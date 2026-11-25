@@ -472,9 +472,10 @@ treats a dial-in device like any other (its provider, report and permission supp
   with no holder.
 - **Streams.** `ctx.dialIn.openStream(deviceId, body, { signal })` (`DialInGateway.openStream`,
   `dial-in/streams.ts`) opens a byte stream to the machine straight over its socket: `stream-open`
-  / `stream-opened`, then `stream-data` (one whole message in base64 per frame; a message that does
-  not fit the connection's `maxFrameBytes` is refused, never split), `stream-credit` and
-  `stream-close`. Each side starts with `DIAL_IN_STREAM_INITIAL_CREDIT` messages of credit and
+  / `stream-opened`, then `stream-data` (one whole message in base64 per frame, or as a binary
+  message (`encodeDialInStreamData`) when the hello's `transport.binaryStreamData` and the ready
+  agree; a message that does not fit the connection's `maxFrameBytes` is refused, never split),
+  `stream-credit` and `stream-close`. Each side starts with `DIAL_IN_STREAM_INITIAL_CREDIT` messages of credit and
   grants one more per message it consumed, so a stream never starves the connection's requests.
   Frames never touch Redis or PG, so only the gateway replica holding the socket opens a stream;
   any other replica throws `DialInStreamElsewhereError` (no holder: `DeviceOfflineError`). The

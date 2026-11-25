@@ -122,9 +122,17 @@ async function signedIn() {
 }
 
 /** A connected machine whose streams go to `onStream`; resolves once this replica holds it. */
-async function connected(onStream?: (open: unknown, s: FakeMachineStream) => void) {
+async function connected(
+  onStream?: (open: unknown, s: FakeMachineStream) => void,
+  opts: { binaryStreamData?: boolean } = {},
+) {
   const m = await signedIn();
-  const machine = await FakeDialInMachine.connect({ url, credential: m.credential, hello: HELLO });
+  const machine = await FakeDialInMachine.connect({
+    url,
+    credential: m.credential,
+    hello: HELLO,
+    ...opts,
+  });
   open.push(machine);
   if (onStream) machine.onStream(onStream);
   await waitFor(async () => gateway.holdsLocally(m.deviceId), 10_000, "holding");
@@ -257,6 +265,78 @@ describe("dial-in streams", () => {
     await stream.send(bytes(1));
     await peer.receivedCount(1);
     stream.close();
+  });
+
+  it("stream data goes binary both ways once hello and ready agree", async () => {
+    let peer: FakeMachineStream | undefined;
+    const c = await connected(
+      (_o, s) => {
+        peer = s;
+        s.onMessage((m) => void s.send(m));
+      },
+      { binaryStreamData: true },
+    );
+    expect(c.machine.binaryStreamData).toBe(true);
+    const stream = await gateway.openStream(
+      c.deviceId,
+      { target: "echo" },
+      AbortSignal.timeout(10_000),
+    );
+    const got: Uint8Array[] = [];
+    const collected = (async () => {
+      for await (const m of stream.messages) {
+        got.push(m);
+        if (got.length === 3) break;
+      }
+    })();
+    // raw bytes of every value survive (no text encoding on the way)
+    const sent = [bytes(1), Uint8Array.of(0, 255, 128, 1), new Uint8Array()];
+    for (const m of sent) await stream.send(m);
+    await collected;
+    expect(got.map((m) => [...m])).toEqual(sent.map((m) => [...m]));
+    expect(c.machine.binaryReceived).toBe(3);
+    expect(peer?.received).toHaveLength(3);
+    // a message too large for one frame once base64-encoded fits as binary
+    const big = new Uint8Array(MAX_FRAME_BYTES - 100);
+    const second = await openPair();
+    await expect(second.stream.send(big)).rejects.toMatchObject({
+      code: DEVICE_STREAM_MESSAGE_TOO_BIG,
+    });
+    second.stream.close();
+    let bigPeer: FakeMachineStream | undefined;
+    const d = await connected(
+      (_o, s) => {
+        bigPeer = s;
+      },
+      { binaryStreamData: true },
+    );
+    const bigStream = await gateway.openStream(
+      d.deviceId,
+      { target: "x" },
+      AbortSignal.timeout(10_000),
+    );
+    await bigStream.send(big);
+    await bigPeer?.receivedCount(1);
+    expect(bigPeer?.received[0]?.byteLength).toBe(big.byteLength);
+    bigStream.close();
+  });
+
+  it("a machine that did not offer binary stream data stays on JSON", async () => {
+    const { machine, stream, peer } = await openPair();
+    expect(machine.binaryStreamData).toBe(false);
+    await stream.send(bytes(1));
+    await peer.receivedCount(1);
+    expect(machine.binaryReceived).toBe(0);
+    stream.close();
+  });
+
+  it("a binary message the connection did not agree on closes the socket", async () => {
+    const { machine } = await openPair();
+    // the fake machine sends only what the ready agreed; this one sends binary anyway
+    (machine as unknown as { ws: { send(b: Uint8Array): void } }).ws.send(
+      Uint8Array.of(1, 1, 115, 7),
+    );
+    expect((await machine.closed).code).toBe(4400);
   });
 
   it("stream closes when the machine socket drops", async () => {

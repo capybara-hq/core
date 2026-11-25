@@ -8,6 +8,7 @@ import {
   type DialInKernelFrame,
   type DialInMachineFrame,
   DialInStreamElsewhereError,
+  decodeDialInStreamData,
   type ExtensionContext,
   parseDialInMachineFrame,
 } from "@capybara-hq/plugin-sdk";
@@ -227,12 +228,14 @@ class DeviceConnection {
     this.streams = new DialInStreams(
       identity.deviceId,
       {
-        send: (text) => {
+        send: (frame) => {
           if (this.state === "closed" || this.socket.readyState !== this.socket.OPEN) return false;
-          this.socket.send(text);
+          // a Uint8Array goes as a binary message: only binary stream-data, once agreed
+          this.socket.send(frame);
           return true;
         },
         maxFrameBytes: () => this.effectiveCap ?? 0,
+        binaryStreamData: () => this.binaryStreamData,
       },
       () => this.gw.streamOpenTimeoutMs,
     );
@@ -248,6 +251,8 @@ class DeviceConnection {
   readonly connectionId = randomUUID();
   /** The negotiated capacity: the smaller of the machine's and the kernel's frame limits. */
   private effectiveCap: number | undefined;
+  /** The hello offered binary `stream-data` (the ready agrees): both sides send it binary. */
+  private binaryStreamData = false;
   /** The program run the hello named (`programRunId`), published with the capacity. */
   private programRunId: string | undefined;
   private ready = false;
@@ -336,7 +341,7 @@ class DeviceConnection {
       if (this.state === "closed") return;
       this.traffic();
       if (isBinary) {
-        this.close(DEVICE_CLOSE.protocol, "frames are JSON text");
+        void this.inOrg(() => this.onBinary(data));
         return;
       }
       const text = Array.isArray(data)
@@ -349,6 +354,38 @@ class DeviceConnection {
     socket.on("close", () => {
       void this.inOrg(() => this.shutdown());
     });
+  }
+
+  /**
+   * A binary message: only `stream-data`, only after a ready that agreed on binary stream data,
+   * within the negotiated capacity. It goes to this socket's stream table like its JSON form.
+   */
+  private async onBinary(data: Buffer | ArrayBuffer | Buffer[]): Promise<void> {
+    const bytes = Array.isArray(data)
+      ? Buffer.concat(data)
+      : Buffer.isBuffer(data)
+        ? data
+        : Buffer.from(data);
+    if (!this.ready || !this.binaryStreamData) {
+      this.close(DEVICE_CLOSE.protocol, "frames are JSON text");
+      return;
+    }
+    let decoded: { streamId: string; data: Uint8Array };
+    try {
+      if (this.effectiveCap === undefined || bytes.byteLength > this.effectiveCap)
+        throw new Error(`frame exceeds ${this.effectiveCap ?? 0} bytes`);
+      decoded = decodeDialInStreamData(
+        new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+      );
+    } catch (e) {
+      this.gw.log.warn("device sent an invalid frame", {
+        deviceId: this.deviceId,
+        error: errMsg(e),
+      });
+      this.close(DEVICE_CLOSE.protocol, "invalid frame");
+      return;
+    }
+    this.streams.onData(decoded.streamId, decoded.data);
   }
 
   private async onFrame(text: string): Promise<void> {
@@ -378,6 +415,7 @@ class DeviceConnection {
       }
       // the machine's announced limit never raises the kernel's own
       this.effectiveCap = Math.min(frame.transport.maxFrameBytes, this.gw.maxFrameBytes());
+      this.binaryStreamData = frame.transport.binaryStreamData === true;
       if (this.effectiveCap < 1024 || Buffer.byteLength(text) > this.effectiveCap) {
         this.close(DEVICE_CLOSE.protocol, "Check frame limits: hello cannot fit");
         return;
@@ -656,6 +694,7 @@ class DeviceConnection {
       type: "ready",
       connectionId: this.connectionId,
       maxFrameBytes: this.effectiveCap ?? 0,
+      ...(this.binaryStreamData && { binaryStreamData: true as const }),
     };
     const raw = JSON.stringify(ready);
     if (this.effectiveCap === undefined || Buffer.byteLength(raw) > this.effectiveCap)

@@ -18,6 +18,20 @@ export interface FakeDialInMachineOptions {
   maxFrameBytes?: number;
   /** Random per program run (default: a fresh one). */
   programRunId?: string;
+  /**
+   * Offer binary `stream-data` in the hello (`transport.binaryStreamData`); once the kernel's
+   * ready agrees, stream data goes both ways as binary messages (default false: JSON only).
+   */
+  binaryStreamData?: boolean;
+}
+
+/** The tag of a binary `stream-data` message (the SDK's `DIAL_IN_STREAM_DATA_TAG`). */
+const STREAM_DATA_TAG = 1;
+
+/** A binary `stream-data` message: tag, id length, id (ASCII), the bytes (the SDK's encoding). */
+function encodeStreamData(streamId: string, data: Uint8Array): Buffer {
+  const id = Buffer.from(streamId, "ascii");
+  return Buffer.concat([Buffer.from([STREAM_DATA_TAG, id.length]), id, data]);
 }
 
 type RequestHandler = (body: unknown) => unknown | Promise<unknown>;
@@ -47,8 +61,11 @@ export class FakeMachineStream {
   private opened = false;
   /** Messages this side may still send (granted by the kernel). */
   private credit = INITIAL_CREDIT;
-  private readonly waiting: { data: string; resolve: () => void; reject: (e: Error) => void }[] =
-    [];
+  private readonly waiting: {
+    data: Uint8Array;
+    resolve: () => void;
+    reject: (e: Error) => void;
+  }[] = [];
   private readonly countWaiters: { n: number; resolve: () => void }[] = [];
   private messageHandler: ((m: Uint8Array) => void) | undefined;
 
@@ -56,6 +73,8 @@ export class FakeMachineStream {
   constructor(
     readonly streamId: string,
     private readonly sendFrame: (frame: unknown) => Promise<void>,
+    /** Sends one message of this stream (JSON or binary, as the connection agreed). */
+    private readonly sendData: (data: Uint8Array) => Promise<void>,
   ) {
     this.closed = new Promise((resolve) => {
       this.resolveClosed = resolve;
@@ -77,7 +96,7 @@ export class FakeMachineStream {
   send(message: Uint8Array): Promise<void> {
     if (this.isClosed) return Promise.reject(new Error("stream closed"));
     return new Promise((resolve, reject) => {
-      this.waiting.push({ data: Buffer.from(message).toString("base64"), resolve, reject });
+      this.waiting.push({ data: new Uint8Array(message), resolve, reject });
       this.flush();
     });
   }
@@ -99,20 +118,25 @@ export class FakeMachineStream {
   onFrame(frame: { type: string; data?: string; messages?: number; reason?: string }): void {
     if (this.isClosed) return;
     if (frame.type === "stream-data" && typeof frame.data === "string") {
-      const m = new Uint8Array(Buffer.from(frame.data, "base64"));
-      this.received.push(m);
-      for (const w of this.countWaiters.splice(0)) {
-        if (this.received.length >= w.n) w.resolve();
-        else this.countWaiters.push(w);
-      }
-      if (this.autoCredit) void this.grant(1).catch(() => {});
-      this.messageHandler?.(m);
+      this.onData(new Uint8Array(Buffer.from(frame.data, "base64")));
     } else if (frame.type === "stream-credit" && typeof frame.messages === "number") {
       this.credit += frame.messages;
       this.flush();
     } else if (frame.type === "stream-close") {
       this.end(frame.reason ?? "closed");
     }
+  }
+
+  /** @internal one message from the kernel (a JSON or a binary `stream-data`). */
+  onData(m: Uint8Array): void {
+    if (this.isClosed) return;
+    this.received.push(m);
+    for (const w of this.countWaiters.splice(0)) {
+      if (this.received.length >= w.n) w.resolve();
+      else this.countWaiters.push(w);
+    }
+    if (this.autoCredit) void this.grant(1).catch(() => {});
+    this.messageHandler?.(m);
   }
 
   /** @internal the machine answered `stream-opened` ok: queued messages may go out. */
@@ -133,10 +157,7 @@ export class FakeMachineStream {
     while (this.opened && this.credit > 0 && this.waiting.length > 0 && !this.isClosed) {
       const w = this.waiting.shift() as (typeof this.waiting)[number];
       this.credit--;
-      this.sendFrame({ type: "stream-data", streamId: this.streamId, data: w.data }).then(
-        w.resolve,
-        w.reject,
-      );
+      this.sendData(w.data).then(w.resolve, w.reject);
     }
   }
 }
@@ -160,6 +181,10 @@ export class FakeDialInMachine {
   readonly connectionId: string;
   /** The connection's effective frame capacity (from `ready`): at most the announced one. */
   readonly maxFrameBytes: number;
+  /** Whether hello and ready agreed on binary `stream-data`. */
+  readonly binaryStreamData: boolean;
+  /** Binary `stream-data` messages received from the kernel. */
+  binaryReceived = 0;
   /** The bodies of the `req` frames received, in order. */
   readonly requests: unknown[] = [];
   /** The ids of the `cancel` frames received, in order. */
@@ -183,15 +208,24 @@ export class FakeDialInMachine {
 
   private constructor(
     private readonly ws: WebSocket,
-    ready: { connectionId: string; maxFrameBytes: number },
+    ready: { connectionId: string; maxFrameBytes: number; binaryStreamData: boolean },
     closed: Promise<{ code: number; reason: string }>,
   ) {
     this.connectionId = ready.connectionId;
     this.maxFrameBytes = ready.maxFrameBytes;
+    this.binaryStreamData = ready.binaryStreamData;
     this.closed = closed;
     // the connect promise's listener is gone once settled: an error later must not go unhandled
     ws.on("error", (e) => this.errors.push(e));
-    ws.on("message", (data) => this.onMessage(data.toString()));
+    ws.on("message", (data, isBinary) => {
+      const buf = Array.isArray(data)
+        ? Buffer.concat(data)
+        : Buffer.isBuffer(data)
+          ? data
+          : Buffer.from(data);
+      if (isBinary) this.onBinary(buf);
+      else this.onMessage(buf.toString());
+    });
     void closed.then(() => {
       for (const st of this.streams.values()) st.end("socket closed");
       this.streams.clear();
@@ -238,12 +272,17 @@ export class FakeDialInMachine {
             protocol,
             programRunId: opts.programRunId ?? randomUUID(),
             program: { version: "0.0.0-fake", os: "linux", arch: "x64" },
-            transport: { maxFrameBytes },
+            transport: { maxFrameBytes, ...(opts.binaryStreamData && { binaryStreamData: true }) },
             body: opts.hello,
           }),
         );
         ws.once("message", (data) => {
-          let frame: { type?: unknown; connectionId?: unknown; maxFrameBytes?: unknown };
+          let frame: {
+            type?: unknown;
+            connectionId?: unknown;
+            maxFrameBytes?: unknown;
+            binaryStreamData?: unknown;
+          };
           try {
             frame = JSON.parse(data.toString());
           } catch {
@@ -263,7 +302,11 @@ export class FakeDialInMachine {
           resolve(
             new FakeDialInMachine(
               ws,
-              { connectionId: frame.connectionId, maxFrameBytes: frame.maxFrameBytes },
+              {
+                connectionId: frame.connectionId,
+                maxFrameBytes: frame.maxFrameBytes,
+                binaryStreamData: opts.binaryStreamData === true && frame.binaryStreamData === true,
+              },
               closed,
             ),
           );
@@ -300,6 +343,18 @@ export class FakeDialInMachine {
     return new Promise((resolve, reject) =>
       this.ws.send(JSON.stringify(frame), (e) => (e ? reject(e) : resolve())),
     );
+  }
+
+  /** A binary message: a `stream-data` (kept in {@link invalid} as hex when it is not one). */
+  private onBinary(buf: Buffer): void {
+    const len = buf[1] ?? 0;
+    if (buf.length < 2 || buf[0] !== STREAM_DATA_TAG || buf.length < 2 + len) {
+      this.invalid.push(buf.toString("hex"));
+      return;
+    }
+    this.binaryReceived++;
+    const streamId = buf.subarray(2, 2 + len).toString("ascii");
+    this.streams.get(streamId)?.onData(new Uint8Array(buf.subarray(2 + len)));
   }
 
   private onMessage(text: string): void {
@@ -348,7 +403,20 @@ export class FakeDialInMachine {
   }
 
   private openStream(streamId: string, body: unknown): void {
-    const st = new FakeMachineStream(streamId, (f) => this.sendFrame(f));
+    const st = new FakeMachineStream(
+      streamId,
+      (f) => this.sendFrame(f),
+      (data) =>
+        this.binaryStreamData
+          ? new Promise<void>((resolve, reject) =>
+              this.ws.send(encodeStreamData(streamId, data), (e) => (e ? reject(e) : resolve())),
+            )
+          : this.sendFrame({
+              type: "stream-data",
+              streamId,
+              data: Buffer.from(data).toString("base64"),
+            }),
+    );
     void st.closed.then(() => this.streams.delete(streamId));
     let error: string | undefined;
     if (this.streamHandler === undefined) error = "this machine opens no streams";

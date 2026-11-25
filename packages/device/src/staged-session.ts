@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   type DialInMachineFrame,
+  decodeDialInStreamData,
   parseDialInKernelFrame,
   parseDialInMachineFrame,
   type SandboxHandle,
@@ -353,10 +354,11 @@ export function serveStagedSession(
       // the host's OS boot identity: the deployment's evidence that the host restarted (8.5)
       ...(bootId !== undefined && { bootId }),
     },
-    transport: { maxFrameBytes: cap },
+    // stream data goes binary (no base64) once the kernel's ready agrees
+    transport: { maxFrameBytes: cap, binaryStreamData: true },
     body: report.body,
   } satisfies DialInMachineFrame;
-  let ready: { connectionId: string; maxFrameBytes: number } | undefined;
+  let ready: { connectionId: string; maxFrameBytes: number; binary: boolean } | undefined;
   /** This connection's capacity: the kernel's effective one once ready, the credential's before. */
   const limit = () => ready?.maxFrameBytes ?? cap;
   const send = (value: unknown) => {
@@ -414,13 +416,16 @@ export function serveStagedSession(
   // this socket's streams: frames go straight over it, each within its capacity
   const streams = new DialInStreamBridge(
     {
-      send(text) {
+      send(out) {
         if (ready === undefined || socket.readyState !== socket.OPEN) return false;
-        if (Buffer.byteLength(text) > limit()) return false;
-        socket.send(text);
+        const size = typeof out === "string" ? Buffer.byteLength(out) : out.byteLength;
+        if (size > limit()) return false;
+        // a Uint8Array is a binary message: only stream data, once the ready agreed
+        socket.send(out);
         return true;
       },
       maxFrameBytes: limit,
+      binaryStreamData: () => ready?.binary === true,
     },
     async (body, signal) => {
       if (!services) throw new Error("This device program serves no device streams");
@@ -438,13 +443,31 @@ export function serveStagedSession(
       return;
     }
     try {
-      if (binary) throw new Error("Use JSON text frames");
+      if (binary) {
+        // binary messages carry only stream data, after a ready that agreed on it
+        if (ready?.binary !== true) throw new Error("Use JSON text frames");
+        const bytes = Array.isArray(data)
+          ? Buffer.concat(data)
+          : Buffer.isBuffer(data)
+            ? data
+            : Buffer.from(data);
+        if (bytes.byteLength > limit()) throw new Error("Frame exceeds the negotiated capacity");
+        const m = decodeDialInStreamData(
+          new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+        );
+        streams.onData(m.streamId, m.data);
+        return;
+      }
       const envelope = parseDialInKernelFrame(data.toString(), limit());
       if (envelope.type === "ready") {
         // the effective capacity is at most what this program announced
         if (ready || envelope.maxFrameBytes > cap)
           throw new Error("Invalid ready capacity; reconnect");
-        ready = { connectionId: envelope.connectionId, maxFrameBytes: envelope.maxFrameBytes };
+        ready = {
+          connectionId: envelope.connectionId,
+          maxFrameBytes: envelope.maxFrameBytes,
+          binary: envelope.binaryStreamData === true,
+        };
         state.current = deliverHere;
         // answers produced while no socket was ready, within the grace
         const now = state.now();
@@ -595,7 +618,7 @@ export function serveStagedSession(
     fail(error);
   }
   return {
-    ready: () => ready,
+    ready: () => ready && { connectionId: ready.connectionId, maxFrameBytes: ready.maxFrameBytes },
     event(body) {
       if (ready === undefined || socket.readyState !== socket.OPEN) return false;
       const raw = JSON.stringify({ type: "event", body });

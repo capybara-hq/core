@@ -26,7 +26,9 @@ export const DIAL_IN_STREAM_INITIAL_CREDIT = 8;
 
 /**
  * The stream frames both sides send ({@link DialInChannel.openStream}). `data` is one whole message
- * in standard base64; the frame, like every frame, fits the connection's `maxFrameBytes`.
+ * in standard base64; the frame, like every frame, fits the connection's `maxFrameBytes`. On a
+ * connection whose hello and ready both set `binaryStreamData`, both sides send `stream-data` as
+ * a binary WebSocket message instead ({@link encodeDialInStreamData}: no base64, no JSON).
  */
 export type DialInStreamFrame =
   | { type: "stream-data"; streamId: string; data: string }
@@ -45,8 +47,12 @@ export type DialInMachineFrame =
       /** Random per run of the machine's program, the same on each of its connections. */
       programRunId: string;
       program: { version: string; os: string; arch: string; bootId?: string };
-      /** The largest frame, in UTF-8 bytes, the machine accepts. */
-      transport: { maxFrameBytes: number };
+      /**
+       * The largest frame, in UTF-8 bytes, the machine accepts; `binaryStreamData`: the machine
+       * sends and accepts binary `stream-data` ({@link encodeDialInStreamData}) once the kernel's
+       * ready says so too.
+       */
+      transport: { maxFrameBytes: number; binaryStreamData?: true };
       body: unknown;
     }
   /** The answer to the kernel's `req` with the same `id`. */
@@ -64,7 +70,16 @@ export type DialInKernelFrame =
    * connection's effective frame capacity: the smaller of the machine's `transport.maxFrameBytes`
    * and the kernel's limit. Neither side sends a larger frame on this connection.
    */
-  | { type: "ready"; connectionId: string; maxFrameBytes: number }
+  | {
+      type: "ready";
+      connectionId: string;
+      maxFrameBytes: number;
+      /**
+       * Set when the machine's hello offered it: from now on both sides send `stream-data` only
+       * as binary messages ({@link encodeDialInStreamData}); every other frame stays JSON text.
+       */
+      binaryStreamData?: true;
+    }
   /** A provider's request ({@link DialInChannel.request}); answered by a `res` with its `id`. */
   | { type: "req"; id: string; deadlineMs: number; body: unknown }
   /** The kernel no longer waits for request `id` (aborted or timed out). */
@@ -117,6 +132,7 @@ const machineFrame = z.discriminatedUnion("type", [
     }),
     transport: z.strictObject({
       maxFrameBytes: z.number().int().min(1024).max(Number.MAX_SAFE_INTEGER),
+      binaryStreamData: z.literal(true).optional(),
     }),
     body,
   }),
@@ -167,6 +183,7 @@ const kernelFrame = z.discriminatedUnion("type", [
     type: z.literal("ready"),
     connectionId: id,
     maxFrameBytes: z.number().int().min(1024).max(Number.MAX_SAFE_INTEGER),
+    binaryStreamData: z.literal(true).optional(),
   }),
   z.strictObject({
     type: z.literal("req"),
@@ -188,6 +205,46 @@ const kernelFrame = z.discriminatedUnion("type", [
  */
 export function parseDialInKernelFrame(text: string, maxBytes: number): DialInKernelFrame {
   return parseFrame(kernelFrame, text, maxBytes) as DialInKernelFrame;
+}
+
+/** The first byte of a binary `stream-data` message (the only binary dial-in message). */
+export const DIAL_IN_STREAM_DATA_TAG = 1;
+
+/**
+ * One `stream-data` as a binary WebSocket message, for a connection whose hello and ready set
+ * `binaryStreamData`: the tag {@link DIAL_IN_STREAM_DATA_TAG}, the stream id's length in bytes (one
+ * byte), the id in ASCII, then the message's bytes as they are. Like every frame it must fit the
+ * connection's `maxFrameBytes` (its byte length). Throws a `RangeError` for an id that is not a
+ * dial-in id.
+ */
+export function encodeDialInStreamData(streamId: string, data: Uint8Array): Uint8Array {
+  if (!ID_RE.test(streamId)) throw new RangeError(`not a dial-in stream id: ${streamId}`);
+  const out = new Uint8Array(2 + streamId.length + data.byteLength);
+  out[0] = DIAL_IN_STREAM_DATA_TAG;
+  out[1] = streamId.length;
+  for (let i = 0; i < streamId.length; i++) out[2 + i] = streamId.charCodeAt(i);
+  out.set(data, 2 + streamId.length);
+  return out;
+}
+
+/**
+ * Reads a binary `stream-data` message ({@link encodeDialInStreamData}); `data` is a view into
+ * `message`. Throws {@link DialInProtocolError} for anything else: another tag, a truncated
+ * header, an id that is not a dial-in id.
+ */
+export function decodeDialInStreamData(message: Uint8Array): {
+  streamId: string;
+  data: Uint8Array;
+} {
+  if (message.byteLength < 2 || message[0] !== DIAL_IN_STREAM_DATA_TAG)
+    throw new DialInProtocolError("binary frame is not stream-data");
+  const len = message[1] as number;
+  if (message.byteLength < 2 + len)
+    throw new DialInProtocolError("binary stream-data is truncated");
+  let streamId = "";
+  for (let i = 0; i < len; i++) streamId += String.fromCharCode(message[2 + i] as number);
+  if (!ID_RE.test(streamId)) throw new DialInProtocolError("binary stream-data has an invalid id");
+  return { streamId, data: message.subarray(2 + len) };
 }
 
 /**

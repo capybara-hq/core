@@ -3,6 +3,7 @@ import {
   DIAL_IN_STREAM_INITIAL_CREDIT,
   type DialInKernelFrame,
   type DialInMachineFrame,
+  encodeDialInStreamData,
   encodeServiceMessage,
   ServiceMessageDecoder,
 } from "@capybara-hq/plugin-sdk";
@@ -25,10 +26,12 @@ export function isKernelStreamFrame(frame: DialInKernelFrame): frame is KernelSt
 
 /** What the bridge needs from its dial-in socket. */
 export interface StreamBridgeTransport {
-  /** Sends one frame's text; false when the socket is no longer open. */
-  send(text: string): boolean;
-  /** The connection's negotiated frame capacity in UTF-8 bytes. */
+  /** Sends one frame: JSON text, or a binary `stream-data`; false when the socket is not open. */
+  send(frame: string | Uint8Array): boolean;
+  /** The connection's negotiated frame capacity in bytes. */
   maxFrameBytes(): number;
+  /** Whether the kernel's ready agreed on binary `stream-data` (`encodeDialInStreamData`). */
+  binaryStreamData(): boolean;
 }
 
 /** Opens the service connection a `stream-open` body names (`ServiceSupervisor.openStream`). */
@@ -44,8 +47,8 @@ interface Stream {
   sendCredit: number;
   /** Messages the kernel may still send (granted by this side as it consumes them). */
   recvCredit: number;
-  /** Frame texts from the service waiting for credit, oldest first. */
-  queue: string[];
+  /** Frames from the service waiting for credit, oldest first. */
+  queue: (string | Uint8Array)[];
   ended: boolean;
   /** The opening's abort, while the service connection is being opened. */
   opening: AbortController | undefined;
@@ -57,7 +60,8 @@ const frame = (f: DialInMachineFrame) => JSON.stringify(f);
  * The machine's end of the dial-in streams of one socket (browser use spec §6.1): a `stream-open`
  * whose body is `{ service }` opens a `stream` connection to that running service and is answered
  * `stream-opened`; then each `stream-data` is one whole service message both ways (base64 in the
- * frame, length-prefixed on the socket). Credit follows the kernel's rules: both sides start with
+ * JSON frame, or raw in a binary one once the kernel's ready agreed; length-prefixed on the
+ * service socket). Credit follows the kernel's rules: both sides start with
  * {@link DIAL_IN_STREAM_INITIAL_CREDIT}, implicit; this side grants one per message it wrote to
  * the service and sends only while it holds credit (the service's socket is paused meanwhile), and
  * a kernel exceeding its credit gets the stream closed ("credit exceeded"). A service message that
@@ -87,29 +91,44 @@ export class DialInStreamBridge {
     } else if (f.type === "stream-credit") {
       s.sendCredit += f.messages;
       this.flush(s);
-    } else if (!s.conn) {
-      // the kernel sends data only after `stream-opened`: anything else breaks the protocol
-      this.end(f.streamId, s, "data before open");
     } else {
-      if (s.recvCredit <= 0) {
-        this.end(f.streamId, s, "credit exceeded");
-        return;
-      }
-      s.recvCredit--;
-      let message: Uint8Array;
-      try {
-        message = encodeServiceMessage(new Uint8Array(Buffer.from(f.data, "base64")));
-      } catch (error) {
-        this.end(f.streamId, s, (error as Error).message);
-        return;
-      }
-      s.conn.write(message, (error) => {
-        // written to the service: the kernel may send one more
-        if (error || s.ended) return;
-        s.recvCredit++;
-        this.transport.send(frame({ type: "stream-credit", streamId: f.streamId, messages: 1 }));
-      });
+      this.write(f.streamId, s, new Uint8Array(Buffer.from(f.data, "base64")));
     }
+  }
+
+  /** A binary `stream-data` from the kernel (`decodeDialInStreamData`). */
+  onData(streamId: string, data: Uint8Array): void {
+    if (this.closed) return;
+    const s = this.streams.get(streamId);
+    if (!s || s.ended) return;
+    this.write(streamId, s, data);
+  }
+
+  /** One message from the kernel to the service, within the credit this side granted. */
+  private write(streamId: string, s: Stream, data: Uint8Array): void {
+    if (!s.conn) {
+      // the kernel sends data only after `stream-opened`: anything else breaks the protocol
+      this.end(streamId, s, "data before open");
+      return;
+    }
+    if (s.recvCredit <= 0) {
+      this.end(streamId, s, "credit exceeded");
+      return;
+    }
+    s.recvCredit--;
+    let message: Uint8Array;
+    try {
+      message = encodeServiceMessage(data);
+    } catch (error) {
+      this.end(streamId, s, (error as Error).message);
+      return;
+    }
+    s.conn.write(message, (error) => {
+      // written to the service: the kernel may send one more
+      if (error || s.ended) return;
+      s.recvCredit++;
+      this.transport.send(frame({ type: "stream-credit", streamId, messages: 1 }));
+    });
   }
 
   /** The dial-in socket closed: every service connection ends, nothing more is sent. */
@@ -180,21 +199,25 @@ export class DialInStreamBridge {
         return;
       }
       const cap = this.transport.maxFrameBytes();
+      const binary = this.transport.binaryStreamData();
       for (const m of messages) {
-        const text = frame({
-          type: "stream-data",
-          streamId,
-          data: Buffer.from(m.buffer, m.byteOffset, m.byteLength).toString("base64"),
-        });
-        if (Buffer.byteLength(text) > cap) {
+        const out = binary
+          ? encodeDialInStreamData(streamId, m)
+          : frame({
+              type: "stream-data",
+              streamId,
+              data: Buffer.from(m.buffer, m.byteOffset, m.byteLength).toString("base64"),
+            });
+        const size = typeof out === "string" ? Buffer.byteLength(out) : out.byteLength;
+        if (size > cap) {
           this.end(
             streamId,
             s,
-            `A service message of ${m.byteLength} bytes does not fit the connection's frame capacity of ${cap} bytes once base64-encoded; the service must send smaller messages`,
+            `A service message of ${m.byteLength} bytes does not fit the connection's frame capacity of ${cap} bytes ${binary ? "with its header" : "once base64-encoded"}; the service must send smaller messages`,
           );
           return;
         }
-        s.queue.push(text);
+        s.queue.push(out);
       }
       this.flush(s);
     });
@@ -204,8 +227,8 @@ export class DialInStreamBridge {
 
   private flush(s: Stream): void {
     while (s.sendCredit > 0 && s.queue.length > 0 && !s.ended) {
-      const text = s.queue.shift() as string;
-      if (!this.transport.send(text)) return;
+      const out = s.queue.shift() as string | Uint8Array;
+      if (!this.transport.send(out)) return;
       s.sendCredit--;
     }
     // backpressure: stop reading the service while the kernel has granted nothing more

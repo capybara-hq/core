@@ -165,7 +165,10 @@ openStream?(h: SandboxHandle, target: { unixSocket: string } | { port: number },
   usable only on the gateway replica that holds the machine's socket, which sends stream frames
   straight over that socket (new envelope kinds `stream-open` / `stream-data` / `stream-close`,
   each within `maxFrameBytes`, per-stream credit flow control so a stream cannot starve the
-  machine's operations). `packages/device` implements the machine side.
+  machine's operations). `packages/device` implements the machine side. When the machine's hello
+  offers `transport.binaryStreamData` and the kernel's `ready` agrees, `stream-data` travels as a
+  binary WebSocket message (a tag byte, the stream id, the raw message) instead of base64 inside
+  JSON; a machine that does not offer it stays on JSON. (amended 2026-11-25, core#848)
 - The target must be inside the device and refer to a socket the daemon owns; the stream is not a
   general port forward (the provider refuses any other target class the kernel does not ask for).
 
@@ -206,6 +209,14 @@ openStream?(h: SandboxHandle, target: { unixSocket: string } | { port: number },
 - `Page.startScreencast` gets `maxWidth` / `maxHeight` from the panel's current size: small frames in
   the side panel (≈15–30 KB JPEG, peak ≈200 KB/s), larger in the expanded view (peak ≈0.5–1 MB/s).
 - Input round trip same region: ≈100–200 ms.
+- (amended 2026-11-25, plugins#229) A frame's bytes share the slowest hop with the person's input,
+  so the daemon paces by link time, not a fixed count: it pings each viewer (the path's own round
+  trip) and compares each frame's ack round trip with it. While frames take more than about 120 ms
+  over that, it lowers JPEG quality and then scale (down to half) and keeps one frame in flight;
+  only the newest frame waits; JSON messages (state, cursor) never wait behind a held frame; at most
+  15 frames per second on a fast link. Frames are binary messages (no base64 or JSON on the viewer
+  leg), sized to the picture's CSS box times the device pixel ratio capped at 1.25. Measured on a
+  model of a 350 KB/s, 2 × 105 ms path: click to changed frame from ≈1.2 s to ≈0.55 s.
 
 ## 7. `ctx.deviceAccess` for extensions
 
@@ -277,7 +288,16 @@ by `actor.runId`). The browser is a long-lived service, so:
   never starts the service itself, so every start passes through a tool call and its review.
 - **Watch state (side panel, default)**: tab strip, address bar, back / forward / reload, the picture
   scaled to the panel width at 16:10 with letterboxing, a status line ("agent: filling the form…"),
-  the agent's clicks flashed on the picture. Clicking in the small view works (closing a popup).
+  the agent's clicks flashed on the picture. The watch state is read-only: no pointer, keys, address
+  bar, tabs or navigation, the arrow cursor; the daemon drops viewer input unless the person holds
+  control (also input still queued when control returns to the agent). (amended 2026-11-25,
+  maintainer: replaces "clicking in the small view works")
+- **Takeover feel** (amended 2026-11-25): pointer moves are forwarded coalesced (the newest
+  position wins, never queued behind frames), so hover effects, menus and tooltips render; the
+  daemon resolves the page's cursor under the pointer (computed `cursor` through shadow roots and
+  frames) and the panel shows it on the picture; a press indicator appears at mousedown before any
+  frame; a hidden text field holds the focus, so IME composition (Chinese) and paste reach the page
+  as text.
 - **Expanded state**: the right area's existing full-screen mode (`RightArea` `full`: the panel
   maximised inside the page) at near 1:1; 接管 asks the host to switch to it through the embed bridge
   (a new bridge message if none exists), 交还智能体 and `Esc` restore. No new overlay. (amended

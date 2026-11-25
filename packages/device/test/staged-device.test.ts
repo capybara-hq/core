@@ -651,7 +651,7 @@ describe("staged connection (W3-M)", () => {
         arch: process.arch,
         bootId: "boot-1",
       },
-      transport: { maxFrameBytes: 69632 },
+      transport: { maxFrameBytes: 69632, binaryStreamData: true },
       body: expect.any(Object),
     });
     // the body is the device protocol's: the owner's ceiling and no program fact
