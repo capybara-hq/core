@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { DeviceOfflineError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
 import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
-import { BackgroundTaskStopper } from "../../src/background/stop.js";
+import { BACKGROUND_STOP_ATTEMPT_MS, BackgroundTaskStopper } from "../../src/background/stop.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -49,6 +50,8 @@ let redis: Redis;
 let accounts: AccountsService;
 let owner: Account;
 let added: { name: string; jobId: string }[] = [];
+/** One exact stop attempt's time limit (`BACKGROUND_STOP_ATTEMPT_MS`, read at every attempt). */
+let stopAttemptMs = 20_000;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -62,7 +65,11 @@ beforeAll(async () => {
       roles: ["api"],
       ...MODEL_PLUGINS_CONFIG,
     }),
-    { env: {}, logger: createLogger("error", { write: () => {} }) },
+    {
+      env: {},
+      logger: createLogger("error", { write: () => {} }),
+      overrides: [{ provide: BACKGROUND_STOP_ATTEMPT_MS, useValue: () => stopAttemptMs }],
+    },
   );
   raw = createDb(pgc.url, 5);
   redis = new Redis(rd.url);
@@ -76,6 +83,7 @@ afterAll(async () => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  stopAttemptMs = 20_000;
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
@@ -473,6 +481,207 @@ describe("TaskStop and the stopper on managed tasks", () => {
   });
 });
 
+describe("a stop the device cannot take now is durable intent", () => {
+  /** A machine that is connected but never answers: only the attempt's limit ends the wait. */
+  const silent = (signal: AbortSignal) =>
+    new Promise<never>((_, reject) => {
+      if (signal.aborted) reject(signal.reason);
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  const stopUrl = (f: Awaited<ReturnType<typeof fixture>>) =>
+    `/api/v1/orgs/${f.orgId}/conversations/${f.conversationId}/background-tasks/${f.taskId}/stop`;
+  const listed = async (f: Awaited<ReturnType<typeof fixture>>) => {
+    const res = await f.req({
+      method: "GET",
+      url: `/api/v1/orgs/${f.orgId}/conversations/${f.conversationId}/background-tasks`,
+    });
+    return (res.json() as { tasks: Record<string, unknown>[] }).tasks[0];
+  };
+
+  it("TaskStop on an offline machine returns at once with the stop recorded; the poller delivers it", async () => {
+    const f = await fixture();
+    f.provider.state.beforeStop = async () => {
+      throw new DeviceOfflineError(f.deviceId);
+    };
+    const r = textOf(await f.taskStop());
+    expect(r).toMatch(/stop requested: the device did not confirm it \(Device .* is offline/);
+    expect(r).toMatch(/attempted again automatically/);
+    expect(await f.taskRow()).toMatchObject({
+      status: "running",
+      launch_state: "cancel-pending",
+      cancel_requested_by: "tool",
+      cancel_failure: "unreachable",
+      stopping_at: null,
+    });
+    expect(await listed(f)).toMatchObject({
+      stopping: true,
+      stopWaiting: true,
+      stopFailure: "unreachable",
+    });
+    expect(await f.finishedEvents()).toHaveLength(0);
+    // still offline: the owed stop stays owed, nothing finishes
+    expect(await poller().pollOnce()).toBe(0);
+    expect((await f.taskRow()).launch_state).toBe("cancel-pending");
+    // the machine is back: the exact stop is delivered and settles the task once
+    f.provider.state.beforeStop = undefined;
+    expect(await poller().pollOnce()).toBe(1);
+    expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
+    expect(await f.finishedEvents()).toHaveLength(1);
+  });
+
+  it("a person's stop is recorded before the device is asked", async () => {
+    const f = await fixture();
+    let during: Record<string, unknown> | undefined;
+    f.provider.state.beforeStop = async () => {
+      during = await f.taskRow();
+      throw new DeviceOfflineError(f.deviceId);
+    };
+    const res = await f.req({ method: "POST", url: stopUrl(f) });
+    expect(res.statusCode).toBe(200);
+    // the intent was durable before the provider call: owed, the asker kept, claimed by this stop
+    expect(during).toMatchObject({
+      status: "running",
+      launch_state: "cancel-pending",
+      cancel_requested_by: "person",
+    });
+    expect(during?.stopping_at).not.toBeNull();
+    expect((res.json() as { task: Record<string, unknown> }).task).toMatchObject({
+      status: "running",
+      stopping: true,
+      stopWaiting: true,
+      stopFailure: "unreachable",
+    });
+    // the device answers again: the person's stop settles without waking the conversation
+    f.provider.state.beforeStop = undefined;
+    expect(await poller().pollOnce()).toBe(1);
+    const [event] = await f.finishedEvents();
+    expect(event?.payload).toMatchObject({ status: "stopped", stoppedBy: "person" });
+    expect(ensureRuns(f.conversationId)).toHaveLength(0);
+  });
+
+  it("a person's stop on a machine that never answers returns within the attempt limit", async () => {
+    const f = await fixture();
+    stopAttemptMs = 200;
+    f.provider.state.beforeStop = silent;
+    const res = await f.req({ method: "POST", url: stopUrl(f) });
+    expect(res.statusCode).toBe(200);
+    // whether the limit ran out before or inside the provider call, the stop is owed and unreachable
+    expect((res.json() as { task: Record<string, unknown> }).task).toMatchObject({
+      status: "running",
+      stopping: true,
+      stopWaiting: true,
+      stopFailure: "unreachable",
+    });
+    expect(await f.taskRow()).toMatchObject({ launch_state: "cancel-pending", stopping_at: null });
+  });
+
+  it("a device whose stop fails is told as a failure with its cause, not as offline", async () => {
+    const f = await fixture();
+    f.provider.state.beforeStop = async () => {
+      throw new Error("Managed background tasks are unavailable on this device");
+    };
+    const r = textOf(await f.taskStop());
+    expect(r).toMatch(
+      /the device's stop failed \(Managed background tasks are unavailable on this device\)/,
+    );
+    expect(r).not.toMatch(/offline/);
+    expect(await f.taskRow()).toMatchObject({
+      launch_state: "cancel-pending",
+      cancel_failure: "failed",
+      cancel_failure_detail: "Managed background tasks are unavailable on this device",
+    });
+    expect(await listed(f)).toMatchObject({ stopWaiting: true, stopFailure: "failed" });
+  });
+
+  it("an owed stop whose device does not answer never holds the poll past the attempt limit", async () => {
+    const f = await fixture();
+    stopAttemptMs = 200;
+    f.provider.state.beforeStop = async () => {
+      throw new DeviceOfflineError(f.deviceId);
+    };
+    await f.taskStop();
+    f.provider.state.beforeStop = silent;
+    expect(await poller().pollOnce()).toBe(0);
+    expect(await f.taskRow()).toMatchObject({
+      status: "running",
+      launch_state: "cancel-pending",
+      cancel_failure: "unreachable",
+      stopping_at: null,
+    });
+  });
+
+  it("a stop whose replica died after recording it is delivered once its claim expires", async () => {
+    const f = await fixture();
+    const store = k.app.get(BackgroundTaskStore);
+    // the dead replica's steps: the claim, then the owed intent, then nothing
+    expect(await store.claimStop(f.taskId)).toBe(true);
+    await store.oweCancel(f.taskId, "person");
+    // a live claim keeps the poller away
+    expect(await poller().pollOnce()).toBe(0);
+    expect(f.provider.calls.stop).toEqual([]);
+    await f.db
+      .updateTable("background_tasks")
+      .set({ stopping_at: sql<Date>`now() - interval '6 minutes'` })
+      .where("id", "=", f.taskId)
+      .execute();
+    expect(await listed(f)).toMatchObject({ stopWaiting: true, stopFailure: null });
+    expect(await poller().pollOnce()).toBe(1);
+    const [event] = await f.finishedEvents();
+    expect(event?.payload).toMatchObject({ status: "stopped", stoppedBy: "person" });
+  });
+
+  it("a caller that gives up mid-attempt leaves the stop owed without a device failure", async () => {
+    const f = await fixture();
+    const ac = new AbortController();
+    f.provider.state.beforeStop = async (signal) => {
+      ac.abort(new Error("the run was aborted"));
+      await silent(signal);
+    };
+    const store = k.app.get(BackgroundTaskStore);
+    const after = await k.app
+      .get(BackgroundTaskStopper)
+      .stop(await getTask(store, f.taskId), "tool", ac.signal);
+    expect(after).toMatchObject({
+      status: "running",
+      launchState: "cancel-pending",
+      cancelRequestedBy: "tool",
+      cancelFailure: null,
+      stoppingAt: null,
+    });
+  });
+
+  it("a task that exits on its own while its stop is owed keeps its natural end", async () => {
+    const f = await fixture();
+    f.provider.state.beforeStop = async () => {
+      throw new DeviceOfflineError(f.deviceId);
+    };
+    await f.taskStop();
+    f.provider.state.beforeStop = undefined;
+    f.provider.exit(0);
+    expect(await poller().pollOnce()).toBe(1);
+    expect(await f.taskRow()).toMatchObject({ status: "completed", exit_code: 0 });
+  });
+
+  it("a person's stop that loses the claim to another attempt still records the person", async () => {
+    const f = await fixture();
+    const store = k.app.get(BackgroundTaskStore);
+    // another attempt (a poller's revocation delivery) holds the claim
+    expect(await store.claimStop(f.taskId)).toBe(true);
+    const res = await f.req({ method: "POST", url: stopUrl(f) });
+    expect((res.json() as { task: Record<string, unknown> }).task).toMatchObject({
+      status: "running",
+      stopping: true,
+    });
+    expect(await f.taskRow()).toMatchObject({ cancel_requested_by: "person" });
+    // that attempt did not settle and released its claim; the poller settles the stop later
+    await store.requestCancel(f.taskId, null, true, null);
+    expect(await poller().pollOnce()).toBe(1);
+    const [event] = await f.finishedEvents();
+    expect(event?.payload).toMatchObject({ status: "stopped", stoppedBy: "person" });
+    expect(ensureRuns(f.conversationId)).toHaveLength(0);
+  });
+});
+
 async function getTask(store: BackgroundTaskStore, id: string) {
   const t = await store.get(id);
   if (!t) throw new Error("no task");
@@ -660,13 +869,22 @@ describe("tool and HTTP surfaces stay the same for managed tasks", () => {
         "starting",
         "status",
         "stopping",
+        // the stop is recorded and waits for the device, and why its last attempt did not settle
+        "stopFailure",
+        "stopWaiting",
         "subagentId",
         // the person whose run started it, for the web (account profile); no tool returns it
         "trigger",
       ].sort(),
     );
     // an acknowledged managed task is running, not "starting", for the model and the API
-    expect(view).toMatchObject({ status: "running", stopping: false, starting: false });
+    expect(view).toMatchObject({
+      status: "running",
+      stopping: false,
+      stopWaiting: false,
+      stopFailure: null,
+      starting: false,
+    });
     const listed = textOf(await taskListTool(deps).run({}, await f.ctxFor()));
     expect(listed).toContain("running for");
   });

@@ -122,6 +122,8 @@ const task = (extra: Record<string, unknown> = {}) => ({
   startedAt: "2026-10-26T06:00:04.000Z",
   finishedAt: null,
   stopping: false,
+  stopWaiting: false,
+  stopFailure: null,
   starting: false,
   ...extra,
 });
@@ -276,6 +278,27 @@ describe("the background section", () => {
     await vi.waitFor(() => expect(within(section).queryByRole("status")).toBeNull());
     expect(within(section).queryByText("Start the dev server")).toBeNull();
     expect(within(section).getByRole("button", { name: /1 completed/ })).toBeTruthy();
+  });
+
+  it("a stop the device has not taken yet says it waits for the device, not a spinner forever", async () => {
+    const state = { tasks: [task()] as unknown[] };
+    api(state, {
+      [`POST ${TASKS}/${TASK}/stop`]: () =>
+        json(200, {
+          task: task({ stopping: true, stopWaiting: true, stopFailure: "unreachable" }),
+        }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChatRoute();
+    const section = await backgroundSection();
+    const user = userEvent.setup();
+    await user.click(
+      await within(section).findByRole("button", { name: "Stop Start the dev server" }),
+    );
+    await vi.waitFor(() =>
+      expect(within(section).getByRole("status").textContent).toBe("Stops when the device answers"),
+    );
+    expect(within(section).queryByRole("button", { name: "Stop Start the dev server" })).toBeNull();
   });
 
   it("a changed frame during the first read reads the list again (the read may predate the task)", async () => {

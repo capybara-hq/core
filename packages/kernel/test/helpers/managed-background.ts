@@ -86,6 +86,11 @@ export function managedOutputProvider() {
     failTail: false,
     /** Status reads of these operations throw. */
     statusFailsFor: new Set<string>(),
+    /**
+     * Runs before a stop takes effect, with the stop's signal (a machine that is offline or never
+     * answers: throw, or wait until the signal aborts).
+     */
+    beforeStop: undefined as ((signal: AbortSignal) => Promise<void>) | undefined,
   };
   const owned = (ref: SandboxExecutionRef): OwnedExecution => {
     const e = executions.get(ref.operationId);
@@ -168,6 +173,7 @@ export function managedOutputProvider() {
     async stop(_h, ref, opts) {
       calls.stop.push({ graceMs: opts.graceMs });
       const e = owned(ref);
+      await state.beforeStop?.(opts.signal);
       // the atomically claimed outcome of an applied cancellation is kept on every retry
       if (e.cancelled) return { outcome: "stopped" };
       if (e.status.state === "exited")
