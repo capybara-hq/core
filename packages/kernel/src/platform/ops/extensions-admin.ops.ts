@@ -14,7 +14,7 @@ import {
 } from "../../extensions/deployment-config.js";
 import { ExtensionInstalls } from "../../extensions/installs.js";
 import type { AdminExtensionView } from "../../extensions/permission-view.js";
-import { PluginGuides } from "../../extensions/plugin-guides.js";
+import { PluginGuides, type RenderedSetupGuide } from "../../extensions/plugin-guides.js";
 import {
   SINGLE_PROVIDER_ENABLED,
   SINGLE_PROVIDER_REQUIRED,
@@ -98,6 +98,33 @@ export function deploymentPersonFields(
       ...new Set([...found.recordOnly, ...secrets.map((f) => f.path).filter((p) => !asked.has(p))]),
     ],
   };
+}
+
+/**
+ * What `extensions.platform-config` adds to the config view: the extension's platform setup guides
+ * as a short list (id and title, no body), and a next step naming `extensions.platform-guides` when
+ * a guide exists and the config needs setting up (invalid, or a required field without a value).
+ */
+export function configGuides(
+  v: DeploymentConfigView,
+  guides: readonly Pick<RenderedSetupGuide, "id" | "title">[],
+): { guides: { id: string; title: string }[]; next?: string } {
+  const list = guides.map((g) => ({ id: g.id, title: g.title }));
+  if (list.length === 0 || !needsSetup(v)) return { guides: list };
+  return {
+    guides: list,
+    next: "Required fields are unset or the config is invalid, and the extension ships platform setup guides (guides): read them with extensions.platform-guides, walk the person through their steps, then save the fields with extensions.platform-set-config.",
+  };
+}
+
+/** Whether a deployment config is invalid or leaves a required field without a value. */
+function needsSetup(v: DeploymentConfigView): boolean {
+  if (!v.valid || v.orgMustConfigure.length > 0) return true;
+  const required = (v.schema as { required?: unknown } | null)?.required;
+  if (!Array.isArray(required)) return false;
+  return v.fields.some(
+    (f) => required.includes(f.path) && (f.secret ? f.set !== true : f.source === "unset"),
+  );
 }
 
 /** The English name of an extension as next steps name it. */
@@ -575,11 +602,12 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-config",
         description:
-          "Read an extension's deployment config (super admin): each field's source (env, file or nacos: read-only here; db: saved here; default; unset), the effective value of non-secret fields, whether each secret field is set (never its value), the form's JSON Schema (secret fields carry x-secret), whether the config is valid and the problems (paths only), and the overridable fields every org must fill in itself (orgMustConfigure).",
-        input: NameInput,
-        example: EXAMPLE,
+          "Read an extension's deployment config (super admin): each field's source (env, file or nacos: read-only here; db: saved here; default; unset), the effective value of non-secret fields, whether each secret field is set (never its value), the form's JSON Schema (secret fields carry x-secret), whether the config is valid and the problems (paths only), the overridable fields every org must fill in itself (orgMustConfigure), and the platform setup guides the extension ships (guides: id and title in locale, the person's language; read them with extensions.platform-guides). next names that operation when a guide exists and the config needs setting up.",
+        input: NameInput.extend(DeploymentGuidesQuery.shape).strict(),
+        example: { name: "slack", locale: "en" },
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/extensions/:name/config"],
+        extras: ["locale"],
         confirm: "read",
         errors: [
           {
@@ -589,7 +617,11 @@ export class ExtensionsAdminOperations implements OnModuleInit {
         ],
         run: async (input, ctx) => {
           await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
-          return this.deploymentConfigs.view(input.name);
+          const [view, guides] = await Promise.all([
+            this.deploymentConfigs.view(input.name),
+            this.guides.deploymentGuides(input.name, { locale: input.locale }),
+          ]);
+          return { ...view, ...configGuides(view, guides) };
         },
       }),
       defineOperation({
