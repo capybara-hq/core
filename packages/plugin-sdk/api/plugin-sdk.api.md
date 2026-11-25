@@ -950,6 +950,15 @@ export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
 
 // @public
+export const DEVICE_SERVICE_ID_RE: RegExp;
+
+// @public
+export const DEVICE_SERVICE_INSTALL_ENV = "CAPYBARA_SERVICE_INSTALL";
+
+// @public
+export const DEVICE_SERVICE_INSTALL_SEAL = ".sealed";
+
+// @public
 export const DEVICE_SERVICE_MAX_MESSAGE: number;
 
 // @public
@@ -1142,6 +1151,9 @@ export class DeviceRequestNotSentError extends SandboxScopeDeniedError {
 export interface DevicesCtx {
     reportChanged(deviceId: string): Promise<void>;
 }
+
+// @public
+export function deviceServiceId(extension: string, name: string): string;
 
 // @public
 export interface DeviceServiceSpec {

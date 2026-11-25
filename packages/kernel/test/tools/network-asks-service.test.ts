@@ -389,7 +389,7 @@ describe("network asks for extension service calls", () => {
           holderConversationId: s.conversationId,
           actor: { accountId: s.accountId, conversationId: s.conversationId },
         },
-        "echo",
+        "fake-device-access.echo",
         AbortSignal.timeout(30_000),
       );
     }

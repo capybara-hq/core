@@ -35,7 +35,12 @@ import type { PolicyStore } from "./policy-store.js";
 import { recordProjectRoot, reportedSharedProjectRoots } from "./project-roots.js";
 import { policySummary, type StagedOwnerPolicy } from "./server-ops.js";
 import { macServiceLauncher } from "./services/mac-launcher.js";
-import { ServiceSupervisor, serviceCodeRoot, serviceRoot } from "./services/supervisor.js";
+import {
+  ServiceSupervisor,
+  serviceCodeRoot,
+  serviceInstallRoot,
+  serviceRoot,
+} from "./services/supervisor.js";
 import { type StagedHello, StagedSessionStates } from "./staged-session.js";
 import type { Credential } from "./state.js";
 import { PROGRAM_VERSION } from "./version.js";
@@ -280,8 +285,13 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       onOperationEnded: (operationId) => running.endOperation(operationId),
       // the project directories this connection used, for the ones it shares with another
       onProjectAdmitted: (projectRoot) => recordProjectRoot(stateDir, projectRoot),
-      // the services' profiles (cookies) and code: never read or written by an agent operation
-      serviceRoots: [serviceRoot(resolve(cred.dir)), serviceCodeRoot(resolve(cred.dir))],
+      // the services' profiles (cookies), code and installs: never read or written by an agent
+      // operation
+      serviceRoots: [
+        serviceRoot(resolve(cred.dir)),
+        serviceCodeRoot(resolve(cred.dir)),
+        serviceInstallRoot(resolve(cred.dir)),
+      ],
     };
     const deps = o.backendDependencies ?? {};
     if (mode === "docker") {

@@ -4,6 +4,7 @@ import {
   type DeviceAccessScope,
   type DeviceServiceSpec,
   type DeviceServiceStatus,
+  deviceServiceId,
   type Logger,
   parseToolKey,
   type ToolCallContext,
@@ -111,7 +112,9 @@ const shellWord = (s: string): string =>
 /**
  * `ctx.deviceAccess` (browser use spec §7): an extension's device services in the conversation's
  * device, limited to the conversation's owner on their own personal device and to the service
- * names the extension's approved manifest declares. A service launch passes the command review
+ * names the extension's approved manifest declares. The provider sees each service by its id
+ * (`<extension>.<name>`, `deviceServiceId`), so two extensions declaring the same name never
+ * reach each other's process; the extension sees only its own names. A service launch passes the command review
  * (fail closed: only `allow` starts it), once per start; requests ride the provider's request
  * path; refused hosts land in the call scope for the pipeline's network ask; viewer tickets are
  * single-use Redis records; the allowlist write and the handoff answer go through the device page's
@@ -164,7 +167,13 @@ export class DeviceAccessService {
   ): Promise<DeviceServiceStatus> {
     assertDeclared(caller, spec.name);
     assertCallOwner(call);
-    assertServiceSpec(spec);
+    const name = spec.name;
+    // the provider gets the service by its id: the extension's name, namespaced
+    const providerSpec: DeviceServiceSpec = {
+      ...spec,
+      name: deviceServiceId(caller.extension, name),
+    };
+    assertServiceSpec(providerSpec);
     const scope = callScopeOf(call);
     const facts = scope?.facts;
     if (scope === null || facts === undefined)
@@ -174,7 +183,10 @@ export class DeviceAccessService {
     const use = await this.callUse(call, facts.rootConversationId, scope);
     const ensure = async (ifRunning: boolean): Promise<DeviceServiceStatus> => {
       try {
-        return await this.services.ensure(use, spec, call.signal, { ifRunning });
+        return asNamed(
+          await this.services.ensure(use, providerSpec, call.signal, { ifRunning }),
+          name,
+        );
       } catch (e) {
         throw refusal(e);
       }
@@ -232,7 +244,7 @@ export class DeviceAccessService {
     // fail closed: an ask has nobody to answer it here, and a deny is a deny
     if (!allowed)
       throw new ToolError(
-        `The device service ${spec.name} was not started: the command review did not allow its launch (${verdict.reason}). Ask the user to check the device's settings.`,
+        `The device service ${name} was not started: the command review did not allow its launch (${verdict.reason}). Ask the user to check the device's settings.`,
       );
     // another call may have started it since the first look (that call audits its own start):
     // found running now, this call started nothing and audits nothing
@@ -249,7 +261,8 @@ export class DeviceAccessService {
       target: use.deviceId,
       detail: {
         extension: caller.extension,
-        service: spec.name,
+        service: name,
+        serviceId: providerSpec.name,
         deviceId: use.deviceId,
         argv,
         decision: record.decision,
@@ -273,7 +286,13 @@ export class DeviceAccessService {
     // from here the service may act: a timeout of this call never says nothing was sent
     scope.reached = true;
     try {
-      return await this.services.request(use, req.service, req.body, req.timeoutMs, call.signal);
+      return await this.services.request(
+        use,
+        deviceServiceId(caller.extension, req.service),
+        req.body,
+        req.timeoutMs,
+        call.signal,
+      );
     } catch (e) {
       throw refusal(e);
     }
@@ -423,7 +442,11 @@ export class DeviceAccessService {
     };
     for (const name of caller.services) {
       try {
-        await this.services.refresh(use, name, AbortSignal.timeout(REFRESH_TIMEOUT_MS));
+        await this.services.refresh(
+          use,
+          deviceServiceId(caller.extension, name),
+          AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+        );
       } catch (err) {
         this.log.warn("device service not refreshed after an allowlist change", {
           deviceId: d.deviceId,
@@ -559,6 +582,11 @@ export class DeviceAccessService {
   private rootOf(conversationId: string): Promise<string> {
     return rootConversationOf(this.db, conversationId);
   }
+}
+
+/** A provider's status under the extension's own service name (the provider names the id). */
+function asNamed(status: DeviceServiceStatus, name: string): DeviceServiceStatus {
+  return { ...status, name };
 }
 
 function assertDeclared(caller: DeviceAccessCaller, service: string): void {
