@@ -215,11 +215,12 @@ export interface DeviceAccessCtx {
   addNetworkHosts(scope: DeviceAccessScope & { hosts: string[] }): Promise<void>;
   /**
    * Answers the handoff question of this extension's tool call `callId` from the panel.
-   * `handoffConversationId` is the conversation whose tool call raised the handoff, as the
-   * extension recorded it from the trusted tool call (`ToolCallContext.conversationId`): the scope
-   * conversation or one of its sub-agent descendants (a call id is unique only within a run, so
-   * two sub-agents of one tree can wait under the same one). Any other conversation, like a
-   * question that is not pending or not this extension's, refuses with `question.not_found`.
+   * `handoffConversationId` is the conversation whose tool call raised the handoff (the extension
+   * learns it from `ToolCallContext.conversationId`; the panel may echo it back, so it is
+   * untrusted input): the kernel answers only when it is the scope conversation or one of its
+   * sub-agent descendants (a call id is unique only within a run, so two sub-agents of one tree
+   * can wait under the same one). Any other conversation, like a question that is not pending or
+   * not this extension's, refuses with `question.not_found`.
    */
   answerHandoff(
     scope: DeviceAccessScope & { callId: string; handoffConversationId: string; done: boolean },
