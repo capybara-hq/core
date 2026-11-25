@@ -7,7 +7,7 @@
  * runs the full suite); `--full` runs the full suite locally too. `--fast` runs lint, typecheck,
  * the custom checks, CI's PR-only checks against the local upstream `main` (English comment lines
  * the branch adds, commit messages, applied migrations and migration numbers) and the
- * container-free tests (kernel unit, tools, design, plugin-client): a quick advisory signal that
+ * container-free tests (kernel unit, tools, design, plugin-client, web): a quick advisory signal that
  * never fetches and computes no plan. It reads local git state only (the remotes, the local
  * `<remote>/main` ref, a merge base); when that ref is missing the base steps are skipped with a
  * warning, never failed. It is never the gate and takes precedence over `--full`. `--plan-only`

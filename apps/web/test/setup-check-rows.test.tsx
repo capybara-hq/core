@@ -34,6 +34,18 @@ const RUN_URL = `${CHECKS_URL}/app-token/run`;
 const KERNEL_RUN_URL = `${CHECKS_URL}/capybara%3Apublic-url/run`;
 const T = "2026-11-09T00:00:00.000Z";
 const settle = (ms = 30) => act(() => new Promise((r) => setTimeout(r, ms)));
+/** How often the guide reads the states again while a row runs elsewhere (SetupGuideSection). */
+const POLL_MS = 1000;
+/**
+ * Fakes the timers the states poll runs on (TanStack's refetchInterval), still moving with real
+ * time so the renders go on as usual; {@link advance} then jumps ahead.
+ */
+const fakePollTimers = () =>
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+    shouldAdvanceTime: true,
+  });
+const advance = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
 const D = { zh: { recheck: "重新检查" }, en: { recheck: "Re-check" } };
 
 const SCHEMA = {
@@ -160,6 +172,7 @@ const gets = (calls: Call[]) =>
 beforeEach(() => resetNavigation("/channels/ch1"));
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -230,6 +243,7 @@ describe("channel detail: live check rows", () => {
 
   it("polls while running and stops", async () => {
     let n = 0;
+    fakePollTimers();
     const { calls } = await openDetail({
       states: () => {
         n += 1;
@@ -245,18 +259,20 @@ describe("channel detail: live check rows", () => {
     const running = row("应用令牌有效");
     expect(within(running).getByRole("img", { name: "检查中" })).toBeTruthy();
     expect(within(running).queryByRole("button")).toBeNull();
-    await vi.waitFor(() => expect(screen.getByText("应用令牌可用。")).toBeTruthy(), {
-      timeout: 4000,
-    });
+    // one read per poll until the run elsewhere has its result
+    await advance(POLL_MS);
+    await advance(POLL_MS);
+    await vi.waitFor(() => expect(screen.getByText("应用令牌可用。")).toBeTruthy());
     const settled = gets(calls).length;
     expect(settled).toBe(3);
-    await settle(1300);
+    await advance(POLL_MS * 3);
     expect(gets(calls)).toHaveLength(settled);
     expect(posts(calls)).toHaveLength(0);
   });
 
   it("a run answered running is polled to its result", async () => {
     let ran = false;
+    fakePollTimers();
     const { calls } = await openDetail({
       states: () =>
         json(200, {
@@ -271,9 +287,10 @@ describe("channel detail: live check rows", () => {
         return json(200, { result: { status: "running" } });
       },
     });
-    await vi.waitFor(() => expect(screen.getByText("应用令牌可用。")).toBeTruthy(), {
-      timeout: 4000,
-    });
+    await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
+    // the states read again on the next poll carry the other replica's result
+    await advance(POLL_MS);
+    await vi.waitFor(() => expect(screen.getByText("应用令牌可用。")).toBeTruthy());
     expect(posts(calls)).toHaveLength(1);
   });
 

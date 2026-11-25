@@ -127,9 +127,10 @@ Vitest projects are declared in `vitest.config.ts`:
 **Local fast check.** `pnpm verify --fast` runs no container and no database and never fetches:
 lint, typecheck, `pnpm check`, CI's PR-only static checks against the local upstream `main`
 (English comment lines, commit messages, applied migrations and migration numbers; skipped with a
-warning when that ref is missing) and the `kernel-unit`, `tools`, `design` and `plugin-client`
-projects. A kernel test that needs no database belongs in the unit list partly so this check
-runs it. The `web` project is not part of it (its cost next to the others on a dev Mac).
+warning when that ref is missing) and the `kernel-unit`, `tools`, `design`, `plugin-client` and
+`web` projects. A kernel test that needs no database belongs in the unit list partly so this check
+runs it. The jsdom projects `design` and `web` run in Vitest's `vmForks` pool (a fresh vm context
+per file in a reused worker instead of a new process), which is what makes `web` affordable here.
 
 Membership is a checked-in list, not a naming convention or import detection: renaming 578 files
 is churn, and detecting "boots an app" at config time is unreliable. Integration is the default

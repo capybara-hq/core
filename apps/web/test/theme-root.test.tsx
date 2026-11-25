@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import type { ThemeRef } from "../src/lib/themes";
 import { resetNavigation } from "./support/navigation";
+import { withPageUrl } from "./support/page";
 import { ME, renderPage, testQueryClient } from "./support/render";
 import { renderFrame, shellOf } from "./support/shell";
 import { themeCssUrl } from "./support/themes";
@@ -337,16 +338,7 @@ describe("the brand cookie (theme brand coverage §5)", () => {
     vi.spyOn(document, "cookie", "set").mockImplementation((v: string) => {
       all.push(v);
     });
-    const real = window.location;
-    vi.stubGlobal(
-      "location",
-      new Proxy(real, { get: (t, k) => (k === "protocol" ? "https:" : Reflect.get(t, k)) }),
-    );
-    try {
-      renderFrame(shellOf(ME, { theme: BRANDED }));
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    withPageUrl("https://localhost:3000/", () => renderFrame(shellOf(ME, { theme: BRANDED })));
     expect(all).toHaveLength(2);
     const value = all[0]?.split(";")[0]?.slice(`${BRAND_COOKIE_HTTPS}=`.length);
     expect(all[0]?.startsWith(`${BRAND_COOKIE_HTTPS}=`)).toBe(true);

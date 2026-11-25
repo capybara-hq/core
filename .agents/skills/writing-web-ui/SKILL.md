@@ -507,4 +507,10 @@ pnpm --filter @capybara-hq/web e2e        # real-stack e2e (Testcontainers, need
                                           # build, CAPYBARA_E2E_WEB=dev runs next dev
 ```
 
+The `design` and `web` vitest projects run in the `vmForks` pool (part of `pnpm verify --fast`):
+`window` is jsdom's real global, so `window.location` and `window.top` cannot be stubbed or spied.
+A test that needs another URL or a frame uses `withPageUrl` / `insideFrame` from
+`apps/web/test/support/page.ts` (design: `packages/design/test/support/page.ts`). Time-driven
+behaviour (polls, throttles) runs on fake timers, never on real sleeps.
+
 Before changing `apps/web`, read `node_modules/next/dist/docs` (see `apps/web/AGENTS.md`; Next 16 has breaking changes).
