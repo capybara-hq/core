@@ -25,6 +25,15 @@ export const DEVICE_SERVICE_STATE_ENV = "CAPYBARA_SERVICE_STATE";
  * it); a service confines the files it takes in (uploads) and lets out (downloads) to it.
  */
 export const DEVICE_SERVICE_WORKSPACE_ENV = "CAPYBARA_SERVICE_WORKSPACE";
+/**
+ * Names the Mach service allowances the provider's sandbox gives the service (macOS: device-local
+ * sets it, a spec cannot). Its value {@link DEVICE_SERVICE_MACH_CHROMIUM} means the full Chromium
+ * build can start there (its `MachPortRendezvousServer` check-in is allowed); absent, a service
+ * must not count on it (an older capybara-device refuses it).
+ */
+export const DEVICE_SERVICE_MACH_ENV = "CAPYBARA_SERVICE_MACH";
+/** {@link DEVICE_SERVICE_MACH_ENV}'s value for the full Chromium build's Mach services. */
+export const DEVICE_SERVICE_MACH_CHROMIUM = "chromium";
 /** The largest message body, in bytes, either side may send on a service connection. */
 export const DEVICE_SERVICE_MAX_MESSAGE = 8 * 1024 * 1024;
 /** The kinds a connection's first message may name. */

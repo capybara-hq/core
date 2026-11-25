@@ -950,6 +950,12 @@ export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
 
 // @public
+export const DEVICE_SERVICE_MACH_CHROMIUM = "chromium";
+
+// @public
+export const DEVICE_SERVICE_MACH_ENV = "CAPYBARA_SERVICE_MACH";
+
+// @public
 export const DEVICE_SERVICE_MAX_MESSAGE: number;
 
 // @public

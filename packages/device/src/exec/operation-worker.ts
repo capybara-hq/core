@@ -189,27 +189,25 @@ export function mandatoryDenyPatterns(root: string): string[] {
 
 /**
  * The Mach service names a device service may register and look up besides the base profile's
- * (core#843): exactly the two kinds the full Chromium build (Playwright's Chrome for Testing,
- * bundle id `com.google.chrome.for.testing`) checks in with `bootstrap_check_in` at start, each
- * suffixed by a value only known at run time (the browser process's pid; a hash of the profile
- * path), hence a prefix ending in the kind's own dot:
+ * (core#843): exactly the one kind the full Chromium build (Playwright's Chrome for Testing,
+ * bundle id `com.google.chrome.for.testing`) needs to start,
+ * `com.google.chrome.for.testing.MachPortRendezvousServer.<pid>`: the browser process registers
+ * it, its helper processes (renderer, GPU, network) look it up to receive their task ports. The
+ * pid is only known at run time, hence a prefix ending in the kind's own dot. The server accepts
+ * only children the browser launched itself (it checks the client's audit token), so looking up
+ * another browser's server reaches nothing.
  *
- * - `com.google.chrome.for.testing.MachPortRendezvousServer.<pid>`: the browser process registers
- *   it, its helper processes (renderer, GPU, network) look it up to receive their task ports.
- *   The server accepts only children the browser launched itself (it checks the client's audit
- *   token), so looking up another browser's server reaches nothing.
- * - `com.google.chrome.for.testing.apps.<hash>`: the named platform channel of a profile (the
- *   process singleton's IPC); the browser registers it, a second launch on the same profile
- *   looks it up.
- *
- * Nothing broader: no other Chromium or Google name, no `*`, and only for device service launches
+ * Deliberately not granted: `com.google.chrome.for.testing.apps.<hash>`, a profile's app-shim /
+ * second-launch listener. The browser starts without it (its check-in failing is not fatal), and
+ * its lookup would let a confined service reach a Chrome for Testing the person runs outside the
+ * device (one that opens URLs on request, outside the device's network rules). Nothing broader
+ * either: no other Chromium or Google name, no `*`, and only for device service launches
  * (`MacWorkerRequest.service`, built only by the service launcher), never an agent command. A
  * registration is only a name in the per-user bootstrap namespace; it grants no file or network
  * reach, so the service's confinement is otherwise the base profile's.
  */
 export const MAC_SERVICE_CHROMIUM_MACH_NAMES: readonly string[] = Object.freeze([
   "com.google.chrome.for.testing.MachPortRendezvousServer.*",
-  "com.google.chrome.for.testing.apps.*",
 ]);
 
 /** The Mach rules a device service launch adds to its network config ({@link MAC_SERVICE_CHROMIUM_MACH_NAMES}). */
