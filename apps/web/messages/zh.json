@@ -45,7 +45,18 @@
       },
       "unknown": "登录失败，请重试。"
     },
-    "insecureOrigin": "当前通过 HTTP 地址访问。如果登录后无法保持登录状态，请使用 HTTPS 地址或联系管理员。"
+    "insecureOrigin": "当前通过 HTTP 地址访问。如果登录后无法保持登录状态，请使用 HTTPS 地址或联系管理员。",
+    "link": {
+      "title": "完成绑定",
+      "intro": "这个 {platform} 账号（{name} · {tenant}）还没有可登录的 {product} 账号。用你的用户名和密码登录，完成绑定。",
+      "platform": "平台",
+      "tenant": "租户",
+      "linkedToAnother": "这个账号已绑定到另一个 {product} 账号，用那个账号的密码登录即可升级为可登录。",
+      "submit": "登录并绑定",
+      "cancel": "取消",
+      "noAccount": "没有账号？请联系管理员。",
+      "taken": "这个 {platform} 账号已绑定到另一个 {product} 账号。用那个账号登录并解绑后再试。"
+    }
   },
   "changePassword": {
     "title": "设置新密码",
@@ -3295,7 +3306,8 @@
     "tenant": "租户",
     "externalId": "账号 ID",
     "email": "邮箱",
-    "warning": "只有当你刚刚亲自在 IM 中发起时才确认：这会把该 IM 账号绑定到你的 {product} 账号，它发来的消息将以你的身份处理。",
+    "effect": "确认后，这个 IM 账号绑定到你的 {product} 账号，它发来的消息将以你的身份处理。",
+    "warning": "只绑定你本人的账号。如果这个链接是别人发给你的，不要绑定。",
     "confirm": "确认绑定",
     "cancel": "取消",
     "doneTitle": "绑定成功",

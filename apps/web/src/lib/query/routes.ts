@@ -1094,6 +1094,12 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
     queries: () => [q(authSourcesQuery()), q(maybeMeQuery())],
   },
   {
+    pattern: "/login/link",
+    // The session the login layout reads; the pending link is read in the browser only (it needs
+    // the `cap_sso` cookie, which the page request does not carry).
+    queries: () => [q(maybeMeQuery())],
+  },
+  {
     pattern: "/p/[plugin]/[id]",
     // Anyone in the org: the UI contributions, then the page's view when it is a schema view (an
     // embed's token handshake stays in the browser).

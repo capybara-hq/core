@@ -1,4 +1,4 @@
-import { listAuthSources } from "../auth-sources";
+import { listAuthSources, peekLink } from "../auth-sources";
 import { peekBinding } from "../identities";
 import { previewInvitation } from "../members";
 import { getSetupStatus } from "../session";
@@ -37,5 +37,17 @@ export const pendingBindingQuery = (token: string) =>
   defineQuery({
     key: keys.deployment().pendingBinding(token),
     fn: () => peekBinding(token).then((r) => r.binding),
+    freshness: "deployment",
+  });
+
+/**
+ * The external account a pending link would link (`/login/link`): platform, tenant, display name,
+ * avatar, and whether it is linked for IM already. Read in the browser only: the page request does
+ * not carry the `cap_sso` cookie the kernel checks (its path is `/api/v1/auth/sso`).
+ */
+export const ssoLinkQuery = (ticket: string) =>
+  defineQuery({
+    key: keys.deployment().ssoLink(ticket),
+    fn: () => peekLink(ticket),
     freshness: "deployment",
   });

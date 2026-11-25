@@ -570,6 +570,11 @@ export const keys = {
        */
       pendingBinding: (token: string): readonly unknown[] => [...all, "pendingBinding", token],
       /**
+       * A pending link of a third-party sign-in (`/login/link`), by its ticket: read only in the
+       * browser (it needs the `cap_sso` cookie, whose path is the kernel's SSO routes).
+       */
+      ssoLink: (ticket: string): readonly unknown[] => [...all, "ssoLink", ticket],
+      /**
        * The machine waiting behind a device user code (`/devices/link`). Like a binding it needs a
        * session to read but answers the same whoever asks; a sign-in or sign-out drops the cache.
        */

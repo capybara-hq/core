@@ -45,7 +45,18 @@
       },
       "unknown": "Sign-in failed. Please try again."
     },
-    "insecureOrigin": "You are using an HTTP address. If you cannot stay signed in after logging in, use an HTTPS address or contact your administrator."
+    "insecureOrigin": "You are using an HTTP address. If you cannot stay signed in after logging in, use an HTTPS address or contact your administrator.",
+    "link": {
+      "title": "Finish linking",
+      "intro": "This {platform} account ({name} · {tenant}) has no {product} account it can sign in to yet. Sign in with your username and password to link it.",
+      "platform": "Platform",
+      "tenant": "Tenant",
+      "linkedToAnother": "This account is linked to another {product} account. Sign in with that account's password to let it sign in.",
+      "submit": "Sign in and link",
+      "cancel": "Cancel",
+      "noAccount": "No account? Contact your administrator.",
+      "taken": "This {platform} account is linked to another {product} account. Sign in with that account and unlink it, then try again."
+    }
   },
   "changePassword": {
     "title": "Set a new password",
@@ -3307,7 +3318,8 @@
     "tenant": "Tenant",
     "externalId": "Account ID",
     "email": "Email",
-    "warning": "Only confirm if you just requested this from IM yourself; this links that IM account to your {product} account, and its messages will act as you.",
+    "effect": "Confirming links this IM account to your {product} account, and its messages will act as you.",
+    "warning": "Only link your own account. If someone else sent you this link, do not link it.",
     "confirm": "Link account",
     "cancel": "Cancel",
     "doneTitle": "Account linked",

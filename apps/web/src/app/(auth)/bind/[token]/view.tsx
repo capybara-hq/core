@@ -2,6 +2,7 @@
 
 import {
   AuthPage,
+  Avatar,
   Button,
   Card,
   type FieldShape,
@@ -42,13 +43,21 @@ const LOADING_FIELDS: FieldShape[] = [
   { control: "key-value", rows: 3, keyWidth: "10ch" },
 ];
 
-/** What confirming does (static: the loading card shows it too). */
+/**
+ * Bind only your own account, and what confirming does (static: the loading card shows it too).
+ * A forwarded link would bind someone else's IM account to the person who opens it (spec §7).
+ */
 function BindWarning() {
   const t = useTranslations("bind");
   return (
     <Card tone="danger">
       <div role="note">
-        <Text tone="warn">{t("warning")}</Text>
+        <Stack gap={4}>
+          <Text tone="warn">{t("warning")}</Text>
+          <Text variant="prose" tone="muted">
+            {t("effect")}
+          </Text>
+        </Stack>
       </div>
     </Card>
   );
@@ -59,8 +68,9 @@ function BindWarning() {
  * message points here; the pending binding comes from the cache the (auth) layout prefetched (a
  * signed-out visitor was sent to sign-in and back first).
  *
- * Against phishing: the IM display name, source (plugin) and tenant stand out, with the warning
- * "confirm only if you just started this in the IM yourself"; then the person confirms or cancels.
+ * Against phishing: the IM avatar, display name, source (plugin) and tenant stand out, with the
+ * warning "bind only your own account; never a link someone sent you"; then the person confirms
+ * or cancels.
  */
 export default function BindView({ token }: { token: string }) {
   const t = useTranslations("bind");
@@ -149,7 +159,15 @@ export default function BindView({ token }: { token: string }) {
   const { plugin, tenant } = splitSource(binding.source);
   const identity = (
     <Stack gap={8}>
-      <Text variant="h2">{binding.displayName}</Text>
+      <Stack direction="row" gap={12} align="center">
+        <Avatar
+          shape="circle"
+          size={40}
+          name={binding.displayName}
+          value={binding.avatarUrl !== undefined ? { kind: "image", src: binding.avatarUrl } : null}
+        />
+        <Text variant="h2">{binding.displayName}</Text>
+      </Stack>
       <KeyValue
         keyWidth="10ch"
         rows={[
