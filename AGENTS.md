@@ -258,7 +258,7 @@ pnpm doctor:env  # check your environment
 pnpm verify --fast   # the local check before pushing: lint, typecheck, custom checks, CI's PR-only
                      # checks against the local origin/main (English comments, commitlint, applied
                      # migrations and numbers; never fetched, skipped with a warning if missing),
-                     # kernel-unit, tools, design and plugin-client tests; then the tests of the
+                     # kernel-unit, tools, design and plugin-client tests, ~1 min; then the tests of the
                      # files you changed (pnpm exec vitest run <path>). No changeset warning
                      # (pnpm check:api-changeset --base origin/main), no kernel integration/container
                      # tests, no web tests: CI on the PR runs those and is the gate
