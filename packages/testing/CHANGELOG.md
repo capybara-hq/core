@@ -1,5 +1,24 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.43
+
+### Patch Changes
+
+- 086129e: Login sources (which `identity-source@1` extensions the login page offers, in which order, and
+  their trusted tenants) are a deployment setting read from PG (`LoginSourcesService`), no longer
+  the startup keys `auth.loginSources` / `auth.trustedIdentitySources`, which are removed. The
+  testing package adds `seedLoginSources(db, entries)`.
+- Updated dependencies [7c691af]
+- Updated dependencies [f10820e]
+- Updated dependencies [70d42b5]
+- Updated dependencies [086129e]
+- Updated dependencies [6984d37]
+- Updated dependencies [7d032f0]
+- Updated dependencies [e0a320f]
+  - @capybara-hq/kernel@0.1.0-rc.94
+  - @capybara-hq/plugin-sdk@0.1.0-rc.77
+  - @capybara-hq/plugin-tools@0.1.0-rc.25
+
 ## 0.1.0-rc.42
 
 ### Patch Changes

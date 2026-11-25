@@ -1,5 +1,40 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.40
+
+### Patch Changes
+
+- a984249: A restricted command on Linux and in the local Docker mode reports the hosts its operation proxy
+  refused, with the same layers as on macOS. The forwarder answers each refusal with the macOS
+  proxy's reason as the 403 status phrase ("host is not on the allow list", "address is …",
+  "resolved to …"), which `sandboxProxyRefusalLayer` reads, and the exec result carries its refusals
+  as `network.blocked`: a name resolving to a private address gets the address note, a host off the
+  allowlist the network ask. Both modes now announce `networkReport`.
+- 6984d37: Refused network hosts carry the layer that refused them end to end.
+  
+  - SDK: `ctx.deviceAccess.reportBlockedHosts(call, hosts)` takes `ServiceBlockedHost[]`
+    (`{ host, layer }`) instead of host names, and `sandboxProxyRefusalLayer(reason)` reads the layer
+    from the device sandbox proxy's refusal reason (a closed address is `address`, a host off the
+    allowlist `device`).
+  - Kernel: a device service's refused host gets the note of its layer: a host refused for its
+    private or local address gets the address note, never a network ask or the "an organization
+    admin adds it" note. A host reported twice keeps its most restrictive layer, and an IP literal is
+    always `address`, so a report never makes a host grantable.
+  - capybara-device: a restricted command on macOS reports the hosts its operation proxy refused
+    (`network.blocked`, which the protocol 2 removal had left unwired), so a sandboxed `curl` to a
+    name resolving to a private address gets the address note instead of nothing.
+- e0a320f: Device service rolls (an extension upgraded while its service runs), follow-ups:
+  `deviceServiceFilesDigest` caches per files object, and `DEVICE_SERVICE_FILES_DIGEST_VECTOR` pins the
+  digest for every implementation (capybara-device now uses the SDK's). The kernel never rolls a
+  service to the files of a draining instance, of another package than the replica runs or than the
+  deployment enabled, and keeps a service that answers the new roll check (`DEVICE_SERVICE_ROLL_CHECK`,
+  `parseRollCheck`, `isRollCheck`) busy. A provider that keeps the old files after the start is
+  refused with the cause instead of every later call being reviewed again. The
+  `device.service_started` audit row says `reason` (`start` or `files_changed`), the files digest and
+  what a roll replaced, and a call that finds the row of the same start writes none.
+  A busy answer holds a roll onto the same files for at most an hour, and the holds apply at the
+  re-check after the review too.
+
 ## 0.1.0-rc.39
 
 ### Patch Changes
