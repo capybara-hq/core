@@ -1,6 +1,6 @@
 # Login extensions design: turned on in the admin console, linked accounts, the link page
 
-Status: draft for maintainer review (2026-11-26). Decisions below were taken with the maintainer in
+Status: approved by the maintainer (2026-11-26). Decisions below were taken with the maintainer in
 the review of a production conversation (a person asked the agent how to enable Slack sign-in; the
 agent could not find the answer through the `Platform` tool and went to read the local source).
 
@@ -133,8 +133,10 @@ Web:
   the existing trust warning), and the callback URL to copy. Design components only (a `FormSection`
   on the existing page template).
 - **Order**: the platform settings page gets a 「登录方式」 section listing the login extensions on
-  the platform (enabled first, in order, each linking to its extension page) with reorder controls.
-  A list of all login methods needs one place; everything about one method stays on its page.
+  the platform (enabled first, in login page order, each linking to its extension page); the
+  enabled ones are reordered by drag (with keyboard move up / down for accessibility), saved through
+  the order route. A list of all login methods needs one place; everything about one method stays
+  on its page (maintainer decision 2026-11-26).
 
 `Platform` operations, built from the route schemas (`check:platform-ops`, parity test):
 `login-sources.list`, `login-sources.update`, `login-sources.reorder`. They carry no secret (the
@@ -300,9 +302,5 @@ under 平台 → 扩展 → <extension> → 登录. Production sets neither toda
 5. One "linked accounts" concept with IM / 登录 capabilities; 未验证 is removed.
 6. The IM bind link verifies only the Capybara account for every platform and links for IM only;
    the forwarded-link risk is accepted.
-
-## Open questions
-
-- Order placement: this design puts the reorder list on the platform settings page (one place for a
-  cross-source list). If the maintainer prefers, order could instead be a number on each extension
-  page; nothing else depends on it.
+7. Cross-source order lives in the platform settings page's 「登录方式」 list, reordered by drag;
+   each method's own settings stay on its extension page.
