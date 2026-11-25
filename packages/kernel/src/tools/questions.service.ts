@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { type FormAnswer, type InputForm, validateAnswer } from "@capybara-hq/plugin-sdk";
+import {
+  type FormAnswer,
+  type InputForm,
+  type ServiceBlockedHost,
+  validateAnswer,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
@@ -36,7 +41,7 @@ interface QuestionSpec {
  */
 export interface QuestionCarried {
   review?: ReviewRecord;
-  blocked?: { deviceId: string | null; hosts: string[]; url: string | null };
+  blocked?: { deviceId: string | null; hosts: ServiceBlockedHost[]; url: string | null };
 }
 
 /** 一条输入请求（`AskUserQuestion`、插件工具的 `input_required`、MCP elicitation 共用）。 */

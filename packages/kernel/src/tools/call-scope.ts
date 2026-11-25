@@ -1,4 +1,8 @@
-import type { ToolCallContext } from "@capybara-hq/plugin-sdk";
+import type {
+  NetworkBlockLayer,
+  ServiceBlockedHost,
+  ToolCallContext,
+} from "@capybara-hq/plugin-sdk";
 import type { ReviewRecord } from "../conversations/events.js";
 import type { ConversationKindForHooks } from "../runtime/hook-calls.js";
 
@@ -41,12 +45,17 @@ export interface CallScope {
   review: ReviewRecord | null;
   /**
    * Hosts a device service (`ctx.deviceAccess.reportBlockedHosts`) saw refused by the device's
-   * network allowlist during this call; null when nothing was reported. `deviceId` is the device
-   * this call's own `ctx.deviceAccess` calls resolved, or null when the call made none (the
-   * pipeline then asks about the device the call's conversation works in); `url` is the page the
-   * refusals came from, when the service said.
+   * network during this call, each with the most restrictive layer reported for it
+   * ({@link strongerLayer}); null when nothing was reported. `deviceId` is the device this call's
+   * own `ctx.deviceAccess` calls resolved, or null when the call made none (the pipeline then asks
+   * about the device the call's conversation works in); `url` is the page the refusals came from,
+   * when the service said.
    */
-  blocked: { deviceId: string | null; hosts: Set<string>; url: string | null } | null;
+  blocked: {
+    deviceId: string | null;
+    hosts: Map<string, NetworkBlockLayer>;
+    url: string | null;
+  } | null;
   /**
    * How many device starts of this call are in progress now (`ctx.deviceAccess.ensureService`:
    * the instance created or resumed, the service launched): a timeout that lands while one is
@@ -105,4 +114,40 @@ export async function whileDeviceStarting<T>(
  */
 export function stillStartingUnsent(scope: CallScope | undefined | null): boolean {
   return scope != null && scope.starting > 0 && !scope.reached;
+}
+
+/**
+ * How restrictive a refusal layer is: `address` (no host grant lifts it) over `org` (only an
+ * admin) over `device` (the device owner may be asked) over `unknown` (nothing said).
+ */
+const LAYER_RANK: Record<NetworkBlockLayer, number> = { unknown: 0, device: 1, org: 2, address: 3 };
+
+/**
+ * The more restrictive of two layers reported for one host: a report never makes a host more
+ * grantable than another report of the same call said it was.
+ */
+export function strongerLayer(a: NetworkBlockLayer, b: NetworkBlockLayer): NetworkBlockLayer {
+  return LAYER_RANK[b] > LAYER_RANK[a] ? b : a;
+}
+
+/** A refused host as the call scope keeps it: lower-cased, without a trailing dot. */
+export function serviceHostKey(host: string): string {
+  return host.toLowerCase().replace(/\.$/, "");
+}
+
+/**
+ * Two lists of a service's refused hosts as one, in first-seen order: a host in both keeps the
+ * more restrictive layer ({@link strongerLayer}).
+ */
+export function mergeServiceHosts(
+  a: readonly ServiceBlockedHost[],
+  b: readonly ServiceBlockedHost[],
+): ServiceBlockedHost[] {
+  const out = new Map<string, NetworkBlockLayer>();
+  for (const h of [...a, ...b]) {
+    const key = serviceHostKey(h.host);
+    const had = out.get(key);
+    out.set(key, had === undefined ? h.layer : strongerLayer(had, h.layer));
+  }
+  return [...out].map(([host, layer]) => ({ host, layer }));
 }

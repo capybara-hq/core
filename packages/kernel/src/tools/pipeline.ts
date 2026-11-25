@@ -8,6 +8,7 @@ import {
   type InputRequired,
   type Logger,
   type NetworkBlockedHost,
+  type ServiceBlockedHost,
   type ToolDisplay,
   ToolError,
   validateInputForm,
@@ -124,7 +125,12 @@ import {
 import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "./builtins/sandbox/device-owner.js";
 import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
-import { attachCallScope, type CallScope, stillStartingUnsent } from "./call-scope.js";
+import {
+  attachCallScope,
+  type CallScope,
+  mergeServiceHosts,
+  stillStartingUnsent,
+} from "./call-scope.js";
 import { canonicalJson } from "./canonical-json.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
@@ -618,7 +624,8 @@ export type ToolResume = { state: unknown; answer: FormAnswer | null };
 export interface ServiceBlocked {
   /** The device the call's `ctx.deviceAccess` calls resolved; null: the conversation's device. */
   deviceId: string | null;
-  hosts: string[];
+  /** Each host once, with the most restrictive layer reported for it. */
+  hosts: ServiceBlockedHost[];
   /** The page the refusals came from, when the service said. */
   url: string | null;
 }
@@ -956,7 +963,11 @@ function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOu
     ...outcome,
     ...(blocked != null &&
       blocked.hosts.size > 0 && {
-        blocked: { deviceId: blocked.deviceId, hosts: [...blocked.hosts], url: blocked.url },
+        blocked: {
+          deviceId: blocked.deviceId,
+          hosts: [...blocked.hosts].map(([host, layer]) => ({ host, layer })),
+          url: blocked.url,
+        },
       }),
     // a device service launch's review (ctx.deviceAccess), recorded with the call's result
     ...(review !== null && { review }),
@@ -981,14 +992,30 @@ function carriedOf(rounds: readonly QuestionRecord[]): QuestionCarried {
   };
 }
 
-/** Two refused-host reports of one call as one: the hosts of both, the later device and page. */
+/**
+ * Two refused-host reports of one call as one: the hosts of both (a host in both keeps the more
+ * restrictive layer), the later device and page. A malformed host entry (a record written by
+ * another kernel version) is dropped.
+ */
 function mergeBlocked(a: ServiceBlocked | undefined, b: ServiceBlocked): ServiceBlocked {
-  if (a === undefined) return { ...b, hosts: [...b.hosts] };
   return {
-    deviceId: b.deviceId ?? a.deviceId,
-    hosts: [...new Set([...a.hosts, ...b.hosts])],
-    url: b.url ?? a.url,
+    deviceId: b.deviceId ?? a?.deviceId ?? null,
+    hosts: mergeServiceHosts(validServiceHosts(a?.hosts), validServiceHosts(b.hosts)),
+    url: b.url ?? a?.url ?? null,
   };
+}
+
+/** The well-formed entries of a refused-host list ({@link ServiceBlocked.hosts}). */
+function validServiceHosts(hosts: unknown): ServiceBlockedHost[] {
+  if (!Array.isArray(hosts)) return [];
+  return hosts.filter(
+    (h): h is ServiceBlockedHost =>
+      typeof h === "object" &&
+      h !== null &&
+      typeof (h as ServiceBlockedHost).host === "string" &&
+      (h as ServiceBlockedHost).host !== "" &&
+      ["device", "org", "address", "unknown"].includes((h as ServiceBlockedHost).layer),
+  );
 }
 
 /**
@@ -2089,8 +2116,11 @@ export class ToolPipeline {
         ? undefined
         : {
             deviceId: scoped.deviceId,
-            // a service reports host names only: the event carries the HTTPS port
-            blocked: scoped.hosts.map((host) => ({ host, port: 443, layer: "device" as const })),
+            // a service reports host names with their layers only: the event carries the HTTPS
+            // port. The layer is the service's word: it only chooses the note or the ask, and the
+            // plan still refuses to ask about a host the device list cannot take (an IP literal
+            // or other invalid name is always `address`)
+            blocked: scoped.hosts.map(({ host, layer }) => ({ host, port: 443, layer })),
           });
     let content = spilled.content;
     if (report !== undefined) {

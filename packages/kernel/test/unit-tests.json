@@ -151,6 +151,7 @@
   "themes/render-css.test.ts",
   "themes/theme-ref.test.ts",
   "tools/builtin-names.test.ts",
+  "tools/call-scope.unit.test.ts",
   "tools/connector-setup.test.ts",
   "tools/current-time.test.ts",
   "tools/delivery-scope.unit.test.ts",

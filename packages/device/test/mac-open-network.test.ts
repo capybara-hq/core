@@ -178,6 +178,36 @@ it.runIf(darwin)(
 );
 
 it.runIf(darwin)(
+  "the result reports the refused hosts with their layers: closed addresses as address, off-list hosts as device",
+  async () => {
+    // a name resolving to a closed address (here loopback: no carve-out) and a private literal
+    // are the address layer, which no host grant lifts
+    const open = await run(
+      connectProbes({
+        name: `https://localhost:${port}/`,
+        literal: "https://10.0.0.1/",
+      }),
+    );
+    expect(open.network?.blocked, open.stdout).toEqual(
+      expect.arrayContaining([
+        { host: "localhost", port, layer: "address" },
+        { host: "10.0.0.1", port: 443, layer: "address" },
+      ]),
+    );
+    expect(open.network?.blocked.every((b) => b.layer === "address")).toBe(true);
+    // under an allowlist, a public name off the list is the device layer (refused before any
+    // lookup, so this needs no network)
+    const listed = await run(connectProbes({ off: "https://example.org/" }), {
+      openNetwork: false,
+      hosts: ["example.com"],
+    });
+    expect(listed.network?.blocked, listed.stdout).toEqual([
+      { host: "example.org", port: 443, layer: "device" },
+    ]);
+  },
+);
+
+it.runIf(darwin)(
   "CONNECT tunnels and SOCKS5 refuse the same destinations, in any literal spelling",
   async () => {
     receipts.length = 0;
