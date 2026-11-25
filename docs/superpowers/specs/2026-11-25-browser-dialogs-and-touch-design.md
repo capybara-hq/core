@@ -82,8 +82,9 @@ Non-goals
   (`2026-11-25-browser-long-waits-design.md` §6.2).
 - **No hold timer**: a pending dialog stays until it is answered, its tab closes, or the daemon stops
   (idle stop, device suspension). **A tab with a pending decision dialog counts as in use** under
-  #853: its owner is not idle-closed after `CONVERSATION_IDLE_MS`, the tab is not evicted at the
-  device cap, and adopt of it is refused ("in use"), so an approval of `browser_dialog` given later
+  #853: **only that tab** is pinned: idle close after `CONVERSATION_IDLE_MS` skips it while the
+  owner's other tabs close as usual (the owner's per-conversation state stays only while a tab
+  remains), the tab is not evicted at the device cap, and adopt of it is refused ("in use"), so an approval of `browser_dialog` given later
   still finds it. #853 §6 lists it as the third kind of park (amended in the same PR). The daemon's
   own idle stop still bounds it. A blocked tab harms nothing else (other tabs work), every reply
   names it, and the next agent run sees it in its first reply. An automatic default after a delay

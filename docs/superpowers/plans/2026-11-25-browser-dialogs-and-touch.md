@@ -132,7 +132,7 @@ before any task, with `2026-11-25-browser-tab-ownership-design.md` (core#853); t
   - `browser_dialog answers while the opening click is still pending`; `an action on another tab runs while a confirm is held` (both with the opening action unsettled).
   - `a stale dialogId is refused`; `a mismatching message is refused`; `a message with newlines, quotes and an emoji at the clip boundary matches when copied from the dialog line`.
   - `another conversation's dialogId is refused with the adopt text`; `a dialog note reaches only the owner`; `reply.dialog never shows another conversation's dialog`.
-  - `a tab with a held confirm survives idle close and eviction`; `adopt of a tab with a held dialog is refused`.
+  - `a tab with a held confirm survives idle close and eviction`; `idle close keeps the tab with the held dialog and closes the owner's other tabs`; `adopt of a tab with a held dialog is refused`.
   - `state.dialogs reaches only the owner's tree`; `a viewer cannot answer a dialog outside its tree`.
   - `dialog accept with text answers a prompt`; `dismiss answers a confirm`; `beforeunload accept lets the navigation go on`.
   - `an alert is closed at once and noted`.
