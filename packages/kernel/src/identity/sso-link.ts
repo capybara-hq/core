@@ -45,9 +45,14 @@ if tonumber(redis.call('HGET', KEYS[1], 'attempts') or '0') > 0 then
 end
 return 1`;
 
-/** A reserved attempt was a wrong password: at the limit the link is deleted (burned). */
+/**
+ * A reserved attempt was a wrong password: it stays reserved (`attempts` = failures + checks in
+ * flight, which caps concurrent checks), and `failures` counts it; the link is deleted (burned)
+ * once the real failures reach the limit, never because of reservations a refund will give back.
+ */
 const SETTLE_FAILURE = `
-local n = tonumber(redis.call('HGET', KEYS[1], 'attempts') or '0')
+if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
+local n = redis.call('HINCRBY', KEYS[1], 'failures', 1)
 if n >= tonumber(ARGV[1]) then redis.call('DEL', KEYS[1]) end
 return n`;
 
@@ -75,7 +80,8 @@ const sessionMismatch = () =>
 
 /**
  * Link tickets (spec §5): `cap_link_<32 bytes base64url>`, kept in Redis as a hash
- * `capk:sso-link:<sha256(ticket)>` (`rec`: the pending link as JSON, `attempts`) for 10 minutes.
+ * `capk:sso-link:<sha256(ticket)>` (`rec`: the pending link as JSON, `attempts`: reserved password
+ * checks, `failures`: wrong passwords) for 10 minutes.
  * Every read checks the browser binding cookie against the recorded hash. Single use on success
  * ({@link redeem} deletes it atomically, so two concurrent submissions get one winner), burned
  * after {@link SSO_LINK_MAX_ATTEMPTS} wrong passwords (an attempt is reserved atomically before
@@ -96,7 +102,7 @@ export class SsoLinkTickets {
     const key = ticketKey(ticket);
     await this.redis
       .multi()
-      .hset(key, { rec: JSON.stringify(link), attempts: 0 })
+      .hset(key, { rec: JSON.stringify(link), attempts: 0, failures: 0 })
       .expire(key, SSO_LINK_TTL_SECONDS)
       .exec();
     return ticket;

@@ -372,8 +372,9 @@ export class ExternalIdentities {
   }
 
   /**
-   * 可合并的既有账号：身份源键受信任（登录源的可信租户）、身份邮箱已验证，
-   * 且恰好有一个邮箱已验证、邮箱相同（不区分大小写）的账号；否则 undefined（多个候选时不猜，新建）。
+   * The existing account to merge into: the source key is trusted (a trusted tenant of its login
+   * source), the identity's email is verified, and exactly one account has the same verified email
+   * (case-insensitive); else undefined (with several candidates it never guesses).
    */
   private async mergeTarget(id: ExternalIdentity): Promise<string | undefined> {
     if (!id.emailVerified || id.email === undefined || !(await this.trusted(id.source))) {

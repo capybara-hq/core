@@ -342,6 +342,26 @@ describe("the link page", () => {
     expect((await redis.keys("throttler:{cred:login}:*")).length).toBeGreaterThan(0);
   });
 
+  it("only real failures burn the ticket, not a reservation that is given back", async () => {
+    const alice = await local("alice");
+    const r = await toLinkPage({ sub: "u-real" });
+    for (let i = 0; i < 3; i++) {
+      expect(errCode(await submit(r.jar, r.ticket, "alice", "wrong password!!"))).toBe(
+        "auth.invalid_credentials",
+      );
+    }
+    // another check in flight (one that will be refunded, e.g. a disabled account) holds a slot
+    await redis.hincrby(ticketKey(r.ticket), "attempts", 1);
+    expect(errCode(await submit(r.jar, r.ticket, "alice", "wrong password!!"))).toBe(
+      "auth.invalid_credentials",
+    );
+    expect(await redis.hget(ticketKey(r.ticket), "failures")).toBe("4");
+    await redis.hincrby(ticketKey(r.ticket), "attempts", -1);
+    const ok = await submit(r.jar, r.ticket, "alice");
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(await row("u-real")).toEqual({ account_id: alice.id, linked_via: "sso" });
+  });
+
   it("concurrent wrong passwords check at most five", async () => {
     await local("alice");
     const r = await toLinkPage({ sub: "u-par" });

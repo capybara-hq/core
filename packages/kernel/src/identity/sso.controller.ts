@@ -264,8 +264,8 @@ export class SsoController {
    * throttlers as `POST /auth/login` (R25); each check first reserves one of the ticket's attempts
    * atomically, and a wrong password keeps it (the fifth burns the ticket). A disabled account →
    * `auth.account_disabled` (its password was right: the ticket's attempt and the throttler
-   * reservation are given back). The login source is checked again after the ticket is taken. An identity already linked to another account →
-   * `identity.taken`, the ticket kept. On success the ticket is taken atomically (a concurrent
+   * reservation are given back). The login source is checked again after the ticket is taken. An
+   * identity already linked to another account → `identity.taken`, the ticket kept. On success the ticket is taken atomically (a concurrent
    * submission gets `sso.link_expired`), the identity is linked as `sso` (or the account's `bind`
    * row upgraded) and a session is created exactly as a password sign-in; an account that must
    * change its password is sent there by the web as after a password sign-in.
