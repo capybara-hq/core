@@ -3,15 +3,36 @@ import {
   type DeviceServiceSpec,
   defineExtension,
   type ExtensionContext,
+  type ServiceBlockedHost,
   type ToolCallContext,
 } from "@capybara-hq/plugin-sdk";
+
+/** A refused host as a test gives it: a bare name (layer `device`) or a host with its layer. */
+type Refused = string | ServiceBlockedHost;
+
+/** The report of `refused` (a bare name is a `device`-layer refusal). */
+const reported = (refused: readonly Refused[]): ServiceBlockedHost[] =>
+  refused.map((r) => (typeof r === "string" ? { host: r, layer: "device" } : r));
+
+/** A JSON schema item for {@link Refused}. */
+const REFUSED_ITEM = {
+  anyOf: [
+    { type: "string" },
+    {
+      type: "object",
+      properties: { host: { type: "string" }, layer: { type: "string" } },
+      required: ["host", "layer"],
+    },
+  ],
+};
 
 /**
  * Test only: a browser-like extension on `ctx.deviceAccess` with one device service, `echo` (the
  * kernel tests' framed echo service).
  *
  * - `navigate` reports hosts its "service" saw refused (`ctx.deviceAccess.reportBlockedHosts`, with
- *   the URL): `blocked` on the first invocation of a logical call; a re-run of the same call (same
+ *   the URL): `blocked` (layer `device`, or each entry's own layer when given as
+ *   `{ host, layer }`) on the first invocation of a logical call; a re-run of the same call (same
  *   idempotency key) reports `blockedAgain` when given, else loads the page. With `service: true`
  *   it first starts and asks the echo service (so the report is about the device those calls
  *   resolved), then awaits `globalThis.__fakeDeviceAccessBeforeReport` when a test set one. Every
@@ -77,8 +98,8 @@ export default defineExtension({
           properties: {
             url: { type: "string" },
             service: { type: "boolean" },
-            blocked: { type: "array", items: { type: "string" } },
-            blockedAgain: { type: "array", items: { type: "string" } },
+            blocked: { type: "array", items: REFUSED_ITEM },
+            blockedAgain: { type: "array", items: REFUSED_ITEM },
           },
           required: ["url"],
         },
@@ -92,8 +113,8 @@ export default defineExtension({
         } = input as {
           url: string;
           service?: boolean;
-          blocked?: string[];
-          blockedAgain?: string[];
+          blocked?: Refused[];
+          blockedAgain?: Refused[];
         };
         const key = call.idempotencyKey ?? call.callId;
         const calls = fakeDeviceAccessCalls();
@@ -103,7 +124,7 @@ export default defineExtension({
         await beforeReport()?.();
         const refused = first ? blocked : blockedAgain;
         if (refused.length > 0) {
-          ctx.deviceAccess.reportBlockedHosts(call, refused, { url });
+          ctx.deviceAccess.reportBlockedHosts(call, reported(refused), { url });
           return text(`Could not load ${url}.`);
         }
         return text(`Loaded ${url}.`);
@@ -144,7 +165,9 @@ export default defineExtension({
         };
         if (service) await echo(call, "before the handoff");
         if (blocked.length > 0)
-          ctx.deviceAccess.reportBlockedHosts(call, blocked, { url: "https://example.org/" });
+          ctx.deviceAccess.reportBlockedHosts(call, reported(blocked), {
+            url: "https://example.org/",
+          });
         return {
           kind: "input_required" as const,
           form: {

@@ -1,5 +1,9 @@
 import type { Kysely } from "kysely";
-import type { DeviceServiceSpec, DeviceServiceStatus } from "./device-provider.js";
+import type {
+  DeviceServiceSpec,
+  DeviceServiceStatus,
+  ServiceBlockedHost,
+} from "./device-provider.js";
 import type { DevicesCtx, DialInChannel } from "./dial-in.js";
 import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
@@ -194,12 +198,21 @@ export interface DeviceAccessCtx {
     req: { service: string; body: Uint8Array; timeoutMs: number },
   ): Promise<Uint8Array>;
   /**
-   * The service saw requests to `hosts` refused by the device's network allowlist during this
-   * call: the kernel raises the network ask in the call's conversation once the handler returns
-   * (and runs the call again once the person approves). Only an ask. `opts.url` is the page the
-   * refusals came from, shown with the ask.
+   * The service saw requests to `hosts` refused by the device's network during this call, each
+   * with the layer that refused it (`sandboxProxyRefusalLayer` reads it from the device's
+   * proxy): once the handler returns, the kernel raises the network ask in the call's
+   * conversation for `device` hosts it can offer (and runs the call again once the person
+   * approves), and writes a note for the others (an `address` host: a private or local address,
+   * which no host grant reaches). Only an ask: a layer never widens access, and the kernel's own
+   * planning still applies (a host the device list cannot take is never asked about; an IP
+   * literal is always `address`). A host reported twice keeps its most restrictive layer.
+   * `opts.url` is the page the refusals came from, shown with the ask.
    */
-  reportBlockedHosts(call: ToolCallContext, hosts: string[], opts?: { url?: string }): void;
+  reportBlockedHosts(
+    call: ToolCallContext,
+    hosts: ServiceBlockedHost[],
+    opts?: { url?: string },
+  ): void;
   /**
    * A short-lived, single-use ticket for one viewer stream to the service (the person's panel
    * opens `url` as a WebSocket). The account must be the conversation's owner.

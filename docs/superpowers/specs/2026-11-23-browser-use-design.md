@@ -243,9 +243,15 @@ surface is small (amended 2026-11-23 after mapping the kernel):
   only for viewers (§6.2). Provider side: optional `serviceRequest?(h, name, body, opts)`.
 - `streamTicket({ conversationId, accountId, target })`: a viewer ticket (§6.2); the account must be
   the conversation's owner.
-- `reportBlockedHosts(call, hosts)`: the daemon saw requests refused by the device's allowlist during
-  this call; the kernel raises the network ask in the call's conversation (§7.1) and the pipeline
-  waits on it as for an exec. Only an ask, so trusting the plugin's report costs nothing.
+- `reportBlockedHosts(call, hosts)`: the daemon saw requests refused by the device's network during
+  this call, each `{ host, layer }` (`sandboxProxyRefusalLayer` reads the layer from the proxy's
+  403: a name resolving to a private or local address, or a closed literal, is `address`; a host
+  off the allowlist `device`); the kernel raises the network ask in the call's conversation for
+  the `device` hosts it can offer (§7.1) and the pipeline waits on it as for an exec; other layers
+  get their note (an `address` host the private-address note, never an ask). Only an ask or a
+  note, so trusting the plugin's report costs nothing: a host reported twice keeps its most
+  restrictive layer, an IP literal is always `address`, and the kernel's own planning still
+  decides what can be offered.
 - `addNetworkHosts({ conversationId, accountId, hosts })`: owner-only, used from the panel during
   takeover (§7.1), through the same device write the device page uses (ceilings apply, audited).
   The running instance gets the new limits at once, as a tool call's exclusive step applies them

@@ -7,7 +7,9 @@ import {
   deviceServiceFilesDigest,
   deviceServiceId,
   type Logger,
+  type NetworkBlockLayer,
   parseToolKey,
+  type ServiceBlockedHost,
   type ToolCallContext,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
@@ -33,9 +35,14 @@ import {
   attachCallScope,
   type CallScope,
   callScopeOf,
+  serviceHostKey,
+  strongerLayer,
   whileDeviceStarting,
 } from "../tools/call-scope.js";
 import { QuestionsService } from "../tools/questions.service.js";
+
+/** The layers a service may report a refused host with (`ServiceBlockedHost.layer`). */
+const BLOCK_LAYERS: readonly NetworkBlockLayer[] = ["device", "org", "address", "unknown"];
 
 /** What every `ctx.deviceAccess` call refuses a run another member triggered with. */
 export const DEVICE_ACCESS_NOT_OWNER_TEXT =
@@ -310,21 +317,36 @@ export class DeviceAccessService {
   }
 
   /**
-   * Records refused hosts in the call scope (synchronous: the pipeline reads it once the handler
-   * returns) on the device this call's own `ctx.deviceAccess` calls resolved, if any.
+   * Records refused hosts with their layers in the call scope (synchronous: the pipeline reads it
+   * once the handler returns) on the device this call's own `ctx.deviceAccess` calls resolved, if
+   * any. A malformed entry (not a non-empty host with a known layer) is dropped; a host reported
+   * again keeps its most restrictive layer, so a later report never makes it grantable.
    */
-  reportBlockedHosts(call: ToolCallContext, hosts: string[], opts?: { url?: string }): void {
+  reportBlockedHosts(
+    call: ToolCallContext,
+    hosts: ServiceBlockedHost[],
+    opts?: { url?: string },
+  ): void {
     assertCallOwner(call);
     const scope = callScopeOf(call) ?? attachCallScope(call);
-    const valid = hosts.filter((h): h is string => typeof h === "string" && h.length > 0);
+    const valid = (Array.isArray(hosts) ? hosts : []).filter(
+      (h): h is ServiceBlockedHost =>
+        typeof h === "object" &&
+        h !== null &&
+        typeof h.host === "string" &&
+        h.host.length > 0 &&
+        BLOCK_LAYERS.includes(h.layer),
+    );
     if (valid.length === 0) return;
     const url = typeof opts?.url === "string" && opts.url.length > 0 ? opts.url : null;
-    if (scope.blocked === null) {
-      scope.blocked = { deviceId: scope.device, hosts: new Set(valid), url };
-      return;
+    if (scope.blocked === null) scope.blocked = { deviceId: scope.device, hosts: new Map(), url };
+    else if (url !== null) scope.blocked.url = url;
+    const seen = scope.blocked.hosts;
+    for (const h of valid) {
+      const key = serviceHostKey(h.host);
+      const had = seen.get(key);
+      seen.set(key, had === undefined ? h.layer : strongerLayer(had, h.layer));
     }
-    for (const h of valid) scope.blocked.hosts.add(h);
-    if (url !== null) scope.blocked.url = url;
   }
 
   /** A single-use viewer ticket for the service (the person's panel opens `url`). */

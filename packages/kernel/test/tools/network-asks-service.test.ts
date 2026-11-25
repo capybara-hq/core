@@ -10,7 +10,12 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
-import { addedToDeviceNote, onListNote, serviceAskedNote } from "../../src/tools/network-asks.js";
+import {
+  addedToDeviceNote,
+  addressLayerNote,
+  onListNote,
+  serviceAskedNote,
+} from "../../src/tools/network-asks.js";
 import {
   fakeDeviceAccessCalls,
   setFakeDeviceAccessBeforeReport,
@@ -164,7 +169,8 @@ const listOnly = () =>
  * The model calls `navigate` once, its service refused `blocked` (and `blockedAgain` on a re-run);
  * with `service` it first starts and asks the echo service.
  */
-const navigate = (blocked: string[], blockedAgain?: string[], service = false) =>
+type Refused = string | { host: string; layer: string };
+const navigate = (blocked: Refused[], blockedAgain?: Refused[], service = false) =>
   postMessage(
     s.req,
     orgId,
@@ -292,6 +298,27 @@ describe("network asks for extension service calls", () => {
     expect(r?.content).toContain("Could not load https://example.org/.");
     // the note names who can add the host
     expect(r?.content).toContain("an organization admin adds evil.dev");
+  });
+
+  it("a host the service saw refused for its address gets the private-address note, never an ask", async () => {
+    // the name resolves on the device to a private address (an /etc/hosts entry, a VPN): the
+    // org's network would allow the name, but no host grant reaches a closed address
+    await navigate([{ host: "example.org", layer: "address" }]);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    expect(await networkAsks()).toEqual([]);
+    expect(await invocations()).toEqual({ keys: 1, counts: [1] });
+    const [r] = await results();
+    expect(r?.content).toContain("Could not load https://example.org/.");
+    expect(r?.content).toContain(addressLayerNote(["example.org"]));
+    expect(r?.content).not.toContain("organization admin");
+  });
+
+  it("a service cannot make an IP literal grantable: a device-layer literal is still an address", async () => {
+    await navigate([{ host: "10.8.0.1", layer: "device" }]);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    expect(await networkAsks()).toEqual([]);
+    const [r] = await results();
+    expect(r?.content).toContain(addressLayerNote(["10.8.0.1"]));
   });
 
   it("a re-run refused more hosts gets the already-asked note; no second ask", async () => {

@@ -44,6 +44,11 @@ import {
   type PinnedNativeRoot,
   runNativeHelper,
 } from "./native-helper-client.js";
+import {
+  MAX_NETWORK_DENIAL_LINE_CHARS,
+  MAX_NETWORK_DENIAL_LINES,
+  networkBlocked,
+} from "./network-denials.js";
 import type { LocalExecAuthority, LocalOperationGrant } from "./operation-types.js";
 import { withCanonicalForms, within } from "./operation-types.js";
 import { onDisk, protectedChain } from "./protected-targets.js";
@@ -475,6 +480,10 @@ export const JAVA_PROXY_AGENT_JAR = "vendor/java-proxy-agent/srt-proxy-agent.jar
  * A runtime without the network patch (`resolvedAddressStrict`, `fakeIpDoh` in its schema) is
  * refused before it starts: its proxy would skip the address rules, so the bind self-check fails
  * and the device reports no restricted support (and so no open network).
+ * A restricted command's completion carries `denials`: the outbound refusals its operation's proxy
+ * recorded (`deny network-outbound …` lines of the runtime's violation store, at most
+ * {@link MAX_NETWORK_DENIAL_LINES} of at most {@link MAX_NETWORK_DENIAL_LINE_CHARS} characters),
+ * which the exec result reports as `network.blocked` ({@link networkBlocked}).
  */
 export const WORKER = `import {pathToFileURL} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
@@ -494,6 +503,7 @@ async function collect(stream){
  }}catch(error){if(forced)return;const alreadyFailed=outputFailed;outputFailed=true;stream.resume();if(!alreadyFailed)send({event:'error',message:'Managed producer failed'});}
 }
 const send=value=>{if(process.connected)process.send(value,()=>{});};
+function denials(){try{return (manager?.getSandboxViolationStore?.().getViolations()??[]).map(v=>v?.line).filter(l=>typeof l==='string'&&l.length<=${MAX_NETWORK_DENIAL_LINE_CHARS}&&l.startsWith('deny network-outbound ')).slice(0,${MAX_NETWORK_DENIAL_LINES});}catch{return [];}}
 function stopTree(){
  if(!child?.pid||child.exitCode!==null||child.signalCode!==null)return [];
  try{process.kill(child.pid,'SIGSTOP');}catch{return [];}
@@ -552,7 +562,7 @@ process.on('message',async message=>{try{
   child=spawn('/bin/bash',['-c',message.script],{cwd:message.cwd,env:message.env,detached:true,stdio:['ignore','pipe','pipe']});
   const identity={pid:child.pid,token:randomUUID(),launchedAtMs:Date.now()};if(!identity.pid)throw Error('Missing trusted launch identity');
   owned.set(identity.pid,identity.token);
-  childClosed=new Promise(resolve=>child.once('close',async code=>{clearTimeout(timer);clearTimeout(settleTimer);await outputDone;send({event:'completed',code,timedOut,killed,outputFailed});resolve();}));
+  childClosed=new Promise(resolve=>child.once('close',async code=>{clearTimeout(timer);clearTimeout(settleTimer);await outputDone;send({event:'completed',code,timedOut,killed,outputFailed,denials:full?[]:denials()});resolve();}));
   child.once('error',error=>send({event:'error',message:String(error)}));
   child.once('exit',code=>{exited=true;send({event:'process-exit',code,timedOut,killed});try{signalOwned();}catch(error){send({event:'error',message:'Owned group cleanup pending: '+error.code});}settle();});
   if(message.managed){
@@ -1304,12 +1314,16 @@ export async function startMacOperationWorker(
         execCompleted = true;
         if (outputFault || result.outputFailed)
           throw outputFault ?? Error("Managed output stream failed");
+        // the hosts the operation's proxy refused, with the layer that refused each (the kernel
+        // turns an address refusal into the private-address note, a device one into an ask)
+        const blocked = Array.isArray(result.denials) ? networkBlocked(result.denials) : [];
         return {
           exitCode: result.killed || result.timedOut ? null : (result.code as number | null),
           stdout: cap.text("stdout"),
           stderr: cap.text("stderr"),
           truncated: cap.truncated,
           timedOut: result.timedOut === true,
+          ...(blocked.length > 0 ? { network: { blocked } } : {}),
         };
       } finally {
         worker.off("message", onOutput);

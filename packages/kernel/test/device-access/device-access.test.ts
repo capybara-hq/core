@@ -479,7 +479,7 @@ describe("ctx.deviceAccess", () => {
       () => access.ensureService(CALLER, call, echoServiceSpec()),
       () =>
         access.request(CALLER, call, { service: "echo", body: new Uint8Array(1), timeoutMs: 1000 }),
-      () => access.reportBlockedHosts(call, ["example.org"]),
+      () => access.reportBlockedHosts(call, [{ host: "example.org", layer: "device" }]),
     ]) {
       expect(await refusal(attempt)).toEqual({
         code: "not_owner",
@@ -617,23 +617,29 @@ describe("ctx.deviceAccess", () => {
 
   it("reportBlockedHosts lands in the call scope", async () => {
     allowReview();
+    const device = (host: string) => ({ host, layer: "device" as const });
     // before any service call of this call: no device named (the pipeline asks about the
     // conversation's)
     const before = callOf();
-    access.reportBlockedHosts(before, ["example.org"], { url: "https://example.org/a" });
+    access.reportBlockedHosts(before, [device("example.org")], { url: "https://example.org/a" });
     expect(callScopeOf(before)?.blocked).toEqual({
       deviceId: null,
-      hosts: new Set(["example.org"]),
+      hosts: new Map([["example.org", "device"]]),
       url: "https://example.org/a",
     });
     // after the call's service calls: the device they resolved; reports accumulate
     const call = callOf();
     await access.ensureService(CALLER, call, echoServiceSpec());
-    access.reportBlockedHosts(call, ["example.org"]);
-    access.reportBlockedHosts(call, ["cdn.example.org"], { url: "https://example.org/b" });
+    access.reportBlockedHosts(call, [device("example.org")]);
+    access.reportBlockedHosts(call, [device("cdn.example.org")], { url: "https://example.org/b" });
     const blocked = callScopeOf(call)?.blocked;
     expect(blocked?.deviceId).toBe(s.deviceId);
-    expect(blocked?.hosts).toEqual(new Set(["example.org", "cdn.example.org"]));
+    expect(blocked?.hosts).toEqual(
+      new Map([
+        ["example.org", "device"],
+        ["cdn.example.org", "device"],
+      ]),
+    );
     expect(blocked?.url).toBe("https://example.org/b");
     // a context the pipeline did not make gets a scope attached
     const bare: ToolCallContext = {
@@ -647,8 +653,30 @@ describe("ctx.deviceAccess", () => {
       signal: AbortSignal.timeout(30_000),
     };
     expect(callScopeOf(bare)).toBeNull();
-    access.reportBlockedHosts(bare, ["example.org"]);
-    expect(callScopeOf(bare)?.blocked?.hosts).toEqual(new Set(["example.org"]));
+    access.reportBlockedHosts(bare, [device("example.org")]);
+    expect(callScopeOf(bare)?.blocked?.hosts).toEqual(new Map([["example.org", "device"]]));
+  });
+
+  it("reportBlockedHosts keeps the most restrictive layer of a host and drops malformed entries", () => {
+    const call = callOf();
+    // a private-resolving name the proxy refused for its address; a later device-layer report of
+    // the same host (another spelling) never makes it grantable again
+    access.reportBlockedHosts(call, [{ host: "intranet.example.org", layer: "address" }]);
+    access.reportBlockedHosts(call, [
+      { host: "Intranet.Example.org.", layer: "device" },
+      { host: "cdn.example.org", layer: "unknown" },
+      { host: "cdn.example.org", layer: "device" },
+      // malformed: dropped
+      "bare.example.org" as never,
+      { host: "", layer: "device" },
+      { host: "odd.example.org", layer: "nope" } as never,
+    ]);
+    expect(callScopeOf(call)?.blocked?.hosts).toEqual(
+      new Map([
+        ["intranet.example.org", "address"],
+        ["cdn.example.org", "device"],
+      ]),
+    );
   });
 
   it("streamTicket refuses a non-owner and mints a single-use 60 s ticket", async () => {

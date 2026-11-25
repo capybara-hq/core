@@ -996,7 +996,7 @@ export interface DeviceAccessCtx {
         done: boolean;
     }): Promise<void>;
     ensureService(call: ToolCallContext, spec: DeviceServiceSpec): Promise<DeviceServiceStatus>;
-    reportBlockedHosts(call: ToolCallContext, hosts: string[], opts?: {
+    reportBlockedHosts(call: ToolCallContext, hosts: ServiceBlockedHost[], opts?: {
         url?: string;
     }): void;
     request(call: ToolCallContext, req: {
@@ -3946,6 +3946,9 @@ export interface SandboxPreparationScope {
 }
 
 // @public
+export function sandboxProxyRefusalLayer(reason: string): NetworkBlockLayer;
+
+// @public
 export interface SandboxRoots {
     skills: string;
     tmp: string;
@@ -4027,6 +4030,12 @@ export const SEMVER_VERSION_RE: RegExp;
 
 // @public
 export const SERVICE_CONNECTION_KINDS: readonly ["request", "stream"];
+
+// @public
+export interface ServiceBlockedHost {
+    host: string;
+    layer: NetworkBlockLayer;
+}
 
 // @public
 export type ServiceConnectionKind = (typeof SERVICE_CONNECTION_KINDS)[number];
