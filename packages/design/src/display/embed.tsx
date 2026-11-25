@@ -4,6 +4,21 @@ import { useInBox } from "../layout/box";
 /** 固定的沙箱：允许脚本与表单，不给同源（嵌入页拿不到外层的 cookie / storage / DOM）。 */
 export const EMBED_SANDBOX = "allow-scripts allow-forms";
 
+/**
+ * The permissions delegated to the embed: Chrome's Local Network Access features, nothing else.
+ * Chrome holds a request from a document back behind a permission of the top-level origin when its
+ * target's address space is more private than the document's (public to local, local to loopback),
+ * and a subframe may only ask for that permission when it is delegated. The embed's subresources
+ * leave on their own connections (an opaque origin is its own network partition), so after a
+ * network change (VPN, hosts file, a proxy switched off) they can reach the same host at a private
+ * address while the document came over an older public connection; undelegated, every request is
+ * denied without a prompt and the embed stays blank. Delegated, Chrome asks the person once for the
+ * app's origin. It widens nothing: the embed CSP keeps every request on the app's own origin, and
+ * the grant is the person's. Three names: `local-network-access` (Chrome 142), split into
+ * `local-network` and `loopback-network` later.
+ */
+export const EMBED_ALLOW = "local-network-access; local-network; loopback-network";
+
 export type EmbedFrameProps = {
   src: string;
   /** iframe 的可访问名称。 */
@@ -82,6 +97,7 @@ export function EmbedFrame({
       title={title}
       height={fill ? undefined : Math.max(0, Math.round(height))}
       sandbox={EMBED_SANDBOX}
+      allow={EMBED_ALLOW}
       referrerPolicy="no-referrer"
     />
   );

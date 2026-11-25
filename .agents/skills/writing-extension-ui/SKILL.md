@@ -210,7 +210,7 @@ return {
 
 ## Tier 2: embeds
 
-The extension's own page is placed in the web app's sandboxed iframe (`sandbox="allow-scripts allow-forms"`, without `allow-same-origin`, so it has an opaque origin) and cannot read the outer page or cookies. `apps/web` renders the iframe only through the design system's `EmbedFrame` (the `web-ui-iframe` rule of `check:web-ui`).
+The extension's own page is placed in the web app's sandboxed iframe (`sandbox="allow-scripts allow-forms"`, without `allow-same-origin`, so it has an opaque origin) and cannot read the outer page or cookies. Its only delegated permissions are Chrome's Local Network Access features (`EMBED_ALLOW`): an opaque origin is its own network partition, so the embed's subresources open their own connections and, after a network change (VPN, hosts file, a proxy), can reach the app's host at a private address while the document came over an older public connection; undelegated, Chrome denies them without a prompt and the embed stays blank. The embed CSP still keeps every request on the app's origin. `apps/web` renders the iframe only through the design system's `EmbedFrame` (the `web-ui-iframe` rule of `check:web-ui`).
 
 ### Embed tokens
 

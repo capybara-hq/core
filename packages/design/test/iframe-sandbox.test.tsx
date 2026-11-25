@@ -4,6 +4,7 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DesignProvider,
+  EMBED_ALLOW,
   EMBED_SANDBOX,
   EmbedFrame,
   HTML_DOCUMENT_SANDBOX,
@@ -85,4 +86,39 @@ describe("every iframe is sandboxed without same-origin", () => {
       expect((sandbox as string).split(/\s+/)).not.toContain("allow-same-origin");
     },
   );
+});
+
+/**
+ * Chrome's Local Network Access gates a request from a document in a more public address space
+ * than its target behind a permission of the top-level origin. A subframe may ask for it only when
+ * the permission is delegated to it; an embed's subresources open their own connections (an
+ * opaque origin is its own network partition), so they can land in another address space than the
+ * document that loaded them. EmbedFrame delegates exactly the local network features, nothing else.
+ */
+describe("EmbedFrame delegates local network access and nothing else", () => {
+  it("allows only the local network features", () => {
+    expect(EMBED_ALLOW.split(";").map((f) => f.trim())).toEqual([
+      "local-network-access",
+      "local-network",
+      "loopback-network",
+    ]);
+  });
+
+  it("renders the allow attribute", () => {
+    const { container } = render(
+      <DesignProvider locale="en">
+        <EmbedFrame src="/plugin-ui/p/x" title="x" onMessage={() => {}} />
+      </DesignProvider>,
+    );
+    expect(container.querySelector("iframe")?.getAttribute("allow")).toBe(EMBED_ALLOW);
+  });
+
+  it("gives the HTML document frame no delegated features", () => {
+    const { container } = render(
+      <DesignProvider locale="en">
+        <HtmlDocumentFrame src="/api/v1/html/t" title="x.html" />
+      </DesignProvider>,
+    );
+    expect(container.querySelector("iframe")?.getAttribute("allow")).toBeNull();
+  });
 });
