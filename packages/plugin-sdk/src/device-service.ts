@@ -26,6 +26,22 @@ export const DEVICE_SERVICE_STATE_ENV = "CAPYBARA_SERVICE_STATE";
  */
 export const DEVICE_SERVICE_WORKSPACE_ENV = "CAPYBARA_SERVICE_WORKSPACE";
 /**
+ * Names the service's install directory, where the provider gives it one (device-local does;
+ * absent elsewhere): a place for what the service fetches once and then only runs, such as a
+ * browser, apart from its state. The service may write it until it creates the regular file
+ * {@link DEVICE_SERVICE_INSTALL_SEAL} in it; from its next start on the directory is read only
+ * for the service, so nothing the service later runs (a compromised browser included) can
+ * replace what was installed. The provider empties it at every start that does not find it
+ * sealed under the service's current files (unsealed, or a plugin upgrade since), so a service
+ * installs afresh while unsealed and never trusts what it finds there. The process that seals
+ * keeps its write access until it exits, so a service runs no untrusted input (no web page) while
+ * unsealed, seals only a complete install and then exits; the next start, reviewed again, runs it
+ * read only.
+ */
+export const DEVICE_SERVICE_INSTALL_ENV = "CAPYBARA_SERVICE_INSTALL";
+/** The file that seals a service's install directory ({@link DEVICE_SERVICE_INSTALL_ENV}). */
+export const DEVICE_SERVICE_INSTALL_SEAL = ".sealed";
+/**
  * Names the Mach service allowances the provider's sandbox gives the service (macOS: device-local
  * sets it, a spec cannot). Its value {@link DEVICE_SERVICE_MACH_CHROMIUM} means the full Chromium
  * build can start there (its `MachPortRendezvousServer` check-in is allowed); absent, a service

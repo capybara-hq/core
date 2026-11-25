@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { DeviceOfflineError, type SandboxExecutionRef } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
 import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
-import { BackgroundTaskStopper } from "../../src/background/stop.js";
+import { BACKGROUND_STOP_ATTEMPT_MS, BackgroundTaskStopper } from "../../src/background/stop.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -49,6 +50,8 @@ let redis: Redis;
 let accounts: AccountsService;
 let owner: Account;
 let added: { name: string; jobId: string }[] = [];
+/** One exact stop attempt's time limit (`BACKGROUND_STOP_ATTEMPT_MS`, read at every attempt). */
+let stopAttemptMs = 20_000;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -62,7 +65,11 @@ beforeAll(async () => {
       roles: ["api"],
       ...MODEL_PLUGINS_CONFIG,
     }),
-    { env: {}, logger: createLogger("error", { write: () => {} }) },
+    {
+      env: {},
+      logger: createLogger("error", { write: () => {} }),
+      overrides: [{ provide: BACKGROUND_STOP_ATTEMPT_MS, useValue: () => stopAttemptMs }],
+    },
   );
   raw = createDb(pgc.url, 5);
   redis = new Redis(rd.url);
@@ -76,6 +83,7 @@ afterAll(async () => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  stopAttemptMs = 20_000;
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
@@ -473,6 +481,207 @@ describe("TaskStop and the stopper on managed tasks", () => {
   });
 });
 
+describe("a stop the device cannot take now is durable intent", () => {
+  /** A machine that is connected but never answers: only the attempt's limit ends the wait. */
+  const silent = (signal: AbortSignal) =>
+    new Promise<never>((_, reject) => {
+      if (signal.aborted) reject(signal.reason);
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  const stopUrl = (f: Awaited<ReturnType<typeof fixture>>) =>
+    `/api/v1/orgs/${f.orgId}/conversations/${f.conversationId}/background-tasks/${f.taskId}/stop`;
+  const listed = async (f: Awaited<ReturnType<typeof fixture>>) => {
+    const res = await f.req({
+      method: "GET",
+      url: `/api/v1/orgs/${f.orgId}/conversations/${f.conversationId}/background-tasks`,
+    });
+    return (res.json() as { tasks: Record<string, unknown>[] }).tasks[0];
+  };
+
+  it("TaskStop on an offline machine returns at once with the stop recorded; the poller delivers it", async () => {
+    const f = await fixture();
+    f.provider.state.beforeStop = async () => {
+      throw new DeviceOfflineError(f.deviceId);
+    };
+    const r = textOf(await f.taskStop());
+    expect(r).toMatch(/stop requested: the device did not confirm it \(Device .* is offline/);
+    expect(r).toMatch(/attempted again automatically/);
+    expect(await f.taskRow()).toMatchObject({
+      status: "running",
+      launch_state: "cancel-pending",
+      cancel_requested_by: "tool",
+      cancel_failure: "unreachable",
+      stopping_at: null,
+    });
+    expect(await listed(f)).toMatchObject({
+      stopping: true,
+      stopWaiting: true,
+      stopFailure: "unreachable",
+    });
+    expect(await f.finishedEvents()).toHaveLength(0);
+    // still offline: the owed stop stays owed, nothing finishes
+    expect(await poller().pollOnce()).toBe(0);
+    expect((await f.taskRow()).launch_state).toBe("cancel-pending");
+    // the machine is back: the exact stop is delivered and settles the task once
+    f.provider.state.beforeStop = undefined;
+    expect(await poller().pollOnce()).toBe(1);
+    expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
+    expect(await f.finishedEvents()).toHaveLength(1);
+  });
+
+  it("a person's stop is recorded before the device is asked", async () => {
+    const f = await fixture();
+    let during: Record<string, unknown> | undefined;
+    f.provider.state.beforeStop = async () => {
+      during = await f.taskRow();
+      throw new DeviceOfflineError(f.deviceId);
+    };
+    const res = await f.req({ method: "POST", url: stopUrl(f) });
+    expect(res.statusCode).toBe(200);
+    // the intent was durable before the provider call: owed, the asker kept, claimed by this stop
+    expect(during).toMatchObject({
+      status: "running",
+      launch_state: "cancel-pending",
+      cancel_requested_by: "person",
+    });
+    expect(during?.stopping_at).not.toBeNull();
+    expect((res.json() as { task: Record<string, unknown> }).task).toMatchObject({
+      status: "running",
+      stopping: true,
+      stopWaiting: true,
+      stopFailure: "unreachable",
+    });
+    // the device answers again: the person's stop settles without waking the conversation
+    f.provider.state.beforeStop = undefined;
+    expect(await poller().pollOnce()).toBe(1);
+    const [event] = await f.finishedEvents();
+    expect(event?.payload).toMatchObject({ status: "stopped", stoppedBy: "person" });
+    expect(ensureRuns(f.conversationId)).toHaveLength(0);
+  });
+
+  it("a person's stop on a machine that never answers returns within the attempt limit", async () => {
+    const f = await fixture();
+    stopAttemptMs = 200;
+    f.provider.state.beforeStop = silent;
+    const res = await f.req({ method: "POST", url: stopUrl(f) });
+    expect(res.statusCode).toBe(200);
+    // whether the limit ran out before or inside the provider call, the stop is owed and unreachable
+    expect((res.json() as { task: Record<string, unknown> }).task).toMatchObject({
+      status: "running",
+      stopping: true,
+      stopWaiting: true,
+      stopFailure: "unreachable",
+    });
+    expect(await f.taskRow()).toMatchObject({ launch_state: "cancel-pending", stopping_at: null });
+  });
+
+  it("a device whose stop fails is told as a failure with its cause, not as offline", async () => {
+    const f = await fixture();
+    f.provider.state.beforeStop = async () => {
+      throw new Error("Managed background tasks are unavailable on this device");
+    };
+    const r = textOf(await f.taskStop());
+    expect(r).toMatch(
+      /the device's stop failed \(Managed background tasks are unavailable on this device\)/,
+    );
+    expect(r).not.toMatch(/offline/);
+    expect(await f.taskRow()).toMatchObject({
+      launch_state: "cancel-pending",
+      cancel_failure: "failed",
+      cancel_failure_detail: "Managed background tasks are unavailable on this device",
+    });
+    expect(await listed(f)).toMatchObject({ stopWaiting: true, stopFailure: "failed" });
+  });
+
+  it("an owed stop whose device does not answer never holds the poll past the attempt limit", async () => {
+    const f = await fixture();
+    stopAttemptMs = 200;
+    f.provider.state.beforeStop = async () => {
+      throw new DeviceOfflineError(f.deviceId);
+    };
+    await f.taskStop();
+    f.provider.state.beforeStop = silent;
+    expect(await poller().pollOnce()).toBe(0);
+    expect(await f.taskRow()).toMatchObject({
+      status: "running",
+      launch_state: "cancel-pending",
+      cancel_failure: "unreachable",
+      stopping_at: null,
+    });
+  });
+
+  it("a stop whose replica died after recording it is delivered once its claim expires", async () => {
+    const f = await fixture();
+    const store = k.app.get(BackgroundTaskStore);
+    // the dead replica's steps: the claim, then the owed intent, then nothing
+    expect(await store.claimStop(f.taskId)).toBe(true);
+    await store.oweCancel(f.taskId, "person");
+    // a live claim keeps the poller away
+    expect(await poller().pollOnce()).toBe(0);
+    expect(f.provider.calls.stop).toEqual([]);
+    await f.db
+      .updateTable("background_tasks")
+      .set({ stopping_at: sql<Date>`now() - interval '6 minutes'` })
+      .where("id", "=", f.taskId)
+      .execute();
+    expect(await listed(f)).toMatchObject({ stopWaiting: true, stopFailure: null });
+    expect(await poller().pollOnce()).toBe(1);
+    const [event] = await f.finishedEvents();
+    expect(event?.payload).toMatchObject({ status: "stopped", stoppedBy: "person" });
+  });
+
+  it("a caller that gives up mid-attempt leaves the stop owed without a device failure", async () => {
+    const f = await fixture();
+    const ac = new AbortController();
+    f.provider.state.beforeStop = async (signal) => {
+      ac.abort(new Error("the run was aborted"));
+      await silent(signal);
+    };
+    const store = k.app.get(BackgroundTaskStore);
+    const after = await k.app
+      .get(BackgroundTaskStopper)
+      .stop(await getTask(store, f.taskId), "tool", ac.signal);
+    expect(after).toMatchObject({
+      status: "running",
+      launchState: "cancel-pending",
+      cancelRequestedBy: "tool",
+      cancelFailure: null,
+      stoppingAt: null,
+    });
+  });
+
+  it("a task that exits on its own while its stop is owed keeps its natural end", async () => {
+    const f = await fixture();
+    f.provider.state.beforeStop = async () => {
+      throw new DeviceOfflineError(f.deviceId);
+    };
+    await f.taskStop();
+    f.provider.state.beforeStop = undefined;
+    f.provider.exit(0);
+    expect(await poller().pollOnce()).toBe(1);
+    expect(await f.taskRow()).toMatchObject({ status: "completed", exit_code: 0 });
+  });
+
+  it("a person's stop that loses the claim to another attempt still records the person", async () => {
+    const f = await fixture();
+    const store = k.app.get(BackgroundTaskStore);
+    // another attempt (a poller's revocation delivery) holds the claim
+    expect(await store.claimStop(f.taskId)).toBe(true);
+    const res = await f.req({ method: "POST", url: stopUrl(f) });
+    expect((res.json() as { task: Record<string, unknown> }).task).toMatchObject({
+      status: "running",
+      stopping: true,
+    });
+    expect(await f.taskRow()).toMatchObject({ cancel_requested_by: "person" });
+    // that attempt did not settle and released its claim; the poller settles the stop later
+    await store.requestCancel(f.taskId, null, true, null);
+    expect(await poller().pollOnce()).toBe(1);
+    const [event] = await f.finishedEvents();
+    expect(event?.payload).toMatchObject({ status: "stopped", stoppedBy: "person" });
+    expect(ensureRuns(f.conversationId)).toHaveLength(0);
+  });
+});
+
 async function getTask(store: BackgroundTaskStore, id: string) {
   const t = await store.get(id);
   if (!t) throw new Error("no task");
@@ -660,13 +869,22 @@ describe("tool and HTTP surfaces stay the same for managed tasks", () => {
         "starting",
         "status",
         "stopping",
+        // the stop is recorded and waits for the device, and why its last attempt did not settle
+        "stopFailure",
+        "stopWaiting",
         "subagentId",
         // the person whose run started it, for the web (account profile); no tool returns it
         "trigger",
       ].sort(),
     );
     // an acknowledged managed task is running, not "starting", for the model and the API
-    expect(view).toMatchObject({ status: "running", stopping: false, starting: false });
+    expect(view).toMatchObject({
+      status: "running",
+      stopping: false,
+      stopWaiting: false,
+      stopFailure: null,
+      starting: false,
+    });
     const listed = textOf(await taskListTool(deps).run({}, await f.ctxFor()));
     expect(listed).toContain("running for");
   });
@@ -854,10 +1072,11 @@ async function owedClones(
   f: Awaited<ReturnType<typeof fixture>>,
   n: number,
   deviceId: string,
+  from = 0,
 ): Promise<string[]> {
   const base = await f.taskRow();
   const ids: string[] = [];
-  for (let i = 0; i < n; i++) {
+  for (let i = from; i < from + n; i++) {
     const id = `bt_cl${"abcdefghijklmnop"[i]}aaa`;
     const operationId = `${"c".repeat(60)}${String(i).padStart(4, "0")}`;
     const ref = {
@@ -887,6 +1106,117 @@ async function owedClones(
   }
   return ids;
 }
+
+describe("owed stops of different devices are delivered side by side", () => {
+  it("a silent device's stop never delays another device's in the same tick, and gets one attempt", async () => {
+    const f = await fixture();
+    stopAttemptMs = 2000;
+    // a second running device served by the same provider (its handle names the same instance)
+    const other = randomUUID();
+    await f.db
+      .insertInto("devices")
+      .values({
+        id: other,
+        org_id: f.orgId,
+        owner_kind: "personal",
+        owner_account_id: owner.id,
+        provider: "@managed-consumer-test",
+        name: "Other",
+      })
+      .execute();
+    await f.db
+      .insertInto("device_instances")
+      .values({
+        device_id: other,
+        org_id: f.orgId,
+        provider: "@managed-consumer-test",
+        status: "running",
+        handle: JSON.stringify({ id: f.deviceId, roots: { workspace: "/work" } }),
+        created_at: new Date(MANAGED_GENERATION),
+        fs_status: "ready",
+        had_instance: true,
+      })
+      .execute();
+    // owed: one stop on the silent device (before the fixture's own task, also owed there) and
+    // one on the other device, each an execution the provider owns
+    // the silent device's stop comes first in the owed order (older), so a one-by-one delivery
+    // would hold the other device's behind it
+    const [otherId] = await owedClones(f, 1, other, 0);
+    const [silentId] = await owedClones(f, 1, f.deviceId, 1);
+    for (const id of [silentId, otherId]) {
+      const row = await f.db
+        .selectFrom("background_tasks")
+        .select("execution_ref")
+        .where("id", "=", id as string)
+        .executeTakeFirstOrThrow();
+      const ref = (
+        typeof row.execution_ref === "string" ? JSON.parse(row.execution_ref) : row.execution_ref
+      ) as SandboxExecutionRef;
+      f.provider.executions.set(ref.operationId, {
+        ref,
+        output: new Uint8Array(),
+        status: { state: "running" },
+        stopAs: "stopped",
+        retained: "ok",
+      });
+    }
+    const store = k.app.get(BackgroundTaskStore);
+    expect(await store.claimStop(f.taskId)).toBe(true);
+    await store.oweCancel(f.taskId, "tool");
+    await store.requestCancel(f.taskId, "tool", true, null);
+    const opOf = async (id: string) =>
+      (
+        await f.db
+          .selectFrom("background_tasks")
+          .select("operation_id")
+          .where("id", "=", id)
+          .executeTakeFirstOrThrow()
+      ).operation_id;
+    const silentOp = await opOf(silentId as string);
+    const otherOp = await opOf(otherId as string);
+    let otherSettled!: () => void;
+    const otherDone = new Promise<void>((r) => {
+      otherSettled = r;
+    });
+    let sawOtherWhileSilent = false;
+    const attempted: string[] = [];
+    f.provider.state.beforeStop = async (signal, ref) => {
+      attempted.push(ref.operationId);
+      if (ref.operationId === otherOp) {
+        queueMicrotask(otherSettled);
+        return;
+      }
+      // the silent machine: it sees the other device's stop settle while it still holds its own
+      await Promise.race([
+        otherDone.then(() => {
+          // only while this attempt still waits (a late settle after its abort does not count)
+          if (!signal.aborted) sawOtherWhileSilent = true;
+        }),
+        new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true })),
+      ]);
+      await new Promise<never>((_, reject) => {
+        if (signal.aborted) reject(signal.reason);
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    };
+    expect(await poller().pollOnce()).toBe(1);
+    expect(sawOtherWhileSilent).toBe(true);
+    const status = async (id: string) =>
+      await f.db
+        .selectFrom("background_tasks")
+        .select(["status", "cancel_failure"])
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+    expect(await status(otherId as string)).toMatchObject({ status: "stopped" });
+    expect(await status(silentId as string)).toMatchObject({
+      status: "running",
+      cancel_failure: "unreachable",
+    });
+    // the silent device's other owed stop waits for the next tick: one attempt there per tick
+    expect(attempted.filter((op) => op === silentOp)).toHaveLength(1);
+    expect(await f.taskRow()).toMatchObject({ status: "running", launch_state: "cancel-pending" });
+  });
+});
 
 describe("fix round 2: owed stops are applied fairly", () => {
   it("owed stops on a suspended instance never hold back one on a running instance", async () => {

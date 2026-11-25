@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import type { ConversationEvent } from "../src/lib/conversations";
+import { TASK_OUTPUT_POLL_MS } from "../src/lib/query/conversation";
 import { type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -122,6 +123,8 @@ const task = (extra: Record<string, unknown> = {}) => ({
   startedAt: "2026-10-26T06:00:04.000Z",
   finishedAt: null,
   stopping: false,
+  stopWaiting: false,
+  stopFailure: null,
   starting: false,
   ...extra,
 });
@@ -214,6 +217,17 @@ const backgroundSection = async () => {
   ) as HTMLElement;
 };
 
+/**
+ * Fakes the timers the output poll runs on (TanStack's refetchInterval), still moving with real
+ * time so the renders and the stream go on as usual; {@link advance} then jumps ahead.
+ */
+const fakePollTimers = () =>
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+    shouldAdvanceTime: true,
+  });
+const advance = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+
 const outputReads = (calls: Call[]) =>
   calls.filter((c) => c.method === "GET" && c.url.startsWith(`${TASKS}/${TASK}/output`)).length;
 
@@ -225,6 +239,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   FakeEventSource.instances = [];
   window.history.replaceState(null, "", "/");
@@ -276,6 +291,27 @@ describe("the background section", () => {
     await vi.waitFor(() => expect(within(section).queryByRole("status")).toBeNull());
     expect(within(section).queryByText("Start the dev server")).toBeNull();
     expect(within(section).getByRole("button", { name: /1 completed/ })).toBeTruthy();
+  });
+
+  it("a stop the device has not taken yet says it waits for the device, not a spinner forever", async () => {
+    const state = { tasks: [task()] as unknown[] };
+    api(state, {
+      [`POST ${TASKS}/${TASK}/stop`]: () =>
+        json(200, {
+          task: task({ stopping: true, stopWaiting: true, stopFailure: "unreachable" }),
+        }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChatRoute();
+    const section = await backgroundSection();
+    const user = userEvent.setup();
+    await user.click(
+      await within(section).findByRole("button", { name: "Stop Start the dev server" }),
+    );
+    await vi.waitFor(() =>
+      expect(within(section).getByRole("status").textContent).toBe("Stops when the device answers"),
+    );
+    expect(within(section).queryByRole("button", { name: "Stop Start the dev server" })).toBeNull();
   });
 
   it("a changed frame during the first read reads the list again (the read may predate the task)", async () => {
@@ -406,19 +442,22 @@ describe("the task output panel", () => {
     const state = { tasks: [task()] as unknown[] };
     const calls = api(state);
     window.history.replaceState(null, "", `/chat/c1#bg-${TASK}`);
+    fakePollTimers();
     await renderChatRoute();
     await screen.findByRole("complementary", { name: "Start the dev server" });
-    await vi.waitFor(() => expect(outputReads(calls)).toBeGreaterThanOrEqual(2), {
-      timeout: 5000,
-    });
+    await vi.waitFor(() => expect(outputReads(calls)).toBeGreaterThanOrEqual(1));
+    const first = outputReads(calls);
+    await advance(TASK_OUTPUT_POLL_MS);
+    await vi.waitFor(() => expect(outputReads(calls)).toBeGreaterThan(first));
     state.tasks = [task({ status: "completed", exitCode: 0, finishedAt: "2026-10-26T06:01:00Z" })];
     act(() => stream().emit("changed", { what: "background" }));
     const panel = await screen.findByRole("complementary", { name: "Start the dev server" });
     await within(panel).findByText("Done");
+    await advance(0);
     const settled = outputReads(calls);
-    await new Promise((r) => setTimeout(r, 2500));
+    await advance(TASK_OUTPUT_POLL_MS * 3);
     expect(outputReads(calls)).toBe(settled);
-  }, 15_000);
+  });
 
   it("a 409 (sandbox suspended) shows why and the finish event's last lines", async () => {
     api(

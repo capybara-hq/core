@@ -224,7 +224,7 @@ describe("GET /conversations/:id/tools", () => {
     expect(t.Edit).toMatchObject({ kind: "edit", keyArgs: ["file_path"] });
     expect(t.Glob).toMatchObject({ kind: "search", keyArgs: ["pattern"] });
     expect(t.Grep).toMatchObject({ kind: "search", keyArgs: ["pattern", "path"] });
-    expect(t.Deliver).toMatchObject({ kind: "tool", keyArgs: ["file_path"] });
+    expect(t.Deliver).toMatchObject({ kind: "tool", keyArgs: ["file_path", "file_id"] });
     expect(t.Deliver).toMatchObject({ sandbox: true });
     for (const k of ["Skill", "ToolSearch", "AskUserQuestion", "Agent"]) {
       expect(t[k]?.sandbox, k).toBe(false);

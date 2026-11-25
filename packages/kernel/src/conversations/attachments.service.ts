@@ -582,6 +582,9 @@ export class AttachmentsService {
    * 下载地址（预签名，{@link ATTACHMENT_DOWNLOAD_TTL_SECONDS} 秒）：已绑定的附件要求能访问其会话，
    * 未绑定的只有上传者；否则 `attachment.not_found`。只有图片与 PDF 以 `inline` 打开，其余一律 `attachment`
    * （即使存储里的类型被改成 text/html 也不会在页面里渲染）；响应类型按 finalize 核对过的类型返回。
+   * A `read` copy (an image a tool showed the agent) is served the same way to whoever can open its
+   * conversation, so the web can show it on the call's row (tool result images design §4); it is
+   * still never listed (lists and the device's attachments stay `chat` only).
    */
   async downloadUrl(orgId: string, accountId: string, id: string): Promise<string> {
     this.storage.assertAvailable();
@@ -599,7 +602,7 @@ export class AttachmentsService {
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("status", "=", "ready")
-      .where("purpose", "=", "chat")
+      .where("purpose", "in", ["chat", "read"])
       .executeTakeFirst();
     if (!row) throw notFound();
     const allowed =

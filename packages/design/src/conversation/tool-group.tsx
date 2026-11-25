@@ -30,6 +30,10 @@ export type ToolGroupProps = {
   defaultOpenRows?: string[];
   onViewAll?(rowId: string): void;
   onCopy?(rowId: string): void;
+  /** A result image's thumbnail on a row was clicked (its index in the row's `detail.images`). */
+  onOpenImage?(rowId: string, index: number): void;
+  /** A row's thumbnail failed to load. */
+  onImageError?(id: string): void;
   /** The clock for running rows (the caller re-renders each second). */
   now?: number;
   /** Replaces the rows inside the box. */
@@ -47,6 +51,8 @@ export function ToolGroup({
   defaultOpenRows,
   onViewAll,
   onCopy,
+  onOpenImage,
+  onImageError,
   now,
   children,
 }: ToolGroupProps): JSX.Element {
@@ -63,6 +69,8 @@ export function ToolGroup({
   const rowCallbacks = (rowId: string) => ({
     ...(onViewAll ? { onViewAll: () => onViewAll(rowId) } : {}),
     ...(onCopy ? { onCopy: () => onCopy(rowId) } : {}),
+    ...(onOpenImage ? { onOpenImage: (i: number) => onOpenImage(rowId, i) } : {}),
+    ...(onImageError ? { onImageError } : {}),
   });
 
   const single = rows.length === 1 ? rows[0] : undefined;

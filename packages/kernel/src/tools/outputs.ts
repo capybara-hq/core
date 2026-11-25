@@ -6,6 +6,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { asPlatform } from "../infra/database/org-scope.js";
+import { base64Bytes, isToolImageBlock, resultImageNotStoredText } from "./result-images.js";
 
 /** 文本行数（按 `\n` 切分；空串算 1 行，与按行分页读取一致）。 */
 export function countLines(s: string): number {
@@ -160,13 +161,6 @@ export async function resolveOutputRefs(
   return walk(input);
 }
 
-/** base64 数据解码后的字节数。 */
-function base64Bytes(data: string): number {
-  const s = data.replace(/\s/g, "");
-  const pad = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
-  return Math.max(0, Math.floor((s.length * 3) / 4) - pad);
-}
-
 export interface RenderedResult {
   /** 模型看到的文本（尚未转存）。 */
   text: string;
@@ -179,11 +173,13 @@ export interface RenderedResult {
 const NO_OUTPUT = "(no output)";
 
 /**
- * 管线第 5 阶段（渲染）：文本块按行拼接；图片 → `[image <mimeType>, <n> bytes]`（M3 不把图片回传模型）；
- * `resource_link` → `[resource <uri>]`；未知块 → `[unsupported content <type>]`。
- * 畸形结果（不是对象、content 不是数组）给出说明并标为错误，不抛错（Review Focus 5）。
+ * Pipeline stage 5 (render): text blocks joined by lines; the n-th image block → `imageTexts[n]`
+ * (the stored copy or why it was not stored, `storeResultImages`), else a "not stored, so not
+ * shown" line; `resource_link` → `[resource <uri>]`; an unknown block →
+ * `[unsupported content <type>]`. A malformed result (not an object, content not an array) gets an
+ * explanation and is marked an error, never thrown (Review Focus 5).
  */
-export function renderResult(result: unknown): RenderedResult {
+export function renderResult(result: unknown, imageTexts?: readonly string[]): RenderedResult {
   if (!isPlainObject(result) || !Array.isArray(result.content)) {
     return {
       text: "The tool returned a malformed result (expected an object with a content array).",
@@ -193,14 +189,16 @@ export function renderResult(result: unknown): RenderedResult {
   }
   const parts: string[] = [];
   const types: string[] = [];
+  let image = 0;
   for (const block of result.content as unknown[]) {
     const b = isPlainObject(block) ? block : {};
     const type = typeof b.type === "string" ? b.type : "unknown";
     if (!types.includes(type)) types.push(type);
     if (type === "text" && typeof b.text === "string") parts.push(b.text);
-    else if (type === "image" && typeof b.data === "string") {
+    else if (isToolImageBlock(block) && typeof b.data === "string") {
       const mime = typeof b.mimeType === "string" ? b.mimeType : "unknown";
-      parts.push(`[image ${mime}, ${base64Bytes(b.data)} bytes]`);
+      parts.push(imageTexts?.[image] ?? resultImageNotStoredText(mime, base64Bytes(b.data)));
+      image++;
     } else if (type === "resource_link" && typeof b.uri === "string") {
       parts.push(`[resource ${b.uri}]`);
     } else parts.push(`[unsupported content ${type}]`);

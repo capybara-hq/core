@@ -1477,10 +1477,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         })
         .optional(),
       /**
-       * The images the builtin Read stored for the call (vision-read design §1.2): `read`
-       * attachments bound to this conversation, one per image. Model-visible: request building
-       * renders each after the step's tool results (`Image from Read (file_id <id>):` and the image,
-       * or the no-vision text), inside the Read-image window. Only the builtin Read sets it.
+       * The images stored for the call: the builtin Read's copy (vision-read design §1.2) and the
+       * image blocks of any tool's result, which the pipeline stores itself (tool result images
+       * design §2); `read` attachments bound to this conversation, one per image. A tool never
+       * names an attachment here. Model-visible: request building renders each after the step's
+       * tool results (`Image from <toolKey> (file_id <id>):` and the image, or the no-vision
+       * text), inside the Read-image window. The web shows them on the call's row.
        */
       media: z
         .array(
@@ -1610,6 +1612,17 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       questionId: z.string(),
       form: InputFormSchema,
       expiresAt: z.string(),
+      /**
+       * A plugin tool's `InputRequired.open`: a `conversation.panel` of the asking extension the
+       * page opens when the question arrives (display only; the kernel names the plugin itself).
+       */
+      open: z
+        .object({
+          plugin: z.string(),
+          contribution: z.string(),
+          item: z.string().optional(),
+        })
+        .optional(),
     }),
   ),
   /**

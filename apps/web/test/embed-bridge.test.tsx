@@ -403,3 +403,45 @@ describe("panel-mode (an embed asks for the panel's full mode)", () => {
     expect(onPanelMode).not.toHaveBeenCalled();
   });
 });
+
+describe("panel-mode to the embed (the host tells a panel embed its mode)", () => {
+  const modes = (posted: EmbedParentMessage[]) =>
+    posted.filter((m) => m.type === "panel-mode").map((m) => (m as { full: boolean }).full);
+
+  it("right after init, then on every change, never twice the same", async () => {
+    let full = false;
+    const { bridge, posted } = setup({ panelFull: () => full });
+    await bridge.start();
+    bridge.panelModeChanged(); // before load: told with its init
+    expect(modes(posted)).toEqual([]);
+    bridge.loaded();
+    expect(posted.map((m) => m.type)).toEqual(["init", "panel-mode"]);
+    expect(modes(posted)).toEqual([false]);
+    full = true;
+    bridge.panelModeChanged();
+    bridge.panelModeChanged();
+    full = false;
+    bridge.panelModeChanged();
+    expect(modes(posted)).toEqual([false, true, false]);
+  });
+
+  it("a remounted document is told again after its own init", async () => {
+    const { bridge, posted } = setup({ panelFull: () => true });
+    await bridge.start();
+    bridge.loaded();
+    bridge.loaded(); // navigated away
+    bridge.panelModeChanged();
+    expect(modes(posted)).toEqual([true]);
+    bridge.frameReset();
+    bridge.loaded();
+    expect(modes(posted)).toEqual([true, true]);
+  });
+
+  it("an embed of another slot (no panelFull) never gets panel-mode", async () => {
+    const { bridge, posted } = setup();
+    await bridge.start();
+    bridge.loaded();
+    bridge.panelModeChanged();
+    expect(modes(posted)).toEqual([]);
+  });
+});

@@ -13,7 +13,8 @@
  *   effect only when the caller passes `onPanelMode` (embeds mounted in the `conversation.panel`
  *   slot), and is ignored from embeds in every other slot.
  * Sent to the iframe: `init` after the first load, `token` 60 s before the token expires, `theme` on
- * a theme change.
+ * a theme change, and to a `conversation.panel` embed (the caller passes `panelFull`) `panel-mode`
+ * with the panel's mode right after `init` and on every change, whoever changed it.
  * A second `load` of the same iframe means the embed navigated away on its own (it may no longer be
  * the plugin's page): no further messages are sent to it, and the caller remounts the iframe on the
  * original `src` (multi-page plugin apps use the History API, not full page loads).
@@ -53,6 +54,12 @@ export type EmbedParentMessage =
       theme: EmbedTheme;
       tokens: Record<string, string>;
     }
+  /**
+   * Only to an embed in the `conversation.panel` slot: whether the right panel is maximised, right
+   * after `init` and on every change (the embed's own ask, the host's close control, Esc, a size
+   * class change).
+   */
+  | { protocol: typeof EMBED_PROTOCOL; type: "panel-mode"; full: boolean }
   /** Only to a `file-preview` embed, once after `init`: the file it previews (never a URL). */
   | {
       protocol: typeof EMBED_PROTOCOL;
@@ -230,6 +237,12 @@ export interface EmbedBridgeOptions {
    * caller's fact, never the message's).
    */
   onPanelMode?(full: boolean): void;
+  /**
+   * Only for an embed mounted in the `conversation.panel` slot: whether the right panel is
+   * maximised now. Sent as `panel-mode` after `init`, and again by `panelModeChanged` when it
+   * changes.
+   */
+  panelFull?(): boolean;
   /** 续期失败（会在 {@link EMBED_RETRY_MS} 后重试）。 */
   onTokenError?(e: unknown): void;
   /** iframe 再次 load（嵌入页导航走了）：调用方在原 src 上重新挂载 iframe，挂好后调 `frameReset()`。 */
@@ -264,6 +277,11 @@ export interface EmbedBridge {
   receive(e: { source: unknown; data: unknown }): void;
   /** 外层主题变了：发 `theme`。 */
   themeChanged(): void;
+  /**
+   * The right panel's mode may have changed: sends `panel-mode` when it differs from what this
+   * document was last told (only with `panelFull`; nothing before `init`).
+   */
+  panelModeChanged(): void;
   /** 卸载：停止续期，此后什么都不发。 */
   dispose(): void;
 }
@@ -284,6 +302,8 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
   let fileSent = false;
   /** Bumped per document (frameReset): a read started for an earlier document is never posted. */
   let generation = 0;
+  /** The panel mode this document was last told (undefined: not yet, or not a panel embed). */
+  let toldFull: boolean | undefined;
 
   const post = (msg: EmbedParentMessage) => {
     if (!disposed && isLoaded && !away) o.post(msg);
@@ -300,7 +320,16 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
       tokens,
       context: o.context,
     });
+    toldFull = undefined;
+    sendPanelMode();
     sendFile();
+  };
+  const sendPanelMode = () => {
+    if (o.panelFull === undefined || disposed || !isLoaded || away || token === undefined) return;
+    const full = o.panelFull();
+    if (full === toldFull) return;
+    toldFull = full;
+    post({ protocol: EMBED_PROTOCOL, type: "panel-mode", full });
   };
   const sendFile = () => {
     if (o.file === undefined || fileSent || disposed || !isLoaded || away) return;
@@ -380,6 +409,7 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
       // a new document: it gets the file again after its init, never an earlier read's
       fileSent = false;
       generation += 1;
+      toldFull = undefined;
     },
     receive(e) {
       if (disposed || away) return;
@@ -396,6 +426,10 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
     themeChanged() {
       const { theme, tokens } = o.readTheme();
       post({ protocol: EMBED_PROTOCOL, type: "theme", theme, tokens });
+    },
+    panelModeChanged() {
+      // before init the document is told with its init
+      if (toldFull !== undefined) sendPanelMode();
     },
     dispose() {
       disposed = true;

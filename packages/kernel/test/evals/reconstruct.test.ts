@@ -550,6 +550,8 @@ async function withReadImages(
         fallback === null ? "" : `\n\n${fallback}`
       }`;
       p.media = [{ attachmentId: id, name: "shot.png", mediaType: "image/png", size: PNG.length }];
+      // the result stands in for Read's: request building labels an image with its tool's key
+      p.toolKey = "Read";
       ids.push(id);
     }
     return original(conversationId, events, bodies);
@@ -1640,7 +1642,7 @@ describe("reconstructRequest：基线零漂移", () => {
     expect(tail[0]?.content).toContain("read the image for you");
     expect(tail.slice(-2)).toEqual([
       { type: "text", text: `Image from Read (file_id ${id}):` },
-      { type: "text", text: "[This model cannot view images.]" },
+      { type: "text", text: "[Not shown to you: this model cannot view images.]" },
     ]);
     const snap = await snapshotOf(conv);
     const second = modelCalls(toEvents(snap))[1] as ModelCallEvent;

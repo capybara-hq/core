@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "d03e463a0339d42f42ec591cd44eea7d96436d06"
+    "commit": "44fa9a1384c92d8016c54dae17d36fb9d464c9e5"
   },
   "plugins": [
     {
@@ -90,16 +90,16 @@
       "name": "device-docker",
       "source": "npm",
       "npm": "@capybara-hq/plugin-device-docker",
-      "version": "0.1.0-rc.29",
-      "integrity": "sha512-TGdSjzofH1KNP8t0fgzFqd7Jf19nrDSJ+l+G+0oLc36PI3GGk2pzp97m9K1XfAlaIWrABghZytjE3myCXpvdBw==",
+      "version": "0.1.0-rc.30",
+      "integrity": "sha512-bhqSRr6r9gNI7aKYE0ANf3xeCYYIKCOFlvOZZLyM83AzaTn4A2K7zgbgZQZAGgs9b5M3cZhlemjVTAChBPZGuw==",
       "required": false
     },
     {
       "name": "device-local",
       "source": "npm",
       "npm": "@capybara-hq/plugin-device-local",
-      "version": "0.1.0-rc.10",
-      "integrity": "sha512-f33WI+WifA/5jNjsWiuuPsrvRR/TD3qizXY2GkW4IVKZGHuMoznoxQu+znEYjsQl7b0ZxuuBzcTgHI9oGIFhRg==",
+      "version": "0.1.0-rc.11",
+      "integrity": "sha512-ZxWxrGjPjNpJtwH/2oK58itxfPFRi5CQQFbMe8VPyfYaEdfyPT8ZlOjgocdz/F8hR9jeu+E2VPgOmh7uMeBo/w==",
       "required": false,
       "scope": "all"
     },

@@ -93,7 +93,7 @@ const aborted = (s: AbortSignal) =>
 const MIN = 60_000;
 
 const spec = (): DeviceServiceSpec => ({
-  name: "echo",
+  name: "fake-ext.echo",
   runtime: "node",
   entry: "echo.mjs",
   args: [],
@@ -177,21 +177,21 @@ describe("device services", () => {
     const first = await services.ensure(use(), spec(), signal());
     const second = await services.ensure(use(), spec(), signal());
     expect(first.state).toBe("running");
-    expect(first.name).toBe("echo");
+    expect(first.name).toBe("fake-ext.echo");
     expect(second).toEqual(first);
     expect(await fakeServiceStarts(root)).toBe(1);
   });
 
   it("request round-trips through the service socket", async () => {
     await services.ensure(use(), spec(), signal());
-    const answer = await services.request(use(), "echo", text("ping"), 5_000, signal());
+    const answer = await services.request(use(), "fake-ext.echo", text("ping"), 5_000, signal());
     expect(new TextDecoder().decode(answer)).toBe("ping");
   });
 
   it("files are written into the service state dir, not the project root", async () => {
     await services.ensure(use(), spec(), signal());
     const id = await instanceId();
-    const state = fakeServiceStateDir(root, id, "echo");
+    const state = fakeServiceStateDir(root, id, "fake-ext.echo");
     expect(await readFile(join(state, "data/note.txt"), "utf8")).toBe("note");
     expect(existsSync(join(state, "echo.mjs"))).toBe(true);
     // the service itself wrote into the directory its environment named
@@ -213,19 +213,29 @@ describe("device services", () => {
   it("stop ends the service and never resumes a suspended instance", async () => {
     await services.ensure(use(), spec(), signal());
     const id = await instanceId();
-    await services.stop(use(), "echo", signal());
-    expect(await fakeServiceRunning(root, id, "echo")).toBe(false);
-    await expect(services.request(use(), "echo", text("ping"), 5_000, signal())).rejects.toThrow(
-      /not running/,
-    );
+    await services.stop(use(), "fake-ext.echo", signal());
+    expect(await fakeServiceRunning(root, id, "fake-ext.echo")).toBe(false);
+    await expect(
+      services.request(use(), "fake-ext.echo", text("ping"), 5_000, signal()),
+    ).rejects.toThrow(/not running/);
     expect(await svc.suspendIdle(new Date(Date.now() + DAY))).toBe(1);
-    await services.stop(use(), "echo", signal());
+    await services.stop(use(), "fake-ext.echo", signal());
     expect(await fakeSandboxState(root, id)).toBe("suspended");
   });
 
   it("an invalid service name is refused before the device is used", async () => {
     await expect(services.ensure(use(), { ...spec(), name: "Bad Name" }, signal())).rejects.toThrow(
-      /service name/,
+      /service id/,
+    );
+    expect(await row()).toBeUndefined();
+  });
+
+  it("a bare service name without its extension is refused before the device is used", async () => {
+    await expect(services.ensure(use(), { ...spec(), name: "echo" }, signal())).rejects.toThrow(
+      /service id/,
+    );
+    await expect(services.request(use(), "echo", text("ping"), 5_000, signal())).rejects.toThrow(
+      /service id/,
     );
     expect(await row()).toBeUndefined();
   });
@@ -261,15 +271,15 @@ describe("device services", () => {
 
   it("an ifRunning ensure never starts a stopped service and keeps a running one", async () => {
     const stopped = await services.ensure(use(), spec(), signal(), { ifRunning: true });
-    expect(stopped).toMatchObject({ name: "echo", state: "stopped", startedAt: null });
+    expect(stopped).toMatchObject({ name: "fake-ext.echo", state: "stopped", startedAt: null });
     // the provider's state directory (the fake's sits in the device's files: `.svc/<name>`)
-    expect(stopped.stateDir).toMatch(/\/\.svc\/echo$/);
-    const want = fakeServiceStateDir(root, await instanceId(), "echo");
+    expect(stopped.stateDir).toMatch(/\/\.svc\/fake-ext\.echo$/);
+    const want = fakeServiceStateDir(root, await instanceId(), "fake-ext.echo");
     expect(stopped.stateDir.endsWith(want.slice(root.length))).toBe(true);
     expect(await fakeServiceStarts(root)).toBe(0);
     const started = await services.ensure(use(), spec(), signal());
     expect(await services.ensure(use(), spec(), signal(), { ifRunning: true })).toEqual(started);
-    expect(await services.refresh(use(), "echo", signal())).toEqual(started);
+    expect(await services.refresh(use(), "fake-ext.echo", signal())).toEqual(started);
     expect(await fakeServiceStarts(root)).toBe(1);
   });
 
@@ -281,10 +291,10 @@ describe("device services", () => {
       seen.push({ spec, ifRunning: opts?.ifRunning === true });
       return ensure(h, spec, sig, opts);
     };
-    const nameOnly = { name: "echo", runtime: "node", entry: "", args: [], files: {} };
+    const nameOnly = { name: "fake-ext.echo", runtime: "node", entry: "", args: [], files: {} };
     await services.ensure(use(), spec(), signal(), { ifRunning: true });
     await services.ensure(use(), spec(), signal());
-    await services.refresh(use(), "echo", signal());
+    await services.refresh(use(), "fake-ext.echo", signal());
     // refresh of a running service with nothing to apply: one ifRunning ensure
     expect(seen.map((c) => c.ifRunning)).toEqual([true, false, true]);
     expect(seen[0]?.spec).toEqual(nameOnly);
@@ -313,7 +323,7 @@ describe("refresh after an allowlist change", () => {
     const started = await services.ensure(use(), spec(), signal());
     const h = await hold();
     await setHosts(["example.com"]);
-    expect(await services.refresh(use(), "echo", signal())).toEqual(started);
+    expect(await services.refresh(use(), "fake-ext.echo", signal())).toEqual(started);
     expect(await updates()).toHaveLength(1);
     const applied = await lastLimits();
     expect(applied?.op).toBe("update");
@@ -325,8 +335,8 @@ describe("refresh after an allowlist change", () => {
     await aborted(h.signal);
     await h.release();
     // applied: the next refresh and the next use change nothing
-    await services.refresh(use(), "echo", signal());
-    await services.request(use(), "echo", text("ping"), 5_000, signal());
+    await services.refresh(use(), "fake-ext.echo", signal());
+    await services.request(use(), "fake-ext.echo", text("ping"), 5_000, signal());
     expect(await updates()).toHaveLength(1);
   });
 
@@ -334,7 +344,7 @@ describe("refresh after an allowlist change", () => {
     await setHosts(["example.com"]);
     await services.ensure(use(), spec(), signal());
     const h = await hold();
-    await services.refresh(use(), "echo", signal());
+    await services.refresh(use(), "fake-ext.echo", signal());
     expect(await updates()).toHaveLength(0);
     expect(h.signal.aborted).toBe(false);
     await h.release();
@@ -346,7 +356,7 @@ describe("refresh after an allowlist change", () => {
     const id = await instanceId();
     expect(await svc.suspendIdle(new Date(Date.now() + DAY))).toBe(1);
     await setHosts(["example.com"]);
-    expect(await services.refresh(use(), "echo", signal())).toBeNull();
+    expect(await services.refresh(use(), "fake-ext.echo", signal())).toBeNull();
     expect(await fakeSandboxState(root, id)).toBe("suspended");
     expect(await updates()).toHaveLength(0);
     expect((await readFakeSandboxOps(root)).some((o) => o[0] === "resume")).toBe(false);
@@ -360,12 +370,12 @@ describe("refresh after an allowlist change", () => {
     await services.ensure(use(), spec(), signal());
     const before = await instanceId();
     await setHosts(["example.com"]);
-    const status = await services.refresh(use(), "echo", signal());
+    const status = await services.refresh(use(), "fake-ext.echo", signal());
     // the ifRunning ensure on the new instance finds the service stopped and starts nothing
     expect(status?.state).toBe("stopped");
     const after = await instanceId();
     expect(after).not.toBe(before);
-    expect(await fakeServiceRunning(root, before, "echo")).toBe(false);
+    expect(await fakeServiceRunning(root, before, "fake-ext.echo")).toBe(false);
     expect(await fakeServiceStarts(root)).toBe(1);
     const applied = await lastLimits();
     expect(applied?.op).toBe("create");
@@ -394,7 +404,7 @@ describe("refresh after an allowlist change", () => {
       await gate;
     });
     await inside;
-    const refreshed = services.refresh(use(), "echo", signal());
+    const refreshed = services.refresh(use(), "fake-ext.echo", signal());
     // the waiter's intent: new shared leases wait behind it
     await vi.waitFor(
       async () => expect(await redis.exists(`capk:sandbox-intent:${deviceId}`)).toBe(1),
@@ -439,10 +449,10 @@ describe("refresh after an allowlist change", () => {
     await setHosts([]);
     await services.ensure(use(), spec(), signal());
     const id = await instanceId();
-    await services.stop(use(), "echo", signal());
+    await services.stop(use(), "fake-ext.echo", signal());
     const h = await hold();
     await setHosts(["example.com"]);
-    expect((await services.refresh(use(), "echo", signal()))?.state).toBe("stopped");
+    expect((await services.refresh(use(), "fake-ext.echo", signal()))?.state).toBe("stopped");
     expect(await updates()).toHaveLength(0);
     expect(await instanceId()).toBe(id);
     expect(h.signal.aborted).toBe(false);
@@ -458,7 +468,7 @@ describe("refresh after an allowlist change", () => {
     await services.ensure(use(), spec(), signal());
     await setHosts(["example.com"]);
     const held = await holdElsewhere();
-    await expect(services.refresh(use(), "echo", signal())).rejects.toMatchObject({
+    await expect(services.refresh(use(), "fake-ext.echo", signal())).rejects.toMatchObject({
       code: "sandbox.busy",
     });
     expect(await redis.exists(intentKey())).toBe(0);
@@ -474,7 +484,7 @@ describe("refresh after an allowlist change", () => {
     await setHosts(["example.com"]);
     const held = await holdElsewhere();
     const ac = new AbortController();
-    const refreshed = services.refresh(use(), "echo", ac.signal);
+    const refreshed = services.refresh(use(), "fake-ext.echo", ac.signal);
     await intentSet();
     ac.abort(new Error("caller gave up"));
     await expect(refreshed).rejects.toThrow(/caller gave up/);
@@ -499,7 +509,7 @@ describe("refresh after an allowlist change", () => {
     };
     await holdNextFakeSandboxUpdate(root, "panel");
     const ac = new AbortController();
-    const refreshed = services.refresh(use(), "echo", ac.signal);
+    const refreshed = services.refresh(use(), "fake-ext.echo", ac.signal);
     await vi.waitFor(
       async () =>
         expect((await readFakeSandboxOps(root)).some((o) => o[0] === "update-held")).toBe(true),
@@ -536,7 +546,7 @@ describe("refresh after an allowlist change", () => {
       JSON.stringify({ ...meta, fence: 1_000_000 }),
     );
     await setHosts(["example.com"]);
-    await expect(services.refresh(use(), "echo", signal())).rejects.toBeInstanceOf(
+    await expect(services.refresh(use(), "fake-ext.echo", signal())).rejects.toBeInstanceOf(
       SandboxLockLostError,
     );
     const ops = await readFakeSandboxOps(root);
@@ -544,7 +554,7 @@ describe("refresh after an allowlist change", () => {
     expect(ops.some((o) => o[0] === "destroy")).toBe(false);
     expect((await readFakeSandboxLimits(root)).filter((e) => e.op === "create")).toHaveLength(1);
     expect(await instanceId()).toBe(id);
-    expect(await fakeServiceRunning(root, id, "echo")).toBe(true);
+    expect(await fakeServiceRunning(root, id, "fake-ext.echo")).toBe(true);
   });
 
   it("a device deleted while the refresh waited gets nothing applied or recreated", async () => {
@@ -554,7 +564,7 @@ describe("refresh after an allowlist change", () => {
     const id = await instanceId();
     await setHosts(["example.com"]);
     const held = await holdElsewhere();
-    const refreshed = services.refresh(use(), "echo", signal());
+    const refreshed = services.refresh(use(), "fake-ext.echo", signal());
     await intentSet();
     await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${deviceId}`.execute(raw);
     held.letGo();
@@ -631,7 +641,7 @@ describe("stream holds", () => {
     const h = await hold();
     await setHosts(["example.com"]);
     // the next use applies the widened allowlist under the exclusive lease
-    await services.request(use(), "echo", text("ping"), 5_000, signal());
+    await services.request(use(), "fake-ext.echo", text("ping"), 5_000, signal());
     const ops = (await readFakeSandboxOps(root)).filter((o) => o[0] === "update");
     expect(ops).toHaveLength(1);
     await aborted(h.signal);
@@ -657,7 +667,7 @@ describe("stream holds", () => {
     await services.ensure(use(), spec(), signal());
     const holds = [await hold(), await hold(), await hold()];
     // the one slot is free for commands while three viewers are open
-    const answer = await services.request(use(), "echo", text("ping"), 5_000, signal());
+    const answer = await services.request(use(), "fake-ext.echo", text("ping"), 5_000, signal());
     expect(new TextDecoder().decode(answer)).toBe("ping");
     for (const h of holds) expect(h.signal.aborted).toBe(false);
     for (const h of holds) await h.release();
@@ -679,7 +689,7 @@ describe("stream holds", () => {
     await services.ensure(use(), spec(), signal());
     const h = await hold();
     try {
-      const stream = await h.p.openStream(h.h, { service: "echo" }, signal());
+      const stream = await h.p.openStream(h.h, { service: "fake-ext.echo" }, signal());
       const it = stream.messages[Symbol.asyncIterator]();
       await stream.send(text("one"));
       expect(new TextDecoder().decode((await it.next()).value as Uint8Array)).toBe("one");
@@ -695,9 +705,9 @@ describe("stream holds", () => {
   it("suspend kills the service", async () => {
     await services.ensure(use(), spec(), signal());
     const id = await instanceId();
-    expect(await fakeServiceRunning(root, id, "echo")).toBe(true);
+    expect(await fakeServiceRunning(root, id, "fake-ext.echo")).toBe(true);
     expect(await svc.suspendIdle(idle())).toBe(1);
-    expect(await fakeServiceRunning(root, id, "echo")).toBe(false);
+    expect(await fakeServiceRunning(root, id, "fake-ext.echo")).toBe(false);
     // the next ensure resumes the instance and starts the service again
     const again = await services.ensure(use(), spec(), signal());
     expect(again.state).toBe("running");

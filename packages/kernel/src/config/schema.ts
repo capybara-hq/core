@@ -4,6 +4,7 @@ import {
   DOCUMENT_MEDIA_TYPES,
   EXTENSION_NAME_RE,
   IMAGE_MEDIA_TYPES,
+  TOOL_TIMEOUT_MAX_MS,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -1086,6 +1087,18 @@ export const KernelConfigSchema = z.strictObject({
         .positive()
         .default(60000)
         .meta(meta({ description: "Timeout of one tool call in milliseconds" })),
+      maxTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(TOOL_TIMEOUT_MAX_MS)
+        .default(TOOL_TIMEOUT_MAX_MS)
+        .meta(
+          meta({
+            description:
+              "Ceiling on the time limit an extension tool declares (ToolSpec.timeoutMs) in milliseconds; a longer declared limit is cut to it",
+          }),
+        ),
       breakerFailures: z
         .number()
         .int()
@@ -1265,6 +1278,7 @@ export const KernelConfigSchema = z.strictObject({
     })
     .default({
       timeoutMs: 60000,
+      maxTimeoutMs: TOOL_TIMEOUT_MAX_MS,
       breakerFailures: 5,
       breakerOpenSeconds: 60,
       outputSpillChars: 50000,
@@ -1513,7 +1527,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Most images Read may show the model in one request; older Read images are replaced with a placeholder",
+              "Most stored tool-result images (Read images and images other tools returned) shown to the model in one request; older ones are replaced with a placeholder",
           }),
         ),
       readMaxBytesPerConversation: z
@@ -1526,7 +1540,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Most bytes of Read image copies stored for one conversation; past it a Read image is not stored and does not stay in the history; 0 stores none",
+              "Most bytes of stored tool-result image copies (Read images and images other tools returned) for one conversation; past it an image is not stored and does not stay in the history; 0 stores none",
           }),
         ),
       readPurgeAfterHours: z
@@ -1539,7 +1553,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Hours after a conversation is deleted before its Read image copies are purged (row and object)",
+              "Hours after a conversation is deleted before its stored tool-result image copies are purged (row and object)",
           }),
         ),
     })

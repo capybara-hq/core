@@ -81,7 +81,8 @@ export interface MacOperationBackendOptions {
   onProjectAdmitted?: (projectRoot: string) => void;
   /**
    * The device services' directories (`<device dir>/svc` with each service's state, a browser
-   * profile among them, and `<device dir>/svc-files` with their code): added to every sandboxed
+   * profile among them, `<device dir>/svc-files` with their code and `<device dir>/svc-install`
+   * with what they installed, a browser): added to every sandboxed
    * grant's denied roots, so an agent operation neither reads nor writes them (the sandbox turns
    * each denied read root into write denies too). Only grants: the owner ceiling the service
    * launcher checks its own roots against stays as it is.

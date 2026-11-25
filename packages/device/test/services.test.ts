@@ -14,6 +14,8 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DEVICE_SERVICE_INSTALL_ENV,
+  DEVICE_SERVICE_INSTALL_SEAL,
   DEVICE_SERVICE_MACH_CHROMIUM,
   DEVICE_SERVICE_MACH_ENV,
   DEVICE_SERVICE_SOCKET_ENV,
@@ -58,7 +60,7 @@ async function fixture() {
 }
 
 const spec = (files: Record<string, string> = { "main.js": "// service" }) => ({
-  name: "browser",
+  name: "browser.browser",
   entry: "main.js",
   args: ["--flag"],
   files: Object.fromEntries(Object.entries(files).map(([k, v]) => [k, b64(v)])),
@@ -72,18 +74,20 @@ it("ensure writes files and starts the service under the sandbox launcher", asyn
     { op: "service.ensure", spec: spec({ "main.js": "// main", "lib/x.js": "// x" }) },
     signal(),
   );
-  const stateDir = join(deviceDir, "svc", "browser");
+  const stateDir = join(deviceDir, "svc", "browser.browser");
   // the code lives apart from the state, in a directory the service only reads (R30)
-  const codeDir = join(deviceDir, "svc-files", "browser");
+  const codeDir = join(deviceDir, "svc-files", "browser.browser");
   expect(res).toMatchObject({
     ok: true,
-    result: { name: "browser", state: "running", stateDir, codeDir },
+    result: { name: "browser.browser", state: "running", stateDir, codeDir },
   });
   expect(await readFile(join(codeDir, "main.js"), "utf8")).toBe("// main");
   expect(await readFile(join(codeDir, "lib", "x.js"), "utf8")).toBe("// x");
   expect(echo.calls).toHaveLength(1);
   const call = echo.calls[0];
-  expect(call?.writeRoots).toEqual([stateDir, join(workspace, "downloads")]);
+  // the install directory is the service's to fill until it seals it
+  const installDir = join(deviceDir, "svc-install", "browser.browser");
+  expect(call?.writeRoots).toEqual([stateDir, join(workspace, "downloads"), installDir]);
   expect(call?.argv).toEqual([process.execPath, join(codeDir, "main.js"), "--flag"]);
   expect(call?.readRoots).toContain(codeDir);
   expect(call?.cwd).toBe(stateDir);
@@ -91,6 +95,7 @@ it("ensure writes files and starts the service under the sandbox launcher", asyn
     FOO: "bar",
     [DEVICE_SERVICE_STATE_ENV]: stateDir,
     [DEVICE_SERVICE_SOCKET_ENV]: join(stateDir, "s"),
+    [DEVICE_SERVICE_INSTALL_ENV]: installDir,
   });
   expect((await stat(join(workspace, "downloads"))).isDirectory()).toBe(true);
   const ok = res as { result: { startedAt: string } };
@@ -100,7 +105,7 @@ it("ensure writes files and starts the service under the sandbox launcher", asyn
 it("second ensure is a no-op while running", async () => {
   const { deviceDir, supervisor, echo } = await fixture();
   const first = await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
-  const entry = join(deviceDir, "svc-files", "browser", "main.js");
+  const entry = join(deviceDir, "svc-files", "browser.browser", "main.js");
   await writeFile(entry, "// changed locally");
   const second = await serveServiceOp(
     supervisor,
@@ -118,7 +123,7 @@ it("service.request round-trips via the socket", async () => {
   await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
   const res = await serveServiceOp(
     supervisor,
-    { op: "service.request", name: "browser", body: b64("hello"), timeoutMs: 5000 },
+    { op: "service.request", name: "browser.browser", body: b64("hello"), timeoutMs: 5000 },
     signal(),
   );
   expect(res).toEqual({ ok: true, result: { body: b64("echo:hello") } });
@@ -127,29 +132,29 @@ it("service.request round-trips via the socket", async () => {
 it("service.status and service.stop report and end the service", async () => {
   const { deviceDir, supervisor, echo } = await fixture();
   expect(
-    await serveServiceOp(supervisor, { op: "service.status", name: "browser" }, signal()),
+    await serveServiceOp(supervisor, { op: "service.status", name: "browser.browser" }, signal()),
   ).toEqual({
     ok: true,
     result: {
-      name: "browser",
+      name: "browser.browser",
       state: "stopped",
       startedAt: null,
-      stateDir: join(deviceDir, "svc", "browser"),
-      codeDir: join(deviceDir, "svc-files", "browser"),
+      stateDir: join(deviceDir, "svc", "browser.browser"),
+      codeDir: join(deviceDir, "svc-files", "browser.browser"),
     },
   });
   await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
   expect(
-    await serveServiceOp(supervisor, { op: "service.stop", name: "browser" }, signal()),
+    await serveServiceOp(supervisor, { op: "service.stop", name: "browser.browser" }, signal()),
   ).toEqual({
     ok: true,
     result: null,
   });
-  expect(supervisor.status("browser").state).toBe("stopped");
+  expect(supervisor.status("browser.browser").state).toBe("stopped");
   // stopped: a request fails with an actionable error, and the next ensure starts it again
   const refused = await serveServiceOp(
     supervisor,
-    { op: "service.request", name: "browser", body: b64("x"), timeoutMs: 1000 },
+    { op: "service.request", name: "browser.browser", body: b64("x"), timeoutMs: 1000 },
     signal(),
   );
   expect(refused).toMatchObject({
@@ -164,13 +169,13 @@ it("a service that exits is reported stopped and is never restarted", async () =
   const { deviceDir, supervisor, echo } = await fixture();
   await supervisor.ensure({ ...spec(), files: { "main.js": bytes("//") } }, undefined, signal());
   echo.exitAll(1);
-  await supervisor.exited("browser");
-  expect(supervisor.status("browser")).toEqual({
-    name: "browser",
+  await supervisor.exited("browser.browser");
+  expect(supervisor.status("browser.browser")).toEqual({
+    name: "browser.browser",
     state: "stopped",
     startedAt: null,
-    stateDir: join(deviceDir, "svc", "browser"),
-    codeDir: join(deviceDir, "svc-files", "browser"),
+    stateDir: join(deviceDir, "svc", "browser.browser"),
+    codeDir: join(deviceDir, "svc-files", "browser.browser"),
   });
   expect(echo.calls).toHaveLength(1);
 });
@@ -179,12 +184,13 @@ it("refuses malformed service bodies with a typed answer", async () => {
   const { supervisor } = await fixture();
   for (const body of [
     { op: "service.ensure", spec: { ...spec(), name: "Bad Name" } },
+    { op: "service.ensure", spec: { ...spec(), name: "browser" } },
     { op: "service.ensure", spec: { ...spec(), entry: "../escape.js" } },
     { op: "service.ensure", spec: { ...spec(), files: { "/abs.js": b64("x") }, entry: "/abs.js" } },
     { op: "service.ensure", spec: { ...spec(), entry: "missing.js" } },
     { op: "service.ensure", spec: { ...spec(), env: { [DEVICE_SERVICE_SOCKET_ENV]: "/x" } } },
-    { op: "service.request", name: "browser", body: "not base64!", timeoutMs: 10 },
-    { op: "service.unknown", name: "browser" },
+    { op: "service.request", name: "browser.browser", body: "not base64!", timeoutMs: 10 },
+    { op: "service.unknown", name: "browser.browser" },
   ])
     expect(await serveServiceOp(supervisor, body, signal())).toMatchObject({
       ok: false,
@@ -209,18 +215,19 @@ it("without a launcher (an unsupported host) service.ensure answers unsupported"
   });
 });
 
-it("state dir path length stays under 104 bytes for a 32-char service name", async () => {
-  const name = `a${"b".repeat(31)}`;
-  expect(name).toHaveLength(32);
+it("state dir path length stays under 104 bytes for the longest service id", async () => {
+  // the longest id: a 41-character extension name, a dot, a 32-character service name
+  const name = `e${"x".repeat(40)}.a${"b".repeat(31)}`;
+  expect(name).toHaveLength(74);
   expect(MAX_SERVICE_SOCKET_PATH_BYTES).toBeLessThan(104);
   // a typical device directory, ~/capybara-device/<uuid>: a short name binds in the state dir
   const typicalDir = "/Users/someone/capybara-device/0b9c7a52-3f1e-4f43-9d55-3f0e9b6e2a11";
-  const short = servicePaths(typicalDir, "browser", "/tmp/capybara-svc-501");
+  const short = servicePaths(typicalDir, "browser.browser", "/tmp/capybara-svc-501");
   expect(short).toEqual({
-    stateDir: `${typicalDir}/svc/browser`,
-    socket: `${typicalDir}/svc/browser/s`,
+    stateDir: `${typicalDir}/svc/browser.browser`,
+    socket: `${typicalDir}/svc/browser.browser/s`,
   });
-  // a 32-character name there would pass the limit: the socket is reached through the alias
+  // the longest id there would pass the limit: the socket is reached through the alias
   const typical = servicePaths(typicalDir, name, "/tmp/capybara-svc-501");
   expect(Buffer.byteLength(`${typical.stateDir}/s`)).toBeGreaterThan(MAX_SERVICE_SOCKET_PATH_BYTES);
   expect(Buffer.byteLength(typical.socket)).toBeLessThanOrEqual(MAX_SERVICE_SOCKET_PATH_BYTES);
@@ -253,7 +260,7 @@ it("a long device directory still serves the socket inside the state dir", async
     socketAliasRoot: join(aliasRoot, "r"),
   });
   cleanups.push(() => supervisor.stopAll(signal()));
-  const name = `a${"b".repeat(31)}`;
+  const name = `e${"x".repeat(40)}.a${"b".repeat(31)}`;
   await supervisor.ensure(
     { ...spec(), name, files: { "main.js": bytes("//") } },
     undefined,
@@ -285,7 +292,7 @@ async function plantedFixture() {
   const outside = join(f.root, "outside");
   await mkdir(outside);
   await writeFile(join(outside, "secret"), "keep");
-  const codeDir = join(f.deviceDir, "svc-files", "browser");
+  const codeDir = join(f.deviceDir, "svc-files", "browser.browser");
   await mkdir(codeDir, { recursive: true });
   return { ...f, outside, codeDir };
 }
@@ -336,8 +343,8 @@ it("a state directory or downloads that is a link is refused", async () => {
   });
   await rm(join(f.workspace, "downloads"));
   // the refused first attempt made the state directory; a service could replace it with a link
-  await rm(join(f.deviceDir, "svc", "browser"), { recursive: true });
-  await symlink(elsewhere, join(f.deviceDir, "svc", "browser"));
+  await rm(join(f.deviceDir, "svc", "browser.browser"), { recursive: true });
+  await symlink(elsewhere, join(f.deviceDir, "svc", "browser.browser"));
   expect(
     await serveServiceOp(f.supervisor, { op: "service.ensure", spec: spec() }, signal()),
   ).toMatchObject({
@@ -357,7 +364,7 @@ it("spec files may use any name but the digest's", async () => {
       signal(),
     ),
   ).toMatchObject({ ok: true });
-  await supervisor.stop("browser", signal());
+  await supervisor.stop("browser.browser", signal());
   expect(
     await serveServiceOp(
       supervisor,
@@ -378,11 +385,11 @@ it("ifRunning starts nothing for a stopped service", async () => {
   ).toEqual({
     ok: true,
     result: {
-      name: "browser",
+      name: "browser.browser",
       state: "stopped",
       startedAt: null,
-      stateDir: join(deviceDir, "svc", "browser"),
-      codeDir: join(deviceDir, "svc-files", "browser"),
+      stateDir: join(deviceDir, "svc", "browser.browser"),
+      codeDir: join(deviceDir, "svc-files", "browser.browser"),
     },
   });
   expect(echo.calls).toHaveLength(0);
@@ -401,7 +408,7 @@ it("parses service files of several megabytes (a browser daemon bundle)", () => 
   const big = Buffer.alloc(6 * 1024 * 1024, 7).toString("base64");
   const parsed = parseServiceOpBody({
     op: "service.ensure",
-    spec: { name: "browser", entry: "main.js", args: [], files: { "main.js": big } },
+    spec: { name: "browser.browser", entry: "main.js", args: [], files: { "main.js": big } },
   });
   expect(parsed.op === "service.ensure" && parsed.spec.files?.["main.js"]?.length).toBe(
     6 * 1024 * 1024,
@@ -410,17 +417,17 @@ it("parses service files of several megabytes (a browser daemon bundle)", () => 
     expect(() =>
       parseServiceOpBody({
         op: "service.ensure",
-        spec: { name: "browser", entry: "main.js", args: [], files: { "main.js": bad } },
+        spec: { name: "browser.browser", entry: "main.js", args: [], files: { "main.js": bad } },
       }),
     ).toThrow(/standard padded base64/);
 });
 
 it("ifRunning accepts the name-only spec device-local sends", async () => {
   const { supervisor, echo } = await fixture();
-  const nameOnly = { op: "service.ensure", spec: { name: "browser" }, ifRunning: true };
+  const nameOnly = { op: "service.ensure", spec: { name: "browser.browser" }, ifRunning: true };
   expect(await serveServiceOp(supervisor, nameOnly, signal())).toMatchObject({
     ok: true,
-    result: { name: "browser", state: "stopped" },
+    result: { name: "browser.browser", state: "stopped" },
   });
   await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
   expect(await serveServiceOp(supervisor, nameOnly, signal())).toMatchObject({
@@ -430,7 +437,11 @@ it("ifRunning accepts the name-only spec device-local sends", async () => {
   expect(echo.calls).toHaveLength(1);
   // without ifRunning the spec stays complete
   expect(
-    await serveServiceOp(supervisor, { op: "service.ensure", spec: { name: "browser" } }, signal()),
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: { name: "browser.browser" } },
+      signal(),
+    ),
   ).toMatchObject({ ok: false, error: { kind: "invalid" } });
 });
 
@@ -458,7 +469,7 @@ it("service.request waits no longer than the envelope deadline and answers", asy
   await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
   const res = await serveServiceOp(
     supervisor,
-    { op: "service.request", name: "browser", body: b64("hang"), timeoutMs: 600_000 },
+    { op: "service.request", name: "browser.browser", body: b64("hang"), timeoutMs: 600_000 },
     signal(),
     { deadlineMs: 300 },
   );
@@ -558,9 +569,13 @@ it("ensure with a widened host list restarts the running service with the new gr
   expect(first?.grant).toMatchObject({
     full: false,
     hosts: ["a.example.com"],
-    writeRoots: [join(f.deviceDir, "svc", "browser"), join(f.workspace, "downloads")],
+    writeRoots: [
+      join(f.deviceDir, "svc", "browser.browser"),
+      join(f.workspace, "downloads"),
+      join(f.deviceDir, "svc-install", "browser.browser"),
+    ],
   });
-  expect(first?.service?.unixSockets).toEqual([join(f.deviceDir, "svc", "browser")]);
+  expect(first?.service?.unixSockets).toEqual([join(f.deviceDir, "svc", "browser.browser")]);
   // the same network again: kept as is
   await ensure(["a.example.com"]);
   expect(f.requests).toHaveLength(1);
@@ -574,7 +589,7 @@ it("ensure with a widened host list restarts the running service with the new gr
     "a.example.com",
     "b.example.com",
   ]);
-  const reply = await f.supervisor.request("browser", bytes("x"), {
+  const reply = await f.supervisor.request("browser.browser", bytes("x"), {
     timeoutMs: 5000,
     signal: signal(),
   });
@@ -670,24 +685,26 @@ it("digest-first files: a start reuses stored files only under the same digest",
     ok: true,
     result: { state: "running" },
   });
-  expect(await readFile(join(deviceDir, "svc-files", "browser", ".files-digest"), "utf8")).toBe(
-    "sha256:v1",
-  );
+  expect(
+    await readFile(join(deviceDir, "svc-files", "browser.browser", ".files-digest"), "utf8"),
+  ).toBe("sha256:v1");
   // a running service ignores files and digest
   expect(await ensure({ spec: noFiles, filesDigest: "sha256:other" })).toMatchObject({
     ok: true,
     result: { state: "running" },
   });
   expect(echo.calls).toHaveLength(1);
-  await supervisor.stop("browser", signal());
+  await supervisor.stop("browser.browser", signal());
   // the digest alone starts it on the stored files
   expect(await ensure({ spec: noFiles, filesDigest: "sha256:v1" })).toMatchObject({
     ok: true,
     result: { state: "running" },
   });
   expect(echo.calls).toHaveLength(2);
-  expect(await readFile(join(deviceDir, "svc-files", "browser", "main.js"), "utf8")).toBe("// v1");
-  await supervisor.stop("browser", signal());
+  expect(await readFile(join(deviceDir, "svc-files", "browser.browser", "main.js"), "utf8")).toBe(
+    "// v1",
+  );
+  await supervisor.stop("browser.browser", signal());
   // another digest without files: files_needed, nothing started
   expect(await ensure({ spec: noFiles, filesDigest: "sha256:v2" })).toMatchObject({
     ok: false,
@@ -701,7 +718,7 @@ it("digest-first files: a start reuses stored files only under the same digest",
   expect(echo.calls).toHaveLength(2);
   // files without a digest drop the stored one: the old digest no longer matches
   await ensure({ spec: spec({ "main.js": "// v3" }) });
-  await supervisor.stop("browser", signal());
+  await supervisor.stop("browser.browser", signal());
   expect(await ensure({ spec: noFiles, filesDigest: "sha256:v1" })).toMatchObject({
     ok: false,
     error: { kind: "files_needed" },
@@ -724,8 +741,8 @@ it("a stored digest that is a link counts as none", async () => {
     { op: "service.ensure", spec: spec(), filesDigest: "d1" },
     signal(),
   );
-  await supervisor.stop("browser", signal());
-  const digestFile = join(deviceDir, "svc-files", "browser", ".files-digest");
+  await supervisor.stop("browser.browser", signal());
+  const digestFile = join(deviceDir, "svc-files", "browser.browser", ".files-digest");
   await writeFile(join(root, "planted"), "d1");
   await rm(digestFile);
   await symlink(join(root, "planted"), digestFile);
@@ -741,8 +758,8 @@ it("a stored digest that is a link counts as none", async () => {
 
 it("a service rewriting its state directory cannot change the code a digest start runs", async () => {
   const { deviceDir, workspace, supervisor, echo } = await fixture();
-  const stateDir = join(deviceDir, "svc", "browser");
-  const codeDir = join(deviceDir, "svc-files", "browser");
+  const stateDir = join(deviceDir, "svc", "browser.browser");
+  const codeDir = join(deviceDir, "svc-files", "browser.browser");
   await serveServiceOp(
     supervisor,
     { op: "service.ensure", spec: spec({ "main.js": "// reviewed" }), filesDigest: "d1" },
@@ -753,11 +770,15 @@ it("a service rewriting its state directory cannot change the code a digest star
   expect(grant?.readRoots).toContain(codeDir);
   for (const root of grant?.writeRoots ?? [])
     expect(codeDir === root || codeDir.startsWith(`${root}/`)).toBe(false);
-  expect(grant?.writeRoots).toEqual([stateDir, join(workspace, "downloads")]);
+  expect(grant?.writeRoots).toEqual([
+    stateDir,
+    join(workspace, "downloads"),
+    join(deviceDir, "svc-install", "browser.browser"),
+  ]);
   // what a compromised service can do: rewrite anything in its state directory
   await writeFile(join(stateDir, "main.js"), "// evil");
   await writeFile(join(stateDir, ".files-digest"), "d1");
-  await supervisor.stop("browser", signal());
+  await supervisor.stop("browser.browser", signal());
   const { files: _f, ...noFiles } = spec();
   expect(
     await serveServiceOp(
@@ -777,20 +798,20 @@ it("new files replace the whole code directory", async () => {
     { op: "service.ensure", spec: spec({ "main.js": "//", "old.js": "//" }), filesDigest: "d1" },
     signal(),
   );
-  await supervisor.stop("browser", signal());
+  await supervisor.stop("browser.browser", signal());
   await serveServiceOp(
     supervisor,
     { op: "service.ensure", spec: spec({ "main.js": "//" }) },
     signal(),
   );
-  const codeDir = join(deviceDir, "svc-files", "browser");
+  const codeDir = join(deviceDir, "svc-files", "browser.browser");
   await expect(stat(join(codeDir, "old.js"))).rejects.toThrow(/ENOENT/);
   await expect(stat(join(codeDir, ".files-digest"))).rejects.toThrow(/ENOENT/);
 });
 
 // The kernel's ifRunning ensures (the launch review's first look, the refresh after an allowlist
 // change) send only the service's name: { name, entry: "", args: [], files: {} }.
-const nameOnly = { name: "browser", entry: "", args: [], files: {} };
+const nameOnly = { name: "browser.browser", entry: "", args: [], files: {} };
 
 it("an ifRunning ensure with the name-only spec answers stopped, then keeps a running service", async () => {
   const { deviceDir, supervisor, echo } = await fixture();
@@ -800,7 +821,10 @@ it("an ifRunning ensure with the name-only spec answers stopped, then keeps a ru
       { op: "service.ensure", spec: nameOnly, ifRunning: true },
       signal(),
     ),
-  ).toMatchObject({ ok: true, result: { name: "browser", state: "stopped", startedAt: null } });
+  ).toMatchObject({
+    ok: true,
+    result: { name: "browser.browser", state: "stopped", startedAt: null },
+  });
   const started = await serveServiceOp(
     supervisor,
     { op: "service.ensure", spec: spec({ "main.js": "// reviewed" }) },
@@ -815,14 +839,14 @@ it("an ifRunning ensure with the name-only spec answers stopped, then keeps a ru
   ).toEqual(started);
   expect(echo.calls).toHaveLength(1);
   // the empty files of the name-only spec never touch the code directory
-  expect(await readFile(join(deviceDir, "svc-files", "browser", "main.js"), "utf8")).toBe(
+  expect(await readFile(join(deviceDir, "svc-files", "browser.browser", "main.js"), "utf8")).toBe(
     "// reviewed",
   );
 });
 
 it("a network change under a name-only ifRunning ensure restarts the launched spec on its stored code", async () => {
   const f = await macFixture();
-  const codeDir = join(f.deviceDir, "svc-files", "browser");
+  const codeDir = join(f.deviceDir, "svc-files", "browser.browser");
   const first = await serveServiceOp(
     f.supervisor,
     {
@@ -877,19 +901,19 @@ it("reconcile stops a service whose owner ceiling changed, and keeps one whose d
   await ensure();
   // nothing changed: kept
   await f.supervisor.reconcile(signal());
-  expect(f.supervisor.status("browser").state).toBe("running");
+  expect(f.supervisor.status("browser.browser").state).toBe("running");
   // the owner narrows the network: stopped, not restarted (the next ensure starts it again)
   allowedDomains = ["a.example.com"];
   revision = "r2";
   await f.supervisor.reconcile(signal());
-  expect(f.supervisor.status("browser").state).toBe("stopped");
+  expect(f.supervisor.status("browser.browser").state).toBe("stopped");
   expect(f.requests).toHaveLength(1);
   // a revision change alone (a new deny root) stops it too
   await ensure();
   expect(f.requests).toHaveLength(2);
   revision = "r3";
   await f.supervisor.reconcile(signal());
-  expect(f.supervisor.status("browser").state).toBe("stopped");
+  expect(f.supervisor.status("browser.browser").state).toBe("stopped");
   expect(f.requests).toHaveLength(2);
 });
 
@@ -902,4 +926,117 @@ it("the macOS launcher tells the service the full Chromium build can start", asy
   expect(request?.kind === "exec" ? request.args.env : undefined).toMatchObject({
     [DEVICE_SERVICE_MACH_ENV]: DEVICE_SERVICE_MACH_CHROMIUM,
   });
+});
+
+it("the install directory is read only once sealed and emptied when the service's files change", async () => {
+  const { deviceDir, workspace, supervisor, echo } = await fixture();
+  const stateDir = join(deviceDir, "svc", "browser.browser");
+  const installDir = join(deviceDir, "svc-install", "browser.browser");
+  const { files: _f, ...noFiles } = spec();
+  const ensure = (body: Record<string, unknown>) =>
+    serveServiceOp(supervisor, { op: "service.ensure", ...body }, signal());
+  expect(await ensure({ spec: spec(), filesDigest: "d1" })).toMatchObject({ ok: true });
+  // unsealed: writable, not a read root
+  expect(echo.calls[0]?.writeRoots).toContain(installDir);
+  expect(echo.calls[0]?.readRoots).not.toContain(installDir);
+  // what the service does on its first start: install, then seal
+  await writeFile(join(installDir, "browser"), "chromium");
+  await writeFile(join(installDir, DEVICE_SERVICE_INSTALL_SEAL), "");
+  await supervisor.stop("browser.browser", signal());
+  // the next start (same files): read only, the install kept
+  expect(await ensure({ spec: noFiles, filesDigest: "d1" })).toMatchObject({ ok: true });
+  expect(echo.calls[1]?.writeRoots).toEqual([stateDir, join(workspace, "downloads")]);
+  expect(echo.calls[1]?.readRoots).toContain(installDir);
+  expect(echo.calls[1]?.env[DEVICE_SERVICE_INSTALL_ENV]).toBe(installDir);
+  expect(await readFile(join(installDir, "browser"), "utf8")).toBe("chromium");
+  // a restart for a changed network runs on the stored code: the seal holds
+  expect(
+    await ensure({
+      spec: { name: "browser.browser" },
+      ifRunning: true,
+      network: { kind: "allowlist", hosts: ["a.example.com"] },
+    }),
+  ).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(echo.calls).toHaveLength(3);
+  expect(echo.calls[2]?.writeRoots).not.toContain(installDir);
+  expect(echo.calls[2]?.readRoots).toContain(installDir);
+  await supervisor.stop("browser.browser", signal());
+  // new files (a plugin upgrade): emptied and writable again for the new install
+  expect(await ensure({ spec: spec({ "main.js": "// v2" }), filesDigest: "d2" })).toMatchObject({
+    ok: true,
+  });
+  expect(echo.calls[3]?.writeRoots).toContain(installDir);
+  await expect(lstat(join(installDir, "browser"))).rejects.toThrow(/ENOENT/);
+  await expect(lstat(join(installDir, DEVICE_SERVICE_INSTALL_SEAL))).rejects.toThrow(/ENOENT/);
+  // the digest record sits beside the install directory, out of the service's reach
+  expect(await readFile(join(deviceDir, "svc-install", ".browser.browser"), "utf8")).toBe("d2");
+});
+
+it("only a regular seal file seals the install directory", async () => {
+  const { root, deviceDir, supervisor, echo } = await fixture();
+  const installDir = join(deviceDir, "svc-install", "browser.browser");
+  const { files: _f, ...noFiles } = spec();
+  await serveServiceOp(
+    supervisor,
+    { op: "service.ensure", spec: spec(), filesDigest: "d1" },
+    signal(),
+  );
+  await writeFile(join(root, "elsewhere"), "");
+  await symlink(join(root, "elsewhere"), join(installDir, DEVICE_SERVICE_INSTALL_SEAL));
+  await supervisor.stop("browser.browser", signal());
+  await serveServiceOp(
+    supervisor,
+    { op: "service.ensure", spec: noFiles, filesDigest: "d1" },
+    signal(),
+  );
+  expect(echo.calls[1]?.writeRoots).toContain(installDir);
+  expect(echo.calls[1]?.readRoots).not.toContain(installDir);
+});
+
+it("an unsealed install directory is emptied at every start, whatever wrote it (an older version)", async () => {
+  const { deviceDir, supervisor, echo } = await fixture();
+  const installDir = join(deviceDir, "svc-install", "browser.browser");
+  const { files: _f, ...noFiles } = spec();
+  const ensure = (body: Record<string, unknown>) =>
+    serveServiceOp(supervisor, { op: "service.ensure", ...body }, signal());
+  expect(await ensure({ spec: spec(), filesDigest: "d1" })).toMatchObject({ ok: true });
+  // a process that never sealed (an older service, a compromised one) left an "install" behind
+  await mkdir(join(installDir, "chromium-1"), { recursive: true });
+  await writeFile(join(installDir, "chromium-1", "INSTALLATION_COMPLETE"), "");
+  await writeFile(join(installDir, "chromium-1", "chrome"), "planted");
+  await supervisor.stop("browser.browser", signal());
+  // the same files again: still unsealed, so emptied
+  expect(await ensure({ spec: noFiles, filesDigest: "d1" })).toMatchObject({ ok: true });
+  await expect(lstat(join(installDir, "chromium-1"))).rejects.toThrow(/ENOENT/);
+  expect(echo.calls[1]?.writeRoots).toContain(installDir);
+  await writeFile(join(installDir, "planted-again"), "x");
+  await supervisor.stop("browser.browser", signal());
+  // an upgrade (new files) over a dirty unsealed directory: emptied too, never sealed as found
+  expect(await ensure({ spec: spec({ "main.js": "// v2" }), filesDigest: "d2" })).toMatchObject({
+    ok: true,
+  });
+  await expect(lstat(join(installDir, "planted-again"))).rejects.toThrow(/ENOENT/);
+  expect(echo.calls[2]?.writeRoots).toContain(installDir);
+});
+
+it("removes what services kept under bare names before ids, keeping every service id", async () => {
+  const { deviceDir, supervisor } = await fixture();
+  for (const dir of ["svc/browser/profile", "svc-files/browser", "svc/other.kept"])
+    await mkdir(join(deviceDir, dir), { recursive: true });
+  await writeFile(join(deviceDir, "svc/browser/profile/Cookies"), "old session");
+  expect(
+    await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal()),
+  ).toMatchObject({ ok: true });
+  await expect(lstat(join(deviceDir, "svc/browser"))).rejects.toThrow(/ENOENT/);
+  await expect(lstat(join(deviceDir, "svc-files/browser"))).rejects.toThrow(/ENOENT/);
+  expect((await lstat(join(deviceDir, "svc/other.kept"))).isDirectory()).toBe(true);
+  expect((await lstat(join(deviceDir, "svc/browser.browser"))).isDirectory()).toBe(true);
+  // only once: what appears later under a non-id name (a future id rule) is left alone
+  expect((await lstat(join(deviceDir, "svc/.ids-v1"))).isFile()).toBe(true);
+  await supervisor.stop("browser.browser", signal());
+  await mkdir(join(deviceDir, "svc/Later_Name"), { recursive: true });
+  expect(
+    await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal()),
+  ).toMatchObject({ ok: true });
+  expect((await lstat(join(deviceDir, "svc/Later_Name"))).isDirectory()).toBe(true);
 });

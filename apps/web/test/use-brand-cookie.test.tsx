@@ -10,6 +10,7 @@ import {
   encodeBrandCookie,
 } from "../src/lib/brand-cookie";
 import { useBrandCookie } from "../src/lib/use-brand-cookie";
+import { withPageUrl } from "./support/page";
 import { themeCssUrl } from "./support/themes";
 
 const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
@@ -54,18 +55,14 @@ describe("useBrandCookie", () => {
   it("over https only __Host-cb-brand is read: a plain cb-brand is rejected", () => {
     let jar = "";
     vi.spyOn(document, "cookie", "get").mockImplementation(() => jar);
-    const real = window.location;
-    vi.stubGlobal(
-      "location",
-      new Proxy(real, { get: (t, k) => (k === "protocol" ? "https:" : Reflect.get(t, k)) }),
-    );
     try {
-      jar = `${BRAND_COOKIE_HTTP}=${encodeBrandCookie(REF)}`;
-      expect(renderHook(() => useBrandCookie()).result.current).toBeNull();
-      jar = `${BRAND_COOKIE_HTTPS}=${encodeBrandCookie(REF)}`;
-      expect(renderHook(() => useBrandCookie()).result.current).toEqual(REF);
+      withPageUrl("https://localhost:3000/", () => {
+        jar = `${BRAND_COOKIE_HTTP}=${encodeBrandCookie(REF)}`;
+        expect(renderHook(() => useBrandCookie()).result.current).toBeNull();
+        jar = `${BRAND_COOKIE_HTTPS}=${encodeBrandCookie(REF)}`;
+        expect(renderHook(() => useBrandCookie()).result.current).toEqual(REF);
+      });
     } finally {
-      vi.unstubAllGlobals();
       vi.restoreAllMocks();
     }
   });

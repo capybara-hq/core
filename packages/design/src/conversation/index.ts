@@ -165,6 +165,7 @@ export {
   type QuickActionsProps,
 } from "./quick-actions";
 export { registrableDomain } from "./registrable";
+export { useRightFull } from "./right-full";
 export { RunRow, type RunRowProps, type RunRowStatus } from "./run-row";
 export {
   AgentCallBlock,
@@ -180,6 +181,7 @@ export {
   type BackgroundTaskStatus,
   BackgroundTasks,
   type BackgroundTasksProps,
+  type StopWaiting,
   type SubagentFinishStatus,
   SubagentGroup,
   type SubagentGroupProps,
@@ -240,6 +242,7 @@ export {
   ToolMeta,
   ToolRow,
   type ToolRowData,
+  type ToolRowImage,
   type ToolRowProps,
 } from "./tool-row";
 export { WorkingLine, type WorkingLineProps } from "./working-line";

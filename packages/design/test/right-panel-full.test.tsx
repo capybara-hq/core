@@ -56,10 +56,13 @@ describe("ConversationPage rightFull", () => {
     const { container } = render(page({ full: true, onFull }));
     expect(screen.queryByTestId("thread")).toBeNull();
     expect(screen.queryByTestId("composer")).toBeNull();
-    expect(container.querySelector('[data-part="panel-slot"]')).toBeNull();
     expect(container.querySelector(".cb-title-bar")).not.toBeNull();
-    const full = container.querySelector('[data-part="panel-full"]');
-    expect(full?.querySelector('[data-part="right-panel"]')).not.toBeNull();
+    // the column keeps the content area as an empty box; the panel slot lies over it
+    expect(container.querySelector('[data-part="panel-full"]')?.childElementCount).toBe(0);
+    const slot = container.querySelector('[data-part="panel-slot"]');
+    expect(slot?.getAttribute("data-full")).toBe("true");
+    expect(slot?.querySelector('[data-part="right-panel"]')).not.toBeNull();
+    expect(slot?.querySelector('[role="separator"]')).toBeNull();
     expect(
       container
         .querySelector('[data-template="ConversationPage"]')
@@ -89,7 +92,21 @@ describe("ConversationPage rightFull", () => {
     const { container } = render(page({ full: true, onFull: vi.fn(), layout: "sheet" }));
     expect(document.querySelector('[data-part="sheet"]')).toBeNull();
     expect(
-      container.querySelector('[data-part="panel-full"] [data-part="right-panel"]'),
+      container.querySelector(
+        '[data-part="panel-slot"][data-full="true"] [data-part="right-panel"]',
+      ),
     ).not.toBeNull();
+  });
+
+  it("a full-mode switch keeps the panel mounted (the same DOM node, its state kept)", () => {
+    const { container, rerender } = render(page({ full: false, onFull: vi.fn() }));
+    const before = container.querySelector('[data-part="right-panel"]');
+    expect(before).not.toBeNull();
+    rerender(page({ full: true, onFull: vi.fn() }));
+    expect(container.querySelector('[data-part="right-panel"]')).toBe(before);
+    expect(screen.getByRole("button", { name: "退出全屏" })).toBeTruthy();
+    rerender(page({ full: false, onFull: vi.fn() }));
+    expect(container.querySelector('[data-part="right-panel"]')).toBe(before);
+    expect(screen.getByRole("button", { name: "全屏" })).toBeTruthy();
   });
 });

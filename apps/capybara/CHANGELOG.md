@@ -1,5 +1,56 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.116
+
+### Patch Changes
+
+- 2c09b84: Pin the bootstrap device providers to the releases that take namespaced device service ids (core#840):
+  device-docker 0.1.0-rc.30 (services as their own user, pinned read-only Chromium in the sandbox image)
+  and device-local 0.1.0-rc.11 (sealed service install directory, gone at once after a machine restart),
+  plus the plugins marketplace commit and the compose sandbox image build context at 44fa9a1. The kernel
+  and these providers move together: deploy them in one step, together with device-e2b 0.1.0-rc.30 and
+  browser 0.1.0-rc.5 where installed, and capybara-device 0.1.0-rc.37 on machines.
+- aa535be: Images in tool results reach the agent and the person. The pipeline stores every image block a
+  tool returns (a browser screenshot, an MCP image) as a copy of the conversation and names it in the
+  result (`file_id`); a model with vision sees it after the step's results, a model without vision is
+  told it was not shown and how to read it, and an image that cannot be stored says why. The web
+  shows the images as thumbnails on the call's row (opening the image viewer), and `Deliver` takes a
+  `file_id` to hand such an image (or any attachment or artifact of the conversation) to the person
+  without a device.
+- Updated dependencies [2c09b84]
+- Updated dependencies [e6a1fb9]
+- Updated dependencies [aa535be]
+  - @capybara-hq/kernel@0.1.0-rc.91
+
+## 0.1.0-rc.115
+
+### Patch Changes
+
+- c9a563b: Device services are namespaced per extension (core#817): a device provider now receives every service
+  by its id `<extension>.<name>` (`DEVICE_SERVICE_ID_RE`, `deviceServiceId`) in `ensureService`,
+  `stopService`, `serviceStatus`, `serviceRequest` and `openStream`, never by the extension's bare name,
+  so two extensions declaring the same service name never start, stop or reach each other's process.
+  `ctx.deviceAccess` keeps the extension's own names and maps statuses back. `capybara-device` accepts
+  service ids only (a machine on an older version refuses them: update it with the deployment), and the
+  device service conformance starts `conformance.echo`.
+- 5a8031d: Dial-in stream data can travel as binary WebSocket messages. A machine's hello offers `transport.binaryStreamData` and the kernel's `ready` agrees; from then on both sides send `stream-data` as one binary message (`encodeDialInStreamData`: tag, stream id, the raw bytes) instead of base64 inside JSON, which cuts a quarter of the bytes of every device stream (the browser live view). `capybara-device` offers it; a machine that does not offer it stays on JSON, and a `capybara-device` whose offer an older kernel refuses (4400 before `ready`) reconnects without it, so the device and the deployment can be upgraded in either order. `FakeDialInMachine` takes `binaryStreamData` to test both.
+- 7a178bf: The conversation's right panel keeps an embed mounted across full mode: maximising or restoring
+  the panel no longer reloads its iframe, so a panel's document and connections survive the switch,
+  and a panel embed fills the panel (borderless) in both modes instead of sizing itself by `resize`.
+  The embed bridge tells a `conversation.panel` embed the panel's mode: `EmbedParentMessage` gains
+  `panel-mode { full }`, sent right after `init` and on every change, whoever made it (the embed's
+  own ask, the close control or Esc, the host refusing full mode on a phone). A plugin tool's
+  `InputRequired` may carry `open` (a `UiOpen` naming a `conversation.panel` of the same extension):
+  the kernel writes it to `question_asked` after checking it, and the conversation page opens that
+  panel when the question arrives.
+- Updated dependencies [c245a0d]
+- Updated dependencies [dd481a3]
+- Updated dependencies [e2ca2ff]
+- Updated dependencies [c9a563b]
+- Updated dependencies [5a8031d]
+- Updated dependencies [7a178bf]
+  - @capybara-hq/kernel@0.1.0-rc.90
+
 ## 0.1.0-rc.114
 
 ### Patch Changes

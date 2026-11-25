@@ -12,6 +12,7 @@
   "mac-orphans.test.ts",
   "mac-read-scope.test.ts",
   "mac-self-check.test.ts",
+  "mac-service-install.test.ts",
   "mac-service-mach.test.ts",
   "mac-tool-homes.test.ts",
   "mac-write-denies.test.ts",

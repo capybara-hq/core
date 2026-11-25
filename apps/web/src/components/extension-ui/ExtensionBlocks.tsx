@@ -356,7 +356,6 @@ export function ExtensionPanel({
   onClose,
   onFullscreen,
   onPanelMode,
-  full,
 }: {
   ctx: BlockContext;
   c: UiContributionItem;
@@ -366,8 +365,6 @@ export function ExtensionPanel({
   onFullscreen(): void;
   /** An embed's bridge `panel-mode`: maximise (`true`) or restore (`false`) the panel. */
   onPanelMode(full: boolean): void;
-  /** The panel is maximised: an embed fills it (width and height) instead of its own height. */
-  full: boolean;
 }) {
   const locale = uiLocale(useLocale());
   const title = c.title[locale];
@@ -389,7 +386,9 @@ export function ExtensionPanel({
         title={title}
         conversationId={ctx.conversationId}
         onPanelMode={onPanelMode}
-        fill={full}
+        // a panel embed fills the panel in both modes (its own page lays itself out in it; the
+        // bridge's resize does not apply), borderless: the panel is its one box
+        fill
         failed={({ message, onRetry }) => (
           <LoadFailed name={title} reason={message} onRetry={onRetry} />
         )}

@@ -179,6 +179,11 @@ export interface PipelineTestDeps {
    */
   sandbox?: Pick<SandboxService, "ensureRunning" | "hostRefusal">;
   onToolsChanged?: (orgId: string, connectorId: string) => void;
+  /**
+   * The `conversation.panel` contribution ids of each extension (default: none, so an
+   * `InputRequired.open` is dropped).
+   */
+  panels?: Record<string, string[]>;
 }
 
 /** Approvals for a pipeline: a double without secure inputs gets "none" and a failing request. */
@@ -216,7 +221,18 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
     d.questions,
     configFrom(d.config),
     d.log,
-    d.pluginHooks ? ({ hooks: d.pluginHooks, current: () => undefined } as never) : undefined,
+    d.pluginHooks !== undefined || d.panels !== undefined
+      ? ({
+          hooks: d.pluginHooks,
+          current: (plugin: string) => {
+            const ids = d.panels?.[plugin];
+            if (ids === undefined) return undefined;
+            return {
+              ui: ids.map((id) => ({ slot: { id: "conversation.panel" }, contribution: { id } })),
+            };
+          },
+        } as never)
+      : undefined,
     onToolsChanged
       ? {
           onToolsChanged: async (orgId, connectorId) => {

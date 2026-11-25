@@ -18,6 +18,7 @@ import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import { backgroundMaxSeconds } from "../background/launch.js";
 import { ConversationApprovalProfile } from "../conversations/approval-profile.js";
+import { AttachmentsService } from "../conversations/attachments.service.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import {
   COMMAND_ASK_MAX_CHARS,
@@ -123,7 +124,7 @@ import {
 import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "./builtins/sandbox/device-owner.js";
 import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
-import { attachCallScope, type CallScope } from "./call-scope.js";
+import { attachCallScope, type CallScope, stillStartingUnsent } from "./call-scope.js";
 import { canonicalJson } from "./canonical-json.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
@@ -159,6 +160,7 @@ import {
   type ToolResultMedia,
 } from "./registry.js";
 import { runResourceTool } from "./resources.js";
+import { type StoreResultImage, storeResultImages } from "./result-images.js";
 import { ToolAskReview, type ToolAskReviewer } from "./tool-review.js";
 import { validateInput } from "./validate.js";
 
@@ -305,6 +307,13 @@ const skippedResult = (
 
 const timeoutText = (key: string, ms: number) =>
   `Tool ${key} timed out after ${ms / 1000}s. The operation may or may not have completed; verify before retrying.`;
+/**
+ * The timeout of a call whose device was still starting (its instance being created or resumed,
+ * or the device service being launched) and that had sent nothing to a device service: its
+ * target was not reached. The start was stopped with the call, so a retry starts it again.
+ */
+export const deviceStartingTimeoutText = (key: string, ms: number) =>
+  `Tool ${key} timed out after ${ms / 1000}s while the device was still starting (its sandbox or the device service), before the call sent anything to its target. The start was stopped with the call; a retry starts the device again, and if it times out the same way the tool's time limit is too short for this device's first start: tell the user.`;
 const failedText = (key: string, errName: string) =>
   `Tool ${key} failed (${errName}). The operation may not have completed; check before retrying or try another approach.`;
 const unknownToolText = (name: string, keys: string[], toolSearch: boolean) =>
@@ -508,6 +517,11 @@ interface PipelineDeps {
    */
   inlineViews(plugin: string): ReadonlySet<string>;
   /**
+   * Ids of an extension's `conversation.panel` contributions (read live, no alias): a plugin
+   * tool's `InputRequired.open` must name one of them, otherwise it is dropped with a warning.
+   */
+  panels(plugin: string): ReadonlySet<string>;
+  /**
    * 连接器在调用途中报告工具清单变了（MCP `notifications/tools/list_changed`）：内核安排一次该连接器的漂移检查。
    * 不等待、不抛错（实现自己吞掉错误）。
    */
@@ -620,6 +634,8 @@ export type ExecOutcome =
       kind: "input_required";
       form: InputForm;
       state: unknown;
+      /** A plugin tool's `InputRequired.open`, unchecked (`openOf` checks it before asking). */
+      open?: unknown;
       blocked?: ServiceBlocked;
       review?: ReviewRecord;
     }
@@ -916,11 +932,12 @@ function withNotes(result: unknown, notes: readonly string[]): unknown {
 type Resolved = AgentTools;
 
 /** A network ask's kept display fields, written with its result when the ask settles. */
-const keptExtras = (kept: NetworkAskDetail["result"] | undefined) => ({
+export const keptExtras = (kept: NetworkAskDetail["result"] | undefined) => ({
   ...(kept?.outputId !== undefined && { outputId: kept.outputId }),
   ...(kept?.contentTypes !== undefined && { contentTypes: kept.contentTypes }),
   ...(kept?.display !== undefined && { display: kept.display }),
   ...(kept?.view !== undefined && { view: kept.view }),
+  ...(kept?.media !== undefined && { media: kept.media }),
 });
 
 /**
@@ -1173,6 +1190,13 @@ export class ToolPipeline {
     @Optional()
     @Inject(ToolAskReview)
     private readonly toolReview?: ToolAskReviewer,
+    /**
+     * Stores the images a tool result carries as `read` copies of the calling conversation (tool
+     * result images design §2); absent (hand-built pipelines): images are named as not stored.
+     */
+    @Optional()
+    @Inject(AttachmentsService)
+    private readonly resultImages?: Pick<AttachmentsService, "storeRead">,
   ) {
     this.deps = {
       // the builtins that enter a device on the managed operation route (common.ts
@@ -1200,6 +1224,12 @@ export class ToolPipeline {
         new Set(
           (host?.current(plugin)?.ui ?? [])
             .filter((r) => r.slot.id === "conversation.tool-result.card")
+            .map((r) => r.contribution.id),
+        ),
+      panels: (plugin) =>
+        new Set(
+          (host?.current(plugin)?.ui ?? [])
+            .filter((r) => r.slot.id === "conversation.panel")
             .map((r) => r.contribution.id),
         ),
       onToolsChanged: (orgId, connectorId) => {
@@ -1917,7 +1947,15 @@ export class ToolPipeline {
       }
     }
     if (outcome.kind === "input_required") {
-      const asked = await this.askInput(ctx, call.id, tool.key, attempt, outcome);
+      const open =
+        tool.source.kind === "plugin" && outcome.open !== undefined
+          ? this.openOf(outcome.open, tool.source.plugin, tool.key)
+          : undefined;
+      const { open: _raw, ...asking } = outcome;
+      const asked = await this.askInput(ctx, call.id, tool.key, attempt, {
+        ...asking,
+        ...(open !== undefined && { open }),
+      });
       if (typeof asked !== "string") return asked;
       outcome = {
         kind: "error",
@@ -1927,9 +1965,26 @@ export class ToolPipeline {
       };
     }
 
+    // the images of the result (any tool): stored as `read` copies of the calling conversation,
+    // named in the text and in `tool_result.media`, so a model with vision sees them after the
+    // step's results and the person sees them on the call's row (tool result images design §2)
+    const images =
+      outcome.kind === "result"
+        ? await storeResultImages(
+            outcome.result,
+            tool.key,
+            this.storeResultImage(ctx),
+            (err) =>
+              this.deps.log.warn("cannot store an image of a tool result", {
+                toolKey: tool.key,
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            ctx.signal,
+          )
+        : undefined;
     const rendered =
       outcome.kind === "result"
-        ? renderResult(outcome.result)
+        ? renderResult(outcome.result, images?.texts)
         : { text: outcome.message, contentTypes: [], isError: true };
     // the tools a builtin (ToolSearch) reports as loaded: only keys available in this step and not
     // builtin, written to tool_result (the log is the source of truth)
@@ -1939,10 +1994,12 @@ export class ToolPipeline {
         : [];
     // the images the builtin Read stored for the call (vision-read design §1.2): builtins only,
     // so a plugin can never name an attachment for request building
-    const media =
+    const builtinMedia =
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? mediaFrom(outcome.result)
         : undefined;
+    const allMedia = [...(builtinMedia ?? []), ...(images?.media ?? [])];
+    const media = allMedia.length > 0 ? allMedia : undefined;
     // 显示摘要：只认插件 / 内置工具与内核的 resources 工具给的（连接器结果来自外部服务，不采信），
     // 校验不过就丢弃并告警
     const display =
@@ -2053,6 +2110,7 @@ export class ToolPipeline {
           ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
           ...(display !== undefined && { display }),
           ...(view !== undefined && { view }),
+          ...(media !== undefined && { media }),
           ...(review !== undefined && { review }),
           // carried into the kept result so a resumed run writes the event too (it was written
           // with `network_blocked` below when the ask was created)
@@ -3189,6 +3247,18 @@ export class ToolPipeline {
   }
 
   /**
+   * How a call's result images are stored: a `read` copy bound to the calling conversation (a
+   * sub-agent's own, never its root), owned by the run's trigger account; absent without the
+   * attachments service.
+   */
+  private storeResultImage(ctx: ToolStepContext): StoreResultImage | undefined {
+    const attachments = this.resultImages;
+    if (attachments === undefined) return undefined;
+    return (file) =>
+      attachments.storeRead(ctx.orgId, ctx.conversationId, ctx.accountId || null, file);
+  }
+
+  /**
    * 发出本步调用的请求里带了完整定义的工具 key：本步最后一次尝试的 `model_call.request.tools`
    * （`assistant_message` 来自最后一次尝试）。该请求不在 ToolSearch 模式（没有 `catalog`，工具全部发送）
    * 或找不到 model_call 时返回 null（不做加载检查）。已加载集合由此从日志得出，不放进程内存。
@@ -3315,7 +3385,13 @@ export class ToolPipeline {
     callId: string,
     toolKey: string,
     attempt: number,
-    req: { form: InputForm; state: unknown; blocked?: ServiceBlocked; review?: ReviewRecord },
+    req: {
+      form: InputForm;
+      state: unknown;
+      blocked?: ServiceBlocked;
+      review?: ReviewRecord;
+      open?: { plugin: string; contribution: string; item?: string };
+    },
   ): Promise<WaitingFor | string> {
     if (attempt > MAX_INPUT_ROUNDS) return TOO_MANY_INPUT_REQUESTS_TEXT;
     const problems = validateInputForm(req.form);
@@ -3340,6 +3416,7 @@ export class ToolPipeline {
       toolKey,
       form: req.form,
       state: JSON.parse(stateJson) as unknown,
+      ...(req.open !== undefined && { open: req.open }),
       // kept for the call's result, which a later round writes
       ...((req.review !== undefined || req.blocked !== undefined) && {
         carried: {
@@ -3440,7 +3517,15 @@ export class ToolPipeline {
       }),
     };
     // 内置工具可按输入给自己的时限（沙箱 bash 按命令超时加余量）；缺省 tools.timeoutMs
-    const timeoutMs = tool.timeoutMs?.(input) ?? this.config.get().tools.timeoutMs;
+    const toolsCfg = this.config.get().tools;
+    const ownMs = tool.timeoutMs?.(input);
+    // an extension tool's declared limit never exceeds the deployment's ceiling
+    const timeoutMs =
+      ownMs === undefined
+        ? toolsCfg.timeoutMs
+        : tool.source.kind === "plugin"
+          ? Math.min(ownMs, toolsCfg.maxTimeoutMs)
+          : ownMs;
     let scope: CallScope | undefined;
     try {
       // a plugin tool runs with the extension's effective config for the org, never without it
@@ -3490,14 +3575,28 @@ export class ToolPipeline {
         timeoutMs,
       );
       if (r === "timeout") {
-        return withBlocked({ kind: "error", message: timeoutText(tool.key, timeoutMs) }, scope);
+        const starting = stillStartingUnsent(scope as CallScope | undefined);
+        if (starting)
+          this.deps.log.info("tool call timed out while its device was still starting", {
+            toolKey: tool.key,
+            timeoutMs,
+          });
+        const message = starting
+          ? deviceStartingTimeoutText(tool.key, timeoutMs)
+          : timeoutText(tool.key, timeoutMs);
+        return withBlocked({ kind: "error", message }, scope);
       }
       // a launch reviewed before the call stopped or asked is kept with its result
       if (r === "aborted")
         return withBlocked({ kind: "error", message: RUN_STOPPED_DURING_TEXT }, scope);
       if (isInputRequired(r.value)) {
         return withBlocked(
-          { kind: "input_required", form: r.value.form, state: r.value.state ?? null },
+          {
+            kind: "input_required",
+            form: r.value.form,
+            state: r.value.state ?? null,
+            ...(r.value.open !== undefined && { open: r.value.open }),
+          },
           scope,
         );
       }
@@ -3800,6 +3899,42 @@ export class ToolPipeline {
       return undefined;
     }
     return { plugin, view: x.view, ...(x.key !== undefined && { key: x.key as string }) };
+  }
+
+  /**
+   * A plugin tool's `InputRequired.open` (display only): `contribution` must be a
+   * `conversation.panel` of the same extension and `item` at most 200 characters; anything else is
+   * dropped with a warning and the form is asked as usual. The plugin is the tool's, never the
+   * extension's word.
+   */
+  private openOf(
+    open: unknown,
+    plugin: string,
+    toolKey: string,
+  ): { plugin: string; contribution: string; item?: string } | undefined {
+    const x = (typeof open === "object" && open !== null ? open : {}) as Record<string, unknown>;
+    const itemOk =
+      x.item === undefined || (typeof x.item === "string" && x.item !== "" && x.item.length <= 200);
+    if (
+      typeof x.contribution !== "string" ||
+      !this.deps.panels(plugin).has(x.contribution) ||
+      !itemOk
+    ) {
+      this.deps.log.warn(
+        "tool asked for input with an open target that is not a panel of its extension; dropped",
+        {
+          toolKey,
+          contribution:
+            typeof x.contribution === "string" ? x.contribution.slice(0, 100) : undefined,
+        },
+      );
+      return undefined;
+    }
+    return {
+      plugin,
+      contribution: x.contribution,
+      ...(x.item !== undefined && { item: x.item as string }),
+    };
   }
 
   /**

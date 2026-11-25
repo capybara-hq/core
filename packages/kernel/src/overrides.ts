@@ -1,6 +1,7 @@
 import type { NestInterceptor } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { ADMIN_USAGE_TIMINGS, type AdminUsageTimings } from "./admin/usage.service.js";
+import { BACKGROUND_STOP_ATTEMPT_MS } from "./background/stop.js";
 import { SCOPE_ORG_CHUNK_SIZE } from "./catalog/scope-jobs.js";
 import { CHANNEL_WEBHOOK_TIMINGS, type ChannelWebhookTimings } from "./channels/webhook.js";
 import { PROMPT_SUGGESTION_TIMEOUT } from "./conversations/prompt-suggestions.js";
@@ -67,6 +68,8 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  *   read (a test shortens it for one run);
  * - `PUSH_SEND_TIMEOUT_MS`: one push send's time limit, read at every send (a test shortens it
  *   for a hanging provider);
+ * - `BACKGROUND_STOP_ATTEMPT_MS`: one exact background task stop attempt's time limit, read at
+ *   every attempt (a test shortens it for a machine that never answers);
  * - `PROMPT_SUGGESTION_TIMEOUT`: the prompt suggestion call's time limit, read at every call (a test
  *   shortens it for one call);
  * - `PLUGIN_PUBLIC_WRITE_LIMIT`: a lower limit for unsafe methods on `public` extension routes;
@@ -104,6 +107,7 @@ interface KernelSeams {
   [PROJECT_KNOWLEDGE_TIMEOUT]: () => number;
   [PROMPT_SUGGESTION_TIMEOUT]: () => number;
   [PUSH_SEND_TIMEOUT_MS]: () => number;
+  [BACKGROUND_STOP_ATTEMPT_MS]: () => number;
   [PLUGIN_PUBLIC_WRITE_LIMIT]: number;
   [EXTENSION_NET_SEAMS]: ExtensionNetSeams;
   [APP_INTERCEPTOR]: NestInterceptor;
@@ -147,6 +151,7 @@ const SEAM_TOKENS = [
   PROJECT_KNOWLEDGE_TIMEOUT,
   PROMPT_SUGGESTION_TIMEOUT,
   PUSH_SEND_TIMEOUT_MS,
+  BACKGROUND_STOP_ATTEMPT_MS,
   PLUGIN_PUBLIC_WRITE_LIMIT,
   EXTENSION_NET_SEAMS,
   APP_INTERCEPTOR,

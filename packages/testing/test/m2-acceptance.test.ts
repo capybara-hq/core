@@ -376,12 +376,19 @@ describe("M2 双副本端到端验收", () => {
       expect(textOf(last)).toBe("after-crash");
       expect(c.errors).toEqual([]);
     }
-    // 两路 SSE 最终看到的事件序列与事件日志一致
+    // Both streams end up with exactly the event log. Background jobs append events after a
+    // run_finished (the title's and prompt suggestions' `usage`), so the log may still grow:
+    // wait until both streams hold the log as it is at that moment (core#855)
+    let evs2: Ev[] = [];
+    const sameAsLog = async () => {
+      const log = await at(survivor, admin, "GET", `${base}/events?after=0`);
+      evs2 = log.json.events as Ev[];
+      const want = JSON.stringify(evs2.map((e) => e.seq));
+      return streams.every((c) => JSON.stringify(c.events.map((e) => e.seq)) === want);
+    };
+    await waitFor(sameAsLog, 30_000, "streams equal to the event log");
 
     // 6. 模型调用次数（model_call 事件）：被杀的那一步最多两次，其余每步一次
-    const log2 = await at(survivor, admin, "GET", `${base}/events?after=0`);
-    const evs2 = log2.json.events as Ev[];
-    for (const c of streams) expect(c.events.map((e) => e.seq)).toEqual(evs2.map((e) => e.seq));
     const calls = new Map<string, number>();
     for (const e of evs2) {
       if (e.type !== "model_call") continue;

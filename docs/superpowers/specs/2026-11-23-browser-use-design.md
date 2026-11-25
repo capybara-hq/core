@@ -121,7 +121,9 @@ Anti-goals (a failure even if it works)
   (§7.1), killed on suspend / destroy. The kernel starts it on behalf of an extension holding
   `permissions.deviceAccess`; its launch passes the command review once per start (fail closed).
   Each provider implements it (docker / e2b: a supervised process in the instance; local: a
-  process the device program supervises under the local sandbox).
+  process the device program supervises under the local sandbox). Providers know a service by
+  its id `<extension>.<name>`, so two extensions declaring the same name never share a process
+  (amended 2026-11-25, core#817).
 - Chromium: Playwright's Chromium (docker / e2b, per the sandbox dev tiers spec: runtime libraries,
   `ShmSize`, downloads into the cache under `PLAYWRIGHT_BROWSERS_PATH`); on macOS
   `chrome-headless-shell` with `--single-process` until the full Chrome works under the local sandbox
@@ -165,7 +167,10 @@ openStream?(h: SandboxHandle, target: { unixSocket: string } | { port: number },
   usable only on the gateway replica that holds the machine's socket, which sends stream frames
   straight over that socket (new envelope kinds `stream-open` / `stream-data` / `stream-close`,
   each within `maxFrameBytes`, per-stream credit flow control so a stream cannot starve the
-  machine's operations). `packages/device` implements the machine side.
+  machine's operations). `packages/device` implements the machine side. When the machine's hello
+  offers `transport.binaryStreamData` and the kernel's `ready` agrees, `stream-data` travels as a
+  binary WebSocket message (a tag byte, the stream id, the raw message) instead of base64 inside
+  JSON; a machine that does not offer it stays on JSON. (amended 2026-11-25, core#848)
 - The target must be inside the device and refer to a socket the daemon owns; the stream is not a
   general port forward (the provider refuses any other target class the kernel does not ask for).
 
@@ -206,6 +211,14 @@ openStream?(h: SandboxHandle, target: { unixSocket: string } | { port: number },
 - `Page.startScreencast` gets `maxWidth` / `maxHeight` from the panel's current size: small frames in
   the side panel (≈15–30 KB JPEG, peak ≈200 KB/s), larger in the expanded view (peak ≈0.5–1 MB/s).
 - Input round trip same region: ≈100–200 ms.
+- (amended 2026-11-25, plugins#229) A frame's bytes share the slowest hop with the person's input,
+  so the daemon paces by link time, not a fixed count: it pings each viewer (the path's own round
+  trip) and compares each frame's ack round trip with it. While frames take more than about 120 ms
+  over that, it lowers JPEG quality and then scale (down to half) and keeps one frame in flight;
+  only the newest frame waits; JSON messages (state, cursor) never wait behind a held frame; at most
+  15 frames per second on a fast link. Frames are binary messages (no base64 or JSON on the viewer
+  leg), sized to the picture's CSS box times the device pixel ratio capped at 1.25. Measured on a
+  model of a 350 KB/s, 2 × 105 ms path: click to changed frame from ≈1.2 s to ≈0.55 s.
 
 ## 7. `ctx.deviceAccess` for extensions
 
@@ -277,11 +290,23 @@ by `actor.runId`). The browser is a long-lived service, so:
   never starts the service itself, so every start passes through a tool call and its review.
 - **Watch state (side panel, default)**: tab strip, address bar, back / forward / reload, the picture
   scaled to the panel width at 16:10 with letterboxing, a status line ("agent: filling the form…"),
-  the agent's clicks flashed on the picture. Clicking in the small view works (closing a popup).
+  the agent's clicks flashed on the picture. The watch state is read-only: no pointer, keys, address
+  bar, tabs or navigation, the arrow cursor; the daemon drops viewer input unless the person holds
+  control (also input still queued when control returns to the agent). (amended 2026-11-25,
+  maintainer: replaces "clicking in the small view works")
+- **Takeover feel** (amended 2026-11-25): pointer moves are forwarded coalesced (the newest
+  position wins, never queued behind frames), so hover effects, menus and tooltips render; the
+  daemon resolves the page's cursor under the pointer (computed `cursor` through shadow roots and
+  frames) and the panel shows it on the picture; a press indicator appears at mousedown before any
+  frame; a hidden text field holds the focus, so IME composition (Chinese) and paste reach the page
+  as text.
 - **Expanded state**: the right area's existing full-screen mode (`RightArea` `full`: the panel
   maximised inside the page) at near 1:1; 接管 asks the host to switch to it through the embed bridge
   (a new bridge message if none exists), 交还智能体 and `Esc` restore. No new overlay. (amended
-  2026-11-23)
+  2026-11-23) The panel's frame stays mounted across the switch (one panel slot laid over the
+  content area), and the host tells the embed the mode it draws (`panel-mode { full }` after `init`
+  and on every change); the panel derives its layout from that message. (amended 2026-11-25,
+  core#818, core#832)
 - Input coordinates are mapped back through the scale. The viewport stays fixed (default 1280×800);
   resizing or closing the panel never changes it. A viewport switch (desktop / tablet / phone via
   `Emulation.setDeviceMetricsOverride`) is phase 2.
@@ -314,7 +339,9 @@ Primary, structure based (every chat model):
 - click / type / select / press key / scroll / hover by ref; upload a workspace file to a ref
 - wait (for text, a ref, navigation, or a time cap)
 - handoff (`message` for the person): phase 1 shows the question card in the conversation and a
-  banner in the panel (opening the panel automatically is phase 2); waits until
+  banner in the panel, and opens the panel (amended 2026-11-25, core#818: the handoff's
+  `InputRequired` carries `open`, a `conversation.panel` of the extension, which the kernel checks
+  and writes to `question_asked`; the page opens it when the question arrives); waits until
   the person hands back or cancels, then returns the new page state. The wait is the existing
   resumable `InputRequired` (a two-choice form: 完成 / 取消, answered in the conversation or by
   交还智能体 in the panel through `ctx.deviceAccess.answerHandoff`), so it survives replica restarts. `wait` with a long cap uses the same

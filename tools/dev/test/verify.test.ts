@@ -155,6 +155,8 @@ describe("verifySteps", () => {
           "design",
           "--project",
           "plugin-client",
+          "--project",
+          "web",
         ],
       ],
     ]);

@@ -22,6 +22,7 @@ import {
   useSignInCapability,
   useSwitchProfile,
 } from "../src/lib/shell";
+import { insideFrame } from "./support/page";
 
 /** A fake shell whose capabilities a test changes, announcing them with `change`. */
 function fakeShell(over: Record<string, unknown> = {}) {
@@ -137,8 +138,7 @@ describe("useShellCapability", () => {
     expect(screen.getByTestId("device").textContent).toBe("browser");
     cleanup();
     install(fakeShell({ capabilities: { "example@1": device } }).shell);
-    vi.spyOn(window, "top", "get").mockReturnValue({} as Window);
-    render(<Probe />);
+    insideFrame(() => render(<Probe />));
     expect(screen.getByTestId("device").textContent).toBe("browser");
   });
 

@@ -148,7 +148,7 @@ describe("buildModelRequest 解析媒体引用", () => {
       { type: "text", text: "see these" },
       {
         type: "text",
-        text: `[Attached image "cat.png" — this model cannot view images. Read with file_id ${IMG} sends it to the organization's vision model, if one is set.]`,
+        text: `[Attached image "cat.png" — this model cannot view images. If Read is available to you, Read with file_id ${IMG} sends it to the organization's vision model, if one is set.]`,
       },
       {
         type: "text",
@@ -265,7 +265,7 @@ describe("占位与内联的细节", () => {
     const [b] = userContent(build(BLIND, log).request.messages);
     expect(b).toEqual({
       type: "text",
-      text: `[Attached image ${JSON.stringify(name)} — this model cannot view images. Read with file_id ${IMG} sends it to the organization's vision model, if one is set.]`,
+      text: `[Attached image ${JSON.stringify(name)} — this model cannot view images. If Read is available to you, Read with file_id ${IMG} sends it to the organization's vision model, if one is set.]`,
     });
   });
 

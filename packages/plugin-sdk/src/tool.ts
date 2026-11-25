@@ -1,4 +1,5 @@
 import { checkParamValue, type ParamSchema } from "./model-params.js";
+import type { UiOpen } from "./ui.js";
 import { isHttpUrl } from "./url.js";
 
 /** Tool annotations (hints aligned with MCP, used to derive the default policy). */
@@ -52,7 +53,22 @@ export interface ToolSpec {
    * {@link CONVERSATION_SOURCES}.
    */
   sources?: ConversationSource[];
+  /**
+   * Extension tools only: the time limit of one call in milliseconds, a whole number from
+   * {@link TOOL_TIMEOUT_MIN_MS} to {@link TOOL_TIMEOUT_MAX_MS}. When declared, the deployment's
+   * `tools.timeoutMs` no longer applies to the tool; the deployment's `tools.maxTimeoutMs`
+   * (default {@link TOOL_TIMEOUT_MAX_MS}) cuts a longer value. Absent: `tools.timeoutMs`. Declare
+   * it when a call may legitimately take longer, e.g. one that first starts a device service
+   * (`ctx.deviceAccess.ensureService`). Never sent to the model and not part of the definition
+   * fingerprint.
+   */
+  timeoutMs?: number;
 }
+
+/** Shortest {@link ToolSpec.timeoutMs}: one second. */
+export const TOOL_TIMEOUT_MIN_MS = 1000;
+/** Longest {@link ToolSpec.timeoutMs} the kernel accepts: ten minutes. */
+export const TOOL_TIMEOUT_MAX_MS = 600_000;
 
 /** Longest {@link ToolSpec.title}, in code points. */
 export const TOOL_TITLE_MAX = 80;
@@ -199,6 +215,13 @@ export interface InputRequired {
   kind: "input_required";
   form: InputForm;
   state?: unknown;
+  /**
+   * Opens a `conversation.panel` of the same extension on the asking person's open conversation
+   * page when the form is asked (e.g. the browser panel for a handoff), as a view's `open` does
+   * on a click. Display only: a target that names no panel of the extension is dropped with a
+   * warning and the form is asked as usual.
+   */
+  open?: UiOpen;
 }
 
 export type FormAnswer = Record<string, string | number | boolean | string[]>;
@@ -315,6 +338,17 @@ export function validateToolSpec(spec: ToolSpec): string[] {
       sources.some((s) => !(CONVERSATION_SOURCES as readonly unknown[]).includes(s)))
   )
     out.push(`sources must be a non-empty list of ${CONVERSATION_SOURCES.join(", ")}`);
+  const timeout: unknown = spec?.timeoutMs;
+  if (
+    timeout !== undefined &&
+    (typeof timeout !== "number" ||
+      !Number.isInteger(timeout) ||
+      timeout < TOOL_TIMEOUT_MIN_MS ||
+      timeout > TOOL_TIMEOUT_MAX_MS)
+  )
+    out.push(
+      `timeoutMs must be a whole number of milliseconds from ${TOOL_TIMEOUT_MIN_MS} to ${TOOL_TIMEOUT_MAX_MS}`,
+    );
   return out;
 }
 

@@ -1,5 +1,5 @@
 import {
-  DEVICE_SERVICE_NAME_RE,
+  DEVICE_SERVICE_ID_RE,
   DeviceAccessError,
   type DeviceServiceSpec,
   type DeviceServiceStatus,
@@ -18,7 +18,9 @@ export const POST_APPLY_ENSURE_TIMEOUT_MS = 30_000;
  * ({@link SandboxService.withDeviceServices}: a suspended instance is resumed); stopping never
  * starts or resumes one. A provider without the service methods is refused with
  * `DeviceAccessError("capability_missing")` before the device is touched. The command review of a
- * launch and the extension's permission are the caller's (`ctx.deviceAccess`).
+ * launch and the extension's permission are the caller's (`ctx.deviceAccess`). Every name here is
+ * a service id (`<extension>.<name>`, `DEVICE_SERVICE_ID_RE`): the caller namespaces the
+ * extension's service names, so the provider never sees a bare name two extensions could share.
  */
 @Injectable()
 export class DeviceServices {
@@ -200,7 +202,7 @@ function servicePathIssue(path: string): string | null {
 }
 
 /**
- * Why a service spec is refused, or null (browser use spec §5): a valid name; `entry` and every
+ * Why a service spec is refused, or null (browser use spec §5): a valid service id; `entry` and every
  * `files` key relative inside the state directory (no absolute path, no `.` / `..` / empty
  * segment, no backslash, no NUL); `entry` one of the files; no env variable that changes what
  * runs or that the provider sets (`NODE_*`, `PATH`, `SSL_CERT_FILE`, `SSL_CERT_DIR`,
@@ -208,8 +210,8 @@ function servicePathIssue(path: string): string | null {
  * a value. So the reviewed command is the one that runs.
  */
 export function serviceSpecIssue(spec: DeviceServiceSpec): string | null {
-  if (typeof spec?.name !== "string" || !DEVICE_SERVICE_NAME_RE.test(spec.name))
-    return `the service name ${JSON.stringify(spec?.name)} must be 1 to 32 characters, a lower-case letter then lower-case letters, digits and "-"`;
+  if (typeof spec?.name !== "string" || !DEVICE_SERVICE_ID_RE.test(spec.name))
+    return `the service id ${JSON.stringify(spec?.name)} must be <extension>.<name> (${DEVICE_SERVICE_ID_RE})`;
   if (typeof spec.entry !== "string") return "entry must be a string";
   const files = spec.files ?? {};
   for (const key of Object.keys(files)) {
@@ -239,9 +241,9 @@ export function assertServiceSpec(spec: DeviceServiceSpec): void {
 }
 
 function assertServiceName(name: string): void {
-  if (!DEVICE_SERVICE_NAME_RE.test(name))
+  if (!DEVICE_SERVICE_ID_RE.test(name))
     throw new Error(
-      `Invalid device service name ${JSON.stringify(name)}: use 1 to 32 characters, a lower-case letter then lower-case letters, digits and "-".`,
+      `Invalid device service id ${JSON.stringify(name)}: use <extension>.<name> (${DEVICE_SERVICE_ID_RE}).`,
     );
 }
 

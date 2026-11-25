@@ -1,5 +1,5 @@
 import { type JSX, type ReactNode, useId, useState } from "react";
-import { formatBytes } from "../display/attachments";
+import { formatBytes, isSafeAttachmentHref } from "../display/attachments";
 import { formatDuration } from "../display/duration";
 import { Icon } from "../icons/icon";
 import { useDesignLocale, useDesignT } from "../provider";
@@ -102,8 +102,16 @@ export type ToolRowData = {
     /** The full error text of a failure (shown in the output box). */
     errorText?: string;
     diff?: DiffData;
+    /**
+     * Images the call's result carried (shown to the agent): thumbnails under the output, each
+     * opening `onOpenImage` with its index.
+     */
+    images?: ToolRowImage[];
   };
 };
+
+/** One image of a call's result on its row: a thumbnail source (http(s) or same-origin path). */
+export type ToolRowImage = { id: string; name: string; src: string };
 
 const utf8 = (s: string) => new TextEncoder().encode(s).length;
 
@@ -280,7 +288,45 @@ export function hasDetail(row: ToolRowData): boolean {
       d.command !== undefined ||
       d.output !== undefined ||
       d.errorText !== undefined ||
-      d.diff !== undefined)
+      d.diff !== undefined ||
+      (d.images !== undefined && d.images.length > 0))
+  );
+}
+
+/** The thumbnails of a result's images (`tool-images`), each a button that opens the image. */
+function ToolImages({
+  images,
+  onOpenImage,
+  onImageError,
+}: {
+  images: ToolRowImage[];
+  onOpenImage?(index: number): void;
+  onImageError?(id: string): void;
+}): JSX.Element {
+  return (
+    <div className="cb-tool-images" data-part="tool-images">
+      {images.map((img, i) => (
+        <button
+          key={img.id}
+          type="button"
+          className="cb-tool-thumb"
+          data-part="thumb"
+          aria-label={img.name}
+          title={img.name}
+          onClick={() => onOpenImage?.(i)}
+        >
+          {isSafeAttachmentHref(img.src) ? (
+            <img
+              src={img.src}
+              alt=""
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              {...(onImageError ? { onError: () => onImageError(img.id) } : {})}
+            />
+          ) : null}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -290,12 +336,18 @@ export function ToolDetail({
   id,
   onViewAll,
   onCopy,
+  onOpenImage,
+  onImageError,
   animate,
 }: {
   row: ToolRowData;
   id?: string;
   onViewAll?(): void;
   onCopy?(): void;
+  /** A result image's thumbnail was clicked (its index in `detail.images`). */
+  onOpenImage?(index: number): void;
+  /** A thumbnail failed to load (the caller may refresh the session and change `src`). */
+  onImageError?(id: string): void;
   /** Grow in over `motion.expand` (set when the viewer opened it, not on first paint). */
   animate?: boolean;
 }): JSX.Element | null {
@@ -344,7 +396,8 @@ export function ToolDetail({
     }
   }
   const hasIn = d.command !== undefined || (d.input !== undefined && d.input.length > 0);
-  const hasOut = out !== undefined || foot.length > 0;
+  const images = d.images !== undefined && d.images.length > 0 ? d.images : undefined;
+  const hasOut = out !== undefined || foot.length > 0 || images !== undefined;
   return (
     <div
       id={id}
@@ -381,6 +434,13 @@ export function ToolDetail({
             <pre className="cb-tool-output" data-part="tool-output">
               {out}
             </pre>
+          ) : null}
+          {images !== undefined ? (
+            <ToolImages
+              images={images}
+              {...(onOpenImage ? { onOpenImage } : {})}
+              {...(onImageError ? { onImageError } : {})}
+            />
           ) : null}
           {foot.length > 0 ? (
             <div className="cb-tool-footer" data-part="tool-footer">
@@ -420,6 +480,9 @@ export type ToolRowProps = {
   onToggle?(): void;
   onViewAll?(): void;
   onCopy?(): void;
+  /** A result image's thumbnail was clicked (its index in `detail.images`). */
+  onOpenImage?(index: number): void;
+  onImageError?(id: string): void;
   /** The clock for the running elapsed time (the caller re-renders each second). */
   now?: number;
 };
@@ -431,6 +494,8 @@ export function ToolRow({
   onToggle,
   onViewAll,
   onCopy,
+  onOpenImage,
+  onImageError,
   now,
 }: ToolRowProps): JSX.Element {
   const locale = useDesignLocale();
@@ -479,6 +544,8 @@ export function ToolRow({
         animate={animate}
         {...(onViewAll ? { onViewAll } : {})}
         {...(onCopy ? { onCopy } : {})}
+        {...(onOpenImage ? { onOpenImage } : {})}
+        {...(onImageError ? { onImageError } : {})}
       />
     ) : null;
   if (row.link) {

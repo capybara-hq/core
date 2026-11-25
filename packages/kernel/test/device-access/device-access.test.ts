@@ -62,6 +62,11 @@ const FAKE_DEVICE_ACCESS = fileURLToPath(
 const ECHO_TOOL = "plugin__fake-device-access__echo";
 const HANDOFF_TOOL = "plugin__fake-device-access__handoff";
 const CALLER: DeviceAccessCaller = { extension: "fake-device-access", services: ["echo"] };
+/** The id the provider knows the fixture's service by (`<extension>.<name>`). */
+const ID = "fake-device-access.echo";
+/** Another extension declaring the same service name. */
+const OTHER: DeviceAccessCaller = { extension: "other-ext", services: ["echo"] };
+const OTHER_ID = "other-ext.echo";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -179,7 +184,8 @@ const use = (): SandboxUseContext => ({
 // no service process outlives its test
 afterEach(async () => {
   vi.restoreAllMocks();
-  await k.app.get(DeviceServices).stop(use(), "echo", AbortSignal.timeout(30_000));
+  await k.app.get(DeviceServices).stop(use(), ID, AbortSignal.timeout(30_000));
+  await k.app.get(DeviceServices).stop(use(), OTHER_ID, AbortSignal.timeout(30_000));
 });
 
 /** A tool call context as the pipeline makes it (with the call scope and its run facts). */
@@ -210,7 +216,7 @@ const allowReview = () =>
     .spyOn(k.app.get(CommandReviewService), "review")
     .mockResolvedValue({ decision: "allow", by: "rule", reason: "test", rule: null });
 
-const status = () => k.app.get(DeviceServices).status(use(), "echo", AbortSignal.timeout(30_000));
+const status = () => k.app.get(DeviceServices).status(use(), ID, AbortSignal.timeout(30_000));
 
 /** The refusal `p` rejects with, as `{ code, message }`. */
 const refusal = async (p: Promise<unknown> | (() => unknown)) => {
@@ -235,10 +241,13 @@ describe("ctx.deviceAccess", () => {
     expect(first.state).toBe("running");
     expect(review).toHaveBeenCalledTimes(1);
     // the command as it runs: node <stateDir>/<entry> <args…>, in the state directory
-    expect(first.stateDir).toMatch(/\/\.svc\/echo$/);
+    expect(first.name).toBe("echo");
+    expect(first.stateDir).toMatch(/\/\.svc\/fake-device-access\.echo$/);
     expect(review.mock.calls[0]?.[0]).toMatchObject({
       toolKey: "Bash",
       input: { command: `node ${first.stateDir}/echo.mjs --title 'a b'` },
+      // reviewed as the declared service launch it is (allow.service), not as a dev command
+      serviceEntry: `${first.stateDir}/echo.mjs`,
       workspace: first.stateDir,
       orgId,
       conversationId: s.conversationId,
@@ -263,6 +272,7 @@ describe("ctx.deviceAccess", () => {
     expect(audits[0]?.detail).toEqual({
       extension: "fake-device-access",
       service: "echo",
+      serviceId: ID,
       deviceId: s.deviceId,
       argv: ["node", `${first.stateDir}/echo.mjs`, "--title", "a b"],
       decision: "allow",
@@ -273,10 +283,43 @@ describe("ctx.deviceAccess", () => {
     expect(second).toEqual(first);
     expect(review).toHaveBeenCalledTimes(1);
     // the service died since: the ifRunning ensure finds it stopped, so it is reviewed again
-    await k.app.get(DeviceServices).stop(use(), "echo", AbortSignal.timeout(30_000));
+    await k.app.get(DeviceServices).stop(use(), ID, AbortSignal.timeout(30_000));
     const third = await access.ensureService(CALLER, callOf(), spec);
     expect(third.state).toBe("running");
     expect(review).toHaveBeenCalledTimes(2);
+  });
+
+  it("two extensions declaring the same service name run and reach separate services", async () => {
+    allowReview();
+    const services = k.app.get(DeviceServices);
+    const starts = await fakeServiceStarts(sandboxRoot);
+    const mine = await access.ensureService(CALLER, callOf(), echoServiceSpec());
+    const theirs = await access.ensureService(OTHER, callOf(), echoServiceSpec());
+    // each extension sees its own name; the provider keyed them apart
+    expect(mine.name).toBe("echo");
+    expect(theirs.name).toBe("echo");
+    expect(theirs.stateDir).not.toBe(mine.stateDir);
+    expect(await fakeServiceStarts(sandboxRoot)).toBe(starts + 2);
+    const startLines = (await readFakeSandboxOps(sandboxRoot))
+      .filter((l) => l[0] === "service-start")
+      .map((l) => l[2]);
+    expect(startLines.slice(-2)).toEqual([ID, OTHER_ID]);
+    // stopping one leaves the other running and reachable
+    await services.stop(use(), OTHER_ID, AbortSignal.timeout(30_000));
+    expect((await status())?.state).toBe("running");
+    const answer = await access.request(CALLER, callOf(), {
+      service: "echo",
+      body: new TextEncoder().encode("ping"),
+      timeoutMs: 5_000,
+    });
+    expect(new TextDecoder().decode(answer)).toContain("ping");
+    await expect(
+      access.request(OTHER, callOf(), {
+        service: "echo",
+        body: new TextEncoder().encode("ping"),
+        timeoutMs: 5_000,
+      }),
+    ).rejects.toThrow(/not running/);
   });
 
   it("the launch is reviewed at the service's code directory when the provider reports one", async () => {
@@ -298,7 +341,7 @@ describe("ctx.deviceAccess", () => {
       });
     } finally {
       spy.mockRestore();
-      await services.stop(use(), "echo", AbortSignal.timeout(30_000));
+      await services.stop(use(), ID, AbortSignal.timeout(30_000));
     }
   });
 
@@ -381,7 +424,7 @@ describe("ctx.deviceAccess", () => {
     const services = k.app.get(DeviceServices);
     // while this call is being reviewed, another call starts the service
     vi.spyOn(k.app.get(CommandReviewService), "review").mockImplementation(async () => {
-      await services.ensure(use(), echoServiceSpec(), AbortSignal.timeout(30_000));
+      await services.ensure(use(), { ...echoServiceSpec(), name: ID }, AbortSignal.timeout(30_000));
       return { decision: "allow", by: "rule", reason: "test", rule: null };
     });
     const status = await access.ensureService(CALLER, callOf(), echoServiceSpec());
@@ -509,12 +552,15 @@ describe("ctx.deviceAccess", () => {
     // the launch's review is recorded with the call's result, as a reviewed Bash call's is
     expect(r?.review).toEqual({ decision: "allow", by: "rule", rule: null, reason: "test" });
     // and directly, once running
-    const answer = await access.request(CALLER, callOf(), {
+    const direct = callOf();
+    const answer = await access.request(CALLER, direct, {
       service: "echo",
       body: new TextEncoder().encode("again"),
       timeoutMs: 10_000,
     });
     expect(new TextDecoder().decode(answer)).toBe("again");
+    // the call reached the service: a later timeout never claims nothing was sent
+    expect(callScopeOf(direct)?.reached).toBe(true);
   });
 
   it("a refusal reaches the model as its own actionable text", async () => {
@@ -677,7 +723,7 @@ describe("ctx.deviceAccess", () => {
     allowReview();
     const ifRunning = async () =>
       (await readFakeSandboxOps(sandboxRoot)).filter(
-        (l) => l[0] === "service-if-running" && l[2] === "echo",
+        (l) => l[0] === "service-if-running" && l[2] === ID,
       );
     const scope = { orgId, conversationId: s.conversationId, accountId: s.accountId };
     // running: an ifRunning ensure after the write
@@ -696,7 +742,7 @@ describe("ctx.deviceAccess", () => {
     expect(applied?.op).toBe("update");
     expect(applied?.limits.network.hosts).toContain("example.org");
     // stopped (the instance runs): the ifRunning ensure finds it stopped and starts nothing
-    await k.app.get(DeviceServices).stop(use(), "echo", AbortSignal.timeout(30_000));
+    await k.app.get(DeviceServices).stop(use(), ID, AbortSignal.timeout(30_000));
     await access.addNetworkHosts(CALLER, { ...scope, hosts: ["cdn.example.org"] });
     const last = await ifRunning();
     expect(last.length).toBe(before + 3);

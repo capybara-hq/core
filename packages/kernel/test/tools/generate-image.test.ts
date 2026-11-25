@@ -527,7 +527,7 @@ describe("GenerateImage calls", () => {
     }
     expect(lines[4]).toBe("Revised prompt: revised: a red fox");
     expect(lines[5]).toBe(
-      `The images are not shown to you; Read with file_id ${artifacts[0]?.payload.artifactId} returns one.`,
+      `The images are not shown to you; if Read is available to you, Read with file_id ${artifacts[0]?.payload.artifactId} returns one.`,
     );
     expect(lines).toHaveLength(6);
     // without file_path the call writes nothing into the device and is not reviewed
@@ -649,7 +649,9 @@ describe("GenerateImage calls", () => {
     const conv = await createConv(owner, orgId, agentId);
     const text = textOf(await direct(conv, { prompt: "a moon" }));
     const id = ARTIFACT_LINE.exec(text.split("\n")[2] as string)?.[2];
-    expect(text).toContain(`The images are not shown to you; Read with file_id ${id} returns one.`);
+    expect(text).toContain(
+      `The images are not shown to you; if Read is available to you, Read with file_id ${id} returns one.`,
+    );
   });
 
   it("an unknown reference id names the index", async () => {

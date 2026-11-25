@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  DialInAnswerTimeoutError,
   type ExtensionContext,
   isDeviceOfflineError,
   isDeviceRequestNotSent,
@@ -17,11 +18,13 @@ import {
   deviceTransportKey,
 } from "../../src/dial-in/keys.js";
 import {
+  answerMarginMs,
   DialInFrameTooLargeError,
   DialInRelay,
   HOLDER_POLL_MS,
   LEASE_CHECK_TIMEOUT_MS,
   LIST_TTL_MARGIN_MS,
+  RELAY_ANSWER_MARGIN_MS,
 } from "../../src/dial-in/relay.js";
 import { type DeviceTargetState, DeviceTargets } from "../../src/dial-in/targets.js";
 import { ApiError } from "../../src/errors.js";
@@ -247,7 +250,7 @@ describe("DialInRelay", () => {
     await h.disconnect();
   });
 
-  it("grace exceeded on a taken request queues a cancel and throws device.offline", async () => {
+  it("a connected machine that took a request and never answers: given up at the deadline plus the answer margin, a cancel queued", async () => {
     graceSeconds = 1;
     const h = holder();
     await h.connect();
@@ -260,7 +263,9 @@ describe("DialInRelay", () => {
     await h.disconnect();
     await holdLeaseOnly(h.deviceId);
     const e = await call;
-    expect(isOffline(e)).toBe(true);
+    // still connected: not offline, the answer is overdue
+    expect(e).toBeInstanceOf(DialInAnswerTimeoutError);
+    expect(isOffline(e)).toBe(false);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(1400);
     // the cancel waits on the list for the next connect, under a TTL
     const listKey = deviceReqKey(h.deviceId);
@@ -272,12 +277,77 @@ describe("DialInRelay", () => {
     await h.disconnect();
   });
 
+  it("the reconnect grace is not added while the machine stays connected", async () => {
+    // a long grace: only the answer margin (the test seam) follows the deadline
+    graceSeconds = 60;
+    const r = relayOver(redis);
+    r.answerMarginOverrideMs = 300;
+    const env = randomUUID();
+    await holdLeaseOnly(env);
+    const t0 = Date.now();
+    const e = await rejection(r.request(env, execBody, { timeoutMs: 500, signal: signal() }));
+    // never taken by the connected machine: not sent, nothing ran
+    expect(isDeviceRequestNotSent(e)).toBe(true);
+    const took = Date.now() - t0;
+    expect(took).toBeGreaterThanOrEqual(800);
+    expect(took).toBeLessThan(800 + 3000);
+    await redis.del(deviceReqKey(env), deviceLeaseKey(env));
+  });
+
+  it("the answer margin is at least the device lease TTL, at most the grace", () => {
+    expect(answerMarginMs(120_000)).toBe(RELAY_ANSWER_MARGIN_MS);
+    expect(answerMarginMs(120_000, 30_000)).toBe(30_000);
+    expect(answerMarginMs(1000, 30_000)).toBe(1000);
+  });
+
+  it("a lease that outlives the socket: a result held for the reconnect still arrives after the deadline", async () => {
+    graceSeconds = 60;
+    const r = relayOver(redis);
+    r.answerMarginOverrideMs = 3000;
+    const h = holder();
+    await h.connect();
+    const t0 = Date.now();
+    const call = r.request(h.deviceId, execBody, { timeoutMs: 500, signal: signal() });
+    const req = await h.next();
+    // the socket dies, the lease stays (a crashed holder or a half-open socket)
+    await h.disconnect();
+    await holdLeaseOnly(h.deviceId);
+    await sleep(Math.max(0, 1500 - (Date.now() - t0)));
+    // the machine comes back past the deadline, within the margin, with its held result
+    await h.connect();
+    await h.respond(req.id, { ok: true, result: EXEC_RESULT });
+    expect(await call).toEqual(EXEC_ANSWER);
+    await h.disconnect();
+  });
+
+  it("a machine lost before the deadline and back after it: the wait goes on a margin past the reconnect", async () => {
+    graceSeconds = 3;
+    const r = relayOver(redis);
+    r.answerMarginOverrideMs = 1500;
+    const h = holder();
+    await h.connect();
+    const t0 = Date.now();
+    const at = (ms: number) => sleep(Math.max(0, ms - (Date.now() - t0)));
+    const call = r.request(h.deviceId, execBody, { timeoutMs: 500, signal: signal() });
+    const req = await h.next();
+    await h.disconnect();
+    // the first poll (~2 s, the connected bound) sees it lost: the wait is capped at ~3.5 s
+    await at(2600);
+    await h.connect();
+    // the poll at ~3.5 s sees it back: the wait goes on to ~5 s; answered in between
+    await at(4200);
+    await h.respond(req.id, { ok: true, result: EXEC_RESULT });
+    expect(await call).toEqual(EXEC_ANSWER);
+    await h.disconnect();
+  });
+
   it("a request given up on before the machine took it is removed: nothing reaches the machine", async () => {
     graceSeconds = 1;
     const env = randomUUID();
     await holdLeaseOnly(env);
     const e = await rejection(relay.request(env, execBody, { timeoutMs: 500, signal: signal() }));
-    expect(isOffline(e)).toBe(true);
+    // connected all along and never taken: removed from the list, provably not sent
+    expect(isDeviceRequestNotSent(e)).toBe(true);
     const ac = new AbortController();
     const aborted = rejection(relay.request(env, statBody, { timeoutMs: 5000, signal: ac.signal }));
     await sleep(100);
@@ -386,7 +456,8 @@ describe("DialInRelay", () => {
     const call = rejection(stalling.request(env, execBody, { timeoutMs: 500, signal: signal() }));
     await sleep(100);
     stall = true;
-    expect(isOffline(await call)).toBe(true);
+    // never seen disconnected and never taken: given up at the deadline plus the margin, not sent
+    expect(isDeviceRequestNotSent(await call)).toBe(true);
     expect(Date.now() - t0).toBeLessThan(1500 + LEASE_CHECK_TIMEOUT_MS + 1000);
     await redis.del(deviceLeaseKey(env), deviceReqKey(env));
   });

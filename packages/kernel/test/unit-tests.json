@@ -168,6 +168,7 @@
   "tools/platform-tool.test.ts",
   "tools/redact.test.ts",
   "tools/registry-builtin-unavailable.test.ts",
+  "tools/result-images.test.ts",
   "tools/sandbox/device-code.test.ts",
   "tools/sandbox/device-errors.test.ts",
   "tools/sandbox/escalation-hints.test.ts",
@@ -183,5 +184,6 @@
   "ui/arrangement.test.ts",
   "ui/builtin-display.test.ts",
   "ui/embed-token.test.ts",
-  "ui/ui-stream.test.ts"
+  "ui/ui-stream.test.ts",
+  "background/stop-failure.test.ts"
 ]

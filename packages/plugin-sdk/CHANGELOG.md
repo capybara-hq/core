@@ -1,5 +1,70 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.73
+
+### Patch Changes
+
+- aa535be: Images in tool results reach the agent and the person. The pipeline stores every image block a
+  tool returns (a browser screenshot, an MCP image) as a copy of the conversation and names it in the
+  result (`file_id`); a model with vision sees it after the step's results, a model without vision is
+  told it was not shown and how to read it, and an image that cannot be stored says why. The web
+  shows the images as thumbnails on the call's row (opening the image viewer), and `Deliver` takes a
+  `file_id` to hand such an image (or any attachment or artifact of the conversation) to the person
+  without a device.
+
+## 0.1.0-rc.72
+
+### Minor Changes
+
+- e2ca2ff: A device's first tool call no longer hangs in silence until the tool's time limit:
+  
+  - `ToolSpec.timeoutMs`: an extension tool can declare its own time limit, from 1 s to 10 min
+    (`TOOL_TIMEOUT_MIN_MS`, `TOOL_TIMEOUT_MAX_MS`). It replaces `tools.timeoutMs` for that tool and is
+    cut to the new deployment setting `tools.maxTimeoutMs` (default 10 min). It is not part of the
+    tool's definition fingerprint.
+  - A tool call that times out while `ctx.deviceAccess.ensureService` is still starting the device,
+    before the call sent anything to a device service, says that the device was still starting and
+    nothing reached the target. It no longer uses the generic "may or may not have completed" text.
+  - The dial-in relay adds the reconnect grace only while the machine is disconnected. A connected
+    machine is given up at the deadline plus a margin (at least the device lease TTL). It fails with
+    `DeviceRequestNotSentError` when the request was never taken, and with the new SDK error
+    `DialInAnswerTimeoutError` (`isDialInAnswerTimeoutError`, code `device.answer_timeout`) when the
+    outcome is unknown. Tools show the outcome-unknown text for it. A slow machine is never reported
+    as a refused open network or a failed create. `capybara-device` now answers an expired lifecycle or operation
+    request with a typed `unknown` error instead of staying silent.
+  - The sandbox logs each lifecycle step (resume, create, recreate) with its duration and outcome.
+    It also logs relay give-ups and aborted lease or relay waits.
+  - A device service launch is reviewed by its own rule, `allow.service` ("Starts a device service
+    declared by the extension, from its code directory."), instead of `allow.dev`.
+- 5a8031d: Dial-in stream data can travel as binary WebSocket messages. A machine's hello offers `transport.binaryStreamData` and the kernel's `ready` agrees; from then on both sides send `stream-data` as one binary message (`encodeDialInStreamData`: tag, stream id, the raw bytes) instead of base64 inside JSON, which cuts a quarter of the bytes of every device stream (the browser live view). `capybara-device` offers it; a machine that does not offer it stays on JSON, and a `capybara-device` whose offer an older kernel refuses (4400 before `ready`) reconnects without it, so the device and the deployment can be upgraded in either order. `FakeDialInMachine` takes `binaryStreamData` to test both.
+- 7a178bf: The conversation's right panel keeps an embed mounted across full mode: maximising or restoring
+  the panel no longer reloads its iframe, so a panel's document and connections survive the switch,
+  and a panel embed fills the panel (borderless) in both modes instead of sizing itself by `resize`.
+  The embed bridge tells a `conversation.panel` embed the panel's mode: `EmbedParentMessage` gains
+  `panel-mode { full }`, sent right after `init` and on every change, whoever made it (the embed's
+  own ask, the close control or Esc, the host refusing full mode on a phone). A plugin tool's
+  `InputRequired` may carry `open` (a `UiOpen` naming a `conversation.panel` of the same extension):
+  the kernel writes it to `question_asked` after checking it, and the conversation page opens that
+  panel when the question arrives.
+
+### Patch Changes
+
+- c9a563b: Device services are namespaced per extension (core#817): a device provider now receives every service
+  by its id `<extension>.<name>` (`DEVICE_SERVICE_ID_RE`, `deviceServiceId`) in `ensureService`,
+  `stopService`, `serviceStatus`, `serviceRequest` and `openStream`, never by the extension's bare name,
+  so two extensions declaring the same service name never start, stop or reach each other's process.
+  `ctx.deviceAccess` keeps the extension's own names and maps statuses back. `capybara-device` accepts
+  service ids only (a machine on an older version refuses them: update it with the deployment), and the
+  device service conformance starts `conformance.echo`.
+- c9a563b: `capybara-device` gives every device service an install directory (`<device dir>/svc-install/<id>`,
+  named by `CAPYBARA_SERVICE_INSTALL`, `DEVICE_SERVICE_INSTALL_ENV`): the service may write it until it
+  creates the regular file `.sealed` there (`DEVICE_SERVICE_INSTALL_SEAL`), and from its next start on
+  reads it only, so nothing the service later runs can replace what it installed (the browser plugin's
+  Chromium, capybara-hq/plugins#209). It is emptied at every start that does not find it sealed under the service's current files, and
+  agent operations can neither read nor write it.
+  Entries of `svc/` and `svc-files/` kept under bare service names from before ids (an old browser profile) are removed at the
+  next service start: the person signs in to sites in the browser again once.
+
 ## 0.1.0-rc.71
 
 ### Minor Changes
