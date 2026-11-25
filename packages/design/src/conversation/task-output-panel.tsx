@@ -29,7 +29,7 @@ export type TaskOutputPanelProps = {
   stopping?: boolean;
   /**
    * With `stopping`: the stop is recorded but waits for the device (its machine offline or not
-   * answering); it says "等待设备响应后停止" / "Stops when the device answers" instead.
+   * answering); it says "Stops when the device answers" (`background.stopWaiting`) instead.
    */
   stopWaiting?: boolean;
   onStop(): void;
