@@ -25,6 +25,20 @@ export const DEVICE_SERVICE_STATE_ENV = "CAPYBARA_SERVICE_STATE";
  * it); a service confines the files it takes in (uploads) and lets out (downloads) to it.
  */
 export const DEVICE_SERVICE_WORKSPACE_ENV = "CAPYBARA_SERVICE_WORKSPACE";
+/**
+ * Names the service's install directory, where the provider gives it one (device-local does;
+ * absent elsewhere): a place for what the service fetches once and then only runs, such as a
+ * browser, apart from its state. The service may write it until it creates the regular file
+ * {@link DEVICE_SERVICE_INSTALL_SEAL} in it; from its next start on the directory is read only
+ * for the service, so nothing the service later runs (a compromised browser included) can
+ * replace what was installed. The provider empties and unseals it when the service's files
+ * change (a plugin upgrade may need another install). The process that seals keeps its write
+ * access until it exits, so a service seals only a complete install and then exits without
+ * running it; the next start, reviewed again, runs it read only.
+ */
+export const DEVICE_SERVICE_INSTALL_ENV = "CAPYBARA_SERVICE_INSTALL";
+/** The file that seals a service's install directory ({@link DEVICE_SERVICE_INSTALL_ENV}). */
+export const DEVICE_SERVICE_INSTALL_SEAL = ".sealed";
 /** The largest message body, in bytes, either side may send on a service connection. */
 export const DEVICE_SERVICE_MAX_MESSAGE = 8 * 1024 * 1024;
 /** The kinds a connection's first message may name. */

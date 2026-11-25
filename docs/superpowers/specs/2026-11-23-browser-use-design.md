@@ -121,7 +121,9 @@ Anti-goals (a failure even if it works)
   (§7.1), killed on suspend / destroy. The kernel starts it on behalf of an extension holding
   `permissions.deviceAccess`; its launch passes the command review once per start (fail closed).
   Each provider implements it (docker / e2b: a supervised process in the instance; local: a
-  process the device program supervises under the local sandbox).
+  process the device program supervises under the local sandbox). Providers know a service by
+  its id `<extension>.<name>`, so two extensions declaring the same name never share a process
+  (amended 2026-11-25, core#817).
 - Chromium: Playwright's Chromium (docker / e2b, per the sandbox dev tiers spec: runtime libraries,
   `ShmSize`, downloads into the cache under `PLAYWRIGHT_BROWSERS_PATH`); on macOS
   `chrome-headless-shell` with `--single-process` until the full Chrome works under the local sandbox
