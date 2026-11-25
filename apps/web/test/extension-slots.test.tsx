@@ -315,6 +315,8 @@ describe("embed panels (tier two)", () => {
         type: "init",
         context: { scope: "org", orgId: "o1", conversationId: "c1" },
       }),
+      // a conversation.panel embed is told the panel's mode right after init
+      { protocol: "capybara-embed/1", type: "panel-mode", full: false },
     ]);
     const fromFrame = (data: unknown) =>
       act(() => {
