@@ -898,7 +898,7 @@ it("the hello is the dial-in envelope around the device protocol body", async ()
     protocol: "capybara-device/6",
     programRunId: PROGRAM_RUN_ID,
     program: { version: "1.0.0", os: "linux", arch: "x64", bootId: "boot-1" },
-    transport: { maxFrameBytes: 69632 },
+    transport: { maxFrameBytes: 69632, binaryStreamData: true },
     body,
   });
 });

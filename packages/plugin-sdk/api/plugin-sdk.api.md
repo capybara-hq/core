@@ -915,6 +915,12 @@ export const CONVERSATION_SOURCES: readonly ["web", "channel_dm", "channel_group
 export type ConversationSource = (typeof CONVERSATION_SOURCES)[number];
 
 // @public
+export function decodeDialInStreamData(message: Uint8Array): {
+    streamId: string;
+    data: Uint8Array;
+};
+
+// @public
 export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
 
 // @public
@@ -1194,6 +1200,9 @@ export interface DeviceText {
 export const DIAL_IN_PROTOCOL_RE: RegExp;
 
 // @public
+export const DIAL_IN_STREAM_DATA_TAG = 1;
+
+// @public
 export const DIAL_IN_STREAM_INITIAL_CREDIT = 8;
 
 // @public
@@ -1250,6 +1259,7 @@ export type DialInKernelFrame =
     type: "ready";
     connectionId: string;
     maxFrameBytes: number;
+    binaryStreamData?: true;
 }
 /** A provider's request ({@link DialInChannel.request}); answered by a `res` with its `id`. */
 | {
@@ -1288,6 +1298,7 @@ export type DialInMachineFrame = {
     };
     transport: {
         maxFrameBytes: number;
+        binaryStreamData?: true;
     };
     body: unknown;
 }
@@ -1551,6 +1562,9 @@ export interface EmbedResult {
     };
     vectors: number[][];
 }
+
+// @public
+export function encodeDialInStreamData(streamId: string, data: Uint8Array): Uint8Array;
 
 // @public
 export function encodeServiceMessage(body: Uint8Array): Uint8Array;

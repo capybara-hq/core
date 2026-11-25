@@ -651,7 +651,7 @@ describe("staged connection (W3-M)", () => {
         arch: process.arch,
         bootId: "boot-1",
       },
-      transport: { maxFrameBytes: 69632 },
+      transport: { maxFrameBytes: 69632, binaryStreamData: true },
       body: expect.any(Object),
     });
     // the body is the device protocol's: the owner's ceiling and no program fact
@@ -665,6 +665,27 @@ describe("staged connection (W3-M)", () => {
     expect(announced).not.toContain("policyOp");
     expect(announced).not.toContain("policyOpId");
     expect(hello.body).not.toHaveProperty("recentOps");
+  });
+
+  it("against a kernel without binary stream data, the next hello drops the offer", async () => {
+    const k = await kernel();
+    const s = staged({ cred: credential({ connectUrl: k.url }) });
+    const conn = connectStaged(s.device, { err: () => {}, bootId: null });
+    cleanups.push(() => {
+      conn.stop();
+      return conn.done;
+    });
+    const first = await k.waitFor("hello", () => k.of("hello", 0)[0]);
+    expect(first.transport).toEqual({ maxFrameBytes: 69632, binaryStreamData: true });
+    // a kernel released before the offer: its strict envelope knows only maxFrameBytes
+    expect(Object.keys(first.transport)).not.toEqual(["maxFrameBytes"]);
+    k.sockets[0]?.close(4400, "invalid frame");
+    const second = await k.waitFor("second hello", () => k.of("hello", 1)[0], 15_000);
+    expect(second.transport).toEqual({ maxFrameBytes: 69632 });
+    // that kernel accepts it, and the machine is served on JSON stream data
+    ready(k, 1);
+    send(k, 1, "c1", "create", { limits: LIMITS });
+    expect(await res(k, "c1")).toMatchObject({ ok: true });
   });
 
   it("an unbound hello, then the binding and lifecycle over the socket", async () => {
