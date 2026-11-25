@@ -1166,6 +1166,9 @@ export interface DevicesCtx {
 }
 
 // @public
+export function deviceServiceFilesDigest(files: Record<string, Uint8Array>): string;
+
+// @public
 export function deviceServiceId(extension: string, name: string): string;
 
 // @public
@@ -1181,6 +1184,7 @@ export interface DeviceServiceSpec {
 // @public
 export interface DeviceServiceStatus {
     codeDir?: string;
+    filesDigest?: string;
     name: string;
     startedAt: string | null;
     state: "running" | "stopped";

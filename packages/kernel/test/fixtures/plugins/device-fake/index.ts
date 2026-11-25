@@ -34,6 +34,7 @@ import {
   type DeviceServiceStatus,
   type DeviceStream,
   defineExtension,
+  deviceServiceFilesDigest,
   type ExecResult,
   encodeServiceMessage,
   FileSystemGoneError,
@@ -301,6 +302,8 @@ export async function fakeServiceRunning(
 interface ServiceRecord {
   pid: number;
   startedAt: string;
+  /** The digest of the files it was started from ({@link deviceServiceFilesDigest}). */
+  filesDigest?: string;
 }
 
 const serviceRecordPath = (root: string, id: string, name: string) =>
@@ -399,13 +402,20 @@ function serviceSurface(
     signal: AbortSignal,
   ): Promise<DeviceServiceStatus> => {
     const rec = await readServiceRecord(root, h.id, spec.name);
-    if (rec !== null && alive(rec.pid))
-      return {
-        name: spec.name,
-        state: "running",
-        startedAt: rec.startedAt,
-        stateDir: fakeServiceStateDir(root, h.id, spec.name),
-      };
+    const filesDigest = deviceServiceFilesDigest(spec.files);
+    if (rec !== null && alive(rec.pid)) {
+      if (rec.filesDigest === filesDigest)
+        return {
+          name: spec.name,
+          state: "running",
+          startedAt: rec.startedAt,
+          stateDir: fakeServiceStateDir(root, h.id, spec.name),
+          filesDigest,
+        };
+      // other files (an upgraded extension): the old process goes, the new files start
+      await killService(root, h.id, spec.name);
+      await log(`service-replace ${h.id} ${spec.name}`);
+    }
     const state = fakeServiceStateDir(root, h.id, spec.name);
     const inside = (rel: string) => {
       const n = posix.normalize(rel);
@@ -471,17 +481,23 @@ function serviceSurface(
     await mkdir(join(instanceDir(root, h.id), "services"), { recursive: true });
     await writeFile(
       serviceRecordPath(root, h.id, spec.name),
-      JSON.stringify({ pid, startedAt } satisfies ServiceRecord),
+      JSON.stringify({ pid, startedAt, filesDigest } satisfies ServiceRecord),
     );
     await log(`service-start ${h.id} ${spec.name} ${pid}`);
-    return { name: spec.name, state: "running", startedAt, stateDir: state };
+    return { name: spec.name, state: "running", startedAt, stateDir: state, filesDigest };
   };
   /** The service's status now, without starting it. */
   const statusOf = async (h: SandboxHandle, name: string): Promise<DeviceServiceStatus> => {
     const rec = await readServiceRecord(root, h.id, name);
     const stateDir = fakeServiceStateDir(root, h.id, name);
     return rec !== null && alive(rec.pid)
-      ? { name, state: "running", startedAt: rec.startedAt, stateDir }
+      ? {
+          name,
+          state: "running",
+          startedAt: rec.startedAt,
+          stateDir,
+          ...(rec.filesDigest !== undefined && { filesDigest: rec.filesDigest }),
+        }
       : { name, state: "stopped", startedAt: null, stateDir };
   };
   return {

@@ -532,7 +532,11 @@ treats a dial-in device like any other (its provider, report and permission supp
   never starts anything, re-applies the device's current limits to a running service (a restart
   for that runs the spec the service was launched with and its stored code, never the request's)
   and answers a stopped one's status (implement it: the kernel calls it before every launch
-  review, race-free, and after the device allowlist changes). The kernel refuses a spec before any provider call (`serviceSpecIssue`): entry and
+  review, race-free, and after the device allowlist changes). A running service's status carries
+  `filesDigest` (`deviceServiceFilesDigest` of the files it was started from) when the provider
+  knows it: `ctx.deviceAccess.ensureService` treats a service running other files (an upgraded
+  extension) like a stopped one, reviews the start, and the full ensure then stops the old process
+  and starts the new files; without `filesDigest` a running service is kept as before. The kernel refuses a spec before any provider call (`serviceSpecIssue`): entry and
   file keys relative with plain segments (no absolute path, `..`, `.`, empty segment, backslash,
   NUL), entry one of the files, no `NODE_*` / `PATH` / `SSL_CERT_FILE` / `SSL_CERT_DIR` /
   `OPENSSL_CONF` / `OPENSSL_ENGINES` / `LD_*` / `DYLD_*` / `CAPYBARA_*` / proxy variables in

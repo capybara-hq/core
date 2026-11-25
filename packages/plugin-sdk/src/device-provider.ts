@@ -9,6 +9,7 @@
  * (`create`) attach to it and come and go (`destroy` drops the instance and keeps the files).
  */
 
+import { createHash } from "node:crypto";
 import type {
   SandboxBackground,
   SandboxBrowse,
@@ -473,6 +474,28 @@ export interface DeviceServiceStatus {
    * `node <codeDir ?? stateDir>/<entry>`, so a provider runs exactly that.
    */
   codeDir?: string;
+  /**
+   * The {@link deviceServiceFilesDigest} of the files the running process was started from, when
+   * the provider knows it (absent when stopped). The kernel compares it with the spec's files: a
+   * running service on other files (an upgraded extension) gets a reviewed start, which restarts
+   * it on the new files.
+   */
+  filesDigest?: string;
+}
+
+/**
+ * The digest of a service's files: `sha256:` and the hex SHA-256 over each file in path order
+ * (path, NUL, byte length, NUL, bytes). Providers report it in {@link DeviceServiceStatus} and
+ * may send it to a machine instead of the files.
+ */
+export function deviceServiceFilesDigest(files: Record<string, Uint8Array>): string {
+  const h = createHash("sha256");
+  for (const path of Object.keys(files).sort()) {
+    const data = files[path] as Uint8Array;
+    h.update(`${path}\0${data.byteLength}\0`);
+    h.update(data);
+  }
+  return `sha256:${h.digest("hex")}`;
 }
 
 /**
@@ -811,8 +834,9 @@ export interface DeviceProvider {
    * `<extension>.<name>`, {@link DEVICE_SERVICE_ID_RE}), never by the extension's bare name.
    * It writes `spec.files` into the service's code directory, then runs `spec.entry` with Node, the
    * service socket and state directory named in its environment (`DEVICE_SERVICE_SOCKET_ENV`,
-   * `DEVICE_SERVICE_STATE_ENV`). A service already running under the name is kept as is. The
-   * kernel has passed the launch through the command review before it calls this.
+   * `DEVICE_SERVICE_STATE_ENV`). A service already running under the name is kept as is, unless
+   * it runs other files than the spec's: then it is stopped and started on them. The kernel has
+   * passed the launch through the command review before it calls this.
    *
    * With `opts.ifRunning` it never starts anything and reads only `spec.name` (the kernel sends
    * `{ name, runtime: "node", entry: "", args: [], files: {} }`, which must not be refused): a
@@ -820,7 +844,8 @@ export interface DeviceProvider {
    * a restart for that runs the spec it was launched with and its stored code (the kernel calls
    * this after the device's allowlist changed, and before reviewing a launch); a stopped one
    * answers its `stopped` status (with `stateDir`, and `codeDir` where kept apart) and stays
-   * stopped.
+   * stopped. A running one answers its `filesDigest` when known, so the kernel reviews a start on
+   * new files before calling this without `ifRunning`.
    */
   ensureService?(
     h: SandboxHandle,
