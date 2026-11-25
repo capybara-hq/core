@@ -9,6 +9,7 @@ import {
 } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { WebSocket } from "ws";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
@@ -327,6 +328,8 @@ describe("dial-in streams", () => {
     await stream.send(bytes(1));
     await peer.receivedCount(1);
     expect(machine.binaryReceived).toBe(0);
+    // nothing binary reached it, agreed or not
+    expect(machine.invalid).toEqual([]);
     stream.close();
   });
 
@@ -336,6 +339,48 @@ describe("dial-in streams", () => {
     (machine as unknown as { ws: { send(b: Uint8Array): void } }).ws.send(
       Uint8Array.of(1, 1, 115, 7),
     );
+    expect((await machine.closed).code).toBe(4400);
+  });
+
+  it("binary sent after the hello but before ready closes the socket", async () => {
+    const m = await signedIn();
+    const ws = new WebSocket(url, {
+      headers: {
+        authorization: `Bearer ${m.credential}`,
+        "x-capybara-device-protocol": "fake-dial-in/1",
+      },
+    });
+    const closed = new Promise<number>((r) => ws.once("close", (code) => r(code)));
+    await new Promise<void>((r) => ws.once("open", () => r()));
+    ws.send(
+      JSON.stringify({
+        type: "hello",
+        protocol: "fake-dial-in/1",
+        programRunId: randomUUID(),
+        program: { version: "0.0.0-fake", os: "linux", arch: "x64" },
+        transport: { maxFrameBytes: MAX_FRAME_BYTES, binaryStreamData: true },
+        body: HELLO,
+      }),
+    );
+    // in the same tick: the kernel has not answered ready yet
+    ws.send(Uint8Array.of(1, 2, 115, 49, 7));
+    expect(await closed).toBe(4400);
+  });
+
+  it("a binary message over the connection's effective capacity closes the socket", async () => {
+    const m = await signedIn();
+    const machine = await FakeDialInMachine.connect({
+      url,
+      credential: m.credential,
+      hello: HELLO,
+      // the machine announces less than the kernel's limit: the effective cap is its own
+      maxFrameBytes: 8 * 1024,
+      binaryStreamData: true,
+    });
+    open.push(machine);
+    expect(machine.maxFrameBytes).toBe(8 * 1024);
+    const big = Buffer.concat([Buffer.from([1, 2]), Buffer.from("s1"), Buffer.alloc(9 * 1024)]);
+    (machine as unknown as { ws: { send(b: Uint8Array): void } }).ws.send(big);
     expect((await machine.closed).code).toBe(4400);
   });
 

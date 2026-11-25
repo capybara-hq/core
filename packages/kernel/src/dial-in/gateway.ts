@@ -374,6 +374,9 @@ class DeviceConnection {
     try {
       if (this.effectiveCap === undefined || bytes.byteLength > this.effectiveCap)
         throw new Error(`frame exceeds ${this.effectiveCap ?? 0} bytes`);
+      // like a JSON frame: a capacity lowered since the hello ends the connection
+      if (this.gw.maxFrameBytes() < this.effectiveCap)
+        throw new Error("Frame capacity changed; reconnect");
       decoded = decodeDialInStreamData(
         new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
       );

@@ -60,6 +60,12 @@ export interface StagedSessionState {
   readonly pending: Map<string, { res: DeviceResponse; expires: number }>;
   /** Delivers on the current ready socket; undefined while none is ready. */
   current: ((res: DeviceResponse) => void) | undefined;
+  /**
+   * A kernel refused a hello that offered binary stream data (4400 "invalid frame" before
+   * `ready`: a kernel older than the offer, whose strict envelope has no such key). Later hellos
+   * of this state no longer offer it, so the machine keeps working on JSON stream data.
+   */
+  binaryStreamDataRefused: boolean;
 }
 
 /**
@@ -88,6 +94,7 @@ export function createStagedSessionState(opts: {
     draining: false,
     discarded: false,
     sockets: new Set(),
+    binaryStreamDataRefused: false,
   };
 }
 
@@ -345,6 +352,8 @@ export function serveStagedSession(
     throw new Error("Serve the session with the current credential's session state");
   const bootId = report.envelope.program.bootId ?? currentBootId();
   const cap = credential.maxFrameBytes;
+  // offered unless a kernel already refused the offer (an older kernel: it stays JSON there)
+  const offerBinary = !state.binaryStreamDataRefused;
   const hello = {
     type: "hello",
     protocol: DEVICE_DIAL_IN_PROTOCOL,
@@ -355,7 +364,7 @@ export function serveStagedSession(
       ...(bootId !== undefined && { bootId }),
     },
     // stream data goes binary (no base64) once the kernel's ready agrees
-    transport: { maxFrameBytes: cap, binaryStreamData: true },
+    transport: { maxFrameBytes: cap, ...(offerBinary && { binaryStreamData: true as const }) },
     body: report.body,
   } satisfies DialInMachineFrame;
   let ready: { connectionId: string; maxFrameBytes: number; binary: boolean } | undefined;
@@ -434,6 +443,11 @@ export function serveStagedSession(
       return services.openStream(body, signal);
     },
   );
+  socket.on("close", (code, reason) => {
+    // an older kernel refuses the unknown offer before its ready: the next hello goes without it
+    if (code === 4400 && offerBinary && ready === undefined && String(reason) === "invalid frame")
+      state.binaryStreamDataRefused = true;
+  });
   const credentialChanged = () => socket.close(4401, "Credential changed; reconnect");
   state.sockets.add(credentialChanged);
   socket.on("message", (data, binary) => {

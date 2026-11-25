@@ -193,7 +193,10 @@ export class FakeDialInMachine {
   readonly stops: ("drain" | "stop")[] = [];
   /** Socket errors after `ready` (kept, so an error never goes unhandled), in order. */
   readonly errors: Error[] = [];
-  /** Kernel frames that were not JSON, in order (the kernel never sends one). */
+  /**
+   * Kernel messages it could not take, in order: text that was not JSON, and binary messages
+   * (hex) that were not an agreed `stream-data` (the kernel never sends either).
+   */
   readonly invalid: string[] = [];
   private handler: RequestHandler = () => ({});
   private streamHandler: StreamHandler | undefined;
@@ -345,10 +348,19 @@ export class FakeDialInMachine {
     );
   }
 
-  /** A binary message: a `stream-data` (kept in {@link invalid} as hex when it is not one). */
+  /**
+   * A binary message: a `stream-data` of a connection that agreed on binary (anything else is
+   * kept in {@link invalid} as hex).
+   */
   private onBinary(buf: Buffer): void {
     const len = buf[1] ?? 0;
-    if (buf.length < 2 || buf[0] !== STREAM_DATA_TAG || buf.length < 2 + len) {
+    // binary the connection did not agree on is the kernel's mistake: kept, never delivered
+    if (
+      !this.binaryStreamData ||
+      buf.length < 2 ||
+      buf[0] !== STREAM_DATA_TAG ||
+      buf.length < 2 + len
+    ) {
       this.invalid.push(buf.toString("hex"));
       return;
     }
