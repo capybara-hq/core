@@ -16,6 +16,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { BoxScope, useInBox } from "../layout/box";
 import { useDesignT } from "../provider";
+import { DragFill } from "../shell/drag-fill";
 import { useRegisterShellPage } from "../shell/shell-page";
 import { LoadFailed } from "./file-preview";
 import { TypeBadge } from "./files";
@@ -588,7 +589,7 @@ export function RightPanel({
               {meta}
             </span>
           ) : null}
-          <span className="cb-rpanel-grow" />
+          <DragFill className="cb-rpanel-grow" />
           {actions}
           {onFullscreen && !pushed ? (
             <IconButton

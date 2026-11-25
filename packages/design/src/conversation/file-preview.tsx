@@ -5,6 +5,7 @@ import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { Menu } from "../overlays/menus";
 import { useDesignT } from "../provider";
+import { DragFill } from "../shell/drag-fill";
 import { isSafeImageSrc, TypeBadge, typeBadge } from "./files";
 import { Prose } from "./prose";
 import { useRightFull } from "./right-full";
@@ -160,7 +161,7 @@ export function FilePreviewFrame({
           <TypeBadge label={h.badge} />
           {title}
           {h.version ? <span className="cb-faint cb-small cb-rpanel-meta">{h.version}</span> : null}
-          <span className="cb-rpanel-grow" />
+          <DragFill className="cb-rpanel-grow" />
           {previewerSwitch}
           {h.onShare ? (
             <IconButton
