@@ -282,6 +282,17 @@ acts on it) and **seen** by its owner's tree, whose root is the conversation the
    window of their own (`Target.createTarget` with `newWindow: true`) or the renderer
    backgrounding flags are set explicitly, and this ruling records which. Cost if wrong: falling
    back to one queue is a one-line change; a stalled screencast is what the spike exists to catch.
+   **Spike result (2026-11-26): per-conversation queues work as they are.** One Chromium, one
+   context, two animating tabs each with a screencast, no `bringToFront` between: on the Linux
+   plan (Chromium 159 full build in new headless mode, in the device-docker sandbox image with its
+   container settings) and on the macOS plan (the full Chromium of #231 under the device-local
+   launch) the non-front tab kept about 60 frames per second, ran `requestAnimationFrame` about
+   60 times per second, stayed `visible`, and answered `page.screenshot` as fast as the front tab
+   (about 33 ms). No separate windows and no extra flags: Playwright's default switches already
+   disable timer throttling, renderer backgrounding and occluded-window backgrounding; without
+   them macOS background screenshots slowed to 50–160 ms. So the daemon never launches with an
+   `ignoreDefaultArgs` that drops them (a daemon test asserts it). Not measured: more than two
+   tabs, runsc or e2b, the device-local seatbelt.
 8. **Handoff per conversation and seen by the tree; takeover per device.** A handoff is one
    conversation's question that the person answers from the root; a takeover is the person holding
    the one browser. Cost if wrong: none known beyond the session file format.
