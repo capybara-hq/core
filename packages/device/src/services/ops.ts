@@ -154,7 +154,7 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
     return {
       op,
       spec: {
-        name: str(s.name, "spec.name", 64),
+        name: str(s.name, "spec.name", 80),
         entry: str(entry, "spec.entry", 512),
         args: args.map((a, i) => str(a, `spec.args[${i}]`, 65536)),
         ...(files && { files }),
@@ -167,7 +167,7 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
   }
   if (op === "service.stop" || op === "service.status") {
     keys(o, ["op", "name"], op);
-    return { op, name: str(o.name, `${op} name`, 64) };
+    return { op, name: str(o.name, `${op} name`, 80) };
   }
   if (op === "service.request") {
     keys(o, ["op", "name", "body", "timeoutMs"], op);
@@ -184,7 +184,7 @@ export function parseServiceOpBody(body: unknown): ServiceOpBody {
     const decoded = base64(o.body, "service.request body");
     if (decoded.byteLength > DEVICE_SERVICE_MAX_MESSAGE)
       invalid(`service.request body exceeds ${DEVICE_SERVICE_MAX_MESSAGE} bytes`);
-    return { op, name: str(o.name, "service.request name", 64), body: decoded, timeoutMs };
+    return { op, name: str(o.name, "service.request name", 80), body: decoded, timeoutMs };
   }
   return invalid(`Unknown service operation ${String(op)}`);
 }

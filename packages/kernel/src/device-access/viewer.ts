@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   DeviceAccessError,
   type DeviceStream,
+  deviceServiceId,
   isDeviceOfflineError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -714,7 +715,12 @@ export class DeviceStreamViewers {
     }
     let stream: DeviceStream;
     try {
-      stream = await hold.p.openStream(hold.h, { service: record.service }, hold.signal);
+      // the provider knows the service by its id: the ticket's extension and service name
+      stream = await hold.p.openStream(
+        hold.h,
+        { service: deviceServiceId(record.extension, record.service) },
+        hold.signal,
+      );
     } catch (err) {
       await hold.release();
       if (life.signal.aborted) return;

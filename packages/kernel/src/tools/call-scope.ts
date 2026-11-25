@@ -47,6 +47,17 @@ export interface CallScope {
    * refusals came from, when the service said.
    */
   blocked: { deviceId: string | null; hosts: Set<string>; url: string | null } | null;
+  /**
+   * How many device starts of this call are in progress now (`ctx.deviceAccess.ensureService`:
+   * the instance created or resumed, the service launched): a timeout that lands while one is
+   * says the device was still starting, not that the target failed.
+   */
+  starting: number;
+  /**
+   * Whether this call sent a request to a device service (`ctx.deviceAccess.request`): its target
+   * may have acted, so a timeout never claims otherwise.
+   */
+  reached: boolean;
 }
 
 type Scoped = ToolCallContext & { [CALL_SCOPE]?: CallScope };
@@ -57,6 +68,8 @@ export function attachCallScope(ctx: ToolCallContext, facts?: CallFacts): CallSc
     device: null,
     review: null,
     blocked: null,
+    starting: 0,
+    reached: false,
     ...(facts !== undefined && { facts }),
   };
   (ctx as Scoped)[CALL_SCOPE] = scope;
@@ -66,4 +79,30 @@ export function attachCallScope(ctx: ToolCallContext, facts?: CallFacts): CallSc
 /** The call's scope, or null for a context the pipeline did not make (no scope attached). */
 export function callScopeOf(ctx: ToolCallContext): CallScope | null {
   return (ctx as Scoped)[CALL_SCOPE] ?? null;
+}
+
+/**
+ * Runs `fn` as a device start of the call ({@link CallScope.starting}); a context without a scope
+ * runs it as it is.
+ */
+export async function whileDeviceStarting<T>(
+  ctx: ToolCallContext,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const scope = callScopeOf(ctx);
+  if (scope === null) return fn();
+  scope.starting++;
+  try {
+    return await fn();
+  } finally {
+    scope.starting--;
+  }
+}
+
+/**
+ * Whether a timeout of this call happened while its device was still starting and before it sent
+ * anything to a device service (the only case the pipeline's "still starting" text may describe).
+ */
+export function stillStartingUnsent(scope: CallScope | undefined | null): boolean {
+  return scope != null && scope.starting > 0 && !scope.reached;
 }

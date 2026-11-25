@@ -378,8 +378,35 @@ export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedEr
   );
 }
 
-/** A device service name: 1 to 32 characters, a lower-case letter then letters, digits and `-`. */
+/**
+ * A device service name as an extension declares it (`permissions.deviceAccess.services`) and
+ * names it in `ctx.deviceAccess`: 1 to 32 characters, a lower-case letter then letters, digits
+ * and `-`.
+ */
 export const DEVICE_SERVICE_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/;
+
+/**
+ * A device service id: what a device provider receives as the service's name. The kernel
+ * namespaces every extension's service names by the extension (`<extension>.<name>`,
+ * {@link deviceServiceId}), so two extensions declaring the same name never start, stop or reach
+ * each other's process; the provider keys everything of a service (its state and code
+ * directories, its socket, its process) by the id. At most 74 characters, one path segment.
+ */
+export const DEVICE_SERVICE_ID_RE = /^[a-z][a-z0-9-]{1,40}\.[a-z][a-z0-9-]{0,31}$/;
+
+/**
+ * The device service id of an extension's service (`<extension>.<name>`,
+ * {@link DEVICE_SERVICE_ID_RE}). Throws a `TypeError` for an extension name that is not one or a
+ * service name breaking {@link DEVICE_SERVICE_NAME_RE}.
+ */
+export function deviceServiceId(extension: string, name: string): string {
+  const id = `${extension}.${name}`;
+  if (!DEVICE_SERVICE_NAME_RE.test(name) || !DEVICE_SERVICE_ID_RE.test(id))
+    throw new TypeError(
+      `Invalid device service ${JSON.stringify(name)} of extension ${JSON.stringify(extension)}`,
+    );
+  return id;
+}
 
 /**
  * A long-lived service process in a device ({@link DeviceProvider.ensureService}), started on an
@@ -391,7 +418,11 @@ export const DEVICE_SERVICE_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/;
  * (`device-service.ts`).
  */
 export interface DeviceServiceSpec {
-  /** One service per name per device; matches {@link DEVICE_SERVICE_NAME_RE}. */
+  /**
+   * One service per name per device. In `ctx.deviceAccess.ensureService` the extension's service
+   * name ({@link DEVICE_SERVICE_NAME_RE}); a provider receives the kernel's service id in its place
+   * (`<extension>.<name>`, {@link DEVICE_SERVICE_ID_RE}).
+   */
   name: string;
   /** The provider supplies Node 22 or later. */
   runtime: "node";
@@ -421,6 +452,10 @@ export interface DeviceServiceSpec {
 
 /** A device service's state ({@link DeviceProvider.ensureService}). */
 export interface DeviceServiceStatus {
+  /**
+   * The name the status was asked for: the service id from a provider, the extension's service
+   * name from `ctx.deviceAccess`.
+   */
   name: string;
   state: "running" | "stopped";
   /** ISO 8601 time the running process started; null when stopped. */
@@ -771,8 +806,10 @@ export interface DeviceProvider {
   ): Promise<{ path: string; suggestedName: string }[]>;
   /**
    * Starts the named service in the instance, or finds it running (optional, with
-   * {@link DeviceProvider.stopService} and {@link DeviceProvider.serviceRequest}): writes
-   * `spec.files` into the service's code directory, then runs `spec.entry` with Node, the
+   * {@link DeviceProvider.stopService} and {@link DeviceProvider.serviceRequest}). Every service
+   * method names the service by its id (`spec.name`, `name`, `target.service`:
+   * `<extension>.<name>`, {@link DEVICE_SERVICE_ID_RE}), never by the extension's bare name.
+   * It writes `spec.files` into the service's code directory, then runs `spec.entry` with Node, the
    * service socket and state directory named in its environment (`DEVICE_SERVICE_SOCKET_ENV`,
    * `DEVICE_SERVICE_STATE_ENV`). A service already running under the name is kept as is. The
    * kernel has passed the launch through the command review before it calls this.

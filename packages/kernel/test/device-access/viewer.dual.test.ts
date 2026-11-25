@@ -212,7 +212,8 @@ describe("device stream viewer across replicas (dual replica)", () => {
     const v = viewer(`${wsBase(1)}/device/stream?ticket=${await d.ticket()}`);
     expect(await v.roundTrip("one")).toBe("one");
     expect(await v.roundTrip("two")).toBe("two");
-    expect(d.opens).toEqual([{ service: "echo" }]);
+    // the machine is asked for the service by its id (`<extension>.<name>`)
+    expect(d.opens).toEqual([{ service: "fake-device-access.echo" }]);
     v.ws.close(1000);
     expect((await v.closed).code).toBe(1000);
     // the holder audits the open and the close, once each

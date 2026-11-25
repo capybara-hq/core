@@ -26,7 +26,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import {
   DEVICE_PROVIDER_EXTENSION_POINT,
-  DEVICE_SERVICE_NAME_RE,
+  DEVICE_SERVICE_ID_RE,
   DEVICE_SERVICE_SOCKET_ENV,
   DEVICE_SERVICE_STATE_ENV,
   type DeviceProvider,
@@ -487,8 +487,8 @@ function serviceSurface(
   return {
     async ensureService(h, spec, signal, opts) {
       signal.throwIfAborted();
-      if (!DEVICE_SERVICE_NAME_RE.test(spec.name))
-        throw new Error(`invalid device service name ${spec.name}`);
+      if (!DEVICE_SERVICE_ID_RE.test(spec.name))
+        throw new Error(`invalid device service id ${spec.name}`);
       await requireRunning(h);
       if (opts?.ifRunning === true) {
         // never starts one; a running one would get the device's current limits again

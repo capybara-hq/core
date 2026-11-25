@@ -2,6 +2,10 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   DEVICE_PROVIDER_EXTENSION_POINT,
   DEVICE_REPORT_LIMITS,
+  DEVICE_SERVICE_ID_RE,
+  DEVICE_SERVICE_NAME_RE,
+  deviceServiceId,
+  EXTENSION_NAME_RE,
   EXTENSION_POINTS,
   isFileSystemGoneError,
   isProjectPathRefusedError,
@@ -273,5 +277,17 @@ describe("SandboxLimits", () => {
       ),
     ).toBe(true);
     expect(isProjectPathRefusedError(new Error("x"))).toBe(false);
+  });
+});
+
+describe("device service ids", () => {
+  it("are an extension name and a service name joined by a dot, built from those two rules", () => {
+    const body = (re: RegExp) => re.source.replace(/^\^/, "").replace(/\$$/, "");
+    expect(DEVICE_SERVICE_ID_RE.source).toBe(
+      `^${body(EXTENSION_NAME_RE)}\\.${body(DEVICE_SERVICE_NAME_RE)}$`,
+    );
+    expect(deviceServiceId("browser", "browser")).toBe("browser.browser");
+    expect(() => deviceServiceId("browser", "Bad")).toThrow(TypeError);
+    expect(() => deviceServiceId("x", "browser")).toThrow(TypeError);
   });
 });

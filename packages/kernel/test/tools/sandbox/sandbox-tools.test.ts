@@ -118,7 +118,8 @@ beforeAll(async () => {
         runtime: { jobLockMs: 30_000, stalledIntervalMs: 30_000 },
       },
     ),
-    { logger: createLogger("warn", { write: (l) => logLines.push(l) }) },
+    // info: the lifecycle steps' log lines are asserted too
+    { logger: createLogger("info", { write: (l) => logLines.push(l) }) },
   );
 });
 
@@ -1066,6 +1067,11 @@ describe("sandbox tools", () => {
     expect(r.content).not.toContain("Attachments copied");
     expect(r.content).toContain("apple,3");
     expect(r.content).toContain(SANDBOX_RESTARTED_NOTICE);
+    // the rebuild is logged as a lifecycle step with its duration
+    const step = logLines
+      .map((l) => JSON.parse(l) as { msg?: string; durationMs?: unknown; deviceId?: unknown })
+      .find((l) => l.msg === "sandbox recreate ok");
+    expect(step).toMatchObject({ deviceId: await envOf(conv), durationMs: expect.any(Number) });
   });
 
   it("attachments of two conversations do not collide", async () => {

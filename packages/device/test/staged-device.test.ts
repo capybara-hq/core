@@ -397,7 +397,7 @@ describe("staged device parts (W3-M)", () => {
   });
 
   const echoSpec = {
-    name: "echo",
+    name: "tx.echo",
     entry: "main.js",
     args: [],
     files: { "main.js": new Uint8Array(Buffer.from("// echo")) },
@@ -409,9 +409,9 @@ describe("staged device parts (W3-M)", () => {
     await s.device.binder.bind(request(G1, B1, null), signal());
     await s.device.create(signal());
     await s.device.services.ensure(echoSpec, allowlist, signal());
-    expect(s.device.services.status("echo").state).toBe("running");
+    expect(s.device.services.status("tx.echo").state).toBe("running");
     await s.device.binder.bind(request(G2, B2, G1), signal());
-    expect(s.device.services.status("echo").state).toBe("stopped");
+    expect(s.device.services.status("tx.echo").state).toBe("stopped");
   });
 
   it("an owner reconcile stops a device service whose owner ceiling changed", async () => {
@@ -422,7 +422,7 @@ describe("staged device parts (W3-M)", () => {
     await s.device.services.ensure(echoSpec, allowlist, signal());
     // nothing changed: kept
     await s.device.owner.reconcile(signal());
-    expect(s.device.services.status("echo").state).toBe("running");
+    expect(s.device.services.status("tx.echo").state).toBe("running");
     // the owner narrows the network on the machine: stopped, not restarted
     writePolicy(state, {
       ...FULL_POLICY,
@@ -430,7 +430,7 @@ describe("staged device parts (W3-M)", () => {
       allowedDomains: [],
     });
     await s.device.owner.reconcile(signal());
-    expect(s.device.services.status("echo").state).toBe("stopped");
+    expect(s.device.services.status("tx.echo").state).toBe("stopped");
   });
 
   /** A scoped exec in `<workspace>/core`, admitted until `admitBeforeMs` (the fixture clock is 1). */

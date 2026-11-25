@@ -98,7 +98,7 @@ async function fixture(maxFrameBytes?: number, binary = false) {
   });
   cleanups.push(() => supervisor.stopAll(signal()));
   await supervisor.ensure(
-    { name: "browser", entry: "main.js", args: [], files: { "main.js": bytes("//") } },
+    { name: "browser.browser", entry: "main.js", args: [], files: { "main.js": bytes("//") } },
     undefined,
     signal(),
   );
@@ -113,7 +113,7 @@ async function fixture(maxFrameBytes?: number, binary = false) {
 const open = async (
   f: Awaited<ReturnType<typeof fixture>>,
   streamId = "s1",
-  body: unknown = { service: "browser" },
+  body: unknown = { service: "browser.browser" },
 ) => {
   f.bridge.onFrame({ type: "stream-open", streamId, body });
   await f.kernel.until((fs) =>
@@ -220,12 +220,14 @@ it("the dial-in socket closing ends every stream's service connection", async ()
 
 it("refuses a stream to a service that is not running or a malformed target", async () => {
   const f = await fixture();
-  expect(await open(f, "s1", { service: "other" })).toMatchObject({
+  expect(await open(f, "s1", { service: "other.other" })).toMatchObject({
     ok: false,
     error: expect.stringMatching(/not running/),
   });
   expect(await open(f, "s2", { unixSocket: "/var/run/docker.sock" })).toMatchObject({ ok: false });
   expect(await open(f, "s3", { service: "Bad Name" })).toMatchObject({ ok: false });
+  // a bare name without its extension is not a service id
+  expect(await open(f, "s4", { service: "browser" })).toMatchObject({ ok: false });
 });
 
 it("the staged session serves service bodies and stream frames on its socket", async () => {
@@ -296,7 +298,7 @@ it("the staged session serves service bodies and stream frames on its socket", a
       type: "req",
       id: "r1",
       deadlineMs: 5000,
-      body: { op: "service.request", name: "browser", body: b64("ping"), timeoutMs: 5000 },
+      body: { op: "service.request", name: "browser.browser", body: b64("ping"), timeoutMs: 5000 },
     }),
   );
   await until(() => frames.some((x) => x.type === "res"));
@@ -306,7 +308,7 @@ it("the staged session serves service bodies and stream frames on its socket", a
     body: { ok: true, result: { body: b64("echo:ping") } },
   });
   socket.send(
-    JSON.stringify({ type: "stream-open", streamId: "s1", body: { service: "browser" } }),
+    JSON.stringify({ type: "stream-open", streamId: "s1", body: { service: "browser.browser" } }),
   );
   await until(() => frames.some((x) => x.type === "stream-opened"));
   socket.send(JSON.stringify({ type: "stream-data", streamId: "s1", data: b64("hi") }));
@@ -326,7 +328,7 @@ it("data before the stream opened closes it", async () => {
   const kernel = kernelEnd();
   // an opener that never finishes: the service connection is still being made
   const bridge = new DialInStreamBridge(kernel.transport, () => new Promise(() => {}));
-  bridge.onFrame({ type: "stream-open", streamId: "s1", body: { service: "browser" } });
+  bridge.onFrame({ type: "stream-open", streamId: "s1", body: { service: "browser.browser" } });
   bridge.onFrame({ type: "stream-data", streamId: "s1", data: b64("early") });
   expect(kernel.of("stream-close")).toEqual([
     { type: "stream-close", streamId: "s1", reason: "data before open" },

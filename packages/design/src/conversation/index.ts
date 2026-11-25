@@ -181,6 +181,7 @@ export {
   type BackgroundTaskStatus,
   BackgroundTasks,
   type BackgroundTasksProps,
+  type StopWaiting,
   type SubagentFinishStatus,
   SubagentGroup,
   type SubagentGroupProps,

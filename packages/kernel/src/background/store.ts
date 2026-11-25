@@ -83,7 +83,18 @@ export interface BackgroundTaskRow {
   cancelRequestedAt: Date | null;
   /** Who asked for it by a stop (0153); null for a revocation's cancellation or none. */
   cancelRequestedBy: CancelRequester | null;
+  /**
+   * Why the owed stop did not settle at its last attempt (0184): `unreachable` (the device did not
+   * answer in time, or its machine is not connected), `failed` (the device or its provider failed
+   * the stop); null when no attempt failed.
+   */
+  cancelFailure: CancelFailure | null;
+  /** That failure's message, clipped; null without one. */
+  cancelFailureDetail: string | null;
 }
+
+/** Why an owed stop did not settle at its last attempt. */
+export type CancelFailure = "unreachable" | "failed";
 
 /** Who asked for a managed task's stop: their wake rule holds for its later finish. */
 export type CancelRequester = "tool" | "person" | "conversation_deleted" | "subagent_end";
@@ -138,6 +149,8 @@ export type BackgroundTaskInsert = Omit<
   | "instanceGeneration"
   | "cancelRequestedAt"
   | "cancelRequestedBy"
+  | "cancelFailure"
+  | "cancelFailureDetail"
 >;
 
 const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
@@ -172,6 +185,8 @@ const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
   instanceGeneration: r.instance_generation,
   cancelRequestedAt: r.cancel_requested_at === null ? null : new Date(r.cancel_requested_at),
   cancelRequestedBy: r.cancel_requested_by,
+  cancelFailure: r.cancel_failure,
+  cancelFailureDetail: r.cancel_failure_detail,
 });
 
 /**
@@ -532,7 +547,8 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Records who asked for a running managed task's stop (the first asker is kept) and when. With
+   * Records who asked for a running managed task's stop (the first asker is kept) and when, and
+   * with `failure` why its last attempt did not settle (null: it did not fail). With
    * `release` (the stop could not settle now: the provider recorded a pending cancellation, or the
    * instance is not reachable) an acknowledged task becomes `cancel-pending` and the stop's claim
    * is given up, so the poller owes the exact stop; without, the claim stays (a task without its
@@ -540,16 +556,49 @@ export class BackgroundTaskStore {
    */
   // org-filter: by task id: callers check ownership first (ownedTask: the calling conversation;
   // TasksService.owned: org and conversation scope) or pass the id of a row they already read
-  async requestCancel(id: string, by: CancelRequester | null, release: boolean): Promise<void> {
+  async requestCancel(
+    id: string,
+    by: CancelRequester | null,
+    release: boolean,
+    failure?: { kind: CancelFailure; detail: string } | null,
+  ): Promise<void> {
     await this.db
       .updateTable("background_tasks")
       .set({
         cancel_requested_by: sql<CancelRequester | null>`COALESCE(cancel_requested_by, ${by}::text)`,
         cancel_requested_at: sql<Date>`COALESCE(cancel_requested_at, now())`,
+        // undefined keeps the last attempt's failure (a caller that gave up learned nothing new)
+        ...(failure !== undefined && {
+          cancel_failure: failure?.kind ?? null,
+          cancel_failure_detail: failure?.detail ?? null,
+        }),
         ...(release && {
           stopping_at: null,
           launch_state: sql<BackgroundLaunchState>`CASE WHEN launch_state = 'acknowledged' THEN 'cancel-pending' ELSE launch_state END`,
         }),
+      })
+      .where("id", "=", id)
+      .where("status", "=", "running")
+      .where("launch_state", "<>", "legacy")
+      .execute();
+  }
+
+  /**
+   * Records a running acknowledged task's stop as owed before the device is asked (intent first):
+   * the asker is kept (the first one wins) and the task becomes `cancel-pending`, while the stop's
+   * claim (`stopping_at`) stays. A stop that settles finishes the task; one that cannot settle now
+   * releases the claim ({@link requestCancel}), and the poller delivers the owed stop. A stop
+   * whose replica died leaves the same record: the claim expires and the poller delivers it.
+   */
+  // org-filter: by task id: callers check ownership first (ownedTask: the calling conversation;
+  // TasksService.owned: org and conversation scope) or pass the id of a row they already read
+  async oweCancel(id: string, by: CancelRequester | null): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({
+        cancel_requested_by: sql<CancelRequester | null>`COALESCE(cancel_requested_by, ${by}::text)`,
+        cancel_requested_at: sql<Date>`COALESCE(cancel_requested_at, now())`,
+        launch_state: sql<BackgroundLaunchState>`CASE WHEN launch_state = 'acknowledged' THEN 'cancel-pending' ELSE launch_state END`,
       })
       .where("id", "=", id)
       .where("status", "=", "running")

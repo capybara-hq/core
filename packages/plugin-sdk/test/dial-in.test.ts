@@ -3,9 +3,11 @@ import {
   DeviceOfflineError,
   DeviceRequestNotSentError,
   DIAL_IN_PROTOCOL_RE,
+  DialInAnswerTimeoutError,
   DialInProtocolError,
   isDeviceOfflineError,
   isDeviceRequestNotSent,
+  isDialInAnswerTimeoutError,
   isSandboxScopeDeniedError,
   parseDialInKernelFrame,
   parseDialInMachineFrame,
@@ -185,5 +187,21 @@ describe("dial-in errors", () => {
     expect(isDeviceRequestNotSent(new SandboxScopeDeniedError("x"))).toBe(false);
     expect(isDeviceRequestNotSent(Object.assign(new Error("x"), { notSent: true }))).toBe(false);
     expect(isDeviceRequestNotSent(null)).toBe(false);
+  });
+});
+
+describe("DialInAnswerTimeoutError", () => {
+  it("is recognized by name and code (another SDK copy's error too), never as offline", () => {
+    const e = new DialInAnswerTimeoutError(30_000);
+    expect(e.code).toBe("device.answer_timeout");
+    expect(e.message).toMatch(/deadline of 30 s; the outcome is unknown/);
+    expect(isDialInAnswerTimeoutError(e)).toBe(true);
+    expect(isDeviceOfflineError(e)).toBe(false);
+    const copy = Object.assign(new Error("x"), {
+      name: "DialInAnswerTimeoutError",
+      code: "device.answer_timeout",
+    });
+    expect(isDialInAnswerTimeoutError(copy)).toBe(true);
+    expect(isDialInAnswerTimeoutError(new DeviceOfflineError("d"))).toBe(false);
   });
 });

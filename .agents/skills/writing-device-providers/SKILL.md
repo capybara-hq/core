@@ -508,7 +508,14 @@ treats a dial-in device like any other (its provider, report and permission supp
 - **Services.** Optional `ensureService` / `stopService` / `serviceRequest` (all three, else
   `DeviceServices` refuses `capability_missing`), `openStream` for viewers and `serviceStatus`:
   one named long-lived Node process per device in its own state directory, under the device's
-  sandbox and network, killed with the instance on suspend and destroy. The kernel reaches them
+  sandbox and network, killed with the instance on suspend and destroy. **Names are ids.** A
+  provider only ever sees a service id, `<extension>.<name>` (`DEVICE_SERVICE_ID_RE`,
+  `deviceServiceId`, core#817): `DeviceAccessService` namespaces the extension's declared name
+  before every `DeviceServices` call and the viewer opens `deviceServiceId(ticket.extension,
+  ticket.service)`; `DeviceServices` refuses a bare name. So two extensions declaring the same
+  name never start, stop or reach each other's process. Providers key everything of a service
+  (state and code directories, socket, process records) by the id; the extension sees only its
+  own name (`ctx.deviceAccess` maps the status back). The kernel reaches them
   only through `DeviceServices` (`sandbox/device-services.ts`: `ensure`, `request`, `status`,
   `refresh`, `stop`; `ensure` and `request` are uses like any tool call, so a suspended instance
   resumes; `status`, `refresh` and `stop` never resume one). `refresh` (after the allowlist changed
@@ -532,7 +539,7 @@ treats a dial-in device like any other (its provider, report and permission supp
   `env`. The review sees
   `env K=V … node <codeDir ?? stateDir>/<entry> …` in the state directory, so run exactly that.
   A provider that can keep code apart from state should, and reports that directory as the
-  status's `codeDir`: `capybara-device` writes the files into a device-owned `svc-files/<name>`
+  status's `codeDir`: `capybara-device` writes the files into a device-owned `svc-files/<id>`
   directory the service can only read (R30), so a service cannot rewrite the code a later
   digest-matched start runs; agent operations can neither read nor write `svc` (the profile)
   nor `svc-files`, and an owner ceiling change stops the services (`ServiceSupervisor.reconcile`).

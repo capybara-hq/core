@@ -123,7 +123,7 @@ import {
 import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "./builtins/sandbox/device-owner.js";
 import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
-import { attachCallScope, type CallScope } from "./call-scope.js";
+import { attachCallScope, type CallScope, stillStartingUnsent } from "./call-scope.js";
 import { canonicalJson } from "./canonical-json.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
@@ -305,6 +305,13 @@ const skippedResult = (
 
 const timeoutText = (key: string, ms: number) =>
   `Tool ${key} timed out after ${ms / 1000}s. The operation may or may not have completed; verify before retrying.`;
+/**
+ * The timeout of a call whose device was still starting (its instance being created or resumed,
+ * or the device service being launched) and that had sent nothing to a device service: its
+ * target was not reached. The start was stopped with the call, so a retry starts it again.
+ */
+export const deviceStartingTimeoutText = (key: string, ms: number) =>
+  `Tool ${key} timed out after ${ms / 1000}s while the device was still starting (its sandbox or the device service), before the call sent anything to its target. The start was stopped with the call; a retry starts the device again, and if it times out the same way the tool's time limit is too short for this device's first start: tell the user.`;
 const failedText = (key: string, errName: string) =>
   `Tool ${key} failed (${errName}). The operation may not have completed; check before retrying or try another approach.`;
 const unknownToolText = (name: string, keys: string[], toolSearch: boolean) =>
@@ -3468,7 +3475,15 @@ export class ToolPipeline {
       }),
     };
     // 内置工具可按输入给自己的时限（沙箱 bash 按命令超时加余量）；缺省 tools.timeoutMs
-    const timeoutMs = tool.timeoutMs?.(input) ?? this.config.get().tools.timeoutMs;
+    const toolsCfg = this.config.get().tools;
+    const ownMs = tool.timeoutMs?.(input);
+    // an extension tool's declared limit never exceeds the deployment's ceiling
+    const timeoutMs =
+      ownMs === undefined
+        ? toolsCfg.timeoutMs
+        : tool.source.kind === "plugin"
+          ? Math.min(ownMs, toolsCfg.maxTimeoutMs)
+          : ownMs;
     let scope: CallScope | undefined;
     try {
       // a plugin tool runs with the extension's effective config for the org, never without it
@@ -3518,7 +3533,16 @@ export class ToolPipeline {
         timeoutMs,
       );
       if (r === "timeout") {
-        return withBlocked({ kind: "error", message: timeoutText(tool.key, timeoutMs) }, scope);
+        const starting = stillStartingUnsent(scope as CallScope | undefined);
+        if (starting)
+          this.deps.log.info("tool call timed out while its device was still starting", {
+            toolKey: tool.key,
+            timeoutMs,
+          });
+        const message = starting
+          ? deviceStartingTimeoutText(tool.key, timeoutMs)
+          : timeoutText(tool.key, timeoutMs);
+        return withBlocked({ kind: "error", message }, scope);
       }
       // a launch reviewed before the call stopped or asked is kept with its result
       if (r === "aborted")
