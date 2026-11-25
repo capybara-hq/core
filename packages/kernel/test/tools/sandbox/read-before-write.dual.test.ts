@@ -97,6 +97,7 @@ describe("read before write (two replicas)", () => {
           accountId,
           agentId,
           conversationId,
+          rootConversationId: conversationId,
           callId,
           runId,
           executionClaim: claim,

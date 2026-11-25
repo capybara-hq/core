@@ -3461,11 +3461,14 @@ export class ToolPipeline {
     const handler = this.deps.registry.handler(tool.source);
     if (!handler) return { kind: "error", message: `Tool ${tool.key} is no longer available.` };
     // 插件处理函数只拿到 SDK 的 ToolCallContext；内置工具另外拿到本步解析出的工具（ToolSearch 用）
+    // the tree root the person looks at; every sub-agent run carries it from its start
+    const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
     const base: Omit<BuiltinCallContext, "signal"> = {
       orgId: ctx.orgId,
       accountId: ctx.accountId,
       agentId: ctx.agentId,
       conversationId: ctx.conversationId,
+      rootConversationId,
       callId,
       idempotencyKey: toolIdempotencyKey(ctx.conversationId, ctx.runId, callId),
       ...(resume !== undefined && { resume }),
@@ -3554,7 +3557,7 @@ export class ToolPipeline {
           scope = attachCallScope(call, {
             runId: ctx.runId,
             step: ctx.step,
-            rootConversationId: ctx.parent?.rootConversationId ?? ctx.conversationId,
+            rootConversationId,
             unattended: ctx.unattended != null,
             agentVersion: ctx.agentVersion,
             ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),

@@ -460,6 +460,7 @@ async function runTool(
     accountId: f.accountId,
     agentId: f.agentId,
     conversationId: f.conversationId,
+    rootConversationId: f.conversationId,
     callId,
     runId: f.runId,
     signal: new AbortController().signal,

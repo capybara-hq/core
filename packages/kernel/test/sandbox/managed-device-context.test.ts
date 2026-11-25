@@ -265,6 +265,7 @@ const ctxOf = (f: Fixture, claim: ExecutionClaim = f.claim): BuiltinCallContext 
   accountId: f.accountId,
   agentId: f.agentId,
   conversationId: f.conversationId,
+  rootConversationId: f.conversationId,
   callId: randomUUID(),
   runId: f.runId,
   signal: new AbortController().signal,

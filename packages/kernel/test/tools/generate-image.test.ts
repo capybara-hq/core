@@ -256,6 +256,7 @@ function direct(
     accountId: ownerId,
     agentId,
     conversationId,
+    rootConversationId: conversationId,
     callId: `call-${randomUUID().slice(0, 8)}`,
     signal: new AbortController().signal,
     ...over,

@@ -379,6 +379,7 @@ describe("no automatic attachment copy", () => {
         accountId: "a",
         agentId: "g",
         conversationId: "c",
+        rootConversationId: "c",
         callId: "call",
         signal: new AbortController().signal,
       }),
@@ -403,6 +404,7 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
       accountId: "a",
       agentId: "g",
       conversationId: "c",
+      rootConversationId: "c",
       callId: "call",
       signal: new AbortController().signal,
     });
@@ -651,6 +653,7 @@ describe("read before write over Read's byte limit", () => {
       accountId: "a",
       agentId: "g",
       conversationId: "c",
+      rootConversationId: "c",
       callId: "call",
       signal: new AbortController().signal,
     });
@@ -685,6 +688,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     accountId: "a",
     agentId: "g",
     conversationId: "0123abcd-4567-4890-8bcd-ef0123456789",
+    rootConversationId: "0123abcd-4567-4890-8bcd-ef0123456789",
     callId: "call",
     signal: new AbortController().signal,
   });

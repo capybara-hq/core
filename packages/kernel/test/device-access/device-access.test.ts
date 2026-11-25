@@ -196,6 +196,7 @@ const callOf = (over: Partial<ToolCallContext> = {}): ToolCallContext => {
     ownerAccountId: s.accountId,
     agentId: s.agentId,
     conversationId: s.conversationId,
+    rootConversationId: s.conversationId,
     callId: `call-${randomUUID().slice(0, 8)}`,
     idempotencyKey: randomUUID().replaceAll("-", "").padEnd(64, "0"),
     signal: AbortSignal.timeout(30_000),
@@ -472,6 +473,7 @@ describe("ctx.deviceAccess", () => {
       ownerAccountId: s.accountId,
       agentId: s.agentId,
       conversationId: s.conversationId,
+      rootConversationId: s.conversationId,
       callId: "group-call",
       signal: AbortSignal.timeout(30_000),
     };
@@ -609,6 +611,7 @@ describe("ctx.deviceAccess", () => {
       ownerAccountId: s.accountId,
       agentId: s.agentId,
       conversationId: s.conversationId,
+      rootConversationId: s.conversationId,
       callId: "bare",
       signal: AbortSignal.timeout(30_000),
     };

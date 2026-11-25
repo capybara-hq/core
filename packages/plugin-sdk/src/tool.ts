@@ -251,6 +251,11 @@ export interface ToolCallContext {
   agentId: string;
   conversationId: string;
   /**
+   * The root of the call's conversation tree (the conversation the person looks at); equal to
+   * `conversationId` outside sub-agents. Set by the kernel, never from tool input.
+   */
+  rootConversationId: string;
+  /**
    * The model's id for this call. Stable across every invocation of one logical call (the
    * `InputRequired` rounds), but unique only within its run: two runs of one conversation may
    * reuse an id, so `conversationId` + `callId` is not a key. Use `idempotencyKey`.

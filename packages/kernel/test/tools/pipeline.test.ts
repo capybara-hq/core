@@ -1193,6 +1193,40 @@ describe("ToolPipeline.runStep", () => {
     ]);
   });
 
+  it("a handler gets the tree root: its own conversation at the root, the root in a grandchild", async () => {
+    const seen: { conversationId: string; rootConversationId: string }[] = [];
+    handlers.plugin__probe__form = async (_input, ctx: ToolCallContext) => {
+      seen.push({ conversationId: ctx.conversationId, rootConversationId: ctx.rootConversationId });
+      return { content: [{ type: "text", text: "done" }] };
+    };
+    await insertRun();
+    await runCalls([{ id: "c1", name: "plugin__probe__form", input: {} }]);
+    // root → mid → this conversation: the root, never the direct parent
+    const rootConv = randomUUID();
+    const midConv = randomUUID();
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+      VALUES (${rootConv}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId})`.execute(raw);
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, kind, parent_conversation_id, subagent_depth)
+      VALUES (${midConv}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId}, 'subagent',
+        ${rootConv}, 1)`.execute(raw);
+    await sql`UPDATE capybara.conversations SET parent_conversation_id = ${midConv}
+      WHERE id = ${seed.conversationId}`.execute(raw);
+    const parent = {
+      conversationId: midConv,
+      runId: randomUUID(),
+      callId: "pc1",
+      depth: 1,
+      rootConversationId: rootConv,
+    };
+    await assistant([{ id: "c2", name: "plugin__probe__form", input: {} }], 2);
+    await pipeline().runStep(stepCtx({ step: 2, parent }));
+    expect(seen).toEqual([
+      { conversationId: seed.conversationId, rootConversationId: seed.conversationId },
+      { conversationId: seed.conversationId, rootConversationId: rootConv },
+    ]);
+  });
+
   it("处理函数抛出非 ToolError：只给模型错误类名，不回显内部消息", async () => {
     const evs = await runCalls([{ id: "c1", name: "plugin__probe__throws", input: {} }]);
     const r = resultsOf(evs)[0];

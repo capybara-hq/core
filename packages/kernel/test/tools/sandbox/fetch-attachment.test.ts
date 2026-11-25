@@ -34,6 +34,7 @@ const callCtx = () =>
     accountId: "a",
     agentId: "g",
     conversationId: CONV,
+    rootConversationId: CONV,
     callId: "call",
     signal: new AbortController().signal,
   });
