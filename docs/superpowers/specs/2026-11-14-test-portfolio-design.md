@@ -120,6 +120,16 @@ Vitest projects are declared in `vitest.config.ts`:
   costs nothing for a passing test and only delays the failure report of a hung one. Shortening
   it would force clock fakes into tests whose point is real cross-replica timing.
 - The `design`, `plugin-client` and `web` projects are unchanged.
+- `tools` (added 2026-11-25): the `tools/*` tests, which read the repository, run git or
+  in-process fake servers and need no database, so no `globalSetup`; they left the `node` project,
+  whose shared PG/Valkey setup kept them out of the local fast check.
+
+**Local fast check.** `pnpm verify --fast` runs no container and no database and never fetches:
+lint, typecheck, `pnpm check`, CI's PR-only static checks against the local upstream `main`
+(English comment lines, commit messages, applied migrations and migration numbers; skipped with a
+warning when that ref is missing) and the `kernel-unit`, `tools`, `design` and `plugin-client`
+projects. A kernel test that needs no database belongs in the unit list partly so this check
+runs it. The `web` project is not part of it (its cost next to the others on a dev Mac).
 
 Membership is a checked-in list, not a naming convention or import detection: renaming 578 files
 is churn, and detecting "boots an app" at config time is unreliable. Integration is the default
@@ -265,5 +275,6 @@ there is a separate decision after the kernel numbers land.
 - More shards / duration-balanced sharding (CI parallelism).
 - Docker job split (api/web builds in parallel, smoke after).
 - e2e shard count and scope.
-- Local `pnpm verify` fast path for changed directories (advisory only, never a gate).
+- Local `pnpm verify` fast path for changed directories (advisory only, never a gate). The
+  fixed fast check exists (§2, "Local fast check"); a changed-directories variant is still open.
 - Coverage merged across shards as a CI job — the hard gate the maintainer wants next.
