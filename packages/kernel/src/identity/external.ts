@@ -20,11 +20,12 @@ const MAX_EMAIL = 320;
 
 export type { LinkedVia };
 
-/** {@link ExternalIdentities.resolve} 的选项。 */
+/** The options of {@link ExternalIdentities.resolve}. */
 export interface ResolveOptions {
-  /** 只有第三方登录路径传 true（Ruling A9）。 */
-  allowMerge?: boolean;
-  /** 新建身份行时记下的建立方式：第三方登录 `sso`，通讯录同步 `directory`。已有的行不改。 */
+  /**
+   * How a new identity row is made: `sso` (a sign-in's self sign-up), `directory` (directory
+   * sync). An existing row keeps its kind.
+   */
   linkedVia: "sso" | "directory";
 }
 
@@ -113,10 +114,13 @@ const profileOf = (i: ExternalIdentity) =>
   });
 
 /**
- * 外部身份：按 `(source, externalId)` 映射到账号（登录、渠道入站、通讯录共用同一个键）。
- * 首次出现时按「受信任的身份源 + 两侧邮箱均已验证」合并到既有账号，否则新建账号（不建组织）。
- * Concurrent first resolves of one identity are serialized by {@link ExternalIdentityLock},
- * so only one account is created.
+ * External identities: `(source, externalId)` maps to an account (sign-in, channel inbound and the
+ * directory share the key). A sign-in of an identity nobody has linked ({@link decideSignIn})
+ * merges into an existing account when its tenant is trusted and both emails are verified;
+ * otherwise it goes to the link page by default, and creates a new org-less account only when the
+ * login source's `signUp` is `create`. Directory sync creates the account for its identity
+ * ({@link resolve}). Concurrent first resolves of one identity are serialized by
+ * {@link ExternalIdentityLock}, so only one account is created.
  */
 @Injectable()
 export class ExternalIdentities {
@@ -140,16 +144,14 @@ export class ExternalIdentities {
   }
 
   /**
-   * Resolves an external identity to an account. Linked → that account (the row's email and
-   * profile are refreshed); unlinked → merged or created (see the class), the new row recording
-   * `linked_via = opts.linkedVia` (a merge records `sso`). A merge is considered only with
-   * `opts.allowMerge` (Ruling A9). Rows are never checked for sign-in here: the sign-in callback
-   * goes through {@link decideSignIn}; this serves directory sync (and creation once a sign-in
-   * decided on it). A created account's `email_verified` is true only when the source is trusted
-   * and the identity's email is verified: an untrusted source can claim any email "verified", and
-   * its accounts must not become merge targets of a later trusted sign-in.
-   * A merge audits `identity.linked`, a creation `account.created`. The account's status is not
-   * checked (the caller decides, e.g. sign-in refuses a disabled account).
+   * Resolves an external identity to an account: linked → that account (the row's email and
+   * profile are refreshed); unlinked → a new org-less account with this identity, the row
+   * recording `linked_via = opts.linkedVia`. It never merges by email and never checks a row for
+   * sign-in: the sign-in callback goes through {@link decideSignIn} (which calls this only for a
+   * self sign-up); directory sync calls it directly. A created account's `email_verified` is true
+   * only when the source is trusted and the identity's email is verified: an untrusted source can
+   * claim any email "verified", and its accounts must not become merge targets of a later trusted
+   * sign-in. A creation audits `account.created`. The account's status is not checked.
    * Joins the caller's transaction when there is one; takes the same lock as `link`, and falls back
    * to `ON CONFLICT DO NOTHING` plus a re-read, so it never throws a unique violation or aborts the
    * caller's transaction.
@@ -165,19 +167,6 @@ export class ExternalIdentities {
     if (existing !== undefined) {
       await this.refreshIdentity(id);
       return { accountId: existing.accountId, created: false };
-    }
-    const merged = opts.allowMerge === true ? await this.mergeTarget(id) : undefined;
-    if (merged !== undefined) {
-      if (!(await this.insertIdentity(merged, id, "sso"))) {
-        return { accountId: await this.mustFind(id), created: false };
-      }
-      await audit(this.db.db, {
-        actorAccountId: merged,
-        action: "identity.linked",
-        target: merged,
-        detail: { source: id.source, externalId: id.externalId, via: "verified_email" },
-      });
-      return { accountId: merged, created: false };
     }
     const accountId = randomUUID();
     await this.db
@@ -209,8 +198,8 @@ export class ExternalIdentities {
    * row and the merge target are read under the lock, then `signin` / `refresh` refresh the row,
    * `upgrade` and `linked` go through {@link linkVerified}, `create` creates the account
    * ({@link resolve}, no merge: the decision ruled it out). `link_page` and `error` write nothing.
-   * A link intent never creates an account. Returns the decision and the normalized identity
-   * (what a link page stores). Throws `identity.taken` when a concurrent writer linked the
+   * A link intent never creates an account. Returns the decision, whether an account was created
+   * and the normalized identity (what a link page stores). Throws `identity.taken` when a concurrent writer linked the
    * identity to another account between the read and the write (cannot happen under the lock
    * except for a writer that skips it).
    */
@@ -218,7 +207,7 @@ export class ExternalIdentities {
   async decideSignIn(
     identity: ExternalIdentity,
     ctx: SignInContext,
-  ): Promise<{ decision: SignInDecision; identity: ExternalIdentity }> {
+  ): Promise<{ decision: SignInDecision; identity: ExternalIdentity; created: boolean }> {
     const id = normalize(identity);
     await this.lockIdentity(id);
     const row = await this.findRow(id);
@@ -236,7 +225,11 @@ export class ExternalIdentities {
     switch (decision.kind) {
       case "create": {
         const r = await this.resolve(id, { linkedVia: "sso" });
-        return { decision: { kind: "signin", accountId: r.accountId }, identity: id };
+        return {
+          decision: { kind: "signin", accountId: r.accountId },
+          identity: id,
+          created: r.created,
+        };
       }
       case "signin":
       case "refresh":
@@ -249,7 +242,11 @@ export class ExternalIdentities {
         // a disabled merge target gets no row: reported as its sign-in, which the caller refuses
         // (auth.account_disabled) as it refuses any disabled account
         if (decision.via === "verified_email" && !(await this.isActive(decision.accountId))) {
-          return { decision: { kind: "signin", accountId: decision.accountId }, identity: id };
+          return {
+            decision: { kind: "signin", accountId: decision.accountId },
+            identity: id,
+            created: false,
+          };
         }
         await this.linkVerified(decision.accountId, id, decision.via);
         break;
@@ -257,7 +254,7 @@ export class ExternalIdentities {
       case "error":
         break;
     }
-    return { decision, identity: id };
+    return { decision, identity: id, created: false };
   }
 
   private async isActive(accountId: string): Promise<boolean> {

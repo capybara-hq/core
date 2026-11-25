@@ -118,6 +118,25 @@ export function configGuides(
   };
 }
 
+/** The login next step of an identity-source@1 extension (login extensions spec §3). */
+export const LOGIN_SOURCE_NEXT =
+  "Its sign-in is turned on and its trusted tenants set with login-sources.update.";
+
+/**
+ * The `next` of `extensions.platform-config`: the setup guides' step, then, for an extension that
+ * provides identity-source@1, where its sign-in is switched on (its switch is not part of its
+ * config); absent when neither applies.
+ */
+export function platformConfigNext(
+  setupNext: string | undefined,
+  isLoginSource: boolean,
+): string | undefined {
+  const next = [setupNext, isLoginSource ? LOGIN_SOURCE_NEXT : undefined]
+    .filter((s) => s !== undefined)
+    .join(" ");
+  return next === "" ? undefined : next;
+}
+
 /** Whether a deployment config is invalid or leaves a required field without a value. */
 function needsSetup(v: DeploymentConfigView): boolean {
   if (!v.valid || v.orgMustConfigure.length > 0) return true;
@@ -626,12 +645,8 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             this.loginSources.providesIdentitySource(input.name),
           ]);
           const setup = configGuides(view, guides);
-          // a login extension's sign-in switch is not part of its config (login extensions §3)
-          const loginNext = login
-            ? "Its sign-in is turned on and its trusted tenants set with login-sources.update."
-            : undefined;
-          const next = [setup.next, loginNext].filter((s) => s !== undefined).join(" ");
-          return { ...view, ...setup, ...(next ? { next } : {}) };
+          const next = platformConfigNext(setup.next, login);
+          return { ...view, ...setup, ...(next !== undefined ? { next } : {}) };
         },
       }),
       defineOperation({

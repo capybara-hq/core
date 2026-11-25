@@ -27,7 +27,7 @@ export const LOGIN_SOURCES_SETTING = "loginSources";
 /** At most this many trusted tenants per source. */
 export const MAX_TRUSTED_TENANTS = 50;
 /** A tenant id is the `<tenant>` of a source key: non-empty, no whitespace, at most 256 chars. */
-const TENANT_MAX = 256;
+export const TENANT_MAX = 256;
 
 const LoginSourceSettingsSchema = z.object({
   plugin: z.string().min(1).max(214),

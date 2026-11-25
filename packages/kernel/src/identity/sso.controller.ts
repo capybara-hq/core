@@ -329,17 +329,18 @@ export class SsoController {
 const identityTaken = () =>
   new ApiError("identity.taken", "This external identity is already linked to another account");
 
-/**
- * IM 身份绑定确认（`/api/v1/bind/:token`，需 Web 会话）：GET 查看待绑定的身份，POST 绑到当前账号。
- * 令牌单次有效；身份已绑定他人 → 409 `identity.taken`。
- */
-/** 请求带着的 Web 会话的账号（PAT / 未登录时 undefined）。 */
+/** The account of the request's web session (undefined for a PAT or when signed out). */
 function sessionAccount(principal: Principal | undefined): string | undefined {
   return principal?.kind === "user" && principal.via === "session"
     ? principal.account.id
     : undefined;
 }
 
+/**
+ * IM binding confirmation (`/api/v1/bind/:token`, web session only): GET shows the identity to
+ * bind, POST binds it to the signed-in account. The token is single use; an identity linked to
+ * another account → 409 `identity.taken`.
+ */
 @Controller("api/v1/bind")
 export class BindController {
   constructor(@Inject(IdentityBinding) private readonly binding: IdentityBinding) {}

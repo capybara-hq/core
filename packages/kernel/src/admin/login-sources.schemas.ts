@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MAX_TRUSTED_TENANTS } from "../identity/login-sources.js";
+import { MAX_TRUSTED_TENANTS, TENANT_MAX } from "../identity/login-sources.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 
 /** A plugin name as the extension host takes it (the npm package name limit). */
@@ -32,7 +32,7 @@ export const LoginSourceBody = z
         "An external account nobody has linked: link (the link page, where the person signs in with a username and password to link it) or create (a new account is created).",
       ),
     trustedTenants: z
-      .array(z.string().max(214))
+      .array(z.string().max(TENANT_MAX))
       .max(MAX_TRUSTED_TENANTS)
       .optional()
       .describe(

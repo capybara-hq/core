@@ -270,7 +270,8 @@ under 平台 → 扩展 → <extension> → 登录. Production sets neither toda
   capabilities.
 - Dual-replica: start on one replica, callback and link POST on the other (Redis-only state).
 - Web: linked accounts page states (jsdom), link page, the 登录 section and the order section;
-  e2e `global-setup.ts` seeds the setting through the admin route instead of `auth.loginSources`.
+  e2e `global-setup.ts` seeds the setting directly with `seedLoginSources(db)` after migrations
+  (`signUp: "create"`) instead of `auth.loginSources`.
 - Checks: `check:platform-ops` and the parity test for the three operations and two exclusions;
   `check:sdk-api` / `check:api-changeset`; `check:agent-docs`; `check:i18n` (zh copy uses 平台 /
   超级管理员).

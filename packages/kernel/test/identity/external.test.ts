@@ -52,7 +52,6 @@ const codeOf = async (p: Promise<unknown>) => {
 const trust = (plugin: string, tenant: string) =>
   seedLoginSources(db, [{ plugin, enabled: false, trustedTenants: [tenant] }]);
 
-const MERGE = { allowMerge: true, linkedVia: "sso" } as const;
 const SSO = { linkedVia: "sso" } as const;
 
 const ident = (over: Partial<ExternalIdentity> = {}): ExternalIdentity => ({
@@ -64,6 +63,16 @@ const ident = (over: Partial<ExternalIdentity> = {}): ExternalIdentity => ({
   displayName: "Alice",
   ...over,
 });
+
+/**
+ * A sign-in with self sign-up on (`decideSignIn`, signUp create): the trusted-email merge applies
+ * (Ruling A9), otherwise an account is created.
+ */
+async function signIn(i: ExternalIdentity): Promise<{ accountId: string; created: boolean }> {
+  const r = await svc.decideSignIn(i, { intent: "signin", signUp: "create" });
+  if (!("accountId" in r.decision)) throw new Error(`unexpected decision ${r.decision.kind}`);
+  return { accountId: r.decision.accountId, created: r.created };
+}
 
 /** The hash of PW, computed once: these tests never check passwords, scrypt is not under test. */
 let pwHash: Promise<string> | undefined;
@@ -118,10 +127,10 @@ describe("ExternalIdentities.resolve", () => {
     expect(rs.filter((r) => r.created)).toHaveLength(1);
   });
 
-  it("身份源受信任 + 两侧邮箱都已验证 → 合并到同邮箱账号并审计 identity.linked", async () => {
+  it("sign-in: a trusted source + both emails verified → merged into the account with that email, audited identity.linked", async () => {
     const a = await local("alice", "Alice@Example.com", true);
     await trust("lark", "t1");
-    const r = await svc.resolve(ident(), MERGE);
+    const r = await signIn(ident());
     expect(r).toEqual({ accountId: a.id, created: false });
     const audits = await db
       .selectFrom("audit_events")
@@ -133,22 +142,22 @@ describe("ExternalIdentities.resolve", () => {
     expect(audits[0]?.detail).toMatchObject({ source: "lark:t1", externalId: "ou_1" });
   });
 
-  it("身份源未受信任 → 新建账号（即使邮箱都已验证）", async () => {
+  it("sign-in: an untrusted source → a new account (even with both emails verified)", async () => {
     const a = await local("alice", "alice@example.com", true);
     await trust("slack", "t1");
-    const r = await svc.resolve(ident(), MERGE);
+    const r = await signIn(ident());
     expect(r.created).toBe(true);
     expect(r.accountId).not.toBe(a.id);
   });
 
-  it("受信任但身份邮箱未验证 / 本地账号邮箱未验证 → 新建", async () => {
+  it("sign-in: trusted but the identity's or the account's email unverified → a new account", async () => {
     await trust("lark", "t1");
     const a = await local("alice", "alice@example.com", true);
-    const r1 = await svc.resolve(ident({ emailVerified: false }), MERGE);
+    const r1 = await signIn(ident({ emailVerified: false }));
     expect(r1.created).toBe(true);
     expect(r1.accountId).not.toBe(a.id);
     const b = await local("bob", "bob@example.com", false);
-    const r2 = await svc.resolve(ident({ externalId: "ou_2", email: "bob@example.com" }), MERGE);
+    const r2 = await signIn(ident({ externalId: "ou_2", email: "bob@example.com" }));
     expect(r2.created).toBe(true);
     expect(r2.accountId).not.toBe(b.id);
   });
@@ -187,16 +196,15 @@ describe("ExternalIdentities.link / unlink / listForAccount", () => {
 });
 
 describe("修复轮 1：合并只在登录路径、不受信任来源不标记邮箱已验证、resolve / link 竞态", () => {
-  it("不受信任来源声称已验证的邮箱：新账号不算邮箱已验证；之后受信任来源同邮箱登录 → 另建账号", async () => {
+  it("an untrusted source's verified-claimed email: the new account is not email-verified; a later trusted sign-in with that email creates another account", async () => {
     await trust("lark", "t1");
-    const evil = await svc.resolve(
+    const evil = await signIn(
       ident({
         source: "slack:t9",
         tenantId: "t9",
         externalId: "U_evil",
         email: "victim@corp.example",
       }),
-      MERGE,
     );
     expect(evil.created).toBe(true);
     const row = await db
@@ -205,17 +213,14 @@ describe("修复轮 1：合并只在登录路径、不受信任来源不标记�
       .where("id", "=", evil.accountId)
       .executeTakeFirstOrThrow();
     expect(row.email_verified).toBe(false);
-    const victim = await svc.resolve(
-      ident({ externalId: "ou_victim", email: "victim@corp.example" }),
-      MERGE,
-    );
+    const victim = await signIn(ident({ externalId: "ou_victim", email: "victim@corp.example" }));
     expect(victim.created).toBe(true);
     expect(victim.accountId).not.toBe(evil.accountId);
   });
 
-  it("受信任来源新建的账号邮箱算已验证", async () => {
+  it("an account created through a trusted source counts as email-verified", async () => {
     await trust("lark", "t1");
-    const r = await svc.resolve(ident(), MERGE);
+    const r = await signIn(ident());
     const row = await db
       .selectFrom("accounts")
       .select("email_verified")
@@ -224,7 +229,7 @@ describe("修复轮 1：合并只在登录路径、不受信任来源不标记�
     expect(row.email_verified).toBe(true);
   });
 
-  it("不传 allowMerge（如渠道入站）→ 即使受信任且两侧已验证也不合并", async () => {
+  it("resolve (directory sync) never merges, even trusted with both emails verified", async () => {
     const a = await local("alice", "alice@example.com", true);
     await trust("lark", "t1");
     const r = await svc.resolve(ident(), SSO);
@@ -270,7 +275,7 @@ describe("修复波 W1：身份来源（linked_via）与租户级信任", () => 
     expect(await linkedVia("lark:t1", "ou_sso")).toBe("sso");
     await svc.resolve(ident({ externalId: "ou_dir" }), { linkedVia: "directory" });
     expect(await linkedVia("lark:t1", "ou_dir")).toBe("directory");
-    // 已有的身份行再经别的路径解析：不改 linked_via
+    // an existing row resolved through another path keeps its linked_via
     await svc.resolve(ident({ externalId: "ou_bind" }), { linkedVia: "directory" });
     expect(await linkedVia("lark:t1", "ou_bind")).toBe("bind");
   });
@@ -343,13 +348,10 @@ describe("修复波 W1：身份来源（linked_via）与租户级信任", () => 
     expect(await linkedVia("lark:t1", "ou_1")).toBe("sso");
   });
 
-  it("信任按租户：受信任的 lark:t1 不让 lark:t2 的身份算已验证或可合并", async () => {
+  it("trust is per tenant: a trusted lark:t1 makes no lark:t2 identity verified or mergeable", async () => {
     const a = await local("alice", "alice@example.com", true);
     await trust("lark", "t1");
-    const other = await svc.resolve(
-      ident({ source: "lark:t2", tenantId: "t2", externalId: "ou_t2" }),
-      MERGE,
-    );
+    const other = await signIn(ident({ source: "lark:t2", tenantId: "t2", externalId: "ou_t2" }));
     expect(other.created).toBe(true);
     expect(other.accountId).not.toBe(a.id);
     const row = await db
@@ -358,8 +360,8 @@ describe("修复波 W1：身份来源（linked_via）与租户级信任", () => 
       .where("id", "=", other.accountId)
       .executeTakeFirstOrThrow();
     expect(row.email_verified).toBe(false);
-    // 同一租户照常合并
-    expect(await svc.resolve(ident(), MERGE)).toEqual({
+    // the same tenant merges as usual
+    expect(await signIn(ident())).toEqual({
       accountId: a.id,
       created: false,
     });

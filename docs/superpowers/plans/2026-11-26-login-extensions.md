@@ -205,7 +205,7 @@ Merge order: core PR (SDK + kernel + web, one PR) first; the main session releas
 ### Task 8: Docs, skills, e2e seed, changesets
 
 **Files:**
-- Modify: `docs/guide/slack-and-lark.md` (enabling and trust through 平台 → 扩展 → 登录; the link page; drop the env examples), `.agents/skills/writing-channels/SKILL.md` (identity-source section: no `auth.loginSources` / `trustedIdentitySources`; `tenant` declaration; the link page), `apps/web/e2e/global-setup.ts` (seed `fake-im` through `PUT /api/v1/admin/login-sources/fake-im` instead of `auth.loginSources`)
+- Modify: `docs/guide/slack-and-lark.md` (enabling and trust through 平台 → 扩展 → 登录; the link page; drop the env examples), `.agents/skills/writing-channels/SKILL.md` (identity-source section: no `auth.loginSources` / `trustedIdentitySources`; `tenant` declaration; the link page), `apps/web/e2e/global-setup.ts` (seed `fake-im` directly with `seedLoginSources(db)` after migrations, `signUp: "create"`, instead of `auth.loginSources`)
 - Create: `.changeset/login-extensions.md` (`@capybara-hq/capybara`: patch, release note: remove `CAPYBARA_AUTH__LOGIN_SOURCES` / `CAPYBARA_AUTH__TRUSTED_IDENTITY_SOURCES`, startup fails while set; turn methods on in the console)
 
 - [ ] **Step 1: Edit** the files; `rg -n "loginSources|trustedIdentitySources" --glob '!docs/superpowers/**' --glob '!**/migrations/**'` → only the release note and the spec/plan remain.

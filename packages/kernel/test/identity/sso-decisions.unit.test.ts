@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideSsoCallback, type SsoDecisionInput } from "../../src/identity/sso.js";
+import { decideSsoCallback, type SsoDecisionInput } from "../../src/identity/sso-decisions.js";
 
 const A = "acc-a";
 const B = "acc-b";
