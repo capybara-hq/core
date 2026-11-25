@@ -52,7 +52,19 @@ export interface ToolSpec {
    * {@link CONVERSATION_SOURCES}.
    */
   sources?: ConversationSource[];
+  /**
+   * Extension tools only: the time limit of one call in milliseconds, a whole number from
+   * {@link TOOL_TIMEOUT_MIN_MS} to {@link TOOL_TIMEOUT_MAX_MS}; absent = the deployment's
+   * `tools.timeoutMs`. Declare it when a call may legitimately take longer, e.g. one that first
+   * starts a device service (`ctx.deviceAccess.ensureService`). Never sent to the model.
+   */
+  timeoutMs?: number;
 }
+
+/** Shortest {@link ToolSpec.timeoutMs}: one second. */
+export const TOOL_TIMEOUT_MIN_MS = 1000;
+/** Longest {@link ToolSpec.timeoutMs} the kernel accepts: ten minutes. */
+export const TOOL_TIMEOUT_MAX_MS = 600_000;
 
 /** Longest {@link ToolSpec.title}, in code points. */
 export const TOOL_TITLE_MAX = 80;
@@ -315,6 +327,17 @@ export function validateToolSpec(spec: ToolSpec): string[] {
       sources.some((s) => !(CONVERSATION_SOURCES as readonly unknown[]).includes(s)))
   )
     out.push(`sources must be a non-empty list of ${CONVERSATION_SOURCES.join(", ")}`);
+  const timeout: unknown = spec?.timeoutMs;
+  if (
+    timeout !== undefined &&
+    (typeof timeout !== "number" ||
+      !Number.isInteger(timeout) ||
+      timeout < TOOL_TIMEOUT_MIN_MS ||
+      timeout > TOOL_TIMEOUT_MAX_MS)
+  )
+    out.push(
+      `timeoutMs must be a whole number of milliseconds from ${TOOL_TIMEOUT_MIN_MS} to ${TOOL_TIMEOUT_MAX_MS}`,
+    );
   return out;
 }
 

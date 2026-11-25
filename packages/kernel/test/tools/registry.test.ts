@@ -232,6 +232,9 @@ describe("ToolRegistry", () => {
     });
     // 插件显式声明 defaultPolicy 优先于注解
     expect(byKey["plugin__mem-connector__wipe"]?.defaultPolicy).toBe("allow");
+    // an extension tool's declared time limit replaces tools.timeoutMs; none declared: absent
+    expect(byKey["plugin__mem-connector__wipe"]?.timeoutMs?.({})).toBe(180_000);
+    expect(byKey["plugin__mem-connector__echo"]?.timeoutMs).toBeUndefined();
     expect(byKey.mcp__docs__read).toMatchObject({
       source: { kind: "connector", connectorId, name: "read" },
       defaultPolicy: "allow",

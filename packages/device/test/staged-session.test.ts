@@ -344,10 +344,34 @@ it.each(["cancel", "deadline"])("%s aborts an in-flight read only", async (mode)
   await enteredPromise;
   if (mode === "cancel") f.socket.send(cancelFrame(call.key));
   await abortedPromise;
+  // an elapsed deadline is answered (outcome unknown), never left to the kernel's wait; a
+  // cancel is the kernel giving up, so nothing is sent for it
+  if (mode === "deadline")
+    expect(await call.response).toMatchObject({
+      ok: false,
+      error: { kind: "unknown", message: expect.stringMatching(/deadline/) },
+    });
   expect(await f.backend.background.status(f.handle, f.ref, signal())).toEqual({
     state: "running",
   });
   expect(f.cancelled).not.toHaveBeenCalled();
+});
+it("an operation that ignores its signal past the deadline is answered at the deadline, its late result dropped", async () => {
+  const f = await fixture();
+  let release!: () => void;
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  vi.spyOn(f.backend.background, "readOutput").mockImplementation(async () => {
+    await held;
+    return { data: new Uint8Array(), offset: 0, nextOffset: 0, totalBytes: 0 };
+  });
+  const call = f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 1 }, 100);
+  expect(await call.response).toMatchObject({ ok: false, error: { kind: "unknown" } });
+  release();
+  // the late result is never sent: one answer per request
+  await f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 0 }).response;
+  expect(f.responses.filter((r) => r.res.id === call.key)).toHaveLength(1);
 });
 it("refuses requests before ready and incoming frames above the credential's capacity", async () => {
   const f = await fixture(false);

@@ -239,6 +239,8 @@ describe("ctx.deviceAccess", () => {
     expect(review.mock.calls[0]?.[0]).toMatchObject({
       toolKey: "Bash",
       input: { command: `node ${first.stateDir}/echo.mjs --title 'a b'` },
+      // reviewed as the declared service launch it is (allow.service), not as a dev command
+      serviceEntry: `${first.stateDir}/echo.mjs`,
       workspace: first.stateDir,
       orgId,
       conversationId: s.conversationId,

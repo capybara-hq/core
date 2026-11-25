@@ -968,6 +968,8 @@ interface ResolvedFacts {
   homes: readonly string[];
   /** Absolute paths this conversation's tool calls wrote before this line (hardening spec R1). */
   written: ReadonlySet<string>;
+  /** The entry of a device service launch ({@link ReviewFacts.serviceEntry}), or null. */
+  serviceEntry: string | null;
 }
 
 /** The home directory a path lies in by its `/home/<u>`, `/Users/<u>` or `/root` prefix, or null. */
@@ -1006,6 +1008,7 @@ function resolveFacts(facts: ReviewFacts): ResolvedFacts {
         p.endsWith("/**") ? `${normalizePath(p.slice(0, -3))}/**` : normalizePath(p),
       ),
     ),
+    serviceEntry: facts.serviceEntry?.startsWith("/") ? normalizePath(facts.serviceEntry) : null,
   };
 }
 
@@ -4550,11 +4553,38 @@ const RULES: readonly Rule[] = [
     },
   },
   {
+    // a device service launch as the kernel runs it (`node <entry> …`, browser use spec §5):
+    // the extension's declared service from its code directory, not a build of the project
+    id: "allow.service",
+    outcome: "allow",
+    check: (ctx) => {
+      const entry = ctx.facts.serviceEntry;
+      if (entry === null) return null;
+      const matched = eachInvocation(
+        ctx.commands,
+        (inv) => inv.program === "node" && inv.args[0] === entry,
+      );
+      return matched.length > 0
+        ? {
+            reason: "Starts a device service declared by the extension, from its code directory.",
+            commands: matched,
+          }
+        : null;
+    },
+  },
+  {
     id: "allow.dev",
     outcome: "allow",
     check: (ctx) => {
       const matched = eachInvocation(ctx.commands, (inv, command) => {
         if (credentialProducer(inv)) return false;
+        // a device service launch is `allow.service`'s, never a development command
+        if (
+          ctx.facts.serviceEntry !== null &&
+          inv.program === "node" &&
+          inv.args[0] === ctx.facts.serviceEntry
+        )
+          return false;
         // code the review cannot read is not a development command (`unsure.interpreter`)
         if (interpreterRisk(inv, command, ctx) !== null) return false;
         if (globalInstallOf(inv.program, inv.args, ctx.venv || venvBinary(inv.raw))) return false;

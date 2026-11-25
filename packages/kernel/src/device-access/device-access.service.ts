@@ -27,7 +27,12 @@ import { assertServiceSpec, DeviceServices } from "../sandbox/device-services.js
 import { DeviceProviders } from "../sandbox/providers.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import type { SandboxUseContext } from "../sandbox/use-context.js";
-import { attachCallScope, type CallScope, callScopeOf } from "../tools/call-scope.js";
+import {
+  attachCallScope,
+  type CallScope,
+  callScopeOf,
+  whileDeviceStarting,
+} from "../tools/call-scope.js";
 import { QuestionsService } from "../tools/questions.service.js";
 
 /** What every `ctx.deviceAccess` call refuses a run another member triggered with. */
@@ -85,9 +90,18 @@ const REFRESH_TIMEOUT_MS = 30_000;
  */
 function launchArgv(spec: DeviceServiceSpec, status: DeviceServiceStatus): string[] {
   const env = Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`);
+  return [
+    ...(env.length > 0 ? ["env", ...env] : []),
+    "node",
+    launchEntry(spec, status),
+    ...spec.args,
+  ];
+}
+
+/** The absolute entry a launch runs: `<codeDir ?? stateDir>/<entry>`. */
+function launchEntry(spec: DeviceServiceSpec, status: DeviceServiceStatus): string {
   const dir = status.codeDir ?? status.stateDir;
-  const entry = `${dir.replace(/\/+$/, "")}/${spec.entry}`;
-  return [...(env.length > 0 ? ["env", ...env] : []), "node", entry, ...spec.args];
+  return `${dir.replace(/\/+$/, "")}/${spec.entry}`;
 }
 
 /** A POSIX shell word for the review's command text (bare when it needs no quoting). */
@@ -139,6 +153,15 @@ export class DeviceAccessService {
     call: ToolCallContext,
     spec: DeviceServiceSpec,
   ): Promise<DeviceServiceStatus> {
+    // a timeout while this runs says the device was still starting (the tool pipeline's text)
+    return whileDeviceStarting(call, () => this.ensureServiceNow(caller, call, spec));
+  }
+
+  private async ensureServiceNow(
+    caller: DeviceAccessCaller,
+    call: ToolCallContext,
+    spec: DeviceServiceSpec,
+  ): Promise<DeviceServiceStatus> {
     assertDeclared(caller, spec.name);
     assertCallOwner(call);
     assertServiceSpec(spec);
@@ -174,6 +197,8 @@ export class DeviceAccessService {
       accountId: call.accountId,
       toolKey: "Bash",
       input: { command: argv.map(shellWord).join(" ") },
+      // the kernel's own fact: this command is the extension's declared service (`allow.service`)
+      serviceEntry: launchEntry(spec, found),
       mode: reviewFacts.mode,
       // the command runs in the service's state directory
       workspace: found.stateDir,

@@ -547,10 +547,23 @@ export function serveStagedSession(
         return;
       }
       const ctl = new AbortController();
-      const timer = setTimeout(
-        () => ctl.abort(new Error("Request deadline elapsed; retry the request")),
-        frame.deadlineMs,
-      );
+      let overdue = false;
+      const timer = setTimeout(() => {
+        ctl.abort(new Error("Request deadline elapsed; retry the request"));
+        // answered now, whatever the work does with its signal: the kernel hears that the
+        // deadline passed instead of waiting in silence (a machine stop answers when it ends)
+        if (frame.op === "stop") return;
+        overdue = true;
+        deliver({
+          type: "res",
+          id: frame.id,
+          ok: false,
+          error: {
+            kind: "unknown",
+            message: `The machine did not finish ${frame.op} within its deadline of ${Math.ceil(frame.deadlineMs / 1000)} s; its outcome is unknown, check the device and retry`,
+          },
+        });
+      }, frame.deadlineMs);
       const lifecycle = frame.op === "create" || frame.op === "stop";
       const done = (
         lifecycle
@@ -559,7 +572,8 @@ export function serveStagedSession(
       )
         .then((res) => {
           // a machine stop is answered even when its deadline passed: the program ends anyway
-          if (ctl.signal.aborted && frame.op !== "stop") return;
+          // after the deadline (answered then) or a cancel (the kernel gave up): one answer at most
+          if (overdue || (ctl.signal.aborted && frame.op !== "stop")) return;
           deliver(res);
           // a valid machine stop ends the program even when some stops are still pending (its
           // answer names them): the machine is revoked or deleted either way
@@ -567,7 +581,10 @@ export function serveStagedSession(
           if (frame.op === "stop" && machine && (reason === "revoked" || reason === "deleted"))
             machine.stopped(reason);
         })
-        .catch(fail)
+        // work that fails after its overdue answer went out has nothing left to tell
+        .catch((error: unknown) => {
+          if (!overdue) fail(error);
+        })
         .finally(() => {
           clearTimeout(timer);
           state.running.delete(frame.id);

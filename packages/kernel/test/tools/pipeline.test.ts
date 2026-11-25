@@ -33,10 +33,12 @@ import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call.js";
 import type { Breaker } from "../../src/tools/breaker.js";
 import { notLoadedText, toolSearchTool } from "../../src/tools/builtins/tool-search.js";
+import { whileDeviceStarting } from "../../src/tools/call-scope.js";
 import { type ConnectorAuth, CredentialMissing } from "../../src/tools/credentials.js";
 import type { ToolOutputs } from "../../src/tools/outputs.js";
 import {
   type DecidePolicy,
+  deviceStartingTimeoutText,
   hookDeniedText,
   RUN_STOPPED_DURING_TEXT,
   RUN_STOPPED_TEXT,
@@ -331,6 +333,10 @@ beforeEach(async () => {
       record("ctx", { ...ctx, signal: undefined });
       return { content: [{ type: "text", text: "ok" }] };
     },
+    plugin__probe__starting: async (_input, ctx: ToolCallContext) => {
+      // stuck while the conversation's device starts (ctx.deviceAccess.ensureService)
+      return whileDeviceStarting(ctx, () => new Promise<ToolResult>(() => {}));
+    },
     plugin__probe__throws: async () => {
       throw new Error("internal detail with token abc");
     },
@@ -344,6 +350,7 @@ beforeEach(async () => {
     pluginTool("big"),
     pluginTool("ctx"),
     pluginTool("throws"),
+    pluginTool("starting"),
     appTool("docs", connectorId, "read"),
   ];
   await seedAppTool(connectorId, "read");
@@ -1152,6 +1159,27 @@ describe("ToolPipeline.runStep", () => {
       content:
         "Tool plugin__probe__slow timed out after 0.15s. The operation may or may not have completed; verify before retrying.",
     });
+  });
+
+  it("a timeout while the device was still starting says so, not that the target is unreachable", async () => {
+    toolsCfg = { timeoutMs: 150 };
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__starting", input: {} }]);
+    const r = resultsOf(evs)[0];
+    expect(r?.isError).toBe(true);
+    expect(r?.content).toBe(deviceStartingTimeoutText("plugin__probe__starting", 150));
+    expect(r?.content).toMatch(/device was still starting/);
+    expect(r?.content).not.toMatch(/may or may not have completed/);
+  });
+
+  it("an extension tool's own time limit replaces tools.timeoutMs", async () => {
+    toolsCfg = { timeoutMs: 60_000 };
+    resolved = resolved.map((t) =>
+      t.key === "plugin__probe__slow" ? { ...t, timeoutMs: () => 200 } : t,
+    );
+    const t0 = Date.now();
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__slow", input: {} }]);
+    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(resultsOf(evs)[0]?.content).toMatch(/^Tool plugin__probe__slow timed out after 0.2s/);
   });
 
   it("连接器工具超时：经 AbortSignal 中止连接器调用，会话照样关闭", async () => {

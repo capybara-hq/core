@@ -63,6 +63,31 @@ export class DialInFrameTooLargeError extends Error {
   }
 }
 
+/**
+ * The machine's connection stayed up but its answer did not arrive within the request's deadline
+ * plus {@link answerMarginMs}: the machine took the request (or nobody drained it) and stayed
+ * silent. The outcome is unknown; a cancel was queued when the machine had taken it.
+ */
+export class DialInAnswerTimeoutError extends Error {
+  constructor(deadlineMs: number) {
+    super(
+      `The connected machine did not answer within the request's deadline of ${Math.ceil(deadlineMs / 1000)} s; the outcome is unknown, check the device and retry`,
+    );
+    this.name = "DialInAnswerTimeoutError";
+  }
+}
+
+/**
+ * The most a caller waits past the request's deadline while the machine stays connected (the
+ * machine answers an elapsed deadline itself; this covers the trip back). Never more than the
+ * reconnect grace ({@link answerMarginMs}).
+ */
+export const RELAY_ANSWER_MARGIN_MS = 10_000;
+
+/** The answer margin for a reconnect grace of `graceMs`: the smaller of the two. */
+export const answerMarginMs = (graceMs: number): number =>
+  Math.min(RELAY_ANSWER_MARGIN_MS, graceMs);
+
 /** The longest one lease check of a waiting caller may take before it counts as "unknown". */
 export const LEASE_CHECK_TIMEOUT_MS = 2000;
 
@@ -107,8 +132,11 @@ return 1
 /** Why a call stopped waiting without a result. */
 const ABORTED = Symbol("aborted");
 const GRACE_EXPIRED = Symbol("grace expired");
+const ANSWER_OVERDUE = Symbol("answer overdue");
 
-type Outcome = { res: ReadResult } | { error: typeof ABORTED | typeof GRACE_EXPIRED | Error };
+type Outcome =
+  | { res: ReadResult }
+  | { error: typeof ABORTED | typeof GRACE_EXPIRED | typeof ANSWER_OVERDUE | Error };
 
 /** The options of {@link DialInRelay.request}. */
 export interface DialInRequestOptions {
@@ -143,9 +171,11 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  *
  * The caller subscribes to its result topic before pushing and reads the result key once after,
  * and once more before giving up (the run-abort pattern; a publish lost while the subscriber
- * reconnects is still found). It waits within its own call for at most `timeoutMs` plus
- * `devices.dialIn.reconnectGraceSeconds`; when the lease disappears meanwhile (checked every
- * {@link HOLDER_POLL_MS}) the wait ends at most one grace later ({@link DeviceOfflineError}), and
+ * reconnects is still found). While the machine stays connected it waits within its own call for
+ * `timeoutMs` plus a short answer margin ({@link answerMarginMs}; then
+ * {@link DialInAnswerTimeoutError}); `devices.dialIn.reconnectGraceSeconds` applies only once the
+ * lease disappears (checked every {@link HOLDER_POLL_MS}): the wait then ends at most one grace
+ * later ({@link DeviceOfflineError}), never later than `timeoutMs` plus the grace, and
  * when the machine is connected again as another run of its program (`programRunId`) it ends at
  * that poll with {@link DeviceProgramRestartedError}: the old run's kept results died with it. A
  * result produced while the machine was disconnected arrives after it reconnects. Giving up (grace,
@@ -159,7 +189,7 @@ export class DialInRelay {
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn" | "info">,
     @Inject(DeviceTargets)
     private readonly targets: Pick<DeviceTargets, "state" | "current">,
   ) {}
@@ -220,7 +250,8 @@ export class DialInRelay {
   /**
    * Sends `body` to the device's machine as the body of a `req` and resolves the body of its `res`
    * (never read here). Throws {@link DeviceOfflineError} when no replica holds the machine at send
-   * time or when the wait ran out, but `device.forbidden` ({@link machineRevoked}) when the machine
+   * time or when it stayed disconnected past the grace, {@link DialInAnswerTimeoutError} when the
+   * connected machine did not answer in time, but `device.forbidden` ({@link machineRevoked}) when the machine
    * was revoked and `device.not_found` when the device was deleted (checked whenever the
    * connection is missing, ruling R27); {@link DeviceRequestNotSentError} when the request never
    * reached the machine (its connection changed first), {@link DialInFrameTooLargeError} when it
@@ -298,12 +329,17 @@ export class DialInRelay {
       this.nudge(deviceId, id);
       onStored(await this.redis.get(deviceResKey(id)));
 
-      // wait until the result, the abort, or `giveUpAt`. The lease is checked every poll: its loss
-      // caps `giveUpAt` at one grace from then (never extending it); a reconnect within that grace
-      // restores the full wait, so a long command whose machine blipped keeps its deadline
-      const fullGiveUpAt = Date.now() + deadlineMs + graceMs;
-      let giveUpAt = fullGiveUpAt;
-      let capped = false;
+      // wait until the result, the abort, or `giveUpAt`. While the machine stays connected that is
+      // the deadline plus a short answer margin (the machine answers an elapsed deadline itself);
+      // the reconnect grace applies only while no replica holds the machine: its loss caps the
+      // wait at one grace from then (never extending the old deadline-plus-grace bound), and a
+      // reconnect restores the connected bound, at least a margin after the reconnect (a result
+      // produced while it was away is delivered then). Checked every poll.
+      const startedAt = Date.now();
+      const connectedGiveUpAt = startedAt + deadlineMs + answerMarginMs(graceMs);
+      const latestGiveUpAt = startedAt + deadlineMs + graceMs;
+      let giveUpAt = connectedGiveUpAt;
+      let lostAt: number | null = null;
       const tick = async () => {
         if (stopped) return;
         try {
@@ -337,12 +373,12 @@ export class DialInRelay {
               return;
             }
           }
-          if (live === true && capped) {
-            capped = false;
-            giveUpAt = fullGiveUpAt;
-          } else if (live === false && !capped) {
-            capped = true;
-            giveUpAt = Math.min(giveUpAt, Date.now() + graceMs);
+          if (live === true && lostAt !== null) {
+            lostAt = null;
+            giveUpAt = Math.max(connectedGiveUpAt, Date.now() + answerMarginMs(graceMs));
+          } else if (live === false && lostAt === null) {
+            lostAt = Date.now();
+            giveUpAt = Math.min(latestGiveUpAt, lostAt + graceMs);
           }
           if (live === false) {
             // a revoked machine or a deleted device never comes back: fail at once
@@ -358,9 +394,10 @@ export class DialInRelay {
         if (stopped) return;
         if (Date.now() >= giveUpAt) {
           // a last look at the key: the publish may have been lost while the subscriber reconnected
+          const why = lostAt === null ? ANSWER_OVERDUE : GRACE_EXPIRED;
           this.redis.get(deviceResKey(id)).then(
-            (raw) => (raw !== null ? onStored(raw) : settle({ error: GRACE_EXPIRED })),
-            () => settle({ error: GRACE_EXPIRED }),
+            (raw) => (raw !== null ? onStored(raw) : settle({ error: why })),
+            () => settle({ error: why }),
           );
           return;
         }
@@ -388,8 +425,25 @@ export class DialInRelay {
         await this.quietly("delete the result", deviceId, () => this.redis.del(deviceResKey(id)));
       }
       await this.giveUp(deviceId, id, reqJson, listTtlMs);
-      if (r.error === ABORTED) throw signal.reason;
-      if (r.error === GRACE_EXPIRED) throw new DeviceOfflineError(deviceId);
+      if (r.error === ABORTED) {
+        this.log.info("device relay wait aborted", { deviceId, waitedMs: Date.now() - startedAt });
+        throw signal.reason;
+      }
+      if (r.error === GRACE_EXPIRED) {
+        this.log.warn("device relay gave up: the machine stayed disconnected past the grace", {
+          deviceId,
+          waitedMs: Date.now() - startedAt,
+        });
+        throw new DeviceOfflineError(deviceId);
+      }
+      if (r.error === ANSWER_OVERDUE) {
+        this.log.warn("device relay gave up: the connected machine did not answer in time", {
+          deviceId,
+          deadlineMs,
+          waitedMs: Date.now() - startedAt,
+        });
+        throw new DialInAnswerTimeoutError(deadlineMs);
+      }
       throw r.error;
     } finally {
       stopped = true;

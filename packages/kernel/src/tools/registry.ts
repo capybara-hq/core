@@ -357,6 +357,16 @@ export function specHash(spec: unknown): string {
   return contentHash(withoutDisplayFields(spec));
 }
 
+/**
+ * An extension tool's own time limit ({@link ToolSpec.timeoutMs}, checked at registration), as
+ * the resolved tool's `timeoutMs`; nothing when it declares none (the pipeline then uses
+ * `tools.timeoutMs`).
+ */
+export function pluginToolTimeout(spec: ToolSpec): Pick<ResolvedTool, "timeoutMs"> {
+  const ms = spec.timeoutMs;
+  return ms === undefined ? {} : { timeoutMs: () => ms };
+}
+
 /** 由注解推导默认策略：只读 → allow；其余（破坏性 / 无注解）→ ask。 */
 export function policyFromAnnotations(a: ToolAnnotations | undefined): "allow" | "ask" {
   return a?.readOnlyHint === true ? "allow" : "ask";
@@ -823,6 +833,7 @@ export class ToolRegistry {
           spec: t.spec,
           specHash: specHash(t.spec),
           defaultPolicy: t.spec.defaultPolicy ?? policyFromAnnotations(t.spec.annotations),
+          ...pluginToolTimeout(t.spec),
         });
       }
     }

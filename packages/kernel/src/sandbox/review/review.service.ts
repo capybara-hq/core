@@ -135,6 +135,11 @@ export interface ReviewInput {
   deviceHome?: string | null | undefined;
   /** Whether a person is present to answer an `ask` (rules may read it; the pipeline decides). */
   attended: boolean;
+  /**
+   * A device service launch (`ctx.deviceAccess.ensureService`): the absolute entry the command
+   * runs, the kernel's own fact ({@link ReviewFacts.serviceEntry}). Absent for every tool call.
+   */
+  serviceEntry?: string | undefined;
   /** Hook payload facts (optional: without enough of them no model hook fires). */
   agentId?: string | undefined;
   agentVersion?: number | undefined;
@@ -486,6 +491,7 @@ export class CommandReviewService implements CommandReview {
       deviceHome: input.deviceHome ?? null,
       mode: input.mode,
       attended: input.attended,
+      ...(input.serviceEntry !== undefined && { serviceEntry: input.serviceEntry }),
     };
     // running a file this conversation wrote is not a development command (hardening spec R1)
     const result = isWrite

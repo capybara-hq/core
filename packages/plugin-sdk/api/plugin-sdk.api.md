@@ -4693,6 +4693,12 @@ export const THINKING_VALUES: readonly string[];
 export const TOOL_KEY_ARGS_MAX = 3;
 
 // @public
+export const TOOL_TIMEOUT_MAX_MS = 600000;
+
+// @public
+export const TOOL_TIMEOUT_MIN_MS = 1000;
+
+// @public
 export const TOOL_TITLE_MAX = 80;
 
 // @public
@@ -4804,6 +4810,7 @@ export interface ToolSpec {
     keyArgs?: string[];
     name: string;
     sources?: ConversationSource[];
+    timeoutMs?: number;
     title?: string;
 }
 

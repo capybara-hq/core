@@ -305,6 +305,12 @@ const skippedResult = (
 
 const timeoutText = (key: string, ms: number) =>
   `Tool ${key} timed out after ${ms / 1000}s. The operation may or may not have completed; verify before retrying.`;
+/**
+ * The timeout of a call whose device was still starting (its instance being created or resumed,
+ * or the device service being launched): the target was never reached, so a retry is safe.
+ */
+export const deviceStartingTimeoutText = (key: string, ms: number) =>
+  `Tool ${key} timed out after ${ms / 1000}s while the device was still starting (its sandbox or the device service), so the request never reached its target. Retry the call: a started device answers quickly.`;
 const failedText = (key: string, errName: string) =>
   `Tool ${key} failed (${errName}). The operation may not have completed; check before retrying or try another approach.`;
 const unknownToolText = (name: string, keys: string[], toolSearch: boolean) =>
@@ -3490,7 +3496,17 @@ export class ToolPipeline {
         timeoutMs,
       );
       if (r === "timeout") {
-        return withBlocked({ kind: "error", message: timeoutText(tool.key, timeoutMs) }, scope);
+        const starting = (scope as CallScope | undefined)?.starting ?? 0;
+        if (starting > 0)
+          this.deps.log.info("tool call timed out while its device was still starting", {
+            toolKey: tool.key,
+            timeoutMs,
+          });
+        const message =
+          starting > 0
+            ? deviceStartingTimeoutText(tool.key, timeoutMs)
+            : timeoutText(tool.key, timeoutMs);
+        return withBlocked({ kind: "error", message }, scope);
       }
       // a launch reviewed before the call stopped or asked is kept with its result
       if (r === "aborted")
