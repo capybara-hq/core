@@ -979,6 +979,34 @@ button.cb-tool-toggle:focus-visible {
   font-family: var(--cb-font-code);
   word-break: break-all;
 }
+/* A result's images under its output (§6.16.9): thumbnails that open the image viewer. */
+.cb-tool-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+}
+.cb-tool-thumb {
+  display: block;
+  flex: none;
+  width: var(--cb-layout-thumb);
+  height: var(--cb-layout-thumb);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+  cursor: pointer;
+}
+.cb-tool-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.cb-tool-thumb:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 1px;
+}
 .cb-tool-output {
   margin: 0;
   max-height: var(--cb-layout-tool-output);

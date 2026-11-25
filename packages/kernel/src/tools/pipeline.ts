@@ -18,6 +18,7 @@ import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import { backgroundMaxSeconds } from "../background/launch.js";
 import { ConversationApprovalProfile } from "../conversations/approval-profile.js";
+import { AttachmentsService } from "../conversations/attachments.service.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import {
   COMMAND_ASK_MAX_CHARS,
@@ -159,6 +160,7 @@ import {
   type ToolResultMedia,
 } from "./registry.js";
 import { runResourceTool } from "./resources.js";
+import { type StoreResultImage, storeResultImages } from "./result-images.js";
 import { ToolAskReview, type ToolAskReviewer } from "./tool-review.js";
 import { validateInput } from "./validate.js";
 
@@ -921,6 +923,7 @@ const keptExtras = (kept: NetworkAskDetail["result"] | undefined) => ({
   ...(kept?.contentTypes !== undefined && { contentTypes: kept.contentTypes }),
   ...(kept?.display !== undefined && { display: kept.display }),
   ...(kept?.view !== undefined && { view: kept.view }),
+  ...(kept?.media !== undefined && { media: kept.media }),
 });
 
 /**
@@ -1173,6 +1176,13 @@ export class ToolPipeline {
     @Optional()
     @Inject(ToolAskReview)
     private readonly toolReview?: ToolAskReviewer,
+    /**
+     * Stores the images a tool result carries as `read` copies of the calling conversation (tool
+     * result images design §2); absent (hand-built pipelines): images are named as not stored.
+     */
+    @Optional()
+    @Inject(AttachmentsService)
+    private readonly resultImages?: Pick<AttachmentsService, "storeRead">,
   ) {
     this.deps = {
       // the builtins that enter a device on the managed operation route (common.ts
@@ -1927,9 +1937,21 @@ export class ToolPipeline {
       };
     }
 
+    // the images of the result (any tool): stored as `read` copies of the calling conversation,
+    // named in the text and in `tool_result.media`, so a model with vision sees them after the
+    // step's results and the person sees them on the call's row (tool result images design §2)
+    const images =
+      outcome.kind === "result"
+        ? await storeResultImages(outcome.result, tool.key, this.storeResultImage(ctx), (err) =>
+            this.deps.log.warn("cannot store an image of a tool result", {
+              toolKey: tool.key,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          )
+        : undefined;
     const rendered =
       outcome.kind === "result"
-        ? renderResult(outcome.result)
+        ? renderResult(outcome.result, images?.texts)
         : { text: outcome.message, contentTypes: [], isError: true };
     // the tools a builtin (ToolSearch) reports as loaded: only keys available in this step and not
     // builtin, written to tool_result (the log is the source of truth)
@@ -1939,10 +1961,12 @@ export class ToolPipeline {
         : [];
     // the images the builtin Read stored for the call (vision-read design §1.2): builtins only,
     // so a plugin can never name an attachment for request building
-    const media =
+    const builtinMedia =
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? mediaFrom(outcome.result)
         : undefined;
+    const allMedia = [...(builtinMedia ?? []), ...(images?.media ?? [])];
+    const media = allMedia.length > 0 ? allMedia : undefined;
     // 显示摘要：只认插件 / 内置工具与内核的 resources 工具给的（连接器结果来自外部服务，不采信），
     // 校验不过就丢弃并告警
     const display =
@@ -2053,6 +2077,7 @@ export class ToolPipeline {
           ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
           ...(display !== undefined && { display }),
           ...(view !== undefined && { view }),
+          ...(media !== undefined && { media }),
           ...(review !== undefined && { review }),
           // carried into the kept result so a resumed run writes the event too (it was written
           // with `network_blocked` below when the ask was created)
@@ -3193,6 +3218,18 @@ export class ToolPipeline {
    * （`assistant_message` 来自最后一次尝试）。该请求不在 ToolSearch 模式（没有 `catalog`，工具全部发送）
    * 或找不到 model_call 时返回 null（不做加载检查）。已加载集合由此从日志得出，不放进程内存。
    */
+  /**
+   * How a call's result images are stored: a `read` copy bound to the calling conversation (a
+   * sub-agent's own, never its root), owned by the run's trigger account; absent without the
+   * attachments service.
+   */
+  private storeResultImage(ctx: ToolStepContext): StoreResultImage | undefined {
+    const attachments = this.resultImages;
+    if (attachments === undefined) return undefined;
+    return (file) =>
+      attachments.storeRead(ctx.orgId, ctx.conversationId, ctx.accountId || null, file);
+  }
+
   private async sentTools(ctx: ToolStepContext): Promise<Set<string> | null> {
     // attempts can reach MAX_STEP_MODEL_CALLS after reactive overflow fix-ups; the assistant_message
     // comes from the last attempt, so scan from the top

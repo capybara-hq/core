@@ -241,7 +241,10 @@ function mediaMode(
   return isText(b.mediaType) ? "inline" : "placeholder";
 }
 
-/** One image the builtin Read stored (`tool_result.media`, vision-read design §1.2). */
+/**
+ * One stored image of a tool result (`tool_result.media`): the builtin Read's copy (vision-read
+ * design §1.2) or an image block of any tool's result (tool result images design §2).
+ */
 export type ReadMedia = NonNullable<EventPayload<"tool_result">["media"]>[number];
 
 type ToolResultEvent = ConversationEvent & { type: "tool_result" };
@@ -521,18 +524,26 @@ export const mediaTooManyPagesText = (name: string): string =>
 export const mediaRejectedText = (name: string): string =>
   `[Attachment ${quoted(name)} was rejected by the model provider.]`;
 
-/** The label before an image from Read (model-facing, vision-read design §1.4). */
-export const readImageLabelText = (id: string): string => `Image from Read (file_id ${id}):`;
+/**
+ * The label before an image of a tool result (model-facing; vision-read design §1.4, tool result
+ * images design §3): the tool's key, e.g. `Image from Read (file_id <id>):`.
+ */
+export const readImageLabelText = (toolKey: string, id: string): string =>
+  `Image from ${toolKey} (file_id ${id}):`;
 
 /**
- * An image from Read for a model without vision (static, so history stays append-only; any
- * fallback answer is already in the tool result).
+ * An image of a tool result for a model without vision (static, so history stays append-only):
+ * it says the image was not shown. After `Read`, whose result already carries any vision model's
+ * answer, nothing more; after another tool, how the image can still be read.
  */
-export const READ_IMAGE_NO_VISION_TEXT = "[This model cannot view images.]";
+export const readImageNoVisionText = (toolKey: string, id: string): string =>
+  toolKey === "Read"
+    ? "[Not shown to you: this model cannot view images.]"
+    : `[Not shown to you: this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`;
 
-/** An image from Read the Read-image window left out of this request. */
-export const readImageNotIncludedText = (id: string): string =>
-  `[Image from Read (file_id ${id}) not included in this request.]`;
+/** An image of a tool result the Read-image window left out of this request. */
+export const readImageNotIncludedText = (toolKey: string, id: string): string =>
+  `[Image from ${toolKey} (file_id ${id}) not included in this request.]`;
 
 /**
  * The usual file extension per content type: the label of a `file` block logged without a name (every
@@ -1053,7 +1064,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
    * label: the image (through {@link resolveMedia}, so the cap, the budget and `media_excluded`
    * apply), the static text for a model without vision, or the window's "not included" text.
    */
-  const readBlocks = (media: readonly ReadMedia[]): ContentBlock[] =>
+  const readBlocks = (toolKey: string, media: readonly ReadMedia[]): ContentBlock[] =>
     media.flatMap((m): ContentBlock[] => {
       const id = m.attachmentId;
       const note = (text: string, outcome: MediaOutcome): ContentBlock[] => {
@@ -1062,14 +1073,14 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       };
       if (!model.capabilities.vision) {
         return [
-          { type: "text", text: readImageLabelText(id) },
-          ...note(READ_IMAGE_NO_VISION_TEXT, "placeholder_unsupported"),
+          { type: "text", text: readImageLabelText(toolKey, id) },
+          ...note(readImageNoVisionText(toolKey, id), "placeholder_unsupported"),
         ];
       }
       if (mediaCtx.plan.notIncluded.has(id)) {
-        return note(readImageNotIncludedText(id), "not_included");
+        return note(readImageNotIncludedText(toolKey, id), "not_included");
       }
-      return [{ type: "text", text: readImageLabelText(id) }, ...blocksOf([readBlock(m)])];
+      return [{ type: "text", text: readImageLabelText(toolKey, id) }, ...blocksOf([readBlock(m)])];
     });
   /** Whether the request renders an image from Read (the window is then recorded). */
   let hasReadImages = false;
@@ -1174,7 +1185,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
               });
               if (r.media !== undefined && r.media.length > 0) {
                 hasReadImages = true;
-                images.push(...readBlocks(r.media));
+                images.push(...readBlocks(r.toolKey, r.media));
               }
             }
           }

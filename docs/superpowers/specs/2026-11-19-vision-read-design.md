@@ -2,6 +2,12 @@
 
 Status: implemented on this branch (2026-11-19), revised after adversarial and implementation reviews.
 
+Amended 2026-11-25 by `2026-11-25-tool-result-images-design.md`: the pipeline now stores the image
+blocks of every tool's result as `read` copies (the non-goal "No image bytes inside tool results"
+no longer holds: the kernel, not the tool, names the copies), the label names the tool, the
+no-vision text reads `[Not shown to you: this model cannot view images.]`, and the web shows the
+images on the call's row (open question 2).
+
 Scope:
 - the kernel;
 - `@capybara-hq/plugin-sdk`: one purpose value is added (§2.4);

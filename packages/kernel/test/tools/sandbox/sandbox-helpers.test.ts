@@ -4,6 +4,7 @@ import { taskOutputFile } from "../../../src/background/launch.js";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { ExtensionHost } from "../../../src/extensions/host.js";
 import type { KernelDb } from "../../../src/infra/database/kernel-db.js";
+import { DELIVER_ONE_SOURCE_TEXT } from "../../../src/tools/builtins/sandbox/deliver.js";
 import { parseGrepNull } from "../../../src/tools/builtins/sandbox/grep.js";
 import {
   assignAttachmentNames,
@@ -413,12 +414,22 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
       append?: () => Promise<unknown>;
       /** 有没有对象存储（默认有）。 */
       storage?: boolean;
+      /** Files of the conversation by id (Deliver's `file_id`); absent: no `read` deps. */
+      byId?: Map<string, { name: string; contentType: string; data: Uint8Array }>;
     } = {},
   ) {
     let reads = 0;
     const files = new Map<string, Uint8Array>();
     const puts: string[] = [];
     const deletes: string[] = [];
+    const events: { type: string; payload: Record<string, unknown> }[] = [];
+    const appended = async (
+      _conv: string,
+      evs: { type: string; payload: Record<string, unknown> }[],
+    ) => {
+      events.push(...evs);
+      return [];
+    };
     const p = {
       readFile: async (_h: unknown, path: string) => {
         reads++;
@@ -455,14 +466,34 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
         }),
       } as unknown as SandboxToolDeps["storage"],
       eventLog: {
-        append: opts.append ?? (async () => []),
+        append: opts.append ?? appended,
         readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
       } as unknown as SandboxToolDeps["eventLog"],
       config: { get: () => cfg },
+      ...(opts.byId !== undefined && {
+        read: {
+          files: {
+            db: noRowsDb(),
+            storage: {} as never,
+            attachments: {
+              openForConversation: async (_org: string, _conv: string, id: string) => {
+                const f = opts.byId?.get(id);
+                if (f === undefined) return null;
+                return {
+                  name: f.name,
+                  contentType: f.contentType,
+                  size: f.data.byteLength,
+                  body: new Blob([new Uint8Array(f.data)]).stream(),
+                };
+              },
+            },
+          },
+        } as unknown as NonNullable<SandboxToolDeps["read"]>,
+      }),
     });
     const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
     const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
-    return { files, puts, deletes, tool, text, reads: () => reads };
+    return { files, puts, deletes, events, tool, text, reads: () => reads };
   }
 
   it("deliver rejects a bad name before reading or uploading anything", async () => {
@@ -498,6 +529,41 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
     expect(r.reads()).toBe(0);
     expect(r.puts).toEqual([]);
     expect(await rig().tool("Deliver").unavailable?.({ orgId: "o" })).toBeNull();
+  });
+
+  it("deliver file_id: a file of the conversation (an image a tool returned), no device read", async () => {
+    const id = "00000000-0000-4000-8000-0000000000aa";
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    const r = rig({
+      byId: new Map([
+        [id, { name: "browser_screenshot.png", contentType: "image/png", data: png }],
+      ]),
+    });
+    const deliver = r.tool("Deliver");
+    expect(deliver.spec.keyArgs).toEqual(["file_path", "file_id"]);
+    const out = await deliver.run({ file_id: id }, callCtx());
+    expect(r.text(out)).toMatch(
+      /^Delivered browser_screenshot\.png \(7 bytes, image\/png\) to the user as artifact /,
+    );
+    expect(r.reads()).toBe(0);
+    expect(r.puts).toHaveLength(1);
+    expect(r.events.map((e) => [e.type, e.payload.name, e.payload.sourcePath])).toEqual([
+      ["artifact_created", "browser_screenshot.png", `file_id/${id}`],
+    ]);
+  });
+
+  it("deliver: exactly one of file_path and file_id; an unknown file_id is named", async () => {
+    const r = rig({ byId: new Map() });
+    const deliver = r.tool("Deliver");
+    await expect(deliver.run({}, callCtx())).rejects.toThrow(DELIVER_ONE_SOURCE_TEXT);
+    await expect(
+      deliver.run({ file_path: "/workspace/a", file_id: "x" }, callCtx()),
+    ).rejects.toThrow(DELIVER_ONE_SOURCE_TEXT);
+    const id = "00000000-0000-4000-8000-0000000000bb";
+    await expect(deliver.run({ file_id: id }, callCtx())).rejects.toThrow(
+      `file_id ${id} is not an attachment or artifact of this conversation; pass the id of one.`,
+    );
+    expect(r.puts).toEqual([]);
   });
 
   it("deliver deletes the uploaded object when writing artifact_created fails", async () => {

@@ -72,6 +72,8 @@ const fixture = (name: string) =>
 const MEM_STORE = fixture("mem-store");
 const SANDBOX_FAKE = fixture("device-fake");
 const HOOKS_PROBE = fixture("hooks-probe");
+/** A tool returning image blocks, as a screenshot tool does (tool result images design §2). */
+const IMAGE_TOOL = fixture("image-tool");
 
 const VISION = { provider: "model-fake", model: "fake-v" };
 const BLIND = { provider: "model-fake", model: "fake-1" };
@@ -136,6 +138,10 @@ let blindId: string;
 let switcherId: string;
 /** GenerateImage + Read on the vision model. */
 let painterId: string;
+/** Deliver (and the image-tool's `shot`) on the vision model. */
+let shooterId: string;
+/** The image-tool's `shot` on the model without vision. */
+let blindShooterId: string;
 
 beforeAll(async () => {
   capture.install();
@@ -148,7 +154,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, MEM_STORE, SANDBOX_FAKE, HOOKS_PROBE],
+        extensions: [MODEL_FAKE, MEM_STORE, SANDBOX_FAKE, HOOKS_PROBE, IMAGE_TOOL],
         extensionConfig: {
           "model-fake": {
             models: [
@@ -170,12 +176,14 @@ beforeAll(async () => {
   otherId = (await accountsFor(db).createLocal({ login: "other", password: PW, displayName: "X" }))
     .id;
   await testMembers(db).add(orgId, otherId, "member", ownerId);
-  const enabled = await owner({
-    method: "PUT",
-    url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
-    payload: { enabled: true },
-  });
-  expect(enabled.statusCode, enabled.body).toBe(200);
+  for (const plugin of ["hooks-probe", "image-tool"]) {
+    const enabled = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
+      payload: { enabled: true },
+    });
+    expect(enabled.statusCode, enabled.body).toBe(200);
+  }
   const agent = async (name: string, definition: Record<string, unknown>, tools: string[]) => {
     const res = await owner({
       method: "POST",
@@ -197,6 +205,8 @@ beforeAll(async () => {
   blindId = await agent("Blind", { model: BLIND }, ["Read"]);
   switcherId = await agent("Switcher", { model: VISION, fallback: BLIND }, ["Read"]);
   painterId = await agent("Painter", { model: VISION }, ["GenerateImage", "Read", "Write"]);
+  shooterId = await agent("Shooter", { model: VISION }, ["Deliver"]);
+  blindShooterId = await agent("Blind shooter", { model: BLIND }, []);
   // image models start disabled in an org
   const enable = await owner({
     method: "PATCH",
@@ -536,7 +546,7 @@ describe("Read: images for a model without vision", () => {
     const sent = chatRequests();
     expect(lastUser(sent.at(-1)).slice(-2)).toEqual([
       { type: "text", text: `Image from Read (file_id ${id}):` },
-      { type: "text", text: "[This model cannot view images.]" },
+      { type: "text", text: "[Not shown to you: this model cannot view images.]" },
     ]);
     await expectZeroDrift(conv, await snapshotOf(conv), sent);
   });
@@ -998,5 +1008,114 @@ describe("Read: cap on a model without vision", () => {
       `Read image pasted.png (image/png, ${IMAGE.length} B, 3×2). This conversation reached its limit for stored images, so the image is not stored: it is not shown and will not stay in the history.`,
     );
     expect(answer).toMatch(/^model-fake\/fake-eye read the image for you/);
+  });
+});
+
+// ---- images in any tool's result (tool result images design §2–§5) ----
+
+describe("images in an extension tool's result", () => {
+  const SHOT = "plugin__image-tool__shot";
+  const B64 = IMAGE.toString("base64");
+
+  /** Runs one scripted call of `key` and returns its result (the `n`th run of `conv`). */
+  async function call(conv: string, key: string, input: Record<string, unknown>, n = 1) {
+    await postMessage(owner, orgId, conv, `tool:${key}:${JSON.stringify(input)}`);
+    await waitForTerminal(db, conv, n, 30_000);
+    const r = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
+    expect(r.payload.toolKey).toBe(key);
+    return r;
+  }
+
+  it("stored as a read copy, named in the text and media, shown to a vision model; zero drift", async () => {
+    const conv = await createConv(owner, orgId, shooterId);
+    const r = await call(conv, SHOT, { images: [B64] });
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    const id = UUID.exec(r.payload.content)?.[0] as string;
+    expect(r.payload.content).toBe(
+      `Screenshot of 1 image(s).\n[Image (image/png, ${sizeOf(IMAGE.length)}, 3×2), file_id ${id}]`,
+    );
+    expect(r.payload.contentTypes).toEqual(["text", "image"]);
+    expect(r.payload.media).toEqual([
+      { attachmentId: id, name: "shot.png", mediaType: "image/png", size: IMAGE.length },
+    ]);
+    expect(await readRows(conv)).toEqual([
+      {
+        id,
+        conversation_id: conv,
+        name: "shot.png",
+        content_type: "image/png",
+        size: String(IMAGE.length),
+        object_key: `read-images/${id}`,
+        status: "ready",
+      },
+    ]);
+    const sent = chatRequests();
+    expect(lastUser(sent.at(-1)).slice(-2)).toEqual([
+      { type: "text", text: `Image from ${SHOT} (file_id ${id}):` },
+      {
+        type: "image",
+        mediaType: "image/png",
+        name: "shot.png",
+        source: { kind: "base64", data: B64 },
+      },
+    ]);
+    await expectZeroDrift(conv, await snapshotOf(conv), sent);
+  });
+
+  it("a model without vision is told the image was not shown and how to read it; zero drift", async () => {
+    const conv = await createConv(owner, orgId, blindShooterId);
+    const r = await call(conv, SHOT, { images: [B64] });
+    const id = r.payload.media?.[0]?.attachmentId as string;
+    expect(id).toMatch(UUID);
+    const sent = chatRequests();
+    expect(lastUser(sent.at(-1)).slice(-2)).toEqual([
+      { type: "text", text: `Image from ${SHOT} (file_id ${id}):` },
+      {
+        type: "text",
+        text: `[Not shown to you: this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
+      },
+    ]);
+    // the scripted input carries the base64 as text; no image block is ever sent
+    const blocks = sent.flatMap((q) =>
+      q.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])),
+    ) as { type: string }[];
+    expect(blocks.filter((b) => b.type === "image")).toEqual([]);
+    // no vision call either: nobody asked for one
+    expect(visionRequests()).toEqual([]);
+    await expectZeroDrift(conv, await snapshotOf(conv), sent);
+  });
+
+  it("an image that cannot be stored says it was not shown, with no media", async () => {
+    const conv = await createConv(owner, orgId, shooterId);
+    const svg = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>").toString("base64");
+    const r = await call(conv, SHOT, { images: [svg], mimeType: "image/svg+xml" });
+    expect(r.payload.media).toBeUndefined();
+    expect(r.payload.content).toBe(
+      "Screenshot of 1 image(s).\n[Image (image/svg+xml, 41 B) not stored, so not shown: only PNG, JPEG, GIF and WebP images are stored.]",
+    );
+    expect(await readRows(conv)).toEqual([]);
+  });
+
+  it("the person opens the image from the call's row; Deliver hands it over by file_id", async () => {
+    const conv = await createConv(owner, orgId, shooterId);
+    const r = await call(conv, SHOT, { images: [B64] });
+    const id = r.payload.media?.[0]?.attachmentId as string;
+    const res = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/attachments/${id}/download?as=url`,
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { url: string }).url).toEqual(expect.any(String));
+    const d = await call(conv, "Deliver", { file_id: id }, 2);
+    expect(d.payload.isError, d.payload.content).toBe(false);
+    expect(d.payload.content).toMatch(
+      new RegExp(
+        `^Delivered shot\\.png \\(${IMAGE.length} bytes, image/png\\) to the user as artifact `,
+      ),
+    );
+    const artifacts = ofType(await eventsOf(db, conv), "artifact_created");
+    expect(artifacts.map((e) => [e.payload.name, e.payload.sourcePath])).toEqual([
+      ["shot.png", `file_id/${id}`],
+    ]);
   });
 });
