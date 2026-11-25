@@ -473,9 +473,13 @@ describe("M4 第一段验收（双副本）", () => {
       emailVerified: true,
       displayName: "Carol",
     });
-    /** 走一次 SSO 到回调；返回回调的 302 目标。`jar` 给了就带着它（已登录的会话）。 */
-    const ssoTo = async (externalId: string, jar: Jar) => {
-      const start = await call(jar, "GET", "/api/v1/auth/sso/fake-im/start?returnTo=%2Fchat");
+    /**
+     * Runs SSO up to the callback; returns its 302 target. `jar`, when given, is carried (a
+     * signed-in session); `intent: "link"` starts a link intent.
+     */
+    const ssoTo = async (externalId: string, jar: Jar, intent?: "link") => {
+      const q = intent === undefined ? "" : `&intent=${intent}`;
+      const start = await call(jar, "GET", `/api/v1/auth/sso/fake-im/start?returnTo=%2Fchat${q}`);
       expect(start.status).toBe(302);
       expect(start.location.startsWith(`${im.url}/oauth/authorize?`)).toBe(true);
       expect(new URL(start.location).searchParams.get("code_challenge_method")).toBe("S256");
@@ -487,21 +491,24 @@ describe("M4 第一段验收（双副本）", () => {
       expect(back.origin + back.pathname).toBe(`${PUBLIC}/api/v1/auth/sso/fake-im/callback`);
       const cb = await call(jar, "GET", back.pathname + back.search);
       expect(cb.status).toBe(302);
-      expect(jar.has("cap_sso")).toBe(false);
+      // the link page keeps the binding cookie for its routes; every other outcome clears it
+      expect(jar.has("cap_sso")).toBe(cb.location.startsWith(`${PUBLIC}/login/link?`));
       return cb.location;
     };
-    const sso = async (externalId: string, jar: Jar = new Map()) => {
-      expect(await ssoTo(externalId, jar)).toBe(`${PUBLIC}/chat`);
+    const sso = async (externalId: string, jar: Jar = new Map(), intent?: "link") => {
+      expect(await ssoTo(externalId, jar, intent)).toBe(`${PUBLIC}/chat`);
       const me = await call(jar, "GET", "/api/v1/me");
       expect(me.status).toBe(200);
       return { jar, accountId: (me.json.account as { id: string }).id };
     };
-    // alice 的 IM 身份经绑定链接建立：未登录时不能直接登录（Ruling A18）
+    // alice's IM identity came from a binding link: signed out, it goes to the link page
+    // (Ruling A18)
     const anon: Jar = new Map();
-    expect(await ssoTo("u-alice", anon)).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect((await ssoTo("u-alice", anon)).startsWith(`${PUBLIC}/login/link?ticket=`)).toBe(true);
     expect(anon.has("cap_at")).toBe(false);
-    // alice 在已登录状态下完成一次：证明控制该 IM 身份，升级；之后未登录也登录到同一个账号（同一个 fake-im:t1 键）
-    expect((await sso("u-alice", aliceJar)).accountId).toBe(aliceId);
+    // alice links it while signed in (link intent): the bind row is upgraded; then a signed-out
+    // sign-in reaches the same account (the same fake-im:t1 key)
+    expect((await sso("u-alice", aliceJar, "link")).accountId).toBe(aliceId);
     expect((await sso("u-alice")).accountId).toBe(aliceId);
     // carol 第一次出现：新账号，身份行与渠道、通讯录同键；还不是组织成员
     const carol = await sso("u-carol");

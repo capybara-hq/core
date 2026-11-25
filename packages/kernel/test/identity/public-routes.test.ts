@@ -29,6 +29,9 @@ const PUBLIC_ROUTES = new Set([
   "GET /api/v1/auth/sources",
   "GET /api/v1/auth/sso/:plugin/start",
   "GET /api/v1/auth/sso/:plugin/callback",
+  // Login extensions spec §5: the link page, before a session exists (ticket + binding cookie)
+  "GET /api/v1/auth/sso/link",
+  "POST /api/v1/auth/sso/link",
   // Themes spec §8: styles are not sensitive; the URLs reveal only that a theme version exists
   "GET /api/v1/themes/:id/:version/:revision/theme.css",
   "GET /api/v1/themes/:id/:version/assets/:file",

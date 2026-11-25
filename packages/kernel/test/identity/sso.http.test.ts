@@ -75,9 +75,12 @@ beforeEach(async () => {
 const errCode = (res: { json(): unknown }) =>
   (res.json() as { error?: { code?: string } }).error?.code;
 
-/** 发起 SSO：返回授权地址里的 state / nonce / redirect_uri。 */
-async function start(jar: CookieJar, returnTo?: string) {
-  const q = returnTo === undefined ? "" : `?returnTo=${encodeURIComponent(returnTo)}`;
+/** Starts SSO; returns the state / nonce / challenge of the authorize URL. */
+async function start(jar: CookieJar, returnTo?: string, intent?: "link") {
+  const params = new URLSearchParams();
+  if (returnTo !== undefined) params.set("returnTo", returnTo);
+  if (intent !== undefined) params.set("intent", intent);
+  const q = params.size === 0 ? "" : `?${params.toString()}`;
   const res = await asUser(
     k.http,
     jar,
@@ -128,11 +131,17 @@ async function callback(jar: CookieJar, query: Record<string, string>) {
 }
 
 /**
- * 完整走一次登录；返回回跳地址与 Cookie 罐。授权码带上发起时的 PKCE challenge：假身份源回调时核对内核交来的
- * codeVerifier。`jar` 给了就在该 Cookie 罐（如已登录的会话）里走。
+ * Runs one whole sign-in; returns the redirect target and the cookie jar. The code carries the
+ * start's PKCE challenge: the fake source checks the codeVerifier the kernel hands it. `jar`, when
+ * given, is the jar to run in (a signed-in session, say); `intent: "link"` starts a link intent.
  */
-async function sso(code: Omit<FakeIdpCode, "nonce">, returnTo?: string, jar = cookieJar()) {
-  const s = await start(jar, returnTo);
+async function sso(
+  code: Omit<FakeIdpCode, "nonce">,
+  returnTo?: string,
+  jar = cookieJar(),
+  intent?: "link",
+) {
+  const s = await start(jar, returnTo, intent);
   const res = await callback(jar, {
     state: s.state,
     code: fakeIdpCode({ ...code, nonce: s.nonce, challenge: s.challenge }),
@@ -551,38 +560,43 @@ describe("修复波 W1", () => {
         .executeTakeFirst()
     )?.linked_via;
 
-  it("Ruling A18：IM 绑定的身份不能直接第三方登录（sso.identity_not_verified），也不建会话", async () => {
+  it("Ruling A18: a bind row never signs in directly; a sign-in with it goes to the link page", async () => {
     const bob = await loggedIn("bob");
     await bindTo(bob.req, "im-x");
     expect(await linkedVia("im-x")).toBe("bind");
-    // 攻击者：在 IM 里拿到绑定链接骗 bob 确认后，用同一个 IM 身份登录网页
+    // an attacker who had bob confirm a binding link signs in with the same IM identity
     const attacker = await sso({ sub: "im-x" });
-    expect(attacker.location).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect(attacker.location.startsWith(`${PUBLIC}/login/link?ticket=cap_link_`)).toBe(true);
     expect(attacker.jar.get("cap_at")).toBeUndefined();
-    // 已登录的是另一个账号：同样拒绝，身份行不变
+    // signed in as another account (a sign-in, not a link intent): the link page too, row unchanged
     const carol = await loggedIn("carol");
     const other = await sso({ sub: "im-x" }, "/chat", carol.jar);
-    expect(other.location).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect(other.location.startsWith(`${PUBLIC}/login/link?ticket=`)).toBe(true);
     expect(await linkedVia("im-x")).toBe("bind");
     expect(await me(carol.jar)).toBe(carol.account.id);
   });
 
-  it("本人已登录时完成同一身份的第三方登录 → 升级为 sso，之后可以直接登录", async () => {
+  it("a link intent of the signed-in owner upgrades the bind row to sso; later sign-ins go in", async () => {
     const bob = await loggedIn("bob");
     await bindTo(bob.req, "im-y");
-    const proved = await sso({ sub: "im-y" }, "/account/identities", bob.jar);
+    const sessionsBefore = await db.selectFrom("sessions").select("id").execute();
+    const proved = await sso({ sub: "im-y" }, "/account/identities", bob.jar, "link");
     expect(proved.location).toBe(`${PUBLIC}/account/identities`);
     expect(await me(proved.jar)).toBe(bob.account.id);
     expect(await linkedVia("im-y")).toBe("sso");
+    // a link intent creates no session
+    expect(await db.selectFrom("sessions").select("id").execute()).toHaveLength(
+      sessionsBefore.length,
+    );
     const later = await sso({ sub: "im-y" });
     expect(later.location).toBe(`${PUBLIC}/`);
     expect(await me(later.jar)).toBe(bob.account.id);
   });
 
-  it("W2：升级意图在发起时绑定——未登录时发起、回调时才带着本人会话 → 不升级", async () => {
+  it("W2: a sign-in started signed out and called back with the owner's session does not upgrade", async () => {
     const bob = await loggedIn("bob");
     await bindTo(bob.req, "im-z");
-    // 同一个浏览器：先（未登录）发起，再登录 bob，然后完成回调
+    // the same browser: start signed out, sign bob in, then finish the callback
     const jar = cookieJar();
     const s = await start(jar, "/account/identities");
     const login = await asUser(
@@ -594,7 +608,7 @@ describe("修复波 W1", () => {
       state: s.state,
       code: fakeIdpCode({ sub: "im-z", nonce: s.nonce, challenge: s.challenge }),
     });
-    expect(String(res.headers.location)).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect(String(res.headers.location).startsWith(`${PUBLIC}/login/link?ticket=`)).toBe(true);
     expect(await linkedVia("im-z")).toBe("bind");
   });
 

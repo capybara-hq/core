@@ -20,7 +20,7 @@ const LoginBodySchema = z.object({ login: z.string().max(256), password: z.strin
 class LoginBody extends createZodDto(LoginBodySchema, "LoginBody") {}
 
 /** The credential throttlers of a login attempt (R25: per (login, IP), per IP, per login). */
-const LOGIN_THROTTLERS = ["login", "login-ip", "login-account"] as const;
+export const LOGIN_THROTTLERS = ["login", "login-ip", "login-account"] as const;
 
 /** 会话的客户端信息（记入 sessions 表）。`req.ip` 在 `http.trustProxy` 时取自 X-Forwarded-For。 */
 export function clientMeta(req: FastifyRequest): { userAgent?: string; ip: string } {

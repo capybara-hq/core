@@ -36,7 +36,7 @@
         "access_denied": "登录已取消或授权被拒绝。",
         "provider_error": "身份提供方返回错误，请稍后再试。",
         "account_not_allowed": "这个账号不允许登录本平台。请使用允许的组织的账号，或联系管理员。",
-        "identity_not_verified": "这个账号是通过 IM 绑定链接关联的，还不能直接用它登录。请先用其他方式登录，再在登录状态下用它登录一次完成验证。"
+        "link_expired": "绑定请求已过期或已使用。请重新登录。"
       },
       "auth": {
         "account_disabled": "该账号已被停用。",

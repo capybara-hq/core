@@ -50,7 +50,7 @@ const LOGIN_MSG = "Too many failed login attempts; try again later";
  *
  * | route | names (reserved via `CredentialThrottler`) |
  * |---|---|
- * | `POST /api/v1/auth/login` | `login`, `login-ip`, `login-account` |
+ * | `POST /api/v1/auth/login`, `POST /api/v1/auth/sso/link` | `login`, `login-ip`, `login-account` |
  * | `PUT /api/v1/me/password` | `change-password`, `change-password-ip` |
  * | `POST /api/v1/setup` | `setup-token`, `setup-ip` |
  * | `POST /api/v1/invitations/:token/accept` | `invitation`, `invitation-ip` |

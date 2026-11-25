@@ -76,6 +76,7 @@
   "identity/insecure-public-url.test.ts",
   "identity/login.test.ts",
   "identity/passwords.test.ts",
+  "identity/sso-decisions.unit.test.ts",
   "identity/sso-paths.test.ts",
   "infra/kernel-events.test.ts",
   "infra/org-scope.test.ts",

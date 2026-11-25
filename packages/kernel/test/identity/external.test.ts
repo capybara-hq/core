@@ -8,7 +8,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import type { AccountsService } from "../../src/identity/accounts.js";
-import { type ExternalIdentities, IdentityNotVerified } from "../../src/identity/external.js";
+import type { ExternalIdentities } from "../../src/identity/external.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor, externalFor } from "../helpers/identity.js";
 
@@ -275,20 +275,22 @@ describe("修复波 W1：身份来源（linked_via）与租户级信任", () => 
     expect(await linkedVia("lark:t1", "ou_bind")).toBe("bind");
   });
 
-  it("登录路径：bind 绑定的身份 → IdentityNotVerified；同一账号已登录时升级为 sso 并通过", async () => {
+  it("sign-in: a bind row goes to the link page; a link intent of the same account upgrades it", async () => {
     const a = await local("alice", "a@example.com", false);
     const b = await local("bob", "b@example.com", false);
     await svc.link(a.id, ident());
-    const login = (sessionAccountId?: string) =>
-      svc.resolve(ident(), {
-        ...MERGE,
-        login: sessionAccountId === undefined ? {} : { sessionAccountId },
-      });
-    await expect(login()).rejects.toBeInstanceOf(IdentityNotVerified);
-    // 已登录的是别的账号：同样拒绝，不改行
-    await expect(login(b.id)).rejects.toBeInstanceOf(IdentityNotVerified);
+    const signIn = () => svc.decideSignIn(ident(), { intent: "signin", signUp: "create" });
+    expect((await signIn()).decision).toEqual({ kind: "link_page", existingAccountId: a.id });
+    // a link intent of another account: refused, the row unchanged
+    expect(
+      (await svc.decideSignIn(ident(), { intent: "link", sessionAccountId: b.id, signUp: "link" }))
+        .decision,
+    ).toEqual({ kind: "error", code: "identity.taken" });
     expect(await linkedVia("lark:t1", "ou_1")).toBe("bind");
-    expect(await login(a.id)).toEqual({ accountId: a.id, created: false });
+    expect(
+      (await svc.decideSignIn(ident(), { intent: "link", sessionAccountId: a.id, signUp: "link" }))
+        .decision,
+    ).toEqual({ kind: "upgrade", accountId: a.id });
     expect(await linkedVia("lark:t1", "ou_1")).toBe("sso");
     const verified = await db
       .selectFrom("audit_events")
@@ -298,18 +300,19 @@ describe("修复波 W1：身份来源（linked_via）与租户级信任", () => 
     expect(verified).toEqual([
       { target: a.id, detail: expect.objectContaining({ source: "lark:t1", externalId: "ou_1" }) },
     ]);
-    // 升级之后未登录也能登录
-    expect(await login()).toEqual({ accountId: a.id, created: false });
+    // once upgraded, a sign-in goes straight in
+    expect((await signIn()).decision).toEqual({ kind: "signin", accountId: a.id });
   });
 
-  it("Ruling A23：通讯录建的身份无论租户是否受信任都能直接登录（身份源登录本身就是证明）", async () => {
+  it("Ruling A23: a directory row signs in whether or not its tenant is trusted", async () => {
     const r = await svc.resolve(ident(), { linkedVia: "directory" });
-    const login = () => svc.resolve(ident(), { ...MERGE, login: {} });
+    const signIn = async () =>
+      (await svc.decideSignIn(ident(), { intent: "signin", signUp: "link" })).decision;
     await seedLoginSources(db, []);
-    expect(await login()).toEqual({ accountId: r.accountId, created: false });
+    expect(await signIn()).toEqual({ kind: "signin", accountId: r.accountId });
     await trust("lark", "t1");
-    expect(await login()).toEqual({ accountId: r.accountId, created: false });
-    // 通讯录身份直接登录不改其来源，也不写 identity.verified
+    expect(await signIn()).toEqual({ kind: "signin", accountId: r.accountId });
+    // signing in through a directory row keeps its kind and writes no identity.verified
     expect(await linkedVia("lark:t1", "ou_1")).toBe("directory");
     expect(
       await db
@@ -320,15 +323,24 @@ describe("修复波 W1：身份来源（linked_via）与租户级信任", () => 
     ).toEqual([]);
   });
 
-  it("旧行（linked_via 为 null）按 sso 处理", async () => {
+  it("a legacy row (linked_via null) signs in as sso", async () => {
     const r = await svc.resolve(ident(), SSO);
     await sql`UPDATE capybara.identities SET linked_via = NULL WHERE external_id = 'ou_1'`.execute(
       raw,
     );
-    expect(await svc.resolve(ident(), { ...MERGE, login: {} })).toEqual({
-      accountId: r.accountId,
-      created: false,
-    });
+    expect(
+      (await svc.decideSignIn(ident(), { intent: "signin", signUp: "link" })).decision,
+    ).toEqual({ kind: "signin", accountId: r.accountId });
+  });
+
+  it("sign-in of an unlinked identity: signUp link creates nothing, signUp create creates", async () => {
+    const off = await svc.decideSignIn(ident(), { intent: "signin", signUp: "link" });
+    expect(off.decision).toEqual({ kind: "link_page" });
+    expect(await db.selectFrom("accounts").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("identities").select("source").execute()).toEqual([]);
+    const on = await svc.decideSignIn(ident(), { intent: "signin", signUp: "create" });
+    expect(on.decision.kind).toBe("signin");
+    expect(await linkedVia("lark:t1", "ou_1")).toBe("sso");
   });
 
   it("信任按租户：受信任的 lark:t1 不让 lark:t2 的身份算已验证或可合并", async () => {

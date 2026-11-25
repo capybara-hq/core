@@ -36,7 +36,7 @@
         "access_denied": "Sign-in was cancelled or access was denied.",
         "provider_error": "The identity provider returned an error. Please try again later.",
         "account_not_allowed": "This account is not allowed to sign in on this platform. Use an account of an allowed organization, or contact an administrator.",
-        "identity_not_verified": "This account was linked through an IM binding link and cannot be used to sign in yet. Sign in another way first, then sign in with it once while signed in to verify it."
+        "link_expired": "The link request expired or was already used. Please sign in again."
       },
       "auth": {
         "account_disabled": "This account has been disabled.",

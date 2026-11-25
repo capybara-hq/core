@@ -16,6 +16,7 @@ import { LoginSourcesService } from "./login-sources.js";
 import { SessionService } from "./sessions.js";
 import { SettingsService } from "./settings.js";
 import { SsoFlow } from "./sso.js";
+import { SsoLinkTickets } from "./sso-link.js";
 import { SuperAdminLockModule } from "./super-admin.js";
 
 /**
@@ -43,6 +44,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
     ExternalIdentities,
     IdentityBinding,
     SsoFlow,
+    SsoLinkTickets,
     InitialPasswords,
     AppAuthService,
   ],
@@ -57,6 +59,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
     ExternalIdentities,
     IdentityBinding,
     SsoFlow,
+    SsoLinkTickets,
     InitialPasswords,
     AppAuthService,
   ],
