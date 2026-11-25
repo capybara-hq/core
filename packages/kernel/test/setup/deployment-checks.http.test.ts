@@ -354,6 +354,14 @@ describe("extension-deployment guides", () => {
       guides: Guide[];
     };
     expect(guides.guides.map((g) => g.id)).toEqual(["fake-push-key"]);
+    // the config read points at the guides: id and title in the asked locale, never a body; the
+    // config is valid, so there is no next step
+    const config = await call("extensions.platform-config", { name: "fake-push", locale: "zh" });
+    expect(config).toMatchObject({ plugin: "fake-push", valid: true });
+    expect(config.guides).toEqual([{ id: "fake-push-key", title: "连接 fake 推送服务" }]);
+    expect(config).not.toHaveProperty("next");
+    const en = await call("extensions.platform-config", { name: "fake-push" });
+    expect(en.guides).toEqual([{ id: "fake-push-key", title: "Connect the fake push service" }]);
     const ran = await call("extensions.platform-check", {
       name: "fake-push",
       guideId: "fake-push-key",
