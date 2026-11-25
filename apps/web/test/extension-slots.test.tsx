@@ -285,7 +285,7 @@ describe("embed panels (tier two)", () => {
       expiresIn: 300,
     });
 
-  it("token with conversationId, a sandboxed iframe, init after load, navigate / toast / resize", async () => {
+  it("token with conversationId, a sandboxed iframe, init after load, navigate / toast, fills the panel", async () => {
     contributions = [EMBED];
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
@@ -322,16 +322,18 @@ describe("embed panels (tier two)", () => {
       act(() => {
         window.dispatchEvent(new MessageEvent("message", { data, source: win }));
       });
-    // The frame's message listener is a passive effect, which may run after the frame shows up
-    // (late under load): a resize answered first proves messages reach the bridge.
-    await vi.waitFor(() => {
-      fromFrame({ protocol: "capybara-embed/1", type: "resize", height: 640 });
-      expect(frame.getAttribute("height")).toBe("640");
-    });
+    // a panel embed fills the panel: a resize does not size it
+    expect(frame.getAttribute("data-fill")).toBe("true");
     fromFrame({ protocol: "capybara-embed/1", type: "navigate", path: "https://evil.example" });
     expect(router.push).not.toHaveBeenCalled();
-    fromFrame({ protocol: "capybara-embed/1", type: "navigate", path: "/chat/c9" });
-    expect(router.push).toHaveBeenCalledWith("/chat/c9");
+    // The frame's message listener is a passive effect, which may run after the frame shows up
+    // (late under load): retry until the bridge answers.
+    await vi.waitFor(() => {
+      fromFrame({ protocol: "capybara-embed/1", type: "navigate", path: "/chat/c9" });
+      expect(router.push).toHaveBeenCalledWith("/chat/c9");
+    });
+    fromFrame({ protocol: "capybara-embed/1", type: "resize", height: 640 });
+    expect(frame.hasAttribute("height")).toBe(false);
     fromFrame({ protocol: "capybara-embed/1", type: "toast", text: "Card added" });
     expect(await screen.findByText("Card added")).toBeTruthy();
   });

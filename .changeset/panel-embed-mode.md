@@ -5,7 +5,8 @@
 ---
 
 The conversation's right panel keeps an embed mounted across full mode: maximising or restoring
-the panel no longer reloads its iframe, so a panel's document and connections survive the switch.
+the panel no longer reloads its iframe, so a panel's document and connections survive the switch,
+and a panel embed fills the panel (borderless) in both modes instead of sizing itself by `resize`.
 The embed bridge tells a `conversation.panel` embed the panel's mode: `EmbedParentMessage` gains
 `panel-mode { full }`, sent right after `init` and on every change, whoever made it (the embed's
 own ask, the close control or Esc, the host refusing full mode on a phone). A plugin tool's

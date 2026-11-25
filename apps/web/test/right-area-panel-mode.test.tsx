@@ -103,7 +103,7 @@ describe("a conversation.panel embed switches the panel's full mode", () => {
     });
   });
 
-  it("the embed keeps its own height in the normal panel and fills the panel when maximised", async () => {
+  it("the embed fills the panel, borderless, in both modes (a resize does not apply)", async () => {
     api();
     await renderChatRoute();
     const current = () =>
@@ -111,9 +111,9 @@ describe("a conversation.panel embed switches the panel's full mode", () => {
     await vi.waitFor(() => {
       if (!current()) throw new Error("no iframe yet");
     });
-    expect(current()?.getAttribute("data-fill")).toBeNull();
-    expect(current()?.getAttribute("height")).toBe("360");
-    const msg = (full: boolean) => ({ protocol: "capybara-embed/1", type: "panel-mode", full });
+    expect(current()?.getAttribute("data-fill")).toBe("true");
+    expect(current()?.getAttribute("data-framed")).toBe("false");
+    expect(current()?.hasAttribute("height")).toBe(false);
     const fromFrame = (data: unknown) => {
       const f = current();
       if (!f) throw new Error("no iframe yet");
@@ -124,20 +124,12 @@ describe("a conversation.panel embed switches the panel's full mode", () => {
       });
     };
     await vi.waitFor(() => {
-      fromFrame(msg(true));
+      fromFrame({ protocol: "capybara-embed/1", type: "panel-mode", full: true });
       expect(isFull()).toBe(true);
     });
-    await vi.waitFor(() => {
-      expect(current()?.getAttribute("data-fill")).toBe("true");
-    });
+    fromFrame({ protocol: "capybara-embed/1", type: "resize", height: 640 });
+    expect(current()?.getAttribute("data-fill")).toBe("true");
     expect(current()?.hasAttribute("height")).toBe(false);
-    await vi.waitFor(() => {
-      fromFrame(msg(false));
-      expect(isFull()).toBe(false);
-    });
-    await vi.waitFor(() => {
-      expect(current()?.getAttribute("data-fill")).toBeNull();
-    });
   });
 
   it("the frame stays mounted across a full-mode switch and is told each mode (panel-mode)", async () => {
