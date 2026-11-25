@@ -35,7 +35,9 @@ import {
   type BackgroundTaskRow,
   type BackgroundTaskStatus,
   BackgroundTaskStore,
+  type CancelFailure,
   isManagedTask,
+  STOP_CLAIM_TTL_MS,
 } from "./store.js";
 
 /** The most bytes of output one read returns. */
@@ -62,6 +64,19 @@ export interface BackgroundTaskView {
   finishedAt: string | null;
   /** True while a stop has claimed the task and it is still running. */
   stopping: boolean;
+  /**
+   * True while the task's stop is recorded and owed but no attempt is under way (with
+   * `stopping`): the device has not applied it yet; the poller attempts it again. `stopFailure`
+   * says why the last attempt did not settle.
+   */
+  stopWaiting: boolean;
+  /**
+   * Why the owed stop's last attempt did not settle: `unreachable` (the device did not answer in
+   * time, or its machine is not connected), `failed` (the device or its provider failed the stop);
+   * null when no attempt failed (the device recorded the cancellation and applies it later, or
+   * its instance is suspended).
+   */
+  stopFailure: CancelFailure | null;
   /**
    * True while the task's start was sent but not yet confirmed (a managed launch without its
    * exact ref, still `running`): the kernel is reconciling it under its original identity, and it
@@ -185,6 +200,16 @@ export class BackgroundTasks {
       stopping:
         task.status === "running" &&
         (task.stoppingAt !== null || task.launchState === "cancel-pending"),
+      // owed and not being attempted right now (an attempt holds a live claim; an expired claim
+      // is a replica that died mid-attempt, the poller's again)
+      stopWaiting:
+        task.status === "running" &&
+        task.launchState === "cancel-pending" &&
+        (task.stoppingAt === null || task.stoppingAt.getTime() < Date.now() - STOP_CLAIM_TTL_MS),
+      stopFailure:
+        task.status === "running" && task.launchState === "cancel-pending"
+          ? task.cancelFailure
+          : null,
       starting:
         task.status === "running" &&
         task.executionRef === null &&
@@ -218,7 +243,8 @@ export class BackgroundTasks {
   /**
    * A person's stop. Returns the row after the stop: `running` with `stopping` true when another
    * stop already claimed the task (or the task is a reservation still launching, which its launch
-   * then kills); a stop that fails throws. Writes the `background_task.stopped` audit event.
+   * then kills), or when the device has not applied it yet (`stopWaiting`, the stop owed and
+   * delivered by the poller); a legacy task's retirement refusal throws. Writes the `background_task.stopped` audit event.
    */
   async stop(
     orgId: string,

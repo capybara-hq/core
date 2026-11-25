@@ -180,26 +180,57 @@ export class BackgroundTaskPollJob {
         });
       }
     }
-    // Bounded per tick: at most this many stops that reach a provider, least recently attempted
-    // first (an attempt moves a task to the back, so one that keeps failing never holds the head);
-    // a task whose provider is not loaded takes no turn. The rest stay owed for the next ticks.
-    let attempts = 0;
+    return n + (await this.applyOwedStops(cancels, signal));
+  }
+
+  /**
+   * The owed exact stops of one tick; returns how many tasks finished. Bounded per tick: at most
+   * {@link MANAGED_STOPS_PER_TICK} stops that reach a provider, least recently attempted first (an
+   * attempt moves a task to the back, so one that keeps failing never holds the head); a task whose
+   * provider is not loaded takes no turn, and the rest stay owed for the next ticks. Each device's
+   * stops run one after another and the devices side by side, so one silent machine costs the tick
+   * at most one attempt's limit and never delays another device's stops; a device that did not
+   * answer (`unreachable`) gets no further attempt this tick.
+   */
+  private async applyOwedStops(cancels: BackgroundTaskRow[], signal: AbortSignal): Promise<number> {
+    const byDevice = new Map<string, BackgroundTaskRow[]>();
+    let turns = 0;
     for (const t of cancels) {
-      if (signal.aborted || attempts >= MANAGED_STOPS_PER_TICK) break;
+      if (turns >= MANAGED_STOPS_PER_TICK) break;
       try {
         // revocation delivery needs the provider loaded only (not on in the org)
         if (!(await this.sandbox.providerLoaded(t.deviceId as string))) continue;
-        attempts++;
-        const after = await this.stopper.stop(t, "revoked", signal);
-        if (after.status !== "running") n++;
       } catch (err) {
         this.log.warn("cannot apply an owed background task cancellation; retrying next tick", {
           taskId: t.id,
           err,
         });
+        continue;
       }
+      turns++;
+      const key = t.deviceId as string;
+      byDevice.set(key, [...(byDevice.get(key) ?? []), t]);
     }
-    return n;
+    const finished = await Promise.all(
+      [...byDevice.values()].map(async (tasks) => {
+        let n = 0;
+        for (const t of tasks) {
+          if (signal.aborted) break;
+          try {
+            const after = await this.stopper.stop(t, "revoked", signal);
+            if (after.status !== "running") n++;
+            else if (after.cancelFailure === "unreachable") break;
+          } catch (err) {
+            this.log.warn("cannot apply an owed background task cancellation; retrying next tick", {
+              taskId: t.id,
+              err,
+            });
+          }
+        }
+        return n;
+      }),
+    );
+    return finished.reduce((a, b) => a + b, 0);
   }
 
   /** The exact statuses of one instance's acknowledged managed tasks; returns how many finished. */

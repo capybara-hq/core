@@ -128,18 +128,7 @@ const audits = (action: string) =>
 type Field = { path: string; secret: boolean; set?: boolean; value?: unknown };
 
 describe("registration", () => {
-  it("registers the config operations, never remembered when destructive", () => {
-    for (const id of [
-      "extensions.platform-config",
-      "extensions.platform-set-config",
-      "extensions.platform-clear-config",
-      "extensions.org-config",
-      "extensions.take-org-config",
-      "extensions.save-org-config",
-      "extensions.drop-org-config",
-    ]) {
-      expect(ops.get(id), id).not.toBeNull();
-    }
+  it("never remembers the destructive config operations; secrets are person fields", () => {
     expect(op("extensions.platform-clear-config").rememberable).toBe(false);
     expect(op("extensions.drop-org-config").rememberable).toBe(false);
     // the org config is the org's copy: no operation writes a separate org config

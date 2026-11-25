@@ -629,11 +629,16 @@ describe("stopping", () => {
     await store.releaseStop(t.id);
   });
 
-  it("a stop that fails while the sandbox runs keeps the task running and gives up its claim", async () => {
+  it("a stop that fails while the sandbox runs stays owed: the task keeps running, the claim is given up", async () => {
     const c = await conversation();
     const t = await launch(c, "sleep 317");
     vi.spyOn(sandbox, "ifRunning").mockRejectedValueOnce(new Error("sandbox busy"));
-    await expect(stopper.stop(t, "tool")).rejects.toThrow("sandbox busy");
+    expect(await stopper.stop(t, "tool")).toMatchObject({
+      status: "running",
+      stoppingAt: null,
+      launchState: "cancel-pending",
+      cancelRequestedBy: "tool",
+    });
     expect(await store.get(t.id)).toMatchObject({ status: "running", stoppingAt: null });
     expect(await finishedEvents(c.conversationId, t.id)).toHaveLength(0);
     expect(await alive(c, t)).toBe(true);

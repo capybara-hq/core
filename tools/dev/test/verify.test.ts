@@ -17,6 +17,7 @@ import {
   baseChecks,
   changedFiles,
   changesetWarning,
+  fastBaseCheck,
   fastSteps,
   localTestPlan,
   safePlan,
@@ -116,7 +117,7 @@ describe("verifySteps", () => {
     expect(find(basePlan, "web")).toBeUndefined();
   });
 
-  it("--fast runs only lint, typecheck, check and the container-free tests", () => {
+  it("--fast runs lint, typecheck, check, the base checks and the container-free tests", () => {
     const everything = {
       ...basePlan,
       all: true,
@@ -128,11 +129,17 @@ describe("verifySteps", () => {
       docker: true,
       bootstrapNetwork: true,
     };
-    const fast = verifySteps(everything, "abc", { fast: true });
+    const fastBase = { ref: "origin/main", sha: "main123", mergeBase: "mb456" };
+    const fast = verifySteps(everything, "abc", { fast: true, fastBase });
     expect(fast.map((s) => [s.id, s.cmd])).toEqual([
       ["lint", ["pnpm", "lint"]],
       ["typecheck", ["pnpm", "typecheck"]],
       ["check", ["pnpm", "check"]],
+      // added comment lines and commit messages since the merge base, as CI's PR-only steps
+      ["english-comments", ["pnpm", "check:english-comments", "--base", "mb456"]],
+      ["commitlint", ["pnpm", "exec", "commitlint", "--from", "mb456", "--to", "HEAD"]],
+      // migration numbers compare with the ref itself: a number main took meanwhile counts
+      ["applied-migrations", ["pnpm", "check:applied-migrations", "--base", "main123"]],
       [
         "unit",
         [
@@ -143,6 +150,8 @@ describe("verifySteps", () => {
           "--project",
           "kernel-unit",
           "--project",
+          "tools",
+          "--project",
           "design",
           "--project",
           "plugin-client",
@@ -150,8 +159,18 @@ describe("verifySteps", () => {
       ],
     ]);
     expect(fast.every((s) => s.cmd !== null)).toBe(true);
-    // The fast list depends on nothing but the flag: no plan and no base.
-    expect(fast).toEqual(fastSteps());
+    // The fast list depends on nothing but the flag and the local base: no plan, no CI base.
+    expect(fast).toEqual(fastSteps(fastBase));
+
+    // Without a local base the three base steps are skipped with a note, never run.
+    const bare = verifySteps(everything, "abc", { fast: true });
+    expect(bare.filter((s) => s.cmd === null).map((s) => s.id)).toEqual([
+      "english-comments",
+      "commitlint",
+      "applied-migrations",
+    ]);
+    expect(bare.find((s) => s.id === "commitlint")?.note).toMatch(/never fetches/);
+    expect(bare).toEqual(fastSteps());
 
     // The same plan without --fast keeps the full step list.
     expect(verifySteps(everything, "abc", { full: true }).map((s) => s.id)).toEqual([
@@ -166,6 +185,23 @@ describe("verifySteps", () => {
       "e2e",
       "docker",
     ]);
+  });
+
+  it("fastBaseCheck warns, never fails, when the local base is missing", () => {
+    for (const [remote, sha, mb, detail] of [
+      [null, null, null, /no remote points to github.com\/capybara-hq\/core/],
+      ["origin", null, null, /no local origin\/main \(fast never fetches\)/],
+      ["upstream", "abc", null, /no merge base between HEAD and upstream\/main/],
+    ] as const) {
+      const r = fastBaseCheck(remote, sha, mb);
+      expect(r.base).toBeNull();
+      expect(r.check).toMatchObject({ id: "base", status: "warn", detail });
+      expect(r.check?.detail).toContain("skipped english-comments, commitlint, applied-migrations");
+    }
+    expect(fastBaseCheck("origin", "abc", "def")).toEqual({
+      check: null,
+      base: { ref: "origin/main", sha: "abc", mergeBase: "def" },
+    });
   });
 
   it("--fast takes precedence over --full", () => {
@@ -336,20 +372,20 @@ describe("maxWorkersFromEnv", () => {
 });
 
 describe("verify-cli --fast --plan-only", () => {
-  it("plans the four steps without any git work", () => {
-    const root = join(import.meta.dirname, "../../..");
+  const root = join(import.meta.dirname, "../../..");
+  /** Runs the plan with a `git` first on PATH that logs every call; `hideRemotes` hides them all. */
+  const planWithShim = (hideRemotes: boolean) => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "cap-verify-plan-")));
     try {
-      // A `git` first on PATH that logs every call, hides every remote and fails the commands the
-      // plan needs. The fast path must never call them.
+      // fetch always fails: the fast path must never call it
       const log = join(dir, "git.log");
       const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
       writeFileSync(
         join(dir, "git"),
         `#!/bin/sh
 printf '%s\\n' "$*" >> "$CAP_VERIFY_GIT_LOG"
-if [ "$1" = config ] && [ "$2" = --get-regexp ]; then exit 128; fi
-case "$1" in fetch|merge-base) exit 128 ;; esac
+if [ "$CAP_VERIFY_HIDE_REMOTES" = 1 ] && [ "$1" = config ] && [ "$2" = --get-regexp ]; then exit 1; fi
+case "$1" in fetch) exit 128 ;; esac
 exec "${realGit}" "$@"
 `,
         { mode: 0o755 },
@@ -363,29 +399,50 @@ exec "${realGit}" "$@"
             ...process.env,
             PATH: `${dir}:${process.env.PATH ?? ""}`,
             CAP_VERIFY_GIT_LOG: log,
+            CAP_VERIFY_HIDE_REMOTES: hideRemotes ? "1" : "0",
           },
           encoding: "utf8",
         },
       );
-      expect(r.status).toBe(0);
-      const report = JSON.parse(r.stdout) as {
-        ok: boolean;
-        checks: { id: string; status: string; detail: string }[];
-      };
-      expect(report.ok).toBe(true);
-      expect(report.checks.map((c) => [c.id, c.status])).toEqual([
-        ["lint", "planned"],
-        ["typecheck", "planned"],
-        ["check", "planned"],
-        ["unit", "planned"],
-      ]);
-      expect(report.checks[3]?.detail).toContain("--project kernel-unit");
-      // No plan or diff header on stderr, and the shim never saw the plan's git commands.
-      expect(r.stderr).not.toMatch(/^(base|changed files|plan|local tests):/m);
       const calls = existsSync(log) ? readFileSync(log, "utf8") : "";
-      expect(calls).not.toMatch(/^(config --get-regexp|fetch|merge-base)/m);
+      return { r, calls };
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  };
+  type Report = { ok: boolean; checks: { id: string; status: string; detail: string }[] };
+
+  it("without an upstream remote: warns, skips the base steps, and never fetches", () => {
+    const { r, calls } = planWithShim(true);
+    expect(r.status).toBe(0);
+    const report = JSON.parse(r.stdout) as Report;
+    expect(report.ok).toBe(true);
+    expect(report.checks.map((c) => [c.id, c.status])).toEqual([
+      ["base", "warn"],
+      ["lint", "planned"],
+      ["typecheck", "planned"],
+      ["check", "planned"],
+      ["english-comments", "skip"],
+      ["commitlint", "skip"],
+      ["applied-migrations", "skip"],
+      ["unit", "planned"],
+    ]);
+    expect(report.checks.at(-1)?.detail).toContain("--project kernel-unit --project tools");
+    // No plan or diff header on stderr, and no fetch.
+    expect(r.stderr).not.toMatch(/^(changed files|plan|local tests):/m);
+    expect(calls).not.toMatch(/^fetch/m);
+  });
+
+  it("with the repository's own remotes: plans every step from local refs only, never fetching", () => {
+    const { r, calls } = planWithShim(false);
+    expect(r.status).toBe(0);
+    const report = JSON.parse(r.stdout) as Report;
+    // the base is either found locally (steps planned) or missing (warned); never a failure
+    expect(report.ok).toBe(true);
+    const base = report.checks.find((c) => c.id === "base");
+    const comments = report.checks.find((c) => c.id === "english-comments");
+    if (base === undefined) expect(comments?.status).toBe("planned");
+    else expect([base.status, comments?.status]).toEqual(["warn", "skip"]);
+    expect(calls).not.toMatch(/^fetch/m);
   });
 });

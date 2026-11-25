@@ -75,6 +75,7 @@ import {
   type DeviceProvider,
   type ExecResult,
   type FileSystemHandle,
+  isDialInAnswerTimeoutError,
   isFileSystemGoneError,
   isSandboxGoneError,
   isSandboxOperationOutcomeUnknownError,
@@ -442,9 +443,12 @@ export const sandboxCreateFailed = (): ApiError =>
  * {@link sandboxOpenNetworkRefused} when `limits` ask for the open public network (the only
  * network a provider's config refuses), else (a create) by {@link sandboxCreateFailed}; a failed
  * `update` below the open network stays as it is. A dial-in device that is offline keeps its
- * error (the tools tell the person to connect its machine).
+ * error (the tools tell the person to connect its machine), and so does a machine that did not
+ * finish or answer in time (`DialInAnswerTimeoutError`, `SandboxOperationOutcomeUnknownError`,
+ * `DeviceRequestNotSentError`): a slow machine is never reported as a refused network or a
+ * failed create.
  */
-function providerRefusal(
+export function providerRefusal(
   log: Pick<KernelLogger, "warn">,
   err: unknown,
   facts: { deviceId: string; provider: string; op: "createFileSystem" | "create" | "update" },
@@ -454,6 +458,10 @@ function providerRefusal(
   if (
     signal.aborted ||
     isDeviceOfflineError(err) ||
+    // a machine that did not finish (or never answered) in time: an outcome, not a refusal
+    isDialInAnswerTimeoutError(err) ||
+    isSandboxOperationOutcomeUnknownError(err) ||
+    isDeviceRequestNotSent(err) ||
     isSandboxGoneError(err) ||
     isFileSystemGoneError(err) ||
     err instanceof SandboxProviderUnreachableError ||
@@ -2311,7 +2319,8 @@ export class SandboxService {
     wantNow: () => Promise<DeviceLimits>,
   ): Promise<Entered> {
     const env = ctx.deviceId;
-    const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
+    const waitStart = Date.now();
+    const deadline = waitStart + this.config.get().sandbox.lockWaitSeconds * 1000;
     const token = randomUUID();
     let intent = false;
     let want = await wantNow();
@@ -2359,8 +2368,23 @@ export class SandboxService {
           intent = lease === null;
           if (lease) return await this.asExclusive(ctx, p, lease, gone, signal);
         }
-        if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
-        await sleep(this.pollMs + Math.floor(Math.random() * this.pollMs), signal);
+        if (Date.now() + this.pollMs > deadline) {
+          this.log.info("sandbox lease wait gave up: the device stayed busy", {
+            deviceId: env,
+            waitedMs: Date.now() - waitStart,
+          });
+          throw sandboxBusy();
+        }
+        try {
+          await sleep(this.pollMs + Math.floor(Math.random() * this.pollMs), signal);
+        } catch (err) {
+          if (signal.aborted)
+            this.log.info("sandbox lease wait aborted", {
+              deviceId: env,
+              waitedMs: Date.now() - waitStart,
+            });
+          throw err;
+        }
       }
     } catch (err) {
       if (intent) await this.clearIntent(env, token);
@@ -3998,7 +4022,9 @@ export class SandboxService {
       }
       if (handle && row.status === "suspended") {
         // the retirement gate may have resumed it already, to cancel revoked starts exactly (B-22)
-        const r = gate.resumed ? "resumed" : await p.impl.resume(handle, signal);
+        const r = gate.resumed
+          ? "resumed"
+          : await this.lifecycleStep("resume", id, p, signal, () => p.impl.resume(handle, signal));
         if (r === "resumed") {
           const incarnation = { provider: p.plugin, generation: String(createdAt) };
           // the new limits first: the row says running only once the instance runs with them
@@ -4117,7 +4143,13 @@ export class SandboxService {
     signal: AbortSignal,
     want: DeviceLimits,
   ): Promise<Instance> {
-    const created = await this.create(ctx, p, held, row, fence, signal, want);
+    const created = await this.lifecycleStep(
+      row.had_instance ? "recreate" : "create",
+      ctx.deviceId,
+      p,
+      signal,
+      () => this.create(ctx, p, held, row, fence, signal, want),
+    );
     if (p.impl.limitsApplyAt !== "fileSystem") return created;
     // the row as the create committed it (its new instance generation and record)
     const fresh = await this.readRow(ctx);
@@ -4411,7 +4443,42 @@ export class SandboxService {
         });
       }
     }
-    return await this.create(ctx, p, held, row, fence, signal, want);
+    return await this.lifecycleStep("recreate", id, p, signal, () =>
+      this.create(ctx, p, held, row, fence, signal, want),
+    );
+  }
+
+  /**
+   * One lifecycle step on the provider (resume, create, recreate), logged when it ends with its
+   * duration and outcome: `ok`, `aborted` (the use's signal, e.g. a tool call's time limit) or
+   * `failed` (the error itself is thrown on, and logged by whoever handles it).
+   */
+  private async lifecycleStep<T>(
+    step: "resume" | "create" | "recreate",
+    deviceId: string,
+    p: DeviceProviderEntry,
+    signal: AbortSignal,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const started = Date.now();
+    const done = (outcome: "ok" | "aborted" | "failed", extra: Record<string, unknown> = {}) =>
+      this.log.info(`sandbox ${step} ${outcome}`, {
+        deviceId,
+        provider: p.plugin,
+        durationMs: Date.now() - started,
+        ...extra,
+      });
+    try {
+      const r = await fn();
+      done("ok", typeof r === "string" ? { answer: r } : {});
+      return r;
+    } catch (err) {
+      done(
+        signal.aborted ? "aborted" : "failed",
+        signal.aborted ? {} : { error: err instanceof Error ? err.name : typeof err },
+      );
+      throw err;
+    }
   }
 
   /**

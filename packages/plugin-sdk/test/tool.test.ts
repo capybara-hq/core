@@ -5,6 +5,8 @@ import {
   defineExtension,
   EXTENSION_POINT_CARDINALITY,
   type InputForm,
+  TOOL_TIMEOUT_MAX_MS,
+  TOOL_TIMEOUT_MIN_MS,
   ToolError,
   validateAnswer,
   validateInputForm,
@@ -56,6 +58,13 @@ describe("validateToolSpec", () => {
     expect(
       validateToolSpec({ ...ok, sources: "web" as unknown as ConversationSource[] }).join(),
     ).toMatch(/sources/);
+  });
+  it("timeoutMs: a whole number of milliseconds within the kernel's bounds", () => {
+    expect(validateToolSpec({ ...ok, timeoutMs: 180_000 })).toEqual([]);
+    expect(validateToolSpec({ ...ok, timeoutMs: TOOL_TIMEOUT_MAX_MS })).toEqual([]);
+    expect(validateToolSpec({ ...ok, timeoutMs: TOOL_TIMEOUT_MIN_MS })).toEqual([]);
+    for (const bad of [TOOL_TIMEOUT_MAX_MS + 1, TOOL_TIMEOUT_MIN_MS - 1, 1.5, Number.NaN, "60"])
+      expect(validateToolSpec({ ...ok, timeoutMs: bad as number }).join()).toMatch(/timeoutMs/);
   });
   it("非法名称 / 空描述被报告", () => {
     expect(validateToolSpec({ ...ok, name: "bad name" }).join()).toMatch(/name/);

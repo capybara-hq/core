@@ -1615,14 +1615,26 @@ button.cb-property-row {
 .cb-conv-new[data-start="true"] > .cb-conv-new-composer > .cb-file-drop {
   margin-top: 0;
 }
-/* The right panel maximised inside the page (§6.16.18): the content area under the title bar. */
+/* The right panel maximised inside the page (§6.16.18): the content area under the title bar.
+   The column keeps it as an empty box; the panel slot (the same element as beside the thread, so
+   the panel is never mounted again) leaves the flow and lies over it, at the box the template
+   measures onto it. */
 .cb-conv-panel-full {
-  display: flex;
   flex: 1;
   min-width: 0;
   min-height: 0;
 }
-.cb-conv-panel-full > .cb-rpanel {
+.cb-conv-page .cb-conv-panel[data-full="true"] {
+  position: absolute;
+  top: var(--cb-conv-full-top, 0px);
+  left: var(--cb-conv-full-left, 0px);
+  width: var(--cb-conv-full-w, 100%);
+  height: var(--cb-conv-full-h, 100%);
+  flex: none;
+  min-width: 0;
+  margin: 0;
+}
+.cb-conv-panel[data-full="true"] > .cb-rpanel {
   flex: 1;
   min-width: 0;
 }

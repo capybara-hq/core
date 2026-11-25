@@ -950,6 +950,15 @@ export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
 
 // @public
+export const DEVICE_SERVICE_ID_RE: RegExp;
+
+// @public
+export const DEVICE_SERVICE_INSTALL_ENV = "CAPYBARA_SERVICE_INSTALL";
+
+// @public
+export const DEVICE_SERVICE_INSTALL_SEAL = ".sealed";
+
+// @public
 export const DEVICE_SERVICE_MAX_MESSAGE: number;
 
 // @public
@@ -1144,6 +1153,9 @@ export interface DevicesCtx {
 }
 
 // @public
+export function deviceServiceId(extension: string, name: string): string;
+
+// @public
 export interface DeviceServiceSpec {
     args: string[];
     entry: string;
@@ -1183,6 +1195,14 @@ export const DIAL_IN_PROTOCOL_RE: RegExp;
 
 // @public
 export const DIAL_IN_STREAM_INITIAL_CREDIT = 8;
+
+// @public
+export class DialInAnswerTimeoutError extends Error {
+    constructor(deadlineMs: number, opts?: {
+        cause?: unknown;
+    });
+    readonly code = "device.answer_timeout";
+}
 
 // @public
 export interface DialInChannel {
@@ -1419,7 +1439,8 @@ export type EmbedChildMessage =
 }
 /**
 * Asks the host to maximise (`true`) or restore (`false`) the conversation's right panel; only an
-* embed in the `conversation.panel` slot is honoured.
+* embed in the `conversation.panel` slot is honoured. The host answers with its own
+* `panel-mode` once the mode changed (it may refuse, e.g. on a phone).
 */
 | {
     protocol: typeof EMBED_PROTOCOL;
@@ -1489,6 +1510,18 @@ export type EmbedParentMessage = {
     type: "theme";
     theme: "dark" | "light";
     tokens: Record<string, string>;
+}
+/**
+* Only to an embed in the `conversation.panel` slot: whether the conversation's right panel is
+* maximised (`full`). Sent right after `init` and on every change, whoever made it (the embed's
+* own `panel-mode` ask, the host's close control or Esc, a size-class change, the host refusing
+* full mode): derive the layout from this message, not from what was asked. The panel's frame
+* stays mounted across a change.
+*/
+| {
+    protocol: typeof EMBED_PROTOCOL;
+    type: "panel-mode";
+    full: boolean;
 }
 /**
 * Only to a `file-preview` embed, once, after `init`: the file being previewed. The embed never
@@ -2264,6 +2297,7 @@ export interface InputForm {
 export interface InputRequired {
     form: InputForm;
     kind: "input_required";
+    open?: UiOpen;
     state?: unknown;
 }
 
@@ -2287,6 +2321,9 @@ export function isDeviceProjectName(v: unknown): v is string;
 
 // @public
 export function isDeviceRequestNotSent(e: unknown): boolean;
+
+// @public
+export function isDialInAnswerTimeoutError(e: unknown): e is DialInAnswerTimeoutError;
 
 // @public
 export function isDisallowedSkillRef(v: unknown): v is string;
@@ -4693,6 +4730,12 @@ export const THINKING_VALUES: readonly string[];
 export const TOOL_KEY_ARGS_MAX = 3;
 
 // @public
+export const TOOL_TIMEOUT_MAX_MS = 600000;
+
+// @public
+export const TOOL_TIMEOUT_MIN_MS = 1000;
+
+// @public
 export const TOOL_TITLE_MAX = 80;
 
 // @public
@@ -4804,6 +4847,7 @@ export interface ToolSpec {
     keyArgs?: string[];
     name: string;
     sources?: ConversationSource[];
+    timeoutMs?: number;
     title?: string;
 }
 

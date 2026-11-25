@@ -9,6 +9,7 @@ import {
   formatDuration,
   PropertySection,
   RightPanel,
+  type StopWaiting,
   type SubagentStatus,
   subagentWaitKind,
   TaskOutputPanel,
@@ -48,6 +49,9 @@ const ms = (iso: string | null): number | undefined => {
   return Number.isNaN(n) ? undefined : n;
 };
 
+/** Why a recorded stop still waits, as the design says it. */
+const stopWaitingOf = (t: BackgroundTaskView): StopWaiting => t.stopFailure ?? "recorded";
+
 /** A kernel task as the design's row (also the agent map's background rows). */
 export function taskItem(t: BackgroundTaskView, stopping: ReadonlySet<string>): BackgroundTaskItem {
   const finishedAt = ms(t.finishedAt);
@@ -60,6 +64,7 @@ export function taskItem(t: BackgroundTaskView, stopping: ReadonlySet<string>): 
     ...(finishedAt !== undefined ? { finishedAt } : {}),
     exitCode: t.exitCode,
     ...(t.stopping || stopping.has(t.id) ? { stopping: true } : {}),
+    ...(t.stopWaiting ? { stopWaiting: stopWaitingOf(t) } : {}),
   };
 }
 
@@ -277,6 +282,7 @@ export function BackgroundTaskPanel({
           elapsed={formatDuration(end - started, locale, { live: status === "running" })}
           {...outputProps(out, lastLines, task)}
           stopping={task.stopping || stopping}
+          {...(task.stopWaiting ? { stopWaiting: stopWaitingOf(task) } : {})}
           onStop={onStop}
         />
       ) : null}

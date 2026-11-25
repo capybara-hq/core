@@ -5,11 +5,14 @@
  *
  * When CI's plan runs everything, only the tests of the packages the diff touches run here (CI
  * runs the full suite); `--full` runs the full suite locally too. `--fast` runs lint, typecheck,
- * the custom checks and the container-free tests (kernel unit, design, plugin-client): a quick
- * advisory signal that does no upstream/fetch/merge-base/plan work (the steps themselves may still
- * use git: `pnpm check` lists tracked files) and is never the gate (it takes precedence over
- * `--full`). `--plan-only` (with `--fast` only) reports the steps and their commands without
- * running them: a testing aid for the fast path's own test.
+ * the custom checks, CI's PR-only checks against the local upstream `main` (English comment lines
+ * the branch adds, commit messages, applied migrations and migration numbers) and the
+ * container-free tests (kernel unit, tools, design, plugin-client): a quick advisory signal that
+ * never fetches and computes no plan. It reads local git state only (the remotes, the local
+ * `<remote>/main` ref, a merge base); when that ref is missing the base steps are skipped with a
+ * warning, never failed. It is never the gate and takes precedence over `--full`. `--plan-only`
+ * (with `--fast` only) reports the steps and their commands without running them: a testing aid
+ * for the fast path's own test.
  */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -19,6 +22,7 @@ import { type Check, printReport } from "./report.ts";
 import {
   baseChecks,
   changesetWarning,
+  fastBaseCheck,
   fastSteps,
   localTestPlan,
   safePlan,
@@ -67,21 +71,52 @@ function runSteps(steps: VerifyStep[]): Check[] {
   return checks;
 }
 
+/**
+ * The fast check's base from local git state only: never a fetch. `git rev-parse` reads the local
+ * remote-tracking ref, which may be stale; CI on the PR compares with the real main.
+ */
+function resolveFastBase(): ReturnType<typeof fastBaseCheck> {
+  const upstream = findUpstream(readRemotes(root), "core");
+  if (upstream === null) return fastBaseCheck(null, null, null);
+  const ref = `${upstream.remote}/main`;
+  const sha = spawnSync("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  if (sha.status !== 0) return fastBaseCheck(upstream.remote, null, null);
+  const mb = spawnSync("git", ["merge-base", "HEAD", sha.stdout.trim()], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  return fastBaseCheck(
+    upstream.remote,
+    sha.stdout.trim(),
+    mb.status === 0 ? mb.stdout.trim() : null,
+  );
+}
+
 if (fast) {
-  // Self-contained: no upstream remote, no fetch, no merge base, no plan, no changeset warning.
+  // No fetch, no plan, no changeset warning; the base steps use the local upstream ref if any.
   if (full) say("--fast takes precedence over --full");
+  const resolved = resolveFastBase();
+  const head: Check[] = resolved.check === null ? [] : [resolved.check];
+  if (resolved.base !== null) say(`base: ${resolved.base.ref} (${resolved.base.sha}, not fetched)`);
+  const steps = fastSteps(resolved.base);
   if (planOnly) {
     // A testing aid: the same step list, reported without spawning anything.
-    const checks: Check[] = fastSteps().map((step) => ({
-      id: step.id,
-      title: step.title,
-      status: "planned",
-      detail: step.cmd?.join(" ") ?? step.note ?? "",
-    }));
+    const checks: Check[] = [
+      ...head,
+      ...steps.map((step) => ({
+        id: step.id,
+        title: step.title,
+        status: step.cmd === null ? ("skip" as const) : ("planned" as const),
+        detail: step.cmd?.join(" ") ?? step.note ?? "",
+      })),
+    ];
     if (json) process.exitCode = printReport(checks, true);
     else for (const c of checks) console.log(`${c.id}: ${c.detail}`);
   } else {
-    const checks = runSteps(fastSteps());
+    const checks = [...head, ...runSteps(steps)];
     say(
       "\nfast check only; run the tests of the files you changed, CI runs the affected tests before merge",
     );

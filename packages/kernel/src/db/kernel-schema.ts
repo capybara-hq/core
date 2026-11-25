@@ -1219,6 +1219,14 @@ export interface BackgroundTasksTable {
     "tool" | "person" | "conversation_deleted" | "subagent_end" | null | undefined,
     "tool" | "person" | "conversation_deleted" | "subagent_end" | null
   >;
+  /** 0184: why a managed task's owed stop did not settle at its last attempt; null otherwise. */
+  cancel_failure: ColumnType<
+    "unreachable" | "failed" | null,
+    "unreachable" | "failed" | null | undefined,
+    "unreachable" | "failed" | null
+  >;
+  /** 0184: that failure's message, clipped. */
+  cancel_failure_detail: NullableText;
   /** 0157: the exact incarnation a legacy dispatch was admitted for; null on historical rows. */
   legacy_dispatch_provider: NullableText;
   legacy_dispatch_generation: NullableText;

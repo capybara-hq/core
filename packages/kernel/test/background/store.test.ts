@@ -100,6 +100,8 @@ describe("BackgroundTaskStore", () => {
       instanceGeneration: null,
       cancelRequestedAt: null,
       cancelRequestedBy: null,
+      cancelFailure: null,
+      cancelFailureDetail: null,
     });
     expect(await store.get("bt_missing")).toBeUndefined();
   });

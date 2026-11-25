@@ -236,7 +236,10 @@ export interface DialInConnectionInfo {
 export interface DialInChannel {
   /**
    * Sends `frame` as the body of a `req` and resolves the body of the machine's `res`. Throws
-   * {@link DeviceOfflineError} when no machine holds the device within the reconnect grace.
+   * {@link DeviceOfflineError} when no machine holds the device within the reconnect grace,
+   * {@link DialInAnswerTimeoutError} when the machine stayed connected but sent no answer within
+   * `timeoutMs` plus a short margin (the outcome is unknown), and `DeviceRequestNotSentError` when
+   * the request provably never reached the machine (given up while still queued).
    */
   request(
     deviceId: string,
@@ -316,5 +319,31 @@ export function isDeviceOfflineError(e: unknown): e is DeviceOfflineError {
     e instanceof Error &&
     e.name === "DeviceOfflineError" &&
     (e as { code?: unknown }).code === "device.offline"
+  );
+}
+
+/**
+ * The machine stayed connected but sent no answer within the request's deadline plus a short
+ * margin (`ctx.dialIn.request`): it may have run the request, so the outcome is unknown. A cancel
+ * was queued for it.
+ */
+export class DialInAnswerTimeoutError extends Error {
+  readonly code = "device.answer_timeout";
+
+  constructor(deadlineMs: number, opts?: { cause?: unknown }) {
+    super(
+      `The connected machine did not answer within the request's deadline of ${Math.ceil(deadlineMs / 1000)} s; the outcome is unknown, check the device and retry`,
+      opts && "cause" in opts ? { cause: opts.cause } : undefined,
+    );
+    this.name = "DialInAnswerTimeoutError";
+  }
+}
+
+/** Recognizes {@link DialInAnswerTimeoutError} by name and code, so another SDK copy's error matches. */
+export function isDialInAnswerTimeoutError(e: unknown): e is DialInAnswerTimeoutError {
+  return (
+    e instanceof Error &&
+    e.name === "DialInAnswerTimeoutError" &&
+    (e as { code?: unknown }).code === "device.answer_timeout"
   );
 }

@@ -158,7 +158,14 @@ async function memberWithDevice(): Promise<Setup> {
     holderConversationId: conversationId,
     actor: { accountId, conversationId },
   };
-  await k.app.get(DeviceServices).ensure(use, echoServiceSpec(), AbortSignal.timeout(30_000));
+  // the provider knows the fixture's service by its id
+  await k.app
+    .get(DeviceServices)
+    .ensure(
+      use,
+      { ...echoServiceSpec(), name: "fake-device-access.echo" },
+      AbortSignal.timeout(30_000),
+    );
   return { accountId, deviceId, conversationId };
 }
 

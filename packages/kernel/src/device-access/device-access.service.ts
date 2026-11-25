@@ -4,6 +4,7 @@ import {
   type DeviceAccessScope,
   type DeviceServiceSpec,
   type DeviceServiceStatus,
+  deviceServiceId,
   type Logger,
   parseToolKey,
   type ToolCallContext,
@@ -27,7 +28,12 @@ import { assertServiceSpec, DeviceServices } from "../sandbox/device-services.js
 import { DeviceProviders } from "../sandbox/providers.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import type { SandboxUseContext } from "../sandbox/use-context.js";
-import { attachCallScope, type CallScope, callScopeOf } from "../tools/call-scope.js";
+import {
+  attachCallScope,
+  type CallScope,
+  callScopeOf,
+  whileDeviceStarting,
+} from "../tools/call-scope.js";
 import { QuestionsService } from "../tools/questions.service.js";
 
 /** What every `ctx.deviceAccess` call refuses a run another member triggered with. */
@@ -85,9 +91,18 @@ const REFRESH_TIMEOUT_MS = 30_000;
  */
 function launchArgv(spec: DeviceServiceSpec, status: DeviceServiceStatus): string[] {
   const env = Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`);
+  return [
+    ...(env.length > 0 ? ["env", ...env] : []),
+    "node",
+    launchEntry(spec, status),
+    ...spec.args,
+  ];
+}
+
+/** The absolute entry a launch runs: `<codeDir ?? stateDir>/<entry>`. */
+function launchEntry(spec: DeviceServiceSpec, status: DeviceServiceStatus): string {
   const dir = status.codeDir ?? status.stateDir;
-  const entry = `${dir.replace(/\/+$/, "")}/${spec.entry}`;
-  return [...(env.length > 0 ? ["env", ...env] : []), "node", entry, ...spec.args];
+  return `${dir.replace(/\/+$/, "")}/${spec.entry}`;
 }
 
 /** A POSIX shell word for the review's command text (bare when it needs no quoting). */
@@ -97,7 +112,9 @@ const shellWord = (s: string): string =>
 /**
  * `ctx.deviceAccess` (browser use spec §7): an extension's device services in the conversation's
  * device, limited to the conversation's owner on their own personal device and to the service
- * names the extension's approved manifest declares. A service launch passes the command review
+ * names the extension's approved manifest declares. The provider sees each service by its id
+ * (`<extension>.<name>`, `deviceServiceId`), so two extensions declaring the same name never
+ * reach each other's process; the extension sees only its own names. A service launch passes the command review
  * (fail closed: only `allow` starts it), once per start; requests ride the provider's request
  * path; refused hosts land in the call scope for the pipeline's network ask; viewer tickets are
  * single-use Redis records; the allowlist write and the handoff answer go through the device page's
@@ -139,9 +156,24 @@ export class DeviceAccessService {
     call: ToolCallContext,
     spec: DeviceServiceSpec,
   ): Promise<DeviceServiceStatus> {
+    // a timeout while this runs says the device was still starting (the tool pipeline's text)
+    return whileDeviceStarting(call, () => this.ensureServiceNow(caller, call, spec));
+  }
+
+  private async ensureServiceNow(
+    caller: DeviceAccessCaller,
+    call: ToolCallContext,
+    spec: DeviceServiceSpec,
+  ): Promise<DeviceServiceStatus> {
     assertDeclared(caller, spec.name);
     assertCallOwner(call);
-    assertServiceSpec(spec);
+    const name = spec.name;
+    // the provider gets the service by its id: the extension's name, namespaced
+    const providerSpec: DeviceServiceSpec = {
+      ...spec,
+      name: deviceServiceId(caller.extension, name),
+    };
+    assertServiceSpec(providerSpec);
     const scope = callScopeOf(call);
     const facts = scope?.facts;
     if (scope === null || facts === undefined)
@@ -151,7 +183,10 @@ export class DeviceAccessService {
     const use = await this.callUse(call, facts.rootConversationId, scope);
     const ensure = async (ifRunning: boolean): Promise<DeviceServiceStatus> => {
       try {
-        return await this.services.ensure(use, spec, call.signal, { ifRunning });
+        return asNamed(
+          await this.services.ensure(use, providerSpec, call.signal, { ifRunning }),
+          name,
+        );
       } catch (e) {
         throw refusal(e);
       }
@@ -174,6 +209,8 @@ export class DeviceAccessService {
       accountId: call.accountId,
       toolKey: "Bash",
       input: { command: argv.map(shellWord).join(" ") },
+      // the kernel's own fact: this command is the extension's declared service (`allow.service`)
+      serviceEntry: launchEntry(spec, found),
       mode: reviewFacts.mode,
       // the command runs in the service's state directory
       workspace: found.stateDir,
@@ -207,7 +244,7 @@ export class DeviceAccessService {
     // fail closed: an ask has nobody to answer it here, and a deny is a deny
     if (!allowed)
       throw new ToolError(
-        `The device service ${spec.name} was not started: the command review did not allow its launch (${verdict.reason}). Ask the user to check the device's settings.`,
+        `The device service ${name} was not started: the command review did not allow its launch (${verdict.reason}). Ask the user to check the device's settings.`,
       );
     // another call may have started it since the first look (that call audits its own start):
     // found running now, this call started nothing and audits nothing
@@ -224,7 +261,8 @@ export class DeviceAccessService {
       target: use.deviceId,
       detail: {
         extension: caller.extension,
-        service: spec.name,
+        service: name,
+        serviceId: providerSpec.name,
         deviceId: use.deviceId,
         argv,
         decision: record.decision,
@@ -245,8 +283,16 @@ export class DeviceAccessService {
     const scope = callScopeOf(call) ?? attachCallScope(call);
     const root = scope.facts?.rootConversationId ?? (await this.rootOf(call.conversationId));
     const use = await this.callUse(call, root, scope);
+    // from here the service may act: a timeout of this call never says nothing was sent
+    scope.reached = true;
     try {
-      return await this.services.request(use, req.service, req.body, req.timeoutMs, call.signal);
+      return await this.services.request(
+        use,
+        deviceServiceId(caller.extension, req.service),
+        req.body,
+        req.timeoutMs,
+        call.signal,
+      );
     } catch (e) {
       throw refusal(e);
     }
@@ -396,7 +442,11 @@ export class DeviceAccessService {
     };
     for (const name of caller.services) {
       try {
-        await this.services.refresh(use, name, AbortSignal.timeout(REFRESH_TIMEOUT_MS));
+        await this.services.refresh(
+          use,
+          deviceServiceId(caller.extension, name),
+          AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+        );
       } catch (err) {
         this.log.warn("device service not refreshed after an allowlist change", {
           deviceId: d.deviceId,
@@ -532,6 +582,11 @@ export class DeviceAccessService {
   private rootOf(conversationId: string): Promise<string> {
     return rootConversationOf(this.db, conversationId);
   }
+}
+
+/** A provider's status under the extension's own service name (the provider names the id). */
+function asNamed(status: DeviceServiceStatus, name: string): DeviceServiceStatus {
+  return { ...status, name };
 }
 
 function assertDeclared(caller: DeviceAccessCaller, service: string): void {

@@ -18,7 +18,7 @@ export const MARKETPLACE_USAGE =
  * - `--plugins <glob>`: the plugin directories, relative to the root (default `plugins/*`, or the
  *   root itself when it is a plugin).
  *
- * - `--base <rev>` (with `--check`, on pull requests): an entry's version may only increase over the
+ * - `--base <rev>` (on pull requests; `--write` with it also fixes the entries added since): an entry's version may only increase over the
  *   versions `<rev>` lists (`marketplace-version-decrease`), a version `<rev>` lists keeps its
  *   integrity, and the entries added since must match the tree's packs (`marketplace-integrity`).
  *
@@ -48,10 +48,6 @@ export async function marketplaceCommand(args: string[], cwd: string): Promise<n
   }
   if (values.write === values.check) {
     console.error(`give exactly one of --write and --check\nusage: ${MARKETPLACE_USAGE}`);
-    return 2;
-  }
-  if (values.base !== undefined && values.write) {
-    console.error(`--base goes with --check\nusage: ${MARKETPLACE_USAGE}`);
     return 2;
   }
   const root = values.root === undefined ? cwd : resolve(cwd, values.root);

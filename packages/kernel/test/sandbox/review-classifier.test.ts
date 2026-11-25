@@ -285,6 +285,16 @@ describe("the classifier's answer parsing", () => {
 });
 
 describe("CommandReviewService", () => {
+  it("a device service launch's entry reaches the rules: allowed by allow.service, no classifier", async () => {
+    const entry = `${WORKSPACE}/svc-files/browser/daemon.mjs`;
+    const command = `node ${entry}`;
+    const v = await call({ input: { command }, serviceEntry: entry });
+    expect(v).toMatchObject({ decision: "allow", by: "rule", rule: "allow.service" });
+    // without the kernel's fact the same command is an ordinary development command
+    expect(await call({ input: { command } })).toMatchObject({ rule: "allow.dev" });
+    expect(reviewChats()).toHaveLength(0);
+  });
+
   it("an unsure command: the classifier's allow is the verdict; the request has no agent text", async () => {
     answer("allow", "An unknown helper that only reads.");
     let sent: { target: { provider: string; model: string }; request: ModelRequest } | undefined;
