@@ -202,6 +202,11 @@ export class FakeDialInMachine {
   private streamHandler: StreamHandler | undefined;
   /** Leave every `stream-open` unanswered (a machine that never opens streams). */
   ignoreStreamOpens = false;
+  /**
+   * While set, each `stream-open` is answered only once this promise resolves (a machine slow to
+   * open its service): a test holds the kernel's stream open here.
+   */
+  streamOpenGate: Promise<void> | undefined;
   /** The ids of the `stream-open` frames received, in order. */
   readonly streamOpens: string[] = [];
   /** The ids of the `stream-close` frames received, in order (also of streams never opened). */
@@ -405,7 +410,13 @@ export class FakeDialInMachine {
       this.stops.push(frame.reason);
     } else if (frame.type === "stream-open" && frame.streamId !== undefined) {
       this.streamOpens.push(frame.streamId);
-      if (!this.ignoreStreamOpens) this.openStream(frame.streamId, frame.body);
+      if (!this.ignoreStreamOpens) {
+        const streamId = frame.streamId;
+        const body = frame.body;
+        const gate = this.streamOpenGate;
+        if (gate === undefined) this.openStream(streamId, body);
+        else void gate.then(() => this.openStream(streamId, body));
+      }
     } else if (frame.type.startsWith("stream-") && frame.streamId !== undefined) {
       if (frame.type === "stream-close") this.streamCloses.push(frame.streamId);
       const st = this.streams.get(frame.streamId);

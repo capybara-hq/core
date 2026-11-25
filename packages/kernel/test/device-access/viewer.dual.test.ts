@@ -269,15 +269,43 @@ describe("device stream viewer across replicas (dual replica)", () => {
 
   it("after a hop the machine's first stream message is the kernel's viewer context", async () => {
     const d = await heldDevice();
-    const v = viewer(`${wsBase(1)}/device/stream?ticket=${await d.ticket()}`);
-    // sent as soon as the socket opens, before the hop and the stream open
-    await v.opened;
-    for (const m of ["a", "b", "c"]) v.ws.send(Buffer.from(m, "utf8"));
     const context = {
       kind: "viewer",
       conversationId: d.childId,
       rootConversationId: d.conversationId,
     };
+    /**
+     * Opens a viewer on `replica` whose `early` messages are written to its socket while the
+     * machine holds the holder's stream open, then lets the stream open.
+     */
+    const earlyViewer = async (replica: 0 | 1, early: string[]) => {
+      let release!: () => void;
+      d.machine.streamOpenGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const opensBefore = d.machine.streamOpens.length;
+      const v = viewer(`${wsBase(replica)}/device/stream?ticket=${await d.ticket()}`);
+      await v.opened;
+      await Promise.all(
+        early.map(
+          (m) =>
+            new Promise<void>((resolve, reject) =>
+              v.ws.send(Buffer.from(m, "utf8"), (err) => (err ? reject(err) : resolve())),
+            ),
+        ),
+      );
+      await waitFor(
+        async () => d.machine.streamOpens.length > opensBefore,
+        10_000,
+        "the holder opening the stream",
+      );
+      d.machine.streamOpenGate = undefined;
+      release();
+      return v;
+    };
+
+    // B does not hold the machine: the messages go through the hop and wait on the holder
+    const v = await earlyViewer(1, ["a", "b", "c"]);
     expect(JSON.parse(await v.context)).toEqual(context);
     v.ws.send(Buffer.from("d", "utf8"));
     await waitFor(async () => (d.streams[0]?.length ?? 0) >= 5, 10_000, "every message");
@@ -289,10 +317,13 @@ describe("device stream viewer across replicas (dual replica)", () => {
     await v.closed;
 
     // likewise on the holder itself (the direct path)
-    const local = viewer(`${wsBase(0)}/device/stream?ticket=${await d.ticket()}`);
+    const local = await earlyViewer(0, ["e", "f"]);
     expect(JSON.parse(await local.context)).toEqual(context);
-    expect(await local.roundTrip("here")).toBe("here");
+    local.ws.send(Buffer.from("g", "utf8"));
+    await waitFor(async () => (d.streams[1]?.length ?? 0) >= 4, 10_000, "every local message");
+    expect(d.streams).toHaveLength(2);
     expect(JSON.parse(d.streams[1]?.[0] ?? "")).toEqual(context);
+    expect(d.streams[1]?.slice(1)).toEqual(["e", "f", "g"]);
     local.ws.close(1000);
     await local.closed;
   });
