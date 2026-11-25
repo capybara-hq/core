@@ -335,26 +335,27 @@ export function contentHash(v: unknown): string {
 }
 
 /**
- * `ToolSpec` fields that are display only (UI refresh B): never sent to the model and left out of
- * the definition fingerprint, so adding or changing them never changes `model_call.request.tools`,
- * never sends a connector tool to drift review and never invalidates a remembered grant.
+ * `ToolSpec` fields the model never sees: the display-only `title` and `keyArgs` (UI refresh B)
+ * and an extension tool's own time limit `timeoutMs`. Left out of the definition fingerprint, so
+ * adding or changing them never changes `model_call.request.tools`, never sends a connector tool
+ * to drift review and never invalidates a remembered grant.
  */
-export const DISPLAY_ONLY_SPEC_FIELDS = ["title", "keyArgs"] as const;
+export const NON_MODEL_SPEC_FIELDS = ["title", "keyArgs", "timeoutMs"] as const;
 
-/** A tool spec without its {@link DISPLAY_ONLY_SPEC_FIELDS} (non-objects unchanged). */
-export function withoutDisplayFields<T>(spec: T): T {
+/** A tool spec without its {@link NON_MODEL_SPEC_FIELDS} (non-objects unchanged). */
+export function withoutNonModelFields<T>(spec: T): T {
   if (spec === null || typeof spec !== "object" || Array.isArray(spec)) return spec;
   const out = { ...(spec as Record<string, unknown>) };
-  for (const f of DISPLAY_ONLY_SPEC_FIELDS) delete out[f];
+  for (const f of NON_MODEL_SPEC_FIELDS) delete out[f];
   return out as T;
 }
 
 /**
- * Tool definition fingerprint: {@link contentHash} of the spec without its display-only fields
- * (`title`, `keyArgs`). Specs without them hash exactly as before.
+ * Tool definition fingerprint: {@link contentHash} of the spec without the fields the model never
+ * sees ({@link NON_MODEL_SPEC_FIELDS}). Specs without them hash exactly as before.
  */
 export function specHash(spec: unknown): string {
-  return contentHash(withoutDisplayFields(spec));
+  return contentHash(withoutNonModelFields(spec));
 }
 
 /**

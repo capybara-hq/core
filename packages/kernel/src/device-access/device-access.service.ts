@@ -270,6 +270,8 @@ export class DeviceAccessService {
     const scope = callScopeOf(call) ?? attachCallScope(call);
     const root = scope.facts?.rootConversationId ?? (await this.rootOf(call.conversationId));
     const use = await this.callUse(call, root, scope);
+    // from here the service may act: a timeout of this call never says nothing was sent
+    scope.reached = true;
     try {
       return await this.services.request(use, req.service, req.body, req.timeoutMs, call.signal);
     } catch (e) {

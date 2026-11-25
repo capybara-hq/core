@@ -53,6 +53,11 @@ export interface CallScope {
    * says the device was still starting, not that the target failed.
    */
   starting: number;
+  /**
+   * Whether this call sent a request to a device service (`ctx.deviceAccess.request`): its target
+   * may have acted, so a timeout never claims otherwise.
+   */
+  reached: boolean;
 }
 
 type Scoped = ToolCallContext & { [CALL_SCOPE]?: CallScope };
@@ -64,6 +69,7 @@ export function attachCallScope(ctx: ToolCallContext, facts?: CallFacts): CallSc
     review: null,
     blocked: null,
     starting: 0,
+    reached: false,
     ...(facts !== undefined && { facts }),
   };
   (ctx as Scoped)[CALL_SCOPE] = scope;
@@ -91,4 +97,12 @@ export async function whileDeviceStarting<T>(
   } finally {
     scope.starting--;
   }
+}
+
+/**
+ * Whether a timeout of this call happened while its device was still starting and before it sent
+ * anything to a device service (the only case the pipeline's "still starting" text may describe).
+ */
+export function stillStartingUnsent(scope: CallScope | undefined | null): boolean {
+  return scope != null && scope.starting > 0 && !scope.reached;
 }

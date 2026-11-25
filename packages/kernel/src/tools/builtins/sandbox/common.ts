@@ -2,6 +2,7 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   isDeviceOfflineError,
   isDeviceRequestNotSent,
+  isDialInAnswerTimeoutError,
   isFileSystemGoneError,
   isSandboxOperationOutcomeUnknownError,
   isSandboxPermissionUnsupportedError,
@@ -605,6 +606,11 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
       return new ToolError(SANDBOX_CONNECTION_DROPPED_TEXT, { kind: "unavailable" });
     }
     log?.warn("sandbox operation outcome unknown", { err: e });
+    return new ToolError(OUTCOME_UNKNOWN_TOOL_TEXT, { kind: "unavailable" });
+  }
+  // a connected dial-in machine that never answered (the relay's give-up): it may have acted
+  if (isDialInAnswerTimeoutError(e)) {
+    log?.warn("dial-in machine did not answer in time", { err: e });
     return new ToolError(OUTCOME_UNKNOWN_TOOL_TEXT, { kind: "unavailable" });
   }
   // a dial-in provider's machine is not connected (the SDK's error, from any provider)

@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { DeviceOfflineError, type ExtensionContext } from "@capybara-hq/plugin-sdk";
+import {
+  DeviceOfflineError,
+  DialInAnswerTimeoutError,
+  type ExtensionContext,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { deviceNotFound, machineRevoked } from "../devices/errors.js";
@@ -64,29 +68,19 @@ export class DialInFrameTooLargeError extends Error {
 }
 
 /**
- * The machine's connection stayed up but its answer did not arrive within the request's deadline
- * plus {@link answerMarginMs}: the machine took the request (or nobody drained it) and stayed
- * silent. The outcome is unknown; a cancel was queued when the machine had taken it.
- */
-export class DialInAnswerTimeoutError extends Error {
-  constructor(deadlineMs: number) {
-    super(
-      `The connected machine did not answer within the request's deadline of ${Math.ceil(deadlineMs / 1000)} s; the outcome is unknown, check the device and retry`,
-    );
-    this.name = "DialInAnswerTimeoutError";
-  }
-}
-
-/**
- * The most a caller waits past the request's deadline while the machine stays connected (the
- * machine answers an elapsed deadline itself; this covers the trip back). Never more than the
- * reconnect grace ({@link answerMarginMs}).
+ * The least a caller waits past the request's deadline while the machine stays connected (the
+ * machine answers an elapsed deadline itself; this covers the trip back). Never less than the
+ * device lease TTL, so a dead holder's lease cannot end the wait before another replica could
+ * take the machine over, and never more than the reconnect grace ({@link answerMarginMs}).
  */
 export const RELAY_ANSWER_MARGIN_MS = 10_000;
 
-/** The answer margin for a reconnect grace of `graceMs`: the smaller of the two. */
-export const answerMarginMs = (graceMs: number): number =>
-  Math.min(RELAY_ANSWER_MARGIN_MS, graceMs);
+/**
+ * The answer margin for a reconnect grace of `graceMs` and a device lease TTL of `leaseTtlMs`:
+ * the larger of {@link RELAY_ANSWER_MARGIN_MS} and the lease TTL, capped at the grace.
+ */
+export const answerMarginMs = (graceMs: number, leaseTtlMs = 0): number =>
+  Math.min(graceMs, Math.max(RELAY_ANSWER_MARGIN_MS, leaseTtlMs));
 
 /** The longest one lease check of a waiting caller may take before it counts as "unknown". */
 export const LEASE_CHECK_TIMEOUT_MS = 2000;
@@ -193,6 +187,9 @@ export class DialInRelay {
     @Inject(DeviceTargets)
     private readonly targets: Pick<DeviceTargets, "state" | "current">,
   ) {}
+
+  /** Test seam: the answer margin in ms instead of {@link answerMarginMs} (null: computed). */
+  answerMarginOverrideMs: number | null = null;
 
   /** Whether a gateway replica holds the machine's connection now. */
   async online(deviceId: string): Promise<boolean> {
@@ -336,7 +333,8 @@ export class DialInRelay {
       // reconnect restores the connected bound, at least a margin after the reconnect (a result
       // produced while it was away is delivered then). Checked every poll.
       const startedAt = Date.now();
-      const connectedGiveUpAt = startedAt + deadlineMs + answerMarginMs(graceMs);
+      const marginMs = this.marginMs();
+      const connectedGiveUpAt = startedAt + deadlineMs + marginMs;
       const latestGiveUpAt = startedAt + deadlineMs + graceMs;
       let giveUpAt = connectedGiveUpAt;
       let lostAt: number | null = null;
@@ -375,7 +373,7 @@ export class DialInRelay {
           }
           if (live === true && lostAt !== null) {
             lostAt = null;
-            giveUpAt = Math.max(connectedGiveUpAt, Date.now() + answerMarginMs(graceMs));
+            giveUpAt = Math.max(connectedGiveUpAt, Date.now() + marginMs);
           } else if (live === false && lostAt === null) {
             lostAt = Date.now();
             giveUpAt = Math.min(latestGiveUpAt, lostAt + graceMs);
@@ -424,7 +422,7 @@ export class DialInRelay {
         // a bad answer: drop it, give the request up, report the error
         await this.quietly("delete the result", deviceId, () => this.redis.del(deviceResKey(id)));
       }
-      await this.giveUp(deviceId, id, reqJson, listTtlMs);
+      const left = await this.giveUp(deviceId, id, reqJson, listTtlMs);
       if (r.error === ABORTED) {
         this.log.info("device relay wait aborted", { deviceId, waitedMs: Date.now() - startedAt });
         throw signal.reason;
@@ -435,6 +433,17 @@ export class DialInRelay {
           waitedMs: Date.now() - startedAt,
         });
         throw new DeviceOfflineError(deviceId);
+      }
+      if (r.error === ANSWER_OVERDUE && left === "removed") {
+        // still on the list when given up: the machine never took it, nothing ran
+        this.log.warn("device relay gave up: the connected machine never took the request", {
+          deviceId,
+          deadlineMs,
+          waitedMs: Date.now() - startedAt,
+        });
+        throw new DeviceRequestNotSentError(
+          "The connected machine did not take the request within its deadline; nothing ran, retry it",
+        );
       }
       if (r.error === ANSWER_OVERDUE) {
         this.log.warn("device relay gave up: the connected machine did not answer in time", {
@@ -507,6 +516,12 @@ export class DialInRelay {
     return this.config.get().devices.dialIn.reconnectGraceSeconds * 1000;
   }
 
+  private marginMs(): number {
+    if (this.answerMarginOverrideMs !== null) return this.answerMarginOverrideMs;
+    const d = this.config.get().devices.dialIn;
+    return answerMarginMs(d.reconnectGraceSeconds * 1000, d.leaseTtlMs ?? 0);
+  }
+
   private async push(deviceId: string, frame: string, ttlMs: number): Promise<void> {
     await this.redis.eval(PUSH_WITH_TTL, 1, deviceReqKey(deviceId), frame, String(ttlMs));
   }
@@ -519,8 +534,18 @@ export class DialInRelay {
   }
 
   /** Removes the request from the list, or queues a cancel when the machine took it (R15). */
-  private async giveUp(deviceId: string, id: string, reqJson: string, ttlMs: number) {
+  /**
+   * Gives the request up ({@link GIVE_UP}): `removed` when it was still queued (never sent),
+   * `cancelled` when the machine had taken it (a cancel queued), `unknown` when Redis failed.
+   */
+  private async giveUp(
+    deviceId: string,
+    id: string,
+    reqJson: string,
+    ttlMs: number,
+  ): Promise<"removed" | "cancelled" | "unknown"> {
     const cancel: QueuedCancel = { type: "cancel", id };
+    let left: "removed" | "cancelled" | "unknown" = "unknown";
     await this.quietly("give the request up", deviceId, async () => {
       const queued = await this.redis.eval(
         GIVE_UP,
@@ -530,8 +555,10 @@ export class DialInRelay {
         JSON.stringify(cancel),
         String(ttlMs),
       );
+      left = queued === 1 ? "cancelled" : "removed";
       if (queued === 1) this.nudge(deviceId, id);
     });
+    return left;
   }
 
   /** Runs a side step whose failure must not replace the call's outcome: logged, swallowed. */

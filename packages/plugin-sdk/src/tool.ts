@@ -54,9 +54,12 @@ export interface ToolSpec {
   sources?: ConversationSource[];
   /**
    * Extension tools only: the time limit of one call in milliseconds, a whole number from
-   * {@link TOOL_TIMEOUT_MIN_MS} to {@link TOOL_TIMEOUT_MAX_MS}; absent = the deployment's
-   * `tools.timeoutMs`. Declare it when a call may legitimately take longer, e.g. one that first
-   * starts a device service (`ctx.deviceAccess.ensureService`). Never sent to the model.
+   * {@link TOOL_TIMEOUT_MIN_MS} to {@link TOOL_TIMEOUT_MAX_MS}. When declared, the deployment's
+   * `tools.timeoutMs` no longer applies to the tool; the deployment's `tools.maxTimeoutMs`
+   * (default {@link TOOL_TIMEOUT_MAX_MS}) cuts a longer value. Absent: `tools.timeoutMs`. Declare
+   * it when a call may legitimately take longer, e.g. one that first starts a device service
+   * (`ctx.deviceAccess.ensureService`). Never sent to the model and not part of the definition
+   * fingerprint.
    */
   timeoutMs?: number;
 }

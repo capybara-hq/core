@@ -15,7 +15,7 @@ import { Credentials } from "../../src/tools/credentials.js";
 import { OrgToolSwitches } from "../../src/tools/org-tool-switches.js";
 import {
   canonicalJson,
-  DISPLAY_ONLY_SPEC_FIELDS,
+  NON_MODEL_SPEC_FIELDS,
   specHash,
   ToolRegistry,
 } from "../../src/tools/registry.js";
@@ -160,8 +160,8 @@ describe("ToolRegistry", () => {
     expect(specHash({ inputSchema: { type: "object" }, description: "d", name: "x" })).toBe(h);
   });
 
-  it("specHash leaves out the display-only title and keyArgs", () => {
-    expect([...DISPLAY_ONLY_SPEC_FIELDS]).toEqual(["title", "keyArgs"]);
+  it("specHash leaves out the fields the model never sees: title, keyArgs and timeoutMs", () => {
+    expect([...NON_MODEL_SPEC_FIELDS]).toEqual(["title", "keyArgs", "timeoutMs"]);
     const s = {
       name: "search",
       description: "Search.",
@@ -169,12 +169,14 @@ describe("ToolRegistry", () => {
     };
     expect(specHash({ ...s, title: "X", keyArgs: ["q"] })).toBe(specHash(s));
     expect(specHash({ ...s, title: "Y" })).toBe(specHash({ ...s, title: "X" }));
+    // retuning an extension tool's time limit is no definition change
+    expect(specHash({ ...s, timeoutMs: 300_000 })).toBe(specHash(s));
     // Everything else still counts.
     expect(specHash({ ...s, description: "Search!" })).not.toBe(specHash(s));
   });
 
   it("specHash of a fixed pre-B spec is pinned: display fields leave old fingerprints alone", () => {
-    // Computed with the algorithm before UI refresh B. A change to DISPLAY_ONLY_SPEC_FIELDS or
+    // Computed with the algorithm before UI refresh B. A change to NON_MODEL_SPEC_FIELDS or
     // canonicalJson that moves it would drop remembered grants and mark eval cases spec-changed.
     const FIXED = {
       name: "search",
@@ -230,7 +232,7 @@ describe("ToolRegistry", () => {
       source: { kind: "plugin", plugin: "mem-connector", name: "echo" },
       defaultPolicy: "allow", // readOnlyHint
     });
-    // 插件显式声明 defaultPolicy 优先于注解
+    // an extension's explicit defaultPolicy wins over its annotations
     expect(byKey["plugin__mem-connector__wipe"]?.defaultPolicy).toBe("allow");
     // an extension tool's declared time limit replaces tools.timeoutMs; none declared: absent
     expect(byKey["plugin__mem-connector__wipe"]?.timeoutMs?.({})).toBe(180_000);

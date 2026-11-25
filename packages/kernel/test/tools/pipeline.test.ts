@@ -33,7 +33,7 @@ import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call.js";
 import type { Breaker } from "../../src/tools/breaker.js";
 import { notLoadedText, toolSearchTool } from "../../src/tools/builtins/tool-search.js";
-import { whileDeviceStarting } from "../../src/tools/call-scope.js";
+import { callScopeOf, whileDeviceStarting } from "../../src/tools/call-scope.js";
 import { type ConnectorAuth, CredentialMissing } from "../../src/tools/credentials.js";
 import type { ToolOutputs } from "../../src/tools/outputs.js";
 import {
@@ -337,6 +337,12 @@ beforeEach(async () => {
       // stuck while the conversation's device starts (ctx.deviceAccess.ensureService)
       return whileDeviceStarting(ctx, () => new Promise<ToolResult>(() => {}));
     },
+    plugin__probe__startingAfterSend: async (_input, ctx: ToolCallContext) => {
+      // a request already went to the device service, then a second start hangs
+      const scope = callScopeOf(ctx);
+      if (scope) scope.reached = true;
+      return whileDeviceStarting(ctx, () => new Promise<ToolResult>(() => {}));
+    },
     plugin__probe__throws: async () => {
       throw new Error("internal detail with token abc");
     },
@@ -351,6 +357,7 @@ beforeEach(async () => {
     pluginTool("ctx"),
     pluginTool("throws"),
     pluginTool("starting"),
+    pluginTool("startingAfterSend"),
     appTool("docs", connectorId, "read"),
   ];
   await seedAppTool(connectorId, "read");
@@ -1169,6 +1176,22 @@ describe("ToolPipeline.runStep", () => {
     expect(r?.content).toBe(deviceStartingTimeoutText("plugin__probe__starting", 150));
     expect(r?.content).toMatch(/device was still starting/);
     expect(r?.content).not.toMatch(/may or may not have completed/);
+  });
+
+  it("a call that already sent a device request gets the generic timeout text, even while starting", async () => {
+    toolsCfg = { timeoutMs: 150 };
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__startingAfterSend", input: {} }]);
+    expect(resultsOf(evs)[0]?.content).toMatch(/may or may not have completed/);
+    expect(resultsOf(evs)[0]?.content).not.toMatch(/still starting/);
+  });
+
+  it("an extension tool's own time limit is cut to the deployment's tools.maxTimeoutMs", async () => {
+    toolsCfg = { timeoutMs: 60_000, maxTimeoutMs: 200 };
+    resolved = resolved.map((t) =>
+      t.key === "plugin__probe__slow" ? { ...t, timeoutMs: () => 600_000 } : t,
+    );
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__slow", input: {} }]);
+    expect(resultsOf(evs)[0]?.content).toMatch(/^Tool plugin__probe__slow timed out after 0.2s/);
   });
 
   it("an extension tool's own time limit replaces tools.timeoutMs", async () => {

@@ -1,5 +1,6 @@
 import {
   DeviceOfflineError,
+  DialInAnswerTimeoutError,
   FileSystemGoneError,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
@@ -9,12 +10,16 @@ import {
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DeviceRequestNotSentError } from "../../../src/dial-in/relay.js";
 import { ApiError } from "../../../src/errors.js";
 import type { PermissionAvailabilityCause } from "../../../src/sandbox/permission-availability.js";
 import { DeviceProgramRestartedError } from "../../../src/sandbox/request-not-sent.js";
-import { recreateRequired, retirementPending } from "../../../src/sandbox/sandbox.service.js";
+import {
+  providerRefusal,
+  recreateRequired,
+  retirementPending,
+} from "../../../src/sandbox/sandbox.service.js";
 import {
   admissionUnavailableText,
   DEVICE_OFFLINE_TEXT,
@@ -62,6 +67,40 @@ describe("sandbox tool errors", () => {
     expect(text).not.toMatch(/environment/i);
     // every provider's devices read the same: no program of one provider is named
     expect(text).not.toMatch(/capybara-device/);
+  });
+
+  it("a connected machine that never answered is the outcome-unknown text, never offline", () => {
+    const mapped = mapSandboxError(new DialInAnswerTimeoutError(30_000), undefined);
+    expect(mapped).toBeInstanceOf(ToolError);
+    expect(message(mapped)).toBe(OUTCOME_UNKNOWN_TOOL_TEXT);
+  });
+
+  it("a slow machine is never a refused network or a failed create (providerRefusal keeps it)", () => {
+    const warn = vi.fn();
+    const open = {
+      cpu: 1,
+      memoryMb: 512,
+      diskMb: 1024,
+      network: { kind: "open-public" as const, hosts: [] },
+    };
+    const facts = { deviceId: "d", provider: "device-local", op: "create" as const };
+    for (const err of [
+      new DialInAnswerTimeoutError(30_000),
+      new SandboxOperationOutcomeUnknownError("deadline elapsed"),
+      new DeviceRequestNotSentError("not taken"),
+    ]) {
+      expect(providerRefusal({ warn }, err, facts, open, new AbortController().signal)).toBe(err);
+      expect(
+        providerRefusal(
+          { warn },
+          err,
+          facts,
+          { ...open, network: { kind: "allowlist", hosts: [] } },
+          new AbortController().signal,
+        ),
+      ).toBe(err);
+    }
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("a dial-in provider's offline error is the tools' offline text, like device.offline", () => {

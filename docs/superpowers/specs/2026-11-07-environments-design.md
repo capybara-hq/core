@@ -633,12 +633,24 @@ The shape of RFC 8628 for both cases (browser or not):
 - The gateway accepts a `res` only for a request id it took for that environment (it records
   `capk:device-taken:<id>` when it forwards the request), so a connected machine cannot write results
   for requests of other environments.
-- No holder at send time → `environment.offline` at once. A holder lost mid-command → the caller
-  waits until the command's deadline plus the grace; the program keeps results of commands that
-  finished while disconnected for the grace and sends them after reconnecting. When the caller gives
-  up (grace exceeded or aborted), a request still in the queue is removed from it; only a request the
-  machine already took gets a `cancel`, delivered on the next connect. The program treats a cancel
-  for an unknown or not-yet-started request as "never start it".
+- No holder at send time → `environment.offline` at once. While a holder stays (the lease is the
+  test, read every 5 s), the caller waits until the command's deadline plus an answer margin:
+  `min(grace, max(10 s, devices.dialIn.leaseTtlMs))`. The margin is at least the lease TTL, so a
+  crashed holder's lease cannot end the wait before another replica could take the machine over.
+  The program answers an elapsed deadline itself (`unknown`), so the margin only covers the trip
+  back (core#844, 2026-11-25). A holder lost mid-command → the wait ends one grace after the loss,
+  never later than the deadline plus the grace. A reconnect restores the connected bound, and the
+  wait still runs at least one margin past the reconnect, so a result held across the disconnect
+  arrives. The program keeps results of commands that finished while disconnected for the grace
+  and sends them after reconnecting. When the caller gives up, a request still in the queue is
+  removed from it. If the machine stayed connected, that removal is `DeviceRequestNotSentError`
+  (nothing ran, a retry is safe). If it went away, the give-up is `DeviceOfflineError`. Only a
+  request the machine already took gets a `cancel`, delivered on the next connect; with the
+  machine still connected, its give-up is `DialInAnswerTimeoutError` (outcome unknown). Trade-off:
+  a lease that outlives a dead socket (a half-open TCP connection is renewed until two missed
+  pongs, ~40-60 s) ends the wait at the margin rather than the grace. A result the machine delivers
+  later than that is lost to this call, and managed operations reconcile it. The program treats a
+  cancel for an unknown or not-yet-started request as "never start it".
 - `stop` (the program's stop on environment deletion) is fire-and-forget: it is pushed and nudged
   only while a holder is live, and never awaited.
 

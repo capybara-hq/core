@@ -1185,6 +1185,14 @@ export const DIAL_IN_PROTOCOL_RE: RegExp;
 export const DIAL_IN_STREAM_INITIAL_CREDIT = 8;
 
 // @public
+export class DialInAnswerTimeoutError extends Error {
+    constructor(deadlineMs: number, opts?: {
+        cause?: unknown;
+    });
+    readonly code = "device.answer_timeout";
+}
+
+// @public
 export interface DialInChannel {
     capacity(deviceId: string): Promise<{
         maxFrameBytes: number;
@@ -2287,6 +2295,9 @@ export function isDeviceProjectName(v: unknown): v is string;
 
 // @public
 export function isDeviceRequestNotSent(e: unknown): boolean;
+
+// @public
+export function isDialInAnswerTimeoutError(e: unknown): e is DialInAnswerTimeoutError;
 
 // @public
 export function isDisallowedSkillRef(v: unknown): v is string;

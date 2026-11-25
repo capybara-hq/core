@@ -75,6 +75,7 @@ import {
   type DeviceProvider,
   type ExecResult,
   type FileSystemHandle,
+  isDialInAnswerTimeoutError,
   isFileSystemGoneError,
   isSandboxGoneError,
   isSandboxOperationOutcomeUnknownError,
@@ -442,9 +443,12 @@ export const sandboxCreateFailed = (): ApiError =>
  * {@link sandboxOpenNetworkRefused} when `limits` ask for the open public network (the only
  * network a provider's config refuses), else (a create) by {@link sandboxCreateFailed}; a failed
  * `update` below the open network stays as it is. A dial-in device that is offline keeps its
- * error (the tools tell the person to connect its machine).
+ * error (the tools tell the person to connect its machine), and so does a machine that did not
+ * finish or answer in time (`DialInAnswerTimeoutError`, `SandboxOperationOutcomeUnknownError`,
+ * `DeviceRequestNotSentError`): a slow machine is never reported as a refused network or a
+ * failed create.
  */
-function providerRefusal(
+export function providerRefusal(
   log: Pick<KernelLogger, "warn">,
   err: unknown,
   facts: { deviceId: string; provider: string; op: "createFileSystem" | "create" | "update" },
@@ -454,6 +458,10 @@ function providerRefusal(
   if (
     signal.aborted ||
     isDeviceOfflineError(err) ||
+    // a machine that did not finish (or never answered) in time: an outcome, not a refusal
+    isDialInAnswerTimeoutError(err) ||
+    isSandboxOperationOutcomeUnknownError(err) ||
+    isDeviceRequestNotSent(err) ||
     isSandboxGoneError(err) ||
     isFileSystemGoneError(err) ||
     err instanceof SandboxProviderUnreachableError ||
