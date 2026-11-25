@@ -18,6 +18,7 @@ import {
   ShellEnvironmentScript,
 } from "../src/shell/shell-environment-script";
 import { parseCss } from "./css-rules";
+import { insideFrame } from "./support/page";
 
 const root = () => document.documentElement;
 const PROPS = [
@@ -113,10 +114,8 @@ describe("the inline script (before the first paint)", () => {
 
   it("does nothing inside a frame (window.top is another window)", () => {
     install(fakeShell().shell);
-    const top = vi.spyOn(window, "top", "get").mockReturnValue({} as Window);
-    runScript();
+    insideFrame(runScript);
     untouched();
-    top.mockRestore();
   });
 
   it("does nothing for an unknown kind, and drops an unknown platform", () => {
@@ -493,9 +492,10 @@ describe("ShellReady (chrome@1.ready, once per document)", () => {
     const run = frames();
     const fn = vi.fn();
     install(ready({ ready: fn }));
-    vi.spyOn(window, "top", "get").mockReturnValue({} as Window);
-    render(<ShellReady />);
-    act(run);
+    insideFrame(() => {
+      render(<ShellReady />);
+      act(run);
+    });
     expect(fn).not.toHaveBeenCalled();
   });
 

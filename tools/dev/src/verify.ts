@@ -95,8 +95,8 @@ export const FAST_BASE_STEPS = ["english-comments", "commitlint", "applied-migra
  * commit messages, applied migrations and migration numbers (against the ref itself, so a number
  * main took meanwhile fails here); then the container-free tests: kernel unit, the internal tools
  * (`tools/*`: error copy, platform parity, workflow pins and the other repository-reading tests),
- * the jsdom projects design and plugin-client. Not the web project: about a minute alone, and run
- * together with these it more than triples the step on a dev Mac (CI runs it by diff).
+ * the jsdom projects design, plugin-client and web (design and web run in a vm pool, which keeps
+ * them cheap enough for this step).
  */
 export function fastSteps(base: FastBase | null = null): VerifyStep[] {
   const noBase = "no local upstream main to compare with (git fetch it; fast never fetches)";
@@ -145,6 +145,8 @@ export function fastSteps(base: FastBase | null = null): VerifyStep[] {
         "design",
         "--project",
         "plugin-client",
+        "--project",
+        "web",
       ],
     },
   ];

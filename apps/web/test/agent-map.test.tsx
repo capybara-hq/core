@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { agentTreeNodes, liveStatus, logWord } from "../src/components/conversation/AgentMap";
 import type { AgentTreeNode, ConversationEvent } from "../src/lib/conversations";
-import { TREE_PROGRESS_MS } from "../src/lib/subagents";
+import { TREE_PROGRESS_MS, TREE_TRAILING_READS } from "../src/lib/subagents";
 import { type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -223,6 +223,16 @@ const titleBar = () => document.querySelector('[data-part="title-bar"]') as HTML
 const agentsChip = () =>
   document.querySelector('[data-part="agents-chip"]') as HTMLButtonElement | null;
 const mapDialog = () => screen.findByRole("dialog", { name: MAP });
+/**
+ * Fakes the timers the tree's progress throttle runs on (`TREE_PROGRESS_MS`), still moving with
+ * real time so the renders and the stream go on as usual; {@link advance} then jumps ahead.
+ */
+const fakePollTimers = () =>
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+    shouldAdvanceTime: true,
+  });
+const advance = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
 
 beforeEach(() => {
   params.conversationId = "c1";
@@ -232,6 +242,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   FakeEventSource.instances = [];
   window.history.replaceState(null, "", "/");
@@ -364,7 +375,8 @@ describe("the agent map's entry points", () => {
     const calls = api(parentEvents());
     await renderChatRoute();
     await waitFor(() => expect(agentsChip()).not.toBeNull());
-    await act(async () => await new Promise((r) => setTimeout(r, 50)));
+    fakePollTimers();
+    await advance(50);
     expect(treeReads(calls)).toBe(0);
     // progress of agents the tree already has, many steps: the closed map reads nothing
     for (let step = 1; step <= 12; step++) {
@@ -377,7 +389,7 @@ describe("the agent map's entry points", () => {
         });
       });
     }
-    await act(async () => await new Promise((r) => setTimeout(r, TREE_PROGRESS_MS + 300)));
+    await advance(TREE_PROGRESS_MS * 2);
     expect(treeReads(calls)).toBe(0);
     // an agent the tree lacks (a new grandchild): one read, once, however many steps it makes
     for (let step = 1; step <= 6; step++) {
@@ -390,7 +402,8 @@ describe("the agent map's entry points", () => {
         });
       });
     }
-    await waitFor(() => expect(treeReads(calls)).toBe(1), { timeout: TREE_PROGRESS_MS + 1500 });
+    await advance(TREE_PROGRESS_MS);
+    await waitFor(() => expect(treeReads(calls)).toBe(1));
     for (let step = 7; step <= 10; step++) {
       act(() => {
         FakeEventSource.instances[0]?.emit("subagent_progress", {
@@ -401,11 +414,11 @@ describe("the agent map's entry points", () => {
         });
       });
     }
-    await act(async () => await new Promise((r) => setTimeout(r, TREE_PROGRESS_MS + 300)));
+    await advance(TREE_PROGRESS_MS * 2);
     expect(treeReads(calls)).toBe(1);
     // the stream's progress counts the new agent at once
     expect(agentsChip()?.getAttribute("aria-label")).toMatch(/^3 agents, /);
-  }, 15_000);
+  });
 
   it("open properties, open the map, close the map: the properties stay under it and are back", async () => {
     api(parentEvents());
@@ -536,8 +549,12 @@ describe("the agent map's tree", () => {
   it("a grandchild's progress refreshes the tree", async () => {
     const calls = api(parentEvents());
     window.history.replaceState(null, "", "/chat/c1#agents");
+    // from the start: the open map's first answer already starts a throttle window
+    fakePollTimers();
     await renderChatRoute();
     await within(await mapDialog()).findByText("Read the changelog");
+    // the running grandchild's trailing reads run out first, so only the progress can read
+    await advance(TREE_PROGRESS_MS * (TREE_TRAILING_READS + 2));
     const before = treeReads(calls);
     act(() => {
       FakeEventSource.instances[0]?.emit("subagent_progress", {
@@ -548,9 +565,8 @@ describe("the agent map's tree", () => {
       });
     });
     // progress is coalesced: the read comes at the end of the throttle window
-    await waitFor(() => expect(treeReads(calls)).toBeGreaterThan(before), {
-      timeout: TREE_PROGRESS_MS + 1500,
-    });
+    await advance(TREE_PROGRESS_MS);
+    await waitFor(() => expect(treeReads(calls)).toBeGreaterThan(before));
   });
 });
 

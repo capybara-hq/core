@@ -160,6 +160,9 @@ export default defineConfig({
           name: "design",
           include: ["packages/design/test/**/*.test.{ts,tsx}"],
           environment: "jsdom",
+          // A fresh vm context per file in a reused worker, like the web project (about 2.5x
+          // faster); `top` and `location` cannot be spied there: test/support/page.ts.
+          pool: "vmForks",
           setupFiles: ["packages/design/test/setup.ts"],
         },
       },
@@ -181,6 +184,11 @@ export default defineConfig({
           name: "web",
           include: ["apps/web/test/**/*.test.tsx"],
           environment: "jsdom",
+          // Each file in a fresh vm context of a reused worker, not a new process: about 40% faster
+          // and a third less CPU, which keeps the project inside `pnpm verify --fast`. jsdom's
+          // `window` is then the real global (`location` and `top` cannot be stubbed: use
+          // test/support/page.ts).
+          pool: "vmForks",
           setupFiles: ["apps/web/test/setup.ts"],
           // next-intl 的 ESM 构建 import "next/navigation"（无扩展名），交给 Vite 解析。
           server: { deps: { inline: ["next-intl", "use-intl"] } },

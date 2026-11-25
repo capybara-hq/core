@@ -7,7 +7,7 @@ Capybara uses one contribution workflow across the `capybara-hq` organization: i
 Two commands help at every step:
 
 - `pnpm doctor:env` checks your environment (Node, pnpm, dependencies, Docker, remotes, git identity); `--fix` performs only fixes that need no decision.
-- `pnpm verify --fast` is the local check before pushing (lint, typecheck, custom checks, the PR-only checks against your local `origin/main`: English comments, commit messages, migration numbers; kernel unit, tools and design/plugin-client tests; no containers, never fetches; about a minute on an idle dev machine); also run the tests of the files you changed (`pnpm exec vitest run <path>` from the repository root). The merge gate is CI on the PR (`ci-ok`), which runs every test the diff affects. `pnpm verify` without `--fast` runs those affected tests locally too (testcontainers, one vitest worker per core); it is optional.
+- `pnpm verify --fast` is the local check before pushing (lint, typecheck, custom checks, the PR-only checks against your local `origin/main`: English comments, commit messages, migration numbers; kernel unit, tools, design, plugin-client and web tests; no containers, never fetches; a little over a minute on a dev machine); also run the tests of the files you changed (`pnpm exec vitest run <path>` from the repository root). The merge gate is CI on the PR (`ci-ok`), which runs every test the diff affects. `pnpm verify` without `--fast` runs those affected tests locally too (testcontainers, one vitest worker per core); it is optional.
 
 Both accept `--json`; run them as `pnpm -s doctor:env --json` so pnpm's banner does not precede the JSON.
 
