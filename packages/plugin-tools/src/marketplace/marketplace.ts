@@ -44,7 +44,8 @@ export interface SyncMarketplaceOptions {
    * published. An entry of a version the base lists must keep its source and integrity
    * (`marketplace-integrity`); an entry of a version the base does not list must be newer than
    * every version the base lists for that plugin (`marketplace-version-decrease`) and, when it is
-   * the tree's version, match the tree's pack (`marketplace-integrity`). A file the base does not
+   * the tree's version, match the tree's pack (`marketplace-integrity`; `--write --base` rewrites
+   * such an entry's source to the tree's pack instead). A file the base does not
    * have constrains nothing.
    */
   base?: string;
@@ -267,12 +268,19 @@ export async function syncMarketplace(
       const toCompare = listed.filter(({ e }) => baseKeys !== undefined && !baseKeys.has(keyOf(e)));
       const kept = listed[0];
       /** Keeps the listed entry: drops the other versions, refreshes its display fields. */
-      const keep = (raw: unknown) => {
+      const keep = (raw: unknown, resourced = false) => {
         const display = displayOf(source, opts.root, dir);
         const fresh = display === undefined ? undefined : refreshDisplay(raw, display);
-        if (dropped.length > 0 || fresh !== undefined) {
+        if (dropped.length > 0 || fresh !== undefined || resourced) {
           const entry = fresh ?? raw;
-          updates.push({ name, version, entry, isNew: false, dropped, refreshed: !!fresh });
+          updates.push({
+            name,
+            version,
+            entry,
+            isNew: false,
+            dropped,
+            refreshed: !!fresh || resourced,
+          });
         }
       };
       if (kept !== undefined && toCompare.length === 0) {
@@ -287,9 +295,15 @@ export async function syncMarketplace(
         version: r.manifest.version,
         integrity: integrityOf(bytes),
       };
+      let resourced = false;
       for (const { e } of toCompare) {
         const src = "npm" in e.source ? e.source.npm : undefined;
         if (src?.package !== npm.package || src.integrity !== npm.integrity) {
+          if (opts.write) {
+            // --write fixes what --check --base would flag: the entry takes the tree's pack.
+            resourced = true;
+            continue;
+          }
           const was =
             src === undefined
               ? `a ${Object.keys(e.source)[0]} source`
@@ -302,7 +316,8 @@ export async function syncMarketplace(
         }
       }
       if (kept !== undefined) {
-        keep(rawEntries[kept.i]);
+        const was = rawEntries[kept.i];
+        keep(resourced && isObj(was) ? { ...was, source: { npm } } : was, resourced);
         continue;
       }
       const entry: MarketplaceEntry = {

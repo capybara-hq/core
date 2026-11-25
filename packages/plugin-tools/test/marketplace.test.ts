@@ -440,7 +440,26 @@ describe("capybara-plugin marketplace", () => {
       expect(f[0]?.message).toContain(integrity.get("fixture-declarative"));
     }, 60_000);
 
-    it("the command takes --base with --check only", async () => {
+    it("--write --base rewrites an added entry whose integrity --check --base flags", async () => {
+      writeManifest(EMPTY);
+      git("add", "-A");
+      git("commit", "-q", "-m", "empty");
+      base = git("rev-parse", "HEAD").trim();
+      await sync(true);
+      const m = readManifest();
+      (m.plugins[0] as { source: { npm: { integrity: string } } }).source.npm.integrity =
+        `sha512-${"B".repeat(86)}==`;
+      writeManifest(m);
+      expect((await check()).findings.map((x) => x.rule)).toEqual(["marketplace-integrity"]);
+      // without --base the stale entry is invisible to --write (a listed version is not compared)
+      expect((await syncMarketplace({ root, file, write: true })).refreshed).toEqual([]);
+      const r = await syncMarketplace({ root, file, write: true, base });
+      expect(r.findings).toEqual([]);
+      expect(r.refreshed.length).toBe(1);
+      expect((await check()).findings).toEqual([]);
+    }, 60_000);
+
+    it("the command takes --base with --check and --write", async () => {
       const err = vi.spyOn(console, "error").mockImplementation(() => {});
       const log = vi.spyOn(console, "log").mockImplementation(() => {});
       try {
@@ -448,7 +467,7 @@ describe("capybara-plugin marketplace", () => {
         const m = readManifest();
         writeManifest({ ...m, plugins: [old("fixture-declarative", "0.0.1"), m.plugins[1]] });
         expect(await marketplaceCommand(["--check", "--base", base], root)).toBe(1);
-        expect(await marketplaceCommand(["--write", "--base", base], root)).toBe(2);
+        expect(await marketplaceCommand(["--write", "--base", base], root)).toBe(1);
       } finally {
         err.mockRestore();
         log.mockRestore();
