@@ -30,6 +30,13 @@ before any task.
   the daemon while control is `agent`, whatever the panel shows.
 - The agent always acts on the 1280×800 desktop viewport: hand back restores it before any queued
   agent request runs.
+- Queue rule: an action whose race ends on a dialog releases its serial-queue slot; `op: "dialog"`
+  runs beside the queue; a serial action on a blocked tab fails with `dialog_open` before queueing.
+- `browser_dialog` answers only the dialog named by `dialogId` whose 300-character message clip
+  matches `message`.
+- Basic credentials go only where a browser would send them (CDP `continueWithAuth`, or a route header
+  for the origin's own pages and top-level navigations); never to other initiators or service workers.
+- The permission binding's payload is untrusted: origin from `source.frame`, enumerated names, capped.
 - Tool texts English and actionable, key `browser_dialog` (no dots), `defaultPolicy: "ask"`;
   `capybara-plugin check` (tool design check) passes.
 - UI text zh + en through the panel's i18n; zh says 智能体, never 企业. Touch targets ≥ 44 px at
@@ -54,6 +61,13 @@ before any task.
 5. **A dialog left unanswered by an ended run**: it stays pending (no timer, no default) and the next
    run's first reply names it. → Task 2 test `a pending dialog survives until answered and is named in
    the next reply`.
+6. **The opening click still pending**: `browser_dialog` answers and another tab acts meanwhile. →
+   Task 2 tests `browser_dialog answers while the opening click is still pending`, `an action on another
+   tab runs while a confirm is held`.
+7. **An approval given after the dialog changed**: refused. → Task 3 tests `a stale dialogId is
+   refused`, `a mismatching message is refused`.
+8. **A cross-site page calls the signed-in origin**: no credentials. → Task 4 test `a cross-site page's
+   request to the signed-in origin carries no Authorization`.
 
 ---
 
@@ -75,9 +89,9 @@ before any task.
 - Create: `<scratchpad>/browser-208-spike/spike.mjs` (not committed)
 - Modify: `docs/superpowers/plans/2026-11-25-browser-dialogs-and-touch.md` in core (append "Spike results")
 
-- [ ] **Step 1:** With playwright-core and a local server answering `401 WWW-Authenticate: Basic realm="x"` unless the right header is present: confirm (a) the main-frame `response` event shows 401 and the header, (b) `context.route("http://127.0.0.1:<port>/**", r => r.continue({ headers: { ...r.request().headers(), authorization } }))` + reload loads the page, (c) both with `proxy: { server, username, password }` pointed at a local authenticating proxy (as the docker device runs it) and without.
+- [ ] **Step 1:** With playwright-core and a local server answering `401 WWW-Authenticate: Basic realm="x"` unless the right header is present: confirm (a) the main-frame `response` event shows 401 and the header, (a2) whether the daemon's own CDP session can answer `Fetch.authRequired` with `continueWithAuth` for that origin while Playwright handles the proxy's 407 (preferred path if yes), (b) `context.route("http://127.0.0.1:<port>/**", r => r.continue({ headers: { ...r.request().headers(), authorization } }))` + reload loads the page, (c) both with `proxy: { server, username, password }` pointed at a local authenticating proxy (as the docker device runs it) and without.
 - [ ] **Step 2:** Check the pinned Chromium for a CDP-native signal of a permission request (none expected); record it. If one exists, Task 4 uses it instead of the init-script wrapper.
-- [ ] **Step 3:** In the docker device: `Emulation.setDeviceMetricsOverride` (390×844, mobile) + `setTouchEmulationEnabled` + `Input.dispatchTouchEvent` tap on a button with a `touchstart` listener; record that the listener fires and the screencast frame is portrait.
+- [ ] **Step 3:** In the docker device: `Emulation.setDeviceMetricsOverride` (390×844, mobile) + `setTouchEmulationEnabled` + `Input.dispatchTouchEvent` tap on a button with a `touchstart` listener; record that the listener fires and the screencast frame is portrait; check that Playwright does not reapply its 1280×800 emulation over the override on a popup or new page, and that a restore wins over any reapply.
 - [ ] **Step 4:** Record pass / fail and any deviation in "Spike results"; a failure in (c) means the auth task changes approach before Wave 2 (report, do not improvise).
 
 ---
@@ -85,9 +99,9 @@ before any task.
 ### Task 2: Pending dialogs in the daemon
 
 **Files:**
-- Modify: `plugins/browser/daemon/protocol.ts` (`PendingDialogView`, `ToolRequest` `op: "dialog"`, `ToolErrorCode` `dialog_open`, `ToolReply.dialog`, `ViewerIn` `dialog`, `ViewerOut` `state.dialogs`)
-- Modify: `plugins/browser/daemon/actions.ts` (`onDialog` :600 closes alerts at once with a note and records the other kinds; per-tab pending map; actions race "dialog opened on this tab"; `snapshot` / other ops on a blocked tab; `dialogOp`; late action outcomes to `unreported`; no timer)
-- Modify: `plugins/browser/daemon/main.ts` (route `op: "dialog"` through the takeover refusal like other agent input)
+- Modify: `plugins/browser/daemon/protocol.ts` (`PendingDialogView` with short `id`, `ToolRequest` `op: "dialog" { dialogId, message }`, `ToolErrorCode` `dialog_open`, `ToolReply.dialog`, `ViewerIn` `dialog`, `ViewerOut` `state.dialogs`)
+- Modify: `plugins/browser/daemon/actions.ts` (`onDialog` :600 closes alerts at once with a note and records the other kinds; per-tab pending map; actions race "dialog opened on this tab" and on the dialog release their `serial()` slot (the dangling Playwright promise tracked per tab, late outcome to `unreported`); `op: "dialog"` runs beside the queue like `wait`; serial actions on a blocked tab fail `dialog_open` before queueing; `snapshot` / other ops on a blocked tab; `dialogOp`; late action outcomes to `unreported`; no timer)
+- Modify: `plugins/browser/daemon/main.ts` (`op: "dialog"` gets the takeover refusal like other agent input, but not the serial queue)
 - Modify: `plugins/browser/daemon/viewer.ts` (`state.dialogs`; viewer `dialog` answer only while control is `user`; the old `dialog` message only for `alert` and `file`)
 - Test: `plugins/browser/test/daemon/tools.test.ts`, `plugins/browser/test/daemon/viewer.test.ts`
 
@@ -95,11 +109,10 @@ before any task.
 - Produces:
   ```ts
   type DialogKind = "confirm" | "prompt" | "beforeunload" | "auth";
-  interface PendingDialogView { tabId: string; kind: DialogKind; message: string;
-    defaultValue?: string; origin?: string; realm?: string }   // in ToolReply.dialog
-  interface ViewerDialog extends PendingDialogView { id: string }  // in state.dialogs
+  interface PendingDialogView { id: string; tabId: string; kind: DialogKind; message: string;
+    defaultValue?: string; origin?: string; realm?: string }   // ToolReply.dialog and state.dialogs
   // ToolRequest
-  | { op: "dialog"; action: "accept" | "dismiss"; text?: string; tabId?: string }
+  | { op: "dialog"; dialogId: string; message: string; action: "accept" | "dismiss"; text?: string }
   // ViewerIn
   | { t: "dialog"; id: string; action: "accept" | "dismiss"; text?: string;
       username?: string; password?: string }
@@ -107,7 +120,9 @@ before any task.
 
 - [ ] **Step 1: Failing tests:**
   - `click that opens a confirm replies with the dialog` (reply ok, `dialog.kind === "confirm"`, within the action timeout).
-  - `snapshot on a blocked tab returns the dialog line`; `click on a blocked tab fails with dialog_open`; `actions on another tab work`.
+  - `snapshot on a blocked tab returns the dialog line`; `click on a blocked tab fails with dialog_open before queueing`.
+  - `browser_dialog answers while the opening click is still pending`; `an action on another tab runs while a confirm is held` (both with the opening action unsettled).
+  - `a stale dialogId is refused`; `a mismatching message is refused`.
   - `dialog accept with text answers a prompt`; `dismiss answers a confirm`; `beforeunload accept lets the navigation go on`.
   - `an alert is closed at once and noted`.
   - `a pending dialog survives until answered and is named in the next reply` (fake clock advanced an hour; still pending).
@@ -128,8 +143,9 @@ before any task.
 - Modify: `plugins/browser/README.md`
 - Test: `plugins/browser/test/tools.test.ts`
 
-- [ ] **Step 1: Failing tests:** `browser_dialog spec: key, ask policy, schema`;
-  `accept maps to op dialog`; `no dialog → actionable ToolError`;
+- [ ] **Step 1: Failing tests:** `browser_dialog spec: key, ask policy, required dialogId and message, keyArgs`;
+  `accept maps to op dialog with dialogId and message`; `the dialog line names the id and the 300-char message`;
+  `a stale dialogId is refused` and `a mismatching message is refused` (daemon reply mapped to the actionable text); `no dialog → actionable ToolError`;
   `auth dialog accept → handoff ToolError`; `toResult renders confirm / prompt / beforeunload / auth lines and the alert note`;
   `dialog_open error names browser_dialog`.
 - [ ] **Step 2:** Run → FAIL.
@@ -142,7 +158,7 @@ before any task.
 ### Task 4: HTTP Basic auth and permission reports (daemon)
 
 **Files:**
-- Modify: `plugins/browser/daemon/actions.ts` (401 detection on main-frame responses; `auth` pending dialog; per-origin credential map in memory; `context.route` per origin; reload; clear on a new 401; unsupported-scheme note; permission init script + random binding name; dedup set; `grantPermissions`)
+- Modify: `plugins/browser/daemon/actions.ts` (401 detection on main-frame responses; `auth` pending dialog; per-origin credential map in memory; answer per the spike: CDP `Fetch.authRequired` → `continueWithAuth`, else a `context.route` that adds the header only for top-level navigations to the origin and requests whose frame's page has that origin; reload; clear on a new 401; unsupported-scheme note; permission init script + random binding name; origin from `source.frame`, enumerated names, caps (5 per page load, 50 pairs); dedup set; `grantPermissions` only for recorded pairs)
 - Modify: `plugins/browser/daemon/protocol.ts` (`ViewerIn` `permission`; `ViewerOut` `permission`)
 - Modify: `plugins/browser/daemon/viewer.ts` (auth answer and permission grant only while control is `user`)
 - Create: `plugins/browser/daemon/permissions.ts` (the init script source and the binding handler; pure, unit-testable)
@@ -153,9 +169,11 @@ before any task.
   - `viewer credentials sign in and reload`; `the agent's next reply notes the sign-in`.
   - `credentials never leave the daemon memory` (the password string absent from every reply, note, viewer message, log line captured, and the profile and state directories).
   - `credentials go only to the exact origin` (a request to another port / host has no header).
+  - `a cross-site page's request to the signed-in origin carries no Authorization` (fetch, img and form post from another origin's page; a service-worker request).
   - `a new 401 clears the credentials and asks again`.
   - `auth answer refused without control`.
-  - `notifications request is reported once per origin`; `clipboard grant from the panel takes effect`; `geolocation denial is reported as unavailable`; `permission grant refused without control`; `the wrapper returns the page the same result`.
+  - `notifications request is reported once per origin`; `clipboard grant from the panel takes effect`; `geolocation denial is reported as unavailable`; `permission grant refused without control`; `the wrapper returns the page the same result`;
+    `a forged origin in the payload is ignored`; `an unknown permission is dropped`; `reports are capped per page`; `wrapped functions keep a native toString`.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3:** Implement (approach per the Task 1 spike).
 - [ ] **Step 4:** Rerun → PASS.
@@ -170,7 +188,7 @@ before any task.
 - Create: `plugins/browser/daemon/viewport.ts` (apply / restore a profile to a page through CDP; mobile UA derivation; tap and pan translation for the desktop profile)
 - Modify: `plugins/browser/daemon/actions.ts` (profile applied to new tabs; restore on hand back serialized before the request queue)
 - Modify: `plugins/browser/daemon/state.ts` (hand back hook that awaits the restore)
-- Modify: `plugins/browser/daemon/viewer.ts` (`viewport` only while control is `user`; `touch` dispatch)
+- Modify: `plugins/browser/daemon/viewer.ts` (`viewport` only while control is `user`; `touch` dispatch; the mouse input clamp (:375-376) and the screencast `maxWidth` / `maxHeight` / scale (:178-179, :270, :302-303) follow the current profile)
 - Test: `plugins/browser/test/daemon/viewport.test.ts`
 
 - [ ] **Step 1: Failing tests:**
@@ -180,6 +198,8 @@ before any task.
   - `touch tap in phone dispatches touch events` (page `touchstart` listener fires).
   - `touch tap in desktop clicks`; `one-finger pan in desktop scrolls`.
   - `state carries the viewport`.
+  - `phone profile accepts input at y 843`; `phone screencast frames are portrait`; `restore returns the clamp and frames to desktop`.
+  - `a popup opened in phone gets the phone profile`.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3:** Implement.
 - [ ] **Step 4:** Rerun → PASS.

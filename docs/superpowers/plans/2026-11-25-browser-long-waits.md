@@ -29,8 +29,15 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 - Constants: `TOOL_WATCH_INTERVAL_MS = 10_000`, `TOOL_WATCH_TIMEOUT_MS = 5_000`,
   `TOOL_WATCH_MAX_FAILURES = 3`; a missing watcher (extension off, unloaded, upgraded without one)
   wakes at once. Deadline: `least(watch.deadlineMs, tools.approvalTimeoutHours)`.
-- In a watch call scope `ctx.deviceAccess.request` runs only on a running instance with the service
-  running (`not_running` otherwise) and refreshes last use; `ensureService` is refused there.
+- `ctx.deviceAccess.request` option `ifRunning`: only a running instance with the service running
+  answers (`not_running` otherwise), nothing is resumed or started, last use is refreshed; forced in a
+  watch call scope, where `ensureService` is refused.
+- The watcher passes the pipeline's own pre-call gate (one extracted function: enabled + loaded,
+  `isToolOff`, effective config valid); any refusal wakes without calling the watcher.
+- Config (adding-config, regenerate `docs/config.md`): `tools.watchConcurrency` (default 50),
+  `tools.maxWatchedWaitsPerAccount` (default 10).
+- Daemon heartbeat `WATCH_HEARTBEAT_MS = 600_000`; watch ops never take the hand-back note or the
+  unreported notes.
 - Waits ≤ 60 s stay in-call, unchanged and cardless; a longer wait needs a condition.
 - No new model-visible input outside tool results; no `DriftReason`.
 - Applied migrations immutable; the new migration follows `0108_question_skipped.sql`.
@@ -59,6 +66,13 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
    unavailable-tool result, no stuck run. → Task 3 test `missing watcher wakes the call`.
 5. **A message from the person during the wait**: `WAIT_SKIPPED_TEXT`, no handler call, no later
    wake. → Task 2 test `skipped watched wait is never woken`; Task 4 test `skip text of a watched wait`.
+6. **A wait longer than the device's running limit**: ends honestly and resumes nothing. → Task 3 test
+   `a parked wait past maxRunningMinutes ends honestly and resumes nothing`; Task 6 test
+   `not_running on watch_end → device stopped ToolError, no ensureService`.
+7. **Tool switched off or config invalid while parked**: the watcher is never called again. → Task 3
+   tests `tool switched off while parked wakes and never calls the watcher`, `invalid effective config wakes`.
+8. **A hand back during a wait**: the note reaches the result, not a poll. → Task 7 test
+   `a hand back during a watch is reported by watch_end's reply, not lost to polls`.
 
 ---
 
@@ -82,7 +96,8 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 
 **Files:**
 - Modify: `packages/plugin-sdk/src/tool.ts` (`InputRequired.watch`, `ToolWatchContext`, `ToolWatcher`)
-- Modify: `packages/plugin-sdk/src/ctx.ts` (`tools.register(spec, handler, opts?)`; `DeviceAccessErrorCode` + `not_running` with TSDoc "only a watcher's request")
+- Modify: `packages/plugin-sdk/src/tool.ts` (`ToolCallContext.resume.outcome: "answered" | "woken" | "expired"`)
+- Modify: `packages/plugin-sdk/src/ctx.ts` (`tools.register(spec, handler, opts?)`; `DeviceAccessCtx.request` option `ifRunning?: boolean`; `DeviceAccessErrorCode` + `not_running`)
 - Modify: `packages/plugin-sdk/src/cards.ts` (question card `state` + `woken`; `renderCardAsText` label "Wait ended")
 - Modify: `packages/kernel/src/ctx/create-ctx.ts` (`RegisteredTool` gains `watch?: ToolWatcher`; `register` checks `typeof opts.watch === "function"` and keeps it as frozen as the handler)
 - Modify: `packages/kernel/src/tools/registry.ts` (`watcher(source): ToolWatcher | undefined` next to `handler(source)` :497)
@@ -97,6 +112,8 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
   export interface ToolWatchContext extends Omit<ToolCallContext, "resume"> { state: unknown }
   export type ToolWatcher = (ctx: ToolWatchContext) => Promise<"settle" | "pending">;
   tools.register(spec: ToolSpec, handler: ToolHandler, opts?: { watch?: ToolWatcher }): void;
+  resume?: { state: unknown; answer: FormAnswer | null; outcome: "answered" | "woken" | "expired" }
+  deviceAccess.request(call, { service, body, timeoutMs, ifRunning?: boolean }): Promise<Uint8Array>
   ToolRegistry.watcher(source: ResolvedTool["source"]): ToolWatcher | undefined
   ```
 
@@ -124,6 +141,7 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
   ```
 - Create: `packages/kernel/src/tools/tool-watch-queue.ts` (no Nest deps: `TOOL_WATCH_QUEUE = "cap-kernel-tool-watch"`, `TOOL_WATCH_JOB = "tool-watch"`, `toolWatchJobId`, `ToolWatchJobData = { orgId; questionId; failures }`, the three constants)
 - Modify: `packages/kernel/src/tools/questions.service.ts` (`QuestionAskInput.watch?: { deadlineMs }`; `askIn` sets `expires_at` from `least(deadlineMs, hours)`, stores `watch: true` in the spec JSON, adds `watch: true` to `question_asked`, owes the first `tool-watch` job; new `wake(questionId)` / `wakeIn`; outcome and status unions gain `woken`)
+- Modify: `packages/kernel/src/infra/queue/queue-names.ts` (`KERNEL_QUEUES` + `cap-kernel-tool-watch`), `packages/kernel/src/admin/health.service.ts` (`KERNEL_QUEUE_NAMES`; `test/infra/queue-names.test.ts` keeps them equal)
 - Modify: `packages/kernel/src/infra/outbox/registry.ts` (`OUTBOX_JOBS` entry `tool-watch`: queue, `processedIn` the Task 3 processor, idempotent: "deterministic job id per question; the job re-reads the question and acts only while it is pending", `removeOnComplete: true`)
 - Modify: `packages/kernel/src/conversations/events.ts` (`question_asked.watch?: true`, `question_answered.outcome` + `woken`)
 - Modify: `packages/kernel/src/infra/events/kernel-events.ts` (`question.answered` outcome + `woken`)
@@ -138,7 +156,7 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 - [ ] **Step 1: Failing tests:**
   - `ask with watch sets expires_at to the deadline and owes tool-watch` — outbox row with job id `tool-watch-<id>`, `runAt ≈ now + 10 s`, data has `orgId`; `question_asked.payload.watch === true`.
   - `deadline is bounded by approvalTimeoutHours` — `deadlineMs` 48 h with config 24 h → `expires_at ≈ now + 24 h`.
-  - `wake settles a pending question and resumes the waiting run` — status `woken`, `question_answered { outcome: "woken", byAccountId: null, answer: null }`, run `queued`, resume job owed.
+  - `wake settles a pending question and resumes the waiting run` — status `woken`, `question_answered { outcome: "woken", byAccountId: null, answer: null }`, run `queued`, resume job owed; after commit the event log is notified and `question.answered` (outcome `woken`) emitted once.
   - `wake, answer and expire race: one wins` — the three concurrently on a due question; exactly one effective outcome, one `question_answered`.
   - `skipped watched wait is never woken` — `skipPendingIn` then `wake` → `settled`, no event.
 - [ ] **Step 2:** Run → FAIL.
@@ -153,13 +171,14 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 **Repo:** core
 
 **Files:**
-- Create: `packages/kernel/src/tools/tool-watch.processor.ts` (`@Processor(TOOL_WATCH_QUEUE, { concurrency: 10 })`, every job inside `runJob` with the data's `orgId` as its org scope)
+- Create: `packages/kernel/src/tools/tool-watch.processor.ts` (`configuredProcessor` with `tools.watchConcurrency`, every job inside `runJob` with the data's `orgId` as its org scope)
 - Create: `packages/kernel/src/tools/tool-watch.service.ts` (`poll(job, token)`: read, resolve watcher, build context, call, wake / re-delay / count failures)
 - Create: `packages/kernel/src/tools/tool-watch.module.ts` (`QueueModule.registerQueue(TOOL_WATCH_QUEUE)` + the processor; imported only by `WorkerModule`)
 - Modify: `packages/kernel/src/roles/worker.module.ts` (import `ToolWatchModule`)
-- Modify: `packages/kernel/src/tools/pipeline.ts` (export the handler-context builder of `execute` :3359 as `extensionCallContext(...)` so the job builds the identical `ToolCallContext`)
+- Modify: `packages/kernel/src/tools/pipeline.ts` (export the handler-context builder of `execute` :3359 as `extensionCallContext(...)`, and extract the pre-call gate of `execute` (:3427-3451: enabled + loaded, `switches.isToolOff`, effective config `ok` / `needsConfig`) into `extensionCallGate(...)`, used by both `execute` and the job)
+- Modify: `packages/kernel/src/config/schema.ts` (`tools.watchConcurrency`, default 50) + `docs/config.md` (`pnpm gen:config-docs`, `pnpm check:config-docs`)
 - Modify: `packages/kernel/src/tools/call-scope.ts` (`CallScope.watch?: true`; `attachCallScope(ctx, facts, { watch })`)
-- Modify: `packages/kernel/src/device-access/device-access.service.ts` (watch scope: `request` → `DeviceServices.request(..., { ifRunning: true })`, `not_running` on a stopped instance or service; `ensureService` refused with a plain error)
+- Modify: `packages/kernel/src/device-access/device-access.service.ts` (`request` option `ifRunning` → `DeviceServices.request(..., { ifRunning: true })`, `not_running` on a stopped instance or service; forced in a watch scope; `ensureService` refused there with a plain error)
 - Modify: `packages/kernel/src/sandbox/device-services.ts` (`request` option `ifRunning`: uses the running instance only, refreshes last use, never resumes; reuse the `ifRunning` path of `ensure` / `status`)
 - Modify: `packages/testing/fixtures/extensions/fake-tools-ui/src/index.ts` (a `wait` tool: first call returns `InputRequired` with `watch`; watcher returns `settle` when `ctx.kv` holds `go` for the state's key, throws on `fail`, else `pending`; resume returns `met` / `not met`)
 - Modify: the device-fake fixture's echo service test helper if needed for the suspended-device case
@@ -179,7 +198,10 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
   - `a settle before the suspend resumes through the re-check` — a test seam delays the suspend; one resume.
   - `watcher gets the call's identity` — `callId`, `idempotencyKey`, `accountId`, `ownerAccountId`, `conversationId` equal the handler's.
   - `watched wait in an unattended fail-mode run is allowed` (with Task 4).
-  - device-access: `watch scope request on a suspended device rejects not_running and resumes nothing`; `watch scope request on a running device refreshes last use`; `watch scope ensureService is refused`.
+  - device-access: `watch scope request on a suspended device rejects not_running and resumes nothing`; `ifRunning request from a handler behaves the same`; `watch scope request on a running device refreshes last use`; `watch scope ensureService is refused`.
+  - `a parked wait past maxRunningMinutes ends honestly and resumes nothing` (sweep seam suspends the instance; watcher gets `not_running` → woken; the handler's `ifRunning` request also `not_running`; instance stays suspended).
+  - `tool switched off while parked wakes and never calls the watcher`; `invalid effective config wakes`.
+  - `a backlog longer than one interval does not lose the wait` (pause the worker for 3 intervals; the wait still settles when the condition is set).
   - Container: `two workers poll one wait: one wake`.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3:** Implement per spec §5.3 (`job.moveToDelayed(Date.now() + TOOL_WATCH_INTERVAL_MS, token)` + `throw new DelayedError()`; `job.updateData` for `failures`; a watcher's `reportBlockedHosts` lands in the throwaway watch scope that nothing reads).
@@ -193,12 +215,15 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 **Repo:** core
 
 **Files:**
-- Modify: `packages/kernel/src/tools/pipeline.ts` (`isInputRequired` :885 and the `input_required` mapping :3500 carry `watch`; `askInput` :3312: `watch` without a registered watcher → `Tool <key> asked for a watched wait but registers no watcher.`, invalid `deadlineMs` → invalid-form text, pass `watch` to `questions.ask`; the unattended `fail` branch :1902 keeps outcomes with `watch`; `skippedResult` :284 gives `WAIT_SKIPPED_TEXT` for a question whose spec has `watch`)
+- Modify: `packages/kernel/src/tools/pipeline.ts` (`isInputRequired` :885 and the `input_required` mapping :3500 carry `watch`; `askInput` :3312: `watch` without a registered watcher → `Tool <key> asked for a watched wait but registers no watcher.`, invalid `deadlineMs` → invalid-form text, pass `watch` to `questions.ask`; the unattended `fail` branch :1902 keeps outcomes with `watch`; `skippedResult` :284 gives `WAIT_SKIPPED_TEXT` (`isError: false`, display summary 等待因新消息结束 / Wait ended by your message) for a question whose spec has `watch`; `processCall` :1332 passes `resume.outcome` from the round's status; `askInput` refuses a watch past `tools.maxWatchedWaitsPerAccount` pending watched questions of the trigger account)
+- Modify: `packages/kernel/src/config/schema.ts` (`tools.maxWatchedWaitsPerAccount`, default 10) + `docs/config.md` (`pnpm gen:config-docs`)
 - Test: `packages/kernel/test/tools/pipeline.test.ts`, `packages/kernel/test/tools/questions-skip.test.ts`
 
 - [ ] **Step 1: Failing tests:** `watched wait without watcher is an error result`;
   `invalid deadline is an error result`; `unattended fail mode keeps a watched wait`;
-  `unattended fail mode still refuses an unwatched input request`; `skip text of a watched wait`.
+  `unattended fail mode still refuses an unwatched input request`; `skip text of a watched wait` (isError false);
+  `resume carries outcome answered / woken / expired`; `the eleventh pending watched wait of one account is refused`;
+  `deadline clamp shorter than the asked deadline ends the wait at the clamp with outcome expired`.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3:** Implement.
 - [ ] **Step 4:** Rerun → PASS.
@@ -212,13 +237,14 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 
 **Files:**
 - Modify: `apps/web/src/lib/conversations.ts` (`question_asked.watch?: true`; outcome + `woken`), `apps/web/src/lib/trajectories.ts` (outcome union)
-- Modify: `apps/web/src/components/QuestionCard.tsx` (wait card when `watch`: title, deadline, the form's control; `woken` → 等待已结束 / Wait ended; `expired` on a watched question → 等待已超时 / Wait timed out)
+- Modify: `packages/kernel/src/runtime/waits.ts` (`surfaceInRoot`: `subagent_waiting` gains `watch: true` for a watched question), `packages/kernel/src/conversations/events.ts` (the field)
+- Modify: `apps/web/src/components/QuestionCard.tsx` (wait card when `watch`, also for a root's `subagent_waiting` with `watch`: title, deadline, the form's single one-value choice as one button 结束等待; `woken` → 等待已结束 / Wait ended; `expired` on a watched question → 等待已超时 / Wait timed out)
 - Modify: `apps/web/messages/zh.json`, `apps/web/messages/en.json`
 - Modify: `packages/kernel/src/channels/outbound.ts` (`question_answered` :1153 passes `woken` as the card state)
-- Modify: `.agents/skills/writing-tools/SKILL.md` (InputRequired section: watched waits, watcher rules, `not_running`, `woken`, `WAIT_SKIPPED_TEXT`, unattended), `.agents/skills/replay-evals/SKILL.md` (a woken wait and its skip text: in the log, no `DriftReason`), `.agents/skills/writing-channels/SKILL.md` (card state `woken`)
+- Modify: `.agents/skills/writing-tools/SKILL.md` (InputRequired section: watched waits, watcher rules and the shared gate, `ifRunning` / `not_running`, `resume.outcome`, `woken`, `WAIT_SKIPPED_TEXT`, the per-account cap, unattended runs and schedule `overlap`), `.agents/skills/replay-evals/SKILL.md` (a woken wait and its skip text: in the log, no `DriftReason`), `.agents/skills/writing-channels/SKILL.md` (card state `woken`)
 - Test: `apps/web/test/tool-cards.test.tsx` (QuestionCard cases), `packages/kernel/test/channels/outbound.test.ts` (question card cases), `packages/kernel/test/evals/reconstruct.test.ts` (case `a woken watched wait rebuilds byte for byte`)
 
-- [ ] **Step 1: Failing tests:** web `wait card shows the deadline and the end control`, `woken reads Wait ended`;
+- [ ] **Step 1: Failing tests:** web `wait card shows the deadline and one end button`, `woken reads Wait ended`, `a sub-agent's watched wait renders as a wait card in the root`;
   IM `woken question updates the card to state woken`; replay `a woken watched wait rebuilds byte for byte`.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3:** Implement; `pnpm check:web-ui`, `pnpm check:i18n`.
@@ -232,7 +258,7 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 **Repo:** plugins (after the core release carrying Tasks 1–5; bump the SDK with the repo's single-instance override)
 
 **Files:**
-- Modify: `plugins/browser/src/tools.ts` (`WAIT` spec: `timeoutMs` max 86_400_000, `urlContains`, `download`, description; handler split ≤ 60 s / > 60 s; register with `{ watch }`)
+- Modify: `plugins/browser/src/tools.ts` (`WAIT` spec: `timeoutMs` max 86_400_000, `urlContains`, `download`, description incl. the running-limit and scheduled-task sentences; handler split ≤ 60 s / > 60 s; register with `{ watch }`)
 - Create: `plugins/browser/src/wait.ts` (long-wait handler, watcher, resume outcome mapping per spec §6.1)
 - Modify: `plugins/browser/src/i18n.ts` (wait form title per condition, 结束等待 / End the wait)
 - Modify: `plugins/browser/README.md`, `.changeset/<name>.md` (browser)
@@ -246,9 +272,11 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
   - `wait of 60 s stays in-call` (one `wait` request, no InputRequired).
   - `long wait arms a watch and returns a watched InputRequired` (`watch_start` body, `watch.deadlineMs`, form with `end`).
   - `long wait without a condition is a ToolError`; `two conditions are a ToolError`.
-  - `watcher maps pending / met / ended / unknown / not_running`; `watcher never calls ensureService`.
+  - `watch_start sends remainingMs`; `watcher passes ifRunning and maps pending / met / ended / unknown / not_running`; `watcher never calls ensureService`.
   - `resume: met → result with duration and detail`; `ended dialog → dialog line`; `tab_closed → ToolError`;
-    `user ended → ToolError`; `past deadline → timeout ToolError`; `unknown watch after restart checks once`.
+    `outcome answered → user ended ToolError`; `outcome expired or ended/deadline → timeout text with elapsed`;
+    `outcome woken while pending → interrupted ToolError`; `not_running on watch_end → device stopped ToolError, no ensureService`;
+    `unknown watch checks once with ifRunning`.
 - [ ] **Step 2:** `pnpm exec vitest run plugins/browser/test/tools.test.ts` → FAIL.
 - [ ] **Step 3:** Implement.
 - [ ] **Step 4:** Rerun → PASS; `capybara-plugin check` (tool design check).
@@ -261,19 +289,19 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 **Repo:** plugins
 
 **Files:**
-- Modify: `plugins/browser/daemon/protocol.ts` (`WaitCondition`, `watch_start` / `watch_poll` / `watch_end`, `ToolReply.watch`, `state.waiting`, `MAX_WATCHES = 16`, `WATCH_HEARTBEAT_MS = 120_000`; short `wait` gains `urlContains` / `download`)
+- Modify: `plugins/browser/daemon/protocol.ts` (`WaitCondition`, `watch_start { remainingMs }` / `watch_poll` / `watch_end`, `ToolReply.watch`, `state.waiting`, `MAX_WATCHES = 16`, `WATCH_HEARTBEAT_MS = 600_000`; short `wait` gains `urlContains` / `download`)
 - Modify: `plugins/browser/daemon/actions.ts` (watch registry: arm per tab, evaluate, latch, end on dialog / tab close / deadline; heartbeat drop; download watch hook in `onDownload`; `waitOp` :1235 new conditions)
 - Modify: `plugins/browser/daemon/state.ts` (a polled pending watch keeps the daemon from its idle stop)
-- Modify: `plugins/browser/daemon/main.ts` (watch ops bypass the takeover refusal and `dropHandoff`)
+- Modify: `plugins/browser/daemon/main.ts` (watch ops in their own handler like the handoff ops: bypass the takeover refusal and `dropHandoff`; `watch_start` / `watch_poll` do not call `takeHandbackNote` (:388-391) or splice `unreported`; `watch_end` does)
 - Modify: `plugins/browser/daemon/viewer.ts` (`state.waiting`), `plugins/browser/ui-src/panel/panel.ts` + `i18n.ts` (status line)
 - Test: `plugins/browser/test/daemon/tools.test.ts`, `plugins/browser/test/daemon/state.test.ts`, `plugins/browser/test/panel/panel.test.ts`
 
 - [ ] **Step 1: Failing tests:**
   - `watch latches text that appears after the start` (a test page adds the text after a click the test triggers).
   - `watch on urlContains`, `watch on navigation`, `watch on download saves and reports the path`.
-  - `dialog on the watched tab ends the watch with reason dialog`; `closing the tab ends it with tab_closed`; `deadline ends it`.
+  - `dialog on the watched tab ends the watch with reason dialog`; `closing the tab ends it with tab_closed`; `deadline (from remainingMs on the device clock) ends it`.
   - `watch_start is idempotent per id`; `watch_poll of an unknown id is unknown`; `watch_end forgets`.
-  - `a watch without a poll for 2 minutes is dropped` (fake clock); `a polled watch keeps the daemon from its idle stop`.
+  - `a watch without a poll for 10 minutes is dropped` (fake clock); `a hand back during a watch is reported by watch_end's reply, not lost to polls`; `unreported notes survive polls`; `auth dialog or alert does not end a watch`; `a polled watch keeps the daemon from its idle stop`.
   - `watch ops run while taken over and keep the pending handoff`.
   - `a 17th watch drops the oldest latched one`.
   - panel `status line shows the waiting label and time`.
@@ -307,6 +335,6 @@ and channel plugins, vitest (kernel integration tests with testcontainers).
 - [ ] **Step 1:** Core PR(s) for Tasks 1–5 green; Task 8 released and pinned; then the main session releases core (SDK and kernel rc).
 - [ ] **Step 2:** Plugins PR for Tasks 6–7 against the released SDK; green; browser rc released.
 - [ ] **Step 3:** Dev stack, docker device: ask the agent to "wait until the page at <local test page> says Done (it flips after 3 minutes)". Expected: one `browser_wait` call, the run `waiting`, the wait card with 结束等待, no model turns for 3 minutes, resume within ~10 s of the flip, result `Waited 3 min …`.
-- [ ] **Step 4:** Same with a download that takes 2 minutes; with 结束等待 pressed mid-wait; with a message sent mid-wait (skip text); with the kernel restarted mid-wait; with the device suspended from the device page mid-wait (`not_running` → honest result, device not resumed by polls).
+- [ ] **Step 4:** Same with a download that takes 2 minutes; with 结束等待 pressed mid-wait; with a message sent mid-wait (skip text); with the kernel restarted mid-wait; with the device suspended from the device page mid-wait (`not_running` → "device stopped" result, device not resumed by polls or by the resumed handler); one wait longer than `maxRunningMinutes` on a dev config lowered to 5 min.
 - [ ] **Step 5:** Local device (`device-local`): one long wait end to end; a Lark conversation shows the wait card and its `woken` state.
 - [ ] **Step 6:** Record results in the PR description; close plugins#207 with the release note.

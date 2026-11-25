@@ -53,11 +53,16 @@ Non-goals
   settles: the session records one **pending dialog** per tab (JS dialogs are modal per page):
   `PendingDialog = { id, tabId, kind: "confirm" | "prompt" | "beforeunload" | "auth",
   message, defaultValue?, origin?, realm?, since }` (message clipped to `MAX_DIALOG_CHARS`).
-- **The request that opened it replies at once.** An agent action races its own completion with
-  "a dialog opened on this tab"; on the dialog it replies `ok` with the dialog in `reply.dialog` (the
-  action's Playwright promise keeps running and settles once the dialog is answered; its late outcome
-  goes to the next reply as a note, through the existing `unreported` path). Without this, Playwright
-  actions on a page with an open dialog never finish.
+- **The request that opened it replies at once, and leaves the serial queue.** An agent action races
+  its own completion with "a dialog opened on this tab"; on the dialog it replies `ok` with the dialog
+  in `reply.dialog`. Today every op but `wait` runs through `BrowserSession.serial()`, a promise chain
+  (`daemon/actions.ts` `run`), so an action whose Playwright promise still waits for the dialog would
+  hold the queue and deadlock the op that answers it. So: (a) when the race ends on the dialog, the
+  action's queue slot is released (the queue advances); its dangling Playwright promise is tracked per
+  tab and its late outcome goes to the next reply as a note through the existing `unreported` path;
+  (b) `op: "dialog"` runs beside the queue, like `wait` (it only answers the tab's pending dialog),
+  still refused while the person holds control; (c) a serial action on a blocked tab fails fast with
+  `dialog_open` before it waits on the queue.
 - **While a JS dialog (confirm, prompt, beforeunload) is pending on a tab** (an `auth` dialog does
   not block: its page is loaded, so only the first bullet applies to it):
   - every ok reply carries `reply.dialog` (the active tab's, or the tab the request touched);
@@ -93,31 +98,46 @@ Non-goals
   text, labelled so) and username / password fields; 登录 sends `{ t: "dialog", id, action: "accept",
   username, password }` over the viewer stream, straight to the daemon (the kernel relays bytes and
   never parses them, browser use spec §6.2).
-- The daemon then adds `Authorization: Basic …` to requests to that exact origin through
-  `context.route` (origin-scoped pattern) and reloads the page. The credentials live only in the
+- The daemon then answers for that exact origin, with browser semantics (only where a browser would
+  send the credentials itself). Preferred, if the Task 1 spike shows it works beside Playwright's own
+  Fetch handling (it answers the proxy's 407): answer the real challenge through CDP
+  `Fetch.authRequired` → `continueWithAuth` for that origin and reload. Otherwise a `context.route`
+  that adds `Authorization: Basic …` **only** to top-level navigations to the origin and to requests
+  whose frame's top-level page has that origin (`route.request().frame()` → its page's main-frame URL
+  origin); never to requests initiated by pages of other origins (a cross-site `fetch`, `<img>`, form
+  post or redirect into the origin) nor to service-worker requests, so the signed-in site gains no
+  CSRF exposure a browser would not have. The credentials live only in the
   daemon's memory for its lifetime (gone at idle stop, never in the profile, never in a reply, a log,
   a viewer message or a note); a later `401` from that origin clears them and raises a new auth
   dialog. The agent's next reply notes `The user signed in to <origin> (HTTP auth).`
 - Proxy auth (the device's egress proxy, `LaunchPlan.proxyAuth`) is untouched: Playwright answers the
   proxy's 407 itself. **First plan task**: spike that a site 401 is visible as described under the
-  device proxy (docker) and with no proxy (local), and that the routed header works through the proxy.
+  device proxy (docker) and with no proxy (local), whether `Fetch.authRequired` can be answered from
+  the daemon's CDP session while Playwright handles the proxy's auth, and that the routed header works
+  through the proxy.
 
 ## 5. Agent tool `browser_dialog`
 
 ```
-browser_dialog { action: "accept" | "dismiss", text?: string, tabId?: string }
+browser_dialog { dialogId: string, message: string, action: "accept" | "dismiss", text?: string }
 ```
 
-- Answers the pending dialog of the active tab (or `tabId`): `text` only for a prompt (`accept` with no
-  text accepts the default value). Alerts never need it (closed at once). No pending dialog →
-  ToolError `No dialog is open on this tab; call browser_snapshot to see the page.`
+- Answers one specific pending dialog: `dialogId` (short id shown in the dialog line, e.g. `d3`) and
+  `message` (the dialog's message as the dialog line quotes it, clipped to 300 characters) are
+  required, so the approval card shows exactly what is being confirmed and an approval given hours
+  later can never answer a newer dialog. The daemon refuses a `dialogId` that is not the tab's pending
+  dialog, or a `message` that differs from its own 300-character clip: `The dialog changed; call
+  browser_snapshot to see the current one.` `text` only for a prompt (`accept` with no text accepts the
+  default value). Alerts never need it (closed at once). No pending dialog → ToolError `No dialog is
+  open on this tab; call browser_snapshot to see the page.`
 - `defaultPolicy: "ask"` (accepting a confirm can delete or pay; the permission profile decides, as
   for `browser_click`).
 - Refused while the person holds control (the usual `TAKEN_OVER_MESSAGE`).
 - Result: the page line plus `Accepted the confirm dialog "…".` and any note that followed.
+- `keyArgs: ["action", "message", "text"]`.
 - Rendering of a pending dialog in every tool result (`toResult` in `src/browser.ts`):
-  `The page shows a confirm dialog: "…". Answer it with browser_dialog (accept or dismiss) before
-  acting on this tab.` (a prompt adds the default value; `beforeunload`: `The page asks whether to
+  `The page shows a confirm dialog d3: "…". Answer it with browser_dialog (dialogId d3, the message as
+  quoted, accept or dismiss) before acting on this tab.` (a prompt adds the default value; `beforeunload`: `The page asks whether to
   leave (it may have unsaved changes): accept leaves, dismiss stays.`; an auth dialog: the sign-in
   sentence from §4). An alert's note: `The page showed an alert: "…" (closed).`
 
@@ -126,12 +146,20 @@ browser_dialog { action: "accept" | "dismiss", text?: string, tabId?: string }
 - Headless Chromium denies permission requests without a prompt, and CDP has no event for a
   request (the Task 1 spike confirms this on the pinned Chromium; a CDP-native signal, if one exists,
   replaces the wrapper). The daemon wraps the request APIs in an init script
-  (`context.addInitScript`) that calls the original and, only when the result is a denial, reports `{ origin, permission }` to the daemon
-  through a binding (`context.exposeBinding` with a per-daemon random name). Wrapped:
+  (`context.addInitScript`) that calls the original and, only when the result is a denial, reports
+  the permission name to the daemon through a binding (`context.exposeBinding` with a per-daemon
+  random name). Any page script can find and call the binding, so the daemon trusts nothing in the
+  payload but the permission name: the origin is taken from the binding's `source.frame` URL, never
+  from the payload; only the enumerated names (`notifications`, `clipboard-read`, `geolocation`,
+  `camera`, `microphone`) are accepted; reports are capped (at most 5 per page load, 50 distinct
+  origin–permission pairs in the dedupe set); a grant goes only to an origin–permission pair the
+  daemon itself recorded. Wrapped:
   `Notification.requestPermission`, `navigator.clipboard.read` / `readText`, the error callbacks of
   `navigator.geolocation.getCurrentPosition` / `watchPosition` (code 1), and
-  `navigator.mediaDevices.getUserMedia` rejections with `NotAllowedError`. Page-visible behaviour is
-  unchanged (same result, same timing within a microtask).
+  `navigator.mediaDevices.getUserMedia` rejections with `NotAllowedError`. Results are unchanged (same
+  value, same timing within a microtask) and the wrappers keep `Function.prototype.toString` output
+  native-looking; a determined page can still detect the wrapping (accepted for the report's value:
+  without it nobody learns why a button did nothing; the wrapper never changes what the page gets).
 - Reported to the agent as a note in the next reply (deduplicated per origin and permission for the
   daemon's life): `The page asked for notifications permission, which was denied.` plus, for the
   grantable ones, ` The user can allow it from the browser panel.` and for the others
@@ -159,7 +187,14 @@ browser_dialog { action: "accept" | "dismiss", text?: string, tabId?: string }
   coordinate bounds, the screenshot text and the `VIEWPORT` constant stay as they are, and the anti-goal
   "agent refs or coordinates silently invalidated" holds.
 - Viewers: `state.viewport = { width, height, mobile }`; the panel maps input through it (today it
-  uses the `VIEWPORT` constant) and letterboxes the frame by its aspect (portrait in phone).
+  uses the `VIEWPORT` constant) and letterboxes the frame by its aspect (portrait in phone). The daemon
+  follows the current profile too: the viewer's input clamp (`daemon/viewer.ts`, today
+  `VIEWPORT.width/height`) and the screencast's `maxWidth` / `maxHeight` / scale use the profile's
+  size, and return to desktop with the restore.
+- Playwright keeps its own viewport bookkeeping (`page.viewportSize()` stays 1280×800 under a raw
+  CDP override) and may reapply its emulation on new pages and popups; the daemon applies the profile
+  after Playwright's setup of a new page, and the restore must win over any reapply (Task 1 spike
+  confirms both).
 - The takeover note the agent gets after hand back is unchanged; the viewport is already desktop again.
 
 ### 7.2 Touch and keyboard from a compact window
@@ -194,15 +229,16 @@ browser_dialog { action: "accept" | "dismiss", text?: string, tabId?: string }
 
 ## 9. Protocol changes (`daemon/protocol.ts`) and why core does not change
 
-- `ToolRequest`: `{ op: "dialog"; action: "accept" | "dismiss"; text?: string; tabId?: string }`.
-- `ToolErrorCode`: `+ "dialog_open"`. `ToolReply` (ok): `dialog?: PendingDialogView` (no `id`,
-  no `since`).
+- `ToolRequest`: `{ op: "dialog"; dialogId: string; message: string; action: "accept" | "dismiss";
+  text?: string }`, run beside the serial queue (§3).
+- `ToolErrorCode`: `+ "dialog_open"`. `ToolReply` (ok): `dialog?: PendingDialogView` (with its short
+  `id`, without `since`).
 - `ViewerIn`: `{ t: "dialog"; id; action; text?; username?; password? }`,
   `{ t: "permission"; origin; permission; allow: true }`, `{ t: "viewport"; profile }`,
   `{ t: "touch"; kind; points }`. The daemon refuses `dialog`, `permission` and `viewport`
   from a viewer while control is `agent` (the panel hides them, the daemon enforces it).
-- `ViewerOut`: `state` gains `dialogs: (PendingDialogView & { id })[]` (one per tab at most; a viewer
-  answer names the `id`, so a stale click never answers a newer dialog) and `viewport`; new
+- `ViewerOut`: `state` gains `dialogs: PendingDialogView[]` (one per tab at most; a viewer answer
+  names the `id`, so a stale click never answers a newer dialog) and `viewport`; new
   `{ t: "permission"; origin; permission; grantable }`; the `dialog` message stays for `alert` and `file`
   (informational).
 - Core: none. Dialog text reaches the model only inside browser tool results (recorded, so no
@@ -218,7 +254,8 @@ browser_dialog { action: "accept" | "dismiss", text?: string, tabId?: string }
   any other viewer; the agent can never submit credentials.
 - Accepting a dialog is an action under the permission profile; viewport, permission grants and
   credentials are person-only and control-gated in the daemon.
-- The init script changes no page-visible result; its binding name is random per daemon start.
+- The init script changes no page-visible result; its binding is callable by any page, so its payload
+  is untrusted: origin from the calling frame, enumerated permission names, capped reports.
 
 ## 11. Rulings (designer, delegated by the maintainer)
 
@@ -226,16 +263,23 @@ browser_dialog { action: "accept" | "dismiss", text?: string, tabId?: string }
   request replies at once. Alerts are closed at once and reported (no decision to make).
 - R2 No hold timer and no automatic default: a pending dialog waits for an answer, its tab's close or
   the daemon's stop.
-- R3 One tool `browser_dialog` (`accept` / `dismiss`, `text`), `defaultPolicy: "ask"`.
+- R3 One tool `browser_dialog` (`dialogId`, `message`, `accept` / `dismiss`, `text`),
+  `defaultPolicy: "ask"`; the daemon verifies id and message, so an approval covers exactly the dialog
+  it shows (review I6).
 - R4 A blocked page's snapshot returns the dialog instead of the tree; other actions on the tab fail
-  with `dialog_open`; other tabs work.
-- R5 HTTP auth: Basic only, detected from the 401 response, credentials by the person only, applied by
-  an origin-scoped route header kept in daemon memory; the agent is pointed to `browser_handoff`.
-- R6 Permissions: detection through an init-script wrapper that only reports denials; the person may
+  with `dialog_open` before queueing; the opening action leaves the serial queue and `op: "dialog"`
+  runs beside it, so other tabs and the answer never wait on the held action (review C1).
+- R5 HTTP auth: Basic only, detected from the 401 response, credentials by the person only, kept in
+  daemon memory, answered with browser semantics (CDP `continueWithAuth` if the spike allows, else a
+  route header only for the origin's own pages and navigations, review I7); the agent is pointed to
+  `browser_handoff`.
+- R6 Permissions: detection through an init-script wrapper that only reports denials, with an
+  untrusted payload (origin from the frame, enumerated names, capped; review I8); the person may
   grant notifications and clipboard reading for the daemon's life; geolocation / camera / microphone are
   reported as unavailable; the agent cannot grant.
 - R7 Viewport: `desktop` and `phone` only (no tablet); person-only during takeover; hand back
-  restores desktop, so agent coordinates never change.
+  restores desktop, so agent coordinates never change; the daemon's input clamp and screencast follow
+  the profile (review I9).
 - R8 Compact takeover inside the drawer; 手机宽度 suggested, never automatic.
 - R9 Touch: phone profile dispatches touch events; desktop translates tap → click and pan → wheel.
 - R10 Soft keyboard through an off-screen textarea using the existing `char` key path.
