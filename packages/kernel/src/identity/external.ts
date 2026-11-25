@@ -4,12 +4,12 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { LinkedVia } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { audit } from "./audit.js";
 import { ExternalIdentityLock } from "./external-identity-lock.js";
+import { LoginSourcesService } from "./login-sources.js";
 
 /** `<插件名>:<租户 id>`；插件名同清单规则，租户 id 为非空、不含空白的串。 */
 const SOURCE_RE = /^([a-z0-9][a-z0-9._-]{0,213}):(\S{1,256})$/;
@@ -124,7 +124,8 @@ export class ExternalIdentities {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(ExternalIdentityLock) private readonly identityLock: ExternalIdentityLock,
-    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(LoginSourcesService)
+    private readonly loginSources: Pick<LoginSourcesService, "isTrusted">,
   ) {}
 
   /** The account the external identity is linked to (in the context's transaction when there is one); undefined when unlinked. */
@@ -187,7 +188,7 @@ export class ExternalIdentities {
         id: accountId,
         display_name: id.displayName,
         email: id.email ?? null,
-        email_verified: id.emailVerified && this.trusted(id.source),
+        email_verified: id.emailVerified && (await this.trusted(id.source)),
       })
       .execute();
     if (!(await this.insertIdentity(accountId, id, opts.linkedVia))) {
@@ -209,9 +210,12 @@ export class ExternalIdentities {
     await this.identityLock.lock(id);
   }
 
-  /** 身份源键（`<插件名>:<租户 id>`）是否在 `auth.trustedIdentitySources` 中：按完整键比较，信任按租户（Ruling A19）。 */
-  private trusted(source: string): boolean {
-    return this.config.get().auth.trustedIdentitySources.includes(source);
+  /**
+   * Whether the source key (`<plugin>:<tenant>`) is trusted: its tenant is among the login
+   * source's trusted tenants, full key match, trust is per tenant (Ruling A19).
+   */
+  private trusted(source: string): Promise<boolean> {
+    return this.loginSources.isTrusted(source);
   }
 
   private async findRow(
@@ -270,11 +274,13 @@ export class ExternalIdentities {
   }
 
   /**
-   * 可合并的既有账号：身份源键在 `auth.trustedIdentitySources` 中、身份邮箱已验证，
+   * 可合并的既有账号：身份源键受信任（登录源的可信租户）、身份邮箱已验证，
    * 且恰好有一个邮箱已验证、邮箱相同（不区分大小写）的账号；否则 undefined（多个候选时不猜，新建）。
    */
   private async mergeTarget(id: ExternalIdentity): Promise<string | undefined> {
-    if (!id.emailVerified || id.email === undefined || !this.trusted(id.source)) return undefined;
+    if (!id.emailVerified || id.email === undefined || !(await this.trusted(id.source))) {
+      return undefined;
+    }
     const rows = await this.db
       .selectFrom("accounts")
       .select("id")

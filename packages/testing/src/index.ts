@@ -227,6 +227,7 @@ export {
   waitForEvent,
   waitForTerminal,
 } from "./kernel-helpers.js";
+export { type LoginSourceSeed, seedLoginSources } from "./login-sources.js";
 export {
   FAKE_PNG_BASE64,
   isPngBase64,

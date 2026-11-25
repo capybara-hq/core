@@ -9,6 +9,7 @@ import {
   fakeGroupMessage,
   type Harness,
   replicaOf,
+  seedLoginSources,
   startFakeChannelServer,
   startTestPostgres,
   startTestRedis,
@@ -104,7 +105,7 @@ describe("M4 第一段验收（双副本）", () => {
         },
       },
       config: {
-        auth: { cookieSecure: false, loginSources: ["fake-im"] },
+        auth: { cookieSecure: false },
         http: { publicUrl: PUBLIC },
         channels: { leaseTtlMs: LEASE_TTL_MS, scanIntervalMs: 300 },
         runtime: { jobLockMs: 2000, stalledIntervalMs: 1000 },
@@ -114,6 +115,8 @@ describe("M4 第一段验收（双副本）", () => {
     const raw = createDb(harness.dbUrl, 3);
     cleanups.push(() => raw.destroy());
     const db: KernelSchemaDb = kernelDb(raw);
+    // fake-im on the login page; carol signs up through it below
+    await seedLoginSources(db, [{ plugin: "fake-im", signUp: "create" }]);
 
     // ---- HTTP：杀副本前严格交替发往两个副本；之后只发往幸存的副本 ----
     let dead: number | undefined;

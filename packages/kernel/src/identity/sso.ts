@@ -1,10 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import {
-  IDENTITY_SOURCE_EXTENSION_POINT,
-  type IdentitySource,
-  isIdentitySourceRefused,
-  type Logger,
-} from "@capybara-hq/plugin-sdk";
+import { type IdentitySource, isIdentitySourceRefused, type Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ApiError } from "../errors.js";
@@ -13,6 +8,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { isSafeReturnPath } from "../tools/oauth/flow-paths.js";
 import { ExternalIdentities, IdentityNotVerified } from "./external.js";
+import { LoginSourcesService } from "./login-sources.js";
 import { SSO_PATH_PREFIX, ssoCallbackPath } from "./sso-paths.js";
 
 /** state 的有效期（秒）。 */
@@ -98,25 +94,27 @@ export class SsoFlow {
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ExtensionRegistry)
-    private readonly registry: Pick<ExtensionRegistry, "list" | "deploymentConfig">,
+    private readonly registry: Pick<ExtensionRegistry, "deploymentConfig">,
+    @Inject(LoginSourcesService)
+    private readonly loginSources: Pick<LoginSourcesService, "enabled">,
     @Inject(ExternalIdentities) private readonly external: ExternalIdentities,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
   ) {}
 
-  /** 已启用的登录方式：`auth.loginSources` 中（按其顺序）且已加载、提供 `identity-source@1` 的插件。 */
-  sources(): { plugin: string; label: { zh: string; en: string } }[] {
-    return this.config.get().auth.loginSources.flatMap((plugin) => {
-      const src = this.provider(plugin);
-      return src ? [{ plugin, label: { zh: src.label.zh, en: src.label.en } }] : [];
-    });
+  /**
+   * The login methods on offer: the enabled login sources whose extension is loaded and provides
+   * `identity-source@1`, in login page order (read from PG at each call).
+   */
+  async sources(): Promise<{ plugin: string; label: { zh: string; en: string } }[]> {
+    return (await this.loginSources.enabled()).map(({ plugin, source }) => ({
+      plugin,
+      label: { zh: source.label.zh, en: source.label.en },
+    }));
   }
 
-  private provider(plugin: string): IdentitySource | undefined {
-    if (!this.config.get().auth.loginSources.includes(plugin)) return undefined;
-    const entry = this.registry
-      .list("identity-source")
-      .find((e) => e.plugin === plugin && e.capability === IDENTITY_SOURCE_EXTENSION_POINT);
-    return entry?.impl as IdentitySource | undefined;
+  /** The identity source of `plugin` when its login source is on offer (see {@link sources}). */
+  private async provider(plugin: string): Promise<IdentitySource | undefined> {
+    return (await this.loginSources.enabled()).find((e) => e.plugin === plugin)?.source;
   }
 
   private redirectUri(plugin: string): string {
@@ -151,7 +149,7 @@ export class SsoFlow {
     binding: string,
     sessionAccountId?: string,
   ): Promise<string> {
-    const src = this.provider(plugin);
+    const src = await this.provider(plugin);
     if (!src || !this.config.get().http.publicUrl) return this.loginError("sso.unavailable");
     const state = b64url();
     const nonce = b64url();
@@ -222,7 +220,7 @@ export class SsoFlow {
         error: query.error === "access_denied" ? "sso.access_denied" : "sso.provider_error",
       };
     }
-    const src = this.provider(plugin);
+    const src = await this.provider(plugin);
     if (!src) return { ok: false, error: "sso.unavailable" };
     let identity: Awaited<ReturnType<IdentitySource["callback"]>>;
     try {

@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  seedLoginSources,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -39,7 +44,7 @@ beforeAll(async () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       marketplaces: { official: { enabled: false } },
       http: { port: 0, publicUrl: PUBLIC },
-      auth: { cookieSecure: false, loginSources: ["fake-idp", "not-installed"] },
+      auth: { cookieSecure: false },
       extensions: [FAKE_IDP],
       extensionConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
       extensionPermissions: { autoApprove: true },
@@ -59,6 +64,11 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
+  // after the truncate: it empties deployment_settings (its updated_by references accounts)
+  await seedLoginSources(db, [
+    { plugin: "fake-idp", signUp: "create" },
+    { plugin: "not-installed", signUp: "create" },
+  ]);
   await redis.flushdb();
 });
 
@@ -136,7 +146,7 @@ const me = async (jar: CookieJar) => {
 };
 
 describe("登录方式列表", () => {
-  it("只列出 auth.loginSources 中且提供 identity-source@1 的插件", async () => {
+  it("lists only enabled login sources whose extension provides identity-source@1", async () => {
     const res = await k.http.inject({ method: "GET", url: "/api/v1/auth/sources" });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({

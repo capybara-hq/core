@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres } from "@capybara-hq/testing";
+import { seedLoginSources, startTestPostgres } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -16,7 +16,6 @@ let box: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let accounts: AccountsService;
-let trusted: string[] = [];
 let svc: ExternalIdentities;
 
 beforeAll(async () => {
@@ -28,16 +27,14 @@ beforeAll(async () => {
   raw = createDb(box.url, 10);
   db = kernelDb(raw);
   accounts = accountsFor(db);
-  svc = externalFor(db, () => ({
-    auth: { trustedIdentitySources: trusted },
-  }));
+  svc = externalFor(db);
 });
 afterAll(async () => {
   await raw.destroy();
   await box.stop();
 });
 beforeEach(async () => {
-  trusted = [];
+  // also empties the login sources (deployment_settings references accounts): nothing trusted
   await truncateTables(raw, "capybara.accounts, capybara.audit_events");
 });
 
@@ -50,6 +47,10 @@ const codeOf = async (p: Promise<unknown>) => {
   }
   return undefined;
 };
+
+/** Trusts one tenant of a source (the login sources setting, switched off on the login page). */
+const trust = (plugin: string, tenant: string) =>
+  seedLoginSources(db, [{ plugin, enabled: false, trustedTenants: [tenant] }]);
 
 const MERGE = { allowMerge: true, linkedVia: "sso" } as const;
 const SSO = { linkedVia: "sso" } as const;
@@ -119,7 +120,7 @@ describe("ExternalIdentities.resolve", () => {
 
   it("身份源受信任 + 两侧邮箱都已验证 → 合并到同邮箱账号并审计 identity.linked", async () => {
     const a = await local("alice", "Alice@Example.com", true);
-    trusted = ["lark:t1"];
+    await trust("lark", "t1");
     const r = await svc.resolve(ident(), MERGE);
     expect(r).toEqual({ accountId: a.id, created: false });
     const audits = await db
@@ -134,14 +135,14 @@ describe("ExternalIdentities.resolve", () => {
 
   it("身份源未受信任 → 新建账号（即使邮箱都已验证）", async () => {
     const a = await local("alice", "alice@example.com", true);
-    trusted = ["slack:t1"];
+    await trust("slack", "t1");
     const r = await svc.resolve(ident(), MERGE);
     expect(r.created).toBe(true);
     expect(r.accountId).not.toBe(a.id);
   });
 
   it("受信任但身份邮箱未验证 / 本地账号邮箱未验证 → 新建", async () => {
-    trusted = ["lark:t1"];
+    await trust("lark", "t1");
     const a = await local("alice", "alice@example.com", true);
     const r1 = await svc.resolve(ident({ emailVerified: false }), MERGE);
     expect(r1.created).toBe(true);
@@ -187,7 +188,7 @@ describe("ExternalIdentities.link / unlink / listForAccount", () => {
 
 describe("修复轮 1：合并只在登录路径、不受信任来源不标记邮箱已验证、resolve / link 竞态", () => {
   it("不受信任来源声称已验证的邮箱：新账号不算邮箱已验证；之后受信任来源同邮箱登录 → 另建账号", async () => {
-    trusted = ["lark:t1"];
+    await trust("lark", "t1");
     const evil = await svc.resolve(
       ident({
         source: "slack:t9",
@@ -213,7 +214,7 @@ describe("修复轮 1：合并只在登录路径、不受信任来源不标记�
   });
 
   it("受信任来源新建的账号邮箱算已验证", async () => {
-    trusted = ["lark:t1"];
+    await trust("lark", "t1");
     const r = await svc.resolve(ident(), MERGE);
     const row = await db
       .selectFrom("accounts")
@@ -225,7 +226,7 @@ describe("修复轮 1：合并只在登录路径、不受信任来源不标记�
 
   it("不传 allowMerge（如渠道入站）→ 即使受信任且两侧已验证也不合并", async () => {
     const a = await local("alice", "alice@example.com", true);
-    trusted = ["lark:t1"];
+    await trust("lark", "t1");
     const r = await svc.resolve(ident(), SSO);
     expect(r.created).toBe(true);
     expect(r.accountId).not.toBe(a.id);
@@ -304,9 +305,9 @@ describe("修复波 W1：身份来源（linked_via）与租户级信任", () => 
   it("Ruling A23：通讯录建的身份无论租户是否受信任都能直接登录（身份源登录本身就是证明）", async () => {
     const r = await svc.resolve(ident(), { linkedVia: "directory" });
     const login = () => svc.resolve(ident(), { ...MERGE, login: {} });
-    trusted = [];
+    await seedLoginSources(db, []);
     expect(await login()).toEqual({ accountId: r.accountId, created: false });
-    trusted = ["lark:t1"];
+    await trust("lark", "t1");
     expect(await login()).toEqual({ accountId: r.accountId, created: false });
     // 通讯录身份直接登录不改其来源，也不写 identity.verified
     expect(await linkedVia("lark:t1", "ou_1")).toBe("directory");
@@ -332,7 +333,7 @@ describe("修复波 W1：身份来源（linked_via）与租户级信任", () => 
 
   it("信任按租户：受信任的 lark:t1 不让 lark:t2 的身份算已验证或可合并", async () => {
     const a = await local("alice", "alice@example.com", true);
-    trusted = ["lark:t1"];
+    await trust("lark", "t1");
     const other = await svc.resolve(
       ident({ source: "lark:t2", tenantId: "t2", externalId: "ou_t2" }),
       MERGE,

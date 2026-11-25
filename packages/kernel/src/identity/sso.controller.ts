@@ -54,8 +54,8 @@ export class SsoController {
 
   @Get("sources")
   @Public()
-  sources(): { sources: { plugin: string; label: { zh: string; en: string } }[] } {
-    return { sources: this.flow.sources() };
+  async sources(): Promise<{ sources: { plugin: string; label: { zh: string; en: string } }[] }> {
+    return { sources: await this.flow.sources() };
   }
 
   /**

@@ -53,7 +53,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   accounts = accountsFor(db);
   tokens = apiTokensFor(db);
-  external = externalFor(db, () => ({ auth: { trustedIdentitySources: [] } }));
+  external = externalFor(db);
 });
 afterAll(async () => {
   await k?.close();

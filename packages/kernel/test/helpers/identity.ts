@@ -28,6 +28,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { ExternalIdentities } from "../../src/identity/external.js";
 import { ExternalIdentityLock } from "../../src/identity/external-identity-lock.js";
+import { LoginSourcesService } from "../../src/identity/login-sources.js";
 import { SessionService } from "../../src/identity/sessions.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import type { SuperAdminLock } from "../../src/identity/super-admin.js";
@@ -186,11 +187,34 @@ export function sessionsFor(
   );
 }
 
-export function externalFor(db: Kysely<any>, config: () => unknown): ExternalIdentities {
+/**
+ * The external identities over `db`, trust read from the stored login sources (seed them with
+ * `seedLoginSources`); no extension is loaded.
+ */
+export function externalFor(db: Kysely<any>): ExternalIdentities {
   const h = handlesFor(db);
-  return new ExternalIdentities(h.db, h.txHost, new ExternalIdentityLock(h.xactLock, h.txHost), {
-    get: () => config() as never,
-  });
+  return new ExternalIdentities(
+    h.db,
+    h.txHost,
+    new ExternalIdentityLock(h.xactLock, h.txHost),
+    loginSourcesFor(db),
+  );
+}
+
+/** The login sources service over `db`, with no extension loaded. */
+export function loginSourcesFor(db: Kysely<any>): LoginSourcesService {
+  const h = handlesFor(db);
+  return new LoginSourcesService(
+    h.db,
+    h.txHost,
+    { list: () => [], current: () => undefined },
+    {
+      get: () => {
+        throw new Error("no kernel config in this test");
+      },
+    },
+    quiet,
+  );
 }
 
 const noWaits = {
