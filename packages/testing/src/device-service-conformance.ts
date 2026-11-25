@@ -64,7 +64,8 @@ export interface DeviceServiceFixture {
   dispose(): Promise<void>;
 }
 
-const SERVICE = "conformance-echo";
+/** The service id the conformance starts (a provider receives ids: `<extension>.<name>`). */
+const SERVICE = "conformance.echo";
 
 /** What the kernel sends with every `ifRunning` ensure: the name, nothing to run. */
 const nameOnly = (name: string): DeviceServiceSpec => ({

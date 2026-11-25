@@ -84,6 +84,34 @@ describe("BackgroundTasks task rows", () => {
     expect(screen.getByText("Stopping…")).toBeTruthy();
   });
 
+  it("a stop waiting for the device says why instead of Stopping…", () => {
+    const { rerender } = wrap(
+      <BackgroundTasks
+        items={[task({ stopping: true, stopWaiting: "unreachable" })]}
+        now={NOW}
+        onStop={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /停止/ })).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("等待设备响应后停止");
+    const again = (stopWaiting: "recorded" | "failed") =>
+      rerender(
+        <DesignProvider locale="zh">
+          <BackgroundTasks
+            items={[task({ stopping: true, stopWaiting })]}
+            now={NOW}
+            onStop={vi.fn()}
+            onOpen={vi.fn()}
+          />
+        </DesignProvider>,
+      );
+    again("recorded");
+    expect(screen.getByRole("status").textContent).toBe("停止已记录，等待设备执行");
+    again("failed");
+    expect(screen.getByRole("status").textContent).toBe("设备未能停止，将自动重试");
+  });
+
   it("a failed row has the fail mark and no spinner", () => {
     const { container } = wrap(
       <BackgroundTaskRow
@@ -280,6 +308,27 @@ describe("TaskOutputPanel", () => {
     expect(el.textContent).toBe("Stopping…");
     expect(el.getAttribute("role")).toBe("status");
     expect(el.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("a stop waiting for the device: no stop button, the waiting text announced politely", () => {
+    const { container } = wrap(
+      <TaskOutputPanel
+        description="pnpm dev"
+        command="pnpm dev"
+        status="running"
+        elapsed="2m 28s"
+        text="ready"
+        source="sandbox"
+        stopping
+        stopWaiting="unreachable"
+        onStop={vi.fn()}
+      />,
+      "en",
+    );
+    expect(screen.queryByRole("button", { name: "Stop pnpm dev" })).toBeNull();
+    const el = container.querySelector('[data-part="task-output-stopping"]') as HTMLElement;
+    expect(el.textContent).toBe("Stops when the device answers");
+    expect(el.getAttribute("role")).toBe("status");
   });
 
   it("a finished task ignores stopping: neither the button nor the stopping text", () => {

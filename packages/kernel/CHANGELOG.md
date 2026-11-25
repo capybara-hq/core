@@ -1,5 +1,55 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.90
+
+### Patch Changes
+
+- c245a0d: A background task's stop is durable intent. The kernel records it (`cancel-pending`, who asked) before the device is asked and gives one attempt at most 20 s; when the device's machine is offline or does not answer, the stop stays owed and the poller delivers it once the device answers. `TaskStop` and the stop button return promptly: the tool says the stop is requested, and the panel says why the recorded stop still waits ("停止已记录，等待设备执行", "等待设备响应后停止", "设备未能停止，将自动重试"; `stopWaiting` and `stopFailure` on the task view) instead of spinning. The poller delivers owed stops per device side by side, so one silent machine never delays another device's stops. On the device, an operation's private supervisor whose sandbox runtime teardown hangs (a proxied connection the remote never closes) is killed 5 s after its stop, with the command's process group, so the machine answers the stop.
+- dd481a3: An owed background stop is labelled unreachable for every connectivity failure, including a request that was never sent and a restart wrapped as the cause of an unknown outcome. The device kills a late supervisor's command group only while the command may still hold processes, never after its leader was seen to end.
+- e2ca2ff: A device's first tool call no longer hangs in silence until the tool's time limit:
+  
+  - `ToolSpec.timeoutMs`: an extension tool can declare its own time limit, from 1 s to 10 min
+    (`TOOL_TIMEOUT_MIN_MS`, `TOOL_TIMEOUT_MAX_MS`). It replaces `tools.timeoutMs` for that tool and is
+    cut to the new deployment setting `tools.maxTimeoutMs` (default 10 min). It is not part of the
+    tool's definition fingerprint.
+  - A tool call that times out while `ctx.deviceAccess.ensureService` is still starting the device,
+    before the call sent anything to a device service, says that the device was still starting and
+    nothing reached the target. It no longer uses the generic "may or may not have completed" text.
+  - The dial-in relay adds the reconnect grace only while the machine is disconnected. A connected
+    machine is given up at the deadline plus a margin (at least the device lease TTL). It fails with
+    `DeviceRequestNotSentError` when the request was never taken, and with the new SDK error
+    `DialInAnswerTimeoutError` (`isDialInAnswerTimeoutError`, code `device.answer_timeout`) when the
+    outcome is unknown. Tools show the outcome-unknown text for it. A slow machine is never reported
+    as a refused open network or a failed create. `capybara-device` now answers an expired lifecycle or operation
+    request with a typed `unknown` error instead of staying silent.
+  - The sandbox logs each lifecycle step (resume, create, recreate) with its duration and outcome.
+    It also logs relay give-ups and aborted lease or relay waits.
+  - A device service launch is reviewed by its own rule, `allow.service` ("Starts a device service
+    declared by the extension, from its code directory."), instead of `allow.dev`.
+- c9a563b: Device services are namespaced per extension (core#817): a device provider now receives every service
+  by its id `<extension>.<name>` (`DEVICE_SERVICE_ID_RE`, `deviceServiceId`) in `ensureService`,
+  `stopService`, `serviceStatus`, `serviceRequest` and `openStream`, never by the extension's bare name,
+  so two extensions declaring the same service name never start, stop or reach each other's process.
+  `ctx.deviceAccess` keeps the extension's own names and maps statuses back. `capybara-device` accepts
+  service ids only (a machine on an older version refuses them: update it with the deployment), and the
+  device service conformance starts `conformance.echo`.
+- 5a8031d: Dial-in stream data can travel as binary WebSocket messages. A machine's hello offers `transport.binaryStreamData` and the kernel's `ready` agrees; from then on both sides send `stream-data` as one binary message (`encodeDialInStreamData`: tag, stream id, the raw bytes) instead of base64 inside JSON, which cuts a quarter of the bytes of every device stream (the browser live view). `capybara-device` offers it; a machine that does not offer it stays on JSON, and a `capybara-device` whose offer an older kernel refuses (4400 before `ready`) reconnects without it, so the device and the deployment can be upgraded in either order. `FakeDialInMachine` takes `binaryStreamData` to test both.
+- 7a178bf: The conversation's right panel keeps an embed mounted across full mode: maximising or restoring
+  the panel no longer reloads its iframe, so a panel's document and connections survive the switch,
+  and a panel embed fills the panel (borderless) in both modes instead of sizing itself by `resize`.
+  The embed bridge tells a `conversation.panel` embed the panel's mode: `EmbedParentMessage` gains
+  `panel-mode { full }`, sent right after `init` and on every change, whoever made it (the embed's
+  own ask, the close control or Esc, the host refusing full mode on a phone). A plugin tool's
+  `InputRequired` may carry `open` (a `UiOpen` naming a `conversation.panel` of the same extension):
+  the kernel writes it to `question_asked` after checking it, and the conversation page opens that
+  panel when the question arrives.
+- Updated dependencies [e2ca2ff]
+- Updated dependencies [c9a563b]
+- Updated dependencies [c9a563b]
+- Updated dependencies [5a8031d]
+- Updated dependencies [7a178bf]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.72
+
 ## 0.1.0-rc.89
 
 ### Patch Changes

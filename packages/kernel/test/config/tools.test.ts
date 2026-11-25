@@ -13,6 +13,7 @@ describe("tools 配置段", () => {
     const c = KernelConfigSchema.parse(base);
     expect(c.tools).toEqual({
       timeoutMs: 60000,
+      maxTimeoutMs: 600000,
       breakerFailures: 5,
       breakerOpenSeconds: 60,
       outputSpillChars: 50000,

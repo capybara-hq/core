@@ -10,7 +10,11 @@ import { createStagedSessionState, drainStagedSession, serveStagedSession } from
 import type { InstanceBinder } from "../src/exec/instance-binding.js";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
-import { PROGRAM_RUN_ID, StagedSessionStates } from "../src/staged-session.js";
+import {
+  PROGRAM_RUN_ID,
+  type StagedMachineControl,
+  StagedSessionStates,
+} from "../src/staged-session.js";
 import {
   cancelFrame,
   readMachineFrame,
@@ -32,6 +36,8 @@ async function fixture(
     binder?: (b: { backend: unknown; handle: { id: string } }) => InstanceBinder;
     /** The effective frame capacity the kernel's `ready` names (default the credential's). */
     readyCap?: number;
+    /** The machine lifecycle (`create` / `stop`); absent: unsupported. */
+    machine?: StagedMachineControl;
   } = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "cap-output-session-")));
@@ -210,6 +216,8 @@ async function fixture(
     handle,
     state,
     binder,
+    undefined,
+    opts.machine,
   );
   if (negotiate) await expect.poll(() => session.ready()).toBeDefined();
   const request = (op: string, args: unknown, deadlineMs = 10000, key = String(++id)) => {
@@ -344,10 +352,71 @@ it.each(["cancel", "deadline"])("%s aborts an in-flight read only", async (mode)
   await enteredPromise;
   if (mode === "cancel") f.socket.send(cancelFrame(call.key));
   await abortedPromise;
+  // an elapsed deadline is answered (outcome unknown), never left to the kernel's wait; a
+  // cancel is the kernel giving up, so nothing is sent for it
+  if (mode === "deadline")
+    expect(await call.response).toMatchObject({
+      ok: false,
+      error: { kind: "unknown", message: expect.stringMatching(/deadline/) },
+    });
   expect(await f.backend.background.status(f.handle, f.ref, signal())).toEqual({
     state: "running",
   });
   expect(f.cancelled).not.toHaveBeenCalled();
+});
+it("an operation that ignores its signal past the deadline is answered at the deadline, its late result dropped", async () => {
+  const f = await fixture();
+  let release!: () => void;
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  vi.spyOn(f.backend.background, "readOutput").mockImplementation(async () => {
+    await held;
+    return { data: new Uint8Array(), offset: 0, nextOffset: 0, totalBytes: 0 };
+  });
+  const call = f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 1 }, 100);
+  expect(await call.response).toMatchObject({ ok: false, error: { kind: "unknown" } });
+  release();
+  // the late result is never sent: one answer per request
+  await f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 0 }).response;
+  expect(f.responses.filter((r) => r.res.id === call.key)).toHaveLength(1);
+});
+it("an overdue machine create is answered unknown at its deadline; a machine stop answers only when it ends", async () => {
+  let finishCreate!: () => void;
+  let finishStop!: () => void;
+  let stopDeadline!: () => void;
+  const stopDeadlinePassed = new Promise<void>((r) => {
+    stopDeadline = r;
+  });
+  const machine: StagedMachineControl = {
+    create: () =>
+      new Promise((resolve) => {
+        finishCreate = () => resolve({ roots: { workspace: "/w", skills: "/s", tmp: "/t" } });
+      }),
+    stop: (_reason, signal) =>
+      new Promise<void>((resolve) => {
+        finishStop = resolve;
+        signal.addEventListener("abort", () => stopDeadline(), { once: true });
+      }),
+    stopped: vi.fn(),
+  };
+  const f = await fixture(true, true, { machine });
+  const limits = { cpu: 1, memoryMb: 512, diskMb: 1024, network: { kind: "allowlist", hosts: [] } };
+  const create = f.request("create", { limits }, 100);
+  expect(await create.response).toMatchObject({
+    ok: false,
+    error: { kind: "unknown", message: expect.stringMatching(/create within its deadline/) },
+  });
+  finishCreate();
+  // a stop past its deadline gets no early answer: it is answered once it ends
+  const stop = f.request("stop", { reason: "revoked" }, 100);
+  await stopDeadlinePassed;
+  // frames are ordered on the socket: an early stop answer would arrive before this read's
+  await f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 0 }).response;
+  expect(f.responses.some((r) => r.res.id === stop.key)).toBe(false);
+  finishStop();
+  expect(await stop.response).toMatchObject({ ok: true });
+  expect(f.responses.filter((r) => r.res.id === create.key)).toHaveLength(1);
 });
 it("refuses requests before ready and incoming frames above the credential's capacity", async () => {
   const f = await fixture(false);
@@ -829,7 +898,7 @@ it("the hello is the dial-in envelope around the device protocol body", async ()
     protocol: "capybara-device/6",
     programRunId: PROGRAM_RUN_ID,
     program: { version: "1.0.0", os: "linux", arch: "x64", bootId: "boot-1" },
-    transport: { maxFrameBytes: 69632 },
+    transport: { maxFrameBytes: 69632, binaryStreamData: true },
     body,
   });
 });

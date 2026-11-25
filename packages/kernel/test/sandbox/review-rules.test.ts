@@ -71,6 +71,37 @@ describe("parseCommand", () => {
   });
 });
 
+describe("reviewRules: a device service launch", () => {
+  const entry = "/home/dev/capybara-device/d1/svc-files/browser/daemon.mjs";
+  const svc: ReviewFacts = {
+    ...facts,
+    workspace: "/home/dev/capybara-device/d1/svc/browser",
+    serviceEntry: entry,
+  };
+  const hitsOf = (command: string, f: ReviewFacts = svc) => reviewRules(command, f).hits;
+
+  it("is allowed by its own rule with a reason that says what it is, never as a dev command", () => {
+    for (const command of [`node ${entry}`, `env A=1 B=2 node ${entry} --flag 'a b'`]) {
+      const r = reviewRules(command, svc);
+      expect(r.outcome).toBe("allow");
+      expect(r.hits.map((h) => h.id)).toEqual(["allow.service"]);
+      expect(r.hits[0]?.reason).toBe(
+        "Starts a device service declared by the extension, from its code directory.",
+      );
+    }
+  });
+
+  it("covers only the declared entry: other node scripts stay development commands", () => {
+    expect(hitsOf("node other.mjs").map((h) => h.id)).toEqual(["allow.dev"]);
+    // without the kernel's launch fact the same command is an ordinary node run
+    const plain = hitsOf(`node ${entry}`, facts).map((h) => h.id);
+    expect(plain).toContain("allow.dev");
+    expect(plain).not.toContain("allow.service");
+    // the launch fact never excuses another command of the line
+    expect(reviewRules(`node ${entry} && sudo rm -rf /etc`, svc).outcome).not.toBe("allow");
+  });
+});
+
 describe("reviewRules: the rule table", () => {
   const table: ReadonlyArray<{ id: string; outcome: string; command: string }> = [
     { id: "allow.read", outcome: "allow", command: "cat README.md" },

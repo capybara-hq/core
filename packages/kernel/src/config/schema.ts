@@ -4,6 +4,7 @@ import {
   DOCUMENT_MEDIA_TYPES,
   EXTENSION_NAME_RE,
   IMAGE_MEDIA_TYPES,
+  TOOL_TIMEOUT_MAX_MS,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -1086,6 +1087,18 @@ export const KernelConfigSchema = z.strictObject({
         .positive()
         .default(60000)
         .meta(meta({ description: "Timeout of one tool call in milliseconds" })),
+      maxTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(TOOL_TIMEOUT_MAX_MS)
+        .default(TOOL_TIMEOUT_MAX_MS)
+        .meta(
+          meta({
+            description:
+              "Ceiling on the time limit an extension tool declares (ToolSpec.timeoutMs) in milliseconds; a longer declared limit is cut to it",
+          }),
+        ),
       breakerFailures: z
         .number()
         .int()
@@ -1265,6 +1278,7 @@ export const KernelConfigSchema = z.strictObject({
     })
     .default({
       timeoutMs: 60000,
+      maxTimeoutMs: TOOL_TIMEOUT_MAX_MS,
       breakerFailures: 5,
       breakerOpenSeconds: 60,
       outputSpillChars: 50000,

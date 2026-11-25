@@ -69,6 +69,7 @@ The defaults of secret fields do not appear in this document.
 | `runtime.sseHeartbeatMs` | `CAPYBARA_RUNTIME__SSE_HEARTBEAT_MS` | `number` | `15000` | no | no | Interval in milliseconds between heartbeat comments on a conversation event stream (SSE) |
 | `runtime.sseRecheckMs` | `CAPYBARA_RUNTIME__SSE_RECHECK_MS` | `number` | `60000` | no | no | How often an open conversation event stream (SSE) re-checks that the viewer may still access the conversation, in milliseconds; the stream closes when access is lost |
 | `tools.timeoutMs` | `CAPYBARA_TOOLS__TIMEOUT_MS` | `number` | `60000` | no | no | Timeout of one tool call in milliseconds |
+| `tools.maxTimeoutMs` | `CAPYBARA_TOOLS__MAX_TIMEOUT_MS` | `number` | `600000` | no | no | Ceiling on the time limit an extension tool declares (ToolSpec.timeoutMs) in milliseconds; a longer declared limit is cut to it |
 | `tools.breakerFailures` | `CAPYBARA_TOOLS__BREAKER_FAILURES` | `number` | `5` | no | no | Consecutive failures of one connector that open its circuit breaker |
 | `tools.breakerOpenSeconds` | `CAPYBARA_TOOLS__BREAKER_OPEN_SECONDS` | `number` | `60` | no | no | Seconds an open circuit breaker rejects calls before allowing a probe |
 | `tools.outputSpillChars` | `CAPYBARA_TOOLS__OUTPUT_SPILL_CHARS` | `number` | `50000` | no | no | Tool results longer than this many characters are archived and replaced by a preview |

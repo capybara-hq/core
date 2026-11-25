@@ -163,6 +163,8 @@ export default defineExtension({
         inputSchema: { type: "object" },
         annotations: { destructiveHint: true },
         defaultPolicy: "allow",
+        // its own time limit instead of tools.timeoutMs (registry.test.ts)
+        timeoutMs: 180_000,
       },
       async () => ({ content: [{ type: "text", text: "wiped" }] }),
     );

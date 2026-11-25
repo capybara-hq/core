@@ -468,6 +468,11 @@ type EventBody =
         questionId: string;
         form: InputForm;
         expiresAt: string;
+        /**
+         * A plugin tool's `InputRequired.open`: a `conversation.panel` of that extension the page
+         * opens when the question arrives (display only).
+         */
+        open?: { plugin: string; contribution: string; item?: string };
       };
     }
   | {
@@ -836,6 +841,10 @@ export interface BackgroundTaskView {
   finishedAt: string | null;
   /** A stop is under way (another request is handling it); the task still runs. */
   stopping: boolean;
+  /** With `stopping`: the stop is recorded and owed, no attempt under way (waits for the device). */
+  stopWaiting: boolean;
+  /** Why the owed stop's last attempt did not settle; null when none failed. */
+  stopFailure: "unreachable" | "failed" | null;
   /** The start was sent but not confirmed yet: the kernel is reconciling it. */
   starting: boolean;
 }

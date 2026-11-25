@@ -686,6 +686,63 @@ export async function sweepPrivateTemps(parent: string, pythonPath: string): Pro
   }
 }
 /** A separate process owns each immutable SRT manager; Full never enters that process. */
+/**
+ * The longest a private supervisor may take to end after its `stop` before it is killed. Its
+ * `stop` kills the owned process groups at once; only the sandbox runtime's teardown follows.
+ */
+export const WORKER_STOP_GRACE_MS = 5000;
+
+/**
+ * Sends a private supervisor its `stop` and waits for it to exit; one still alive after `graceMs`
+ * is killed. The sandbox runtime's teardown can wait forever: its proxy server's close waits for a
+ * tunnelled connection whose remote never closes its half (a long poll behind a killed client).
+ * A background task's operation, and with it the machine's answer to its stop, ends only once its
+ * supervisor exited, so an unbounded wait here left a stopped task running in every view.
+ *
+ * `ownedGroup` is the command's process group (its detached leader's pid, as the supervisor
+ * reported it at launch). The supervisor's own `stop` kills it first; when the supervisor is
+ * killed late it may not have got that far (its owned-group walk still running, or refused), so
+ * the group is killed here too: nothing it owned outlives it unsupervised.
+ */
+export async function stopWorker(
+  worker: ChildProcess,
+  onDiagnostic?: (text: string) => void,
+  graceMs = WORKER_STOP_GRACE_MS,
+  ownedGroup?: number,
+): Promise<void> {
+  const exited = () => worker.exitCode !== null || worker.signalCode !== null;
+  // the worker may exit between the check and the send: never wait for an exit already seen
+  const ended = new Promise<void>((r) => {
+    if (exited()) r();
+    else worker.once("exit", () => r());
+  });
+  if (worker.connected) worker.send({ type: "stop" }, () => {});
+  let timer: NodeJS.Timeout | undefined;
+  const late = await Promise.race([
+    ended.then(() => false),
+    new Promise<boolean>((r) => {
+      timer = setTimeout(() => r(true), graceMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  if (!late) return;
+  let group = "";
+  if (ownedGroup !== undefined && Number.isSafeInteger(ownedGroup) && ownedGroup > 1) {
+    try {
+      process.kill(-ownedGroup, "SIGKILL");
+      group = "; its command's process group was killed too";
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== "ESRCH") group = `; killing its command's process group failed (${code})`;
+    }
+  }
+  onDiagnostic?.(
+    `The operation's supervisor did not end within ${Math.ceil(graceMs / 1000)} s of its stop; killed${group}`,
+  );
+  if (!exited()) worker.kill("SIGKILL");
+  await ended;
+}
+
 export async function startMacOperationWorker(
   request: MacWorkerRequest,
   signal: AbortSignal,
@@ -710,6 +767,9 @@ export async function startMacOperationWorker(
   let registered: TrustedLaunchIdentity | undefined;
   let execStarted = false;
   let execCompleted = false;
+  // the command's leader was seen to end (its process-exit, its completion, the native helper's
+  // return): its process group may be empty and its pgid free for reuse from then on
+  let commandClosed = false;
   let cancellation: Promise<void> | undefined;
   const files: FileHandle[] = [];
   const controller = new AbortController();
@@ -1046,7 +1106,7 @@ export async function startMacOperationWorker(
         const invocation = transport.nativeHelperInvocation(roots, launch);
         prepared = await wrap([invocation.command, ...invocation.args].map(shellQuote).join(" "));
         recordTransferTiming(request.native.method, "prepare", performance.now() - preparedAt);
-        return await runNativeHelper(
+        const nativeResult = await runNativeHelper(
           {
             ...request.native,
             path: (() => {
@@ -1082,6 +1142,8 @@ export async function startMacOperationWorker(
           },
           controller.signal,
         );
+        commandClosed = true;
+        return nativeResult;
       }
       const args = request.args;
       for (const key of Object.keys(args.env ?? {}))
@@ -1137,6 +1199,7 @@ export async function startMacOperationWorker(
           return;
         }
         if (item.event === "cancelled" || item.event === "process-exit") {
+          if (item.event === "process-exit") commandClosed = true;
           request.onControl?.(item.event);
           return;
         }
@@ -1196,6 +1259,7 @@ export async function startMacOperationWorker(
         await request.onLaunch(registered);
         readyResolve();
         const result = await completed;
+        commandClosed = true;
         await outputPending;
         execCompleted = true;
         if (outputFault || result.outputFailed)
@@ -1229,13 +1293,15 @@ export async function startMacOperationWorker(
             // a worker that exits before answering has released nothing more to release
             await released.catch(() => undefined);
           }
-          // the worker may exit between the check and the send: never wait for an exit already seen
-          const ended = new Promise<void>((r) => {
-            if (exited()) r();
-            else worker.once("exit", () => r());
-          });
-          if (worker.connected) worker.send({ type: "stop" }, () => {});
-          await ended;
+          // the command's group is killed on the late path only while it may still hold
+          // processes: once its leader ended, the supervisor's exit handler signalled the group
+          // and the pgid may already name another process's group
+          await stopWorker(
+            worker,
+            request.onDiagnostic,
+            WORKER_STOP_GRACE_MS,
+            commandClosed ? undefined : registered?.pid,
+          );
         } else if (!exited()) worker.kill("SIGTERM");
       }
       // the sandbox keeps git's sequencer directory (it may hold a kept HEAD) from being removed

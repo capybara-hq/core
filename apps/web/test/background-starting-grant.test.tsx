@@ -21,6 +21,8 @@ const task = (over: Partial<BackgroundTaskView> = {}): BackgroundTaskView => ({
   startedAt: "2026-11-16T10:00:00.000Z",
   finishedAt: null,
   stopping: false,
+  stopWaiting: false,
+  stopFailure: null,
   starting: false,
   ...over,
 });

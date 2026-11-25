@@ -2,7 +2,11 @@ import { once } from "node:events";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DIAL_IN_STREAM_INITIAL_CREDIT } from "@capybara-hq/plugin-sdk";
+import {
+  DIAL_IN_STREAM_INITIAL_CREDIT,
+  decodeDialInStreamData,
+  encodeDialInStreamData,
+} from "@capybara-hq/plugin-sdk";
 import type { DeviceHello } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, expect, it } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
@@ -31,9 +35,13 @@ type Frame = {
   error?: string;
 };
 
-/** The kernel's end: every frame the bridge sends, and a way to wait for one. */
-function kernelEnd(maxFrameBytes = 65536) {
+/**
+ * The kernel's end: every frame the bridge sends (a binary stream-data is recorded in its JSON
+ * shape, and counted), and a way to wait for one.
+ */
+function kernelEnd(maxFrameBytes = 65536, binary = false) {
   const frames: Frame[] = [];
+  let binaryFrames = 0;
   const waiters: { pred: (f: Frame[]) => boolean; resolve: () => void }[] = [];
   const check = () => {
     for (const w of [...waiters])
@@ -44,13 +52,26 @@ function kernelEnd(maxFrameBytes = 65536) {
   };
   return {
     frames,
+    get binaryFrames() {
+      return binaryFrames;
+    },
     transport: {
-      send(text: string) {
-        frames.push(JSON.parse(text) as Frame);
+      send(out: string | Uint8Array) {
+        if (typeof out === "string") frames.push(JSON.parse(out) as Frame);
+        else {
+          binaryFrames++;
+          const m = decodeDialInStreamData(out);
+          frames.push({
+            type: "stream-data",
+            streamId: m.streamId,
+            data: Buffer.from(m.data).toString("base64"),
+          });
+        }
         check();
         return true;
       },
       maxFrameBytes: () => maxFrameBytes,
+      binaryStreamData: () => binary,
     },
     /** Resolves once `pred` holds for the frames sent so far. */
     until(pred: (f: Frame[]) => boolean) {
@@ -63,7 +84,7 @@ function kernelEnd(maxFrameBytes = 65536) {
   };
 }
 
-async function fixture(maxFrameBytes?: number) {
+async function fixture(maxFrameBytes?: number, binary = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "cap-bridge-")));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const workspace = join(root, "workspace");
@@ -77,11 +98,11 @@ async function fixture(maxFrameBytes?: number) {
   });
   cleanups.push(() => supervisor.stopAll(signal()));
   await supervisor.ensure(
-    { name: "browser", entry: "main.js", args: [], files: { "main.js": bytes("//") } },
+    { name: "browser.browser", entry: "main.js", args: [], files: { "main.js": bytes("//") } },
     undefined,
     signal(),
   );
-  const kernel = kernelEnd(maxFrameBytes);
+  const kernel = kernelEnd(maxFrameBytes, binary);
   const bridge = new DialInStreamBridge(kernel.transport, (body, sig) =>
     supervisor.openStream(body, sig),
   );
@@ -92,7 +113,7 @@ async function fixture(maxFrameBytes?: number) {
 const open = async (
   f: Awaited<ReturnType<typeof fixture>>,
   streamId = "s1",
-  body: unknown = { service: "browser" },
+  body: unknown = { service: "browser.browser" },
 ) => {
   f.bridge.onFrame({ type: "stream-open", streamId, body });
   await f.kernel.until((fs) =>
@@ -130,6 +151,22 @@ it("stream bridge relays messages and honours credit", async () => {
       .map((x) => unb64(x.data as string)),
   ).toEqual(Array.from({ length: 20 }, (_, i) => `m${i}`));
   expect(f.kernel.of("stream-close")).toEqual([]);
+});
+
+it("binary stream data both ways once the kernel's ready agreed on it", async () => {
+  const f = await fixture(65536, true);
+  await open(f);
+  for (const m of ["a", "b"]) f.bridge.onData("s1", new TextEncoder().encode(m));
+  await f.kernel.until((fs) => fs.filter((x) => x.type === "stream-data").length === 2);
+  expect(f.kernel.of("stream-data").map((x) => unb64(x.data as string))).toEqual(["a", "b"]);
+  // the service's answers went out binary; control frames stay JSON
+  expect(f.kernel.binaryFrames).toBe(2);
+  await f.kernel.until((fs) => fs.filter((x) => x.type === "stream-credit").length === 2);
+  // binary data counts against the same credit
+  for (let i = 0; i < DIAL_IN_STREAM_INITIAL_CREDIT + 1; i++)
+    f.bridge.onData("s1", new TextEncoder().encode(`x${i}`));
+  await f.kernel.until((fs) => fs.some((x) => x.type === "stream-close"));
+  expect(f.kernel.of("stream-close")[0]?.reason).toBe("credit exceeded");
 });
 
 it("a kernel exceeding its credit gets the stream closed", async () => {
@@ -183,12 +220,14 @@ it("the dial-in socket closing ends every stream's service connection", async ()
 
 it("refuses a stream to a service that is not running or a malformed target", async () => {
   const f = await fixture();
-  expect(await open(f, "s1", { service: "other" })).toMatchObject({
+  expect(await open(f, "s1", { service: "other.other" })).toMatchObject({
     ok: false,
     error: expect.stringMatching(/not running/),
   });
   expect(await open(f, "s2", { unixSocket: "/var/run/docker.sock" })).toMatchObject({ ok: false });
   expect(await open(f, "s3", { service: "Bad Name" })).toMatchObject({ ok: false });
+  // a bare name without its extension is not a service id
+  expect(await open(f, "s4", { service: "browser" })).toMatchObject({ ok: false });
 });
 
 it("the staged session serves service bodies and stream frames on its socket", async () => {
@@ -259,7 +298,7 @@ it("the staged session serves service bodies and stream frames on its socket", a
       type: "req",
       id: "r1",
       deadlineMs: 5000,
-      body: { op: "service.request", name: "browser", body: b64("ping"), timeoutMs: 5000 },
+      body: { op: "service.request", name: "browser.browser", body: b64("ping"), timeoutMs: 5000 },
     }),
   );
   await until(() => frames.some((x) => x.type === "res"));
@@ -269,7 +308,7 @@ it("the staged session serves service bodies and stream frames on its socket", a
     body: { ok: true, result: { body: b64("echo:ping") } },
   });
   socket.send(
-    JSON.stringify({ type: "stream-open", streamId: "s1", body: { service: "browser" } }),
+    JSON.stringify({ type: "stream-open", streamId: "s1", body: { service: "browser.browser" } }),
   );
   await until(() => frames.some((x) => x.type === "stream-opened"));
   socket.send(JSON.stringify({ type: "stream-data", streamId: "s1", data: b64("hi") }));
@@ -289,9 +328,121 @@ it("data before the stream opened closes it", async () => {
   const kernel = kernelEnd();
   // an opener that never finishes: the service connection is still being made
   const bridge = new DialInStreamBridge(kernel.transport, () => new Promise(() => {}));
-  bridge.onFrame({ type: "stream-open", streamId: "s1", body: { service: "browser" } });
+  bridge.onFrame({ type: "stream-open", streamId: "s1", body: { service: "browser.browser" } });
   bridge.onFrame({ type: "stream-data", streamId: "s1", data: b64("early") });
   expect(kernel.of("stream-close")).toEqual([
     { type: "stream-close", streamId: "s1", reason: "data before open" },
   ]);
+});
+
+it("the staged session offers binary stream data and uses it once the ready agrees", async () => {
+  const f = await fixture();
+  const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  await once(server, "listening");
+  const address = server.address();
+  if (typeof address === "string" || !address) throw Error("no address");
+  cleanups.push(async () => {
+    for (const c of server.clients) c.terminate();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+  const accepted = once(server, "connection");
+  const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  await once(client, "open");
+  const [socket] = (await accepted) as [WebSocket];
+  const texts: (Frame & { transport?: { binaryStreamData?: boolean } })[] = [];
+  const binaries: { streamId: string; data: string }[] = [];
+  const waiters: (() => void)[] = [];
+  // each wait names what it waits for and what came, so a stall says where it stopped
+  const until = async (pred: () => boolean, what: string) => {
+    const deadline = Date.now() + 10_000;
+    while (!pred()) {
+      if (Date.now() > deadline)
+        throw new Error(
+          `timed out waiting for ${what}; got ${JSON.stringify({ texts, binaries })}`,
+        );
+      await new Promise<void>((r) => {
+        waiters.push(r);
+        setTimeout(r, 200);
+      });
+    }
+  };
+  socket.on("message", (raw, isBinary) => {
+    if (isBinary) {
+      const m = decodeDialInStreamData(new Uint8Array(raw as Buffer));
+      binaries.push({ streamId: m.streamId, data: Buffer.from(m.data).toString("utf8") });
+    } else {
+      const frame = JSON.parse(raw.toString()) as (typeof texts)[number];
+      if (frame.type === "hello")
+        socket.send(
+          JSON.stringify({
+            type: "ready",
+            connectionId: "c1",
+            maxFrameBytes: 69632,
+            binaryStreamData: true,
+          }),
+        );
+      texts.push(frame);
+    }
+    for (const w of waiters.splice(0)) w();
+  });
+  const closed = once(client, "close");
+  serveStagedSession(
+    client,
+    stagedHello({
+      mode: "os",
+      roots: { workspace: "/w", skills: "/s", tmp: "/t" },
+      sessionIsolation: false,
+      permissionSupport: {
+        version: 2,
+        restricted: null,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: false, perOperationHosts: false },
+        outsideSandbox: false,
+        background: false,
+      },
+      ownerCeiling: {
+        version: 3,
+        sequence: 0,
+        projectReach: "workspace",
+        revision: "r",
+        outsideSandbox: false,
+        network: "allowlist",
+        allowedDomains: [],
+      },
+      instanceGeneration: "g",
+    }),
+    { maxFrameBytes: 69632 },
+    {} as MacOperationBackend,
+    { id: "d" },
+    createStagedSessionState({ graceMs: 0 }),
+    undefined,
+    undefined,
+    undefined,
+    f.supervisor,
+  );
+  await until(() => texts.some((x) => x.type === "hello"), "hello");
+  expect(texts.find((x) => x.type === "hello")?.transport).toMatchObject({
+    binaryStreamData: true,
+  });
+  socket.send(
+    JSON.stringify({ type: "stream-open", streamId: "s1", body: { service: "browser.browser" } }),
+  );
+  await until(() => texts.some((x) => x.type === "stream-opened"), "stream-opened");
+  socket.send(encodeDialInStreamData("s1", new TextEncoder().encode("hi")));
+  await until(() => binaries.length > 0, "the binary echo");
+  expect(binaries).toEqual([{ streamId: "s1", data: "hi" }]);
+  // credit still travels as JSON
+  await until(() => texts.some((x) => x.type === "stream-credit"), "stream-credit");
+  // a binary message that is not stream-data breaks the protocol: the socket closes
+  socket.send(Uint8Array.of(9, 9, 9));
+  const [code] = (await Promise.race([
+    closed,
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`no close; client readyState ${client.readyState}`)),
+        10_000,
+      ),
+    ),
+  ])) as [number];
+  expect(code).toBe(4400);
 });

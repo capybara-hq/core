@@ -231,7 +231,6 @@ describe("ClientComponentBlock", () => {
           onClose,
           onFullscreen: () => {},
           onPanelMode: () => {},
-          full: false,
           onOpenTarget: () => {},
         }}
       />,
@@ -250,7 +249,6 @@ describe("ClientComponentBlock", () => {
         onClose,
         onFullscreen: () => {},
         onPanelMode: () => {},
-        full: false,
         onOpenTarget: () => {},
       }}
     />

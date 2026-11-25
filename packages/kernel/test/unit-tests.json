@@ -184,5 +184,6 @@
   "ui/arrangement.test.ts",
   "ui/builtin-display.test.ts",
   "ui/embed-token.test.ts",
-  "ui/ui-stream.test.ts"
+  "ui/ui-stream.test.ts",
+  "background/stop-failure.test.ts"
 ]

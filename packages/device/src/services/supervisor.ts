@@ -15,7 +15,9 @@ import {
 import { createConnection, type Socket } from "node:net";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import {
-  DEVICE_SERVICE_NAME_RE,
+  DEVICE_SERVICE_ID_RE,
+  DEVICE_SERVICE_INSTALL_ENV,
+  DEVICE_SERVICE_INSTALL_SEAL,
   DEVICE_SERVICE_SOCKET_ENV,
   DEVICE_SERVICE_STATE_ENV,
   DEVICE_SERVICE_WORKSPACE_ENV,
@@ -58,6 +60,14 @@ export const serviceRoot = (deviceDir: string) => join(deviceDir, "svc");
  * runs the files the deployment sent, whatever the service did to its own state directory.
  */
 export const serviceCodeRoot = (deviceDir: string) => join(deviceDir, "svc-files");
+
+/**
+ * The device's service install root: `<device dir>/svc-install`, one directory per service
+ * ({@link DEVICE_SERVICE_INSTALL_ENV}: writable by the service until it seals it, read only from
+ * its next start on) and, beside each, the record `.<id>` of the files digest the directory was
+ * filled under (a dot name no service id can take). Only this program writes the records.
+ */
+export const serviceInstallRoot = (deviceDir: string) => join(deviceDir, "svc-install");
 
 /**
  * The paths of one service (browser use spec §5): its state directory `<device dir>/svc/<name>`
@@ -118,7 +128,10 @@ export interface ServiceLaunch {
   cwd: string;
   env: Record<string, string>;
   stateDir: string;
-  /** Exactly the state directory and `<workspace>/downloads`. */
+  /**
+   * The state directory and `<workspace>/downloads`, and the install directory while it is not
+   * sealed ({@link DEVICE_SERVICE_INSTALL_ENV}).
+   */
   writeRoots: string[];
   /** What the service reads besides its write roots. */
   readRoots: string[];
@@ -342,7 +355,8 @@ export function checkRelativePath(p: string, what: string): string {
 /**
  * The named services of one device (browser use spec §5): each runs under the device's local
  * sandbox through the host's {@link ServiceLauncher}, with `process.execPath` as its Node runtime,
- * writing only in its state directory and `<workspace>/downloads`. `ensure` starts a service that
+ * writing only in its state directory, `<workspace>/downloads` and its install directory until it
+ * seals it ({@link DEVICE_SERVICE_INSTALL_ENV}). `ensure` starts a service that
  * is not running (its files are written then, and only then) and is a no-op for a running one
  * with the same network (a changed network restarts it, {@link ServiceSupervisor.ensure}); a
  * service that exits stays stopped until the next `ensure` (never restarted automatically). This
@@ -372,8 +386,8 @@ export class ServiceSupervisor {
    * of the name on this device.
    */
   status(name: string): DeviceServiceStatus {
-    if (!DEVICE_SERVICE_NAME_RE.test(name))
-      throw new ServiceSpecError(`Invalid device service name: ${name}`);
+    if (!DEVICE_SERVICE_ID_RE.test(name))
+      throw new ServiceSpecError(`Invalid device service id: ${name}`);
     const stateDir = join(serviceRoot(this.o.deviceDir), name);
     // the entry runs from the read-only code directory (R30), which the kernel reviews (R31)
     const codeDir = join(serviceCodeRoot(this.o.deviceDir), name);
@@ -570,8 +584,8 @@ export class ServiceSupervisor {
     )
       throw new ServiceSpecError("Open a device stream with { service } naming a device service");
     const name = (body as { service: string }).service;
-    if (!DEVICE_SERVICE_NAME_RE.test(name))
-      throw new ServiceSpecError(`Invalid device service name: ${name}`);
+    if (!DEVICE_SERVICE_ID_RE.test(name))
+      throw new ServiceSpecError(`Invalid device service id: ${name}`);
     return this.connect(name, "stream", signal);
   }
 
@@ -624,6 +638,7 @@ export class ServiceSupervisor {
       throw new SandboxPermissionUnsupportedError(
         "Device services need a macOS host device in this version of capybara-device",
       );
+    await this.pruneLegacy();
     const paths = servicePaths(this.o.deviceDir, spec.name, this.aliasRoot);
     // every directory and file written here is checked component by component and never through
     // a link: the state directory is the service's own write root, the workspace the agent's
@@ -632,6 +647,12 @@ export class ServiceSupervisor {
     const tmpDir = await realDirectory(stateDir, [TMP_NAME]);
     // the code lives apart from the state: `<device dir>/svc-files/<name>`, written only here
     const codeDir = await realDirectory(this.o.deviceDir, ["svc-files", spec.name]);
+    // what the service installed once (a browser): read only once it sealed it, emptied when
+    // its files change; a restart on stored code keeps it as it is
+    const install = await this.installDir(
+      spec.name,
+      o.storedCode ? null : (filesDigest ?? (spec.files ? filesDigestOf(spec.files) : null)),
+    );
     // files are (re)written on start only; the state directory is the service's own and kept (a
     // browser profile)
     if (o.storedCode) {
@@ -661,6 +682,7 @@ export class ServiceSupervisor {
       ...spec.env,
       [DEVICE_SERVICE_SOCKET_ENV]: paths.socket,
       [DEVICE_SERVICE_STATE_ENV]: stateDir,
+      [DEVICE_SERVICE_INSTALL_ENV]: install.dir,
       // resolved, as the service's grant names it
       [DEVICE_SERVICE_WORKSPACE_ENV]: await realpath(this.o.workspace),
     };
@@ -671,6 +693,7 @@ export class ServiceSupervisor {
     const realState = await resolvedInside(stateDir, serviceRoot(this.o.deviceDir));
     const realDownloads = await resolvedInside(downloads, this.o.workspace);
     const realCode = await resolvedInside(codeDir, serviceCodeRoot(this.o.deviceDir));
+    const realInstall = await resolvedInside(install.dir, serviceInstallRoot(this.o.deviceDir));
     const proc = await launcher.launch(
       {
         name: spec.name,
@@ -680,11 +703,12 @@ export class ServiceSupervisor {
         cwd: stateDir,
         env,
         stateDir,
-        writeRoots: [realState, realDownloads],
-        // the code directory is read only: it is never a write root
+        writeRoots: [realState, realDownloads, ...(install.sealed ? [] : [realInstall])],
+        // the code directory is read only: it is never a write root; so is a sealed install
         readRoots: [
           nodeDirectory(),
           realCode,
+          ...(install.sealed ? [realInstall] : []),
           this.o.workspace,
           ...(paths.alias ? [paths.alias] : []),
         ],
@@ -731,6 +755,51 @@ export class ServiceSupervisor {
       );
     }
     return this.status(spec.name);
+  }
+
+  /**
+   * The service's install directory (`<device dir>/svc-install/<id>`, made link-free) and whether
+   * this launch gets it read only: sealed (the service made the regular file
+   * {@link DEVICE_SERVICE_INSTALL_SEAL} in it) and filled under `digest`. Anything else is emptied
+   * and the launch gets it writable: an unsealed directory holds nothing trustworthy (an earlier
+   * process, an older version of the service, may have written anything there), so every unsealed
+   * start installs afresh. `digest` null (a restart on the stored code) keeps a sealed directory
+   * and empties an unsealed one.
+   */
+  private async installDir(
+    name: string,
+    digest: string | null,
+  ): Promise<{ dir: string; sealed: boolean }> {
+    const root = await realDirectory(this.o.deviceDir, ["svc-install"]);
+    const dir = await realDirectory(root, [name]);
+    const sealed = await isRegularFile(join(dir, DEVICE_SERVICE_INSTALL_SEAL));
+    const record = join(root, `.${name}`);
+    const recorded = await readSmallFile(record);
+    if (sealed && (digest === null || recorded === digest)) return { dir, sealed: true };
+    // never through a link: rm removes a link itself
+    for (const entry of await readdir(dir))
+      await rm(join(dir, entry), { recursive: true, force: true });
+    if (digest !== null && recorded !== digest) await writeNewFile(record, Buffer.from(digest));
+    return { dir, sealed: false };
+  }
+
+  /**
+   * Removes what services kept under bare names before ids (core#817): an entry of `svc/` or
+   * `svc-files/` whose name is not a service id (an old browser profile with its cookies, old
+   * code). Never through a link (rm removes a link itself); records (`.`-names) are left alone.
+   */
+  private async pruneLegacy(): Promise<void> {
+    for (const root of [serviceRoot(this.o.deviceDir), serviceCodeRoot(this.o.deviceDir)]) {
+      let entries: string[];
+      try {
+        entries = await readdir(root);
+      } catch {
+        continue;
+      }
+      for (const entry of entries)
+        if (!entry.startsWith(".") && !DEVICE_SERVICE_ID_RE.test(entry))
+          await rm(join(root, entry), { recursive: true, force: true });
+    }
   }
 
   /** Refuses a start without files unless the stored files were written under `digest`. */
@@ -781,17 +850,23 @@ function nodeDirectory(): string {
 }
 
 /**
- * The digest the code directory's files were written under: opened without following a link and
- * without blocking (a FIFO), read only from a regular file and at most 257 bytes (a longer or
- * growing file counts as none); anything else counts as none.
+ * The digest the code directory's files were written under ({@link readSmallFile}); anything
+ * that is not a digest counts as none.
  */
 async function readStoredDigest(codeDir: string): Promise<string | undefined> {
+  const text = await readSmallFile(join(codeDir, DIGEST_NAME));
+  return text !== undefined && FILES_DIGEST_RE.test(text) ? text : undefined;
+}
+
+/**
+ * A small record file, trimmed: opened without following a link and without blocking (a FIFO),
+ * read only from a regular file and at most 257 bytes (a longer or growing file counts as none);
+ * anything else counts as none.
+ */
+async function readSmallFile(path: string): Promise<string | undefined> {
   let fh: Awaited<ReturnType<typeof open>>;
   try {
-    fh = await open(
-      join(codeDir, DIGEST_NAME),
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
+    fh = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch {
     return undefined;
   }
@@ -800,17 +875,39 @@ async function readStoredDigest(codeDir: string): Promise<string | undefined> {
     const buf = Buffer.alloc(257);
     const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
     if (bytesRead > 256) return undefined;
-    const text = buf.subarray(0, bytesRead).toString("utf8").trim();
-    return FILES_DIGEST_RE.test(text) ? text : undefined;
+    return buf.subarray(0, bytesRead).toString("utf8").trim();
   } finally {
     await fh.close();
   }
 }
 
+/** Whether `path` is a regular file itself (a link to one is not). */
+async function isRegularFile(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * This program's digest of files sent without the provider's (`sha256:` over each path, NUL, byte
+ * length, NUL, bytes, in path order): what an install directory is recorded as filled under.
+ */
+function filesDigestOf(files: Record<string, Uint8Array>): string {
+  const h = createHash("sha256");
+  for (const p of Object.keys(files).sort()) {
+    const data = files[p] as Uint8Array;
+    h.update(`${p}\0${data.byteLength}\0`);
+    h.update(data);
+  }
+  return `sha256:${h.digest("hex")}`;
+}
+
 function checkName(name: string): void {
-  if (!DEVICE_SERVICE_NAME_RE.test(name))
+  if (!DEVICE_SERVICE_ID_RE.test(name))
     throw new ServiceSpecError(
-      `Invalid device service name ${JSON.stringify(name)}: 1 to 32 characters, a lower-case letter then letters, digits and -`,
+      `Invalid device service id ${JSON.stringify(name)}: <extension>.<name> (${DEVICE_SERVICE_ID_RE})`,
     );
 }
 

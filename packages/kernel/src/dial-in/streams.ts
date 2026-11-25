@@ -5,11 +5,12 @@ import {
   DIAL_IN_STREAM_INITIAL_CREDIT,
   type DialInKernelFrame,
   type DialInMachineFrame,
+  encodeDialInStreamData,
 } from "@capybara-hq/plugin-sdk";
 
 /**
  * The `code` of the error a stream's `send` rejects with when a message does not fit one frame
- * once base64-encoded (the viewer endpoint answers it with 1009).
+ * (base64-encoded, or binary with its header; the viewer endpoint answers it with 1009).
  */
 export const DEVICE_STREAM_MESSAGE_TOO_BIG = "device.stream_message_too_big";
 
@@ -31,10 +32,15 @@ export function isStreamFrame(frame: DialInMachineFrame): frame is DialInMachine
 
 /** What a connection's stream table needs from its socket. */
 export interface DialInStreamTransport {
-  /** Sends one frame's text on the socket; false when the socket is no longer open. */
-  send(text: string): boolean;
-  /** The connection's negotiated frame capacity in UTF-8 bytes. */
+  /**
+   * Sends one frame on the socket: JSON text, or a binary `stream-data` message; false when the
+   * socket is no longer open.
+   */
+  send(frame: string | Uint8Array): boolean;
+  /** The connection's negotiated frame capacity in bytes. */
   maxFrameBytes(): number;
+  /** Whether hello and ready agreed on binary `stream-data` ({@link encodeDialInStreamData}). */
+  binaryStreamData(): boolean;
 }
 
 /** The reason every stream of a connection ends with when its socket closes. */
@@ -54,9 +60,12 @@ class Stream implements DeviceStream {
   private sendCredit = DIAL_IN_STREAM_INITIAL_CREDIT;
   /** Messages the machine may still send (granted by the kernel). */
   private recvCredit = DIAL_IN_STREAM_INITIAL_CREDIT;
-  /** Sends waiting for credit, in call order (each frame text already checked to fit). */
-  private readonly waiting: { text: string; resolve: () => void; reject: (e: Error) => void }[] =
-    [];
+  /** Sends waiting for credit, in call order (each frame already checked to fit). */
+  private readonly waiting: {
+    frame: string | Uint8Array;
+    resolve: () => void;
+    reject: (e: Error) => void;
+  }[] = [];
   /** Messages received and not consumed yet (at most the credit the kernel granted). */
   private readonly inbox: Uint8Array[] = [];
   /** A consumer waiting for the next message. */
@@ -110,25 +119,30 @@ class Stream implements DeviceStream {
       return Promise.reject(new TypeError("A stream message must be a Uint8Array"));
     if (this.endedWith !== undefined)
       return Promise.reject(new Error(`The stream is closed: ${this.endedWith}`));
-    const frame: DialInKernelFrame = {
-      type: "stream-data",
-      streamId: this.id,
-      data: Buffer.from(message.buffer, message.byteOffset, message.byteLength).toString("base64"),
-    };
-    const text = JSON.stringify(frame);
+    const binary = this.transport.binaryStreamData();
+    const frame: string | Uint8Array = binary
+      ? encodeDialInStreamData(this.id, message)
+      : JSON.stringify({
+          type: "stream-data",
+          streamId: this.id,
+          data: Buffer.from(message.buffer, message.byteOffset, message.byteLength).toString(
+            "base64",
+          ),
+        } satisfies DialInKernelFrame);
+    const size = typeof frame === "string" ? Buffer.byteLength(frame) : frame.byteLength;
     const cap = this.transport.maxFrameBytes();
     // a message is never split: one that does not fit one frame is refused
-    if (Buffer.byteLength(text) > cap)
+    if (size > cap)
       return Promise.reject(
         Object.assign(
           new Error(
-            `A stream message of ${message.byteLength} bytes does not fit the connection's frame capacity of ${cap} bytes once base64-encoded; send smaller messages`,
+            `A stream message of ${message.byteLength} bytes does not fit the connection's frame capacity of ${cap} bytes ${binary ? "with its header" : "once base64-encoded"}; send smaller messages`,
           ),
           { code: DEVICE_STREAM_MESSAGE_TOO_BIG },
         ),
       );
     return new Promise((resolve, reject) => {
-      this.waiting.push({ text, resolve, reject });
+      this.waiting.push({ frame, resolve, reject });
       this.flush();
     });
   }
@@ -147,23 +161,28 @@ class Stream implements DeviceStream {
       this.sendCredit += frame.messages;
       this.flush();
     } else if (frame.type === "stream-data") {
-      if (this.recvCredit <= 0) {
-        // the machine sent beyond the credit the kernel granted: the stream ends, the connection
-        // and its other streams go on
-        this.close("credit exceeded");
-        return;
-      }
-      this.recvCredit--;
-      const m = new Uint8Array(Buffer.from(frame.data, "base64"));
-      const reader = this.reader;
-      if (reader) {
-        this.reader = undefined;
-        this.consumed();
-        reader({ value: m, done: false });
-      } else this.inbox.push(m);
+      this.onData(new Uint8Array(Buffer.from(frame.data, "base64")));
     } else if (frame.type === "stream-close") {
       this.end(frame.reason);
     }
+  }
+
+  /** One message of this stream from the machine (a JSON or a binary `stream-data`). */
+  onData(m: Uint8Array): void {
+    if (this.endedWith !== undefined) return;
+    if (this.recvCredit <= 0) {
+      // the machine sent beyond the credit the kernel granted: the stream ends, the connection
+      // and its other streams go on
+      this.close("credit exceeded");
+      return;
+    }
+    this.recvCredit--;
+    const reader = this.reader;
+    if (reader) {
+      this.reader = undefined;
+      this.consumed();
+      reader({ value: m, done: false });
+    } else this.inbox.push(m);
   }
 
   /** The stream ended (either side, or the socket): waiting sends fail, the reader ends. */
@@ -188,7 +207,7 @@ class Stream implements DeviceStream {
   private flush(): void {
     while (this.sendCredit > 0 && this.waiting.length > 0 && this.endedWith === undefined) {
       const w = this.waiting.shift() as (typeof this.waiting)[number];
-      if (!this.transport.send(w.text)) {
+      if (!this.transport.send(w.frame)) {
         w.reject(new Error(`The stream is closed: ${STREAM_OFFLINE_REASON}`));
         continue;
       }
@@ -203,7 +222,8 @@ class Stream implements DeviceStream {
  * spec §6.1): opened with `stream-open`, carried as `stream-data` frames straight over the socket
  * (never through Redis or PG), each side sending only while it holds credit
  * ({@link DIAL_IN_STREAM_INITIAL_CREDIT} at the open, one more per message the other side
- * consumed). A data frame carries one whole message in base64; a message that does not fit the
+ * consumed). A data frame carries one whole message, in base64 inside JSON or, when hello and
+ * ready agreed on it, as a binary message (raw bytes); a message that does not fit the
  * connection's frame capacity is refused, never split. The table is the connection's own state and
  * lives exactly as long as the socket: its close ends every stream with
  * {@link STREAM_OFFLINE_REASON}.
@@ -314,6 +334,11 @@ export class DialInStreams {
     }
     // a frame racing the stream's close (or of a stream never opened here) has nothing to reach
     this.open.get(frame.streamId)?.onFrame(frame);
+  }
+
+  /** A binary `stream-data` message from the machine; one of a stream not open is dropped. */
+  onData(streamId: string, data: Uint8Array): void {
+    this.open.get(streamId)?.onData(data);
   }
 
   /** The socket closed: every stream ends, every opening fails. */
