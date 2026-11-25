@@ -164,6 +164,7 @@ export type RightAreaSlot = {
     | "listedFiles"
     | "filePaths"
     | "renderCard"
+    | "questionPanel"
     | "openSubagent"
     | "onOpenSubagent"
     | "onOpenAgent"

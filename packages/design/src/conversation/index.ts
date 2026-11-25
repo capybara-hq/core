@@ -92,6 +92,7 @@ export {
   type ApprovalScope,
   type ApprovalState,
   approvalArgs,
+  buttonChoiceField,
   type CommandAsk,
   ConnectBlock,
   type ConnectBlockProps,

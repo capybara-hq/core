@@ -10,13 +10,16 @@
 <body>
 <main class="r-page">
 <h1>Question block</h1>
-<p>Options plus Other, Answer and Skip; a url form shows the full address; answered or skipped collapses to a question and answer pair.</p>
+<p>Options plus Other, Answer and Skip; a url form shows the full address; a form with choices answers with buttons (a confirm: a short title, the reason, 完成 / 取消 and an action); answered or skipped collapses to a question and answer pair.</p>
 <div class="r-blocks">
 <section data-ref-block="question-block-pending" style="width:752px" data-pad>
   <template data-fixture="question-block" data-opts='{"state": "pending"}'></template>
 </section>
 <section data-ref-block="question-block-url" style="width:752px" data-pad>
   <template data-fixture="question-block" data-opts='{"state": "url"}'></template>
+</section>
+<section data-ref-block="question-block-confirm" style="width:752px" data-pad>
+  <template data-fixture="question-block" data-opts='{"state": "confirm"}'></template>
 </section>
 <section data-ref-block="question-block-answered" style="width:752px" data-pad>
   <template data-fixture="question-block" data-opts='{"state": "answered"}'></template>

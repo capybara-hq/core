@@ -931,6 +931,27 @@ function questionBlocks(): ReactNode {
           onSkip={noop}
         />
       </Block>
+      <Block id="question-block-confirm">
+        <QuestionBlock
+          title={H.questionConfirm.title}
+          body={H.questionConfirm.body}
+          fields={[
+            {
+              key: "done",
+              label: H.questionConfirm.yes,
+              kind: "boolean",
+              required: true,
+              choices: [
+                { value: true, label: H.questionConfirm.yes },
+                { value: false, label: H.questionConfirm.no },
+              ],
+            },
+          ]}
+          action={{ label: H.questionConfirm.action, icon: "globe", onClick: noop }}
+          state={{ kind: "pending" }}
+          onAnswer={noop}
+        />
+      </Block>
       <Block id="question-block-answered">
         <QuestionBlock
           title={Q.question}

@@ -195,6 +195,11 @@ export interface InputForm {
    * characters, are accepted.
    */
   url?: string;
+  /**
+   * Optional: longer text under the title (the reason, what to do), at most
+   * {@link INPUT_FORM_BODY_MAX} characters, shown as plain text. Keep the title short.
+   */
+  body?: LocalizedText;
   fields: {
     key: string;
     label: LocalizedText;
@@ -203,8 +208,26 @@ export interface InputForm {
     multiSelect?: boolean;
     allowOther?: boolean;
     required?: boolean;
+    /**
+     * Buttons in place of the field's control: one per choice, the first is the primary, and pressing one answers
+     * the form with its value at once (no separate Answer). Allowed only on the form's single
+     * field, when it is required and a single choice: a `boolean` (values `true` / `false`) or a
+     * string `enum` without `multiSelect` / `allowOther` (values from the enum). 1 to
+     * {@link INPUT_CHOICES_MAX} choices with distinct values; labels at most
+     * {@link INPUT_CHOICE_LABEL_MAX} characters. Example: a confirm form `{ done: boolean }` with
+     * `[{ value: true, label: "Done" }, { value: false, label: "Cancel" }]`, or a one-value enum
+     * that renders as one button ("End wait").
+     */
+    choices?: { value: string | boolean; label: LocalizedText }[];
   }[];
 }
+
+/** The longest {@link InputForm.body}, in characters (per language). */
+export const INPUT_FORM_BODY_MAX = 2000;
+/** The most buttons a form's choices may draw. */
+export const INPUT_CHOICES_MAX = 3;
+/** The longest choice label, in characters (per language). */
+export const INPUT_CHOICE_LABEL_MAX = 40;
 
 /**
  * The tool needs user input: the kernel pauses the run and renders a form; after the user submits,
@@ -395,6 +418,8 @@ export function validateInputForm(form: InputForm): string[] {
   if (form.fields.length === 0) out.push("form must have at least one field");
   if (form.url !== undefined && !isHttpUrl(form.url))
     out.push("url must be an absolute http(s) URL of at most 2000 characters");
+  if (form.body !== undefined && !textWithin(form.body, INPUT_FORM_BODY_MAX))
+    out.push(`body must be non-empty text of at most ${INPUT_FORM_BODY_MAX} characters`);
   const seen = new Set<string>();
   for (const f of form.fields) {
     const at = `field ${JSON.stringify(f?.key)}`;
@@ -409,6 +434,51 @@ export function validateInputForm(form: InputForm): string[] {
     if (probs.length > 0) continue;
     if ((f.multiSelect || f.allowOther) && !isEnum(f.schema))
       out.push(`${at}: multiSelect and allowOther require a string enum schema`);
+    if (f.choices !== undefined) out.push(...choicesProblems(form, f).map((p) => `${at}: ${p}`));
+  }
+  return out;
+}
+
+/** Non-empty text (a string or both languages) of at most `max` characters per language. */
+function textWithin(t: unknown, max: number): boolean {
+  const ok = (x: unknown) => typeof x === "string" && x.trim() !== "" && x.length <= max;
+  if (typeof t === "string") return ok(t);
+  return (
+    typeof t === "object" &&
+    t !== null &&
+    ok((t as { zh?: unknown }).zh) &&
+    ok((t as { en?: unknown }).en)
+  );
+}
+
+/** The rules of {@link InputForm} `choices` (buttons): see the field's documentation. */
+function choicesProblems(form: InputForm, f: InputForm["fields"][number]): string[] {
+  const out: string[] = [];
+  const c = f.choices;
+  if (!Array.isArray(c) || c.length === 0 || c.length > INPUT_CHOICES_MAX)
+    return [`choices must be an array of 1 to ${INPUT_CHOICES_MAX} items`];
+  if (form.fields.length !== 1) out.push("choices are allowed only on a form's single field");
+  if (f.required !== true) out.push("choices require required: true");
+  const bool = f.schema.type === "boolean";
+  const single = isEnum(f.schema) && !f.multiSelect && !f.allowOther;
+  if (!bool && !single)
+    out.push(
+      "choices require a boolean or a single-choice string enum (no multiSelect / allowOther)",
+    );
+  const seen = new Set<string | boolean>();
+  for (const x of c) {
+    const v = (x as { value?: unknown } | null)?.value;
+    const valid = bool
+      ? typeof v === "boolean"
+      : single && typeof v === "string" && (f.schema as { enum: string[] }).enum.includes(v);
+    if (!valid) out.push(`choice value ${JSON.stringify(v)} is not a value of the field`);
+    else if (seen.has(v as string | boolean))
+      out.push(`duplicate choice value ${JSON.stringify(v)}`);
+    else seen.add(v as string | boolean);
+    if (!textWithin((x as { label?: unknown } | null)?.label, INPUT_CHOICE_LABEL_MAX))
+      out.push(
+        `choice label must be non-empty text of at most ${INPUT_CHOICE_LABEL_MAX} characters`,
+      );
   }
   return out;
 }

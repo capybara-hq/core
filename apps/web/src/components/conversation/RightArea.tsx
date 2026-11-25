@@ -769,6 +769,21 @@ export function useRightAreaSlot(p: {
       onOpenSubagent: (id) => open({ kind: "subagent", id }),
       ...(hasSubagents ? { onOpenAgentMap: openMap, onOpenAgent: openAgent } : {}),
       onOpenTask: openTask,
+      questionPanel: (o) => {
+        const c = panels.find((x) => x.plugin === o.plugin && x.id === o.contribution);
+        if (c === undefined) return null;
+        return {
+          label: c.title[locale],
+          icon: ICON_OF[c.icon] ?? "extension",
+          onOpen: () =>
+            open({
+              kind: "panel",
+              plugin: o.plugin,
+              contribution: o.contribution,
+              ...(o.item !== undefined ? { item: o.item } : {}),
+            }),
+        };
+      },
       renderCard: (e) => (
         <ExtensionSlot
           slot="conversation.tool-result.card"

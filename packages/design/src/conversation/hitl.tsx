@@ -16,6 +16,7 @@ import { CodeBlock } from "../display/chat";
 import { initialOf } from "../display/initial";
 import { type PersonLike, PersonName } from "../display/person-name";
 import { Icon } from "../icons/icon";
+import type { IconName } from "../icons/paths";
 import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
 import { useMobileSizes } from "../shell/touch";
@@ -1240,7 +1241,25 @@ export type QuestionField = {
   max?: number;
   /** `string`: the longest answer. */
   maxLength?: number;
+  /**
+   * Buttons in place of the control (`InputForm` `choices`): on a form's single required
+   * single-choice field (`boolean`, or `enum` without Other), one button per choice, the first
+   * primary; pressing one answers with its value at once.
+   */
+  choices?: { value: string | boolean; label: string }[];
 };
+
+/**
+ * The field a question answers with buttons (see {@link QuestionField.choices}): the form's only
+ * field, required, a single choice, with choices. One mechanism for every button question (a
+ * confirm 完成 / 取消, a one-value wait 结束等待).
+ */
+export function buttonChoiceField(fields: QuestionField[]): QuestionField | undefined {
+  const f = fields.length === 1 ? fields[0] : undefined;
+  if (f === undefined || f.required !== true || (f.choices?.length ?? 0) === 0) return undefined;
+  if (f.kind === "boolean" || (f.kind === "enum" && f.allowOther !== true)) return f;
+  return undefined;
+}
 
 export type QuestionAnswer = Record<string, string | number | boolean | string[]>;
 
@@ -1259,6 +1278,13 @@ export type QuestionBlockProps = {
   /** URL mode: a page the person opens in their browser (http(s) only; anything else is hidden). */
   url?: string;
   fields: QuestionField[];
+  /** Longer text under the title (`InputForm.body`): the reason, what to do; plain text. */
+  body?: string;
+  /**
+   * A secondary action beside the answer (e.g. opening the panel where the person does what is
+   * asked); it does not answer.
+   */
+  action?: { label: string; icon?: IconName; onClick(): void };
   state: QuestionState;
   onAnswer?(answer: QuestionAnswer): void;
   onSkip?(): void;
@@ -1612,13 +1638,14 @@ export function QuestionBlock(p: QuestionBlockProps): JSX.Element {
   const busy = s.busy === true;
   const link = safeHttpUrl(p.url);
   const single = p.fields.length === 1;
+  const buttons = buttonChoiceField(p.fields);
   const submit = () => {
     const built = buildAnswer(p.fields, draft);
     setMissing(built.missing);
     if (built.missing.length > 0) return;
     p.onAnswer?.(built.answer);
   };
-  const fields = p.fields.map((f) => {
+  const fields = (buttons ? [] : p.fields).map((f) => {
     const label = single && (f.kind === "enum" || f.kind === "multi") ? null : f.label;
     const err = missing.includes(f.key);
     let control: ReactNode;
@@ -1678,6 +1705,11 @@ export function QuestionBlock(p: QuestionBlockProps): JSX.Element {
       <div className="cb-hcard-title" data-part="question-title">
         {p.title}
       </div>
+      {p.body ? (
+        <figure className="cb-hcard-reason" data-part="question-body">
+          <blockquote className="cb-hcard-reason-text">{p.body}</blockquote>
+        </figure>
+      ) : null}
       {link ? (
         <a
           className="cb-q-url"
@@ -1710,7 +1742,19 @@ export function QuestionBlock(p: QuestionBlockProps): JSX.Element {
             </span>
           </a>
         ) : null}
-        {hasFields ? (
+        {buttons ? (
+          (buttons.choices ?? []).map((c, i) => (
+            <Button
+              key={String(c.value)}
+              variant={i === 0 && !link ? "primary" : "default"}
+              disabled={busy}
+              data-choice={String(c.value)}
+              onClick={() => p.onAnswer?.({ [buttons.key]: c.value })}
+            >
+              {c.label}
+            </Button>
+          ))
+        ) : hasFields ? (
           <Button variant={link ? "default" : "primary"} disabled={busy} onClick={submit}>
             {t("hitl.answer")}
           </Button>
@@ -1718,6 +1762,12 @@ export function QuestionBlock(p: QuestionBlockProps): JSX.Element {
           // URL mode: once the page was opened, the person says they are done.
           <Button variant="primary" disabled={busy} onClick={() => p.onAnswer?.({})}>
             {t("hitl.done")}
+          </Button>
+        ) : null}
+        {p.action ? (
+          <Button variant="ghost" disabled={busy} onClick={p.action.onClick}>
+            {p.action.icon ? <Icon name={p.action.icon} size={14} /> : null}
+            {p.action.label}
           </Button>
         ) : null}
         {p.onSkip ? (

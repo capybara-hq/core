@@ -201,6 +201,78 @@ describe("validateInputForm", () => {
   });
 });
 
+describe("InputForm choices and body (buttons)", () => {
+  const done = (over: Record<string, unknown> = {}) => ({
+    key: "done",
+    label: "Done",
+    schema: { type: "boolean" as const },
+    required: true,
+    choices: [
+      { value: true, label: { zh: "完成", en: "Done" } },
+      { value: false, label: { zh: "取消", en: "Cancel" } },
+    ],
+    ...over,
+  });
+
+  it("a confirm form (required boolean, two labelled values) with a body is valid", () => {
+    expect(
+      validateInputForm({ title: "T", body: { zh: "原因", en: "Why" }, fields: [done()] }),
+    ).toEqual([]);
+  });
+
+  it("a one-value required enum with one choice is valid (one button)", () => {
+    expect(
+      validateInputForm({
+        title: "Waiting",
+        fields: [
+          {
+            key: "end",
+            label: "End",
+            schema: { type: "string", enum: ["end"] },
+            required: true,
+            choices: [{ value: "end", label: { zh: "结束等待", en: "End wait" } }],
+          },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("choices outside the rule are refused", () => {
+    const probs = (f: Record<string, unknown>, extra: Record<string, unknown>[] = []) =>
+      validateInputForm({ title: "T", fields: [f, ...extra] as never }).join("\n");
+    expect(probs(done({ required: false }))).toMatch(/require required: true/);
+    expect(probs(done(), [{ key: "x", label: "X", schema: { type: "string" } }])).toMatch(
+      /single field/,
+    );
+    expect(probs(done({ schema: { type: "string" } }))).toMatch(/boolean or a single-choice/);
+    expect(
+      probs(
+        done({
+          schema: { type: "string", enum: ["a"] },
+          multiSelect: true,
+          choices: [{ value: "a", label: "A" }],
+        }),
+      ),
+    ).toMatch(/boolean or a single-choice/);
+    expect(probs(done({ choices: [{ value: "yes", label: "Y" }] }))).toMatch(/not a value/);
+    expect(
+      probs(
+        done({
+          choices: [
+            { value: true, label: "A" },
+            { value: true, label: "B" },
+          ],
+        }),
+      ),
+    ).toMatch(/duplicate choice value/);
+    expect(probs(done({ choices: [{ value: true, label: "" }] }))).toMatch(/choice label/);
+    expect(probs(done({ choices: [] }))).toMatch(/1 to 3/);
+    expect(
+      validateInputForm({ title: "T", body: "x".repeat(2001), fields: [done()] }).join(""),
+    ).toMatch(/body must be/);
+  });
+});
+
 describe("validateAnswer", () => {
   const f = form([
     { key: "pick", label: "P", schema: { type: "string", enum: ["a", "b"] }, required: true },

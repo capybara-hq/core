@@ -246,6 +246,8 @@ export interface QuestionItem {
   callId: string;
   form: InputForm;
   expiresAt: string;
+  /** A plugin tool's `InputRequired.open`: the panel the question names (the card's action). */
+  open?: { plugin: string; contribution: string; item?: string };
   /** `byPerson`: the answerer as a question read names them (a sub-agent's wait), when known. */
   answered: (QuestionOutcome & { byPerson?: PersonRef | null }) | null;
 }
@@ -1668,6 +1670,7 @@ export function buildEventTimeline(
             callId: e.payload.callId,
             form: e.payload.form,
             expiresAt: e.payload.expiresAt,
+            ...(e.payload.open !== undefined ? { open: e.payload.open } : {}),
             answered: null,
           },
         });

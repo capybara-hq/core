@@ -1099,6 +1099,41 @@ describe("ToolPipeline.runStep", () => {
     expect(handlerCalls.form).toHaveLength(1);
   });
 
+  it("a confirm form's body and choices reach question_asked; choices outside the rule are an error text", async () => {
+    const confirm = {
+      title: { zh: "请在浏览器中完成：登录", en: "Finish in the browser: sign in" },
+      body: { zh: "请登录你的账号。", en: "Please sign in." },
+      fields: [
+        {
+          key: "done",
+          label: { zh: "完成", en: "Done" },
+          schema: { type: "boolean" as const },
+          required: true,
+          choices: [
+            { value: true, label: { zh: "完成", en: "Done" } },
+            { value: false, label: { zh: "取消", en: "Cancel" } },
+          ],
+        },
+      ],
+    };
+    let form: unknown = confirm;
+    handlers.plugin__probe__form = async () => ({ kind: "input_required", form: form as never });
+    await insertRun();
+    await assistant([{ id: "c1", name: "plugin__probe__form", input: {} }]);
+    await pipeline().runStep(stepCtx());
+    const asked = (await eventsOf(db, seed.conversationId)).find(
+      (e) => e.type === "question_asked",
+    );
+    expect((asked?.payload as { form?: unknown } | undefined)?.form).toEqual(confirm);
+    // an optional field with choices breaks the rule: the model gets the form's problem
+    form = { ...confirm, fields: [{ ...confirm.fields[0], required: false }] };
+    await assistant([{ id: "c2", name: "plugin__probe__form", input: {} }], 2);
+    await pipeline().runStep(stepCtx({ step: 2 }));
+    const evs = await eventsOf(db, seed.conversationId);
+    expect(evs.filter((e) => e.type === "question_asked")).toHaveLength(1);
+    expect(JSON.stringify(resultsOf(evs).at(-1))).toMatch(/choices require required: true/);
+  });
+
   it("InputRequired.open: a panel of the tool's own extension goes into question_asked; another is dropped", async () => {
     let open: unknown = { contribution: "panel", item: "tab-1" };
     handlers.plugin__probe__form = async () => ({

@@ -369,6 +369,87 @@ const choice: QuestionField = {
   required: true,
 };
 
+describe("QuestionBlock buttons (choices: one mechanism for confirm and one-value forms)", () => {
+  const confirm = {
+    key: "done",
+    label: "完成",
+    kind: "boolean" as const,
+    required: true,
+    choices: [
+      { value: true, label: "完成" },
+      { value: false, label: "取消" },
+    ],
+  };
+
+  it("a confirm form: body under a short title, 完成 primary first, 取消, an action; a press answers at once", async () => {
+    const onAnswer = vi.fn();
+    const onOpen = vi.fn();
+    const { container } = wrap(
+      <QuestionBlock
+        title="请在浏览器中完成：登录"
+        body="请登录你的账号，完成后交还。"
+        fields={[confirm]}
+        action={{ label: "打开浏览器面板", icon: "globe", onClick: onOpen }}
+        state={{ kind: "pending" }}
+        onAnswer={onAnswer}
+      />,
+    );
+    expect(container.querySelector('[data-part="question-body"]')?.textContent).toBe(
+      "请登录你的账号，完成后交还。",
+    );
+    // no switch and no 回答: the choices are the answer
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByRole("button", { name: "回答" })).toBeNull();
+    const buttons = Array.from(container.querySelectorAll(".cb-hcard-actions button"));
+    expect(buttons.map((b) => b.textContent)).toEqual(["完成", "取消", "打开浏览器面板"]);
+    expect(buttons[0]?.getAttribute("data-variant")).toBe("primary");
+    expect(buttons[1]?.getAttribute("data-variant")).not.toBe("primary");
+    await userEvent.click(screen.getByRole("button", { name: "打开浏览器面板" }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onAnswer).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(onAnswer).toHaveBeenCalledWith({ done: false });
+    expect(findNestedBoxes(container)).toEqual([]);
+  });
+
+  it("a one-value required enum renders as one button", async () => {
+    const onAnswer = vi.fn();
+    wrap(
+      <QuestionBlock
+        title="智能体正在等待：页面出现“支付成功”"
+        fields={[
+          {
+            key: "end",
+            label: "结束等待",
+            kind: "enum",
+            options: ["end"],
+            required: true,
+            choices: [{ value: "end", label: "结束等待" }],
+          },
+        ]}
+        state={{ kind: "pending" }}
+        onAnswer={onAnswer}
+      />,
+    );
+    expect(screen.queryByRole("radio")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "结束等待" }));
+    expect(onAnswer).toHaveBeenCalledWith({ end: "end" });
+  });
+
+  it("choices on an optional field draw the ordinary control", () => {
+    wrap(
+      <QuestionBlock
+        title="T"
+        fields={[{ ...confirm, required: false }]}
+        state={{ kind: "pending" }}
+        onAnswer={() => {}}
+      />,
+    );
+    expect(screen.getByRole("switch")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "回答" })).toBeTruthy();
+  });
+});
+
 describe("QuestionBlock (§6.16.12)", () => {
   it("answers with the picked option", async () => {
     const onAnswer = vi.fn();
