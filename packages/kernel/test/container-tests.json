@@ -33,6 +33,7 @@
   "git/gateway.test.ts",
   "dial-in/gateway.dual.test.ts",
   "dial-in/streams.dual.test.ts",
+  "identity/sso-link.dual.test.ts",
   "infra/rls-enforce.dual.test.ts",
   "migrations/0123.test.ts",
   "orgs/directory-sync.dual.test.ts",

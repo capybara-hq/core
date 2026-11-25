@@ -135,6 +135,7 @@ function adminRoutes(
           { id: "t-neon", kind: "theme", name: "neon", displayName: { en: "Neon", zh: "霓虹" } },
         ],
       }),
+    "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
     "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: singles }),
     ...extra,
   });

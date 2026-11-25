@@ -557,6 +557,8 @@ export const keys = {
       platformIcons: (): readonly unknown[] => [...all, "platformIcons"],
       /** The sign-in sources the login page offers. */
       authSources: (): readonly unknown[] => [...all, "authSources"],
+      /** The platform's login methods with their settings (super admins, `/admin/*`). */
+      loginSources: (): readonly unknown[] => [...all, "loginSources"],
       /** Whether the deployment still needs its first admin (`GET /setup`). */
       setupStatus: (): readonly unknown[] => [...all, "setupStatus"],
       /** An invitation's public preview, by its token (no session needed). */
@@ -567,6 +569,11 @@ export const keys = {
        * drops the whole cache anyway.
        */
       pendingBinding: (token: string): readonly unknown[] => [...all, "pendingBinding", token],
+      /**
+       * A pending link of a third-party sign-in (`/login/link`), by its ticket: read only in the
+       * browser (it needs the `cap_sso` cookie, whose path is the kernel's SSO routes).
+       */
+      ssoLink: (ticket: string): readonly unknown[] => [...all, "ssoLink", ticket],
       /**
        * The machine waiting behind a device user code (`/devices/link`). Like a binding it needs a
        * session to read but answers the same whoever asks; a sign-in or sign-out drops the cache.

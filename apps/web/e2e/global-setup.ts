@@ -721,7 +721,7 @@ export default async function globalSetup(): Promise<Cleanup> {
       extensionHost: { dir: join(dir, "plugins") },
       // publicUrl：机器人发的绑定链接指向 Web 层（`<publicUrl>/bind/<token>`）
       http: { port: kernelPort, trustProxy: 1, publicUrl: `http://localhost:${webPort}` },
-      auth: { cookieSecure: false, loginSources: ["fake-im"] },
+      auth: { cookieSecure: false },
       // 渠道长连接的扫描加快，建连接后很快连上
       channels: { leaseTtlMs: 3000, scanIntervalMs: 500 },
       log: { level: "warn" },
@@ -738,6 +738,30 @@ export default async function globalSetup(): Promise<Cleanup> {
     );
     if ((await exited(migrate)) !== 0) {
       throw new Error(`capybara migrate failed:\n${await tail(logs.migrate)}`);
+    }
+
+    // fake-im on the login page (the `loginSources` deployment setting); an unlinked sign-in
+    // creates an account, as before the setting existed. Plain SQL through psql in the container:
+    // importing the kernel's source here would hit Playwright's transform, which has no
+    // parameter decorators.
+    {
+      const value = JSON.stringify([
+        { plugin: "fake-im", enabled: true, signUp: "create", trustedTenants: [] },
+      ]);
+      const seeded = await pg.exec([
+        "psql",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-U",
+        pg.getUsername(),
+        "-d",
+        pg.getDatabase(),
+        "-c",
+        `INSERT INTO capybara.deployment_settings (key, value) VALUES ('loginSources', '${value}'::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      ]);
+      if (seeded.exitCode !== 0) {
+        throw new Error(`seeding loginSources failed:\n${seeded.output}`);
+      }
     }
 
     // The bootstrap plugins: the pinned npm packages from the public registry (or the mirror in

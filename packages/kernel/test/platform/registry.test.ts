@@ -51,6 +51,7 @@ describe("PlatformOperations", () => {
       "extensions",
       "conversations",
       "orgs",
+      "login-sources",
       "accounts",
       "admin",
       "models",

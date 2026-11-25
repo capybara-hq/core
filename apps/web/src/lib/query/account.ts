@@ -12,7 +12,10 @@ export const toolGrantsQuery = (orgId: string) =>
     freshness: "mine",
   });
 
-/** The account's linked external identities (`{ identities }`, as the kernel answers). */
+/**
+ * The account's linked external identities with their capabilities and the login methods it can
+ * still link (`{ identities, linkable }`, as the kernel answers).
+ */
 export const identitiesQuery = (accountId: string) =>
   defineQuery({
     key: keys.account(accountId).identities(),

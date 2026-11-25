@@ -224,6 +224,31 @@ describe("Repeater (spec §6.26)", () => {
     expect(onMove).toHaveBeenCalledTimes(1);
   });
 
+  it("without onAdd and onRemove it is an order-only list: no footer, no remove, still movable", async () => {
+    const onMove = vi.fn();
+    wrap(
+      <Repeater
+        label="Login methods"
+        variant="rows"
+        items={[card("a"), card("b")]}
+        onMove={onMove}
+      />,
+    );
+    expect(document.querySelector('[data-part="repeater-foot"]')).toBeNull();
+    expect(document.querySelector('[data-part="repeater-remove"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Move a down" }));
+    expect(onMove).toHaveBeenCalledWith("a", 1);
+  });
+
+  it("an add button always has a name: onAdd without addLabel does not compile", () => {
+    // @ts-expect-error onAdd needs its addLabel
+    const unnamed = <Repeater label="Endpoints" items={[]} onAdd={() => {}} />;
+    // @ts-expect-error addLabel without onAdd names no button
+    const orphan = <Repeater label="Endpoints" items={[]} addLabel="Add endpoint" />;
+    expect([unnamed, orphan]).toHaveLength(2);
+  });
+
   it("after add, focus moves to the new item's first field", async () => {
     wrap(<Host initial={["a"]} />);
     await userEvent.click(screen.getByRole("button", { name: "Add endpoint" }));

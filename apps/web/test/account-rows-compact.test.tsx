@@ -28,6 +28,9 @@ const IDENTITY = {
   avatarUrl: null,
   linkedVia: "bind",
   createdAt: "2026-11-01T08:00:00Z",
+  label: { zh: "假 IM", en: "Fake IM" },
+  channel: true,
+  login: "needs_link",
 };
 const REG = {
   id: "r2",
@@ -77,8 +80,7 @@ describe("account tables at 390", () => {
   it("/account/identities: title = the identity, unlink in the row menu", async () => {
     resetNavigation("/account/identities");
     stubApi({
-      "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY] }),
-      "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
+      "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY], linkable: [] }),
     });
     await renderRouteWithCache("/account/identities", lastStubRoutes(), { locale: "en", me: ME });
     const table = await vi.waitFor(compact);

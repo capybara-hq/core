@@ -80,7 +80,7 @@ itself `/** @clientOnly … */`. Details: [tools/checks/README.md](../../../tool
 
 ### The web order: contexts and frames (spec `docs/superpowers/specs/2026-10-31-web-order-design.md`)
 
-The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`): the workspace (新会话, which is the home, then 智能体 / 技能 / 连接器; 更多 with plugins / extensions / channels / evals / org settings (agent templates are the 模板 tab of 智能体, ruling P4-14); the conversations) and the admin console (`/admin/*`, entered from the account row, super admins only). Personal settings are `/account/*` (connections, grants, IM identities), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
+The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`): the workspace (新会话, which is the home, then 智能体 / 技能 / 连接器; 更多 with plugins / extensions / channels / evals / org settings (agent templates are the 模板 tab of 智能体, ruling P4-14); the conversations) and the admin console (`/admin/*`, entered from the account row, super admins only). Personal settings are `/account/*` (connections, grants, linked accounts (已绑定账号)), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
 
 | Frame | Template | Use |
 |---|---|---|

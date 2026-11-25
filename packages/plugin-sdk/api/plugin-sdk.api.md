@@ -2181,11 +2181,27 @@ export interface IdentitySource {
         zh: string;
         en: string;
     };
+    tenant?: IdentitySourceTenant;
 }
 
 // @public
 export class IdentitySourceRefused extends Error {
     constructor(message: string);
+}
+
+// @public
+export interface IdentitySourceTenant {
+    help?: {
+        zh: string;
+        en: string;
+    };
+    label: {
+        zh: string;
+        en: string;
+    };
+    neverTrusted?: string[];
+    pattern?: string;
+    placeholder?: string;
 }
 
 // @public
@@ -5287,6 +5303,9 @@ export function validateSkillPackage(files: {
     path: string;
     size: number;
 }[]): string[];
+
+// @public
+export function validateTenantId(decl: IdentitySourceTenant | undefined, id: string): "ok" | "pattern" | "never_trusted" | "empty";
 
 // @public
 export function validateThemeAssets(theme: ParsedTheme, files: Map<string, Uint8Array>): {

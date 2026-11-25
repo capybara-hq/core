@@ -125,6 +125,30 @@ describe("binding confirmation (AuthPage)", () => {
     },
   );
 
+  it.each(["zh", "en"] as const)(
+    "shows the warning line: bind only your own account; the avatar sends no referrer (%s)",
+    async (locale) => {
+      const m = msgs[locale].bind;
+      stubApi({
+        [`GET ${PATH}`]: () =>
+          json(200, { binding: { ...BINDING, avatarUrl: "https://im.example/a.png" } }),
+      });
+      const { container } = await renderAuthRouteWithCache(PAGE, lastStubRoutes(), { locale });
+      expect(await screen.findByText("Alice Wong")).toBeTruthy();
+      const note = screen.getByRole("note");
+      expect(within(note).getByText(m.warning)).toBeTruthy();
+      expect(within(note).getByText(m.effect)).toBeTruthy();
+      expect(m.warning).toBe(
+        locale === "zh"
+          ? "只绑定你本人的账号。如果这个链接是别人发给你的，不要绑定。"
+          : "Only link your own account. If someone else sent you this link, do not link it.",
+      );
+      const img = container.querySelector("img");
+      expect(img?.getAttribute("src")).toBe("https://im.example/a.png");
+      expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
+    },
+  );
+
   it("cancel: no binding, back home (the new conversation)", async () => {
     const calls = stubApi({ [`GET ${PATH}`]: () => json(200, { binding: BINDING }) });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());

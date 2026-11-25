@@ -21,6 +21,7 @@ import {
   singleProviderMessage,
 } from "../../extensions/single-provider.js";
 import { unavailableReason } from "../../extensions/unavailable.js";
+import { LoginSourcesService } from "../../identity/login-sources.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import {
@@ -115,6 +116,25 @@ export function configGuides(
     guides: list,
     next: "Required fields are unset or the config is invalid, and the extension ships platform setup guides (guides): read them with extensions.platform-guides, walk the person through their steps, then save the fields with extensions.platform-set-config.",
   };
+}
+
+/** The login next step of an identity-source@1 extension (login extensions spec §3). */
+export const LOGIN_SOURCE_NEXT =
+  "Its sign-in is turned on and its trusted tenants set with login-sources.update.";
+
+/**
+ * The `next` of `extensions.platform-config`: the setup guides' step, then, for an extension that
+ * provides identity-source@1, where its sign-in is switched on (its switch is not part of its
+ * config); absent when neither applies.
+ */
+export function platformConfigNext(
+  setupNext: string | undefined,
+  isLoginSource: boolean,
+): string | undefined {
+  const next = [setupNext, isLoginSource ? LOGIN_SOURCE_NEXT : undefined]
+    .filter((s) => s !== undefined)
+    .join(" ");
+  return next === "" ? undefined : next;
 }
 
 /** Whether a deployment config is invalid or leaves a required field without a value. */
@@ -215,6 +235,8 @@ export class ExtensionsAdminOperations implements OnModuleInit {
     @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "deploymentGuides">,
     @Inject(SetupChecksService)
     private readonly checks: Pick<SetupChecksService, "deploymentStates" | "deploymentRun">,
+    @Inject(LoginSourcesService)
+    private readonly loginSources: Pick<LoginSourcesService, "providesIdentitySource">,
   ) {}
 
   /** The view of `name` for a precheck, or the refusal (unknown, startup-declared). */
@@ -602,7 +624,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-config",
         description:
-          "Read an extension's deployment config (super admin): each field's source (env, file or nacos: read-only here; db: saved here; default; unset), the effective value of non-secret fields, whether each secret field is set (never its value), the form's JSON Schema (secret fields carry x-secret), whether the config is valid and the problems (paths only), the overridable fields every org must fill in itself (orgMustConfigure), and the platform setup guides the extension ships (guides: id and title in locale, the person's language; read them with extensions.platform-guides). next names that operation when a guide exists and the config needs setting up.",
+          "Read an extension's deployment config (super admin): each field's source (env, file or nacos: read-only here; db: saved here; default; unset), the effective value of non-secret fields, whether each secret field is set (never its value), the form's JSON Schema (secret fields carry x-secret), whether the config is valid and the problems (paths only), the overridable fields every org must fill in itself (orgMustConfigure), and the platform setup guides the extension ships (guides: id and title in locale, the person's language; read them with extensions.platform-guides). next names that operation when a guide exists and the config needs setting up; for an identity-source@1 extension, next also points to login-sources.update.",
         input: NameInput.extend(DeploymentGuidesQuery.shape).strict(),
         example: { name: "slack", locale: "en" },
         authz: { superAdmin: true },
@@ -617,11 +639,14 @@ export class ExtensionsAdminOperations implements OnModuleInit {
         ],
         run: async (input, ctx) => {
           await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
-          const [view, guides] = await Promise.all([
+          const [view, guides, login] = await Promise.all([
             this.deploymentConfigs.view(input.name),
             this.guides.deploymentGuides(input.name, { locale: input.locale }),
+            this.loginSources.providesIdentitySource(input.name),
           ]);
-          return { ...view, ...configGuides(view, guides) };
+          const setup = configGuides(view, guides);
+          const next = platformConfigNext(setup.next, login);
+          return { ...view, ...setup, ...(next !== undefined ? { next } : {}) };
         },
       }),
       defineOperation({

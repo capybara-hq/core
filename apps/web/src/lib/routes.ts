@@ -7,6 +7,13 @@ export const PUBLIC_PREFIXES = ["/login", "/setup", "/invite", "/bind", "/s"] as
 /** Whether a page path (no query) is a share page `/s/<code>`. */
 export const isSharePath = (path: string): boolean => path.startsWith("/s/");
 
+/**
+ * The link page (login extensions spec §5): a third-party sign-in without a linked account
+ * finishes here with a username and password. Its ticket is in the query, so the page sends no
+ * referrer, and a signed-in visitor stays on it (the sign-in replaces the session).
+ */
+export const LINK_PAGE_PATH = "/login/link";
+
 const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
 
 /** Whether a page path (no query) is public: one of {@link PUBLIC_PREFIXES} or below it. */

@@ -7,34 +7,19 @@ const base = {
   masterKey: Buffer.alloc(32, 1).toString("base64"),
 };
 
-/** Ruling A19：受信任的身份源按租户配置，元素是完整的身份源键 `<插件名>:<租户 id>`。 */
-describe("auth.trustedIdentitySources", () => {
-  it("接受完整的身份源键", () => {
-    const c = KernelConfigSchema.parse({
-      ...base,
-      auth: { trustedIdentitySources: ["lark:tenant_1", "fake-idp:t1"] },
+/**
+ * Login methods and trusted tenants are a deployment setting (login extensions spec §1), no
+ * longer startup config: a deployment that still sets the old keys fails at startup naming them.
+ */
+describe("removed auth login keys", () => {
+  for (const key of ["loginSources", "trustedIdentitySources"]) {
+    it(`auth.${key} is refused`, () => {
+      const r = KernelConfigSchema.safeParse({ ...base, auth: { [key]: [] } });
+      expect(r.success).toBe(false);
+      const issue = r.error?.issues[0];
+      expect(issue?.code).toBe("unrecognized_keys");
+      expect(issue?.path).toEqual(["auth"]);
+      expect((issue as { keys?: string[] } | undefined)?.keys).toEqual([key]);
     });
-    expect(c.auth.trustedIdentitySources).toEqual(["lark:tenant_1", "fake-idp:t1"]);
-  });
-
-  it("只写插件名（不带租户）→ 拒绝，并说明要写成 <插件名>:<租户 id>", () => {
-    const r = KernelConfigSchema.safeParse({
-      ...base,
-      auth: { trustedIdentitySources: ["lark"] },
-    });
-    expect(r.success).toBe(false);
-    const issue = r.error?.issues[0];
-    expect(issue?.path).toEqual(["auth", "trustedIdentitySources", 0]);
-    expect(issue?.message).toMatch(/<plugin>:<tenantId>/);
-  });
-
-  it("租户为空或含空白、插件名不合规 → 拒绝", () => {
-    for (const bad of ["lark:", ":t1", "lark:t 1", "Lark:t1", "local:x"]) {
-      const r = KernelConfigSchema.safeParse({
-        ...base,
-        auth: { trustedIdentitySources: [bad] },
-      });
-      expect(r.success, bad).toBe(false);
-    }
-  });
+  }
 });

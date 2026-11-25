@@ -21,8 +21,6 @@ describe("configFields", () => {
     expect(byPath.get("masterKeyPrevious")?.secret).toBe(true);
     expect(fields.filter((f) => f.meta?.hot).map((f) => f.path)).toEqual([
       "platform.name",
-      "auth.loginSources",
-      "auth.trustedIdentitySources",
       "runtime.orgConcurrency",
       "tools.git.enabled",
       "attachments.readImagesPerRequest",

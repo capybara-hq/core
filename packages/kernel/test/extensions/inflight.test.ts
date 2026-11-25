@@ -1,5 +1,10 @@
 import { fileURLToPath } from "node:url";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  seedLoginSources,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -56,11 +61,12 @@ beforeAll(async () => {
         extensions: [MODEL_FAKE, fx("everything"), fx("fake-idp"), fx("dir-mini"), fx("sse-hold")],
         extensionConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
         http: { port: 0, publicUrl: "https://cap.example" },
-        auth: { cookieSecure: false, loginSources: ["fake-idp"] },
+        auth: { cookieSecure: false },
       },
     ),
   );
   raw = createDb(pgc.url, 3);
+  await seedLoginSources(kernelDb(raw), [{ plugin: "fake-idp" }]);
   await accountsFor(kernelDb(raw)).createLocal({
     login: "owner",
     password: PW,
@@ -242,21 +248,12 @@ describe("内核侧消费方实时向注册表取", () => {
   });
 
   it("登录源（identity-source@1）：撤销后不再列出，重新加载后回来", async () => {
-    expect(
-      k.app
-        .get(SsoFlow)
-        .sources()
-        .map((s) => s.plugin),
-    ).toEqual(["fake-idp"]);
+    const plugins = async () => (await k.app.get(SsoFlow).sources()).map((s) => s.plugin);
+    expect(await plugins()).toEqual(["fake-idp"]);
     await k.app.get(ExtensionHost).unload("fake-idp");
-    expect(k.app.get(SsoFlow).sources()).toEqual([]);
+    expect(await plugins()).toEqual([]);
     await k.app.get(ExtensionHost).reload("fake-idp");
-    expect(
-      k.app
-        .get(SsoFlow)
-        .sources()
-        .map((s) => s.plugin),
-    ).toEqual(["fake-idp"]);
+    expect(await plugins()).toEqual(["fake-idp"]);
   });
 
   it("通讯录（directory@1）：撤销后扫描不再投递，重新加载后恢复", async () => {

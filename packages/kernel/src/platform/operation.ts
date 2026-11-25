@@ -292,6 +292,11 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
       "This org (read, rename, members and invitations, its audit log) and, for the super admin, every org and its limits.",
   },
   {
+    id: "login-sources",
+    description:
+      "The login page's third-party sign-in methods (super admin): list, turn one on or off, what an unlinked external account does, trusted tenants, the order.",
+  },
+  {
     id: "accounts",
     description: "Platform accounts (super admin): list, read, create, disable, enable.",
   },

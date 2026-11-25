@@ -10,7 +10,8 @@ import { ADMIN_PAGES as NAV } from "../../components/admin-nav";
 import { type Session, SessionContext } from "../../components/shell/session";
 import type { AdminOrg, DeploymentSettings } from "../../lib/admin";
 import type { ComponentVersion, PlatformComponent } from "../../lib/components";
-import { adminOrgsQuery, deploymentSettingsQuery } from "../../lib/query/admin";
+import type { LoginSource } from "../../lib/login-sources";
+import { adminOrgsQuery, deploymentSettingsQuery, loginSourcesQuery } from "../../lib/query/admin";
 import { adminComponentsQuery, componentVersionsQuery } from "../../lib/query/components";
 import { meQuery } from "../../lib/query/shell";
 import type { Me } from "../../lib/session";
@@ -92,6 +93,39 @@ const SETTINGS: DeploymentSettings = {
   promptSuggestions: "on",
 };
 
+const LOGIN_SOURCES: LoginSource[] = [
+  {
+    plugin: "slack",
+    label: { zh: "Slack", en: "Slack" },
+    enabled: true,
+    signUp: "link",
+    trustedTenants: [],
+    available: true,
+    needsConfig: false,
+    callbackUrl: "https://capybara.example.com/api/v1/auth/sso/slack/callback",
+  },
+  {
+    plugin: "lark",
+    label: { zh: "飞书", en: "Lark" },
+    enabled: true,
+    signUp: "link",
+    trustedTenants: [],
+    available: true,
+    needsConfig: false,
+    callbackUrl: "https://capybara.example.com/api/v1/auth/sso/lark/callback",
+  },
+  {
+    plugin: "google",
+    label: { zh: "Google", en: "Google" },
+    enabled: false,
+    signUp: "link",
+    trustedTenants: [],
+    available: true,
+    needsConfig: true,
+    callbackUrl: "https://capybara.example.com/api/v1/auth/sso/google/callback",
+  },
+];
+
 function seededSuper(): QueryClient {
   const qc = seeded();
   qc.setQueryData(meQuery().queryKey, SUPER_ME);
@@ -102,6 +136,7 @@ function seededSuper(): QueryClient {
   });
   qc.setQueryData(adminOrgsQuery().queryKey, { orgs: ORGS });
   qc.setQueryData(deploymentSettingsQuery().queryKey, SETTINGS);
+  qc.setQueryData(loginSourcesQuery().queryKey, { items: LOGIN_SOURCES });
   return qc;
 }
 

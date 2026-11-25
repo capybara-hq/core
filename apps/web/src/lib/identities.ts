@@ -9,11 +9,48 @@ export interface LinkedIdentity {
   displayName: string | null;
   avatarUrl: string | null;
   /**
-   * 身份行是怎么建立的：`bind`（IM 里点绑定链接确认）只能在 IM 里代表本人，要用它登录须先在登录状态下
-   * 完成一次该身份的第三方登录（「验证」）；null 为旧行。
+   * How the row was made: `bind` (an IM bind link) acts as the person only in IM until a link
+   * intent upgrades it; null for rows from before the column.
    */
   linkedVia?: "bind" | "sso" | "directory" | "local" | null;
   createdAt: string;
+  /** The platform's name (the identity source's label, else the plugin's display name). */
+  label: { zh: string; en: string };
+  /** Its plugin provides `channel@1`: the account can talk to agents in IM. */
+  channel: boolean;
+  /**
+   * Sign-in with it: `unsupported` (the plugin has no sign-in), `off` (not offered on this
+   * platform), `needs_link` (offered; an IM-bound row that a link intent upgrades), `on`.
+   */
+  login: "unsupported" | "off" | "needs_link" | "on";
+}
+
+/** An enabled login method the account has no identity of (a Link button). */
+export interface LinkableMethod {
+  plugin: string;
+  label: { zh: string; en: string };
+}
+
+/**
+ * The reason codes a link intent's failure brings back to the linked accounts page
+ * (`?error=<code>`); a code outside the set reads `unknown`.
+ */
+export const LINK_ERROR_CODES = [
+  "identity.taken",
+  "sso.unavailable",
+  "sso.session_mismatch",
+  "sso.access_denied",
+  "sso.provider_error",
+  "sso.account_not_allowed",
+] as const;
+export type LinkErrorCode = (typeof LINK_ERROR_CODES)[number] | "unknown";
+
+/** The `?error=` code of the linked accounts page; null when there is none. */
+export function parseLinkError(code: string | undefined): LinkErrorCode | null {
+  if (code === undefined || code === "") return null;
+  return (LINK_ERROR_CODES as readonly string[]).includes(code)
+    ? (code as LinkErrorCode)
+    : "unknown";
 }
 
 /** 待确认绑定的 IM 身份（内核 `PendingBinding`）。 */
@@ -35,7 +72,7 @@ export function splitSource(source: string): { plugin: string; tenant: string } 
 }
 
 export const listIdentities = () =>
-  apiFetch<{ identities: LinkedIdentity[] }>("/api/v1/me/identities");
+  apiFetch<{ identities: LinkedIdentity[]; linkable: LinkableMethod[] }>("/api/v1/me/identities");
 
 export const unlinkIdentity = (source: string, externalId: string) =>
   apiFetch<void>(

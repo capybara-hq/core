@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeExtensionEntry,
+  seedLoginSources,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -19,6 +25,10 @@ import { accountsFor } from "../helpers/identity.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 const FAKE_IDP = fileURLToPath(new URL("../fixtures/plugins/fake-idp/index.ts", import.meta.url));
+// channel@1 + identity-source@1 (never seeded as a login source unless a test turns it on)
+const FAKE_IM = fakeExtensionEntry("fake-im");
+// channel@1 only
+const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
 const PUBLIC = "https://cap.example";
 const PW = "correct horse battery";
 
@@ -39,9 +49,12 @@ beforeAll(async () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       marketplaces: { official: { enabled: false } },
       http: { port: 0, publicUrl: PUBLIC },
-      auth: { cookieSecure: false, loginSources: ["fake-idp", "not-installed"] },
-      extensions: [FAKE_IDP],
-      extensionConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
+      auth: { cookieSecure: false },
+      extensions: [FAKE_IDP, FAKE_IM, CHAN_MINI],
+      extensionConfig: {
+        "fake-idp": { tenant: "t1", clientSecret: "s3cret" },
+        "fake-im": { platformUrl: "http://127.0.0.1:9", clientId: "c1", clientSecret: "s3cret" },
+      },
       extensionPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
@@ -59,21 +72,37 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
+  // after the truncate: it empties deployment_settings (its updated_by references accounts)
+  await seedLoginSources(db, [
+    { plugin: "fake-idp", signUp: "create" },
+    { plugin: "not-installed", signUp: "create" },
+  ]);
   await redis.flushdb();
 });
 
 const errCode = (res: { json(): unknown }) =>
   (res.json() as { error?: { code?: string } }).error?.code;
 
-/** 发起 SSO：返回授权地址里的 state / nonce / redirect_uri。 */
-async function start(jar: CookieJar, returnTo?: string) {
-  const q = returnTo === undefined ? "" : `?returnTo=${encodeURIComponent(returnTo)}`;
-  const res = await asUser(
-    k.http,
-    jar,
-  )({ method: "GET", url: `/api/v1/auth/sso/fake-idp/start${q}` });
-  expect(res.statusCode).toBe(302);
-  const loc = new URL(String(res.headers.location));
+/** Starts SSO; returns the state / nonce / challenge of the authorize URL. */
+async function start(jar: CookieJar, returnTo?: string, intent?: "link") {
+  const req = asUser(k.http, jar);
+  let res: Awaited<ReturnType<typeof req>>;
+  let loc: URL;
+  if (intent === "link") {
+    // a link intent starts from the CSRF-protected POST, which returns the location
+    res = await req({
+      method: "POST",
+      url: "/api/v1/auth/sso/fake-idp/start",
+      payload: { intent, ...(returnTo !== undefined && { returnTo }) },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    loc = new URL((res.json() as { location: string }).location);
+  } else {
+    const q = returnTo === undefined ? "" : `?returnTo=${encodeURIComponent(returnTo)}`;
+    res = await req({ method: "GET", url: `/api/v1/auth/sso/fake-idp/start${q}` });
+    expect(res.statusCode).toBe(302);
+    loc = new URL(String(res.headers.location));
+  }
   return {
     res,
     loc,
@@ -118,11 +147,17 @@ async function callback(jar: CookieJar, query: Record<string, string>) {
 }
 
 /**
- * 完整走一次登录；返回回跳地址与 Cookie 罐。授权码带上发起时的 PKCE challenge：假身份源回调时核对内核交来的
- * codeVerifier。`jar` 给了就在该 Cookie 罐（如已登录的会话）里走。
+ * Runs one whole sign-in; returns the redirect target and the cookie jar. The code carries the
+ * start's PKCE challenge: the fake source checks the codeVerifier the kernel hands it. `jar`, when
+ * given, is the jar to run in (a signed-in session, say); `intent: "link"` starts a link intent.
  */
-async function sso(code: Omit<FakeIdpCode, "nonce">, returnTo?: string, jar = cookieJar()) {
-  const s = await start(jar, returnTo);
+async function sso(
+  code: Omit<FakeIdpCode, "nonce">,
+  returnTo?: string,
+  jar = cookieJar(),
+  intent?: "link",
+) {
+  const s = await start(jar, returnTo, intent);
   const res = await callback(jar, {
     state: s.state,
     code: fakeIdpCode({ ...code, nonce: s.nonce, challenge: s.challenge }),
@@ -136,12 +171,79 @@ const me = async (jar: CookieJar) => {
 };
 
 describe("登录方式列表", () => {
-  it("只列出 auth.loginSources 中且提供 identity-source@1 的插件", async () => {
+  it("lists only enabled login sources whose extension provides identity-source@1", async () => {
     const res = await k.http.inject({ method: "GET", url: "/api/v1/auth/sources" });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
       sources: [{ plugin: "fake-idp", label: { zh: "测试身份源", en: "Fake IdP" } }],
     });
+  });
+});
+
+describe("已绑定账号", () => {
+  it("me identities report capabilities", async () => {
+    const alice = await accounts.createLocal({ login: "alice", password: PW, displayName: "A" });
+    const row = (source: string, externalId: string, linkedVia: "bind" | "sso") => ({
+      source,
+      external_id: externalId,
+      account_id: alice.id,
+      email: null,
+      profile: JSON.stringify({ displayName: externalId }),
+      linked_via: linkedVia,
+    });
+    await db
+      .insertInto("identities")
+      .values([
+        row("fake-idp:t1", "idp-1", "sso"),
+        row("fake-im:t1", "im-sso", "sso"),
+        row("fake-im:t1", "im-bind", "bind"),
+        row("chan-mini:t1", "chan-1", "bind"),
+      ])
+      .execute();
+    const jar = cookieJar();
+    const login = await asUser(
+      k.http,
+      jar,
+    )({ method: "POST", url: "/api/v1/auth/login", payload: { login: "alice", password: PW } });
+    expect(login.statusCode).toBe(200);
+    type Row = { externalId: string; label: unknown; channel: boolean; login: string };
+    const read = async () => {
+      const res = await asUser(k.http, jar)({ method: "GET", url: "/api/v1/me/identities" });
+      expect(res.statusCode, res.body).toBe(200);
+      const body = res.json() as { identities: Row[]; linkable: unknown[] };
+      return {
+        rows: Object.fromEntries(
+          body.identities.map((r) => [r.externalId, { channel: r.channel, login: r.login }]),
+        ),
+        labels: Object.fromEntries(body.identities.map((r) => [r.externalId, r.label])),
+        linkable: body.linkable,
+      };
+    };
+    // fake-im is loaded but not on the login page: off
+    const before = await read();
+    expect(before.rows).toEqual({
+      "idp-1": { channel: false, login: "on" },
+      "im-sso": { channel: true, login: "off" },
+      "im-bind": { channel: true, login: "off" },
+      "chan-1": { channel: true, login: "unsupported" },
+    });
+    expect(before.labels).toMatchObject({
+      "idp-1": { zh: "测试身份源", en: "Fake IdP" },
+      "im-sso": { zh: "假 IM", en: "Fake IM" },
+      "chan-1": { zh: "chan-mini", en: "chan-mini" },
+    });
+    expect(before.linkable).toEqual([]);
+    // fake-im turned on: a bind row needs a link, an sso row signs in
+    await seedLoginSources(db, [{ plugin: "fake-idp" }, { plugin: "fake-im" }]);
+    const after = await read();
+    expect(after.rows["im-sso"]).toEqual({ channel: true, login: "on" });
+    expect(after.rows["im-bind"]).toEqual({ channel: true, login: "needs_link" });
+    expect(after.rows["chan-1"]).toEqual({ channel: true, login: "unsupported" });
+    // an enabled method without an identity of the account is linkable
+    await db.deleteFrom("identities").where("source", "=", "fake-idp:t1").execute();
+    expect((await read()).linkable).toEqual([
+      { plugin: "fake-idp", label: { zh: "测试身份源", en: "Fake IdP" } },
+    ]);
   });
 });
 
@@ -541,38 +643,43 @@ describe("修复波 W1", () => {
         .executeTakeFirst()
     )?.linked_via;
 
-  it("Ruling A18：IM 绑定的身份不能直接第三方登录（sso.identity_not_verified），也不建会话", async () => {
+  it("Ruling A18: a bind row never signs in directly; a sign-in with it goes to the link page", async () => {
     const bob = await loggedIn("bob");
     await bindTo(bob.req, "im-x");
     expect(await linkedVia("im-x")).toBe("bind");
-    // 攻击者：在 IM 里拿到绑定链接骗 bob 确认后，用同一个 IM 身份登录网页
+    // an attacker who had bob confirm a binding link signs in with the same IM identity
     const attacker = await sso({ sub: "im-x" });
-    expect(attacker.location).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect(attacker.location.startsWith(`${PUBLIC}/login/link?ticket=cap_link_`)).toBe(true);
     expect(attacker.jar.get("cap_at")).toBeUndefined();
-    // 已登录的是另一个账号：同样拒绝，身份行不变
+    // signed in as another account (a sign-in, not a link intent): the link page too, row unchanged
     const carol = await loggedIn("carol");
     const other = await sso({ sub: "im-x" }, "/chat", carol.jar);
-    expect(other.location).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect(other.location.startsWith(`${PUBLIC}/login/link?ticket=`)).toBe(true);
     expect(await linkedVia("im-x")).toBe("bind");
     expect(await me(carol.jar)).toBe(carol.account.id);
   });
 
-  it("本人已登录时完成同一身份的第三方登录 → 升级为 sso，之后可以直接登录", async () => {
+  it("a link intent of the signed-in owner upgrades the bind row to sso; later sign-ins go in", async () => {
     const bob = await loggedIn("bob");
     await bindTo(bob.req, "im-y");
-    const proved = await sso({ sub: "im-y" }, "/account/identities", bob.jar);
+    const sessionsBefore = await db.selectFrom("sessions").select("id").execute();
+    const proved = await sso({ sub: "im-y" }, "/account/identities", bob.jar, "link");
     expect(proved.location).toBe(`${PUBLIC}/account/identities`);
     expect(await me(proved.jar)).toBe(bob.account.id);
     expect(await linkedVia("im-y")).toBe("sso");
+    // a link intent creates no session
+    expect(await db.selectFrom("sessions").select("id").execute()).toHaveLength(
+      sessionsBefore.length,
+    );
     const later = await sso({ sub: "im-y" });
     expect(later.location).toBe(`${PUBLIC}/`);
     expect(await me(later.jar)).toBe(bob.account.id);
   });
 
-  it("W2：升级意图在发起时绑定——未登录时发起、回调时才带着本人会话 → 不升级", async () => {
+  it("W2: a sign-in started signed out and called back with the owner's session does not upgrade", async () => {
     const bob = await loggedIn("bob");
     await bindTo(bob.req, "im-z");
-    // 同一个浏览器：先（未登录）发起，再登录 bob，然后完成回调
+    // the same browser: start signed out, sign bob in, then finish the callback
     const jar = cookieJar();
     const s = await start(jar, "/account/identities");
     const login = await asUser(
@@ -584,7 +691,7 @@ describe("修复波 W1", () => {
       state: s.state,
       code: fakeIdpCode({ sub: "im-z", nonce: s.nonce, challenge: s.challenge }),
     });
-    expect(String(res.headers.location)).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect(String(res.headers.location).startsWith(`${PUBLIC}/login/link?ticket=`)).toBe(true);
     expect(await linkedVia("im-z")).toBe("bind");
   });
 

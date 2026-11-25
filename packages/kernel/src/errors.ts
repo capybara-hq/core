@@ -411,7 +411,17 @@ export const ERROR_CODES = {
   "identity.taken": 409,
   "identity.not_found": 404,
   "identity.last_login_method": 409,
+  /** A login source update names an extension that is neither a loaded identity source nor stored. */
+  "login_sources.unknown_plugin": 404,
+  /** A trusted tenant is blank or refused by the source's tenant declaration. */
+  "login_sources.invalid_tenant": 400,
+  /** Turning a login source on while its extension's deployment config is not complete. */
+  "login_sources.needs_config": 409,
   "bind.invalid": 404,
+  /** The link page's ticket is unknown, expired, used, burned, or its login source is off. */
+  "sso.link_expired": 410,
+  /** The link page's browser binding cookie does not match the sign-in that made the ticket. */
+  "sso.session_mismatch": 403,
   "channel.not_found": 404,
   "channel.verify_failed": 502,
   "channel.webhook_not_found": 404,

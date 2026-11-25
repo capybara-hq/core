@@ -21,7 +21,7 @@ export const LOGIN_ERROR_CODES = [
   "sso.access_denied",
   "sso.provider_error",
   "sso.account_not_allowed",
-  "sso.identity_not_verified",
+  "sso.link_expired",
   "auth.account_disabled",
   // a native sign-in POST (lib/form-post.ts) that failed
   "auth.invalid_credentials",
@@ -56,6 +56,44 @@ export function safeReturnTo(raw: string | null | undefined): string {
     return HOME_PATH;
   }
 }
+
+/** A pending link as the link page shows it (`GET /api/v1/auth/sso/link?ticket=`). */
+export interface SsoLinkView {
+  plugin: string;
+  label: { zh: string; en: string };
+  tenantId: string;
+  displayName: string;
+  avatarUrl?: string;
+  /** The external account is already linked to some account for IM (never which one). */
+  linkedToAnother: boolean;
+}
+
+/** The link page's view of its ticket (needs the `cap_sso` cookie the sign-in set). */
+export const peekLink = (ticket: string) =>
+  apiFetch<SsoLinkView>(`/api/v1/auth/sso/link?ticket=${encodeURIComponent(ticket)}`);
+
+/**
+ * Completes a pending link with a username and password; signs in like a password sign-in (the
+ * session cookies are set) and gives the page to go to.
+ */
+export const redeemLink = (body: { ticket: string; login: string; password: string }) =>
+  apiFetch<{ account: { id: string; mustChangePassword: boolean }; returnTo: string }>(
+    "/api/v1/auth/sso/link",
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+/**
+ * Starts linking an external account to the signed-in person (the linked accounts page): a POST,
+ * so no other site can start it; the browser then navigates to the returned `location` (the
+ * identity provider, or back to `returnTo` with `?error=<code>`).
+ */
+export const startLink = (plugin: string, returnTo: string) => {
+  const body: { intent: "link"; returnTo: string } = { intent: "link", returnTo };
+  return apiFetch<{ location: string }>(`/api/v1/auth/sso/${encodeURIComponent(plugin)}/start`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+};
 
 /** 发起第三方登录的地址（整页跳转；内核 302 到身份源，回调后回到 `returnTo`）。 */
 export const ssoStartUrl = (plugin: string, returnTo: string) =>

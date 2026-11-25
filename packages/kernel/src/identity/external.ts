@@ -4,12 +4,13 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { LinkedVia } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { audit } from "./audit.js";
 import { ExternalIdentityLock } from "./external-identity-lock.js";
+import { LoginSourcesService } from "./login-sources.js";
+import { decideSsoCallback, type SsoDecision, type SsoIntent } from "./sso-decisions.js";
 
 /** `<插件名>:<租户 id>`；插件名同清单规则，租户 id 为非空、不含空白的串。 */
 const SOURCE_RE = /^([a-z0-9][a-z0-9._-]{0,213}):(\S{1,256})$/;
@@ -19,28 +20,28 @@ const MAX_EMAIL = 320;
 
 export type { LinkedVia };
 
-/**
- * 第三方登录拒绝了这个身份（Ruling A18）：身份行经 IM 绑定链接建立，而请求没有带着同一账号的会话。
- * 登录页原因码 `sso.identity_not_verified`。
- */
-export class IdentityNotVerified extends Error {
-  constructor() {
-    super("external identity is not verified for sign-in");
-    this.name = "IdentityNotVerified";
-  }
+/** The options of {@link ExternalIdentities.resolve}. */
+export interface ResolveOptions {
+  /**
+   * How a new identity row is made: `sso` (a sign-in's self sign-up), `directory` (directory
+   * sync). An existing row keeps its kind.
+   */
+  linkedVia: "sso" | "directory";
 }
 
-/** {@link ExternalIdentities.resolve} 的选项。 */
-export interface ResolveOptions {
-  /** 只有第三方登录路径传 true（Ruling A9）。 */
-  allowMerge?: boolean;
-  /** 新建身份行时记下的建立方式：第三方登录 `sso`，通讯录同步 `directory`。已有的行不改。 */
-  linkedVia: "sso" | "directory";
-  /**
-   * 第三方登录路径：已有的身份行须可用于登录（见 {@link ExternalIdentities.resolve}）。
-   * `sessionAccountId` 为请求已带着的 Web 会话的账号（没有会话时省略）。
-   */
-  login?: { sessionAccountId?: string };
+/** How a verified link was made (`identity.linked` audit `via`). */
+export type VerifiedLinkVia = "oauth" | "link_page" | "verified_email";
+
+/** A sign-in decision once applied: a creation is reported as the sign-in of the new account. */
+export type SignInDecision = Exclude<SsoDecision, { kind: "create" }>;
+
+/** The sign-in callback's context for {@link ExternalIdentities.decideSignIn}. */
+export interface SignInContext {
+  intent: SsoIntent;
+  /** Link intent only: the account of the web session the start and the callback both carried. */
+  sessionAccountId?: string;
+  /** The login source's setting for an unlinked external account. */
+  signUp: "link" | "create";
 }
 
 /** 账号已绑定的一个外部身份（不含本地登录名）。 */
@@ -113,10 +114,13 @@ const profileOf = (i: ExternalIdentity) =>
   });
 
 /**
- * 外部身份：按 `(source, externalId)` 映射到账号（登录、渠道入站、通讯录共用同一个键）。
- * 首次出现时按「受信任的身份源 + 两侧邮箱均已验证」合并到既有账号，否则新建账号（不建组织）。
- * Concurrent first resolves of one identity are serialized by {@link ExternalIdentityLock},
- * so only one account is created.
+ * External identities: `(source, externalId)` maps to an account (sign-in, channel inbound and the
+ * directory share the key). A sign-in of an identity nobody has linked ({@link decideSignIn})
+ * merges into an existing account when its tenant is trusted and both emails are verified;
+ * otherwise it goes to the link page by default, and creates a new org-less account only when the
+ * login source's `signUp` is `create`. Directory sync creates the account for its identity
+ * ({@link resolve}). Concurrent first resolves of one identity are serialized by
+ * {@link ExternalIdentityLock}, so only one account is created.
  */
 @Injectable()
 export class ExternalIdentities {
@@ -124,7 +128,8 @@ export class ExternalIdentities {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(ExternalIdentityLock) private readonly identityLock: ExternalIdentityLock,
-    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(LoginSourcesService)
+    private readonly loginSources: Pick<LoginSourcesService, "isTrusted">,
   ) {}
 
   /** The account the external identity is linked to (in the context's transaction when there is one); undefined when unlinked. */
@@ -139,17 +144,14 @@ export class ExternalIdentities {
   }
 
   /**
-   * 解析外部身份到账号。已绑定 → 该账号（顺带刷新身份行上的邮箱与资料）；未绑定 → 合并或新建（见类说明），
-   * 新身份行记 `linked_via = opts.linkedVia`（合并也是 `sso`）。
-   * 合并只在 `opts.allowMerge` 时考虑（Ruling A9：只有第三方登录路径传 true；渠道入站、通讯录不传）。
-   * 第三方登录（`opts.login`，Ruling A18 / A23）：已有的身份行若经 IM 绑定建立（`bind`），只证明了某个网页登录者
-   * 点过绑定链接，不证明他控制该外部身份——此时只有请求已带着**同一账号**的会话（本人在已登录状态下完成第三方登录，
-   * 证明自己控制该身份）才放行，并把行升级为 `sso`（审计 `identity.verified`）；否则抛 {@link IdentityNotVerified}。
-   * 通讯录建立的行（`directory`）不论租户是否受信任都可直接登录：身份源登录本身就证明登录者控制该身份，
-   * 而通讯录身份总是指向为它新建的账号（信任只影响合并与 `email_verified`）。旧行（`linked_via` 为 null）按 `sso` 处理。
-   * 新建账号的 `email_verified` 只在身份源受信任且身份邮箱已验证时为 true——不受信任的身份源可以声称任意邮箱
-   * 「已验证」，不能让它建出的账号成为日后受信任登录的合并目标。
-   * 合并写审计 `identity.linked`，新建写 `account.created`。不判断账号状态，由调用方决定（如登录拒绝停用账号）。
+   * Resolves an external identity to an account: linked → that account (the row's email and
+   * profile are refreshed); unlinked → a new org-less account with this identity, the row
+   * recording `linked_via = opts.linkedVia`. It never merges by email and never checks a row for
+   * sign-in: the sign-in callback goes through {@link decideSignIn} (which calls this only for a
+   * self sign-up); directory sync calls it directly. A created account's `email_verified` is true
+   * only when the source is trusted and the identity's email is verified: an untrusted source can
+   * claim any email "verified", and its accounts must not become merge targets of a later trusted
+   * sign-in. A creation audits `account.created`. The account's status is not checked.
    * Joins the caller's transaction when there is one; takes the same lock as `link`, and falls back
    * to `ON CONFLICT DO NOTHING` plus a re-read, so it never throws a unique violation or aborts the
    * caller's transaction.
@@ -163,22 +165,8 @@ export class ExternalIdentities {
     await this.lockIdentity(id);
     const existing = await this.findRow(id);
     if (existing !== undefined) {
-      if (opts.login !== undefined) await this.allowLogin(id, existing, opts.login);
       await this.refreshIdentity(id);
       return { accountId: existing.accountId, created: false };
-    }
-    const merged = opts.allowMerge === true ? await this.mergeTarget(id) : undefined;
-    if (merged !== undefined) {
-      if (!(await this.insertIdentity(merged, id, "sso"))) {
-        return { accountId: await this.mustFind(id), created: false };
-      }
-      await audit(this.db.db, {
-        actorAccountId: merged,
-        action: "identity.linked",
-        target: merged,
-        detail: { source: id.source, externalId: id.externalId, via: "verified_email" },
-      });
-      return { accountId: merged, created: false };
     }
     const accountId = randomUUID();
     await this.db
@@ -187,11 +175,11 @@ export class ExternalIdentities {
         id: accountId,
         display_name: id.displayName,
         email: id.email ?? null,
-        email_verified: id.emailVerified && this.trusted(id.source),
+        email_verified: id.emailVerified && (await this.trusted(id.source)),
       })
       .execute();
     if (!(await this.insertIdentity(accountId, id, opts.linkedVia))) {
-      // 不走咨询锁的写入方抢先插入了同一身份：撤销刚建的账号，回读
+      // a writer that skipped the lock inserted the same identity first: undo the account, re-read
       await this.db.deleteFrom("accounts").where("id", "=", accountId).execute();
       return { accountId: await this.mustFind(id), created: false };
     }
@@ -204,18 +192,152 @@ export class ExternalIdentities {
     return { accountId, created: true };
   }
 
+  /**
+   * The sign-in callback's decision on a verified external identity (spec §4,
+   * {@link decideSsoCallback}), taken and applied in one transaction under the identity lock: the
+   * row and the merge target are read under the lock, then `signin` / `refresh` refresh the row,
+   * `upgrade` and `linked` go through {@link linkVerified}, `create` creates the account
+   * ({@link resolve}, no merge: the decision ruled it out). `link_page` and `error` write nothing.
+   * A link intent never creates an account. Returns the decision, whether an account was created
+   * and the normalized identity (what a link page stores). Throws `identity.taken` when a concurrent writer linked the
+   * identity to another account between the read and the write (cannot happen under the lock
+   * except for a writer that skips it).
+   */
+  @Transactional()
+  async decideSignIn(
+    identity: ExternalIdentity,
+    ctx: SignInContext,
+  ): Promise<{ decision: SignInDecision; identity: ExternalIdentity; created: boolean }> {
+    const id = normalize(identity);
+    await this.lockIdentity(id);
+    const row = await this.findRow(id);
+    // the merge target matters only to a sign-in of an unlinked identity (a link intent links to
+    // the session's account whatever the email says)
+    const mergeTarget =
+      row === undefined && ctx.intent === "signin" ? await this.mergeTarget(id) : undefined;
+    const decision = decideSsoCallback({
+      intent: ctx.intent,
+      ...(ctx.sessionAccountId !== undefined && { sessionAccountId: ctx.sessionAccountId }),
+      ...(row !== undefined && { row }),
+      ...(mergeTarget !== undefined && { mergeTarget }),
+      signUp: ctx.signUp,
+    });
+    switch (decision.kind) {
+      case "create": {
+        const r = await this.resolve(id, { linkedVia: "sso" });
+        return {
+          decision: { kind: "signin", accountId: r.accountId },
+          identity: id,
+          created: r.created,
+        };
+      }
+      case "signin":
+      case "refresh":
+        await this.refreshIdentity(id);
+        break;
+      case "upgrade":
+        await this.linkVerified(decision.accountId, id, "oauth");
+        break;
+      case "linked":
+        // a disabled merge target gets no row: reported as its sign-in, which the caller refuses
+        // (auth.account_disabled) as it refuses any disabled account
+        if (decision.via === "verified_email" && !(await this.isActive(decision.accountId))) {
+          return {
+            decision: { kind: "signin", accountId: decision.accountId },
+            identity: id,
+            created: false,
+          };
+        }
+        await this.linkVerified(decision.accountId, id, decision.via);
+        break;
+      case "link_page":
+      case "error":
+        break;
+    }
+    return { decision, identity: id, created: false };
+  }
+
+  private async isActive(accountId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("accounts")
+      .select("status")
+      .where("id", "=", accountId)
+      .executeTakeFirst();
+    return row?.status === "active";
+  }
+
+  /**
+   * Links an external identity whose control the person proved (a third-party sign-in, or the
+   * link page's password plus the sign-in) to `accountId` as `sso`: no row → a new `sso` row
+   * (audit `identity.linked` with `via`); a `bind` row of the same account → upgraded to `sso`
+   * (audit `identity.verified`); an `sso` / `directory` / legacy row of the same account → its
+   * profile refreshed; a row of another account → `409 identity.taken`. Under the identity lock,
+   * in the caller's transaction when there is one.
+   */
+  @Transactional()
+  async linkVerified(
+    accountId: string,
+    identity: ExternalIdentity,
+    via: VerifiedLinkVia,
+  ): Promise<void> {
+    const id = normalize(identity);
+    await this.lockIdentity(id);
+    const row = await this.findRow(id);
+    if (row !== undefined && row.accountId !== accountId) throw taken();
+    if (row !== undefined) {
+      await this.refreshIdentity(id);
+      if (row.linkedVia !== "bind") return;
+      await this.db
+        .updateTable("identities")
+        .set({ linked_via: "sso" })
+        .where("source", "=", id.source)
+        .where("external_id", "=", id.externalId)
+        .execute();
+      await audit(this.db.db, {
+        actorAccountId: accountId,
+        action: "identity.verified",
+        target: accountId,
+        detail: { source: id.source, externalId: id.externalId, from: "bind", via },
+      });
+      return;
+    }
+    if (!(await this.insertIdentity(accountId, id, "sso"))) {
+      if ((await this.mustFind(id)) !== accountId) throw taken();
+      return;
+    }
+    await audit(this.db.db, {
+      actorAccountId: accountId,
+      action: "identity.linked",
+      target: accountId,
+      detail: { source: id.source, externalId: id.externalId, via },
+    });
+  }
+
+  /**
+   * The account an identity row links to and how it was made, without a lock (the link page's
+   * read-only view; any write re-reads under the lock).
+   */
+  async peekRow(
+    identity: Pick<ExternalIdentity, "source" | "externalId">,
+  ): Promise<{ accountId: string; linkedVia: LinkedVia | null } | undefined> {
+    return this.findRow(identity);
+  }
+
   /** Serializes resolve / link of one identity ({@link ExternalIdentityLock}). */
   private async lockIdentity(id: ExternalIdentity): Promise<void> {
     await this.identityLock.lock(id);
   }
 
-  /** 身份源键（`<插件名>:<租户 id>`）是否在 `auth.trustedIdentitySources` 中：按完整键比较，信任按租户（Ruling A19）。 */
-  private trusted(source: string): boolean {
-    return this.config.get().auth.trustedIdentitySources.includes(source);
+  /**
+   * Whether the source key (`<plugin>:<tenant>`) is trusted: its tenant is among the login
+   * source's trusted tenants, full key match, trust is per tenant (Ruling A19).
+   */
+  private trusted(source: string): Promise<boolean> {
+    return this.loginSources.isTrusted(source);
   }
 
   private async findRow(
-    id: ExternalIdentity,
+    id: Pick<ExternalIdentity, "source" | "externalId">,
   ): Promise<{ accountId: string; linkedVia: LinkedVia | null } | undefined> {
     const row = await this.db
       .selectFrom("identities")
@@ -224,29 +346,6 @@ export class ExternalIdentities {
       .where("external_id", "=", id.externalId)
       .executeTakeFirst();
     return row && { accountId: row.account_id, linkedVia: row.linked_via };
-  }
-
-  /** 第三方登录能否用这一行（见 {@link resolve}）：只有 `bind` 行需要同一账号的会话，放行时把行改为 `sso`。 */
-  private async allowLogin(
-    id: ExternalIdentity,
-    row: { accountId: string; linkedVia: LinkedVia | null },
-    login: { sessionAccountId?: string },
-  ): Promise<void> {
-    const via = row.linkedVia ?? "sso";
-    if (via !== "bind") return;
-    if (login.sessionAccountId !== row.accountId) throw new IdentityNotVerified();
-    await this.db
-      .updateTable("identities")
-      .set({ linked_via: "sso" })
-      .where("source", "=", id.source)
-      .where("external_id", "=", id.externalId)
-      .execute();
-    await audit(this.db.db, {
-      actorAccountId: row.accountId,
-      action: "identity.verified",
-      target: row.accountId,
-      detail: { source: id.source, externalId: id.externalId, from: via },
-    });
   }
 
   private async mustFind(id: ExternalIdentity): Promise<string> {
@@ -270,11 +369,14 @@ export class ExternalIdentities {
   }
 
   /**
-   * 可合并的既有账号：身份源键在 `auth.trustedIdentitySources` 中、身份邮箱已验证，
-   * 且恰好有一个邮箱已验证、邮箱相同（不区分大小写）的账号；否则 undefined（多个候选时不猜，新建）。
+   * The existing account to merge into: the source key is trusted (a trusted tenant of its login
+   * source), the identity's email is verified, and exactly one account has the same verified email
+   * (case-insensitive); else undefined (with several candidates it never guesses).
    */
   private async mergeTarget(id: ExternalIdentity): Promise<string | undefined> {
-    if (!id.emailVerified || id.email === undefined || !this.trusted(id.source)) return undefined;
+    if (!id.emailVerified || id.email === undefined || !(await this.trusted(id.source))) {
+      return undefined;
+    }
     const rows = await this.db
       .selectFrom("accounts")
       .select("id")
