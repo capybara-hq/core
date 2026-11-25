@@ -396,6 +396,7 @@ describe("the (app) layout's client code (client extensions spec §9.6, §10.1, 
     const admin = shellRoutesWith({
       "GET /api/v1/admin/ui/client": () => json(200, SET),
       "GET /api/v1/admin/ui/contributions": () => json(200, { items: [] }),
+      "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     });
     const consolePage = await layoutAt("/admin/extensions");
@@ -405,6 +406,7 @@ describe("the (app) layout's client code (client extensions spec §9.6, §10.1, 
     const page = shellRoutesWith({
       "GET /api/v1/admin/ui/client": () => json(200, SET),
       "GET /api/v1/admin/ui/contributions": () => json(200, { items: [] }),
+      "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     });
     const element = await layoutAt("/admin/p/fake-client/page");

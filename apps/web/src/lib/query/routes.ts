@@ -21,6 +21,7 @@ import type { Conversation } from "../conversations";
 import { codeParam, defaultDeviceOrg } from "../device-sign-in";
 import { chosenDeviceId, type DeviceList } from "../devices";
 import type { EvalSetDetail } from "../evals";
+import { pointsOf } from "../extension-capabilities";
 import { labelLocale } from "../extension-label";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
@@ -49,6 +50,7 @@ import {
   deploymentRequestsQuery,
   deploymentSettingsQuery,
   extensionConfigQuery,
+  loginSourcesQuery,
   marketplaceEntriesQuery,
   marketplacesQuery,
   pendingPluginsQuery,
@@ -310,7 +312,8 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   {
     pattern: "/admin/extensions/[name]",
     // The list (the extension is found in it) and its deployment config (the Config tab); for an
-    // extension in the list, its platform setup guides (the Config tab) and each guide's cached
+    // extension in the list, the login methods when it is an identity source (its 登录 section), its
+    // platform setup guides (the Config tab) and each guide's cached
     // check states; for an extension with client code, the settings too (the client code section
     // says whether it is stopped), and the orgs when its reports name any (each report row shows
     // the org's name).
@@ -327,6 +330,9 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
       );
       const ext = list?.extensions.find((e) => e.name === name);
       if (ext === undefined) return;
+      // an identity source: the login methods (its 登录 section on the Config tab)
+      if (pointsOf(ext.permissions).includes("identity-source"))
+        await qc.prefetchQuery({ ...loginSourcesQuery(), retry: false });
       const guidesQuery = deploymentGuidesQuery(name, labelLocale(locale));
       await qc.prefetchQuery({ ...guidesQuery, retry: false });
       await Promise.all(
@@ -604,8 +610,8 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
     pattern: "/admin/settings",
     // The settings, the themes (the appearance section's eligible ones, with their names and
     // swatches), the uploaded platform icons and the platform default theme (the app icon section
-    // previews its app icons), the platform arrangement and the extensions (the plugin UI code
-    // section lists those with client code).
+    // previews its app icons), the platform arrangement, the extensions (the plugin UI code
+    // section lists those with client code) and the login methods (登录方式).
     queries: ({ me }) =>
       superAdmin(me)
         ? [
@@ -615,6 +621,7 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
             q(platformThemeQuery()),
             q(adminUiArrangementQuery()),
             q(adminExtensionsQuery()),
+            q(loginSourcesQuery()),
           ]
         : [],
   },

@@ -23,16 +23,20 @@ import {
 import { ExtensionStatusMark } from "../../../../../components/AdminExtensionParts";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { ExtensionDeploymentConfig } from "../../../../../components/ExtensionDeploymentConfig";
+import { LoginSourceSection } from "../../../../../components/LoginSourceSection";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { SetupGuideSection } from "../../../../../components/SetupGuideSection";
 import { usePagePath } from "../../../../../components/shell/path";
 import type { AdminExtension } from "../../../../../lib/admin-extensions";
+import { pointsOf } from "../../../../../lib/extension-capabilities";
 import { extensionLabel, labelLocale } from "../../../../../lib/extension-label";
 import {
   adminExtensionQuery,
   adminExtensionsQuery,
   extensionChangeKeys,
+  loginSourcesQuery,
 } from "../../../../../lib/query/admin";
+import { retryOnMountOf } from "../../../../../lib/query/client";
 import { keys } from "../../../../../lib/query/keys";
 import { usePageQuery } from "../../../../../lib/query/page-query";
 import { deploymentGuidesQuery } from "../../../../../lib/query/setup";
@@ -55,6 +59,8 @@ type Tab = (typeof TABS)[number];
  *   apply at once, the others reload after saving); a pending-config extension opens on it, with
  *   the missing fields listed. Under it, each platform setup guide the extension ships (place
  *   `extension-deployment`) with live check rows run against the saved deployment config.
+ * Under the config, an identity source's 登录 section (`LoginSourceSection`, login extensions spec
+ * §3): whether the login page offers it, unlinked accounts, trusted tenants, the callback URL.
  * 界面代码 (an extension with client code): its build, files, sizes and error reports, and
  * 停用界面代码 (client extensions spec §10.2, §10.4).
  * Actions only write the desired state and return; the page re-reads while the state is converging.
@@ -201,21 +207,44 @@ function Detail({
             drainSeconds={data.drainSeconds}
             pending={plugin.status === "pending_config"}
             // The extension's state (pending config) and the org's readiness may change with it,
-            // and its platform guide checks verify the config just saved.
+            // its platform guide checks verify the config just saved, and an identity source may
+            // stop (or start) waiting for its config to show on the login page.
             onChanged={() => {
               for (const queryKey of [
                 listKey,
                 ...extensionChangeKeys(orgId),
                 keys.deployment().deploymentChecksOf(name),
+                keys.deployment().loginSources(),
               ])
                 void qc.invalidateQueries({ queryKey });
             }}
           />
+          {pointsOf(plugin.permissions).includes("identity-source") && (
+            <LoginSection plugin={plugin} />
+          )}
           <DeploymentGuides name={name} />
         </Stack>
       )}
     </DetailPage>
   );
+}
+
+/**
+ * 登录 of an identity source: its entry in the login methods. An extension waiting for its
+ * deployment config is not loaded, so the list may not hold it yet: the section then shows only the
+ * switch, off, with the hint to fill in the config first. Its placeholder while the methods are
+ * read, the failure with a retry when the read failed.
+ */
+function LoginSection({ plugin }: { plugin: AdminExtension }) {
+  const q = loginSourcesQuery();
+  const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  if (read.isPending) return <LoginSourceSection source="loading" />;
+  if (read.isError) {
+    return <LoginSourceSection source={{ error: read.error, retry: () => void read.refetch() }} />;
+  }
+  const source = read.data.items.find((s) => s.plugin === plugin.name);
+  if (source !== undefined) return <LoginSourceSection source={source} />;
+  return plugin.status === "pending_config" ? <LoginSourceSection source={null} /> : null;
 }
 
 /**

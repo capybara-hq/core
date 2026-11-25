@@ -325,6 +325,11 @@
       "not_found": "The identity does not exist or is already unlinked.",
       "last_login_method": "This is your only way to sign in. Set a password before unlinking it."
     },
+    "login_sources": {
+      "needs_config": "Fill in this extension's deployment config before showing it on the login page.",
+      "invalid_tenant": "A trusted tenant is not a valid tenant ID.",
+      "unknown_plugin": "No extension provides this sign-in."
+    },
     "bind": {
       "invalid": "This link is invalid or has expired."
     },
@@ -3230,6 +3235,50 @@
     "unlinked": "\"{name}\" unlinked.",
     "unverified": "Not verified",
     "verify": "Verify (sign in with this account)"
+  },
+  "loginSources": {
+    "section": {
+      "title": "Sign-in",
+      "description": "The third-party sign-in this extension provides: whether the login page offers it, where unlinked accounts go and which tenants are trusted.",
+      "show": "Show on the login page",
+      "needsConfig": "Fill in the deployment config first to show it on the login page.",
+      "unavailable": "This extension is not running, so the login page does not offer it now.",
+      "turnedOn": "The login page now offers \"{name}\".",
+      "turnedOff": "The login page no longer offers \"{name}\".",
+      "saved": "Saved.",
+      "signUp": {
+        "label": "Unlinked accounts",
+        "link": "Go to the link page (recommended)",
+        "linkHint": "The person signs in with a username and password to link the external account to an existing account.",
+        "create": "Create a new account",
+        "createHint": "The new account belongs to no org until an invitation or directory sync adds it."
+      },
+      "tenants": {
+        "label": "Trusted tenants ({tenant})",
+        "defaultTenant": "Tenant ID",
+        "help": "One per line. An external account with a verified email in a trusted tenant links to the existing account with that email.",
+        "warning": "List only tenants you control: anyone in a trusted tenant can claim the existing account with the same email.",
+        "invalidPattern": "\"{tenant}\" is not a valid {label}.",
+        "neverTrusted": "\"{tenant}\" can never be trusted.",
+        "save": "Save trusted tenants"
+      },
+      "callback": {
+        "label": "Callback URL",
+        "help": "Register this address in the identity provider's app settings.",
+        "missing": "The callback URL shows here once the deployment's public URL (http.publicUrl) is set."
+      }
+    },
+    "methods": {
+      "title": "Login methods",
+      "description": "The login page offers third-party sign-ins in this order. Drag them or move them up and down; each method's settings are on its extension page.",
+      "orderLabel": "Order on the login page",
+      "others": "Not on the login page",
+      "off": "Off",
+      "needsConfig": "Needs config",
+      "unavailable": "Not running",
+      "empty": "No extension provides a sign-in yet.",
+      "reordered": "Login order saved."
+    }
   },
   "bind": {
     "title": "Link IM account",

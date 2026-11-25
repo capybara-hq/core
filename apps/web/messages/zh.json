@@ -325,6 +325,11 @@
       "not_found": "该身份不存在或已解绑。",
       "last_login_method": "这是你唯一的登录方式，请先设置密码再解绑。"
     },
+    "login_sources": {
+      "needs_config": "先填写这个扩展的部署配置，再在登录页显示它。",
+      "invalid_tenant": "有可信租户不是有效的租户 ID。",
+      "unknown_plugin": "没有提供这种登录的扩展。"
+    },
     "bind": {
       "invalid": "绑定链接无效或已过期。"
     },
@@ -3218,6 +3223,50 @@
     "unlinked": "已解绑「{name}」。",
     "unverified": "未验证",
     "verify": "验证（用该账号登录一次）"
+  },
+  "loginSources": {
+    "section": {
+      "title": "登录",
+      "description": "这个扩展提供的第三方登录：是否在登录页显示、未绑定的账号去哪里、哪些租户可信。",
+      "show": "在登录页显示",
+      "needsConfig": "先填写部署配置，才能在登录页显示。",
+      "unavailable": "这个扩展没有运行，登录页暂不显示它。",
+      "turnedOn": "登录页已显示「{name}」。",
+      "turnedOff": "登录页不再显示「{name}」。",
+      "saved": "已保存。",
+      "signUp": {
+        "label": "未绑定的账号",
+        "link": "去绑定页（推荐）",
+        "linkHint": "用户名和密码登录后，把这个外部账号绑定到已有账号。",
+        "create": "自动注册新账号",
+        "createHint": "新账号不属于任何组织，由邀请或目录同步加入组织。"
+      },
+      "tenants": {
+        "label": "可信租户（{tenant}）",
+        "defaultTenant": "租户 ID",
+        "help": "每行一个。可信租户里邮箱已验证的外部账号，会直接绑定到同邮箱的已有账号。",
+        "warning": "只填写你们自己控制的租户：可信租户里的任何人都能凭邮箱认领同邮箱的已有账号。",
+        "invalidPattern": "「{tenant}」不是有效的{label}。",
+        "neverTrusted": "「{tenant}」不能设为可信租户。",
+        "save": "保存可信租户"
+      },
+      "callback": {
+        "label": "回调地址",
+        "help": "在身份提供方的应用设置里登记这个地址。",
+        "missing": "设置部署的公开地址（http.publicUrl）后，这里显示回调地址。"
+      }
+    },
+    "methods": {
+      "title": "登录方式",
+      "description": "登录页按这个顺序显示第三方登录。拖动或上移、下移调整顺序；每种方式的设置在它的扩展页。",
+      "orderLabel": "登录页上的顺序",
+      "others": "未在登录页显示",
+      "off": "未开启",
+      "needsConfig": "待配置",
+      "unavailable": "未运行",
+      "empty": "还没有提供登录的扩展。",
+      "reordered": "已保存登录顺序。"
+    }
   },
   "bind": {
     "title": "绑定 IM 账号",

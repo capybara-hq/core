@@ -1637,6 +1637,7 @@ describe("/admin/orgs（ListPage）", () => {
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     });
     await renderRouteWithCache("/admin/orgs", lastStubRoutes(), { locale: "zh" });
@@ -1655,6 +1656,7 @@ describe("/admin/orgs（ListPage）", () => {
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
         json(200, {
@@ -1715,6 +1717,7 @@ describe("/admin/orgs（ListPage）", () => {
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
         json(200, { ...SETTINGS, runConcurrencyOverrides: {}, sandboxLimitOverrides: {} }),
@@ -1876,6 +1879,7 @@ describe("/admin/orgs（ListPage）", () => {
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
         json(400, { error: { code: "validation_failed", message: "x" } }),
@@ -1913,6 +1917,7 @@ describe("/admin/settings（FormPage）", () => {
         "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
         "GET /api/v1/platform/theme": () => json(200, null),
         "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+        "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
         "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
         ...THEME_ROUTES,
         "PUT /api/v1/admin/settings": (c) => json(200, { ...SETTINGS, ...(bodyOf(c) as object) }),
@@ -1950,6 +1955,7 @@ describe("/admin/settings（FormPage）", () => {
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       ...THEME_ROUTES,
     });
@@ -1972,6 +1978,7 @@ describe("/admin/settings（FormPage）", () => {
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       ...THEME_ROUTES,
     });

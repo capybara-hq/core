@@ -36,14 +36,20 @@ export type RepeaterProps = {
   /** The list's accessible name ("端点"). */
   label: string;
   items: RepeaterItem[];
-  /** The add button's words ("添加端点"). */
-  addLabel: string;
-  /** Adds an item; `presetId` when a preset was picked, `undefined` for a blank one. */
-  onAdd(presetId?: string): void;
+  /** The add button's words ("添加端点"); with `onAdd`. */
+  addLabel?: string;
+  /**
+   * Adds an item; `presetId` when a preset was picked, `undefined` for a blank one. Without it
+   * there is no footer (a fixed set the person only reorders, with `onMove`).
+   */
+  onAdd?(presetId?: string): void;
   /** With presets the add button opens a menu of them plus "空白" / "Blank". */
   presets?: RepeaterPreset[];
-  /** Removes at once and returns the restore the undo toast calls. */
-  onRemove(key: string): () => void;
+  /**
+   * Removes at once and returns the restore the undo toast calls. Without it the items have no
+   * remove button (a fixed set the person only reorders).
+   */
+  onRemove?(key: string): () => void;
   /** Present when the order matters: the drag handle, move up / down and Alt+↑/↓. */
   onMove?(key: string, to: number): void;
   /** Present when cards collapse: a chevron before the title. */
@@ -101,12 +107,13 @@ type Pending =
  * A list of item cards (spec §6.26): an array of objects in a config form (endpoints, models).
  * Each item is a group named by its title; remove is immediate with an undo toast; reorder by drag
  * handle, move buttons or Alt+↑/↓ on a focused item; after an add, focus goes to the new item's
- * first field.
+ * first field. Without `onAdd` and `onRemove` it is an order-only list: a fixed set the person
+ * reorders (the login page's methods), no footer and no remove buttons.
  */
 export function Repeater({
   label,
   items,
-  addLabel,
+  addLabel = "",
   onAdd,
   presets,
   onRemove,
@@ -136,8 +143,9 @@ export function Repeater({
 
   const canAdd = !disabled && items.length < max;
   const canRemove = !disabled && items.length > min;
+  const removable = onRemove !== undefined;
   // At its minimum the remove button says why it is off (its tooltip and accessible description).
-  const atMin = !disabled && items.length <= min;
+  const atMin = removable && !disabled && items.length <= min;
   const keepMin = t("repeater.keepMin").replace("{min}", String(min));
   const reorder = onMove !== undefined;
 
@@ -187,6 +195,7 @@ export function Repeater({
   }, [armed]);
 
   const add = (presetId?: string) => {
+    if (!onAdd) return;
     pending.current = { kind: "add", before: new Set(items.map((i) => i.key)) };
     onAdd(presetId);
   };
@@ -199,6 +208,7 @@ export function Repeater({
   };
 
   const remove = (item: RepeaterItem, index: number) => {
+    if (!onRemove) return;
     const name = nameOf(item, index, t);
     pending.current = { kind: "remove", index };
     const restore = onRemove(item.key);
@@ -250,7 +260,7 @@ export function Repeater({
       : {};
 
   const addButton =
-    presets && presets.length > 0 ? (
+    onAdd === undefined ? null : presets && presets.length > 0 ? (
       <Menu
         label={addLabel}
         onCloseAutoFocus={(e) => {
@@ -324,15 +334,17 @@ export function Repeater({
           />
         </>
       ) : null}
-      <IconButton
-        density="dense"
-        part="repeater-remove"
-        label={t("repeater.remove").replace("{name}", name)}
-        icon={<Icon name="trash-2" size={14} />}
-        disabled={!canRemove}
-        {...(atMin ? { title: keepMin, "aria-describedby": `${base}-${index}-keep` } : {})}
-        onClick={() => remove(item, index)}
-      />
+      {removable ? (
+        <IconButton
+          density="dense"
+          part="repeater-remove"
+          label={t("repeater.remove").replace("{name}", name)}
+          icon={<Icon name="trash-2" size={14} />}
+          disabled={!canRemove}
+          {...(atMin ? { title: keepMin, "aria-describedby": `${base}-${index}-keep` } : {})}
+          onClick={() => remove(item, index)}
+        />
+      ) : null}
       {atMin ? (
         <span id={`${base}-${index}-keep`} className="cb-sr-only">
           {keepMin}
@@ -459,9 +471,11 @@ export function Repeater({
           })}
         </ul>
       )}
-      <div className="cb-repeater-foot" data-part="repeater-foot">
-        {addButton}
-      </div>
+      {addButton === null ? null : (
+        <div className="cb-repeater-foot" data-part="repeater-foot">
+          {addButton}
+        </div>
+      )}
     </div>
   );
 }

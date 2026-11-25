@@ -28,6 +28,7 @@ import {
   listMarketplaces,
   listPendingPlugins,
 } from "../catalog";
+import { listLoginSources } from "../login-sources";
 import { getAdminModels, listAdminPurposes } from "../models";
 import { listAdminOrgNetworkAllowances } from "../org-network";
 import { listPlatformIcons } from "../platform-icons";
@@ -218,6 +219,27 @@ export const adminExtensionsQuery = () =>
     fn: () => listAdminExtensions(),
     freshness: "deployment",
   });
+
+/**
+ * The platform's login methods (`identity-source@1` extensions) with their settings: the
+ * 登录方式 section of `/admin/settings` and an identity source's 登录 section on its extension page.
+ */
+export const loginSourcesQuery = () =>
+  defineQuery({
+    key: d().loginSources(),
+    fn: () => listLoginSources(),
+    freshness: "deployment",
+  });
+
+/**
+ * What a login method write changes: the methods, the login page's sources (`GET
+ * /api/v1/auth/sources`) and the platform audit log.
+ */
+export const loginSourceChangeKeys = (): (readonly unknown[])[] => [
+  d().loginSources(),
+  d().authSources(),
+  d().platformAuditAll(),
+];
 
 /** One extension (the detail page polls it while it converges). */
 export const adminExtensionQuery = (name: string) =>

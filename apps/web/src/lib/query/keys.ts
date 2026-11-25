@@ -557,6 +557,8 @@ export const keys = {
       platformIcons: (): readonly unknown[] => [...all, "platformIcons"],
       /** The sign-in sources the login page offers. */
       authSources: (): readonly unknown[] => [...all, "authSources"],
+      /** The platform's login methods with their settings (super admins, `/admin/*`). */
+      loginSources: (): readonly unknown[] => [...all, "loginSources"],
       /** Whether the deployment still needs its first admin (`GET /setup`). */
       setupStatus: (): readonly unknown[] => [...all, "setupStatus"],
       /** An invitation's public preview, by its token (no session needed). */

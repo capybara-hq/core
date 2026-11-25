@@ -224,6 +224,23 @@ describe("Repeater (spec §6.26)", () => {
     expect(onMove).toHaveBeenCalledTimes(1);
   });
 
+  it("without onAdd and onRemove it is an order-only list: no footer, no remove, still movable", async () => {
+    const onMove = vi.fn();
+    wrap(
+      <Repeater
+        label="Login methods"
+        variant="rows"
+        items={[card("a"), card("b")]}
+        onMove={onMove}
+      />,
+    );
+    expect(document.querySelector('[data-part="repeater-foot"]')).toBeNull();
+    expect(document.querySelector('[data-part="repeater-remove"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Move a down" }));
+    expect(onMove).toHaveBeenCalledWith("a", 1);
+  });
+
   it("after add, focus moves to the new item's first field", async () => {
     wrap(<Host initial={["a"]} />);
     await userEvent.click(screen.getByRole("button", { name: "Add endpoint" }));
