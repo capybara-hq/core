@@ -123,6 +123,7 @@ const task = (extra: Record<string, unknown> = {}) => ({
   finishedAt: null,
   stopping: false,
   stopWaiting: false,
+  stopFailure: null,
   starting: false,
   ...extra,
 });
@@ -283,7 +284,9 @@ describe("the background section", () => {
     const state = { tasks: [task()] as unknown[] };
     api(state, {
       [`POST ${TASKS}/${TASK}/stop`]: () =>
-        json(200, { task: task({ stopping: true, stopWaiting: true }) }),
+        json(200, {
+          task: task({ stopping: true, stopWaiting: true, stopFailure: "unreachable" }),
+        }),
     });
     window.history.replaceState(null, "", "/chat/c1#properties");
     await renderChatRoute();

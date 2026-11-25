@@ -3,7 +3,7 @@ import { IconButton } from "../controls/button";
 import { CodeBlock } from "../display/chat";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
-import type { BackgroundTaskStatus } from "./subagents";
+import type { BackgroundTaskStatus, StopWaiting } from "./subagents";
 import { fillCopy } from "./tool-copy";
 
 export type TaskOutputPanelProps = {
@@ -28,10 +28,11 @@ export type TaskOutputPanelProps = {
    */
   stopping?: boolean;
   /**
-   * With `stopping`: the stop is recorded but waits for the device (its machine offline or not
-   * answering); it says "Stops when the device answers" (`background.stopWaiting`) instead.
+   * With `stopping`: the stop is recorded and waits for the device, saying why instead of
+   * "Stopping…": `recorded` (the device has not applied it yet), `unreachable` (the device did not
+   * answer), `failed` (the device's stop failed; it is attempted again).
    */
-  stopWaiting?: boolean;
+  stopWaiting?: StopWaiting;
   onStop(): void;
 };
 
@@ -113,7 +114,7 @@ export function TaskOutputPanel({
             role="status"
             aria-live="polite"
           >
-            {t(stopWaiting === true ? "background.stopWaiting" : "background.stopping")}
+            {t(stopWaiting ? `background.stopWaiting.${stopWaiting}` : "background.stopping")}
           </span>
         ) : null}
         {status === "running" && stopping !== true ? (

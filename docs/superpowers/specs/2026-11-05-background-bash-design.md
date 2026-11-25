@@ -113,16 +113,20 @@ shown as failed, a wait shown as "Reading file") is core#385.
   gives the final status and the last 20 lines of output.
 - Stopping a task that has already finished is not an error: the result says it had already
   finished.
-- **A stop is durable intent** (fix 2026-11-25, prod acceptance of rc.114): before the device is
-  asked, the stop is recorded on the row (`cancel-pending`, the asker in `cancel_requested_by`,
-  the claim in `stopping_at`). One attempt takes at most `STOP_ATTEMPT_TIMEOUT_MS` (20 s). When the
-  device cannot take it now (its machine offline or not answering, a busy lease, a provider error,
-  the caller gone), the claim is released and the task stays running with its stop owed: the
-  `TaskStop` result says the stop is requested and delivered when the device answers, the HTTP view
-  says `stopping` and `stopWaiting` ("等待设备响应后停止"), and the poller delivers the owed stop on
-  later ticks, each attempt bounded the same way. The task's own time limit still ends it on the
-  device. A replica that dies mid-stop leaves the same record; its claim expires and the poller
-  delivers it.
+- **A stop is durable intent** (fix 2026-11-25, core#846): before the device is asked, the stop is
+  recorded on the row (`cancel-pending`, the asker in `cancel_requested_by`, the claim in
+  `stopping_at`). One attempt takes at most `STOP_ATTEMPT_TIMEOUT_MS` (20 s). When it does not
+  settle, the claim is released and the task stays running with its stop owed, and why is kept in
+  `cancel_failure` (0184): `unreachable` (the device did not answer in time, or its machine is not
+  connected) or `failed` (the device or its provider failed the stop; the message in
+  `cancel_failure_detail`); a caller that gave up keeps the last value, and a device that recorded
+  the cancellation itself clears it. The `TaskStop` result says which and that the recorded stop is
+  attempted again automatically; the HTTP view says `stopping`, `stopWaiting` and `stopFailure`,
+  and the panel "停止已记录，等待设备执行" / "等待设备响应后停止" / "设备未能停止，将自动重试". The poller
+  delivers owed stops on later ticks: each device's in turn, the devices side by side, a device that
+  did not answer getting no further attempt that tick. The task's own time limit still ends it on
+  the device. A replica that dies mid-stop leaves the same record; its claim expires and the poller
+  delivers it. A stop that loses the claim to another live stop still records its asker.
 - **Scope:** a conversation stops only its own tasks. A sub-agent's tasks belong to its child
   conversation; the parent cannot stop them through `TaskStop`, but a person can, from the
   properties panel.
@@ -360,7 +364,7 @@ next person message would pick it up.
 - `POST …/background-tasks/:taskId/stop`: a person stops a task. The same people who may stop a run
   may stop a task. The action is audited as `background_task.stopped`. It answers within one stop
   attempt (§2.3): a stop the device has not taken yet comes back `running` with `stopping` and
-  `stopWaiting` true.
+  `stopWaiting` true, and `stopFailure` saying why.
 - `GET …/background-tasks/:taskId/output?tail=<bytes>`: up to 64 KiB of the end of the output, read
   through one short exec while the sandbox runs. Otherwise the response is 409
   `background_task.output_unavailable`, unless the task finished and its last lines were kept in

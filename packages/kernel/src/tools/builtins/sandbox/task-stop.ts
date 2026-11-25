@@ -116,12 +116,31 @@ function text(task: BackgroundTaskRow, body: string): BuiltinResult {
 }
 
 /**
+ * The result of a stop that is recorded but not applied yet (`cancel-pending`): why the last
+ * attempt did not settle, and how the recorded stop proceeds.
+ */
+function owedStopText(task: BackgroundTaskRow): string {
+  const head = `Background task ${task.id} ("${task.description}") stop requested`;
+  const why =
+    task.cancelFailure === "unreachable"
+      ? `the device did not confirm it (${clip(task.cancelFailureDetail ?? "its machine is offline or not answering", 300)})`
+      : task.cancelFailure === "failed"
+        ? `the device's stop failed (${clip(task.cancelFailureDetail ?? "no detail", 300)})`
+        : "the device recorded the cancellation and has not applied it yet";
+  return (
+    `${head}: ${why}. The stop is recorded and attempted again automatically until the device ` +
+    "applies it; another TaskStop call changes nothing. The task's own time limit still ends it on " +
+    "the device. TaskOutput shows when it has ended."
+  );
+}
+
+/**
  * Built-in `TaskStop` (spec 2026-11-05-background-bash-design §2.3): stops one of this
  * conversation's background tasks through `BackgroundTaskStopper` (by its exact ref, with the device's
  * five-second grace, never creating or resuming a sandbox). A task that had already finished is not an
  * error; a reservation still launching, or a task another stop already claimed, is reported as
- * stopping. A stop the device cannot take now (its machine offline or silent) is recorded and
- * reported as requested: the kernel delivers it when the device answers.
+ * stopping. A stop the device cannot apply now (its machine offline or silent, the device's stop
+ * failed) is recorded and reported as requested, with why: the poller attempts it again.
  */
 export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -143,7 +162,9 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
       try {
         after = await env.tasks.stopper.stop(task, "tool", ctx.signal);
       } catch (e) {
-        // a running legacy task's stop is the retirement gate's refusal, in its own words
+        // a managed task's stop never throws for the device (it stays owed): what is left is a
+        // running legacy task's retirement refusal, in its own words, a malformed recorded ref or
+        // a failed write that recorded nothing
         const mapped = retirementRefusal(e, env);
         if (mapped instanceof ToolError) throw mapped;
         const why = e instanceof Error ? e.message : String(e);
@@ -152,10 +173,7 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
         );
       }
       if (after.status === "running" && after.launchState === "cancel-pending") {
-        return text(
-          after,
-          `Background task ${after.id} ("${after.description}") stop requested: the device has not confirmed it yet (its machine is offline or not answering, or it is still applying the stop). The stop is recorded and is delivered when the device answers; the task's own time limit still ends it. Do not call TaskStop again; call TaskOutput later to see when it has ended.`,
-        );
+        return text(after, owedStopText(after));
       }
       if (after.status === "running") {
         return text(

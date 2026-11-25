@@ -20,6 +20,5 @@
   "permission-native-contract.test.ts",
   "runtime-manifest-pack.test.ts",
   "runtime-manifest.test.ts",
-  "stop-worker.test.ts",
   "transfer-timing.test.ts"
 ]

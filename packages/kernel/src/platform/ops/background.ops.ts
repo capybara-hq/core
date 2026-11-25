@@ -28,6 +28,7 @@ const row = (t: BackgroundTaskView) => ({
   stopping: t.stopping,
   // the stop is recorded and is delivered once the device answers (offline or not answering now)
   ...(t.stopWaiting && { stopWaiting: true }),
+  ...(t.stopFailure !== null && { stopFailure: t.stopFailure }),
 });
 
 /**
@@ -47,7 +48,7 @@ export class BackgroundOperations implements OnModuleInit {
       defineOperation({
         id: "conversations.background-tasks",
         description:
-          "List the background commands of one of your conversations and of its sub-agents, newest first: description, state (running, finished, failed, stopped, lost), the command, whether a stop is under way and whether it waits for the device to answer. Pages by 50: pass the returned next as params.cursor.",
+          "List the background commands of one of your conversations and of its sub-agents, newest first: description, state (running, finished, failed, stopped, lost), the command, whether a stop is under way, whether it is recorded and waits for the device (stopWaiting) and why its last attempt did not settle (stopFailure: unreachable or failed). Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ conversationId: ConversationId, cursor: Cursor.optional() }).strict(),
         example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
         authz: { orgAction: "agents.use" },
@@ -71,7 +72,7 @@ export class BackgroundOperations implements OnModuleInit {
       defineOperation({
         id: "conversations.stop-background-task",
         description:
-          "Stop one background command of one of your conversations, as the stop button does: the command is killed. Takes the task id from conversations.background-tasks. A task already stopping or finished is returned as it is; when the device is offline or not answering, the stop is recorded (stopWaiting) and delivered once it answers.",
+          "Stop one background command of one of your conversations, as the stop button does: the command is killed. Takes the task id from conversations.background-tasks. A task already stopping or finished is returned as it is; a stop the device has not applied yet is recorded (stopWaiting, with stopFailure saying why its last attempt did not settle) and attempted again automatically.",
         input: z.object({ conversationId: ConversationId, taskId: TaskId }).strict(),
         example: {
           conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10",

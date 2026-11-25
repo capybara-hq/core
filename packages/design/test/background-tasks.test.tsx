@@ -84,10 +84,10 @@ describe("BackgroundTasks task rows", () => {
     expect(screen.getByText("Stopping…")).toBeTruthy();
   });
 
-  it("a stop waiting for the device says so instead of Stopping…", () => {
-    wrap(
+  it("a stop waiting for the device says why instead of Stopping…", () => {
+    const { rerender } = wrap(
       <BackgroundTasks
-        items={[task({ stopping: true, stopWaiting: true })]}
+        items={[task({ stopping: true, stopWaiting: "unreachable" })]}
         now={NOW}
         onStop={vi.fn()}
         onOpen={vi.fn()}
@@ -95,6 +95,21 @@ describe("BackgroundTasks task rows", () => {
     );
     expect(screen.queryByRole("button", { name: /停止/ })).toBeNull();
     expect(screen.getByRole("status").textContent).toBe("等待设备响应后停止");
+    const again = (stopWaiting: "recorded" | "failed") =>
+      rerender(
+        <DesignProvider locale="zh">
+          <BackgroundTasks
+            items={[task({ stopping: true, stopWaiting })]}
+            now={NOW}
+            onStop={vi.fn()}
+            onOpen={vi.fn()}
+          />
+        </DesignProvider>,
+      );
+    again("recorded");
+    expect(screen.getByRole("status").textContent).toBe("停止已记录，等待设备执行");
+    again("failed");
+    expect(screen.getByRole("status").textContent).toBe("设备未能停止，将自动重试");
   });
 
   it("a failed row has the fail mark and no spinner", () => {
@@ -305,7 +320,7 @@ describe("TaskOutputPanel", () => {
         text="ready"
         source="sandbox"
         stopping
-        stopWaiting
+        stopWaiting="unreachable"
         onStop={vi.fn()}
       />,
       "en",

@@ -22,6 +22,7 @@ const task = (over: Partial<BackgroundTaskView> = {}): BackgroundTaskView => ({
   finishedAt: null,
   stopping: false,
   stopWaiting: false,
+  stopFailure: null,
   starting: false,
   ...over,
 });

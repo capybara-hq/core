@@ -698,11 +698,17 @@ export const WORKER_STOP_GRACE_MS = 5000;
  * tunnelled connection whose remote never closes its half (a long poll behind a killed client).
  * A background task's operation, and with it the machine's answer to its stop, ends only once its
  * supervisor exited, so an unbounded wait here left a stopped task running in every view.
+ *
+ * `ownedGroup` is the command's process group (its detached leader's pid, as the supervisor
+ * reported it at launch). The supervisor's own `stop` kills it first; when the supervisor is
+ * killed late it may not have got that far (its owned-group walk still running, or refused), so
+ * the group is killed here too: nothing it owned outlives it unsupervised.
  */
 export async function stopWorker(
   worker: ChildProcess,
   onDiagnostic?: (text: string) => void,
   graceMs = WORKER_STOP_GRACE_MS,
+  ownedGroup?: number,
 ): Promise<void> {
   const exited = () => worker.exitCode !== null || worker.signalCode !== null;
   // the worker may exit between the check and the send: never wait for an exit already seen
@@ -720,8 +726,18 @@ export async function stopWorker(
   ]);
   clearTimeout(timer);
   if (!late) return;
+  let group = "";
+  if (ownedGroup !== undefined && Number.isSafeInteger(ownedGroup) && ownedGroup > 1) {
+    try {
+      process.kill(-ownedGroup, "SIGKILL");
+      group = "; its command's process group was killed too";
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== "ESRCH") group = `; killing its command's process group failed (${code})`;
+    }
+  }
   onDiagnostic?.(
-    `The operation's supervisor did not end within ${Math.ceil(graceMs / 1000)} s of its stop; killed`,
+    `The operation's supervisor did not end within ${Math.ceil(graceMs / 1000)} s of its stop; killed${group}`,
   );
   if (!exited()) worker.kill("SIGKILL");
   await ended;
@@ -1270,7 +1286,7 @@ export async function startMacOperationWorker(
             // a worker that exits before answering has released nothing more to release
             await released.catch(() => undefined);
           }
-          await stopWorker(worker, request.onDiagnostic);
+          await stopWorker(worker, request.onDiagnostic, WORKER_STOP_GRACE_MS, registered?.pid);
         } else if (!exited()) worker.kill("SIGTERM");
       }
       // the sandbox keeps git's sequencer directory (it may hold a kept HEAD) from being removed

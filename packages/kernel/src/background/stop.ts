@@ -16,7 +16,6 @@ import {
   exactRefOf,
   lastLinesByRef,
   MANAGED_STOP_GRACE_MS,
-  ManagedRefError,
   onManagedInstance,
   stopEnd,
   summaryLines,
@@ -24,6 +23,7 @@ import {
 import {
   type BackgroundTaskRow,
   BackgroundTaskStore,
+  type CancelFailure,
   type CancelRequester,
   isManagedTask,
 } from "./store.js";
@@ -35,6 +35,45 @@ import {
  * poll: the stop stays owed (`cancel-pending`) and the poller attempts it again.
  */
 export const STOP_ATTEMPT_TIMEOUT_MS = 20_000;
+
+/** The longest failure message kept on the row for the model and the logs. */
+const FAILURE_DETAIL_MAX = 300;
+
+/**
+ * Errors that say the device's machine did not take or answer the request (not connected, gone
+ * away mid-request, restarted, silent past the deadline), matched by name: the classes live in the
+ * kernel and in the SDK a provider may bundle its own copy of.
+ */
+const UNREACHABLE_ERRORS: ReadonlySet<string> = new Set([
+  "DeviceOfflineError",
+  "DialInAnswerTimeoutError",
+  "DialInConnectionChangedError",
+  "DeviceRequestNotSentError",
+  "DeviceProgramRestartedError",
+]);
+
+/**
+ * Why one stop attempt did not settle, or undefined when the caller gave up (that says nothing
+ * about the device, so the last attempt's failure is kept).
+ */
+export function attemptFailure(
+  err: unknown,
+  attemptTimedOut: boolean,
+  callerAborted: boolean,
+): { kind: CancelFailure; detail: string } | undefined {
+  if (callerAborted) return undefined;
+  const message = err instanceof Error ? err.message : String(err);
+  const detail =
+    message.length > FAILURE_DETAIL_MAX ? `${message.slice(0, FAILURE_DETAIL_MAX)}…` : message;
+  if (attemptTimedOut)
+    return {
+      kind: "unreachable",
+      detail: "the device did not answer within the stop attempt's time limit",
+    };
+  if (err instanceof Error && UNREACHABLE_ERRORS.has(err.name))
+    return { kind: "unreachable", detail };
+  return { kind: "failed", detail };
+}
 
 /**
  * Test seam (`KernelOverride`): a shorter {@link STOP_ATTEMPT_TIMEOUT_MS}, read at every attempt.
@@ -113,11 +152,15 @@ export class BackgroundTaskStopper {
    * live stop already claimed, is returned as it is now.
    *
    * The stop first claims the task (`stopping_at`), so the poller leaves it alone while the stop
-   * takes effect and the stop's finish is its only one. A legacy reservation that never started
-   * (no instance) is only claimed: the poller fails it as abandoned. When the stop fails while the
-   * sandbox runs (busy, a provider error, a legacy task's retirement refusal), the claim is given
-   * up, the task stays `running` and the error is thrown. `how.reported`: the caller's own result
-   * tells the model this finish (a managed task's cancellation settled from a TaskOutput read).
+   * takes effect and the stop's finish is its only one. A stop that loses the claim to another
+   * live stop still records its asker on a managed task, so the later finish keeps their wake
+   * rule. A legacy reservation that never started (no instance) is only claimed: the poller fails
+   * it as abandoned. A managed task's stop is owed before the device is asked and never throws for
+   * the device: one that cannot settle within its attempt stays owed (`cancel-pending`, why in
+   * `cancelFailure`) for the poller. A legacy task's retirement refusal, a malformed ref and a
+   * failed write give the claim up and throw, the task staying `running`. `how.reported`: the
+   * caller's own result tells the model this finish (a managed task's cancellation settled from a
+   * TaskOutput read).
    */
   async stop(
     task: BackgroundTaskRow,
@@ -125,7 +168,13 @@ export class BackgroundTaskStopper {
     signal?: AbortSignal,
     how: { reported?: boolean } = {},
   ): Promise<BackgroundTaskRow> {
-    if (!(await this.store.claimStop(task.id))) return (await this.store.get(task.id)) ?? task;
+    if (!(await this.store.claimStop(task.id))) {
+      // another live stop holds the claim (a poller attempt, a second click): this asker's wake
+      // rule still holds for the finish whoever settles it
+      if (why !== "revoked" && isManagedTask(task))
+        await this.store.requestCancel(task.id, why, false);
+      return (await this.store.get(task.id)) ?? task;
+    }
     // read after the claim: an acknowledgement recording the ref before the claim is seen here,
     // one recording it after sees the claim (both are single-row updates of the same row)
     const cur = (await this.store.get(task.id)) ?? task;
@@ -237,14 +286,18 @@ export class BackgroundTaskStopper {
     // `reportedHere`: the caller's own result tells the model this finish (a TaskOutput read)
     const reported = reportedHere ?? (by === "tool" && why === "tool");
     const opts = stoppedByOpts(by);
-    const pending = async () => {
-      await this.store.requestCancel(cur.id, asker, true);
+    const pending = async (failure: { kind: CancelFailure; detail: string } | null | undefined) => {
+      await this.store.requestCancel(cur.id, asker, true, failure);
       return (await this.store.get(cur.id)) ?? cur;
     };
     try {
       exactRefOf(cur);
+      // intent first: from here on the stop is owed whatever happens to this attempt (the device
+      // offline or silent, this replica gone); the claim keeps the poller away while it runs
+      await this.store.oweCancel(cur.id, asker);
     } catch (err) {
-      // a malformed ref is never used, and no stop is owed by it (the poller skips it too)
+      // a malformed ref is never used and owes nothing (the poller skips it too); a failed write
+      // recorded nothing: either way the claim is given up and the caller hears why
       await this.store
         .releaseStop(cur.id)
         .catch((e: unknown) =>
@@ -252,13 +305,8 @@ export class BackgroundTaskStopper {
         );
       throw err;
     }
-    // intent first: from here on the stop is owed whatever happens to this attempt (the device
-    // offline or silent, this replica gone); the claim keeps the poller away while it runs
-    await this.store.oweCancel(cur.id, asker);
-    const attempt = AbortSignal.any([
-      ...(signal ? [signal] : []),
-      AbortSignal.timeout(this.attemptMs()),
-    ]);
+    const timeout = AbortSignal.timeout(this.attemptMs());
+    const attempt = AbortSignal.any([...(signal ? [signal] : []), timeout]);
     let r: IfRunningResult<{ to: BackgroundFinish | null; lastLines: string }>;
     try {
       await this.store.noteCancelAttempt(cur.id);
@@ -276,25 +324,30 @@ export class BackgroundTaskStopper {
         attempt,
       );
     } catch (err) {
-      if (err instanceof ManagedRefError) throw err;
-      // the device could not take the stop now (offline, silent past the attempt's limit, busy,
-      // a provider error) or the caller gave up: the stop stays owed and the claim is released,
-      // so the poller delivers it once the device answers; the task's own time limit still ends
-      // it on the device
-      this.log.warn("a background task stop was not confirmed; it stays owed", {
+      // the device could not take the stop now (its machine offline or silent past the attempt's
+      // limit, a provider error) or the caller gave up: the stop stays owed and the claim is
+      // released, so the poller attempts it again; the task's own time limit still ends it on
+      // the device
+      const failure = attemptFailure(
+        err,
+        timeout.aborted && !signal?.aborted,
+        signal?.aborted === true,
+      );
+      this.log.warn("a background task stop did not settle; it stays owed", {
         taskId: cur.id,
-        timedOut: attempt.aborted && !signal?.aborted,
+        failure: failure?.kind ?? "caller_aborted",
         err,
       });
-      return pending();
+      return pending(failure);
     }
     if (r.kind === "ran") {
-      if (r.value.to === null) return pending();
+      // the device recorded the cancellation and applies it later: nothing failed
+      if (r.value.to === null) return pending(null);
       await this.finisher.finish(cur, r.value.to, r.value.lastLines, reported, opts);
     } else if (r.kind === "not_running") {
       // never resumed for a stop: a suspended instance keeps the cancellation owed; a missing or
       // destroyed one is lost like an acknowledged task's (the uncertain record is retained)
-      if (r.status === "suspended") return pending();
+      if (r.status === "suspended") return pending(null);
       await this.finisher.finish(cur, notRunningAs(r.status, false), "", reported, opts);
     } else {
       await this.finisher.finish(cur, RECREATED, "", reported, opts);

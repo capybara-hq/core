@@ -584,6 +584,12 @@ export type BackgroundTaskStatus =
   | "timed_out"
   | "lost";
 
+/**
+ * Why a recorded stop still waits for the device: `recorded` (the device has not applied it yet),
+ * `unreachable` (the device did not answer), `failed` (the device's stop failed; attempted again).
+ */
+export type StopWaiting = "recorded" | "unreachable" | "failed";
+
 export type BackgroundTaskItem = {
   kind: "task";
   id: string;
@@ -596,8 +602,8 @@ export type BackgroundTaskItem = {
   exitCode?: number | null;
   /** A stop is under way (the kernel view's `stopping`): the row stays running, with no stop. */
   stopping?: boolean;
-  /** With `stopping`: the stop waits for the device (offline or not answering). */
-  stopWaiting?: boolean;
+  /** With `stopping`: the stop is recorded and waits for the device, and why ({@link StopWaiting}). */
+  stopWaiting?: StopWaiting;
   /** Drawn indented, under the sub-agent that started it. */
   nested?: boolean;
 };
@@ -744,8 +750,8 @@ export function BackgroundTaskRow({
       {stopping ? (
         <span className="cb-muted" role="status" aria-live="polite">
           {t(
-            item.kind === "task" && item.stopWaiting === true
-              ? "background.stopWaiting"
+            item.kind === "task" && item.stopWaiting
+              ? `background.stopWaiting.${item.stopWaiting}`
               : "background.stopping",
           )}
         </span>
