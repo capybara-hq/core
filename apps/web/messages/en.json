@@ -49,9 +49,10 @@
     "link": {
       "title": "Finish linking",
       "intro": "This {platform} account ({name} · {tenant}) has no {product} account it can sign in to yet. Sign in with your username and password to link it.",
+      "introNoTenant": "This {platform} account ({name}) has no {product} account it can sign in to yet. Sign in with your username and password to link it.",
       "platform": "Platform",
       "tenant": "Tenant",
-      "linkedToAnother": "This account is linked to another {product} account. Sign in with that account's password to let it sign in.",
+      "linkedToAnother": "This account is linked to a {product} account through IM. Sign in with that account's username and password to sign in with it from now on.",
       "submit": "Sign in and link",
       "cancel": "Cancel",
       "noAccount": "No account? Contact your administrator.",
@@ -3256,6 +3257,7 @@
       },
       "sso": {
         "unavailable": "This sign-in method is not available right now. Contact an administrator.",
+        "session_mismatch": "Your session changed. Sign in again and retry.",
         "access_denied": "Linking was cancelled or access was denied.",
         "provider_error": "The identity provider returned an error. Please try again later.",
         "account_not_allowed": "This account is not allowed to sign in on this platform."

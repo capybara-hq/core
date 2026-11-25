@@ -827,6 +827,7 @@ describe("已绑定账号（SettingsPage）", () => {
   it.each([
     ["identity.taken", (m: typeof en.identities) => m.linkError.identity.taken],
     ["sso.unavailable", (m: typeof en.identities) => m.linkError.sso.unavailable],
+    ["sso.session_mismatch", (m: typeof en.identities) => m.linkError.sso.session_mismatch],
     ["bogus", (m: typeof en.identities) => m.linkError.unknown],
   ] as const)("?error=%s shows its message", async (code, text) => {
     resetNavigation(`/account/identities?error=${code}`);

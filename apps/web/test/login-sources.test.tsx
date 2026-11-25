@@ -20,10 +20,10 @@ vi.mock("next/navigation", () => ({
 }));
 
 /**
- * The login methods in the admin console (login extensions spec §3): an identity source's 登录
+ * The login methods in the admin console (login extensions spec §3): an identity source's sign-in
  * section on its extension page (the switch, unlinked accounts, trusted tenants checked by the
- * source's tenant declaration, the callback URL) and 登录方式 on `/admin/settings` (the enabled
- * methods reordered, each move saving the whole order; the others listed without reorder).
+ * source's tenant declaration, the callback URL) and the login methods on `/admin/settings` (the
+ * enabled methods reordered, each move saving the whole order; the others listed without reorder).
  */
 
 const S = en.loginSources.section;
@@ -178,6 +178,14 @@ describe("登录 on an identity source's extension page", () => {
     const toggle = within(section).getByRole("switch", { name: S.show }) as HTMLButtonElement;
     expect(toggle.disabled).toBe(true);
     expect(within(section).getByText(S.needsConfig)).toBeTruthy();
+  });
+
+  it("an extension that is not running disables turning it on, with the hint", async () => {
+    routes(source("slack", { available: false }));
+    const { section } = await openConfig();
+    const toggle = within(section).getByRole("switch", { name: S.show }) as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    expect(within(section).getByText(S.unavailable)).toBeTruthy();
   });
 
   it("an extension waiting for config that the methods do not list yet shows the switch off, with the hint", async () => {

@@ -49,9 +49,10 @@
     "link": {
       "title": "完成绑定",
       "intro": "这个 {platform} 账号（{name} · {tenant}）还没有可登录的 {product} 账号。用你的用户名和密码登录，完成绑定。",
+      "introNoTenant": "这个 {platform} 账号（{name}）还没有可登录的 {product} 账号。用你的用户名和密码登录，完成绑定。",
       "platform": "平台",
       "tenant": "租户",
-      "linkedToAnother": "这个账号已绑定到另一个 {product} 账号，用那个账号的密码登录即可升级为可登录。",
+      "linkedToAnother": "这个账号已通过 IM 绑定到一个 {product} 账号。用那个账号的用户名和密码登录，即可用它登录。",
       "submit": "登录并绑定",
       "cancel": "取消",
       "noAccount": "没有账号？请联系管理员。",
@@ -3244,6 +3245,7 @@
       },
       "sso": {
         "unavailable": "这个登录方式暂不可用，请联系管理员。",
+        "session_mismatch": "登录状态已变化。请重新登录后再试。",
         "access_denied": "绑定已取消或授权被拒绝。",
         "provider_error": "身份提供方返回错误，请稍后再试。",
         "account_not_allowed": "这个账号不允许登录本平台。"

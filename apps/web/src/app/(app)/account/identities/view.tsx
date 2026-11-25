@@ -37,10 +37,10 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 
 /**
  * `/account/identities` (SettingsPage): the person's linked accounts (IM and sign-in accounts),
- * whatever their org. One row per identity: the account, its platform and tenant, whether it
- * works in IM (`channel`) and for sign-in (`login`, decided by the kernel). A row that came from
- * an IM bind link while its platform's sign-in is on (`needs_link`) offers 启用登录, and every
- * enabled login method the person has no identity of gets a 绑定 <platform> button: both start a
+ * whatever their org. One row per identity: the account, its platform and tenant, whether it works
+ * in IM (`channel`) and for sign-in (`login`, decided by the kernel). A row that came from an IM
+ * bind link while its platform's sign-in is on (`needs_link`) offers "Turn on sign-in", and every
+ * enabled login method the person has no identity of gets a "Link <platform>" button: both start a
  * link intent (`POST …/start`, CSRF-protected) and navigate to the identity provider, which comes
  * back here, with `?error=<code>` on failure. Unlinking the last sign-in of an account without a
  * password is refused (`identity.last_login_method`). From the query cache (the layout prefetched

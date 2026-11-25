@@ -2,7 +2,7 @@ import { apiFetch } from "./api";
 
 /** What a sign-in calls a tenant (an identity source's `tenant` declaration, login extensions spec §2). */
 export interface LoginSourceTenant {
-  /** The tenant's name in the admin console ("Slack 工作区 ID"). */
+  /** The tenant's name in the admin console ("Slack workspace ID"). */
   label: { zh: string; en: string };
   /** Where to find it. */
   help?: { zh: string; en: string };

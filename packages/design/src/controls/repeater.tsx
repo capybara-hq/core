@@ -32,19 +32,25 @@ export interface RepeaterItem {
 
 export type RepeaterPreset = { id: string; label: string; help?: string };
 
-export type RepeaterProps = {
-  /** The list's accessible name ("端点"). */
+/**
+ * The add button: `onAdd` and its words `addLabel` come together (an add button always has a
+ * name), or neither (no footer: a fixed set the person only reorders, with `onMove`).
+ */
+export type RepeaterAdd =
+  | {
+      /** The add button's words ("Add endpoint"). */
+      addLabel: string;
+      /** Adds an item; `presetId` when a preset was picked, `undefined` for a blank one. */
+      onAdd(presetId?: string): void;
+      /** With presets the add button opens a menu of them plus a blank item. */
+      presets?: RepeaterPreset[];
+    }
+  | { addLabel?: undefined; onAdd?: undefined; presets?: undefined };
+
+export type RepeaterProps = RepeaterAdd & {
+  /** The list's accessible name ("Endpoints"). */
   label: string;
   items: RepeaterItem[];
-  /** The add button's words ("添加端点"); with `onAdd`. */
-  addLabel?: string;
-  /**
-   * Adds an item; `presetId` when a preset was picked, `undefined` for a blank one. Without it
-   * there is no footer (a fixed set the person only reorders, with `onMove`).
-   */
-  onAdd?(presetId?: string): void;
-  /** With presets the add button opens a menu of them plus "空白" / "Blank". */
-  presets?: RepeaterPreset[];
   /**
    * Removes at once and returns the restore the undo toast calls. Without it the items have no
    * remove button (a fixed set the person only reorders).

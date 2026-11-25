@@ -94,6 +94,15 @@ describe("/login/link (AuthPage)", () => {
     },
   );
 
+  it("without a tenant the intro names only the account", async () => {
+    await linkAt({ [PEEK]: () => json(200, { ...VIEW, tenantId: "" }) });
+    expect(
+      await screen.findByText(
+        fill(en.login.link.introNoTenant, { platform: "Fake IM", name: "Alice Wong" }),
+      ),
+    ).toBeTruthy();
+  });
+
   it("an already linked account: says its password upgrades it", async () => {
     await linkAt({ [PEEK]: () => json(200, { ...VIEW, linkedToAnother: true }) }, { locale: "zh" });
     expect(await screen.findByText(zh.login.link.linkedToAnother)).toBeTruthy();

@@ -21,7 +21,7 @@ export default async function LoginLayout({ children }: { children: ReactNode })
   ]);
   if (needsSetup === true) redirect("/setup");
   const path = await currentPath();
-  const linkPage = path.split(/[?#]/)[0] === LINK_PAGE_PATH;
+  const linkPage = (path.split(/[?#]/)[0] ?? "").replace(/\/+$/, "") === LINK_PAGE_PATH;
   if ("data" in me && me.data !== null && !linkPage) redirect(signedInTarget(path));
   return children;
 }

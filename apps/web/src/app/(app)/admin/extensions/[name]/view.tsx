@@ -59,7 +59,7 @@ type Tab = (typeof TABS)[number];
  *   apply at once, the others reload after saving); a pending-config extension opens on it, with
  *   the missing fields listed. Under it, each platform setup guide the extension ships (place
  *   `extension-deployment`) with live check rows run against the saved deployment config.
- * Under the config, an identity source's 登录 section (`LoginSourceSection`, login extensions spec
+ * Under the config, an identity source's sign-in section (`LoginSourceSection`, login ext. spec
  * §3): whether the login page offers it, unlinked accounts, trusted tenants, the callback URL.
  * 界面代码 (an extension with client code): its build, files, sizes and error reports, and
  * 停用界面代码 (client extensions spec §10.2, §10.4).
@@ -230,7 +230,7 @@ function Detail({
 }
 
 /**
- * 登录 of an identity source: its entry in the login methods. An extension waiting for its
+ * Sign-in of an identity source: its entry in the login methods. An extension waiting for its
  * deployment config is not loaded, so the list may not hold it yet: the section then shows only the
  * switch, off, with the hint to fill in the config first. Its placeholder while the methods are
  * read, the failure with a retry when the read failed.

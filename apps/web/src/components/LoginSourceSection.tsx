@@ -35,12 +35,13 @@ const head = (t: (k: string) => string) => ({
 });
 
 /**
- * 登录 on an identity source's extension page (`/admin/extensions/<name>`, login extensions spec §3):
- * the switch 在登录页显示 (off while the deployment config is invalid, with the hint to fill it in
- * first), 未绑定的账号 (the link page or a new account), 可信租户 (one tenant per line, named and
- * checked by the source's tenant declaration, with the trust warning) and the callback URL to
- * register at the identity provider. The switch and the radio save at once; the tenants with their
- * own button. Every write invalidates the methods, the login page's sources and the audit log.
+ * The sign-in section on an identity source's extension page (`/admin/extensions/<name>`, login
+ * extensions spec §3): the switch "show on the sign-in page" (off while the deployment config is
+ * invalid or the extension is not running, with the hint), unlinked accounts (the link page or a
+ * new account), trusted tenants (one tenant per line, named and checked by the source's tenant
+ * declaration, with the trust warning) and the callback URL to register at the identity provider.
+ * The switch and the radio save at once; the tenants with their own button. Every write invalidates
+ * the methods, the login page's sources and the audit log.
  *
  * `source` is null for an identity source the methods list does not hold yet (an extension waiting
  * for its deployment config is not loaded): only the switch shows, off, with the hint. `"loading"`
@@ -134,8 +135,10 @@ function LoginSourceEditor({ source }: { source: LoginSource }) {
         : t("tenants.neverTrusted", { tenant: invalid.tenant });
   const dirty = draft !== undefined && tenants.join("\n") !== source.trustedTenants.join("\n");
   const help = source.tenant?.help?.[lang];
-  // turning off is always allowed; turning on waits for a valid deployment config
-  const switchOff = update.isPending || (source.needsConfig && !source.enabled);
+  // turning off is always allowed; turning on waits for a valid deployment config and a running
+  // extension
+  const switchOff =
+    update.isPending || (!source.enabled && (source.needsConfig || !source.available));
 
   return (
     <FormSection {...head(t)}>

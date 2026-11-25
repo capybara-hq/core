@@ -221,8 +221,8 @@ export const adminExtensionsQuery = () =>
   });
 
 /**
- * The platform's login methods (`identity-source@1` extensions) with their settings: the
- * 登录方式 section of `/admin/settings` and an identity source's 登录 section on its extension page.
+ * The platform's login methods (`identity-source@1` extensions) with their settings: the login
+ * methods of `/admin/settings` and an identity source's sign-in section on its extension page.
  */
 export const loginSourcesQuery = () =>
   defineQuery({

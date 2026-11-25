@@ -127,7 +127,11 @@ export default function LinkView({ ticket }: { ticket: string }) {
   return (
     <AuthPage
       title={t("title")}
-      subtitle={t("intro", { platform, name: link.displayName, tenant: link.tenantId })}
+      subtitle={
+        link.tenantId === ""
+          ? t("introNoTenant", { platform, name: link.displayName })
+          : t("intro", { platform, name: link.displayName, tenant: link.tenantId })
+      }
       preferences={preferences}
     >
       <Stack gap={16}>

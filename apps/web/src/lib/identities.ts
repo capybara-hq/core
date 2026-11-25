@@ -25,7 +25,7 @@ export interface LinkedIdentity {
   login: "unsupported" | "off" | "needs_link" | "on";
 }
 
-/** An enabled login method the account has no identity of (a 绑定 button). */
+/** An enabled login method the account has no identity of (a Link button). */
 export interface LinkableMethod {
   plugin: string;
   label: { zh: string; en: string };
@@ -38,6 +38,7 @@ export interface LinkableMethod {
 export const LINK_ERROR_CODES = [
   "identity.taken",
   "sso.unavailable",
+  "sso.session_mismatch",
   "sso.access_denied",
   "sso.provider_error",
   "sso.account_not_allowed",

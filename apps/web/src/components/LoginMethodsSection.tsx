@@ -10,7 +10,7 @@ import {
   TextLink,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { labelLocale } from "../lib/extension-label";
@@ -34,12 +34,12 @@ const movedTo = (keys: string[], key: string, to: number): string[] => {
 };
 
 /**
- * 登录方式 on `/admin/settings` (login extensions spec §3): the platform's login methods. The ones
- * the login page offers come first, in its order, as an order-only `Repeater` (drag handle, move up
- * / down, Alt+↑/↓), each linking to its extension page, where everything about one method lives;
- * every move saves the whole order at once (apart from the page's ActionRow) and shows it while
- * the save runs. The others (off, waiting for config, not running) follow as a plain list with
- * their state, not reorderable.
+ * Login methods on `/admin/settings` (login extensions spec §3): the platform's login methods. The
+ * ones the login page offers come first, in its order, as an order-only `Repeater` (drag handle,
+ * move up / down, Alt+↑/↓), each linking to its extension page, where everything about one method
+ * lives; every move saves the whole order at once (apart from the page's ActionRow) and shows it
+ * while the save runs. The others (off, waiting for config, not running) follow as a plain list
+ * with their state, not reorderable.
  */
 export function LoginMethodsSection() {
   const t = useTranslations("loginSources.methods");
@@ -49,10 +49,16 @@ export function LoginMethodsSection() {
   const errorMessage = useErrorMessage();
   const q = loginSourcesQuery();
   const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  const qc = useQueryClient();
   // the order being saved, drawn until the save settles (focus stays on the moved item)
   const [moving, setMoving] = useState<string[] | null>(null);
   const reorder = useAppMutation({
-    fn: (plugins: string[]) => reorderLoginSources(plugins),
+    // the answer is the new overview: cached before `moving` clears, so the old order never flashes
+    fn: async (plugins: string[]) => {
+      const r = await reorderLoginSources(plugins);
+      qc.setQueryData(q.queryKey, r);
+      return r;
+    },
     invalidates: () => loginSourceChangeKeys(),
     onSuccess: () => toast.success(t("reordered")),
     onError: (e) => toast.error(errorMessage(e)),
@@ -107,6 +113,7 @@ export function LoginMethodsSection() {
               const s = byPlugin.get(plugin) as LoginSource;
               return {
                 key: plugin,
+                // in the rows variant the title is only the row's accessible name
                 title: label(s),
                 body: (
                   <Stack direction="row" gap={8}>
