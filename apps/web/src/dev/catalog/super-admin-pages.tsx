@@ -11,11 +11,7 @@ import { type Session, SessionContext } from "../../components/shell/session";
 import type { AdminOrg, DeploymentSettings } from "../../lib/admin";
 import type { ComponentVersion, PlatformComponent } from "../../lib/components";
 import type { LoginSource } from "../../lib/login-sources";
-import {
-  adminOrgsQuery,
-  deploymentSettingsQuery,
-  loginSourcesQuery,
-} from "../../lib/query/admin";
+import { adminOrgsQuery, deploymentSettingsQuery, loginSourcesQuery } from "../../lib/query/admin";
 import { adminComponentsQuery, componentVersionsQuery } from "../../lib/query/components";
 import { meQuery } from "../../lib/query/shell";
 import type { Me } from "../../lib/session";
