@@ -992,6 +992,7 @@ export interface DeviceAccessCtx {
     }): Promise<void>;
     answerHandoff(scope: DeviceAccessScope & {
         callId: string;
+        handoffConversationId: string;
         done: boolean;
     }): Promise<void>;
     ensureService(call: ToolCallContext, spec: DeviceServiceSpec): Promise<DeviceServiceStatus>;
@@ -1184,6 +1185,13 @@ export interface DeviceServiceStatus {
     startedAt: string | null;
     state: "running" | "stopped";
     stateDir: string;
+}
+
+// @public
+export interface DeviceServiceViewerContext {
+    conversationId: string;
+    kind: "viewer";
+    rootConversationId: string;
 }
 
 // @public
@@ -1574,6 +1582,9 @@ export function encodeDialInStreamData(streamId: string, data: Uint8Array): Uint
 
 // @public
 export function encodeServiceMessage(body: Uint8Array): Uint8Array;
+
+// @public
+export function encodeViewerContext(ctx: DeviceServiceViewerContext): Uint8Array;
 
 // @public
 export interface EntryImport {
@@ -3187,6 +3198,9 @@ export interface ParseThemeOptions {
 export function parseToolKey(key: string): ParsedToolKey | null;
 
 // @public
+export function parseViewerContext(body: Uint8Array | string): DeviceServiceViewerContext | null;
+
+// @public
 export type PermissionProfile = "request-approval" | "approve-for-me" | "full-access";
 
 // @public
@@ -4782,6 +4796,7 @@ export interface ToolCallContext {
         answer: FormAnswer | null;
     };
     role?: "owner" | "admin" | "member" | "guest";
+    rootConversationId: string;
     signal: AbortSignal;
     source?: ConversationSource;
 }

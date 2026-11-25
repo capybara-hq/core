@@ -108,6 +108,8 @@ Anti-goals (a failure even if it works)
 
 ## 5. The browser daemon and its profile
 
+Amended 2026-11-25: tabs are owned per conversation and seen per conversation tree; [tab ownership spec](2026-11-25-browser-tab-ownership-design.md).
+
 - One daemon and one Chromium per device, shared by every conversation on that device (they are all
   the owner's). Profile directory under the device's state area in the file system (exact path:
   builder's call; it must not be inside a project root, so it never lands in a repository or a share).
@@ -182,7 +184,9 @@ openStream?(h: SandboxHandle, target: { unixSocket: string } | { port: number },
   org, and returns a short-lived single-use ticket.
 - The web panel opens a WebSocket to a kernel endpoint with the ticket. The kernel re-checks the
   session, opens the provider stream and pipes bytes both ways. The protocol on the stream (screencast
-  frames, input events, tab / navigation state) is the plugin's; the kernel does not parse it.
+  frames, input events, tab / navigation state) is the plugin's; the kernel does not parse it, and
+  writes one context message first: the viewer context (the ticket's conversation and its root),
+  the first stream message the service gets (amended 2026-11-25, [tab ownership spec](2026-11-25-browser-tab-ownership-design.md) §3).
 - **Frames never pass through Redis or PG.** The viewer WebSocket is served by the replica that can
   open the provider stream directly: any replica for docker / e2b; for local devices the gateway
   replica holding the machine's dial-in socket. Routing (designer's call): the viewer path is
@@ -246,8 +250,9 @@ surface is small (amended 2026-11-23 after mapping the kernel):
   takeover (§7.1), through the same device write the device page uses (ceilings apply, audited).
   The running instance gets the new limits at once, as a tool call's exclusive step applies them
   (provider `update`, else a recreate that ends the services); a suspended one at its next use.
-- `answerHandoff({ conversationId, accountId, callId, done })`: answers the handoff question of that
-  call from the panel (§9); the kernel's own question rules apply (only the run's starter answers).
+- `answerHandoff({ conversationId, accountId, callId, handoffConversationId, done })` (the handoff's
+  conversation: the scope conversation or a sub-agent descendant, amended 2026-11-25): answers the
+  handoff question of that call from the panel (§9); the kernel's own question rules apply (only the run's starter answers).
 - Each call is refused when the conversation has no device, the device's provider is unavailable or
   lacks the service / stream capability, or the trigger account is not the conversation's owner
   (actionable English error for the model).
@@ -279,6 +284,9 @@ by `actor.runId`). The browser is a long-lived service, so:
 - Org and platform ceilings bound every grant, as today.
 
 ## 8. The panel
+
+Amended 2026-11-25: the panel shows its conversation tree's tabs and moves other trees' tabs;
+[tab ownership spec](2026-11-25-browser-tab-ownership-design.md) §5.
 
 - A browser button in the conversation's right area opens the plugin's panel (`conversation.panel`,
   `kind: "embed"`; amended 2026-11-23: embed routes get the caller's account and conversation
@@ -333,6 +341,9 @@ by `actor.runId`). The browser is a long-lived service, so:
 
 ## 9. Agent tools
 
+Amended 2026-11-25: tools act on the calling conversation's own tabs, `browser_tabs` gains
+`adopt`, handoffs are per conversation; [tab ownership spec](2026-11-25-browser-tab-ownership-design.md) §4, §5.
+
 Primary, structure based (every chat model):
 
 - navigate (url, or back / forward / reload), tabs (list / open / switch / close)
@@ -374,6 +385,8 @@ Rules:
   (designer's call)
 
 ## 10. Multi-replica and state
+
+Amended 2026-11-25: tab owners, parks and idle close live in the daemon; [tab ownership spec](2026-11-25-browser-tab-ownership-design.md) §6.
 
 - Takeover state (who controls, since when) lives in the daemon, the one place every tool call and
   every viewer stream of the device reaches; it refuses agent input while taken over, so the

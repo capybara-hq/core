@@ -161,7 +161,9 @@ Each line is the rule you must not miss; the skill has the rest.
   [writing-extensions](.agents/skills/writing-extensions/SKILL.md)
 - **Device access (`ctx.deviceAccess`):** only the conversation's owner on their own personal
   device; a device service launch passes the command review as it runs and fails closed; viewer
-  tickets are single use; stream frames never pass through Redis or PG.
+  tickets are single use; a viewer stream starts with the kernel's viewer context message (the
+  ticket's conversation and its root), never one from the panel; stream frames never pass through
+  Redis or PG.
   [browser use spec](docs/superpowers/specs/2026-11-23-browser-use-design.md)
 - **Plugins and the catalog:** plugin tgz with `.capybara-plugin/plugin.json`; downloads always
   verified against recorded integrity; every admin-supplied URL goes through
