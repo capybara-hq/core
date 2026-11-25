@@ -4,9 +4,11 @@ import { type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
   CONV,
+  ev,
   FakeEventSource,
   MODELS,
   renderChatRoute,
+  runStarted,
   userMsg,
 } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
@@ -73,8 +75,7 @@ describe("a conversation.panel embed switches the panel's full mode", () => {
       return f as HTMLIFrameElement;
     });
     expect(frame).toBeTruthy();
-    // The panel is drawn in another place of the page when maximised, so its frame is remounted:
-    // always address the current frame, once it is there.
+    // Always address the current frame, once it is there.
     const fromFrame = (data: unknown) => {
       const current = document.querySelector('iframe[title="Live"]') as HTMLIFrameElement | null;
       if (!current) throw new Error("no iframe yet");
@@ -102,7 +103,7 @@ describe("a conversation.panel embed switches the panel's full mode", () => {
     });
   });
 
-  it("the embed keeps its own height in the normal panel and fills the panel when maximised", async () => {
+  it("the embed fills the panel, borderless, in both modes (a resize does not apply)", async () => {
     api();
     await renderChatRoute();
     const current = () =>
@@ -110,9 +111,9 @@ describe("a conversation.panel embed switches the panel's full mode", () => {
     await vi.waitFor(() => {
       if (!current()) throw new Error("no iframe yet");
     });
-    expect(current()?.getAttribute("data-fill")).toBeNull();
-    expect(current()?.getAttribute("height")).toBe("360");
-    const msg = (full: boolean) => ({ protocol: "capybara-embed/1", type: "panel-mode", full });
+    expect(current()?.getAttribute("data-fill")).toBe("true");
+    expect(current()?.getAttribute("data-framed")).toBe("false");
+    expect(current()?.hasAttribute("height")).toBe(false);
     const fromFrame = (data: unknown) => {
       const f = current();
       if (!f) throw new Error("no iframe yet");
@@ -123,19 +124,109 @@ describe("a conversation.panel embed switches the panel's full mode", () => {
       });
     };
     await vi.waitFor(() => {
-      fromFrame(msg(true));
+      fromFrame({ protocol: "capybara-embed/1", type: "panel-mode", full: true });
       expect(isFull()).toBe(true);
     });
-    await vi.waitFor(() => {
-      expect(current()?.getAttribute("data-fill")).toBe("true");
-    });
+    fromFrame({ protocol: "capybara-embed/1", type: "resize", height: 640 });
+    expect(current()?.getAttribute("data-fill")).toBe("true");
     expect(current()?.hasAttribute("height")).toBe(false);
-    await vi.waitFor(() => {
-      fromFrame(msg(false));
-      expect(isFull()).toBe(false);
+  });
+
+  it("the frame stays mounted across a full-mode switch and is told each mode (panel-mode)", async () => {
+    api();
+    await renderChatRoute();
+    const frame = await vi.waitFor(() => {
+      const f = document.querySelector('iframe[title="Live"]');
+      if (!f) throw new Error("no iframe yet");
+      return f as HTMLIFrameElement;
     });
-    await vi.waitFor(() => {
-      expect(current()?.getAttribute("data-fill")).toBeNull();
+    const win = frame.contentWindow as Window;
+    const posted: { type?: string; full?: boolean }[] = [];
+    vi.spyOn(win, "postMessage").mockImplementation((m: unknown) => {
+      posted.push(m as { type?: string; full?: boolean });
     });
+    act(() => {
+      frame.dispatchEvent(new Event("load"));
+    });
+    const modes = () => posted.filter((m) => m.type === "panel-mode").map((m) => m.full);
+    // init first, then the mode right after it
+    await vi.waitFor(() => expect(modes()).toEqual([false]));
+    expect(posted[0]?.type).toBe("init");
+    const fromFrame = (full: boolean) =>
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: { protocol: "capybara-embed/1", type: "panel-mode", full },
+            source: win,
+          }),
+        );
+      });
+    await vi.waitFor(() => {
+      fromFrame(true);
+      expect(isFull()).toBe(true);
+    });
+    expect(document.querySelector('iframe[title="Live"]')).toBe(frame);
+    await vi.waitFor(() => expect(modes()).toEqual([false, true]));
+    // the host leaves full mode on its own (Esc): the embed is told, the frame is the same one
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    await vi.waitFor(() => expect(isFull()).toBe(false));
+    expect(document.querySelector('iframe[title="Live"]')).toBe(frame);
+    await vi.waitFor(() => expect(modes()).toEqual([false, true, false]));
+    // one init for the whole life of the frame (no remount, no new handshake)
+    expect(posted.filter((m) => m.type === "init")).toHaveLength(1);
+  });
+});
+
+describe("a plugin tool's question names a panel (InputRequired.open)", () => {
+  const asked = (seq: number, id: string, open?: Record<string, unknown>) =>
+    ev(seq, "question_asked", {
+      step: 0,
+      callId: `call-${id}`,
+      questionId: id,
+      form: { title: "Please sign in", fields: [] },
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      ...(open !== undefined && { open }),
+    });
+  const panelShown = () => document.querySelector('iframe[title="Live"]') !== null;
+  const stream = () => FakeEventSource.instances[0] as FakeEventSource;
+
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/chat/c1");
+  });
+
+  it("opens the panel when the question arrives", async () => {
+    api();
+    await renderChatRoute();
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBeGreaterThan(0));
+    expect(panelShown()).toBe(false);
+    act(() => stream().emit("event", runStarted(2)));
+    act(() => stream().emit("event", asked(3, "q1", { plugin: "board", contribution: "live" })));
+    await vi.waitFor(() => expect(panelShown()).toBe(true));
+    expect(window.location.hash).toBe("#panel=board/live");
+  });
+
+  it("a question already in the log, another plugin's panel or none opens nothing", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "hi"),
+            runStarted(2),
+            asked(3, "q0", { plugin: "board", contribution: "live" }),
+          ],
+        }),
+    });
+    await renderChatRoute();
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBeGreaterThan(0));
+    act(() => {
+      stream().emit("event", asked(4, "q1", { plugin: "other", contribution: "live" }));
+      stream().emit("event", asked(5, "q2"));
+    });
+    // the stream's events are on the page (the question cards), and still no panel
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Please sign in"));
+    expect(panelShown()).toBe(false);
+    expect(window.location.hash).toBe("");
   });
 });

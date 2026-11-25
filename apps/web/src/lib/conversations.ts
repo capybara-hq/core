@@ -455,6 +455,11 @@ type EventBody =
         questionId: string;
         form: InputForm;
         expiresAt: string;
+        /**
+         * A plugin tool's `InputRequired.open`: a `conversation.panel` of that extension the page
+         * opens when the question arrives (display only).
+         */
+        open?: { plugin: string; contribution: string; item?: string };
       };
     }
   | {
