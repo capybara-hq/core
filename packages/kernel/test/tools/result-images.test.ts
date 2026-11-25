@@ -190,14 +190,40 @@ describe("storeResultImages", () => {
     ]);
   });
 
-  it("a stopped run stores nothing more", async () => {
-    const { store, stored } = fakeStore();
+  it("a stopped run stores nothing more and names the rest; the result is still returned", async () => {
     const ac = new AbortController();
-    ac.abort();
-    await expect(
-      storeResultImages({ content: [image(png())] }, "shot", store, undefined, ac.signal),
-    ).rejects.toThrow();
-    expect(stored).toEqual([]);
+    const stored: string[] = [];
+    const store: StoreResultImage = async (file) => {
+      stored.push(file.name);
+      ac.abort();
+      return { ok: true, attachmentId: "00000000-0000-4000-8000-000000000001", size: N };
+    };
+    const got = await storeResultImages(
+      { content: [image(png()), image(png())] },
+      "shot",
+      store,
+      undefined,
+      ac.signal,
+    );
+    expect(stored).toEqual(["shot.png"]);
+    expect(got?.media).toHaveLength(1);
+    expect(got?.texts).toEqual([
+      `[Image (image/png, ${N} B, 2×3), file_id 00000000-0000-4000-8000-000000000001]`,
+      `[Image (image/png, ${N} B) not stored, so not shown: the run was stopped while its images were stored.]`,
+    ]);
+  });
+
+  it("without an object store a non-image block still reads as the wrong type", async () => {
+    const svg = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>");
+    const got = await storeResultImages(
+      { content: [image(svg, "image/svg+xml"), image(png())] },
+      "shot",
+      undefined,
+    );
+    expect(got?.texts).toEqual([
+      `[Image (image/svg+xml, ${svg.length} B) not stored, so not shown: only PNG, JPEG, GIF and WebP images are stored.]`,
+      `[Image (image/png, ${N} B) not stored, so not shown: file storage is not configured in this deployment.]`,
+    ]);
   });
 
   it("storeResultImages and renderResult count the same image blocks, so texts never shift", async () => {

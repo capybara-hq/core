@@ -39,7 +39,9 @@ result's image blocks (`{ type: "image", data, mimeType }`) in order (`tools/res
    the thumbnails' bound: an external server can send a small file that decodes to gigabytes), and
    the image must decode whole (`sharp`, `failOn: "truncated"`, bounded by the same limit, shrunk),
    so a truncated body is named as not stored instead of reaching a provider;
-4. the run's signal is checked before each image (a stopped run stores nothing more);
+4. the run's signal is checked before each image: once the run is stopped nothing more is
+   stored, the remaining images read "not stored, so not shown: the run was stopped while its
+   images were stored", and the tool's own result is still written;
 5. stored with `AttachmentsService.storeRead` as a `read` copy bound to the calling conversation
    (intent row, put, bind; the per-conversation cap `attachments.readMaxBytesPerConversation`
    applies; the purge of deleted conversations covers it), named `<tool name>[-n].<ext>`.
@@ -56,7 +58,8 @@ The block's line in the result text (model-visible, written once in the log):
   of: only PNG, JPEG, GIF and WebP images are stored / it is over the 5 MB image limit / its pixel
   size is missing or over the limit of 40 megapixels / it could not be decoded as a whole image / a tool
   result stores at most 10 images / this conversation reached its limit for stored images / file
-  storage is not configured in this deployment / storing it failed. A pipeline with no image store
+  storage is not configured in this deployment (a block that is no image still reads as the wrong
+  type: its head is sniffed) / the run was stopped while its images were stored / storing it failed. A pipeline with no image store
   wired in (hand-built test pipelines) writes `… not stored, so not shown.`
 
 A network ask that keeps a result keeps its `media` too (`KeptToolResult.media`). A copy stored
