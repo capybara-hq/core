@@ -17,14 +17,14 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor, invitationsFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 
-/** 可让 hashPassword 人为变慢（毫秒），使「scrypt 是否在事务内执行」在任何机器上都能被观察到。 */
-const hashDelay = vi.hoisted(() => ({ ms: 0 }));
+/** Runs inside hashPassword, so a test can observe what the database looks like while scrypt runs. */
+const hashHook = vi.hoisted(() => ({ onHash: null as null | (() => Promise<void>) }));
 vi.mock("../../src/identity/passwords.js", async (importOriginal) => {
   const m = await importOriginal<typeof import("../../src/identity/passwords.js")>();
   return {
     ...m,
     hashPassword: async (plain: string) => {
-      if (hashDelay.ms > 0) await new Promise((r) => setTimeout(r, hashDelay.ms));
+      await hashHook.onHash?.();
       return m.hashPassword(plain);
     },
   };
@@ -261,38 +261,25 @@ describe("InvitationsService.accept", () => {
     expect(await roleOf(r.account.id)).toBe("member");
   });
 
-  it("signup 期间事务不会因 scrypt 处于 idle in transaction 超过 50ms（哈希在 BEGIN 之前算）", async () => {
+  it("signup hashes the password before BEGIN: no transaction is open while scrypt runs", async () => {
     const watcher = createDb(pg.url, 1);
-    // 本机 scrypt 可能快于 50ms：人为再加 150ms，哈希若在事务内执行必然被观察到
-    hashDelay.ms = 150;
+    const openDuringHash: number[] = [];
+    let hashCalls = 0;
+    hashHook.onHash = async () => {
+      hashCalls++;
+      const r = await sql<{ n: number }>`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE xact_start IS NOT NULL AND datname = current_database()
+          AND pid <> pg_backend_pid()`.execute(watcher);
+      openDuringHash.push(r.rows[0]?.n ?? -1);
+    };
     try {
-      for (let i = 0; i < 3; i++) {
-        const { token } = await inv.create(org.id, { role: "member" }, A.id);
-        let done = false;
-        let worst = 0;
-        const poll = (async () => {
-          while (!done) {
-            const r = await sql<{ s: number | null }>`
-              SELECT max(extract(epoch FROM clock_timestamp() - state_change))::float8 AS s
-              FROM pg_stat_activity
-              WHERE state = 'idle in transaction' AND datname = current_database()`.execute(
-              watcher,
-            );
-            worst = Math.max(worst, Number(r.rows[0]?.s ?? 0));
-          }
-        })();
-        try {
-          await inv.accept(token, {
-            signup: { login: `idle${i}`, password: PW, displayName: "Idle" },
-          });
-        } finally {
-          done = true;
-          await poll;
-        }
-        expect(worst).toBeLessThan(0.05);
-      }
+      const { token } = await inv.create(org.id, { role: "member" }, A.id);
+      await inv.accept(token, { signup: { login: "idle0", password: PW, displayName: "Idle" } });
+      expect(hashCalls).toBeGreaterThan(0);
+      expect(openDuringHash).toEqual(openDuringHash.map(() => 0));
     } finally {
-      hashDelay.ms = 0;
+      hashHook.onHash = null;
       await watcher.destroy();
     }
   });
