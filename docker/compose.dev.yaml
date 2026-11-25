@@ -61,6 +61,8 @@ services:
   sandbox-proxy:
     profiles: ["sandbox"]
     image: haproxy:3.2-alpine@sha256:254e6370f01cd654e0744edf607c67f33777c1b6a9dc0d4b28bcba7171460122
+    # Back after a Docker Desktop or machine restart, as in compose.yaml: docker devices need it
+    restart: unless-stopped
     user: root
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
