@@ -47,10 +47,12 @@ before wave 2 starts.
    test (device-fake): viewer bytes sent before the provider stream opens; the context with the
    ticket's conversation and root is still the first stream message, on the direct path and after
    a hop; then the viewer's messages unchanged.
-4. Kernel `answerHandoff`: find the pending question of `callId` in the scope conversation or its
-   descendants (recursive on the conversation parent link, org-scoped, same extension check).
-   Tests: root scope answers a sub-agent's question; another tree's and another extension's
-   question stay `question.not_found`.
+4. Kernel + SDK `answerHandoff`: takes `handoffConversationId`; checks it is the scope
+   conversation or a descendant (recursive on the conversation parent link, org-scoped), then
+   looks up the pending question by `(conversation_id, call_id)` (same extension check). Tests:
+   root scope answers a sub-agent's question; two sub-agents of one tree pending under the same
+   `callId`: only the named one is answered; a conversation outside the scope's tree, another
+   tree's and another extension's question stay `question.not_found`.
 5. AGENTS.md "Device access" line: the viewer context sentence. Amend the browser use spec §6.2
    ("the kernel does not parse it" gains "and writes one context message first") and point §5 /
    §8 / §9 / §10 to the tab ownership spec.
@@ -64,37 +66,45 @@ One implementer; review as one batch.
 1. `daemon/protocol.ts`: `conversationId` / `rootConversationId` on `ToolRequest`; `page` optional
    in the ok reply; `tabs` action `adopt`; viewer `tab` action `adopt` and a shown-tab message;
    `state.tabs` grouped by conversation of the tree, `state.otherTabs` (id, title, url only),
-   `state.handoffs`; `{ t: "notice", code: "tab_in_use" }`; `CONVERSATION_IDLE_MS`,
+   `state.handoffs` (each with `callId` and the trusted `conversationId`); `{ t: "notice", code: "tab_in_use" }`; `CONVERSATION_IDLE_MS`,
    `MAX_TABS_PER_CONVERSATION`.
 2. `daemon/actions.ts`: `{ owner, root }` per tab and per-conversation active maps; a tab for a
    conversation's first acting call (claim unowned, else open); non-acting ops open no tab;
    own-tab checks on switch / close; adopt with the in-use refusal (in flight from arrival to
    reply, queued and `wait` included, or parked) and the note to the previous owner; popups via
-   `page.on("popup")` on every tracked page, unowned when unattributable; both caps and the least
-   recently used eviction with its note and the two refusal texts; notes, `unreported`, refused
+   `page.on("popup")` on every tracked page, unowned when unattributable; both caps and the eviction
+   (only owners not in use and with no request for `EVICT_MIN_IDLE_MS`, 5 min; least recently used
+   owner, its non-active tabs before its active tab; else refuse) with its note and the two refusal
+   texts (tests: a conversation that made a request a moment ago is never evicted; non-active tab
+   first); notes, `unreported`, refused
    hosts (`blockedHosts`), `lastClick` and session events tagged by owner; per-conversation queues;
    no `bringToFront` on agent paths; list sections with the clipping of other conversations'
    titles and URLs.
 3. `daemon/state.ts`: per-conversation handoffs and parks and the keepalive; the hand back note
    for the conversations the takeover concerned; per-conversation idle timers (requests per
-   conversation, viewers per tree, parks), and deletion of all per-conversation state on idle
+   conversation, parks, and viewers pinning only their own conversation and the owner of the tab
+   they show; test: a finished sub-agent's tab closes after `CONVERSATION_IDLE_MS` with the root
+   panel open), and deletion of all per-conversation state on idle
    close.
 4. `daemon/main.ts`: refuse a request without the conversation fields; stream: take the first
    stream message as the viewer context (`parseViewerContext`), close otherwise, never re-read a
    later one; pass conversation and root to `ViewerSession`.
 5. `daemon/viewer.ts`: state for the viewer's tree plus `otherTabs`; the viewer's shown tab
    (default, last acting conversation, follows a new handoff); input on the shown tab in control;
-   #230's input gate lets `adopt` and the shown-tab choice through in the watch state; the
-   `tab_in_use` notice.
+   #230's input gate lets `adopt` and the shown-tab choice through in the watch state; a viewer
+   adopt of a tab of its own tree is ignored (test); in control, `switch` sets the owner's active
+   tab only for the viewer's own conversation, otherwise only the shown tab, and a sub-agent whose
+   tab the person then uses gets the hand back note (test); the `tab_in_use` notice.
 6. `daemon/session-file.ts`: owners and roots, per-conversation active, handoff and park; restore
    by owner.
-7. `src/browser.ts` / `src/handoff.ts` / `src/tools.ts`: `runRequest` adds `call.conversationId`
+7. `src/routes.ts`: `/ui/handoff-answer` takes and passes the handoff's `conversationId`
+   (`handoffConversationId`); `src/browser.ts` / `src/handoff.ts` / `src/tools.ts`: `runRequest` adds `call.conversationId`
    and `call.rootConversationId`; results without a page say "This conversation has no browser tab
    yet."; `browser_tabs` enum and description gain `adopt` ("list also shows other conversations'
    tabs; adopt one only when the user points you to a page opened elsewhere").
 8. `ui-src/panel/panel.ts` + `i18n.ts`: strip with the tree's groups ("子任务" / "Sub-task"),
    the other-conversations menu with "Move here", the `tab_in_use` line, the tree's empty state,
-   the newest handoff of the tree in the banner; zh / en texts (智能体, never the Latin word).
+   the newest handoff of the tree in the banner, whose Done / Cancel echo its `conversationId`; zh / en texts (智能体, never the Latin word).
 9. Raise the extension manifest's `sdk` range (`src/index.ts`, checked by the kernel's
    `extensions/resolve.ts`) to the release from wave 1, and the plugins repo's pnpm override that
    keeps one `@capybara-hq/plugin-sdk` instance; changeset on the browser plugin; README "Tabs"

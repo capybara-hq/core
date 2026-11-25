@@ -119,14 +119,22 @@ acts on it) and **seen** by its owner's tree, whose root is the conversation the
   become its active tab.
 - **Caps.** `MAX_TABS` (10) stays a device-wide cap (Chromium memory inside the device, spec §5),
   and a conversation may own at most `MAX_TABS_PER_CONVERSATION` (6). At the device cap, before
-  refusing, the daemon closes the least recently used tab of a conversation not in use (no
-  request in flight, no viewer of its tree, no pending park), noting it to its owner ("Tab t4
+  refusing, the daemon closes one tab of a conversation that is evictable: not in use (no request
+  in flight, no pending park, not pinned by a viewer, see below) and with no request for at least
+  `EVICT_MIN_IDLE_MS` (5 minutes; an agent between two tool calls, while its model generates, is
+  never evicted). Among evictable owners it picks the least recently used one, and closes that
+  owner's least recently used non-active tab before its active tab. It notes the close to the
+  owner ("Tab t4
   (title) was closed to make room for another conversation."). It refuses only when no tab
   qualifies: with own tabs "The browser has 10 tabs open, the most it keeps (3 are this
   conversation's); close one of yours first."; with none "Other conversations hold all 10 tabs
   of the browser; retry later or ask the user to close one in the browser panel." At the
   per-conversation cap: "This conversation has 6 tabs open, the most one conversation keeps;
   close one first."
+- **What a viewer pins.** An open viewer counts as use only for its own conversation and for the
+  owner of the tab it currently shows; the other conversations of its tree idle and are evictable
+  as usual (their tabs stay listed in its strip until they close). So a root panel left open for a
+  whole task does not keep finished sub-agents' tabs.
 - **Notes, refused hosts and events by owner.** A dialog, a download, a refused host, a file
   chooser or a popup closed at the cap belongs to its page's owner: its note goes to that
   conversation's request in flight, else its next reply (`unreported` becomes per conversation),
@@ -151,14 +159,20 @@ acts on it) and **seen** by its owner's tree, whose root is the conversation the
   the request's conversation; the daemon keeps at most one pending handoff per conversation. A
   tool request drops only its own conversation's pending handoff (today any conversation's request
   drops it). A viewer's `state.handoffs` lists the pending handoffs of its tree, each with its
-  conversation's tab ids; the banner shows the newest. The keepalive (`HANDOFF_KEEPALIVE_MS`)
+  `callId`, its `conversationId` (from the trusted request; an opaque id the panel only echoes,
+  never shown to the model or the person) and its conversation's tab ids; the banner shows the newest. The keepalive (`HANDOFF_KEEPALIVE_MS`)
   counts from the oldest pending notice.
 - **The panel's Done from the root (core fix).** `/ui/handoff-answer` calls
   `ctx.deviceAccess.answerHandoff` with the embed caller's conversation, and the kernel today
   looks the question up only in that conversation, while a sub-agent's question row carries the
   sub-agent's conversation (`questions.service.ts` `askIn`), so Done from the root panel answers
-  `question.not_found`. `answerHandoff` now finds the pending question of `callId` in the scope
-  conversation or its descendants (same extension check, same owner rules).
+  `question.not_found`. `callId` is unique only within its run, so two sub-agents of one
+  tree may have pending handoffs with the same `callId`; a lookup by `callId` across the tree could
+  resume the wrong one. So the panel echoes the handoff's `conversationId` in
+  `/ui/handoff-answer`, `ctx.deviceAccess.answerHandoff` takes it (`handoffConversationId`), and
+  the kernel checks that it is the scope conversation or one of its descendants, then queries the
+  pending question by `(conversation_id, call_id)` exactly (same extension check, same owner
+  rules).
 - **Panel: what it shows.** `ViewerOut.state.tabs` lists the viewer's tree: its own conversation's
   tabs first, then one group per other conversation of the tree (labelled "子任务" / "Sub-task"
   with its tabs; no conversation names, which the daemon does not know). A new `state.otherTabs:
@@ -173,10 +187,16 @@ acts on it) and **seen** by its owner's tree, whose root is the conversation the
   yet") with the other-conversations menu, not another tree's page.
 - **Panel: what it does.** Input, navigation and `+` / `switch` / `close` stay control-only
   (plugins#230's read-only watch state) and act on the shown tab, which may be a sub-agent's: the
-  person driving a sub-agent's page moves no ownership. In control, a `switch` also makes the tab
-  its owner's active tab (the person chose it, as today). When `otherTabs` is not empty, a small
+  person driving a sub-agent's page moves no ownership. In control, a `switch` to a tab of the viewer's
+  own conversation also makes it that conversation's active tab (the person chose it, as today); a
+  `switch` to a tab another conversation of the tree owns changes only the shown tab, never that
+  sub-agent's active tab, so its next action still lands on the page of its last result. If the
+  person then uses that tab, the sub-agent is told by the hand back note (it is a conversation
+  whose tab the person used). When `otherTabs` is not empty, a small
   "其他对话 (N)" / "Other conversations (N)" menu lists them, each with "移到此对话" / "Move here",
-  which sends `{ t: "tab", action: "adopt", tabId }` (the tool's adopt rules). Adopt is an
+  which sends `{ t: "tab", action: "adopt", tabId }` (the tool's adopt rules, and only for other
+  trees' tabs: a viewer adopt of a tab in its own tree is ignored, since inside the tree the person
+  drives tabs without moving them). Adopt is an
   ownership change, not page input, so it is allowed in the watch state too: a carve-out in
   #230's input gate for `action: "adopt"` only. A refused adopt (owner in use) comes back as a
   new `{ t: "notice", code: "tab_in_use" }` viewer message, which the panel shows as a short,
@@ -191,8 +211,9 @@ acts on it) and **seen** by its owner's tree, whose root is the conversation the
   as in use for adopt and for the cap eviction, and keeps an otherwise idle daemon alive under the
   handoff keepalive.
 - **Idle close.** A conversation's tabs close when, for `CONVERSATION_IDLE_MS` (15 minutes, equal
-  to the daemon's own idle stop, `IDLE_STOP_MS`), it has made no request, no viewer of its tree has
-  been open and it has no pending park. A conversation alone on its device behaves as today: the
+  to the daemon's own idle stop, `IDLE_STOP_MS`), it has made no request, no viewer has pinned it
+  (§4: a viewer pins its own conversation and the owner of the tab it shows) and it has no pending
+  park. A conversation alone on its device behaves as today: the
   daemon's idle stop comes first. The timer is the daemon's (spec §10: the daemon keeps its own
   timers inside the device). Idle close also deletes the conversation's per-conversation state
   (its active entry, queue, `unreported` notes, handoff and park, hand back flag, counters), so the
@@ -234,14 +255,16 @@ acts on it) and **seen** by its owner's tree, whose root is the conversation the
    conversation from the kernel; a route handler has no tool call context, so the plugin server
    cannot register a viewer with the daemon itself. Cost if wrong: a small core change where a
    panel-supplied id would have done for a filter that is not a security boundary.
-5. **Idle close after 15 minutes without requests, viewers of the tree or a park; no deletion
-   signal.** It equals the daemon's own idle stop, so a busy device does not keep a silent
+5. **Idle close after 15 minutes without requests, a pinning viewer or a park; no deletion
+   signal.** A viewer pins only its own conversation and the owner of the tab it shows (re-review
+   N3), so an open root panel does not keep finished sub-agents' tabs. It equals the daemon's own idle stop, so a busy device does not keep a silent
    conversation's tabs longer than an idle device would. Cost if wrong: a deleted conversation's
    tabs linger up to 15 minutes (or until the cap evicts them); a person returning after 15
    minutes to a conversation whose device stayed busy finds its pages closed (the login survives
    in the profile).
-6. **Caps: 10 per device, 6 per conversation, least recently used eviction of tabs not in use at
-   the device cap** (revised after review I3). The device cap protects shared memory; the
+6. **Caps: 10 per device, 6 per conversation, eviction at the device cap only of owners not in use
+   and idle for at least 5 minutes, non-active tabs first, else refuse** (revised after review I3
+   and re-review N1). The device cap protects shared memory; the
    per-conversation cap and the eviction keep one conversation (or one task's sub-agents) from
    locking the others out until the idle close. Cost if wrong: a tab the person meant to come back
    to is closed to make room; its owner is told, and the login survives in the profile.
@@ -264,7 +287,15 @@ acts on it) and **seen** by its owner's tree, whose root is the conversation the
 10. **Popups attributed from the opener side or left unowned** (review I2). Guessing from the
     request in flight is ambiguous once queues are per conversation. Cost if wrong: a popup the
     browser opened by itself stays unowned until a conversation's first call or an adopt claims it.
-11. **The hand back note goes only to conversations whose tabs the takeover concerned** (review
+11. **A handoff answer names its conversation** (re-review N2). The panel echoes the trusted
+    `conversationId` the daemon recorded, and the kernel checks it against the scope's tree before
+    looking up `(conversation_id, call_id)`. Refusing when several questions match was the
+    alternative; it would leave the person unable to answer either. Cost if wrong: one more field
+    on `answerHandoff` (SDK public API).
+12. **Inside its tree a viewer drives tabs but never moves ownership or a sub-agent's active tab**
+    (re-review N4, N5). Cost if wrong: a person who wants a sub-agent to continue on another of its
+    tabs must tell it in the conversation.
+13. **The hand back note goes only to conversations whose tabs the takeover concerned** (review
     M5). Telling every conversation would put a false statement into the model's context. Cost if
     wrong: a conversation whose page changed indirectly (a shared login expiring) is not told.
 
@@ -287,33 +318,43 @@ model-visible.
   refused while the owner has a queued request, while it runs `wait` and while it has a park;
   a `target=_blank rel=noopener` link and a `window.open(…, "noopener")` clicked in A while B has
   a request in flight both become A's tabs; the first acting call claims the blank tab, the second
-  gets a new one; both caps, the eviction and its note, the refusal with 0 own tabs; notes and
+  gets a new one; both caps, the eviction and its note, the refusal with 0 own tabs; a conversation that made a
+  request a moment ago is never evicted, and an evictable owner loses a non-active tab before its
+  active one; notes and
   refused hosts routed to the owner (B gets no network ask for A's host); per-conversation handoff
   drop; a sub-agent's handoff shown to the root viewer; the hand back note only to the concerned
   conversations; idle close with and without a viewer, handoff or park, and the per-conversation
-  state gone after it; session file round trip with owners; a request without a conversation
+  state gone after it; a finished sub-agent's tab closes after `CONVERSATION_IDLE_MS` while the
+  root panel stays open (showing another tab); session file round trip with owners; a request without a conversation
   refused; a stream without the viewer context closed; a second `{"kind":"viewer"}` from the panel
   changes nothing.
 - Viewer / panel tests: the strip shows the tree's groups and the other-conversations menu; the
-  shown tab follows a new handoff; adopt from a watching viewer moves the tab while `switch` from a
-  watching viewer is still dropped; a refused adopt shows the notice; the empty state when the tree
+  shown tab follows a new handoff; adopt from a watching viewer moves another tree's tab while `switch` from a
+  watching viewer is still dropped; a viewer adopt of a tab of its own tree is ignored; in control,
+  a `switch` to a sub-agent's tab changes the shown tab but not the sub-agent's active tab, and the
+  sub-agent is told by the hand back note only if the person used the tab; `state.handoffs` carries
+  each handoff's `conversationId`; a refused adopt shows the notice; the empty state when the tree
   owns no tab.
 - Plugin server tests: `runRequest` sends `call.conversationId` and `call.rootConversationId`,
   never input fields.
 - Kernel: the viewer relay test sends viewer bytes before the device-fake stream opens and asserts
   the context (with the ticket's conversation and root) is still the first stream message, on the
   direct path and after a hop; `ToolCallContext.rootConversationId` for a root call and a
-  sub-agent call; `answerHandoff` from the root's scope answers a sub-agent's question and still
+  sub-agent call; `answerHandoff` from the root's scope answers a sub-agent's question by
+  `(handoffConversationId, callId)`; with two sub-agents of one tree pending under the same
+  `callId`, the named one is answered and the other stays pending; it still
   refuses another tree's or another extension's question.
 
 ## AGENTS.md rules touched
 
 - **Device access (`ctx.deviceAccess`)**: the kernel's viewer relay now writes one message of its
   own (the viewer context: the ticket's conversation and its root) as the first stream message of
-  every viewer stream; otherwise the stream stays opaque. `answerHandoff` finds the question in
-  the scope conversation or its descendants. The rule line gains: "a viewer stream starts with
+  every viewer stream; otherwise the stream stays opaque. `answerHandoff` takes the handoff's
+  conversation, checks it is the scope conversation or a descendant, and looks the question up by
+  `(conversation_id, call_id)`. The rule line gains: "a viewer stream starts with
   the kernel's viewer context message".
-- **Public API reports**: `ToolCallContext.rootConversationId`, and the viewer context shape and
+- **Public API reports**: `ToolCallContext.rootConversationId`, `answerHandoff`'s
+  `handoffConversationId`, and the viewer context shape and
   parser in the device service protocol: `pnpm gen:sdk-api` plus a changeset on
   `@capybara-hq/plugin-sdk`.
 - **Multi-replica discipline**: unchanged; tab ownership, parks, idle close and handoff state live
