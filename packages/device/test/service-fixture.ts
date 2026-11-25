@@ -22,6 +22,8 @@ export function echoLauncher() {
   const received: string[] = [];
   /** Stream connections the service saw end, and who waits for a count of them. */
   let streamEnds = 0;
+  /** Launched services stopped through their `stop` (not exited on their own). */
+  let stopped = 0;
   const endWaiters: { n: number; resolve: () => void }[] = [];
   const ended = () => {
     streamEnds++;
@@ -39,7 +41,14 @@ export function echoLauncher() {
         onStreamEnd: ended,
       });
       running.push(svc);
-      return { exited: svc.exited, stop: async () => svc.exit(null), output: () => "" };
+      return {
+        exited: svc.exited,
+        stop: async () => {
+          stopped++;
+          svc.exit(null);
+        },
+        output: () => "",
+      };
     },
   };
   return {
@@ -47,6 +56,9 @@ export function echoLauncher() {
     calls,
     received,
     streamEnds: () => streamEnds,
+    get stopped() {
+      return stopped;
+    },
     /** Resolves once the service saw `n` stream connections end. */
     untilStreamEnds: (n: number) =>
       new Promise<void>((resolve) => {

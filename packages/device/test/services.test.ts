@@ -102,20 +102,56 @@ it("ensure writes files and starts the service under the sandbox launcher", asyn
   expect(Number.isNaN(Date.parse(ok.result.startedAt))).toBe(false);
 });
 
-it("second ensure is a no-op while running", async () => {
+it("second ensure with the same files is a no-op while running", async () => {
   const { deviceDir, supervisor, echo } = await fixture();
   const first = await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
   const entry = join(deviceDir, "svc-files", "browser.browser", "main.js");
   await writeFile(entry, "// changed locally");
-  const second = await serveServiceOp(
-    supervisor,
-    { op: "service.ensure", spec: spec({ "main.js": "// new" }) },
-    signal(),
-  );
+  const second = await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
   expect(second).toEqual(first);
   expect(echo.calls).toHaveLength(1);
   // files are written only on start
   expect(await readFile(entry, "utf8")).toBe("// changed locally");
+});
+
+it("an ensure with other files (an upgraded extension) restarts the running service on them", async () => {
+  const { deviceDir, supervisor, echo } = await fixture();
+  const ensure = (body: Record<string, unknown>) =>
+    serveServiceOp(supervisor, { op: "service.ensure", ...body }, signal());
+  const { files: _files, ...noFiles } = spec();
+  const first = await ensure({ spec: spec({ "main.js": "// v1" }), filesDigest: "sha256:v1" });
+  // a running service names the files it runs (an ifRunning ensure answers it too)
+  expect(first).toMatchObject({
+    ok: true,
+    result: { state: "running", filesDigest: "sha256:v1" },
+  });
+  expect(await ensure({ spec: { name: "browser.browser" }, ifRunning: true })).toMatchObject({
+    ok: true,
+    result: { state: "running", filesDigest: "sha256:v1" },
+  });
+  // the same digest without files: the running service stays
+  expect(await ensure({ spec: noFiles, filesDigest: "sha256:v1" })).toEqual(first);
+  expect(echo.calls).toHaveLength(1);
+  // the upgraded files' digest alone: the machine asks for the files, and the old service runs on
+  expect(await ensure({ spec: noFiles, filesDigest: "sha256:v2" })).toMatchObject({
+    ok: false,
+    error: { kind: "files_needed" },
+  });
+  expect(echo.calls).toHaveLength(1);
+  expect((await supervisor.status("browser.browser")).state).toBe("running");
+  // with the files: the old process is stopped and the new one runs on the new code
+  const second = await ensure({ spec: spec({ "main.js": "// v2" }), filesDigest: "sha256:v2" });
+  expect(second).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(echo.calls).toHaveLength(2);
+  expect(echo.stopped).toBe(1);
+  const codeDir = join(deviceDir, "svc-files", "browser.browser");
+  expect(await readFile(join(codeDir, "main.js"), "utf8")).toBe("// v2");
+  expect(await readFile(join(codeDir, ".files-digest"), "utf8")).toBe("sha256:v2");
+  // files without a digest are compared by their content
+  expect(await ensure({ spec: spec({ "main.js": "// v3" }) })).toMatchObject({ ok: true });
+  expect(echo.calls).toHaveLength(3);
+  expect(await ensure({ spec: spec({ "main.js": "// v3" }) })).toMatchObject({ ok: true });
+  expect(echo.calls).toHaveLength(3);
 });
 
 it("service.request round-trips via the socket", async () => {
@@ -688,8 +724,8 @@ it("digest-first files: a start reuses stored files only under the same digest",
   expect(
     await readFile(join(deviceDir, "svc-files", "browser.browser", ".files-digest"), "utf8"),
   ).toBe("sha256:v1");
-  // a running service ignores files and digest
-  expect(await ensure({ spec: noFiles, filesDigest: "sha256:other" })).toMatchObject({
+  // a running service under the same digest stays as it is
+  expect(await ensure({ spec: noFiles, filesDigest: "sha256:v1" })).toMatchObject({
     ok: true,
     result: { state: "running" },
   });

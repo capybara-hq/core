@@ -4,6 +4,7 @@ import {
   type DeviceAccessScope,
   type DeviceServiceSpec,
   type DeviceServiceStatus,
+  deviceServiceFilesDigest,
   deviceServiceId,
   type Logger,
   parseToolKey,
@@ -197,8 +198,13 @@ export class DeviceAccessService {
       }
     };
     // race-free: the provider keeps a running service and never starts a stopped one here
+    // a service running other files (the extension was upgraded since it started) gets a start
+    // like a stopped one, reviewed below; the provider then restarts it on the spec's files
+    const digest = deviceServiceFilesDigest(providerSpec.files);
+    const current = (st: DeviceServiceStatus) =>
+      st.state === "running" && (st.filesDigest === undefined || st.filesDigest === digest);
     const found = await ensure(true);
-    if (found.state === "running") return found;
+    if (current(found)) return found;
     const reviewFacts = await this.devices.reviewFacts(
       call.orgId,
       facts.rootConversationId,
@@ -254,10 +260,10 @@ export class DeviceAccessService {
     // another call may have started it since the first look (that call audits its own start):
     // found running now, this call started nothing and audits nothing
     const raced = await ensure(true);
-    if (raced.state === "running") return raced;
+    if (current(raced)) return raced;
     const started = await ensure(false);
-    // audited only when this ensure started it: the service was stopped (no startedAt) just
-    // before, and runs with a startedAt now
+    // audited only when this ensure started it: the service was stopped (no startedAt) or ran
+    // other files just before, and runs with a new startedAt now
     if (started.state !== "running" || started.startedAt === raced.startedAt) return started;
     await audit(this.db, {
       actorAccountId: call.accountId,

@@ -211,6 +211,11 @@ interface Running {
   launchNetwork: SandboxLimits["network"] | undefined;
   /** The spec it was launched with, its files left out: a restart runs exactly this again. */
   spec: Omit<LocalServiceSpec, "files">;
+  /**
+   * The digest of the code it runs: the ensure's `filesDigest`, else the digest of the files it
+   * was sent; undefined when neither was known. An ensure naming other files restarts it.
+   */
+  filesDigest: string | undefined;
   startedAt: string;
   socket: string;
   /** The connections this program opened to the service; ended when it exits. */
@@ -395,8 +400,16 @@ export class ServiceSupervisor {
     // the entry runs from the read-only code directory (R30), which the kernel reviews (R31)
     const codeDir = join(serviceCodeRoot(this.o.deviceDir), name);
     const r = this.running.get(name);
+    // a running one names the files it runs, so the kernel can review a start on new ones
     return r
-      ? { name, state: "running", startedAt: r.startedAt, stateDir, codeDir }
+      ? {
+          name,
+          state: "running",
+          startedAt: r.startedAt,
+          stateDir,
+          codeDir,
+          ...(r.filesDigest !== undefined && { filesDigest: r.filesDigest }),
+        }
       : { name, state: "stopped", startedAt: null, stateDir, codeDir };
   }
 
@@ -410,6 +423,10 @@ export class ServiceSupervisor {
    * restarted with the requested one (controller ruling R14): the sandbox's network grant is fixed
    * when the worker starts and cannot be changed in place, so hosts approved later reach the
    * service only through a restart (its state directory, a browser profile included, persists).
+   * So is one running other code than the ensure names (its `filesDigest`, else the digest of its
+   * files): an upgraded extension's service runs its new files from the next ensure on, decided
+   * here on the machine that runs it, whichever replica asks. Without the files, a differing
+   * digest answers `files_needed` before the running service is stopped.
    * With `ifRunning` a stopped service stays stopped and its stopped status is answered (R15).
    * Ensures of one name run one after another under an internal signal; `signal` bounds only
    * this caller's wait, so a cancelled caller never fails another's start.
@@ -433,7 +450,12 @@ export class ServiceSupervisor {
       const launcher = this.o.launcher();
       const key = launcher?.networkKey ? await launcher.networkKey(network) : networkKey(network);
       const current = this.running.get(name);
-      if (current?.network === key) return this.status(name);
+      // the code the ensure names (an ifRunning ensure names none: it keeps the launched code)
+      const wanted = opts.ifRunning
+        ? undefined
+        : (opts.filesDigest ?? (spec.files ? filesDigestOf(spec.files) : undefined));
+      if (current?.network === key && (wanted === undefined || wanted === current.filesDigest))
+        return this.status(name);
       if (!current && opts.ifRunning) return this.status(name);
       // under ifRunning a running service is restarted with the new network from the spec it was
       // launched with (the one the kernel reviewed) and the code already in its code directory,
@@ -451,7 +473,7 @@ export class ServiceSupervisor {
       this.startCtl.set(name, ctl);
       try {
         return await this.start(launch, network, key, ctl.signal, {
-          ...(opts.ifRunning ? { storedCode: true } : {}),
+          ...(opts.ifRunning ? { storedCode: true, runningDigest: current?.filesDigest } : {}),
           ...(opts.filesDigest !== undefined && { filesDigest: opts.filesDigest }),
         });
       } finally {
@@ -633,7 +655,7 @@ export class ServiceSupervisor {
      * code already in its code directory, which it was launched from; nothing there is checked
      * against a digest or written.
      */
-    o: { filesDigest?: string; storedCode?: boolean },
+    o: { filesDigest?: string; storedCode?: boolean; runningDigest?: string | undefined },
   ): Promise<DeviceServiceStatus> {
     const filesDigest = o.filesDigest;
     const launcher = this.o.launcher();
@@ -727,6 +749,9 @@ export class ServiceSupervisor {
       network: key,
       launchNetwork: network,
       spec: launched,
+      filesDigest: o.storedCode
+        ? o.runningDigest
+        : (filesDigest ?? (spec.files ? filesDigestOf(spec.files) : undefined)),
       startedAt: this.now().toISOString(),
       socket: paths.socket,
       conns: new Set(),

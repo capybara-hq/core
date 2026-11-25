@@ -293,6 +293,34 @@ describe("ctx.deviceAccess", () => {
     expect(review).toHaveBeenCalledTimes(2);
   });
 
+  it("a service running other files (an upgraded extension) is reviewed and restarted on the new ones", async () => {
+    const review = allowReview();
+    const v1 = echoServiceSpec();
+    const first = await access.ensureService(CALLER, callOf(), v1);
+    expect(first.state).toBe("running");
+    const reviews = review.mock.calls.length;
+    const starts = await fakeServiceStarts(sandboxRoot);
+    // the same files: kept, no review
+    expect(await access.ensureService(CALLER, callOf(), v1)).toEqual(first);
+    expect(review).toHaveBeenCalledTimes(reviews);
+    // the extension's files changed: a reviewed start, and a new process on the new files
+    const script = new TextDecoder().decode(v1.files["echo.mjs"]);
+    const v2 = { ...v1, files: { "echo.mjs": new TextEncoder().encode(`${script}\n// v2\n`) } };
+    const second = await access.ensureService(CALLER, callOf(), v2);
+    expect(second.state).toBe("running");
+    expect(second.startedAt).not.toBe(first.startedAt);
+    expect(review).toHaveBeenCalledTimes(reviews + 1);
+    expect(await fakeServiceStarts(sandboxRoot)).toBe(starts + 1);
+    // and it answers
+    const body = new TextEncoder().encode("ping");
+    const answer = await access.request(CALLER, callOf(), {
+      service: "echo",
+      body,
+      timeoutMs: 10_000,
+    });
+    expect(new TextDecoder().decode(answer)).toBe("ping");
+  });
+
   it("two extensions declaring the same service name run and reach separate services", async () => {
     allowReview();
     const services = k.app.get(DeviceServices);
