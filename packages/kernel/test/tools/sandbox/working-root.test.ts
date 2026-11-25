@@ -11,6 +11,7 @@ import { MANAGED_DEVICE_CONTEXT_STALE_TEXT } from "../../../src/sandbox/managed-
 import { reviewRules, reviewWrite } from "../../../src/sandbox/review/index.js";
 import { sandboxStartedNotice } from "../../../src/tools/builtins/sandbox/common.js";
 import { sandboxTools } from "../../../src/tools/builtins/sandbox/index.js";
+import { listFilesCommand } from "../../../src/tools/builtins/sandbox/search-command.js";
 import type { BuiltinTool } from "../../../src/tools/registry.js";
 import { managedCall, managedRoute, managedSandbox } from "../../helpers/managed-tool-stubs.js";
 
@@ -179,12 +180,13 @@ describe("the sandbox tools in a bound conversation", () => {
       },
       exec: async (_h: unknown, a: { command: string; cwd: string }) => {
         execs.push({ command: a.command, cwd: a.cwd });
-        const stdout = a.command.startsWith("find")
-          ? "./a.txt\0"
-          : a.command.startsWith("grep")
-            ? ""
-            : "4242\n";
-        const exitCode = a.command.startsWith("grep") ? 1 : 0;
+        const stdout =
+          a.command === listFilesCommand()
+            ? "./a.txt\0"
+            : a.command.includes("grep -r")
+              ? ""
+              : "4242\n";
+        const exitCode = a.command.includes("grep -r") ? 1 : 0;
         return { exitCode, stdout, stderr: "", truncated: false, timedOut: false };
       },
     };

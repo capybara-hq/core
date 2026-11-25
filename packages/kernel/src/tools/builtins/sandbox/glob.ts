@@ -13,10 +13,11 @@ import {
   withNotices,
 } from "./common.js";
 import { compileGlob, GlobPatternError } from "./glob-match.js";
+import { listFilesCommand } from "./search-command.js";
 
 /** 最多列出的文件数。 */
 const MAX_RESULTS = 1000;
-/** `find` 输出的上限（字节）。 */
+/** The most file listing output read, in bytes. */
 const MAX_FIND_BYTES = 8 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
@@ -28,7 +29,9 @@ const SPEC: ToolSpec = {
     'locate files by name, e.g. pattern "**/*.py" for all Python files. The pattern is matched ' +
     "against paths relative to path (default: the workspace directory): * matches within one directory, ** " +
     "matches across directories, ? matches one character, {a,b} matches either. Returns absolute " +
-    "paths sorted by name, up to 1000. To search file contents, use Grep. " +
+    "paths sorted by name, up to 1000. Skips .git and node_modules directories and, where the " +
+    "device supports it, files ignored by .gitignore, .ignore or .rgignore files; to list files " +
+    "inside a skipped directory, pass that directory as path. To search file contents, use Grep. " +
     "In auto mode paths may be anywhere on the machine.",
   inputSchema: {
     type: "object",
@@ -92,14 +95,14 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
         const st = await p.stat(h, dir, signal);
         if (!st?.isDir) throw new ToolError(notDirectory(dir, s.workingRoot));
         const r = await p.exec(h, {
-          command: "find . -type f -print0",
+          command: listFilesCommand(),
           cwd: dir,
           timeoutMs: searchTimeoutMs(deps.config.get(), startedAt, Date.now(), ctx.runDeadline),
           maxOutputBytes: MAX_FIND_BYTES,
           signal,
         });
         if (r.timedOut || r.exitCode === null) throw new ToolError(FIND_FAILED);
-        // -print0：文件名里可能有换行，按 NUL 切分；最后一项（截断时不完整）丢掉
+        // NUL-separated: a file name may contain newlines; the last part (incomplete when truncated) is dropped
         const names = r.stdout.split("\0");
         names.pop();
         if (r.truncated) names.pop();

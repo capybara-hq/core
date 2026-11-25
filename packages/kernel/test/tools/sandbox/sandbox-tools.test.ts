@@ -554,6 +554,41 @@ describe("sandbox tools", () => {
     expect(old.isError).toBe(true);
   });
 
+  it("glob and grep skip .git and node_modules unless the path is inside them", async () => {
+    const conv = await sandboxConversation();
+    const files: [string, string][] = [
+      ["/workspace/p/src/a.ts", "marker\n"],
+      ["/workspace/p/node_modules/dep/index.js", "marker\n"],
+      ["/workspace/p/.git/marker.txt", "marker\n"],
+    ];
+    let n = 1;
+    for (const [file_path, content] of files) {
+      await call(conv, "Write", { file_path, content }, n++);
+    }
+    const g = await call(conv, "Glob", { pattern: "**/*", path: "/workspace/p" }, n++);
+    expect(g.content).toContain("/workspace/p/src/a.ts");
+    expect(g.content).not.toContain("node_modules");
+    expect(g.content).not.toContain(".git/");
+    const gr = await call(conv, "Grep", { pattern: "marker", path: "/workspace/p" }, n++);
+    expect(gr.content).toContain("/workspace/p/src/a.ts");
+    expect(gr.content).not.toContain("node_modules");
+    expect(gr.content).not.toContain(".git/");
+    const inside = await call(
+      conv,
+      "Grep",
+      { pattern: "marker", path: "/workspace/p/node_modules" },
+      n++,
+    );
+    expect(inside.content).toContain("/workspace/p/node_modules/dep/index.js");
+    const listed = await call(
+      conv,
+      "Glob",
+      { pattern: "**/*.js", path: "/workspace/p/node_modules" },
+      n++,
+    );
+    expect(listed.content).toContain("/workspace/p/node_modules/dep/index.js");
+  });
+
   it("write / read / edit / glob / grep round trip", async () => {
     const conv = await sandboxConversation();
     const w = await call(
