@@ -365,6 +365,16 @@ describe("device stream viewer", () => {
     expect(await auditsOf("browser.view", s.deviceId)).toHaveLength(0);
   });
 
+  it("a ticket record whose root is not its conversation's current root is refused", async () => {
+    const t = await mint();
+    const key = `${DEVICE_STREAM_TICKET_PREFIX}${t}`;
+    const rec = JSON.parse((await redis.get(key)) as string) as Record<string, unknown>;
+    // edited to another conversation as the root: the viewer context would name a wrong tree
+    await redis.set(key, JSON.stringify({ ...rec, rootConversationId: randomUUID() }), "EX", 60);
+    expect((await viewer(t).closed).code).toBe(4401);
+    expect(await auditsOf("browser.view", s.deviceId)).toHaveLength(0);
+  });
+
   it("ticket is single use", async () => {
     const ticket = await mint();
     const first = viewer(ticket);

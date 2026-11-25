@@ -382,7 +382,7 @@ export class DeviceAccessService {
   /**
    * Whether a taken viewer ticket's record still stands when its viewer opens (the checks of
    * {@link mintTicket} again, binding nothing): the conversation live and owned by the record's
-   * account, its device still the record's device on the record's provider and the account's
+   * account, its current tree root the record's root, its device still the record's device on the record's provider and the account's
    * own, the record's extension still enabled in the org and its approved manifest as loaded now
    * (not the record's copy) still declaring the service in `permissions.deviceAccess.services`.
    * False when any of that no longer holds; other failures (the database) are thrown.
@@ -406,7 +406,10 @@ export class DeviceAccessService {
         { extension: t.extension, services: [t.service] },
         { orgId: t.orgId, accountId: t.accountId, conversationId: t.conversationId },
       );
-      return d.orgId === t.orgId && d.deviceId === t.deviceId && d.provider === t.providerName
+      return d.orgId === t.orgId &&
+        d.rootConversationId === t.rootConversationId &&
+        d.deviceId === t.deviceId &&
+        d.provider === t.providerName
         ? "stands"
         : "revoked";
     } catch (e) {
