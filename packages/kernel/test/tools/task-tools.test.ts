@@ -134,6 +134,7 @@ const ctxOf = (c: Conv, over: Partial<BuiltinCallContext> = {}): BuiltinCallCont
   accountId: c.accountId,
   agentId: c.agentId,
   conversationId: c.conversationId,
+  rootConversationId: c.conversationId,
   callId: `call-${randomUUID().slice(0, 8)}`,
   runId: c.runId,
   executionClaim: c.claim,

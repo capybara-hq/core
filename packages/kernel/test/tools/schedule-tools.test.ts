@@ -147,6 +147,7 @@ const callCtx = (accountId: string, conversationId: string): BuiltinCallContext 
   accountId,
   agentId,
   conversationId,
+  rootConversationId: conversationId,
   callId: randomUUID(),
   signal: new AbortController().signal,
 });

@@ -334,6 +334,7 @@ describe("ctx.models.describe", () => {
         accountId: "a",
         agentId: "g",
         conversationId: "c",
+        rootConversationId: "c",
         callId: "x",
         signal: new AbortController().signal,
       },

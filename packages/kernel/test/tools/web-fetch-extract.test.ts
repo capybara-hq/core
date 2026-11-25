@@ -604,6 +604,7 @@ describe("WebFetch extraction", () => {
         accountId: ownerId,
         agentId,
         conversationId: conv,
+        rootConversationId: conv,
         callId: "direct-call",
         signal: new AbortController().signal,
       },

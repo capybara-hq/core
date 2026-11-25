@@ -107,6 +107,7 @@ const callCtx = (org = orgId) => ({
   accountId: ownerId,
   agentId: "g",
   conversationId: "c",
+  rootConversationId: "c",
   callId: "call",
   signal: new AbortController().signal,
 });

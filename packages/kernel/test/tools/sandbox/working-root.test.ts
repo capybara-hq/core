@@ -143,6 +143,7 @@ describe("the sandbox tools in a bound conversation", () => {
     accountId: "a",
     agentId: "g",
     conversationId: "0123abcd-4567-4890-8bcd-ef0123456789",
+    rootConversationId: "0123abcd-4567-4890-8bcd-ef0123456789",
     callId: "call",
     signal: new AbortController().signal,
   });

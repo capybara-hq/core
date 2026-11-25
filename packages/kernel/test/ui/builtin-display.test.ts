@@ -21,6 +21,7 @@ const ctx = (over: Partial<ToolCallContext> & { tools?: ResolvedTool[] } = {}) =
   accountId: "a",
   agentId: "g",
   conversationId: "c",
+  rootConversationId: "c",
   callId: "call",
   signal: new AbortController().signal,
   ...over,

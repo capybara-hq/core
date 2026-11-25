@@ -94,6 +94,7 @@ function setup(s: Setup) {
       accountId: "acc",
       agentId: "a",
       conversationId: "root",
+      rootConversationId: "root",
       callId: "call-1",
       signal: new AbortController().signal,
     }),

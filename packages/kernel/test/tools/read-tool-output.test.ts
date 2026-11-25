@@ -60,6 +60,7 @@ const ctxFor = (orgId: string): ToolCallContext => ({
   accountId: seed.accountId,
   agentId: seed.agentId,
   conversationId: seed.conversationId,
+  rootConversationId: seed.conversationId,
   callId: "c1",
   signal: new AbortController().signal,
 });

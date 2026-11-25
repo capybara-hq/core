@@ -51,6 +51,8 @@ const fixture = (name: string) =>
   fileURLToPath(new URL(`../../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
 const SANDBOX_FAKE = fixture("device-fake");
+const TREE_PROBE = fixture("tree-probe");
+const WHERE = "plugin__tree-probe__where";
 
 const CHILD = "You are a sub-agent";
 const RESEARCHER = "You are the researcher";
@@ -100,7 +102,10 @@ const RULES: ScriptRule[] = [
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "L3-go", assistantTurns: 0 },
     reply: {
-      toolCalls: [{ name: "Write", input: { file_path: "/workspace/deep.txt", content: "deep" } }],
+      toolCalls: [
+        { name: "Write", input: { file_path: "/workspace/deep.txt", content: "deep" } },
+        { name: WHERE, input: {} },
+      ],
     },
   },
   {
@@ -154,7 +159,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE],
+        extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE, TREE_PROBE],
         extensionConfig: { "model-script": { rules: RULES }, "device-fake": { root } },
         // these tests are about dispatch, not waking (subagents/wake.test.ts): a parent woken by
         // its children's deliveries would race their last-reply and one-run assertions
@@ -261,6 +266,14 @@ async function converse(req: Req, agentId: string, text: string) {
 
 describe("nested sub-agents", () => {
   it("root → child → grandchild → great-grandchild dispatch with the default maxDepth", async () => {
+    // the tree probe is switched on here and stays on (later tests list its tool); the
+    // great-grandchild calls it
+    const on = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/tree-probe`,
+      payload: { enabled: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
     const { conv, events } = await converse(owner, leadId, "SCENARIO chain");
     expect(finalText(events)).toBe("chain done");
     // every level's finish is delivered to the level above it
@@ -278,9 +291,14 @@ describe("nested sub-agents", () => {
     expect(await childOf(l3?.id as string)).toEqual([]);
     // depths 1 and 2 have Agent; depth 3 (the default maxDepth) does not; every child has the
     // message tools (agent map spec §4.2, §4.3)
-    expect(toolsOf("L1-go")).toEqual(["Agent", "SendMessage", "SubagentHandback", "Write"]);
-    expect(toolsOf("L2-go")).toEqual(["Agent", "SendMessage", "SubagentHandback", "Write"]);
-    expect(toolsOf("L3-go")).toEqual(["SendMessage", "SubagentHandback", "Write"]);
+    expect(toolsOf("L1-go")).toEqual(["Agent", "SendMessage", "SubagentHandback", "Write", WHERE]);
+    expect(toolsOf("L2-go")).toEqual(["Agent", "SendMessage", "SubagentHandback", "Write", WHERE]);
+    expect(toolsOf("L3-go")).toEqual(["SendMessage", "SubagentHandback", "Write", WHERE]);
+    // a tool handler at depth 3 sees the root conversation as its tree root, not its parent
+    const where = ofType(await eventsOf(db, l3?.id as string), "tool_result").find(
+      (e) => e.payload.toolKey === WHERE,
+    );
+    expect(where?.payload.content).toBe(`conversation=${l3?.id} root=${conv}`);
     // the frozen definitions: Agent kept below the limit, removed at it (by key)
     const frozenDeny = async (id: string) => {
       const started = ofType(await eventsOf(db, id), "subagent_started")[0];

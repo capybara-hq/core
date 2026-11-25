@@ -1,5 +1,18 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.38
+
+### Patch Changes
+
+- ecff88f: `capybara-device` removes the bare-name service entries from before service ids once per device directory (a `svc/.ids-v1`
+  record), so a later change of the id rule never wipes what services keep.
+- 1cd5adb: A device service on macOS may register and look up Chromium's rendezvous server
+  (`com.google.chrome.for.testing.MachPortRendezvousServer.*`), so the full Chromium build starts under the local sandbox
+  (core#843); the profile's app-shim listener (`…apps.*`) stays closed. The launcher tells the service with
+  `CAPYBARA_SERVICE_MACH=chromium` (`DEVICE_SERVICE_MACH_ENV`, `DEVICE_SERVICE_MACH_CHROMIUM`). Agent commands get none of it;
+  the service's file and network confinement is unchanged. The bundled sandbox runtime patch gains `allowMachRegister` (names
+  of at least three dotted labels).
+
 ## 0.1.0-rc.37
 
 ### Patch Changes
