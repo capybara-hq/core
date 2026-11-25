@@ -21,7 +21,12 @@ import { type Account, AccountsService } from "./accounts.js";
 import { clientMeta, LOGIN_THROTTLERS } from "./auth.controller.js";
 import { IdentityBinding, type PendingBinding } from "./binding.js";
 import { setSessionCookies } from "./cookies.js";
-import { ExternalIdentities, type LinkedIdentity } from "./external.js";
+import { ExternalIdentities } from "./external.js";
+import {
+  type LinkableMethod,
+  type LinkedAccountRow,
+  LinkedAccountsService,
+} from "./linked-accounts.js";
 import { CurrentPrincipal, type Principal, Public, requireUser, SessionOnly } from "./principal.js";
 import { SessionService } from "./sessions.js";
 import {
@@ -364,12 +369,21 @@ export class BindController {
 /** 本人绑定的外部身份（`/api/v1/me/identities`）：列出、解除。 */
 @Controller("api/v1/me/identities")
 export class MeIdentitiesController {
-  constructor(@Inject(ExternalIdentities) private readonly external: ExternalIdentities) {}
+  constructor(
+    @Inject(ExternalIdentities) private readonly external: ExternalIdentities,
+    @Inject(LinkedAccountsService) private readonly linked: LinkedAccountsService,
+  ) {}
 
+  /**
+   * The person's identities with their IM and sign-in capabilities, and the enabled login methods
+   * they can still link (the linked accounts page).
+   */
   @Get()
-  async list(@CurrentPrincipal() principal: Principal): Promise<{ identities: LinkedIdentity[] }> {
+  async list(
+    @CurrentPrincipal() principal: Principal,
+  ): Promise<{ identities: LinkedAccountRow[]; linkable: LinkableMethod[] }> {
     const p = requireUser(principal);
-    return { identities: await this.external.listForAccount(p.account.id) };
+    return this.linked.list(p.account.id);
   }
 
   @Delete(":source/:externalId")

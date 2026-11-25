@@ -688,98 +688,160 @@ const IDENTITY = {
   avatarUrl: null,
   linkedVia: "sso",
   createdAt: "2026-10-01T00:00:00Z",
+  label: { zh: "假 IM", en: "Fake IM" },
+  channel: true,
+  login: "on",
 };
 
-/** 经 IM 绑定链接建立、还不能用来登录的身份（Ruling A18）。 */
+/** An identity from an IM bind link while its platform's sign-in is on: it needs a link. */
 const BOUND = {
   ...IDENTITY,
   externalId: "u-bound",
   email: null,
   displayName: "Bound Bob",
   linkedVia: "bind",
+  login: "needs_link",
 };
 
-describe("已绑定的 IM 身份（SettingsPage）", () => {
-  beforeEach(() => resetNavigation("/account/identities"));
+/** A channel-only platform (no sign-in), telegram-like. */
+const TELEGRAM = {
+  ...IDENTITY,
+  source: "telegram:bot1",
+  externalId: "tg-1",
+  email: null,
+  displayName: "Tg Tom",
+  linkedVia: "bind",
+  label: { zh: "Telegram", en: "Telegram" },
+  login: "unsupported",
+};
 
-  it.each(["zh", "en"] as const)("列出身份（来源、租户）；解绑 → DELETE（%s）", async (locale) => {
-    const m = msgs[locale].identities;
-    let identities = [IDENTITY];
-    const calls = api({
-      "GET /api/v1/me/identities": () => json(200, { identities }),
-      "DELETE /api/v1/me/identities/fake-im%3At1/u-alice": () => {
-        identities = [];
-        return noContent();
-      },
-    });
-    const { container } = await renderRouteWithCache("/account/identities", lastStubRoutes(), {
-      locale,
-    });
-    expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
-    const row = await screen.findByRole("row", { name: /Alice Wong/ });
-    expect(within(row).getByText("fake-im")).toBeTruthy();
-    expect(within(row).getByText("t1")).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(
-      within(row).getByRole("button", { name: locale === "zh" ? "行操作" : "Row actions" }),
-    );
-    await user.click(await screen.findByRole("menuitem", { name: m.unlink }));
-    const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: m.unlink }));
-    expect(await screen.findByText(m.empty)).toBeTruthy();
-    expect(calls.some((c) => c.method === "DELETE")).toBe(true);
-    // unlinking invalidates the identities: they are read again in the browser
-    expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toEqual([
-      "/api/v1/me/identities",
-    ]);
+const IDP = { plugin: "fake-idp", label: { zh: "测试身份源", en: "Fake IdP" } };
+
+describe("已绑定账号（SettingsPage）", () => {
+  beforeEach(() => {
+    resetNavigation("/account/identities");
+    navigateBrowser.mockReset();
   });
 
   it.each(["zh", "en"] as const)(
-    "经 IM 绑定的身份标为「未验证」并提供「验证」：整页跳到该插件的第三方登录，回到本页（%s）",
+    "列出账号（平台、租户、IM、登录）；解绑 → DELETE（%s）",
     async (locale) => {
       const m = msgs[locale].identities;
-      navigateBrowser.mockReset();
-      api({
-        "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY, BOUND] }),
-        "GET /api/v1/auth/sources": () =>
-          json(200, { sources: [{ plugin: "fake-im", label: { zh: "假 IM", en: "Fake IM" } }] }),
+      let identities = [IDENTITY];
+      const calls = api({
+        "GET /api/v1/me/identities": () => json(200, { identities, linkable: [] }),
+        "DELETE /api/v1/me/identities/fake-im%3At1/u-alice": () => {
+          identities = [];
+          return noContent();
+        },
       });
-      await renderRouteWithCache("/account/identities", lastStubRoutes(), { locale });
-      const bound = await screen.findByRole("row", { name: /Bound Bob/ });
-      expect(within(bound).getByText(m.unverified)).toBeTruthy();
-      const verified = screen.getByRole("row", { name: /Alice Wong/ });
-      expect(within(verified).queryByText(m.unverified)).toBeNull();
+      const { container } = await renderRouteWithCache("/account/identities", lastStubRoutes(), {
+        locale,
+      });
+      expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
+      expect(screen.getByRole("heading", { level: 1, name: m.title })).toBeTruthy();
+      const row = await screen.findByRole("row", { name: /Alice Wong/ });
+      expect(within(row).getByText(IDENTITY.label[locale])).toBeTruthy();
+      expect(within(row).getByText("t1")).toBeTruthy();
+      expect(within(row).getByText(m.im.on)).toBeTruthy();
+      expect(within(row).getByText(m.login.on)).toBeTruthy();
+      expect(findNestedBoxes(container)).toEqual([]);
       const user = userEvent.setup();
-      const rowActions = locale === "zh" ? "行操作" : "Row actions";
-      // 已能登录的身份没有「验证」
-      await user.click(within(verified).getByRole("button", { name: rowActions }));
-      expect(screen.queryByRole("menuitem", { name: m.verify })).toBeNull();
-      await user.keyboard("{Escape}");
-      await user.click(within(bound).getByRole("button", { name: rowActions }));
-      await user.click(await screen.findByRole("menuitem", { name: m.verify }));
-      expect(navigateBrowser).toHaveBeenCalledWith(
-        "/api/v1/auth/sso/fake-im/start?returnTo=%2Faccount%2Fidentities",
+      await user.click(
+        within(row).getByRole("button", { name: locale === "zh" ? "行操作" : "Row actions" }),
       );
+      await user.click(await screen.findByRole("menuitem", { name: m.unlink }));
+      const dialog = await screen.findByRole("dialog");
+      await user.click(within(dialog).getByRole("button", { name: m.unlink }));
+      expect(await screen.findByText(m.empty)).toBeTruthy();
+      expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+      // unlinking invalidates the identities: they are read again in the browser
+      expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toEqual([
+        "/api/v1/me/identities",
+      ]);
     },
   );
 
-  it("该插件不是可用的登录方式（不在 GET /auth/sources 里）→ 仍标「未验证」，但不提供「验证」", async () => {
-    api({
-      "GET /api/v1/me/identities": () => json(200, { identities: [BOUND] }),
-      "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
+  it.each(["zh", "en"] as const)(
+    "shows 绑定 for an enabled source without an identity: a link intent, then the provider (%s)",
+    async (locale) => {
+      const m = msgs[locale].identities;
+      const calls = api({
+        "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY], linkable: [IDP] }),
+        "POST /api/v1/auth/sso/fake-idp/start": () =>
+          json(200, { location: "https://idp.example/authorize?state=s" }),
+      });
+      await renderRouteWithCache("/account/identities", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      await user.click(
+        await screen.findByRole("button", {
+          name: m.link.replace("{platform}", IDP.label[locale]),
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(navigateBrowser).toHaveBeenCalledWith("https://idp.example/authorize?state=s"),
+      );
+      const post = calls.find((c) => c.method === "POST");
+      expect(post && bodyOf(post)).toEqual({ intent: "link", returnTo: "/account/identities" });
+    },
+  );
+
+  it("启用登录 on a needs_link row starts a link intent for its platform", async () => {
+    const calls = api({
+      "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY, BOUND], linkable: [] }),
+      "POST /api/v1/auth/sso/fake-im/start": () =>
+        json(200, { location: "https://im.example/authorize" }),
     });
-    await renderRouteWithCache("/account/identities", lastStubRoutes());
-    const bound = await screen.findByRole("row", { name: /Bound Bob/ });
-    expect(within(bound).getByText(en.identities.unverified)).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(within(bound).getByRole("button", { name: "Row actions" }));
-    expect(await screen.findByRole("menuitem", { name: en.identities.unlink })).toBeTruthy();
-    expect(screen.queryByRole("menuitem", { name: en.identities.verify })).toBeNull();
+    await renderRouteWithCache("/account/identities", lastStubRoutes(), { locale: "zh" });
+    const verified = await screen.findByRole("row", { name: /Alice Wong/ });
+    expect(within(verified).queryByRole("button", { name: zh.identities.login.enable })).toBeNull();
+    const bound = screen.getByRole("row", { name: /Bound Bob/ });
+    await userEvent
+      .setup()
+      .click(within(bound).getByRole("button", { name: zh.identities.login.enable }));
+    await vi.waitFor(() =>
+      expect(navigateBrowser).toHaveBeenCalledWith("https://im.example/authorize"),
+    );
+    expect(
+      calls.some((c) => c.method === "POST" && c.url === "/api/v1/auth/sso/fake-im/start"),
+    ).toBe(true);
+  });
+
+  it("no 未验证 badge; 不支持 for telegram-like rows, 未开启 when the platform's sign-in is off", async () => {
+    api({
+      "GET /api/v1/me/identities": () =>
+        json(200, {
+          identities: [TELEGRAM, { ...BOUND, login: "off" }],
+          linkable: [],
+        }),
+    });
+    await renderRouteWithCache("/account/identities", lastStubRoutes(), { locale: "zh" });
+    const tg = await screen.findByRole("row", { name: /Tg Tom/ });
+    expect(within(tg).getByText(zh.identities.login.unsupported)).toBeTruthy();
+    const bound = screen.getByRole("row", { name: /Bound Bob/ });
+    expect(within(bound).getByText(zh.identities.login.off)).toBeTruthy();
+    expect(screen.queryByText("未验证")).toBeNull();
+    expect(screen.queryByRole("button", { name: zh.identities.login.enable })).toBeNull();
+  });
+
+  it.each([
+    ["identity.taken", (m: typeof en.identities) => m.linkError.identity.taken],
+    ["sso.unavailable", (m: typeof en.identities) => m.linkError.sso.unavailable],
+    ["bogus", (m: typeof en.identities) => m.linkError.unknown],
+  ] as const)("?error=%s shows its message", async (code, text) => {
+    resetNavigation(`/account/identities?error=${code}`);
+    api({
+      "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY], linkable: [] }),
+    });
+    await renderRouteWithCache(`/account/identities?error=${code}`, lastStubRoutes());
+    expect(
+      await screen.findByText(text(en.identities).replace("{product}", "Capybara")),
+    ).toBeTruthy();
   });
 
   it("最后一个登录方式（identity.last_login_method）：对话框里显示原因", async () => {
     api({
-      "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY] }),
+      "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY], linkable: [] }),
       "DELETE /api/v1/me/identities/fake-im%3At1/u-alice": () =>
         json(409, { error: { code: "identity.last_login_method", message: "x" } }),
     });

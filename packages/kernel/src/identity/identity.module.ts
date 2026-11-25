@@ -12,6 +12,7 @@ import { IdentityBinding } from "./binding.js";
 import { ExternalIdentities } from "./external.js";
 import { ExternalIdentityLock } from "./external-identity-lock.js";
 import { InitialPasswords } from "./initial-passwords.js";
+import { LinkedAccountsService } from "./linked-accounts.js";
 import { LoginSourcesService } from "./login-sources.js";
 import { SessionService } from "./sessions.js";
 import { SettingsService } from "./settings.js";
@@ -42,6 +43,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
     ExternalIdentityLock,
     LoginSourcesService,
     ExternalIdentities,
+    LinkedAccountsService,
     IdentityBinding,
     SsoFlow,
     SsoLinkTickets,
@@ -57,6 +59,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
     SuperAdminLockModule,
     LoginSourcesService,
     ExternalIdentities,
+    LinkedAccountsService,
     IdentityBinding,
     SsoFlow,
     SsoLinkTickets,

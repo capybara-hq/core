@@ -24,7 +24,6 @@ vi.mock("next/navigation", () => ({
 
 const O = "/api/v1/orgs/o1";
 const T = "2026-10-19T12:00:00.000Z";
-const failing = () => json(500, { error: { code: "internal", message: "x" } });
 
 const MEMBERS = [
   {
@@ -73,6 +72,9 @@ const IDENTITY = {
   avatarUrl: null,
   linkedVia: "bind",
   createdAt: T,
+  label: { zh: "假 IM", en: "Fake IM" },
+  channel: true,
+  login: "needs_link",
 };
 
 /** The personal connection card named `name` on /account/connections, or null. */
@@ -128,7 +130,11 @@ const ROUTES: Routes = {
   [`GET ${O}/connectors/c1`]: () => json(200, { connector: personalApp("c1", "Docs") }),
   [`GET ${O}/connectors/c2`]: () => json(200, { connector: personalApp("c2", "Wiki") }),
   [`GET ${O}/me/tool-grants`]: () => json(200, { grants: [] }),
-  "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY] }),
+  "GET /api/v1/me/identities": () =>
+    json(200, {
+      identities: [IDENTITY],
+      linkable: [{ plugin: "fake-idp", label: { zh: "测试身份源", en: "Fake IdP" } }],
+    }),
   "GET /api/v1/auth/sources": () => json(200, { sources: [{ plugin: "fake-im" }] }),
 };
 
@@ -289,26 +295,15 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/account/identities: a first render from the hydrated cache makes no browser read; no org needed; 验证 only for login plugins read", async () => {
+  it("/account/identities: a first render from the hydrated cache makes no browser read; no org needed", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/account/identities", ROUTES, {
       me: { ...ME, currentOrgId: null },
     });
     expect(screen.getByText("Alice Wong")).toBeTruthy();
-    await userEvent.setup().click(screen.getByRole("button", { name: "Row actions" }));
-    expect(screen.getByRole("menuitem", { name: en.identities.verify })).toBeTruthy();
+    expect(screen.getByRole("button", { name: en.identities.login.enable })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Link Fake IdP/ })).toBeTruthy();
     await settle();
-    expect(browser).toEqual([]);
-    cleanup();
-    await renderRouteWithCache("/account/identities", {
-      ...ROUTES,
-      "GET /api/v1/auth/sources": failing,
-    });
-    await userEvent.setup().click(screen.getByRole("button", { name: "Row actions" }));
-    expect(screen.queryByRole("menuitem", { name: en.identities.verify })).toBeNull();
-    expect(screen.getByRole("menuitem", { name: en.identities.unlink })).toBeTruthy();
-    await settle();
-    // a section that failed on the first load is not read again on mount
     expect(browser).toEqual([]);
   });
 

@@ -249,9 +249,8 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/account/identities",
-    // No org needed: my identities, and the sign-in sources (which plugins offer 验证).
-    queries: ({ me }) =>
-      me === null ? [] : [q(identitiesQuery(me.account.id)), q(authSourcesQuery())],
+    // No org needed: my identities with their capabilities and the methods I can link.
+    queries: ({ me }) => (me === null ? [] : [q(identitiesQuery(me.account.id))]),
   },
   {
     pattern: "/account/notifications",

@@ -2614,7 +2614,7 @@
       "grants": "Remembered approvals",
       "general": "General",
       "sandbox": "Sandbox",
-      "identities": "IM identities",
+      "identities": "Linked accounts",
       "models": "Models",
       "members": "Members",
       "tokens": "Service tokens",
@@ -3218,23 +3218,43 @@
     "appearanceTitle": "Appearance"
   },
   "identities": {
-    "title": "IM identities",
-    "hint": "IM and sign-in accounts linked to your {product} account. Messages from a linked IM account act as you.",
-    "empty": "No linked identities.",
-    "emptyHint": "Message a {product} bot in IM and follow its link, or sign in with a third-party account.",
+    "title": "Linked accounts",
+    "hint": "IM and sign-in accounts linked to your {product} account. Messages from an account that works in IM act as you; an account that can sign in signs you in to {product}.",
+    "empty": "No linked accounts.",
+    "emptyHint": "Message a {product} bot in IM and follow its link, use a Link button above, or have an administrator sync the directory.",
     "columns": {
-      "name": "Name",
-      "source": "Source",
+      "account": "Account",
+      "platform": "Platform",
       "tenant": "Tenant",
-      "externalId": "Account ID",
-      "linkedAt": "Linked"
+      "im": "IM",
+      "login": "Sign-in"
+    },
+    "im": {
+      "on": "Available"
+    },
+    "login": {
+      "unsupported": "Not supported",
+      "off": "Not turned on",
+      "enable": "Turn on sign-in",
+      "on": "Can sign in"
+    },
+    "link": "Link {platform}",
+    "linkError": {
+      "identity": {
+        "taken": "This account is linked to another {product} account. Sign in with that account and unlink it first."
+      },
+      "sso": {
+        "unavailable": "This sign-in method is not available right now. Contact an administrator.",
+        "access_denied": "Linking was cancelled or access was denied.",
+        "provider_error": "The identity provider returned an error. Please try again later.",
+        "account_not_allowed": "This account is not allowed to sign in on this platform."
+      },
+      "unknown": "Linking failed. Please try again."
     },
     "unlink": "Unlink",
     "unlinkTitle": "Unlink {name}?",
-    "unlinkHint": "Messages from this IM account will no longer act as you, and you can no longer sign in with it.",
-    "unlinked": "\"{name}\" unlinked.",
-    "unverified": "Not verified",
-    "verify": "Verify (sign in with this account)"
+    "unlinkHint": "Messages from this account in IM will no longer act as you, and you can no longer sign in with it.",
+    "unlinked": "\"{name}\" unlinked."
   },
   "loginSources": {
     "section": {

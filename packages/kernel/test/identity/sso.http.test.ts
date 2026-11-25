@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
 import {
+  fakeExtensionEntry,
   seedLoginSources,
   startTestPostgres,
   startTestRedis,
@@ -24,6 +25,10 @@ import { accountsFor } from "../helpers/identity.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 const FAKE_IDP = fileURLToPath(new URL("../fixtures/plugins/fake-idp/index.ts", import.meta.url));
+// channel@1 + identity-source@1 (never seeded as a login source unless a test turns it on)
+const FAKE_IM = fakeExtensionEntry("fake-im");
+// channel@1 only
+const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
 const PUBLIC = "https://cap.example";
 const PW = "correct horse battery";
 
@@ -45,8 +50,11 @@ beforeAll(async () => {
       marketplaces: { official: { enabled: false } },
       http: { port: 0, publicUrl: PUBLIC },
       auth: { cookieSecure: false },
-      extensions: [FAKE_IDP],
-      extensionConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
+      extensions: [FAKE_IDP, FAKE_IM, CHAN_MINI],
+      extensionConfig: {
+        "fake-idp": { tenant: "t1", clientSecret: "s3cret" },
+        "fake-im": { platformUrl: "http://127.0.0.1:9", clientId: "c1", clientSecret: "s3cret" },
+      },
       extensionPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
@@ -169,6 +177,73 @@ describe("登录方式列表", () => {
     expect(res.json()).toEqual({
       sources: [{ plugin: "fake-idp", label: { zh: "测试身份源", en: "Fake IdP" } }],
     });
+  });
+});
+
+describe("已绑定账号", () => {
+  it("me identities report capabilities", async () => {
+    const alice = await accounts.createLocal({ login: "alice", password: PW, displayName: "A" });
+    const row = (source: string, externalId: string, linkedVia: "bind" | "sso") => ({
+      source,
+      external_id: externalId,
+      account_id: alice.id,
+      email: null,
+      profile: JSON.stringify({ displayName: externalId }),
+      linked_via: linkedVia,
+    });
+    await db
+      .insertInto("identities")
+      .values([
+        row("fake-idp:t1", "idp-1", "sso"),
+        row("fake-im:t1", "im-sso", "sso"),
+        row("fake-im:t1", "im-bind", "bind"),
+        row("chan-mini:t1", "chan-1", "bind"),
+      ])
+      .execute();
+    const jar = cookieJar();
+    const login = await asUser(
+      k.http,
+      jar,
+    )({ method: "POST", url: "/api/v1/auth/login", payload: { login: "alice", password: PW } });
+    expect(login.statusCode).toBe(200);
+    type Row = { externalId: string; label: unknown; channel: boolean; login: string };
+    const read = async () => {
+      const res = await asUser(k.http, jar)({ method: "GET", url: "/api/v1/me/identities" });
+      expect(res.statusCode, res.body).toBe(200);
+      const body = res.json() as { identities: Row[]; linkable: unknown[] };
+      return {
+        rows: Object.fromEntries(
+          body.identities.map((r) => [r.externalId, { channel: r.channel, login: r.login }]),
+        ),
+        labels: Object.fromEntries(body.identities.map((r) => [r.externalId, r.label])),
+        linkable: body.linkable,
+      };
+    };
+    // fake-im is loaded but not on the login page: off
+    const before = await read();
+    expect(before.rows).toEqual({
+      "idp-1": { channel: false, login: "on" },
+      "im-sso": { channel: true, login: "off" },
+      "im-bind": { channel: true, login: "off" },
+      "chan-1": { channel: true, login: "unsupported" },
+    });
+    expect(before.labels).toMatchObject({
+      "idp-1": { zh: "测试身份源", en: "Fake IdP" },
+      "im-sso": { zh: "假 IM", en: "Fake IM" },
+      "chan-1": { zh: "chan-mini", en: "chan-mini" },
+    });
+    expect(before.linkable).toEqual([]);
+    // fake-im turned on: a bind row needs a link, an sso row signs in
+    await seedLoginSources(db, [{ plugin: "fake-idp" }, { plugin: "fake-im" }]);
+    const after = await read();
+    expect(after.rows["im-sso"]).toEqual({ channel: true, login: "on" });
+    expect(after.rows["im-bind"]).toEqual({ channel: true, login: "needs_link" });
+    expect(after.rows["chan-1"]).toEqual({ channel: true, login: "unsupported" });
+    // an enabled method without an identity of the account is linkable
+    await db.deleteFrom("identities").where("source", "=", "fake-idp:t1").execute();
+    expect((await read()).linkable).toEqual([
+      { plugin: "fake-idp", label: { zh: "测试身份源", en: "Fake IdP" } },
+    ]);
   });
 });
 
