@@ -77,16 +77,24 @@ const errCode = (res: { json(): unknown }) =>
 
 /** Starts SSO; returns the state / nonce / challenge of the authorize URL. */
 async function start(jar: CookieJar, returnTo?: string, intent?: "link") {
-  const params = new URLSearchParams();
-  if (returnTo !== undefined) params.set("returnTo", returnTo);
-  if (intent !== undefined) params.set("intent", intent);
-  const q = params.size === 0 ? "" : `?${params.toString()}`;
-  const res = await asUser(
-    k.http,
-    jar,
-  )({ method: "GET", url: `/api/v1/auth/sso/fake-idp/start${q}` });
-  expect(res.statusCode).toBe(302);
-  const loc = new URL(String(res.headers.location));
+  const req = asUser(k.http, jar);
+  let res: Awaited<ReturnType<typeof req>>;
+  let loc: URL;
+  if (intent === "link") {
+    // a link intent starts from the CSRF-protected POST, which returns the location
+    res = await req({
+      method: "POST",
+      url: "/api/v1/auth/sso/fake-idp/start",
+      payload: { intent, ...(returnTo !== undefined && { returnTo }) },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    loc = new URL((res.json() as { location: string }).location);
+  } else {
+    const q = returnTo === undefined ? "" : `?returnTo=${encodeURIComponent(returnTo)}`;
+    res = await req({ method: "GET", url: `/api/v1/auth/sso/fake-idp/start${q}` });
+    expect(res.statusCode).toBe(302);
+    loc = new URL(String(res.headers.location));
+  }
   return {
     res,
     loc,

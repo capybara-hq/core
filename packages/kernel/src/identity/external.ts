@@ -246,6 +246,11 @@ export class ExternalIdentities {
         await this.linkVerified(decision.accountId, id, "oauth");
         break;
       case "linked":
+        // a disabled merge target gets no row: reported as its sign-in, which the caller refuses
+        // (auth.account_disabled) as it refuses any disabled account
+        if (decision.via === "verified_email" && !(await this.isActive(decision.accountId))) {
+          return { decision: { kind: "signin", accountId: decision.accountId }, identity: id };
+        }
         await this.linkVerified(decision.accountId, id, decision.via);
         break;
       case "link_page":
@@ -253,6 +258,15 @@ export class ExternalIdentities {
         break;
     }
     return { decision, identity: id };
+  }
+
+  private async isActive(accountId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("accounts")
+      .select("status")
+      .where("id", "=", accountId)
+      .executeTakeFirst();
+    return row?.status === "active";
   }
 
   /**

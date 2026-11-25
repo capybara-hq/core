@@ -26,16 +26,30 @@ function sameHash(a: string, b: string): boolean {
 }
 
 /**
- * One wrong password, atomically: the pending link (a hash `rec` + `attempts`) gains an attempt,
- * which keeps its TTL; at the limit it is deleted. Returns -1 when the link is gone, 0 when this
- * attempt burned it, else the attempts left.
+ * Reserves one password attempt, atomically, before the password is checked: the pending link (a
+ * hash `rec` + `attempts`) gains an attempt, which keeps its TTL. Returns 1 when reserved, 0 when
+ * the link is gone or its attempts are all taken (the reservation is undone), so concurrent
+ * submissions never check more than the limit of passwords.
  */
-const FAIL_ATTEMPT = `
-if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
+const RESERVE_ATTEMPT = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 local n = redis.call('HINCRBY', KEYS[1], 'attempts', 1)
-local left = tonumber(ARGV[1]) - n
-if left <= 0 then redis.call('DEL', KEYS[1]); return 0 end
-return left`;
+if n > tonumber(ARGV[1]) then redis.call('HINCRBY', KEYS[1], 'attempts', -1); return 0 end
+return 1`;
+
+/** Gives a reserved attempt back (the password was not wrong: a disabled account, a rate limit). */
+const REFUND_ATTEMPT = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+if tonumber(redis.call('HGET', KEYS[1], 'attempts') or '0') > 0 then
+  redis.call('HINCRBY', KEYS[1], 'attempts', -1)
+end
+return 1`;
+
+/** A reserved attempt was a wrong password: at the limit the link is deleted (burned). */
+const SETTLE_FAILURE = `
+local n = tonumber(redis.call('HGET', KEYS[1], 'attempts') or '0')
+if n >= tonumber(ARGV[1]) then redis.call('DEL', KEYS[1]) end
+return n`;
 
 /** Takes the pending link and deletes it in one step (GETDEL on the hash): one caller wins. */
 const REDEEM = `
@@ -64,8 +78,13 @@ const sessionMismatch = () =>
  * `capk:sso-link:<sha256(ticket)>` (`rec`: the pending link as JSON, `attempts`) for 10 minutes.
  * Every read checks the browser binding cookie against the recorded hash. Single use on success
  * ({@link redeem} deletes it atomically, so two concurrent submissions get one winner), burned
- * after {@link SSO_LINK_MAX_ATTEMPTS} wrong passwords ({@link failedAttempt}, an atomic counter on
- * the same key that keeps its TTL). All state is in Redis: any replica serves any step.
+ * after {@link SSO_LINK_MAX_ATTEMPTS} wrong passwords (an attempt is reserved atomically before
+ * each password check, {@link reserveAttempt}, on the same key, which keeps its TTL). All state is
+ * in Redis: any replica serves any step.
+ *
+ * Deployment assumption: no sibling origin can set cookies for the kernel's host (no untrusted
+ * subdomain sharing a parent domain cookie scope), so the `cap_sso` binding value is this
+ * browser's own and cannot be planted to tie a victim's browser to an attacker's ticket.
  */
 @Injectable()
 export class SsoLinkTickets {
@@ -94,10 +113,30 @@ export class SsoLinkTickets {
     return checkBinding(JSON.parse(raw) as PendingSsoLink, binding);
   }
 
-  /** Counts one wrong password; the attempt that reaches the limit deletes the ticket. */
+  /**
+   * Reserves one of the ticket's attempts before a password check; none left, or the ticket gone →
+   * `sso.link_expired`.
+   */
+  async reserveAttempt(ticket: string): Promise<void> {
+    if (!TICKET_RE.test(ticket)) throw linkExpired();
+    const ok = await this.redis.eval(
+      RESERVE_ATTEMPT,
+      1,
+      ticketKey(ticket),
+      String(SSO_LINK_MAX_ATTEMPTS),
+    );
+    if (ok !== 1) throw linkExpired();
+  }
+
+  /** Gives a reserved attempt back (the check did not find a wrong password). */
+  async refundAttempt(ticket: string): Promise<void> {
+    if (TICKET_RE.test(ticket)) await this.redis.eval(REFUND_ATTEMPT, 1, ticketKey(ticket));
+  }
+
+  /** The reserved attempt was a wrong password; the one that reaches the limit burns the ticket. */
   async failedAttempt(ticket: string): Promise<void> {
     if (!TICKET_RE.test(ticket)) return;
-    await this.redis.eval(FAIL_ATTEMPT, 1, ticketKey(ticket), String(SSO_LINK_MAX_ATTEMPTS));
+    await this.redis.eval(SETTLE_FAILURE, 1, ticketKey(ticket), String(SSO_LINK_MAX_ATTEMPTS));
   }
 
   /**

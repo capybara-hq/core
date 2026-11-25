@@ -83,19 +83,39 @@ const errCode = (res: { json(): unknown }) =>
 const ticketKey = (ticket: string) =>
   `capk:sso-link:${createHash("sha256").update(ticket).digest("base64url")}`;
 
+/**
+ * Starts SSO in `jar`: a sign-in through `GET …/start`, a link intent through the CSRF-protected
+ * `POST …/start` (which returns the location instead of a 302).
+ */
 async function start(jar: CookieJar, opts: { returnTo?: string; intent?: string } = {}) {
-  const p = new URLSearchParams();
-  if (opts.returnTo !== undefined) p.set("returnTo", opts.returnTo);
-  if (opts.intent !== undefined) p.set("intent", opts.intent);
-  const res = await asUser(
-    k.http,
-    jar,
-  )({ method: "GET", url: `/api/v1/auth/sso/fake-idp/start?${p.toString()}` });
-  expect(res.statusCode).toBe(302);
-  const loc = new URL(String(res.headers.location));
+  let res: Awaited<ReturnType<ReturnType<typeof asUser>>>;
+  let location: string;
+  if (opts.intent === "link") {
+    res = await asUser(
+      k.http,
+      jar,
+    )({
+      method: "POST",
+      url: "/api/v1/auth/sso/fake-idp/start",
+      payload: { intent: "link", ...(opts.returnTo !== undefined && { returnTo: opts.returnTo }) },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    location = (res.json() as { location: string }).location;
+  } else {
+    const p = new URLSearchParams();
+    if (opts.returnTo !== undefined) p.set("returnTo", opts.returnTo);
+    if (opts.intent !== undefined) p.set("intent", opts.intent);
+    res = await asUser(
+      k.http,
+      jar,
+    )({ method: "GET", url: `/api/v1/auth/sso/fake-idp/start?${p.toString()}` });
+    expect(res.statusCode).toBe(302);
+    location = String(res.headers.location);
+  }
+  const loc = new URL(location);
   return {
     res,
-    location: String(res.headers.location),
+    location,
     state: loc.searchParams.get("state") ?? "",
     nonce: loc.searchParams.get("nonce") ?? "",
     challenge: loc.searchParams.get("code_challenge") ?? "",
@@ -322,6 +342,18 @@ describe("the link page", () => {
     expect((await redis.keys("throttler:{cred:login}:*")).length).toBeGreaterThan(0);
   });
 
+  it("concurrent wrong passwords check at most five", async () => {
+    await local("alice");
+    const r = await toLinkPage({ sub: "u-par" });
+    const res = await Promise.all(
+      Array.from({ length: 7 }, () => submit(r.jar, r.ticket, "alice", "wrong password!!")),
+    );
+    const codes = res.map((x) => errCode(x)).sort();
+    expect(codes.filter((c) => c === "auth.invalid_credentials")).toHaveLength(5);
+    expect(codes.filter((c) => c === "sso.link_expired")).toHaveLength(2);
+    expect(await redis.exists(ticketKey(r.ticket))).toBe(0);
+  });
+
   it("link ticket is single use under concurrency", async () => {
     const alice = await local("alice");
     const r = await toLinkPage({ sub: "u4" });
@@ -417,9 +449,12 @@ describe("the link page", () => {
 
 describe("the link intent", () => {
   it("link intent without the same session → sso.session_mismatch, no account created", async () => {
-    // started signed out
-    const anon = await start(cookieJar(), { intent: "link", returnTo: "/account/identities" });
-    expect(anon.location).toBe(`${PUBLIC}/login?error=sso.session_mismatch`);
+    // a link intent cannot start signed out
+    const anon = await asUser(
+      k.http,
+      cookieJar(),
+    )({ method: "POST", url: "/api/v1/auth/sso/fake-idp/start", payload: { intent: "link" } });
+    expect(anon.statusCode).toBe(401);
     expect(await redis.keys("capk:sso-state:*")).toEqual([]);
 
     // started as alice, called back signed out (session expired) or as bob (another tab)
@@ -448,6 +483,57 @@ describe("the link intent", () => {
       expect(await countSessions()).toBe(before.sessions);
       expect(await me(jar)).toBe(swap === "bob" ? bob.account.id : null);
     }
+  });
+
+  it("a cross-site GET start with intent=link creates no state and links nothing", async () => {
+    const alice = await signedIn("alice");
+    // a top-level cross-site navigation carries the Lax session cookie
+    const res = await asUser(
+      k.http,
+      alice.jar,
+    )({
+      method: "GET",
+      url: "/api/v1/auth/sso/fake-idp/start?intent=link&returnTo=%2Faccount%2Fidentities",
+    });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe(`${PUBLIC}/login?error=sso.session_mismatch`);
+    expect(await redis.keys("capk:sso-state:*")).toEqual([]);
+    expect(setCookies(res).find((c) => c.name === "cap_sso")).toBeUndefined();
+    expect(
+      await db.selectFrom("identities").select("source").where("source", "=", SOURCE).execute(),
+    ).toEqual([]);
+  });
+
+  it("POST start without the CSRF header → 403, no state", async () => {
+    const alice = await signedIn("alice");
+    const res = await asUser(
+      k.http,
+      alice.jar,
+    )({
+      method: "POST",
+      url: "/api/v1/auth/sso/fake-idp/start",
+      payload: { intent: "link" },
+      csrf: false,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(errCode(res)).toBe("auth.csrf");
+    expect(await redis.keys("capk:sso-state:*")).toEqual([]);
+  });
+
+  it("POST start writes the binding cookie and a state recording the link intent", async () => {
+    const alice = await signedIn("alice");
+    const s = await start(alice.jar, { intent: "link", returnTo: "/account/identities" });
+    expect(s.location.startsWith("https://idp.example/authorize?")).toBe(true);
+    const c = setCookies(s.res).find((x) => x.name === "cap_sso");
+    expect(c?.attrs.httponly).toBe(true);
+    expect(c?.attrs.path).toBe("/api/v1/auth/sso");
+    const rec = JSON.parse((await redis.get(`capk:sso-state:${s.state}`)) ?? "{}") as {
+      intent?: string;
+      sessionAccountId?: string;
+    };
+    expect(rec).toEqual(
+      expect.objectContaining({ intent: "link", sessionAccountId: alice.account.id }),
+    );
   });
 
   it("link intent links to the signed-in account, session unchanged", async () => {
@@ -512,6 +598,16 @@ describe("sign-up and trust follow the setting", () => {
     expect(trusted.location).toBe(`${PUBLIC}/`);
     expect(await me(trusted.jar)).toBe(alice.id);
     expect(await row("u-mail")).toEqual({ account_id: alice.id, linked_via: "sso" });
+  });
+
+  it("a disabled merge target gets no row: auth.account_disabled", async () => {
+    const alice = await local("alice", "alice@corp.example");
+    await sql`UPDATE capybara.accounts SET status = 'disabled' WHERE id = ${alice.id}`.execute(raw);
+    await seed({ trustedTenants: ["t1"] });
+    const r = await sso({ sub: "u-mail-off", email: "alice@corp.example", emailVerified: true });
+    expect(r.location).toBe(`${PUBLIC}/login?error=auth.account_disabled`);
+    expect(await row("u-mail-off")).toBeUndefined();
+    expect(await audits("identity.linked")).toEqual([]);
   });
 
   it("a link intent links to the session account even when the email would merge elsewhere", async () => {

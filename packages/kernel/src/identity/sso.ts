@@ -74,8 +74,8 @@ interface StateRecord {
    * start, never by whatever session the callback happens to carry.
    */
   sessionAccountId?: string;
-  /** Why the sign-in started (absent in states written before intents: `signin`). */
-  intent?: SsoIntent;
+  /** Why the sign-in started. */
+  intent: SsoIntent;
 }
 
 /** 一个有效的浏览器绑定值（复用请求里已有的，否则新生成）。 */
@@ -83,7 +83,15 @@ export function ssoBrowserBinding(existing: string | undefined): string {
   return existing !== undefined && BINDING_RE.test(existing) ? existing : b64url();
 }
 
-/** 回跳页面：站内相对路径（以单个 `/` 开头，非 `//`），否则 `/`（防开放重定向）。 */
+/** Appends `error=<code>` to a site path (a link intent's failure back on its page). */
+export function withError(path: string, code: string): string {
+  const hash = path.indexOf("#");
+  const base = hash < 0 ? path : path.slice(0, hash);
+  const frag = hash < 0 ? "" : path.slice(hash);
+  return `${base}${base.includes("?") ? "&" : "?"}error=${encodeURIComponent(code)}${frag}`;
+}
+
+/** The return page: a site-relative path (a single leading `/`, not `//`), else `/` (no open redirect). */
 export function safeReturnTo(p: string | undefined): string {
   return p !== undefined && isSafeReturnPath(p) ? p : "/";
 }
@@ -167,17 +175,18 @@ export class SsoFlow {
     return `${base}${path}`;
   }
 
-  /** 登录页并带原因码。 */
+  /** The sign-in page with a reason code. */
   loginError(code: SsoLoginError): string {
     return this.webUrl(`${LOGIN_PATH}?error=${encodeURIComponent(code)}`);
   }
 
   /**
-   * Starts a sign-in and returns the 302 target: the source's authorize URL; a source not on
-   * offer, no `http.publicUrl` or a plugin error → the sign-in page with `sso.unavailable`; a
-   * `link` intent without a web session → the sign-in page with `sso.session_mismatch`.
-   * `binding` is this browser's binding value (the controller writes the cookie);
-   * `sessionAccountId` the account of the web session the request carries.
+   * Starts a sign-in and returns the target to navigate to: the source's authorize URL. A sign-in's
+   * failure (source not on offer, no `http.publicUrl`, a plugin error: `sso.unavailable`) goes to
+   * the sign-in page; a link intent's back to its page with `?error=<code>`. A link intent needs
+   * the web session's account and must come from a CSRF-protected request (the controller's
+   * `POST …/start`; a cross-site top-level GET carries the Lax session cookie, so a GET start never
+   * links). `binding` is this browser's binding value (the controller writes the cookie).
    */
   async start(
     plugin: string,
@@ -186,11 +195,14 @@ export class SsoFlow {
     sessionAccountId?: string,
     intent: SsoIntent = "signin",
   ): Promise<string> {
+    const back = safeReturnTo(returnTo);
+    const fail = (code: SsoLoginError) =>
+      intent === "link" ? this.webUrl(withError(back, code)) : this.loginError(code);
     if (intent === "link" && sessionAccountId === undefined) {
       return this.loginError("sso.session_mismatch");
     }
     const src = await this.provider(plugin);
-    if (!src || !this.config.get().http.publicUrl) return this.loginError("sso.unavailable");
+    if (!src || !this.config.get().http.publicUrl) return fail("sso.unavailable");
     const state = b64url();
     const nonce = b64url();
     const codeVerifier = b64url();
@@ -209,13 +221,13 @@ export class SsoFlow {
       if (proto !== "https:" && proto !== "http:") throw new Error("authorize URL must be http(s)");
     } catch (err) {
       this.log.warn("identity source authorizeUrl failed", { plugin, err });
-      return this.loginError("sso.unavailable");
+      return fail("sso.unavailable");
     }
     const rec: StateRecord = {
       plugin,
       nonce,
       redirectUri,
-      returnTo: safeReturnTo(returnTo),
+      returnTo: back,
       binding: sha256(binding),
       codeVerifier,
       ...(sessionAccountId !== undefined && { sessionAccountId }),
@@ -258,7 +270,7 @@ export class SsoFlow {
     if (binding === undefined || !sameHash(sha256(binding), rec.binding)) {
       return { ok: false, error: "sso.session_mismatch" };
     }
-    const intent: SsoIntent = rec.intent ?? "signin";
+    const intent = rec.intent;
     if (
       intent === "link" &&
       (rec.sessionAccountId === undefined || rec.sessionAccountId !== sessionAccountId)

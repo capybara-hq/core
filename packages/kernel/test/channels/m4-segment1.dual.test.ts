@@ -478,13 +478,21 @@ describe("M4 第一段验收（双副本）", () => {
      * signed-in session); `intent: "link"` starts a link intent.
      */
     const ssoTo = async (externalId: string, jar: Jar, intent?: "link") => {
-      const q = intent === undefined ? "" : `&intent=${intent}`;
-      const start = await call(jar, "GET", `/api/v1/auth/sso/fake-im/start?returnTo=%2Fchat${q}`);
-      expect(start.status).toBe(302);
+      // a link intent starts from the CSRF-protected POST, which returns the location
+      const start =
+        intent === "link"
+          ? await call(jar, "POST", "/api/v1/auth/sso/fake-im/start", { intent, returnTo: "/chat" })
+          : await call(jar, "GET", "/api/v1/auth/sso/fake-im/start?returnTo=%2Fchat");
+      if (intent === "link") {
+        expect(start.status).toBe(200);
+        start.location = String(start.json.location);
+      } else {
+        expect(start.status).toBe(302);
+      }
       expect(start.location.startsWith(`${im.url}/oauth/authorize?`)).toBe(true);
       expect(new URL(start.location).searchParams.get("code_challenge_method")).toBe("S256");
       expect(jar.has("cap_sso")).toBe(true);
-      // 平台上「登录」为 externalId，平台带授权码 302 回内核的回调地址
+      // the platform signs in as externalId and 302s back to the callback with a code
       const authz = await fetch(`${start.location}&as=${externalId}`, { redirect: "manual" });
       expect(authz.status).toBe(302);
       const back = new URL(authz.headers.get("location") ?? "");

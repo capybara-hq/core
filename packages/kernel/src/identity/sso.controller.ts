@@ -30,6 +30,7 @@ import {
   SSO_STATE_TTL_SECONDS,
   SsoFlow,
   ssoBrowserBinding,
+  withError,
 } from "./sso.js";
 import {
   linkExpired,
@@ -45,6 +46,12 @@ const LinkBodySchema = z.object({
 });
 class LinkBody extends createZodDto(LinkBodySchema, "SsoLinkBody") {}
 
+const StartLinkBodySchema = z.object({
+  intent: z.literal("link"),
+  returnTo: z.string().max(2000).optional(),
+});
+class StartLinkBody extends createZodDto(StartLinkBodySchema, "SsoStartLinkBody") {}
+
 /** What the link page shows (`GET /api/v1/auth/sso/link`). */
 export interface SsoLinkView {
   plugin: string;
@@ -54,14 +61,6 @@ export interface SsoLinkView {
   avatarUrl?: string;
   /** The external account is already linked to a Capybara account for IM (never which one). */
   linkedToAnother: boolean;
-}
-
-/** Appends `error=<code>` to a site path (a link intent's failure back on its page). */
-function withError(path: string, code: string): string {
-  const hash = path.indexOf("#");
-  const base = hash < 0 ? path : path.slice(0, hash);
-  const frag = hash < 0 ? "" : path.slice(hash);
-  return `${base}${base.includes("?") ? "&" : "?"}error=${encodeURIComponent(code)}${frag}`;
 }
 
 const MAX_QUERY_KEYS = 50;
@@ -101,8 +100,10 @@ export class SsoController {
   /**
    * Starts a sign-in: 302 to the source's authorize URL, writing the browser binding cookie
    * `cap_sso` (HttpOnly, SameSite=Lax: the source's redirect back is a cross-site top-level GET,
-   * which Lax sends; Path only `/api/v1/auth/sso`). `intent=link` (the linked accounts page)
-   * needs a web session and links to its account; anything else is a sign-in.
+   * which Lax sends; Path only `/api/v1/auth/sso`). Always a sign-in: `intent=link` is refused
+   * with `sso.session_mismatch` and no state, because a cross-site page can trigger this GET with
+   * the person's Lax session cookie and would link whatever external account that browser is
+   * signed in to (a link intent starts from `POST …/start`).
    */
   @Get("sso/:plugin/start")
   @Public()
@@ -110,22 +111,54 @@ export class SsoController {
     @Param("plugin") plugin: string,
     @Query("returnTo") returnTo: unknown,
     @Query("intent") intent: unknown,
-    @CurrentPrincipal() principal: Principal | undefined,
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply,
   ): Promise<void> {
+    if (intent === "link") {
+      await reply
+        .header("cache-control", "no-store")
+        .redirect(this.flow.loginError("sso.session_mismatch"), 302);
+      return;
+    }
     const binding = ssoBrowserBinding(req.cookies[SSO_BINDING_COOKIE]);
-    // the session's account at the start goes into the state: a link intent's callback must carry
-    // the same session
     const location = await this.flow.start(
       plugin,
       typeof returnTo === "string" ? returnTo : undefined,
       binding,
-      sessionAccount(principal),
-      intent === "link" ? "link" : "signin",
     );
     this.setBindingCookie(reply, binding, SSO_STATE_TTL_SECONDS);
     await reply.header("cache-control", "no-store").redirect(location, 302);
+  }
+
+  /**
+   * Starts a link intent (the linked accounts page, spec §4): web session only, and as an unsafe
+   * method it needs the CSRF header (global guard), so no other site can start it. The state
+   * records the session's account; the callback must carry the same session. Writes the binding
+   * cookie as the GET start does and returns where the browser goes next: the source's authorize
+   * URL, or, on failure, the page with `?error=<code>`.
+   */
+  @Post("sso/:plugin/start")
+  @SessionOnly()
+  @HttpCode(200)
+  async startLink(
+    @Param("plugin") plugin: string,
+    @ZBody(StartLinkBody) body: z.infer<typeof StartLinkBodySchema>,
+    @CurrentPrincipal() principal: Principal,
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ location: string }> {
+    const p = requireUser(principal);
+    const binding = ssoBrowserBinding(req.cookies[SSO_BINDING_COOKIE]);
+    const location = await this.flow.start(
+      plugin,
+      body.returnTo,
+      binding,
+      p.account.id,
+      body.intent,
+    );
+    this.setBindingCookie(reply, binding, SSO_STATE_TTL_SECONDS);
+    reply.header("cache-control", "no-store");
+    return { location };
   }
 
   private setBindingCookie(reply: FastifyReply, binding: string, maxAge: number): void {
@@ -221,10 +254,12 @@ export class SsoController {
   /**
    * Completes a pending link with the person's username and password (spec §5). Public; the
    * global guard requires the CSRF header on this unsafe public route, and the binding cookie must
-   * match. The password goes through the same service and the same credential throttlers as
-   * `POST /auth/login` (R25); a wrong one also costs the ticket an attempt (the fifth burns it). A
-   * disabled account → `auth.account_disabled` (its password was right: no attempt is counted, the
-   * reservation is given back). An identity already linked to another account →
+   * match (it relies on no sibling origin being able to set cookies for the kernel's host, see
+   * `SsoLinkTickets`). The password goes through the same service and the same credential
+   * throttlers as `POST /auth/login` (R25); each check first reserves one of the ticket's attempts
+   * atomically, and a wrong password keeps it (the fifth burns the ticket). A disabled account →
+   * `auth.account_disabled` (its password was right: the ticket's attempt and the throttler
+   * reservation are given back). The login source is checked again after the ticket is taken. An identity already linked to another account →
    * `identity.taken`, the ticket kept. On success the ticket is taken atomically (a concurrent
    * submission gets `sso.link_expired`), the identity is linked as `sso` (or the account's `bind`
    * row upgraded) and a session is created exactly as a password sign-in; an account that must
@@ -244,15 +279,24 @@ export class SsoController {
       await this.linkTickets.discard(body.ticket);
       throw linkExpired();
     }
-    // reserve before checking the password, atomically (as POST /auth/login)
-    await this.throttler.reserve(LOGIN_THROTTLERS, req, reply);
+    // one of the ticket's attempts first (atomic: concurrent wrong passwords never exceed the
+    // limit), then one on the login throttlers, before checking the password (as POST /auth/login)
+    await this.linkTickets.reserveAttempt(body.ticket);
     let account: Account | null;
     try {
-      account = await this.accounts.authenticateLocal(body.login, body.password);
-    } catch (e) {
-      if (e instanceof ApiError && e.code === "auth.account_disabled") {
-        await this.throttler.succeeded(LOGIN_THROTTLERS, req);
+      await this.throttler.reserve(LOGIN_THROTTLERS, req, reply);
+      try {
+        account = await this.accounts.authenticateLocal(body.login, body.password);
+      } catch (e) {
+        // a disabled account's password is right: no failed attempt, the reservation given back
+        if (e instanceof ApiError && e.code === "auth.account_disabled") {
+          await this.throttler.succeeded(LOGIN_THROTTLERS, req);
+        }
+        throw e;
       }
+    } catch (e) {
+      // rate limited or disabled: the ticket's attempt is given back
+      await this.linkTickets.refundAttempt(body.ticket);
       throw e;
     }
     if (!account) {
@@ -262,8 +306,13 @@ export class SsoController {
     await this.throttler.succeeded(LOGIN_THROTTLERS, req);
     // refused before the ticket is taken, so the person may try the other account's password
     const row = await this.external.peekRow(pending.identity);
-    if (row !== undefined && row.accountId !== account.id) throw identityTaken();
+    if (row !== undefined && row.accountId !== account.id) {
+      await this.linkTickets.refundAttempt(body.ticket);
+      throw identityTaken();
+    }
     const link = await this.linkTickets.redeem(body.ticket, binding);
+    // the source may have been switched off while the password was checked: no row then
+    if (!(await this.flow.provider(link.plugin))) throw linkExpired();
     await this.external.linkVerified(account.id, link.identity, "link_page");
     const session = await this.sessions.create(account.id, clientMeta(req));
     setSessionCookies(reply, session, this.config.get());

@@ -82,6 +82,19 @@ export const redeemLink = (body: { ticket: string; login: string; password: stri
     { method: "POST", body: JSON.stringify(body) },
   );
 
+/**
+ * Starts linking an external account to the signed-in person (the linked accounts page): a POST,
+ * so no other site can start it; the browser then navigates to the returned `location` (the
+ * identity provider, or back to `returnTo` with `?error=<code>`).
+ */
+export const startLink = (plugin: string, returnTo: string) => {
+  const body: { intent: "link"; returnTo: string } = { intent: "link", returnTo };
+  return apiFetch<{ location: string }>(`/api/v1/auth/sso/${encodeURIComponent(plugin)}/start`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+};
+
 /** 发起第三方登录的地址（整页跳转；内核 302 到身份源，回调后回到 `returnTo`）。 */
 export const ssoStartUrl = (plugin: string, returnTo: string) =>
   `/api/v1/auth/sso/${encodeURIComponent(plugin)}/start?returnTo=${encodeURIComponent(returnTo)}`;

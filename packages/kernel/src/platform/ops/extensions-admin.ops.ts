@@ -605,7 +605,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-config",
         description:
-          "Read an extension's deployment config (super admin): each field's source (env, file or nacos: read-only here; db: saved here; default; unset), the effective value of non-secret fields, whether each secret field is set (never its value), the form's JSON Schema (secret fields carry x-secret), whether the config is valid and the problems (paths only), the overridable fields every org must fill in itself (orgMustConfigure), and the platform setup guides the extension ships (guides: id and title in locale, the person's language; read them with extensions.platform-guides). next names that operation when a guide exists and the config needs setting up.",
+          "Read an extension's deployment config (super admin): each field's source (env, file or nacos: read-only here; db: saved here; default; unset), the effective value of non-secret fields, whether each secret field is set (never its value), the form's JSON Schema (secret fields carry x-secret), whether the config is valid and the problems (paths only), the overridable fields every org must fill in itself (orgMustConfigure), and the platform setup guides the extension ships (guides: id and title in locale, the person's language; read them with extensions.platform-guides). next names that operation when a guide exists and the config needs setting up; for an identity-source@1 extension, next also points to login-sources.update.",
         input: NameInput.extend(DeploymentGuidesQuery.shape).strict(),
         example: { name: "slack", locale: "en" },
         authz: { superAdmin: true },

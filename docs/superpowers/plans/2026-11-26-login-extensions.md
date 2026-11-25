@@ -136,10 +136,10 @@ Merge order: core PR (SDK + kernel + web, one PR) first; the main session releas
 **Interfaces:**
 - Consumes: `LoginSourcesService.enabled()/get()` (Task 2), `AccountsService.authenticateLocal`, `CredentialThrottler` with `LOGIN_THROTTLERS` (export it from `auth.controller.ts`), `SessionService.create`, `setSessionCookies`.
 - Produces:
-  - `GET /api/v1/auth/sso/:plugin/start?returnTo&intent=signin|link` (`link` without a web session → login page `sso.session_mismatch`).
+  - `GET /api/v1/auth/sso/:plugin/start?returnTo` is a sign-in only (`intent=link` → login page `sso.session_mismatch`, no state); `POST /api/v1/auth/sso/:plugin/start` body `{ intent: "link"; returnTo? }` (web session only, CSRF header) → `{ location }` + the `cap_sso` cookie: the link intent's start (web helper `startLink(plugin, returnTo)`).
   - Pure decision `decideSsoCallback(input: { intent: "signin" | "link"; sessionAccountId?: string; row?: { accountId: string; linkedVia: "bind" | "sso" | "directory" | null }; mergeTarget?: string; signUp: "link" | "create" }): { kind: "signin"; accountId } | { kind: "linked"; accountId } | { kind: "upgrade"; accountId } | { kind: "link_page"; existingAccountId?: string } | { kind: "create" } | { kind: "error"; code: SsoLoginError | "identity.taken" }` in `sso.ts`, implementing spec §4's table cell by cell.
   - `GET /api/v1/auth/sso/link?ticket=` (public, needs `cap_sso`) → `{ plugin; label; tenantId; displayName; avatarUrl?; linkedToAnother: boolean }`.
-  - `POST /api/v1/auth/sso/link` body `{ ticket; login; password }` (public, CSRF header + Origin as `/auth/login`) → `{ account }` + session cookies; errors `auth.invalid_credentials`, `auth.rate_limited`, `auth.account_disabled`, `identity.taken`, `sso.link_expired`.
+  - `POST /api/v1/auth/sso/link` body `{ ticket; login; password }` (public, CSRF header as `/auth/login`) → `{ account, returnTo }` + session cookies; errors `auth.invalid_credentials`, `auth.rate_limited`, `auth.account_disabled`, `identity.taken`, `sso.link_expired`.
 
 - [ ] **Step 1: Write the failing unit tests** in `sso-decisions.unit.test.ts`, one per cell of spec §4's table (10 cells), e.g. `link intent, row of A as bind → upgrade A`, `signin, no row, signUp link → link_page`, `signin, row of B as bind → link_page`, `link intent, row of B → identity.taken`, `link intent, merge target B, session A → linked A`.
 - [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/identity/sso-decisions.unit.test.ts` → FAIL.
@@ -158,8 +158,8 @@ Merge order: core PR (SDK + kernel + web, one PR) first; the main session releas
 - Test: extend `packages/kernel/test/identity/sso.http.test.ts` (`me identities report capabilities`), `apps/web/src/app/(app)/account/identities/view.test.tsx`
 
 **Interfaces:**
-- Consumes: `LoginSourcesService.enabled()` (Task 2); `start?intent=link` (Task 4).
-- Produces: the page described in spec §6 — columns 账号 / 平台 / 租户 / IM / 登录; 「启用登录」 row action and 「绑定 <平台>」 buttons navigate to `/api/v1/auth/sso/<plugin>/start?intent=link&returnTo=/account/identities`; no 「未验证」 badge.
+- Consumes: `LoginSourcesService.enabled()` (Task 2); `POST …/start` `{ intent: "link" }` via `startLink` (Task 4).
+- Produces: the page described in spec §6 — columns 账号 / 平台 / 租户 / IM / 登录; 「启用登录」 row action and 「绑定 <平台>」 buttons call `startLink(plugin, "/account/identities")` and navigate to the returned `location`; link-intent errors come back as `?error=<code>` on the page; no 「未验证」 badge.
 
 - [ ] **Step 1: Write the failing tests**: kernel `me identities report capabilities` (fake-im row: `channel: true`; login `off` before enabling, `needs_link` for a bind row after enabling, `on` for an sso row; a plugin without identity-source → `unsupported`); web view test: `shows 绑定 for an enabled source without an identity`, `no 未验证 badge`, `启用登录 on a needs_link row`, `不支持 for telegram-like rows`.
 - [ ] **Step 2: Run** both → FAIL.
