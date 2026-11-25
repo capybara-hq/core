@@ -918,7 +918,7 @@ function withNotes(result: unknown, notes: readonly string[]): unknown {
 type Resolved = AgentTools;
 
 /** A network ask's kept display fields, written with its result when the ask settles. */
-const keptExtras = (kept: NetworkAskDetail["result"] | undefined) => ({
+export const keptExtras = (kept: NetworkAskDetail["result"] | undefined) => ({
   ...(kept?.outputId !== undefined && { outputId: kept.outputId }),
   ...(kept?.contentTypes !== undefined && { contentTypes: kept.contentTypes }),
   ...(kept?.display !== undefined && { display: kept.display }),
@@ -1942,11 +1942,16 @@ export class ToolPipeline {
     // step's results and the person sees them on the call's row (tool result images design §2)
     const images =
       outcome.kind === "result"
-        ? await storeResultImages(outcome.result, tool.key, this.storeResultImage(ctx), (err) =>
-            this.deps.log.warn("cannot store an image of a tool result", {
-              toolKey: tool.key,
-              error: err instanceof Error ? err.message : String(err),
-            }),
+        ? await storeResultImages(
+            outcome.result,
+            tool.key,
+            this.storeResultImage(ctx),
+            (err) =>
+              this.deps.log.warn("cannot store an image of a tool result", {
+                toolKey: tool.key,
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            ctx.signal,
           )
         : undefined;
     const rendered =
@@ -3214,11 +3219,6 @@ export class ToolPipeline {
   }
 
   /**
-   * 发出本步调用的请求里带了完整定义的工具 key：本步最后一次尝试的 `model_call.request.tools`
-   * （`assistant_message` 来自最后一次尝试）。该请求不在 ToolSearch 模式（没有 `catalog`，工具全部发送）
-   * 或找不到 model_call 时返回 null（不做加载检查）。已加载集合由此从日志得出，不放进程内存。
-   */
-  /**
    * How a call's result images are stored: a `read` copy bound to the calling conversation (a
    * sub-agent's own, never its root), owned by the run's trigger account; absent without the
    * attachments service.
@@ -3230,6 +3230,11 @@ export class ToolPipeline {
       attachments.storeRead(ctx.orgId, ctx.conversationId, ctx.accountId || null, file);
   }
 
+  /**
+   * 发出本步调用的请求里带了完整定义的工具 key：本步最后一次尝试的 `model_call.request.tools`
+   * （`assistant_message` 来自最后一次尝试）。该请求不在 ToolSearch 模式（没有 `catalog`，工具全部发送）
+   * 或找不到 model_call 时返回 null（不做加载检查）。已加载集合由此从日志得出，不放进程内存。
+   */
   private async sentTools(ctx: ToolStepContext): Promise<Set<string> | null> {
     // attempts can reach MAX_STEP_MODEL_CALLS after reactive overflow fix-ups; the assistant_message
     // comes from the last attempt, so scan from the top

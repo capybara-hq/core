@@ -772,7 +772,7 @@ function resultText(
   const first = stored[0];
   if (first !== undefined) {
     lines.push(
-      `The images are not shown to you; Read with file_id ${first.repeatOf?.artifactId ?? first.artifactId} returns one.`,
+      `The images are not shown to you; if Read is available to you, Read with file_id ${first.repeatOf?.artifactId ?? first.artifactId} returns one.`,
     );
   }
   if (deviceLine !== null) lines.push(deviceLine);

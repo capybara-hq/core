@@ -1,4 +1,5 @@
 import { MEDIA_LIMITS } from "@capybara-hq/plugin-sdk";
+import sharp from "sharp";
 import { sniffImage } from "../media/image-header.js";
 import { sizeText } from "./builtins/size-text.js";
 import type { ToolResultMedia } from "./registry.js";
@@ -15,6 +16,13 @@ import type { ToolResultMedia } from "./registry.js";
 export const RESULT_IMAGES_MAX = 10;
 
 /**
+ * The most pixels an image from a tool result may have: an external server can send a small,
+ * highly compressible file that decodes to gigabytes. The same bound as the kernel's thumbnails
+ * (`THUMBNAIL_MAX_INPUT_PIXELS`).
+ */
+export const RESULT_IMAGE_MAX_PIXELS = 40_000_000;
+
+/**
  * Stores one image as a `read` copy of the calling conversation (`AttachmentsService.storeRead`
  * bound to it): the copy, or refused by the per-conversation cap. Throws `storage.unavailable`
  * without an object store.
@@ -26,7 +34,15 @@ export type StoreResultImage = (file: {
 }) => Promise<{ ok: true; attachmentId: string; size: number } | { ok: false; reason: "cap" }>;
 
 /** Why an image block was not stored (each one is said in the result text). */
-export type NotStoredReason = "type" | "size" | "count" | "cap" | "storage" | "error";
+export type NotStoredReason =
+  | "type"
+  | "size"
+  | "pixels"
+  | "unreadable"
+  | "count"
+  | "cap"
+  | "storage"
+  | "error";
 
 /** The per-block texts (in image order) and the stored copies of one tool result. */
 export interface ResultImages {
@@ -68,6 +84,8 @@ export const resultImageText = (
 const REASON_TEXT: Record<NotStoredReason, string> = {
   type: "only PNG, JPEG, GIF and WebP images are stored.",
   size: "it is over the 5 MB image limit.",
+  pixels: `its pixel size is missing or over the limit of ${RESULT_IMAGE_MAX_PIXELS / 1_000_000} megapixels.`,
+  unreadable: "it could not be decoded as a whole image.",
   count: `a tool result stores at most ${RESULT_IMAGES_MAX} images.`,
   cap: "this conversation reached its limit for stored images.",
   storage: "file storage is not configured in this deployment.",
@@ -94,53 +112,94 @@ const clipType = (t: string): string => (t.length > 100 ? `${t.slice(0, 100)}…
 /** base64 data decoded (Node accepts and skips characters outside the alphabet). */
 const decode = (data: string): Uint8Array => new Uint8Array(Buffer.from(data, "base64"));
 
+/** The decoded size of base64 data, without decoding it. */
+export function base64Bytes(data: string): number {
+  const s = data.replace(/\s/g, "");
+  const pad = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((s.length * 3) / 4) - pad);
+}
+
+/**
+ * An image block of a tool result: `{ type: "image", data: <base64 string>, mimeType? }`. The one
+ * test {@link storeResultImages} and `renderResult` both use, so the n-th text always belongs to
+ * the n-th image block.
+ */
+export function isToolImageBlock(
+  b: unknown,
+): b is { type: "image"; data: string; mimeType?: unknown } {
+  return (
+    typeof b === "object" &&
+    b !== null &&
+    !Array.isArray(b) &&
+    (b as { type?: unknown }).type === "image" &&
+    typeof (b as { data?: unknown }).data === "string"
+  );
+}
+
+/**
+ * Whether the bytes decode as a whole image within {@link RESULT_IMAGE_MAX_PIXELS}: `pixels` when
+ * the header's size is missing or over the bound, `unreadable` when decoding fails (a truncated
+ * or corrupt body after valid magic bytes), else null. Decodes once, shrunk, so the cost is bounded
+ * by the pixel limit.
+ */
+export async function checkResultImage(data: Uint8Array): Promise<"pixels" | "unreadable" | null> {
+  let width: number | undefined;
+  let height: number | undefined;
+  try {
+    ({ width, height } = await sharp(data, { limitInputPixels: false }).metadata());
+  } catch {
+    return "unreadable";
+  }
+  if (!width || !height || width * height > RESULT_IMAGE_MAX_PIXELS) return "pixels";
+  try {
+    await sharp(data, { failOn: "truncated", limitInputPixels: RESULT_IMAGE_MAX_PIXELS })
+      .resize(64, 64, { fit: "inside" })
+      .toBuffer();
+  } catch {
+    return "unreadable";
+  }
+  return null;
+}
+
 const isApiStorageUnavailable = (e: unknown): boolean =>
   typeof e === "object" && e !== null && (e as { code?: unknown }).code === "storage.unavailable";
 
 /**
- * Stores the image blocks of a tool result (`{ content: [...] }`, image blocks
- * `{ type: "image", data, mimeType }`), in order and one at a time, and returns the text for each
- * block and the stored copies; `undefined` when the result has no image block. A block is stored
- * when its bytes sniff as PNG, JPEG, GIF or WebP, are at most `MEDIA_LIMITS.imageBytes`, and it is
- * among the first {@link RESULT_IMAGES_MAX}; `store` absent or throwing `storage.unavailable`
- * means no object store; any other error is passed to `onError` and the block is not stored (the
- * call's result is still written).
+ * Stores the image blocks of a tool result (`{ content: [...] }`, blocks matching
+ * {@link isToolImageBlock}), in order and one at a time, and returns the text for each block and
+ * the stored copies; `undefined` when the result has no image block. A block is stored when it is
+ * among the first {@link RESULT_IMAGES_MAX} and at most `MEDIA_LIMITS.imageBytes` (both checked
+ * before decoding), its bytes sniff as PNG, JPEG, GIF or WebP, and it decodes as a whole image
+ * within {@link RESULT_IMAGE_MAX_PIXELS}; `store` absent or throwing `storage.unavailable` means no
+ * object store; any other error is passed to `onError` and the block is not stored (the call's
+ * result is still written). `signal` (the run's) is checked before each image: a stopped run stores
+ * nothing more. A copy stored before a crash that keeps the result from being written stays bound
+ * and unreferenced until the conversation's purge (the same window as `Read`'s copies).
  */
 export async function storeResultImages(
   result: unknown,
   toolKey: string,
   store: StoreResultImage | undefined,
   onError?: (err: unknown) => void,
+  signal?: AbortSignal,
 ): Promise<ResultImages | undefined> {
   const content = (result as { content?: unknown } | null)?.content;
   if (!Array.isArray(content)) return undefined;
-  const blocks = content.filter(
-    (b): b is { type: "image"; data: string; mimeType?: unknown } =>
-      typeof b === "object" &&
-      b !== null &&
-      (b as { type?: unknown }).type === "image" &&
-      typeof (b as { data?: unknown }).data === "string",
-  );
+  const blocks = content.filter(isToolImageBlock);
   if (blocks.length === 0) return undefined;
   const texts: string[] = [];
   const media: ToolResultMedia[] = [];
   let noStorage = store === undefined;
   for (const [i, b] of blocks.entries()) {
     const declared = typeof b.mimeType === "string" ? b.mimeType : "unknown";
-    const data = decode(b.data);
-    const size = data.byteLength;
-    const notStored = (reason: NotStoredReason) =>
+    const declaredSize = base64Bytes(b.data);
+    const notStored = (reason: NotStoredReason, size = declaredSize) =>
       texts.push(resultImageNotStoredText(declared, size, reason));
     if (i >= RESULT_IMAGES_MAX) {
       notStored("count");
       continue;
     }
-    const sniffed = sniffImage(data);
-    if (sniffed === null) {
-      notStored("type");
-      continue;
-    }
-    if (size > MEDIA_LIMITS.imageBytes) {
+    if (declaredSize > MEDIA_LIMITS.imageBytes) {
       notStored("size");
       continue;
     }
@@ -148,11 +207,25 @@ export async function storeResultImages(
       notStored("storage");
       continue;
     }
+    signal?.throwIfAborted();
+    const data = decode(b.data);
+    const size = data.byteLength;
+    const sniffed = sniffImage(data);
+    if (sniffed === null) {
+      notStored("type", size);
+      continue;
+    }
+    const bad = await checkResultImage(data);
+    if (bad !== null) {
+      notStored(bad, size);
+      continue;
+    }
+    signal?.throwIfAborted();
     const name = resultImageName(toolKey, media.length, sniffed.mediaType);
     try {
       const stored = await store({ name, contentType: sniffed.mediaType, data });
       if (!stored.ok) {
-        notStored("cap");
+        notStored("cap", size);
         continue;
       }
       media.push({
@@ -165,10 +238,10 @@ export async function storeResultImages(
     } catch (e) {
       if (isApiStorageUnavailable(e)) {
         noStorage = true;
-        notStored("storage");
+        notStored("storage", size);
       } else {
         onError?.(e);
-        notStored("error");
+        notStored("error", size);
       }
     }
   }

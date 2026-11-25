@@ -1,6 +1,7 @@
 ---
 "@capybara-hq/kernel": patch
 "@capybara-hq/design": patch
+"@capybara-hq/plugin-sdk": patch
 "@capybara-hq/capybara": patch
 ---
 

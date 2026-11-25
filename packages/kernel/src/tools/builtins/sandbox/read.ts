@@ -224,6 +224,12 @@ interface ReadBytes {
   /** The file's full size (`data` may be its head only). */
   size: number;
   truncated: boolean;
+  /**
+   * The `read` copy of the calling conversation these bytes already are: when the chat model
+   * cannot view images, the vision answer names it and nothing is stored again (a vision model
+   * still gets a new copy, so each image block in a request keeps its own id).
+   */
+  storedAs?: string;
 }
 
 /**
@@ -352,6 +358,8 @@ async function readById(
     data: data.subarray(0, READ_MAX_BYTES),
     size: Math.max(found.size, data.byteLength),
     truncated: found.size > READ_MAX_BYTES || data.byteLength > READ_MAX_BYTES,
+    // already a stored copy of this conversation: a model without vision needs no second one
+    ...(found.readCopyOf === ctx.conversationId && { storedAs: found.id }),
   });
   return {
     ...out,
@@ -426,6 +434,11 @@ async function readImage(
     answer = fallbackAnswerText(got.provider, got.model, got.text);
   }
   const withAnswer = (text: string) => (answer === null ? text : `${text}\n\n${answer}`);
+  if (answer !== null && file.storedAs !== undefined) {
+    return {
+      text: withAnswer(readImageText(file.name, image.mediaType, size, image, file.storedAs)),
+    };
+  }
   // storeRead takes no signal: an aborted call stores nothing
   ctx.signal.throwIfAborted();
   let stored: Awaited<ReturnType<AttachmentsService["storeRead"]>> | "storage";

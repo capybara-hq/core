@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import {
   FakeMcpRpcError,
   type FakeMcpServer,
@@ -8,6 +9,7 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -47,6 +49,10 @@ import {
 
 /** The core fake connector (an MCP client for startFakeMcpServer), kind `fake`. */
 const CONNECTOR = fakeExtensionEntry("fake-connector");
+/** The object store an image a connector returns is stored in (tool result images design §2). */
+const MEM_STORE = fileURLToPath(new URL("../fixtures/plugins/mem-store/index.ts", import.meta.url));
+/** A 4×3 PNG an MCP tool returns as image content. */
+let SHOT_PNG = "";
 
 const TOKEN = "mcp-org-token-7f3a9c1e5b2d4086";
 
@@ -69,9 +75,25 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  SHOT_PNG = (
+    await sharp({ create: { width: 4, height: 3, channels: 3, background: "#08f" } })
+      .png()
+      .toBuffer()
+  ).toString("base64");
   mcp = await startFakeMcpServer({
     requireBearer: TOKEN,
     tools: [
+      {
+        name: "screenshot",
+        description: "Returns a screenshot",
+        annotations: { readOnlyHint: true },
+        handler: () => ({
+          content: [
+            { type: "text", text: "shot" },
+            { type: "image", mimeType: "image/png", data: SHOT_PNG },
+          ],
+        }),
+      },
       {
         name: "search",
         description: "Search the docs",
@@ -145,7 +167,7 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        extensions: [MODEL_FAKE, CONNECTOR],
+        extensions: [MODEL_FAKE, CONNECTOR, MEM_STORE],
         extensionPermissions: { autoApprove: true },
         // 假服务在 127.0.0.1 上跑 http：测试打开本机 http（默认关闭）
         extensionConfig: { "fake-connector": {} },
@@ -444,6 +466,27 @@ describe("connector end to end (fake-connector)", () => {
     }
     expect(JSON.stringify(evs)).toContain("[REDACTED]");
     expect(logLines.join("\n")).toContain("[REDACTED]");
+  });
+
+  it("an image the connector returns is stored and named like any tool's (tool result images §2)", async () => {
+    const { connectorId } = await installConnector();
+    const agentId = await agentFor(connectorId);
+    const convId = await createConv(req, orgId, agentId);
+    const r = await runTool(convId, 1, "mcp__docs__screenshot", {});
+    expect(r.isError, r.content).toBe(false);
+    const id = r.media?.[0]?.attachmentId as string;
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    const bytes = Buffer.from(SHOT_PNG, "base64").length;
+    expect(r.content).toBe(`shot\n[Image (image/png, ${bytes} B, 4×3), file_id ${id}]`);
+    expect(r.media).toEqual([
+      { attachmentId: id, name: "screenshot.png", mediaType: "image/png", size: bytes },
+    ]);
+    const row = await db
+      .selectFrom("attachments")
+      .select(["conversation_id", "purpose"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ conversation_id: convId, purpose: "read" });
   });
 
   it("destructive 工具触发审批：批准前不执行，批准后执行一次", async () => {

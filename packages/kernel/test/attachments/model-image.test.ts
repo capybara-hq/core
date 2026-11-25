@@ -5,6 +5,7 @@ import {
   fitImageForModel,
   MODEL_IMAGE_KEEP_BYTES,
   MODEL_IMAGE_MAX_EDGE,
+  MODEL_IMAGE_MAX_INPUT_PIXELS,
   modelImageKey,
   parseModelImage,
   serializeModelImage,
@@ -19,6 +20,18 @@ async function noisePng(width: number, height: number, alpha = false): Promise<U
 }
 
 describe("fitImageForModel", () => {
+  it("never decodes past its pixel bound: a compressible image over it is sent unchanged", async () => {
+    // 10500×10000 = 105 megapixels of one colour: a few hundred KB, gigabytes once decoded
+    const data = new Uint8Array(
+      await sharp({ create: { width: 10_500, height: 10_000, channels: 3, background: "#fff" } })
+        .png({ compressionLevel: 9 })
+        .toBuffer(),
+    );
+    expect(10_500 * 10_000).toBeGreaterThan(MODEL_IMAGE_MAX_INPUT_PIXELS);
+    const media = { mediaType: "image/png", data };
+    expect(await fitImageForModel(media)).toBe(media);
+  });
+
   it("scales a large opaque PNG to the max edge as a smaller JPEG", async () => {
     const data = await noisePng(3000, 1500);
     expect(data.byteLength).toBeGreaterThan(MODEL_IMAGE_KEEP_BYTES);

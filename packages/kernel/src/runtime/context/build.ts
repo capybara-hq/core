@@ -539,7 +539,7 @@ export const readImageLabelText = (toolKey: string, id: string): string =>
 export const readImageNoVisionText = (toolKey: string, id: string): string =>
   toolKey === "Read"
     ? "[Not shown to you: this model cannot view images.]"
-    : `[Not shown to you: this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`;
+    : `[Not shown to you: this model cannot view images. If Read is available to you, Read with file_id ${id} sends it to the organization's vision model, if one is set.]`;
 
 /** An image of a tool result the Read-image window left out of this request. */
 export const readImageNotIncludedText = (toolKey: string, id: string): string =>
@@ -594,7 +594,7 @@ export const attachmentReferenceText = (input: {
 
 function placeholder(b: LogMedia, name: string): string {
   if (b.type === "image") {
-    return `[Attached image ${quoted(name)} — this model cannot view images. Read with file_id ${b.source.attachmentId} sends it to the organization's vision model, if one is set.]`;
+    return `[Attached image ${quoted(name)} — this model cannot view images. If Read is available to you, Read with file_id ${b.source.attachmentId} sends it to the organization's vision model, if one is set.]`;
   }
   return `[Attached document ${quoted(name)} — this model cannot read ${
     b.mediaType === "application/pdf" ? "PDF documents" : "documents"

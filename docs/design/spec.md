@@ -1915,7 +1915,7 @@ widths; the disclosure chevron remains visible.
   - An edit's expanded form stays its diff (§6.16.10), without labels.
 
 <!-- states: tool-row -->
-States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `hook-denied`, `waiting`, `linked`, `auto-granted`, `auto-approved`, `review-approved`
+States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `expanded-images`, `hook-denied`, `waiting`, `linked`, `auto-granted`, `auto-approved`, `review-approved`
 
 <!-- size-table: tool-row -->
 | Part | State | Property | Value |

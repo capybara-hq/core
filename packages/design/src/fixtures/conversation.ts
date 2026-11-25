@@ -251,6 +251,8 @@ export type FixtureTool = {
   outsideSandbox?: boolean;
   /** Who approved the call without asking the person (§6.16.9 "approved automatically"). */
   approvedBy?: "auto" | "review-model";
+  /** Images the call's result carried (§6.16.9 result images): names only, drawn as empty thumbnails. */
+  images?: string[];
 };
 
 const cmd = (
@@ -275,6 +277,7 @@ export const TOOL_FIXTURES: Record<
   | "expanded"
   | "diff"
   | "largeOutput"
+  | "images"
   | "hookDenied"
   | "waiting"
   | "autoGranted"
@@ -485,6 +488,21 @@ export const TOOL_FIXTURES: Record<
       outputBytes: 82 * 1024,
       output:
         'scripts/calc.py:88:    rp = load_sheet("示例表")\nscripts/calc.py:91:    rp_names = {norm_name(r[0]) for r in rp}\nscripts/calc.py:402:   if payee in rp_names or row["Related?"] == "Y":\nscripts/report.py:17:  src = open_book("示例表.xlsx")\n…',
+    },
+  ],
+  // An extension tool whose result carried two images (tool result images design §4).
+  images: [
+    {
+      id: "t_images",
+      kind: "tool",
+      name: "浏览器",
+      tool: "browser_screenshot",
+      status: "done",
+      durationMs: 900,
+      input: [["fullPage", "true"]],
+      output:
+        "Screenshot 1280x800 (viewport 1280x800).\n[Image (image/jpeg, 49.1 KB, 1280×800), file_id 7d1c…]\n[Image (image/jpeg, 31.4 KB, 1280×800), file_id 9a42…]",
+      images: ["browser_screenshot.jpg", "browser_screenshot-2.jpg"],
     },
   ],
   hookDenied: [

@@ -1072,7 +1072,7 @@ describe("images in an extension tool's result", () => {
       { type: "text", text: `Image from ${SHOT} (file_id ${id}):` },
       {
         type: "text",
-        text: `[Not shown to you: this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
+        text: `[Not shown to you: this model cannot view images. If Read is available to you, Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
       },
     ]);
     // the scripted input carries the base64 as text; no image block is ever sent
@@ -1094,6 +1094,73 @@ describe("images in an extension tool's result", () => {
       "Screenshot of 1 image(s).\n[Image (image/svg+xml, 41 B) not stored, so not shown: only PNG, JPEG, GIF and WebP images are stored.]",
     );
     expect(await readRows(conv)).toEqual([]);
+  });
+
+  it("another member cannot open the copy; it stays out of the conversation's files list", async () => {
+    const conv = await createConv(owner, orgId, shooterId);
+    const r = await call(conv, SHOT, { images: [B64] });
+    const id = r.payload.media?.[0]?.attachmentId as string;
+    const other = await session(k, "other");
+    const theirs = await other({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/attachments/${id}/download?as=url`,
+    });
+    expect(theirs.statusCode).toBe(404);
+    const files = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/files`,
+    });
+    expect(files.statusCode, files.body).toBe(200);
+    expect(files.body).not.toContain(id);
+  });
+
+  it("past the conversation's cap the image is not stored and the result says so", async () => {
+    vi.spyOn(k.app.get(AttachmentsService), "storeRead").mockResolvedValue({
+      ok: false,
+      reason: "cap",
+    });
+    const conv = await createConv(owner, orgId, shooterId);
+    const r = await call(conv, SHOT, { images: [B64] });
+    expect(r.payload.media).toBeUndefined();
+    expect(r.payload.content).toBe(
+      `Screenshot of 1 image(s).\n[Image (image/png, ${sizeOf(IMAGE.length)}) not stored, so not shown: this conversation reached its limit for stored images.]`,
+    );
+  });
+
+  it("Read by file_id of the copy on a model without vision answers without a second copy", async () => {
+    const conv = await createConv(owner, orgId, blindId);
+    const shot = await call(conv, SHOT, { images: [B64] });
+    const id = shot.payload.media?.[0]?.attachmentId as string;
+    const r = await read(conv, { file_id: id, prompt: "media:" }, 2);
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    expect(r.payload.media).toBeUndefined();
+    const [first, answer] = r.payload.content.split("\n\n");
+    expect(first).toBe(readText("shot.png", IMAGE.length, ", 3×2", id));
+    expect(answer).toMatch(/^model-fake\/fake-eye read the image for you/);
+    expect((await readRows(conv)).map((x) => x.id)).toEqual([id]);
+  });
+
+  it("a parent delivers its sub-agent's image by file_id; another conversation's is refused", async () => {
+    const parent = await createConv(owner, orgId, shooterId);
+    const child = await createConv(owner, orgId, shooterId);
+    const childShot = await call(child, SHOT, { images: [B64] });
+    const childImage = childShot.payload.media?.[0]?.attachmentId as string;
+    await db
+      .updateTable("conversations")
+      .set({ kind: "subagent", parent_conversation_id: parent })
+      .where("id", "=", child)
+      .execute();
+    const elsewhere = await createConv(owner, orgId, shooterId);
+    const otherShot = await call(elsewhere, SHOT, { images: [B64] });
+    const otherImage = otherShot.payload.media?.[0]?.attachmentId as string;
+    const ok = await call(parent, "Deliver", { file_id: childImage });
+    expect(ok.payload.isError, ok.payload.content).toBe(false);
+    expect(ok.payload.content).toMatch(/^Delivered shot\.png /);
+    const refused = await call(parent, "Deliver", { file_id: otherImage }, 2);
+    expect(refused.payload.isError).toBe(true);
+    expect(refused.payload.content).toContain(
+      `file_id ${otherImage} is not an attachment or artifact of this conversation; pass the id of one.`,
+    );
   });
 
   it("the person opens the image from the call's row; Deliver hands it over by file_id", async () => {

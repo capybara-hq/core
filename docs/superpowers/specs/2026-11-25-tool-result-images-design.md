@@ -32,10 +32,15 @@ kernel stores the bytes itself.
 For every tool call that returns a result (builtin, extension or connector), the pipeline walks the
 result's image blocks (`{ type: "image", data, mimeType }`) in order (`tools/result-images.ts`):
 
-1. at most `RESULT_IMAGES_MAX` (10) per result;
+1. at most `RESULT_IMAGES_MAX` (10) per result and at most `MEDIA_LIMITS.imageBytes` (5 MiB), both
+   checked on the base64 length before anything is decoded;
 2. the bytes must sniff as PNG, JPEG, GIF or WebP (the sniffed type wins over the declared one);
-3. at most `MEDIA_LIMITS.imageBytes` (5 MiB);
-4. stored with `AttachmentsService.storeRead` as a `read` copy bound to the calling conversation
+3. the header's pixel size must be present and at most `RESULT_IMAGE_MAX_PIXELS` (40 megapixels,
+   the thumbnails' bound: an external server can send a small file that decodes to gigabytes), and
+   the image must decode whole (`sharp`, `failOn: "truncated"`, bounded by the same limit, shrunk),
+   so a truncated body is named as not stored instead of reaching a provider;
+4. the run's signal is checked before each image (a stopped run stores nothing more);
+5. stored with `AttachmentsService.storeRead` as a `read` copy bound to the calling conversation
    (intent row, put, bind; the per-conversation cap `attachments.readMaxBytesPerConversation`
    applies; the purge of deleted conversations covers it), named `<tool name>[-n].<ext>`.
 
@@ -48,12 +53,20 @@ The block's line in the result text (model-visible, written once in the log):
 
 - stored: `[Image (<type>, <size>, <W>×<H>), file_id <id>]`;
 - not stored: `[Image (<declared type>, <size>) not stored, so not shown: <reason>]`, the reason one
-  of: only PNG, JPEG, GIF and WebP images are stored / it is over the 5 MB image limit / a tool
+  of: only PNG, JPEG, GIF and WebP images are stored / it is over the 5 MB image limit / its pixel
+  size is missing or over the limit of 40 megapixels / it could not be decoded as a whole image / a tool
   result stores at most 10 images / this conversation reached its limit for stored images / file
   storage is not configured in this deployment / storing it failed. A pipeline with no image store
   wired in (hand-built test pipelines) writes `… not stored, so not shown.`
 
-A network ask that keeps a result keeps its `media` too (`KeptToolResult.media`).
+A network ask that keeps a result keeps its `media` too (`KeptToolResult.media`). A copy stored
+before a crash that keeps the result from being written stays bound and unreferenced until the
+conversation's purge: the same window as `Read`'s copies, bounded by the per-conversation cap.
+
+`fitImageForModel` (the copy a request carries) decodes at most `MODEL_IMAGE_MAX_INPUT_PIXELS`
+(100 megapixels, explicit; above the tool-result bound so a large camera photo a person uploads is
+still scaled); a larger image is sent unchanged and a provider rejection goes through
+`media_excluded`.
 
 ## 3. Request building
 
@@ -64,7 +77,7 @@ tool and say plainly when the image was not shown:
 - label: `Image from <toolKey> (file_id <id>):` (for `Read` exactly as before);
 - a model without vision: `[Not shown to you: this model cannot view images.]` after `Read` (its
   result already carries the vision model's answer); after any other tool
-  `[Not shown to you: this model cannot view images. Read with file_id <id> sends it to the
+  `[Not shown to you: this model cannot view images. If Read is available to you, Read with file_id <id> sends it to the
   organization's vision model, if one is set.]` (the same mechanism the pasted-image placeholder
   states; `Read` resolves `read` copies by id);
 - left out by the window: `[Image from <toolKey> (file_id <id>) not included in this request.]`.
@@ -88,7 +101,8 @@ rows, and the person may not expand them.
 ## 5. The agent can hand an image over
 
 `Deliver` gains `file_id` (exactly one of `file_path` and `file_id`): an attachment, `read` copy or
-artifact of the conversation or its root, read from the object store with no device, stored as an
+artifact of the conversation, its root, or a sub-agent conversation below the calling one (so a
+parent delivers the screenshot its sub-agent took and quoted; never a sibling's or another tree's), read from the object store with no device, stored as an
 artifact with source path `file_id/<id>`, name and type from the stored file unless `name` is given.
 `Deliver` is listed without a usable device when the object store and the conversation file lookup
 exist. Its description states the mechanism: files on the device and images in tool results are not
@@ -101,10 +115,15 @@ No browser plugin change is needed: its screenshot result is an ordinary image b
 | Tool | Before | Now |
 |---|---|---|
 | `Read` of an image | stored, shown / vision answer (vision-read) | unchanged; label text unchanged; no-vision text says "Not shown to you" |
-| `GenerateImage` | artifacts, "not shown to you; Read with file_id" | unchanged (already delivered to the person) |
+| `GenerateImage` | artifacts, "not shown to you; Read with file_id" | already delivered to the person; the Read hint is conditional ("if Read is available to you") |
 | Extension tools (`browser_screenshot`, any plugin) | flattened to `[image <mime>, <n> bytes]`, never seen | stored, shown to vision models, thumbnails, Deliver by `file_id` |
 | Connector tools (MCP image content) | flattened, never seen | same as extension tools |
 | Resource reads / prompts (`connector-content.ts`) | flattened text | flattened to the honest "not stored, so not shown." line (no call context to store under) |
+
+`Read` with `file_id` resolves the same way. A `Read` of a `read` copy that is already the calling
+conversation's, on a model without vision, returns the vision model's answer naming that copy and
+stores nothing (the no-vision placeholder steers there); on a model with vision it still stores a
+new copy, so every image block in a request keeps its own id (vision-read §1.2).
 
 ## 7. Rulings
 
@@ -116,7 +135,12 @@ No browser plugin change is needed: its screenshot result is an ordinary image b
 - No vision-purpose call for extension images on a model without vision: that is a billed call per
   screenshot the agent did not ask for; the placeholder names the `Read file_id` way.
 - Thumbnails live in the row's expanded OUT section, not always visible: the row is a record; the
-  explicit hand-over is `Deliver`.
+  explicit hand-over is `Deliver`. The tool-row state `expanded-images` has a reference block and a
+  catalog block; its visual baselines are rendered only by the `visual-update` workflow.
+- Every model-visible pointer to Read is conditional ("If Read is available to you"): the texts are
+  written once in the log and must stay append-only, so they cannot depend on the request's tools.
+- The file lookup reaches sub-agents below the caller, not siblings: a parent supervises its
+  children; siblings stay apart.
 
 ## AGENTS.md rules touched
 

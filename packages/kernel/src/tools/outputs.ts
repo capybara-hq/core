@@ -6,7 +6,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { asPlatform } from "../infra/database/org-scope.js";
-import { resultImageNotStoredText } from "./result-images.js";
+import { base64Bytes, isToolImageBlock, resultImageNotStoredText } from "./result-images.js";
 
 /** 文本行数（按 `\n` 切分；空串算 1 行，与按行分页读取一致）。 */
 export function countLines(s: string): number {
@@ -161,13 +161,6 @@ export async function resolveOutputRefs(
   return walk(input);
 }
 
-/** base64 数据解码后的字节数。 */
-function base64Bytes(data: string): number {
-  const s = data.replace(/\s/g, "");
-  const pad = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
-  return Math.max(0, Math.floor((s.length * 3) / 4) - pad);
-}
-
 export interface RenderedResult {
   /** 模型看到的文本（尚未转存）。 */
   text: string;
@@ -202,7 +195,7 @@ export function renderResult(result: unknown, imageTexts?: readonly string[]): R
     const type = typeof b.type === "string" ? b.type : "unknown";
     if (!types.includes(type)) types.push(type);
     if (type === "text" && typeof b.text === "string") parts.push(b.text);
-    else if (type === "image" && typeof b.data === "string") {
+    else if (isToolImageBlock(block) && typeof b.data === "string") {
       const mime = typeof b.mimeType === "string" ? b.mimeType : "unknown";
       parts.push(imageTexts?.[image] ?? resultImageNotStoredText(mime, base64Bytes(b.data)));
       image++;

@@ -742,7 +742,7 @@ describe("images from Read (vision-read design §1.4)", () => {
       { type: "text", text: `Image from plugin__browser__browser_screenshot (file_id ${rid(1)}):` },
       {
         type: "text",
-        text: `[Not shown to you: this model cannot view images. Read with file_id ${rid(1)} sends it to the organization's vision model, if one is set.]`,
+        text: `[Not shown to you: this model cannot view images. If Read is available to you, Read with file_id ${rid(1)} sends it to the organization's vision model, if one is set.]`,
       },
     ]);
     expect(meta.media).toEqual([{ attachmentId: rid(1), outcome: "placeholder_unsupported" }]);
@@ -896,13 +896,13 @@ describe("images from Read (vision-read design §1.4)", () => {
     expect(build(named).request.messages[0]?.content).toEqual([
       {
         type: "text",
-        text: `[Attached image "cat.png" — this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
+        text: `[Attached image "cat.png" — this model cannot view images. If Read is available to you, Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
       },
     ]);
     expect(build(log).request.messages[0]?.content).toEqual([
       {
         type: "text",
-        text: `[Attached image "attachment" — this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
+        text: `[Attached image "attachment" — this model cannot view images. If Read is available to you, Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
       },
     ]);
   });

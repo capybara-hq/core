@@ -154,10 +154,13 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         foot.push(`<span>${(t.durationMs / 1000).toFixed(1)} 秒</span>`);
         foot.push(`<button class="r-linkbtn">${esc(K.copyOutput)}</button>`);
       }
+      const thumbs = t.images
+        ? `<div class="r-timages">${t.images.map((n) => `<button class="r-tthumb" aria-label="${esc(n)}" title="${esc(n)}"></button>`).join("")}</div>`
+        : "";
       parts.push(
         io(
           "OUT",
-          `<pre class="r-tout">${esc(t.output)}</pre>${foot.length ? `<div class="r-tfoot">${foot.join("")}</div>` : ""}`,
+          `<pre class="r-tout">${esc(t.output)}</pre>${thumbs}${foot.length ? `<div class="r-tfoot">${foot.join("")}</div>` : ""}`,
         ),
       );
     }
@@ -1232,6 +1235,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         "expanded-connector": [T.expanded[1], { open: true }],
         "expanded-failed": [T.expanded[3], { open: true }],
         "large-output": [T.largeOutput[0], { open: true }],
+        "expanded-images": [T.images[0], { open: true }],
         "hook-denied": [T.hookDenied[0], { open: true }],
         waiting: [T.waiting[0], {}],
         "auto-granted": [T.autoGranted[0], {}],
