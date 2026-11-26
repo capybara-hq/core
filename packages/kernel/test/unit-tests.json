@@ -105,6 +105,7 @@
   "runtime/absorb-subagent.test.ts",
   "runtime/attribution-render.test.ts",
   "runtime/claude-tools.test.ts",
+  "runtime/consume-model-stream.test.ts",
   "runtime/context/build-current-turn.test.ts",
   "runtime/context/build-skills.test.ts",
   "runtime/context/build-tools.test.ts",

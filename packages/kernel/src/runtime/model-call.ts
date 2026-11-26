@@ -176,13 +176,27 @@ const READ_PAGE = 1000;
  * 流式增量的出口（推给前端等订阅方）；`step_reset` 表示丢弃本步已推出的增量、重新开始。
  * `stream_end` (the step's model stream completed) and `step_end` (the step's `assistant_message`
  * is logged) carry no delta: the run worker's sink writes and then clears the step's live draft on
- * them (spec 2026-11-07 §3.2) and publishes neither.
+ * them (spec 2026-11-07 §3.2) and publishes neither. `tool_start` (`callId`, `name`), `tool_input`
+ * (`callId`, `text`: a fragment of the call's JSON input) and `tool_base` (`callId`, `text`,
+ * `sha256`: the file a streaming `Write` replaces) are display only (streaming tool input spec §4):
+ * nothing streamed reaches the log, the model or a hook.
  */
 export type StreamSink = (delta: {
-  kind: "text" | "thinking" | "step_reset" | "stream_end" | "step_end";
+  kind:
+    | "text"
+    | "thinking"
+    | "tool_start"
+    | "tool_input"
+    | "tool_base"
+    | "step_reset"
+    | "stream_end"
+    | "step_end";
   runId: string;
   step: number;
   text?: string;
+  callId?: string;
+  name?: string;
+  sha256?: string;
 }) => void;
 
 export interface ModelStepDeps {
@@ -2015,8 +2029,11 @@ async function ladder(
               sink({ kind: "text", runId, step, text: ev.text });
             } else if (ev.type === "thinking_delta") {
               sink({ kind: "thinking", runId, step, text: ev.text });
+            } else if (ev.type === "tool_call_start") {
+              sink({ kind: "tool_start", runId, step, callId: ev.id, name: ev.name });
+            } else {
+              sink({ kind: "tool_input", runId, step, callId: ev.id, text: ev.input });
             }
-            // tool_call_start / tool_call_delta are forwarded by a later task
           },
         );
         // the draft's last write, before the assistant_message is logged

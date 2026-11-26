@@ -150,7 +150,7 @@ const eventFrame = (e: ConversationEvent): string =>
   `id: ${e.seq}\nevent: event\ndata: ${JSON.stringify(e)}\n\n`;
 
 const draftFrame = (d: LiveDraft): string =>
-  `event: draft\ndata: ${JSON.stringify({ runId: d.runId, step: d.step, text: d.text, thinking: d.thinking })}\n\n`;
+  `event: draft\ndata: ${JSON.stringify({ runId: d.runId, step: d.step, text: d.text, thinking: d.thinking, tools: d.tools })}\n\n`;
 
 const suggestionFrame = (s: { runId: string; afterSeq: number; text: string }): string =>
   `event: suggestion\ndata: ${JSON.stringify({ runId: s.runId, afterSeq: s.afterSeq, text: s.text })}\n\n`;

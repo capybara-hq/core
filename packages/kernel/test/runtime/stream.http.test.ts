@@ -864,9 +864,9 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
       "a draft",
     );
     expect(live.drafts).toHaveLength(1);
-    expect(live.drafts[0]).toMatchObject({ step: 1, thinking: "" });
+    expect(live.drafts[0]).toMatchObject({ step: 1, thinking: "", tools: [] });
     expect(SLOW_REPLY.startsWith(live.drafts[0]?.text ?? "x")).toBe(true);
-    expect(Object.keys(live.drafts[0] ?? {}).sort()).toEqual(["step", "text", "thinking"]);
+    expect(Object.keys(live.drafts[0] ?? {}).sort()).toEqual(["step", "text", "thinking", "tools"]);
 
     await waitForTerminal(db, convId);
     const after = await owner.req({ method: "GET", url: draftUrl(orgId, convId, runId) });
