@@ -160,7 +160,7 @@ describe("ToolRegistry", () => {
     expect(specHash({ inputSchema: { type: "object" }, description: "d", name: "x" })).toBe(h);
   });
 
-  it("specHash leaves out the fields the model never sees: title, keyArgs, inputView and timeoutMs", () => {
+  it("specHash leaves out title, keyArgs, inputView and timeoutMs (never model-visible)", () => {
     expect([...NON_MODEL_SPEC_FIELDS]).toEqual(["title", "keyArgs", "inputView", "timeoutMs"]);
     const s = {
       name: "search",

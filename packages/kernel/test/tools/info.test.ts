@@ -251,7 +251,17 @@ describe("GET /conversations/:id/tools", () => {
       },
     });
     expect(inst.statusCode, inst.body).toBe(201);
-    const keys = ["Write", "Edit", "Agent", "Read", "mcp__chat__search", "mcp__nope__x"];
+    const keys = [
+      "Write",
+      "Edit",
+      "Bash",
+      "Agent",
+      "SendMessage",
+      "GenerateImage",
+      "Read",
+      "mcp__chat__search",
+      "mcp__nope__x",
+    ];
     const res = await tools(req, orgId, conversationId, keys);
     expect(res.statusCode, res.body).toBe(200);
     const t = byKey(res);
@@ -267,6 +277,14 @@ describe("GET /conversations/:id/tools", () => {
       new: "new_string",
     });
     expect(t.Agent?.inputView).toEqual({ kind: "text", field: "prompt" });
+    // info drops an inputView that fails validateToolPresentation, so a view here also proves valid
+    expect(t.Bash?.inputView).toEqual({
+      kind: "command",
+      command: "command",
+      description: "description",
+    });
+    expect(t.SendMessage?.inputView).toEqual({ kind: "text", field: "message" });
+    expect(t.GenerateImage?.inputView).toEqual({ kind: "text", field: "prompt" });
     expect(t.Read?.inputView).toBeNull();
     expect(t.mcp__chat__search?.inputView).toBeNull();
     expect(t.mcp__nope__x?.inputView).toBeNull();
