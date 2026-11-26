@@ -1,5 +1,6 @@
 import { LINUX_SANDBOX_SOURCE } from "./sandbox-linux-runtime-source.js";
 import { NATIVE_FILES_SOURCE } from "./sandbox-native-runtime-source.js";
+import { NATIVE_FILES_STAGED_SOURCE } from "./sandbox-native-staged-runtime-source.js";
 
 /**
  * A capability of a runtime file that a consumer may use only when the file it runs declares it.
@@ -16,10 +17,18 @@ export interface SandboxRuntimeFile {
   readonly features?: readonly SandboxRuntimeFeature[];
 }
 
+/** The staged helper: answers a non-regular file with the generic `INVALID_NATIVE_REQUEST`. */
+const NATIVE_FILES_STAGED: SandboxRuntimeFile = Object.freeze({
+  name: "native-files.py",
+  source: NATIVE_FILES_STAGED_SOURCE,
+  sha256: "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
+});
+
+/** The current helper: answers a non-regular file with `NOT_REGULAR_FILE` (core#907). */
 const NATIVE_FILES: SandboxRuntimeFile = Object.freeze({
   name: "native-files.py",
   source: NATIVE_FILES_SOURCE,
-  sha256: "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
+  sha256: "41cf54ea285d29c49b42b33efd99d11254ba07cee4832a9d6f9414dc99c31461",
 });
 
 const LINUX_SANDBOX: SandboxRuntimeFile = Object.freeze({
@@ -29,8 +38,8 @@ const LINUX_SANDBOX: SandboxRuntimeFile = Object.freeze({
   features: Object.freeze(["fileReadRoots"] as const),
 });
 
-const STAGED = Object.freeze([NATIVE_FILES, LINUX_SANDBOX]);
-const CURRENT = STAGED;
+const STAGED = Object.freeze([NATIVE_FILES_STAGED, LINUX_SANDBOX]);
+const CURRENT = Object.freeze([NATIVE_FILES, LINUX_SANDBOX]);
 
 /**
  * Digests of earlier revisions a staged copy may still have (one previous revision at most):
@@ -84,7 +93,8 @@ function acceptedDigests(
  *
  * A runtime change therefore lands in three steps (tools/checks/README.md, "Changing the SDK
  * runtime sources"): `current` first, then the provider restages, then core promotes `current` to
- * `files` with the pin. Between changes, as now, `current` is `files`.
+ * `files` with the pin. Between changes `current` is `files`; now `native-files.py` is ahead
+ * (core#907: `NOT_REGULAR_FILE`).
  */
 export const SANDBOX_RUNTIME_SOURCE: {
   readonly version: number;
