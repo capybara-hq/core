@@ -84,6 +84,32 @@ describe("validateToolPresentation", () => {
   };
   const ok = { title: "Search messages", keyArgs: ["query", "channel"], inputSchema };
 
+  it("inputView names string properties of inputSchema", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        file_path: { type: "string" },
+        content: { type: "string" },
+        n: { type: "number" },
+      },
+    };
+    const view = { kind: "file_write" as const, path: "file_path", content: "content" };
+    expect(validateToolPresentation({ inputView: view, inputSchema: schema })).toEqual([]);
+    const missing = 'inputView names "nope", which is not a string property of inputSchema';
+    expect(
+      validateToolPresentation({ inputView: { ...view, content: "nope" }, inputSchema: schema }),
+    ).toEqual([missing]);
+    expect(
+      validateToolPresentation({ inputView: { ...view, content: "n" }, inputSchema: schema }),
+    ).toEqual(['inputView names "n", which is not a string property of inputSchema']);
+    expect(
+      validateToolPresentation({
+        inputView: { kind: "bogus" } as never,
+        inputSchema: schema,
+      }),
+    ).toEqual(["inputView kind must be one of file_write, file_edit, command, text"]);
+  });
+
   it("accepts a title and key arguments that are input properties, and neither", () => {
     expect(validateToolPresentation(ok)).toEqual([]);
     expect(validateToolPresentation({ inputSchema })).toEqual([]);

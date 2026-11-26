@@ -2013,9 +2013,10 @@ async function ladder(
             if (ev.type === "text_delta") {
               streamed.text += ev.text;
               sink({ kind: "text", runId, step, text: ev.text });
-            } else {
+            } else if (ev.type === "thinking_delta") {
               sink({ kind: "thinking", runId, step, text: ev.text });
             }
+            // tool_call_start / tool_call_delta are forwarded by a later task
           },
         );
         // the draft's last write, before the assistant_message is logged
@@ -2294,6 +2295,19 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
     }, ms);
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/** Characters one streamed delta carries, for the idle and size accounting of a stream. */
+export function deltaChars(ev: Exclude<ModelStreamEvent, { type: "message_complete" }>): number {
+  switch (ev.type) {
+    case "text_delta":
+    case "thinking_delta":
+      return ev.text.length;
+    case "tool_call_delta":
+      return ev.input.length;
+    case "tool_call_start":
+      return 0;
+  }
 }
 
 /**

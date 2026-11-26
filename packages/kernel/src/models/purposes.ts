@@ -23,7 +23,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
-import { consumeModelStream } from "../runtime/model-call.js";
+import { consumeModelStream, deltaChars } from "../runtime/model-call.js";
 import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
 import { StorageService } from "../storage/storage.service.js";
 import { IMAGE_PURPOSE, imagePurposeState } from "./image-usable.js";
@@ -578,7 +578,7 @@ export class ModelPurposesService {
     let chars = 0;
     try {
       const out = await consumeModelStream(provider, request, idleMs, signal, (ev) => {
-        chars += ev.text.length;
+        chars += deltaChars(ev);
       });
       return {
         content: out.content,

@@ -17,6 +17,32 @@ export const CONVERSATION_SOURCES = ["web", "channel_dm", "channel_group", "suba
 /** A conversation source (see {@link CONVERSATION_SOURCES}). */
 export type ConversationSource = (typeof CONVERSATION_SOURCES)[number];
 
+/**
+ * How a tool's input is previewed while it streams ({@link ToolSpec.inputView}). Every name is a
+ * string property of the tool's `inputSchema`.
+ */
+export type ToolInputView =
+  | { kind: "file_write"; path: string; content: string }
+  | { kind: "file_edit"; path: string; old: string; new: string }
+  | { kind: "command"; command: string; description?: string }
+  | { kind: "text"; field: string };
+
+const INPUT_VIEW_KINDS = ["file_write", "file_edit", "command", "text"] as const;
+
+/** The property names a {@link ToolInputView} refers to, by kind. */
+function inputViewFields(view: Record<string, unknown>): unknown[] {
+  switch (view.kind) {
+    case "file_write":
+      return [view.path, view.content];
+    case "file_edit":
+      return [view.path, view.old, view.new];
+    case "command":
+      return view.description === undefined ? [view.command] : [view.command, view.description];
+    default:
+      return [view.field];
+  }
+}
+
 export interface ToolSpec {
   name: string;
   description: string;
@@ -48,6 +74,13 @@ export interface ToolSpec {
    * model and not part of the definition fingerprint.
    */
   keyArgs?: string[];
+  /**
+   * Display only: how the UI previews this tool's input while the model is still writing it. Names
+   * string properties of `inputSchema` that carry a file body, an edit, a command or free text.
+   * Never sent to the model and not part of the definition fingerprint. Nothing streamed ever
+   * executes: the call runs from the logged assistant message.
+   */
+  inputView?: ToolInputView;
   /**
    * The conversation sources this tool is offered in; absent = every source. A non-empty list of
    * {@link CONVERSATION_SOURCES}.
@@ -91,7 +124,7 @@ const CONTROL_OR_FORMAT = /(?![\u200C\u200D])[\p{Cc}\p{Cf}]/u;
  * `inputSchema.properties` and free of Cc / Cf characters.
  */
 export function validateToolPresentation(
-  spec: Pick<ToolSpec, "title" | "keyArgs" | "inputSchema">,
+  spec: Pick<ToolSpec, "title" | "keyArgs" | "inputView" | "inputSchema">,
 ): string[] {
   const out: string[] = [];
   const title: unknown = spec.title;
@@ -103,6 +136,12 @@ export function validateToolPresentation(
   } else if (typeof title === "string" && CONTROL_OR_FORMAT.test(title)) {
     out.push("title must not contain control, bidi or invisible characters");
   }
+  const schema = spec.inputSchema as { properties?: unknown } | null | undefined;
+  const props =
+    typeof schema?.properties === "object" && schema.properties !== null
+      ? (schema.properties as Record<string, unknown>)
+      : {};
+  out.push(...validateInputView(spec.inputView, props));
   const keyArgs: unknown = spec.keyArgs;
   if (keyArgs === undefined) return out;
   if (!Array.isArray(keyArgs) || keyArgs.some((k) => typeof k !== "string")) {
@@ -114,14 +153,29 @@ export function validateToolPresentation(
   if (new Set(keyArgs).size !== keyArgs.length) out.push("keyArgs must not repeat a name");
   if ((keyArgs as string[]).some((k) => CONTROL_OR_FORMAT.test(k)))
     out.push("keyArgs names must not contain control, bidi or invisible characters");
-  const schema = spec.inputSchema as { properties?: unknown } | null | undefined;
-  const props =
-    typeof schema?.properties === "object" && schema.properties !== null
-      ? (schema.properties as Record<string, unknown>)
-      : {};
   for (const k of keyArgs as string[]) {
     if (!Object.hasOwn(props, k))
       out.push(`keyArgs names "${k}", which is not a property of inputSchema`);
+  }
+  return out;
+}
+
+function validateInputView(view: unknown, props: Record<string, unknown>): string[] {
+  if (view === undefined) return [];
+  const kinds = INPUT_VIEW_KINDS.join(", ");
+  const kindProblem = `inputView kind must be one of ${kinds}`;
+  if (typeof view !== "object" || view === null || Array.isArray(view)) return [kindProblem];
+  const v = view as Record<string, unknown>;
+  if (!(INPUT_VIEW_KINDS as readonly unknown[]).includes(v.kind)) return [kindProblem];
+  const out: string[] = [];
+  for (const name of inputViewFields(v)) {
+    const label = typeof name === "string" ? name : String(name);
+    const prop =
+      typeof name === "string" && Object.hasOwn(props, name)
+        ? (props[name] as { type?: unknown } | null)
+        : undefined;
+    if (typeof name !== "string" || CONTROL_OR_FORMAT.test(name) || prop?.type !== "string")
+      out.push(`inputView names "${label}", which is not a string property of inputSchema`);
   }
   return out;
 }
