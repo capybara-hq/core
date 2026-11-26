@@ -373,7 +373,7 @@ describe("/bind/[token]", () => {
     // Confirm and Cancel buttons' boxes
     const card = document.querySelector(".cb-auth-card") as HTMLElement;
     expect(card.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(3);
-    expect(within(card).getByRole("note").textContent).toBe(en.bind.warning);
+    expect(within(card).getByRole("note").textContent).toBe(`${en.bind.warning}${en.bind.effect}`);
     expect(card.querySelectorAll('[data-box="prominent"]')).toHaveLength(2);
     await release();
     expect(await screen.findByText("Alice Wong")).toBeTruthy();

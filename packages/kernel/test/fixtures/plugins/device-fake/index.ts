@@ -230,6 +230,28 @@ export async function readFakeSandboxLimits(root: string): Promise<FakeSandboxLi
     .map((l) => JSON.parse(l) as FakeSandboxLimitsEntry);
 }
 
+/**
+ * How the fake's device services treat files (`root/service-mode.json`, read at each call;
+ * absent: the default, a provider that reports and rolls). `digest: false`: statuses carry no
+ * `filesDigest` (an older provider) and a running service is kept whatever files are asked for;
+ * `roll: false`: the digest is reported but a running service on other files is kept (a broken
+ * provider).
+ */
+export interface FakeServiceMode {
+  digest?: boolean;
+  roll?: boolean;
+}
+
+/** Sets {@link FakeServiceMode} for the next service calls. */
+export async function setFakeServiceMode(root: string, mode: FakeServiceMode): Promise<void> {
+  await writeFile(join(root, "service-mode.json"), JSON.stringify(mode));
+}
+
+async function readServiceMode(root: string): Promise<FakeServiceMode> {
+  const text = await readFile(join(root, "service-mode.json"), "utf8").catch(() => "{}");
+  return JSON.parse(text) as FakeServiceMode;
+}
+
 /** 慢操作的延迟（毫秒），写在 `root/delays.json`。 */
 export interface FakeSandboxDelays {
   create?: number;
@@ -403,14 +425,16 @@ function serviceSurface(
   ): Promise<DeviceServiceStatus> => {
     const rec = await readServiceRecord(root, h.id, spec.name);
     const filesDigest = deviceServiceFilesDigest(spec.files);
+    const mode = await readServiceMode(root);
     if (rec !== null && alive(rec.pid)) {
-      if (rec.filesDigest === filesDigest)
+      if (rec.filesDigest === filesDigest || mode.digest === false || mode.roll === false)
         return {
           name: spec.name,
           state: "running",
           startedAt: rec.startedAt,
           stateDir: fakeServiceStateDir(root, h.id, spec.name),
-          filesDigest,
+          ...(mode.digest !== false &&
+            rec.filesDigest !== undefined && { filesDigest: rec.filesDigest }),
         };
       // other files (an upgraded extension): the old process goes, the new files start
       await killService(root, h.id, spec.name);
@@ -490,13 +514,15 @@ function serviceSurface(
   const statusOf = async (h: SandboxHandle, name: string): Promise<DeviceServiceStatus> => {
     const rec = await readServiceRecord(root, h.id, name);
     const stateDir = fakeServiceStateDir(root, h.id, name);
+    const mode = await readServiceMode(root);
     return rec !== null && alive(rec.pid)
       ? {
           name,
           state: "running",
           startedAt: rec.startedAt,
           stateDir,
-          ...(rec.filesDigest !== undefined && { filesDigest: rec.filesDigest }),
+          ...(mode.digest !== false &&
+            rec.filesDigest !== undefined && { filesDigest: rec.filesDigest }),
         }
       : { name, state: "stopped", startedAt: null, stateDir };
   };

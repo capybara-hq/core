@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEVICE_SERVICE_FILES_DIGEST_VECTOR,
   DEVICE_SERVICE_MAX_MESSAGE,
+  DEVICE_SERVICE_ROLL_CHECK,
   DEVICE_SERVICE_SOCKET_ENV,
   DEVICE_SERVICE_STATE_ENV,
+  deviceServiceFilesDigest,
   encodeServiceMessage,
   encodeViewerContext,
+  isRollCheck,
+  parseRollCheck,
   parseViewerContext,
   SERVICE_CONNECTION_KINDS,
   ServiceMessageDecoder,
@@ -113,5 +118,39 @@ describe("viewer context", () => {
     // bytes that are not UTF-8
     expect(parseViewerContext(new Uint8Array([0xff, 0xfe, 0x7b]))).toBeNull();
     expect(parseViewerContext(new Uint8Array())).toBeNull();
+  });
+});
+
+describe("service files digest", () => {
+  const enc = (files: Readonly<Record<string, string>>) =>
+    Object.fromEntries(Object.entries(files).map(([k, v]) => [k, new TextEncoder().encode(v)]));
+
+  it("matches the pinned vector", () => {
+    expect(deviceServiceFilesDigest(enc(DEVICE_SERVICE_FILES_DIGEST_VECTOR.files))).toBe(
+      DEVICE_SERVICE_FILES_DIGEST_VECTOR.digest,
+    );
+  });
+
+  it("is the same for the same files object without hashing again, and follows the content", () => {
+    const files = enc({ "a.js": "a" });
+    const first = deviceServiceFilesDigest(files);
+    expect(deviceServiceFilesDigest(files)).toBe(first);
+    expect(deviceServiceFilesDigest(enc({ "a.js": "a" }))).toBe(first);
+    expect(deviceServiceFilesDigest(enc({ "a.js": "b" }))).not.toBe(first);
+  });
+});
+
+describe("roll check", () => {
+  it("recognises the kernel's request and reads only an explicit busy answer as busy", () => {
+    expect(isRollCheck(DEVICE_SERVICE_ROLL_CHECK)).toBe(true);
+    expect(isRollCheck(new TextEncoder().encode(DEVICE_SERVICE_ROLL_CHECK))).toBe(true);
+    expect(isRollCheck('{"op":"snapshot"}')).toBe(false);
+    expect(isRollCheck("not json")).toBe(false);
+    expect(parseRollCheck('{"busy":true,"reason":"takeover"}')).toEqual({
+      busy: true,
+      reason: "takeover",
+    });
+    for (const other of ['{"busy":false}', '{"busy":"yes"}', '{"ok":false}', "Unknown", "null"])
+      expect(parseRollCheck(other)).toEqual({ busy: false });
   });
 });

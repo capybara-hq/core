@@ -207,6 +207,7 @@ describe("replaceable slots on /admin/settings", () => {
         }),
       "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+      "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
       "GET /api/v1/admin/ui/arrangement": () =>
         json(200, { slots: [brand({ use: "theme-neon/brand", followsPlatform: false })] }),
       "GET /api/v1/admin/ui/contributions": () => json(200, { items: [] }),

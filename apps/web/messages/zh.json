@@ -36,7 +36,7 @@
         "access_denied": "登录已取消或授权被拒绝。",
         "provider_error": "身份提供方返回错误，请稍后再试。",
         "account_not_allowed": "这个账号不允许登录本平台。请使用允许的组织的账号，或联系管理员。",
-        "identity_not_verified": "这个账号是通过 IM 绑定链接关联的，还不能直接用它登录。请先用其他方式登录，再在登录状态下用它登录一次完成验证。"
+        "link_expired": "绑定请求已过期或已使用。请重新登录。"
       },
       "auth": {
         "account_disabled": "该账号已被停用。",
@@ -45,7 +45,19 @@
       },
       "unknown": "登录失败，请重试。"
     },
-    "insecureOrigin": "当前通过 HTTP 地址访问。如果登录后无法保持登录状态，请使用 HTTPS 地址或联系管理员。"
+    "insecureOrigin": "当前通过 HTTP 地址访问。如果登录后无法保持登录状态，请使用 HTTPS 地址或联系管理员。",
+    "link": {
+      "title": "完成绑定",
+      "intro": "这个 {platform} 账号（{name} · {tenant}）还没有可登录的 {product} 账号。用你的用户名和密码登录，完成绑定。",
+      "introNoTenant": "这个 {platform} 账号（{name}）还没有可登录的 {product} 账号。用你的用户名和密码登录，完成绑定。",
+      "platform": "平台",
+      "tenant": "租户",
+      "linkedToAnother": "这个账号已通过 IM 绑定到一个 {product} 账号。用那个账号的用户名和密码登录，即可用它登录。",
+      "submit": "登录并绑定",
+      "cancel": "取消",
+      "noAccount": "没有账号？请联系管理员。",
+      "taken": "这个 {platform} 账号已绑定到另一个 {product} 账号。用那个账号登录并解绑后再试。"
+    }
   },
   "changePassword": {
     "title": "设置新密码",
@@ -325,6 +337,11 @@
       "not_found": "该身份不存在或已解绑。",
       "last_login_method": "这是你唯一的登录方式，请先设置密码再解绑。"
     },
+    "login_sources": {
+      "needs_config": "先填写这个扩展的部署配置，再在登录页显示它。",
+      "invalid_tenant": "有可信租户不是有效的租户 ID。",
+      "unknown_plugin": "没有提供这种登录的扩展。"
+    },
     "bind": {
       "invalid": "绑定链接无效或已过期。"
     },
@@ -602,6 +619,10 @@
     "push": {
       "provider_unavailable": "平台没有可用的推送通道覆盖此应用，暂时无法接收通知。请联系超级管理员。",
       "registration_not_found": "此设备已不再接收通知。"
+    },
+    "sso": {
+      "link_expired": "绑定链接已过期，请重新用第三方账号登录。",
+      "session_mismatch": "登录状态已变化，请重新登录后再试。"
     }
   },
   "agents": {
@@ -2597,7 +2618,7 @@
       "grants": "已记住的授权",
       "general": "通用",
       "sandbox": "沙箱",
-      "identities": "IM 身份",
+      "identities": "已绑定账号",
       "models": "模型",
       "members": "成员",
       "tokens": "服务令牌",
@@ -3201,23 +3222,88 @@
     "appearanceTitle": "外观"
   },
   "identities": {
-    "title": "IM 身份",
-    "hint": "绑定到你的 {product} 账号的 IM 与第三方登录账号。已绑定的 IM 账号发来的消息以你的身份处理。",
-    "empty": "还没有绑定任何身份。",
-    "emptyHint": "在 IM 里给 {product} 机器人发消息并按链接绑定，或使用第三方账号登录。",
+    "title": "已绑定账号",
+    "hint": "绑定到你的 {product} 账号的 IM 与第三方登录账号。可用于 IM 的账号发来的消息以你的身份处理；可登录的账号能用来登录 {product}。",
+    "empty": "还没有绑定任何账号。",
+    "emptyHint": "在 IM 里给 {product} 机器人发消息并按链接绑定，点上方的「绑定」按钮，或由管理员通过通讯录同步。",
     "columns": {
-      "name": "名称",
-      "source": "来源",
+      "account": "账号",
+      "platform": "平台",
       "tenant": "租户",
-      "externalId": "账号 ID",
-      "linkedAt": "绑定于"
+      "im": "IM",
+      "login": "登录"
+    },
+    "im": {
+      "on": "可用"
+    },
+    "login": {
+      "unsupported": "不支持",
+      "off": "未开启",
+      "enable": "启用登录",
+      "on": "可登录"
+    },
+    "link": "绑定 {platform}",
+    "linkError": {
+      "identity": {
+        "taken": "这个账号已绑定到另一个 {product} 账号。先用那个账号登录并解绑，再来绑定。"
+      },
+      "sso": {
+        "unavailable": "这个登录方式暂不可用，请联系管理员。",
+        "session_mismatch": "登录状态已变化。请重新登录后再试。",
+        "access_denied": "绑定已取消或授权被拒绝。",
+        "provider_error": "身份提供方返回错误，请稍后再试。",
+        "account_not_allowed": "这个账号不允许登录本平台。"
+      },
+      "unknown": "绑定失败，请重试。"
     },
     "unlink": "解绑",
     "unlinkTitle": "解绑 {name}？",
-    "unlinkHint": "解绑后，这个 IM 账号发来的消息不再以你的身份处理，也不能再用它登录。",
-    "unlinked": "已解绑「{name}」。",
-    "unverified": "未验证",
-    "verify": "验证（用该账号登录一次）"
+    "unlinkHint": "解绑后，这个账号发来的 IM 消息不再以你的身份处理，也不能再用它登录。",
+    "unlinked": "已解绑「{name}」。"
+  },
+  "loginSources": {
+    "section": {
+      "title": "登录",
+      "description": "这个扩展提供的第三方登录：是否在登录页显示、未绑定的账号去哪里、哪些租户可信。",
+      "show": "在登录页显示",
+      "needsConfig": "先填写部署配置，才能在登录页显示。",
+      "unavailable": "这个扩展没有运行，登录页暂不显示它。",
+      "turnedOn": "登录页已显示「{name}」。",
+      "turnedOff": "登录页不再显示「{name}」。",
+      "saved": "已保存。",
+      "signUp": {
+        "label": "未绑定的账号",
+        "link": "去绑定页（推荐）",
+        "linkHint": "用户名和密码登录后，把这个外部账号绑定到已有账号。",
+        "create": "自动注册新账号",
+        "createHint": "新账号不属于任何组织，由邀请或目录同步加入组织。"
+      },
+      "tenants": {
+        "label": "可信租户（{tenant}）",
+        "defaultTenant": "租户 ID",
+        "help": "每行一个。可信租户里邮箱已验证的外部账号，会直接绑定到同邮箱的已有账号。",
+        "warning": "只填写你们自己控制的租户：可信租户里的任何人都能凭邮箱认领同邮箱的已有账号。",
+        "invalidPattern": "「{tenant}」不是有效的{label}。",
+        "neverTrusted": "「{tenant}」不能设为可信租户。",
+        "save": "保存可信租户"
+      },
+      "callback": {
+        "label": "回调地址",
+        "help": "在身份提供方的应用设置里登记这个地址。",
+        "missing": "设置部署的公开地址（http.publicUrl）后，这里显示回调地址。"
+      }
+    },
+    "methods": {
+      "title": "登录方式",
+      "description": "登录页按这个顺序显示第三方登录。拖动或上移、下移调整顺序；每种方式的设置在它的扩展页。",
+      "orderLabel": "登录页上的顺序",
+      "others": "未在登录页显示",
+      "off": "未开启",
+      "needsConfig": "待配置",
+      "unavailable": "未运行",
+      "empty": "还没有提供登录的扩展。",
+      "reordered": "已保存登录顺序。"
+    }
   },
   "bind": {
     "title": "绑定 IM 账号",
@@ -3226,7 +3312,8 @@
     "tenant": "租户",
     "externalId": "账号 ID",
     "email": "邮箱",
-    "warning": "只有当你刚刚亲自在 IM 中发起时才确认：这会把该 IM 账号绑定到你的 {product} 账号，它发来的消息将以你的身份处理。",
+    "effect": "确认后，这个 IM 账号绑定到你的 {product} 账号，它发来的消息将以你的身份处理。",
+    "warning": "只绑定你本人的账号。如果这个链接是别人发给你的，不要绑定。",
     "confirm": "确认绑定",
     "cancel": "取消",
     "doneTitle": "绑定成功",
@@ -4215,6 +4302,7 @@
         "identityLinked": "关联了外部身份",
         "identityVerified": "验证了外部身份",
         "identityUnlinked": "解除了外部身份关联",
+        "loginSourcesUpdated": "修改了登录方式",
         "deploymentSettingsUpdated": "修改了部署设置",
         "bootstrapCompleted": "完成了预装插件的初始化",
         "deploymentSetupCompleted": "完成了部署初始化",

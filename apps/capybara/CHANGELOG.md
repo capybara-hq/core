@@ -1,5 +1,44 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.119
+
+### Patch Changes
+
+- 7c691af: `ctx.deviceAccess.ensureService` and `request` hand an extension the device and provider failures
+  as the sandbox tools say them (an actionable `ToolError`: the provider cannot be reached, the
+  machine is offline or needs an update, the outcome is unknown, ...), instead of the raw error that
+  extensions could only report generically. A browser tool on a device whose provider is down now
+  says what a Bash call says.
+- 41d7498: Third-party sign-in is turned on, ordered and trusted in the admin console (Platform → Extensions →
+  the login extension → Sign-in, and Platform → Settings → Login methods) or through the
+  `login-sources.*` Platform operations. **Remove `CAPYBARA_AUTH__LOGIN_SOURCES` and
+  `CAPYBARA_AUTH__TRUSTED_IDENTITY_SOURCES`** (`auth.loginSources` / `auth.trustedIdentitySources`):
+  startup fails while either is set. Signing in with an unlinked external account now leads to a link
+  page (username and password) instead of creating an account; self sign-up is opt-in per method.
+- 7d032f0: `extensions.platform-config` lists the extension's platform setup guides (`guides`: id and title,
+  in the optional `locale`) and, when a guide exists and the deployment config is invalid or leaves a
+  required field without a value, a `next` step naming `extensions.platform-guides`. An agent reading
+  the config now learns that the extension ships a setup guide instead of guessing the operation.
+- e0a320f: Device service rolls (an extension upgraded while its service runs), follow-ups:
+  `deviceServiceFilesDigest` caches per files object, and `DEVICE_SERVICE_FILES_DIGEST_VECTOR` pins the
+  digest for every implementation (capybara-device now uses the SDK's). The kernel never rolls a
+  service to the files of a draining instance, of another package than the replica runs or than the
+  deployment enabled, and keeps a service that answers the new roll check (`DEVICE_SERVICE_ROLL_CHECK`,
+  `parseRollCheck`, `isRollCheck`) busy. A provider that keeps the old files after the start is
+  refused with the cause instead of every later call being reviewed again. The
+  `device.service_started` audit row says `reason` (`start` or `files_changed`), the files digest and
+  what a roll replaced, and a call that finds the row of the same start writes none.
+  A busy answer holds a roll onto the same files for at most an hour, and the holds apply at the
+  re-check after the review too.
+- 5a8cd3b: The side panel's header drags the desktop window like the rest of the top edge.
+- Updated dependencies [7c691af]
+- Updated dependencies [f10820e]
+- Updated dependencies [086129e]
+- Updated dependencies [6984d37]
+- Updated dependencies [7d032f0]
+- Updated dependencies [e0a320f]
+  - @capybara-hq/kernel@0.1.0-rc.94
+
 ## 0.1.0-rc.118
 
 ### Patch Changes

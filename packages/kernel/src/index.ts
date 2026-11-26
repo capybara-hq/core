@@ -235,6 +235,12 @@ export { type Account, AccountsModule, AccountsService } from "./identity/accoun
 export { type ApiTokenRecord, ApiTokenService } from "./identity/api-tokens.js";
 export { audit } from "./identity/audit.js";
 export { normalizeLogin, validatePassword } from "./identity/login.js";
+export {
+  LOGIN_SOURCES_SETTING,
+  type LoginSourceSettings,
+  LoginSourcesService,
+  writeLoginSources,
+} from "./identity/login-sources.js";
 export { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./identity/passwords.js";
 export {
   type IssuedSession,

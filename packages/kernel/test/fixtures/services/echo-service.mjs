@@ -2,8 +2,9 @@
 // `@capybara-hq/plugin-sdk`'s device-service.ts, written out here so the script runs alone from
 // the service's state directory). It listens on $CAPYBARA_SERVICE_SOCKET, writes `started` into
 // $CAPYBARA_SERVICE_STATE, answers a `request` connection with its body unchanged and echoes every
-// message of a `stream` connection.
-import { writeFileSync } from "node:fs";
+// message of a `stream` connection. The kernel's roll check is answered busy while a file `busy`
+// exists in the state directory (its content is the reason), else echoed like any request.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 
@@ -37,6 +38,12 @@ const server = createServer((conn) => {
         continue;
       }
       if (kind === "request") {
+        const busy = join(state, "busy");
+        if (msg.toString("utf8").includes('"roll-check"') && existsSync(busy)) {
+          const reason = readFileSync(busy, "utf8");
+          conn.end(frame(Buffer.from(JSON.stringify({ busy: true, reason }))));
+          return;
+        }
         conn.end(frame(msg));
         return;
       }

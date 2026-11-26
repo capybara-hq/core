@@ -377,6 +377,7 @@ const ROUTES: Routes = {
   "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
   "GET /api/v1/platform/theme": () => json(200, null),
   "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+  "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
   "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
   // 外观: the themes and the current org's
   "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
@@ -598,9 +599,10 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     // three policies, running outside the sandbox, the device network's ceiling and default and
     // the appearance theme cards, then the plugin UI code switch row
     expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(7);
-    // ... plus the prompt suggestion switch, the compaction section (a switch and four numbers, no
-    // card radios) and the sharing section (a switch, a number and a list)
-    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(11);
+    // ... plus the login methods (rows), the prompt suggestion switch, the compaction section (a
+    // switch and four numbers, no card radios) and the sharing section (a switch, a number and a
+    // list)
+    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(12);
     await release();
   });
 

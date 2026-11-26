@@ -34,11 +34,6 @@ function isValidMasterKey(value: string): boolean {
   return Buffer.from(value, "base64").length === 32;
 }
 
-/**
- * 受信任身份源的一项：完整的身份源键 `<插件名>:<租户 id>`（Ruling A19，信任按租户）。
- * 插件名同清单规则（不能是 `local`），租户 id 非空、不含空白；与 identity/external.ts 的身份源键规则一致。
- */
-const TRUSTED_SOURCE_RE = /^(?!local:)[a-z0-9][a-z0-9._-]{0,213}:\S{1,256}$/;
 /** Schemes an app redirect URI never uses: the consent page navigates to it. */
 const UNSAFE_REDIRECT_RE = /^\s*(?:javascript|data|vbscript|file):/i;
 
@@ -907,44 +902,12 @@ export const KernelConfigSchema = z.strictObject({
         )
         .optional()
         .meta(meta({ secret: true, description: "If set, the setup wizard requires this token" })),
-      loginSources: z
-        .array(z.string().min(1).max(214))
-        .max(50)
-        .default([])
-        .meta(
-          meta({
-            hot: true,
-            description:
-              "Extension names (providing identity-source@1) offered as third-party sign-in on the login page, in this order; the sign-in callback URL is <http.publicUrl>/api/v1/auth/sso/<plugin>/callback",
-          }),
-        ),
-      trustedIdentitySources: z
-        .array(
-          z
-            .string()
-            .max(471)
-            .refine((v) => TRUSTED_SOURCE_RE.test(v), {
-              message:
-                'Each entry must be a full identity source key "<plugin>:<tenantId>" (for example "lark:tenant_1"); plugin-only entries are not allowed, trust is per tenant',
-            }),
-        )
-        .max(50)
-        .default([])
-        .meta(
-          meta({
-            hot: true,
-            description:
-              'Identity source keys "<plugin>:<tenantId>" (one tenant each, e.g. "lark:tenant_1") whose external identities are trusted: on third-party sign-in, when the identity\'s email and an existing account\'s email are both verified and equal, the identity is linked to that account instead of creating a new one; and accounts created through a trusted source count as email-verified. Only list tenants (workspaces / apps) that your enterprise controls; otherwise anyone in that tenant could claim your users\' emails. Entries without a tenant id are rejected',
-          }),
-        ),
     })
     .default({
       accessTokenTtlSeconds: 900,
       refreshTokenTtlDays: 30,
       cookieSecure: true,
       appRedirectUris: ["capybara://auth/callback"],
-      loginSources: [],
-      trustedIdentitySources: [],
     }),
   runtime: z
     .strictObject({

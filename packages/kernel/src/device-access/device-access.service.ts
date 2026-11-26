@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  DEVICE_SERVICE_ROLL_CHECK,
   DeviceAccessError,
   type DeviceAccessScope,
   type DeviceServiceSpec,
@@ -8,6 +9,7 @@ import {
   deviceServiceId,
   type Logger,
   type NetworkBlockLayer,
+  parseRollCheck,
   parseToolKey,
   type ServiceBlockedHost,
   type ToolCallContext,
@@ -15,6 +17,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
+import { sql } from "kysely";
 import type { ReviewRecord } from "../conversations/events.js";
 import { DeviceAccess } from "../devices/access.js";
 import { ConversationDevices } from "../devices/conversation-devices.js";
@@ -31,6 +34,7 @@ import { assertServiceSpec, DeviceServices } from "../sandbox/device-services.js
 import { DeviceProviders } from "../sandbox/providers.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import type { SandboxUseContext } from "../sandbox/use-context.js";
+import { mapSandboxError } from "../tools/builtins/sandbox/common.js";
 import {
   attachCallScope,
   type CallScope,
@@ -74,7 +78,22 @@ export interface DeviceStreamTicket {
 export interface DeviceAccessCaller {
   extension: string;
   services: readonly string[];
+  /** The package the calling instance was loaded from (null or absent: not an install record). */
+  sha256?: string | null;
+  /** True once the calling instance is being replaced or unloaded (it drains its calls). */
+  superseded?: () => boolean;
 }
+
+/**
+ * The longest a service's busy answer holds a roll onto the same files, counted from the first
+ * busy answer (`capk:device-service-roll-held:<device>:<service>:<digest>`, the first answer's
+ * time, a TTL of twice this).
+ */
+const ROLL_HOLD_CAP_MS = 60 * 60_000;
+const ROLL_HOLD_PREFIX = "capk:device-service-roll-held:";
+
+/** How long the roll check waits for a running service's answer ({@link DEVICE_SERVICE_ROLL_CHECK}). */
+const ROLL_CHECK_TIMEOUT_MS = 5_000;
 
 /** The device a scope-based call works on, after the owner checks. */
 interface ScopedDevice {
@@ -86,13 +105,17 @@ interface ScopedDevice {
 }
 
 /** Maps the device resolution's API errors to the extension's refusal codes. */
-function refusal(e: unknown): unknown {
-  if (!(e instanceof ApiError)) return e;
-  if (e.code === "device.not_found" || e.code === "sandbox.unavailable")
-    return new DeviceAccessError("no_device", e.message, { cause: e });
-  if (e.code === "device.unavailable")
-    return new DeviceAccessError("provider_unavailable", e.message, { cause: e });
-  return e;
+function refusal(e: unknown, log: Pick<Logger, "warn">): unknown {
+  if (e instanceof ApiError) {
+    if (e.code === "device.not_found" || e.code === "sandbox.unavailable")
+      return new DeviceAccessError("no_device", e.message, { cause: e });
+    if (e.code === "device.unavailable")
+      return new DeviceAccessError("provider_unavailable", e.message, { cause: e });
+  }
+  // every other device or provider failure as the sandbox tools say it (the provider cannot be
+  // reached, the machine is offline or outdated, the outcome is unknown, ...): an actionable
+  // ToolError the extension passes on, never its own guess
+  return mapSandboxError(e, log);
 }
 
 /** How long the refresh of one service after an allowlist change may take. */
@@ -201,17 +224,26 @@ export class DeviceAccessService {
           name,
         );
       } catch (e) {
-        throw refusal(e);
+        throw refusal(e, this.log);
       }
     };
     // race-free: the provider keeps a running service and never starts a stopped one here
     // a service running other files (the extension was upgraded since it started) gets a start
-    // like a stopped one, reviewed below; the provider then restarts it on the spec's files
+    // like a stopped one, reviewed below; the provider then restarts it on the spec's files (a
+    // roll). The digest is cached per files object (a browser's files are megabytes).
     const digest = deviceServiceFilesDigest(providerSpec.files);
-    const current = (st: DeviceServiceStatus) =>
-      st.state === "running" && (st.filesDigest === undefined || st.filesDigest === digest);
+    const runsSpec = (st: DeviceServiceStatus) =>
+      st.filesDigest === undefined || st.filesDigest === digest;
     const found = await ensure(true);
-    if (current(found)) return found;
+    if (found.state === "running") {
+      if (runsSpec(found)) return found;
+      // never a roll back to older files, nor one under a person at work: kept, rolled later
+      if (await this.holdRoll(caller, use, providerSpec.name, name, digest, call.signal))
+        return found;
+    }
+    // A stopped service is started on the caller's files even when the caller is draining (its
+    // call still needs the service): the next call of the current instance rolls it forward, one
+    // restart more during an upgrade.
     const reviewFacts = await this.devices.reviewFacts(
       call.orgId,
       facts.rootConversationId,
@@ -267,11 +299,48 @@ export class DeviceAccessService {
     // another call may have started it since the first look (that call audits its own start):
     // found running now, this call started nothing and audits nothing
     const raced = await ensure(true);
-    if (current(raced)) return raced;
+    if (raced.state === "running" && runsSpec(raced)) return raced;
+    // another call started it on other files meanwhile, or the review took long enough for a
+    // person to take over: the same holds as at the first look
+    if (
+      raced.state === "running" &&
+      (await this.holdRoll(caller, use, providerSpec.name, name, digest, call.signal))
+    )
+      return raced;
     const started = await ensure(false);
+    // a provider that reports the digest but kept the old files would have every later call
+    // reviewed again for nothing: a broken provider, said as such
+    if (started.state === "running" && !runsSpec(started)) {
+      this.log.error("device provider kept a service on other files after a start", {
+        extension: caller.extension,
+        service: name,
+        deviceId: use.deviceId,
+        running: started.filesDigest,
+        wanted: digest,
+      });
+      throw new ToolError(
+        `The device service ${name} still runs its earlier files after a restart was asked for; the device's provider did not restart it. Ask the user to update the device's provider plugin, then retry.`,
+      );
+    }
     // audited only when this ensure started it: the service was stopped (no startedAt) or ran
-    // other files just before, and runs with a new startedAt now
+    // other files just before, and runs with a new startedAt now; one row per start, also when
+    // two replicas' calls both got here (the second finds the first one's process)
     if (started.state !== "running" || started.startedAt === raced.startedAt) return started;
+    // the start's own row, written by whichever call saw it first (a check, then the insert: two
+    // replicas reaching it in the same milliseconds may still both write)
+    const seen = await this.db
+      .selectFrom("audit_events")
+      .select("id")
+      .where("org_id", "=", call.orgId)
+      .where("action", "=", "device.service_started")
+      .where("target", "=", use.deviceId)
+      .where(sql<string>`detail->>'serviceId'`, "=", providerSpec.name)
+      .where(sql<string>`detail->>'startedAt'`, "=", started.startedAt)
+      // the start just happened: the (org_id, at) index keeps the range tiny
+      .where("at", ">=", sql<Date>`now() - interval '10 minutes'`)
+      .executeTakeFirst();
+    if (seen !== undefined) return started;
+    const rolled = raced.state === "running";
     await audit(this.db, {
       actorAccountId: call.accountId,
       orgId: call.orgId,
@@ -285,9 +354,109 @@ export class DeviceAccessService {
         argv,
         decision: record.decision,
         rule: record.rule,
+        // a roll replaces a process running other files; a start follows a stopped service
+        reason: rolled ? "files_changed" : "start",
+        startedAt: started.startedAt,
+        filesDigest: started.filesDigest ?? digest,
+        ...(rolled && {
+          replacedStartedAt: raced.startedAt,
+          ...(raced.filesDigest !== undefined && { replacedFilesDigest: raced.filesDigest }),
+        }),
       },
     });
     return started;
+  }
+
+  /**
+   * Whether a roll of a running service onto `digest` is held now ({@link rollHeld}), logged
+   * with the reason when it is.
+   */
+  private async holdRoll(
+    caller: DeviceAccessCaller,
+    use: SandboxUseContext,
+    serviceId: string,
+    name: string,
+    digest: string,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const held = await this.rollHeld(caller, use, serviceId, digest, signal);
+    if (held === null) return false;
+    this.log.info("device service roll deferred", {
+      extension: caller.extension,
+      service: name,
+      deviceId: use.deviceId,
+      reason: held,
+    });
+    return true;
+  }
+
+  /**
+   * Why a running service on other files is kept for now, or null to roll it:
+   * - the calling instance is being replaced or is not the one this replica runs now (it drains),
+   *   or not the version the deployment has enabled (a replica that has not reloaded yet): its
+   *   files are older, and rolling to them would flip the service back and forth;
+   * - the service answers the roll check busy (a person controls it or a handoff waits), for at
+   *   most {@link ROLL_HOLD_CAP_MS} after the first busy answer for these files (a Redis record
+   *   with a TTL: a service that stays busy, a handoff nobody ends, never holds an upgrade for
+   *   good).
+   * A failed check (an older service, no answer) lets the roll go ahead.
+   */
+  private async rollHeld(
+    caller: DeviceAccessCaller,
+    use: SandboxUseContext,
+    serviceId: string,
+    digest: string,
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    if (caller.superseded?.() === true) return "superseded: the calling instance is draining";
+    const sha = caller.sha256 ?? null;
+    if (sha !== null) {
+      const loaded = this.registry.current(caller.extension);
+      if (loaded === undefined || (loaded.sha256 ?? null) !== sha)
+        return "superseded: this replica runs another package of the extension";
+      // deployment-wide: the extension's install record, not an org's data
+      const row = await this.db
+        .selectFrom("extension_installs")
+        .select("sha256")
+        .where("name", "=", caller.extension)
+        .where("desired_state", "=", "enabled")
+        .executeTakeFirst();
+      if (row !== undefined && row.sha256 !== sha)
+        return "stale: the deployment enabled another package of the extension";
+    }
+    try {
+      const answer = await this.services.request(
+        use,
+        serviceId,
+        new TextEncoder().encode(DEVICE_SERVICE_ROLL_CHECK),
+        ROLL_CHECK_TIMEOUT_MS,
+        AbortSignal.any([signal, AbortSignal.timeout(ROLL_CHECK_TIMEOUT_MS)]),
+      );
+      const check = parseRollCheck(answer);
+      if (check.busy) {
+        const key = `${ROLL_HOLD_PREFIX}${use.deviceId}:${serviceId}:${digest}`;
+        const now = Date.now();
+        // the first busy answer's time, kept by whichever replica wrote it first (HSETNX)
+        if ((await this.redis.hsetnx(key, "first", String(now))) === 1)
+          await this.redis.pexpire(key, ROLL_HOLD_CAP_MS * 2);
+        const first = Number(await this.redis.hget(key, "first"));
+        if (Number.isFinite(first) && now - first >= ROLL_HOLD_CAP_MS) {
+          this.log.warn("device service roll no longer held by its busy answer", {
+            extension: caller.extension,
+            serviceId,
+            deviceId: use.deviceId,
+            heldMs: now - first,
+            reason: check.reason,
+          });
+          return null;
+        }
+        return `busy: ${check.reason ?? "the service is in use"}`;
+      }
+    } catch (e) {
+      if (signal.aborted) throw e;
+      // an older service, a slow one: the roll goes ahead
+    }
+    return null;
   }
 
   /** One request to the service's socket in the call's device. */
@@ -312,7 +481,7 @@ export class DeviceAccessService {
         call.signal,
       );
     } catch (e) {
-      throw refusal(e);
+      throw refusal(e, this.log);
     }
   }
 
@@ -582,7 +751,7 @@ export class DeviceAccessService {
     try {
       deviceId = await this.devices.forTool(call.orgId, rootConversationId);
     } catch (e) {
-      throw refusal(e);
+      throw refusal(e, this.log);
     }
     scope.device = deviceId;
     return {
@@ -637,7 +806,7 @@ export class DeviceAccessService {
       // the device bound to the owner's conversation is not theirs to use: someone else's
       if (e instanceof ApiError && e.code === "device.not_found")
         throw new DeviceAccessError("not_owner", DEVICE_ACCESS_NOT_OWNER_TEXT, { cause: e });
-      throw refusal(e);
+      throw refusal(e, this.log);
     }
     return {
       orgId: conv.org_id,

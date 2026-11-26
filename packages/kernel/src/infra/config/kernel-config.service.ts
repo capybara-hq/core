@@ -20,9 +20,6 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "runtime.orgConcurrency": () => {},
   // Eval org concurrency is read the same way at every quota request.
   "evals.orgConcurrency": () => {},
-  // Login methods and trusted identity sources are read on every request.
-  "auth.loginSources": () => {},
-  "auth.trustedIdentitySources": () => {},
   // The git gateway reads tools.git.enabled through the config service on every request.
   "tools.git.enabled": () => {},
   // The hook registry reads the time limit on every run.

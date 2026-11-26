@@ -525,6 +525,22 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Completes an SSO login from the identity provider",
   },
   {
+    route: "POST /api/v1/auth/sso/:plugin/start",
+    category: "human-only",
+    reason:
+      "A person links their own external account: the browser goes on to the identity provider's sign-in",
+  },
+  {
+    route: "GET /api/v1/auth/sso/link",
+    category: "human-only",
+    reason: "A person's own sign-in with a password: the link page's view of a pending link",
+  },
+  {
+    route: "POST /api/v1/auth/sso/link",
+    category: "human-only",
+    reason: "A person's own sign-in with a password: completes a pending link and signs in",
+  },
+  {
     route: "GET /api/v1/bind/:token",
     category: "human-only",
     reason: "Shows a one-time identity binding link",

@@ -337,6 +337,7 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
     "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
     "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
     "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+    "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
     "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     "GET /api/v1/admin/components?kind=theme": () => json(200, THEMES),
     "PUT /api/v1/admin/settings": put,

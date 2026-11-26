@@ -27,6 +27,54 @@
  * stream message.
  */
 
+/**
+ * The request body the kernel sends a running service before restarting it on new files (an
+ * upgraded extension, {@link DeviceServiceRollCheck}). A service that answers
+ * `{"busy":true,"reason":"…"}` is kept running (a person is using it); the kernel asks again at a
+ * later ensure. Any other answer, an error or no answer within a few seconds lets the restart go
+ * ahead, so a service that does not know the check is restarted as before. Every service gets
+ * this body on its request connection, so a service must ignore a request body it does not know
+ * (answer an error, act on nothing), never treat an arbitrary body as a command.
+ */
+export const DEVICE_SERVICE_ROLL_CHECK = '{"capybara":"roll-check"}';
+
+/** A service's answer to {@link DEVICE_SERVICE_ROLL_CHECK}. */
+export interface DeviceServiceRollCheck {
+  /** True while restarting now would lose something a person is doing (a takeover, a handoff). */
+  busy: boolean;
+  /** What keeps it busy, for the kernel's log. */
+  reason?: string;
+}
+
+/** Whether `body` is the kernel's {@link DEVICE_SERVICE_ROLL_CHECK} request. */
+export function isRollCheck(body: Uint8Array | string): boolean {
+  const text = typeof body === "string" ? body : new TextDecoder().decode(body);
+  try {
+    const v = JSON.parse(text) as unknown;
+    return (
+      typeof v === "object" && v !== null && (v as { capybara?: unknown }).capybara === "roll-check"
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Reads a service's answer to the roll check: busy only for `{"busy":true}` (never throws). */
+export function parseRollCheck(body: Uint8Array | string): DeviceServiceRollCheck {
+  const text = typeof body === "string" ? body : new TextDecoder().decode(body);
+  try {
+    const v = JSON.parse(text) as { busy?: unknown; reason?: unknown } | null;
+    if (typeof v === "object" && v !== null && v.busy === true)
+      return {
+        busy: true,
+        ...(typeof v.reason === "string" && { reason: v.reason.slice(0, 200) }),
+      };
+  } catch {
+    // not JSON: not busy
+  }
+  return { busy: false };
+}
+
 /** Names the unix socket path the service listens on. */
 export const DEVICE_SERVICE_SOCKET_ENV = "CAPYBARA_SERVICE_SOCKET";
 /** Names the service's state directory (its own data, its write root; not where its code is). */

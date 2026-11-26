@@ -55,6 +55,7 @@ const adminRoutes = () =>
     "GET /api/v1/platform/theme": () => json(200, null),
     "GET /api/v1/admin/settings": () => json(200, ADMIN_SETTINGS),
     "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
+    "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
     "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
     "PUT /api/v1/admin/settings": (c: Call) => {

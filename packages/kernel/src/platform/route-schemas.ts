@@ -3,6 +3,7 @@ import { ADMIN_ROUTES } from "../admin/admin.schemas.js";
 import { ADMIN_ITEM_ROUTES } from "../admin/admin-items.schemas.js";
 import { AUDIT_ROUTES } from "../admin/audit.schemas.js";
 import { ADMIN_EXTENSION_ROUTES } from "../admin/extensions.schemas.js";
+import { LOGIN_SOURCE_ROUTES } from "../admin/login-sources.schemas.js";
 import { ORG_NETWORK_ROUTES } from "../admin/org-network.schemas.js";
 import { OUTBOX_DEAD_ROUTES } from "../admin/outbox-dead.schemas.js";
 import { OVERVIEW_ROUTES } from "../admin/overview.schemas.js";
@@ -114,6 +115,7 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...OUTBOX_DEAD_ROUTES,
   // org network allowances (plugin safe fetch spec)
   ...ORG_NETWORK_ROUTES,
+  ...LOGIN_SOURCE_ROUTES,
   // shares of conversation files (file sharing spec §10)
   ...SHARE_ROUTES,
 ];

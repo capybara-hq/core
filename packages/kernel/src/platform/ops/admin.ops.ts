@@ -4,12 +4,18 @@ import { DeploymentSettingsBody, PurposeParams } from "../../admin/admin.schemas
 import { AuditListQuery } from "../../admin/audit.schemas.js";
 import { AuditLogService } from "../../admin/audit-log.service.js";
 import { AdminHealthService } from "../../admin/health.service.js";
+import {
+  LoginSourceBody,
+  LoginSourceParams,
+  LoginSourcesOrderBody,
+} from "../../admin/login-sources.schemas.js";
 import { UsageQuery } from "../../admin/overview.schemas.js";
 import { type AdminAttention, AdminOverviewService } from "../../admin/overview.service.js";
 import { AdminUsageService } from "../../admin/usage.service.js";
 import { ApiError } from "../../errors.js";
 import { ExtensionDisplayNames } from "../../extensions/display-name.js";
 import { ExtensionRegistry } from "../../extensions/registry.js";
+import { LoginSourcesService } from "../../identity/login-sources.js";
 import { DEPLOYMENT_SETTINGS_PATCH, SettingsService } from "../../identity/settings.js";
 import { ModelDisabledPatch, ModelProviderParams } from "../../models/enablement.controller.js";
 import { ModelEnablement } from "../../models/enablement.js";
@@ -45,6 +51,38 @@ const SettingsInput = DEPLOYMENT_SETTINGS_PATCH.pick({
   promptSuggestions: true,
   htmlRenderCdnAllowlist: true,
 }).strict();
+
+/** `login-sources.update`: the source and the fields to change. */
+const LoginSourceUpdateInput = z
+  .object({ ...LoginSourceParams.shape, ...LoginSourceBody.shape })
+  .strict()
+  .refine((i) => Object.keys(i).length > 1, {
+    message: "give at least one of enabled, signUp or trustedTenants",
+  });
+
+/** The bilingual card lines of a `login-sources.update` input. */
+function loginSourceChanges(i: z.infer<typeof LoginSourceUpdateInput>): { zh: string; en: string } {
+  const zh: string[] = [];
+  const en: string[] = [];
+  if (i.enabled !== undefined) {
+    zh.push(i.enabled ? "在登录页显示" : "不在登录页显示");
+    en.push(i.enabled ? "offered on the login page" : "no longer offered on the login page");
+  }
+  if (i.signUp !== undefined) {
+    zh.push(i.signUp === "link" ? "未绑定的账号去绑定页" : "未绑定的账号自动注册新账号");
+    en.push(
+      i.signUp === "link"
+        ? "unlinked accounts go to the link page"
+        : "unlinked accounts create a new account",
+    );
+  }
+  if (i.trustedTenants !== undefined) {
+    const list = i.trustedTenants.map(named).join(", ");
+    zh.push(i.trustedTenants.length === 0 ? "不信任任何租户" : `可信租户：${list}`);
+    en.push(i.trustedTenants.length === 0 ? "no trusted tenants" : `trusted tenants: ${list}`);
+  }
+  return { zh: zh.join("；"), en: en.join("; ") };
+}
 
 const ProviderId = ModelProviderParams.shape.provider.describe(
   "The model provider (models.platform-list), e.g. the plugin name of its extension.",
@@ -129,6 +167,7 @@ export class AdminOperations implements OnModuleInit {
     @Inject(AdminOverviewService) private readonly overview: AdminOverviewService,
     @Inject(AdminHealthService) private readonly health: AdminHealthService,
     @Inject(AdminUsageService) private readonly usage: AdminUsageService,
+    @Inject(LoginSourcesService) private readonly loginSources: LoginSourcesService,
   ) {}
 
   private assertProvider(provider: string): void {
@@ -355,6 +394,80 @@ export class AdminOperations implements OnModuleInit {
             // a person turns the platform's auto mode on, never an agent (auto mode spec §4.3)
             { onlyNarrows: true },
           ),
+      }),
+      defineOperation({
+        id: "login-sources.list",
+        description:
+          "The third-party sign-in methods of the login page (super admin): every loaded identity-source extension and every stored entry, the enabled ones first in login page order. Each item has plugin, label, tenant (what a tenant id is for this platform: label, pattern, placeholder, neverTrusted), enabled (offered on the login page), signUp (link: an unlinked external account goes to the link page to sign in with a password; create: it creates a new account), trustedTenants (tenants whose verified emails link to the existing account with that email), available (the extension is loaded), needsConfig (its deployment config is incomplete, so it cannot be turned on) and callbackUrl (the redirect URI to register at the identity provider; null while the deployment's public URL is unset).",
+        input: z.object({}).strict(),
+        example: {},
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/login-sources"],
+        confirm: "read",
+        run: async () => ({ items: await this.loginSources.overview() }),
+      }),
+      defineOperation({
+        id: "login-sources.update",
+        description:
+          "Change one third-party sign-in method (super admin); give only the fields to change: enabled (true offers it on the login page at once, placed last in the order; false removes it from the login page), signUp (link or create: what signing in with an external account nobody has linked does) and trustedTenants (the whole list of tenant ids whose verified emails link to the existing account with that email; read the current list with login-sources.list first). Returns the item as login-sources.list shows it.",
+        input: LoginSourceUpdateInput,
+        example: { plugin: "slack", enabled: true },
+        authz: { superAdmin: true },
+        mirrors: ["PUT /api/v1/admin/login-sources/:plugin"],
+        confirm: "platform",
+        errors: [
+          {
+            code: "login_sources.unknown_plugin",
+            next: "Check the plugin name with login-sources.list; the extension must be installed and provide identity-source@1.",
+          },
+          {
+            code: "login_sources.invalid_tenant",
+            next: "Fix the tenant id as the message says: it must match the format in the item's tenant (login-sources.list) and not be one of its neverTrusted tenants.",
+          },
+          {
+            code: "login_sources.needs_config",
+            next: "Its deployment config is incomplete: fill in the deployment config with extensions.platform-set-config, following extensions.platform-guides, then turn it on again.",
+          },
+        ],
+        summary: (i) => {
+          const c = loginSourceChanges(i);
+          return {
+            zh: `修改登录方式「${named(i.plugin)}」：${c.zh}`,
+            en: `Change the sign-in method "${named(i.plugin)}": ${c.en}`,
+          };
+        },
+        run: async ({ plugin, ...patch }, ctx) => {
+          await this.loginSources.update(plugin, patch, ctx.actorAccountId, {
+            detail: viaAgent("login-sources.update", ctx),
+          });
+          return this.loginSources.view(plugin);
+        },
+      }),
+      defineOperation({
+        id: "login-sources.reorder",
+        description:
+          "Set the order of the sign-in buttons on the login page (super admin): plugins lists every enabled sign-in method exactly once (login-sources.list shows them), first shown first.",
+        input: LoginSourcesOrderBody.strict(),
+        example: { plugins: ["slack", "google"] },
+        authz: { superAdmin: true },
+        mirrors: ["PUT /api/v1/admin/login-sources/order"],
+        confirm: "platform",
+        errors: [
+          {
+            code: "validation_failed",
+            next: "List every enabled sign-in method exactly once (the enabled items of login-sources.list).",
+          },
+        ],
+        summary: (i) => {
+          const list = i.plugins.map(named).join(", ");
+          return { zh: `登录页的登录方式顺序：${list}`, en: `Login page sign-in order: ${list}` };
+        },
+        run: async (input, ctx) => {
+          await this.loginSources.reorder(input.plugins, ctx.actorAccountId, {
+            detail: viaAgent("login-sources.reorder", ctx),
+          });
+          return { items: await this.loginSources.overview() };
+        },
       }),
       defineOperation({
         id: "models.platform-list",

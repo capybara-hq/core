@@ -16,6 +16,7 @@ export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "identity.linked": "identityLinked",
   "identity.verified": "identityVerified",
   "identity.unlinked": "identityUnlinked",
+  "login_sources.updated": "loginSourcesUpdated",
   "deployment.settings.updated": "deploymentSettingsUpdated",
   "bootstrap.completed": "bootstrapCompleted",
   "deployment.setup_completed": "deploymentSetupCompleted",

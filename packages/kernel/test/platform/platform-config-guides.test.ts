@@ -3,7 +3,11 @@ import type {
   DeploymentConfigField,
   DeploymentConfigView,
 } from "../../src/extensions/deployment-config.js";
-import { configGuides } from "../../src/platform/ops/extensions-admin.ops.js";
+import {
+  configGuides,
+  LOGIN_SOURCE_NEXT,
+  platformConfigNext,
+} from "../../src/platform/ops/extensions-admin.ops.js";
 
 // `extensions.platform-config` lists the extension's platform setup guides (id and title only) and
 // names `extensions.platform-guides` as the next step while the config still needs setting up.
@@ -67,5 +71,25 @@ describe("configGuides", () => {
 
   it("gives no next step without a guide, whatever the config", () => {
     expect(configGuides(view({ valid: false }), [])).toEqual({ guides: [] });
+  });
+});
+
+describe("platformConfigNext", () => {
+  const SETUP = "Read the setup guides.";
+
+  it("guide and login source: the guide's step, then the login step", () => {
+    expect(platformConfigNext(SETUP, true)).toBe(`${SETUP} ${LOGIN_SOURCE_NEXT}`);
+  });
+
+  it("login source only: the login step", () => {
+    expect(platformConfigNext(undefined, true)).toBe(LOGIN_SOURCE_NEXT);
+  });
+
+  it("guide only: the guide's step", () => {
+    expect(platformConfigNext(SETUP, false)).toBe(SETUP);
+  });
+
+  it("neither: no next step", () => {
+    expect(platformConfigNext(undefined, false)).toBeUndefined();
   });
 });

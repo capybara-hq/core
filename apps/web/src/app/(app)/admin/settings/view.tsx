@@ -23,6 +23,10 @@ import { useState } from "react";
 import { platformOwned } from "../../../../components/AdminComponents";
 import { AppIconSection } from "../../../../components/AppIconSection";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
+import {
+  LOGIN_METHODS_LOADING,
+  LoginMethodsSection,
+} from "../../../../components/LoginMethodsSection";
 import { NoAccess } from "../../../../components/NoAccess";
 import { CompactionSection } from "../../../../components/settings/CompactionSection";
 import { usePagePath } from "../../../../components/shell/path";
@@ -87,8 +91,10 @@ import NotFound from "../../not-found";
  * 组织能否自建连接器 / 技能（`deny` 时只能从平台目录安装）, and 外观: the platform default theme
  * (themes spec §7, §10), 内置主题 or a platform-owned theme whose scope is `all` and that is not
  * disabled; the kernel refuses one off in some org with the orgs (shown). The app icon: the
- * platform icon (mobile layout spec §10.2.1, `AppIconSection`), saved per action. Plugin UI code: the
- * client code kill switch and the plugins whose client code alone is stopped (client extensions
+ * platform icon (mobile layout spec §10.2.1, `AppIconSection`), saved per action. Login methods: the
+ * login methods in login page order (`LoginMethodsSection`), each move saved at once. Plugin UI
+ * code: the client code kill switch and the plugins whose client code alone is stopped (client
+ * extensions
  * spec §10.2); a save that changes it marks every cached client set stale. The device sandbox:
  * running outside the sandbox (`devicesOutsideSandbox`) and the device network's default and
  * ceiling (`devicesNetwork`), each read with where it comes from; a value set in the startup config
@@ -134,6 +140,7 @@ function AdminSettingsRead() {
   const tcp = useTranslations("compaction");
   const tps = useTranslations("promptSuggestions");
   const tsh = useTranslations("admin.settings.sharing");
+  const tlm = useTranslations("loginSources.methods");
   const header = { path: [...scope, { label: "settings" }], title: t("title") };
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -156,6 +163,12 @@ function AdminSettingsRead() {
         }}
       >
         {section("org-creation", "orgCreation", RADIOS)}
+        <FormSection
+          id="login-methods"
+          title={tlm("title")}
+          description={tlm("description")}
+          loading={LOGIN_METHODS_LOADING}
+        />
         {section("currency", "currency", [{ help: true }])}
         {section("customConnectors", "customConnectors", RADIOS)}
         {section("customSkills", "customSkills", RADIOS)}
@@ -424,6 +437,7 @@ function AdminSettings({
           }))}
         />
       </FormSection>
+      <LoginMethodsSection />
       <FormSection
         id="currency"
         title={t("currency.title")}

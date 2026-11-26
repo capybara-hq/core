@@ -1,5 +1,55 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.94
+
+### Patch Changes
+
+- 7c691af: `ctx.deviceAccess.ensureService` and `request` hand an extension the device and provider failures
+  as the sandbox tools say them (an actionable `ToolError`: the provider cannot be reached, the
+  machine is offline or needs an update, the outcome is unknown, ...), instead of the raw error that
+  extensions could only report generically. A browser tool on a device whose provider is down now
+  says what a Bash call says.
+- f10820e: `Grep` and `Glob` no longer walk into `.git` or `node_modules` directories, and on a device that has
+  ripgrep they also skip what `.gitignore` / `.ignore` / `.rgignore` files ignore, so searching a
+  repository root finishes instead of timing out. A skipped directory is still searched when it is
+  passed as `path`.
+- 086129e: Login sources (which `identity-source@1` extensions the login page offers, in which order, and
+  their trusted tenants) are a deployment setting read from PG (`LoginSourcesService`), no longer
+  the startup keys `auth.loginSources` / `auth.trustedIdentitySources`, which are removed. The
+  testing package adds `seedLoginSources(db, entries)`.
+- 6984d37: Refused network hosts carry the layer that refused them end to end.
+  
+  - SDK: `ctx.deviceAccess.reportBlockedHosts(call, hosts)` takes `ServiceBlockedHost[]`
+    (`{ host, layer }`) instead of host names, and `sandboxProxyRefusalLayer(reason)` reads the layer
+    from the device sandbox proxy's refusal reason (a closed address is `address`, a host off the
+    allowlist `device`).
+  - Kernel: a device service's refused host gets the note of its layer: a host refused for its
+    private or local address gets the address note, never a network ask or the "an organization
+    admin adds it" note. A host reported twice keeps its most restrictive layer, and an IP literal is
+    always `address`, so a report never makes a host grantable.
+  - capybara-device: a restricted command on macOS reports the hosts its operation proxy refused
+    (`network.blocked`, which the protocol 2 removal had left unwired), so a sandboxed `curl` to a
+    name resolving to a private address gets the address note instead of nothing.
+- 7d032f0: `extensions.platform-config` lists the extension's platform setup guides (`guides`: id and title,
+  in the optional `locale`) and, when a guide exists and the deployment config is invalid or leaves a
+  required field without a value, a `next` step naming `extensions.platform-guides`. An agent reading
+  the config now learns that the extension ships a setup guide instead of guessing the operation.
+- e0a320f: Device service rolls (an extension upgraded while its service runs), follow-ups:
+  `deviceServiceFilesDigest` caches per files object, and `DEVICE_SERVICE_FILES_DIGEST_VECTOR` pins the
+  digest for every implementation (capybara-device now uses the SDK's). The kernel never rolls a
+  service to the files of a draining instance, of another package than the replica runs or than the
+  deployment enabled, and keeps a service that answers the new roll check (`DEVICE_SERVICE_ROLL_CHECK`,
+  `parseRollCheck`, `isRollCheck`) busy. A provider that keeps the old files after the start is
+  refused with the cause instead of every later call being reviewed again. The
+  `device.service_started` audit row says `reason` (`start` or `files_changed`), the files digest and
+  what a roll replaced, and a call that finds the row of the same start writes none.
+  A busy answer holds a roll onto the same files for at most an hour, and the holds apply at the
+  re-check after the review too.
+- Updated dependencies [70d42b5]
+- Updated dependencies [6984d37]
+- Updated dependencies [e0a320f]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.77
+
 ## 0.1.0-rc.93
 
 ### Patch Changes

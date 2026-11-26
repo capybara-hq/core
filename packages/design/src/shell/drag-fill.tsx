@@ -5,6 +5,8 @@
  * stacked above, so it never holds or lies under a control. Outside a desktop shell it is a plain
  * spacer. Design CSS turns dragging off while an overlay is open.
  */
-export function DragFill() {
-  return <span className="cb-drag-fill" aria-hidden="true" />;
+export function DragFill({ className }: { className?: string } = {}) {
+  return (
+    <span className={className ? `cb-drag-fill ${className}` : "cb-drag-fill"} aria-hidden="true" />
+  );
 }

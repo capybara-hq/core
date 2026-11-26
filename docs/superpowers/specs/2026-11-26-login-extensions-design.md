@@ -152,10 +152,15 @@ trusted-tenant step points at the same section.
 
 `SsoFlow.start(plugin, returnTo, binding, session, intent)` with `intent`:
 
-- `signin` (default, the login page): as today.
-- `link` (the linked accounts page, §5): requires a web session at start; the state records it; at
-  the callback the request must carry **the same** session, otherwise `sso.session_mismatch`. A
-  link-intent callback never creates an account and never switches the session.
+- `signin` (default, the login page): as today (`GET /api/v1/auth/sso/<plugin>/start`).
+- `link` (the linked accounts page, §6): starts only from a CSRF-protected
+  `POST /api/v1/auth/sso/<plugin>/start` `{ intent: "link", returnTo? }` (web session only, CSRF
+  header), which sets the `cap_sso` binding cookie and returns `{ location }` (the authorize URL)
+  for the page to navigate to; the GET start refuses `intent=link` (`sso.session_mismatch`, no
+  state), since a cross-site page can trigger a GET with the Lax session cookie. The state records
+  the session; at the callback the request must carry **the same** session, otherwise
+  `sso.session_mismatch`. A link-intent callback never creates an account and never switches the
+  session; its failures go back to its page with `?error=<code>`.
 
 The callback, after the existing checks (state single use, browser binding, plugin verification,
 source key `${plugin}:${tenantId}`), decides on the identity row:
@@ -186,7 +191,7 @@ When the callback chooses the link page:
 3. The page (`AuthPage` template) says: 「这个 Slack 账号（朝华 · 工作区 T0BB…）还没有可登录的
    Capybara 账号。用你的用户名和密码登录，完成绑定。」 with username / password, a 「取消」 back to
    `/login`, and 「没有账号？请联系管理员。」
-4. `POST /api/v1/auth/sso/link` `{ ticket, login, password }` (public, CSRF header + Origin like
+4. `POST /api/v1/auth/sso/link` `{ ticket, login, password }` (public, CSRF header like
    `/auth/login`, the `cap_sso` cookie): verifies the password through the same service as
    `/auth/login` (the same per-login and per-(login, IP) throttles of R25, lockout and audit), then
    in one transaction under the identity lock: no row → link to the account as `sso`; a `bind` row
@@ -234,7 +239,8 @@ bounded because a `bind` row never signs anyone in.
   action both need OAuth proof of the external account plus the Capybara account, so neither can be
   driven by a forwarded link.
 - **Login CSRF / session swap**: state single use, browser binding cookie, PKCE unchanged; `intent:
-  link` requires the same session at start and callback; the link page needs the ticket, the
+  link` starts only from a CSRF-protected POST (never a GET) and requires the same session at start
+  and callback; the link page needs the ticket, the
   binding cookie and the CSRF header. A link-intent callback never signs anyone in as someone else.
 - **Password guessing through the link page**: the same throttles and lockout as `/auth/login`,
   plus 5 attempts per ticket; generic error text.
@@ -264,7 +270,8 @@ under 平台 → 扩展 → <extension> → 登录. Production sets neither toda
   capabilities.
 - Dual-replica: start on one replica, callback and link POST on the other (Redis-only state).
 - Web: linked accounts page states (jsdom), link page, the 登录 section and the order section;
-  e2e `global-setup.ts` seeds the setting through the admin route instead of `auth.loginSources`.
+  e2e `global-setup.ts` seeds the setting directly with `seedLoginSources(db)` after migrations
+  (`signUp: "create"`) instead of `auth.loginSources`.
 - Checks: `check:platform-ops` and the parity test for the three operations and two exclusions;
   `check:sdk-api` / `check:api-changeset`; `check:agent-docs`; `check:i18n` (zh copy uses 平台 /
   超级管理员).

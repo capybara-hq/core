@@ -330,6 +330,11 @@ describe("proxy: share pages", () => {
     }
   });
 
+  it("the link page sends no referrer (its ticket is in the address)", async () => {
+    const res = await proxy(page("/login/link?ticket=cap_link_x"));
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
   it("other pages keep the default referrer and robots", async () => {
     for (const path of ["/login", "/shares", "/sx"]) {
       const res = await proxy(page(path, "cap_at=x"));

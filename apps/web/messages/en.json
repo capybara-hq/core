@@ -36,7 +36,7 @@
         "access_denied": "Sign-in was cancelled or access was denied.",
         "provider_error": "The identity provider returned an error. Please try again later.",
         "account_not_allowed": "This account is not allowed to sign in on this platform. Use an account of an allowed organization, or contact an administrator.",
-        "identity_not_verified": "This account was linked through an IM binding link and cannot be used to sign in yet. Sign in another way first, then sign in with it once while signed in to verify it."
+        "link_expired": "The link request expired or was already used. Please sign in again."
       },
       "auth": {
         "account_disabled": "This account has been disabled.",
@@ -45,7 +45,19 @@
       },
       "unknown": "Sign-in failed. Please try again."
     },
-    "insecureOrigin": "You are using an HTTP address. If you cannot stay signed in after logging in, use an HTTPS address or contact your administrator."
+    "insecureOrigin": "You are using an HTTP address. If you cannot stay signed in after logging in, use an HTTPS address or contact your administrator.",
+    "link": {
+      "title": "Finish linking",
+      "intro": "This {platform} account ({name} · {tenant}) has no {product} account it can sign in to yet. Sign in with your username and password to link it.",
+      "introNoTenant": "This {platform} account ({name}) has no {product} account it can sign in to yet. Sign in with your username and password to link it.",
+      "platform": "Platform",
+      "tenant": "Tenant",
+      "linkedToAnother": "This account is linked to a {product} account through IM. Sign in with that account's username and password to sign in with it from now on.",
+      "submit": "Sign in and link",
+      "cancel": "Cancel",
+      "noAccount": "No account? Contact your administrator.",
+      "taken": "This {platform} account is linked to another {product} account. Sign in with that account and unlink it, then try again."
+    }
   },
   "changePassword": {
     "title": "Set a new password",
@@ -325,6 +337,11 @@
       "not_found": "The identity does not exist or is already unlinked.",
       "last_login_method": "This is your only way to sign in. Set a password before unlinking it."
     },
+    "login_sources": {
+      "needs_config": "Fill in this extension's deployment config before showing it on the login page.",
+      "invalid_tenant": "A trusted tenant is not a valid tenant ID.",
+      "unknown_plugin": "No extension provides this sign-in."
+    },
     "bind": {
       "invalid": "This link is invalid or has expired."
     },
@@ -602,6 +619,10 @@
     "push": {
       "provider_unavailable": "This app can't receive notifications from this platform: no enabled push channel covers it. Ask your super admin.",
       "registration_not_found": "This device no longer receives notifications."
+    },
+    "sso": {
+      "link_expired": "The link has expired. Sign in with the external account again.",
+      "session_mismatch": "Your session changed. Sign in again and retry."
     }
   },
   "agents": {
@@ -2609,7 +2630,7 @@
       "grants": "Remembered approvals",
       "general": "General",
       "sandbox": "Sandbox",
-      "identities": "IM identities",
+      "identities": "Linked accounts",
       "models": "Models",
       "members": "Members",
       "tokens": "Service tokens",
@@ -3213,23 +3234,88 @@
     "appearanceTitle": "Appearance"
   },
   "identities": {
-    "title": "IM identities",
-    "hint": "IM and sign-in accounts linked to your {product} account. Messages from a linked IM account act as you.",
-    "empty": "No linked identities.",
-    "emptyHint": "Message a {product} bot in IM and follow its link, or sign in with a third-party account.",
+    "title": "Linked accounts",
+    "hint": "IM and sign-in accounts linked to your {product} account. Messages from an account that works in IM act as you; an account that can sign in signs you in to {product}.",
+    "empty": "No linked accounts.",
+    "emptyHint": "Message a {product} bot in IM and follow its link, use a Link button above, or have an administrator sync the directory.",
     "columns": {
-      "name": "Name",
-      "source": "Source",
+      "account": "Account",
+      "platform": "Platform",
       "tenant": "Tenant",
-      "externalId": "Account ID",
-      "linkedAt": "Linked"
+      "im": "IM",
+      "login": "Sign-in"
+    },
+    "im": {
+      "on": "Available"
+    },
+    "login": {
+      "unsupported": "Not supported",
+      "off": "Not turned on",
+      "enable": "Turn on sign-in",
+      "on": "Can sign in"
+    },
+    "link": "Link {platform}",
+    "linkError": {
+      "identity": {
+        "taken": "This account is linked to another {product} account. Sign in with that account and unlink it first."
+      },
+      "sso": {
+        "unavailable": "This sign-in method is not available right now. Contact an administrator.",
+        "session_mismatch": "Your session changed. Sign in again and retry.",
+        "access_denied": "Linking was cancelled or access was denied.",
+        "provider_error": "The identity provider returned an error. Please try again later.",
+        "account_not_allowed": "This account is not allowed to sign in on this platform."
+      },
+      "unknown": "Linking failed. Please try again."
     },
     "unlink": "Unlink",
     "unlinkTitle": "Unlink {name}?",
-    "unlinkHint": "Messages from this IM account will no longer act as you, and you can no longer sign in with it.",
-    "unlinked": "\"{name}\" unlinked.",
-    "unverified": "Not verified",
-    "verify": "Verify (sign in with this account)"
+    "unlinkHint": "Messages from this account in IM will no longer act as you, and you can no longer sign in with it.",
+    "unlinked": "\"{name}\" unlinked."
+  },
+  "loginSources": {
+    "section": {
+      "title": "Sign-in",
+      "description": "The third-party sign-in this extension provides: whether the login page offers it, where unlinked accounts go and which tenants are trusted.",
+      "show": "Show on the login page",
+      "needsConfig": "Fill in the deployment config first to show it on the login page.",
+      "unavailable": "This extension is not running, so the login page does not offer it now.",
+      "turnedOn": "The login page now offers \"{name}\".",
+      "turnedOff": "The login page no longer offers \"{name}\".",
+      "saved": "Saved.",
+      "signUp": {
+        "label": "Unlinked accounts",
+        "link": "Go to the link page (recommended)",
+        "linkHint": "The person signs in with a username and password to link the external account to an existing account.",
+        "create": "Create a new account",
+        "createHint": "The new account belongs to no org until an invitation or directory sync adds it."
+      },
+      "tenants": {
+        "label": "Trusted tenants ({tenant})",
+        "defaultTenant": "Tenant ID",
+        "help": "One per line. An external account with a verified email in a trusted tenant links to the existing account with that email.",
+        "warning": "List only tenants you control: anyone in a trusted tenant can claim the existing account with the same email.",
+        "invalidPattern": "\"{tenant}\" is not a valid {label}.",
+        "neverTrusted": "\"{tenant}\" can never be trusted.",
+        "save": "Save trusted tenants"
+      },
+      "callback": {
+        "label": "Callback URL",
+        "help": "Register this address in the identity provider's app settings.",
+        "missing": "The callback URL shows here once the deployment's public URL (http.publicUrl) is set."
+      }
+    },
+    "methods": {
+      "title": "Login methods",
+      "description": "The login page offers third-party sign-ins in this order. Drag them or move them up and down; each method's settings are on its extension page.",
+      "orderLabel": "Order on the login page",
+      "others": "Not on the login page",
+      "off": "Off",
+      "needsConfig": "Needs config",
+      "unavailable": "Not running",
+      "empty": "No extension provides a sign-in yet.",
+      "reordered": "Login order saved."
+    }
   },
   "bind": {
     "title": "Link IM account",
@@ -3238,7 +3324,8 @@
     "tenant": "Tenant",
     "externalId": "Account ID",
     "email": "Email",
-    "warning": "Only confirm if you just requested this from IM yourself; this links that IM account to your {product} account, and its messages will act as you.",
+    "effect": "Confirming links this IM account to your {product} account, and its messages will act as you.",
+    "warning": "Only link your own account. If someone else sent you this link, do not link it.",
     "confirm": "Link account",
     "cancel": "Cancel",
     "doneTitle": "Account linked",
@@ -4227,6 +4314,7 @@
         "identityLinked": "Linked an external identity",
         "identityVerified": "Verified an external identity",
         "identityUnlinked": "Unlinked an external identity",
+        "loginSourcesUpdated": "Changed the login methods",
         "deploymentSettingsUpdated": "Changed the deployment settings",
         "bootstrapCompleted": "Set up the bootstrap plugins",
         "deploymentSetupCompleted": "Completed the deployment setup",

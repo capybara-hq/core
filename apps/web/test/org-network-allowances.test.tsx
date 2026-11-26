@@ -56,6 +56,7 @@ function adminRoutes(extra: Parameters<typeof stubApi>[0] = {}) {
     "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
     "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
     "GET /api/v1/admin/settings": () => json(200, DEPLOYMENT_SETTINGS),
+    "GET /api/v1/admin/login-sources": () => json(200, { items: [] }),
     "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     ...extra,
   });

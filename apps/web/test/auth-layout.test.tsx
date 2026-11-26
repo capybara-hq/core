@@ -162,6 +162,11 @@ describe("the login layout's decisions before anything renders", () => {
     await expect(loginAt("/login")).rejects.toThrow(/^REDIRECT \/$/);
   });
 
+  it("the link page is shown to a signed-in visitor too (its sign-in replaces the session)", async () => {
+    signedIn();
+    await expect(loginAt("/login/link?ticket=cap_link_x")).resolves.toBeTruthy();
+  });
+
   it("signed out, or the session read failing, renders the form", async () => {
     serverRoutes({
       "GET /api/v1/me": () =>
