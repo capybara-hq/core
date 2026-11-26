@@ -1,5 +1,18 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.78
+
+### Patch Changes
+
+- bd6dd67: A `/name` skill invocation renders `${CLAUDE_SKILL_DIR}` and its files line under the conversation
+  device's skills root (`renderSkillInvocation`'s new `skillsRoot`), not always `/skills`; `Skill`
+  after an inline invocation copies the files without repeating the instructions (#904).
+- 506de30: A failed native file operation names its cause (#907): the SDK's `nativeFailureText(code)` maps a
+  native helper's error code (`NOT_REGULAR_FILE`, `ENOENT`, `ENOTDIR`, `EISDIR`, `ENOSPC`, …) to
+  actionable English text, keeping the generic text for unknown codes. capybara-device's native
+  helpers answer `NOT_REGULAR_FILE` for a read or write of a FIFO, device or other special file, and
+  its macOS and Linux operation backends throw the mapped text instead of one generic message.
+
 ## 0.1.0-rc.77
 
 ### Minor Changes
