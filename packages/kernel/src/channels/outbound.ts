@@ -277,7 +277,8 @@ export interface DeliveryAdvance {
   draft?: string | null;
   /**
    * A run's progress message was posted (null: a channel without edits, which posts none): its id
-   * and run are recorded and the milestone time cleared (process blocks spec §6.3).
+   * and run are recorded, the milestone time and the re-post flag cleared (process blocks spec
+   * §6.3).
    */
   progress?: { messageId: string | null; runId: string };
   /** A milestone message was sent: the log time of its event. */
@@ -566,6 +567,7 @@ export class ChannelOutbound {
           progress_message_id: a.progress.messageId,
           progress_run_id: a.progress.runId,
           milestone_at: null,
+          progress_reposted: false,
         }),
         ...(a.milestoneAt !== undefined && { milestone_at: a.milestoneAt }),
         updated_at: new Date(),
@@ -769,8 +771,7 @@ class Delivery {
   private progressRetry: Error | undefined;
   /**
    * The run's card was re-posted after a rejected edit (once per run: in this job, or in an earlier
-   * one, recorded as `milestone_at`, which a card run uses for nothing else); a rejection after
-   * that stops the edits.
+   * one, `progress_reposted`); a rejection after that stops the edits.
    */
   private progressReposted = false;
   private progressBroken = false;
@@ -810,6 +811,7 @@ class Delivery {
         "progress_message_id",
         "progress_run_id",
         "milestone_at",
+        "progress_reposted",
       ])
       .where("conversation_id", "=", this.conversationId)
       .executeTakeFirst();
@@ -865,7 +867,7 @@ class Delivery {
       if (this.progressKind !== "off" && row.progress_run_id !== null) {
         this.progressId = row.progress_message_id;
         this.milestoneAt = row.milestone_at?.getTime() ?? null;
-        this.progressReposted = this.progressKind === "card" && row.milestone_at !== null;
+        this.progressReposted = row.progress_reposted;
         await this.rebuildProgress(row.progress_run_id);
       }
       return await this.loop();
@@ -2026,7 +2028,7 @@ class Delivery {
    * leaves the card dirty for the next interval instead of failing the job, so blocking cards and
    * the answer still go out. An edit the platform rejects (message too old, content refused)
    * posts the card again once per run, recording the new message's id and the re-post (as
-   * `milestone_at`) in one write; after that a rejection leaves the card as it is. The re-post's
+   * `progress_reposted`) in one write; after that a rejection leaves the card as it is. The re-post's
    * idempotency key derives from the rejected message, so a job that re-posts the same rejected
    * card again (the first one died before its write) reuses it.
    */
@@ -2073,7 +2075,7 @@ class Delivery {
     // fenced like the draft id: only while this delivery still owns `last_seq` and the run
     const r = await this.d.db
       .updateTable("channel_deliveries")
-      .set({ progress_message_id: messageId, milestone_at: new Date(), updated_at: new Date() })
+      .set({ progress_message_id: messageId, progress_reposted: true, updated_at: new Date() })
       .where("conversation_id", "=", this.conversationId)
       .where("last_seq", "=", String(this.persisted))
       .where("progress_run_id", "=", s.runId)

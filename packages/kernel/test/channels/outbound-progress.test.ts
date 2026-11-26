@@ -302,7 +302,13 @@ async function convOf(conn: string, chatId: string): Promise<string> {
 async function deliveryRow(conversationId: string) {
   return db
     .selectFrom("channel_deliveries")
-    .select(["last_seq", "progress_message_id", "progress_run_id", "milestone_at"])
+    .select([
+      "last_seq",
+      "progress_message_id",
+      "progress_run_id",
+      "milestone_at",
+      "progress_reposted",
+    ])
     .where("conversation_id", "=", conversationId)
     .executeTakeFirstOrThrow();
 }
@@ -420,7 +426,13 @@ describe("channel progress card (process blocks spec §6.2)", () => {
       progress_run_id: run1,
     });
 
-    // a second run in the same conversation gets its own progress message
+    // a second run in the same conversation gets its own progress message, and run_started
+    // clears the previous run's re-post flag
+    await db
+      .updateTable("channel_deliveries")
+      .set({ progress_reposted: true })
+      .where("conversation_id", "=", conv)
+      .execute();
     im.push(detailedId, dm("pn2b", "u-n2", "and again"));
     await waitFor(async () => (await runIds(conv)).length === 2, 10_000, "second run");
     await settled(conv);
@@ -436,6 +448,7 @@ describe("channel progress card (process blocks spec §6.2)", () => {
     expect(await deliveryRow(conv)).toMatchObject({
       progress_message_id: progress[1]?.messageId,
       progress_run_id: run2,
+      progress_reposted: false,
     });
   });
 
@@ -622,7 +635,12 @@ describe("channel progress card (process blocks spec §6.2)", () => {
     expect(msgs.filter((m) => progressOf(m) !== undefined)).toHaveLength(2);
     expect(msgs.filter((m) => cardOf(m) === undefined).map((m) => m.message.text)).toEqual([
       "approved answer",
-    ]);
+    ]); // the re-post has its own flag; milestone_at stays the no-edit milestones' only
+    expect(await deliveryRow(conv)).toMatchObject({
+      progress_message_id: msgs.filter((m) => progressOf(m) !== undefined)[1]?.messageId,
+      progress_reposted: true,
+      milestone_at: null,
+    });
   });
 
   it("a retryable edit failure does not hold back the answer", async () => {

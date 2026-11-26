@@ -997,11 +997,13 @@ export interface ChannelDeliveriesTable {
   pending_thread_account_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
    * 0185: the run's progress message (edited in place), the run it belongs to and when its last
-   * milestone was sent; null without one.
+   * milestone was sent; null without one. `progress_reposted`: the card was posted again after a
+   * rejected edit (once per run).
    */
   progress_message_id: ColumnType<string | null, string | null | undefined, string | null>;
   progress_run_id: ColumnType<string | null, string | null | undefined, string | null>;
   milestone_at: TsNullable;
+  progress_reposted: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 /** 0018_channels.sql：出站投递发出的审批 / 提问卡片对应的 IM 消息（Task 11，用于更新卡片状态）。 */

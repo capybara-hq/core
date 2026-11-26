@@ -7,3 +7,5 @@ ALTER TABLE channel_connections ADD COLUMN IF NOT EXISTS process_display text
 ALTER TABLE channel_deliveries ADD COLUMN IF NOT EXISTS progress_message_id text;
 ALTER TABLE channel_deliveries ADD COLUMN IF NOT EXISTS progress_run_id text;
 ALTER TABLE channel_deliveries ADD COLUMN IF NOT EXISTS milestone_at timestamptz;
+-- The run's progress card was posted again after the platform rejected an edit (once per run).
+ALTER TABLE channel_deliveries ADD COLUMN IF NOT EXISTS progress_reposted boolean NOT NULL DEFAULT false;
