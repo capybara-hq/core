@@ -501,8 +501,9 @@ export class SandboxOperationAuthority {
    *   review's fallbacks apply: a root outside the mode or above the home is refused); the root's
    *   `stat`, `AGENTS.md`, `.agents/skills/**`.
    * - `write_base` (streaming tool input spec §4.1): the working root admission decides for a tool
-   *   call; `stat` and `readFile` of exactly the one path, which must lie inside that working root
-   *   (a path a `Write` reaches only by escalation gets no base).
+   *   call; `stat` and `readFile` of exactly the one path, which must lie strictly inside that
+   *   working root, never the root itself (a path a `Write` reaches only by escalation gets no
+   *   base).
    * The restricted {@link KERNEL_READ_PROFILE} whenever the runtime enforces it (the runtime then
    * enforces the read root, symlinks included); the conversation's admitted Full access only on an
    * isolated Full-only runtime; a host machine without restricted enforcement throws
@@ -549,7 +550,11 @@ export class SandboxOperationAuthority {
           "forbidden",
           "The kernel read's root is not the conversation's usable project root",
         );
-    } else if (!withinDirectory(covering, f.workingRoot))
+    } else if (
+      // exactly one file inside the working root, never the root directory itself
+      canonicalRoot(covering) === canonicalRoot(f.workingRoot) ||
+      !withinDirectory(covering, f.workingRoot)
+    )
       throw new ApiError(
         "forbidden",
         "The write base read is outside the conversation's working root",

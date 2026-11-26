@@ -1268,15 +1268,22 @@ export class SandboxOperationIntents {
     id: string,
     executionId: string,
     result: unknown,
-    /** A kernel read's purpose (a row with a run and no tool call); `project_root` by default. */
-    kernelRead: KernelReadInvocation["purpose"] = "project_root",
+    /**
+     * A kernel read's purpose: required for a row with a run and no tool call (a kernel read),
+     * whose run state it decides; never defaulted, so a caller that forgets it fails loudly.
+     */
+    kernelRead?: KernelReadInvocation["purpose"],
   ): Promise<void> {
     const initial = await this.read(id);
     if (initial.run_id !== null) {
       // a kernel read (no tool call) serves a run start, which reads while its run is queued, or a
       // write base, which reads while its run is running
-      const status =
-        initial.call_id === null && kernelRead === "project_root" ? "queued" : "running";
+      let status: "queued" | "running" = "running";
+      if (initial.call_id === null) {
+        if (kernelRead === "project_root") status = "queued";
+        else if (kernelRead !== "write_base")
+          throw new Error("A kernel read's completion must name its purpose");
+      }
       const run = await this.db
         .selectFrom("runs")
         .select("id")

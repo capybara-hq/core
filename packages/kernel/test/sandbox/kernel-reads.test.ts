@@ -13,7 +13,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -53,7 +53,7 @@ import {
   type TestKernel,
 } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
-import { identityFor, REPORTS, type ReportKind } from "../runtime/permission-context-fixture.js";
+import { REPORTS, type ReportKind } from "../runtime/permission-context-fixture.js";
 
 /**
  * The non-tool device callers (permission activation L2), on
@@ -826,6 +826,13 @@ describe("a write base read (withKernelRead, purpose write_base)", () => {
     await expect(
       readBase(f, run, (h, p) => p.stat(h, "/etc/passwd", signal), "/etc/passwd"),
     ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
+    // the working root itself is never a write base: exactly one file inside it
+    await expect(readBase(f, run, (h, p) => p.stat(h, WS, signal), WS)).rejects.toBeInstanceOf(
+      KernelReadNotAdmitted,
+    );
+    await expect(
+      readBase(f, run, (h, p) => p.readFile(h, WS, { maxBytes: 9, signal }), WS),
+    ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
     expect(seen).toEqual([]);
     expect(await intentsOf(f)).toEqual([]);
     // the one path, by stat and readFile
@@ -920,6 +927,80 @@ describe("a write base read (withKernelRead, purpose write_base)", () => {
         .where("device_id", "=", f.deviceId)
         .executeTakeFirstOrThrow(),
     ).toEqual({ status: "suspended" });
+  });
+
+  it("write_base on an instance-boundary runtime under Full access sends the one path in the instance scope", async () => {
+    instanceBoundary = true;
+    await setFakeSandboxPermissionSupport(root, REPORTS.instance);
+    const target = `${APP}/notes.txt`;
+    files.set(target, "old notes");
+    const f = await seed();
+    await bindProject(f);
+    await fullAccess(f);
+    await start(f);
+    const run = await claimRun(f, "running");
+    seen.length = 0;
+    lifecycle.length = 0;
+    // a sibling stays refused on this route too
+    await expect(
+      readBase(f, run, (h, p) => p.stat(h, `${APP}/secret.txt`, signal), target),
+    ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
+    expect(seen).toEqual([]);
+    const got = await readBase<{ data: Uint8Array }>(
+      f,
+      run,
+      (h, p) => p.readFile(h, target, { maxBytes: 99, signal }),
+      target,
+    );
+    expect(new TextDecoder().decode(got.data)).toBe("old notes");
+    expect(seen.map((x) => [x.route, x.method, x.path])).toEqual([
+      ["operation", "readFile", target],
+    ]);
+    const [intent, ...rest] = await intentsOf(f);
+    expect(rest).toEqual([]);
+    const scope = intent?.scope as unknown as SandboxOperationScope;
+    // the instance is the sandbox: its own scope, the read root the one file, no network
+    expect(scope.profile).toBe("request-approval");
+    expect(scope.filesystem).toEqual({
+      kind: "scoped",
+      projectRoot: target,
+      writeRoots: ["/", APP],
+    });
+    expect(scope.network).toEqual({ kind: "none" });
+    expect(intent).toMatchObject({ state: "completed", call_id: null, run_id: run.runId });
+    expect(lifecycle).toEqual([]);
+  });
+
+  it("write_base refuses when the device changes instance between its check and its lease", async () => {
+    files.set(NOTES, "old notes");
+    const f = await seed();
+    await start(f);
+    const run = await claimRun(f, "running");
+    seen.length = 0;
+    lifecycle.length = 0;
+    const sandbox = k.app.get(SandboxService);
+    // biome-ignore lint/suspicious/noExplicitAny: the race is injected at the private row read
+    const svc = sandbox as any;
+    const readRow = svc.readRow.bind(sandbox);
+    // another holder rebuilds the instance right after the read saw the old one
+    const spy = vi.spyOn(svc, "readRow").mockImplementationOnce(async (ctx: unknown) => {
+      const row = await readRow(ctx);
+      await sql`UPDATE capybara.device_instances
+        SET created_at = created_at + interval '1 second' WHERE device_id = ${f.deviceId}`.execute(
+        raw,
+      );
+      return row;
+    });
+    try {
+      await expect(readBase(f, run, (h, p) => p.stat(h, NOTES, signal))).rejects.toBeInstanceOf(
+        KernelReadInstanceNotRunning,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(seen).toEqual([]);
+    expect(lifecycle).toEqual([]);
+    expect(await intentsOf(f)).toEqual([]);
   });
 
   it("project_root admission unchanged", async () => {

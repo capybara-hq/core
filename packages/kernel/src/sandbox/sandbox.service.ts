@@ -1749,6 +1749,16 @@ export class SandboxService {
    * a shared lease taken the way {@link ifRunning} takes it (B1 reconcile marker and retirement
    * gate included): a device with no running instance, or one that changes instance before the
    * lease, throws {@link KernelReadInstanceNotRunning} with nothing made, woken or sent.
+   *
+   * Unlike a use's `enter`, this path neither applies changed limits (`mustApply`, which needs the
+   * exclusive lease and may rebuild the instance) nor refreshes stale cloud evidence
+   * (`refreshCloudSupport`, B-15), since either would be lifecycle work a display-only read must
+   * not cause. That is acceptable here: the read only stats and reads one file, its scope carries
+   * no write roots (an instance boundary's own scope aside) and network `none`, and the boundary
+   * is the kernel-side covering-path check at admission and claim, not the instance's applied
+   * limits. Stale evidence still picks among the routes `kernelReadRoute` allows (Full access
+   * only on an instance boundary), so the read stays one path, read-only, with no network; a
+   * provider that no longer accepts the scope refuses it, and the person just gets no base.
    */
   private async withRunningKernelRead<T>(
     ctx: SandboxUseContext,
