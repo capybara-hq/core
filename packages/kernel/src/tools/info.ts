@@ -63,7 +63,9 @@ const BUILTIN_ICONS: Record<string, Extract<ToolIcon, { kind: "name" }>["name"]>
   Skill: "skills",
   Agent: "agent",
   TaskList: "list-checks",
-  TaskOutput: "list-checks",
+  // background tasks are commands (process blocks spec §2)
+  TaskOutput: "terminal",
+  TaskStop: "terminal",
 };
 
 const KIND_ICONS: Partial<Record<ToolKind, Extract<ToolIcon, { kind: "name" }>["name"]>> = {
