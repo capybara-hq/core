@@ -153,9 +153,10 @@ export interface ToolResult {
    * `card: { callId, key }`. Display only (recorded on the `tool_result` event, never in the model's
    * context); an unknown view is dropped with a warning and the result is kept.
    *
-   * `placement` says where the card shows: `output` (default) under the call in the run's process
-   * block; `pinned` as the run's pinned card, kept in view while the run goes on (a plan or todo
-   * list; the latest pinned card of the run wins); `process` only inside the process block.
+   * `placement` says where the card shows: `output` (default) lifted out after the run's process
+   * block, where the person sees it with the answer; `pinned` as the run's pinned card, kept in
+   * view while the run goes on (a plan or todo list; the latest pinned card per (extension, view)
+   * of the run wins); `process` only inside the process block, after its call.
    * `text` is the card's Markdown text for surfaces that cannot draw the view (IM channels, the
    * pinned card of a channel's progress card), at most {@link CARD_TEXT_MAX} characters.
    */

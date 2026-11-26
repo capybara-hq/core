@@ -15,6 +15,11 @@ export interface ProgressState {
   state: "running" | "waiting" | "finished" | "stopped" | "failed";
   /** The latest narration: first line, at most {@link STATUS_MAX} characters. */
   status?: string;
+  /**
+   * The latest non-empty narration in full while no non-empty answer followed it: a run that
+   * finishes this way has it promoted to its answer ({@link promotedAnswer}).
+   */
+  unanswered?: string;
   /** The pinned card's Markdown text. */
   pinned?: string;
   /** The last {@link RECENT_MAX} tool labels, oldest first. */
@@ -48,15 +53,38 @@ export function initProgress(runId: string, startedAt: string): ProgressState {
   };
 }
 
-/** The first line of a narration, cut to {@link STATUS_MAX} characters with an ellipsis. */
+/**
+ * Markdown inline syntax taken out of a line before it is cut, so the cut never lands inside
+ * emphasis, code or a link: links and images keep their text, the markers go.
+ */
+function plainInline(line: string): string {
+  return line
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*`~]+/g, "")
+    .replace(/(^|[^\p{L}\p{N}])_+|_+(?=[^\p{L}\p{N}]|$)/gu, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * The first line of a narration (Markdown, rendered like an answer). A line longer than
+ * {@link STATUS_MAX} characters loses its inline Markdown syntax and is cut with an ellipsis, so
+ * no emphasis, code span or link is left open.
+ */
 export function statusLine(text: string): string | undefined {
   const line = text
     .split("\n")
     .map((l) => l.trim())
     .find((l) => l !== "");
   if (line === undefined) return undefined;
-  const chars = [...line];
-  return chars.length > STATUS_MAX ? `${chars.slice(0, STATUS_MAX - 1).join("")}…` : line;
+  if ([...line].length <= STATUS_MAX) return line;
+  const chars = [...plainInline(line)];
+  return chars.length > STATUS_MAX ? `${chars.slice(0, STATUS_MAX - 1).join("")}…` : chars.join("");
+}
+
+/** The narration a finished run without an answer after it takes as its answer, else undefined. */
+export function promotedAnswer(s: ProgressState): string | undefined {
+  return s.state === "finished" ? s.unanswered : undefined;
 }
 
 /**
@@ -83,15 +111,22 @@ export function reduceProgress(
       const calls = content.filter((b) => b.type === "tool_call");
       const thoughts = content.filter((b) => b.type === "thinking").length;
       let status = s.status;
+      let unanswered = s.unanswered;
+      const texts = content.flatMap((b) => (b.type === "text" ? [b.text] : []));
+      const said = texts.join("").trim() !== "";
       // narration (spec §1.1): the text of a message that also calls a tool; answer text is not
       if (calls.length > 0) {
-        const text = content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
-        status = statusLine(text) ?? status;
+        status = statusLine(texts.join("\n")) ?? status;
+        if (said) unanswered = texts.join("");
+      } else if (said) {
+        unanswered = undefined;
       }
       const recent = [...s.recent, ...calls.map((c) => label(c.name, c.input))].slice(-RECENT_MAX);
+      const { unanswered: _prev, ...rest } = s;
       return {
-        ...s,
+        ...rest,
         ...(status !== undefined && { status }),
+        ...(unanswered !== undefined && { unanswered }),
         recent,
         thoughts: s.thoughts + thoughts,
       };

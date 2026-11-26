@@ -25,6 +25,7 @@ export default defineExtension({
         cards: true,
         edit: true,
         threads: true,
+        progress: true,
         files: { maxBytes: 131_072, imageMaxBytes: 32_768 },
       }),
       connectionSchema: ChanMiniConnection,

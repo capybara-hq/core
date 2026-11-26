@@ -1,5 +1,6 @@
 import {
   type Channel,
+  type ChannelCard,
   type ChannelTarget,
   type OutboundMessage,
   renderCardAsText,
@@ -15,6 +16,21 @@ export type ProcessDisplay = "detailed" | "brief" | "off";
 export function processDisplayOf(v: string | null, chatType: "dm" | "group"): ProcessDisplay {
   if (v === "detailed" || v === "brief" || v === "off") return v;
   return chatType === "dm" ? "detailed" : "brief";
+}
+
+/**
+ * A run's progress card as the message the channel gets: the native card (titled for the
+ * notification preview) only when the plugin declares `features.progress`; otherwise its
+ * {@link renderCardAsText} text, which the kernel edits in place like the card (process blocks
+ * spec §10 Execution rulings: a released plugin without a `progress` branch would throw on it).
+ */
+export function progressCardMessage(
+  features: Channel["features"],
+  card: Extract<ChannelCard, { kind: "progress" }>,
+  locale: "zh" | "en",
+): OutboundMessage {
+  if (features.progress === true) return { text: card.title, cards: [card] };
+  return { text: renderCardAsText(card, locale) };
 }
 
 /** `threads: false`: the target loses its `threadId` (the platform has no threads). */

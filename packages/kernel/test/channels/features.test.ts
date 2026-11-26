@@ -1,6 +1,11 @@
 import { type ChannelCard, renderCardAsText } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { adaptTarget, adaptToFeatures, processDisplayOf } from "../../src/channels/features.js";
+import {
+  adaptTarget,
+  adaptToFeatures,
+  processDisplayOf,
+  progressCardMessage,
+} from "../../src/channels/features.js";
 
 const bind: ChannelCard = { kind: "bind", url: "https://cap.example/bind/x", text: "Link it" };
 const connect: ChannelCard = { kind: "connect", appName: "Docs", url: "https://cap.example/c" };
@@ -85,5 +90,34 @@ describe("processDisplayOf", () => {
   it("no setting: direct chats default to detailed, group chats to brief", () => {
     expect(processDisplayOf(null, "dm")).toBe("detailed");
     expect(processDisplayOf(null, "group")).toBe("brief");
+  });
+});
+
+describe("progressCardMessage", () => {
+  const card: Extract<ChannelCard, { kind: "progress" }> = {
+    kind: "progress",
+    state: "running",
+    title: "Working",
+    meta: "Elapsed 0:12",
+    status: "Reading **files**",
+    steps: ["Bash: ls"],
+    pending: [],
+    url: "https://cap.example/chat/c1",
+    urlText: "See the full process on the web",
+  };
+
+  it("a channel declaring features.progress gets the native card", () => {
+    expect(progressCardMessage({ ...all, progress: true }, card, "en")).toEqual({
+      text: "Working",
+      cards: [card],
+    });
+  });
+
+  it("any other channel gets the card's text, without cards", () => {
+    for (const features of [all, { ...all, progress: false }, { ...all, cards: false }]) {
+      expect(progressCardMessage(features, card, "zh")).toEqual({
+        text: renderCardAsText(card, "zh"),
+      });
+    }
   });
 });

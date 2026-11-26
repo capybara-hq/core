@@ -16,7 +16,7 @@ export default defineExtension({
   provides: ["channel@1"],
   setup(ctx) {
     ctx.provide("channel@1", {
-      ...makeFakeImChannel({ cards: true, edit: true, threads: true }),
+      ...makeFakeImChannel({ cards: true, edit: true, threads: true, progress: true }),
       connectionSchema: FakeImConnection.extend({
         appId: z
           .string()

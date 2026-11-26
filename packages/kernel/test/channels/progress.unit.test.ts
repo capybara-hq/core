@@ -4,7 +4,9 @@ import {
   initProgress,
   type ProgressState,
   progressCard,
+  promotedAnswer,
   reduceProgress,
+  statusLine,
 } from "../../src/channels/progress.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 
@@ -62,6 +64,39 @@ describe("reduceProgress", () => {
       reduce(start(), assistant([{ type: "text", text: "Reading files\nmore" }, call("k", "ls")]))
         .status,
     ).toBe("Reading files");
+  });
+
+  it("a long status line is cut without leaving Markdown syntax open", () => {
+    const long = `Reading **the ${"x".repeat(150)} file** and [docs](https://e.x/a)`;
+    const line = statusLine(long) as string;
+    expect([...line]).toHaveLength(120);
+    expect(line.endsWith("…")).toBe(true);
+    expect(line).not.toMatch(/[*`[\]()]/);
+    expect(statusLine(`See [the docs about ${"y".repeat(130)}](https://e.x/a) now`)).toBe(
+      `See the docs about ${"y".repeat(100)}…`,
+    );
+    expect(statusLine(`\`${"z".repeat(130)}\` and _snake_case_`)).toBe(`${"z".repeat(119)}…`);
+    // a short line keeps its Markdown as is
+    expect(statusLine("Reading **README.md**")).toBe("Reading **README.md**");
+  });
+
+  it("the last narration without an answer after it is promoted when the run finishes", () => {
+    const narrated = reduce(
+      start(),
+      assistant([{ type: "text", text: "First look." }, call("1", "a")]),
+      assistant([{ type: "text", text: "All done: **3 files** fixed." }, call("2", "b")]),
+      assistant([call("3", "c")]),
+      assistant([{ type: "text", text: "  " }]),
+    );
+    expect(narrated.unanswered).toBe("All done: **3 files** fixed.");
+    expect(promotedAnswer(narrated)).toBeUndefined();
+    expect(promotedAnswer(reduce(narrated, ev("run_finished", {})))).toBe(
+      "All done: **3 files** fixed.",
+    );
+    expect(promotedAnswer(reduce(narrated, ev("run_failed", {})))).toBeUndefined();
+    const answered = reduce(narrated, assistant([{ type: "text", text: "The answer" }]));
+    expect(answered.unanswered).toBeUndefined();
+    expect(promotedAnswer(reduce(answered, ev("run_finished", {})))).toBeUndefined();
   });
 
   it("answer text does not", () => {

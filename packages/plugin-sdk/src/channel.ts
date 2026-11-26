@@ -236,11 +236,16 @@ export interface Channel {
    *
    * `files`: present iff `sendFile` is implemented; the kernel never hands a file larger than
    * `maxBytes`, and sends `kind: "image"` only within `imageMaxBytes ?? maxBytes`.
+   *
+   * `progress`: the plugin renders the `progress` `ChannelCard` natively (send and update).
+   * Absent or false: the kernel sends a run's progress card as Markdown text built by
+   * `renderCardAsText` instead, and edits that text message in place.
    */
   features: {
     cards: boolean;
     edit: boolean;
     threads: boolean;
+    progress?: boolean;
     minEditIntervalMs?: number;
     files?: { maxBytes: number; imageMaxBytes?: number };
   };

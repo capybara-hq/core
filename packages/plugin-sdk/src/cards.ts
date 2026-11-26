@@ -60,9 +60,12 @@ export type ChannelCard =
   | {
       /**
        * One edited progress card per run (kernel-produced; the channel edits the same message in
-       * place). The title, meta, status and pending texts are written and localized by the kernel and
-       * rendered as is; `steps` are built from tool labels that include model-written arguments, so
-       * {@link renderCardAsText} puts each one in a code span.
+       * place). Sent natively only to a channel that declares `features.progress`; any other
+       * channel gets {@link renderCardAsText} of it as a text message, edited in place. The title,
+       * meta, pending texts and link text are written and localized by the kernel and rendered as
+       * is; `status` (model narration) and `pinned` (extension Markdown) are rendered as Markdown,
+       * like an answer; `steps` are built from tool labels that include model-written arguments,
+       * so {@link renderCardAsText} puts each one in a code span.
        */
       kind: "progress";
       state: "running" | "waiting" | "finished" | "stopped" | "failed";
@@ -70,9 +73,12 @@ export type ChannelCard =
       title: string;
       /** A short detail after the title, e.g. "Elapsed 0:42" or "Todo 4/4 · 12 tools". */
       meta?: string;
-      /** The latest narration, one line. */
+      /**
+       * The latest model narration, its first line (cut short without breaking Markdown syntax):
+       * model-written Markdown, rendered like an answer.
+       */
       status?: string;
-      /** The pinned card's Markdown text (a plan or todo list). */
+      /** The pinned card's Markdown text (a plan or todo list), written by an extension. */
       pinned?: string;
       /** The latest steps, at most 3, oldest first. May hold model-written arguments: plain text. */
       steps: string[];

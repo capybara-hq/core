@@ -50,6 +50,7 @@ const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const CHAN_MINI = fixture("chan-mini");
 const CHAN_NOEDIT = fixture("chan-noedit");
+const CHAN_TEXTPROGRESS = fixture("chan-textprogress");
 const MEM_CONNECTOR = fixture("mem-connector");
 const MODEL_SCRIPT = fixture("model-script");
 const UI_PROBE = fixture("ui-probe");
@@ -133,6 +134,16 @@ const RULES: ScriptRule[] = [
     reply: { text: "milestone answer" },
   },
   { when: { lastUserIncludes: "explode" }, reply: { fail: "invalid_request" } },
+  // narration, then an empty final reply: the last narration is promoted to the answer
+  {
+    when: { lastUserIncludes: "silent", assistantTurns: 0 },
+    reply: { text: "Checking quietly.", toolCalls: [{ name: PROBE, input: {} }] },
+  },
+  {
+    when: { lastUserIncludes: "silent", assistantTurns: 1 },
+    reply: { text: "All **done** here.", toolCalls: [{ name: PROBE, input: {} }] },
+  },
+  { when: { lastUserIncludes: "silent", assistantTurns: 2 }, reply: {} },
 ];
 
 const LONG = "The quick brown fox jumps over the lazy dog while streaming tokens to IM. ".repeat(2);
@@ -150,6 +161,8 @@ let offId: string;
 let noEditId: string;
 let defaultId: string;
 let fakeDetailedId: string;
+let textId: string;
+let noEditBriefId: string;
 let orgId: string;
 let channelQueue: Queue<{ conversationId?: string }>;
 
@@ -160,7 +173,15 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        extensions: [MODEL_FAKE, MODEL_SCRIPT, CHAN_MINI, CHAN_NOEDIT, MEM_CONNECTOR, UI_PROBE],
+        extensions: [
+          MODEL_FAKE,
+          MODEL_SCRIPT,
+          CHAN_MINI,
+          CHAN_NOEDIT,
+          CHAN_TEXTPROGRESS,
+          MEM_CONNECTOR,
+          UI_PROBE,
+        ],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 10_000, deliveryIdleMs: 1000 },
@@ -182,7 +203,13 @@ beforeAll(async () => {
   owner = await session(k, "owner");
   orgId = await createOrgWithProviders(k, owner);
   channelQueue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
-  for (const plugin of ["chan-mini", "chan-noedit", "mem-connector", "ui-probe"]) {
+  for (const plugin of [
+    "chan-mini",
+    "chan-noedit",
+    "chan-textprogress",
+    "mem-connector",
+    "ui-probe",
+  ]) {
     const en = await owner({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
@@ -210,7 +237,7 @@ beforeAll(async () => {
   };
   const scripted = await agent("Scripted", { provider: "model-script", model: "script-1" });
   const fake = await agent("Fake", { provider: "model-fake", model: "fake-1" });
-  for (const source of ["chan-mini:t1", "chan-noedit:t1"]) {
+  for (const source of ["chan-mini:t1", "chan-noedit:t1", "chan-textprogress:t1"]) {
     for (const user of [
       "u-n1",
       "u-n2",
@@ -228,6 +255,11 @@ beforeAll(async () => {
       "u-g1",
       "u-x1",
       "u-e1",
+      "u-tp1",
+      "u-q1",
+      "u-q2",
+      "u-mb1",
+      "u-fl1",
     ]) {
       await sql`INSERT INTO capybara.identities (source, external_id, account_id)
         VALUES (${source}, ${user}, ${ownerId})`.execute(raw);
@@ -264,6 +296,9 @@ beforeAll(async () => {
   defaultId = await mk("chan-mini", "cli_pg", scripted);
   // the streaming checks run on model-fake, which streams in chunks
   fakeDetailedId = await mk("chan-mini", "cli_pf", fake, "detailed");
+  // cards and edits but no features.progress: the card goes out as text
+  textId = await mk("chan-textprogress", "cli_pt", scripted, "detailed");
+  noEditBriefId = await mk("chan-noedit", "cli_pnb", scripted, "brief");
 });
 
 afterAll(async () => {
@@ -566,10 +601,12 @@ describe("channel progress card (process blocks spec §6.2)", () => {
     const conv = await convOf(noEditId, chat);
     await settled(conv);
     // the second pinned change came within a minute of the first milestone: no message for it
+    // then; the run's end sends it as a trailing milestone
     expect(sentTo("cli_pn", chat).map((m) => m.message.text)).toEqual([
       "Working on it",
       "Todo 1/2",
       "pinned answer",
+      "Todo 2/2",
     ]);
     expect(im.updated.filter((u) => u.target.chatId === chat)).toEqual([]);
     const row = await deliveryRow(conv);
@@ -753,12 +790,13 @@ describe("channel progress card (process blocks spec §6.2)", () => {
       ),
     );
     await settled(conv);
-    // the second pinned change came in a new job within a minute of the first milestone (PG)
+    // the second pinned change came in a new job within a minute of the first milestone (PG);
+    // the run's end sends it as a trailing milestone
     expect(
       sentTo("cli_pn", chat)
         .filter((m) => cardOf(m) === undefined)
         .map((m) => m.message.text),
-    ).toEqual(["Working on it", "Step 1/2", "milestone answer"]);
+    ).toEqual(["Working on it", "Step 1/2", "milestone answer", "Step 2/2"]);
   });
 
   it("a group connection without a setting shows the brief card", async () => {
@@ -829,5 +867,115 @@ describe("channel progress card (process blocks spec §6.2)", () => {
     } finally {
       await unsubscribe();
     }
+  });
+
+  it("a channel without features.progress gets the card as a text message, edited", async () => {
+    const chat = "dm-u-tp1";
+    im.push(textId, dm("ptp1", "u-tp1", "handoff as text"));
+    const conv = await convOf(textId, chat);
+    await settled(conv);
+    const msgs = sentTo("cli_pt", chat);
+    expect(msgs).toHaveLength(3);
+    const progressMsg = msgs[0] as FakeChannelSent;
+    // never a native progress card: the plugin has no `progress` branch
+    expect(progressMsg.message.cards).toBeUndefined();
+    expect(progressMsg.message.text).toMatch(/^Working · Elapsed /);
+    expect(progressMsg.message.text).toContain(`(https://cap.example/chat/${conv})`);
+    // the answer and the merged handoffs keep flowing as usual
+    expect(msgs[1]?.message).toEqual({ text: "handoff answer" });
+    expect(msgs[2]?.message.text).toBe("Needs your action (2)");
+    expect(msgs[2]?.message.cards?.map((c) => c.kind)).toEqual(["bind", "bind"]);
+    // the text message is edited in place, down to its finished form
+    const last = await waitFor(
+      async () => {
+        const u = updatesOf(progressMsg.messageId).at(-1);
+        return u?.message.text.startsWith("Worked for ") ? u : undefined;
+      },
+      20_000,
+      "finished progress text",
+    );
+    expect(last.message.cards).toBeUndefined();
+    expect(last.message.text).toContain("[Review A](https://cap.example/admin/review?a=1)");
+    for (const u of updatesOf(progressMsg.messageId)) expect(u.message.cards).toBeUndefined();
+  });
+
+  it("a run without an answer after its last narration gets that narration as its answer", async () => {
+    const chat = "dm-u-q1";
+    im.push(detailedId, dm("pq1", "u-q1", "silent work"));
+    const conv = await convOf(detailedId, chat);
+    await settled(conv);
+    const msgs = sentTo("cli_pd", chat);
+    expect(msgs.map((m) => cardOf(m)?.kind ?? m.message.text)).toEqual([
+      "progress",
+      "All **done** here.",
+    ]);
+    const done = await finished(msgs[0] as FakeChannelSent);
+    expect(done.meta).toBe("2 tools");
+  });
+
+  it("a channel without edits promotes the last narration too", async () => {
+    const chat = "dm-u-q2";
+    im.push(noEditId, dm("pq2", "u-q2", "silent plain"));
+    const conv = await convOf(noEditId, chat);
+    await settled(conv);
+    expect(sentTo("cli_pn", chat).map((m) => m.message.text)).toEqual([
+      "Working on it",
+      "All **done** here.",
+    ]);
+  });
+
+  it("brief on a channel without edits sends no start message and no milestones", async () => {
+    const chat = "dm-u-mb1";
+    im.push(noEditBriefId, dm("pmb1", "u-mb1", "pinned brief"));
+    const conv = await convOf(noEditBriefId, chat);
+    await settled(conv);
+    expect(sentTo("cli_pnb", chat).map((m) => m.message.text)).toEqual(["pinned answer"]);
+    const [run] = await runIds(conv);
+    expect(await deliveryRow(conv)).toMatchObject({
+      progress_run_id: run,
+      progress_message_id: null,
+      milestone_at: null,
+    });
+  });
+
+  it("a new run first lands the previous run's pending final edit", async () => {
+    const chat = "dm-u-fl1";
+    // the first run's final edit fails retryably (a 30 s rate limit: no later interval of the job
+    // retries it in time)
+    im.failNext("/update", 429, 1, 30_000, undefined, undefined, {
+      chatId: chat,
+      textIncludes: "Worked",
+    });
+    // the first card's send hangs while both runs are logged: the job then reads the first run's
+    // end and the second run's start back to back, with no throttled refresh in between
+    im.delayNext("/send", 8000, { onlyCards: true });
+    im.push(detailedId, dm("pfl1", "u-fl1", "narr one"));
+    const conv = await convOf(detailedId, chat);
+    const ran = async (n: number) => {
+      await waitFor(
+        async () => {
+          const r = await db
+            .selectFrom("runs")
+            .select("status")
+            .where("conversation_id", "=", conv)
+            .execute();
+          return r.length === n && r.every((x) => !["queued", "running"].includes(x.status));
+        },
+        20_000,
+        `run ${n} ended`,
+      );
+    };
+    await ran(1);
+    im.push(detailedId, dm("pfl2", "u-fl1", "narr two"));
+    await ran(2);
+    // the delivery is still at the first card's send
+    expect((await deliveryRow(conv)).progress_run_id).toBeNull();
+    await settled(conv);
+    await jobsDone(conv);
+    const cards = sentTo("cli_pd", chat).filter((m) => progressOf(m) !== undefined);
+    expect(cards).toHaveLength(2);
+    // the first card reached its finished form (the flush before the second card)
+    expect(lastProgress(cards[0] as FakeChannelSent).state).toBe("finished");
+    expect((await finished(cards[1] as FakeChannelSent)).state).toBe("finished");
   });
 });

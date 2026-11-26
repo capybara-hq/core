@@ -323,6 +323,7 @@ export interface Channel {
         cards: boolean;
         edit: boolean;
         threads: boolean;
+        progress?: boolean;
         minEditIntervalMs?: number;
         files?: {
             maxBytes: number;

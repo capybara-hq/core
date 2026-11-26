@@ -53,7 +53,7 @@ import {
   type ChannelOutboundSession,
   FILE_CALL_TIMEOUT_MS,
 } from "./connections.service.js";
-import { processDisplayOf } from "./features.js";
+import { processDisplayOf, progressCardMessage } from "./features.js";
 import {
   type FileDeliveryPlan,
   FileSlots,
@@ -80,6 +80,7 @@ import {
   initProgress,
   type ProgressState,
   progressCard,
+  promotedAnswer,
   reduceProgress,
   statusLine,
 } from "./progress.js";
@@ -769,6 +770,8 @@ class Delivery {
   private progressId: string | null = null;
   /** The log time of the run's last milestone message (`milestone_at`), ms. */
   private milestoneAt: number | null = null;
+  /** The pinned text the run's last milestone message carried (rebuilt from the log). */
+  private milestoneText: string | undefined;
   /** How many of `progress.pending` went out in a merged handoff message already. */
   private handoffsSent = 0;
   /** The card changed since its last edit, and when that edit was. */
@@ -1867,6 +1870,9 @@ class Delivery {
    * as the event, so a replica that takes over edits the same message.
    */
   private async startProgress(runId: string, seq: number, at: Date): Promise<void> {
+    // the previous run's final edit may still be pending (throttled or failed retryably): it lands
+    // now, with its end event's key, and is marked final, before this run's card takes over
+    if (this.progress?.endedAt !== undefined) await this.flushProgress(true);
     const s = initProgress(runId, at.toISOString());
     this.progress = s;
     this.handoffsSent = 0;
@@ -1876,6 +1882,7 @@ class Delivery {
     this.progressRetry = undefined;
     this.progressEndSeq = undefined;
     this.milestoneAt = null;
+    this.milestoneText = undefined;
     if (this.progressKind === "card") {
       const { messageId } = await this.send(
         this.progressMessage(s),
@@ -1886,7 +1893,9 @@ class Delivery {
       this.progressId = messageId;
       return;
     }
-    await this.send({ text: phrase("runStarted", this.locale) }, this.key(seq));
+    // `brief` on a channel without edits: no start message, only the answer and what blocks
+    if (this.display === "detailed")
+      await this.send({ text: phrase("runStarted", this.locale) }, this.key(seq));
     await this.advance(seq, { progress: { messageId: null, runId } });
     this.progressId = null;
   }
@@ -1938,6 +1947,8 @@ class Delivery {
       await this.editProgress(seq);
       return;
     }
+    // `brief`: no milestones on a channel without edits
+    if (this.display !== "detailed") return;
     const pinned = this.progress?.pinned;
     if (pinned === undefined) return;
     const t = at.getTime();
@@ -1945,21 +1956,45 @@ class Delivery {
     await this.send({ text: pinned }, this.key(seq, "-milestone"));
     await this.advance(seq, { milestoneAt: at });
     this.milestoneAt = t;
+    this.milestoneText = pinned;
   }
 
   /**
-   * The run ended: the card is edited down to its finished form, and once that edit is done (or
-   * refused for good) `progress_final` is set in the advance past the end event, so a later job
-   * leaves the card alone. A channel without edits gets the handoff links no answer took along (a
-   * run that failed or stopped first).
+   * The run ended. A run that finished with no answer after its last narration gets that
+   * narration as its answer message (process blocks spec §10 Execution rulings), with the handoff
+   * links an answer takes along. Then the card is edited down to its finished form, and once that
+   * edit is done (or refused for good) `progress_final` is set in the advance past the end event,
+   * so a later job leaves the card alone. A channel without edits gets, in `detailed`, the pinned
+   * text as a trailing milestone when the last one sent differs (a change the minute throttle
+   * held back), and the handoff links no answer took along (a run that failed or stopped first).
    */
   private async endProgress(seq: number): Promise<void> {
+    const s = this.progress;
+    const promoted = s === undefined ? undefined : promotedAnswer(s);
+    let sent = false;
+    if (
+      this.progressKind === "plain" &&
+      this.display === "detailed" &&
+      s?.pinned !== undefined &&
+      s.pinned !== this.milestoneText
+    ) {
+      await this.send({ text: s.pinned }, this.key(seq, "-milestone"));
+      this.milestoneText = s.pinned;
+      sent = true;
+    }
+    if (promoted !== undefined) {
+      await this.send({ text: promoted }, this.key(seq, "-answer"));
+      sent = true;
+    }
     if (this.progressKind === "card") {
+      if (promoted !== undefined && (await this.sendHandoffs(seq))) sent = true;
       this.progressEndSeq = seq;
       if (await this.editProgress(seq)) await this.advance(seq, { progressFinal: true });
+      else if (sent) await this.advance(seq);
       return;
     }
-    if (await this.sendHandoffs(seq)) await this.advance(seq);
+    if (await this.sendHandoffs(seq)) sent = true;
+    if (sent) await this.advance(seq);
   }
 
   /** Folds one event into the state; a step's tool labels are looked up first. */
@@ -2007,6 +2042,9 @@ class Delivery {
     if (!start) return;
     let s: ProgressState | undefined;
     let handoffs = 0;
+    // the milestones a channel without edits sent follow from the log times alone: replayed here
+    let milestoneAt: number | null = null;
+    let milestoneText: string | undefined;
     let after = Number(start.seq) - 1;
     let done = false;
     while (!done) {
@@ -2024,16 +2062,28 @@ class Delivery {
           continue;
         }
         if (s === undefined || s.endedAt !== undefined) continue;
+        const before: ProgressState = s;
         s = await this.reduce(s, e);
         if (s.endedAt !== undefined) this.progressEndSeq = e.seq;
         const answered =
           e.type === "assistant_message" && e.runId === runId && !hasToolCall(e.payload.content);
-        const ended = s.endedAt !== undefined && this.progressKind === "plain";
+        const ended =
+          s.endedAt !== undefined &&
+          (this.progressKind === "plain" || promotedAnswer(s) !== undefined);
         if (answered || ended) handoffs = s.pending.length;
+        if (s.pinnedVersion !== before.pinnedVersion && e.type === "tool_result") {
+          const t = e.createdAt.getTime();
+          if (milestoneAt === null || t - milestoneAt > MILESTONE_INTERVAL_MS) {
+            milestoneAt = t;
+            milestoneText = s.pinned;
+          }
+        }
+        if (s.endedAt !== undefined && s.pinned !== undefined) milestoneText = s.pinned;
       }
     }
     this.progress = s;
     this.handoffsSent = handoffs;
+    this.milestoneText = milestoneText;
     // one refresh: a previous job may have died (or failed retryably) before its edit; an ended
     // run's card only while its final edit may not have landed
     this.progressDirty = s !== undefined && !(s.endedAt !== undefined && final);
@@ -2053,7 +2103,7 @@ class Delivery {
       mode: this.display,
       now: Date.now(),
     });
-    return cardMessage(card.title, card);
+    return progressCardMessage(this.s.features, card, this.locale);
   }
 
   /**
