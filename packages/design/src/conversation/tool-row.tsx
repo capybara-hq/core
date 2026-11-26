@@ -108,7 +108,11 @@ export type ToolRowData = {
     /** The full error text of a failure (shown in the output box). */
     errorText?: string;
     diff?: DiffData;
-    /** The live forms of a streaming call's diff (§6.16.10); read only while streaming. */
+    /**
+     * The live forms of a streaming call's diff (§6.16.10): read while the call is live (streaming,
+     * then pending or running without the caret); once it ended, a diff with them is not drawn
+     * (the detail falls back to its inputs and output).
+     */
     live?: DiffBlockLive;
     /**
      * Images the call's result carried (shown to the agent): thumbnails under the output, each
@@ -128,11 +132,12 @@ export const KEY_ARG_MAX = 80;
 
 /** The key argument as the row previews it: its first line, at most {@link KEY_ARG_MAX} characters. */
 export function keyArgPreview(s: string): string {
-  const lines = s.split("\n");
-  const first = lines[0] ?? "";
-  const chars = [...first];
+  const nl = s.indexOf("\n");
+  const first = nl < 0 ? s : s.slice(0, nl);
+  // a long line is cut before it is split into code points (a streaming command can be 512 KB)
+  const chars = [...first.slice(0, 2 * KEY_ARG_MAX + 1)];
   if (chars.length > KEY_ARG_MAX) return `${chars.slice(0, KEY_ARG_MAX).join("")}…`;
-  return lines.length > 1 ? `${first}…` : first;
+  return nl >= 0 ? `${first}…` : first;
 }
 
 /**
@@ -392,13 +397,17 @@ export function ToolDetail({
   const d = row.detail;
   if (!d) return null;
   const streaming = isStreaming(row);
-  if (d.diff) {
+  // A live diff stays in its live forms until the result's diff replaces it: with the caret while
+  // the input streams, without it once the call is logged (pending or running); an ended call
+  // whose diff was only live shows its inputs and output instead (§6.16.10 Live).
+  const liveDiff = streaming || (d.live !== undefined && isLive(row));
+  if (d.diff && (d.live === undefined || liveDiff)) {
     return (
       <div id={id} className="cb-tool-diff cb-expand" data-animate={animate ? "true" : undefined}>
         <DiffBlock
           diff={d.diff}
-          {...(onViewAll && !streaming ? { onViewAll } : {})}
-          {...(streaming ? { live: true, ...d.live } : {})}
+          {...(onViewAll && !liveDiff ? { onViewAll } : {})}
+          {...(liveDiff ? { live: true, caret: streaming, ...d.live } : {})}
         />
       </div>
     );
@@ -473,7 +482,7 @@ export function ToolDetail({
         <IoSection label={t("tool.out")} which="out">
           {out !== undefined ? (
             streaming ? (
-              <LiveOutput text={out} />
+              <LiveOutput text={out} change={`${row.progress?.bytes ?? 0}:${out.length}`} />
             ) : (
               <pre className="cb-tool-output" data-part="tool-output">
                 {out}
@@ -502,9 +511,10 @@ export function ToolDetail({
  * A streaming `text` view (an `Agent` prompt) in OUT: the text with the streaming cursor at its
  * end, folded at `layout.tool-live` and following its tail (§6.16.9).
  */
-function LiveOutput({ text }: { text: string }): JSX.Element {
+function LiveOutput({ text, change }: { text: string; change: string }): JSX.Element {
   const ref = useRef<HTMLPreElement>(null);
-  const onScroll = useTailFollow(ref, true, text.length);
+  // `change` holds the input's size, which grows on after the text stops at the web's cap
+  const onScroll = useTailFollow(ref, true, change);
   return (
     <pre
       ref={ref}

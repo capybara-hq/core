@@ -1,6 +1,12 @@
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { DesignProvider, DIFF_LINE_MAX_CHARS, DiffBlock, type DiffData } from "../src/index";
+import {
+  cutDiffLine,
+  DesignProvider,
+  DIFF_LINE_MAX_CHARS,
+  DiffBlock,
+  type DiffData,
+} from "../src/index";
 
 afterEach(cleanup);
 
@@ -187,5 +193,56 @@ describe("DiffBlock live (§6.16.10)", () => {
     layout(view, { scrollHeight: 900, clientHeight: 100 });
     grow(25);
     expect(view.scrollTop).toBe(900);
+  });
+
+  it("keeps every line's element when the live tail advances the first hunk's starts", () => {
+    const tail = (from: number) => (
+      <DesignProvider locale="zh">
+        <DiffBlock
+          diff={{
+            hunks: [
+              {
+                oldStart: from,
+                newStart: from,
+                lines: Array.from({ length: 5 }, (_, i) => ({
+                  kind: "ctx" as const,
+                  text: `line ${from + i}`,
+                })),
+              },
+            ],
+            truncated: true,
+            totalLines: from + 4,
+          }}
+          live
+        />
+      </DesignProvider>
+    );
+    const { container, rerender } = render(tail(10));
+    const before = [...container.querySelectorAll('[data-part="diff-line"]')];
+    rerender(tail(11));
+    const after = [...container.querySelectorAll('[data-part="diff-line"]')];
+    // lines 11..14 are the same elements: nothing shown before remounts
+    for (let i = 0; i < 4; i++) expect(after[i]).toBe(before[i + 1]);
+    expect(after[0]?.textContent).toContain("line 11");
+  });
+
+  it("draws the live forms without the caret when caret is off", () => {
+    const { container } = wrap(<DiffBlock diff={diff()} live caret={false} preview pending={2} />);
+    expect(container.querySelector('[data-part="diff-caret"]')).toBeNull();
+    expect(container.querySelector('[data-part="diff"]')?.hasAttribute("data-live")).toBe(true);
+    expect(container.querySelector('[data-part="diff-foot"]')?.textContent).toBe("写入预览");
+    expect(container.querySelector('[data-part="diff-pending"]')).not.toBeNull();
+  });
+});
+
+describe("cutDiffLine", () => {
+  it("never leaves a lone surrogate when a pair straddles the cut", () => {
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    for (const at of [DIFF_LINE_MAX_CHARS - 2, DIFF_LINE_MAX_CHARS - 1, DIFF_LINE_MAX_CHARS]) {
+      const cut = cutDiffLine(`${"x".repeat(at)}😀${"y".repeat(10)}`);
+      expect(cut.length).toBeLessThanOrEqual(DIFF_LINE_MAX_CHARS);
+      expect(lone.test(cut)).toBe(false);
+    }
+    expect(cutDiffLine("short")).toBe("short");
   });
 });

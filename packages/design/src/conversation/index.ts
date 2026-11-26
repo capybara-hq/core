@@ -49,6 +49,7 @@ export {
   shortModelLabel,
 } from "./composer-options";
 export {
+  cutDiffLine,
   DIFF_LINE_MAX_CHARS,
   DiffBlock,
   type DiffBlockLive,

@@ -34,7 +34,7 @@ export type DiffBlockLive = {
 export const DIFF_LINE_MAX_CHARS = 2000;
 
 /** `text` cut at {@link DIFF_LINE_MAX_CHARS}, never inside a surrogate pair. */
-function cutLine(text: string): string {
+export function cutDiffLine(text: string): string {
   if (text.length <= DIFF_LINE_MAX_CHARS) return text;
   const end = DIFF_LINE_MAX_CHARS;
   const code = text.charCodeAt(end - 1);
@@ -75,11 +75,17 @@ export function DiffBlock({
   gutter = "numbers",
   pending = 0,
   preview = false,
+  caret = live,
 }: {
   diff: DiffData;
   onViewAll?(): void;
   /** The model is still writing the input: caret, tail-follow, the live forms (§6.16.10). */
   live?: boolean;
+  /**
+   * The caret on the last line (default: while `live`). Off for a live block whose input is
+   * complete (the logged call before its result): the live forms stay, nothing is being written.
+   */
+  caret?: boolean;
 } & DiffBlockLive): JSX.Element {
   const t = useDesignT();
   const locale = useDesignLocale();
@@ -103,10 +109,13 @@ export function DiffBlock({
       if (l.kind !== "add") o++;
       if (l.kind !== "del") n++;
       shown++;
-      const last = live && shown === count;
+      const last = live && caret && shown === count;
       rows.push(
+        // Keyed by kind and number alone: the live tail moves the first hunk's starts each frame,
+        // and a key with them would remount every line (and lose a selection). Numbers grow
+        // across hunks, and the edit form counts its removed and added lines apart from 0.
         <div
-          key={`${at}:${l.kind}:${lineNo}`}
+          key={`${l.kind}:${lineNo}`}
           className="cb-diff-line"
           data-part="diff-line"
           data-kind={l.kind}
@@ -117,7 +126,7 @@ export function DiffBlock({
           <span className="cb-diff-sign" aria-hidden={l.kind === "ctx" ? true : undefined}>
             {SIGN[l.kind]}
           </span>
-          <span className="cb-diff-text">{cutLine(l.text)}</span>
+          <span className="cb-diff-text">{cutDiffLine(l.text)}</span>
           {/* after the text, never shrunk: an over-wide line takes the ellipsis, the caret stays */}
           {last ? (
             <span className="cb-cursor cb-diff-caret" data-part="diff-caret" aria-hidden="true" />

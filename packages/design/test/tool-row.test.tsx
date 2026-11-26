@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { keyArgPreview } from "../src/conversation/tool-row";
 import {
   DesignProvider,
   streamProgressText,
@@ -165,5 +166,66 @@ describe("ToolRow streaming (§6.16.9)", () => {
     fireEvent.scroll(out);
     grow("Summarize the report", 600);
     expect(out.scrollTop).toBe(100);
+  });
+});
+
+describe("ToolRow live diff after the input (§6.16.10 Live)", () => {
+  const liveDetail = {
+    diff: {
+      hunks: [{ oldStart: 1, newStart: 1, lines: [{ kind: "ctx" as const, text: "a" }] }],
+      truncated: false,
+    },
+    live: { preview: true },
+    input: [["file_path", "reports/report.md"]] as [string, string][],
+  };
+
+  it("a logged call keeps the live diff without the caret, the preview footer stays", () => {
+    for (const status of ["pending", "running"] as const) {
+      const { container } = wrap(
+        <ToolRow row={write({ status, startedAt: 0, detail: liveDetail })} open now={1_000} />,
+      );
+      expect(container.querySelector('[data-part="diff"]')?.hasAttribute("data-live")).toBe(true);
+      expect(container.querySelector('[data-part="diff-caret"]')).toBeNull();
+      expect(container.querySelector('[data-part="diff-foot"]')?.textContent).toBe("写入预览");
+      expect(container.querySelector('[data-part="kv"]')).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("an ended call whose diff was only live shows its inputs instead", () => {
+    const { container } = wrap(
+      <ToolRow row={write({ status: "cancelled", detail: liveDetail })} open />,
+    );
+    expect(container.querySelector('[data-part="diff"]')).toBeNull();
+    expect(container.querySelector('[data-part="kv-value"]')?.textContent).toBe(
+      "reports/report.md",
+    );
+  });
+
+  it("the streaming text output keeps following while the shown text stays at its cap", () => {
+    const row = (bytes: number) =>
+      write({
+        kind: "tool",
+        name: "Agent",
+        progress: { lines: 1, bytes },
+        detail: { output: "capped tail" },
+      });
+    const { container, rerender } = wrap(<ToolRow row={row(10)} open />);
+    const out = container.querySelector('[data-part="tool-output"]') as HTMLElement;
+    Object.defineProperty(out, "scrollHeight", { configurable: true, value: 500 });
+    Object.defineProperty(out, "clientHeight", { configurable: true, value: 100 });
+    rerender(
+      <DesignProvider locale="zh">
+        <ToolRow row={row(20)} open />
+      </DesignProvider>,
+    );
+    expect(out.scrollTop).toBe(500);
+  });
+
+  it("previews a huge one-line key argument without spreading all of it", () => {
+    const huge = "x".repeat(600_000);
+    expect(keyArgPreview(huge)).toBe(`${"x".repeat(80)}…`);
+    expect(keyArgPreview(`ls -la\n${huge}`)).toBe("ls -la…");
+    expect(keyArgPreview("ls")).toBe("ls");
   });
 });
