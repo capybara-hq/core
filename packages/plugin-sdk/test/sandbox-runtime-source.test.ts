@@ -33,8 +33,14 @@ describe("sandbox runtime source bundle", () => {
       "native-files.py": "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
       "linux-sandbox.py": "ceb5bb0971437978a7695091792bfafcf3dbf2e7c74e8425d8aceb76e442f848",
     });
-    // promoted: no runtime change is between its steps
-    expect(sdk.SANDBOX_RUNTIME_SOURCE.current).toBe(sdk.SANDBOX_RUNTIME_SOURCE.files);
+    // between steps (core#907): only native-files.py is ahead of the staged set
+    const current = Object.fromEntries(
+      sdk.SANDBOX_RUNTIME_SOURCE.current.map((file) => [file.name, file.sha256]),
+    );
+    expect(current).toEqual({
+      "native-files.py": "41cf54ea285d29c49b42b33efd99d11254ba07cee4832a9d6f9414dc99c31461",
+      "linux-sandbox.py": "ceb5bb0971437978a7695091792bfafcf3dbf2e7c74e8425d8aceb76e442f848",
+    });
   });
 
   it("accepts the staged and current digests of each file, plus one previous revision", () => {
@@ -67,6 +73,7 @@ describe("sandbox runtime source bundle", () => {
     for (const name of [
       "sandbox-runtime-source.ts",
       "sandbox-native-runtime-source.ts",
+      "sandbox-native-staged-runtime-source.ts",
       "sandbox-linux-runtime-source.ts",
     ]) {
       const source = await readFile(new URL(`../src/${name}`, import.meta.url), "utf8");
@@ -312,5 +319,44 @@ print(json.dumps(out))
       expect(verdicts[`${machine}/mediated`]).toEqual(expected(true));
       expect(verdicts[`${machine}/environment`]).toEqual(expected(false));
     }
+  });
+});
+
+/** Runs `native-files.py`'s main() on a readFile of a FIFO and returns its JSON answer. */
+function nativeAnswerForFifo(source: string): unknown {
+  const script = `
+import io, json, os, sys, tempfile, types
+source = sys.stdin.read()
+module = types.ModuleType("native_files")
+exec(compile(source, "native-files.py", "exec"), module.__dict__)
+root = os.path.realpath(tempfile.mkdtemp())
+os.mkfifo(os.path.join(root, "pipe"))
+fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+request = {"roots": {"read": [{"path": root, "fd": fd}], "write": []},
+           "method": "readFile", "path": os.path.join(root, "pipe"), "maxBytes": 3}
+sys.stdin = io.StringIO(json.dumps(request))
+module.main()
+`;
+  const result = spawnSync("python3", ["-I", "-c", script], { input: source, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+describe.skipIf(!python)("native-files.py answers a non-regular file (core#907)", () => {
+  const of = (set: readonly { name: string; source: string }[]) =>
+    set.find((file) => file.name === "native-files.py")?.source ?? "";
+  it("the current helper answers NOT_REGULAR_FILE, which the SDK maps to its own text", () => {
+    const answer = nativeAnswerForFifo(of(sdk.SANDBOX_RUNTIME_SOURCE.current)) as {
+      error: { code: string; message: string };
+    };
+    expect(answer.error.code).toBe(sdk.NATIVE_NOT_REGULAR_FILE);
+    expect(sdk.nativeFailureText(answer.error.code)).toMatch(/not a regular file/);
+  });
+  it("the staged helper still answers the generic code (its consumers fall back to the generic text)", () => {
+    const answer = nativeAnswerForFifo(of(sdk.SANDBOX_RUNTIME_SOURCE.files)) as {
+      error: { code: string };
+    };
+    expect(answer.error.code).toBe("INVALID_NATIVE_REQUEST");
+    expect(sdk.nativeFailureText(answer.error.code)).toBe(sdk.NATIVE_FAILURE_GENERIC);
   });
 });

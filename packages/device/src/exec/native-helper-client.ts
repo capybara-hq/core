@@ -106,7 +106,7 @@ const PRELUDE_TAIL = String.raw`try:
     response={"result":AnchoredFiles(request["roots"]).run(request)}
 except Exception as error:
     code=("SCOPE_DENIED" if isinstance(error,source["ScopeDenied"])
-          else "NOT_REGULAR_FILE" if isinstance(error,ValueError) and str(error).endswith("require a regular file")
+          else "NOT_REGULAR_FILE" if isinstance(error,source["NotRegularFile"])
           else errno.errorcode.get(getattr(error,"errno",None),"INVALID_NATIVE_REQUEST"))
     response={"error":{"code":code,"message":"Native operation failed; check the path, scope and filesystem access"}}
 print(json.dumps(response),flush=True)
@@ -154,7 +154,7 @@ print('ready',flush=True)
     response={"result":AnchoredFiles(request["roots"]).run(request)}
 except Exception as error:
     code=("SCOPE_DENIED" if isinstance(error,source["ScopeDenied"])
-          else "NOT_REGULAR_FILE" if isinstance(error,ValueError) and str(error).endswith("require a regular file")
+          else "NOT_REGULAR_FILE" if isinstance(error,source["NotRegularFile"])
           else errno.errorcode.get(getattr(error,"errno",None),"INVALID_NATIVE_REQUEST"))
     response={"error":{"code":code,"message":"Native operation failed; check the path, scope and filesystem access"}}
 print(json.dumps(response),flush=True)
