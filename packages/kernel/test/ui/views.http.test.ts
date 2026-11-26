@@ -848,7 +848,13 @@ describe("工具显示摘要", () => {
       key: "card-key-zz",
       placement: "process",
     });
-    expect(lines.some((l) => l.includes('"warn"') && l.includes("text"))).toBe(true);
+    expect(
+      lines.some(
+        (l) =>
+          l.includes('"warn"') &&
+          l.includes("inline card text without a pinned placement; text dropped"),
+      ),
+    ).toBe(true);
   });
 
   it("drops an unknown placement", async () => {
@@ -858,7 +864,12 @@ describe("工具显示摘要", () => {
     );
     const [r] = await results();
     expect(r?.payload.card).toEqual({ plugin: "ui-probe", view: "card", key: "card-key-zz" });
-    expect(lines.some((l) => l.includes('"warn"') && l.includes("placement"))).toBe(true);
+    expect(
+      lines.some(
+        (l) =>
+          l.includes('"warn"') && l.includes("inline card with an unknown placement; using output"),
+      ),
+    ).toBe(true);
   });
 
   it("text over 2000 characters is dropped", async () => {
@@ -874,7 +885,13 @@ describe("工具显示摘要", () => {
       key: "card-key-zz",
       placement: "pinned",
     });
-    expect(lines.some((l) => l.includes('"warn"') && l.includes("text"))).toBe(true);
+    expect(
+      lines.some(
+        (l) =>
+          l.includes('"warn"') &&
+          l.includes("inline card text that is empty or too long; text dropped"),
+      ),
+    ).toBe(true);
   });
 
   it("插件给的摘要不合法 → 丢弃并告警，结果照常写入", async () => {
