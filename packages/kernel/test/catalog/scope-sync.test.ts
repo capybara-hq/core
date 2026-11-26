@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { getQueueToken } from "@nestjs/bullmq";
+import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { LIVE_INSTALL_STATUSES } from "../../src/catalog/install-status.js";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "../../src/catalog/scope-state.js";
-import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
+import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "../../src/catalog/scope-sync.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
@@ -61,6 +63,62 @@ async function liveOrgs(itemId: string): Promise<string[]> {
     .where("status", "in", [...LIVE_INSTALL_STATUSES])
     .execute();
   return rows.map((r) => r.org_id).sort();
+}
+
+/**
+ * Waits until an all-scoped item is live in every live org. An idle scope queue alone once let
+ * an assertion run with no install yet (CI, core#894). On timeout the error carries what the
+ * sync left behind (queue counts, owed outbox rows, open failures, installs, audit), so a run
+ * where the sync skipped the installs shows why.
+ */
+async function waitForLiveInEveryOrg(itemId: string): Promise<string[]> {
+  try {
+    return await waitFor(
+      async () => {
+        const orgs = await env.db
+          .selectFrom("orgs")
+          .select("id")
+          .where("deleted_at", "is", null)
+          .execute();
+        const live = await liveOrgs(itemId);
+        return live.length === orgs.length ? live : null;
+      },
+      30_000,
+      "a live install of the item in every org",
+    );
+  } catch (e) {
+    const queue = env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
+    const state = {
+      queue: await queue.getJobCounts(),
+      failedJobs: (await queue.getFailed(0, 10)).map((j) => ({
+        id: j.id,
+        name: j.name,
+        reason: j.failedReason,
+      })),
+      outbox: await env.db
+        .selectFrom("outbox")
+        .select(["id", "job_id", "attempts", "last_error", "dead_at"])
+        .where("queue", "=", PLUGIN_SCOPE_QUEUE)
+        .execute(),
+      failures: await env.db
+        .selectFrom("plugin_scope_sync_failures")
+        .selectAll()
+        .where("item_id", "=", itemId)
+        .execute(),
+      installs: await env.db
+        .selectFrom("plugin_installs")
+        .select(["org_id", "status"])
+        .where("item_id", "=", itemId)
+        .execute(),
+      item: await env.db
+        .selectFrom("catalog_items")
+        .select(["scope", "disabled", "awaiting_confirmation", "latest_version"])
+        .where("id", "=", itemId)
+        .executeTakeFirst(),
+      audit: await env.db.selectFrom("audit_events").select(["action", "org_id"]).execute(),
+    };
+    throw new Error(`${(e as Error).message}; scope sync state: ${JSON.stringify(state)}`);
+  }
 }
 
 async function auditRows(action: string) {
@@ -280,7 +338,7 @@ describe("plugin scope sync", () => {
     await setScope(env, itemId, "all");
     await enqueueItem(itemId);
     await idle();
-    expect((await liveOrgs(itemId)).length).toBeGreaterThan(0);
+    await waitForLiveInEveryOrg(itemId);
     await setScope(env, itemId, "optional");
     await enqueueItem(itemId);
     await idle();
