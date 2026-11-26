@@ -24,6 +24,7 @@
   "channels/approval-person-fields.unit.test.ts",
   "channels/cards.test.ts",
   "channels/features.test.ts",
+  "channels/progress.unit.test.ts",
   "channels/file-delivery.test.ts",
   "channels/public-https.test.ts",
   "config/auth-trust.test.ts",
