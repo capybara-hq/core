@@ -219,20 +219,31 @@ export function streamingView(
   }
 }
 
+/** Counts the logged live views computed (a test seam: a finished call computes none). */
+export const loggedLiveStats = { runs: 0 };
+
 /**
  * The live diff a logged `Write` / `Edit` shows until its result (spec D8: the row does not jump to
- * its inputs) when this page kept none from its streaming frames (opened after the input
- * streamed): from the whole input, without a base (the writing and edit forms).
+ * its inputs), from its complete logged input: against `base` (the one its streaming row had) for
+ * a `Write`, else the writing form; the edit form for an `Edit`.
  */
 export function loggedLiveView(
   input: Record<string, unknown>,
   view: InputView | null,
+  base?: { text: string; sha256: string },
+  callId = "",
 ): Pick<StreamingView, "detail" | "added" | "removed"> | undefined {
   if (view?.kind !== "file_write" && view?.kind !== "file_edit") return undefined;
-  const { detail } = streamingView(
-    { id: "", name: "", input: "" },
+  loggedLiveStats.runs++;
+  const { detail, added, removed } = streamingView(
+    { id: callId, name: "", input: "", ...(base !== undefined ? { base } : {}) },
     { value: input, open: null },
     view,
   );
-  return detail?.diff !== undefined ? { detail } : undefined;
+  if (detail?.diff === undefined) return undefined;
+  return {
+    detail,
+    ...(added !== undefined ? { added } : {}),
+    ...(removed !== undefined ? { removed } : {}),
+  };
 }

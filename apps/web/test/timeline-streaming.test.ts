@@ -10,6 +10,7 @@ import {
   LIVE_MAX_LINES,
   LIVE_TEXT_MAX_CHARS,
   liveTextTail,
+  loggedLiveStats,
   utf8Bytes,
 } from "../src/lib/streaming-tool-view";
 import {
@@ -493,6 +494,7 @@ describe("a logged Write / Edit keeps its live diff until the result (D8, R13)",
     const logged = [...asked, message(3, 1, [{ id: "lw1", name: "Write", input: full }])];
     const [pending] = rowsOf(timeline(logged, []));
     expect(pending?.row.status).toBe("pending");
+    // the complete input gives the same diff as the (complete) last frame
     expect(pending?.row.detail?.diff).toEqual(liveDiff);
     expect(pending?.row.detail?.live).toEqual(streaming?.row.detail?.live);
     expect(streaming?.row.removed).toBe(1);
@@ -528,7 +530,49 @@ describe("a logged Write / Edit keeps its live diff until the result (D8, R13)",
     expect(done?.row.detail?.live).toBeUndefined();
   });
 
-  it("without a remembered diff the logged input gives the writing form", () => {
+  it("a last frame that lags the final input: the logged row diffs the whole input", () => {
+    const base = "a\nb\nc\nd\ne\n";
+    const content = "a\nB\nc\nd\nE\nf\n";
+    const full = { file_path: "lag.md", content };
+    // the last frame streamed stops after "c": "d", "E", "f" never arrived as deltas
+    const lagging = JSON.stringify(full).slice(0, JSON.stringify(full).indexOf("c\\n") + 3);
+    const [streaming] = rowsOf(
+      timeline(asked, [
+        draft([{ id: "lw5", name: "Write", input: lagging, base: { text: base, sha256: "s5" } }]),
+      ]),
+    );
+    const want = liveWriteDiff(base, content);
+    expect(streaming?.row.detail?.diff).not.toEqual(want.diff);
+    const logged = [...asked, message(3, 1, [{ id: "lw5", name: "Write", input: full }])];
+    const [pending] = rowsOf(timeline(logged, []));
+    expect(pending?.row.detail?.diff).toEqual(want.diff);
+    expect(pending?.row.detail?.live).toEqual({ pending: want.pending });
+    expect(pending?.row).toMatchObject({ added: want.added, removed: want.removed });
+    const shown = pending?.row.detail?.diff?.hunks.flatMap((h) => h.lines.map((l) => l.text));
+    expect(shown).toContain("f");
+  });
+
+  it("a call with a result, or of an ended run, computes no live diff", () => {
+    const input = { file_path: "h.md", content: "x\ny\n" };
+    const history = [
+      ...asked,
+      message(3, 1, [
+        { id: "lw6", name: "Write", input },
+        { id: "lw7", name: "Edit", input: { file_path: "h.md", old_string: "x", new_string: "z" } },
+      ]),
+      result(4, "lw6"),
+      ev(5, "run_aborted", {}),
+    ];
+    const before = loggedLiveStats.runs;
+    const rows = rowsOf(timeline(history, []));
+    expect(loggedLiveStats.runs).toBe(before);
+    expect(rows.map((r) => r.row.detail?.diff)).toEqual([undefined, undefined]);
+    // the same calls while the run goes on: the open Edit computes one, the done Write none
+    rowsOf(timeline(history.slice(0, -1), []));
+    expect(loggedLiveStats.runs).toBe(before + 1);
+  });
+
+  it("without a remembered base the logged input gives the writing form", () => {
     const logged = [
       ...asked,
       message(3, 1, [
