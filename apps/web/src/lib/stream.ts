@@ -41,7 +41,10 @@ export interface StreamDelta {
   text?: string;
   /** `draft` only: the step's thinking so far. */
   thinking?: string;
-  /** `draft` only: the step's streamed tool calls so far (a call left out is kept). */
+  /**
+   * `draft` only: the step's streamed tool calls so far (a call left out is kept, except by a
+   * `resync`: it lists every call of the step this connection knows).
+   */
   tools?: DraftTool[];
   offset?: number;
   /** `draft` only: set the channels given instead of keeping the longer. */
@@ -484,14 +487,27 @@ function appendAt(have: string, text: string, offset: number | undefined): strin
   return offset + text.length <= have.length ? have : have + text.slice(have.length - offset);
 }
 
-/** The tools after a `draft` update: per call the merge rules of the text channels apply. */
+/**
+ * The tools after a `draft` update: per call the merge rules of the text channels apply. A resync
+ * (an `event: draft` frame at a (re)open) drops the step's calls it does not list: they are what
+ * an earlier connection showed (an attempt a `step_reset` during the disconnect replaced). The
+ * calls this connection saw after the open are in the frame's list already (the live drafts add
+ * them), and a call the stored draft lagged behind on comes back with its next delta (a gap, then
+ * a draft read).
+ */
 function mergeTools(
   have: DraftTool[],
   got: readonly DraftTool[] | undefined,
   d: StreamDelta,
 ): DraftTool[] {
-  if (got === undefined || got.length === 0) return have;
+  if (got === undefined) return have;
   let out = have;
+  if (d.resync) {
+    const listed = new Set(got.map((t) => t.id));
+    const kept = have.filter((t) => listed.has(t.id));
+    if (kept.length !== have.length) out = kept;
+  }
+  if (got.length === 0) return out;
   for (const t of got) {
     const at = out.findIndex((x) => x.id === t.id);
     if (at < 0) {

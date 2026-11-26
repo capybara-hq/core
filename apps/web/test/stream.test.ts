@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../src/lib/conversations";
 import { DRAFT_RETRY_MS, DRAFT_SLOW_RETRY_MS } from "../src/lib/live-drafts";
-import { fetchRunDrafts, type RunDraftSnapshot } from "../src/lib/run-drafts";
+import { type DraftTool, fetchRunDrafts, type RunDraftSnapshot } from "../src/lib/run-drafts";
 import {
   type ChatState,
   initialChatState,
@@ -915,6 +915,41 @@ describe("reduceChat: tool drafts", () => {
       tools: [{ id: CALL, name: "Write", input: "abc" }],
     });
     expect(lag.drafts[0]?.tools[0]?.input).toBe("abcdef");
+  });
+
+  it("a resync drops the calls it does not list (a step reset while disconnected)", () => {
+    const frame = (tools: DraftTool[], text = ""): StreamDelta => ({
+      runId: RUN,
+      step: 0,
+      delta: "draft",
+      resync: true,
+      text,
+      thinking: "",
+      tools,
+    });
+    // the old attempt's calls, shown before the disconnect
+    const s = apply(
+      initialChatState,
+      [started(1)],
+      start("old1"),
+      input("{1", 0, "old1"),
+      start("old2", "Edit"),
+      input("{2", 0, "old2"),
+    );
+    // the frame at the reopen holds the new attempt only
+    const next = apply(s, frame([{ id: "new1", name: "Bash", input: "{n" }]));
+    expect(next.drafts[0]?.tools).toEqual([{ id: "new1", name: "Bash", input: "{n" }]);
+    // a frame of text alone drops every call
+    const textOnly = apply(s, frame([], "Retrying"));
+    expect(textOnly.drafts[0]).toMatchObject({ text: "Retrying", tools: [] });
+    // a plain draft read (no resync) keeps a call it does not list
+    const read = apply(s, {
+      runId: RUN,
+      step: 0,
+      delta: "draft",
+      tools: [{ id: "old1", name: "Write", input: "{1" }],
+    });
+    expect(read.drafts[0]?.tools.map((t) => t.id)).toEqual(["old1", "old2"]);
   });
 
   it("finalized step ignores late tool deltas", () => {

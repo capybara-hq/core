@@ -163,7 +163,10 @@ export class LiveDrafts {
       if (t.base !== undefined) tool.base = t.base;
       s.tools.set(t.id, tool);
     }
-    // a call this connection saw (or holds deltas of) that the frame does not list yet
+    // A call this connection saw (or holds deltas of) since its open that the frame does not list
+    // yet: the store lags the stream by its coalescing window, so it is kept. The frame's list is
+    // then every call of the step this connection knows; the reducer drops any other (one an
+    // earlier connection showed, before a `step_reset` during the disconnect).
     for (const [id, t] of old?.tools ?? []) {
       const tool = s.tools.get(id);
       if (tool === undefined) s.tools.set(id, t);
