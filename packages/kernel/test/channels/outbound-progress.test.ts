@@ -5,16 +5,22 @@ import {
   fakeDm as dm,
   type FakeChannelSent,
   type FakeChannelServer,
+  fakeGroupMessage as group,
   startFakeChannelServer,
   startTestPostgres,
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import { Queue } from "bullmq";
+import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
+import { CHANNEL_QUEUE_NAME } from "../../src/channels/outbound.js";
+import { conversationTopic } from "../../src/conversations/event-log.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
@@ -109,6 +115,24 @@ const RULES: ScriptRule[] = [
     reply: { text: "Next item.", toolCalls: [pinnedProbe("Todo 2/2")] },
   },
   { when: { lastUserIncludes: "pinned", assistantTurns: 2 }, reply: { text: "pinned answer" } },
+  // a pinned change, a wait for approval (the job ends), then a second pinned change
+  {
+    when: { lastUserIncludes: "milestone", assistantTurns: 0 },
+    reply: { text: "Plan.", toolCalls: [pinnedProbe("Step 1/2")] },
+  },
+  {
+    when: { lastUserIncludes: "milestone", assistantTurns: 1 },
+    reply: { toolCalls: [{ name: ECHO, input: { text: "hi" } }] },
+  },
+  {
+    when: { lastUserIncludes: "milestone", assistantTurns: 2 },
+    reply: { toolCalls: [pinnedProbe("Step 2/2")] },
+  },
+  {
+    when: { lastUserIncludes: "milestone", assistantTurns: 3 },
+    reply: { text: "milestone answer" },
+  },
+  { when: { lastUserIncludes: "explode" }, reply: { fail: "invalid_request" } },
 ];
 
 const LONG = "The quick brown fox jumps over the lazy dog while streaming tokens to IM. ".repeat(2);
@@ -124,6 +148,10 @@ let detailedId: string;
 let briefId: string;
 let offId: string;
 let noEditId: string;
+let defaultId: string;
+let fakeDetailedId: string;
+let orgId: string;
+let channelQueue: Queue<{ conversationId?: string }>;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -152,7 +180,8 @@ beforeAll(async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "Owner" })
   ).id;
   owner = await session(k, "owner");
-  const orgId = await createOrgWithProviders(k, owner);
+  orgId = await createOrgWithProviders(k, owner);
+  channelQueue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
   for (const plugin of ["chan-mini", "chan-noedit", "mem-connector", "ui-probe"]) {
     const en = await owner({
       method: "PUT",
@@ -182,7 +211,23 @@ beforeAll(async () => {
   const scripted = await agent("Scripted", { provider: "model-script", model: "script-1" });
   const fake = await agent("Fake", { provider: "model-fake", model: "fake-1" });
   for (const source of ["chan-mini:t1", "chan-noedit:t1"]) {
-    for (const user of ["u-n1", "u-n2", "u-a1", "u-h1", "u-b1", "u-o1", "u-m1", "u-r1"]) {
+    for (const user of [
+      "u-n1",
+      "u-n2",
+      "u-a1",
+      "u-h1",
+      "u-b1",
+      "u-o1",
+      "u-m1",
+      "u-r1",
+      "u-r2",
+      "u-t1",
+      "u-f1",
+      "u-s1",
+      "u-m2",
+      "u-g1",
+      "u-x1",
+    ]) {
       await sql`INSERT INTO capybara.identities (source, external_id, account_id)
         VALUES (${source}, ${user}, ${ownerId})`.execute(raw);
     }
@@ -214,9 +259,14 @@ beforeAll(async () => {
   offId = await mk("chan-mini", "cli_po", fake, "off");
   // no setting: a direct chat defaults to detailed
   noEditId = await mk("chan-noedit", "cli_pn", scripted);
+  // no setting on an edit channel: groups default to brief
+  defaultId = await mk("chan-mini", "cli_pg", scripted);
+  // the streaming checks run on model-fake, which streams in chunks
+  fakeDetailedId = await mk("chan-mini", "cli_pf", fake, "detailed");
 });
 
 afterAll(async () => {
+  await channelQueue?.close();
   await k?.close();
   await im?.stop();
   await raw?.destroy();
@@ -294,6 +344,30 @@ async function finished(s: FakeChannelSent): Promise<ProgressCard> {
     },
     20_000,
     "finished progress card",
+  );
+}
+
+/** No delivery job of the conversation is left in the channel queue (the current one ended). */
+async function jobsDone(conversationId: string): Promise<void> {
+  await waitFor(
+    async () => {
+      const jobs = await channelQueue.getJobs(["active", "waiting", "prioritized", "delayed"]);
+      return jobs.every((j) => j.data.conversationId !== conversationId);
+    },
+    20_000,
+    "no delivery job of the conversation left",
+  );
+}
+
+/** The ended progress card (the run's final edit) in state `state`. */
+async function ended(s: FakeChannelSent, state: ProgressCard["state"]): Promise<ProgressCard> {
+  return waitFor(
+    async () => {
+      const c = lastProgress(s);
+      return c.state === state ? c : undefined;
+    },
+    20_000,
+    `${state} progress card`,
   );
 }
 
@@ -506,5 +580,205 @@ describe("channel progress card (process blocks spec §6.2)", () => {
     ]);
     expect((await deliveryRow(conv)).progress_message_id).toBe(progress[1]?.messageId);
     expect(im.updated.filter((u) => u.target.chatId === chat)).toEqual([]);
+  });
+
+  it("rejected edit re-posts once across jobs", async () => {
+    const chat = "dm-u-r2";
+    // every edit of the progress card ("Working", "Waiting …", "Worked for …") is rejected; the
+    // approval card's own update goes through
+    for (const textIncludes of ["Work", "Waiting"]) {
+      im.failNext("/update", 400, 50, undefined, "rejected", undefined, {
+        chatId: chat,
+        textIncludes,
+      });
+    }
+    im.push(detailedId, dm("pr2", "u-r2", "approve after rejection"));
+    const conv = await convOf(detailedId, chat);
+    const approval = await waitFor(
+      async () => sentTo("cli_pd", chat).find((s) => cardOf(s)?.kind === "approval"),
+      20_000,
+      "approval card",
+    );
+    // the first job re-posted the card when its waiting edit was rejected, then ended
+    await jobsDone(conv);
+    expect(sentTo("cli_pd", chat).filter((m) => progressOf(m) !== undefined)).toHaveLength(2);
+    im.push(
+      detailedId,
+      cardAction(
+        "pr2-ok",
+        "u-r2",
+        {
+          cardKind: "approval",
+          cardId: (cardOf(approval) as { id: string }).id,
+          action: "approve",
+        },
+        approval.target,
+      ),
+    );
+    await settled(conv);
+    await jobsDone(conv);
+    // the next job's rejected edits post no further card (the fake does not dedupe sends)
+    const msgs = sentTo("cli_pd", chat);
+    expect(msgs.filter((m) => progressOf(m) !== undefined)).toHaveLength(2);
+    expect(msgs.filter((m) => cardOf(m) === undefined).map((m) => m.message.text)).toEqual([
+      "approved answer",
+    ]);
+  });
+
+  it("a retryable edit failure does not hold back the answer", async () => {
+    const chat = "dm-u-t1";
+    // a rate limit asking for 30 s: a failed job would come back far too late for this test
+    im.failNext("/update", 429, 1, 30_000, undefined, undefined, chat);
+    im.push(detailedId, dm("pt1", "u-t1", "handoff later"));
+    const conv = await convOf(detailedId, chat);
+    await waitFor(
+      async () => sentTo("cli_pd", chat).some((m) => m.message.text === "handoff answer"),
+      10_000,
+      "answer in the same job",
+    );
+    await settled(conv);
+    const done = await finished(sentTo("cli_pd", chat)[0] as FakeChannelSent);
+    expect(done.pending).toHaveLength(2);
+    // no delivery attempt failed: the card caught up at a later interval of the same job
+    const retried = (await channelQueue.getJobs(["delayed", "failed", "waiting"])).filter(
+      (j) => j.data.conversationId === conv && j.attemptsMade > 0,
+    );
+    expect(retried).toEqual([]);
+  });
+
+  it("a failed run's card ends as failed, with the failure message", async () => {
+    const chat = "dm-u-f1";
+    im.push(detailedId, dm("pf1", "u-f1", "explode"));
+    const conv = await convOf(detailedId, chat);
+    await settled(conv);
+    const msgs = sentTo("cli_pd", chat);
+    const card = await ended(msgs[0] as FakeChannelSent, "failed");
+    expect(card.title).toBe("Failed");
+    expect(card.steps).toEqual([]);
+    expect(msgs.slice(1).map((m) => m.message.text)).toEqual([
+      "Sorry, something went wrong. Please try again later.",
+    ]);
+  });
+
+  it("a stopped run's card ends as stopped", async () => {
+    const chat = "dm-u-s1";
+    im.push(detailedId, dm("ps1", "u-s1", "approve then stop"));
+    const conv = await convOf(detailedId, chat);
+    await waitFor(
+      async () => sentTo("cli_pd", chat).find((s) => cardOf(s)?.kind === "approval"),
+      20_000,
+      "approval card",
+    );
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await settled(conv);
+    const card = await ended(sentTo("cli_pd", chat)[0] as FakeChannelSent, "stopped");
+    expect(card.title).toBe("Stopped");
+    expect(card.status).toBeUndefined();
+  });
+
+  it("no-edit channel keeps milestone_at across jobs", async () => {
+    const chat = "dm-u-m2";
+    im.push(noEditId, dm("pm2", "u-m2", "milestone run"));
+    const conv = await convOf(noEditId, chat);
+    const approval = await waitFor(
+      async () => sentTo("cli_pn", chat).find((s) => cardOf(s)?.kind === "approval"),
+      20_000,
+      "approval card",
+    );
+    await jobsDone(conv);
+    im.push(
+      noEditId,
+      cardAction(
+        "pm2-ok",
+        "u-m2",
+        {
+          cardKind: "approval",
+          cardId: (cardOf(approval) as { id: string }).id,
+          action: "approve",
+        },
+        approval.target,
+      ),
+    );
+    await settled(conv);
+    // the second pinned change came in a new job within a minute of the first milestone (PG)
+    expect(
+      sentTo("cli_pn", chat)
+        .filter((m) => cardOf(m) === undefined)
+        .map((m) => m.message.text),
+    ).toEqual(["Working on it", "Step 1/2", "milestone answer"]);
+  });
+
+  it("a group connection without a setting shows the brief card", async () => {
+    const chat = "grp-brief";
+    im.push(defaultId, group("pg1", "u-g1", "narr in a group", { chatId: chat }));
+    const conv = await convOf(defaultId, chat);
+    await settled(conv);
+    const msgs = sentTo("cli_pg", chat);
+    expect(msgs.map((m) => cardOf(m)?.kind ?? m.message.text)).toEqual(["progress", "narr answer"]);
+    const progressMsg = msgs[0] as FakeChannelSent;
+    await finished(progressMsg);
+    for (const m of [progressMsg, ...updatesOf(progressMsg.messageId)]) {
+      const c = progressOf(m) as ProgressCard;
+      expect(c.steps).toEqual([]);
+      expect(c.status).toBeUndefined();
+    }
+  });
+
+  it("a step_reset drops the streamed status line and sends no draft", async () => {
+    const chat = "dm-u-x1";
+    let delta: { runId: string; step: number } | undefined;
+    const bus = k.app.get(KERNEL_BUS) as {
+      publish(topic: string, payload: unknown): Promise<void>;
+      subscribe(topic: string, h: (m: unknown) => unknown): Promise<() => Promise<void>>;
+    };
+    im.push(fakeDetailedId, dm("px1", "u-x1", `slow:150:${LONG}`));
+    const conv = await convOf(fakeDetailedId, chat);
+    const unsubscribe = await bus.subscribe(conversationTopic(conv), (m) => {
+      const d = m as { kind?: string; runId?: string; step?: number };
+      if (d.kind === "delta" && d.runId !== undefined && d.step !== undefined)
+        delta ??= { runId: d.runId, step: d.step };
+    });
+    try {
+      const cardMsg = await waitFor(
+        async () => sentTo("cli_pf", chat).find((m) => progressOf(m) !== undefined),
+        20_000,
+        "progress card",
+      );
+      // the streamed text shows as the status line
+      await waitFor(
+        async () =>
+          updatesOf(cardMsg.messageId).some((u) =>
+            LONG.startsWith(progressOf(u)?.status ?? "\u0000"),
+          ),
+        20_000,
+        "streamed status line",
+      );
+      const at = await waitFor(async () => delta, 10_000, "a delta");
+      await bus.publish(conversationTopic(conv), {
+        kind: "delta",
+        runId: at.runId,
+        step: at.step,
+        delta: "step_reset",
+      });
+      await settled(conv);
+      const done = await finished(cardMsg);
+      expect(done.status).toBeUndefined();
+      // the edit after the reset shows no status (later deltas do not start at offset 0)
+      const live = updatesOf(cardMsg.messageId)
+        .map(progressOf)
+        .filter((c) => c?.state === "running");
+      expect(live.at(-1)?.status).toBeUndefined();
+      // one card, one answer with the whole text: no draft
+      expect(sentTo("cli_pf", chat).map((m) => cardOf(m)?.kind ?? m.message.text)).toEqual([
+        "progress",
+        LONG,
+      ]);
+    } finally {
+      await unsubscribe();
+    }
   });
 });

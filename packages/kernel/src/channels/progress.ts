@@ -65,7 +65,9 @@ export function statusLine(text: string): string | undefined {
  *
  * Contract: only this run's events count. An event of another run (a previous run, a sub-agent's)
  * is ignored, and so is every event after the run ended. Any approval or question decision flips
- * `waiting` back to `running`, even when a parallel ask is still pending (accepted behavior).
+ * `waiting` back to `running`, even when a parallel ask is still pending (accepted behavior). A
+ * sub-agent's approval or question (`subagent_waiting`, logged on the root run) waits the same
+ * way; its decision is in the child's log, so the sub-agent's `subagent_finished` resumes.
  */
 export function reduceProgress(
   s: ProgressState,
@@ -121,8 +123,14 @@ export function reduceProgress(
     case "approval_requested":
     case "question_asked":
       return { ...s, state: "waiting" };
+    // a sub-agent's approval or question waits for a person as the run's own does; a connect
+    // request is the web's (the child got the connect text as its result), not a wait
+    case "subagent_waiting":
+      return e.payload.kind === "connect" ? s : { ...s, state: "waiting" };
     case "approval_decided":
     case "question_answered":
+    // the sub-agent's decision is logged in its own log: its finish resumes the card here
+    case "subagent_finished":
       return s.state === "waiting" ? { ...s, state: "running" } : s;
     case "run_finished":
       return { ...s, state: "finished", endedAt: e.createdAt.toISOString() };

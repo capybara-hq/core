@@ -103,6 +103,30 @@ describe("reduceProgress", () => {
     );
   });
 
+  it("a sub-agent's approval or question waits, its finish resumes; a connect request does not wait", () => {
+    const waiting = (kind: string) =>
+      ev("subagent_waiting", {
+        subagentId: "c2",
+        childRunId: "r2",
+        path: ["c2"],
+        kind,
+        toolKey: "Bash",
+      });
+    const finished = ev("subagent_finished", {
+      subagentId: "c2",
+      childRunId: "r2",
+      callId: "k",
+      status: "completed",
+      toolCalls: 1,
+      durationMs: 10,
+      usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    });
+    expect(reduce(start(), waiting("approval")).state).toBe("waiting");
+    expect(reduce(start(), waiting("input")).state).toBe("waiting");
+    expect(reduce(start(), waiting("approval"), finished).state).toBe("running");
+    expect(reduce(start(), waiting("connect")).state).toBe("running");
+  });
+
   it("run_finished finishes with the summary title and meta (zh and en)", () => {
     let s = start();
     for (let i = 0; i < 12; i++) s = reduce(s, result({ isError: i === 0 }));

@@ -765,7 +765,13 @@ class Delivery {
   /** The card changed since its last edit, and when that edit was. */
   private progressDirty = false;
   private lastProgressAt = 0;
-  /** A rejected edit re-posted the card once in this job; a second rejection stops the edits. */
+  /** The last edit failed retryably (cleared by a successful one). */
+  private progressRetry: Error | undefined;
+  /**
+   * The run's card was re-posted after a rejected edit (once per run: in this job, or in an earlier
+   * one, recorded as `milestone_at`, which a card run uses for nothing else); a rejection after
+   * that stops the edits.
+   */
   private progressReposted = false;
   private progressBroken = false;
   /** Tool display metadata for the card's step labels, per tool key (this job only). */
@@ -859,6 +865,7 @@ class Delivery {
       if (this.progressKind !== "off" && row.progress_run_id !== null) {
         this.progressId = row.progress_message_id;
         this.milestoneAt = row.milestone_at?.getTime() ?? null;
+        this.progressReposted = this.progressKind === "card" && row.milestone_at !== null;
         await this.rebuildProgress(row.progress_run_id);
       }
       return await this.loop();
@@ -1014,8 +1021,10 @@ class Delivery {
         if (this.inbox.length > 0) continue;
         // 运行进入 waiting / 终态且读完；或已追上、长时间没有新输出（之后的事件会排新任务）
         if (quiet || (await this.idle())) {
-          // the card's last throttled change is not left for a job that may never come
+          // the card's last throttled change is not left for a job that may never come; an edit
+          // still failing retryably fails this attempt, and the retry's rebuild edits the card
           await this.flushProgress(true);
+          if (this.progressDirty && this.progressRetry !== undefined) throw this.progressRetry;
           return { kind: "done", seen: this.seen };
         }
       }
@@ -1699,6 +1708,10 @@ class Delivery {
     if (m.delta === "step_reset") {
       // 该步重试：此前的文本作废，下一次尝试从 offset 0 重新开始
       this.streaming = { key, text: "", complete: false };
+      // the card drops the abandoned attempt's status line at its next refresh
+      if (this.progressKind === "card" && this.progress?.runId === m.runId) {
+        this.progressDirty = true;
+      }
       return;
     }
     if (m.delta !== "text" || m.text === undefined) return;
@@ -1810,6 +1823,8 @@ class Delivery {
       case "question_asked":
       case "approval_decided":
       case "question_answered":
+      case "subagent_waiting":
+      case "subagent_finished":
         // a wait for a person starts or ends: at once; the blocking card itself follows as usual
         if (next.state !== prev.state) await this.editProgress(e.seq);
         return false;
@@ -1984,6 +1999,8 @@ class Delivery {
     }
     this.progress = s;
     this.handoffsSent = handoffs;
+    // one refresh: a previous job may have died (or failed retryably) before its edit
+    this.progressDirty = s !== undefined;
   }
 
   /** The progress card message for the state, with the step being streamed as its status line. */
@@ -2005,9 +2022,13 @@ class Delivery {
 
   /**
    * Edits the progress card to the current state (`seq`: the event that changed it, for the
-   * idempotency key; none for a throttled refresh). An edit the platform rejects (message too old,
-   * content refused) posts the card again once, recording the new message's id; after a second
-   * rejection the card is left as it is.
+   * idempotency key; none for a throttled refresh). A retryable failure (rate limit, network)
+   * leaves the card dirty for the next interval instead of failing the job, so blocking cards and
+   * the answer still go out. An edit the platform rejects (message too old, content refused)
+   * posts the card again once per run, recording the new message's id and the re-post (as
+   * `milestone_at`) in one write; after that a rejection leaves the card as it is. The re-post's
+   * idempotency key derives from the rejected message, so a job that re-posts the same rejected
+   * card again (the first one died before its write) reuses it.
    */
   private async editProgress(seq: number | undefined): Promise<void> {
     const s = this.progress;
@@ -2017,10 +2038,22 @@ class Delivery {
     this.lastProgressAt = Date.now();
     const message = this.progressMessage(s);
     const key = seq === undefined ? undefined : this.key(seq, "-progress");
+    const rejected = this.progressId;
     try {
-      await this.s.update(this.target, this.progressId, message, key, this.locale);
+      await this.s.update(this.target, rejected, message, key, this.locale);
+      this.progressRetry = undefined;
       return;
     } catch (err) {
+      if (!isChannelSendError(err) || err.retryable) {
+        // the card catches up at the next interval; the delivery goes on
+        this.progressDirty = true;
+        this.progressRetry = err instanceof Error ? err : new Error(String(err));
+        this.d.log.warn("channel progress edit failed; retrying at the next interval", {
+          conversationId: this.conversationId,
+          error: this.redact(errMsg(err)),
+        });
+        return;
+      }
       if (!editRejected(err)) throw err;
       this.d.log.warn("channel progress edit rejected", {
         conversationId: this.conversationId,
@@ -2035,12 +2068,12 @@ class Delivery {
     this.progressReposted = true;
     const { messageId } = await this.send(
       message,
-      idempotencyKey(`${this.conversationId}-progress-${s.runId}-again`),
+      idempotencyKey(`${this.conversationId}-progress-${s.runId}-again-${rejected}`),
     );
     // fenced like the draft id: only while this delivery still owns `last_seq` and the run
     const r = await this.d.db
       .updateTable("channel_deliveries")
-      .set({ progress_message_id: messageId, updated_at: new Date() })
+      .set({ progress_message_id: messageId, milestone_at: new Date(), updated_at: new Date() })
       .where("conversation_id", "=", this.conversationId)
       .where("last_seq", "=", String(this.persisted))
       .where("progress_run_id", "=", s.runId)
@@ -2054,11 +2087,8 @@ class Delivery {
    * streaming draft; `force` ignores the interval (the job is about to end).
    */
   private async flushProgress(force: boolean): Promise<void> {
+    // after the run ended only a final edit that failed retryably is still dirty
     if (this.progressKind !== "card" || !this.progressDirty) return;
-    if (this.progress === undefined || this.progress.endedAt !== undefined) {
-      this.progressDirty = false;
-      return;
-    }
     const interval = Math.max(DRAFT_INTERVAL_MS, this.s.features.minEditIntervalMs ?? 0);
     if (!force && Date.now() - this.lastProgressAt < interval) return;
     await this.editProgress(undefined);
