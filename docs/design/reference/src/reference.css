@@ -2060,7 +2060,7 @@ textarea {
 }
 /* The live block (§6.16.10 Live): a viewport following the tail, caret, collapsed lines, footer. */
 .r-diff[data-live] {
-  max-height: var(--cb-layout-tool-output);
+  max-height: var(--cb-layout-tool-live);
   overflow-y: auto;
 }
 .r-dcaret {

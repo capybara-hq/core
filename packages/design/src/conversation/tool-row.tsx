@@ -1,17 +1,20 @@
-import { type JSX, type ReactNode, useId, useState } from "react";
+import { type JSX, type ReactNode, useId, useRef, useState } from "react";
 import { formatBytes, isSafeAttachmentHref } from "../display/attachments";
 import { formatDuration } from "../display/duration";
 import { Icon } from "../icons/icon";
 import { useDesignLocale, useDesignT } from "../provider";
 import { useClock } from "./clock";
-import { DiffBlock, type DiffData } from "./diff-block";
+import { DiffBlock, type DiffBlockLive, type DiffData, useTailFollow } from "./diff-block";
 import { Spinner } from "./prose";
 import {
   fillCopy,
+  streamProgressText,
   type ToolAutoGranted,
   type ToolGuard,
   type ToolKind,
   type ToolNotice,
+  type ToolStatus,
+  type ToolStreamProgress,
   type ToolWaiting,
   waitingText,
 } from "./tool-copy";
@@ -34,7 +37,10 @@ export type ToolRowData = {
   extra?: string;
   /** A shell row's `description` from the model, shown instead of the key argument. */
   description?: string;
-  status: "pending" | "running" | "done" | "failed" | "cancelled";
+  /** `streaming`: the model is still writing the input (§6.16.9); nothing runs yet. */
+  status: ToolStatus;
+  /** A streaming call's progress: lines when the input view counts them, and the size. */
+  progress?: ToolStreamProgress;
   /**
    * The live call waits for a person (a pending approval, question or connection): the row shows
    * the waiting word instead of the spinner and the timer (§6.16.9). Ignored once it ends.
@@ -102,6 +108,8 @@ export type ToolRowData = {
     /** The full error text of a failure (shown in the output box). */
     errorText?: string;
     diff?: DiffData;
+    /** The live forms of a streaming call's diff (§6.16.10); read only while streaming. */
+    live?: DiffBlockLive;
     /**
      * Images the call's result carried (shown to the agent): thumbnails under the output, each
      * opening `onOpenImage` with its index.
@@ -196,6 +204,33 @@ export function ErrorDot({ label }: { label: string }): JSX.Element {
 }
 
 /**
+ * The stream mark (§6.16.9): three `accent` dots pulsing in turn where the spinner would stand,
+ * still under reduced motion. Decorative: the progress word says the state.
+ */
+export function StreamMark(): JSX.Element {
+  return (
+    <span className="cb-stream-mark" data-part="stream-mark" aria-hidden="true">
+      <span className="cb-stream-dot" data-part="stream-dot" />
+      <span className="cb-stream-dot" data-part="stream-dot" />
+      <span className="cb-stream-dot" data-part="stream-dot" />
+    </span>
+  );
+}
+
+/** A streaming call's progress, "生成中 · 86 行 · 2.7 KB" (§6.16.9), in `faint`. */
+export function StreamProgress({ row, lead }: { row: ToolRowData; lead?: string }): JSX.Element {
+  const locale = useDesignLocale();
+  return (
+    <span className="cb-stream-progress cb-faint" data-part="stream-progress">
+      {`${lead ?? ""}${streamProgressText(row.progress ?? { bytes: 0 }, locale)}`}
+    </span>
+  );
+}
+
+/** The model is still writing the call's input (§6.16.9). */
+export const isStreaming = (row: ToolRowData): boolean => row.status === "streaming";
+
+/**
  * The row's meta (§6.16.9): the status words after the label (a guard, a notice, ran outside the
  * sandbox, approved automatically, cancelled), in their own element that never shrinks or wraps,
  * so a long description yields with the ellipsis and the words stay whole. Null without one.
@@ -256,12 +291,13 @@ export function ToolLink({ link }: { link: NonNullable<ToolRowData["link"]> }): 
   );
 }
 
-/** The call is live: pending or running (a waiting call is live too). */
+/** The call is live: streaming, pending or running (a waiting call is live too). */
 export const isLive = (row: ToolRowData): boolean =>
-  row.status === "running" || row.status === "pending";
+  row.status === "running" || row.status === "pending" || row.status === "streaming";
 
 /** The live call waits for a person (§6.16.9): no spinner, no timer, the waiting word. */
-export const isWaiting = (row: ToolRowData): boolean => isLive(row) && row.waiting !== undefined;
+export const isWaiting = (row: ToolRowData): boolean =>
+  isLive(row) && !isStreaming(row) && row.waiting !== undefined;
 
 /** The waiting word of a live call that waits for a person, in `accent` (§6.16.9). */
 export function WaitingWord({
@@ -355,10 +391,15 @@ export function ToolDetail({
   const locale = useDesignLocale();
   const d = row.detail;
   if (!d) return null;
+  const streaming = isStreaming(row);
   if (d.diff) {
     return (
       <div id={id} className="cb-tool-diff cb-expand" data-animate={animate ? "true" : undefined}>
-        <DiffBlock diff={d.diff} {...(onViewAll ? { onViewAll } : {})} />
+        <DiffBlock
+          diff={d.diff}
+          {...(onViewAll && !streaming ? { onViewAll } : {})}
+          {...(streaming ? { live: true, ...d.live } : {})}
+        />
       </div>
     );
   }
@@ -431,9 +472,13 @@ export function ToolDetail({
       {hasOut ? (
         <IoSection label={t("tool.out")} which="out">
           {out !== undefined ? (
-            <pre className="cb-tool-output" data-part="tool-output">
-              {out}
-            </pre>
+            streaming ? (
+              <LiveOutput text={out} />
+            ) : (
+              <pre className="cb-tool-output" data-part="tool-output">
+                {out}
+              </pre>
+            )
           ) : null}
           {images !== undefined ? (
             <ToolImages
@@ -450,6 +495,27 @@ export function ToolDetail({
         </IoSection>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A streaming `text` view (an `Agent` prompt) in OUT: the text with the streaming cursor at its
+ * end, folded at `layout.tool-live` and following its tail (§6.16.9).
+ */
+function LiveOutput({ text }: { text: string }): JSX.Element {
+  const ref = useRef<HTMLPreElement>(null);
+  const onScroll = useTailFollow(ref, true, text.length);
+  return (
+    <pre
+      ref={ref}
+      className="cb-tool-output"
+      data-part="tool-output"
+      data-live=""
+      onScroll={onScroll}
+    >
+      {text}
+      <span className="cb-cursor" aria-hidden="true" />
+    </pre>
   );
 }
 
@@ -505,9 +571,16 @@ export function ToolRow({
   const isOpen = open ?? own;
   const expandable = hasDetail(row);
   const waiting = isWaiting(row);
-  const running = isLive(row) && !waiting;
+  const streaming = isStreaming(row);
+  const running = isLive(row) && !waiting && !streaming;
   const clock = useClock(running && row.startedAt !== undefined, now);
-  const end = waiting ? (
+  const end = streaming ? (
+    // no timer and no actions while the input is written: the progress, then the chevron
+    <span className="cb-tool-end">
+      <StreamProgress row={row} />
+      {expandable ? <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} /> : null}
+    </span>
+  ) : waiting ? (
     <span className="cb-tool-end">
       <WaitingWord row={row} />
     </span>
@@ -525,7 +598,7 @@ export function ToolRow({
   ) : null;
   const inner = (
     <>
-      {running ? <Spinner size={16} /> : null}
+      {running ? <Spinner size={16} /> : streaming ? <StreamMark /> : null}
       <ToolLabel row={row} />
       <ToolMeta row={row} />
       {end}
@@ -558,6 +631,7 @@ export function ToolRow({
           data-cap-part="tool-row"
           data-status={row.status}
           data-waiting={waiting ? row.waiting : undefined}
+          aria-busy={streaming ? true : undefined}
           data-linked="true"
         >
           {expandable ? (
@@ -589,6 +663,7 @@ export function ToolRow({
           data-cap-part="tool-row"
           data-status={row.status}
           data-waiting={waiting ? row.waiting : undefined}
+          aria-busy={streaming ? true : undefined}
           aria-expanded={isOpen}
           aria-controls={isOpen ? id : undefined}
           onClick={toggle}
@@ -602,6 +677,7 @@ export function ToolRow({
           data-cap-part="tool-row"
           data-status={row.status}
           data-waiting={waiting ? row.waiting : undefined}
+          aria-busy={streaming ? true : undefined}
         >
           {inner}
         </div>

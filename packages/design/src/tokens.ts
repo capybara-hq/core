@@ -109,6 +109,7 @@ export const SIZES = {
     panel: 560,
     "chat-min": 480,
     "tool-output": 120,
+    "tool-live": 360,
     "file-card": 240,
     thumb: 56,
     "inline-image": 360,

@@ -1,3 +1,4 @@
+import { formatBytes } from "../display/attachments";
 import { type DesignKey, type Locale, messages } from "../i18n";
 
 /**
@@ -52,9 +53,39 @@ export function verbGroup(kind: ToolKind): ToolVerbGroup {
     : "tool";
 }
 
+/**
+ * A call's status (§6.16.9). `streaming`: the model is still writing the call's input; nothing runs
+ * yet (streaming tool input spec §6.4).
+ */
+export type ToolStatus = "streaming" | "pending" | "running" | "done" | "failed" | "cancelled";
+
+/**
+ * A streaming call's progress (§6.16.9): the lines of the text being written when the input view
+ * counts them, and the input's size so far. `generic`: a tool without an input view, worded
+ * "生成参数中" / "Writing input".
+ */
+export type ToolStreamProgress = { lines?: number; bytes: number; generic?: boolean };
+
+/** "生成中 · 86 行 · 2.7 KB" / "Writing input · 1.2 KB" (§6.16.9). */
+export function streamProgressText(p: ToolStreamProgress, locale: Locale): string {
+  const m = messages[locale];
+  const parts = [m[p.generic ? "tool.streamingInput" : "tool.streaming"]];
+  if (p.lines !== undefined && !p.generic) {
+    parts.push(
+      p.lines === 1
+        ? m["tool.streamLines1"]
+        : fmt(m["tool.streamLines"], {
+            n: p.lines.toLocaleString(locale === "zh" ? "zh-CN" : "en-US"),
+          }),
+    );
+  }
+  parts.push(formatBytes(p.bytes));
+  return parts.join(" · ");
+}
+
 export type SummaryRow = {
   kind: ToolKind;
-  status: "pending" | "running" | "done" | "failed" | "cancelled";
+  status: ToolStatus;
   /** A done call the read-before-write check refused (§6.16.9): counted apart, never failed. */
   guard?: ToolGuard;
   /** A done call with a protocol notice (§6.16.9): never failed, not counted apart either. */
@@ -103,7 +134,10 @@ export function waitingText(what: ToolWaiting, who: string | undefined, locale: 
 /** The group header (§6.16.8, §7) as styled runs. */
 export function summaryParts(rows: readonly SummaryRow[], locale: Locale): SummaryPart[] {
   const m = messages[locale];
-  const active = rows.filter((r) => r.status === "running" || r.status === "pending");
+  // a streaming call counts as running (§6.16.9): its input is being written
+  const active = rows.filter(
+    (r) => r.status === "running" || r.status === "pending" || r.status === "streaming",
+  );
   const running = active.find((r) => r.waiting === undefined) ?? active[0];
   if (running) {
     const done = rows.length - active.length;

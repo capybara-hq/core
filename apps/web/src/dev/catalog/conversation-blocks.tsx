@@ -420,8 +420,13 @@ function fixtureDiff(t: FixtureTool, truncated = false): DiffData | undefined {
         lines: lines.map((l) => ({ kind: l.kind, text: l.text })),
       },
     ],
-    truncated,
-    ...(truncated ? { totalLines: 10_000 } : {}),
+    // a live tail (§6.16.10 Live): the last lines of a longer text, the earlier ones left out
+    truncated: truncated || t.live?.totalLines !== undefined,
+    ...(truncated
+      ? { totalLines: 10_000 }
+      : t.live?.totalLines !== undefined
+        ? { totalLines: t.live.totalLines }
+        : {}),
   };
 }
 
@@ -431,8 +436,16 @@ export function toRow(
   o: { truncated?: boolean; blockedBy?: string } = {},
 ): ToolRowData {
   const diff = fixtureDiff(t, o.truncated);
+  const live = t.live
+    ? {
+        ...(t.live.gutter ? { gutter: t.live.gutter } : {}),
+        ...(t.live.pending !== undefined ? { pending: t.live.pending } : {}),
+        ...(t.live.preview ? { preview: true } : {}),
+      }
+    : undefined;
   const detail: NonNullable<ToolRowData["detail"]> = {
     ...(t.input ? { input: t.input } : {}),
+    ...(live ? { live } : {}),
     ...(t.command ? { command: t.command } : {}),
     ...(t.output ? { output: t.output } : {}),
     ...(t.outputBytes ? { outputBytes: t.outputBytes, outputShownBytes: 4 * 1024 } : {}),
@@ -445,6 +458,7 @@ export function toRow(
     kind: t.kind,
     name: t.name,
     status: t.status,
+    ...(t.progress ? { progress: t.progress } : {}),
     ...(t.waiting ? { waiting: t.waiting } : {}),
     ...(t.tool ? { tool: t.tool } : {}),
     ...(t.tooltip ? { tooltip: t.tooltip } : {}),
@@ -580,6 +594,8 @@ function toolRowBlocks(): ReactNode {
       <RowBlock id="tool-row-auto-granted" row={toRow(pick(T.autoGranted, 0))} />
       <RowBlock id="tool-row-auto-approved" row={toRow(pick(T.autoApproved, 0))} />
       <RowBlock id="tool-row-review-approved" row={toRow(pick(T.reviewApproved, 0))} />
+      <RowBlock id="tool-row-streaming" row={toRow(pick(T.streaming, 0))} />
+      <RowBlock id="tool-row-streaming-input" row={toRow(pick(T.streaming, 1))} />
     </>
   );
 }
@@ -593,6 +609,19 @@ function diffBlockBlocks(): ReactNode {
       </Block>
       <Block id="diff-block-truncated">
         <ToolGroup rows={[toRow(t, { truncated: true })]} open onViewAll={noop} />
+      </Block>
+      {/* the live forms (§6.16.10 Live), in TOOL_FIXTURES.live's order */}
+      <Block id="diff-block-live">
+        <ToolGroup rows={[toRow(pick(T.live, 0))]} open />
+      </Block>
+      <Block id="diff-block-live-writing">
+        <ToolGroup rows={[toRow(pick(T.live, 1))]} open />
+      </Block>
+      <Block id="diff-block-live-edit">
+        <ToolGroup rows={[toRow(pick(T.live, 2))]} open />
+      </Block>
+      <Block id="diff-block-live-cut">
+        <ToolGroup rows={[toRow(pick(T.live, 3))]} open />
       </Block>
     </>
   );

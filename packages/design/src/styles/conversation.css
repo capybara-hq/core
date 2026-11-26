@@ -904,8 +904,47 @@ button.cb-tool-row {
   color: var(--cb-faint);
 }
 .cb-tool-row[data-status="running"] .cb-tool-label,
-.cb-tool-row[data-status="pending"] .cb-tool-label {
+.cb-tool-row[data-status="pending"] .cb-tool-label,
+.cb-tool-row[data-status="streaming"] .cb-tool-label {
   color: var(--cb-ink);
+}
+/* A streaming call (§6.16.9): three accent dots pulsing in turn where the spinner stands. */
+.cb-stream-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: var(--cb-space-4);
+  height: var(--cb-space-4);
+}
+.cb-stream-dot {
+  width: var(--cb-space-1);
+  height: var(--cb-space-1);
+  border-radius: 50%;
+  background: var(--cb-accent);
+}
+/* Reduced motion: no pulse, the three dots stand still at full opacity. */
+@media (prefers-reduced-motion: no-preference) {
+  .cb-stream-dot {
+    animation: cb-stream-pulse var(--cb-motion-pulse) ease-in-out infinite;
+  }
+  .cb-stream-dot:nth-child(2) {
+    animation-delay: calc(var(--cb-motion-pulse) / 3);
+  }
+  .cb-stream-dot:nth-child(3) {
+    animation-delay: calc(var(--cb-motion-pulse) * 2 / 3);
+  }
+}
+@keyframes cb-stream-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.cb-stream-progress {
+  white-space: nowrap;
+}
+.cb-tool-end > .cb-stream-progress {
+  margin-right: var(--cb-space-1);
 }
 /* A row or line with a link (§6.16.9): the toggle (or the label) and the link side by side. */
 .cb-tool-toggle {
@@ -1092,6 +1131,28 @@ button.cb-tool-toggle:focus-visible {
   height: var(--cb-space-2);
   border-bottom: 1px solid var(--cb-line-soft);
   margin-bottom: var(--cb-space-1);
+}
+/* The live block (§6.16.10 Live): a viewport that follows the tail, the footer outside it. */
+.cb-diff[data-live] {
+  max-height: var(--cb-layout-tool-live);
+  overflow-y: auto;
+}
+.cb-tool-output[data-live] {
+  max-height: var(--cb-layout-tool-live);
+}
+/* The caret (the §2.4 streaming cursor) at the line's height. */
+.cb-diff-line .cb-cursor {
+  margin-left: 1px;
+  vertical-align: top;
+}
+.cb-diff-collapsed {
+  color: var(--cb-faint);
+}
+.cb-diff-foot {
+  padding: 0 var(--cb-space-3) var(--cb-space-1);
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
 }
 .cb-diff-cut {
   display: flex;

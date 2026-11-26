@@ -173,11 +173,24 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   const streamMark = () =>
     '<span class="r-stream-mark" data-part="stream-mark" aria-hidden="true"><span class="r-stream-dot" data-part="stream-dot"></span><span class="r-stream-dot" data-part="stream-dot"></span><span class="r-stream-dot" data-part="stream-dot"></span></span>';
 
+  /** "生成中 · 86 行 · 2.7 KB" (§6.16.9; formatBytes as the design package rounds it). */
+  function streamProgress(p) {
+    const bytes = (n) => {
+      if (n < 1024) return `${n} B`;
+      const v = Math.round((n / 1024) * 10) / 10;
+      return `${Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)} KB`;
+    };
+    const parts = [p.generic ? "生成参数中" : "生成中"];
+    if (p.lines !== undefined && !p.generic) parts.push(`${p.lines.toLocaleString("en-US")} 行`);
+    parts.push(bytes(p.bytes));
+    return parts.join(" · ");
+  }
+
   function toolRow(t, o = {}) {
-    const expandable = Boolean(t.input || t.output || t.command || t.diff || t.expandable);
+    const expandable = Boolean(t.input || t.output || t.command || t.diff);
     if (t.status === "streaming") {
       // Input still being written: the mark, an ink label, the progress where the timer stands.
-      const end = `<span class="r-tend"><span class="r-stream-progress" data-part="stream-progress">${esc(t.progress)}</span>${expandable ? chev(o.open) : ""}</span>`;
+      const end = `<span class="r-tend"><span class="r-stream-progress" data-part="stream-progress">${esc(streamProgress(t.progress))}</span>${expandable ? chev(o.open) : ""}</span>`;
       return `<div class="r-trow" data-running aria-busy="true"${expandable ? ` role="button" aria-expanded="${Boolean(o.open)}"` : ""}>${streamMark()}${toolLabel(t)}${end}</div>`;
     }
     // A call waiting for a person: no spinner, no timer, the waiting word in accent (§6.16.9).
@@ -1260,29 +1273,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return col(toolGroup(rows, { open: o.state === "expanded", openRows: o.state === "expanded" ? ["t_exp_conn", "t_exp_cmd"] : [] }));
     },
     "tool-row": (o) => {
-      const STREAMING = {
-        streaming: {
-          id: "t_stream_write",
-          kind: "edit",
-          name: "Write",
-          keyArg: "reports/对账报告.md",
-          added: 4,
-          removed: 1,
-          status: "streaming",
-          progress: "生成中 · 86 行 · 2.7 KB",
-          expandable: true,
-        },
-        "streaming-input": {
-          id: "t_stream_conn",
-          kind: "connector",
-          name: "Acme 工单",
-          tool: "create_ticket",
-          keyArg: "对账差异：示例表第 118 行",
-          status: "streaming",
-          progress: "生成参数中 · 1.2 KB",
-          expandable: true,
-        },
-      };
+      const STREAMING = { streaming: T.streaming[0], "streaming-input": T.streaming[1] };
       if (STREAMING[o.state]) return col(`<div class="r-tbox">${toolRow(STREAMING[o.state])}</div>`);
       const pick = {
         default: [T.expanded[1], {}],
@@ -1304,65 +1295,20 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return col(`<div class="r-tbox">${toolRow(pick[0], pick[1])}</div>`);
     },
     "diff-block": (o) => {
-      const LIVE = {
-        // A Write against its base: real numbers, the aligned part's +/−, the rest pending.
-        live: {
-          row: { name: "Write", keyArg: "reports/对账报告.md", kind: "edit", added: 3, removed: 1 },
-          pending: 42,
-          lines: [
-            { kind: "ctx", old: 1, new: 1, text: "# 9 月对账报告" },
-            { kind: "del", old: 2, text: "生成时间：2026-09-30" },
-            { kind: "add", new: 2, text: "生成时间：2026-10-01" },
-            { kind: "ctx", old: 3, new: 3, text: "" },
-            { kind: "add", new: 4, text: "## 差异汇总（共 12 行）" },
-            { kind: "add", new: 5, text: "| 收款人 | 科目 | 差" },
-          ],
-        },
-        // A Write without a base: the text numbered from 1, no signs, the preview footer.
-        "live-writing": {
-          row: { name: "Write", keyArg: "scripts/dedupe.py", kind: "edit" },
-          signs: false,
-          foot: "写入预览",
-          lines: [
-            { kind: "ctx", new: 1, text: '"""同收款人 + 同科目只留第一行。"""' },
-            { kind: "ctx", new: 2, text: "" },
-            { kind: "ctx", new: 3, text: "def dedupe(entries):" },
-            { kind: "ctx", new: 4, text: "    seen = set()" },
-            { kind: "ctx", new: 5, text: "    out = []" },
-            { kind: "ctx", new: 6, text: "    for e in entries:" },
-          ],
-        },
-        // A streaming Edit: old as removed, new growing as added, numbers after it runs.
-        "live-edit": {
-          row: { name: "Edit", keyArg: "scripts/calc.py", kind: "edit" },
-          gutter: "pending",
-          foot: "行号待定",
-          lines: [
-            { kind: "del", text: "    if nm and cat:" },
-            { kind: "add", text: "    if nm and cat and not is_blank_row(r):" },
-            { kind: "add", text: "        # 同收款人 + 同科目只留第一行" },
-            { kind: "add", text: "        key = (nm, ca" },
-          ],
-        },
-        // Long text: the last lines, under the earlier line.
-        "live-cut": {
-          row: { name: "Write", keyArg: "data/payees.csv", kind: "edit" },
-          signs: false,
-          earlier: 1204,
-          foot: "写入预览",
-          lines: [
-            { kind: "ctx", new: 1205, text: "P-1205,华东示例供应链有限公司,6602.01" },
-            { kind: "ctx", new: 1206, text: "P-1206,示例物流（上海）有限公司,6601.03" },
-            { kind: "ctx", new: 1207, text: "P-1207,示例数据服务有限公司,6602.07" },
-            { kind: "ctx", new: 1208, text: "P-1208,北京示例咨询有限公司,6602.01" },
-            { kind: "ctx", new: 1209, text: "P-1209,示例印务有限公司,6601.05" },
-            { kind: "ctx", new: 1210, text: "P-1210,示例" },
-          ],
-        },
-      }[o.state];
-      if (LIVE) {
-        const r = { ...LIVE.row, status: "streaming" };
-        return col(`<div class="r-tline" role="button" aria-expanded="true">${toolLabel(r)}${chev(true)}</div><div class="r-tbox">${liveDiff(LIVE)}</div>`);
+      // The live forms (§6.16.10 Live), in TOOL_FIXTURES.live's order.
+      const live = { live: T.live[0], "live-writing": T.live[1], "live-edit": T.live[2], "live-cut": T.live[3] }[o.state];
+      if (live) {
+        const l = live.live ?? {};
+        const spec = {
+          lines: live.diff,
+          gutter: l.gutter,
+          signs: !l.preview,
+          pending: l.pending,
+          earlier: l.totalLines ? l.totalLines - live.diff.length : 0,
+          foot: l.gutter === "pending" ? "行号待定" : l.preview ? "写入预览" : "",
+        };
+        // the single tool line of a streaming call: the mark, the label, " · " and the progress
+        return col(`<div class="r-tline" role="button" aria-expanded="true" aria-busy="true">${streamMark()}${toolLabel(live)}<span class="r-stream-progress"> · ${esc(streamProgress(live.progress))}</span>${chev(true)}</div><div class="r-tbox">${liveDiff(spec)}</div>`);
       }
       const t = T.diff[0];
       return col(`<div class="r-tline" role="button" aria-expanded="true">${toolLabel(t)}${chev(true)}</div><div class="r-tbox">${diffBlock(t, { truncated: o.state === "truncated" })}</div>`);
