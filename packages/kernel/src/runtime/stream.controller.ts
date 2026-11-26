@@ -66,8 +66,9 @@ export class ConversationStreamController {
 
   /**
    * The live drafts of one run (spec 2026-11-07 §3.2):
-   * `{ drafts: { step, text, thinking, tools }[] }`, the steps still streaming whose `assistant_message` is not logged (none once the run is no
-   * longer running). What a stream client asks for when a delta's `offset` is past its draft.
+   * `{ drafts: { step, text, thinking, tools }[] }`, the steps still streaming whose
+   * `assistant_message` is not logged (none once the run is no longer running). What a stream
+   * client asks for when a delta's `offset` is past its draft.
    * The stream's access rule (the conversation is visible to the viewer, else 404
    * `conversation.not_found`); a run not of this conversation → 404 `run.not_found`.
    */

@@ -310,7 +310,7 @@ describe("ConversationStreams", () => {
     expect(streams.size).toBe(0);
   });
 
-  it("after the catch-up, one `event: draft` per live draft (tools too), before any delta", async () => {
+  it("after catch-up: one `event: draft` per live draft, tools too, before deltas", async () => {
     const tool = { id: "c1", name: "Write", input: '{"path":"a', inputTruncated: true as const };
     let handler: ((m: unknown) => unknown) | undefined;
     const ev = {

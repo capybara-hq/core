@@ -162,7 +162,11 @@ export class RunDrafts {
     this.changed(runId, h);
   }
 
-  /** The file a streaming `Write` replaces; kept only within {@link DRAFT_TOOL_INPUT_MAX}. */
+  /**
+   * The file a streaming `Write` replaces; kept only within {@link DRAFT_TOOL_INPUT_MAX}, which the
+   * base shares with the input (spec: "input plus base"). Like {@link appendToolInput}, it ignores
+   * a call never started.
+   */
   setToolBase(
     runId: string,
     step: number,
