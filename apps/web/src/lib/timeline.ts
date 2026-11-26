@@ -733,11 +733,16 @@ function streamingTool(
   const input = parsed.value ?? {};
   const view = streamingView(t, parsed, ti?.inputView ?? null);
   const question = t.name === QUESTION_TOOL;
-  const keyArg = view.keyArg ?? (question ? questionPreview(input, ti) : keyArgOf(input, ti));
+  const kind: ToolRowData["kind"] = question ? "question" : (ti?.kind ?? "tool");
+  // the row shows a description instead of the key argument only for a command kind
+  const keyArg =
+    (kind !== "command" ? view.description : undefined) ??
+    view.keyArg ??
+    (question ? questionPreview(input, ti) : keyArgOf(input, ti));
   const label = ti ? toolLabel(ti, locale) : toolLabelOfKey(t.name);
   const row: ToolRowData = {
     id: callKey(at.runId, t.id),
-    kind: question ? "question" : (ti?.kind ?? "tool"),
+    kind,
     name: label.name,
     status: "streaming",
     progress: view.progress,
@@ -753,6 +758,42 @@ function streamingTool(
   const tool: TimelineTool = { row, callId: t.id, toolKey: t.name, input, outputId: null, step: at };
   streamingRows.set(t, { at, info: ti, locale, tool });
   return tool;
+}
+
+/** The entries the final pass of {@link buildEventTimeline} places after a group, by call. */
+const GROUP_EXTRAS = new Set<TimelineEntry["kind"]>([
+  "files",
+  "card",
+  "network-facts",
+  "device-code",
+  "handoff",
+  "reveal",
+]);
+
+/**
+ * The index of the tools group a prose-less step's calls join once logged, or -1: the last entry,
+ * or the last group followed only by the extras the final pass put after it (its files, cards,
+ * network facts, device codes, handoffs, reveals). An extra placed on its own (no group of its
+ * call) ends the group in the log too. It reads the timeline before `groupProcess`, where a card of
+ * any placement still follows its group, so the joined rows land in the process block's rail step
+ * of the logged calls (same group key, same step).
+ */
+function joinedGroupAt(out: readonly TimelineEntry[]): number {
+  for (let i = out.length - 1; i >= 0; i--) {
+    const e = out[i] as TimelineEntry;
+    if (e.kind === "tools") {
+      const calls = new Set(e.rows.map((r) => r.callId));
+      for (let j = i + 1; j < out.length; j++) {
+        const x = out[j] as TimelineEntry;
+        const of =
+          x.kind === "files" ? x.key === `${e.key}:files` : "callId" in x && calls.has(x.callId);
+        if (!of) return -1;
+      }
+      return i;
+    }
+    if (!GROUP_EXTRAS.has(e.kind)) return -1;
+  }
+  return -1;
 }
 
 /**
@@ -800,11 +841,12 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
       });
     }
     if (!calling) continue;
-    const at: StepRef = { runId: d.runId, step: d.step };
-    const rows = d.tools.map((t) => streamingTool(at, t, base.info, base.locale));
-    const last = out.at(-1);
-    if (last?.kind === "tools") out[out.length - 1] = { ...last, rows: [...last.rows, ...rows] };
-    else out.push({ kind: "tools", key: toolGroupKey(rows[0]?.row.id ?? ""), rows, step: at });
+    const step: StepRef = { runId: d.runId, step: d.step };
+    const rows = d.tools.map((t) => streamingTool(step, t, base.info, base.locale));
+    const at = joinedGroupAt(out);
+    const group = at >= 0 ? out[at] : undefined;
+    if (group?.kind === "tools") out[at] = { ...group, rows: [...group.rows, ...rows] };
+    else out.push({ kind: "tools", key: toolGroupKey(rows[0]?.row.id ?? ""), rows, step });
   }
   if (!added) return base.entries;
   for (let i = tail; i < base.entries.length; i++) out.push(base.entries[i] as TimelineEntry);
@@ -812,13 +854,13 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
 }
 
 /**
- * The tool keys the drafts' streamed calls name, sorted and joined by newlines: a value that only
- * changes when a new tool starts streaming (the page asks for their tool info with the log's).
+ * The tool keys the drafts' streamed calls name, sorted (the page asks for their tool info with the
+ * log's).
  */
-export function streamedToolKeys(drafts: readonly TimelineDraft[]): string {
+export function streamedToolKeys(drafts: readonly TimelineDraft[]): string[] {
   const keys = new Set<string>();
   for (const d of drafts) for (const t of d.tools) if (t.name !== "") keys.add(t.name);
-  return [...keys].sort().join("\n");
+  return [...keys].sort();
 }
 
 /** Events of a run that are its output (what replaces the working line, spec §2.2). */

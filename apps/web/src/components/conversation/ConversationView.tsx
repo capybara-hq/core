@@ -288,10 +288,11 @@ export function useConversationPage(
     rootId: permission.inheritedRootId,
   });
   // a streaming call's tool too: its row shows what the tool's `inputView` declares (spec §6.4)
-  const streamed = streamedToolKeys(conv.state.drafts);
+  const logKeys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
+  const streamed = useMemo(() => streamedToolKeys(conv.state.drafts), [conv.state.drafts]);
   const keys = useMemo(
-    () => [...new Set([...toolKeysOf(conv.events), ...streamed.split("\n").filter(Boolean)])],
-    [conv.events, streamed],
+    () => (streamed.length === 0 ? logKeys : [...new Set([...logKeys, ...streamed])]),
+    [logKeys, streamed],
   );
   const info = useToolInfo(orgId, conversationId, keys);
   useDeviceRefresh(orgId, conversationId, conv.events);

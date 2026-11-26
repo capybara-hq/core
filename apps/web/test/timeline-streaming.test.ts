@@ -237,7 +237,7 @@ describe("streaming tool rows", () => {
     expect(done?.progress).toEqual({ bytes: JSON.stringify(input).length - 1 });
   });
 
-  it("inputTruncated shows the head and the size", () => {
+  it("a truncated input shows its retained head and that head's size (no total on the wire)", () => {
     const lines = Array.from({ length: 50 }, (_, i) => `row ${i}`).join("\n");
     const truncatedHead = JSON.stringify({ file_path: "big.csv", content: lines }).slice(0, 200);
     const [tool] = rowsOf(
@@ -304,6 +304,65 @@ describe("streaming tool rows", () => {
       [],
     );
     expect(groups(logged)[0]?.key).toBe(gs[0]?.key);
+  });
+
+  it("a prose-less draft joins the log's last group past its files, keeping the key once logged", () => {
+    const withFile = [
+      ...asked,
+      message(3, 0, [{ id: "c0", name: "Bash", input: { command: "make" } }]),
+      ev(4, "tool_result", {
+        step: 0,
+        callId: "c0",
+        toolKey: "Bash",
+        content: "ok",
+        isError: false,
+      }),
+      ev(5, "artifact_created", {
+        artifactId: "f1",
+        name: "out.csv",
+        contentType: "text/csv",
+        size: 10,
+        callId: "c0",
+        sourcePath: "out.csv",
+      }),
+    ];
+    const streaming = timeline(withFile, [
+      draft([{ id: "c1", name: "Bash", input: '{"command":"wc' }]),
+    ]);
+    expect(streaming.slice(-2).map((e) => e.kind)).toEqual(["tools", "files"]);
+    const logged = timeline(
+      [
+        ...withFile,
+        ev(6, "assistant_message", {
+          step: 1,
+          stopReason: "tool_use",
+          content: [{ type: "tool_call", id: "c1", name: "Bash", input: { command: "wc" } }],
+        }),
+      ],
+      [],
+    );
+    expect(groups(streaming)).toHaveLength(1);
+    expect(groups(logged)).toHaveLength(1);
+    expect(groups(logged)[0]?.key).toBe(groups(streaming)[0]?.key);
+    expect(groups(streaming)[0]?.rows.map((r) => r.callId)).toEqual(["c0", "c1"]);
+    expect(groups(logged)[0]?.rows.map((r) => r.callId)).toEqual(["c0", "c1"]);
+  });
+
+  it("a file placed on its own ends the group: the streaming call opens a new one", () => {
+    const loose = [
+      ...asked,
+      message(3, 0, [{ id: "c0", name: "Bash", input: { command: "make" } }]),
+      ev(4, "artifact_created", {
+        artifactId: "f1",
+        name: "x.csv",
+        contentType: "text/csv",
+        size: 1,
+        callId: "other",
+        sourcePath: "x.csv",
+      }),
+    ];
+    const out = timeline(loose, [draft([{ id: "c1", name: "Bash", input: '{"command":"ls' }])]);
+    expect(groups(out).map((g) => g.rows.map((r) => r.callId))).toEqual([["c0"], ["c1"]]);
   });
 
   it("Edit streams old as removed and new as added, numbers pending", () => {
@@ -392,7 +451,7 @@ describe("streaming tool rows", () => {
         now: t,
       }),
     ).toBe(false);
-    expect(streamedToolKeys(drafts)).toBe("Bash\nWrite");
-    expect(streamedToolKeys([])).toBe("");
+    expect(streamedToolKeys(drafts)).toEqual(["Bash", "Write"]);
+    expect(streamedToolKeys([])).toEqual([]);
   });
 });
