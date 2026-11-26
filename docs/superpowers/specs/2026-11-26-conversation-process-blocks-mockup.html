@@ -317,7 +317,7 @@ const STEPS = [
   { t: "tool", k: "extension", nm: "平台", tool: "share_file", arg: "匹配结果.xlsx → 财务组", meta: "已生成链接",
     handoff: { title: "确认分享范围", sub: "匹配结果.xlsx · 分享给「财务组」前需要你在文件页确认", act: "去确认" } },
   { t: "think", s: 6, text: "两个文件都生成了，任务列表都完成，可以汇报数字了。" },
-  { t: "tool", k: "task", nm: "任务列表", arg: "4 / 4 已完成" },
+  { t: "tool", k: "task", nm: "待办", arg: "4 / 4 已完成" },
 ];
 /* the todo plugin's list: `at` is the step index whose end completes the item */
 const TODO = [
@@ -405,7 +405,7 @@ function todoState(steps) {
 function todoBox(steps) {
   const items = todoState(steps);
   const n = items.filter((i) => i.state === "done").length;
-  return `<div class="todo"><div class="h">${ic("task")}任务 ${n} / ${items.length}<span style="margin-left:auto">${ic("pin")}</span></div><ul>${items.map((i) => `<li data-state="${i.state}">${esc(i.text)}</li>`).join("")}</ul></div>`;
+  return `<div class="todo"><div class="h">${ic("task")}待办 ${n} / ${items.length}<span style="margin-left:auto">${ic("pin")}</span></div><ul>${items.map((i) => `<li data-state="${i.state}">${esc(i.text)}</li>`).join("")}</ul></div>`;
 }
 function actsBox(steps) {
   const hs = steps.filter((s) => s.handoff && !s.live);
@@ -498,7 +498,7 @@ function renderC(steps) {
   if (running) {
     head = `<div class="p proc-head live">${S.r === "waiting" ? ic("hand", "accent") : spin()}<span class="sum ell">${S.r === "waiting" ? `<span class="accent">等待你批准</span> · ` : "正在运行 · "}${esc(label(cur))} ${esc(cur.arg)}</span><span class="time">${S.r === "waiting" ? "" : "已处理 0:42"}</span></div>`;
   } else {
-    head = `<button class="p proc-head" aria-expanded="${open}" onclick="toggle('${id}')">${chips(steps)}<span class="sum ell"><b>已处理 2 分 43 秒</b> · 任务 4/4 · 思考 ${thinks} 次 · ${tools.length} 个工具${errs ? ` <span class="edot" title="${errs} 个调用返回了错误"></span> ${errs}` : ""}</span>${ic("right", "chev")}</button>`;
+    head = `<button class="p proc-head" aria-expanded="${open}" onclick="toggle('${id}')">${chips(steps)}<span class="sum ell"><b>已处理 2 分 43 秒</b> · 待办 4/4 · 思考 ${thinks} 次 · ${tools.length} 个工具${errs ? ` <span class="edot" title="${errs} 个调用返回了错误"></span> ${errs}` : ""}</span>${ic("right", "chev")}</button>`;
   }
   let body = "";
   if (open) {
@@ -554,7 +554,7 @@ function imToday(steps) {
 function imProgress(steps) {
   const done = S.r === "done";
   if (done)
-    return `<div class="im-card"><div class="ch">已处理 2 分 43 秒<span class="r">任务 4/4 · 12 个工具 · 1 个调用出错</span></div>
+    return `<div class="im-card"><div class="ch">已处理 2 分 43 秒<span class="r">待办 4/4 · 12 个工具 · 1 个调用出错</span></div>
       <div class="ft"><a class="lk" href="#">在网页查看完整过程 ↗</a></div></div>`;
   const items = todoState(steps);
   const n = items.filter((i) => i.state === "done").length;
@@ -564,7 +564,7 @@ function imProgress(steps) {
   return `<div class="im-card">
     <div class="ch run">${waitingNow ? "等待你批准" : "正在处理"}<span class="r">已用 0:42</span></div>
     <div class="cb">
-      <div class="sec">任务 ${n} / ${items.length}</div>
+      <div class="sec">待办 ${n} / ${items.length}</div>
       <div class="todo"><ul>${items.map((i) => `<li data-state="${i.state}">${esc(i.text)}</li>`).join("")}</ul></div>
       <div class="sec">最近步骤</div>
       ${recent.map((s) => `<div class="ln">${s.live ? "▸ " : "· "}<b>${esc(label(s))}</b> ${esc(s.arg)}${s.live ? (waitingNow ? " · 等待批准" : " · 运行中") : ""}</div>`).join("")}
@@ -619,7 +619,7 @@ function render() {
   document.getElementById("notes").innerHTML = NOTES[S.v];
 }
 
-const MAP = [["think", "思考", "lightbulb · 新增"], ["command", "Bash / 后台任务", "terminal · 新增"], ["read", "Read", "file-text"], ["edit", "Write / Edit", "square-pen"], ["search", "Grep / Glob / 工具检索", "search"], ["web", "WebSearch / WebFetch", "globe"], ["skill", "技能", "skills"], ["connector", "连接器工具", "connector（插件有图标则用插件的）"], ["extension", "扩展工具", "extension（同上）"], ["memory", "记忆", "bookmark · 新增"], ["task", "任务列表", "list-checks"], ["agent", "子智能体", "agent"]];
+const MAP = [["think", "思考", "lightbulb · 新增"], ["command", "Bash / 后台任务", "terminal · 新增"], ["read", "Read", "file-text"], ["edit", "Write / Edit", "square-pen"], ["search", "Grep / Glob / 工具检索", "search"], ["web", "WebSearch / WebFetch", "globe"], ["skill", "技能", "skills"], ["connector", "连接器工具", "connector（插件有图标则用插件的）"], ["extension", "扩展工具", "extension（同上）"], ["memory", "记忆（插件工具）", "插件自带图标"], ["task", "任务列表", "list-checks"], ["agent", "子智能体", "agent"]];
 const mapTable = `<table class="map">${MAP.map(([k, n, s]) => `<tr><td>${ic(k)}</td><td class="n">${n}</td><td>${s}</td></tr>`).join("")}</table>`;
 const TIERS = `<table class="tiers">
   <tr><td style="color:var(--cb-ink)">正文</td><td>prose 15/26 · Inter + 思源黑体 · <b>ink</b></td></tr>
@@ -679,7 +679,7 @@ const NOTES = {
     <table class="tiers">
       <tr><td style="color:var(--cb-ink)">阻塞</td><td>批准、提问、连接授权、设备码、安全输入。<b>永远在块外</b>，紧跟块下方；块头变 accent “等待你批准”。处理完缩回轨道成一行（“已允许 · 你”）</td></tr>
       <tr><td style="color:var(--cb-ink)">要人看<br>不阻塞</td><td>跳转链接（去某页配置 / 确认）、一次性展示（初始密码、邀请链接）、交付文件。<b>出现即提升到块外</b>，运行中就可见，不等结束；<b>同类合并</b>：多个链接一张列表（“2 项需要你处理 · 不阻塞，我已继续”），文件一个网格；轨道留原调用行做出处</td></tr>
-      <tr><td style="color:var(--cb-ink)">状态</td><td>todo。<b>钉在块头下方，只显示最新一版</b>，每次更新原地刷新，不新增卡片；旧版本只是轨道里的“任务列表 2/4”行。全部完成后折进摘要（“任务 4/4”）；中止或失败时留下未完成项在块外，告诉人还剩什么</td></tr>
+      <tr><td style="color:var(--cb-ink)">状态</td><td>todo。<b>钉在块头下方，只显示最新一版</b>，每次更新原地刷新，不新增卡片；旧版本只是轨道里的“待办 2/4”行。全部完成后折进摘要（“待办 4/4”）；中止或失败时留下未完成项在块外，告诉人还剩什么</td></tr>
       <tr><td style="color:var(--cb-muted)">过程</td><td>网络受限说明、diff、命令输出。留在轨道里，挂在对应调用行下</td></tr>
     </table>
     <p>块外顺序固定：过程块 → 阻塞卡片 → 待处理列表 → 文件 → 答复。</p>
@@ -687,7 +687,7 @@ const NOTES = {
     <h3>影响面</h3><ul>
     <li>纯展示：事件日志、回放、发给模型的历史都不变（无 DriftReason）</li>
     <li><code>apps/web/src/lib/timeline.ts</code> 分组改为“回合内到答复为止”，design 新增 ProcessBlock（轨道 + 头部），旧的 ThinkingRow / ToolGroup 作为轨道里的行复用</li>
-    <li>spec §6.16.8“组在正文处结束”要改，需你拍板；新增 3 个 lucide 图标（lightbulb / terminal / bookmark）走 gen:icons</li>
+    <li>spec §6.16.8“组在正文处结束”要改，需你拍板；新增 2 个 lucide 图标（lightbulb / terminal）走 gen:icons</li>
     <li>手机：轨道 20 px 不变，头部单行省略，和现在的 touch 规则一致</li></ul>`,
 };
 

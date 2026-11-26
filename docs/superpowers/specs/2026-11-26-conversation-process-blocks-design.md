@@ -1,6 +1,6 @@
 # Conversation process blocks design: one process per answer, cards by who must act, channel progress
 
-Status: draft for maintainer review (2026-11-26). Mockup:
+Status: approved by the maintainer (2026-11-26); decisions in §10. Mockup:
 [2026-11-26-conversation-process-blocks-mockup.html](2026-11-26-conversation-process-blocks-mockup.html)
 (open locally; switches for variant, run state and theme; the "飞书适配" variant shows channels).
 
@@ -77,8 +77,9 @@ only where it is still useful (a burst of parallel calls).
   - Waiting for a person: `hand` in `accent` + "等待你批准" (or the existing waiting words,
     `waitingFor` aware: "等待 张三 批准") + the step label.
   - Finished: up to six **kind chips** (20 px circles, `panel` ground, `line-soft` border, 11 px
-    icon, overlapping by 5 px, in first-use order) + "已处理 2 分 43 秒 · 任务 4/4 · 思考 4 次 ·
-    12 个工具" / "Worked for 2m 43s · Tasks 4/4 · Thought 4 times · 12 tools" + the error dot and
+    icon, overlapping by 5 px, in first-use order) + "已处理 2 分 43 秒 · 待办 4/4 · 思考 4 次 ·
+    12 个工具" / "Worked for 2m 43s · Todos 4/4 · Thought 4 times · 12 tools" (the pinned card's title
+    and `UiView.badge`, when the run has a pinned card) + the error dot and
     count (§2.4) + chevron. Per-kind counts are not in the head (too long for compact); the chips
     carry the kinds.
   - Stopped / failed: the head keeps the summary and adds "已停止" / "Stopped" in `muted` or the
@@ -108,14 +109,16 @@ By kind (`ToolKind` plus the non-tool rows), lucide, 14 px on lines, 11 px in ch
 | Skill | `skills` | yes |
 | Connector tool | the connector's icon, else `connector` | yes |
 | Extension tool | the extension's icon, else `extension` | yes |
-| Memory | `bookmark` | new |
-| Task list | `list-checks` | yes |
+| Memory (the memory plugin's tools) | the plugin's icon (an extension tool) | — |
+| Todo (pinned card rows), `TaskList` | `list-checks` | yes |
 | Sub-agent | `agent` | yes |
 | Model fallback / compaction (rail rows) | `refresh` / `archive` | yes |
 
 Icons are `faint`; a live row's icon becomes the `spinner` (`accent`), a row waiting for a person
-shows `hand` in `accent`. The error dot (§2.4) stays the only failure mark. The three new icons go
-through `gen:icons` from `lucide-static`.
+shows `hand` in `accent`. The error dot (§2.4) stays the only failure mark. The two new icons go
+through `gen:icons` from `lucide-static`. The kernel's tool info gives the web each tool's icon
+(`ToolInfo.icon`, §8): a builtin by key and kind, an extension tool its catalog item's icon when it
+has one.
 
 ## 3. Hierarchy
 
@@ -139,7 +142,7 @@ it. Four classes:
 |---|---|---|
 | **Blocking** | approval, question, connect, device code, secure input, person fields | Outside the block, right after it. The block head turns to the waiting words in `accent`. Once decided, the card shrinks into a rail row ("已允许 · 你" / "Allowed · you") |
 | **Must see, non-blocking** | handoff link cards, reveals (initial password, invitation link), delivered files, edit summaries ("变更 3 个文件 +40 −12") | Lifted out of the block **as soon as they appear** (also while running). Merged by class: all handoffs of a turn in one list card ("2 项需要你处理 · 不阻塞，我已继续" / "2 things need you · not blocking, I carried on"), files in one grid. The originating call keeps its rail row |
-| **State** | todo (and any card declared pinned, §5) | Pinned under the block head, latest version only, updated in place; earlier versions are just "任务列表 2/4" rail rows. When every item is done it folds into the head ("任务 4/4"); when the run stops or fails with items left, the list stays outside the block |
+| **State** | todo (and any card declared pinned, §5) | Pinned under the block head, latest version only, updated in place; earlier versions are just rail rows. When the run finishes it folds into the head (its title and badge, "待办 4/4"); when the run stops or fails, the card stays outside the block (the kernel cannot tell whether items are left, the card shows it) |
 | **Process** | network facts, diffs, command output | Stay in the rail under their call |
 
 Order outside the block is fixed: block → blocking cards → pending actions → files and edits →
@@ -150,12 +153,19 @@ answer.
 Extension cards (`ToolResult.card`, §6.16.16) get a declared place:
 
 ```ts
-card?: { view: string; key?: string; placement?: "output" | "pinned" | "process" };
+card?: {
+  view: string;
+  key?: string;
+  placement?: "output" | "pinned" | "process";
+  /** Pinned only: the card as Markdown (at most 2000 characters), for channels. */
+  text?: string;
+};
 ```
 
 - `output` (default): the must-see class, lifted after the block.
 - `pinned`: the state class. For one extension and view, only the latest card of the run is drawn
-  (pinned under the head); older ones become rail rows. The todo plugin uses it.
+  (pinned under the head); older ones become rail rows. `text` is what channels show for it (§6.2): the kernel never renders
+  an extension view server side. The todo plugin uses both (its checklist as Markdown).
 - `process`: stays in the rail under its call.
 
 This is a public SDK change: `pnpm gen:sdk-api` and a changeset bumping `@capybara-hq/plugin-sdk`;
@@ -175,13 +185,18 @@ Measured on the scenario in the mockup (12-page invoice batch, 18 steps):
 
 | Content | Channels with `features.edit` | Channels without |
 |---|---|---|
-| Process (thinking, tools, narration, todo) | **One progress card per run**: sent once (notifies), then edited in place at the streaming draft's interval, immediately on a state change (a todo item done, a wait for a person). Body: status and elapsed time, the todo list, the last three steps as text lines, pending actions as links, "在网页查看完整过程" / "See the full process on the web". On finish it is edited down to one summary line with the same link | No progress card. One "已开始处理" / "Working on it" message at the start, then one milestone message per completed todo item, at most one a minute |
+| Process (thinking, tools, narration, todo) | **One progress card per run**: sent once (notifies), then edited in place at the streaming draft's interval, immediately on a state change (a todo item done, a wait for a person). Body: status and elapsed time, the status line (the latest narration, §10.1), the pinned card's
+`text`, the last three steps as text lines, pending actions as links, "在网页查看完整过程" / "See the full process on the web". On finish it is edited down to one summary line with the same link | No progress card. One "已开始处理" / "Working on it" message at the start, then one milestone message (the pinned card's `text`) each time a pinned card changes, at most one
+a minute |
 | Blocking cards | New messages (they must notify), as today | Same |
 | Handoffs, reveals | Listed in the progress card while running; after the answer, one merged "需要你处理（N）" card | One merged card after the answer |
 | Files | Native file messages after the answer, as today | Same |
 | Answer | A new message (edits do not notify) | Same |
 
 Narration is never sent as its own message (rule §1.1). Thinking is never sent (unchanged).
+With a progress card (`detailed` or `brief` on an edit channel) the streaming draft is not used: a
+step's streamed text shows as the card's status line, and the answer is sent whole when its step
+ends, as one notifying message. With `off`, today's streaming draft stays.
 Without card support (`cards: false`) every card falls back through `renderCardAsText` as today.
 Channel cards use no icons: text only, colour only on the head status strip.
 
@@ -242,12 +257,16 @@ Steps 1–2 ship alone; 3–5 follow together.
 - Channels: fake-im tests for detailed / brief / off, edit and no-edit channels, rejected edits,
   notifications only on new messages; a container dual-replica test for the progress message id.
 
-## 10. Open questions
+## 10. Decisions (maintainer, 2026-11-26)
 
-1. Narration inside the channel progress card: show it as a step line, or drop it?
-2. Group chat default: `brief` (proposed) or `off`?
-3. Should a single synchronous sub-agent be a rail row instead of breaking the block?
-4. Milestones on no-edit channels: per todo item (proposed) or not at all?
+1. Narration in the channel progress card: the latest narration is the card's status line (one
+   line, cut with "…"), under the head; earlier narration is not shown.
+2. Group chat default: `brief`.
+3. A single synchronous sub-agent (one `Agent` call in a step, not `run_in_background`) is a rail
+   row with its own summary ("子智能体 · <description> · N 个工具"), opening the agent panel;
+   two or more in one step, or a background one, keep the sub-agent group and end the block.
+4. No-edit channels: one milestone message each time the pinned card (the todo list) changes, at
+   most one a minute (the todo plugin writes the list when an item completes).
 
 ## AGENTS.md rules touched
 
