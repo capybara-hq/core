@@ -12,6 +12,7 @@ import {
   KeyValue,
   ObjectMark,
   RadioGroup,
+  Select,
   Skeleton,
   Stack,
   Text,
@@ -43,6 +44,7 @@ import {
   channelPluginLabel,
   deleteChannel,
   type InboundMode,
+  type ProcessDisplay,
   type UnboundPolicy,
   type UpdateChannelInput,
   updateChannel,
@@ -560,7 +562,9 @@ function CredentialsTab({
   );
 }
 
-/** 设置：改名、绑定的 agent、未绑定策略；危险区删除。 */
+const PROCESS_DISPLAYS = ["detailed", "brief", "off"] as const;
+
+/** 设置：改名、绑定的 agent、未绑定策略、过程显示；危险区删除。 */
 function SettingsTab({
   orgId,
   channel,
@@ -579,6 +583,8 @@ function SettingsTab({
   const [name, setName] = useState(channel.name);
   const [agentId, setAgentId] = useState(channel.agentId);
   const [policy, setPolicy] = useState<UnboundPolicy>(channel.unboundPolicy);
+  // null: the default by chat type
+  const [process, setProcess] = useState<ProcessDisplay | null>(channel.processDisplay ?? null);
   const [pending, setPending] = useState(false);
   const [confirm, setConfirm] = useState(false);
   // A delete invalidates the org's connections (the list this page goes back to) and forgets the
@@ -589,7 +595,10 @@ function SettingsTab({
     forgetsOnLeave: () => [keys.org(orgId).channel(channel.id)],
   });
   const dirty =
-    name.trim() !== channel.name || agentId !== channel.agentId || policy !== channel.unboundPolicy;
+    name.trim() !== channel.name ||
+    agentId !== channel.agentId ||
+    policy !== channel.unboundPolicy ||
+    process !== (channel.processDisplay ?? null);
 
   async function save() {
     if (name.trim() === "") return;
@@ -599,6 +608,7 @@ function SettingsTab({
         ...(name.trim() !== channel.name ? { name: name.trim() } : {}),
         ...(agentId !== channel.agentId ? { agentId } : {}),
         ...(policy !== channel.unboundPolicy ? { unboundPolicy: policy } : {}),
+        ...(process !== (channel.processDisplay ?? null) ? { processDisplay: process } : {}),
       });
       toast.success(t("detail.saved"));
     } catch (e) {
@@ -617,6 +627,18 @@ function SettingsTab({
           </Field>
           <AgentSelect agents={agents} value={agentId} onChange={setAgentId} />
           <PolicyRadio value={policy} onChange={setPolicy} />
+          <Field label={t("processDisplayLabel")} help={t("processDisplayHint")}>
+            <Select
+              value={process ?? ""}
+              onChange={(e) =>
+                setProcess(e.target.value === "" ? null : (e.target.value as ProcessDisplay))
+              }
+              options={[
+                { value: "", label: t("processDisplay.default") },
+                ...PROCESS_DISPLAYS.map((v) => ({ value: v, label: t(`processDisplay.${v}`) })),
+              ]}
+            />
+          </Field>
           <Stack direction="row">
             <Button
               variant="primary"

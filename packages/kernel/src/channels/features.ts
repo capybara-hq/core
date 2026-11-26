@@ -5,6 +5,18 @@ import {
   renderCardAsText,
 } from "@capybara-hq/plugin-sdk";
 
+/** How a channel shows a run's process: a detailed or brief progress card, or none. */
+export type ProcessDisplay = "detailed" | "brief" | "off";
+
+/**
+ * The effective process display of a connection's chat: the stored setting, else the default by
+ * chat type (direct chats detailed, group chats brief).
+ */
+export function processDisplayOf(v: string | null, chatType: "dm" | "group"): ProcessDisplay {
+  if (v === "detailed" || v === "brief" || v === "off") return v;
+  return chatType === "dm" ? "detailed" : "brief";
+}
+
 /** `threads: false`: the target loses its `threadId` (the platform has no threads). */
 export function adaptTarget(features: Channel["features"], target: ChannelTarget): ChannelTarget {
   if (!features.threads && target.threadId !== undefined) {

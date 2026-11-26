@@ -945,6 +945,15 @@ export interface ChannelConnectionsTable {
   status: Generated<"active" | "disabled" | "error">;
   /** 0038_channel_inbound_mode.sql: how inbound events arrive (long connection by default). */
   inbound_mode: Generated<"long_connection" | "webhook">;
+  /**
+   * 0185_channel_process_display.sql: how the channel shows a run's process; null follows the
+   * chat type (`processDisplayOf`).
+   */
+  process_display: ColumnType<
+    "detailed" | "brief" | "off" | null,
+    "detailed" | "brief" | "off" | null | undefined,
+    "detailed" | "brief" | "off" | null
+  >;
   last_error: string | null;
   bot_user_id: string | null;
   tenant_id: string | null;
@@ -986,6 +995,13 @@ export interface ChannelDeliveriesTable {
    * outbound has the run's first post (thread key = that message's id). Null otherwise.
    */
   pending_thread_account_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0185: the run's progress message (edited in place), the run it belongs to and when its last
+   * milestone was sent; null without one.
+   */
+  progress_message_id: ColumnType<string | null, string | null | undefined, string | null>;
+  progress_run_id: ColumnType<string | null, string | null | undefined, string | null>;
+  milestone_at: TsNullable;
 }
 
 /** 0018_channels.sql：出站投递发出的审批 / 提问卡片对应的 IM 消息（Task 11，用于更新卡片状态）。 */

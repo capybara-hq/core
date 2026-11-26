@@ -3005,6 +3005,14 @@
       "long_connection": "The bot keeps a connection open to the platform (default; no public address needed).",
       "webhook": "The platform calls this deployment for every event; needs a public address."
     },
+    "processDisplayLabel": "Process",
+    "processDisplayHint": "Direct chats default to Detailed, group chats to Brief.",
+    "processDisplay": {
+      "default": "Default",
+      "detailed": "Detailed",
+      "brief": "Brief",
+      "off": "Off"
+    },
     "tabs": {
       "all": "All",
       "error": "Errors"

@@ -1,6 +1,6 @@
 import { type ChannelCard, renderCardAsText } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { adaptTarget, adaptToFeatures } from "../../src/channels/features.js";
+import { adaptTarget, adaptToFeatures, processDisplayOf } from "../../src/channels/features.js";
 
 const bind: ChannelCard = { kind: "bind", url: "https://cap.example/bind/x", text: "Link it" };
 const connect: ChannelCard = { kind: "connect", appName: "Docs", url: "https://cap.example/c" };
@@ -73,5 +73,17 @@ describe("adaptTarget", () => {
       chatType: "group",
     });
     expect(adaptTarget(all, target)).toBe(target);
+  });
+});
+
+describe("processDisplayOf", () => {
+  it("a stored setting wins over the chat type", () => {
+    expect(processDisplayOf("off", "dm")).toBe("off");
+    expect(processDisplayOf("detailed", "group")).toBe("detailed");
+  });
+
+  it("no setting: direct chats default to detailed, group chats to brief", () => {
+    expect(processDisplayOf(null, "dm")).toBe("detailed");
+    expect(processDisplayOf(null, "group")).toBe("brief");
   });
 });
