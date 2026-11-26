@@ -161,6 +161,8 @@ async function bootstrap(
     plugin: "chan-mini",
     name: "Bot",
     agentId,
+    // the file and draft path as it was; the progress card is outbound-progress.dual.test.ts
+    processDisplay: "off",
     config: { platformUrl: platform.url, appId: "cli_files", appSecret: "files-secret-0a1b2c3d" },
   });
   expect(ch.status, JSON.stringify(ch.json)).toBe(201);

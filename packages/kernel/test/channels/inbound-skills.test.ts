@@ -279,7 +279,10 @@ describe("skill invocations from IM (phase D Task 8)", () => {
       15_000,
       "inbound /new",
     );
-    const reply = im.sent.slice(before).find((s) => s.target.chatId === "dm-u-owner");
+    // an earlier run's progress card may still be posted in this chat: the reply is the text
+    const reply = im.sent
+      .slice(before)
+      .find((s) => s.target.chatId === "dm-u-owner" && s.message.cards?.[0]?.kind !== "progress");
     expect(reply?.message.text).toMatch(/new conversation/i);
     const rows = await db
       .selectFrom("conversation_events")

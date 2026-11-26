@@ -49,7 +49,7 @@ export function initProgress(runId: string, startedAt: string): ProgressState {
 }
 
 /** The first line of a narration, cut to {@link STATUS_MAX} characters with an ellipsis. */
-function statusLine(text: string): string | undefined {
+export function statusLine(text: string): string | undefined {
   const line = text
     .split("\n")
     .map((l) => l.trim())
