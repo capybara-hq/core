@@ -290,6 +290,24 @@ describe("renderSkillInvocation", () => {
     );
   });
 
+  it("renders the directory and the files line under the device's skills root (#904)", () => {
+    const out = renderSkillInvocation({
+      name: "m",
+      skillName: "m",
+      digest: D,
+      version: 1,
+      body: "Run ${CLAUDE_SKILL_DIR}/x.sh",
+      invocation: inv,
+      args: "",
+      lines: { files: "load" },
+      skillsRoot: "/home/u/dev-1/skills",
+    });
+    expect(out).toContain("Run /home/u/dev-1/skills/m@0123456789ab/x.sh");
+    expect(out).toContain(
+      'call Skill with "m" to copy them to /home/u/dev-1/skills/m@0123456789ab/ before running its scripts.',
+    );
+  });
+
   it("can leave out the lead (a forked skill's task)", () => {
     expect(
       renderSkillInvocation({

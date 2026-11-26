@@ -506,6 +506,65 @@ async function invokedEntry(
 }
 
 /**
+ * Whether the caller's context already holds this version's instructions from an inline
+ * invocation (#904): a `user_message` of the caller's log whose `skill` record is this id, source
+ * and version in `inline` mode (a person's `/name`, or a template skill at a sub-agent's start),
+ * with the same arguments (absent `args` count as the same), that the latest compaction summary
+ * does not cover or re-renders as an opening message. `Skill` then copies the files and names
+ * their directory without repeating the instructions. Read from the log, so a replay agrees.
+ */
+async function invokedInContext(
+  db: KernelSchemaDb,
+  conversationId: string,
+  entry: CatalogSkill,
+  args: string | undefined,
+): Promise<boolean> {
+  // only the `skill` field: a message's content holds the rendered skill (up to 200k characters)
+  const rows = await db
+    .selectFrom("conversation_events")
+    .select(["seq", sql<unknown>`payload -> 'skill'`.as("skill")])
+    .where("conversation_id", "=", conversationId)
+    .where("type", "=", "user_message")
+    .where(sql<boolean>`payload -> 'skill' IS NOT NULL`)
+    .execute();
+  const seqs = rows.flatMap((r) => {
+    const k = r.skill as {
+      id: string;
+      source: string;
+      version: number;
+      mode: string;
+      arguments: string;
+    };
+    const same =
+      k.mode === "inline" &&
+      k.id === entry.id &&
+      k.source === entry.source &&
+      k.version === entry.version &&
+      (args === undefined || args.trim() === k.arguments);
+    return same ? [Number(r.seq)] : [];
+  });
+  if (seqs.length === 0) return false;
+  const summary = await db
+    .selectFrom("conversation_events")
+    .select(sql<unknown>`payload`.as("payload"))
+    .where("conversation_id", "=", conversationId)
+    .where("type", "=", "compaction_summary")
+    .orderBy("seq", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (!summary) return true;
+  const { coversUpToSeq, openingSeqs = [] } = summary.payload as {
+    coversUpToSeq: number;
+    openingSeqs?: number[];
+  };
+  return seqs.some((seq) => seq > coversUpToSeq || openingSeqs.includes(seq));
+}
+
+/** The `Skill` line in place of instructions an inline invocation already gave (#904). */
+const invokedInstructionsText = (name: string, dir: string): string =>
+  `Its instructions are in the invocation of "${name}" above and are not repeated here; in them, \${CLAUDE_SKILL_DIR} is ${dir}.`;
+
+/**
  * The line before a forked skill's instructions (spec §4.4): run it through `Agent` when this step
  * offers the tool and the skill's type is in the agent's roster, else follow it yourself.
  */
@@ -854,6 +913,20 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       }
       const invocation = invocationOf(manifest);
       const fork = invocation.fork;
+      if (await invokedInContext(deps.db, ctx.conversationId, entry, args)) {
+        const text = [
+          `Loaded skill "${name}" (version ${entry.version}).`,
+          filesText,
+          invokedInstructionsText(name, skillSandboxDir(name, digest, skillsRoot)),
+        ].join("\n\n");
+        return {
+          content: [{ type: "text", text: withNotices(notices, text) }],
+          display: display(
+            `加载技能 ${name}（版本 ${entry.version}）`,
+            `Loaded skill ${name} (version ${entry.version})`,
+          ),
+        };
+      }
       let instructions: string;
       try {
         instructions = renderSkillBody(

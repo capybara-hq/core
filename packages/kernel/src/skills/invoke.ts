@@ -4,8 +4,11 @@ import {
   parseSkillMd,
   renderSkillBody,
   renderSkillInvocation,
+  rootsOf,
+  type SandboxHandle,
   SKILL_ENTRY_FILE,
   SKILL_INVOCATION_LIMITS,
+  SKILLS_SANDBOX_ROOT,
   skillDigest,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -69,6 +72,43 @@ export interface InvocableSkill {
   manual: boolean;
   /** Runs as a sub-agent when a person invokes it. */
   fork: boolean;
+}
+
+/**
+ * The skills root of device `deviceId` as last known (#904): its instance's handle
+ * (`rootsOf`, e.g. a connected machine's `<home>/<device>/skills`), else `/skills`. Read from the
+ * database only: no device call, no binding. An invocation renders `${CLAUDE_SKILL_DIR}` and its
+ * files line under it, so the path the model reads is the one `Skill` copies the files to.
+ */
+export async function knownSkillsRoot(
+  db: KernelSchemaDb,
+  orgId: string,
+  deviceId: string | null | undefined,
+): Promise<string> {
+  if (deviceId === null || deviceId === undefined) return SKILLS_SANDBOX_ROOT;
+  const row = await db
+    .selectFrom("device_instances")
+    .select("handle")
+    .where("device_id", "=", deviceId)
+    .where("org_id", "=", orgId)
+    .executeTakeFirst();
+  const handle = row?.handle as SandboxHandle | null | undefined;
+  return handle ? rootsOf(handle).skills : SKILLS_SANDBOX_ROOT;
+}
+
+/** {@link knownSkillsRoot} of the device conversation `conversationId` is bound to. */
+export async function conversationSkillsRoot(
+  db: KernelSchemaDb,
+  orgId: string,
+  conversationId: string,
+): Promise<string> {
+  const conv = await db
+    .selectFrom("conversations")
+    .select("device_id")
+    .where("id", "=", conversationId)
+    .where("org_id", "=", orgId)
+    .executeTakeFirst();
+  return knownSkillsRoot(db, orgId, conv?.device_id);
 }
 
 /** The `skill` field of a `user_message`. */
@@ -371,6 +411,11 @@ export class SkillInvoker {
     accountId: string;
     /** Absent for the first message of a conversation not created yet. */
     conversationId?: string;
+    /**
+     * The conversation's device (the one a new conversation is created with); its skills root
+     * names the skill's directory ({@link knownSkillsRoot}). Null or absent: `/skills`.
+     */
+    deviceId?: string | null;
     agent: AgentDefinition;
     name: string;
     args: string;
@@ -400,6 +445,7 @@ export class SkillInvoker {
       invocation: inv,
       args: a.args,
       lines,
+      skillsRoot: await knownSkillsRoot(this.db.db, a.orgId, a.deviceId),
     };
     // a SKILL.md whose body alone renders over the limit can never be invoked: say so, rather than
     // "shorten the arguments"
@@ -488,7 +534,16 @@ export class SkillInvoker {
    * sub-agent's effective definition: the shell-injection line only when the sub-agent has
    * `Bash` (batch 3 review m1).
    */
-  async renderTask(a: { orgId: string; conversationId: string; skill: InvocationRecord }): Promise<{
+  async renderTask(a: {
+    orgId: string;
+    conversationId: string;
+    /**
+     * The root conversation of the tree, whose device the sub-agent uses (its skills root names
+     * the skill's directory, {@link conversationSkillsRoot}). Default `conversationId`.
+     */
+    deviceConversationId?: string;
+    skill: InvocationRecord;
+  }): Promise<{
     task: (child: Pick<AgentDefinition, "disabledTools" | "subagentTools">) => string;
     warning?: string;
   }> {
@@ -512,6 +567,11 @@ export class SkillInvoker {
     });
     const inv = invocationOf(found.manifest);
     const others = found.manifest.files.some((f) => f.path !== SKILL_ENTRY_FILE);
+    const skillsRoot = await conversationSkillsRoot(
+      this.db.db,
+      a.orgId,
+      a.deviceConversationId ?? a.conversationId,
+    );
     const task = (child: Pick<AgentDefinition, "disabledTools" | "subagentTools">) =>
       renderSkillInvocation({
         name: skill.name,
@@ -527,6 +587,7 @@ export class SkillInvoker {
             hasBuiltin(child, BUILTIN.Bash) && { shellHint: true as const }),
         },
         lead: false,
+        skillsRoot,
       });
     const asked = inv.fork?.agent;
     const unknown =

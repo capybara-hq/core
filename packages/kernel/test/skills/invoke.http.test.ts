@@ -14,6 +14,7 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentLookup } from "../../src/agents/agent-lookup.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -1008,6 +1009,72 @@ describe("Review Focus 4: a retry with the same clientMessageId", () => {
     expect(msgs).toHaveLength(1);
     expect(firstText(msgs[0])).toContain('version="1"');
     await waitForTerminal(db, conv, 1, 30_000);
+  });
+});
+
+describe("the skill's directory on the conversation's device (#904)", () => {
+  it("renders CLAUDE_SKILL_DIR and the files line under the device's known skills root", async () => {
+    const s = await seedSkill({
+      name: "scan",
+      body: "SKILL=${CLAUDE_SKILL_DIR}; sh $SKILL/run.sh",
+      files: { "run.sh": "echo hi" },
+      invocation: { model: false, user: true },
+    });
+    // a sandbox tool, so Skill copies the files (and starts the device's instance)
+    const agentId = await createAgent([s.id], [{ kind: "builtin", name: "Bash" }]);
+    const first = await createConv(owner, orgId, agentId);
+    // before the device has an instance: the default root
+    expect((await send(first, { text: "", skill: { name: "scan" } })).statusCode).toBe(202);
+    const dir = `/skills/scan@${await digestOf(s.id)}`;
+    expect(firstText((await userMessages(first))[0])).toContain(`SKILL=${dir};`);
+    await waitForTerminal(db, first, 1, 30_000);
+    expect((await send(first, { text: 'tool:Skill:{"skill":"scan"}' })).statusCode).toBe(202);
+    await waitForTerminal(db, first, 2, 30_000);
+    const { device_id: deviceId } = await db
+      .selectFrom("conversations")
+      .select("device_id")
+      .where("id", "=", first)
+      .executeTakeFirstOrThrow();
+    if (deviceId === null) throw new Error("expected the conversation's device");
+    // a connected machine's real paths, as its handle names them
+    const roots = {
+      workspace: "/Users/u/capybara-device/d1/workspace",
+      skills: "/Users/u/capybara-device/d1/skills",
+      tmp: "/Users/u/capybara-device/d1/tmp",
+    };
+    const updated = await db
+      .updateTable("device_instances")
+      .set({ handle: sql`jsonb_set(handle, '{roots}', ${JSON.stringify(roots)}::jsonb)` })
+      .where("device_id", "=", deviceId)
+      .where("handle", "is not", null)
+      .executeTakeFirst();
+    expect(Number(updated.numUpdatedRows)).toBe(1);
+    const real = `${roots.skills}/scan@${await digestOf(s.id)}`;
+    const expectReal = (text: string) => {
+      expect(text).toContain(`SKILL=${real}; sh $SKILL/run.sh`);
+      expect(text).toContain(`call Skill with "scan" to copy them to ${real}/ before`);
+      // never the default root (a substring of the real path, so matched at a path's start)
+      expect(text).not.toMatch(/(^|[\s=])\/skills\/scan@/);
+    };
+
+    // a new conversation on the same device, the invocation as its first message
+    const r = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations`,
+      payload: {
+        agentId,
+        message: { text: "", skill: { name: "scan" }, clientMessageId: "scan-1" },
+      },
+    });
+    expect(r.statusCode, r.body).toBe(201);
+    const second = (r.json() as { conversation: { id: string } }).conversation.id;
+    expectReal(firstText((await userMessages(second))[0]));
+    await waitForTerminal(db, second, 1, 30_000);
+
+    // a later message of an existing conversation
+    expect((await send(first, { text: "", skill: { name: "scan" } })).statusCode).toBe(202);
+    expectReal(firstText((await userMessages(first))[2]));
+    await waitForTerminal(db, first, 3, 30_000);
   });
 });
 

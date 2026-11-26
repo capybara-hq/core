@@ -64,6 +64,7 @@ export async function templateSkillMessages(
       const { task } = await d.invoker.renderTask({
         orgId: a.ctx.orgId,
         conversationId: a.ctx.conversationId,
+        deviceConversationId: a.ctx.parent?.rootConversationId ?? a.ctx.conversationId,
         skill: record,
       });
       text = `${templateSkillLeadText(s.name)}\n\n${task(a.child)}`;
