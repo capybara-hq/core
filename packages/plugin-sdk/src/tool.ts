@@ -139,6 +139,9 @@ export interface ToolDisplay {
   summary: { zh: string; en: string };
 }
 
+/** The most characters of `ToolResult.card.text`. */
+export const CARD_TEXT_MAX = 2000;
+
 export interface ToolResult {
   content: ToolContent[];
   isError?: boolean;
@@ -149,8 +152,19 @@ export interface ToolResult {
    * the same extension in the `conversation.tool-result.card` slot, rendered with
    * `card: { callId, key }`. Display only (recorded on the `tool_result` event, never in the model's
    * context); an unknown view is dropped with a warning and the result is kept.
+   *
+   * `placement` says where the card shows: `output` (default) under the call in the run's process
+   * block; `pinned` as the run's pinned card, kept in view while the run goes on (a plan or todo
+   * list; the latest pinned card of the run wins); `process` only inside the process block.
+   * `text` is the card's Markdown text for surfaces that cannot draw the view (IM channels, the
+   * pinned card of a channel's progress card), at most {@link CARD_TEXT_MAX} characters.
    */
-  card?: { view: string; key?: string };
+  card?: {
+    view: string;
+    key?: string;
+    placement?: "output" | "pinned" | "process";
+    text?: string;
+  };
 }
 
 const DISPLAY_MAX = 200;

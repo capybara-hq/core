@@ -56,7 +56,32 @@ export type ChannelCard =
       textReply?: "plain" | "mention";
     }
   | { kind: "connect"; appName: string; url: string }
-  | { kind: "bind"; url: string; text: string };
+  | { kind: "bind"; url: string; text: string }
+  | {
+      /**
+       * One edited progress card per run (kernel-produced; the channel edits the same message in
+       * place). All text is written and localized by the kernel, never model-controlled
+       * verbatim, so it is rendered as is.
+       */
+      kind: "progress";
+      state: "running" | "waiting" | "finished" | "stopped" | "failed";
+      /** The headline, e.g. "正在处理", "等待你批准", "已处理 2 分 43 秒". */
+      title: string;
+      /** A short detail after the title, e.g. "已用 0:42" or "待办 4/4 · 12 个工具". */
+      meta?: string;
+      /** The latest narration, one line. */
+      status?: string;
+      /** The pinned card's Markdown text (a plan or todo list). */
+      pinned?: string;
+      /** The latest steps, at most 3, oldest first. */
+      steps: string[];
+      /** Approvals or questions waiting on the person, each with its web link. */
+      pending: { text: string; url: string }[];
+      /** The run on the web. */
+      url: string;
+      /** The link text for `url`, e.g. "在网页查看完整过程". */
+      urlText: string;
+    };
 
 /**
  * A user action on an IM card, parsed by the channel plugin and handed to the kernel through an
@@ -97,7 +122,8 @@ export function questionRenderableInline(form: InputForm, opts?: { textReply?: b
   return f.multiSelect ? n <= MAX_INLINE_MULTI : n <= MAX_INLINE_SINGLE;
 }
 
-const KINDS = ["approval", "question", "connect", "bind"] as const;
+const KINDS = ["approval", "question", "connect", "bind", "progress"] as const;
+const PROGRESS_STATES = ["running", "waiting", "finished", "stopped", "failed"] as const;
 const SCOPES = ["once", "session", "always"] as const;
 const APPROVAL_STATES = [
   "pending",
@@ -197,6 +223,35 @@ export function validateChannelCard(card: unknown): string[] {
       url("url");
       nonEmpty("text");
       return out;
+    case "progress": {
+      nonEmpty("title");
+      nonEmpty("urlText");
+      optNonEmpty("meta");
+      optNonEmpty("status");
+      optNonEmpty("pinned");
+      oneOf("state", PROGRESS_STATES);
+      url("url");
+      if (
+        !Array.isArray(c.steps) ||
+        c.steps.length > 3 ||
+        c.steps.some((x) => typeof x !== "string")
+      )
+        out.push("steps must be an array of at most 3 strings");
+      const p = c.pending;
+      if (
+        !Array.isArray(p) ||
+        p.some(
+          (x) =>
+            typeof x !== "object" ||
+            x === null ||
+            typeof x.text !== "string" ||
+            x.text === "" ||
+            !isHttpUrl(x.url),
+        )
+      )
+        out.push("pending must be an array of { text, url } with an http(s) url");
+      return out;
+    }
     default:
       return [`kind must be one of ${list(KINDS)}`];
   }
@@ -377,5 +432,14 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
       return `${t.connect(card.appName)}\n${line(t.connectLink, card.url)}`;
     case "bind":
       return `${card.text}\n${card.url}`;
+    case "progress":
+      return [
+        card.meta ? `${card.title} · ${card.meta}` : card.title,
+        ...(card.status ? [card.status] : []),
+        ...(card.pinned ? [card.pinned] : []),
+        ...card.steps.map((s) => `- ${s}`),
+        ...card.pending.map((p) => `[${p.text}](${p.url})`),
+        `[${card.urlText}](${card.url})`,
+      ].join("\n");
   }
 }

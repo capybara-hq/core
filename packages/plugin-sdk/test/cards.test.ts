@@ -128,7 +128,7 @@ describe("validateChannelCard", () => {
     expect(validateChannelCard(null).length).toBeGreaterThan(0);
     expect(validateChannelCard("x").length).toBeGreaterThan(0);
     expect(validateChannelCard({ kind: "nope" })).toEqual([
-      'kind must be one of "approval", "question", "connect", "bind"',
+      'kind must be one of "approval", "question", "connect", "bind", "progress"',
     ]);
   });
 
@@ -618,5 +618,67 @@ describe("asCode", () => {
     expect(asCode("a`b")).toBe("``a`b``");
     expect(asCode("<@U1>")).toBe("`<@U1>`");
     expect(asCode("x\ny")).toBe("\n```\nx\ny\n```");
+  });
+});
+
+describe("renderCardAsText: progress", () => {
+  const progress: Extract<ChannelCard, { kind: "progress" }> = {
+    kind: "progress",
+    state: "running",
+    title: "正在处理",
+    meta: "已用 0:42",
+    status: "Reading the config",
+    pinned: "**Todo**\n- [x] one",
+    steps: ["Read a.ts", "Ran `ls`"],
+    pending: [{ text: "Approve Bash", url: "https://app.example.com/chat/1#a" }],
+    url: "https://app.example.com/chat/1",
+    urlText: "在网页查看完整过程",
+  };
+
+  it("renders a running progress card as text", () => {
+    expect(renderCardAsText(progress, "zh")).toBe(
+      [
+        "正在处理 · 已用 0:42",
+        "Reading the config",
+        "**Todo**\n- [x] one",
+        "- Read a.ts",
+        "- Ran `ls`",
+        "[Approve Bash](https://app.example.com/chat/1#a)",
+        "[在网页查看完整过程](https://app.example.com/chat/1)",
+      ].join("\n"),
+    );
+  });
+
+  it("finished card is one line plus the link", () => {
+    const text = renderCardAsText(
+      {
+        kind: "progress",
+        state: "finished",
+        title: "已处理 2 分 43 秒",
+        steps: [],
+        pending: [],
+        url: "https://app.example.com/chat/1",
+        urlText: "在网页查看完整过程",
+      },
+      "zh",
+    );
+    expect(text).toBe("已处理 2 分 43 秒\n[在网页查看完整过程](https://app.example.com/chat/1)");
+  });
+});
+
+describe("validateChannelCard: progress", () => {
+  const ok = {
+    kind: "progress",
+    state: "running",
+    title: "t",
+    steps: ["a"],
+    pending: [{ text: "x", url: "https://a.example/b" }],
+    url: "https://a.example/c",
+    urlText: "open",
+  };
+  it("accepts a valid card and rejects more than 3 steps or a bad link", () => {
+    expect(validateChannelCard(ok)).toEqual([]);
+    expect(validateChannelCard({ ...ok, steps: ["1", "2", "3", "4"] }).length).toBe(1);
+    expect(validateChannelCard({ ...ok, pending: [{ text: "x", url: "nope" }] }).length).toBe(1);
   });
 });
