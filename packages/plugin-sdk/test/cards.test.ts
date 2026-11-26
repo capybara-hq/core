@@ -629,7 +629,7 @@ describe("renderCardAsText: progress", () => {
     meta: "已用 0:42",
     status: "Reading the config",
     pinned: "**Todo**\n- [x] one",
-    steps: ["Read a.ts", "Ran `ls`"],
+    steps: ["Read a.ts", "Ran `ls` [x](http://e.com)"],
     pending: [{ text: "Approve Bash", url: "https://app.example.com/chat/1#a" }],
     url: "https://app.example.com/chat/1",
     urlText: "在网页查看完整过程",
@@ -641,8 +641,8 @@ describe("renderCardAsText: progress", () => {
         "正在处理 · 已用 0:42",
         "Reading the config",
         "**Todo**\n- [x] one",
-        "- Read a.ts",
-        "- Ran `ls`",
+        "- `Read a.ts`",
+        "- ``Ran `ls` [x](http://e.com)``",
         "[Approve Bash](https://app.example.com/chat/1#a)",
         "[在网页查看完整过程](https://app.example.com/chat/1)",
       ].join("\n"),
@@ -680,5 +680,10 @@ describe("validateChannelCard: progress", () => {
     expect(validateChannelCard(ok)).toEqual([]);
     expect(validateChannelCard({ ...ok, steps: ["1", "2", "3", "4"] }).length).toBe(1);
     expect(validateChannelCard({ ...ok, pending: [{ text: "x", url: "nope" }] }).length).toBe(1);
+  });
+  it("rejects an invalid state, a missing urlText and a non-string step", () => {
+    expect(validateChannelCard({ ...ok, state: "paused" }).length).toBe(1);
+    expect(validateChannelCard({ ...ok, urlText: undefined }).length).toBe(1);
+    expect(validateChannelCard({ ...ok, steps: [1] }).length).toBe(1);
   });
 });

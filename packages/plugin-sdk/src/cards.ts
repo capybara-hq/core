@@ -60,8 +60,9 @@ export type ChannelCard =
   | {
       /**
        * One edited progress card per run (kernel-produced; the channel edits the same message in
-       * place). All text is written and localized by the kernel, never model-controlled
-       * verbatim, so it is rendered as is.
+       * place). The title, meta, status and pending texts are written and localized by the kernel and
+       * rendered as is; `steps` are built from tool labels that include model-written arguments, so
+       * {@link renderCardAsText} puts each one in a code span.
        */
       kind: "progress";
       state: "running" | "waiting" | "finished" | "stopped" | "failed";
@@ -73,9 +74,12 @@ export type ChannelCard =
       status?: string;
       /** The pinned card's Markdown text (a plan or todo list). */
       pinned?: string;
-      /** The latest steps, at most 3, oldest first. */
+      /** The latest steps, at most 3, oldest first. May hold model-written arguments: plain text. */
       steps: string[];
-      /** Approvals or questions waiting on the person, each with its web link. */
+      /**
+       * Approvals or questions waiting on the person, each with its web link. `text` is the
+       * kernel-written, localized handoff title (not model text), so it is rendered as is.
+       */
       pending: { text: string; url: string }[];
       /** The run on the web. */
       url: string;
@@ -437,7 +441,7 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
         card.meta ? `${card.title} · ${card.meta}` : card.title,
         ...(card.status ? [card.status] : []),
         ...(card.pinned ? [card.pinned] : []),
-        ...card.steps.map((s) => `- ${s}`),
+        ...card.steps.map((s) => withCode("- ", asCode(s))),
         ...card.pending.map((p) => `[${p.text}](${p.url})`),
         `[${card.urlText}](${card.url})`,
       ].join("\n");
