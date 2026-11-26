@@ -61,8 +61,66 @@ let orgId: string;
 let agentId: string;
 let workspace: string | undefined;
 
+/**
+ * A hold on the provider stream of the next streamed Write request: the stream is delivered up to
+ * `at` input fragments (`Infinity`: all of them) and then waits, so what the kernel does while the
+ * model is still streaming is observed deterministically. Armed by a test, consumed by the first
+ * request that offers `Write` and ends in a `streamtool:` message; released by the test, or by
+ * `beforeEach` when a test failed first.
+ */
+interface Hold {
+  at: number;
+  promise: Promise<void>;
+  release(): void;
+}
+let hold: Hold | undefined;
+let held: Hold | undefined;
+const armHold = (at = Number.POSITIVE_INFINITY): Hold => {
+  let release!: () => void;
+  const promise = new Promise<void>((r) => {
+    release = r;
+  });
+  hold = { at, promise, release };
+  held = hold;
+  return hold;
+};
+let unwrapResolve: (() => void) | undefined;
+function installHold(): void {
+  const wrapped = ProviderRegistry.prototype.resolve;
+  ProviderRegistry.prototype.resolve = async function (this: ProviderRegistry, orgId, ref, opts) {
+    const r = await wrapped.call(this, orgId, ref, opts);
+    const inner = r.provider;
+    return {
+      ...r,
+      provider: {
+        ...inner,
+        stream(req, o) {
+          const stream = inner.stream(req, o);
+          const last = JSON.stringify(req.messages.at(-1));
+          const offersWrite = req.tools.some((t) => t.name === "Write");
+          if (hold === undefined || !offersWrite || !last.includes("streamtool:")) return stream;
+          const h = hold;
+          hold = undefined;
+          return (async function* () {
+            let fragments = 0;
+            for await (const ev of stream) {
+              if (ev.type === "tool_call_delta" && ++fragments === h.at) await h.promise;
+              if (ev.type === "message_complete") await h.promise;
+              yield ev;
+            }
+          })();
+        },
+      },
+    };
+  };
+  unwrapResolve = () => {
+    ProviderRegistry.prototype.resolve = wrapped;
+  };
+}
+
 beforeAll(async () => {
   capture.install();
+  installHold();
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
@@ -109,6 +167,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  held?.release();
+  unwrapResolve?.();
   capture.restore();
   await k?.close();
   await raw?.destroy();
@@ -117,6 +177,8 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
+  held?.release();
+  hold = undefined;
   capture.reset();
 });
 
@@ -130,6 +192,11 @@ interface SseMessage {
 /** A minimal SSE reader: every message of the stream, with a wait on a condition. */
 interface Sse {
   messages: SseMessage[];
+  /**
+   * Seq of the message that started the awaited run: a terminal event after it that the awaited
+   * condition did not need fails the wait at once (a missed frame must not hang the test).
+   */
+  after: number;
   until(pred: (m: SseMessage[]) => boolean, label: string): Promise<void>;
   close(): void;
 }
@@ -174,15 +241,30 @@ async function openSse(convId: string): Promise<Sse> {
       for (const w of [...waiters]) w();
     }
   })();
-  return {
+  const sse: Sse = {
     messages,
+    after: Number.POSITIVE_INFINITY,
     until(pred, label) {
       // bounded by the test run itself: the stream ends or the awaited frame arrives
       return new Promise<void>((resolve, reject) => {
         const check = () => {
+          const over = messages.find(
+            (m) =>
+              m.event === "event" &&
+              (() => {
+                const e = JSON.parse(m.data as string) as { seq: number; type: string };
+                return (
+                  e.seq > sse.after &&
+                  ["run_finished", "run_failed", "run_aborted"].includes(e.type)
+                );
+              })(),
+          );
           if (pred(messages)) {
             waiters.delete(check);
             resolve();
+          } else if (over !== undefined) {
+            waiters.delete(check);
+            reject(new Error(`the run ended before ${label}`));
           } else if (ended) {
             waiters.delete(check);
             reject(new Error(`stream ended before ${label}`));
@@ -194,6 +276,7 @@ async function openSse(convId: string): Promise<Sse> {
     },
     close: () => ac.abort(),
   };
+  return sse;
 }
 
 interface ToolDelta {
@@ -290,21 +373,54 @@ const toolRows = (conv: string) =>
     .orderBy("created_at")
     .execute();
 
-/** Posts a streamed Write on `conv` with a subscriber open; returns it once the run ended. */
-async function runStreamed(conv: string, input: unknown, terminals: number) {
-  const sse = await openSse(conv);
-  await postMessage(owner, orgId, conv, streamedWrite(input));
-  await waitForTerminal(db, conv, terminals, 30_000);
-  const events = await eventsOf(db, conv);
-  const fin = events.filter((e) => e.type === "run_finished").length;
-  await sse.until(
-    (m) =>
-      m.filter((x) => x.event === "event" && JSON.parse(x.data as string).type === "run_finished")
-        .length >= fin,
-    "run_finished",
+const finishedAfter = (after: number) => (m: SseMessage[]) =>
+  m.some(
+    (x) =>
+      x.event === "event" &&
+      (() => {
+        const e = JSON.parse(x.data as string) as { seq: number; type: string };
+        return e.seq > after && e.type === "run_finished";
+      })(),
   );
-  return { sse, events };
+const baseSeen = (m: SseMessage[]) => toolDeltas(m).some((d) => d.delta === "tool_base");
+/** Every fragment of the call's input has been published (the stream is then at its last event). */
+const inputComplete = (input: unknown) => (m: SseMessage[]) => {
+  const last = toolDeltas(m)
+    .filter((d) => d.delta === "tool_input")
+    .at(-1);
+  return (
+    last !== undefined &&
+    (last.offset as number) + (last.text as string).length === JSON.stringify(input).length
+  );
+};
+
+/**
+ * Posts a streamed Write on `conv` with a subscriber open and the provider stream held (see
+ * {@link Hold}); `whileHeld` observes the held stream, then the hold is released and the run is
+ * waited for. Returns the subscriber and the log.
+ */
+async function runStreamed(
+  conv: string,
+  input: unknown,
+  opts: { at?: number; whileHeld?: (sse: Sse) => Promise<void> } = {},
+) {
+  const h = armHold(opts.at);
+  const sse = await openSse(conv);
+  try {
+    sse.after = await postMessage(owner, orgId, conv, streamedWrite(input));
+    await opts.whileHeld?.(sse);
+  } finally {
+    h.release();
+  }
+  await sse.until(finishedAfter(sse.after), "run_finished");
+  return { sse, events: await eventsOf(db, conv) };
 }
+/** Held after `HELD_AT` fragments: past the closed path, long before the input ends. */
+const HELD_AT = 14;
+const heldForBase = { at: HELD_AT, whileHeld: (s: Sse) => s.until(baseSeen, "the tool_base") };
+const heldAtEnd = (input: unknown) => ({
+  whileHeld: (s: Sse) => s.until(inputComplete(input), "the whole input"),
+});
 
 // ---- cases ----
 
@@ -313,7 +429,7 @@ describe("a streaming Write", () => {
     const path = await onDevice("a.py", "print('old')\n");
     const conv = await conversationThatRead(path);
     const input = writeInput(path);
-    const { sse, events } = await runStreamed(conv, input, 2);
+    const { sse, events } = await runStreamed(conv, input, heldForBase);
     sse.close();
 
     const deltas = toolDeltas(sse.messages);
@@ -338,14 +454,15 @@ describe("a streaming Write", () => {
     expect(call?.type === "tool_call" && call.input).toEqual(input);
     // exactly one base: the content the conversation read
     const bases = deltas.filter((d) => d.delta === "tool_base");
-    expect(bases, JSON.stringify(await kernelReadRows(conv))).toHaveLength(1);
+    expect(bases).toHaveLength(1);
     expect(bases[0]).toMatchObject({
       callId,
       text: "print('old')\n",
       sha256: sha("print('old')\n"),
     });
-    // order: start, then the input, the base somewhere before the run's end
+    // it came while the model was still streaming (the hold), after the call started
     expect(deltas[0]?.delta).toBe("tool_start");
+    expect(deltas.indexOf(bases[0] as ToolDelta)).toBeLessThan(deltas.length - 1);
     expect(await readFile(join(await workspaceDir(), "a.py"), "utf8")).toBe(NEW_CONTENT);
 
     // the same call without streaming: the same assistant message and result
@@ -371,7 +488,7 @@ describe("a streaming Write", () => {
     const path = await onDevice("drift.py", "x = 1\n");
     capture.reset();
     const conv = await conversationThatRead(path);
-    const { sse } = await runStreamed(conv, writeInput(path), 2);
+    const { sse } = await runStreamed(conv, writeInput(path), heldForBase);
     sse.close();
     const runId = (await runsOf(db, conv)).at(-1)?.id as string;
     const snap = await takeSnapshot(db, orgId, conv, runId, 4_194_304);
@@ -389,34 +506,44 @@ describe("a streaming Write", () => {
       expect(out.request).toEqual(sent[i]);
     }
     // the streamed input never reached the log as its own event
-    const types = new Set((await eventsOf(db, conv)).map((e) => e.type));
-    expect(
-      [...types].some((t) => String(t).startsWith("tool_input") || String(t) === "tool_base"),
-    ).toBe(false);
+    const types = (await eventsOf(db, conv)).map((e) => String(e.type));
+    expect(types.some((t) => t.startsWith("tool_input") || t === "tool_base")).toBe(false);
   });
 
   it("gives no base for an unread file or a new file; the Write runs as before", async () => {
     const existing = await onDevice("unread.py", "keep me\n");
+    // positive control, same app: a conversation that read a file gets its base while held
+    const readPath = await onDevice("control.py", "control\n");
+    const control = await conversationThatRead(readPath);
+    const withBase = await runStreamed(control, writeInput(readPath), heldForBase);
+    withBase.sse.close();
+    expect(toolDeltas(withBase.sse.messages).filter((d) => d.delta === "tool_base")).toHaveLength(
+      1,
+    );
+    expect((await kernelReadRows(control)).length).toBeGreaterThan(0);
+
+    // an existing file the conversation never read: the held stream completes, no read was made
     const conv = await createConv(owner, orgId, agentId);
-    const first = await runStreamed(conv, writeInput(existing), 1);
+    const first = await runStreamed(conv, writeInput(existing), heldAtEnd(writeInput(existing)));
     first.sse.close();
+    expect(await kernelReadRows(conv)).toEqual([]);
     expect(toolDeltas(first.sse.messages).some((d) => d.delta === "tool_base")).toBe(false);
     expect(toolDeltas(first.sse.messages).some((d) => d.delta === "tool_start")).toBe(true);
     const refused = ofType(first.events, "tool_result").at(-1);
     expect(refused?.payload.isError).toBe(true);
     expect(await readFile(join(await workspaceDir(), "unread.py"), "utf8")).toBe("keep me\n");
-    expect(await kernelReadRows(conv)).toEqual([]);
 
     // a new file: nothing was read, nothing is there
     const fresh = await createConv(owner, orgId, agentId);
-    const second = await runStreamed(fresh, writeInput("/workspace/brand-new.py"), 1);
+    const fresh_in = writeInput("/workspace/brand-new.py");
+    const second = await runStreamed(fresh, fresh_in, heldAtEnd(fresh_in));
     second.sse.close();
+    expect(await kernelReadRows(fresh)).toEqual([]);
     expect(toolDeltas(second.sse.messages).some((d) => d.delta === "tool_base")).toBe(false);
     expect(ofType(second.events, "tool_result").at(-1)?.payload, "new file result").toMatchObject({
       isError: false,
     });
     expect(await readFile(join(await workspaceDir(), "brand-new.py"), "utf8")).toBe(NEW_CONTENT);
-    expect(await kernelReadRows(fresh)).toEqual([]);
   });
 
   it("restores tools for a subscriber that joins mid-call, then sends later deltas only", async () => {
@@ -424,57 +551,52 @@ describe("a streaming Write", () => {
     const conv = await conversationThatRead(path);
     const input = writeInput(path);
     const finalJson = JSON.stringify(input);
-    const first = await openSse(conv);
-    await postMessage(owner, orgId, conv, streamedWrite(input, 60));
-    // past the base and into the content
-    await first.until((m) => {
-      const d = toolDeltas(m);
-      return (
-        d.some((x) => x.delta === "tool_base") &&
-        d.filter((x) => x.delta === "tool_input").length > 12
-      );
-    }, "the base and some input");
-    const runId = toolDeltas(first.messages)[0]?.runId as string;
+    let second: Sse | undefined;
+    let t: DraftTool | undefined;
+    // held past the base: the second subscriber joins while the call is still streaming
+    const { sse: first } = await runStreamed(conv, input, {
+      at: HELD_AT,
+      whileHeld: async (s) => {
+        await s.until(baseSeen, "the tool_base");
+        const runId = toolDeltas(s.messages)[0]?.runId as string;
+        // the draft route has the call while it still streams; its writes are coalesced (a window
+        // of 200 ms), so wait until it holds the base the stream already published
+        const draftUrl = `/api/v1/orgs/${orgId}/conversations/${conv}/runs/${runId}/draft`;
+        const routeDraft = await waitFor(
+          async () => {
+            const route = await owner({ method: "GET", url: draftUrl });
+            expect(route.statusCode).toBe(200);
+            const d = (route.json() as { drafts: DraftFrame[] }).drafts[0];
+            return d?.tools[0]?.base !== undefined ? d : null;
+          },
+          10_000,
+          "the draft route to hold the base",
+        );
+        expect(routeDraft.tools.length).toBeGreaterThan(0);
+        expect(routeDraft.tools[0]?.name).toBe("Write");
+        expect(finalJson.startsWith(routeDraft.tools[0]?.input as string)).toBe(true);
 
-    // the draft route has the call while it still streams; its writes are coalesced (a window of
-    // 200 ms), so wait until it holds the base the stream already published
-    const draftUrl = `/api/v1/orgs/${orgId}/conversations/${conv}/runs/${runId}/draft`;
-    const routeDraft = await waitFor(
-      async () => {
-        const route = await owner({ method: "GET", url: draftUrl });
-        expect(route.statusCode).toBe(200);
-        const d = (route.json() as { drafts: DraftFrame[] }).drafts[0];
-        return d?.tools[0]?.base !== undefined ? d : null;
+        second = await openSse(conv);
+        second.after = s.after;
+        await second.until((m) => draftFrames(m).length > 0, "the draft frame");
+        t = (draftFrames(second.messages)[0] as DraftFrame).tools[0];
       },
-      10_000,
-      "the draft route to hold the base",
-    );
-    expect(routeDraft.tools.length).toBeGreaterThan(0);
-    expect(routeDraft.tools[0]?.name).toBe("Write");
-    expect(finalJson.startsWith(routeDraft.tools[0]?.input as string)).toBe(true);
-
-    const second = await openSse(conv);
-    await second.until((m) => draftFrames(m).length > 0, "the draft frame");
-    const draft = draftFrames(second.messages)[0] as DraftFrame;
-    const t = draft.tools[0] as DraftTool;
-    expect(t.name).toBe("Write");
-    expect(t.input.length).toBeGreaterThan(0);
-    expect(finalJson.startsWith(t.input)).toBe(true);
-    expect(t.base?.text).toBe("mid = 0\n");
-    expect(t.base?.sha256).toBe(sha("mid = 0\n"));
-
-    await waitForTerminal(db, conv, 2, 30_000);
-    await second.until(
-      (m) =>
-        m.some((x) => x.event === "event" && JSON.parse(x.data as string).type === "run_finished"),
-      "run_finished",
-    );
+    });
     first.close();
-    second.close();
+    const joined = second as Sse;
+    await joined.until(finishedAfter(joined.after), "run_finished");
+    joined.close();
+    const draftTool = t as DraftTool;
+    expect(draftTool.name).toBe("Write");
+    expect(draftTool.input.length).toBeGreaterThan(0);
+    expect(draftTool.input.length).toBeLessThan(finalJson.length);
+    expect(finalJson.startsWith(draftTool.input)).toBe(true);
+    expect(draftTool.base?.text).toBe("mid = 0\n");
+    expect(draftTool.base?.sha256).toBe(sha("mid = 0\n"));
     // later deltas only: no second start or base; each continues the draft and the last one ends
     // the input (a delta published inside a coalescing window may sit past the draft: a client
     // asks the draft route again, so only the text is checked here)
-    const later = toolDeltas(second.messages);
+    const later = toolDeltas(joined.messages);
     expect(later.some((d) => d.delta === "tool_start" || d.delta === "tool_base")).toBe(false);
     expect(later.length).toBeGreaterThan(0);
     for (const d of later) {
@@ -485,42 +607,28 @@ describe("a streaming Write", () => {
     expect((last.offset as number) + (last.text as string).length).toBe(finalJson.length);
   });
 
-  it("is awaited by its step: the base read settled before the Write's own operation began", async () => {
+  it("settles every base read before the step ends: all read intents are terminal, the Write's own comes after", async () => {
     const path = await onDevice("order.py", "order = 1\n");
     const conv = await conversationThatRead(path);
-    const { sse, events } = await runStreamed(conv, writeInput(path), 2);
+    const { sse, events } = await runStreamed(conv, writeInput(path), heldForBase);
     sse.close();
-    expect(toolDeltas(sse.messages).filter((d) => d.delta === "tool_base")).toHaveLength(1);
     const runId = ofType(events, "assistant_message").at(-1)?.runId as string;
     const reads = (await kernelReadRows(conv)).filter((r) => r.run_id === runId);
-    // no read outlives its step: every base read row exists and is terminal once the run finished
+    // no read outlives its step: every base read exists and is terminal once the run finished
     expect(reads.length).toBeGreaterThan(0);
     for (const r of reads) expect(r.state).toBe("completed");
-    // ... and the Write's own operation (the tool's intent) was created after the last read ended
+    // the Write's own operation (the tool's intent) was created after the last read ended
     const writes = (await toolRows(conv)).filter((r) => r.method === "writeFile");
     expect(writes).toHaveLength(1);
     const lastReadEnd = Math.max(...reads.map((r) => r.updated_at.getTime()));
     expect((writes[0] as { created_at: Date }).created_at.getTime()).toBeGreaterThanOrEqual(
       lastReadEnd,
     );
-    // the base read also finished before the step's assistant_message was logged
-    const logged = ofType(events, "assistant_message").at(-1);
-    expect(logged).toBeDefined();
-    const loggedAt = (logged as { createdAt?: Date | string }).createdAt;
-    if (loggedAt !== undefined)
-      expect(new Date(loggedAt).getTime()).toBeGreaterThanOrEqual(lastReadEnd);
   });
 });
 
-describe("what could not be covered", () => {
-  // step_reset: model-fake cannot fail a tool call mid-stream (`failAfter` exists for text only), so
-  // a reset during a streamed Write is covered by the unit tests of the watcher
-  // (write-base.test.ts: abort cancels the read) and not end to end. A sub-agent's Read followed by a
-  // Write needs a two-turn child script, which model-fake's one-directive-per-message cannot give.
-  // An eval-kind conversation is hidden from every conversation route (messages, stream, draft: 404)
-  // and has no way to be given a message but a replay run, so no streamed Write can be driven
-  // through it here; the gate (`chat` / `subagent` only, model-call `baseWatcher`) is not covered.
-  it.todo("an eval-kind run never calls the reader");
-  it.todo("step_reset during a streamed Write cancels its base read");
-  it.todo("a sub-agent Write after the sub-agent Read gets a base");
-});
+// The step-level behaviors that need a stream end or a failure at a chosen moment (the read is
+// awaited by its step with its signal aborted, a reset cancels it, an eval conversation never gets
+// a reader, a sub-agent does) are covered in model-call.test.ts ("streaming Write base reads"):
+// a conversation of kind eval has no route to send a message to, and model-fake can neither fail a
+// tool call mid-stream nor script a sub-agent's second turn.
