@@ -1,6 +1,5 @@
 import { LINUX_SANDBOX_SOURCE } from "./sandbox-linux-runtime-source.js";
 import { NATIVE_FILES_SOURCE } from "./sandbox-native-runtime-source.js";
-import { NATIVE_FILES_STAGED_SOURCE } from "./sandbox-native-staged-runtime-source.js";
 
 /**
  * A capability of a runtime file that a consumer may use only when the file it runs declares it.
@@ -17,14 +16,6 @@ export interface SandboxRuntimeFile {
   readonly features?: readonly SandboxRuntimeFeature[];
 }
 
-/** The staged helper: answers a non-regular file with the generic `INVALID_NATIVE_REQUEST`. */
-const NATIVE_FILES_STAGED: SandboxRuntimeFile = Object.freeze({
-  name: "native-files.py",
-  source: NATIVE_FILES_STAGED_SOURCE,
-  sha256: "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
-});
-
-/** The current helper: answers a non-regular file with `NOT_REGULAR_FILE` (core#907). */
 const NATIVE_FILES: SandboxRuntimeFile = Object.freeze({
   name: "native-files.py",
   source: NATIVE_FILES_SOURCE,
@@ -38,18 +29,18 @@ const LINUX_SANDBOX: SandboxRuntimeFile = Object.freeze({
   features: Object.freeze(["fileReadRoots"] as const),
 });
 
-const STAGED = Object.freeze([NATIVE_FILES_STAGED, LINUX_SANDBOX]);
-const CURRENT = Object.freeze([NATIVE_FILES, LINUX_SANDBOX]);
+const STAGED = Object.freeze([NATIVE_FILES, LINUX_SANDBOX]);
+const CURRENT = STAGED;
 
 /**
  * Digests of earlier revisions a staged copy may still have (one previous revision at most):
  * device containers made from an earlier image keep their staged runtime until recreated. The
- * launcher before exact file read roots (core#742); the next runtime change drops it.
+ * native helper before `NOT_REGULAR_FILE` (core#907); the next runtime change drops it.
  */
 const PREVIOUS: readonly Pick<SandboxRuntimeFile, "name" | "sha256">[] = Object.freeze([
   Object.freeze({
-    name: "linux-sandbox.py",
-    sha256: "4e046df902dc644532ada9f2a3bef30a983daf7d1f238bd46dcd16524d96c66c",
+    name: "native-files.py",
+    sha256: "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
   }),
 ]);
 
@@ -93,8 +84,7 @@ function acceptedDigests(
  *
  * A runtime change therefore lands in three steps (tools/checks/README.md, "Changing the SDK
  * runtime sources"): `current` first, then the provider restages, then core promotes `current` to
- * `files` with the pin. Between changes `current` is `files`; now `native-files.py` is ahead
- * (core#907: `NOT_REGULAR_FILE`).
+ * `files` with the pin. Between changes, as now, `current` is `files`.
  */
 export const SANDBOX_RUNTIME_SOURCE: {
   readonly version: number;

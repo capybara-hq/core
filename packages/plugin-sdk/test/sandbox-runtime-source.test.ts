@@ -30,28 +30,22 @@ describe("sandbox runtime source bundle", () => {
       sdk.SANDBOX_RUNTIME_SOURCE.files.map((file) => [file.name, file.sha256]),
     );
     expect(digests).toEqual({
-      "native-files.py": "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
-      "linux-sandbox.py": "ceb5bb0971437978a7695091792bfafcf3dbf2e7c74e8425d8aceb76e442f848",
-    });
-    // between steps (core#907): only native-files.py is ahead of the staged set
-    const current = Object.fromEntries(
-      sdk.SANDBOX_RUNTIME_SOURCE.current.map((file) => [file.name, file.sha256]),
-    );
-    expect(current).toEqual({
       "native-files.py": "41cf54ea285d29c49b42b33efd99d11254ba07cee4832a9d6f9414dc99c31461",
       "linux-sandbox.py": "ceb5bb0971437978a7695091792bfafcf3dbf2e7c74e8425d8aceb76e442f848",
     });
+    // promoted: no runtime change is between its steps
+    expect(sdk.SANDBOX_RUNTIME_SOURCE.current).toBe(sdk.SANDBOX_RUNTIME_SOURCE.files);
   });
 
   it("accepts the staged and current digests of each file, plus one previous revision", () => {
     const bundle = sdk.SANDBOX_RUNTIME_SOURCE;
     expect(Object.isFrozen(bundle.accepted)).toBe(true);
     const expected: Record<string, string[]> = {};
-    // the launcher before exact file read roots, for instances of earlier device-docker images
+    // the helper before NOT_REGULAR_FILE (core#907), for instances of earlier device-docker images
     const previous = [
       {
-        name: "linux-sandbox.py",
-        sha256: "4e046df902dc644532ada9f2a3bef30a983daf7d1f238bd46dcd16524d96c66c",
+        name: "native-files.py",
+        sha256: "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
       },
     ];
     for (const file of [...bundle.files, ...bundle.current, ...previous]) {
@@ -73,7 +67,6 @@ describe("sandbox runtime source bundle", () => {
     for (const name of [
       "sandbox-runtime-source.ts",
       "sandbox-native-runtime-source.ts",
-      "sandbox-native-staged-runtime-source.ts",
       "sandbox-linux-runtime-source.ts",
     ]) {
       const source = await readFile(new URL(`../src/${name}`, import.meta.url), "utf8");
@@ -351,12 +344,5 @@ describe.skipIf(!python)("native-files.py answers a non-regular file (core#907)"
     };
     expect(answer.error.code).toBe(sdk.NATIVE_NOT_REGULAR_FILE);
     expect(sdk.nativeFailureText(answer.error.code)).toMatch(/not a regular file/);
-  });
-  it("the staged helper still answers the generic code (its consumers fall back to the generic text)", () => {
-    const answer = nativeAnswerForFifo(of(sdk.SANDBOX_RUNTIME_SOURCE.files)) as {
-      error: { code: string };
-    };
-    expect(answer.error.code).toBe("INVALID_NATIVE_REQUEST");
-    expect(sdk.nativeFailureText(answer.error.code)).toBe(sdk.NATIVE_FAILURE_GENERIC);
   });
 });
