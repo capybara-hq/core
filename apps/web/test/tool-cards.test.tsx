@@ -50,6 +50,7 @@ const INFO: ToolInfo = {
   kind: "connector",
   sandbox: false,
   keyArgs: ["id"],
+  inputView: null,
   tool: "delete_item",
   source: { kind: "connector", id: "app1", name: "Fixture" },
 };

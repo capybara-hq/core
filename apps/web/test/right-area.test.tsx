@@ -377,6 +377,7 @@ describe("the Context section's sandbox status", () => {
     kind: sandbox ? "command" : "tool",
     sandbox,
     keyArgs: [],
+    inputView: null,
     source: { kind: "builtin" },
   });
   const result = (seq: number, toolKey: string) =>

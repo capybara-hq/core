@@ -1240,6 +1240,13 @@ export interface ToolInfo {
   /** True exactly for the builtin tools that run in the conversation's sandbox. */
   sandbox: boolean;
   keyArgs: string[];
+  /** How the tool's input is previewed while it streams (kernel `ToolSpec.inputView`), or null. */
+  inputView:
+    | { kind: "file_write"; path: string; content: string }
+    | { kind: "file_edit"; path: string; old: string; new: string }
+    | { kind: "command"; command: string; description?: string }
+    | { kind: "text"; field: string }
+    | null;
   /** A connector or extension tool's local name (`mcp__crm__delete` -> `delete`); else null. */
   tool: string | null;
   source:

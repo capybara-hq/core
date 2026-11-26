@@ -216,6 +216,7 @@ describe("GET /conversations/:id/tools", () => {
       kind: "command",
       sandbox: true,
       keyArgs: ["command"],
+      inputView: { kind: "command", command: "command", description: "description" },
       tool: null,
       source: { kind: "builtin" },
     });
@@ -234,6 +235,41 @@ describe("GET /conversations/:id/tools", () => {
     expect(t.AskUserQuestion).toMatchObject({ kind: "meta", keyArgs: [], title: null });
     // a sub-agent's task name, then its type (the page shows agent calls as sub-agent rows)
     expect(t.Agent).toMatchObject({ kind: "tool", keyArgs: ["description", "subagent_type"] });
+  });
+
+  it("tool info returns inputView", async () => {
+    const { req, orgId, conversationId } = await setup();
+    const inst = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/connectors`,
+      payload: {
+        name: "Acme Chat",
+        slug: "chat",
+        connector: "mem",
+        endpoint: { server: "slack" },
+        auth: { type: "none" },
+      },
+    });
+    expect(inst.statusCode, inst.body).toBe(201);
+    const keys = ["Write", "Edit", "Agent", "Read", "mcp__chat__search", "mcp__nope__x"];
+    const res = await tools(req, orgId, conversationId, keys);
+    expect(res.statusCode, res.body).toBe(200);
+    const t = byKey(res);
+    expect(t.Write?.inputView).toEqual({
+      kind: "file_write",
+      path: "file_path",
+      content: "content",
+    });
+    expect(t.Edit?.inputView).toEqual({
+      kind: "file_edit",
+      path: "file_path",
+      old: "old_string",
+      new: "new_string",
+    });
+    expect(t.Agent?.inputView).toEqual({ kind: "text", field: "prompt" });
+    expect(t.Read?.inputView).toBeNull();
+    expect(t.mcp__chat__search?.inputView).toBeNull();
+    expect(t.mcp__nope__x?.inputView).toBeNull();
   });
 
   it("a connector tool returns its MCP title and key arguments, named by the connector", async () => {
@@ -260,6 +296,7 @@ describe("GET /conversations/:id/tools", () => {
         kind: "connector",
         sandbox: false,
         keyArgs: ["query", "channel"],
+        inputView: null,
         tool: "search",
         source: { kind: "connector", id: connectorId, name: "Acme Chat" },
       },
@@ -269,6 +306,7 @@ describe("GET /conversations/:id/tools", () => {
         kind: "connector",
         sandbox: false,
         keyArgs: [],
+        inputView: null,
         tool: "post",
         source: { kind: "connector", id: connectorId, name: "Acme Chat" },
       },
@@ -318,6 +356,7 @@ describe("GET /conversations/:id/tools", () => {
       kind: "tool",
       sandbox: false,
       keyArgs: ["text"],
+      inputView: null,
       tool: "echo",
       // no catalog item: the plugin name stands in for its display name
       source: {
@@ -372,6 +411,7 @@ describe("GET /conversations/:id/tools", () => {
         kind: "tool",
         sandbox: false,
         keyArgs: [],
+        inputView: null,
         tool: "x",
         source: { kind: "unknown" },
       },
@@ -381,6 +421,7 @@ describe("GET /conversations/:id/tools", () => {
         kind: "tool",
         sandbox: false,
         keyArgs: [],
+        inputView: null,
         tool: null,
         source: { kind: "unknown" },
       },

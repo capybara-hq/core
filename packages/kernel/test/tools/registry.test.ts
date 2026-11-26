@@ -160,14 +160,15 @@ describe("ToolRegistry", () => {
     expect(specHash({ inputSchema: { type: "object" }, description: "d", name: "x" })).toBe(h);
   });
 
-  it("specHash leaves out the fields the model never sees: title, keyArgs and timeoutMs", () => {
-    expect([...NON_MODEL_SPEC_FIELDS]).toEqual(["title", "keyArgs", "timeoutMs"]);
+  it("specHash leaves out the fields the model never sees: title, keyArgs, inputView and timeoutMs", () => {
+    expect([...NON_MODEL_SPEC_FIELDS]).toEqual(["title", "keyArgs", "inputView", "timeoutMs"]);
     const s = {
       name: "search",
       description: "Search.",
       inputSchema: { type: "object", properties: { q: { type: "string" } } },
     };
     expect(specHash({ ...s, title: "X", keyArgs: ["q"] })).toBe(specHash(s));
+    expect(specHash({ ...s, inputView: { kind: "text", field: "q" } })).toBe(specHash(s));
     expect(specHash({ ...s, title: "Y" })).toBe(specHash({ ...s, title: "X" }));
     // retuning an extension tool's time limit is no definition change
     expect(specHash({ ...s, timeoutMs: 300_000 })).toBe(specHash(s));

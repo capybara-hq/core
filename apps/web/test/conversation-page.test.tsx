@@ -1903,6 +1903,7 @@ describe("tool rows read the tool info API", () => {
               kind: "connector",
               sandbox: false,
               keyArgs: ["query"],
+              inputView: null,
               tool: "search",
               source: { kind: "connector", id: "k1", name: "Slack" },
             },

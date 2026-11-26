@@ -32,6 +32,7 @@ const SPEC: ToolSpec = {
   name: "Edit",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["file_path"],
+  inputView: { kind: "file_edit", path: "file_path", old: "old_string", new: "new_string" },
   description:
     "Edit a text file in this conversation's sandbox by replacing exact text. old_string must match " +
     "the file exactly (including whitespace and indentation) and, unless replace_all is true, occur " +

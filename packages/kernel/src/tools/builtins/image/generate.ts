@@ -119,6 +119,7 @@ export const GENERATE_IMAGE_SPEC: ToolSpec = {
   name: "GenerateImage",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["prompt"],
+  inputView: { kind: "text", field: "prompt" },
   description:
     "Generate images from a text prompt with this organization's image model, and deliver them to " +
     "the user in the conversation. Write a specific prompt: subject, composition, style, lighting, " +

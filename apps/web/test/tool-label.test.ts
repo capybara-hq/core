@@ -12,6 +12,7 @@ const info = (over: Partial<ToolInfo>): ToolInfo => ({
   kind: "command",
   sandbox: true,
   keyArgs: [],
+  inputView: null,
   tool: null,
   source: { kind: "builtin" },
   ...over,
