@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import {
   assertValidDeclarations,
   type ContentBlock,
@@ -55,8 +56,10 @@ function streamOf(
 
 /**
  * Checks a stream's tool events against its final message: every delta follows its call's start,
- * and the deltas of each started call join to JSON equal to the final call's input.
- * A started call with no final call of its id is allowed. Returns the problems (empty when fine); a stream with no tool events passes.
+ * each call starts once, and the deltas of each started call join to JSON whose parsed value
+ * equals the final call's input (structurally: key order does not matter). A started call with
+ * no final call of its id is allowed. Returns the problems (empty when fine); a stream with no
+ * tool events passes.
  */
 export function checkToolStream(
   events: ModelStreamEvent[],
@@ -65,8 +68,11 @@ export function checkToolStream(
   const problems: string[] = [];
   const streamed = new Map<string, string>();
   for (const e of events) {
-    if (e.type === "tool_call_start") streamed.set(e.id, "");
-    else if (e.type === "tool_call_delta") {
+    if (e.type === "tool_call_start") {
+      // a repeated start keeps the input streamed so far
+      if (streamed.has(e.id)) problems.push(`repeated tool_call_start for id ${e.id}`);
+      else streamed.set(e.id, "");
+    } else if (e.type === "tool_call_delta") {
       const soFar = streamed.get(e.id);
       if (soFar === undefined) problems.push(`tool_call_delta for unknown id ${e.id}`);
       else streamed.set(e.id, soFar + e.input);
@@ -78,7 +84,7 @@ export function checkToolStream(
     if (call?.type !== "tool_call") continue;
     let same = false;
     try {
-      same = JSON.stringify(JSON.parse(json)) === JSON.stringify(call.input);
+      same = isDeepStrictEqual(JSON.parse(json), call.input);
     } catch {}
     if (!same) problems.push(`streamed input of ${id} does not parse to the final input`);
   }

@@ -340,6 +340,33 @@ describe("checkToolStream", () => {
     expect(checkToolStream(events, done({ a: 1 }))).toEqual([]);
   });
 
+  it("compares the parsed input structurally, whatever the key order", () => {
+    const events: ModelStreamEvent[] = [
+      { type: "tool_call_start", id: "call_1", name: "Write" },
+      { type: "tool_call_delta", id: "call_1", input: '{"content":"x","file_path":"/a",' },
+      { type: "tool_call_delta", id: "call_1", input: '"opts":{"b":2,"a":[1,{"d":1,"c":0}]}}' },
+    ];
+    const input = { file_path: "/a", content: "x", opts: { a: [1, { c: 0, d: 1 }], b: 2 } };
+    expect(checkToolStream(events, done(input))).toEqual([]);
+    // array order still matters
+    const swapped = { ...input, opts: { a: [{ c: 0, d: 1 }, 1], b: 2 } };
+    expect(checkToolStream(events, done(swapped))).toEqual([
+      "streamed input of call_1 does not parse to the final input",
+    ]);
+  });
+
+  it("rejects a repeated start for the same id, keeping the input streamed so far", () => {
+    const events: ModelStreamEvent[] = [
+      { type: "tool_call_start", id: "call_1", name: "Write" },
+      { type: "tool_call_delta", id: "call_1", input: '{"a":' },
+      { type: "tool_call_start", id: "call_1", name: "Write" },
+      { type: "tool_call_delta", id: "call_1", input: "1}" },
+    ];
+    expect(checkToolStream(events, done({ a: 1 }))).toEqual([
+      "repeated tool_call_start for id call_1",
+    ]);
+  });
+
   it("rejects a delta before its start", () => {
     const events: ModelStreamEvent[] = [{ type: "tool_call_delta", id: "call_x", input: "{}" }];
     expect(checkToolStream(events, done({}))).toEqual(["tool_call_delta for unknown id call_x"]);
