@@ -174,7 +174,14 @@ export function streamingView(
     case "file_edit": {
       const oldText = str(rec, view.old);
       const newText = str(rec, view.new) ?? "";
-      const out: StreamingView = { progress: { bytes, lines: lineCount(newText) } };
+      // lines count the new text only: while old_string streams, the size alone is shown ("0
+      // lines" would be wrong beside a diff that already has removed lines)
+      const out: StreamingView = {
+        progress: {
+          bytes,
+          ...(str(rec, view.new) !== undefined ? { lines: lineCount(newText) } : {}),
+        },
+      };
       if (oldText === undefined) return out;
       out.detail = {
         diff: liveDiffTail(liveEditDiff(oldText, newText)),

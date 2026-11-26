@@ -18,6 +18,12 @@ export type ProcessBlockProps = {
   state: "running" | "waiting" | "finished" | "stopped" | "failed";
   /** Running / waiting: the current step's label. */
   current?: ReactNode;
+  /**
+   * Running only (ignored while waiting): the label assistive technology hears, when `current` follows a streaming call faster
+   * than it should be announced. The visible `current` is then hidden from the live region and this
+   * (throttled by the page) is read instead.
+   */
+  announce?: ReactNode;
   /** The waiting words ("Waiting for your approval") drawn in `accent` before the current step. */
   waiting?: ReactNode;
   /** Elapsed time of the run; null when unknown. */
@@ -57,6 +63,7 @@ function ProcessMark({ icon, size }: { icon: ProcessIcon; size: 12 | 14 }): JSX.
 export function ProcessBlock({
   state,
   current,
+  announce,
   waiting,
   elapsedMs,
   summary,
@@ -109,7 +116,11 @@ export function ProcessBlock({
         ) : (
           <Spinner size={16} />
         )}
-        <span className="cb-tool-label" data-part="process-summary">
+        <span
+          className="cb-tool-label"
+          data-part="process-summary"
+          aria-hidden={announce !== undefined && state === "running" ? true : undefined}
+        >
           {state === "waiting" ? (
             <>
               <span className="cb-accent-word" data-part="process-waiting">
@@ -125,6 +136,13 @@ export function ProcessBlock({
           )}
           {current}
         </span>
+        {announce !== undefined && state === "running" ? (
+          <span className="cb-sr-only" data-part="process-announce">
+            {t("process.running")}
+            {announce ? ` · ` : null}
+            {announce}
+          </span>
+        ) : null}
         {elapsedMs === null ? null : (
           // a ticking timer: hidden from assistive technology so the live head does not chatter
           <span className="cb-process-time cb-faint" data-part="process-time" aria-hidden="true">
