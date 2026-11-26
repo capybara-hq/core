@@ -400,6 +400,72 @@ describe("the thread draws process blocks", () => {
     expect(prose.contains(theBlock())).toBe(false);
   });
 
+  it("a streamed call is a rail step of the open block; the logged call takes it over in place", async () => {
+    // streaming tool input spec D8 inside a process block: the streaming row stands where the
+    // logged call lands (same block, same rail step), and logging it remounts nothing
+    api([userMsg(1, "go"), runStarted(2), step(3, 0, [bash("t1", "ls")]), result(4, "t1")]);
+    await renderChatRoute();
+    await vi.waitFor(theBlock);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const flush = () =>
+      act(() => {
+        for (const f of frames.splice(0)) f(0);
+      });
+    act(() => {
+      es.emit("delta", {
+        runId: "r1",
+        step: 1,
+        delta: "text",
+        text: "Next, the notes.",
+        offset: 0,
+      });
+    });
+    flush();
+    // the step's text streams as prose below the block until its call starts
+    expect(entries()).toEqual(["user", "process", "prose"]);
+    act(() => {
+      es.emit("delta", { runId: "r1", step: 1, delta: "tool_start", callId: "t2", name: "Bash" });
+      es.emit("delta", {
+        runId: "r1",
+        step: 1,
+        delta: "tool_input",
+        callId: "t2",
+        text: '{"command":"cat no',
+        offset: 0,
+      });
+    });
+    flush();
+    // the call started: the text is narration in the block, the call a streaming rail step
+    expect(entries()).toEqual(["user", "process"]);
+    const block = theBlock();
+    expect(block.getAttribute("data-tool-status")).toBe("done streaming");
+    const streamingStep = block.querySelector('[data-tool-step-status="streaming"]');
+    expect(streamingStep).not.toBeNull();
+    const railStep = streamingStep?.closest('[data-part="rail-step"]') as HTMLElement;
+    expect(within(railStep).getByText("cat no")).toBeTruthy();
+    expect(within(block).getByText("Next, the notes.")).toBeTruthy();
+
+    act(() =>
+      es.emit(
+        "event",
+        step(5, 1, [{ type: "text", text: "Next, the notes." }, bash("t2", "cat notes.md")]),
+      ),
+    );
+    // the same block and the same rail step, now the logged call
+    expect(entries()).toEqual(["user", "process"]);
+    expect(theBlock()).toBe(block);
+    expect(block.querySelector('[data-tool-step-status="streaming"]')).toBeNull();
+    expect(within(railStep).getByText("cat notes.md")).toBeTruthy();
+    expect(railStep.isConnected).toBe(true);
+    expect(railSteps(block)[railSteps(block).length - 1]).toBe(railStep);
+    expect(
+      railStep.querySelector("[data-tool-step-status]")?.getAttribute("data-tool-step-status"),
+    ).toBe("pending");
+  });
+
   it("the head announces step changes, not rows", async () => {
     api([userMsg(1, "go"), runStarted(2), step(3, 0, [bash("t1", "ls")])]);
     await renderChatRoute();

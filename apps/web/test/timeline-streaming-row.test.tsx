@@ -14,6 +14,7 @@ const bash = (kind: ToolInfo["kind"]): Map<string, ToolInfo> =>
         key: "Bash",
         title: null,
         kind,
+        icon: { kind: "name", name: "terminal" },
         sandbox: true,
         keyArgs: ["command"],
         inputView: { kind: "command", command: "command", description: "description" },

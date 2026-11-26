@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent, ToolInfo } from "../src/lib/conversations";
 import { liveWriteDiff } from "../src/lib/live-diff";
+import { groupProcess, type ProcessEntry } from "../src/lib/process";
 import type { DraftTool } from "../src/lib/run-drafts";
 import { initialChatState, reduceChat, type StreamDelta } from "../src/lib/stream";
 import {
@@ -67,6 +68,7 @@ const builtin = (
     key,
     title: null,
     kind,
+    icon: { kind: "name", name: "extension" },
     sandbox: true,
     keyArgs,
     inputView,
@@ -98,6 +100,7 @@ const INFO = new Map<string, ToolInfo>([
       key: "mcp__acme__create_ticket",
       title: null,
       kind: "connector",
+      icon: { kind: "name", name: "connector" },
       sandbox: false,
       keyArgs: ["title"],
       inputView: null,
@@ -350,6 +353,74 @@ describe("streaming tool rows", () => {
     expect(groups(logged)[0]?.key).toBe(groups(streaming)[0]?.key);
     expect(groups(streaming)[0]?.rows.map((r) => r.callId)).toEqual(["c0", "c1"]);
     expect(groups(logged)[0]?.rows.map((r) => r.callId)).toEqual(["c0", "c1"]);
+  });
+
+  it("in a process block a streamed step stands where the logged one lands (past its cards)", () => {
+    // conversation process blocks: the block, its tools step and the rail step of the call keep
+    // their keys from streaming to logged; a process card and a pinned card of the earlier call
+    // follow its group and are walked past, as the logged step joins the same group
+    const withCards = [
+      ...asked,
+      ev(3, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),
+      message(4, 0, [{ id: "c0", name: "Bash", input: { command: "make" } }]),
+      ev(5, "tool_result", {
+        step: 0,
+        callId: "c0",
+        toolKey: "Bash",
+        content: "ok",
+        isError: false,
+        card: { plugin: "charts", view: "chart", placement: "process" },
+      }),
+      ev(6, "tool_result", {
+        step: 0,
+        callId: "c0",
+        toolKey: "Bash",
+        content: "ok",
+        isError: false,
+        card: { plugin: "todo", view: "tasks", placement: "pinned" },
+      }),
+    ];
+    const blockOf = (entries: TimelineEntry[]): ProcessEntry => {
+      const b = groupProcess(entries).find((e): e is ProcessEntry => e.kind === "process");
+      if (b === undefined) throw new Error("no process block");
+      return b;
+    };
+    /** Each tools step's key with its calls split by model step, as the rail draws them. */
+    const rail = (b: ProcessEntry) =>
+      b.steps.flatMap((x) =>
+        x.kind === "tools"
+          ? [[x.key, x.rows.map((r) => `${r.callId}@${r.step?.runId}:${r.step?.step}`)]]
+          : [[x.kind]],
+      );
+    const streaming = blockOf(
+      timeline(withCards, [draft([{ id: "c1", name: "Bash", input: '{"command":"wc' }])]),
+    );
+    const logged = blockOf(
+      timeline(
+        [
+          ...withCards,
+          ev(7, "assistant_message", {
+            step: 1,
+            stopReason: "tool_use",
+            content: [{ type: "tool_call", id: "c1", name: "Bash", input: { command: "wc" } }],
+          }),
+        ],
+        [],
+      ),
+    );
+    expect(rail(streaming)).toEqual([
+      ["narration"],
+      [expect.any(String), ["c0@r1:0", "c1@r1:1"]],
+      ["card"],
+    ]);
+    expect(rail(logged)).toEqual(rail(streaming));
+    expect(logged.key).toBe(streaming.key);
+    expect(logged.pinned.map((c) => c.plugin)).toEqual(["todo"]);
+    expect(streaming.pinned.map((c) => c.plugin)).toEqual(["todo"]);
+    const row = (b: ProcessEntry) =>
+      b.steps.flatMap((x) => (x.kind === "tools" ? x.rows : [])).find((r) => r.callId === "c1");
+    expect(row(streaming)?.row.status).toBe("streaming");
+    expect(row(logged)?.row.id).toBe(row(streaming)?.row.id);
   });
 
   it("a file placed on its own ends the group: the streaming call opens a new one", () => {

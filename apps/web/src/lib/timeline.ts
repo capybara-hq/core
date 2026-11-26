@@ -764,7 +764,14 @@ function streamingTool(
     ...(view.detail !== undefined ? { detail: view.detail } : {}),
   };
   // the step too: a process block draws a step's calls as one rail step, as it will once logged
-  const tool: TimelineTool = { row, callId: t.id, toolKey: t.name, input, outputId: null, step: at };
+  const tool: TimelineTool = {
+    row,
+    callId: t.id,
+    toolKey: t.name,
+    input,
+    outputId: null,
+    step: at,
+  };
   streamingRows.set(t, { at, info: ti, locale, tool });
   if (t.base !== undefined) rememberBase(row.id, t.base);
   return tool;

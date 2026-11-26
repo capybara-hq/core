@@ -59,6 +59,7 @@ const INFO = new Map<string, ToolInfo>([
       icon: { kind: "name", name: "terminal" },
       sandbox: true,
       keyArgs: ["command"],
+      inputView: { kind: "command", command: "command", description: "description" },
       tool: null,
       source: { kind: "builtin" },
     },
@@ -157,7 +158,9 @@ describe("groupProcess", () => {
 
     // a block whose first step is a thinking draft keeps its key when that step lands
     const start = [user(1, "go"), runStarted(2)];
-    const thinking = build(start, [{ runId: "r1", step: 0, text: "", thinking: "plan", tools: [] }]);
+    const thinking = build(start, [
+      { runId: "r1", step: 0, text: "", thinking: "plan", tools: [] },
+    ]);
     expect(kinds(thinking)).toEqual(["user", "process"]);
     expect(kinds(block(thinking).steps)).toEqual(["thinking"]);
     const logged = build([
