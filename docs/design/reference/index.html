@@ -32,7 +32,7 @@
 <body>
 <header>
   <h1>Reference set review</h1>
-  <div>383 blocks × dark | light, rendered at 2× from docs/design/reference/src (sizes are token steps of docs/design/tokens.json).</div>
+  <div>389 blocks × dark | light, rendered at 2× from docs/design/reference/src (sizes are token steps of docs/design/tokens.json).</div>
   <nav><div><a class="g" href="#g-0">UI refresh A: shell, list and form pages</a> <a href="#c-template-list">template-list</a> <a href="#c-template-form">template-form</a> <a href="#c-sidebar">sidebar</a> <a href="#c-page-header">page-header</a> <a href="#c-stat-cards">stat-cards</a> <a href="#c-status-bar">status-bar</a> <a href="#c-action-row">action-row</a> <a href="#c-button">button</a> <a href="#c-input">input</a> <a href="#c-segmented">segmented</a> <a href="#c-switch">switch</a> <a href="#c-filter-chip">filter-chip</a> <a href="#c-table">table</a> <a href="#c-icon">icon</a></div><div><a class="g" href="#g-1">UI refresh B: conversation page</a> <a href="#c-template-conversation">template-conversation</a> <a href="#c-title-bar">title-bar</a> <a href="#c-composer">composer</a> <a href="#c-picker-menu">picker-menu</a> <a href="#c-command-palette">command-palette</a> <a href="#c-prose">prose</a> <a href="#c-thinking-row">thinking-row</a> <a href="#c-user-bubble">user-bubble</a> <a href="#c-run-divider">run-divider</a> <a href="#c-tool-group">tool-group</a> <a href="#c-tool-row">tool-row</a> <a href="#c-diff-block">diff-block</a> <a href="#c-approval-block">approval-block</a> <a href="#c-network-facts">network-facts</a> <a href="#c-question-block">question-block</a> <a href="#c-connect-block">connect-block</a> <a href="#c-queued-message">queued-message</a> <a href="#c-subagent-group">subagent-group</a> <a href="#c-agent-map">agent-map</a> <a href="#c-inline-card">inline-card</a> <a href="#c-property-section">property-section</a> <a href="#c-right-panel">right-panel</a> <a href="#c-file-card">file-card</a> <a href="#c-file-outputs">file-outputs</a> <a href="#c-attachment-strip">attachment-strip</a> <a href="#c-file-preview">file-preview</a> <a href="#c-run-row">run-row</a> <a href="#c-working-line">working-line</a> <a href="#c-greeting">greeting</a> <a href="#c-agent-row">agent-row</a> <a href="#c-quick-actions">quick-actions</a></div><div><a class="g" href="#g-2">Agents: avatar presets and picker</a> <a href="#c-avatar">avatar</a></div><div><a class="g" href="#g-3">Role pass: no access, danger zone, secret reveal</a> <a href="#c-no-access">no-access</a> <a href="#c-danger-zone">danger-zone</a> <a href="#c-secret-reveal">secret-reveal</a> <a href="#c-content-section">content-section</a></div><div><a class="g" href="#g-4">Config forms: repeater, field row, key / value editor</a> <a href="#c-repeater">repeater</a> <a href="#c-field-row">field-row</a> <a href="#c-key-value-editor">key-value-editor</a></div><div><a class="g" href="#g-5">Loading states: skeleton primitives and template loading states</a> <a href="#c-skeleton">skeleton</a> <a href="#c-template-detail">template-detail</a> <a href="#c-template-overview">template-overview</a> <a href="#c-template-inbox">template-inbox</a> <a href="#c-template-trace">template-trace</a> <a href="#c-template-settings">template-settings</a> <a href="#c-template-wizard">template-wizard</a> <a href="#c-template-auth">template-auth</a></div><div><a class="g" href="#g-6">Theme brand: the fixture brand's graphics</a> <a href="#c-empty-state">empty-state</a></div><div><a class="g" href="#g-7">Mobile layout: list-detail, sheet drag states</a> <a href="#c-list-detail">list-detail</a> <a href="#c-sheet">sheet</a></div> <a href="#tokens">tokens</a></nav>
 </header>
 <main>
@@ -1007,7 +1007,7 @@
     <div class="shot light"><img src="tool-group-single-light.png" alt="tool-group-single, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-tool-row">tool-row <small>15 blocks</small></h2>
+<section><h2 id="c-tool-row">tool-row <small>17 blocks</small></h2>
 <figure id="tool-row-auto-approved">
   <figcaption><a href="#tool-row-auto-approved">tool-row-auto-approved</a></figcaption>
   <div class="pair">
@@ -1106,6 +1106,20 @@
     <div class="shot light"><img src="tool-row-running-light.png" alt="tool-row-running, light" loading="lazy"></div>
   </div>
 </figure>
+<figure id="tool-row-streaming">
+  <figcaption><a href="#tool-row-streaming">tool-row-streaming</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="tool-row-streaming-dark.png" alt="tool-row-streaming, dark" loading="lazy"></div>
+    <div class="shot light"><img src="tool-row-streaming-light.png" alt="tool-row-streaming, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="tool-row-streaming-input">
+  <figcaption><a href="#tool-row-streaming-input">tool-row-streaming-input</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="tool-row-streaming-input-dark.png" alt="tool-row-streaming-input, dark" loading="lazy"></div>
+    <div class="shot light"><img src="tool-row-streaming-input-light.png" alt="tool-row-streaming-input, light" loading="lazy"></div>
+  </div>
+</figure>
 <figure id="tool-row-waiting">
   <figcaption><a href="#tool-row-waiting">tool-row-waiting</a></figcaption>
   <div class="pair">
@@ -1113,12 +1127,40 @@
     <div class="shot light"><img src="tool-row-waiting-light.png" alt="tool-row-waiting, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-diff-block">diff-block <small>2 blocks</small></h2>
+<section><h2 id="c-diff-block">diff-block <small>6 blocks</small></h2>
 <figure id="diff-block-default">
   <figcaption><a href="#diff-block-default">diff-block-default</a></figcaption>
   <div class="pair">
     <div class="shot dark"><img src="diff-block-default-dark.png" alt="diff-block-default, dark" loading="lazy"></div>
     <div class="shot light"><img src="diff-block-default-light.png" alt="diff-block-default, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="diff-block-live">
+  <figcaption><a href="#diff-block-live">diff-block-live</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="diff-block-live-dark.png" alt="diff-block-live, dark" loading="lazy"></div>
+    <div class="shot light"><img src="diff-block-live-light.png" alt="diff-block-live, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="diff-block-live-cut">
+  <figcaption><a href="#diff-block-live-cut">diff-block-live-cut</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="diff-block-live-cut-dark.png" alt="diff-block-live-cut, dark" loading="lazy"></div>
+    <div class="shot light"><img src="diff-block-live-cut-light.png" alt="diff-block-live-cut, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="diff-block-live-edit">
+  <figcaption><a href="#diff-block-live-edit">diff-block-live-edit</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="diff-block-live-edit-dark.png" alt="diff-block-live-edit, dark" loading="lazy"></div>
+    <div class="shot light"><img src="diff-block-live-edit-light.png" alt="diff-block-live-edit, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="diff-block-live-writing">
+  <figcaption><a href="#diff-block-live-writing">diff-block-live-writing</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="diff-block-live-writing-dark.png" alt="diff-block-live-writing, dark" loading="lazy"></div>
+    <div class="shot light"><img src="diff-block-live-writing-light.png" alt="diff-block-live-writing, light" loading="lazy"></div>
   </div>
 </figure>
 <figure id="diff-block-truncated">
@@ -2870,7 +2912,7 @@
 <tr><td><code>pad</code></td><td>dense 4/8 · default 6/12</td></tr>
 <tr><td><code>radius</code></td><td>sm 4 · md 8 · bubble 10 · pill 999</td></tr>
 <tr><td><code>type</code></td><td>micro 11/14 · small 12/16 · body 13/20 · h2 16/24 · h1 20/28 · prose 15/26 · prose-small 13/20 · metric 18/24</td></tr>
-<tr><td><code>layout</code></td><td>sidebar 256 · sidebar-rail 48 · content 1120 · content-pad 32 · chat 720 · status-bar 24 · action-row 40 · gutter 20 · title-bar 48 · properties 300 · panel-min 360 · panel 560 · chat-min 480 · tool-output 120 · file-card 240 · thumb 56 · inline-image 360 · menu-max-height 328 · bubble-clamp 208 · head-path 12 · head-description 4 · head-tabs 16 · head-tabs-content 16 · head-content 24 · card-min 280 · policy-select 160 · swatch-min 160 · calendar-axis 48 · calendar-hour 48 · calendar-day-min 76 · calendar-cell 112 · content-min 552 · bottom-nav 56 · top-bar 44 · drawer 320</td></tr>
+<tr><td><code>layout</code></td><td>sidebar 256 · sidebar-rail 48 · content 1120 · content-pad 32 · chat 720 · status-bar 24 · action-row 40 · gutter 20 · title-bar 48 · properties 300 · panel-min 360 · panel 560 · chat-min 480 · tool-output 120 · tool-live 360 · file-card 240 · thumb 56 · inline-image 360 · menu-max-height 328 · bubble-clamp 208 · head-path 12 · head-description 4 · head-tabs 16 · head-tabs-content 16 · head-content 24 · card-min 280 · policy-select 160 · swatch-min 160 · calendar-axis 48 · calendar-hour 48 · calendar-day-min 76 · calendar-cell 112 · content-min 552 · bottom-nav 56 · top-bar 44 · drawer 320</td></tr>
 <tr><td><code>touch</code></td><td>hit 44 · float 48 · primary 48 · prominent 52 · composer 60 · row 52 · row-roomy 56 · icon 22 · icon-float 24 · sheet-inset 14 · sheet-close 30 · sheet-close-icon 14 · sheet-title 15</td></tr></table></details>
 </section>
 </main>
