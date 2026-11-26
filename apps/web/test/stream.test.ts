@@ -1095,4 +1095,47 @@ describe("openConversationStream: tool drafts", () => {
     expect(shown().drafts[0]?.tools).toEqual([{ id: "a", name: "", input: "again" }]);
     expect(read).not.toHaveBeenCalled();
   });
+
+  it("a frame tool without a base keeps the base this connection knows", () => {
+    es.emit("delta", {
+      runId: RUN,
+      step: 0,
+      delta: "tool_base",
+      callId: "a",
+      text: "o",
+      sha256: "h",
+    });
+    es.emit("draft", {
+      runId: RUN,
+      step: 0,
+      text: "",
+      thinking: "",
+      tools: [{ id: "a", name: "Write", input: "ab" }],
+    });
+    expect(shown().drafts[0]?.tools[0]?.base).toEqual({ text: "o", sha256: "h" });
+    es.emit("delta", tin("c", 2));
+    expect(shown().drafts[0]?.tools[0]).toMatchObject({ input: "abc", base: { sha256: "h" } });
+  });
+
+  it("a truncated call holds no deltas and stops the reads", async () => {
+    read.mockResolvedValue([
+      {
+        step: 0,
+        text: "",
+        thinking: "",
+        tools: [{ id: "a", name: "Write", input: "ab", inputTruncated: true }],
+      },
+    ]);
+    es.emit("delta", tin("ab", 0));
+    es.emit("delta", tin("zz", 9));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(read).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(DRAFT_SLOW_RETRY_MS * 3);
+    expect(read).toHaveBeenCalledTimes(1);
+    // later gaps of the truncated call are dropped, not held
+    es.emit("delta", tin("yy", 20));
+    await vi.advanceTimersByTimeAsync(DRAFT_SLOW_RETRY_MS * 3);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(shown().drafts[0]?.tools[0]).toMatchObject({ input: "ab", inputTruncated: true });
+  });
 });

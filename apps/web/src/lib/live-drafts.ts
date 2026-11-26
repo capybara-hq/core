@@ -83,7 +83,7 @@ function toolsOf(s: StepDraft): DraftTool[] {
 const holdsGap = (s: StepDraft): boolean =>
   s.text.held.length > 0 ||
   s.thinking.held.length > 0 ||
-  [...s.tools.values()].some((t) => t.input.held.length > 0);
+  [...s.tools.values()].some((t) => !t.inputTruncated && t.input.held.length > 0);
 
 /**
  * The live drafts of one stream connection (spec 2026-11-07-run-input-and-live-drafts §4): turns
@@ -167,9 +167,15 @@ export class LiveDrafts {
     for (const [id, t] of old?.tools ?? []) {
       const tool = s.tools.get(id);
       if (tool === undefined) s.tools.set(id, t);
-      else tool.input.held = t.input.held;
+      else {
+        tool.input.held = t.input.held;
+        if (tool.base === undefined) tool.base = t.base;
+      }
     }
-    for (const t of s.tools.values()) applyHeld(t.input);
+    for (const t of s.tools.values()) {
+      if (t.inputTruncated) t.input.held = [];
+      else applyHeld(t.input);
+    }
     this.emit({
       runId: d.runId,
       step: d.step,
@@ -236,10 +242,10 @@ export class LiveDrafts {
     }
     const tail = append(c, offset, text);
     if (tail === null) {
+      // a truncated call's draft stops short of the stream: nothing to wait for, nothing to read
+      if (tool?.inputTruncated) return;
       c.held.push(d);
       this.readAgain(d.runId, d.step, s);
-    } else if (tail !== "" && tool !== undefined) {
-      this.emit({ ...d, text: tail, offset: c.value.length - tail.length });
     } else if (tail !== "") {
       this.emit({ ...d, text: tail, offset: c.value.length - tail.length });
     }
@@ -329,6 +335,7 @@ export class LiveDrafts {
           }
           if (st.inputTruncated === true && !tool.inputTruncated) {
             tool.inputTruncated = true;
+            tool.input.held = [];
             changed = true;
           }
           if (tool.base === undefined && st.base !== undefined) {
