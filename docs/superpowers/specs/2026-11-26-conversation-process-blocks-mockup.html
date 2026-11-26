@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>对话过程层次设计</title>
+<style>
+@font-face{font-family:"Sarasa Mono SC";font-weight:400;src:url("../../../packages/design/src/fonts/SarasaMonoSC-Regular.subset.woff2") format("woff2")}
+@font-face{font-family:"Sarasa Mono SC";font-weight:700;src:url("../../../packages/design/src/fonts/SarasaMonoSC-Bold.subset.woff2") format("woff2")}
+@font-face{font-family:"Inter";font-weight:400;src:url("../../../packages/design/src/fonts/Inter-Regular.subset.woff2") format("woff2")}
+@font-face{font-family:"Inter";font-weight:700;src:url("../../../packages/design/src/fonts/Inter-Bold.subset.woff2") format("woff2")}
+@font-face{font-family:"Source Han Sans SC";font-weight:400;src:url("../../../packages/design/src/fonts/SourceHanSansSC-Regular.subset.woff2") format("woff2")}
+@font-face{font-family:"Source Han Sans SC";font-weight:700;src:url("../../../packages/design/src/fonts/SourceHanSansSC-Bold.subset.woff2") format("woff2")}
+
+:root{
+  --cb-font:"Sarasa Mono SC",ui-monospace,monospace;
+  --cb-font-prose:"Inter","Source Han Sans SC",system-ui,sans-serif;
+  --cb-font-code:"Sarasa Mono SC",ui-monospace,monospace;
+  --cb-motion-hover:120ms;--cb-motion-expand:160ms;--cb-motion-spin:800ms;
+  --cb-row-dense:28px;
+  --cb-space-1:4px;--cb-space-2:8px;--cb-space-3:12px;--cb-space-4:16px;--cb-space-5:20px;--cb-space-6:24px;--cb-space-7:32px;
+  --cb-radius-sm:4px;--cb-radius-md:8px;--cb-radius-bubble:10px;--cb-radius-pill:999px;
+  --micro:11px/14px;--small:12px/16px;--body:13px/20px;--h2:16px/24px;--prose:15px/26px;--prose-small:13px/20px;
+}
+:root[data-theme="light"]{
+  --cb-bg:#FAF9F6;--cb-panel:#FFFFFF;--cb-panel-2:#FCFBF9;--cb-raised:#FFFFFF;
+  --cb-selected:rgba(26,26,24,0.07);--cb-hover:rgba(26,26,24,0.04);
+  --cb-line-soft:#E8E7E2;--cb-line:#D9D8D2;--cb-line-strong:#B5B5AE;
+  --cb-ink:#1A1A18;--cb-muted:#5E5E5A;--cb-faint:#9A9A94;
+  --cb-accent:#CC4609;--cb-accent-tint:color-mix(in srgb,#CC4609 12%,transparent);
+  --cb-ok:#16803F;--cb-fail:#C8302A;--cb-warn:#8F6500;
+  --cb-shadow-1:0 2px 8px rgba(10,10,10,.08);
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --cb-bg:#0A0A0A;--cb-panel:#111110;--cb-panel-2:#0E0E0D;--cb-raised:#141413;
+  --cb-selected:#1F1F1D;--cb-hover:#171716;
+  --cb-line-soft:#1C1C1A;--cb-line:#2A2A28;--cb-line-strong:#3A3A37;
+  --cb-ink:#E6E6E3;--cb-muted:#8E8E89;--cb-faint:#5A5A56;
+  --cb-accent:#FF6A13;--cb-accent-tint:color-mix(in srgb,#FF6A13 12%,transparent);
+  --cb-ok:#3FD483;--cb-fail:#FF5C52;--cb-warn:#F2C14B;
+  --cb-shadow-1:0 8px 24px rgba(0,0,0,.40);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--cb-bg);color:var(--cb-ink);font-family:var(--cb-font);font:var(--body) var(--cb-font);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+svg.i{width:14px;height:14px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* ── page chrome ── */
+.bar{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:10px 20px;background:var(--cb-panel);border-bottom:1px solid var(--cb-line)}
+.bar h1{margin:0;font:600 var(--body) var(--cb-font);margin-right:auto}
+.seg{display:inline-flex;border:1px solid var(--cb-line);border-radius:var(--cb-radius-sm);overflow:hidden}
+.seg button{height:26px;padding:0 10px;font:var(--small) var(--cb-font);color:var(--cb-muted)}
+.seg button+button{border-left:1px solid var(--cb-line)}
+.seg button[aria-pressed="true"]{background:var(--cb-selected);color:var(--cb-ink);font-weight:600}
+.lbl{font:var(--small) var(--cb-font);color:var(--cb-faint);margin-right:6px}
+.stage{display:flex;gap:20px;justify-content:center;align-items:flex-start;padding:20px}
+.app{flex:0 1 860px;min-width:0;height:calc(100vh - 88px);min-height:560px;display:flex;flex-direction:column;border:1px solid var(--cb-line);border-radius:var(--cb-radius-md);background:var(--cb-bg);overflow:hidden}
+.titlebar{flex:none;height:48px;display:flex;align-items:center;gap:6px;padding:0 16px;font:var(--body) var(--cb-font)}
+.titlebar .slash{color:var(--cb-faint)}
+.thread{flex:1;overflow:auto}
+.col{max-width:720px;margin:0 auto;padding:16px 20px 40px;display:flex;flex-direction:column;gap:var(--cb-space-6)}
+.composer-wrap{flex:none;padding:0 20px 12px}
+.composer{max-width:720px;margin:0 auto;border:1px solid var(--cb-line);border-radius:var(--cb-radius-md);background:var(--cb-raised);padding:10px 8px 8px 12px;box-shadow:var(--cb-shadow-1)}
+.composer .ph{font:var(--prose) var(--cb-font-prose);color:var(--cb-faint);padding:2px 0 14px}
+.composer .row{display:flex;align-items:center;gap:16px;font:var(--small) var(--cb-font);color:var(--cb-muted)}
+.composer .row .sp{margin-left:auto}
+.send{width:32px;height:32px;border-radius:var(--cb-radius-md);background:var(--cb-selected);display:grid;place-items:center;color:var(--cb-faint)}
+.status{flex:none;height:24px;display:flex;align-items:center;gap:12px;padding:0 12px;border-top:1px solid var(--cb-line-soft);font:var(--micro) var(--cb-font);color:var(--cb-muted)}
+.status .r{margin-left:auto}
+.notes{flex:0 0 380px;height:calc(100vh - 88px);min-height:560px;overflow:auto;border:1px solid var(--cb-line);border-radius:var(--cb-radius-md);background:var(--cb-panel);padding:20px}
+.notes h2{margin:0 0 8px;font:600 var(--h2) var(--cb-font-prose)}
+.notes h3{margin:20px 0 6px;font:600 var(--body) var(--cb-font)}
+.notes p,.notes li{font:var(--prose-small) var(--cb-font-prose);color:var(--cb-muted);margin:0 0 8px}
+.notes ul{padding-left:18px;margin:0 0 8px}
+.notes b{color:var(--cb-ink);font-weight:600}
+.notes code{font:var(--small) var(--cb-font-code);color:var(--cb-ink)}
+.notes .tag{display:inline-block;font:600 var(--micro) var(--cb-font);color:var(--cb-accent);background:var(--cb-accent-tint);border-radius:var(--cb-radius-sm);padding:1px 6px;margin-left:6px;vertical-align:1px}
+.map{width:100%;border-collapse:collapse;margin:4px 0 8px}
+.map td{padding:4px 6px 4px 0;border-bottom:1px solid var(--cb-line-soft);font:var(--small) var(--cb-font);color:var(--cb-muted);vertical-align:middle}
+.map td:first-child{width:22px;color:var(--cb-muted)}
+.map td.n{color:var(--cb-ink)}
+.tiers{width:100%;border-collapse:collapse;margin:4px 0 8px}
+.tiers td:first-child{white-space:nowrap;width:3em}
+.tiers td{padding:6px 6px 6px 0;border-bottom:1px solid var(--cb-line-soft);font:var(--small) var(--cb-font);color:var(--cb-muted);vertical-align:top}
+@media (max-width:1180px){.stage{flex-direction:column;align-items:stretch}.notes{flex:none;height:auto}}
+@media (max-width:600px){.stage{padding:12px 0}.app{border-radius:0;border-left:0;border-right:0}.col{padding:12px 16px 32px}.composer-wrap{padding:0 16px 12px}.notes{border-radius:0}}
+
+/* ── thread content ── */
+.user{align-self:flex-end;max-width:75%;padding:6px 12px;border-radius:var(--cb-radius-bubble);background:var(--cb-selected);font:var(--prose) var(--cb-font-prose)}
+.turn{display:flex;flex-direction:column;gap:var(--cb-space-5)}
+.prose{font:var(--prose) var(--cb-font-prose);color:var(--cb-ink)}
+.prose>*{margin:0}.prose>*+*{margin-top:12px}
+.prose h4{font:600 var(--h2) var(--cb-font-prose);margin-top:20px}
+.prose ul{padding-left:20px}
+.prose strong{font-weight:600}
+.prose code{font:var(--small) var(--cb-font-code);background:var(--cb-selected);border-radius:var(--cb-radius-sm);padding:1px 4px}
+.files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+@media (max-width:600px){.files{grid-template-columns:1fr}}
+.fcard{display:flex;align-items:center;gap:8px;min-width:0;padding:6px 12px;border:1px solid var(--cb-line);border-radius:var(--cb-radius-md);background:var(--cb-raised);font:var(--small) var(--cb-font)}
+.fcard .badge{flex:none;font:600 var(--micro) var(--cb-font);color:var(--cb-muted);border:1px solid var(--cb-line);border-radius:var(--cb-radius-sm);padding:1px 4px}
+.fcard .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fcard .sz{flex:none;color:var(--cb-faint)}
+.fcard svg{color:var(--cb-faint)}
+
+/* shared process primitives */
+.spin{animation:spin var(--cb-motion-spin) linear infinite;color:var(--cb-accent)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.edot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--cb-fail);vertical-align:1px}
+.ell{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* A · current (as shipped) */
+.a-stack{display:flex;flex-direction:column;gap:var(--cb-space-3)}
+.a-line{display:flex;align-items:center;gap:8px;min-height:28px;font:var(--body) var(--cb-font);color:var(--cb-muted);text-align:left;width:100%}
+.a-line b{color:var(--cb-ink);font-weight:700}
+.a-line .ell{flex:0 1 auto}
+.a-box{background:var(--cb-panel);border-radius:var(--cb-radius-md);overflow:hidden}
+.a-box .a-line{padding:6px 12px;font:var(--small) var(--cb-font)}
+.a-box .a-line+.a-line{border-top:1px solid var(--cb-line-soft)}
+.a-think{padding-left:12px;border-left:2px solid var(--cb-line);font:var(--prose) var(--cb-font-prose);color:var(--cb-muted);white-space:pre-wrap}
+
+/* B / C · process line (lighter tier) */
+.p{display:flex;align-items:center;gap:8px;min-height:var(--cb-row-dense);width:100%;padding:0 6px;margin:0 -6px;width:calc(100% + 12px);border-radius:var(--cb-radius-sm);font:var(--small) var(--cb-font);color:var(--cb-faint);text-align:left;transition:background-color var(--cb-motion-hover)}
+button.p:hover{background:var(--cb-hover)}
+button.p:hover .chev{color:var(--cb-muted)}
+.p .ic{color:var(--cb-faint)}
+.p .nm{flex:none;color:var(--cb-muted);font-weight:600}
+.p .arg{flex:0 1 auto}
+.p .meta{flex:none;white-space:nowrap}
+.p .chev{flex:none;color:var(--cb-faint);transition:transform var(--cb-motion-expand)}
+.p[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.p.live .nm,.p.live .arg{color:var(--cb-ink)}
+.p .time{flex:none;margin-left:auto;color:var(--cb-faint);font-variant-numeric:tabular-nums}
+.chips{display:flex;flex:none}
+.chip{width:20px;height:20px;border-radius:var(--cb-radius-pill);background:var(--cb-panel);border:1px solid var(--cb-line-soft);display:grid;place-items:center;color:var(--cb-muted)}
+.chip+.chip{margin-left:-5px}
+.chip svg.i{width:11px;height:11px}
+.b-stack{display:flex;flex-direction:column;gap:2px}
+.b-box{margin:2px 0 4px;background:var(--cb-panel);border-radius:var(--cb-radius-md);padding:2px 12px}
+.b-box .p{margin:0;width:100%;padding:0}
+.b-box .row+.row{border-top:1px solid var(--cb-line-soft)}
+.think-body{padding:2px 0 8px 22px;font:var(--prose-small) var(--cb-font-prose);color:var(--cb-muted);white-space:pre-wrap}
+.detail{margin:2px 0 8px 22px;background:var(--cb-panel);border-radius:var(--cb-radius-md);padding:8px 12px;display:grid;grid-template-columns:4ch 1fr;gap:6px 8px;font:var(--small) var(--cb-font-code);color:var(--cb-muted)}
+.detail .k{font:600 var(--micro) var(--cb-font);color:var(--cb-faint);padding-top:1px}
+.detail pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
+.say-b{font:var(--prose) var(--cb-font-prose);color:var(--cb-ink)}
+
+/* C · merged process block with a rail */
+.proc{display:flex;flex-direction:column}
+.proc-head .sum{color:var(--cb-muted)}
+.proc-head .sum b{font-weight:600;color:var(--cb-muted)}
+.proc-head.live .sum{color:var(--cb-ink)}
+.rail{position:relative;margin-top:4px}
+.step{position:relative;display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:8px}
+.step::before{content:"";position:absolute;left:9.5px;top:0;bottom:0;width:1px;background:var(--cb-line)}
+.step:first-child::before{top:14px}
+.step:last-child::before{bottom:calc(100% - 14px)}
+.step .gut{height:28px;display:grid;place-items:center;position:relative;z-index:1}
+.step .gut>span{display:grid;place-items:center;width:20px;height:20px;border-radius:var(--cb-radius-pill);background:var(--cb-bg);color:var(--cb-faint)}
+.step .gut .dot{width:5px;height:5px;border-radius:50%;background:var(--cb-line-strong)}
+.step .p{margin:0;width:100%;padding:0 6px 0 4px;margin-left:-4px;width:calc(100% + 4px)}
+.step .say{padding:4px 0 6px;font:var(--prose-small) var(--cb-font-prose);color:var(--cb-muted)}
+.step .think-body,.step .detail{margin-left:0;padding-left:0}
+.step .detail{padding-left:12px}
+.step.cur .gut>span{color:var(--cb-accent)}
+.wait-card{margin-top:8px;border:1px solid var(--cb-line);border-radius:var(--cb-radius-md);background:var(--cb-raised);padding:12px;display:flex;flex-direction:column;gap:8px}
+.wait-card .t{font:600 var(--body) var(--cb-font)}
+.wait-card .c{font:var(--small) var(--cb-font-code);color:var(--cb-muted);background:var(--cb-panel);border-radius:var(--cb-radius-sm);padding:6px 8px}
+.wait-card .btns{display:flex;gap:8px;justify-content:flex-end}
+.btn{height:28px;padding:0 12px;border-radius:var(--cb-radius-sm);border:1px solid var(--cb-line);font:var(--small) var(--cb-font)}
+.btn.pri{background:var(--cb-accent);border-color:var(--cb-accent);color:#fff}
+.accent{color:var(--cb-accent)}
+.caption{font:var(--micro) var(--cb-font);color:var(--cb-faint);text-align:center;padding-top:4px}
+.todo{margin:6px 0 2px 28px;padding:8px 12px;border-radius:var(--cb-radius-md);background:var(--cb-panel);display:flex;flex-direction:column;gap:2px}
+.todo .h{display:flex;align-items:center;gap:8px;font:var(--micro) var(--cb-font);color:var(--cb-faint);padding-bottom:2px}
+.todo ul{list-style:none;margin:0;padding:0}
+.todo li{position:relative;padding-left:16px;font:var(--prose-small) var(--cb-font-prose);color:var(--cb-muted)}
+.todo li[data-state="done"]{color:var(--cb-faint);text-decoration:line-through}
+.todo li[data-state="current"]{color:var(--cb-ink)}
+.todo li::before{content:"";position:absolute;left:2px;top:7px;width:6px;height:6px;border-radius:50%;border:1px solid var(--cb-line-strong)}
+.todo li[data-state="done"]::before{background:var(--cb-line-strong)}
+.todo li[data-state="current"]::before{background:var(--cb-accent);border-color:var(--cb-accent)}
+.acts{border:1px solid var(--cb-line);border-radius:var(--cb-radius-md);background:var(--cb-raised);overflow:hidden}
+.acts .hd{padding:8px 12px 4px;font:var(--micro) var(--cb-font);color:var(--cb-faint)}
+.act{display:flex;align-items:center;gap:12px;padding:8px 12px}
+.act+.act{border-top:1px solid var(--cb-line-soft)}
+.act>svg{color:var(--cb-muted)}
+.act .tx{flex:1;min-width:0;display:flex;flex-direction:column}
+.act .tt{font:600 var(--body) var(--cb-font);color:var(--cb-ink)}
+.act .sb{font:var(--small) var(--cb-font);color:var(--cb-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.a-card{border:1px solid var(--cb-line);border-radius:var(--cb-radius-md);background:var(--cb-raised);padding:10px 12px;display:flex;align-items:center;gap:12px}
+.ext{display:inline-flex;align-items:center;gap:4px}
+/* ── IM (Feishu-like, neutral) ── */
+.im-split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+@media (max-width:760px){.im-split{grid-template-columns:1fr}}
+.im-col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.im-col>.cap{font:600 var(--small) var(--cb-font);color:var(--cb-muted);padding-bottom:4px;border-bottom:1px solid var(--cb-line-soft)}
+.im-col>.cap span{font-weight:400;color:var(--cb-faint)}
+.im-chat{display:flex;flex-direction:column;gap:12px;padding:12px;border-radius:var(--cb-radius-md);background:var(--cb-panel-2);border:1px solid var(--cb-line-soft)}
+.im-msg{display:grid;grid-template-columns:28px minmax(0,1fr);column-gap:8px}
+.im-av{width:28px;height:28px;border-radius:var(--cb-radius-sm);display:grid;place-items:center;font:700 var(--small) var(--cb-font)}
+.im-av.bot{background:var(--cb-avatar-capybara-ground, #FBE3D2);color:#8A4A1F}
+.im-av.me{background:var(--cb-selected);color:var(--cb-muted)}
+.im-who{font:var(--micro) var(--cb-font);color:var(--cb-faint);margin-bottom:3px;display:flex;gap:6px;align-items:center}
+.im-who{flex-wrap:wrap;row-gap:2px}
+.im-who .bot-tag,.ping{white-space:nowrap}
+.im-who .bot-tag{border:1px solid var(--cb-line);border-radius:3px;padding:0 3px}
+.im-text{display:inline-block;max-width:100%;padding:7px 10px;border-radius:var(--cb-radius-md);background:var(--cb-raised);border:1px solid var(--cb-line-soft);font:var(--prose-small) var(--cb-font-prose);color:var(--cb-ink)}
+.im-text ul{margin:4px 0 0;padding-left:18px}
+.im-card{border-radius:var(--cb-radius-md);background:var(--cb-raised);border:1px solid var(--cb-line);overflow:hidden;font:var(--prose-small) var(--cb-font-prose);color:var(--cb-ink)}
+.im-card .ch{padding:8px 12px;font-weight:600;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--cb-line-soft)}
+.im-card .ch.run{background:var(--cb-accent-tint)}
+.im-card .ch .r{margin-left:auto;font:400 var(--micro) var(--cb-font);color:var(--cb-faint)}
+.im-card .cb{padding:8px 12px;display:flex;flex-direction:column;gap:8px}
+.im-card .sec{font:var(--micro) var(--cb-font);color:var(--cb-faint)}
+.im-card .ln{font:var(--small) var(--cb-font);color:var(--cb-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.im-card .ln b{color:var(--cb-ink);font-weight:600}
+.im-card .lk{color:var(--cb-accent);text-decoration:none;font:var(--small) var(--cb-font)}
+.im-card .ft{padding:6px 12px;border-top:1px solid var(--cb-line-soft);display:flex;gap:8px;align-items:center;font:var(--small) var(--cb-font)}
+.im-card .btns{display:flex;gap:8px;padding:0 12px 10px}
+.im-card .todo{margin:0;padding:0;background:none}
+.im-file{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--cb-radius-md);background:var(--cb-raised);border:1px solid var(--cb-line);font:var(--small) var(--cb-font)}
+.im-file .ext{width:28px;height:32px;border-radius:3px;background:var(--cb-ok);color:#fff;display:grid;place-items:center;font:700 9px/1 var(--cb-font)}
+.im-file .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.im-file .z{color:var(--cb-faint)}
+.ping{display:inline-flex;align-items:center;gap:4px;font:var(--micro) var(--cb-font);border-radius:3px;padding:0 4px}
+.ping.new{color:var(--cb-accent);background:var(--cb-accent-tint)}
+.ping.edit{color:var(--cb-muted);background:var(--cb-selected)}
+.im-quiet{font:var(--micro) var(--cb-font);color:var(--cb-faint);text-align:center;padding:4px 0}
+</style>
+</head>
+<body>
+<div class="bar">
+  <h1>对话过程：图标 · 合并 · 层次</h1>
+  <span><span class="lbl">方案</span><span class="seg" id="v">
+    <button data-v="A">现状</button><button data-v="B">一 · 图标+层次</button><button data-v="C">二 · 过程合并（推荐）</button><button data-v="IM">飞书适配</button>
+  </span></span>
+  <span><span class="lbl">状态</span><span class="seg" id="r">
+    <button data-r="running">进行中</button><button data-r="waiting">等待批准</button><button data-r="done">已完成</button>
+  </span></span>
+  <span><span class="lbl">主题</span><span class="seg" id="t">
+    <button data-t="light">亮</button><button data-t="dark">暗</button>
+  </span></span>
+</div>
+
+<div class="stage">
+  <section class="app" aria-label="对话页">
+    <div class="titlebar" id="tb"><span class="slash">/</span><span>发票扫描与成品油匹配</span><span id="ic-down"></span></div>
+    <div class="thread"><div class="col" id="thread" style="max-width:var(--thread-max,720px)"></div></div>
+    <div class="composer-wrap"><div class="composer">
+      <div class="ph">回复…</div>
+      <div class="row"><span id="ic-plus"></span><span>MacBook-Pro.local</span><span>DeepSeek-V4.1-Flash · 高</span>
+        <span class="sp" id="mode"></span><span class="send" id="ic-send"></span></div>
+    </div></div>
+    <div class="status"><span>b2720b</span><span>第 1 轮 · <span id="elapsed">已用 2 分 43 秒</span></span><span class="r" id="state">空闲</span></div>
+  </section>
+
+  <aside class="notes" id="notes"></aside>
+</div>
+
+<script>
+/* lucide 1.x paths; the ones marked NEW are not yet in packages/design/src/icons */
+const P = {
+  think:   ['<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>'], // NEW lightbulb
+  command: ['<path d="M12 19h8"/><path d="m4 17 6-6-6-6"/>'], // NEW terminal
+  read:    ['<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>'],
+  edit:    ['<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>'],
+  search:  ['<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'],
+  web:     ['<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>'],
+  skill:   ['<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/>'],
+  connector:['<path d="M12 22v-5"/><path d="M15 8V2"/><path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"/><path d="M9 8V2"/>'],
+  extension:['<path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/>'],
+  memory:  ['<path d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"/>'], // NEW bookmark
+  task:    ['<path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/>'],
+  agent:   ['<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>'],
+  more:    ['<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>'],
+  hand:    ['<path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>'],
+  right:   ['<path d="m9 18 6-6-6-6"/>'],
+  extlink: ['<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>'],
+  pin:     ['<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>'],
+  down:    ['<path d="m6 9 6 6 6-6"/>'],
+  spinner: ['<path d="M21 12a9 9 0 1 1-6.219-8.56"/>'],
+  plus:    ['<path d="M5 12h14"/><path d="M12 5v14"/>'],
+  up:      ['<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>'],
+  lockopen:['<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>'],
+};
+const ic = (n, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n][0]}</svg>`;
+const spin = () => ic("spinner", "spin");
+document.getElementById("ic-down").innerHTML = ic("down");
+document.getElementById("ic-plus").innerHTML = ic("plus");
+document.getElementById("ic-send").innerHTML = ic("up");
+document.getElementById("mode").innerHTML = `<span style="display:inline-flex;gap:6px;align-items:center">${ic("lockopen")}自动模式 ${ic("down")}</span>`;
+
+/* ── the scenario: one turn, as the event log would give it ── */
+const STEPS = [
+  { t: "think", s: 3, text: "用户要两件事：把 12 页扫描件识别成表，再和成品油导出表按票号匹配。仓库里有 invoice-ocr 技能，先看它的约定，避免自己猜字段。" },
+  { t: "say", text: "先读一下发票识别技能的说明，再逐页识别。" },
+  { t: "tool", k: "skill", nm: "技能", arg: "invoice-ocr", meta: "已加载" },
+  { t: "tool", k: "read", nm: "Read", arg: "skills/invoice-ocr/SKILL.md", meta: "第 1–28 行",
+    d: { IN: "skills/invoice-ocr/SKILL.md", OUT: "# invoice-ocr\n逐页 OCR → 票号 / 开票日期 / 价税合计 / 货物名称 …" } },
+  { t: "tool", k: "connector", nm: "飞书云文档", tool: "search_docs", arg: "成品油经销企业发票信息汇总", meta: "待配置",
+    handoff: { title: "配置飞书云文档连接器", sub: "缺少应用凭据 · 配好后我可以直接读云端的导出表", act: "去配置" } },
+  { t: "think", s: 4, text: "飞书连接器待配置，不阻塞：用户上传的导出表本地也有一份，先用本地的。技能要求先用 pdftoppm 拆页再识别；识别完必须做合计校验和重号检查。" },
+  { t: "tool", k: "command", nm: "Bash", arg: "逐页识别 12 页", meta: "退出码 0",
+    d: { IN: "pdftoppm -r 200 invoices.pdf p && ocr-batch p-*.ppm > ocr.json", OUT: "12 pages · 12 invoices · 0 warnings" } },
+  { t: "tool", k: "command", nm: "Bash", arg: "合计与重号检查", meta: "已自动批准：敏感命令", live: true, needsApproval: true,
+    d: { IN: "python check_totals.py ocr.json", OUT: "sum=1,981,810.00 · duplicates=0" } },
+  { t: "think", s: 2, text: "合计一致，没有重号。接着读导出表做匹配。" },
+  { t: "tool", k: "read", nm: "Read", arg: "uploads/成品油导出表.xlsx", meta: "239 行" },
+  { t: "tool", k: "edit", nm: "Write", arg: "发票识别结果.xlsx", meta: "6.9 KB" },
+  { t: "tool", k: "command", nm: "Bash", arg: "匹配成品油导出表", meta: "239 → 12 行" },
+  { t: "say", text: "匹配完成，把这批的结论记进项目记忆，下次续做时不用重算。" },
+  { t: "tool", k: "memory", nm: "记忆", tool: "edit", arg: "project/invoice-batch-2026-11.md", err: "正文 9375 字节，超过 8192 上限" },
+  { t: "tool", k: "memory", nm: "记忆", tool: "edit", arg: "project/invoice-batch-2026-11.md", meta: "+18 −4" },
+  { t: "tool", k: "extension", nm: "平台", tool: "share_file", arg: "匹配结果.xlsx → 财务组", meta: "已生成链接",
+    handoff: { title: "确认分享范围", sub: "匹配结果.xlsx · 分享给「财务组」前需要你在文件页确认", act: "去确认" } },
+  { t: "think", s: 6, text: "两个文件都生成了，任务列表都完成，可以汇报数字了。" },
+  { t: "tool", k: "task", nm: "待办", arg: "4 / 4 已完成" },
+];
+/* the todo plugin's list: `at` is the step index whose end completes the item */
+const TODO = [
+  { text: "逐页识别 12 页发票", at: 6 },
+  { text: "合计与重号检查", at: 7 },
+  { text: "匹配成品油导出表", at: 11 },
+  { text: "记入项目记忆并分享结果", at: 15 },
+];
+const LIVE_AT = STEPS.findIndex((s) => s.live);
+const KIND = { think: "思考", command: "命令", read: "读取", edit: "编辑", search: "搜索", web: "网页", skill: "技能", connector: "连接器", extension: "扩展", memory: "记忆", task: "任务", agent: "子智能体" };
+
+const S = { v: "C", r: "done", t: "light", open: new Set() };
+const toggle = (id) => { S.open.has(id) ? S.open.delete(id) : S.open.add(id); render(); };
+window.toggle = toggle;
+
+function visibleSteps() {
+  if (S.r === "done") return STEPS.map((s, i) => ({ ...s, i, live: false }));
+  return STEPS.slice(0, LIVE_AT + 1).map((s, i) => ({ ...s, i, live: i === LIVE_AT }));
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const label = (s) => (s.tool ? `${s.nm} [${s.tool}]` : s.nm);
+const waiting = (s) => s.live && S.r === "waiting";
+
+/* ── pieces shared by B and C ── */
+function pLine(s, { inBox = false } = {}) {
+  const id = `s${s.i}`;
+  const open = S.open.has(id);
+  const icon = s.t === "think" ? "think" : s.k;
+  if (s.t === "think") {
+    if (s.live) return `<div class="p live">${spin()}<span class="nm" style="font-weight:400">思考中</span></div>`;
+    return `<button class="p" aria-expanded="${open}" onclick="toggle('${id}')">${ic("think", "ic")}<span>思考了 ${s.s} 秒</span>${ic("right", "chev")}</button>` +
+      (open ? `<div class="think-body">${esc(s.text)}</div>` : "");
+  }
+  const lead = s.live && !waiting(s) ? spin() : waiting(s) ? ic("hand", "ic accent") : ic(icon, "ic");
+  const tail = waiting(s)
+    ? `<span class="meta accent">· 等待你批准</span>`
+    : s.live
+      ? `<span class="time">0:42</span>`
+      : s.err
+        ? `<span class="edot" title="调用返回了错误"></span><span class="ell">· ${esc(s.err)}</span>`
+        : s.meta ? `<span class="meta">· ${esc(s.meta)}</span>` : "";
+  const has = !!s.d && !s.live;
+  const inner = `${lead}<span class="nm">${esc(label(s))}</span><span class="arg ell">${esc(s.arg)}</span>${tail}${has ? ic("right", "chev") : ""}`;
+  const line = has
+    ? `<button class="p${s.live ? " live" : ""}" aria-expanded="${open}" onclick="toggle('${id}')">${inner}</button>`
+    : `<div class="p${s.live ? " live" : ""}">${inner}</div>`;
+  const det = has && open ? `<div class="detail">${Object.entries(s.d).map(([k, v]) => `<span class="k">${k}</span><pre>${esc(v)}</pre>`).join("")}</div>` : "";
+  return inBox ? `<div class="row">${line}${det}</div>` : line + det;
+}
+function chips(steps) {
+  const kinds = [];
+  for (const s of steps) { const k = s.t === "think" ? "think" : s.t === "tool" ? s.k : null; if (k && !kinds.includes(k)) kinds.push(k); }
+  return `<span class="chips">${kinds.slice(0, 6).map((k) => `<span class="chip" title="${KIND[k]}">${ic(k)}</span>`).join("")}</span>`;
+}
+function countText(tools) {
+  const by = {};
+  for (const s of tools) by[s.k] = (by[s.k] || 0) + 1;
+  const parts = [];
+  if (by.command) parts.push(`运行 ${by.command} 个命令`);
+  if (by.read) parts.push(`读取 ${by.read} 个文件`);
+  if (by.edit) parts.push(`编辑 ${by.edit} 个文件`);
+  if (by.skill) parts.push(`使用 ${by.skill} 个技能`);
+  if (by.connector) parts.push(`调用 ${by.connector} 个连接器工具`);
+  if (by.memory) parts.push(`写入 ${by.memory} 次记忆`);
+  if (by.task) parts.push("更新任务列表");
+  const errs = tools.filter((s) => s.err).length;
+  return parts.join("，") + (errs ? ` <span class="edot" title="${errs} 个调用返回了错误"></span> ${errs}` : "");
+}
+function attentionCard() {
+  return `<div class="wait-card"><div class="t">${ic("hand", "accent")} 批准运行命令？</div>
+    <div class="c">python check_totals.py ocr.json</div>
+    <div class="btns"><button class="btn">拒绝</button><button class="btn">本次对话都允许</button><button class="btn pri">允许</button></div></div>`;
+}
+
+
+function todoState(steps) {
+  const last = S.r === "done" ? STEPS.length : LIVE_AT; // steps before this index have ended
+  let cur = false;
+  return TODO.map((it) => {
+    if (last > it.at) return { ...it, state: "done" };
+    if (!cur) { cur = true; return { ...it, state: "current" }; }
+    return { ...it, state: "todo" };
+  });
+}
+function todoBox(steps) {
+  const items = todoState(steps);
+  const n = items.filter((i) => i.state === "done").length;
+  return `<div class="todo"><div class="h">${ic("task")}待办 ${n} / ${items.length}<span style="margin-left:auto">${ic("pin")}</span></div><ul>${items.map((i) => `<li data-state="${i.state}">${esc(i.text)}</li>`).join("")}</ul></div>`;
+}
+function actsBox(steps) {
+  const hs = steps.filter((s) => s.handoff && !s.live);
+  if (!hs.length) return "";
+  return `<div class="acts">${hs.length > 1 ? `<div class="hd">${hs.length} 项需要你处理 · 不阻塞，我已继续</div>` : ""}${hs.map((s) => `<div class="act">${ic(s.k)}<div class="tx"><span class="tt">${esc(s.handoff.title)}</span><span class="sb">${esc(s.handoff.sub)}</span></div><button class="btn ext">${esc(s.handoff.act)} ${ic("extlink")}</button></div>`).join("")}</div>`;
+}
+function aCards(tools) {
+  return tools.filter((s) => s.handoff && !s.live).map((s) => `<div class="a-card">${ic("extlink")}<div class="tx" style="flex:1"><div style="font:600 var(--body) var(--cb-font)">${esc(s.handoff.title)}</div><div style="font:var(--small) var(--cb-font);color:var(--cb-muted)">${esc(s.handoff.sub)}</div></div><button class="btn">${esc(s.handoff.act)}</button></div>`).join("");
+}
+
+/* chunk the step list the way timeline.ts does today: say ends a group */
+function chunks(steps) {
+  const out = []; let tools = [];
+  const flush = () => { if (tools.length) out.push({ type: "tools", tools }); tools = []; };
+  for (const s of steps) {
+    if (s.t === "tool") tools.push(s);
+    else { flush(); out.push({ type: s.t, s }); }
+  }
+  flush();
+  return out;
+}
+
+/* ── A · as shipped ── */
+function renderA(steps) {
+  const h = [];
+  for (const c of chunks(steps)) {
+    if (c.type === "say") h.push(`<div class="prose"><p>${esc(c.s.text)}</p></div>`);
+    else if (c.type === "think") {
+      const id = `s${c.s.i}`;
+      h.push(`<button class="a-line" onclick="toggle('${id}')">思考了 ${c.s.s} 秒 ${ic("right")}</button>`);
+      if (S.open.has(id)) h.push(`<div class="a-think">${esc(c.s.text)}</div>`);
+    } else if (c.tools.length === 1) {
+      const s = c.tools[0];
+      h.push(`<div class="a-line">${s.live && !waiting(s) ? spin() : ""}<b>${esc(label(s))}</b><span class="ell">${esc(s.arg)}</span>${s.err ? `<span class="edot"></span><span class="ell">· ${esc(s.err)}</span>` : s.meta ? `<span>· ${esc(s.meta)}</span>` : ""}${ic("right")}</div>`);
+    } else {
+      const id = `g${c.tools[0].i}`;
+      const live = c.tools.some((s) => s.live);
+      if (live || S.open.has(id)) {
+        h.push(`<button class="a-line" onclick="toggle('${id}')">${live ? spin() : ""}${live ? "正在使用" : "已使用"} ${c.tools.length} 个工具 ${live ? "" : ic("down")}</button>`);
+        h.push(`<div class="a-box">${c.tools.map((s) => `<div class="a-line">${s.live && !waiting(s) ? spin() : ""}<b>${esc(label(s))}</b><span class="ell">${esc(s.arg)}</span>${waiting(s) ? `<span class="accent">· 等待你批准</span>` : s.meta ? `<span>· ${esc(s.meta)}</span>` : ""}</div>`).join("")}</div>`);
+      } else h.push(`<button class="a-line" onclick="toggle('${id}')">已使用 ${c.tools.length} 个工具 ${ic("right")}</button>`);
+    }
+    if (c.type === "tools") h.push(aCards(c.tools));
+  }
+  if (S.r === "waiting") h.push(attentionCard());
+  return `<div class="a-stack">${h.join("")}</div>`;
+}
+
+/* ── B · icons + lighter tier, same chunking ── */
+function renderB(steps) {
+  const h = [];
+  let buf = [];
+  const flushBuf = () => { if (buf.length) h.push(`<div class="b-stack">${buf.join("")}</div>`); buf = []; };
+  for (const c of chunks(steps)) {
+    if (c.type === "say") { flushBuf(); h.push(`<div class="say-b">${esc(c.s.text)}</div>`); continue; }
+    if (c.type === "think") { buf.push(pLine(c.s)); continue; }
+    const cards = aCards(c.tools);
+    if (c.tools.length === 1) { buf.push(pLine(c.tools[0])); if (cards) { flushBuf(); h.push(cards); } continue; }
+    const id = `g${c.tools[0].i}`;
+    const live = c.tools.some((s) => s.live);
+    const open = live || S.open.has(id);
+    const head = `${live ? spin() : chips(c.tools)}<span style="color:var(--cb-muted)">${live ? "正在使用" : "已使用"} ${c.tools.length} 个工具</span><span class="ell">· ${countText(c.tools)}</span>${live ? "" : ic("right", "chev")}`;
+    buf.push(live ? `<div class="p live">${head}</div>` : `<button class="p" aria-expanded="${open}" onclick="toggle('${id}')">${head}</button>`);
+    if (open) buf.push(`<div class="b-box">${c.tools.map((s) => pLine(s, { inBox: true })).join("")}</div>`);
+    if (cards) { flushBuf(); h.push(cards); }
+  }
+  flushBuf();
+  if (S.r === "waiting") h.push(attentionCard());
+  return `<div style="display:flex;flex-direction:column;gap:16px">${h.join("")}</div>`;
+}
+
+/* ── C · one process block per stretch before the answer, with a rail ── */
+function stepRow(s) {
+  if (s.t === "say") return `<div class="step"><div class="gut"><span><span class="dot"></span></span></div><div class="say">${esc(s.text)}</div></div>`;
+  const icon = s.t === "think" ? "think" : s.k;
+  const gut = s.live && !waiting(s) ? spin() : waiting(s) ? ic("hand") : ic(icon);
+  // the gutter carries the icon, so the line itself drops its own leading icon
+  const line = pLine(s).replace(/^(<(?:button|div)[^>]*>)(<svg[^>]*>.*?<\/svg>)/, "$1");
+  return `<div class="step${s.live ? " cur" : ""}"><div class="gut"><span>${gut}</span></div><div>${line}</div></div>`;
+}
+function renderC(steps) {
+  const tools = steps.filter((s) => s.t === "tool");
+  const thinks = steps.filter((s) => s.t === "think").length;
+  const errs = tools.filter((s) => s.err).length;
+  const running = S.r !== "done";
+  const cur = steps.find((s) => s.live);
+  const id = "proc";
+  const open = running || S.open.has(id);
+  let head;
+  if (running) {
+    head = `<div class="p proc-head live">${S.r === "waiting" ? ic("hand", "accent") : spin()}<span class="sum ell">${S.r === "waiting" ? `<span class="accent">等待你批准</span> · ` : "正在运行 · "}${esc(label(cur))} ${esc(cur.arg)}</span><span class="time">${S.r === "waiting" ? "" : "已处理 0:42"}</span></div>`;
+  } else {
+    head = `<button class="p proc-head" aria-expanded="${open}" onclick="toggle('${id}')">${chips(steps)}<span class="sum ell"><b>已处理 2 分 43 秒</b> · 待办 4/4 · 思考 ${thinks} 次 · ${tools.length} 个工具${errs ? ` <span class="edot" title="${errs} 个调用返回了错误"></span> ${errs}` : ""}</span>${ic("right", "chev")}</button>`;
+  }
+  let body = "";
+  if (open) {
+    let shown = steps;
+    let fold = "";
+    if (running && !S.open.has("tail") && steps.length > 4) {
+      shown = steps.slice(-4);
+      fold = `<div class="step"><div class="gut"><span>${ic("more")}</span></div><div><button class="p" onclick="toggle('tail')"><span>前 ${steps.length - 4} 步</span>${ic("right", "chev")}</button></div></div>`;
+    }
+    body = `<div class="rail">${fold}${shown.map(stepRow).join("")}</div>`;
+  }
+  const pinned = running ? todoBox(steps) : "";
+  return `<div class="proc">${head}${pinned}${body}</div>${S.r === "waiting" ? attentionCard() : ""}${actsBox(steps)}`;
+}
+
+/* ── the rest of the turn ── */
+const FILES = `<div class="files">
+  <div class="fcard"><span class="badge">XLSX</span><span class="nm">发票识别结果.xlsx</span><span class="sz">6.9 KB</span>${ic("right")}</div>
+  <div class="fcard"><span class="badge">XLSX</span><span class="nm">成品油经销企业发票信息汇总表_匹配结果.xlsx</span><span class="sz">6.2 KB</span>${ic("right")}</div></div>`;
+const ANSWER = `<div class="prose"><p>两个文件都已交付。</p><h4>数字</h4><ul>
+  <li>PDF 页数：12（<code>pdfinfo</code> 报 12，渲染也是 12，一一对应）</li>
+  <li>有效票数：<strong>12</strong>（每页都有“成品油”，票号与价税合计齐全，无重号，全部 20 位以 2 开头）</li>
+  <li>匹配行数：<strong>12</strong>（导出表 239 行 → 保留 12 行，合计价税 1,981,810.00，与票面合计分毫相等）</li>
+  <li>有成品油但导出表里没有的票：<strong>0 张</strong>；票号命中但金额不符：<strong>0 张</strong></li></ul></div>`;
+
+
+/* ── IM view: the same run delivered to a Feishu-like chat, today vs adapted ── */
+const NEW = `<span class="ping new">新消息 · 通知</span>`;
+const EDIT = (n) => `<span class="ping edit">原地更新${n ? ` · 第 ${n} 次` : ""} · 不通知</span>`;
+const imBot = (body, tag = NEW, t = "18:32") => `<div class="im-msg"><div class="im-av bot">C</div><div><div class="im-who">Capybara <span class="bot-tag">机器人</span> ${t} ${tag}</div>${body}</div></div>`;
+const imMe = `<div class="im-msg"><div class="im-av me">我</div><div><div class="im-who">我 18:30</div><div class="im-text">把这 12 页发票扫描件识别成表，再和成品油导出表匹配，出两个表。</div></div></div>`;
+const imFile = (n, z) => `<div class="im-file"><span class="ext">XLSX</span><span class="n">${n}</span><span class="z">${z}</span></div>`;
+const imLinkCard = (h) => `<div class="im-card"><div class="cb"><div style="font-weight:600">${esc(h.title)}</div><div class="ln">${esc(h.sub)}</div></div><div class="btns"><button class="btn">${esc(h.act)}</button></div></div>`;
+const imApproval = `<div class="im-card"><div class="ch">批准运行命令？<span class="r">Bash</span></div><div class="cb"><div class="ln" style="font-family:var(--cb-font-code)">python check_totals.py ocr.json</div></div><div class="btns"><button class="btn">拒绝</button><button class="btn pri">允许</button></div></div>`;
+const imAnswer = `<div class="im-text"><p style="margin:0">两个文件都已交付。</p><ul><li>有效票数 <b>12</b>，无重号</li><li>匹配 <b>12</b> 行，合计价税 1,981,810.00，与票面一致</li><li>导出表里缺的票 0 张；金额不符 0 张</li></ul></div>`;
+
+function imToday(steps) {
+  const h = [imMe];
+  for (const s of steps) {
+    if (s.t === "say") h.push(imBot(`<div class="im-text">${esc(s.text)}</div>`));
+    if (s.handoff && !s.live) h.push(imBot(imLinkCard(s.handoff)));
+  }
+  if (S.r === "waiting") h.push(imBot(imApproval));
+  if (S.r === "done") {
+    h.push(imBot(imAnswer, NEW, "18:35"));
+    h.push(imBot(imFile("发票识别结果.xlsx", "6.9 KB"), NEW, "18:35"));
+    h.push(imBot(imFile("成品油经销企业发票信息汇总表_匹配结果.xlsx", "6.2 KB"), NEW, "18:35"));
+  } else h.push(`<div class="im-quiet">…此后没有动静，看不出在做什么…</div>`);
+  const n = h.length - 1 - (S.r === "done" ? 0 : 1);
+  return { html: h.join(""), n };
+}
+
+function imProgress(steps) {
+  const done = S.r === "done";
+  if (done)
+    return `<div class="im-card"><div class="ch">已处理 2 分 43 秒<span class="r">待办 4/4 · 12 个工具 · 1 个调用出错</span></div>
+      <div class="ft"><a class="lk" href="#">在网页查看完整过程 ↗</a></div></div>`;
+  const items = todoState(steps);
+  const n = items.filter((i) => i.state === "done").length;
+  const recent = steps.filter((s) => s.t === "tool").slice(-3);
+  const hs = steps.filter((s) => s.handoff && !s.live);
+  const waitingNow = S.r === "waiting";
+  return `<div class="im-card">
+    <div class="ch run">${waitingNow ? "等待你批准" : "正在处理"}<span class="r">已用 0:42</span></div>
+    <div class="cb">
+      <div class="sec">待办 ${n} / ${items.length}</div>
+      <div class="todo"><ul>${items.map((i) => `<li data-state="${i.state}">${esc(i.text)}</li>`).join("")}</ul></div>
+      <div class="sec">最近步骤</div>
+      ${recent.map((s) => `<div class="ln">${s.live ? "▸ " : "· "}<b>${esc(label(s))}</b> ${esc(s.arg)}${s.live ? (waitingNow ? " · 等待批准" : " · 运行中") : ""}</div>`).join("")}
+      ${hs.length ? `<div class="sec">需要你处理 · 不阻塞</div>${hs.map((s) => `<div class="ln"><a class="lk" href="#">${esc(s.handoff.title)} ↗</a></div>`).join("")}` : ""}
+    </div>
+    <div class="ft"><a class="lk" href="#">在网页查看完整过程 ↗</a></div></div>`;
+}
+
+function imAdapted(steps) {
+  const done = S.r === "done";
+  const edits = done ? 23 : S.r === "waiting" ? 9 : 8;
+  const h = [imMe, imBot(imProgress(steps), `<span class="ping new">首发通知</span> ${EDIT(edits)}`, "18:30")];
+  if (S.r === "waiting") h.push(imBot(imApproval));
+  if (done) {
+    h.push(imBot(imAnswer, NEW, "18:35"));
+    h.push(imBot(imFile("发票识别结果.xlsx", "6.9 KB"), `<span class="ping edit">文件 · 不单独通知</span>`, "18:35"));
+    h.push(imBot(imFile("成品油经销企业发票信息汇总表_匹配结果.xlsx", "6.2 KB"), `<span class="ping edit">文件 · 不单独通知</span>`, "18:35"));
+    const hs = STEPS.filter((s) => s.handoff);
+    h.push(imBot(`<div class="im-card"><div class="ch">需要你处理（${hs.length}）<span class="r">不阻塞</span></div><div class="cb">${hs.map((s) => `<div><div style="font-weight:600">${esc(s.handoff.title)}</div><div class="ln">${esc(s.handoff.sub)}</div></div>`).join("")}</div><div class="btns">${hs.map((s) => `<button class="btn">${esc(s.handoff.act)}</button>`).join("")}</div></div>`, `<span class="ping edit">随答复一起 · 不单独通知</span>`, "18:35"));
+  }
+  return h.join("");
+}
+
+function renderIM(steps) {
+  const today = imToday(steps);
+  return `<div class="im-split">
+    <div class="im-col"><div class="cap">现状 <span>· 已发 ${today.n} 条，${S.r === "done" ? "其中 2 条是中途旁白" : "中途旁白各占一条"}</span></div><div class="im-chat">${today.html}</div></div>
+    <div class="im-col"><div class="cap">适配后 <span>· 一张进度卡片原地更新</span></div><div class="im-chat">${imAdapted(steps)}</div></div>
+  </div>`;
+}
+
+function render() {
+  document.documentElement.dataset.theme = S.t;
+  for (const [g, key] of [["v", "v"], ["r", "r"], ["t", "t"]])
+    document.querySelectorAll(`#${g} button`).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset[key] === S[key])));
+  const steps = visibleSteps();
+  const done = S.r === "done";
+  const im = S.v === "IM";
+  document.querySelector(".composer-wrap").style.display = im ? "none" : "";
+  document.querySelector(".status").style.display = im ? "none" : "";
+  document.getElementById("tb").innerHTML = im
+    ? `<span>飞书 · 与 Capybara 机器人的单聊</span><span class="lbl" style="margin-left:auto">示意，非飞书真实样式</span>`
+    : `<span class="slash">/</span><span>发票扫描与成品油匹配</span>${ic("down")}`;
+  document.getElementById("thread").style.setProperty("--thread-max", im ? "none" : "720px");
+  if (im) { document.getElementById("thread").innerHTML = renderIM(steps); document.getElementById("notes").innerHTML = NOTES.IM; return; }
+  const proc = S.v === "A" ? renderA(steps) : S.v === "B" ? renderB(steps) : renderC(steps);
+  document.getElementById("thread").innerHTML =
+    `<div class="user">把这 12 页发票扫描件识别成表，再和成品油导出表匹配，出两个表。</div>
+     <div class="turn">${proc}${done ? FILES + ANSWER : ""}</div>`;
+  document.getElementById("elapsed").textContent = done ? "已用 2 分 43 秒" : "已用 0 分 42 秒";
+  document.getElementById("state").innerHTML = done ? "空闲" : S.r === "waiting" ? `<span class="accent">等待批准</span>` : "运行中";
+  document.getElementById("notes").innerHTML = NOTES[S.v];
+}
+
+const MAP = [["think", "思考", "lightbulb · 新增"], ["command", "Bash / 后台任务", "terminal · 新增"], ["read", "Read", "file-text"], ["edit", "Write / Edit", "square-pen"], ["search", "Grep / Glob / 工具检索", "search"], ["web", "WebSearch / WebFetch", "globe"], ["skill", "技能", "skills"], ["connector", "连接器工具", "connector（插件有图标则用插件的）"], ["extension", "扩展工具", "extension（同上）"], ["memory", "记忆（插件工具）", "插件自带图标"], ["task", "任务列表", "list-checks"], ["agent", "子智能体", "agent"]];
+const mapTable = `<table class="map">${MAP.map(([k, n, s]) => `<tr><td>${ic(k)}</td><td class="n">${n}</td><td>${s}</td></tr>`).join("")}</table>`;
+const TIERS = `<table class="tiers">
+  <tr><td style="color:var(--cb-ink)">正文</td><td>prose 15/26 · Inter + 思源黑体 · <b>ink</b></td></tr>
+  <tr><td style="color:var(--cb-muted)">过程</td><td>small 12/16 · Sarasa Mono · 名字 600 <b style="color:var(--cb-muted)">muted</b>，参数与附注 faint（现在名字是 ink 700）</td></tr>
+  <tr><td style="color:var(--cb-faint)">图标</td><td>14 px · faint；运行中 spinner accent，等人时 hand accent；错误仍是 6 px fail 点</td></tr>
+  <tr><td>间距</td><td>过程行之间 2–4 px 紧排；过程与正文之间 20 px。层次靠<b>字号 + 字体 + 色阶 + 间距</b>四件事同时拉开，不靠加框</td></tr></table>`;
+
+const NOTES = {
+  IM: `<h2>飞书适配</h2>
+    <p>同一次运行投递到飞书。左边是现在的出站逻辑，右边是适配后。“状态”开关同样可切进行中 / 等待批准 / 已完成。</p>
+    <h3>现在的问题</h3><ul>
+    <li><b>中途旁白各发一条</b>：<code>finalize</code> 把每一步的文字都当成一条消息，不看这一步还有没有工具调用</li>
+    <li><b>过程不可见</b>：思考、工具都不发；长任务中间只剩零星旁白</li>
+    <li><b>todo 不发</b>：出站只认 handoff 这一种工具结果卡片</li>
+    <li><b>跳转链接每个一条</b>，文件每个一条，每条都通知</li></ul>
+    <h3>适配后</h3><ul>
+    <li><b>一次运行一张进度卡片</b>：首发时通知一次，之后原地更新（按现有流式草稿的节流间隔）。内容：状态 + 计时、todo、最近 3 步、“需要你处理”的链接、“在网页查看完整过程”</li>
+    <li><b>旁白不再单独发</b>：同一步带工具调用块的文字是旁白，只进进度卡片（显示为最近步骤的一行或不显示）</li>
+    <li><b>结束时卡片缩成一行摘要</b>，链接到网页上的这次运行</li>
+    <li><b>要通知到人的发新消息</b>：批准 / 提问 / 连接卡片、最终答复。编辑不会推送通知，所以这些不能塞进进度卡片</li>
+    <li><b>答复之后</b>：文件照常发原生文件消息；不阻塞的链接合成一张“需要你处理（N）”卡片</li></ul>
+    <h3>渠道差异</h3><ul>
+    <li><b>不能编辑</b>（<code>features.edit: false</code>）：不发进度卡片，开始时一句“已开始处理”，之后只在 todo 一项完成时发里程碑（限频），其余同上</li>
+    <li><b>不支持卡片</b>（<code>cards: false</code>）：照旧由 <code>renderCardAsText</code> 退成文本</li>
+    <li><b>群聊</b>：默认“简洁”（只有摘要和答复），渠道连接上可选 详细 / 简洁 / 关闭</li>
+    <li>卡片里不用图标：飞书卡片能用的图标有限，统一用文字；颜色只在头部状态条上</li></ul>
+    <h3>实现要点</h3><ul>
+    <li>进度卡片是每次运行的第二条可编辑消息：<code>channel_deliveries</code> 加字段记它的 message id，更新走现有幂等键</li>
+    <li>更新频率受平台限制：沿用草稿的节流间隔，状态变化（todo、等待批准）立即推一次</li>
+    <li>编辑被拒（消息太旧等）时退回发新消息，同现有草稿逻辑</li>
+    <li>卡片结构走 SDK 的卡片规格（新增 progress 卡片种类），各渠道插件按能力渲染：这是 SDK 公共 API 变更</li></ul>`,
+  A: `<h2>现状</h2>
+    <p>按 §6.16.8：连续工具成组，<b>正文、思考都会切断工具组</b>，所以一个回合里是“思考 / 工具 / 思考 / 工具 / 旁白 / 工具…”交替。</p>
+    <ul><li>过程行用 13 px 等宽、名字 ink 700，和正文的权重太接近，读起来平铺</li>
+    <li>没有类别信号：Bash、技能、记忆长得一样，只能读字</li>
+    <li>中途旁白（“先读一下说明…”）用正文样式，和最终答复同级</li></ul>
+    <p>切到上方的“一 · 图标+层次”“二 · 过程合并”对比；“状态”可看进行中与等待批准。</p>`,
+  B: `<h2>方案一 · 图标 + 层次</h2>
+    <p>只改样式，<b>不改分组</b>。改动最小，<code>timeline.ts</code> 不动。</p>
+    <h3>图标按“种类”而不是工具名</h3>${mapTable}
+    <p>单色，不做每类一色：终端风格下色彩只表示状态（accent 进行、fail 出错）。成组的头部用最多 6 个叠放的类别小圆片，一眼看出这组干了什么。</p>
+    <h3>层次</h3>${TIERS}
+    <h3>不足</h3><p>交替的节奏还在：长任务里一屏仍被十几条“思考了 N 秒 / 已使用 N 个工具”切碎。</p>`,
+  C: `<h2>方案二 · 过程合并 <span class="tag">推荐</span></h2>
+    <p><b>一个回合里，答复之前的思考、工具调用、中途旁白，合成一个过程块。</b>外面只留三样：过程块、交付文件、最终答复。</p>
+    <h3>规则</h3><ul>
+    <li><b>旁白 vs 答复</b>：一段文字后面还有工具调用，就是旁白，进过程块（轨道上以小圆点 + 13 px muted 正文出现）；回合最后一段文字是答复。流式时文字先按正文出，下一次工具调用开始时才收进过程块，不需要模型配合</li>
+    <li><b>进行中</b>：块展开，头部是 spinner + 当前这一步 + 计时；轨道只露最近 4 步，更早的折成“前 N 步”</li>
+    <li><b>结束后</b>：自动折成一行：类别小圆片 + “已处理 2 分 43 秒 · 思考 4 次 · 12 个工具”，错误点照旧带计数；按类别细分的计数不进头部（太长、手机放不下），类别交给小圆片表达</li>
+    <li><b>要人看的东西不进块</b>：批准、提问、安全输入卡片在块下方；块头变成 accent “等待你批准”。子智能体组、分隔线仍然切断过程块</li>
+    <li>每一步仍可展开（思考正文、IN / OUT），点轨道行即可</li></ul>
+    <h3>图标</h3>${mapTable}
+    <p>图标挪到左侧轨道上，一列竖排读下来就是“做了哪几类事”；行内不再重复图标。</p>
+    <h3>层次</h3>${TIERS}
+    <h3>卡片与确认：单独一层，按“要不要等人”分流</h3>
+    <p>分组只管“过程”。卡片不跟着分组走，按下面四类统一处理，不为每种卡片写特例：</p>
+    <table class="tiers">
+      <tr><td style="color:var(--cb-ink)">阻塞</td><td>批准、提问、连接授权、设备码、安全输入。<b>永远在块外</b>，紧跟块下方；块头变 accent “等待你批准”。处理完缩回轨道成一行（“已允许 · 你”）</td></tr>
+      <tr><td style="color:var(--cb-ink)">要人看<br>不阻塞</td><td>跳转链接（去某页配置 / 确认）、一次性展示（初始密码、邀请链接）、交付文件。<b>出现即提升到块外</b>，运行中就可见，不等结束；<b>同类合并</b>：多个链接一张列表（“2 项需要你处理 · 不阻塞，我已继续”），文件一个网格；轨道留原调用行做出处</td></tr>
+      <tr><td style="color:var(--cb-ink)">状态</td><td>todo。<b>钉在块头下方，只显示最新一版</b>，每次更新原地刷新，不新增卡片；旧版本只是轨道里的“待办 2/4”行。全部完成后折进摘要（“待办 4/4”）；中止或失败时留下未完成项在块外，告诉人还剩什么</td></tr>
+      <tr><td style="color:var(--cb-muted)">过程</td><td>网络受限说明、diff、命令输出。留在轨道里，挂在对应调用行下</td></tr>
+    </table>
+    <p>块外顺序固定：过程块 → 阻塞卡片 → 待处理列表 → 文件 → 答复。</p>
+    <p><b>扩展卡片</b>（<code>ToolResult.card</code>）默认按“要人看不阻塞”提升；todo 这类状态卡需要 SDK 给 card 加一个声明，例如 <code>placement: "pinned"</code>（同插件同 view 只显示最新）或 <code>"process"</code>（留在轨道）。这是 SDK 公共 API 变更，要 changeset。</p>
+    <h3>影响面</h3><ul>
+    <li>纯展示：事件日志、回放、发给模型的历史都不变（无 DriftReason）</li>
+    <li><code>apps/web/src/lib/timeline.ts</code> 分组改为“回合内到答复为止”，design 新增 ProcessBlock（轨道 + 头部），旧的 ThinkingRow / ToolGroup 作为轨道里的行复用</li>
+    <li>spec §6.16.8“组在正文处结束”要改，需你拍板；新增 2 个 lucide 图标（lightbulb / terminal）走 gen:icons</li>
+    <li>手机：轨道 20 px 不变，头部单行省略，和现在的 touch 规则一致</li></ul>`,
+};
+
+document.getElementById("v").onclick = (e) => { const b = e.target.closest("button"); if (b) { S.v = b.dataset.v; render(); } };
+document.getElementById("r").onclick = (e) => { const b = e.target.closest("button"); if (b) { S.r = b.dataset.r; S.open.delete("tail"); render(); } };
+document.getElementById("t").onclick = (e) => { const b = e.target.closest("button"); if (b) { S.t = b.dataset.t; render(); } };
+// #v=C&r=running&t=dark&open=proc,s3 opens a given state directly
+for (const [k, val] of new URLSearchParams(location.hash.slice(1))) {
+  if (k === "open") val.split(",").forEach((x) => S.open.add(x));
+  else if (k in S) S[k] = val;
+}
+render();
+</script>
+</body>
+</html>
