@@ -54,13 +54,9 @@ function streamOf(
 }
 
 /**
- * `@2` 参数声明检查：每个模型的 `parameters` 须通过 `assertValidDeclarations`，
- * 每个声明的默认值须通过 `validateParams`。返回问题列表（形如 `<模型 id>: <原因>`），无问题为空。
- */
-/**
  * Checks a stream's tool events against its final message: every delta follows its call's start,
  * and the deltas of each started call join to JSON equal to the final call's input.
- * Returns the problems (empty when fine); a stream with no tool events passes.
+ * A started call with no final call of its id is allowed. Returns the problems (empty when fine); a stream with no tool events passes.
  */
 export function checkToolStream(
   events: ModelStreamEvent[],
@@ -71,17 +67,15 @@ export function checkToolStream(
   for (const e of events) {
     if (e.type === "tool_call_start") streamed.set(e.id, "");
     else if (e.type === "tool_call_delta") {
-      const so_far = streamed.get(e.id);
-      if (so_far === undefined) problems.push(`tool_call_delta for unknown id ${e.id}`);
-      else streamed.set(e.id, so_far + e.input);
+      const soFar = streamed.get(e.id);
+      if (soFar === undefined) problems.push(`tool_call_delta for unknown id ${e.id}`);
+      else streamed.set(e.id, soFar + e.input);
     }
   }
   for (const [id, json] of streamed) {
     const call = done.content.find((b) => b.type === "tool_call" && b.id === id);
-    if (call?.type !== "tool_call") {
-      problems.push(`streamed call ${id} is not in the final message`);
-      continue;
-    }
+    // a started call without a final call of that id is allowed (spec §3)
+    if (call?.type !== "tool_call") continue;
     let same = false;
     try {
       same = JSON.stringify(JSON.parse(json)) === JSON.stringify(call.input);
@@ -91,6 +85,10 @@ export function checkToolStream(
   return problems;
 }
 
+/**
+ * `@2` 参数声明检查：每个模型的 `parameters` 须通过 `assertValidDeclarations`，
+ * 每个声明的默认值须通过 `validateParams`。返回问题列表（形如 `<模型 id>: <原因>`），无问题为空。
+ */
 export function checkDeclaredParameters(plugin: string, models: ModelInfo[]): string[] {
   const problems: string[] = [];
   for (const m of models) {

@@ -355,6 +355,14 @@ describe("checkToolStream", () => {
     ]);
   });
 
+  it("accepts a started call that never reaches the final message", () => {
+    const events: ModelStreamEvent[] = [
+      { type: "tool_call_start", id: "call_gone", name: "Write" },
+      { type: "tool_call_delta", id: "call_gone", input: '{"a":' },
+    ];
+    expect(checkToolStream(events, done({}))).toEqual([]);
+  });
+
   it("accepts a stream with no tool events", () => {
     expect(checkToolStream([], done({}))).toEqual([]);
   });
