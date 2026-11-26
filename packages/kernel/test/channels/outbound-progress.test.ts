@@ -940,15 +940,15 @@ describe("channel progress card (process blocks spec §6.2)", () => {
 
   it("a new run first lands the previous run's pending final edit", async () => {
     const chat = "dm-u-fl1";
-    // the first run's final edit fails retryably (a 30 s rate limit: no later interval of the job
-    // retries it in time)
+    // the first run's final edit fails retryably once; the next attempt goes through
     im.failNext("/update", 429, 1, 30_000, undefined, undefined, {
       chatId: chat,
       textIncludes: "Worked",
     });
-    // the first card's send hangs while both runs are logged: the job then reads the first run's
-    // end and the second run's start back to back, with no throttled refresh in between
-    im.delayNext("/send", 8000, { onlyCards: true });
+    // the job is blocked on the first card's held send until both runs are logged: once released
+    // it reads the first run's end and the second run's start in one catch-up, so no throttled
+    // refresh (which would retry the edit, retryAfter aside) runs between them
+    const hold = im.holdNext("/send", { onlyCards: true });
     im.push(detailedId, dm("pfl1", "u-fl1", "narr one"));
     const conv = await convOf(detailedId, chat);
     const ran = async (n: number) => {
@@ -970,6 +970,7 @@ describe("channel progress card (process blocks spec §6.2)", () => {
     await ran(2);
     // the delivery is still at the first card's send
     expect((await deliveryRow(conv)).progress_run_id).toBeNull();
+    hold.release();
     await settled(conv);
     await jobsDone(conv);
     const cards = sentTo("cli_pd", chat).filter((m) => progressOf(m) !== undefined);

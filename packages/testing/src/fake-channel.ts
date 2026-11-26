@@ -183,6 +183,15 @@ export interface FakeChannelServer {
     delayMs: number,
     opts?: { count?: number; onlyCards?: boolean },
   ): void;
+  /**
+   * Hold the response of the next `count` successful `/send` (or `/update`) requests until
+   * `release()` (a gate, not a time window): recorded on arrival like {@link delayNext}, answered
+   * only once released. `stop()` releases every hold.
+   */
+  holdNext(
+    path: "/send" | "/update" | "/send-file",
+    opts?: { count?: number; onlyCards?: boolean },
+  ): { release(): void };
   /** 让 /connect 返回该状态码（null 恢复正常）。 */
   failConnect(status: number | null): void;
   /** 该渠道连接当前在线的长连接。 */
@@ -246,7 +255,16 @@ export async function startFakeChannelServer(
     delayMs?: number;
     match?: FakeChannelFailMatch;
   }[] = [];
-  const delays: { path: string; delayMs: number; left: number; onlyCards: boolean }[] = [];
+  const delays: {
+    path: string;
+    delayMs: number;
+    left: number;
+    onlyCards: boolean;
+    until?: Promise<void>;
+  }[] = [];
+  const holds: (() => void)[] = [];
+  const pause = (d: { delayMs: number; until?: Promise<void> }) =>
+    d.until ?? new Promise<void>((r) => setTimeout(r, d.delayMs));
   const live = new Map<FakeChannelStream, ServerResponse>();
   const peaks = new Map<string, number>();
   let failStatus: number | null = null;
@@ -337,7 +355,7 @@ export async function startFakeChannelServer(
       const fd = delays.find((x) => x.path === path && x.left > 0);
       if (fd) {
         fd.left--;
-        await new Promise((r) => setTimeout(r, fd.delayMs));
+        await pause(fd);
       }
       json(res, 200, { messageId: fid });
       return;
@@ -359,7 +377,7 @@ export async function startFakeChannelServer(
     const d = delays.find((x) => x.path === path && x.left > 0 && (!x.onlyCards || hasCards));
     if (d) {
       d.left--;
-      await new Promise((r) => setTimeout(r, d.delayMs));
+      await pause(d);
     }
     json(res, 200, { messageId });
   };
@@ -519,6 +537,21 @@ export async function startFakeChannelServer(
     delayNext(path, delayMs, opts = {}) {
       delays.push({ path, delayMs, left: opts.count ?? 1, onlyCards: opts.onlyCards ?? false });
     },
+    holdNext(path, opts = {}) {
+      let release!: () => void;
+      const until = new Promise<void>((r) => {
+        release = r;
+      });
+      holds.push(release);
+      delays.push({
+        path,
+        delayMs: 0,
+        left: opts.count ?? 1,
+        onlyCards: opts.onlyCards ?? false,
+        until,
+      });
+      return { release };
+    },
     failConnect(status) {
       failStatus = status;
     },
@@ -552,6 +585,7 @@ export async function startFakeChannelServer(
       );
     },
     async stop() {
+      for (const release of holds) release();
       for (const res of live.values()) res.destroy();
       live.clear();
       server.closeAllConnections();
