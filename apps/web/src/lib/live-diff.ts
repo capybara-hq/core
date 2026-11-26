@@ -3,16 +3,18 @@
  * Display only. The algorithm is a port of the kernel's `lineDiff` (Myers, bounded edit budget,
  * hunks with context); the web never imports the kernel.
  */
-import type { DiffData, DiffHunk } from "@capybara-hq/design";
+import { cutDiffLine as cut, type DiffData, type DiffHunk } from "@capybara-hq/design";
 
-/** At most this many diff lines are kept (the kernel's `TOOL_VIEW_DIFF_MAX_LINES`). */
-const MAX_LINES = 2000;
+/** At most this many live lines are kept (the kernel's `TOOL_VIEW_DIFF_MAX_LINES`). */
+export const MAX_LINES = 2000;
 /** The most edits the search looks for; beyond it the part is shown as removed then added. */
 const MAX_EDITS = 1000;
+/**
+ * The live diff's budget: lower than {@link MAX_EDITS}, since a streaming Write's diff is redone
+ * on every frame (the result's diff is the kernel's, with its own budget).
+ */
+export const LIVE_MAX_EDITS = 400;
 const CONTEXT = 3;
-/** A shown line is cut to this many characters (the kernel's `TOOL_VIEW_LINE_MAX_CHARS`). */
-const LINE_MAX_CHARS = 2000;
-const cut = (s: string) => (s.length > LINE_MAX_CHARS ? s.slice(0, LINE_MAX_CHARS) : s);
 
 type Kind = "ctx" | "add" | "del";
 
@@ -34,25 +36,33 @@ function splitLines(text: string): string[] {
   return lines;
 }
 
+/** Counts the Myers searches run (a test seam: a remembered fallback runs none). */
+export const liveDiffStats = { myersRuns: 0 };
+
 /**
  * Myers' O(ND) edit script from `a` to `b`, where `b` is a prefix of the final text: the script may
  * stop after all of `b` with part of `a` unread (that tail costs nothing). Returns the operations
- * and how many lines of `a` they cover; null when more than {@link MAX_EDITS} edits are needed.
+ * and how many lines of `a` they cover; null when more than `maxEdits` edits are needed.
+ *
+ * One array of furthest points, updated in place (step `d` writes the diagonals of `d`'s parity and
+ * reads only the other's); before each step the trace keeps just the diagonals `-d..d` it reads,
+ * so the trace holds O(D²) numbers, not O(D · maxEdits).
  */
 function myersPrefix(
   a: string[],
   b: string[],
   maxEdits: number,
 ): { ops: Kind[]; used: number } | null {
+  liveDiffStats.myersRuns++;
   const n = a.length;
   const m = b.length;
   const max = Math.min(n + m, maxEdits);
   const offset = max + 1;
-  let v = new Int32Array(2 * max + 3);
+  const v = new Int32Array(2 * max + 3);
+  // trace[d][k + d]: the furthest x on diagonal k after step d - 1
   const trace: Int32Array[] = [];
   for (let d = 0; d <= max; d++) {
-    trace.push(v);
-    const next = v.slice();
+    trace.push(v.slice(offset - d, offset + d + 1));
     for (let k = -d; k <= d; k += 2) {
       let x: number;
       if (k === -d || (k !== d && (v[offset + k - 1] as number) < (v[offset + k + 1] as number))) {
@@ -65,25 +75,24 @@ function myersPrefix(
         x++;
         y++;
       }
-      next[offset + k] = x;
-      if (y === m && x <= n) return { ops: backtrack(trace, d, x, m, offset), used: x };
+      v[offset + k] = x;
+      if (y === m && x <= n) return { ops: backtrack(trace, d, x, m), used: x };
     }
-    v = next;
   }
   return null;
 }
 
-function backtrack(trace: Int32Array[], dEnd: number, endX: number, endY: number, offset: number) {
+function backtrack(trace: Int32Array[], dEnd: number, endX: number, endY: number) {
   const ops: Kind[] = [];
   let x = endX;
   let y = endY;
   for (let d = dEnd; d > 0; d--) {
     const v = trace[d] as Int32Array;
+    const at = (k: number) => v[k + d] as number;
     const k = x - y;
-    const down =
-      k === -d || (k !== d && (v[offset + k - 1] as number) < (v[offset + k + 1] as number));
+    const down = k === -d || (k !== d && at(k - 1) < at(k + 1));
     const prevK = down ? k + 1 : k - 1;
-    const prevX = v[offset + prevK] as number;
+    const prevX = at(prevK);
     const prevY = prevX - prevK;
     while (x > prevX && y > prevY) {
       ops.push("ctx");
@@ -113,11 +122,12 @@ export function alignOps(
 ): { ops: Kind[]; used: number; fallback: boolean } {
   const found = myersPrefix(a, b, maxEdits);
   if (found) return { ...found, fallback: false };
-  return {
-    ops: [...a.map((): Kind => "del"), ...b.map((): Kind => "add")],
-    used: a.length,
-    fallback: true,
-  };
+  return { ...fallbackOps(a, b), fallback: true };
+}
+
+/** The part past the budget: every line of `a` removed, then every line of `b` added. */
+function fallbackOps(a: string[], b: string[]): { ops: Kind[]; used: number } {
+  return { ops: [...a.map((): Kind => "del"), ...b.map((): Kind => "add")], used: a.length };
 }
 
 interface Op {
@@ -183,11 +193,27 @@ function capLines(hunks: DiffHunk[]): DiffData {
 }
 
 /**
+ * The streaming calls whose live diff fell back, by call id and base sha256. The prefix's edit
+ * distance only grows as the written text grows (every path for a longer text passes through the
+ * end of the shorter one), so once over the budget a call stays over it: its later frames skip the
+ * search. Bounded (oldest first out); client state of this page only.
+ */
+const fellBack = new Set<string>();
+const FELL_BACK_MAX = 64;
+
+/** What identifies a streaming Write's search across frames: the call and its base. */
+export interface LiveDiffKey {
+  callId: string;
+  baseSha256: string;
+}
+
+/**
  * The live diff of a streaming Write against its base: Myers over the base lines and the complete
  * lines of `prefix`; the unfinished last line is always shown as added. Base lines past the last
- * aligned (non-blank, matched) line are `pending`, not removals.
+ * aligned (non-blank, matched) line are `pending`, not removals. With `key`, a search that fell
+ * back is remembered for that call and base, and not run again on its later frames.
  */
-export function liveWriteDiff(base: string, prefix: string): LiveDiff {
+export function liveWriteDiff(base: string, prefix: string, key?: LiveDiffKey): LiveDiff {
   const a = splitLines(base);
   const b = splitLines(prefix);
   const unfinished = prefix !== "" && !prefix.endsWith("\n");
@@ -199,7 +225,18 @@ export function liveWriteDiff(base: string, prefix: string): LiveDiff {
   while (pre < a.length && pre < finished && a[pre] === complete[pre]) pre++;
   const midA = a.slice(pre);
   const midB = complete.slice(pre);
-  const { ops: mid, used: usedMid } = alignOps(midA, midB);
+  const memo = key === undefined ? undefined : `${key.callId}\u0000${key.baseSha256}`;
+  let aligned: { ops: Kind[]; used: number };
+  if (memo !== undefined && fellBack.has(memo)) aligned = fallbackOps(midA, midB);
+  else {
+    const found = alignOps(midA, midB, LIVE_MAX_EDITS);
+    if (found.fallback && memo !== undefined) {
+      fellBack.add(memo);
+      if (fellBack.size > FELL_BACK_MAX) fellBack.delete(fellBack.values().next().value as string);
+    }
+    aligned = found;
+  }
+  const { ops: mid, used: usedMid } = aligned;
   const used = pre + usedMid;
   const ops: Kind[] = [...Array<Kind>(pre).fill("ctx"), ...mid];
   if (unfinished) ops.push("add");

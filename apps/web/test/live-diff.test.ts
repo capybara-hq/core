@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { alignOps, liveEditDiff, liveWriteDiff, writingLines } from "../src/lib/live-diff";
+import {
+  alignOps,
+  LIVE_MAX_EDITS,
+  liveDiffStats,
+  liveEditDiff,
+  liveWriteDiff,
+  writingLines,
+} from "../src/lib/live-diff";
 
 const lines = (n: number, f: (i: number) => string) =>
   `${Array.from({ length: n }, (_, i) => f(i + 1)).join("\n")}\n`;
@@ -201,5 +208,46 @@ describe("alignOps edit budget", () => {
     const r = alignOps(["a", "b", "c", "d", "e"], ["a", "x", "c", "d", "e"]);
     expect(r.fallback).toBe(false);
     expect(r.ops).toEqual(["ctx", "del", "add", "ctx", "ctx", "ctx"]);
+  });
+});
+
+describe("liveWriteDiff remembers a fallback per call and base", () => {
+  // a base and a rewrite with no common line: past the live budget at once
+  const base = lines(6000, (i) => `old ${i}`);
+  const frame = (n: number) => lines(n, (i) => `new ${i}`);
+
+  it("runs no search on a call's later frames once it fell back, with the same output", () => {
+    const key = { callId: "call-1", baseSha256: "sha-a" };
+    const before = liveDiffStats.myersRuns;
+    const first = liveWriteDiff(base, frame(LIVE_MAX_EDITS + 10), key);
+    expect(liveDiffStats.myersRuns).toBe(before + 1);
+    const later = liveWriteDiff(base, frame(LIVE_MAX_EDITS + 50), key);
+    liveWriteDiff(base, frame(LIVE_MAX_EDITS + 90), key);
+    expect(liveDiffStats.myersRuns).toBe(before + 1);
+    // the same diff as a search that runs and falls back
+    expect(later).toEqual(liveWriteDiff(base, frame(LIVE_MAX_EDITS + 50)));
+    expect(first.added).toBe(LIVE_MAX_EDITS + 10);
+  });
+
+  it("a new base sha (or another call) searches again", () => {
+    const key = { callId: "call-2", baseSha256: "sha-a" };
+    liveWriteDiff(base, frame(LIVE_MAX_EDITS + 10), key);
+    const before = liveDiffStats.myersRuns;
+    liveWriteDiff(base, frame(LIVE_MAX_EDITS + 20), key);
+    expect(liveDiffStats.myersRuns).toBe(before);
+    liveWriteDiff(base, frame(LIVE_MAX_EDITS + 20), { ...key, baseSha256: "sha-b" });
+    expect(liveDiffStats.myersRuns).toBe(before + 1);
+    liveWriteDiff(base, frame(LIVE_MAX_EDITS + 20), { ...key, callId: "call-3" });
+    expect(liveDiffStats.myersRuns).toBe(before + 2);
+  });
+
+  it("a call within the budget keeps searching (and stays minimal)", () => {
+    const key = { callId: "call-4", baseSha256: "sha-a" };
+    const small = "a\nb\nc\nd\n";
+    const before = liveDiffStats.myersRuns;
+    liveWriteDiff(small, "a\nx\n", key);
+    const r = liveWriteDiff(small, "a\nx\nc\nd\n", key);
+    expect(liveDiffStats.myersRuns).toBe(before + 2);
+    expect(r).toMatchObject({ added: 1, removed: 1, pending: 0 });
   });
 });
