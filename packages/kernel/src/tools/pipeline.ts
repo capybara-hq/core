@@ -1,5 +1,6 @@
 import {
   type AuthInjection,
+  CARD_TEXT_MAX,
   type ConnectorSession,
   type ConversationSource,
   DeviceAccessError,
@@ -457,7 +458,15 @@ export interface ToolPipelineHooks {
 }
 
 /** `tool_result.card`: an inline card under the call (display only). */
-type ToolCard = { plugin: string; view: string; key?: string };
+type ToolCard = {
+  plugin: string;
+  view: string;
+  key?: string;
+  /** Absent means `output`. */
+  placement?: "pinned" | "process";
+  /** Only with `placement: "pinned"`. */
+  text?: string;
+};
 
 /** Optional provider: the pipeline's {@link ToolPipelineHooks} (tests). */
 export const TOOL_PIPELINE_HOOKS = Symbol("TOOL_PIPELINE_HOOKS");
@@ -3912,7 +3921,9 @@ export class ToolPipeline {
   /**
    * A plugin tool's inline card (`ToolResult.card` → `tool_result.card`, display only): `view` must
    * be an `inline` ui contribution of the same extension and `key` at most 200 characters; anything
-   * else is dropped with a warning and the result is written as usual.
+   * else is dropped with a warning and the result is written as usual. `placement` is kept when
+   * `pinned` or `process` (an unknown value means `output`); `text` only with `pinned`, 1 to
+   * {@link CARD_TEXT_MAX} characters.
    */
   private cardOf(result: unknown, plugin: string, toolKey: string): ToolCard | undefined {
     const c = (result as { card?: unknown } | null)?.card;
@@ -3931,7 +3942,41 @@ export class ToolPipeline {
       );
       return undefined;
     }
-    return { plugin, view: x.view, ...(x.key !== undefined && { key: x.key as string }) };
+    // placement: an unknown value falls back to `output` (recorded as absent)
+    let placement: "pinned" | "process" | undefined;
+    if (x.placement === "pinned" || x.placement === "process") placement = x.placement;
+    else if (x.placement !== undefined && x.placement !== "output") {
+      this.deps.log.warn("tool returned an inline card with an unknown placement; using output", {
+        toolKey,
+        placement: typeof x.placement === "string" ? x.placement.slice(0, 50) : undefined,
+      });
+    }
+    // text: only a pinned card carries it, at most CARD_TEXT_MAX characters
+    let text: string | undefined;
+    if (x.text !== undefined) {
+      if (placement !== "pinned") {
+        this.deps.log.warn(
+          "tool returned inline card text without a pinned placement; text dropped",
+          {
+            toolKey,
+          },
+        );
+      } else if (typeof x.text !== "string" || x.text === "" || x.text.length > CARD_TEXT_MAX) {
+        this.deps.log.warn(
+          "tool returned inline card text that is empty or too long; text dropped",
+          {
+            toolKey,
+          },
+        );
+      } else text = x.text;
+    }
+    return {
+      plugin,
+      view: x.view,
+      ...(x.key !== undefined && { key: x.key as string }),
+      ...(placement !== undefined && { placement }),
+      ...(text !== undefined && { text }),
+    };
   }
 
   /**

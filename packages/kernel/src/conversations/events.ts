@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 import {
+  CARD_TEXT_MAX,
   CONTEXT_LIMITS,
   type ContentBlock,
   DOCUMENT_MEDIA_TYPES,
@@ -1480,6 +1481,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           plugin: z.string().min(1).max(100),
           view: z.string().min(1).max(100),
           key: z.string().min(1).max(200).optional(),
+          /** Absent means `output`. */
+          placement: z.enum(["pinned", "process"]).optional(),
+          /** Only with `placement: "pinned"`; at most `CARD_TEXT_MAX` characters. */
+          text: z.string().min(1).max(CARD_TEXT_MAX).optional(),
         })
         .optional(),
       /**
