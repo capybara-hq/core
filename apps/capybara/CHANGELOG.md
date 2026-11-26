@@ -1,5 +1,30 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.123
+
+### Patch Changes
+
+- 7ff5147: The conversation thread draws a run's process as one block (conversation process blocks spec):
+  thinking, narration and tool calls on a rail with kind icons, open while the run goes (its last
+  four steps) and closed once it finishes, with the pinned todo card under the head; handoffs are one
+  list of pending actions, then files and output cards, then the answer. Sub-agent transcripts and
+  the sub-agent panel draw the same blocks.
+- ace1b2b: Streaming tool input (spec 2026-11-26): the kernel forwards a provider's `tool_call_start` /
+  `tool_call_delta` as display-only `tool_start` / `tool_input` stream deltas and keeps them in the live
+  draft (`tools`, capped at 512 KiB per step); every stream event re-arms the idle watchdog, so a long
+  tool call no longer times out. For a builtin `Write` over a file the conversation already read
+  unchanged, the kernel reads a display-only base (`tool_base`) through a new `write_base` kernel read
+  that never wakes a device. Tool info returns each tool's `inputView`. `@capybara-hq/testing` gains
+  `checkToolStream` in the model conformance suite; model-fake streams every tool call's input and adds
+  the `streamtool:<ms>:<name>:<json>` directive.
+- 76af792: The conversation page shows a tool call while the model writes it (spec 2026-11-26): a streaming
+  row (「生成中」 with lines and size) appears as soon as the call starts, `Write` streams as a live
+  diff against the file's current content (or a numbered preview for a new or unread file), `Edit` as a
+  live diff, `Bash` as its growing command, and the logged row replaces it in place.
+- Updated dependencies [ba80ae7]
+- Updated dependencies [ace1b2b]
+  - @capybara-hq/kernel@0.1.0-rc.98
+
 ## 0.1.0-rc.122
 
 ### Patch Changes
