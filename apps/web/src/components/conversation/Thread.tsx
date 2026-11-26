@@ -6,10 +6,19 @@ import {
   Disclosure,
   FileOutputs,
   formatBytes,
+  type IconName,
   ImageOutput,
   ImagePlaceholder,
   ImageViewer,
+  MAX_PROCESS_CHIPS,
+  type PendingAction,
+  PendingActions,
+  ProcessBlock,
+  type ProcessBlockProps,
   Prose,
+  RailStep,
+  type RailStepProps,
+  RailText,
   RunDivider,
   RunRow,
   Stack,
@@ -20,20 +29,34 @@ import {
   type ToolRowData,
   typeBadge,
   UserBubble,
+  useNow,
   useTimeZone,
   useToast,
+  waitingText,
 } from "@capybara-hq/design";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { memo, type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  memo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ApiClientError, ensureSession } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
 import { attachmentDownloadUrl } from "../../lib/attachments";
+import { orgIconUrl } from "../../lib/catalog";
 import type { ModelRef, ToolInfo } from "../../lib/conversations";
 import { type ModelConfigViewer, modelConfigViewer } from "../../lib/model-config";
 import { withNode } from "../../lib/node-slot";
 import { PeopleContext, type PeopleMap, usePersonLookup } from "../../lib/people";
+import type { PendingEntry, ProcessEntry, ProcessStep, ThreadEntry } from "../../lib/process";
 import { toolOutputSizeQuery } from "../../lib/query/conversation";
+import { uiViewQuery } from "../../lib/query/ui";
 import { canViewTrajectory, configureModelsHref, runParts } from "../../lib/run-row";
 import type { CompactionProgress } from "../../lib/stream";
 import { shortTime } from "../../lib/time";
@@ -41,13 +64,15 @@ import {
   type FailedRun,
   isCallKey,
   type TimelineEntry,
+  type TimelineSubagent,
   type TimelineTool,
 } from "../../lib/timeline";
+import { uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { ApprovalCard } from "../ApprovalCard";
-import { ConnectCard } from "../ConnectCard";
+import { ConnectCard, connectionHref } from "../ConnectCard";
 import { DeviceCodeCard } from "../DeviceCodeCard";
-import { HandoffCard } from "../HandoffCard";
+import { useSlotContributions } from "../extension-ui/ExtensionSlot";
 import { InitialPasswordReveal } from "../InitialPasswordReveal";
 import { InvitationLinkReveal } from "../InvitationLinkReveal";
 import { Person } from "../Person";
@@ -88,7 +113,8 @@ const modelName = (m: ModelRef | null) => (m === null ? "—" : m.model);
 export type ThreadProps = {
   orgId: string;
   conversationId: string;
-  entries: TimelineEntry[];
+  /** The timeline after `groupProcess` (lib/process.ts): a run's process is one `process` entry. */
+  entries: ThreadEntry[];
   info: ReadonlyMap<string, ToolInfo>;
   reasoningOf(m: ModelRef): boolean | undefined;
   /** Retry on the failed run row (the last failure only, while no run is going). */
@@ -179,6 +205,9 @@ type EntryContext = {
   sizes: ReadonlyMap<string, number>;
   openSummaries: ReadonlySet<string>;
   toggleSummary(key: string): void;
+  /** The person's choices per process block (by its key): open or closed, steps drawn. */
+  blockUi: ReadonlyMap<string, BlockUi>;
+  setBlockUi(key: string, f: (u: BlockUi) => BlockUi): void;
   retried: ReadonlySet<string>;
   onImageError(id: string): void;
   lastFailed: string | null;
@@ -264,10 +293,20 @@ export function Thread({
       }),
     [],
   );
+  const [blockUi, setBlockUiMap] = useState<ReadonlyMap<string, BlockUi>>(new Map());
+  const setBlockUi = useCallback(
+    (key: string, f: (u: BlockUi) => BlockUi) =>
+      setBlockUiMap((m) => new Map(m).set(key, f(m.get(key) ?? {}))),
+    [],
+  );
   const archived = useMemo(
     () =>
       entries.flatMap((e) =>
-        e.kind === "tools" ? e.rows.flatMap((r) => (r.outputId ? [r.outputId] : [])) : [],
+        e.kind === "process"
+          ? e.steps.flatMap((s) =>
+              s.kind === "tools" ? s.rows.flatMap((r) => (r.outputId ? [r.outputId] : [])) : [],
+            )
+          : [],
       ),
     [entries],
   );
@@ -322,6 +361,8 @@ export function Thread({
       sizes,
       openSummaries,
       toggleSummary,
+      blockUi,
+      setBlockUi,
       retried,
       onImageError,
       lastFailed,
@@ -352,6 +393,8 @@ export function Thread({
       sizes,
       openSummaries,
       toggleSummary,
+      blockUi,
+      setBlockUi,
       retried,
       onImageError,
       lastFailed,
@@ -392,11 +435,15 @@ export function Thread({
 
 /**
  * One entry and its `data-entry` wrapper. Re-renders only when its entry object or the shared
- * context changes; inline cards and task lines render from the page's state, so they always do.
+ * context changes; inline cards and task lines render from the page's state, so they always do. A
+ * process block is rebuilt by every pass of `groupProcess`: it re-renders when what it draws
+ * changed ({@link sameBlock}), so a delta frame re-renders only the block that streams.
  */
 const EntryView = memo(
-  function EntryView({ e, c }: { e: TimelineEntry; c: EntryContext }) {
+  function EntryView({ e, c }: { e: ThreadEntry; c: EntryContext }) {
     const node = <EntryNode e={e} c={c} />;
+    const rows =
+      e.kind === "process" ? e.steps.flatMap((s) => (s.kind === "tools" ? s.rows : [])) : [];
     return (
       <div
         data-entry={e.kind}
@@ -406,10 +453,13 @@ const EntryView = memo(
           ? // busy until it settles: the live thread announces the reply once, not per token
             { "data-streaming": "true", "aria-busy": true }
           : {})}
-        {...(e.kind === "tools"
+        {...(e.kind === "process"
           ? {
-              "data-tool-keys": e.rows.map((r) => r.toolKey).join(" "),
-              "data-tool-status": e.rows.map((r) => r.row.status).join(" "),
+              "data-state": e.state,
+              // the rail is not announced; the block's head is its own live region (spec §7)
+              "aria-live": "off" as const,
+              "data-tool-keys": rows.map((r) => r.toolKey).join(" "),
+              "data-tool-status": rows.map((r) => r.row.status).join(" "),
             }
           : {})}
       >
@@ -417,10 +467,62 @@ const EntryView = memo(
       </div>
     );
   },
-  (a, b) => a.e === b.e && a.c === b.c && a.e.kind !== "card" && a.e.kind !== "task",
+  (a, b) =>
+    a.c === b.c &&
+    (a.e === b.e || sameBlock(a.e, b.e)) &&
+    a.e.kind !== "card" &&
+    a.e.kind !== "task" &&
+    // the pinned cards and process cards inside a block render from the page's state too
+    !(a.e.kind === "process" && hasCards(a.e)),
 );
 
-function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
+/**
+ * Two passes' blocks (or pending lists) that draw the same: the same steps and pinned cards. The
+ * timeline's entries are reused between passes; the steps `groupProcess` wraps are compared by
+ * what they hold.
+ */
+function sameBlock(a: ThreadEntry, b: ThreadEntry): boolean {
+  if (a.kind === "pending" && b.kind === "pending")
+    return (
+      a.key === b.key &&
+      a.items.length === b.items.length &&
+      a.items.every((x, i) => x === b.items[i])
+    );
+  if (a.kind !== "process" || b.kind !== "process") return false;
+  return (
+    a.key === b.key &&
+    a.state === b.state &&
+    a.runId === b.runId &&
+    a.durationMs === b.durationMs &&
+    a.backgroundRunning === b.backgroundRunning &&
+    a.steps.length === b.steps.length &&
+    a.steps.every((x, i) => sameStep(x, b.steps[i])) &&
+    a.pinned.length === b.pinned.length &&
+    a.pinned.every((x, i) => x === b.pinned[i])
+  );
+}
+
+function sameStep(x: ProcessStep, y: ProcessStep | undefined): boolean {
+  if (x === y) return true;
+  if (y === undefined || x.kind !== y.kind || x.key !== y.key) return false;
+  switch (x.kind) {
+    case "narration":
+      return y.kind === "narration" && x.text === y.text && x.streaming === y.streaming;
+    case "subagent":
+      return y.kind === "subagent" && x.row === y.row;
+    case "decided":
+      return y.kind === "decided" && x.entry === y.entry;
+    case "note":
+      // a note's divider is copied from the same timeline entry: its key says which
+      return true;
+    default:
+      return false;
+  }
+}
+
+const hasCards = (b: ProcessEntry) => b.pinned.length > 0 || b.steps.some((s) => s.kind === "card");
+
+function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
   const t = useTranslations("chat");
   const tb = useTranslations("background");
   const te = useTranslations("errors");
@@ -428,17 +530,12 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const locale = useLocale();
   const timeZone = useTimeZone();
   const { me } = useSession();
-  const toast = useToast();
   const errorMessage = useErrorMessage();
   const openDownload = useOpenDownload();
   const {
     orgId,
     conversationId,
     info,
-    reasoningOf,
-    sizes,
-    openSummaries,
-    toggleSummary,
     retried,
     onImageError,
     lastFailed,
@@ -455,7 +552,6 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const onRetry = c.has.retry ? (d: FailedRun) => cb.current.onRetry?.(d) : undefined;
   const onOpenFile = c.has.openFile ? (id: string) => cb.current.onOpenFile?.(id) : undefined;
   const onMoreFiles = c.has.moreFiles ? () => cb.current.onMoreFiles?.() : undefined;
-  const onOpenOutput = (callId: string) => cb.current.onOpenOutput?.(callId);
   const onOpenSubagent = c.has.openSubagent
     ? (id: string) => cb.current.onOpenSubagent?.(id)
     : undefined;
@@ -473,89 +569,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const whoStopped = (id: string | null): ReactNode =>
     id === null ? t("system") : <Person person={person(id)} size={16} viewerId={me.account.id} />;
 
-  /** An attachment's image as the thread loads it (a retry after a failed load asks again). */
-  const imageSrc = (id: string) =>
-    `${attachmentDownloadUrl(orgId, id)}${retried.has(id) ? "?retry=1" : ""}`;
-
-  const rowWithSize = (r: TimelineTool): ToolRowData => {
-    const taskId = r.background?.taskId;
-    const row = r.lines
-      ? { ...r.row, extra: t("toolLines", r.lines) }
-      : r.background
-        ? {
-            ...r.row,
-            extra: tb("inBackground"),
-            ...(taskId && onOpenTask
-              ? {
-                  link: {
-                    label: tb("openTask", { name: r.row.description ?? taskId }),
-                    onOpen: () => onOpenTask(taskId),
-                  },
-                }
-              : {}),
-          }
-        : r.row;
-    // the images the call's result carried (shown to the agent): thumbnails on the row
-    const withImages =
-      r.images !== undefined && r.images.length > 0
-        ? {
-            ...row,
-            detail: {
-              ...row.detail,
-              images: r.images.map((m) => ({
-                id: m.attachmentId,
-                name: m.name,
-                src: imageSrc(m.attachmentId),
-              })),
-            },
-          }
-        : row;
-    const total = r.outputId ? sizes.get(r.outputId) : undefined;
-    const out = withImages.detail?.output;
-    if (total === undefined || out === undefined) return withImages;
-    return {
-      ...withImages,
-      detail: { ...withImages.detail, outputBytes: total, outputShownBytes: out.length },
-    };
-  };
-
-  const divider = (e: Extract<TimelineEntry, { kind: "divider" }>): ReactNode => {
-    switch (e.divider) {
-      case "compacted": {
-        const open = openSummaries.has(e.key);
-        return (
-          <RunDivider
-            kind="compacted"
-            text={
-              e.savedTokens !== null
-                ? t("divider.compactedSaved", { n: e.savedTokens })
-                : t("divider.compacted")
-            }
-            action={{
-              expanded: open,
-              onClick: () => toggleSummary(e.key),
-            }}
-          >
-            {open ? e.summary : undefined}
-          </RunDivider>
-        );
-      }
-      case "compact-failed":
-        // The raw reason (the kernel's English) stays the panel's detail, as a run row's does.
-        return (
-          <RunDivider kind="failed" text={t("divider.compactFailed")}>
-            {e.reason}
-          </RunDivider>
-        );
-      case "fallback":
-        return (
-          <RunDivider
-            kind="fallback"
-            text={t("divider.fallback", { from: modelName(e.from), to: modelName(e.to) })}
-          />
-        );
-    }
-  };
+  const imageSrc = (id: string) => imageSrcOf(c, id);
 
   const run = (e: Extract<TimelineEntry, { kind: "run" }>): ReactNode => {
     const n = (v: number) => v.toLocaleString(locale);
@@ -678,7 +692,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     );
   };
 
-  const entry = (e: TimelineEntry): ReactNode => {
+  const entry = (e: ThreadEntry): ReactNode => {
     switch (e.kind) {
       case "user": {
         const srcOf = imageSrc;
@@ -825,69 +839,6 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             />
           </div>
         );
-      case "thinking":
-        if (e.model !== null && reasoningOf(e.model) === false) return null;
-        return <ThinkingRow seconds={e.seconds} text={e.text} live={e.live} />;
-      case "tools": {
-        // the group's result images, all navigable in one viewer; the one it shows is `zoomId`
-        const pictures = e.rows.flatMap((r) => r.images ?? []);
-        const zoomIndex = pictures.findIndex((m) => m.attachmentId === zoomId);
-        const shown = pictures[zoomIndex];
-        return (
-          <>
-            <ToolGroup
-              rows={e.rows.map(rowWithSize)}
-              onViewAll={(rowId) => {
-                const r = e.rows.find((x) => x.row.id === rowId);
-                if (r) onOpenOutput?.(r.callId);
-              }}
-              onCopy={(rowId) => {
-                const r = e.rows.find((x) => x.row.id === rowId);
-                const text = r?.row.detail?.output;
-                if (text === undefined) return;
-                navigator.clipboard?.writeText(text).then(
-                  () => toast.success(t("copied")),
-                  () => {},
-                );
-              }}
-              onOpenImage={(rowId, i) => {
-                const m = e.rows.find((x) => x.row.id === rowId)?.images?.[i];
-                if (m) setZoomId(m.attachmentId);
-              }}
-              onImageError={onImageError}
-            />
-            {pictures.length > 0 ? (
-              <ImageViewer
-                open={zoomIndex >= 0}
-                onOpenChange={(open) => {
-                  if (!open) setZoomId(null);
-                }}
-                images={pictures.map((m) => ({
-                  src: imageSrc(m.attachmentId),
-                  name: m.name,
-                  size: formatBytes(m.size),
-                }))}
-                index={Math.max(zoomIndex, 0)}
-                onIndexChange={(i) => {
-                  const next = pictures[i];
-                  if (next) setZoomId(next.attachmentId);
-                }}
-                onDownload={(i) => {
-                  const p = pictures[i];
-                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
-                }}
-                onOpenInNewTab={(i) => {
-                  const p = pictures[i];
-                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
-                }}
-                {...(shown !== undefined && !retried.has(shown.attachmentId)
-                  ? { onRetry: () => onImageError(shown.attachmentId) }
-                  : {})}
-              />
-            ) : null}
-          </>
-        );
-      }
       case "subagents":
         return (
           <SubagentGroup
@@ -947,18 +898,16 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         return <ConnectCard orgId={orgId} item={e.item} />;
       case "card":
         return renderCard?.(e) ?? null;
-      case "network-facts":
-        return <NetworkFacts orgId={orgId} conversationId={conversationId} hosts={e.hosts} />;
       case "device-code":
         return <DeviceCodeCard url={e.url} code={e.code} />;
-      case "handoff":
-        return <HandoffCard orgId={orgId} title={e.title} target={e.target} />;
-      case "reveal":
-        return <RevealEntry orgId={orgId} conversationId={conversationId} entry={e} />;
       case "files":
         return files(e);
       case "divider":
-        return divider(e);
+        return <DividerView e={e} c={c} />;
+      case "process":
+        return <ProcessView b={e} c={c} />;
+      case "pending":
+        return <PendingView e={e} c={c} />;
       case "background":
         return (
           <RunDivider
@@ -986,6 +935,639 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   };
 
   return entry(e);
+}
+
+/** A fallback or compaction divider (a thread entry, or a note step in a process block's rail). */
+function DividerView({
+  e,
+  c,
+}: {
+  e: Extract<TimelineEntry, { kind: "divider" }>;
+  c: EntryContext;
+}): ReactNode {
+  const t = useTranslations("chat");
+  switch (e.divider) {
+    case "compacted": {
+      const open = c.openSummaries.has(e.key);
+      return (
+        <RunDivider
+          kind="compacted"
+          text={
+            e.savedTokens !== null
+              ? t("divider.compactedSaved", { n: e.savedTokens })
+              : t("divider.compacted")
+          }
+          action={{
+            expanded: open,
+            onClick: () => c.toggleSummary(e.key),
+          }}
+        >
+          {open ? e.summary : undefined}
+        </RunDivider>
+      );
+    }
+    case "compact-failed":
+      // The raw reason (the kernel's English) stays the panel's detail, as a run row's does.
+      return (
+        <RunDivider kind="failed" text={t("divider.compactFailed")}>
+          {e.reason}
+        </RunDivider>
+      );
+    case "fallback":
+      return (
+        <RunDivider
+          kind="fallback"
+          text={t("divider.fallback", { from: modelName(e.from), to: modelName(e.to) })}
+        />
+      );
+  }
+}
+
+/** An attachment's image as the thread loads it (a retry after a failed load asks again). */
+const imageSrcOf = (c: EntryContext, id: string) =>
+  `${attachmentDownloadUrl(c.orgId, id)}${c.retried.has(id) ? "?retry=1" : ""}`;
+
+/**
+ * One tool call as a single tool line (a rail step's row, spec §1.3): its line range or background
+ * label, its result images (all navigable in one viewer) and the archived output's size.
+ */
+function ToolStep({ r, c }: { r: TimelineTool; c: EntryContext }): ReactNode {
+  const t = useTranslations("chat");
+  const tb = useTranslations("background");
+  const toast = useToast();
+  const openDownload = useOpenDownload();
+  const [zoomId, setZoomId] = useState<string | null>(null);
+  const cb = c.cb;
+  const onOpenTask = c.has.openTask
+    ? (taskId: string) => cb.current.onOpenTask?.(taskId)
+    : undefined;
+
+  const taskId = r.background?.taskId;
+  const base = r.lines
+    ? { ...r.row, extra: t("toolLines", r.lines) }
+    : r.background
+      ? {
+          ...r.row,
+          extra: tb("inBackground"),
+          ...(taskId && onOpenTask
+            ? {
+                link: {
+                  label: tb("openTask", { name: r.row.description ?? taskId }),
+                  onOpen: () => onOpenTask(taskId),
+                },
+              }
+            : {}),
+        }
+      : r.row;
+  // the images the call's result carried (shown to the agent): thumbnails on the row
+  const pictures = r.images ?? [];
+  const withImages: ToolRowData =
+    pictures.length > 0
+      ? {
+          ...base,
+          detail: {
+            ...base.detail,
+            images: pictures.map((m) => ({
+              id: m.attachmentId,
+              name: m.name,
+              src: imageSrcOf(c, m.attachmentId),
+            })),
+          },
+        }
+      : base;
+  const total = r.outputId ? c.sizes.get(r.outputId) : undefined;
+  const out = withImages.detail?.output;
+  const row: ToolRowData =
+    total === undefined || out === undefined
+      ? withImages
+      : {
+          ...withImages,
+          detail: { ...withImages.detail, outputBytes: total, outputShownBytes: out.length },
+        };
+  const zoomIndex = pictures.findIndex((m) => m.attachmentId === zoomId);
+  const shown = pictures[zoomIndex];
+  return (
+    <>
+      <ToolGroup
+        rows={[row]}
+        onViewAll={() => cb.current.onOpenOutput?.(r.callId)}
+        onCopy={() => {
+          const text = r.row.detail?.output;
+          if (text === undefined) return;
+          navigator.clipboard?.writeText(text).then(
+            () => toast.success(t("copied")),
+            () => {},
+          );
+        }}
+        onOpenImage={(_rowId, i) => {
+          const m = pictures[i];
+          if (m) setZoomId(m.attachmentId);
+        }}
+        onImageError={c.onImageError}
+      />
+      {pictures.length > 0 ? (
+        <ImageViewer
+          open={zoomIndex >= 0}
+          onOpenChange={(open) => {
+            if (!open) setZoomId(null);
+          }}
+          images={pictures.map((m) => ({
+            src: imageSrcOf(c, m.attachmentId),
+            name: m.name,
+            size: formatBytes(m.size),
+          }))}
+          index={Math.max(zoomIndex, 0)}
+          onIndexChange={(i) => {
+            const next = pictures[i];
+            if (next) setZoomId(next.attachmentId);
+          }}
+          onDownload={(i) => {
+            const p = pictures[i];
+            if (p) openDownload(attachmentDownloadUrl(c.orgId, p.attachmentId));
+          }}
+          onOpenInNewTab={(i) => {
+            const p = pictures[i];
+            if (p) openDownload(attachmentDownloadUrl(c.orgId, p.attachmentId));
+          }}
+          {...(shown !== undefined && !c.retried.has(shown.attachmentId)
+            ? { onRetry: () => c.onImageError(shown.attachmentId) }
+            : {})}
+        />
+      ) : null}
+    </>
+  );
+}
+
+// ── Process blocks (conversation process blocks spec §1.3, §4, §7) ──────────
+
+/** The person's choices for one process block. */
+type BlockUi = {
+  /** Their open toggle, kept while the block's state is the one it was made in. */
+  open?: { value: boolean; state: ProcessEntry["state"] };
+  /** How many of the rail's last steps are drawn (more after "N earlier steps"). */
+  shown?: number;
+};
+
+/** Steps a running, waiting, stopped or failed block draws before its fold row (spec §1.3). */
+const LIVE_STEPS = 4;
+/** The rail draws at most this many steps at a time; the fold row adds as many again. */
+const RAIL_PAGE = 200;
+/** How often at most the running head announces a new step (spec §7, accessibility). */
+const ANNOUNCE_MS = 3000;
+
+type Extra = Extract<ProcessStep, { kind: "network-facts" | "card" }>;
+
+/** One rail row: a step, with the process cards and network facts of its call under it. */
+type RailItem =
+  | { kind: "thinking"; key: string; e: Extract<ProcessStep, { kind: "thinking" }> }
+  | { kind: "narration"; key: string; text: string }
+  | { kind: "tool"; key: string; tool: TimelineTool; extras: Extra[] }
+  | { kind: "subagent"; key: string; row: TimelineSubagent }
+  | { kind: "note"; key: string; step: Extract<ProcessStep, { kind: "note" }> }
+  | { kind: "decided"; key: string; e: Extract<ProcessStep, { kind: "decided" }>["entry"] }
+  | { kind: "extra"; key: string; extra: Extra };
+
+/**
+ * A block's steps as rail rows: one per tool call; a process card or a network fact goes under
+ * the call that made it; thinking the model does not show is left out.
+ */
+function railItems(b: ProcessEntry, reasoningOf: (m: ModelRef) => boolean | undefined) {
+  const items: RailItem[] = [];
+  const byCall = new Map<string, Extract<RailItem, { kind: "tool" }>>();
+  for (const s of b.steps) {
+    switch (s.kind) {
+      case "thinking":
+        if (s.model === null || reasoningOf(s.model) !== false)
+          items.push({ kind: "thinking", key: s.key, e: s });
+        break;
+      case "narration":
+        items.push({ kind: "narration", key: s.key, text: s.text });
+        break;
+      case "tools":
+        for (const r of s.rows) {
+          const item = { kind: "tool" as const, key: `${s.key}:${r.callId}`, tool: r, extras: [] };
+          byCall.set(r.callId, item);
+          items.push(item);
+        }
+        break;
+      case "network-facts":
+      case "card": {
+        const at = byCall.get(s.callId);
+        if (at !== undefined) at.extras.push(s);
+        else items.push({ kind: "extra", key: s.key, extra: s });
+        break;
+      }
+      case "subagent":
+        items.push({ kind: "subagent", key: s.key, row: s.row });
+        break;
+      case "note":
+        items.push({ kind: "note", key: s.key, step: s });
+        break;
+      case "decided":
+        items.push({ kind: "decided", key: s.key, e: s.entry });
+        break;
+    }
+  }
+  return { items, byCall };
+}
+
+/** The kind icon of a tool row whose info is not read yet (the tools read is on its way). */
+const ROW_KIND_ICON: Record<ToolRowData["kind"], IconName> = {
+  command: "terminal",
+  read: "file-text",
+  edit: "square-pen",
+  search: "search",
+  connector: "connector",
+  meta: "extension",
+  task: "agent",
+  tool: "extension",
+  question: "extension",
+};
+
+type Kind = ProcessBlockProps["kinds"][number];
+
+/** A tool's mark (`ToolInfo.icon`, spec §2): a named icon, or its catalog item's icon. */
+function toolKind(
+  info: ToolInfo | undefined,
+  rowKind: ToolRowData["kind"],
+  orgId: string,
+  label: (name: IconName) => string,
+  locale: "zh" | "en",
+): Kind {
+  const icon = info?.icon;
+  if (icon?.kind === "catalog") {
+    const src = info?.source;
+    return {
+      key: `catalog:${icon.itemId}`,
+      icon: { src: orgIconUrl(orgId, icon.itemId) },
+      label:
+        src?.kind === "extension"
+          ? src.displayName[locale]
+          : src?.kind === "connector"
+            ? src.name
+            : (info?.title ?? info?.key ?? icon.itemId),
+    };
+  }
+  const name: IconName = icon?.kind === "name" ? icon.name : ROW_KIND_ICON[rowKind];
+  return { key: name, icon: { name }, label: label(name) };
+}
+
+const isLiveRow = (r: ToolRowData) => r.status === "running" || r.status === "pending";
+
+/**
+ * A value that follows `value` at most every `ms` (the first change after mount waits too): the
+ * running head's step label, so the live region does not chatter (spec §7).
+ */
+function useThrottled<T>(value: T, ms: number): T {
+  const [shown, setShown] = useState(value);
+  const last = useRef(0);
+  useEffect(() => {
+    last.current = Date.now();
+  }, []);
+  useEffect(() => {
+    if (Object.is(value, shown)) return;
+    const show = () => {
+      last.current = Date.now();
+      setShown(value);
+    };
+    const wait = last.current + ms - Date.now();
+    if (wait <= 0) {
+      show();
+      return;
+    }
+    const id = setTimeout(show, wait);
+    return () => clearTimeout(id);
+  }, [value, shown, ms]);
+  return shown;
+}
+
+/**
+ * The head's pinned summary (spec §1.3: "Todos 4/4"): the first pinned card's title (its
+ * contribution's) and badge, from its view in the query cache. Read only when the card has been
+ * drawn: a finished run read after a reload says nothing rather than reading every old card.
+ */
+function usePinnedSummary(
+  orgId: string,
+  conversationId: string,
+  card: Extract<TimelineEntry, { kind: "card" }> | undefined,
+): { title: string; badge?: string } | undefined {
+  const locale = uiLocale(useLocale());
+  const { items } = useSlotContributions(
+    orgId,
+    "conversation.tool-result.card",
+    card !== undefined,
+  );
+  const q = uiViewQuery(
+    orgId,
+    {
+      plugin: card?.plugin ?? "",
+      id: card?.view ?? "",
+      card: {
+        callId: card?.callId ?? "",
+        ...(card?.cardKey !== undefined ? { key: card.cardKey } : {}),
+      },
+    },
+    { conversationId, locale },
+  );
+  const view = useQuery({ ...q, enabled: false }).data;
+  if (card === undefined) return undefined;
+  const c = items.find((x) => x.plugin === card.plugin && x.id === card.view);
+  if (c === undefined || view === undefined) return undefined;
+  return { title: c.title[locale], ...(view.badge !== undefined ? { badge: view.badge } : {}) };
+}
+
+/**
+ * A run's process as one block (spec §1.3): open while running or waiting (only its last four
+ * steps, the earlier ones behind the fold row), closed once finished, open on its last steps when
+ * stopped or failed; a person's toggle holds until the block's state changes. The pinned cards sit
+ * under the head while the run goes; finished, the first one's title and badge join the summary.
+ */
+function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode {
+  const t = useTranslations("chat");
+  const locale = useLocale() === "zh" ? "zh" : "en";
+  const live = b.state === "running" || b.state === "waiting";
+  const now = useNow(live ? 1000 : 0);
+  const ui = c.blockUi.get(b.key);
+  const open =
+    ui?.open !== undefined && ui.open.state === b.state ? ui.open.value : b.state !== "finished";
+  const cb = c.cb;
+  const { renderCard } = cb.current;
+
+  const { items, byCall } = useMemo(() => railItems(b, c.reasoningOf), [b, c.reasoningOf]);
+  const kindLabel = (name: IconName) =>
+    (
+      ({
+        terminal: t("process.kind.terminal"),
+        "file-text": t("process.kind.file-text"),
+        "square-pen": t("process.kind.square-pen"),
+        search: t("process.kind.search"),
+        globe: t("process.kind.globe"),
+        skills: t("process.kind.skills"),
+        agent: t("process.kind.agent"),
+        "list-checks": t("process.kind.list-checks"),
+        connector: t("process.kind.connector"),
+      }) as Partial<Record<IconName, string>>
+    )[name] ?? t("process.kind.extension");
+  const kindOf = (r: TimelineTool) =>
+    toolKind(c.info.get(r.toolKey), r.row.kind, c.orgId, kindLabel, locale);
+
+  // the head: kinds in first-use order, counts, the latest step's label
+  const kinds: Kind[] = [];
+  const seen = new Set<string>();
+  const addKind = (k: Kind) => {
+    if (seen.has(k.key)) return;
+    seen.add(k.key);
+    kinds.push(k);
+  };
+  let thoughts = 0;
+  let tools = 0;
+  let errors = 0;
+  let current: string | null = null;
+  let waitingWords: string | null = null;
+  let startedAt: number | null = null;
+  const started = (ms: number | undefined) => {
+    if (ms !== undefined && (startedAt === null || ms < startedAt)) startedAt = ms;
+  };
+  for (const it of items) {
+    if (it.kind === "thinking") {
+      thoughts++;
+      addKind({ key: "thinking", icon: { name: "lightbulb" }, label: t("process.kind.thinking") });
+      current = t("process.thinking");
+    } else if (it.kind === "tool") {
+      const r = it.tool.row;
+      tools++;
+      if (r.status === "failed") errors++;
+      addKind(kindOf(it.tool));
+      current = [r.name, r.description ?? r.keyArg].filter(Boolean).join(" ");
+      started(r.startedAt);
+      if (isLiveRow(r) && r.waiting !== undefined)
+        waitingWords ??= waitingText(r.waiting, r.waitingFor, locale);
+    } else if (it.kind === "subagent") {
+      const r = it.row.row;
+      tools++;
+      if (r.status === "failed") errors++;
+      addKind({ key: "agent", icon: { name: "agent" }, label: t("process.kind.agent") });
+      current = `${t("process.subagent")} ${r.description}`;
+      started(r.startedAt);
+      if (r.status === "waiting")
+        waitingWords ??= waitingText(r.waiting ?? "approval", undefined, locale);
+    }
+  }
+  const label = useThrottled(current, ANNOUNCE_MS);
+  const pinnedSummary = usePinnedSummary(c.orgId, c.conversationId, b.pinned[0]);
+
+  // what the rail draws: the last steps, more behind the fold row
+  const base = b.state === "finished" ? RAIL_PAGE : LIVE_STEPS;
+  const shown = ui?.shown ?? base;
+  const from = Math.max(0, items.length - shown);
+
+  const stepIcon = (it: RailItem): RailStepProps["icon"] => {
+    switch (it.kind) {
+      case "thinking":
+        return live && it.e.live ? "spinner" : { name: "lightbulb" };
+      case "narration":
+        return "dot";
+      case "tool": {
+        const r = it.tool.row;
+        if (live && isLiveRow(r)) return r.waiting !== undefined ? "hand" : "spinner";
+        return kindOf(it.tool).icon;
+      }
+      case "subagent": {
+        const s = it.row.row.status;
+        if (live && s === "waiting") return "hand";
+        if (live && (s === "running" || s === "queued")) return "spinner";
+        return { name: "agent" };
+      }
+      case "note":
+        return { name: it.step.note === "compacted" ? "archive" : "refresh" };
+      case "decided": {
+        const call = byCall.get(it.e.item.callId);
+        return call !== undefined ? kindOf(call.tool).icon : { name: "check" };
+      }
+      case "extra":
+        return { name: it.extra.kind === "card" ? "extension" : "globe" };
+    }
+  };
+
+  const extra = (x: Extra): ReactNode =>
+    x.kind === "card" ? (
+      (renderCard?.(x) ?? null)
+    ) : (
+      <NetworkFacts orgId={c.orgId} conversationId={c.conversationId} hosts={x.hosts} />
+    );
+
+  const stepBody = (it: RailItem): ReactNode => {
+    switch (it.kind) {
+      case "thinking":
+        return <ThinkingRow seconds={it.e.seconds} text={it.e.text} live={it.e.live} inRail />;
+      case "narration":
+        return <RailText>{it.text}</RailText>;
+      case "tool":
+        return (
+          <>
+            <ToolStep r={it.tool} c={c} />
+            {it.extras.map((x) => (
+              <Fragment key={x.key}>{extra(x)}</Fragment>
+            ))}
+          </>
+        );
+      case "subagent":
+        return <SubagentStep row={it.row} c={c} />;
+      case "note":
+        return <DividerView e={{ kind: "divider", key: it.key, ...it.step.divider }} c={c} />;
+      case "decided":
+        return <DecidedStep e={it.e} c={c} />;
+      case "extra":
+        return extra(it.extra);
+    }
+  };
+
+  const toggle = () =>
+    c.setBlockUi(b.key, (u) => ({ ...u, open: { value: !open, state: b.state } }));
+  const pinned =
+    live && b.pinned.length > 0 ? (
+      <Stack gap={8}>
+        {b.pinned.map((p) => (
+          <Fragment key={p.key}>{renderCard?.(p) ?? null}</Fragment>
+        ))}
+      </Stack>
+    ) : undefined;
+
+  return (
+    <ProcessBlock
+      state={b.state}
+      {...(label !== null ? { current: label } : {})}
+      {...(b.state === "waiting" ? { waiting: waitingWords ?? t("process.waiting") } : {})}
+      elapsedMs={live ? (startedAt === null ? null : Math.max(0, now - startedAt)) : b.durationMs}
+      summary={{
+        thoughts,
+        tools,
+        errors,
+        ...(pinnedSummary !== undefined ? { pinned: pinnedSummary } : {}),
+      }}
+      kinds={kinds.slice(0, MAX_PROCESS_CHIPS)}
+      open={open}
+      onToggle={toggle}
+      hiddenBefore={from}
+      onShowEarlier={() =>
+        c.setBlockUi(b.key, (u) => ({ ...u, shown: (u.shown ?? base) + RAIL_PAGE }))
+      }
+      {...(pinned !== undefined ? { pinned } : {})}
+      backgroundRunning={b.backgroundRunning}
+    >
+      {/* the steps are the rail's direct children: its rule's ends come from their positions */}
+      {items.slice(from).map((it) => (
+        <RailStep key={it.key} icon={stepIcon(it)}>
+          {stepBody(it)}
+        </RailStep>
+      ))}
+    </ProcessBlock>
+  );
+}
+
+/**
+ * A single synchronous sub-agent in the rail (spec §10.3): one tool line, "Sub-agent · <task> ·
+ * N tools", whose link opens it in the agent panel.
+ */
+function SubagentStep({ row, c }: { row: TimelineSubagent; c: EntryContext }): ReactNode {
+  const t = useTranslations("chat");
+  const r = row.row;
+  const cb = c.cb;
+  // A call refused before any dispatch keeps its call key as id: no agent to open.
+  const openable = r.openable !== false && !isCallKey(r.id);
+  const onOpen = !openable
+    ? undefined
+    : c.has.openSubagent
+      ? () => cb.current.onOpenSubagent?.(r.id)
+      : c.has.openAgent
+        ? () => cb.current.onOpenAgent?.(r.id)
+        : undefined;
+  const status: ToolRowData["status"] =
+    r.status === "running" || r.status === "waiting"
+      ? "running"
+      : r.status === "queued"
+        ? "pending"
+        : r.status === "failed"
+          ? "failed"
+          : r.status === "aborted"
+            ? "cancelled"
+            : "done";
+  const line: ToolRowData = {
+    id: r.id,
+    kind: "task",
+    name: t("process.subagent"),
+    keyArg: r.description,
+    extra: t("process.subagentTools", { n: r.toolCalls }),
+    status,
+    ...(r.status === "waiting" && r.waiting !== undefined ? { waiting: r.waiting } : {}),
+    ...(r.startedAt !== undefined ? { startedAt: r.startedAt } : {}),
+    ...(r.startedAt !== undefined && r.finishedAt !== undefined
+      ? { durationMs: r.finishedAt - r.startedAt }
+      : {}),
+    ...(onOpen !== undefined ? { link: { label: t("process.openSubagent"), onOpen } } : {}),
+  };
+  return <ToolGroup rows={[line]} />;
+}
+
+/** A decided approval, question or connect in the rail: the card's one-line decided form. */
+function DecidedStep({
+  e,
+  c,
+}: {
+  e: Extract<ProcessStep, { kind: "decided" }>["entry"];
+  c: EntryContext;
+}): ReactNode {
+  const questionPanel = c.cb.current.questionPanel;
+  switch (e.kind) {
+    case "approval":
+      return <ApprovalCard orgId={c.orgId} item={e.item} info={c.info.get(e.item.toolKey)} />;
+    case "question":
+      return (
+        <QuestionCard
+          orgId={c.orgId}
+          item={e.item}
+          {...(questionPanel !== undefined ? { panel: questionPanel } : {})}
+        />
+      );
+    case "connect":
+      return <ConnectCard orgId={c.orgId} item={e.item} />;
+  }
+}
+
+/**
+ * A turn's handoffs and reveals (spec §4, must see, non-blocking): the handoffs as one list of
+ * links (a connector's connection goes to its connection page), then what a call shows the run's
+ * person once.
+ */
+function PendingView({ e, c }: { e: PendingEntry; c: EntryContext }): ReactNode {
+  const t = useTranslations("chat.handoff");
+  const actions: PendingAction[] = [];
+  const reveals: Extract<TimelineEntry, { kind: "reveal" }>[] = [];
+  for (const it of e.items) {
+    if (it.kind === "reveal") {
+      reveals.push(it);
+      continue;
+    }
+    const link = it.target.type === "link";
+    actions.push({
+      key: it.key,
+      icon: { name: link ? "external-link" : "connector" },
+      title: it.title,
+      description: t(link ? "linkBody" : "connectBody"),
+      action: {
+        label: t(link ? "open" : "connect"),
+        href: it.target.type === "link" ? it.target.url : connectionHref(it.target.connectorId),
+      },
+    });
+  }
+  return (
+    <Stack gap={8}>
+      <PendingActions items={actions} />
+      {reveals.map((r) => (
+        <RevealEntry key={r.key} orgId={c.orgId} conversationId={c.conversationId} entry={r} />
+      ))}
+    </Stack>
+  );
 }
 
 /**

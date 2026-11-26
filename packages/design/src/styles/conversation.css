@@ -2375,6 +2375,8 @@ button.cb-file-card:focus-visible {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* space.5 from the answer and the cards after it (spec §3): the thread's space.3 gap plus this */
+  margin-bottom: var(--cb-space-2);
 }
 .cb-process-head {
   min-width: 0;

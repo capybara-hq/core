@@ -1466,6 +1466,26 @@
     }
   },
   "chat": {
+    "process": {
+      "thinking": "Thinking",
+      "waiting": "Waiting for you",
+      "subagent": "Sub-agent",
+      "subagentTools": "{n, plural, one {# tool} other {# tools}}",
+      "openSubagent": "Open",
+      "kind": {
+        "thinking": "Thinking",
+        "terminal": "Command",
+        "file-text": "Read",
+        "square-pen": "Edit",
+        "search": "Search",
+        "globe": "Web",
+        "skills": "Skill",
+        "agent": "Sub-agent",
+        "list-checks": "Todo",
+        "connector": "Connector",
+        "extension": "Extension"
+      }
+    },
     "waitingFor": {
       "role": {
         "guest": "a guest",

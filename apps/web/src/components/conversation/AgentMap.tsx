@@ -24,6 +24,7 @@ import {
   type ConversationEvent,
   type ModelRef,
 } from "../../lib/conversations";
+import { groupProcess } from "../../lib/process";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
   agentTreeQuery,
@@ -435,6 +436,8 @@ function AgentLevel({
     () => (transcript ? withDrafts(base, child.state.drafts) : base.entries),
     [transcript, base, child.state.drafts],
   );
+  // the transcript draws a run's process as one block, as the conversation does
+  const threadEntries = useMemo(() => groupProcess(entries), [entries]);
   const background = useMemo(
     () =>
       (bg.data ?? [])
@@ -553,7 +556,7 @@ function AgentLevel({
             live={false}
             orgId={orgId}
             conversationId={id}
-            entries={entries}
+            entries={threadEntries}
             info={info}
             people={child.people}
             reasoningOf={reasoningOf}

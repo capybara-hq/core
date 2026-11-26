@@ -244,6 +244,7 @@ export {
   type ToolVerbGroup,
   type ToolWaiting,
   verbGroup,
+  waitingText,
 } from "./tool-copy";
 export { ToolGroup, type ToolGroupProps } from "./tool-group";
 export {

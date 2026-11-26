@@ -636,11 +636,13 @@ describe("background tasks in the thread", () => {
   it("labels the background Bash row and links its task", async () => {
     api({ tasks: [task()] });
     await renderChatRoute();
+    // the call is a step of the run's process block, open while the run goes on
     const tools = await vi.waitFor(() => {
-      const e = document.querySelector('[data-entry="tools"]');
+      const e = document.querySelector('[data-entry="process"]');
       if (e === null) throw new Error("no row yet");
       return e as HTMLElement;
     });
+    expect(tools.getAttribute("data-state")).toBe("running");
     expect(tools.textContent).toContain(en.background.inBackground);
     await userEvent.setup().click(
       within(tools).getByRole("button", {
