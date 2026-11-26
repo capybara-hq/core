@@ -2901,6 +2901,14 @@ export type ModelStreamEvent = {
     type: "thinking_delta";
     text: string;
 } | {
+    type: "tool_call_start";
+    id: string;
+    name: string;
+} | {
+    type: "tool_call_delta";
+    id: string;
+    input: string;
+} | {
     type: "message_complete";
     content: ContentBlock[];
     stopReason: StopReason;
@@ -4938,6 +4946,25 @@ export type ToolErrorKind = "error" | "unavailable";
 export type ToolHandler = (input: unknown, ctx: ToolCallContext) => Promise<ToolResult | InputRequired>;
 
 // @public
+export type ToolInputView = {
+    kind: "file_write";
+    path: string;
+    content: string;
+} | {
+    kind: "file_edit";
+    path: string;
+    old: string;
+    new: string;
+} | {
+    kind: "command";
+    command: string;
+    description?: string;
+} | {
+    kind: "text";
+    field: string;
+};
+
+// @public
 export interface ToolPostHookPayload extends ToolPreHookPayload {
     content: string;
     durationMs: number;
@@ -4973,6 +5000,7 @@ export interface ToolSpec {
     defaultPolicy?: "allow" | "ask";
     description: string;
     inputSchema: Record<string, unknown>;
+    inputView?: ToolInputView;
     keyArgs?: string[];
     name: string;
     sources?: ConversationSource[];
@@ -5368,7 +5396,7 @@ export function validateThemeAssets(theme: ParsedTheme, files: Map<string, Uint8
 export function validateToolDisplay(d: unknown): string[];
 
 // @public
-export function validateToolPresentation(spec: Pick<ToolSpec, "title" | "keyArgs" | "inputSchema">): string[];
+export function validateToolPresentation(spec: Pick<ToolSpec, "title" | "keyArgs" | "inputView" | "inputSchema">): string[];
 
 // @public
 export function validateToolSpec(spec: ToolSpec): string[];

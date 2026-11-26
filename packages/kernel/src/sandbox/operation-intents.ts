@@ -404,11 +404,22 @@ export class SandboxOperationIntents {
     return row;
   }
   /**
-   * The run start's kernel read (permission activation L2, Hook 1): the run must still be the
-   * claim's execution, triggered by the actor and `queued` (a run start reads before its run is
-   * running), checked in PG under the authority locks the caller already holds.
+   * The run of a kernel read (permission activation L2): the run must still be the claim's
+   * execution, triggered by the actor and in the state its purpose reads in, checked in PG under
+   * the authority locks the caller already holds. `project_root` reads before its run's first
+   * model call (`queued`); `write_base` reads while its run streams a `Write` (`running`).
    */
-  private async assertKernelReadRun(ctx: SandboxUseContext, c: ExecutionClaim): Promise<void> {
+  private async assertKernelReadRun(
+    ctx: SandboxUseContext,
+    read: KernelReadInvocation,
+  ): Promise<void> {
+    const c = read.claim;
+    const status =
+      read.purpose === "project_root"
+        ? "queued"
+        : read.purpose === "write_base"
+          ? "running"
+          : denied("Unknown kernel read purpose");
     const run = await this.db
       .selectFrom("runs")
       .select(["execution_id", "trigger_account_id", "status"])
@@ -420,9 +431,9 @@ export class SandboxOperationIntents {
       !run ||
       run.execution_id !== c.executionId ||
       run.trigger_account_id !== ctx.actor.accountId ||
-      run.status !== "queued"
+      run.status !== status
     )
-      denied("The run start's execution claim is no longer current");
+      denied("The kernel read's execution claim is no longer current");
   }
   /**
    * Admits one kernel read (Hook 1), modelled on {@link admitBrowse}: a random operation id per
@@ -454,7 +465,7 @@ export class SandboxOperationIntents {
     const scope = await this.authority.resolveKernelRead(ctx, read, method, input.path, signal);
     if (scope.rootConversationId !== c.rootId)
       denied("The kernel read's root no longer matches the execution claim");
-    await this.assertKernelReadRun(ctx, c);
+    await this.assertKernelReadRun(ctx, read);
     const described = describeOperationPayload(input);
     const payload = payloadReference("input", described);
     const vector = await this.epochs.readLocked({
@@ -520,7 +531,7 @@ export class SandboxOperationIntents {
     const initial = await this.read(id);
     await this.locks.acquire(subjectOf(initial), { kind: "admit" });
     const c = read.claim;
-    await this.assertKernelReadRun(ctx, c);
+    await this.assertKernelReadRun(ctx, read);
     const row = await this.db
       .selectFrom("sandbox_operation_intents")
       .selectAll()
@@ -1253,16 +1264,32 @@ export class SandboxOperationIntents {
     });
   }
   @Transactional({ propagation: "requires_new" })
-  async complete(id: string, executionId: string, result: unknown): Promise<void> {
+  async complete(
+    id: string,
+    executionId: string,
+    result: unknown,
+    /**
+     * A kernel read's purpose: required for a row with a run and no tool call (a kernel read),
+     * whose run state it decides; never defaulted, so a caller that forgets it fails loudly.
+     */
+    kernelRead?: KernelReadInvocation["purpose"],
+  ): Promise<void> {
     const initial = await this.read(id);
     if (initial.run_id !== null) {
-      // a kernel read (no tool call) serves a run start, which reads while its run is queued
+      // a kernel read (no tool call) serves a run start, which reads while its run is queued, or a
+      // write base, which reads while its run is running
+      let status: "queued" | "running" = "running";
+      if (initial.call_id === null) {
+        if (kernelRead === "project_root") status = "queued";
+        else if (kernelRead !== "write_base")
+          throw new Error("A kernel read's completion must name its purpose");
+      }
       const run = await this.db
         .selectFrom("runs")
         .select("id")
         .where("id", "=", initial.run_id)
         .where("execution_id", "=", executionId)
-        .where("status", "=", initial.call_id === null ? "queued" : "running")
+        .where("status", "=", status)
         .forShare()
         .executeTakeFirst();
       if (!run) return;

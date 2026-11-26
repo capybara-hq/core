@@ -4,17 +4,33 @@ import { canonicalRoot } from "../devices/working-root.js";
 import type { ExecutionClaim } from "../runtime/run-execution.js";
 
 /**
- * A kernel read of a device on behalf of a run start (permission activation L2, Hook 1): the
- * run's current execution claim and what is read. Only `project_root` exists: the bound project's
- * `AGENTS.md` and `.agents/skills/**` read before the run's first model call. Supplied only by
- * `ProjectKnowledgeService`, never by a tool, a Platform operation or an HTTP route.
+ * A kernel read of a device on behalf of a run (permission activation L2), never a tool's, a
+ * Platform operation's or an HTTP route's: the run's current execution claim and what is read.
+ * - `project_root`: the bound project's `AGENTS.md` and `.agents/skills/**`, read by
+ *   `ProjectKnowledgeService` before the run's first model call (the run still `queued`).
+ * - `write_base`: the current content of the one file a streaming `Write` is about to overwrite,
+ *   read only to show the person a live diff (streaming tool input spec §4.1): the run `running`,
+ *   `stat` and `readFile` of exactly `path`, never making, waking or resuming an instance, no path
+ *   lease. Display only: it never reaches the model, the log or a hook.
  */
-export interface KernelReadInvocation {
-  claim: ExecutionClaim;
-  purpose: "project_root";
-  /** The conversation's bound project root (`conversations.project_path`). */
-  root: string;
-}
+export type KernelReadInvocation =
+  | {
+      claim: ExecutionClaim;
+      purpose: "project_root";
+      /** The conversation's bound project root (`conversations.project_path`). */
+      root: string;
+    }
+  | {
+      claim: ExecutionClaim;
+      purpose: "write_base";
+      /** The one clean, absolute file path the read may reach. */
+      path: string;
+    };
+
+/** What a kernel read reaches, without its claim. */
+export type KernelReadTarget =
+  | Omit<Extract<KernelReadInvocation, { purpose: "project_root" }>, "claim">
+  | Omit<Extract<KernelReadInvocation, { purpose: "write_base" }>, "claim">;
 
 /** The directory of a project's skills, relative to its root (project root spec §4.7). */
 export const PROJECT_SKILLS_DIR = ".agents/skills";
@@ -49,9 +65,41 @@ export function kernelReadRoot(
 }
 
 /**
- * A kernel read that was not admitted (its run is no longer the claim's queued run start, the
- * authority refused it, its scope changed before dispatch): nothing was sent to the device. The
- * knowledge read treats it as a device that could not be asked, never as an unreadable project.
+ * The one path a kernel read of `read` may reach with `method` that covers `path`, the
+ * operation's only read root; null when the read is outside it. `project_root`: {@link
+ * kernelReadRoot}. `write_base`: `stat` or `readFile` of exactly its clean, absolute path, nothing
+ * else (no `list`, no other path, no parent or child).
+ */
+export function kernelReadCovering(
+  read: KernelReadTarget,
+  method: KernelReadMethod,
+  path: string,
+): string | null {
+  if (read.purpose === "project_root") return kernelReadRoot(read.root, method, path);
+  if (read.purpose !== "write_base") return null;
+  if (method !== "stat" && method !== "readFile") return null;
+  if (validateSandboxPathShape(read.path).length > 0 || posix.normalize(read.path) !== read.path)
+    return null;
+  if (read.path === "/" || path !== read.path) return null;
+  return read.path;
+}
+
+/**
+ * A `write_base` kernel read of a device whose instance is not running (none yet, suspended,
+ * being made, destroyed or replaced): nothing was made, woken or resumed and nothing was sent.
+ */
+export class KernelReadInstanceNotRunning extends Error {
+  constructor() {
+    super("The device's instance is not running; a display-only read never starts it");
+    this.name = "KernelReadInstanceNotRunning";
+  }
+}
+
+/**
+ * A kernel read that was not admitted (its run is no longer the claim's run in the state its
+ * purpose needs, the authority refused it, its scope changed before dispatch): nothing was sent to
+ * the device. The knowledge read treats it as a device that could not be asked, never as an
+ * unreadable project.
  */
 export class KernelReadNotAdmitted extends Error {
   constructor(cause: unknown) {

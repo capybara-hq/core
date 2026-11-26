@@ -63,7 +63,10 @@ export const conversationTopic = (conversationId: string): string => `conv.${con
  *   最终内容以日志中的 assistant_message 为准。`offset` (text and thinking): the characters of
  *   that channel this attempt of the step streamed before the delta; a subscriber that joined midway
  *   tells by it whether it has the step's text from the start (the channel outbound only drafts
- *   complete text) and drops what a live draft already covers (spec 2026-11-07 §3.2);
+ *   complete text) and drops what a live draft already covers (spec 2026-11-07 §3.2). Streamed
+ *   tool calls (streaming tool input spec §4, display only): `tool_start` (`callId`, `name`),
+ *   `tool_input` (`callId`, `text`, `offset` counted per call) and `tool_base` (`callId`, `text`,
+ *   `sha256`: the file a streaming `Write` replaces);
  * - `ui`：插件经 `ctx.ui.invalidate` 告知这个会话的某个界面贡献变了（不进日志、不是模型可见内容），
  *   SSE 转发为 `event: ui`，网页据此重新取视图。
  * - `subagent_progress`: after each step of a sub-agent run, on the topic of **every ancestor**
@@ -82,9 +85,12 @@ export type ConversationBusMessage =
       kind: "delta";
       runId: string;
       step: number;
-      delta: "text" | "thinking" | "step_reset";
+      delta: "text" | "thinking" | "tool_start" | "tool_input" | "tool_base" | "step_reset";
       text?: string;
       offset?: number;
+      callId?: string;
+      name?: string;
+      sha256?: string;
     }
   | { kind: "ui"; plugin: string; contribution: string }
   | { kind: "changed"; what: ConversationChange }

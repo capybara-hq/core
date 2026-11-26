@@ -335,12 +335,13 @@ export function contentHash(v: unknown): string {
 }
 
 /**
- * `ToolSpec` fields the model never sees: the display-only `title` and `keyArgs` (UI refresh B)
- * and an extension tool's own time limit `timeoutMs`. Left out of the definition fingerprint, so
- * adding or changing them never changes `model_call.request.tools`, never sends a connector tool
- * to drift review and never invalidates a remembered grant.
+ * `ToolSpec` fields the model never sees: the display-only `title`, `keyArgs` (UI refresh B) and
+ * `inputView` (streaming input preview), and an extension tool's own time limit `timeoutMs`. Left
+ * out of the definition fingerprint, so adding or changing them never changes
+ * `model_call.request.tools`, never sends a connector tool to drift review and never invalidates a
+ * remembered grant.
  */
-export const NON_MODEL_SPEC_FIELDS = ["title", "keyArgs", "timeoutMs"] as const;
+export const NON_MODEL_SPEC_FIELDS = ["title", "keyArgs", "inputView", "timeoutMs"] as const;
 
 /** A tool spec without its {@link NON_MODEL_SPEC_FIELDS} (non-objects unchanged). */
 export function withoutNonModelFields<T>(spec: T): T {

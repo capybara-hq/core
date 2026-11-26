@@ -56,6 +56,7 @@ const SPEC: ToolSpec = {
   },
   // display only (UI refresh B): who the message goes to; never sent to the model
   keyArgs: ["to"],
+  inputView: { kind: "text", field: "message" },
 };
 
 /** `12345` → `12,345` (no locale data involved, so the text is the same on every replica). */

@@ -239,6 +239,29 @@ describe("project knowledge (run start)", () => {
   });
 });
 
+describe("the write base kernel read (streaming tool input spec §4.1)", () => {
+  it("is reachable only through withKernelRead: no tool context, route or Platform operation", async () => {
+    const { readdir, readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const src = join(import.meta.dirname, "../../src");
+    const all = (await readdir(src, { recursive: true })).filter((p) => p.endsWith(".ts")).sort();
+    const naming: string[] = [];
+    const entering: string[] = [];
+    for (const p of all) {
+      const text = await readFile(join(src, p), "utf8");
+      if (text.includes('"write_base"')) naming.push(p);
+      if (text.includes("withKernelRead")) entering.push(p);
+    }
+    // the purpose is named only by the sandbox's kernel read and the run's own code
+    expect(naming.length).toBeGreaterThan(0);
+    for (const p of naming) expect(p).toMatch(/^(sandbox|runtime)\//);
+    // no tool, Platform operation, controller, extension ctx or HTTP code enters a kernel read
+    const exposed = (p: string) =>
+      /^(tools|platform|http|ctx|extensions)\//.test(p) || p.endsWith(".controller.ts");
+    expect([...naming, ...entering].filter(exposed)).toEqual([]);
+  });
+});
+
 describe("a person's project skill invocation", () => {
   const latest = {
     project: "app",

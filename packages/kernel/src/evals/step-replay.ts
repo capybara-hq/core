@@ -17,6 +17,7 @@ import type { CompactionSettingsService } from "../runtime/compaction-settings.s
 import { estimateTokens } from "../runtime/context/tokens.js";
 import {
   consumeModelStream,
+  deltaChars,
   type MediaSourceDeps,
   MediaUnavailableError,
 } from "../runtime/model-call.js";
@@ -304,7 +305,7 @@ export async function replayStep(
   let out: Awaited<ReturnType<typeof consumeModelStream>>;
   try {
     out = await consumeModelStream(provider, request, idleMs, signal, (ev) => {
-      streamedChars += ev.text.length;
+      streamedChars += deltaChars(ev);
     });
   } catch (err) {
     // 请求已发出：供应商流里不带中途用量（model-provider@2 只在 message_complete 给 usage），

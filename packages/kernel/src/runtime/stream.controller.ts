@@ -43,8 +43,9 @@ class RunDraftParamsDto extends createZodDto(DraftParams, "RunDraftParams") {}
  * 会话事件流（SSE）：`GET /api/v1/orgs/:orgId/conversations/:id/stream?after=<seq>`，`agents.use`，只有会话所有者可用。
  * - opening it never changes run state (a read; transactional outbox spec §6);
  * - 先订阅会话频道、再回放 `after`（或优先的 `Last-Event-ID`）之后的事件：`id: <seq>` / `event: event`；
- * - after that catch-up, one `event: draft` (`data: {"runId","step","text","thinking"}`) per step of
- *   the running run whose `assistant_message` is not logged (live drafts, spec 2026-11-07 §3.2);
+ * - after that catch-up, one `event: draft` (`data: {"runId","step","text","thinking","tools"}`)
+ *   per step of the running run whose `assistant_message` is not logged (live drafts, spec
+ *   2026-11-07 §3.2);
  *   之后收到 `events` 通知就补读新事件（按 seq 去重），收到增量就发 `event: delta`，收到界面刷新
  *   （插件 `ctx.ui.invalidate`）就发 `event: ui`（`data: {"plugin","contribution"}`）；
  * - 每 `runtime.sseHeartbeatMs` 发 `: ping` 注释；每 `runtime.sseRecheckMs` 复核凭据（会话未吊销 / 令牌仍有效，
@@ -64,9 +65,10 @@ export class ConversationStreamController {
   ) {}
 
   /**
-   * The live drafts of one run (spec 2026-11-07 §3.2): `{ drafts: { step, text, thinking }[] }`,
-   * the steps still streaming whose `assistant_message` is not logged (none once the run is no
-   * longer running). What a stream client asks for when a delta's `offset` is past its draft.
+   * The live drafts of one run (spec 2026-11-07 §3.2):
+   * `{ drafts: { step, text, thinking, tools }[] }`, the steps still streaming whose
+   * `assistant_message` is not logged (none once the run is no longer running). What a stream
+   * client asks for when a delta's `offset` is past its draft.
    * The stream's access rule (the conversation is visible to the viewer, else 404
    * `conversation.not_found`); a run not of this conversation → 404 `run.not_found`.
    */
@@ -96,7 +98,9 @@ export class ConversationStreamController {
       });
       live = [];
     }
-    return { drafts: live.map(({ step, text, thinking }) => ({ step, text, thinking })) };
+    return {
+      drafts: live.map(({ step, text, thinking, tools }) => ({ step, text, thinking, tools })),
+    };
   }
 
   @Get(":id/stream")

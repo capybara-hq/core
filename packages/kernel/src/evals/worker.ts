@@ -139,6 +139,8 @@ export function replayLoopDeps(
     compactionProgress: _noCompactionProgress,
     skillForks: _noForks,
     permissionContext: _noLivePermissionContext,
+    // a replay never reads a device for a streaming Write's base
+    writeBase: _noWriteBase,
     ...replayDeps
   } = stepDeps;
   // the object rest above copied `db` as a value: read it through the step deps' getter

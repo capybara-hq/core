@@ -2869,3 +2869,247 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
     });
   });
 });
+
+describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
+  type Reader = NonNullable<ModelStepDeps["writeBase"]>;
+  type ReadInput = Parameters<Reader["read"]>[0];
+  type BaseResult = Awaited<ReturnType<Reader["read"]>>;
+  const PATH = "/workspace/a.py";
+  const pending = <T>() => {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  };
+  const toolInfo = stubInfo("tooly", {
+    capabilities: {
+      tools: true,
+      vision: false,
+      reasoning: false,
+      caching: false,
+      midConversationSystem: true,
+    },
+  });
+  const writeAgent = () =>
+    agentWith({
+      model: { provider: "stub", model: "tooly" },
+      disabledTools: onlyBuiltins([{ kind: "builtin", name: "Write" }]),
+    });
+  const usage = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  /** A provider that streams a Write start and its closed path; `after` decides what follows. */
+  function writer(after: (call: number) => Promise<"complete" | ModelError>): ModelProvider {
+    let calls = 0;
+    return {
+      async listModels() {
+        return [toolInfo];
+      },
+      async *stream(): AsyncGenerator<ModelStreamEvent> {
+        const n = ++calls;
+        yield { type: "tool_call_start", id: "c1", name: "Write" };
+        yield { type: "tool_call_delta", id: "c1", input: `{"file_path":"${PATH}",` };
+        const outcome = await after(n);
+        if (outcome !== "complete") throw outcome;
+        yield { type: "tool_call_delta", id: "c1", input: `"content":"x"}` };
+        yield {
+          type: "message_complete",
+          content: [
+            {
+              type: "tool_call",
+              id: "c1",
+              name: "Write",
+              input: { file_path: PATH, content: "x" },
+            },
+          ],
+          stopReason: "tool_use",
+          usage,
+        };
+      },
+    };
+  }
+  const realTools = () => k.app.get(ToolRegistry);
+  const runWith = (
+    reader: Reader,
+    sink: StreamSink,
+    kind: "chat" | "eval" | "subagent" = "chat",
+    opts: { signal?: AbortSignal; settleMs?: number; log?: ModelStepDeps["log"] } = {},
+  ) =>
+    runModelStep(
+      {
+        ...deps,
+        writeBase: reader,
+        ...(opts.settleMs !== undefined && { writeBaseSettleMs: opts.settleMs }),
+        ...(opts.log !== undefined && { log: opts.log }),
+        // a replay listing offers the sandbox tools (this test has no device): the builtin Write
+        tools: {
+          forAgent: (org, def, ...rest) =>
+            realTools().forAgent(org, { ...def, replay: true }, ...rest),
+        },
+      },
+      {
+        source: "web",
+        orgId,
+        conversationId,
+        runId,
+        step: 1,
+        agent: writeAgent(),
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: opts.signal ?? new AbortController().signal,
+        sink,
+        agentId: randomUUID(),
+        accountId,
+        conversationKind: kind,
+      },
+    );
+
+  it("waits for a base read still running at the stream's end, after aborting its signal", async () => {
+    stubImpl = writer(async () => "complete");
+    await say("write it");
+    const read = pending<BaseResult>();
+    const seen: ReadInput[] = [];
+    const reader: Reader = {
+      read: (input) => {
+        seen.push(input);
+        return read.promise;
+      },
+    };
+    const { deltas, sink } = collector();
+    let done = false;
+    const stepP = runWith(reader, sink).finally(() => {
+      done = true;
+    });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0]?.path).toBe(PATH);
+    // the stream ends; the read's signal is aborted, yet the step still waits for the read
+    await vi.waitFor(() => expect(seen[0]?.signal.aborted).toBe(true));
+    await vi.waitFor(() =>
+      expect(deltas.some((d) => d.kind === "tool_input" && d.text === `"content":"x"}`)).toBe(true),
+    );
+    expect(done).toBe(false);
+    expect(deltas.some((d) => d.kind === "stream_end")).toBe(false);
+    expect(await ofType("assistant_message")).toHaveLength(0);
+    // the read ends late: its base is not shown (its attempt is over)
+    read.resolve({ text: "old", sha256: "0".repeat(64) });
+    await stepP;
+    expect(deltas.some((d) => d.kind === "tool_base")).toBe(false);
+    expect(deltas.filter((d) => d.kind === "stream_end")).toHaveLength(1);
+    expect(await ofType("assistant_message")).toHaveLength(1);
+  });
+
+  /** A logger that records its warnings (the rest is silent). */
+  const warnings = () => {
+    const seen: string[] = [];
+    const log: ModelStepDeps["log"] = {
+      ...silent,
+      warn: (msg: string) => {
+        seen.push(msg);
+      },
+    };
+    return { seen, log };
+  };
+  const STRAY = "write base read still running after its abort; not waited for";
+
+  it("a reader that never settles does not hold the step past the bound", async () => {
+    stubImpl = writer(async () => "complete");
+    await say("write it");
+    const seen: ReadInput[] = [];
+    // a provider that ignores its abort: the read never ends
+    const reader: Reader = {
+      read: (input) => {
+        seen.push(input);
+        return new Promise<never>(() => {});
+      },
+    };
+    const { deltas, sink } = collector();
+    const w = warnings();
+    await runWith(reader, sink, "chat", { settleMs: 1, log: w.log });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.signal.aborted).toBe(true);
+    expect(w.seen.filter((m) => m === STRAY)).toHaveLength(1);
+    expect(deltas.some((d) => d.kind === "tool_base")).toBe(false);
+    expect(deltas.filter((d) => d.kind === "stream_end")).toHaveLength(1);
+    expect(await ofType("assistant_message")).toHaveLength(1);
+  });
+
+  it("Stop ends the step while a reader that never settles is still running", async () => {
+    const stall = pending<"complete">();
+    stubImpl = writer(() => stall.promise);
+    await say("write it");
+    const seen: ReadInput[] = [];
+    const reader: Reader = {
+      read: (input) => {
+        seen.push(input);
+        return new Promise<never>(() => {});
+      },
+    };
+    const { deltas, sink } = collector();
+    const stop = new AbortController();
+    const w = warnings();
+    const stepP = runWith(reader, sink, "chat", { signal: stop.signal, settleMs: 1, log: w.log });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    stop.abort();
+    expect(await stepP).toMatchObject({ aborted: true, stopReason: "aborted" });
+    expect(seen[0]?.signal.aborted).toBe(true);
+    expect(w.seen.filter((m) => m === STRAY)).toHaveLength(1);
+    expect(deltas.some((d) => d.kind === "tool_base")).toBe(false);
+  });
+
+  it.each([
+    ["chat", true],
+    ["subagent", true],
+    ["eval", false],
+  ] as const)("a %s conversation: the reader is called: %s", async (kind, called) => {
+    stubImpl = writer(async () => "complete");
+    await say("write it");
+    const seen: ReadInput[] = [];
+    const reader: Reader = {
+      read: async (input) => {
+        seen.push(input);
+        return { text: "old", sha256: "1".repeat(64) };
+      },
+    };
+    const { deltas, sink } = collector();
+    await runWith(reader, sink, kind);
+    // the step awaited every read it started: nothing is pending after it returned
+    expect(seen).toHaveLength(called ? 1 : 0);
+    // the base found in time is published for chat and sub-agent runs only when the stream is
+    // still open; here the read settles at once, before the stream's end
+    expect(deltas.some((d) => d.kind === "tool_start")).toBe(true);
+    if (!called) expect(deltas.some((d) => d.kind === "tool_base")).toBe(false);
+  });
+
+  it("a step reset cancels its reads: no base after the reset for that attempt, the retry watches afresh", async () => {
+    const first = pending<BaseResult>();
+    const seen: ReadInput[] = [];
+    // attempt 1 fails after the path closed (a retryable error); attempt 2 completes
+    stubImpl = writer(async (n) =>
+      n === 1 ? new ModelError("rate_limited", "slow down") : "complete",
+    );
+    await say("write it");
+    const reader: Reader = {
+      read: (input) => {
+        seen.push(input);
+        return seen.length === 1
+          ? first.promise
+          : Promise.resolve({ text: "fresh", sha256: "2".repeat(64) });
+      },
+    };
+    const { deltas, sink } = collector();
+    const stepP = runWith(reader, sink);
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    await vi.waitFor(() => expect(seen[0]?.signal.aborted).toBe(true));
+    // the first attempt's read ends after its reset: nothing is published for it
+    first.resolve({ text: "stale", sha256: "3".repeat(64) });
+    await stepP;
+    expect(seen).toHaveLength(2);
+    expect(seen[1]?.signal).not.toBe(seen[0]?.signal);
+    const resetAt = deltas.findIndex((d) => d.kind === "step_reset");
+    expect(resetAt).toBeGreaterThan(-1);
+    const bases = deltas.flatMap((d, i) => (d.kind === "tool_base" ? [{ i, text: d.text }] : []));
+    expect(bases.some((b) => b.text === "stale")).toBe(false);
+    // the retry's read settled before its stream ended or after; either way a base is never
+    // published before the reset
+    expect(bases.every((b) => b.i > resetAt)).toBe(true);
+  });
+});

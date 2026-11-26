@@ -35,7 +35,7 @@ import {
   hookDeniedEvent,
   hookRequestOf,
 } from "../runtime/hook-calls.js";
-import { consumeModelStream } from "../runtime/model-call.js";
+import { consumeModelStream, deltaChars } from "../runtime/model-call.js";
 import { type BoundProvider, ProviderRegistry, ProvidersModule } from "../runtime/providers.js";
 import { UsageReportJobs, UsageReportJobsModule } from "../runtime/usage-report-jobs.js";
 import { AttachmentsModule } from "./attachments.module.js";
@@ -265,7 +265,7 @@ export class PromptSuggestionGenerator {
           info.streamIdleTimeoutMs ?? this.config.get().runtime.streamIdleMs,
           signal,
           (ev) => {
-            streamedChars += ev.text.length;
+            streamedChars += deltaChars(ev);
           },
         );
       } catch (err) {

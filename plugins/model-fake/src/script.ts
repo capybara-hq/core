@@ -253,6 +253,8 @@ type Plan =
       more?: { name: string; input: unknown }[];
       /** `slowtool:`: wait this long before the call (a message can arrive while it streams). */
       delayMs?: number;
+      /** `streamtool:`: wait this long between the fragments of the streamed input. */
+      streamMs?: number;
     }
   | { kind: "stall" }
   | { kind: "fail"; error: ModelError };
@@ -371,6 +373,23 @@ function scripted(req: ModelRequest): Plan {
       return {
         kind: "fail",
         error: new ModelError("invalid_request", "slowtool directive carries invalid JSON"),
+      };
+    }
+  }
+  // `streamtool:<ms>:<name>:<json>`: the input streams in fragments, <ms> apart
+  const streamTool = /^streamtool:(\d+):([^:]+):([\s\S]*)$/.exec(text);
+  if (streamTool) {
+    try {
+      return {
+        kind: "tool",
+        name: streamTool[2] as string,
+        input: JSON.parse(streamTool[3] as string),
+        streamMs: Number(streamTool[1]),
+      };
+    } catch {
+      return {
+        kind: "fail",
+        error: new ModelError("invalid_request", "streamtool directive carries invalid JSON"),
       };
     }
   }
@@ -612,6 +631,17 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
           name: c.name,
           input: c.input,
         }));
+        for (const c of content) {
+          if (c.type !== "tool_call") continue;
+          yield { type: "tool_call_start", id: c.id, name: c.name };
+          const json = JSON.stringify(c.input ?? null);
+          for (let i = 0; i < json.length; i += CHUNK_CHARS) {
+            if (i > 0 && p.streamMs !== undefined && p.streamMs > 0)
+              await sleep(p.streamMs, signal);
+            if (signal.aborted) throw abortError();
+            yield { type: "tool_call_delta", id: c.id, input: json.slice(i, i + CHUNK_CHARS) };
+          }
+        }
         yield {
           type: "message_complete",
           content,

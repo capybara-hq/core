@@ -1,5 +1,10 @@
 import { once } from "node:events";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,11 +16,17 @@ import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { reconstructRequest } from "../../src/evals/reconstruct.js";
+import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RunDrafts } from "../../src/runtime/run-drafts.js";
 import { ConversationStreams } from "../../src/runtime/stream.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { asUser, type CookieJar, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor, sessionsFor } from "../helpers/identity.js";
+import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createAgent,
   createConv,
@@ -26,12 +37,38 @@ import {
   postMessage,
   type Req,
   runConfig,
+  runsOf,
   sleep,
   startKernel,
   type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import {
+  armHold,
+  baseSeen,
+  clearHold,
+  type DraftFrame,
+  type DraftTool,
+  draftFrames,
+  finishedAfter,
+  inputComplete,
+  installHold,
+  NEW_CONTENT,
+  ofType,
+  openToolSse,
+  type Sse,
+  sha,
+  streamedWrite,
+  type ToolDelta,
+  toolDeltas,
+  uninstallHold,
+  writeInput,
+} from "./streaming-tool-input-support.js";
+
+const SANDBOX_FAKE = fileURLToPath(
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
+);
 
 /** 解析出的一条 SSE 消息；`comment` 为 `:` 开头的注释行（心跳）。 */
 interface SseMessage {
@@ -864,9 +901,9 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
       "a draft",
     );
     expect(live.drafts).toHaveLength(1);
-    expect(live.drafts[0]).toMatchObject({ step: 1, thinking: "" });
+    expect(live.drafts[0]).toMatchObject({ step: 1, thinking: "", tools: [] });
     expect(SLOW_REPLY.startsWith(live.drafts[0]?.text ?? "x")).toBe(true);
-    expect(Object.keys(live.drafts[0] ?? {}).sort()).toEqual(["step", "text", "thinking"]);
+    expect(Object.keys(live.drafts[0] ?? {}).sort()).toEqual(["step", "text", "thinking", "tools"]);
 
     await waitForTerminal(db, convId);
     const after = await owner.req({ method: "GET", url: draftUrl(orgId, convId, runId) });
@@ -1182,4 +1219,365 @@ describe("会话 SSE：凭据复核（R35）", () => {
       await c.close();
     }
   });
+});
+
+describe("streaming tool input, end to end (spec 2026-11-26)", () => {
+  // model-fake streams every tool call as tool_call_start + tool_call_delta, and
+  // `streamtool:<ms>:<name>:<json>` pauses between the fragments. The kernel publishes bus deltas
+  // `tool_start` / `tool_input` / `tool_base`, keeps the live draft (SSE `event: draft`, the draft
+  // route) and, for the builtin `Write` after its file_path closed, reads a display-only base from
+  // the device (a `write_base` kernel read) when the conversation had read the file unchanged.
+  // Nothing streamed reaches the log or the model.
+  const capture = captureProviderRequests();
+  let k: TestKernel;
+  let root: string;
+  let owner: Req;
+  let ownerCookie: () => string;
+  let orgId: string;
+  let agentId: string;
+  let workspace: string | undefined;
+  const openConv = (convId: string) =>
+    openToolSse(
+      `http://127.0.0.1:${k.port}/api/v1/orgs/${orgId}/conversations/${convId}/stream`,
+      ownerCookie(),
+    );
+
+  beforeAll(async () => {
+    capture.install();
+    installHold();
+    await resetDb();
+    root = await mkdtemp(join(tmpdir(), "cap-streaming-tool-input-"));
+    k = await startKernel(
+      runConfig(urls(), {
+        roles: ["api", "worker"],
+        extensions: [MODEL_FAKE, SANDBOX_FAKE],
+        extensionConfig: { "device-fake": { root } },
+        runtime: STREAM_RUNTIME,
+      }),
+    );
+    await account("owner");
+    const session = await login(k, "owner");
+    owner = session.req;
+    ownerCookie = session.cookie;
+    orgId = await createOrgWithProviders(k, owner);
+    const created = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Writer",
+          instructions: "Write files.",
+          model: { provider: "model-fake", model: "fake-1" },
+          disabledTools: onlyBuiltins(
+            ["Read", "Write", "Agent"].map((name) => ({ kind: "builtin" as const, name })),
+          ),
+        },
+        visibility: "org",
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    agentId = (created.json() as { agent: { id: string } }).agent.id;
+  });
+  afterAll(async () => {
+    uninstallHold();
+    capture.restore();
+    await k?.close();
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+  beforeEach(() => {
+    clearHold();
+    capture.reset();
+  });
+
+  /** The host directory of the owner's device `/workspace` (the first call starts the device). */
+  async function workspaceDir(): Promise<string> {
+    if (workspace !== undefined) return workspace;
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:Read:${JSON.stringify({ file_path: "/workspace/none.txt" })}`,
+    );
+    await waitForTerminal(db, conv, 1, 30_000);
+    const dirs = await readdir(join(root, "filesystems"));
+    expect(dirs).toHaveLength(1);
+    workspace = join(root, "filesystems", dirs[0] as string, "workspace");
+    return workspace;
+  }
+
+  async function onDevice(name: string, content: string): Promise<string> {
+    await writeFile(join(await workspaceDir(), name), content);
+    return `/workspace/${name}`;
+  }
+
+  /** A conversation that has read `path` (one run, finished). */
+  async function conversationThatRead(path: string): Promise<string> {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, `tool:Read:${JSON.stringify({ file_path: path })}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const result = ofType(await eventsOf(db, conv), "tool_result").at(-1);
+    expect(result?.payload.isError).toBe(false);
+    return conv;
+  }
+
+  /** The write_base kernel read rows of a conversation's runs (a run row with no tool call). */
+  const kernelReadRows = (conv: string) =>
+    db
+      .selectFrom("sandbox_operation_intents")
+      .select(["operation_id", "method", "state", "run_id", "call_id", "created_at", "updated_at"])
+      .where("conversation_id", "=", conv)
+      .where("call_id", "is", null)
+      .where("run_id", "is not", null)
+      .orderBy("created_at")
+      .execute();
+  const toolRows = (conv: string) =>
+    db
+      .selectFrom("sandbox_operation_intents")
+      .select(["operation_id", "method", "state", "call_id", "created_at"])
+      .where("conversation_id", "=", conv)
+      .where("call_id", "is not", null)
+      .orderBy("created_at")
+      .execute();
+
+  /**
+   * Posts a streamed Write on `conv` with a subscriber open and the provider stream held (see
+   * {@link Hold}); `whileHeld` observes the held stream, then the hold is released and the run is
+   * waited for. Returns the subscriber and the log.
+   */
+  async function runStreamed(
+    conv: string,
+    input: unknown,
+    opts: { at?: number; whileHeld?: (sse: Sse) => Promise<void> } = {},
+  ) {
+    const h = armHold(opts.at);
+    const sse = await openConv(conv);
+    try {
+      sse.after = await postMessage(owner, orgId, conv, streamedWrite(input));
+      await opts.whileHeld?.(sse);
+    } finally {
+      h.release();
+    }
+    await sse.until(finishedAfter(sse.after), "run_finished");
+    return { sse, events: await eventsOf(db, conv) };
+  }
+  /** Held after `HELD_AT` fragments: past the closed path, long before the input ends. */
+  const HELD_AT = 14;
+  const heldForBase = { at: HELD_AT, whileHeld: (s: Sse) => s.until(baseSeen, "the tool_base") };
+  const heldAtEnd = (input: unknown) => ({
+    whileHeld: (s: Sse) => s.until(inputComplete(input), "the whole input"),
+  });
+
+  // ---- cases ----
+
+  describe("a streaming Write", () => {
+    it("publishes start, input and a base; the log and the result equal a non-streamed run's", async () => {
+      const path = await onDevice("a.py", "print('old')\n");
+      const conv = await conversationThatRead(path);
+      const input = writeInput(path);
+      const { sse, events } = await runStreamed(conv, input, heldForBase);
+      sse.close();
+
+      const deltas = toolDeltas(sse.messages);
+      const starts = deltas.filter((d) => d.delta === "tool_start");
+      expect(starts).toHaveLength(1);
+      expect(starts[0]?.name).toBe("Write");
+      const callId = starts[0]?.callId as string;
+      const inputs = deltas.filter((d) => d.delta === "tool_input" && d.callId === callId);
+      expect(inputs.length).toBeGreaterThan(2);
+      // contiguous offsets whose join is the logged input
+      let joined = "";
+      for (const d of inputs) {
+        expect(d.offset).toBe(joined.length);
+        joined += d.text;
+      }
+      const call = ofType(events, "assistant_message")
+        .flatMap((e) => e.payload.content)
+        .find((b) => b.type === "tool_call" && b.name === "Write");
+      // the streamed call id is the logged call's
+      expect(call?.type === "tool_call" && call.id).toBe(callId);
+      expect(JSON.parse(joined)).toEqual(input);
+      expect(call?.type === "tool_call" && call.input).toEqual(input);
+      // exactly one base: the content the conversation read
+      const bases = deltas.filter((d) => d.delta === "tool_base");
+      expect(bases).toHaveLength(1);
+      expect(bases[0]).toMatchObject({
+        callId,
+        text: "print('old')\n",
+        sha256: sha("print('old')\n"),
+      });
+      // it came while the model was still streaming (the hold), after the call started
+      expect(deltas[0]?.delta).toBe("tool_start");
+      expect(deltas.indexOf(bases[0] as ToolDelta)).toBeLessThan(deltas.length - 1);
+      expect(await readFile(join(await workspaceDir(), "a.py"), "utf8")).toBe(NEW_CONTENT);
+
+      // the same call without streaming: the same assistant message and result
+      await onDevice("a.py", "print('old')\n");
+      const plain = await conversationThatRead(path);
+      await postMessage(owner, orgId, plain, `tool:Write:${JSON.stringify(input)}`);
+      await waitForTerminal(db, plain, 2, 30_000);
+      const plainEvents = await eventsOf(db, plain);
+      const norm = (evs: ConversationEvent[]) => {
+        const a = ofType(evs, "assistant_message")
+          .at(-1)
+          ?.payload.content.map((b) =>
+            b.type === "tool_call" ? { name: b.name, input: b.input } : b,
+          );
+        const r = ofType(evs, "tool_result").at(-1);
+        return { a, r: { content: r?.payload.content, isError: r?.payload.isError } };
+      };
+      expect(norm(events)).toEqual(norm(plainEvents));
+      expect(norm(events).r.isError).toBe(false);
+    });
+
+    it("is zero drift: reconstruct equals the requests the provider received", async () => {
+      const path = await onDevice("drift.py", "x = 1\n");
+      capture.reset();
+      const conv = await conversationThatRead(path);
+      const { sse } = await runStreamed(conv, writeInput(path), heldForBase);
+      sse.close();
+      const runId = (await runsOf(db, conv)).at(-1)?.id as string;
+      const snap = await takeSnapshot(db, orgId, conv, runId, 4_194_304);
+      const calls = ofType(toEvents(snap) as ConversationEvent[], "model_call");
+      const sent: ModelRequest[] = capture.sent;
+      expect(calls).toHaveLength(sent.length);
+      expect(sent.length).toBeGreaterThan(0);
+      const registry = k.app.get(ProviderRegistry);
+      for (const [i, c] of calls.entries()) {
+        const info = (
+          await registry.resolve(orgId, { provider: c.payload.provider, model: c.payload.model })
+        ).info;
+        const out = reconstructRequest(snap, c.seq, { model: info });
+        expect(out.drift).toEqual([]);
+        expect(out.request).toEqual(sent[i]);
+      }
+      // the streamed input never reached the log as its own event
+      const types = (await eventsOf(db, conv)).map((e) => String(e.type));
+      expect(types.some((t) => t.startsWith("tool_input") || t === "tool_base")).toBe(false);
+    });
+
+    it("gives no base for an unread file or a new file; the Write runs as before", async () => {
+      const existing = await onDevice("unread.py", "keep me\n");
+      // positive control, same app: a conversation that read a file gets its base while held
+      const readPath = await onDevice("control.py", "control\n");
+      const control = await conversationThatRead(readPath);
+      const withBase = await runStreamed(control, writeInput(readPath), heldForBase);
+      withBase.sse.close();
+      expect(toolDeltas(withBase.sse.messages).filter((d) => d.delta === "tool_base")).toHaveLength(
+        1,
+      );
+      expect((await kernelReadRows(control)).length).toBeGreaterThan(0);
+
+      // an existing file the conversation never read: the held stream completes, no read was made
+      const conv = await createConv(owner, orgId, agentId);
+      const first = await runStreamed(conv, writeInput(existing), heldAtEnd(writeInput(existing)));
+      first.sse.close();
+      expect(await kernelReadRows(conv)).toEqual([]);
+      expect(toolDeltas(first.sse.messages).some((d) => d.delta === "tool_base")).toBe(false);
+      expect(toolDeltas(first.sse.messages).some((d) => d.delta === "tool_start")).toBe(true);
+      const refused = ofType(first.events, "tool_result").at(-1);
+      expect(refused?.payload.isError).toBe(true);
+      expect(await readFile(join(await workspaceDir(), "unread.py"), "utf8")).toBe("keep me\n");
+
+      // a new file: nothing was read, nothing is there
+      const fresh = await createConv(owner, orgId, agentId);
+      const fresh_in = writeInput("/workspace/brand-new.py");
+      const second = await runStreamed(fresh, fresh_in, heldAtEnd(fresh_in));
+      second.sse.close();
+      expect(await kernelReadRows(fresh)).toEqual([]);
+      expect(toolDeltas(second.sse.messages).some((d) => d.delta === "tool_base")).toBe(false);
+      expect(ofType(second.events, "tool_result").at(-1)?.payload, "new file result").toMatchObject(
+        {
+          isError: false,
+        },
+      );
+      expect(await readFile(join(await workspaceDir(), "brand-new.py"), "utf8")).toBe(NEW_CONTENT);
+    });
+
+    it("restores tools for a subscriber that joins mid-call, then sends later deltas only", async () => {
+      const path = await onDevice("mid.py", "mid = 0\n");
+      const conv = await conversationThatRead(path);
+      const input = writeInput(path);
+      const finalJson = JSON.stringify(input);
+      let second: Sse | undefined;
+      let t: DraftTool | undefined;
+      // held past the base: the second subscriber joins while the call is still streaming
+      const { sse: first } = await runStreamed(conv, input, {
+        at: HELD_AT,
+        whileHeld: async (s) => {
+          await s.until(baseSeen, "the tool_base");
+          const runId = toolDeltas(s.messages)[0]?.runId as string;
+          // the draft route has the call while it still streams; its writes are coalesced (a window
+          // of 200 ms), so wait until it holds the base the stream already published
+          const draftUrl = `/api/v1/orgs/${orgId}/conversations/${conv}/runs/${runId}/draft`;
+          const routeDraft = await waitFor(
+            async () => {
+              const route = await owner({ method: "GET", url: draftUrl });
+              expect(route.statusCode).toBe(200);
+              const d = (route.json() as { drafts: DraftFrame[] }).drafts[0];
+              return d?.tools[0]?.base !== undefined ? d : null;
+            },
+            10_000,
+            "the draft route to hold the base",
+          );
+          expect(routeDraft.tools.length).toBeGreaterThan(0);
+          expect(routeDraft.tools[0]?.name).toBe("Write");
+          expect(finalJson.startsWith(routeDraft.tools[0]?.input as string)).toBe(true);
+
+          second = await openConv(conv);
+          second.after = s.after;
+          await second.until((m) => draftFrames(m).length > 0, "the draft frame");
+          t = (draftFrames(second.messages)[0] as DraftFrame).tools[0];
+        },
+      });
+      first.close();
+      const joined = second as Sse;
+      await joined.until(finishedAfter(joined.after), "run_finished");
+      joined.close();
+      const draftTool = t as DraftTool;
+      expect(draftTool.name).toBe("Write");
+      expect(draftTool.input.length).toBeGreaterThan(0);
+      expect(draftTool.input.length).toBeLessThan(finalJson.length);
+      expect(finalJson.startsWith(draftTool.input)).toBe(true);
+      expect(draftTool.base?.text).toBe("mid = 0\n");
+      expect(draftTool.base?.sha256).toBe(sha("mid = 0\n"));
+      // later deltas only: no second start or base; each continues the draft and the last one ends
+      // the input (a delta published inside a coalescing window may sit past the draft: a client
+      // asks the draft route again, so only the text is checked here)
+      const later = toolDeltas(joined.messages);
+      expect(later.some((d) => d.delta === "tool_start" || d.delta === "tool_base")).toBe(false);
+      expect(later.length).toBeGreaterThan(0);
+      for (const d of later) {
+        const offset = d.offset as number;
+        expect(d.text).toBe(finalJson.slice(offset, offset + (d.text as string).length));
+      }
+      const last = later.at(-1) as ToolDelta;
+      expect((last.offset as number) + (last.text as string).length).toBe(finalJson.length);
+    });
+
+    it("settles every base read before the step ends: all read intents are terminal, the Write's own comes after", async () => {
+      const path = await onDevice("order.py", "order = 1\n");
+      const conv = await conversationThatRead(path);
+      const { sse, events } = await runStreamed(conv, writeInput(path), heldForBase);
+      sse.close();
+      const runId = ofType(events, "assistant_message").at(-1)?.runId as string;
+      const reads = (await kernelReadRows(conv)).filter((r) => r.run_id === runId);
+      // no read outlives its step: every base read exists and is terminal once the run finished
+      expect(reads.length).toBeGreaterThan(0);
+      for (const r of reads) expect(r.state).toBe("completed");
+      // the Write's own operation (the tool's intent) was created after the last read ended
+      const writes = (await toolRows(conv)).filter((r) => r.method === "writeFile");
+      expect(writes).toHaveLength(1);
+      const lastReadEnd = Math.max(...reads.map((r) => r.updated_at.getTime()));
+      expect((writes[0] as { created_at: Date }).created_at.getTime()).toBeGreaterThanOrEqual(
+        lastReadEnd,
+      );
+    });
+  });
+
+  // The step-level behaviors that need a stream end or a failure at a chosen moment (the read is
+  // awaited by its step with its signal aborted, a reset cancels it, an eval conversation never gets
+  // a reader, a sub-agent does) are covered in model-call.test.ts ("streaming Write base reads"):
+  // a conversation of kind eval has no route to send a message to, and model-fake can neither fail a
+  // tool call mid-stream nor script a sub-agent's second turn.
 });

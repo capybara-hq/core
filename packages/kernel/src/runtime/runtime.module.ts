@@ -49,6 +49,7 @@ import { ConversationStreams } from "./stream.js";
 import { SubagentsModule } from "./subagents/subagents.service.js";
 import { UsageReportModule } from "./usage-report.js";
 import { Waits } from "./waits.js";
+import { WriteBaseService } from "./write-base.service.js";
 
 /**
  * The run runtime: the conversation run lock, this process's event streams, the run queue and its
@@ -109,6 +110,8 @@ import { Waits } from "./waits.js";
     PermissionContextRecorder,
     PluginContextService,
     ProjectKnowledgeService,
+    // the display-only base of a streaming Write (streaming tool input spec §4.1)
+    WriteBaseService,
     RunWorker,
     // the org's effective compaction settings, one read per model step
     CompactionSettingsService,

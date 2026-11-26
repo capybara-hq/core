@@ -60,6 +60,7 @@ const SPEC: ToolSpec = {
   name: "Bash",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["command"],
+  inputView: { kind: "command", command: "command", description: "description" },
   description:
     "Run a shell command (bash) in this conversation's sandbox, an isolated machine. " +
     "Use it to run programs and scripts, install packages, process files and inspect the " +

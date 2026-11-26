@@ -34,11 +34,11 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import type { DeviceSandbox } from "./device-sandbox.js";
 import { hostGrantable } from "./device-sandbox.js";
 import {
-  type KernelReadInvocation,
   type KernelReadMethod,
   type KernelReadRoute,
+  type KernelReadTarget,
   KernelReadUnsupported,
-  kernelReadRoot,
+  kernelReadCovering,
   kernelReadRoute,
 } from "./kernel-read.js";
 import { coversHost } from "./modes.js";
@@ -494,54 +494,70 @@ export class SandboxOperationAuthority {
   }
 
   /**
-   * The scope of one kernel read (permission activation L2, Hook 1): the conversation's profile
-   * scope from the same authority snapshot admission reads, with the bound project as the working
-   * root it becomes once read (the review's fallbacks apply: a root outside the mode or above the
-   * home is refused), intersected with the one path the read may reach
-   * ({@link kernelReadRoot}: the root's `stat`, `AGENTS.md`, `.agents/skills/**`). The restricted
-   * {@link KERNEL_READ_PROFILE} whenever the runtime enforces it (the runtime then enforces the
-   * read root, symlinks included); the conversation's admitted Full access only on an isolated
-   * Full-only runtime; a host machine without restricted enforcement throws
+   * The scope of one kernel read (permission activation L2): the conversation's profile scope from
+   * the same authority snapshot admission reads, intersected with the one path the read may reach
+   * ({@link kernelReadCovering}). By purpose:
+   * - `project_root` (Hook 1): the bound project as the working root it becomes once read (the
+   *   review's fallbacks apply: a root outside the mode or above the home is refused); the root's
+   *   `stat`, `AGENTS.md`, `.agents/skills/**`.
+   * - `write_base` (streaming tool input spec §4.1): the working root admission decides for a tool
+   *   call; `stat` and `readFile` of exactly the one path, which must lie strictly inside that
+   *   working root, never the root itself (a path a `Write` reaches only by escalation gets no
+   *   base).
+   * The restricted {@link KERNEL_READ_PROFILE} whenever the runtime enforces it (the runtime then
+   * enforces the read root, symlinks included); the conversation's admitted Full access only on an
+   * isolated Full-only runtime; a host machine without restricted enforcement throws
    * {@link KernelReadUnsupported} ({@link kernelReadRoute}). No write roots, no hosts, never a
-   * per-call grant. Called under the run start's claim only (the intents
-   * check that its run is still `queued`).
+   * per-call grant. Called under the run's claim only (the intents check its run state).
    */
   @Transactional()
   async resolveKernelRead(
     ctx: SandboxUseContext,
-    read: Pick<KernelReadInvocation, "purpose" | "root">,
+    read: KernelReadTarget,
     method: KernelReadMethod,
     path: string,
     signal: AbortSignal,
   ): Promise<SandboxOperationScope> {
-    if (read.purpose !== "project_root")
+    if (read.purpose !== "project_root" && read.purpose !== "write_base")
       throw new ApiError("forbidden", "Unknown kernel read purpose");
-    const covering = kernelReadRoot(read.root, method, path);
+    const covering = kernelReadCovering(read, method, path);
     if (covering === null)
       throw new ApiError(
         "forbidden",
-        "A kernel read reaches only the project's root, its AGENTS.md and its .agents/skills",
+        read.purpose === "project_root"
+          ? "A kernel read reaches only the project's root, its AGENTS.md and its .agents/skills"
+          : "A write base read reaches only its one file, by stat or readFile",
       );
     const f = await this.snapshot(
       ctx,
       { runId: ctx.actor.runId ?? "", callId: "" },
       signal,
       undefined,
-      { projectUsable: true },
+      read.purpose === "project_root" ? { projectUsable: true } : {},
     );
-    const bound = await this.profiles.readOwnedRoot(
-      ctx.orgId,
-      ctx.holderConversationId,
-      ctx.actor.accountId,
-    );
-    if (
-      bound.project_path === null ||
-      canonicalRoot(bound.project_path) !== canonicalRoot(read.root) ||
-      canonicalRoot(f.workingRoot) !== canonicalRoot(read.root)
+    if (read.purpose === "project_root") {
+      const bound = await this.profiles.readOwnedRoot(
+        ctx.orgId,
+        ctx.holderConversationId,
+        ctx.actor.accountId,
+      );
+      if (
+        bound.project_path === null ||
+        canonicalRoot(bound.project_path) !== canonicalRoot(read.root) ||
+        canonicalRoot(f.workingRoot) !== canonicalRoot(read.root)
+      )
+        throw new ApiError(
+          "forbidden",
+          "The kernel read's root is not the conversation's usable project root",
+        );
+    } else if (
+      // exactly one file inside the working root, never the root directory itself
+      canonicalRoot(covering) === canonicalRoot(f.workingRoot) ||
+      !withinDirectory(covering, f.workingRoot)
     )
       throw new ApiError(
         "forbidden",
-        "The kernel read's root is not the conversation's usable project root",
+        "The write base read is outside the conversation's working root",
       );
     // the recorded runtime support decides the route: restricted when enforced, Full access only
     // on an isolated Full-only runtime, nothing on a host machine without restricted enforcement

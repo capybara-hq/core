@@ -362,9 +362,20 @@ export interface ModelUsage {
   outputImages?: number;
 }
 
+/**
+ * One event of a model stream. Tool call events are display only: a provider MAY emit
+ * `tool_call_start` when a tool call begins and `tool_call_delta` with raw input JSON fragments
+ * (`input` is the next piece of the call's argument JSON text) for the same `id`. A `tool_call_start`
+ * precedes the deltas of its `id`; calls may interleave with each other and with text and thinking.
+ * The parsed concatenation of an id's deltas must equal the input of that call in
+ * `message_complete`; the final `message_complete` is the only source of truth, and nothing
+ * streamed ever executes. Emitting no tool call events stays valid.
+ */
 export type ModelStreamEvent =
   | { type: "text_delta"; text: string }
   | { type: "thinking_delta"; text: string }
+  | { type: "tool_call_start"; id: string; name: string }
+  | { type: "tool_call_delta"; id: string; input: string }
   | {
       type: "message_complete";
       content: ContentBlock[];

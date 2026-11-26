@@ -94,6 +94,7 @@ import { type BoundProvider, ProviderListError, type ProviderRegistry } from "./
 import { ExecutionRevoked } from "./run-execution.js";
 import type { StepLog } from "./step-log.js";
 import { budgetRunOf, subagentBudgetUsedUp } from "./subagents/limits.js";
+import { type WriteBaseReader, writeBaseViewOf, writeBaseWatcher } from "./write-base.js";
 
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
 export const WRAP_UP_REMINDER =
@@ -176,13 +177,27 @@ const READ_PAGE = 1000;
  * 流式增量的出口（推给前端等订阅方）；`step_reset` 表示丢弃本步已推出的增量、重新开始。
  * `stream_end` (the step's model stream completed) and `step_end` (the step's `assistant_message`
  * is logged) carry no delta: the run worker's sink writes and then clears the step's live draft on
- * them (spec 2026-11-07 §3.2) and publishes neither.
+ * them (spec 2026-11-07 §3.2) and publishes neither. `tool_start` (`callId`, `name`), `tool_input`
+ * (`callId`, `text`: a fragment of the call's JSON input) and `tool_base` (`callId`, `text`,
+ * `sha256`: the file a streaming `Write` replaces) are display only (streaming tool input spec §4):
+ * nothing streamed reaches the log, the model or a hook.
  */
 export type StreamSink = (delta: {
-  kind: "text" | "thinking" | "step_reset" | "stream_end" | "step_end";
+  kind:
+    | "text"
+    | "thinking"
+    | "tool_start"
+    | "tool_input"
+    | "tool_base"
+    | "step_reset"
+    | "stream_end"
+    | "step_end";
   runId: string;
   step: number;
   text?: string;
+  callId?: string;
+  name?: string;
+  sha256?: string;
 }) => void;
 
 export interface ModelStepDeps {
@@ -230,6 +245,16 @@ export interface ModelStepDeps {
    * install only the recorded feeder (`evals/recorded-permission-context.ts`).
    */
   permissionContext?: PermissionContextPort;
+  /**
+   * Reads the display-only base of a streaming `Write` (streaming tool input spec §4.1), published
+   * as `tool_base`. Only chat and sub-agent runs use it (never an eval replay); absent, no base.
+   */
+  writeBase?: WriteBaseReader;
+  /**
+   * How long an attempt waits for its aborted base reads (default `WRITE_BASE_SETTLE_MS`); tests
+   * shorten it.
+   */
+  writeBaseSettleMs?: number;
 }
 
 /** What the request boundary passes to {@link PermissionContextPort.beforeRequest}. */
@@ -2004,20 +2029,37 @@ async function ladder(
         );
         await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
         sentAt = Date.now();
-        const outcome = await consumeModelStream(
-          provider,
-          sentRequest,
-          info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
-          signal,
-          (ev) => {
-            if (ev.type === "text_delta") {
-              streamed.text += ev.text;
-              sink({ kind: "text", runId, step, text: ev.text });
-            } else {
-              sink({ kind: "thinking", runId, step, text: ev.text });
-            }
-          },
-        );
+        // this attempt's pending base reads end with its stream (a reset, the end, an abort)
+        const baseStop = new AbortController();
+        const bases = baseWatcher(deps, input, tools, baseStop.signal);
+        let outcome: StreamOutcome;
+        try {
+          outcome = await consumeModelStream(
+            provider,
+            sentRequest,
+            info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
+            signal,
+            (ev) => {
+              if (ev.type === "text_delta") {
+                streamed.text += ev.text;
+                sink({ kind: "text", runId, step, text: ev.text });
+              } else if (ev.type === "thinking_delta") {
+                sink({ kind: "thinking", runId, step, text: ev.text });
+              } else if (ev.type === "tool_call_start") {
+                sink({ kind: "tool_start", runId, step, callId: ev.id, name: ev.name });
+                bases?.onStart(ev.id, ev.name);
+              } else {
+                sink({ kind: "tool_input", runId, step, callId: ev.id, text: ev.input });
+                bases?.onInput(ev.id, ev.input);
+              }
+            },
+          );
+        } finally {
+          // the attempt's base reads end with it: aborted, then waited for (the abort reaches
+          // the lease and provider waits, so this is short), at most WRITE_BASE_SETTLE_MS
+          baseStop.abort();
+          await bases?.settle();
+        }
         // the draft's last write, before the assistant_message is logged
         sink({ kind: "stream_end", runId, step });
         if (scope && deps.hooks) {
@@ -2280,6 +2322,37 @@ function classify(err: unknown): Failure {
   };
 }
 
+/**
+ * The `Write` base watcher of one stream attempt (streaming tool input spec §4.1), or none: only a
+ * chat or sub-agent run with a reader gets one (an eval replay never reads a device). Its reads
+ * stop when `stop` fires or the run aborts; a base found in time goes out as `tool_base`.
+ */
+function baseWatcher(
+  deps: Pick<ModelStepDeps, "writeBase" | "writeBaseSettleMs" | "log">,
+  input: Pick<
+    ModelStepInput,
+    "conversationId" | "runId" | "step" | "signal" | "sink" | "conversationKind"
+  >,
+  tools: Pick<StepTools, "list">,
+  stop: AbortSignal,
+): ReturnType<typeof writeBaseWatcher> | undefined {
+  const reader = deps.writeBase;
+  const kind = input.conversationKind;
+  if (reader === undefined || (kind !== "chat" && kind !== "subagent")) return undefined;
+  const { conversationId, runId, step, sink } = input;
+  return writeBaseWatcher({
+    reader,
+    // the resolved tools carry their source (`ResolvedTool`): only the builtin Write reads
+    inputViewOf: (name) => writeBaseViewOf(tools.list, name),
+    emit: (callId, base) =>
+      sink({ kind: "tool_base", runId, step, callId, text: base.text, sha256: base.sha256 }),
+    conversationId,
+    signal: AbortSignal.any([input.signal, stop]),
+    log: deps.log,
+    ...(deps.writeBaseSettleMs !== undefined && { settleMs: deps.writeBaseSettleMs }),
+  });
+}
+
 /** 可被中止的等待（本进程发起的模型调用自己的计时器，结束即清除）；中止 → StepAborted。 */
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -2294,6 +2367,19 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
     }, ms);
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/** Characters one streamed delta carries, for the idle and size accounting of a stream. */
+export function deltaChars(ev: Exclude<ModelStreamEvent, { type: "message_complete" }>): number {
+  switch (ev.type) {
+    case "text_delta":
+    case "thinking_delta":
+      return ev.text.length;
+    case "tool_call_delta":
+      return ev.input.length;
+    case "tool_call_start":
+      return 0;
+  }
 }
 
 /**

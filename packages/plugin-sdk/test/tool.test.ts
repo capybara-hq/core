@@ -84,6 +84,58 @@ describe("validateToolPresentation", () => {
   };
   const ok = { title: "Search messages", keyArgs: ["query", "channel"], inputSchema };
 
+  it("inputView names string properties of inputSchema", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        file_path: { type: "string" },
+        content: { type: "string" },
+        n: { type: "number" },
+      },
+    };
+    const view = { kind: "file_write" as const, path: "file_path", content: "content" };
+    expect(validateToolPresentation({ inputView: view, inputSchema: schema })).toEqual([]);
+    const missing = 'inputView names "nope", which is not a string property of inputSchema';
+    expect(
+      validateToolPresentation({ inputView: { ...view, content: "nope" }, inputSchema: schema }),
+    ).toEqual([missing]);
+    expect(
+      validateToolPresentation({ inputView: { ...view, content: "n" }, inputSchema: schema }),
+    ).toEqual(['inputView names "n", which is not a string property of inputSchema']);
+    expect(
+      validateToolPresentation({
+        inputView: { kind: "bogus" } as never,
+        inputSchema: schema,
+      }),
+    ).toEqual(["inputView kind must be one of file_write, file_edit, command, text"]);
+  });
+
+  it("accepts every inputView kind and rejects a non-object one", () => {
+    const str = { type: "string" };
+    const schema = {
+      type: "object",
+      properties: { p: str, o: str, n: str, command: str, description: str, text: str },
+    };
+    const ok = (inputView: never) => validateToolPresentation({ inputView, inputSchema: schema });
+    expect(ok({ kind: "file_edit", path: "p", old: "o", new: "n" } as never)).toEqual([]);
+    expect(ok({ kind: "file_edit", path: "p", old: "o", new: "x" } as never)).toEqual([
+      'inputView names "x", which is not a string property of inputSchema',
+    ]);
+    expect(ok({ kind: "command", command: "command" } as never)).toEqual([]);
+    expect(
+      ok({ kind: "command", command: "command", description: "description" } as never),
+    ).toEqual([]);
+    expect(ok({ kind: "command", command: "command", description: "x" } as never)).toEqual([
+      'inputView names "x", which is not a string property of inputSchema',
+    ]);
+    expect(ok({ kind: "text", field: "text" } as never)).toEqual([]);
+    expect(ok({ kind: "text", field: "x" } as never)).toEqual([
+      'inputView names "x", which is not a string property of inputSchema',
+    ]);
+    const kinds = "inputView kind must be one of file_write, file_edit, command, text";
+    for (const bad of ["text", 3, null, ["text"]]) expect(ok(bad as never)).toEqual([kinds]);
+  });
+
   it("accepts a title and key arguments that are input properties, and neither", () => {
     expect(validateToolPresentation(ok)).toEqual([]);
     expect(validateToolPresentation({ inputSchema })).toEqual([]);

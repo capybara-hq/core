@@ -310,7 +310,8 @@ describe("ConversationStreams", () => {
     expect(streams.size).toBe(0);
   });
 
-  it("after the catch-up, one `event: draft` per live draft, before any delta", async () => {
+  it("after catch-up: one `event: draft` per live draft, tools too, before deltas", async () => {
+    const tool = { id: "c1", name: "Write", input: '{"path":"a', inputTruncated: true as const };
     let handler: ((m: unknown) => unknown) | undefined;
     const ev = {
       conversationId: "c",
@@ -343,7 +344,7 @@ describe("ConversationStreams", () => {
       drafts: async (conversationId: string) => {
         readAt = calls.length;
         calls.push(`drafts ${conversationId}`);
-        return [{ runId: "r", step: 1, text: "Hel", thinking: "hm" }];
+        return [{ runId: "r", step: 1, text: "Hel", thinking: "hm", tools: [tool] }];
       },
     });
     const h = await streams.open(params, out);
@@ -354,7 +355,7 @@ describe("ConversationStreams", () => {
     expect(readAt).toBe(1);
     expect(out.chunks).toEqual([
       `id: 3\nevent: event\ndata: ${JSON.stringify(ev)}\n\n`,
-      `event: draft\ndata: ${JSON.stringify({ runId: "r", step: 1, text: "Hel", thinking: "hm" })}\n\n`,
+      `event: draft\ndata: ${JSON.stringify({ runId: "r", step: 1, text: "Hel", thinking: "hm", tools: [tool] })}\n\n`,
       `event: delta\ndata: ${JSON.stringify({ runId: "r", step: 1, delta: "text", text: "lo", offset: 3 })}\n\n`,
     ]);
     h.close();

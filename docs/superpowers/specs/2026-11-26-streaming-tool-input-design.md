@@ -105,7 +105,10 @@ The run worker's sink watches each streaming call whose tool declares `inputView
 it starts one read, asynchronous and never blocking the stream:
 
 1. Resolve the path as `Write` does (the device and project of the run, `checkFilePathShape`,
-   `checkToolWritable`, `normalizeSandboxPath`). A path `Write` would refuse gets no base.
+   `checkToolWritable`, `normalizeSandboxPath`). A path `Write` would refuse gets no base, and so
+   does a relative path (resolving it needs the working root of a tool call; the row keeps the
+   writing form). Only the builtin `Write` triggers a read: an extension tool declaring
+   `file_write` never makes the kernel read a device for it.
 2. Find the latest recorded state of that path in this conversation's log (the same lookup as
    `assertReadAndUnchanged`). None: no base (a new file, or a call the guard will refuse).
 3. Read it as a kernel read (permission activation L2: `SandboxService.withKernelRead`,

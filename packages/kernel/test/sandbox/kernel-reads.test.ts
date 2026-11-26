@@ -13,7 +13,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -24,6 +24,10 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { ProjectKnowledgeService } from "../../src/runtime/project/knowledge.service.js";
 import { type ExecutionClaim, RunExecution } from "../../src/runtime/run-execution.js";
+import {
+  KernelReadInstanceNotRunning,
+  KernelReadNotAdmitted,
+} from "../../src/sandbox/kernel-read.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
@@ -49,7 +53,7 @@ import {
   type TestKernel,
 } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
-import { identityFor, REPORTS, type ReportKind } from "../runtime/permission-context-fixture.js";
+import { REPORTS, type ReportKind } from "../runtime/permission-context-fixture.js";
 
 /**
  * The non-tool device callers (permission activation L2), on
@@ -79,6 +83,8 @@ let instanceBoundary = false;
 let refuseScopes = false;
 /** Set: the runtime answers every operation-route readFile with this typed failure. */
 let failReads: ToolError | null = null;
+/** The provider's instance lifecycle calls (create, resume), in order. */
+const lifecycle: string[] = [];
 /** Every provider entry reached: the route, the method, the path and the operation's scope. */
 const seen: {
   route: "operation" | "browse" | "raw";
@@ -151,6 +157,14 @@ beforeAll(async () => {
   };
   const impl: DeviceProvider = {
     ...base,
+    create: async (args) => {
+      lifecycle.push("create");
+      return base.create(args);
+    },
+    resume: async (h, signal) => {
+      lifecycle.push("resume");
+      return base.resume(h, signal);
+    },
     stat: async (_h, path) => {
       record("raw", "stat", path);
       return statOf(path);
@@ -243,6 +257,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   seen.length = 0;
+  lifecycle.length = 0;
   files.clear();
   links.clear();
   instanceBoundary = false;
@@ -581,7 +596,7 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
     ).toMatchObject({ truncated: false });
   });
 
-  it("is reachable only from the knowledge service; the owner start only from the projects service", async () => {
+  it("is reachable only from the knowledge and write base services; the owner start only from the projects service", async () => {
     const { readFile: read } = await import("node:fs/promises");
     const { execSync } = await import("node:child_process");
     const src = join(import.meta.dirname, "../../src");
@@ -590,7 +605,11 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
       .split("\n")
       .map((p) => p.slice(src.length + 1))
       .sort();
-    expect(callers).toEqual(["runtime/project/knowledge.service.ts", "sandbox/sandbox.service.ts"]);
+    expect(callers).toEqual([
+      "runtime/project/knowledge.service.ts",
+      "runtime/write-base.service.ts",
+      "sandbox/sandbox.service.ts",
+    ]);
     const starters = execSync(`grep -rl "ensureRunningForOwner" ${src}`, { encoding: "utf8" })
       .trim()
       .split("\n")
@@ -742,6 +761,283 @@ describe("the kernel read's route follows the device's recorded runtime support"
       agentsMd: "Be kind to the build.",
     });
     expect(new Set(await profilesOf(f))).toEqual(new Set(["request-approval"]));
+  });
+});
+
+describe("a write base read (withKernelRead, purpose write_base)", () => {
+  const NOTES = `${WS}/notes.txt`;
+  const signal = new AbortController().signal;
+  /** Starts the device's instance for its owner, as a project picker does. */
+  const start = (f: Fixture) =>
+    k.app
+      .get(SandboxService)
+      .ensureRunningForOwner(
+        { orgId: f.orgId, deviceId: f.deviceId, accountId: f.accountId },
+        new AbortController().signal,
+      );
+  /** One write base read of `path` under the run's claim fence. */
+  const readBase = <T>(
+    f: Fixture,
+    run: { runId: string; claim: ExecutionClaim },
+    fn: Parameters<SandboxService["withKernelRead"]>[2],
+    path = NOTES,
+  ): Promise<T> =>
+    k.app.get(RunExecution).withClaim(
+      run.claim,
+      () => true,
+      () =>
+        k.app
+          .get(SandboxService)
+          .withKernelRead(
+            ctxOf(f, run),
+            { claim: run.claim, purpose: "write_base", path },
+            fn,
+            signal,
+          ),
+    ) as Promise<T>;
+
+  it("write_base reads exactly its path", async () => {
+    files.set(NOTES, "old notes");
+    files.set(`${WS}/other.txt`, "not this one");
+    const f = await seed();
+    await start(f);
+    const run = await claimRun(f, "running");
+    seen.length = 0;
+    lifecycle.length = 0;
+    // a sibling, a parent, a list, a write and an exec are refused before any dispatch
+    await expect(
+      readBase(f, run, (h, p) => p.readFile(h, `${WS}/other.txt`, { maxBytes: 99, signal })),
+    ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
+    await expect(readBase(f, run, (h, p) => p.stat(h, WS, signal))).rejects.toBeInstanceOf(
+      KernelReadNotAdmitted,
+    );
+    await expect(
+      readBase(f, run, (h, p) => p.list?.(h, NOTES, { limit: 9, signal }) as Promise<unknown>),
+    ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
+    await expect(
+      readBase(f, run, (h, p) => p.writeFile(h, NOTES, enc.encode("x"), signal)),
+    ).rejects.toThrow();
+    await expect(
+      readBase(f, run, (h, p) =>
+        p.exec(h, { command: "true", timeoutMs: 1000, maxOutputBytes: 10, signal }),
+      ),
+    ).rejects.toThrow();
+    // a path that is not clean, or outside the working root, is no base
+    await expect(
+      readBase(f, run, (h, p) => p.stat(h, `${WS}/x/../notes.txt`, signal), `${WS}/x/../notes.txt`),
+    ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
+    files.set("/etc/passwd", "root");
+    await expect(
+      readBase(f, run, (h, p) => p.stat(h, "/etc/passwd", signal), "/etc/passwd"),
+    ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
+    // the working root itself is never a write base: exactly one file inside it
+    await expect(readBase(f, run, (h, p) => p.stat(h, WS, signal), WS)).rejects.toBeInstanceOf(
+      KernelReadNotAdmitted,
+    );
+    await expect(
+      readBase(f, run, (h, p) => p.readFile(h, WS, { maxBytes: 9, signal }), WS),
+    ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
+    expect(seen).toEqual([]);
+    expect(await intentsOf(f)).toEqual([]);
+    // the one path, by stat and readFile
+    expect(await readBase(f, run, (h, p) => p.stat(h, NOTES, signal))).toMatchObject({
+      isDir: false,
+    });
+    const got = await readBase<{ data: Uint8Array }>(f, run, (h, p) =>
+      p.readFile(h, NOTES, { maxBytes: 99, signal }),
+    );
+    expect(new TextDecoder().decode(got.data)).toBe("old notes");
+    expect(seen.map((x) => [x.route, x.method, x.path])).toEqual([
+      ["operation", "stat", NOTES],
+      ["operation", "readFile", NOTES],
+    ]);
+    for (const x of seen) {
+      expect(x.projectRoot).toBe(NOTES);
+      expect(x.writeRoots).toEqual([]);
+    }
+    const intents = await intentsOf(f);
+    expect(intents).toHaveLength(2);
+    for (const r of intents) {
+      expect(r).toMatchObject({ run_id: run.runId, call_id: null, state: "completed" });
+      const scope = r.scope as unknown as SandboxOperationScope;
+      expect(scope.profile).toBe("request-approval");
+      expect(scope.filesystem).toEqual({ kind: "scoped", projectRoot: NOTES, writeRoots: [] });
+      expect(scope.network).toEqual({ kind: "none" });
+    }
+    // a running instance is read as it is: nothing made or resumed
+    expect(lifecycle).toEqual([]);
+  });
+
+  it("write_base needs a running run", async () => {
+    files.set(NOTES, "old notes");
+    const f = await seed();
+    await start(f);
+    const run = await claimRun(f, "queued");
+    seen.length = 0;
+    await expect(readBase(f, run, (h, p) => p.stat(h, NOTES, signal))).rejects.toBeInstanceOf(
+      KernelReadNotAdmitted,
+    );
+    // the same run running, under a superseded execution: refused too
+    await f.db
+      .updateTable("runs")
+      .set({ status: "running", execution_id: randomUUID() })
+      .where("id", "=", run.runId)
+      .execute();
+    await expect(readBase(f, run, (h, p) => p.stat(h, NOTES, signal))).rejects.toBeInstanceOf(
+      KernelReadNotAdmitted,
+    );
+    expect(seen).toEqual([]);
+    expect(await intentsOf(f)).toEqual([]);
+  });
+
+  it("write_base never wakes a suspended device", async () => {
+    files.set(NOTES, "old notes");
+    const f = await seed();
+    const run = await claimRun(f, "running");
+    // no instance yet: none is made
+    await expect(readBase(f, run, (h, p) => p.stat(h, NOTES, signal))).rejects.toBeInstanceOf(
+      KernelReadInstanceNotRunning,
+    );
+    expect(lifecycle).toEqual([]);
+    expect(
+      await f.db
+        .selectFrom("device_instances")
+        .select("status")
+        .where("device_id", "=", f.deviceId)
+        .executeTakeFirst(),
+    ).toBeUndefined();
+    // a suspended instance stays suspended
+    await start(f);
+    await k.app.get(SandboxService).suspendIdle(new Date(Date.now() + 365 * 86_400_000));
+    expect(
+      await f.db
+        .selectFrom("device_instances")
+        .select("status")
+        .where("device_id", "=", f.deviceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ status: "suspended" });
+    lifecycle.length = 0;
+    seen.length = 0;
+    await expect(readBase(f, run, (h, p) => p.stat(h, NOTES, signal))).rejects.toBeInstanceOf(
+      KernelReadInstanceNotRunning,
+    );
+    expect(lifecycle).toEqual([]);
+    expect(seen).toEqual([]);
+    expect(await intentsOf(f)).toEqual([]);
+    expect(
+      await f.db
+        .selectFrom("device_instances")
+        .select("status")
+        .where("device_id", "=", f.deviceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ status: "suspended" });
+  });
+
+  it("write_base on an instance-boundary runtime under Full access sends the one path in the instance scope", async () => {
+    instanceBoundary = true;
+    await setFakeSandboxPermissionSupport(root, REPORTS.instance);
+    const target = `${APP}/notes.txt`;
+    files.set(target, "old notes");
+    const f = await seed();
+    await bindProject(f);
+    await fullAccess(f);
+    await start(f);
+    const run = await claimRun(f, "running");
+    seen.length = 0;
+    lifecycle.length = 0;
+    // a sibling stays refused on this route too
+    await expect(
+      readBase(f, run, (h, p) => p.stat(h, `${APP}/secret.txt`, signal), target),
+    ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
+    expect(seen).toEqual([]);
+    const got = await readBase<{ data: Uint8Array }>(
+      f,
+      run,
+      (h, p) => p.readFile(h, target, { maxBytes: 99, signal }),
+      target,
+    );
+    expect(new TextDecoder().decode(got.data)).toBe("old notes");
+    expect(seen.map((x) => [x.route, x.method, x.path])).toEqual([
+      ["operation", "readFile", target],
+    ]);
+    const [intent, ...rest] = await intentsOf(f);
+    expect(rest).toEqual([]);
+    const scope = intent?.scope as unknown as SandboxOperationScope;
+    // the instance is the sandbox: its own scope, the read root the one file, no network
+    expect(scope.profile).toBe("request-approval");
+    expect(scope.filesystem).toEqual({
+      kind: "scoped",
+      projectRoot: target,
+      writeRoots: ["/", APP],
+    });
+    expect(scope.network).toEqual({ kind: "none" });
+    expect(intent).toMatchObject({ state: "completed", call_id: null, run_id: run.runId });
+    expect(lifecycle).toEqual([]);
+  });
+
+  it("write_base refuses when the device changes instance between its check and its lease", async () => {
+    files.set(NOTES, "old notes");
+    const f = await seed();
+    await start(f);
+    const run = await claimRun(f, "running");
+    seen.length = 0;
+    lifecycle.length = 0;
+    const sandbox = k.app.get(SandboxService);
+    // biome-ignore lint/suspicious/noExplicitAny: the race is injected at the private row read
+    const svc = sandbox as any;
+    const readRow = svc.readRow.bind(sandbox);
+    // another holder rebuilds the instance right after the read saw the old one
+    const spy = vi.spyOn(svc, "readRow").mockImplementationOnce(async (ctx: unknown) => {
+      const row = await readRow(ctx);
+      await sql`UPDATE capybara.device_instances
+        SET created_at = created_at + interval '1 second' WHERE device_id = ${f.deviceId}`.execute(
+        raw,
+      );
+      return row;
+    });
+    try {
+      await expect(readBase(f, run, (h, p) => p.stat(h, NOTES, signal))).rejects.toBeInstanceOf(
+        KernelReadInstanceNotRunning,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(seen).toEqual([]);
+    expect(lifecycle).toEqual([]);
+    expect(await intentsOf(f)).toEqual([]);
+  });
+
+  it("project_root admission unchanged", async () => {
+    const f = await seed();
+    await bindProject(f);
+    const run = await claimRun(f);
+    // a queued run start still reads its project, through the lifecycle use (the instance made)
+    expect(await recordKnowledge(f, run)).toBe(true);
+    expect(await latestProjectRoot(f.conversationId)).toMatchObject({
+      agentsMd: "Be kind to the build.",
+    });
+    expect(lifecycle).toEqual(["create"]);
+    // its claim never stretches to a write base, nor a project_root read past its covering paths
+    const before = seen.length;
+    await expect(
+      readBase(f, run, (h, p) => p.stat(h, `${APP}/AGENTS.md`, signal), `${APP}/AGENTS.md`),
+    ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
+    await expect(
+      k.app.get(RunExecution).withClaim(
+        run.claim,
+        () => true,
+        () =>
+          k.app
+            .get(SandboxService)
+            .withKernelRead(
+              ctxOf(f, run),
+              { claim: run.claim, purpose: "project_root", root: APP },
+              (h, p) => p.readFile(h, `${APP}/secret.txt`, { maxBytes: 9, signal }),
+              signal,
+            ),
+      ),
+    ).rejects.toBeInstanceOf(KernelReadNotAdmitted);
+    expect(seen.length).toBe(before);
   });
 });
 

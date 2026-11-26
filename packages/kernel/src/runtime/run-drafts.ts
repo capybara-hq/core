@@ -15,17 +15,35 @@ import { assistantIdemKey, type StreamSink } from "./model-call.js";
 export const DRAFT_TTL_SECONDS = 600;
 /** At most one write per step per window, plus the one at the end of the model stream. */
 export const DRAFT_FLUSH_MS = 200;
+/**
+ * UTF-8 bytes of tool input plus bases one step's draft keeps (streaming tool input spec §4); past
+ * it a call is marked `inputTruncated` and its later fragments are only published.
+ */
+export const DRAFT_TOOL_INPUT_MAX = 512 * 1024;
 
-/** One step's draft: `{ text, thinking }` as JSON (spec 2026-11-07 §3.2). */
+/** One step's draft: `{ text, thinking, tools }` as JSON (spec 2026-11-07 §3.2). */
 export const draftKey = (runId: string, step: number): string => `capk:run-draft:${runId}:${step}`;
 /** The steps of a run that have a draft (a set, so a reader finds them without a key scan). */
 const stepsKey = (runId: string): string => `capk:run-draft-steps:${runId}`;
+
+/** A tool call a step streams (display only: the logged `assistant_message` is what runs). */
+export interface DraftTool {
+  id: string;
+  name: string;
+  /** The head of the call's JSON input as streamed (not parseable until it is complete). */
+  input: string;
+  /** The step's {@link DRAFT_TOOL_INPUT_MAX} was reached: later fragments are not in the draft. */
+  inputTruncated?: true;
+  /** The file a streaming `Write` replaces (streaming tool input spec §4.1). */
+  base?: { text: string; sha256: string };
+}
 
 /** What one step of a run has streamed so far. */
 export interface RunDraft {
   step: number;
   text: string;
   thinking: string;
+  tools: DraftTool[];
 }
 
 /** A draft of a conversation's active run (the `event: draft` frame's data). */
@@ -38,6 +56,9 @@ interface Held {
   step: number;
   text: string;
   thinking: string;
+  tools: DraftTool[];
+  /** UTF-8 bytes of tool input and bases held, against {@link DRAFT_TOOL_INPUT_MAX}. */
+  toolBytes: number;
   /** When the draft was last written (`-Infinity`: never, so the first delta writes at once). */
   writtenAt: number;
   dirty: boolean;
@@ -45,14 +66,33 @@ interface Held {
   timer: NodeJS.Timeout | undefined;
 }
 
+const isRecord = (x: unknown): x is Record<string, unknown> =>
+  typeof x === "object" && x !== null && !Array.isArray(x);
+
+const parseTool = (x: unknown): DraftTool[] => {
+  if (!isRecord(x) || typeof x.id !== "string" || typeof x.name !== "string") return [];
+  const t: DraftTool = {
+    id: x.id,
+    name: x.name,
+    input: typeof x.input === "string" ? x.input : "",
+  };
+  if (x.inputTruncated === true) t.inputTruncated = true;
+  const b = x.base;
+  if (isRecord(b) && typeof b.text === "string" && typeof b.sha256 === "string") {
+    t.base = { text: b.text, sha256: b.sha256 };
+  }
+  return [t];
+};
+
 const parse = (step: number, v: string | null): RunDraft | null => {
   if (v === null) return null;
   try {
-    const d = JSON.parse(v) as { text?: unknown; thinking?: unknown };
+    const d = JSON.parse(v) as { text?: unknown; thinking?: unknown; tools?: unknown };
     return {
       step,
       text: typeof d.text === "string" ? d.text : "",
       thinking: typeof d.thinking === "string" ? d.thinking : "",
+      tools: Array.isArray(d.tools) ? d.tools.flatMap(parseTool) : [],
     };
   } catch {
     return null;
@@ -92,6 +132,59 @@ export class RunDrafts {
 
   /** Adds a delta to the step's draft; writes it when the last write is a window old. */
   append(runId: string, step: number, channel: "text" | "thinking", text: string): void {
+    const h = this.heldFor(runId, step);
+    h[channel] += text;
+    this.changed(runId, h);
+  }
+
+  /** A tool call the step starts streaming (a call id seen again keeps what it has). */
+  startTool(runId: string, step: number, callId: string, name: string): void {
+    const h = this.heldFor(runId, step);
+    if (h.tools.some((t) => t.id === callId)) return;
+    h.tools.push({ id: callId, name, input: "" });
+    this.changed(runId, h);
+  }
+
+  /**
+   * Adds a fragment of a call's input. Past {@link DRAFT_TOOL_INPUT_MAX} for the step the call is
+   * marked `inputTruncated` and keeps its head: later fragments are only published.
+   */
+  appendToolInput(runId: string, step: number, callId: string, text: string): void {
+    const h = this.heldFor(runId, step);
+    const t = h.tools.find((x) => x.id === callId);
+    if (t === undefined || t.inputTruncated) return;
+    const bytes = Buffer.byteLength(text);
+    if (h.toolBytes + bytes > DRAFT_TOOL_INPUT_MAX) t.inputTruncated = true;
+    else {
+      t.input += text;
+      h.toolBytes += bytes;
+    }
+    this.changed(runId, h);
+  }
+
+  /**
+   * The file a streaming `Write` replaces; kept only within {@link DRAFT_TOOL_INPUT_MAX}, which the
+   * base shares with the input (spec: "input plus base"). Like {@link appendToolInput}, it ignores
+   * a call never started.
+   */
+  setToolBase(
+    runId: string,
+    step: number,
+    callId: string,
+    base: { text: string; sha256: string },
+  ): void {
+    const h = this.heldFor(runId, step);
+    const t = h.tools.find((x) => x.id === callId);
+    if (t === undefined || t.base !== undefined) return;
+    const bytes = Buffer.byteLength(base.text);
+    if (h.toolBytes + bytes > DRAFT_TOOL_INPUT_MAX) return;
+    t.base = { text: base.text, sha256: base.sha256 };
+    h.toolBytes += bytes;
+    this.changed(runId, h);
+  }
+
+  /** The step's held draft, a fresh one when the run moved to another step. */
+  private heldFor(runId: string, step: number): Held {
     let h = this.held.get(runId);
     if (h?.step !== step) {
       if (h) this.drop(runId, h);
@@ -99,13 +192,20 @@ export class RunDrafts {
         step,
         text: "",
         thinking: "",
+        tools: [],
+        toolBytes: 0,
         writtenAt: Number.NEGATIVE_INFINITY,
         dirty: false,
         timer: undefined,
       };
       this.held.set(runId, h);
     }
-    h[channel] += text;
+    return h;
+  }
+
+  /** The held draft changed: written now when the last write is a window old, else held. */
+  private changed(runId: string, h: Held): void {
+    const { step } = h;
     h.dirty = true;
     const elapsed = Date.now() - h.writtenAt;
     if (elapsed >= DRAFT_FLUSH_MS) this.write(runId, h);
@@ -209,7 +309,7 @@ export class RunDrafts {
       .multi()
       .set(
         draftKey(runId, step),
-        JSON.stringify({ text: h.text, thinking: h.thinking }),
+        JSON.stringify({ text: h.text, thinking: h.thinking, tools: h.tools }),
         "EX",
         DRAFT_TTL_SECONDS,
       )
@@ -223,7 +323,10 @@ export class RunDrafts {
 /** What {@link streamSink} uses. */
 export interface StreamSinkDeps {
   bus: Pick<ExtensionContext["bus"], "publish">;
-  drafts: Pick<RunDrafts, "append" | "flush" | "clear">;
+  drafts: Pick<
+    RunDrafts,
+    "append" | "flush" | "clear" | "startTool" | "appendToolInput" | "setToolBase"
+  >;
   log: Pick<Logger, "warn">;
 }
 
@@ -231,12 +334,14 @@ export interface StreamSinkDeps {
  * The run's stream sink (one per execution of a run): publishes deltas on the conversation's topic
  * (`conv.<id>`, shared with `{ kind: "events" }`, so a subscriber on any replica gets them) with
  * `offset`, the characters of that channel (text or thinking) this attempt of the step streamed
- * before the delta, and keeps the step's live draft. `step_reset` clears the draft and both
- * offsets; `stream_end` / `step_end` only flush / clear the draft and are not published. A failed
+ * before the delta, and keeps the step's live draft. Tool calls (streaming tool input spec §4):
+ * `tool_start` and `tool_base` carry no offset, `tool_input`'s `offset` is the characters of that
+ * call's input this attempt streamed before the delta. `step_reset` clears the draft and every
+ * offset; `stream_end` / `step_end` only flush / clear the draft and are not published. A failed
  * publish is only logged: deltas are drafts, the `assistant_message` in the log is the truth.
  */
 export function streamSink(conversationId: string, deps: StreamSinkDeps): StreamSink {
-  let at = { runId: "", step: -1, text: 0, thinking: 0 };
+  let at = { runId: "", step: -1, text: 0, thinking: 0, tools: new Map<string, number>() };
   const publish = (msg: ConversationBusMessage) =>
     deps.bus
       .publish(conversationTopic(conversationId), msg)
@@ -245,17 +350,36 @@ export function streamSink(conversationId: string, deps: StreamSinkDeps): Stream
     if (d.kind === "stream_end") return deps.drafts.flush(d.runId, d.step);
     if (d.kind === "step_end") return deps.drafts.clear(d.runId, d.step);
     if (at.runId !== d.runId || at.step !== d.step || d.kind === "step_reset") {
-      at = { runId: d.runId, step: d.step, text: 0, thinking: 0 };
+      at = { runId: d.runId, step: d.step, text: 0, thinking: 0, tools: new Map() };
     }
     if (d.kind === "step_reset") {
       deps.drafts.clear(d.runId, d.step);
       void publish({ kind: "delta", runId: d.runId, step: d.step, delta: "step_reset" });
       return;
     }
+    const { runId, step } = d;
     const text = d.text ?? "";
+    if (d.kind === "tool_start" || d.kind === "tool_input" || d.kind === "tool_base") {
+      const callId = d.callId ?? "";
+      if (d.kind === "tool_start") {
+        const name = d.name ?? "";
+        deps.drafts.startTool(runId, step, callId, name);
+        void publish({ kind: "delta", runId, step, delta: "tool_start", callId, name });
+      } else if (d.kind === "tool_input") {
+        const offset = at.tools.get(callId) ?? 0;
+        at.tools.set(callId, offset + text.length);
+        deps.drafts.appendToolInput(runId, step, callId, text);
+        void publish({ kind: "delta", runId, step, delta: "tool_input", callId, text, offset });
+      } else {
+        const sha256 = d.sha256 ?? "";
+        deps.drafts.setToolBase(runId, step, callId, { text, sha256 });
+        void publish({ kind: "delta", runId, step, delta: "tool_base", callId, text, sha256 });
+      }
+      return;
+    }
     const offset = at[d.kind];
     at[d.kind] += text.length;
-    deps.drafts.append(d.runId, d.step, d.kind, text);
-    void publish({ kind: "delta", runId: d.runId, step: d.step, delta: d.kind, text, offset });
+    deps.drafts.append(runId, step, d.kind, text);
+    void publish({ kind: "delta", runId, step, delta: d.kind, text, offset });
   };
 }

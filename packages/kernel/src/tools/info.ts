@@ -4,7 +4,9 @@ import {
   type LocalizedName,
   parseToolKey,
   type ToolAnnotations,
+  type ToolInputView,
   type ToolSpec,
+  validateToolPresentation,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
@@ -92,6 +94,8 @@ export interface ToolInfo {
   sandbox: boolean;
   /** The declared key arguments (`ToolSpec.keyArgs`), or []. */
   keyArgs: string[];
+  /** The declared streaming input preview (`ToolSpec.inputView`), or null. */
+  inputView: ToolInputView | null;
   /**
    * The local tool name parsed from a connector or extension key (`mcp__crm__delete` -> `delete`),
    * shown in brackets after the source's display name; null for builtins and unparsable keys.
@@ -122,6 +126,10 @@ export interface ToolInfoDeps {
 const display = (spec: ToolSpec | undefined) => ({
   title: typeof spec?.title === "string" ? spec.title : null,
   keyArgs: Array.isArray(spec?.keyArgs) ? [...spec.keyArgs] : [],
+  inputView:
+    spec?.inputView !== undefined && validateToolPresentation(spec).length === 0
+      ? structuredClone(spec.inputView)
+      : null,
 });
 
 /**
@@ -245,6 +253,7 @@ export async function toolInfo(
       icon: named("extension"),
       sandbox: false,
       keyArgs: [],
+      inputView: null,
       tool: localTool(key),
       source: { kind: "unknown" },
     };

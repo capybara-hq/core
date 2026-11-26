@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import {
   assertValidDeclarations,
   type ContentBlock,
@@ -51,6 +52,43 @@ function streamOf(
 ): AsyncIterable<ModelStreamEvent> {
   const { params, ...rest } = req;
   return t.provider.stream({ ...rest, params: params ?? {} }, { signal });
+}
+
+/**
+ * Checks a stream's tool events against its final message: every delta follows its call's start,
+ * each call starts once, and the deltas of each started call join to JSON whose parsed value
+ * equals the final call's input (structurally: key order does not matter). A started call with
+ * no final call of its id is allowed. Returns the problems (empty when fine); a stream with no
+ * tool events passes.
+ */
+export function checkToolStream(
+  events: ModelStreamEvent[],
+  done: Extract<ModelStreamEvent, { type: "message_complete" }>,
+): string[] {
+  const problems: string[] = [];
+  const streamed = new Map<string, string>();
+  for (const e of events) {
+    if (e.type === "tool_call_start") {
+      // a repeated start keeps the input streamed so far
+      if (streamed.has(e.id)) problems.push(`repeated tool_call_start for id ${e.id}`);
+      else streamed.set(e.id, "");
+    } else if (e.type === "tool_call_delta") {
+      const soFar = streamed.get(e.id);
+      if (soFar === undefined) problems.push(`tool_call_delta for unknown id ${e.id}`);
+      else streamed.set(e.id, soFar + e.input);
+    }
+  }
+  for (const [id, json] of streamed) {
+    const call = done.content.find((b) => b.type === "tool_call" && b.id === id);
+    // a started call without a final call of that id is allowed (spec §3)
+    if (call?.type !== "tool_call") continue;
+    let same = false;
+    try {
+      same = isDeepStrictEqual(JSON.parse(json), call.input);
+    } catch {}
+    if (!same) problems.push(`streamed input of ${id} does not parse to the final input`);
+  }
+  return problems;
 }
 
 /**
@@ -181,8 +219,9 @@ export function describeModelProviderConformance(
           { role: "user", content: [{ type: "text", text: "What is the weather in Paris?" }] },
         ],
       });
-      const { done } = await collect(t, first);
+      const { events, done } = await collect(t, first);
       expect(done.stopReason).toBe("tool_use");
+      expect(checkToolStream(events, done)).toEqual([]);
       const call = done.content.find((b) => b.type === "tool_call");
       expect(call).toBeDefined();
       if (call?.type !== "tool_call") return;

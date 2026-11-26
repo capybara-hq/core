@@ -1,4 +1,4 @@
-import type { AgentTemplateTier, ToolSpec } from "@capybara-hq/plugin-sdk";
+import type { AgentTemplateTier, ToolInputView, ToolSpec } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { ROSTER_DESCRIPTION_MAX, type RosterEntry } from "../../runtime/subagents/roster.js";
 import {
@@ -37,6 +37,9 @@ export type AgentToolInputT = z.infer<typeof AgentToolInput>;
 
 /** Display only (UI refresh B): the task name, then the type; never sent to the model. */
 const KEY_ARGS = ["description", "subagent_type"];
+
+/** Display only: the brief streams as text while the call is written. */
+const INPUT_VIEW: ToolInputView = { kind: "text", field: "prompt" };
 
 const INPUT_SCHEMA: ToolSpec["inputSchema"] = {
   type: "object",
@@ -121,6 +124,7 @@ export function agentToolSpec(roster: readonly RosterEntry[], maxConcurrent: num
     description: head(maxConcurrent) + roster.map(rosterLine).join("\n"),
     inputSchema: INPUT_SCHEMA,
     keyArgs: KEY_ARGS,
+    inputView: INPUT_VIEW,
   };
 }
 
@@ -149,6 +153,7 @@ const SPEC: ToolSpec = {
     "- general-purpose: a copy of you with your tools and skills, for multi-step work.",
   inputSchema: INPUT_SCHEMA,
   keyArgs: KEY_ARGS,
+  inputView: INPUT_VIEW,
 };
 
 /** Refusals (§4.5): `isError` results written without starting anything (model-visible). */

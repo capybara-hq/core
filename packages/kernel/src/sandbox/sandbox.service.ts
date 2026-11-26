@@ -140,6 +140,7 @@ import { DeviceReports } from "./device-reports.js";
 import type { DeviceSandbox, HostGrantCeiling } from "./device-sandbox.js";
 import {
   isKernelReadMethod,
+  KernelReadInstanceNotRunning,
   type KernelReadInvocation,
   KernelReadNotAdmitted,
   KernelReadUnsupported,
@@ -1219,7 +1220,13 @@ export class SandboxService {
   private async ifRunningAs<T>(
     deviceId: string,
     instance: { createdAt: Date; exactRef?: boolean },
-    fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
+    fn: (
+      p: TaggedProvider,
+      h: SandboxHandle,
+      signal: AbortSignal,
+      /** The held entry (its lease token and instance), for a held kernel read. */
+      held: Entered,
+    ) => Promise<T>,
     signal: AbortSignal,
     use: boolean,
   ): Promise<IfRunningResult<T>> {
@@ -1267,7 +1274,7 @@ export class SandboxService {
             );
             const sig = AbortSignal.any([signal, lease.signal]);
             try {
-              return { kind: "ran", value: await fn(impl, e.handle, sig) };
+              return { kind: "ran", value: await fn(impl, e.handle, sig, e) };
             } catch (err) {
               if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
               throw err;
@@ -1698,13 +1705,19 @@ export class SandboxService {
   }
 
   /**
-   * A run start's kernel read of the bound project (permission activation L2, Hook 1): the use
-   * a tool call's would be (the instance made or resumed, the read silent for the holder), whose
-   * provider stats, reads and lists only, each call a kernel read admitted and claimed on its own
-   * (`SandboxOperationIntents.admitKernelRead`: the run's current claim with its run still
-   * `queued`, a random operation id, the profile scope narrowed to the root, its `AGENTS.md` and
-   * its `.agents/skills`). Any other method is refused before admission. Only
-   * `ProjectKnowledgeService` calls this: no tool context, Platform operation or route has it.
+   * A kernel read of the device on behalf of a run (permission activation L2), whose provider
+   * stats, reads and lists only, each call a kernel read admitted and claimed on its own
+   * (`SandboxOperationIntents.admitKernelRead`: the run's current claim with its run in the state
+   * the purpose needs, a random operation id, the profile scope narrowed to the one covering
+   * path). Any other method is refused before admission. No path lease is taken. By purpose:
+   * - `project_root` (Hook 1, the run `queued`): the use a tool call's would be (the instance made
+   *   or resumed, the read silent for the holder), narrowed to the root, its `AGENTS.md` and its
+   *   `.agents/skills`.
+   * - `write_base` (streaming tool input spec §4.1, the run `running`): only on the device's
+   *   running instance, as an owner browse is ({@link ifRunning}): it never makes, wakes, resumes
+   *   or rebuilds one (else {@link KernelReadInstanceNotRunning}) and touches no seen record;
+   *   `stat` and `readFile` of exactly its path.
+   * Only the kernel's own run code calls this: no tool context, Platform operation or route has it.
    */
   async withKernelRead<T>(
     ctx: SandboxUseContext,
@@ -1719,14 +1732,63 @@ export class SandboxService {
   ): Promise<T> {
     const c = read.claim;
     if (
-      read.purpose !== "project_root" ||
+      (read.purpose !== "project_root" && read.purpose !== "write_base") ||
       c.orgId !== ctx.orgId ||
       c.conversationId !== ctx.holderConversationId ||
       c.runId !== ctx.actor.runId ||
       ctx.actor.conversationId !== ctx.holderConversationId
     )
-      throw new SandboxScopeDeniedError("The kernel read does not match its run start");
-    return this.withSandboxUse(ctx, { kind: "kernelRead", read, fn }, signal);
+      throw new SandboxScopeDeniedError("The kernel read does not match its run");
+    if (read.purpose === "project_root")
+      return this.withSandboxUse(ctx, { kind: "kernelRead", read, fn }, signal);
+    return this.withRunningKernelRead(ctx, read, fn, signal);
+  }
+
+  /**
+   * A `write_base` kernel read ({@link withKernelRead}) on the instance the device runs now, under
+   * a shared lease taken the way {@link ifRunning} takes it (B1 reconcile marker and retirement
+   * gate included): a device with no running instance, or one that changes instance before the
+   * lease, throws {@link KernelReadInstanceNotRunning} with nothing made, woken or sent.
+   *
+   * Unlike a use's `enter`, this path neither applies changed limits (`mustApply`, which needs the
+   * exclusive lease and may rebuild the instance) nor refreshes stale cloud evidence
+   * (`refreshCloudSupport`, B-15), since either would be lifecycle work a display-only read must
+   * not cause. That is acceptable here: the read only stats and reads one file, its scope carries
+   * no write roots (an instance boundary's own scope aside) and network `none`, and the boundary
+   * is the kernel-side covering-path check at admission and claim, not the instance's applied
+   * limits. Stale evidence still picks among the routes `kernelReadRoute` allows (Full access
+   * only on an instance boundary), so the read stays one path, read-only, with no network; a
+   * provider that no longer accepts the scope refuses it, and the person just gets no base.
+   */
+  private async withRunningKernelRead<T>(
+    ctx: SandboxUseContext,
+    read: KernelReadInvocation,
+    fn: (
+      h: SandboxHandle,
+      p: HeldProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    const p = await this.require(ctx.deviceId, ctx.orgId);
+    const row = await this.readRow(ctx);
+    if (!this.usable(row, p, null)) throw new KernelReadInstanceNotRunning();
+    const result = await this.ifRunningAs(
+      ctx.deviceId,
+      { createdAt: row.created_at },
+      (_tagged, h, sig, held) =>
+        fn(
+          h,
+          this.kernelReadProvider(held, ctx, p, read, sig),
+          { fresh: false, restarted: false, roots: rootsOf(h) },
+          sig,
+        ),
+      signal,
+      true,
+    );
+    if (result.kind !== "ran") throw new KernelReadInstanceNotRunning();
+    return result.value;
   }
 
   async withOperations<T>(
@@ -2252,7 +2314,12 @@ export class SandboxService {
       try {
         const value = await invoke(parseSandboxOperationScope(admitted.scope), sig);
         await runOutsideTransaction(() =>
-          this.operationIntents.complete(admitted.operation_id, admitted.execution_id, value),
+          this.operationIntents.complete(
+            admitted.operation_id,
+            admitted.execution_id,
+            value,
+            read.purpose,
+          ),
         );
         return value;
       } catch (error) {

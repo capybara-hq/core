@@ -6,6 +6,7 @@ import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { createLogger } from "../../src/log.js";
 import {
   DRAFT_FLUSH_MS,
+  DRAFT_TOOL_INPUT_MAX,
   DRAFT_TTL_SECONDS,
   draftKey,
   RunDrafts,
@@ -20,7 +21,7 @@ const draftsOn = (r: Redis) =>
   new RunDrafts(r, {} as KernelDb, { findByIdem: async () => undefined }, quiet);
 const stored = async (runId: string, step: number) => {
   const v = await redis.get(draftKey(runId, step));
-  return v === null ? null : (JSON.parse(v) as { text: string; thinking: string });
+  return v === null ? null : (JSON.parse(v) as { text: string; thinking: string; tools?: unknown });
 };
 
 beforeAll(async () => {
@@ -48,17 +49,17 @@ describe("RunDrafts", () => {
     vi.setSystemTime(1_000_000);
     const d = draftsOn(redis);
     d.append("r1", 1, "text", "Hel");
-    expect(await stored("r1", 1)).toEqual({ text: "Hel", thinking: "" });
+    expect(await stored("r1", 1)).toEqual({ text: "Hel", thinking: "", tools: [] });
 
     vi.setSystemTime(1_000_000 + DRAFT_FLUSH_MS - 1);
     d.append("r1", 1, "text", "lo");
     d.append("r1", 1, "thinking", "hmm");
     // coalesced: still the first write
-    expect(await stored("r1", 1)).toEqual({ text: "Hel", thinking: "" });
+    expect(await stored("r1", 1)).toEqual({ text: "Hel", thinking: "", tools: [] });
 
     vi.setSystemTime(1_000_000 + DRAFT_FLUSH_MS);
     d.append("r1", 1, "text", " world");
-    expect(await stored("r1", 1)).toEqual({ text: "Hello world", thinking: "hmm" });
+    expect(await stored("r1", 1)).toEqual({ text: "Hello world", thinking: "hmm", tools: [] });
   });
 
   it("a held delta is written when the window ends, with no further delta (one trailing timer)", async () => {
@@ -71,10 +72,10 @@ describe("RunDrafts", () => {
     d.append("r1", 1, "thinking", "c");
     // one timer for the held step, however many deltas it holds
     expect(vi.getTimerCount()).toBe(1);
-    expect(await stored("r1", 1)).toEqual({ text: "a", thinking: "" });
+    expect(await stored("r1", 1)).toEqual({ text: "a", thinking: "", tools: [] });
     vi.advanceTimersByTime(DRAFT_FLUSH_MS - 50);
     expect(vi.getTimerCount()).toBe(0);
-    expect(await stored("r1", 1)).toEqual({ text: "ab", thinking: "c" });
+    expect(await stored("r1", 1)).toEqual({ text: "ab", thinking: "c", tools: [] });
   });
 
   it("the trailing timer goes with a write, a clear or a release", async () => {
@@ -104,11 +105,11 @@ describe("RunDrafts", () => {
     d.append("r3", 1, "text", "y");
     d.flush("r3", 1);
     expect(vi.getTimerCount()).toBe(0);
-    expect(await stored("r3", 1)).toEqual({ text: "xy", thinking: "" });
+    expect(await stored("r3", 1)).toEqual({ text: "xy", thinking: "", tools: [] });
     // nothing fires after the clear / release
     vi.advanceTimersByTime(DRAFT_FLUSH_MS * 2);
     expect(await stored("r1", 1)).toBeNull();
-    expect(await stored("r2", 1)).toEqual({ text: "x", thinking: "" });
+    expect(await stored("r2", 1)).toEqual({ text: "x", thinking: "", tools: [] });
   });
 
   it("sets the key's TTL to 600 s and refreshes it on every write", async () => {
@@ -127,9 +128,9 @@ describe("RunDrafts", () => {
     const d = draftsOn(redis);
     d.append("r1", 2, "text", "a");
     d.append("r1", 2, "text", "b");
-    expect(await stored("r1", 2)).toEqual({ text: "a", thinking: "" });
+    expect(await stored("r1", 2)).toEqual({ text: "a", thinking: "", tools: [] });
     d.flush("r1", 2);
-    expect(await stored("r1", 2)).toEqual({ text: "ab", thinking: "" });
+    expect(await stored("r1", 2)).toEqual({ text: "ab", thinking: "", tools: [] });
     // nothing held for another step
     d.flush("r1", 3);
     expect(await stored("r1", 3)).toBeNull();
@@ -141,15 +142,15 @@ describe("RunDrafts", () => {
     d.append("r1", 2, "text", "x2");
     d.append("other", 1, "text", "o");
     expect(await d.read("r1")).toEqual([
-      { step: 1, text: "", thinking: "t1" },
-      { step: 2, text: "x2", thinking: "" },
+      { step: 1, text: "", thinking: "t1", tools: [] },
+      { step: 2, text: "x2", thinking: "", tools: [] },
     ]);
     d.clear("r1", 1);
     expect(await stored("r1", 1)).toBeNull();
-    expect(await d.read("r1")).toEqual([{ step: 2, text: "x2", thinking: "" }]);
+    expect(await d.read("r1")).toEqual([{ step: 2, text: "x2", thinking: "", tools: [] }]);
     d.clear("r1", 2);
     expect(await d.read("r1")).toEqual([]);
-    expect(await d.read("other")).toEqual([{ step: 1, text: "o", thinking: "" }]);
+    expect(await d.read("other")).toEqual([{ step: 1, text: "o", thinking: "", tools: [] }]);
     // every key the drafts use expires
     for (const k of await redis.keys("*")) expect(await redis.ttl(k)).toBeGreaterThan(0);
   });
@@ -159,7 +160,34 @@ describe("RunDrafts", () => {
     d.append("r1", 1, "text", "first try");
     d.clear("r1", 1);
     d.append("r1", 1, "text", "second");
-    expect(await stored("r1", 1)).toEqual({ text: "second", thinking: "" });
+    expect(await stored("r1", 1)).toEqual({ text: "second", thinking: "", tools: [] });
+  });
+
+  it("draft keeps tools and the base", async () => {
+    const d = draftsOn(redis);
+    d.append("r1", 1, "text", "Writing it.");
+    d.startTool("r1", 1, "c1", "Write");
+    d.appendToolInput("r1", 1, "c1", '{"path":"a.txt"');
+    d.setToolBase("r1", 1, "c1", { text: "old\n", sha256: "abc" });
+    d.appendToolInput("r1", 1, "c1", ',"content":"new');
+    d.startTool("r1", 1, "c2", "Bash");
+    d.flush("r1", 1);
+    expect(await d.read("r1")).toEqual([
+      {
+        step: 1,
+        text: "Writing it.",
+        thinking: "",
+        tools: [
+          {
+            id: "c1",
+            name: "Write",
+            input: '{"path":"a.txt","content":"new',
+            base: { text: "old\n", sha256: "abc" },
+          },
+          { id: "c2", name: "Bash", input: "" },
+        ],
+      },
+    ]);
   });
 
   it("a Redis failure is logged, never thrown to the run", async () => {
@@ -195,6 +223,12 @@ describe("streamSink", () => {
           calls.push(`append ${runId}:${step} ${channel} ${text}`),
         flush: (runId, step) => calls.push(`flush ${runId}:${step}`),
         clear: (runId, step) => calls.push(`clear ${runId}:${step}`),
+        startTool: (runId, step, callId, name) =>
+          calls.push(`startTool ${runId}:${step} ${callId} ${name}`),
+        appendToolInput: (runId, step, callId, text) =>
+          calls.push(`appendToolInput ${runId}:${step} ${callId} ${text}`),
+        setToolBase: (runId, step, callId, base) =>
+          calls.push(`setToolBase ${runId}:${step} ${callId} ${base.sha256}`),
       },
       log: quiet,
     });
@@ -237,6 +271,143 @@ describe("streamSink", () => {
       { kind: "delta", runId: "r", step: 1, delta: "text", text: "d", offset: 0 },
       { kind: "delta", runId: "r", step: 1, delta: "thinking", text: "u", offset: 0 },
     ]);
+  });
+
+  it("streamSink offsets tool input per call", () => {
+    const { sink, calls, published } = recorded();
+    sink({ kind: "tool_start", runId: "r", step: 1, callId: "a", name: "Write" });
+    sink({ kind: "tool_start", runId: "r", step: 1, callId: "b", name: "Bash" });
+    sink({ kind: "tool_input", runId: "r", step: 1, callId: "a", text: '{"pa' });
+    sink({ kind: "tool_input", runId: "r", step: 1, callId: "b", text: '{"co' });
+    sink({ kind: "tool_input", runId: "r", step: 1, callId: "a", text: 'th":' });
+    sink({ kind: "tool_base", runId: "r", step: 1, callId: "a", text: "old", sha256: "h" });
+    expect(published).toEqual([
+      { kind: "delta", runId: "r", step: 1, delta: "tool_start", callId: "a", name: "Write" },
+      { kind: "delta", runId: "r", step: 1, delta: "tool_start", callId: "b", name: "Bash" },
+      {
+        kind: "delta",
+        runId: "r",
+        step: 1,
+        delta: "tool_input",
+        callId: "a",
+        text: '{"pa',
+        offset: 0,
+      },
+      {
+        kind: "delta",
+        runId: "r",
+        step: 1,
+        delta: "tool_input",
+        callId: "b",
+        text: '{"co',
+        offset: 0,
+      },
+      {
+        kind: "delta",
+        runId: "r",
+        step: 1,
+        delta: "tool_input",
+        callId: "a",
+        text: 'th":',
+        offset: 4,
+      },
+      {
+        kind: "delta",
+        runId: "r",
+        step: 1,
+        delta: "tool_base",
+        callId: "a",
+        text: "old",
+        sha256: "h",
+      },
+    ]);
+    // the draft is fed before each publish
+    expect(calls.filter((c) => !c.startsWith("publish"))).toEqual([
+      "startTool r:1 a Write",
+      "startTool r:1 b Bash",
+      'appendToolInput r:1 a {"pa',
+      'appendToolInput r:1 b {"co',
+      'appendToolInput r:1 a th":',
+      "setToolBase r:1 a h",
+    ]);
+  });
+
+  it("step_reset clears tools", async () => {
+    const d = draftsOn(redis);
+    const published: ConversationBusMessage[] = [];
+    const sink = streamSink("c1", {
+      bus: { publish: async (_t, m) => void published.push(m as ConversationBusMessage) },
+      drafts: d,
+      log: quiet,
+    });
+    sink({ kind: "tool_start", runId: "r", step: 1, callId: "a", name: "Write" });
+    sink({ kind: "tool_input", runId: "r", step: 1, callId: "a", text: "abc" });
+    sink({ kind: "step_reset", runId: "r", step: 1 });
+    sink({ kind: "tool_start", runId: "r", step: 1, callId: "a", name: "Write" });
+    sink({ kind: "tool_input", runId: "r", step: 1, callId: "a", text: "x" });
+    sink({ kind: "stream_end", runId: "r", step: 1 });
+    expect(published.at(-1)).toEqual({
+      kind: "delta",
+      runId: "r",
+      step: 1,
+      delta: "tool_input",
+      callId: "a",
+      text: "x",
+      offset: 0,
+    });
+    await vi.waitFor(async () =>
+      expect(await d.read("r")).toEqual([
+        { step: 1, text: "", thinking: "", tools: [{ id: "a", name: "Write", input: "x" }] },
+      ]),
+    );
+  });
+
+  it("tool input past DRAFT_TOOL_INPUT_MAX is published but marks inputTruncated", async () => {
+    expect(DRAFT_TOOL_INPUT_MAX).toBe(512 * 1024);
+    const d = draftsOn(redis);
+    const published: ConversationBusMessage[] = [];
+    const sink = streamSink("c1", {
+      bus: { publish: async (_t, m) => void published.push(m as ConversationBusMessage) },
+      drafts: d,
+      log: quiet,
+    });
+    const head = "a".repeat(DRAFT_TOOL_INPUT_MAX - 2);
+    sink({ kind: "tool_start", runId: "r", step: 1, callId: "a", name: "Write" });
+    sink({ kind: "tool_input", runId: "r", step: 1, callId: "a", text: head });
+    // "éé" is 4 UTF-8 bytes: past the cap by 2 though only 2 characters
+    sink({ kind: "tool_input", runId: "r", step: 1, callId: "a", text: "éé" });
+    sink({ kind: "tool_input", runId: "r", step: 1, callId: "a", text: "z" });
+    sink({ kind: "stream_end", runId: "r", step: 1 });
+    expect(published.slice(2)).toEqual([
+      {
+        kind: "delta",
+        runId: "r",
+        step: 1,
+        delta: "tool_input",
+        callId: "a",
+        text: "éé",
+        offset: head.length,
+      },
+      {
+        kind: "delta",
+        runId: "r",
+        step: 1,
+        delta: "tool_input",
+        callId: "a",
+        text: "z",
+        offset: head.length + 2,
+      },
+    ]);
+    await vi.waitFor(async () =>
+      expect(await d.read("r")).toEqual([
+        {
+          step: 1,
+          text: "",
+          thinking: "",
+          tools: [{ id: "a", name: "Write", input: head, inputTruncated: true }],
+        },
+      ]),
+    );
   });
 
   it("stream_end flushes and step_end clears the draft; neither is published", () => {

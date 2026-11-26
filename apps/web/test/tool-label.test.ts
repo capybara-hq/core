@@ -13,6 +13,7 @@ const info = (over: Partial<ToolInfo>): ToolInfo => ({
   icon: { kind: "name", name: "terminal" },
   sandbox: true,
   keyArgs: [],
+  inputView: null,
   tool: null,
   source: { kind: "builtin" },
   ...over,

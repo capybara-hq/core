@@ -30,7 +30,7 @@ import { estimateTokens } from "../runtime/context/tokens.js";
 import type { LoopDeps } from "../runtime/langgraph-loop.js";
 import { runDeadline, tightestLimit } from "../runtime/limits.js";
 import type { AgentLoop, LoopOutcome } from "../runtime/loop.js";
-import { type MediaSourceDeps, RunError } from "../runtime/model-call.js";
+import { deltaChars, type MediaSourceDeps, RunError } from "../runtime/model-call.js";
 import { projectRootIdemKey } from "../runtime/project/knowledge.js";
 import type { BoundProvider, ProviderRegistry } from "../runtime/providers.js";
 import { runContextIdemKey } from "../runtime/run-context.service.js";
@@ -647,7 +647,7 @@ export async function replayRun(
               charged = true;
               await charge(usageTokens(ev.usage));
             } else {
-              chars += ev.text.length;
+              chars += deltaChars(ev);
             }
             yield ev;
           }
