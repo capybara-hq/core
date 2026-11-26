@@ -1,7 +1,15 @@
 import { type ConversationEvent, streamUrl } from "./conversations";
 import { LiveDrafts } from "./live-drafts";
 import { PersonWaits } from "./person-waits";
-import { fetchRunDrafts, type RunDraftSnapshot } from "./run-drafts";
+import {
+  type DraftTool,
+  fetchRunDrafts,
+  parseDraftTools,
+  type RunDraftSnapshot,
+} from "./run-drafts";
+
+export type { DraftTool };
+
 import { parseUiRefresh, type UiRefresh } from "./ui";
 
 /**
@@ -10,6 +18,10 @@ import { parseUiRefresh, type UiRefresh } from "./ui";
  *
  * - `text` / `thinking`: the SSE `event: delta` frame, `text` appended to that channel; `offset` is
  *   the characters of that channel before it (per channel, from 0 at each step and `step_reset`).
+ * - `tool_start` / `tool_input` / `tool_base`: a streamed tool call (`callId`; streaming tool input
+ *   spec §4): `tool_start` names it, `tool_input` appends `text` to its input (`offset` is the
+ *   characters of that call's input before it, counted per call), `tool_base` sets the file a
+ *   streaming `Write` replaces (`text`, `sha256`; kept once).
  * - `step_reset`: the step starts over (its draft is dropped).
  * - `draft`: a step's draft so far, for each channel given (`text`, `thinking`; one left out is
  *   kept). With `replace` it sets those channels (a channel starting over at offset 0); with
@@ -21,10 +33,16 @@ import { parseUiRefresh, type UiRefresh } from "./ui";
 export interface StreamDelta {
   runId: string;
   step: number;
-  delta: "text" | "thinking" | "step_reset" | "draft";
+  delta: "text" | "thinking" | "tool_start" | "tool_input" | "tool_base" | "step_reset" | "draft";
+  /** The tool call a `tool_*` delta belongs to. */
+  callId?: string;
+  name?: string;
+  sha256?: string;
   text?: string;
   /** `draft` only: the step's thinking so far. */
   thinking?: string;
+  /** `draft` only: the step's streamed tool calls so far (a call left out is kept). */
+  tools?: DraftTool[];
   offset?: number;
   /** `draft` only: set the channels given instead of keeping the longer. */
   replace?: boolean;
@@ -264,6 +282,7 @@ export function openConversationStream(
       step: d.step,
       text: typeof d.text === "string" ? d.text : "",
       thinking: typeof d.thinking === "string" ? d.thinking : "",
+      tools: parseDraftTools(d.tools),
     });
   });
   es.addEventListener("delta", (e) => {
@@ -339,6 +358,8 @@ export interface Draft {
   step: number;
   text: string;
   thinking: string;
+  /** The step's streamed tool calls, in the order they first showed. */
+  tools: DraftTool[];
 }
 
 export interface ChatState {
@@ -463,6 +484,70 @@ function appendAt(have: string, text: string, offset: number | undefined): strin
   return offset + text.length <= have.length ? have : have + text.slice(have.length - offset);
 }
 
+/** The tools after a `draft` update: per call the merge rules of the text channels apply. */
+function mergeTools(
+  have: DraftTool[],
+  got: readonly DraftTool[] | undefined,
+  d: StreamDelta,
+): DraftTool[] {
+  if (got === undefined || got.length === 0) return have;
+  let out = have;
+  for (const t of got) {
+    const at = out.findIndex((x) => x.id === t.id);
+    if (at < 0) {
+      out = [...out, t];
+      continue;
+    }
+    const prev = out[at] as DraftTool;
+    const input = d.resync
+      ? prev.input.startsWith(t.input)
+        ? prev.input
+        : t.input
+      : !d.replace && t.input.length < prev.input.length
+        ? prev.input
+        : t.input;
+    const merged: DraftTool = { ...prev, input, name: prev.name === "" ? t.name : prev.name };
+    if (prev.base === undefined && t.base !== undefined) merged.base = t.base;
+    if (t.inputTruncated === true) merged.inputTruncated = true;
+    if (
+      merged.input === prev.input &&
+      merged.name === prev.name &&
+      merged.base === prev.base &&
+      merged.inputTruncated === prev.inputTruncated
+    )
+      continue;
+    out = out.map((x, j) => (j === at ? merged : x));
+  }
+  return out;
+}
+
+/** The tools after one `tool_start` / `tool_input` / `tool_base` delta (same array: no change). */
+function applyToolDelta(have: DraftTool[], d: StreamDelta): DraftTool[] {
+  if (d.callId === undefined) return have;
+  const at = have.findIndex((x) => x.id === d.callId);
+  const prev = at >= 0 ? (have[at] as DraftTool) : undefined;
+  let next: DraftTool;
+  if (d.delta === "tool_start") {
+    if (prev !== undefined) {
+      if (prev.name !== "" || d.name === undefined) return have;
+      next = { ...prev, name: d.name };
+    } else next = { id: d.callId, name: d.name ?? "", input: "" };
+  } else if (d.delta === "tool_base") {
+    if (prev?.base !== undefined || d.text === undefined || d.sha256 === undefined) return have;
+    next = {
+      ...(prev ?? { id: d.callId, name: d.name ?? "", input: "" }),
+      base: { text: d.text, sha256: d.sha256 },
+    };
+  } else {
+    const text = d.text ?? "";
+    if (text === "") return have;
+    const input = appendAt(prev?.input ?? "", text, d.offset);
+    if (prev !== undefined && input === prev.input) return have;
+    next = { ...(prev ?? { id: d.callId, name: d.name ?? "", input: "" }), input };
+  }
+  return at >= 0 ? have.map((x, j) => (j === at ? next : x)) : [...have, next];
+}
+
 function applyDelta(state: ChatState, d: StreamDelta): ChatState {
   const key = stepKey(d.runId, d.step);
   if (state.finalized[key] || state.closedRuns[d.runId]) return state;
@@ -471,7 +556,19 @@ function applyDelta(state: ChatState, d: StreamDelta): ChatState {
     i < 0 ? state : { ...state, drafts: state.drafts.filter((_, j) => j !== i) };
   if (d.delta === "step_reset") return without();
   let next: Draft;
-  if (d.delta === "draft") {
+  if (d.delta === "tool_start" || d.delta === "tool_input" || d.delta === "tool_base") {
+    const prev = i >= 0 ? (state.drafts[i] as Draft) : undefined;
+    const tools = applyToolDelta(prev?.tools ?? [], d);
+    if (prev !== undefined && tools === prev.tools) return state;
+    if (prev === undefined && tools.length === 0) return state;
+    next = {
+      runId: d.runId,
+      step: d.step,
+      text: prev?.text ?? "",
+      thinking: prev?.thinking ?? "",
+      tools,
+    };
+  } else if (d.delta === "draft") {
     const prev = i >= 0 ? (state.drafts[i] as Draft) : undefined;
     // a channel left out is kept; a merge never shrinks what is shown; a resync keeps what is
     // shown when the stored draft is only behind it (a prefix), and replaces anything else
@@ -485,17 +582,27 @@ function applyDelta(state: ChatState, d: StreamDelta): ChatState {
       step: d.step,
       text: pick(prev?.text ?? "", d.text),
       thinking: pick(prev?.thinking ?? "", d.thinking),
+      tools: mergeTools(prev?.tools ?? [], d.tools, d),
     };
-    if (next.text === "" && next.thinking === "") return without();
-    if (prev !== undefined && next.text === prev.text && next.thinking === prev.thinking)
+    if (next.text === "" && next.thinking === "" && next.tools.length === 0) return without();
+    if (
+      prev !== undefined &&
+      next.text === prev.text &&
+      next.thinking === prev.thinking &&
+      next.tools === prev.tools
+    )
       return state;
   } else {
     const text = d.text ?? "";
     if (text === "") return state;
-    const prev = i >= 0 ? (state.drafts[i] as Draft) : { ...d, text: "", thinking: "" };
+    const prev: Draft =
+      i >= 0
+        ? (state.drafts[i] as Draft)
+        : { runId: d.runId, step: d.step, text: "", thinking: "", tools: [] };
     next = {
       runId: d.runId,
       step: d.step,
+      tools: prev.tools,
       text: d.delta === "text" ? appendAt(prev.text, text, d.offset) : prev.text,
       thinking: d.delta === "thinking" ? appendAt(prev.thinking, text, d.offset) : prev.thinking,
     };

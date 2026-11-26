@@ -28,6 +28,7 @@ import type {
 import type { OrgRole } from "./members";
 import type { PersonRef } from "./people";
 import { PersonWaits } from "./person-waits";
+import type { DraftTool } from "./run-drafts";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 
 /**
@@ -551,6 +552,8 @@ export interface TimelineDraft {
    * moves into the process block before the step lands in the log.
    */
   toolCall?: boolean;
+  /** The step's streamed tool calls (display only; rows are built from them by the timeline). */
+  tools?: readonly DraftTool[];
 }
 
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);

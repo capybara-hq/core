@@ -21,8 +21,8 @@ describe("fetchRunDrafts", () => {
       ],
     });
     await expect(fetchRunDrafts("o 1", "c/1", "r1")).resolves.toEqual([
-      { step: 0, text: "a", thinking: "b" },
-      { step: 4, text: "", thinking: "t" },
+      { step: 0, text: "a", thinking: "b", tools: [] },
+      { step: 4, text: "", thinking: "t", tools: [] },
     ]);
     expect(api).toHaveBeenCalledWith("/api/v1/orgs/o%201/conversations/c%2F1/runs/r1/draft");
   });
