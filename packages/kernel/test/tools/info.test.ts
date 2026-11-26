@@ -214,6 +214,7 @@ describe("GET /conversations/:id/tools", () => {
       key: "Bash",
       title: null,
       kind: "command",
+      icon: { kind: "name", name: "terminal" },
       sandbox: true,
       keyArgs: ["command"],
       tool: null,
@@ -258,6 +259,7 @@ describe("GET /conversations/:id/tools", () => {
         key: "mcp__chat__search",
         title: "Search messages",
         kind: "connector",
+        icon: { kind: "name", name: "connector" },
         sandbox: false,
         keyArgs: ["query", "channel"],
         tool: "search",
@@ -267,6 +269,7 @@ describe("GET /conversations/:id/tools", () => {
         key: "mcp__chat__post",
         title: null,
         kind: "connector",
+        icon: { kind: "name", name: "connector" },
         sandbox: false,
         keyArgs: [],
         tool: "post",
@@ -316,6 +319,7 @@ describe("GET /conversations/:id/tools", () => {
       key: "plugin__mem-connector__echo",
       title: "Echo",
       kind: "tool",
+      icon: { kind: "name", name: "extension" },
       sandbox: false,
       keyArgs: ["text"],
       tool: "echo",
@@ -356,6 +360,91 @@ describe("GET /conversations/:id/tools", () => {
     }
   });
 
+  it("an extension tool whose catalog item has an icon gets the catalog icon", async () => {
+    const { req, orgId, conversationId } = await setup();
+    const itemId = randomUUID();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: itemId,
+        name: "mem-connector",
+        package_name: "@acme/plugin-mem-connector",
+        publisher: "Acme",
+        display_name: JSON.stringify({ zh: "内存连接器", en: "Mem Connector" }),
+        description: "d",
+        latest_version: "1.0.0",
+        policy: "allow",
+      })
+      .execute();
+    try {
+      // an item without a version that declares an icon keeps the generic icon
+      const plain = await tools(req, orgId, conversationId, ["plugin__mem-connector__echo"]);
+      expect(byKey(plain)["plugin__mem-connector__echo"]?.icon).toEqual({
+        kind: "name",
+        name: "extension",
+      });
+      await db
+        .insertInto("catalog_item_versions")
+        .values({
+          item_id: itemId,
+          version: "1.0.0",
+          manifest: JSON.stringify({ icon: "./icon.svg" }),
+          source: "file",
+          source_ref: "test",
+          integrity: null,
+          size: 10,
+          files: JSON.stringify([{ path: "icon.svg", size: 10, sha256: "0".repeat(64) }]),
+        })
+        .execute();
+      const res = await tools(req, orgId, conversationId, ["plugin__mem-connector__echo"]);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(byKey(res)["plugin__mem-connector__echo"]?.icon).toEqual({ kind: "catalog", itemId });
+    } finally {
+      await db.deleteFrom("catalog_items").where("name", "=", "mem-connector").execute();
+    }
+  });
+
+  it("builtin icons: by key first, then by kind", async () => {
+    const { req, orgId, conversationId } = await setup();
+    const keys = [
+      "WebSearch",
+      "WebFetch",
+      "Skill",
+      "Agent",
+      "TaskList",
+      "TaskOutput",
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "Deliver",
+      "ToolSearch",
+    ];
+    const res = await tools(req, orgId, conversationId, keys);
+    expect(res.statusCode, res.body).toBe(200);
+    const t = byKey(res);
+    const names = Object.fromEntries(keys.map((k) => [k, t[k]?.icon]));
+    const n = (name: string) => ({ kind: "name", name });
+    expect(names).toEqual({
+      WebSearch: n("globe"),
+      WebFetch: n("globe"),
+      Skill: n("skills"),
+      Agent: n("agent"),
+      TaskList: n("list-checks"),
+      TaskOutput: n("list-checks"),
+      Bash: n("terminal"),
+      Read: n("file-text"),
+      Edit: n("square-pen"),
+      Write: n("square-pen"),
+      Glob: n("search"),
+      Grep: n("search"),
+      Deliver: n("extension"),
+      ToolSearch: n("extension"),
+    });
+  });
+
   it("an unknown key comes back as a plain tool; repeated keys once, in request order", async () => {
     const { req, orgId, conversationId } = await setup();
     const res = await tools(req, orgId, conversationId, [
@@ -370,6 +459,7 @@ describe("GET /conversations/:id/tools", () => {
         key: "mcp__nope__x",
         title: null,
         kind: "tool",
+        icon: { kind: "name", name: "extension" },
         sandbox: false,
         keyArgs: [],
         tool: "x",
@@ -379,6 +469,7 @@ describe("GET /conversations/:id/tools", () => {
         key: "mystery",
         title: null,
         kind: "tool",
+        icon: { kind: "name", name: "extension" },
         sandbox: false,
         keyArgs: [],
         tool: null,

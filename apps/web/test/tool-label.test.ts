@@ -10,6 +10,7 @@ const info = (over: Partial<ToolInfo>): ToolInfo => ({
   key: "Bash",
   title: null,
   kind: "command",
+  icon: { kind: "name", name: "terminal" },
   sandbox: true,
   keyArgs: [],
   tool: null,

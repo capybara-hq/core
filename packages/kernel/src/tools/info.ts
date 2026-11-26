@@ -10,6 +10,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { PluginIcons } from "../extensions/plugin-icons.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { UUID_RE } from "../ui/registry.js";
 import { BUILTIN_TOOL_KINDS, SANDBOX_TOOL_NAMES } from "./builtin-names.js";
@@ -34,12 +35,57 @@ export type ToolKind =
   | "task"
   | "tool";
 
+/**
+ * The icon a step of a run shows: a named design icon, or an org catalog item's icon (web:
+ * `${org}/catalog/${itemId}/icon`). Display only.
+ */
+export type ToolIcon =
+  | {
+      kind: "name";
+      name:
+        | "terminal"
+        | "file-text"
+        | "square-pen"
+        | "search"
+        | "globe"
+        | "skills"
+        | "agent"
+        | "list-checks"
+        | "connector"
+        | "extension";
+    }
+  | { kind: "catalog"; itemId: string };
+
+/** Builtin tools whose icon follows the key, ahead of the kind. */
+const BUILTIN_ICONS: Record<string, Extract<ToolIcon, { kind: "name" }>["name"]> = {
+  WebSearch: "globe",
+  WebFetch: "globe",
+  Skill: "skills",
+  Agent: "agent",
+  TaskList: "list-checks",
+  TaskOutput: "list-checks",
+};
+
+const KIND_ICONS: Partial<Record<ToolKind, Extract<ToolIcon, { kind: "name" }>["name"]>> = {
+  command: "terminal",
+  read: "file-text",
+  edit: "square-pen",
+  search: "search",
+};
+
+const named = (name: Extract<ToolIcon, { kind: "name" }>["name"]): ToolIcon => ({
+  kind: "name",
+  name,
+});
+
 export interface ToolInfo {
   /** The model-visible tool key, as asked for. */
   key: string;
   /** The declared display title (`ToolSpec.title`), or null. */
   title: string | null;
   kind: ToolKind;
+  /** The step's icon in the conversation's process block. */
+  icon: ToolIcon;
   /** True exactly for the builtin tools that run in the conversation's sandbox. */
   sandbox: boolean;
   /** The declared key arguments (`ToolSpec.keyArgs`), or []. */
@@ -67,6 +113,8 @@ export const TOOL_INFO_KEY_MAX = 200;
 export interface ToolInfoDeps {
   db: KernelSchemaDb;
   registry: Pick<ToolRegistry, "builtinSpecs" | "extensionToolSpecs">;
+  /** Without it every extension tool gets the generic icon (display-text callers need none). */
+  icons?: Pick<PluginIcons, "itemIdsWithIcon">;
 }
 
 const display = (spec: ToolSpec | undefined) => ({
@@ -128,19 +176,32 @@ export async function toolInfo(
       return e ? [e.plugin] : [];
     }),
   );
+  // An extension's icon is its plugin's catalog item icon, when the org's catalog shows one.
+  const catalogItems =
+    (await deps.icons?.itemIdsWithIcon(
+      unique.flatMap((k) => {
+        const e = extensions.get(k);
+        return e ? [e.plugin] : [];
+      }),
+      { kind: "org", orgId, isAdmin: false },
+    )) ?? new Map<string, string>();
   const localTool = (key: string): string | null => {
     const p = parseToolKey(key);
     return p && p.kind !== "builtin" ? p.tool : null;
   };
 
-  const builtinInfo = (key: string, spec: ToolSpec): ToolInfo => ({
-    key,
-    ...display(spec),
-    kind: BUILTIN_TOOL_KINDS[key] ?? "tool",
-    sandbox: (SANDBOX_TOOL_NAMES as readonly string[]).includes(key),
-    tool: null,
-    source: { kind: "builtin" },
-  });
+  const builtinInfo = (key: string, spec: ToolSpec): ToolInfo => {
+    const kind = BUILTIN_TOOL_KINDS[key] ?? "tool";
+    return {
+      key,
+      ...display(spec),
+      kind,
+      icon: named(BUILTIN_ICONS[key] ?? KIND_ICONS[kind] ?? "extension"),
+      sandbox: (SANDBOX_TOOL_NAMES as readonly string[]).includes(key),
+      tool: null,
+      source: { kind: "builtin" },
+    };
+  };
 
   return unique.map((key): ToolInfo => {
     const b = builtins.get(key);
@@ -151,6 +212,9 @@ export async function toolInfo(
         key,
         ...display(e.spec),
         kind: "tool",
+        icon: catalogItems.has(e.plugin)
+          ? { kind: "catalog", itemId: catalogItems.get(e.plugin) as string }
+          : named("extension"),
         sandbox: false,
         tool: e.spec.name,
         source: {
@@ -166,6 +230,7 @@ export async function toolInfo(
         key,
         ...display(c.spec as ToolSpec),
         kind: "connector",
+        icon: named("connector"),
         sandbox: false,
         tool: c.tool,
         source: { kind: "connector", id: c.id, name: c.name },
@@ -175,6 +240,7 @@ export async function toolInfo(
       key,
       title: null,
       kind: "tool",
+      icon: named("extension"),
       sandbox: false,
       keyArgs: [],
       tool: localTool(key),
@@ -192,6 +258,7 @@ export class ConversationToolInfo {
     private readonly registry: Pick<ToolRegistry, "builtinSpecs" | "extensionToolSpecs">,
     /** Conversation visibility (the same rule as the events API). */
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
   async get(
@@ -206,7 +273,7 @@ export class ConversationToolInfo {
     ) {
       throw new ApiError("conversation.not_found", "Conversation not found");
     }
-    return toolInfo({ db: this.db.db, registry: this.registry }, orgId, keys);
+    return toolInfo({ db: this.db.db, registry: this.registry, icons: this.icons }, orgId, keys);
   }
 }
 

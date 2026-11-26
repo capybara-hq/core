@@ -111,6 +111,18 @@ export class PluginIcons {
     return new Map(icons.map((i) => [i.name, i.url]));
   }
 
+  /**
+   * Extension (plugin) name -> the id of its catalog item, only for names whose item has an icon the
+   * org's catalog shows (the icon is `GET /api/v1/orgs/:orgId/catalog/:itemId/icon`).
+   */
+  async itemIdsWithIcon(
+    names: string[],
+    scope: Extract<PluginIconScope, { kind: "org" }>,
+  ): Promise<Map<string, string>> {
+    const icons = await this.resolve("name", names, scope);
+    return new Map(icons.map((i) => [i.name, i.id]));
+  }
+
   /** Catalog item id -> its icon's URL (a list of items); items without one are absent. */
   async ofItems(ids: string[], scope: PluginIconScope): Promise<Map<string, string>> {
     const icons = await this.resolve("id", ids, scope);

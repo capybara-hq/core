@@ -1232,11 +1232,30 @@ export const listQueue = (orgId: string, id: string) =>
 export const resumeQueue = (orgId: string, id: string) =>
   apiFetch<Record<string, never>>(`${one(orgId, id)}/queue/resume`, { method: "POST" });
 
+/** A step's icon (kernel `ToolIcon`): a named design icon, or a catalog item's icon. */
+export type ToolIcon =
+  | {
+      kind: "name";
+      name:
+        | "terminal"
+        | "file-text"
+        | "square-pen"
+        | "search"
+        | "globe"
+        | "skills"
+        | "agent"
+        | "list-checks"
+        | "connector"
+        | "extension";
+    }
+  | { kind: "catalog"; itemId: string };
+
 /** Display metadata of a tool (kernel `ToolInfo`). */
 export interface ToolInfo {
   key: string;
   title: string | null;
   kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "task" | "tool";
+  icon: ToolIcon;
   /** True exactly for the builtin tools that run in the conversation's sandbox. */
   sandbox: boolean;
   keyArgs: string[];
