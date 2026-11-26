@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Process block · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+<style>
+.p-block { display: flex; flex-direction: column; min-width: 0; width: 720px; }
+.p-line { display: flex; align-items: center; gap: var(--cb-space-2); min-height: var(--cb-row-dense); max-width: 100%; color: var(--cb-muted); font-size: var(--cb-type-small-size); line-height: var(--cb-type-small-line); }
+.p-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-live { color: var(--cb-ink); }
+.p-time { flex: none; margin-left: auto; color: var(--cb-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.p-spin { display: inline-flex; flex: none; color: var(--cb-accent); }
+.p-lead, .p-acc { color: var(--cb-accent); }
+.p-lead { display: inline-flex; flex: none; }
+.p-word { flex: none; white-space: nowrap; }
+.p-muted { color: var(--cb-muted); }
+.p-fail { color: var(--cb-fail); }
+.p-faint { color: var(--cb-faint); }
+.p-chips { display: inline-flex; flex: none; }
+.p-chip { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--cb-line-soft); border-radius: var(--cb-radius-pill); background: var(--cb-panel); color: var(--cb-muted); }
+.p-chip + .p-chip { margin-left: -5px; }
+.p-chip svg { width: 11px; height: 11px; }
+.p-edot { display: inline-block; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cb-fail); }
+.p-errn { margin-left: calc(var(--cb-space-1) * -1); }
+.p-rail { display: flex; flex-direction: column; margin-top: var(--cb-space-1); }
+.p-step { position: relative; display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: var(--cb-space-2); }
+.p-step::before { content: ""; position: absolute; left: 9.5px; top: 0; bottom: 0; width: 1px; background: var(--cb-line); }
+.p-step[data-edge="first"]::before { top: calc(var(--cb-row-dense) / 2); }
+.p-step[data-edge="last"]::before { bottom: calc(100% - var(--cb-row-dense) / 2); }
+.p-gut { position: relative; z-index: 1; display: grid; place-items: center; align-self: start; width: 20px; height: var(--cb-row-dense); color: var(--cb-faint); }
+.p-gut > .p-acc, .p-gut > svg { background: var(--cb-bg); }
+.p-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--cb-line-strong); }
+.p-body { min-width: 0; }
+.p-name { color: var(--cb-muted); font-weight: 600; }
+.p-arg { color: var(--cb-faint); }
+.p-say { margin: 0; padding: var(--cb-space-1) 0; color: var(--cb-muted); font-family: var(--cb-font-prose); font-size: var(--cb-type-prose-small-size); line-height: var(--cb-type-prose-small-line); }
+.p-fold { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: var(--cb-space-2); align-items: center; min-height: var(--cb-row-dense); padding: 0; border: 0; background: transparent; color: var(--cb-faint); font: inherit; font-size: var(--cb-type-small-size); text-align: left; }
+.p-pending { display: flex; flex-direction: column; width: 720px; overflow: hidden; border: 1px solid var(--cb-line); border-radius: var(--cb-radius-md); background: var(--cb-raised); }
+.p-many { padding: var(--cb-space-2) var(--cb-space-3) var(--cb-space-1); color: var(--cb-faint); font-size: var(--cb-type-micro-size); line-height: var(--cb-type-micro-line); }
+.p-plist { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.p-pitem { display: flex; align-items: center; gap: var(--cb-space-3); padding: var(--cb-space-2) var(--cb-space-3); }
+.p-pitem + .p-pitem { border-top: 1px solid var(--cb-line-soft); }
+.p-picon { display: inline-flex; flex: none; color: var(--cb-muted); }
+.p-ptext { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.p-ptitle { color: var(--cb-ink); font-size: var(--cb-type-body-size); font-weight: 600; line-height: var(--cb-type-body-line); }
+.p-pdesc { color: var(--cb-muted); font-size: var(--cb-type-small-size); line-height: var(--cb-type-small-line); }
+.p-pact { flex: none; color: var(--cb-accent); font-size: var(--cb-type-small-size); text-decoration: none; }
+</style>
+</head>
+<body>
+<main class="r-page">
+<h1>Process block</h1>
+<p>One run's thinking, tool calls and narration: a head with kind chips (running, waiting, finished, stopped, failed), a rail of steps with a fold row, and the pending-actions list for things that need you without blocking the run.</p>
+<div class="r-blocks">
+<section data-ref-block="process-block-running" style="width:752px" data-pad>
+<div class="p-block"><div class="p-head" data-part="process-head"><div class="p-line" data-part="tool-line"><span class="p-spin" data-part="spinner"><i data-icon="spinner" data-size="16"></i></span><span class="p-label p-live" data-part="process-summary">正在运行 · 读取 report.md</span><span class="p-time">12 秒</span></div></div><div class="p-rail" data-part="process-rail"><button class="p-fold" data-part="process-fold"><span class="p-gut"><i data-icon="chevron-up" data-size="12"></i></span><span>前 3 步</span></button><div class="p-step" data-part="rail-step" data-edge="first"><span class="p-gut" data-part="rail-gutter"><i data-icon="lightbulb" data-size="14"></i></span><div class="p-body"><div class="p-line" data-part="tool-line"><span class="p-label">思考了 4 秒</span><i data-icon="chevron-right" data-size="12"></i></div></div></div><div class="p-step" data-part="rail-step"><span class="p-gut" data-part="rail-gutter"><span class="p-dot" data-part="rail-dot"></span></span><div class="p-body"><p class="p-say">先看一下报表的结构，再决定怎么改。</p></div></div><div class="p-step" data-part="rail-step"><span class="p-gut" data-part="rail-gutter"><i data-icon="file-text" data-size="14"></i></span><div class="p-body"><div class="p-line" data-part="tool-line"><span class="p-label"><span class="p-name">Read</span> <span class="p-arg" data-part="key-arg">report.md</span></span></div></div></div><div class="p-step" data-part="rail-step"><span class="p-gut" data-part="rail-gutter"><i data-icon="terminal" data-size="14"></i></span><div class="p-body"><div class="p-line" data-part="tool-line"><span class="p-label"><span class="p-name">Bash</span> <span class="p-arg" data-part="key-arg">pnpm test</span></span></div></div></div><div class="p-step" data-part="rail-step"><span class="p-gut" data-part="rail-gutter"><i class="p-acc" data-icon="hand" data-size="14"></i></span><div class="p-body"><div class="p-line" data-part="tool-line"><span class="p-label"><span class="p-acc" data-part="process-waiting">等待你批准</span></span></div></div></div><div class="p-step" data-part="rail-step" data-edge="last"><span class="p-gut" data-part="rail-gutter"><i data-icon="square-pen" data-size="14"></i></span><div class="p-body"><div class="p-line" data-part="tool-line"><span class="p-label"><span class="p-name">Edit</span> <span class="p-arg" data-part="key-arg">summary.md</span> <span class="p-faint">· +12 −3</span></span></div></div></div></div></div>
+</section>
+<section data-ref-block="process-block-waiting" style="width:752px" data-pad>
+<div class="p-block"><div class="p-head" data-part="process-head"><div class="p-line" data-part="tool-line"><span class="p-lead p-acc"><i data-icon="hand" data-size="16"></i></span><span class="p-label" data-part="process-summary"><span class="p-acc" data-part="process-waiting">等待你批准</span> · 运行 pnpm test</span><span class="p-time">1 分 04 秒</span></div></div></div>
+</section>
+<section data-ref-block="process-block-finished" style="width:752px" data-pad>
+<div class="p-block"><div class="p-head" data-part="process-head"><div class="p-line" data-part="tool-line"><span class="p-chips"><span class="p-chip" data-part="process-chip"><i data-icon="lightbulb" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="terminal" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="file-text" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="square-pen" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="search" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="globe" data-size="12"></i></span></span><span class="p-label" data-part="process-summary">已处理 2 分 43 秒 · 待办 4/4 · 思考 4 次 · 12 个工具</span><span class="p-edot" data-part="error-dot" role="img" aria-label="1 个调用返回了错误"></span><span class="p-errn" data-part="tool-errors">1</span><i data-icon="chevron-right" data-size="12"></i></div></div></div>
+</section>
+<section data-ref-block="process-block-open" style="width:752px" data-pad>
+<div class="p-block"><div class="p-head" data-part="process-head"><div class="p-line" data-part="tool-line"><span class="p-chips"><span class="p-chip" data-part="process-chip"><i data-icon="lightbulb" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="terminal" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="file-text" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="square-pen" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="search" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="globe" data-size="12"></i></span></span><span class="p-label" data-part="process-summary">已处理 2 分 43 秒 · 待办 4/4 · 思考 4 次 · 12 个工具</span><span class="p-edot" data-part="error-dot" role="img" aria-label="1 个调用返回了错误"></span><span class="p-errn" data-part="tool-errors">1</span><i data-icon="chevron-down" data-size="12"></i></div></div><div class="p-rail" data-part="process-rail"><button class="p-fold" data-part="process-fold"><span class="p-gut"><i data-icon="chevron-up" data-size="12"></i></span><span>前 3 步</span></button><div class="p-step" data-part="rail-step" data-edge="first"><span class="p-gut" data-part="rail-gutter"><i data-icon="lightbulb" data-size="14"></i></span><div class="p-body"><div class="p-line" data-part="tool-line"><span class="p-label">思考了 4 秒</span><i data-icon="chevron-right" data-size="12"></i></div></div></div><div class="p-step" data-part="rail-step"><span class="p-gut" data-part="rail-gutter"><span class="p-dot" data-part="rail-dot"></span></span><div class="p-body"><p class="p-say">先看一下报表的结构，再决定怎么改。</p></div></div><div class="p-step" data-part="rail-step"><span class="p-gut" data-part="rail-gutter"><i data-icon="file-text" data-size="14"></i></span><div class="p-body"><div class="p-line" data-part="tool-line"><span class="p-label"><span class="p-name">Read</span> <span class="p-arg" data-part="key-arg">report.md</span></span></div></div></div><div class="p-step" data-part="rail-step"><span class="p-gut" data-part="rail-gutter"><i data-icon="terminal" data-size="14"></i></span><div class="p-body"><div class="p-line" data-part="tool-line"><span class="p-label"><span class="p-name">Bash</span> <span class="p-arg" data-part="key-arg">pnpm test</span></span></div></div></div><div class="p-step" data-part="rail-step"><span class="p-gut" data-part="rail-gutter"><i class="p-acc" data-icon="hand" data-size="14"></i></span><div class="p-body"><div class="p-line" data-part="tool-line"><span class="p-label"><span class="p-acc" data-part="process-waiting">等待你批准</span></span></div></div></div><div class="p-step" data-part="rail-step" data-edge="last"><span class="p-gut" data-part="rail-gutter"><i data-icon="square-pen" data-size="14"></i></span><div class="p-body"><div class="p-line" data-part="tool-line"><span class="p-label"><span class="p-name">Edit</span> <span class="p-arg" data-part="key-arg">summary.md</span> <span class="p-faint">· +12 −3</span></span></div></div></div></div></div>
+</section>
+<section data-ref-block="process-block-stopped" style="width:752px" data-pad>
+<div class="p-block"><div class="p-head" data-part="process-head"><div class="p-line" data-part="tool-line"><span class="p-chips"><span class="p-chip" data-part="process-chip"><i data-icon="lightbulb" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="terminal" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="file-text" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="square-pen" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="search" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="globe" data-size="12"></i></span></span><span class="p-label" data-part="process-summary">已处理 2 分 43 秒 · 待办 4/4 · 思考 4 次 · 12 个工具</span><span class="p-edot" data-part="error-dot" role="img" aria-label="1 个调用返回了错误"></span><span class="p-errn" data-part="tool-errors">1</span><span class="p-word p-muted" data-part="process-state-word">已停止</span><i data-icon="chevron-right" data-size="12"></i></div></div></div>
+</section>
+<section data-ref-block="process-block-failed" style="width:752px" data-pad>
+<div class="p-block"><div class="p-head" data-part="process-head"><div class="p-line" data-part="tool-line"><span class="p-chips"><span class="p-chip" data-part="process-chip"><i data-icon="lightbulb" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="terminal" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="file-text" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="square-pen" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="search" data-size="12"></i></span><span class="p-chip" data-part="process-chip"><i data-icon="globe" data-size="12"></i></span></span><span class="p-label" data-part="process-summary">已处理 2 分 43 秒 · 待办 4/4 · 思考 4 次 · 12 个工具</span><span class="p-edot" data-part="error-dot" role="img" aria-label="1 个调用返回了错误"></span><span class="p-errn" data-part="tool-errors">1</span><span class="p-word p-fail" data-part="process-state-word">失败</span><i data-icon="chevron-right" data-size="12"></i></div></div></div>
+</section>
+<section data-ref-block="process-block-pending" style="width:752px" data-pad>
+<div class="p-pending" data-part="pending-actions"><ul class="p-plist"><li class="p-pitem" data-part="pending-item"><span class="p-picon"><i data-icon="external-link" data-size="14"></i></span><span class="p-ptext"><span class="p-ptitle" data-part="pending-title">设置发布渠道</span><span class="p-pdesc" data-part="pending-desc">在渠道页完成授权</span></span><a class="p-pact" data-part="pending-action" href="#">去处理</a></li></ul></div>
+</section>
+<section data-ref-block="process-block-pending-many" style="width:752px" data-pad>
+<div class="p-pending" data-part="pending-actions"><div class="p-many" data-part="pending-many">2 项需要你处理 · 不阻塞，我已继续</div><ul class="p-plist"><li class="p-pitem" data-part="pending-item"><span class="p-picon"><i data-icon="external-link" data-size="14"></i></span><span class="p-ptext"><span class="p-ptitle" data-part="pending-title">设置发布渠道</span><span class="p-pdesc" data-part="pending-desc">在渠道页完成授权</span></span><a class="p-pact" data-part="pending-action" href="#">去处理</a></li><li class="p-pitem" data-part="pending-item"><span class="p-picon"><i data-icon="external-link" data-size="14"></i></span><span class="p-ptext"><span class="p-ptitle" data-part="pending-title">确认邀请链接</span><span class="p-pdesc" data-part="pending-desc">复制后发给新成员</span></span><a class="p-pact" data-part="pending-action" href="#">去处理</a></li></ul></div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

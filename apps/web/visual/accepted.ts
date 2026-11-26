@@ -38,6 +38,9 @@ export const ACCEPTED: string[] = [
   "template-wizard",
   "template-auth",
   "prose",
+  // the process block (process blocks spec): blocks and size table in place; the reference PNGs
+  // wait for the reference-update workflow
+  "process-block",
   "thinking-row",
   "user-bubble",
   // background Bash plan Task 9 added states: run-divider `notice`, tool-group and tool-row
