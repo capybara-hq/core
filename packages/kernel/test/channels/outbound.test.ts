@@ -16,7 +16,11 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { CHANNEL_QUEUE_NAME, idempotencyKey } from "../../src/channels/outbound.js";
+import {
+  CHANNEL_QUEUE_NAME,
+  idempotencyKey,
+  POISON_FAILURES,
+} from "../../src/channels/outbound.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
@@ -1552,11 +1556,15 @@ describe("出站投递：发送失败", () => {
     const conv = await convOf(noEditId, chat);
     const phraseSent = () =>
       sentTo("cli_noedit", chat).some((s) => s.message.text.startsWith("A request is waiting"));
-    // 每条新消息都会触发一次续投（重试卡住的事件），直到第 3 次失败后跳过
+    // Each new message pulls another delivery (a retry of the stuck event) until the third
+    // failure skips it. The skip is decided when that failure is counted and its notice is sent
+    // just after, so a count at POISON_FAILURES already means skipped: one more message then
+    // (#382) could land in the same run as "after skip", and the echo answers only the last one.
+    const skipped = async () => phraseSent() || (await failCount(conv)) >= POISON_FAILURES;
     let i = 2;
-    while (!phraseSent() && i <= 5) {
+    while (!(await skipped()) && i <= 5) {
       await waitFor(async () => (await failCount(conv)) >= i - 1 || phraseSent(), 15_000, "fail");
-      if (phraseSent()) break;
+      if (await skipped()) break;
       push(group(`p${i}`, "u-owner", `echo:reply ${i}`, { chatId: chat, threadId: "p1" }));
       i++;
       // The new message pulls the next retry of the stuck event: wait for that attempt to fail
@@ -1564,10 +1572,20 @@ describe("出站投递：发送失败", () => {
       await waitFor(async () => (await failCount(conv)) >= i - 1 || phraseSent(), 15_000, "fail");
     }
     await waitFor(async () => phraseSent(), 15_000, "skip notice");
+    // "after skip" must be the last message of whichever run answers it: wait until every earlier
+    // push is in the log, since inbound events of one chat are not ordered across the queue.
+    await waitFor(
+      async () => {
+        const r = await sql<{ n: string }>`
+          SELECT count(*) AS n FROM capybara.conversation_events
+          WHERE conversation_id = ${conv} AND type = 'user_message'`.execute(raw);
+        return Number(r.rows[0]?.n ?? 0) >= i - 1;
+      },
+      15_000,
+      "earlier messages logged",
+    );
     push(group("p-after", "u-owner", "echo:after skip", { chatId: chat, threadId: "p1" }));
-    // #382: this wait has timed out in CI (never locally), each time about 0.3 s into the test
-    // (passing runs take 0.7–1 s), so the skip came before the loop's extra pushes; on a timeout
-    // the error carries the conversation's state for the next diagnosis
+    // On a timeout the error carries the conversation's state for the next diagnosis (#382)
     await waitFor(
       async () => sentTo("cli_noedit", chat).some((s) => s.message.text === "after skip"),
       15_000,
