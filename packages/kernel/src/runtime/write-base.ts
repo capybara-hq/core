@@ -1,4 +1,5 @@
 import type { Logger, ToolInputView } from "@capybara-hq/plugin-sdk";
+import type { ResolvedTool } from "../tools/registry.js";
 
 /**
  * The `Write` base (streaming tool input spec §4.1, D7): while the model streams a call whose tool
@@ -106,8 +107,8 @@ export class TopLevelStringProperty {
         return;
       default:
         // a number, literal or whitespace; a non-string value of the property ends the search
-        if (this.depth === 1 && !/\s/.test(c) && this.valueOf === this.prop) this.stop();
-        else if (this.depth === 0 && !/\s/.test(c)) this.stop();
+        if (this.depth === 1 && !isJsonSpace(c) && this.valueOf === this.prop) this.stop();
+        else if (this.depth === 0 && !isJsonSpace(c)) this.stop();
     }
   }
 
@@ -141,6 +142,9 @@ export class TopLevelStringProperty {
   }
 }
 
+/** JSON whitespace (RFC 8259): space, tab, line feed, carriage return. */
+const isJsonSpace = (c: string): boolean => c === " " || c === "\n" || c === "\t" || c === "\r";
+
 /** A JSON string body (between its quotes) decoded; null when it is not valid JSON. */
 function decode(raw: string): string | null {
   try {
@@ -154,6 +158,24 @@ function decode(raw: string): string | null {
 /** The value of a top-level string property once its closing quote arrived; null before. */
 export function closedStringProperty(json: string, prop: string): string | null {
   return new TopLevelStringProperty(prop).feed(json);
+}
+
+/**
+ * The input view that starts a base read for the step's tool `name` (ruling R7): only the builtin
+ * `Write`'s; an extension or connector tool declaring `file_write` gets no base, and a tool whose
+ * source is unknown gets none either.
+ */
+export function writeBaseViewOf(
+  tools: readonly {
+    key: string;
+    spec: { inputView?: ToolInputView };
+    source?: ResolvedTool["source"];
+  }[],
+  name: string,
+): ToolInputView | undefined {
+  const t = tools.find((x) => x.key === name);
+  if (t?.source?.kind !== "builtin" || t.source.name !== "Write") return undefined;
+  return t.spec.inputView?.kind === "file_write" ? t.spec.inputView : undefined;
 }
 
 /** A `Write` base: the file's current text and the sha256 (hex) of its bytes. */
@@ -174,9 +196,10 @@ export interface WriteBaseReader {
 /**
  * Watches one model stream attempt's tool calls (streaming tool input spec §4.1): a call whose tool
  * declares `inputView.kind: "file_write"` starts one base read once its path property closed, at
- * most one per call id, fire and forget (the stream never waits for it). A read that resolves after
- * `signal` aborted (a step reset, the stream's end, the run's abort) emits nothing; a read that
- * throws is logged and dropped. The per-call state lives and dies with the attempt it serves.
+ * most one per call id, without blocking the stream. A read that resolves after `signal` aborted
+ * (a step reset, the stream's end, the run's abort) emits nothing; a read that throws is logged
+ * and dropped. The attempt aborts `signal` and then awaits {@link settle}, so no read outlives
+ * the attempt it serves (no admission, intent row or lease after its step moves on).
  */
 export function writeBaseWatcher(deps: {
   reader: WriteBaseReader;
@@ -188,8 +211,12 @@ export function writeBaseWatcher(deps: {
 }): {
   onStart(callId: string, name: string): void;
   onInput(callId: string, fragment: string): void;
+  /** Resolves once every read started so far has finished (never rejects). */
+  settle(): Promise<void>;
 } {
   const watching = new Map<string, TopLevelStringProperty>();
+  /** The reads in flight (each removes itself when it finishes). */
+  const inFlight = new Set<Promise<void>>();
   /** Call ids already seen: a repeated start never starts a second read. */
   const seen = new Set<string>();
 
@@ -231,7 +258,12 @@ export function writeBaseWatcher(deps: {
       if (path === null) return;
       // one read per call id, whatever follows
       watching.delete(callId);
-      void read(callId, path);
+      const pending = read(callId, path);
+      inFlight.add(pending);
+      void pending.finally(() => inFlight.delete(pending));
+    },
+    async settle() {
+      while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
     },
   };
 }

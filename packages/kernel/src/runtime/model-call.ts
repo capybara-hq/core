@@ -94,7 +94,7 @@ import { type BoundProvider, ProviderListError, type ProviderRegistry } from "./
 import { ExecutionRevoked } from "./run-execution.js";
 import type { StepLog } from "./step-log.js";
 import { budgetRunOf, subagentBudgetUsedUp } from "./subagents/limits.js";
-import { type WriteBaseReader, writeBaseWatcher } from "./write-base.js";
+import { type WriteBaseReader, writeBaseViewOf, writeBaseWatcher } from "./write-base.js";
 
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
 export const WRAP_UP_REMINDER =
@@ -2050,7 +2050,10 @@ async function ladder(
             },
           );
         } finally {
+          // the attempt's base reads end with it: aborted, then waited for (the abort reaches
+          // the lease and provider waits, so this is short)
           baseStop.abort();
+          await bases?.settle();
         }
         // the draft's last write, before the assistant_message is logged
         sink({ kind: "stream_end", runId, step });
@@ -2334,7 +2337,8 @@ function baseWatcher(
   const { conversationId, runId, step, sink } = input;
   return writeBaseWatcher({
     reader,
-    inputViewOf: (name) => tools.list.find((t) => t.key === name)?.spec.inputView,
+    // the resolved tools carry their source (`ResolvedTool`): only the builtin Write reads
+    inputViewOf: (name) => writeBaseViewOf(tools.list, name),
     emit: (callId, base) =>
       sink({ kind: "tool_base", runId, step, callId, text: base.text, sha256: base.sha256 }),
     conversationId,

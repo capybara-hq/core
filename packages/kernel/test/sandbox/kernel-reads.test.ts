@@ -596,7 +596,7 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
     ).toMatchObject({ truncated: false });
   });
 
-  it("is reachable only from the knowledge service; the owner start only from the projects service", async () => {
+  it("is reachable only from the knowledge and write base services; the owner start only from the projects service", async () => {
     const { readFile: read } = await import("node:fs/promises");
     const { execSync } = await import("node:child_process");
     const src = join(import.meta.dirname, "../../src");

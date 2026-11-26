@@ -1,10 +1,12 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
+import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { EventLog } from "../conversations/event-log.js";
 import { DeviceAccess } from "../devices/access.js";
+import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { KernelReadInstanceNotRunning } from "../sandbox/kernel-read.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import {
   checkFilePathShape,
@@ -37,7 +39,7 @@ export interface WriteBaseReadDeps {
   runFacts(claim: Readonly<ExecutionClaim>): Promise<WriteBaseRunFacts | null>;
   eventLog: Pick<EventLog, "latestFileState">;
   sandbox: Pick<SandboxService, "withKernelRead">;
-  log: Pick<Logger, "warn">;
+  log: Pick<KernelLogger, "warn" | "debug">;
 }
 
 /**
@@ -72,6 +74,7 @@ export async function readWriteBase(
     signal.throwIfAborted();
     const facts = await deps.runFacts(claim);
     if (facts === null) return null;
+    // checked last before the read: an attempt that ended starts no admission
     signal.throwIfAborted();
     const data = await deps.sandbox.withKernelRead(
       {
@@ -102,17 +105,38 @@ export async function readWriteBase(
     const now = fileStateOf(data, data.byteLength);
     if (now.size !== seen.size || now.sha256 !== seen.sha256) return null;
     if (looksBinary(data) || data.includes(0)) return null;
+    const text = utf8(data);
     // bytes that are not UTF-8 are binary here: no base
-    return { text: new TextDecoder("utf-8", { fatal: true }).decode(data), sha256: now.sha256 };
+    return text === null ? null : { text, sha256: now.sha256 };
   } catch (err) {
-    if (!signal.aborted) {
-      deps.log.warn("write base not read; the row streams without it", {
-        conversationId,
-        err,
-      });
-    }
+    if (signal.aborted) return null;
+    // an outcome the person simply gets no base for: debug; anything else: warn
+    const level = expectedNoBase(err) ? "debug" : "warn";
+    deps.log[level]("write base not read; the row streams without it", { conversationId, err });
     return null;
   }
+}
+
+/** `data` as UTF-8 text, or null when it is not valid UTF-8. */
+function utf8(data: Uint8Array): string | null {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(data);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The failures that only mean "no base now": the device's instance is not running, the device is
+ * gone or its provider off, or the model's path is malformed (`Write` refuses it with the same
+ * `ToolError`).
+ */
+function expectedNoBase(err: unknown): boolean {
+  if (err instanceof KernelReadInstanceNotRunning || err instanceof ToolError) return true;
+  return (
+    err instanceof ApiError &&
+    (err.code === "device.unavailable" || err.code === "device.not_found")
+  );
 }
 
 /**

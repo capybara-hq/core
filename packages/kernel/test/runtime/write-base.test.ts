@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import type { ToolInputView } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
+import { ApiError } from "../../src/errors.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import {
   closedStringProperty,
   TopLevelStringProperty,
   type WriteBase,
   type WriteBaseReader,
+  writeBaseViewOf,
   writeBaseWatcher,
 } from "../../src/runtime/write-base.js";
 import { readWriteBase, type WriteBaseReadDeps } from "../../src/runtime/write-base.service.js";
@@ -51,6 +53,9 @@ describe("closedStringProperty", () => {
     expect(closedStringProperty('{"file_path":12,"a":"b"}', "file_path")).toBeNull();
     expect(closedStringProperty('["file_path","/w/a"]', "file_path")).toBeNull();
     expect(closedStringProperty('{"file_path" : "/w/a"}', "file_path")).toBe("/w/a");
+    expect(closedStringProperty('{\t"file_path"\r\n:\n"/w/a"}', "file_path")).toBe("/w/a");
+    // not JSON whitespace: the value is not a string, so nothing
+    expect(closedStringProperty('{"file_path":\u00a0"/w/a"}', "file_path")).toBeNull();
   });
 
   it("finds the same value fed one character at a time", () => {
@@ -67,6 +72,38 @@ describe("closedStringProperty", () => {
     const closed = json.indexOf('.py"') + 3;
     expect(seen.slice(0, closed).every((v) => v === null)).toBe(true);
     expect(seen[closed]).toBe("/w/\\x.py");
+  });
+});
+
+describe("writeBaseViewOf (ruling R7)", () => {
+  const view: ToolInputView = { kind: "file_write", path: "file_path", content: "content" };
+  it("gives the view of the builtin Write only", () => {
+    const tools = [
+      {
+        key: "Write",
+        spec: { inputView: view },
+        source: { kind: "builtin" as const, name: "Write" },
+      },
+      {
+        key: "ext__put",
+        spec: { inputView: view },
+        source: { kind: "plugin" as const, plugin: "ext", name: "put" },
+      },
+      {
+        key: "mcp__fs__write",
+        spec: { inputView: view },
+        source: { kind: "connector" as const, connectorId: "c", name: "write" },
+      },
+      { key: "Bare", spec: { inputView: view } },
+      {
+        key: "Edit",
+        spec: { inputView: { kind: "file_edit" as const, path: "p", old: "o", new: "n" } },
+        source: { kind: "builtin" as const, name: "Edit" },
+      },
+    ];
+    expect(writeBaseViewOf(tools, "Write")).toEqual(view);
+    for (const name of ["ext__put", "mcp__fs__write", "Bare", "Edit", "Missing"])
+      expect(writeBaseViewOf(tools, name)).toBeUndefined();
   });
 });
 
@@ -161,6 +198,36 @@ describe("writeBaseWatcher", () => {
     expect(reader.read).not.toHaveBeenCalled();
   });
 
+  it("settles only once every read started has finished, also after an abort", async () => {
+    const ac = new AbortController();
+    const d = deferred<WriteBase | null>();
+    const { w, emit } = watcherWith(() => d.promise, ac.signal);
+    await w.settle();
+    w.onStart("t1", "Write");
+    w.onInput("t1", '{"file_path":"/w/a.py"}');
+    let settled = false;
+    const s = w.settle().then(() => {
+      settled = true;
+    });
+    ac.abort();
+    await flush();
+    expect(settled).toBe(false);
+    d.resolve({ text: "late", sha256: "h" });
+    await s;
+    expect(settled).toBe(true);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("settles after a reader that throws", async () => {
+    const d = deferred<WriteBase | null>();
+    const { w } = watcherWith(() => d.promise);
+    w.onStart("t1", "Write");
+    w.onInput("t1", '{"file_path":"/w/a.py"}');
+    const s = w.settle();
+    d.reject(new Error("boom"));
+    await expect(s).resolves.toBeUndefined();
+  });
+
   it("swallows and logs a reader that throws", async () => {
     const { w, emit, warn } = watcherWith(async () => {
       throw new Error("boom");
@@ -193,12 +260,14 @@ interface Fake {
 }
 
 function readerDeps(f: Fake) {
+  const stat = vi.fn(async () =>
+    f.file === null ? null : { size: f.statSize ?? f.file.byteLength, isDir: false },
+  );
   const withKernelRead = vi.fn(
     async (_ctx: unknown, _read: unknown, fn: (...a: never[]) => unknown, signal: AbortSignal) => {
       if (f.kernelRead) return f.kernelRead();
       const p = {
-        stat: async () =>
-          f.file === null ? null : { size: f.statSize ?? f.file.byteLength, isDir: false },
+        stat,
         readFile: async () => {
           if (f.readFileError) throw f.readFileError;
           return f.file === null ? null : { data: f.file, truncated: f.truncated === true };
@@ -209,14 +278,15 @@ function readerDeps(f: Fake) {
   );
   const latestFileState = vi.fn(async () => f.recorded);
   const warn = vi.fn();
+  const debug = vi.fn();
   const deps: WriteBaseReadDeps = {
     claim: () => claim,
     runFacts: async () => ({ deviceId: "d1", accountId: "a1" }),
     eventLog: { latestFileState },
     sandbox: { withKernelRead } as never,
-    log: { warn },
+    log: { warn, debug },
   };
-  return { deps, withKernelRead, latestFileState, warn };
+  return { deps, withKernelRead, latestFileState, warn, debug, stat };
 }
 
 const input = (path = "/workspace/a.py", signal = new AbortController().signal) => ({
@@ -298,10 +368,18 @@ describe("readWriteBase", () => {
   });
 
   it("gives none for a relative, malformed, root or skills path", async () => {
-    for (const path of ["a.py", "/workspace/../etc/passwd", "/", "/skills/s/SKILL.md"]) {
-      const { deps } = readerDeps({ file, recorded });
+    for (const path of ["a.py", "/workspace/../etc/passwd", "/"]) {
+      const { deps, withKernelRead, warn, debug } = readerDeps({ file, recorded });
       expect(await readWriteBase(deps, input(path))).toBeNull();
+      expect(withKernelRead).not.toHaveBeenCalled();
+      // a malformed model path is an expected no-base outcome
+      expect(warn).not.toHaveBeenCalled();
+      if (path.includes("..")) expect(debug).toHaveBeenCalledTimes(1);
     }
+    // the skills directory is read-only to Write: refused inside the read, before any stat
+    const { deps, stat } = readerDeps({ file, recorded });
+    expect(await readWriteBase(deps, input("/skills/s/SKILL.md"))).toBeNull();
+    expect(stat).not.toHaveBeenCalled();
   });
 
   it("gives none without the step's claim for this conversation, or without run facts", async () => {
@@ -317,15 +395,29 @@ describe("readWriteBase", () => {
     for (const x of [a, b, c]) expect(x.withKernelRead).not.toHaveBeenCalled();
   });
 
-  it("gives none, logged, when the read is refused, the instance is not running or it fails", async () => {
+  it("gives none, logged at debug, when the instance is not running or the device is away", async () => {
     for (const err of [
       new KernelReadInstanceNotRunning(),
-      new KernelReadNotAdmitted(new Error("refused")),
+      new ApiError("device.unavailable", "off"),
+      new ApiError("device.not_found", "gone"),
     ]) {
-      const { deps, warn } = readerDeps({
+      const { deps, warn, debug } = readerDeps({
         file,
         recorded,
         kernelRead: () => Promise.reject(err),
+      });
+      expect(await readWriteBase(deps, input())).toBeNull();
+      expect(debug).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalled();
+    }
+  });
+
+  it("gives none, logged as a warning, when the read is refused or fails", async () => {
+    {
+      const { deps, warn } = readerDeps({
+        file,
+        recorded,
+        kernelRead: () => Promise.reject(new KernelReadNotAdmitted(new Error("refused"))),
       });
       expect(await readWriteBase(deps, input())).toBeNull();
       expect(warn).toHaveBeenCalledTimes(1);
@@ -346,5 +438,7 @@ describe("readWriteBase", () => {
     ac.abort();
     expect(await readWriteBase(deps, input("/workspace/a.py", ac.signal))).toBeNull();
     expect(warn).not.toHaveBeenCalled();
+    // the second call aborted before the read: no admission started
+    expect(withKernelRead).toHaveBeenCalledTimes(1);
   });
 });
