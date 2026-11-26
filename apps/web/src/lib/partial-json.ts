@@ -19,7 +19,9 @@ interface Parsed {
 
 const NOTHING: Parsed = { value: undefined, complete: false };
 const WS = /\s/;
-const NUMBER = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/;
+const NUMBER_PREFIX = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?/;
+// Containers nested deeper than this are dropped (bounds the recursion).
+const MAX_DEPTH = 64;
 const SIMPLE_ESCAPES: Record<string, string> = {
   '"': '"',
   "\\": "\\",
@@ -36,6 +38,14 @@ function isHighSurrogate(code: number): boolean {
 }
 
 export function parsePartialJson(text: string): PartialJson {
+  try {
+    return parse(text);
+  } catch {
+    return { value: null, open: null };
+  }
+}
+
+function parse(text: string): PartialJson {
   let pos = 0;
   let open: string | null = null;
 
@@ -76,7 +86,7 @@ export function parsePartialJson(text: string): PartialJson {
     return { text: out, complete: false };
   };
 
-  const parseObject = (top: boolean): Parsed => {
+  const parseObject = (top: boolean, depth: number): Parsed => {
     const obj: Record<string, unknown> = {};
     pos++;
     for (;;) {
@@ -94,9 +104,15 @@ export function parsePartialJson(text: string): PartialJson {
       pos++;
       skipWs();
       const isString = text[pos] === '"';
-      const child = parseValue(false);
+      const child = parseValue(false, depth);
       if (child.value !== undefined) {
-        obj[key.text] = child.value;
+        // defineProperty keeps a "__proto__" key an own property, as JSON.parse does.
+        Object.defineProperty(obj, key.text, {
+          value: child.value,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
         if (top && isString && !child.complete) open = key.text;
       }
       if (!child.complete) return { value: obj, complete: false };
@@ -113,7 +129,7 @@ export function parsePartialJson(text: string): PartialJson {
     }
   };
 
-  const parseArray = (): Parsed => {
+  const parseArray = (depth: number): Parsed => {
     const arr: unknown[] = [];
     pos++;
     for (;;) {
@@ -123,7 +139,7 @@ export function parsePartialJson(text: string): PartialJson {
         pos++;
         return { value: arr, complete: true };
       }
-      const child = parseValue(false);
+      const child = parseValue(false, depth);
       if (child.value !== undefined) arr.push(child.value);
       if (!child.complete) return { value: arr, complete: false };
       skipWs();
@@ -139,12 +155,17 @@ export function parsePartialJson(text: string): PartialJson {
     }
   };
 
-  const parseValue = (top: boolean): Parsed => {
+  const parseValue = (top: boolean, depth: number): Parsed => {
     skipWs();
     if (pos >= text.length) return NOTHING;
     const ch = text[pos] as string;
-    if (ch === "{") return parseObject(top);
-    if (ch === "[") return parseArray();
+    if (ch === "{" || ch === "[") {
+      if (depth >= MAX_DEPTH) {
+        pos = text.length;
+        return NOTHING;
+      }
+      return ch === "{" ? parseObject(top, depth + 1) : parseArray(depth + 1);
+    }
     if (ch === '"') {
       const s = readString();
       return { value: s.text, complete: s.complete };
@@ -156,14 +177,19 @@ export function parsePartialJson(text: string): PartialJson {
     if (token === "true") return { value: true, complete: true };
     if (token === "false") return { value: false, complete: true };
     if (token === "null") return { value: null, complete: true };
-    if (NUMBER.test(token)) return { value: Number(token), complete: !atEnd };
-    // A half-written literal or number, or malformed input: nothing usable, stop here.
+    const num = NUMBER_PREFIX.exec(token)?.[0];
+    if (num !== undefined && num === token) return { value: Number(num), complete: !atEnd };
+    // A number cut mid-token keeps its last complete numeric prefix.
+    if (num !== undefined && atEnd) {
+      return { value: Number(num), complete: false };
+    }
+    // A half-written literal, or malformed input: nothing usable, stop here.
     pos = text.length;
     return NOTHING;
   };
 
   skipWs();
   if (text[pos] !== "{") return { value: null, open: null };
-  const root = parseObject(true);
+  const root = parseObject(true, 1);
   return { value: root.value as Record<string, unknown>, open };
 }

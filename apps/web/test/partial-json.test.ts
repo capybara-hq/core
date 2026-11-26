@@ -20,8 +20,11 @@ describe("parsePartialJson", () => {
         const r = parsePartialJson(input.slice(0, i));
         if (i > 0) expect(r.value === null || typeof r.value === "object").toBe(true);
         if (r.value) {
-          for (const v of Object.values(r.value)) {
-            if (typeof v === "string") expect(v).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+          const full = JSON.parse(input) as Record<string, unknown>;
+          for (const [k, v] of Object.entries(r.value)) {
+            if (typeof v !== "string") continue;
+            expect(v).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+            expect((full[k] as string).startsWith(v)).toBe(true);
           }
         }
       }
@@ -48,7 +51,7 @@ describe("parsePartialJson", () => {
     expect(parsePartialJson('{"a":1,"b":').value).toEqual({ a: 1 });
     expect(parsePartialJson('{"a":1,"b":tru').value).toEqual({ a: 1 });
     expect(parsePartialJson('{"a":1,"b":-').value).toEqual({ a: 1 });
-    expect(parsePartialJson('{"a":1,"b":1e').value).toEqual({ a: 1 });
+    expect(parsePartialJson('{"a":1,"b":1e').value).toEqual({ a: 1, b: 1 });
   });
 
   it("drops half of a surrogate pair, raw or escaped", () => {
@@ -65,5 +68,33 @@ describe("parsePartialJson", () => {
     expect(parsePartialJson("[1,2")).toEqual({ value: null, open: null });
     expect(parsePartialJson('{"a":1,}').value).toEqual({ a: 1 });
     expect(() => parsePartialJson('{"a":@,"b":"c"}')).not.toThrow();
+  });
+
+  it("keeps the last complete numeric prefix of a number cut mid-token", () => {
+    expect(parsePartialJson('{"a":1.').value).toEqual({ a: 1 });
+    expect(parsePartialJson('{"a":1e').value).toEqual({ a: 1 });
+    expect(parsePartialJson('{"a":-1.5e+').value).toEqual({ a: -1.5 });
+    expect(parsePartialJson('{"a":-').value).toEqual({});
+  });
+
+  it("keeps a __proto__ key as an own property like JSON.parse", () => {
+    const r = parsePartialJson('{"__proto__":{"x":1},"a":1}');
+    expect(Object.getPrototypeOf(r.value)).toBe(Object.prototype);
+    expect(Object.keys(r.value ?? {})).toEqual(["__proto__", "a"]);
+    expect(r.value).toEqual(JSON.parse('{"__proto__":{"x":1},"a":1}'));
+  });
+
+  it("does not throw on very deep nesting and drops containers past the depth limit", () => {
+    expect(() => parsePartialJson(`{"a":${"[".repeat(20000)}`)).not.toThrow();
+    const depthOf = (v: unknown): number =>
+      Array.isArray(v) || (v && typeof v === "object")
+        ? 1 + Math.max(0, ...Object.values(v as object).map(depthOf))
+        : 0;
+    const r = parsePartialJson(`{"a":1,"b":${"[".repeat(20000)}`);
+    expect(r.value?.a).toBe(1);
+    expect(depthOf(r.value)).toBeLessThanOrEqual(64);
+    expect(depthOf(parsePartialJson(`{"a":${'{"k":'.repeat(20000)}`).value)).toBeLessThanOrEqual(
+      64,
+    );
   });
 });
