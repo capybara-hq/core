@@ -66,9 +66,9 @@ export type ChannelCard =
        */
       kind: "progress";
       state: "running" | "waiting" | "finished" | "stopped" | "failed";
-      /** The headline, e.g. "正在处理", "等待你批准", "已处理 2 分 43 秒". */
+      /** The headline, e.g. "Working", "Waiting for your approval", "Worked for 2m 43s". */
       title: string;
-      /** A short detail after the title, e.g. "已用 0:42" or "待办 4/4 · 12 个工具". */
+      /** A short detail after the title, e.g. "Elapsed 0:42" or "Todo 4/4 · 12 tools". */
       meta?: string;
       /** The latest narration, one line. */
       status?: string;
@@ -83,7 +83,7 @@ export type ChannelCard =
       pending: { text: string; url: string }[];
       /** The run on the web. */
       url: string;
-      /** The link text for `url`, e.g. "在网页查看完整过程". */
+      /** The link text for `url`, e.g. "See the full process on the web". */
       urlText: string;
     };
 
