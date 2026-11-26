@@ -114,10 +114,18 @@ describe("progressCardMessage", () => {
   });
 
   it("any other channel gets the card's text, without cards", () => {
-    for (const features of [all, { ...all, progress: false }, { ...all, cards: false }]) {
-      expect(progressCardMessage(features, card, "zh")).toEqual({
-        text: renderCardAsText(card, "zh"),
-      });
+    for (const features of [
+      all,
+      { ...all, progress: false },
+      { ...all, cards: false },
+      // progress without cards: the text once, no title repeated before it
+      { ...all, cards: false, progress: true },
+    ]) {
+      const m = progressCardMessage(features, card, "zh");
+      expect(m).toEqual({ text: renderCardAsText(card, "zh") });
+      // what the channel finally gets after the features adaptation: the title once
+      const sent = adaptToFeatures(features, target, m, "zh").message.text;
+      expect(sent.split("Working").length - 1).toBe(1);
     }
   });
 });

@@ -20,16 +20,18 @@ export function processDisplayOf(v: string | null, chatType: "dm" | "group"): Pr
 
 /**
  * A run's progress card as the message the channel gets: the native card (titled for the
- * notification preview) only when the plugin declares `features.progress`; otherwise its
- * {@link renderCardAsText} text, which the kernel edits in place like the card (process blocks
- * spec §10 Execution rulings: a released plugin without a `progress` branch would throw on it).
+ * notification preview) only when the plugin declares `features.progress` and `cards`;
+ * otherwise its {@link renderCardAsText} text, which the kernel edits in place like the card
+ * (process blocks spec §10 Execution rulings: a released plugin without a `progress` branch
+ * would throw on it).
  */
 export function progressCardMessage(
   features: Channel["features"],
   card: Extract<ChannelCard, { kind: "progress" }>,
   locale: "zh" | "en",
 ): OutboundMessage {
-  if (features.progress === true) return { text: card.title, cards: [card] };
+  // `cards: false` would fall the card back to text after its title: the text alone instead
+  if (features.progress === true && features.cards) return { text: card.title, cards: [card] };
   return { text: renderCardAsText(card, locale) };
 }
 

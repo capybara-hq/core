@@ -305,8 +305,8 @@ Steps 1–2 ship alone; 3–5 follow together.
 11. The pinned head summary (title + badge) uses the view cache only; after a reload a finished
     head may omit it (§1.3).
 12. Channels: the native `progress` card goes only to a plugin that declares `features.progress`
-    (released lark, slack and telegram have no `progress` branch, so the card would fail their
-    delivery); every other channel gets the same card as `renderCardAsText` text, sent once and
+    and `cards` (released lark, slack and telegram have no `progress` branch, so the card would
+    fail their delivery); every other channel gets the same card as `renderCardAsText` text, sent once and
     edited in place like the card (§6.3).
 13. A run that finishes with no non-empty answer after its last narration promotes that narration
     to its answer: channels send it as the answer message at `run_finished` (progress modes; `off`
@@ -314,7 +314,11 @@ Steps 1–2 ship alone; 3–5 follow together.
     narration step in the block too.
 14. A channel without edits honours the display setting: `brief` sends no start message and no
     milestones (only the answer, blocking cards and the merged handoffs); `detailed` also sends a
-    trailing milestone at run end when the pinned text differs from the last milestone sent.
+    trailing milestone at run end when the pinned text differs from the last milestone sent. On
+    the promoted-answer path (ruling 13) that trailing milestone precedes the answer; on the
+    normal path, where the answer went out at its step, it follows the answer.
+    A retryable failure of the previous run's final card edit, retried once when the next run's
+    card starts (`startProgress`), is dropped if it fails again (accepted).
 15. Release order: the todo plugin's `placement: "pinned"` ships in the same release as core;
     otherwise todo cards stack as output cards.
 
