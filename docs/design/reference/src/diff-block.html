@@ -10,13 +10,25 @@
 <body>
 <main class="r-page">
 <h1>Diff block</h1>
-<p>Line numbers in a 4-character gutter; added and removed lines by tinted ground only (diff-add / diff-del); a capped diff ends with a truncation line.</p>
+<p>Line numbers in a 4-character gutter; added and removed lines by tinted ground only (diff-add / diff-del); a capped diff ends with a truncation line. Live (input still being written): a viewport that follows the tail, the caret on the last line, base lines not reached yet as one pending line, the writing form numbered from 1 with no signs, the edit form with a blank gutter, long text under an earlier line.</p>
 <div class="r-blocks">
 <section data-ref-block="diff-block-default" style="width:752px" data-pad>
   <template data-fixture="diff-block" data-opts='{"state": "default"}'></template>
 </section>
 <section data-ref-block="diff-block-truncated" style="width:752px" data-pad>
   <template data-fixture="diff-block" data-opts='{"state": "truncated"}'></template>
+</section>
+<section data-ref-block="diff-block-live" style="width:752px" data-pad>
+  <template data-fixture="diff-block" data-opts='{"state": "live"}'></template>
+</section>
+<section data-ref-block="diff-block-live-writing" style="width:752px" data-pad>
+  <template data-fixture="diff-block" data-opts='{"state": "live-writing"}'></template>
+</section>
+<section data-ref-block="diff-block-live-edit" style="width:752px" data-pad>
+  <template data-fixture="diff-block" data-opts='{"state": "live-edit"}'></template>
+</section>
+<section data-ref-block="diff-block-live-cut" style="width:752px" data-pad>
+  <template data-fixture="diff-block" data-opts='{"state": "live-cut"}'></template>
 </section>
 </div>
 </main>
