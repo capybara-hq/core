@@ -15,6 +15,7 @@ import {
   type SandboxPreparation,
   type SandboxPreparationScope,
   SandboxScopeDeniedError,
+  ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { asPlatform } from "../infra/database/org-scope.js";
 import { runOutsideTransaction } from "../infra/database/transaction-host.js";
@@ -48,6 +49,24 @@ const failureKindOf = (error: Error): OperationFailureKind =>
     : isSandboxScopeDeniedError(error)
       ? "denied"
       : "unsupported";
+
+/** Native methods without effects: rerunning one is harmless, so its answer never stays unknown. */
+const READ_ONLY_METHODS: ReadonlySet<string> = new Set(["readFile", "stat", "list", "scan"]);
+
+/**
+ * The provider's own typed answer that the operation finished and failed (#903): a `ToolError`.
+ * A read's answer is definite whatever its kind. An effectful operation's is definite only when
+ * the remote answered (`error`, not `unavailable`: a transport loss or timeout proves nothing)
+ * and only on a fresh dispatch: an answer to a reconciliation may describe the earlier dispatch's
+ * effect (a file it already wrote), so the recorded operation stays unknown.
+ */
+const definiteFailureAnswer = (
+  error: unknown,
+  method: string,
+  reconciling: boolean,
+): error is ToolError =>
+  error instanceof ToolError &&
+  (READ_ONLY_METHODS.has(method) || (error.kind !== "unavailable" && !reconciling));
 
 /**
  * A provider found the instance gone before it sent the request (#643): a
@@ -2098,6 +2117,14 @@ export class SandboxService {
             await runOutsideTransaction(() =>
               this.operationIntents.complete(admitted.operation_id, identity.claim.executionId, {
                 $failure: { kind, message: error.message },
+              }),
+            );
+            throw error;
+          }
+          if (definiteFailureAnswer(error, method, reconciling)) {
+            await runOutsideTransaction(() =>
+              this.operationIntents.complete(admitted.operation_id, identity.claim.executionId, {
+                $failure: { kind: "failed", message: error.message, toolKind: error.kind },
               }),
             );
             throw error;

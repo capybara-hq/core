@@ -9,6 +9,7 @@ import {
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
@@ -76,6 +77,8 @@ const links = new Map<string, string>();
 let instanceBoundary = false;
 /** Set: the runtime refuses every operation scope it is sent (a provider's own refusal). */
 let refuseScopes = false;
+/** Set: the runtime answers every operation-route readFile with this typed failure. */
+let failReads: ToolError | null = null;
 /** Every provider entry reached: the route, the method, the path and the operation's scope. */
 const seen: {
   route: "operation" | "browse" | "raw";
@@ -183,6 +186,7 @@ beforeAll(async () => {
         },
         readFile: async (path) => {
           record("operation", "readFile", path, s);
+          if (failReads) throw failReads;
           // a restricted runtime resolves a link before its scope check; a Full access one
           // (scope.profile "full-access") follows it wherever it points
           const target = links.get(path);
@@ -243,6 +247,7 @@ beforeEach(async () => {
   links.clear();
   instanceBoundary = false;
   refuseScopes = false;
+  failReads = null;
   await setFakeSandboxPermissionSupport(root, null);
   files.set(`${APP}/AGENTS.md`, "Be kind to the build.");
   files.set(
@@ -846,6 +851,64 @@ describe("agents.register-skill's file read (a managed operation of its tool cal
     ]);
     expect((await intentsOf(f)).every((r) => r.call_id === callId)).toBe(true);
   });
+});
+
+describe("a provider's typed failure answer is a definite outcome (#903)", () => {
+  /** A file read of a running tool call, as agents.register-skill makes it. */
+  async function readAsToolCall(f: Fixture, path: string) {
+    const run = await claimRun(f, "running");
+    const callId = randomUUID();
+    await f.db
+      .insertInto("conversation_events")
+      .values({
+        conversation_id: f.conversationId,
+        run_id: run.runId,
+        seq: 1,
+        type: "tool_call_started",
+        payload: JSON.stringify({ callId, toolKey: "Platform" }),
+      })
+      .execute();
+    await f.db
+      .updateTable("conversations")
+      .set({ last_seq: 1 })
+      .where("id", "=", f.conversationId)
+      .execute();
+    return k.app.get(RunExecution).withClaim(
+      run.claim,
+      () => true,
+      () =>
+        k.app.get(SandboxFileReader).read({
+          orgId: f.orgId,
+          conversationId: f.conversationId,
+          actorAccountId: f.accountId,
+          path,
+          maxBytes: 100,
+          signal: new AbortController().signal,
+          callId,
+        }),
+    );
+  }
+
+  it.each([
+    ["error", new ToolError("/dev/null is not a regular file")],
+    ["unavailable", new ToolError("the read timed out", { kind: "unavailable" })],
+  ])(
+    "a read answered with a ToolError (%s) returns it as is and completes the intent",
+    async (_, answer) => {
+      const f = await seed();
+      files.set(`${WS}/pkg.zip`, "zip");
+      failReads = answer;
+      const err = await readAsToolCall(f, `${WS}/pkg.zip`).catch((e: unknown) => e);
+      expect(err).toBe(answer);
+      const read = await f.db
+        .selectFrom("sandbox_operation_intents")
+        .select(["state", "outcome_unknown"])
+        .where("device_id", "=", f.deviceId)
+        .where("method", "=", "readFile")
+        .executeTakeFirstOrThrow();
+      expect(read).toEqual({ state: "completed", outcome_unknown: false });
+    },
+  );
 });
 
 describe("device projects over HTTP (owner browse after ensureRunningForOwner)", () => {

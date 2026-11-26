@@ -1171,6 +1171,22 @@ describe("managed background launch identity", () => {
     });
   });
 
+  it("a start the provider answers with a ToolError is refused with the kernel's reason (#903)", async () => {
+    const f = await fixture();
+    f.provider.hooks.beforeEffect = async () => {
+      throw new ToolError("spawn failed: provider detail");
+    };
+    const r = await f.outcome(f.run({ command: "npm run dev" }));
+    expect(r.ok).toBe(false);
+    expect(String((r as { error: unknown }).error)).toMatch(
+      /the device answered that the start failed/,
+    );
+    expect(String((r as { error: unknown }).error)).not.toMatch(/provider detail/);
+    expect(f.provider.calls).toHaveLength(1);
+    expect(await f.task()).toMatchObject({ status: "failed", launch_state: "terminal" });
+    expect((await f.intent())?.state).toBe("completed");
+  });
+
   it("an abandoned pending reservation fails, but a dispatched launch is never failed as abandoned", async () => {
     const f = await fixture();
     f.provider.hooks.afterEffect = async () => {

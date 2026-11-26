@@ -6,6 +6,8 @@ import {
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  ToolError,
+  type ToolErrorKind,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Expression, ExpressionBuilder, Selectable, SqlBool } from "kysely";
@@ -96,14 +98,18 @@ export function operationIdFor(
     .digest("hex");
 }
 /**
- * A definite pre-effect failure recorded as an operation's result: `denied` and `unsupported`
- * refusals, and `not_sent` (the request was refused before it was sent, its connection changed:
- * `DeviceRequestNotSentError`), which is never an unknown outcome either.
+ * A definite failure recorded as an operation's result: `denied` and `unsupported` refusals,
+ * `not_sent` (the request was refused before it was sent, its connection changed:
+ * `DeviceRequestNotSentError`), which is never an unknown outcome either, and `failed`: the
+ * provider's own typed answer that the operation finished and failed (a `ToolError`, #903),
+ * replayed as that `ToolError` with its `toolKind`.
  */
-export type OperationFailureKind = "denied" | "unsupported" | "not_sent";
+export type OperationFailureKind = "denied" | "unsupported" | "not_sent" | "failed";
 export interface OperationFailure {
   kind: OperationFailureKind;
   message: string;
+  /** The answered `ToolError`'s kind (`failed` only). */
+  toolKind?: ToolErrorKind;
 }
 /**
  * Why a managed background start was refused, as `background_tasks.lost_reason` keeps it after
@@ -119,6 +125,8 @@ export function launchRefusedText(kind: OperationFailureKind | undefined): strin
       return "the command or its output file is outside what this conversation may use on the device; choose a working directory this conversation may write to";
     case "unsupported":
       return "the device refused it because it cannot enforce its sandbox limits; ask the device's owner to update its device program (or a super admin to update its device plugin), or continue without the device";
+    case "failed":
+      return "the device answered that the start failed; check the command and its working directory, then retry the call";
     default:
       return "the device refused the start; check that the device is connected, then retry the call";
   }
@@ -129,10 +137,11 @@ export function operationResult(value: unknown): unknown {
       "The retained operation result has expired; this consumed identity cannot run again",
     );
   if (value && typeof value === "object" && "$failure" in value) {
-    const f = (value as { $failure: { kind: string; message: string } }).$failure;
+    const f = (value as { $failure: OperationFailure }).$failure;
     if (f.kind === "denied") throw new SandboxScopeDeniedError(f.message);
     if (f.kind === "not_sent") throw new DeviceRequestNotSentError(f.message);
     if (f.kind === "unsupported") throw new SandboxPermissionUnsupportedError(f.message);
+    if (f.kind === "failed") throw new ToolError(f.message, { kind: f.toolKind ?? "error" });
   }
   return hydrateOperationBytes(value);
 }

@@ -487,6 +487,7 @@ import {
   type DeviceProvider,
   type SandboxOperationScope,
   SandboxScopeDeniedError,
+  ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
@@ -954,6 +955,112 @@ it("an operation pending under one report revision is stale after its provider r
   await expect(intents.admit(f.ctx, { ...f.invocation, ordinal: 1 })).rejects.toBeInstanceOf(
     PermissionAdmissionStale,
   );
+});
+describe("a provider's ToolError answer (#903)", () => {
+  /** A writeFile of the fixture's running call; the provider answers each try with `answers`. */
+  async function writeAnswered(answers: Error[]) {
+    let tries = 0;
+    const f = await operationFixture({
+      async operation() {
+        return {
+          async writeFile() {
+            throw answers[Math.min(tries++, answers.length - 1)];
+          },
+        } as never;
+      },
+    });
+    const service = k.app.get(SandboxService),
+      call = (inv: typeof f.invocation) =>
+        service.withOperations(
+          f.ctx,
+          inv,
+          (h, p, _i, signal) =>
+            p.writeFile(h, "/work/out.txt", new TextEncoder().encode("x"), signal),
+          new AbortController().signal,
+        );
+    const state = () =>
+      f.db
+        .selectFrom("sandbox_operation_intents")
+        .select("state")
+        .where("run_id", "=", f.claim.runId)
+        .executeTakeFirstOrThrow()
+        .then((r) => r.state);
+    return { f, call, state, tries: () => tries };
+  }
+
+  it("an effectful operation answered with an ordinary ToolError fails definitely, replayed as is", async () => {
+    const answer = new ToolError("/work/out.txt: permission denied by the filesystem");
+    const w = await writeAnswered([answer]);
+    await expect(w.call(w.f.invocation)).rejects.toBe(answer);
+    expect(await w.state()).toBe("completed");
+    // the same identity replays the recorded answer and dispatches nothing again
+    await expect(w.call(w.f.invocation)).rejects.toMatchObject({
+      name: "ToolError",
+      kind: "error",
+      message: answer.message,
+    });
+    expect(w.tries()).toBe(1);
+  });
+
+  it("an effectful operation answered unavailable stays unknown", async () => {
+    const w = await writeAnswered([new ToolError("the reply timed out", { kind: "unavailable" })]);
+    await expect(w.call(w.f.invocation)).rejects.toMatchObject({
+      name: "SandboxOperationOutcomeUnknownError",
+    });
+    expect(await w.state()).toBe("started-or-unknown");
+  });
+
+  it("a reconciled effectful operation answered with a ToolError stays unknown", async () => {
+    const w = await writeAnswered([
+      new Error("reply lost after effect"),
+      new ToolError("/work/out.txt already exists"),
+    ]);
+    await expect(w.call(w.f.invocation)).rejects.toMatchObject({
+      name: "SandboxOperationOutcomeUnknownError",
+    });
+    const claim = await k.app.get(RunExecution).claim(w.f.root.id, w.f.claim.runId, randomUUID());
+    if (!claim) throw new Error("The replacement execution claim was not acquired");
+    await expect(w.call({ ...w.f.invocation, claim })).rejects.toMatchObject({
+      name: "SandboxOperationOutcomeUnknownError",
+    });
+    expect(w.tries()).toBe(2);
+    expect(await w.state()).toBe("started-or-unknown");
+  });
+
+  it("a reconciled read answered with a ToolError completes with that answer", async () => {
+    let tries = 0;
+    const answer = new ToolError("/dev/null is not a regular file");
+    const f = await operationFixture({
+      async operation() {
+        return {
+          async stat() {
+            if (tries++ === 0) throw new Error("reply lost");
+            throw answer;
+          },
+        } as never;
+      },
+    });
+    const service = k.app.get(SandboxService),
+      call = (inv: typeof f.invocation) =>
+        service.withOperations(
+          f.ctx,
+          inv,
+          (h, p, _i, signal) => p.stat(h, "/work/file", signal),
+          new AbortController().signal,
+        );
+    await expect(call(f.invocation)).rejects.toMatchObject({
+      name: "SandboxOperationOutcomeUnknownError",
+    });
+    const claim = await k.app.get(RunExecution).claim(f.root.id, f.claim.runId, randomUUID());
+    if (!claim) throw new Error("The replacement execution claim was not acquired");
+    await expect(call({ ...f.invocation, claim })).rejects.toBe(answer);
+    const row = await f.db
+      .selectFrom("sandbox_operation_intents")
+      .select("state")
+      .where("run_id", "=", f.claim.runId)
+      .executeTakeFirstOrThrow();
+    expect(row.state).toBe("completed");
+  });
 });
 it("a newly acquired run claim and lease reconcile the same unknown ID without new effects", async () => {
   let effects = 0;
