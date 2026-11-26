@@ -638,11 +638,35 @@ const asRecord = (v: unknown): Record<string, unknown> =>
 /** An input value as text, bounded (`INPUT_VALUE_MAX_CHARS`: a value can be 512 KB). */
 const valueText = (v: unknown): string => inputValue(v);
 
-/** The key argument: the tool's first declared key argument, else the first string input. */
-function keyArgOf(input: unknown, info: ToolInfo | undefined): string | undefined {
+/**
+ * The key argument: the tool's first declared key argument, else the first string input. A
+ * streaming call whose tool declares its key arguments (or a path / command in its input view)
+ * never falls back: a model often streams `content` before `file_path`, and the content is no
+ * key argument. It shows none until a declared one has parsed.
+ */
+function keyArgOf(
+  input: unknown,
+  info: ToolInfo | undefined,
+  streaming = false,
+): string | undefined {
   const rec = asRecord(input);
   for (const k of info?.keyArgs ?? []) {
     if (Object.hasOwn(rec, k) && rec[k] !== undefined) return valueText(rec[k]);
+  }
+  if (streaming) {
+    const v = info?.inputView;
+    const declared = (info?.keyArgs.length ?? 0) > 0;
+    const viewField =
+      v?.kind === "file_write" || v?.kind === "file_edit"
+        ? v.path
+        : v?.kind === "command"
+          ? v.command
+          : undefined;
+    if (viewField !== undefined && Object.hasOwn(rec, viewField)) {
+      const val = rec[viewField];
+      if (val !== undefined) return valueText(val);
+    }
+    if (declared || viewField !== undefined) return undefined;
   }
   for (const [k, v] of Object.entries(rec)) {
     if (typeof v === "string" && k !== "description") return v;
@@ -747,7 +771,7 @@ function streamingTool(
   const keyArg =
     (kind !== "command" ? view.description : undefined) ??
     view.keyArg ??
-    (question ? questionPreview(input, ti) : keyArgOf(input, ti));
+    (question ? questionPreview(input, ti) : keyArgOf(input, ti, true));
   const label = ti ? toolLabel(ti, locale) : toolLabelOfKey(t.name);
   const row: ToolRowData = {
     id: callKey(at.runId, t.id),

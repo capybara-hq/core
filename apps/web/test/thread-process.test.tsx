@@ -494,6 +494,47 @@ describe("the thread draws process blocks", () => {
     expect(label()).toBe("Running · Bash pwd");
   });
 
+  it("the head follows a streaming call's label within a moment, as its row does (B3)", async () => {
+    api([userMsg(1, "go"), runStarted(2), step(3, 0, [bash("t1", "ls")]), result(4, "t1")], {}, [
+      {
+        ...BASH_INFO,
+        inputView: { kind: "command", command: "command", description: "description" },
+      },
+    ]);
+    await renderChatRoute();
+    const block = await vi.waitFor(theBlock);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const flush = () =>
+      act(() => {
+        for (const f of frames.splice(0)) f(0);
+      });
+    const label = () =>
+      (block.querySelector('[data-part="process-summary"]') as HTMLElement).textContent;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const input = (text: string, offset: number) =>
+      act(() => {
+        es.emit("delta", { runId: "r1", step: 1, delta: "tool_input", callId: "t2", text, offset });
+      });
+    act(() => {
+      es.emit("delta", { runId: "r1", step: 1, delta: "tool_start", callId: "t2", name: "Bash" });
+    });
+    const a = '{"command":"cat no';
+    input(a, 0);
+    flush();
+    expect(label()).toBe("Running · Bash cat no");
+    const b = 'tes.md","description":"Read the notes"}';
+    input(b, a.length);
+    flush();
+    // not held for the announce interval: the description shows as the row's does
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(label()).toBe("Running · Bash Read the notes");
+  });
+
   it("a run that ends without an answer shows its last narration as the answer", async () => {
     api([
       userMsg(1, "go"),

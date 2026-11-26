@@ -165,6 +165,28 @@ describe("streaming tool rows", () => {
     expect(early?.row.detail).toBeUndefined();
   });
 
+  it("a content-first Write shows no key argument until its path parsed (B1)", () => {
+    const input = '{"content":"line one\nline two","file_path":"src/b.ts"';
+    const at = (cut: number) =>
+      rowsOf(timeline(asked, [draft([{ id: "c1", name: "Write", input: input.slice(0, cut) }])]))[0]
+        ?.row;
+    const early = at('{"content":"line one\nline two"'.length + 5);
+    expect(early?.keyArg).toBeUndefined();
+    expect(at(input.length)?.keyArg).toBe("src/b.ts");
+    // in a process block the head reads the same row: no content there either
+    const entries = timeline(asked, [
+      draft([{ id: "c1", name: "Write", input: '{"content":"secret body"' }]),
+    ]);
+    expect(JSON.stringify(entries)).not.toContain('"keyArg":"secret body"');
+    // a tool without declared key arguments or a view keeps the first string field
+    const [generic] = rowsOf(
+      timeline(asked, [
+        draft([{ id: "c2", name: "mcp__acme__create_ticket", input: '{"body":"b","title":"T"' }]),
+      ]),
+    );
+    expect(generic?.row.keyArg).toBe("T");
+  });
+
   it("with a base the row carries a live diff and +a −b of the aligned part", () => {
     const base = "# Title\nold line\n\nkeep\nmore\nrest\n";
     const content = "# Title\nnew line\n\nkeep\nadd";
@@ -451,6 +473,15 @@ describe("streaming tool rows", () => {
       { kind: "add", text: "b" },
     ]);
     expect(tool?.row.progress?.lines).toBe(2);
+  });
+
+  it("an Edit still writing old_string shows its size only, lines count from new_string (B4)", () => {
+    const input = '{"file_path":"a.py","old_string":"a = 1\nb = 2';
+    const [tool] = rowsOf(timeline(asked, [draft([{ id: "c1", name: "Edit", input }])]));
+    expect(tool?.row.progress).toEqual({ bytes: input.length });
+    const next = `${input}","new_string":"x`;
+    const [started] = rowsOf(timeline(asked, [draft([{ id: "c1", name: "Edit", input: next }])]));
+    expect(started?.row.progress?.lines).toBe(1);
   });
 
   it("an Agent prompt streams as bounded live output", () => {

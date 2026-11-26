@@ -1128,6 +1128,8 @@ const LIVE_STEPS = 4;
 const RAIL_PAGE = 200;
 /** How often at most the running head announces a new step (spec §7, accessibility). */
 const ANNOUNCE_MS = 3000;
+/** While the current call still streams its input, its label (path, description) follows sooner. */
+const STREAM_ANNOUNCE_MS = 300;
 
 type Extra = Extract<ProcessStep, { kind: "network-facts" | "card" }>;
 
@@ -1348,6 +1350,7 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
   let tools = 0;
   let errors = 0;
   let current: string | null = null;
+  let currentStreaming = false;
   let waitingWords: string | null = null;
   let startedAt: number | null = null;
   const started = (ms: number | undefined) => {
@@ -1358,13 +1361,17 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       thoughts++;
       addKind({ key: "thinking", icon: { name: "lightbulb" }, label: t("process.kind.thinking") });
       current = t("process.thinking");
+      currentStreaming = false;
     } else if (it.kind === "tool") {
       for (const tool of it.tools) {
         const r = tool.row;
         tools++;
         if (r.status === "failed") errors++;
         addKind(kindOf(tool));
-        current = [r.name, r.description ?? r.keyArg].filter(Boolean).join(" ");
+        // the label the row itself draws: a description replaces the command only for a command
+        const arg = r.kind === "command" ? (r.description ?? r.keyArg) : r.keyArg;
+        current = [r.name, arg?.split("\n")[0]].filter(Boolean).join(" ");
+        currentStreaming = r.status === "streaming";
         started(r.startedAt);
         if (isLiveRow(r) && r.waiting !== undefined)
           waitingWords ??= waitingText(r.waiting, r.waitingFor, locale);
@@ -1375,12 +1382,13 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       if (r.status === "failed") errors++;
       addKind({ key: "agent", icon: { name: "agent" }, label: t("process.kind.agent") });
       current = `${t("process.subagent")} ${r.description}`;
+      currentStreaming = false;
       started(r.startedAt);
       if (r.status === "waiting")
         waitingWords ??= waitingText(r.waiting ?? "approval", undefined, locale);
     }
   }
-  const label = useThrottled(current, ANNOUNCE_MS);
+  const label = useThrottled(current, currentStreaming ? STREAM_ANNOUNCE_MS : ANNOUNCE_MS);
   const pinnedSummary = usePinnedSummary(c.orgId, c.conversationId, b.pinned[0]);
 
   // what the rail draws: the last steps, more behind the fold row
