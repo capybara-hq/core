@@ -4,20 +4,28 @@
  * input as parsed and the tool's declared `inputView`. Pure and display only; the timeline
  * (`lib/timeline.ts`) builds the rows from it.
  */
-import type { DiffData, ToolRowData, ToolStreamProgress } from "@capybara-hq/design";
+import {
+  cutDiffLine,
+  DIFF_LINE_MAX_CHARS,
+  type DiffData,
+  type ToolRowData,
+  type ToolStreamProgress,
+} from "@capybara-hq/design";
 import type { ToolInfo } from "./conversations";
-import { liveEditDiff, liveWriteDiff, writingLines } from "./live-diff";
+import { liveEditDiff, liveWriteDiff, MAX_LINES, writingLines } from "./live-diff";
 import type { PartialJson } from "./partial-json";
 import type { DraftTool } from "./run-drafts";
 
 /** The most lines a live block or streaming text keeps (the last ones; the kernel's diff cap). */
-export const LIVE_MAX_LINES = 2000;
-/** A shown line is cut to this many characters (the kernel's `TOOL_VIEW_LINE_MAX_CHARS`). */
-export const LIVE_LINE_MAX_CHARS = 2000;
+export const LIVE_MAX_LINES = MAX_LINES;
+/** A shown line is cut to this many characters (the design's `DIFF_LINE_MAX_CHARS`). */
+export const LIVE_LINE_MAX_CHARS = DIFF_LINE_MAX_CHARS;
 /** The most characters of streaming text handed to the page (the tail is kept). */
 export const LIVE_TEXT_MAX_CHARS = 256 * 1024;
-/** The most characters of one generic input value shown (the head is kept). */
-const INPUT_VALUE_MAX_CHARS = 16 * 1024;
+/** The most characters of one input value shown, streaming or logged (the head is kept). */
+export const INPUT_VALUE_MAX_CHARS = 16 * 1024;
+/** The most characters of a streaming command kept as the row's key argument (it previews less). */
+export const COMMAND_KEY_ARG_MAX_CHARS = 1024;
 
 type InputView = NonNullable<ToolInfo["inputView"]>;
 
@@ -56,8 +64,12 @@ export function lineCount(text: string): number {
   return text.endsWith("\n") ? n - 1 : n;
 }
 
-const cutLine = (s: string) =>
-  s.length > LIVE_LINE_MAX_CHARS ? s.slice(0, LIVE_LINE_MAX_CHARS) : s;
+/** The head of `s` at most `max` characters long, never ending inside a surrogate pair. */
+export function headOf(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const c = s.charCodeAt(max - 1);
+  return s.slice(0, c >= 0xd800 && c <= 0xdbff ? max - 1 : max);
+}
 
 /**
  * Streaming text bounded for the page (the design's live output draws all it gets): each line cut
@@ -68,7 +80,7 @@ export function liveTextTail(text: string): string {
   if (text.length <= LIVE_LINE_MAX_CHARS && !text.includes("\n")) return text;
   const lines = text.split("\n");
   const kept = lines.length > LIVE_MAX_LINES ? lines.slice(-LIVE_MAX_LINES) : lines;
-  let out = kept.map(cutLine).join("\n");
+  let out = kept.map(cutDiffLine).join("\n");
   if (out.length > LIVE_TEXT_MAX_CHARS) {
     out = out.slice(out.length - LIVE_TEXT_MAX_CHARS);
     // never start inside a surrogate pair
@@ -109,8 +121,11 @@ const str = (rec: Record<string, unknown>, k: string | undefined): string | unde
   return typeof v === "string" ? v : undefined;
 };
 
-/** A generic input value as the detail lists it: a string as is, anything else as JSON. */
-function inputValue(v: unknown): string {
+/**
+ * An input value as the detail lists it (streaming or logged): a string as is, anything else as
+ * JSON; past {@link INPUT_VALUE_MAX_CHARS} its head and "…" (a value can be 512 KB).
+ */
+export function inputValue(v: unknown): string {
   let s: string;
   if (typeof v === "string") s = v;
   else {
@@ -120,7 +135,7 @@ function inputValue(v: unknown): string {
       s = String(v);
     }
   }
-  return s.length > INPUT_VALUE_MAX_CHARS ? `${s.slice(0, INPUT_VALUE_MAX_CHARS)}…` : s;
+  return s.length > INPUT_VALUE_MAX_CHARS ? `${headOf(s, INPUT_VALUE_MAX_CHARS)}…` : s;
 }
 
 /**
@@ -144,7 +159,10 @@ export function streamingView(
       if (content === undefined) return out;
       // the base is the kernel's (only for the builtin Write, only when the log vouches for it)
       if (tool.base !== undefined) {
-        const live = liveWriteDiff(tool.base.text, content);
+        const live = liveWriteDiff(tool.base.text, content, {
+          callId: tool.id,
+          baseSha256: tool.base.sha256,
+        });
         out.added = live.added;
         out.removed = live.removed;
         out.detail = { diff: live.diff, live: { pending: live.pending } };
@@ -169,7 +187,10 @@ export function streamingView(
       const description = str(rec, view.description);
       return {
         progress: { bytes },
-        ...(command !== undefined && command !== "" ? { keyArg: command } : {}),
+        // the row previews the first line only: a heredoc of 512 KB is never handed on whole
+        ...(command !== undefined && command !== ""
+          ? { keyArg: headOf(command, COMMAND_KEY_ARG_MAX_CHARS) }
+          : {}),
         // never a half description: it replaces the command only once its string closed
         ...(description !== undefined &&
         description !== "" &&
@@ -177,7 +198,8 @@ export function streamingView(
         parsed.open !== view.description
           ? { description }
           : {}),
-        ...(command !== undefined ? { detail: { command } } : {}),
+        // the command's tail as it grows, bounded as a streaming text is
+        ...(command !== undefined ? { detail: { command: liveTextTail(command) } } : {}),
       };
     }
     case "text": {
@@ -195,4 +217,22 @@ export function streamingView(
       };
     }
   }
+}
+
+/**
+ * The live diff a logged `Write` / `Edit` shows until its result (spec D8: the row does not jump to
+ * its inputs) when this page kept none from its streaming frames (opened after the input
+ * streamed): from the whole input, without a base (the writing and edit forms).
+ */
+export function loggedLiveView(
+  input: Record<string, unknown>,
+  view: InputView | null,
+): Pick<StreamingView, "detail" | "added" | "removed"> | undefined {
+  if (view?.kind !== "file_write" && view?.kind !== "file_edit") return undefined;
+  const { detail } = streamingView(
+    { id: "", name: "", input: "" },
+    { value: input, open: null },
+    view,
+  );
+  return detail?.diff !== undefined ? { detail } : undefined;
 }

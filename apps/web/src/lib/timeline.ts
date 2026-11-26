@@ -30,7 +30,7 @@ import { parsePartialJson } from "./partial-json";
 import type { PersonRef } from "./people";
 import { PersonWaits } from "./person-waits";
 import type { DraftTool } from "./run-drafts";
-import { streamingView } from "./streaming-tool-view";
+import { inputValue, loggedLiveView, streamingView } from "./streaming-tool-view";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 
 /**
@@ -635,14 +635,8 @@ function userText(e: Extract<ConversationEvent, { type: "user_message" }>): stri
 const asRecord = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
-const valueText = (v: unknown): string => {
-  if (typeof v === "string") return v;
-  try {
-    return JSON.stringify(v) ?? String(v);
-  } catch {
-    return String(v);
-  }
-};
+/** An input value as text, bounded (`INPUT_VALUE_MAX_CHARS`: a value can be 512 KB). */
+const valueText = (v: unknown): string => inputValue(v);
 
 /** The key argument: the tool's first declared key argument, else the first string input. */
 function keyArgOf(input: unknown, info: ToolInfo | undefined): string | undefined {
@@ -712,6 +706,37 @@ interface StreamingRowMemo {
  */
 const streamingRows = new WeakMap<DraftTool, StreamingRowMemo>();
 
+/** The live diff a streaming Write / Edit row showed last, with its "+a −b". */
+type LastLiveDiff = Pick<ToolRowData, "added" | "removed"> & {
+  detail: NonNullable<ToolRowData["detail"]>;
+};
+/**
+ * By call key: the logged call keeps its streaming row's last live diff until its result (spec D8,
+ * ruling R13), so a base it was diffed against outlives the draft. Bounded (oldest first out);
+ * client state of this page only.
+ */
+const lastLiveDiffs = new Map<string, LastLiveDiff>();
+const LAST_LIVE_DIFFS_MAX = 64;
+
+/**
+ * The live diff ends with the call: the result's diff (an edit view) replaces it; any other end
+ * shows the inputs and output, without the live "+a −b".
+ */
+function endLiveDiff(row: ToolRowData): void {
+  if (row.detail?.live === undefined) return;
+  const { diff: _diff, live: _live, ...rest } = row.detail;
+  row.detail = rest;
+  delete row.added;
+  delete row.removed;
+}
+
+function rememberLiveDiff(key: string, last: LastLiveDiff): void {
+  lastLiveDiffs.delete(key);
+  lastLiveDiffs.set(key, last);
+  if (lastLiveDiffs.size > LAST_LIVE_DIFFS_MAX)
+    lastLiveDiffs.delete(lastLiveDiffs.keys().next().value as string);
+}
+
 /** A streamed call's row (spec §6.4), keyed like the logged call that replaces it (D8). */
 function streamingTool(
   at: StepRef,
@@ -757,6 +782,13 @@ function streamingTool(
   // the step too: a process block draws a step's calls as one rail step, as it will once logged
   const tool: TimelineTool = { row, callId: t.id, toolKey: t.name, input, outputId: null, step: at };
   streamingRows.set(t, { at, info: ti, locale, tool });
+  if (view.detail?.diff !== undefined && view.detail.live !== undefined) {
+    rememberLiveDiff(row.id, {
+      detail: { diff: view.detail.diff, live: view.detail.live },
+      ...(view.added !== undefined ? { added: view.added } : {}),
+      ...(view.removed !== undefined ? { removed: view.removed } : {}),
+    });
+  }
   return tool;
 }
 
@@ -1432,6 +1464,14 @@ export function buildEventTimeline(
               ...(command ? { command: rec.command as string } : {}),
             },
           };
+          // a Write / Edit keeps its live diff until the result (D8, R13): the one its streaming
+          // row showed last, else one from the logged input
+          const live = lastLiveDiffs.get(row.id) ?? loggedLiveView(rec, ti?.inputView ?? null);
+          if (live !== undefined) {
+            row.detail = { ...row.detail, ...live.detail };
+            if (live.added !== undefined) row.added = live.added;
+            if (live.removed !== undefined) row.removed = live.removed;
+          }
           const tool: TimelineTool = {
             row,
             callId: b.id,
@@ -1489,6 +1529,7 @@ export function buildEventTimeline(
           if (p.review.decision === "deny" && row.extra === undefined) row.extra = p.review.reason;
         }
         const view = p.view;
+        endLiveDiff(row);
         // A non-zero exit is information, not a failure (the summary names the code); a timeout or
         // a stopped command fails. A background launch has no exit yet (`exitCode: null` in a
         // result that is no error): it started, and its task's end is a notice of its own. A read-before-write refusal (`guard` view) is the guard working,
@@ -2027,6 +2068,7 @@ export function buildEventTimeline(
   for (const c of calls.values()) {
     if (!c.done && c.runId !== null && closedRuns.has(c.runId)) {
       if (c.tool.row.status !== "failed") c.tool.row.status = "cancelled";
+      endLiveDiff(c.tool.row);
     }
   }
   for (const a of agentCalls.values()) {

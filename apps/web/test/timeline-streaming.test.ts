@@ -4,8 +4,11 @@ import { liveWriteDiff } from "../src/lib/live-diff";
 import type { DraftTool } from "../src/lib/run-drafts";
 import { initialChatState, reduceChat, type StreamDelta } from "../src/lib/stream";
 import {
+  COMMAND_KEY_ARG_MAX_CHARS,
+  INPUT_VALUE_MAX_CHARS,
   LIVE_LINE_MAX_CHARS,
   LIVE_MAX_LINES,
+  LIVE_TEXT_MAX_CHARS,
   liveTextTail,
   utf8Bytes,
 } from "../src/lib/streaming-tool-view";
@@ -453,5 +456,162 @@ describe("streaming tool rows", () => {
     ).toBe(false);
     expect(streamedToolKeys(drafts)).toEqual(["Bash", "Write"]);
     expect(streamedToolKeys([])).toEqual([]);
+  });
+});
+
+describe("a logged Write / Edit keeps its live diff until the result (D8, R13)", () => {
+  const started = (seq: number, callId: string) =>
+    ev(seq, "tool_call_started", { step: 1, callId, toolKey: "Write", specHash: "h" });
+  const result = (seq: number, callId: string, extra: Record<string, unknown> = {}) =>
+    ev(seq, "tool_result", {
+      step: 1,
+      callId,
+      toolKey: "Write",
+      content: "ok",
+      isError: false,
+      ...extra,
+    });
+
+  it("streaming, then pending and running show the last live diff; the result's diff replaces it", () => {
+    const base = "# Title\nold line\nkeep\nmore\n";
+    const content = "# Title\nnew line\nkeep\nmore\n";
+    const full = { file_path: "a.md", content };
+    const [streaming] = rowsOf(
+      timeline(asked, [
+        draft([
+          {
+            id: "lw1",
+            name: "Write",
+            input: JSON.stringify(full).slice(0, -2),
+            base: { text: base, sha256: "s1" },
+          },
+        ]),
+      ]),
+    );
+    const liveDiff = streaming?.row.detail?.diff;
+    expect(liveDiff?.hunks.length).toBeGreaterThan(0);
+    const logged = [...asked, message(3, 1, [{ id: "lw1", name: "Write", input: full }])];
+    const [pending] = rowsOf(timeline(logged, []));
+    expect(pending?.row.status).toBe("pending");
+    expect(pending?.row.detail?.diff).toEqual(liveDiff);
+    expect(pending?.row.detail?.live).toEqual(streaming?.row.detail?.live);
+    expect(streaming?.row.removed).toBe(1);
+    expect(pending?.row.added).toBe(streaming?.row.added);
+    expect(pending?.row.removed).toBe(1);
+    const [running] = rowsOf(timeline([...logged, started(4, "lw1")], []));
+    expect(running?.row.status).toBe("running");
+    expect(running?.row.detail?.diff).toEqual(liveDiff);
+    const hunks = [
+      {
+        oldStart: 1,
+        newStart: 1,
+        lines: [
+          { kind: "ctx", text: "# Title" },
+          { kind: "del", text: "old line" },
+          { kind: "add", text: "new line" },
+          { kind: "ctx", text: "keep" },
+        ],
+      },
+    ];
+    const view = {
+      kind: "edit",
+      path: "a.md",
+      created: false,
+      added: 1,
+      removed: 1,
+      hunks,
+      truncated: false,
+    };
+    const [done] = rowsOf(timeline([...logged, started(4, "lw1"), result(5, "lw1", { view })], []));
+    expect(done?.row.status).toBe("done");
+    expect(done?.row.detail?.diff).toEqual({ hunks, truncated: false });
+    expect(done?.row.detail?.live).toBeUndefined();
+  });
+
+  it("without a remembered diff the logged input gives the writing form", () => {
+    const logged = [
+      ...asked,
+      message(3, 1, [
+        { id: "lw2", name: "Write", input: { file_path: "n.md", content: "a\nb\n" } },
+      ]),
+    ];
+    const [pending] = rowsOf(timeline(logged, []));
+    expect(pending?.row.detail?.live).toEqual({ preview: true });
+    expect(pending?.row.detail?.diff?.hunks[0]?.lines).toEqual([
+      { kind: "ctx", text: "a" },
+      { kind: "ctx", text: "b" },
+    ]);
+  });
+
+  it("a result without a diff, or a cancel, drops the live diff and its counts", () => {
+    const base = "x\ny\n";
+    const full = { file_path: "b.md", content: "x\nz\n" };
+    rowsOf(
+      timeline(asked, [
+        draft([
+          {
+            id: "lw3",
+            name: "Write",
+            input: JSON.stringify(full).slice(0, -2),
+            base: { text: base, sha256: "s3" },
+          },
+        ]),
+      ]),
+    );
+    const logged = [...asked, message(3, 1, [{ id: "lw3", name: "Write", input: full }])];
+    const [failed] = rowsOf(
+      timeline([...logged, result(4, "lw3", { isError: true, content: "denied" })], []),
+    );
+    expect(failed?.row.detail?.diff).toBeUndefined();
+    expect(failed?.row.detail?.live).toBeUndefined();
+    expect(failed?.row.added).toBeUndefined();
+    expect(failed?.row.detail?.input).toContainEqual(["file_path", "b.md"]);
+    const [cancelled] = rowsOf(timeline([...logged, ev(4, "run_aborted", {})], []));
+    expect(cancelled?.row.status).toBe("cancelled");
+    expect(cancelled?.row.detail?.diff).toBeUndefined();
+  });
+
+  it("bounds a logged input value", () => {
+    const big = "v".repeat(INPUT_VALUE_MAX_CHARS + 100);
+    const logged = [
+      ...asked,
+      message(3, 1, [
+        { id: "lw4", name: "mcp__acme__create_ticket", input: { title: "t", body: big } },
+      ]),
+    ];
+    const [row] = rowsOf(timeline(logged, []));
+    const body = row?.row.detail?.input?.find(([k]) => k === "body")?.[1];
+    expect(body).toBe(`${"v".repeat(INPUT_VALUE_MAX_CHARS)}…`);
+  });
+});
+
+describe("a streaming command is bounded", () => {
+  it("keeps the key argument's head and the command's tail", () => {
+    const heredoc = `cat > big.txt <<'EOF'\n${Array.from({ length: 4000 }, (_, i) => `row ${i} ${"z".repeat(80)}`).join("\n")}`;
+    const input = JSON.stringify({ command: heredoc }).slice(0, -2);
+    const [tool] = rowsOf(timeline(asked, [draft([{ id: "bc1", name: "Bash", input }])]));
+    const keyArg = tool?.row.keyArg ?? "";
+    expect(keyArg.length).toBe(COMMAND_KEY_ARG_MAX_CHARS);
+    expect(keyArg.startsWith("cat > big.txt <<'EOF'\n")).toBe(true);
+    const command = tool?.row.detail?.command ?? "";
+    expect(command.length).toBeLessThanOrEqual(LIVE_TEXT_MAX_CHARS);
+    expect(command.split("\n")).toHaveLength(LIVE_MAX_LINES);
+    expect(heredoc.endsWith(command)).toBe(true);
+  });
+});
+
+describe("live line cut", () => {
+  it("a surrogate pair at the cut never leaves a lone surrogate", () => {
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    for (const at of [LIVE_LINE_MAX_CHARS - 1, LIVE_LINE_MAX_CHARS]) {
+      const line = `${"x".repeat(at)}😀${"y".repeat(20)}`;
+      const shown = liveTextTail(`${line}\nnext`).split("\n")[0] ?? "";
+      expect(shown.length).toBeLessThanOrEqual(LIVE_LINE_MAX_CHARS);
+      expect(lone.test(shown)).toBe(false);
+      const diff = liveWriteDiff("", `${line}\n`);
+      const text = diff.diff.hunks[0]?.lines[0]?.text ?? "";
+      expect(text.length).toBeLessThanOrEqual(LIVE_LINE_MAX_CHARS);
+      expect(lone.test(text)).toBe(false);
+    }
   });
 });
