@@ -62,11 +62,11 @@ export type ToolStatus = "streaming" | "pending" | "running" | "done" | "failed"
 /**
  * A streaming call's progress (§6.16.9): the lines of the text being written when the input view
  * counts them, and the input's size so far. `generic`: a tool without an input view, worded
- * "生成参数中" / "Writing input".
+ * "Writing input" (zh and en copy in i18n).
  */
 export type ToolStreamProgress = { lines?: number; bytes: number; generic?: boolean };
 
-/** "生成中 · 86 行 · 2.7 KB" / "Writing input · 1.2 KB" (§6.16.9). */
+/** "Writing · 86 lines · 2.7 KB" / "Writing input · 1.2 KB" (§6.16.9). */
 export function streamProgressText(p: ToolStreamProgress, locale: Locale): string {
   const m = messages[locale];
   const parts = [m[p.generic ? "tool.streamingInput" : "tool.streaming"]];

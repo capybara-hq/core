@@ -173,7 +173,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   const streamMark = () =>
     '<span class="r-stream-mark" data-part="stream-mark" aria-hidden="true"><span class="r-stream-dot" data-part="stream-dot"></span><span class="r-stream-dot" data-part="stream-dot"></span><span class="r-stream-dot" data-part="stream-dot"></span></span>';
 
-  /** "生成中 · 86 行 · 2.7 KB" (§6.16.9; formatBytes as the design package rounds it). */
+  /** "Writing · 86 lines · 2.7 KB" (§6.16.9; formatBytes as the design package rounds it). */
   function streamProgress(p) {
     const bytes = (n) => {
       if (n < 1024) return `${n} B`;

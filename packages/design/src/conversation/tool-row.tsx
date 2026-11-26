@@ -217,7 +217,7 @@ export function StreamMark(): JSX.Element {
   );
 }
 
-/** A streaming call's progress, "生成中 · 86 行 · 2.7 KB" (§6.16.9), in `faint`. */
+/** A streaming call's progress, "Writing · 86 lines · 2.7 KB" (§6.16.9), in `faint`. */
 export function StreamProgress({ row, lead }: { row: ToolRowData; lead?: string }): JSX.Element {
   const locale = useDesignLocale();
   return (
