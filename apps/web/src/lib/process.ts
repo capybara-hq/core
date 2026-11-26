@@ -18,7 +18,8 @@ import type { DividerData, TimelineEntry, TimelineSubagent } from "./timeline";
  *   the run's last block also its working time.
  * - An undecided approval, question or connect, a device code and a sub-agent's wait stand outside,
  *   right after the block (the block is `waiting` while one is undecided); once decided an
- *   approval, question or connect is a `decided` step at its place in the rail.
+ *   approval or question is a `decided` step at its place in the rail, a connect once its run
+ *   ended (until then it still offers Connect).
  * - Handoffs and reveals of a turn (up to the next message that starts a run, so across the blocks
  *   a sub-agent group or a queued message splits) merge into one `pending` entry, after the
  *   blocking cards of the turn's last block; `output` cards, files, sub-agent deliveries and
@@ -103,6 +104,17 @@ function decided(e: Entry<"approval" | "question" | "connect">, b: ProcessEntry 
   if (e.kind === "question") return e.item.answered !== null;
   const call = b === null ? undefined : toolsOf(b).find((t) => t.callId === e.item.callId);
   return call !== undefined && call.row.waiting !== "connect";
+}
+
+/**
+ * Whether a blocking card folds into the rail as a `decided` step: an approval or question once
+ * decided; a connect only once its run ended. A connect's call goes on without waiting for the
+ * person (its result says the connector is not connected), so while the run goes on the card
+ * still offers Connect and stays outside: folded into a block that closes at the answer, its
+ * button would vanish under the person's hand.
+ */
+function folds(e: Entry<"approval" | "question" | "connect">, b: ProcessEntry | null): boolean {
+  return e.kind === "connect" ? e.item.closed : decided(e, b);
 }
 
 /** Waiting for a person: an undecided card outside, a row waiting, a device code's call running. */
@@ -295,7 +307,7 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
       case "approval":
       case "question":
       case "connect":
-        if (s.open !== null && decided(e, s.open.block))
+        if (s.open !== null && folds(e, s.open.block))
           addStep(e, { kind: "decided", key: e.key, entry: e });
         else outside(e, "blocking");
         break;

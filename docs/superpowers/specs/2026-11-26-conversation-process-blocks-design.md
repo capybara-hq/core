@@ -321,6 +321,9 @@ Steps 1–2 ship alone; 3–5 follow together.
     card starts (`startProgress`), is dropped if it fails again (accepted).
 15. Release order: the todo plugin's `placement: "pinned"` ships in the same release as core;
     otherwise todo cards stack as output cards.
+16. A connect card folds into the rail only once its run ended: its call goes on without waiting
+    (the result says the connector is not connected), so "decided" by the call would hide a card
+    that still offers Connect inside a block that collapses at the answer (§4).
 
 ## AGENTS.md rules touched
 

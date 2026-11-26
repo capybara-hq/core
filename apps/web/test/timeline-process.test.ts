@@ -631,4 +631,31 @@ describe("groupProcess", () => {
     ]);
     expect(kinds(failed)).toEqual(["user", "process", "run"]);
   });
+
+  it("a connect card stays outside, with its Connect, until the run ends", () => {
+    const connector = {
+      id: "c9",
+      name: "mcp__docs__read",
+      input: {},
+    };
+    const head = [
+      user(1, "read my docs"),
+      runStarted(2),
+      calls(3, [connector]),
+      ev(4, "connection_required", { callId: "c9", appId: "app1", appName: "Docs" }),
+      // the call went on with the connect text as its result: the person has not connected
+      result(5, "c9", "mcp__docs__read", { isError: true, content: "not connected" }),
+      answer(6, "Please connect Docs, then retry."),
+    ];
+    // the answer is in but the run goes on: the card still offers Connect, outside the block
+    const going = build(head);
+    expect(kinds(going)).toEqual(["user", "process", "connect", "prose"]);
+    expect(going[2]).toMatchObject({ kind: "connect", item: { closed: false } });
+    expect(kinds(block(going).steps)).toEqual(["tools"]);
+
+    // the run ended: the card no longer offers Connect and folds into the rail
+    const ended = build([...head, runFinished(7)]);
+    expect(kinds(ended)).toEqual(["user", "process", "prose", "run"]);
+    expect(kinds(block(ended).steps)).toEqual(["tools", "decided"]);
+  });
 });

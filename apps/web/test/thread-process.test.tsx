@@ -444,4 +444,38 @@ describe("the thread draws process blocks", () => {
     expect(within(prose).getByText("Cleaned up the folder.")).toBeTruthy();
     expect(prose.contains(theBlock())).toBe(false);
   });
+
+  it("a connect card keeps its Connect while the run goes on past the answer", async () => {
+    api([
+      userMsg(1, "read my docs"),
+      runStarted(2),
+      step(3, 0, [{ type: "tool_call", id: "c9", name: "mcp__docs__read", input: {} }]),
+      ev(4, "connection_required", { callId: "c9", appId: "app1", appName: "Docs" }),
+      ev(5, "tool_result", {
+        step: 0,
+        callId: "c9",
+        toolKey: "mcp__docs__read",
+        content: "not connected",
+        isError: true,
+      }),
+    ]);
+    await renderChatRoute();
+    const button = () =>
+      within(document.querySelector('[data-role="connect"]') as HTMLElement).getByRole("button", {
+        name: "Connect",
+      });
+    const before = await vi.waitFor(button);
+    // the answer arrives; the run has not ended: the same button stays, outside the block
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() =>
+      es.emit("event", step(6, 1, [{ type: "text", text: "Please connect Docs." }], "end_turn")),
+    );
+    await screen.findByText("Please connect Docs.");
+    expect(button()).toBe(before);
+    expect(theBlock().contains(before)).toBe(false);
+    expect(entries()).toEqual(["user", "process", "connect", "prose"]);
+    // the run ends: the card folds into the block and offers Connect no more
+    act(() => es.emit("event", finished(7)));
+    await vi.waitFor(() => expect(entries()).toEqual(["user", "process", "prose", "run"]));
+  });
 });
