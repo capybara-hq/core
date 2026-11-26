@@ -1,6 +1,6 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DesignProvider,
@@ -265,6 +265,23 @@ describe("PendingActions", () => {
       "2 项需要你处理 · 不阻塞，我已继续",
     );
     expect(screen.getAllByRole("link", { name: "去处理" })).toHaveLength(2);
+  });
+
+  it("a page link goes through the app's design link (client navigation)", () => {
+    const AppLink = ({ href, children, ...rest }: { href: string; children: ReactNode }) => (
+      <a href={href} data-app-link="" {...rest}>
+        {children}
+      </a>
+    );
+    render(
+      <DesignProvider locale="zh" link={AppLink}>
+        <PendingActions items={[item(1)]} />
+      </DesignProvider>,
+    );
+    const a = screen.getByRole("link", { name: "去处理" });
+    expect(a.hasAttribute("data-app-link")).toBe(true);
+    expect(a.getAttribute("data-part")).toBe("pending-action");
+    expect(a.getAttribute("href")).toBe("/p/1");
   });
 
   it("the many-line in English", () => {

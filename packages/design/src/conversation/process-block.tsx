@@ -2,7 +2,7 @@ import { type JSX, type ReactNode, useId } from "react";
 import { formatDuration } from "../display/duration";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
-import { useDesignLocale, useDesignT } from "../provider";
+import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
 import { Spinner } from "./prose";
 import { fillCopy } from "./tool-copy";
 import { ErrorDot } from "./tool-row";
@@ -281,6 +281,8 @@ export type PendingAction = {
  */
 export function PendingActions({ items }: { items: PendingAction[] }): JSX.Element | null {
   const t = useDesignT();
+  // the app's link: a page link navigates on the client, like every other design link
+  const Link = useDesignLink();
   if (items.length === 0) return null;
   return (
     <div className="cb-pending" data-part="pending-actions">
@@ -306,9 +308,9 @@ export function PendingActions({ items }: { items: PendingAction[] }): JSX.Eleme
               ) : null}
             </span>
             {"href" in it.action ? (
-              <a className="cb-pending-action" data-part="pending-action" href={it.action.href}>
+              <Link className="cb-pending-action" data-part="pending-action" href={it.action.href}>
                 {it.action.label}
-              </a>
+              </Link>
             ) : (
               <button
                 type="button"

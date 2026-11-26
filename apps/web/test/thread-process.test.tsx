@@ -416,12 +416,32 @@ describe("the thread draws process blocks", () => {
     // a row changing (its result) is no new step: the head says the same
     act(() => es.emit("event", result(4, "t1")));
     expect(label()).toBe("Running · Bash ls");
-    // a new step changes it, at most every few seconds
+    // a new step changes it: the first change at once, later ones at most every few seconds
     act(() => es.emit("event", step(5, 1, [bash("t2", "cat notes.md")])));
-    expect(label()).toBe("Running · Bash ls");
+    expect(label()).toBe("Running · Bash cat notes.md");
+    act(() => es.emit("event", result(6, "t2")));
+    act(() => es.emit("event", step(7, 2, [bash("t3", "pwd")])));
+    expect(label()).toBe("Running · Bash cat notes.md");
     act(() => {
       vi.advanceTimersByTime(3000);
     });
-    expect(label()).toBe("Running · Bash cat notes.md");
+    expect(label()).toBe("Running · Bash pwd");
+  });
+
+  it("a run that ends without an answer shows its last narration as the answer", async () => {
+    api([
+      userMsg(1, "go"),
+      runStarted(2),
+      step(3, 0, [{ type: "text", text: "Cleaned up the folder." }, bash("t1", "rm tmp")]),
+      result(4, "t1"),
+      step(5, 1, [], "end_turn"),
+      finished(6),
+    ]);
+    await renderChatRoute();
+    await vi.waitFor(theBlock);
+    await vi.waitFor(() => expect(entries()).toEqual(["user", "process", "prose", "run"]));
+    const prose = document.querySelector('[data-entry="prose"]') as HTMLElement;
+    expect(within(prose).getByText("Cleaned up the folder.")).toBeTruthy();
+    expect(prose.contains(theBlock())).toBe(false);
   });
 });

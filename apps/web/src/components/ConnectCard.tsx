@@ -15,11 +15,6 @@ export const connectionHref = (connectorId: string) =>
   `/account/connections#connector-${encodeURIComponent(connectorId)}`;
 
 /**
- * The connect request (design `ConnectBlock`): the service, why, "only affects you" and Connect; once
- * the run ended only the explanation stays.
- * OAuth 连接器点「连接」直接发起授权（授权结束回到本页）；其余认证方式跳到个人连接页填写凭据。
- */
-/**
  * Connects a connector for the viewer from where they are: an OAuth connector starts its
  * authorization (coming back to this page), any other goes to the personal connections page to
  * enter its credentials. `busy` names the connector whose connect is under way.
@@ -50,6 +45,11 @@ export function useConnectConnector(orgId: string): {
   return { connect, busy };
 }
 
+/**
+ * The connect request (design `ConnectBlock`): the service, why, "only affects you" and Connect; once
+ * the run ended only the explanation stays. An OAuth connector starts its authorization (coming
+ * back to this page); any other authentication goes to the personal connections page.
+ */
 export function ConnectCard({ orgId, item }: { orgId: string; item: ConnectItem }) {
   const t = useTranslations("connect");
   const { connect, busy } = useConnectConnector(orgId);

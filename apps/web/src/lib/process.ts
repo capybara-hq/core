@@ -23,6 +23,8 @@ import type { DividerData, TimelineEntry, TimelineSubagent } from "./timeline";
  *   a sub-agent group or a queued message splits) merge into one `pending` entry, after the
  *   blocking cards of the turn's last block; `output` cards, files, sub-agent deliveries and
  *   background task notices follow each block, in log order.
+ * - A run that finishes (`ok`) with no answer after its last narration draws that narration again
+ *   as its answer prose, right before its `run` row (it stays a narration step in the block too).
  * - `pinned` cards: the latest per (plugin, view) of a run, in first-seen order, sit on the run's
  *   latest block that wrote one (earlier versions are only their call's rail row); after a
  *   `failed` / `stopped` run they stand outside, right after that block. `process` cards stay as
@@ -137,7 +139,15 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
     inRun: boolean;
     /** The turn's handoffs and reveals, and where their pending entry goes in `out`. */
     turn: { items: Entry<"handoff" | "reveal">[]; slot: number | null };
-  } = { open: null, unsettled: [], inRun: false, turn: { items: [], slot: null } };
+    /** The latest narration with no answer after it (the run's answer if it finishes so). */
+    unanswered: Entry<"prose"> | null;
+  } = {
+    open: null,
+    unsettled: [],
+    inRun: false,
+    turn: { items: [], slot: null },
+    unanswered: null,
+  };
   /** Run → its pinned cards by (plugin, view) and the block that shows them. */
   const pinnedOf = new Map<string, { block: ProcessEntry; cards: Map<string, Entry<"card">> }>();
   const usedKeys = new Set<string>();
@@ -250,7 +260,9 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
       case "prose":
         if (e.narration) {
           addStep(e, { kind: "narration", key: e.key, text: e.text, streaming: e.streaming });
+          if (e.text.trim() !== "") s.unanswered = e;
         } else {
+          if (e.text.trim() !== "") s.unanswered = null;
           if (s.open !== null) noteRun(s.open.block, e);
           close(e.streaming ? "live" : "ended");
           out.push(e);
@@ -317,6 +329,16 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
         }
         const last = mine.at(-1);
         if (last !== undefined) last.durationMs = e.durationMs;
+        // a finished run with no answer after its last narration: that narration is its answer
+        const promoted = s.unanswered;
+        s.unanswered = null;
+        if (
+          e.status === "ok" &&
+          promoted !== null &&
+          (promoted.step === undefined || e.runId === null || promoted.step.runId === e.runId)
+        ) {
+          out.push({ ...promoted, key: `${promoted.key}:answer`, narration: false });
+        }
         out.push(e);
         break;
       }

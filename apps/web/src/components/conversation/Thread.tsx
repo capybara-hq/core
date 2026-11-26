@@ -1239,15 +1239,14 @@ function toolKind(
 const isLiveRow = (r: ToolRowData) => r.status === "running" || r.status === "pending";
 
 /**
- * A value that follows `value` at most every `ms` (the first change after mount waits too): the
- * running head's step label, so the live region does not chatter (spec §7).
+ * A value that follows `value` at most every `ms`: the first change shows at once, later ones
+ * wait out the interval since the last shown change. The running head's step label, so the live
+ * region does not chatter (spec §7).
  */
 function useThrottled<T>(value: T, ms: number): T {
   const [shown, setShown] = useState(value);
+  // 0: no change shown yet, so the first one is not held back
   const last = useRef(0);
-  useEffect(() => {
-    last.current = Date.now();
-  }, []);
   useEffect(() => {
     if (Object.is(value, shown)) return;
     const show = () => {

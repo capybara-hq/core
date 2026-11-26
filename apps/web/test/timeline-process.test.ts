@@ -593,4 +593,39 @@ describe("groupProcess", () => {
     expect(kinds(block(out).steps)).toEqual(["tools", "card"]);
     expect(block(out).steps[1]).toMatchObject({ plugin: "diff" });
   });
+
+  it("a finished run without an answer after its last narration draws it as the answer", () => {
+    const events = [
+      user(1, "go"),
+      runStarted(2),
+      calls(3, [bash("a")], "Looking first."),
+      result(4, "a", "Bash"),
+      ev(5, "assistant_message", {
+        step: 1,
+        stopReason: "tool_use",
+        content: [{ type: "text", text: "All **done**." }, { type: "tool_call", ...bash("b") }],
+      }),
+      result(6, "b", "Bash"),
+      step(7, [], 2),
+      runFinished(8),
+    ];
+    const out = build(events);
+    expect(kinds(out)).toEqual(["user", "process", "prose", "run"]);
+    // still a narration step in the block, and the answer after it
+    expect(block(out).steps.filter((x) => x.kind === "narration")).toHaveLength(2);
+    expect(out[2]).toMatchObject({ kind: "prose", text: "All **done**.", narration: false });
+    expect(out[2]?.key).not.toBe(block(out).steps[2]?.key);
+
+    // an answer after the narration: nothing promoted
+    const answered = build([...events.slice(0, 6), answer(7, "Here."), runFinished(8)]);
+    expect(kinds(answered)).toEqual(["user", "process", "prose", "run"]);
+    expect(answered[2]).toMatchObject({ text: "Here." });
+
+    // a failed run keeps its narration in the block only
+    const failed = build([
+      ...events.slice(0, 6),
+      ev(7, "run_failed", { error: { code: "model.timeout", message: "x" } }),
+    ]);
+    expect(kinds(failed)).toEqual(["user", "process", "run"]);
+  });
 });
