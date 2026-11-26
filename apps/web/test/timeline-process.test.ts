@@ -603,7 +603,10 @@ describe("groupProcess", () => {
       ev(5, "assistant_message", {
         step: 1,
         stopReason: "tool_use",
-        content: [{ type: "text", text: "All **done**." }, { type: "tool_call", ...bash("b") }],
+        content: [
+          { type: "text", text: "All **done**." },
+          { type: "tool_call", ...bash("b") },
+        ],
       }),
       result(6, "b", "Bash"),
       step(7, [], 2),
