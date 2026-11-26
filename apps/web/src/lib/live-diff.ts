@@ -10,6 +10,9 @@ const MAX_LINES = 2000;
 /** The most edits the search looks for; beyond it the part is shown as removed then added. */
 const MAX_EDITS = 1000;
 const CONTEXT = 3;
+/** A shown line is cut to this many characters (the kernel's `TOOL_VIEW_LINE_MAX_CHARS`). */
+const LINE_MAX_CHARS = 2000;
+const cut = (s: string) => (s.length > LINE_MAX_CHARS ? s.slice(0, LINE_MAX_CHARS) : s);
 
 type Kind = "ctx" | "add" | "del";
 
@@ -36,10 +39,14 @@ function splitLines(text: string): string[] {
  * stop after all of `b` with part of `a` unread (that tail costs nothing). Returns the operations
  * and how many lines of `a` they cover; null when more than {@link MAX_EDITS} edits are needed.
  */
-function myersPrefix(a: string[], b: string[]): { ops: Kind[]; used: number } | null {
+function myersPrefix(
+  a: string[],
+  b: string[],
+  maxEdits: number,
+): { ops: Kind[]; used: number } | null {
   const n = a.length;
   const m = b.length;
-  const max = Math.min(n + m, MAX_EDITS);
+  const max = Math.min(n + m, maxEdits);
   const offset = max + 1;
   let v = new Int32Array(2 * max + 3);
   const trace: Int32Array[] = [];
@@ -95,6 +102,24 @@ function backtrack(trace: Int32Array[], dEnd: number, endX: number, endY: number
   return ops.reverse();
 }
 
+/**
+ * The operations aligning the base lines `a` with the written lines `b`, and how many lines of `a`
+ * they cover. Past `maxEdits` the part is removed then added (`fallback`): correct, not minimal.
+ */
+export function alignOps(
+  a: string[],
+  b: string[],
+  maxEdits = MAX_EDITS,
+): { ops: Kind[]; used: number; fallback: boolean } {
+  const found = myersPrefix(a, b, maxEdits);
+  if (found) return { ...found, fallback: false };
+  return {
+    ops: [...a.map((): Kind => "del"), ...b.map((): Kind => "add")],
+    used: a.length,
+    fallback: true,
+  };
+}
+
 interface Op {
   kind: Kind;
   ai: number;
@@ -117,7 +142,7 @@ function hunksOf(all: Op[], a: string[], b: string[]): DiffHunk[] {
     const first = slice[0] as Op;
     const lines = slice.map((o) => ({
       kind: o.kind,
-      text: (o.kind === "add" ? b[o.bi] : a[o.ai]) as string,
+      text: cut((o.kind === "add" ? b[o.bi] : a[o.ai]) as string),
     }));
     const hasOld = lines.some((l) => l.kind !== "add");
     const hasNew = lines.some((l) => l.kind !== "del");
@@ -174,11 +199,8 @@ export function liveWriteDiff(base: string, prefix: string): LiveDiff {
   while (pre < a.length && pre < finished && a[pre] === complete[pre]) pre++;
   const midA = a.slice(pre);
   const midB = complete.slice(pre);
-  const searched = myersPrefix(midA, midB);
-  const mid: Kind[] = searched
-    ? searched.ops
-    : [...midA.map((): Kind => "del"), ...midB.map((): Kind => "add")];
-  const used = pre + (searched ? searched.used : midA.length);
+  const { ops: mid, used: usedMid } = alignOps(midA, midB);
+  const used = pre + usedMid;
   const ops: Kind[] = [...Array<Kind>(pre).fill("ctx"), ...mid];
   if (unfinished) ops.push("add");
 
@@ -218,8 +240,8 @@ export function liveWriteDiff(base: string, prefix: string): LiveDiff {
 /** The live diff of a streaming Edit: `old` as removed lines, the growing `new` as added; no numbers. */
 export function liveEditDiff(oldText: string, newPrefix: string): DiffData {
   const lines: { kind: Kind; text: string }[] = [
-    ...splitLines(oldText).map((text) => ({ kind: "del" as const, text })),
-    ...splitLines(newPrefix).map((text) => ({ kind: "add" as const, text })),
+    ...splitLines(oldText).map((text) => ({ kind: "del" as const, text: cut(text) })),
+    ...splitLines(newPrefix).map((text) => ({ kind: "add" as const, text: cut(text) })),
   ];
   if (lines.length === 0) return { hunks: [], truncated: false };
   return { hunks: [{ oldStart: 0, newStart: 0, lines }], truncated: false };
@@ -230,7 +252,9 @@ export function writingLines(prefix: string): DiffData {
   const parts = splitLines(prefix);
   if (parts.length === 0) return { hunks: [], truncated: false };
   return {
-    hunks: [{ oldStart: 1, newStart: 1, lines: parts.map((text) => ({ kind: "ctx", text })) }],
+    hunks: [
+      { oldStart: 1, newStart: 1, lines: parts.map((text) => ({ kind: "ctx", text: cut(text) })) },
+    ],
     truncated: false,
   };
 }

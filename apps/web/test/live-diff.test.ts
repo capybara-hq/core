@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { liveEditDiff, liveWriteDiff, writingLines } from "../src/lib/live-diff";
+import { alignOps, liveEditDiff, liveWriteDiff, writingLines } from "../src/lib/live-diff";
 
 const lines = (n: number, f: (i: number) => string) =>
   `${Array.from({ length: n }, (_, i) => f(i + 1)).join("\n")}\n`;
@@ -108,17 +108,16 @@ describe("liveWriteDiff", () => {
     expect(liveWriteDiff(before, near).diff.hunks).toHaveLength(1);
   });
 
-  it("beyond the edit budget the part is removed then added, not minimal but correct", () => {
-    const before = `head\n${lines(1500, (i) => `a${i}`)}tail\n`;
-    // 1,500 different lines, then the old tail again: more than 1,000 edits to align
-    const after = `head\n${lines(1500, (i) => `b${i}`)}tail\n`;
-    const r = liveWriteDiff(before, after);
-    const kinds = r.diff.hunks.flatMap((h) => h.lines.map((l) => l.kind));
-    expect(kinds.filter((k) => k === "add")).toHaveLength(1501);
-    // no add before a del: the part is one removed run, then one added run
-    expect(kinds.indexOf("add")).toBeGreaterThan(kinds.lastIndexOf("del"));
-    // nothing after "head" aligned, so every old line past it is pending
-    expect(r).toMatchObject({ removed: 0, pending: 1501 });
+  it("cuts a very long line when it is shown", () => {
+    const long = "y".repeat(100_000);
+    const r = liveWriteDiff(`${long}\n`, `${long}x\n`);
+    const texts = r.diff.hunks.flatMap((h) => h.lines.map((l) => l.text.length));
+    expect(texts.length).toBeGreaterThan(0);
+    expect(Math.max(...texts)).toBe(2000);
+    expect(liveEditDiff(long, long).hunks[0]?.lines.every((l) => l.text.length === 2000)).toBe(
+      true,
+    );
+    expect(writingLines(long).hunks[0]?.lines[0]?.text).toHaveLength(2000);
   });
 
   it("keeps the last 2,000 diff lines of a huge write and says so", () => {
@@ -179,5 +178,28 @@ describe("writingLines", () => {
       truncated: false,
     });
     expect(writingLines("")).toEqual({ hunks: [], truncated: false });
+  });
+});
+
+describe("alignOps edit budget", () => {
+  const seq = (p: string, n: number) => Array.from({ length: n }, (_, i) => `${p}${i}`);
+
+  it("beyond the budget the part is removed then added; an unbudgeted search differs", () => {
+    const a = [...seq("z", 50), "K"];
+    const b = [...seq("w", 1100), "K"];
+    const budgeted = alignOps(a, b);
+    expect(budgeted.fallback).toBe(true);
+    expect(budgeted.used).toBe(a.length);
+    expect(budgeted.ops).toEqual([...a.map(() => "del"), ...b.map(() => "add")]);
+    const unbudgeted = alignOps(a, b, 5000);
+    expect(unbudgeted.fallback).toBe(false);
+    expect(unbudgeted.ops).not.toEqual(budgeted.ops);
+    expect(unbudgeted.ops.filter((k) => k === "add")).toHaveLength(b.length);
+  });
+
+  it("within the budget the same search is not the fallback", () => {
+    const r = alignOps(["a", "b", "c", "d", "e"], ["a", "x", "c", "d", "e"]);
+    expect(r.fallback).toBe(false);
+    expect(r.ops).toEqual(["ctx", "del", "add", "ctx", "ctx", "ctx"]);
   });
 });
