@@ -169,7 +169,7 @@ export class LiveDrafts {
       if (tool === undefined) s.tools.set(id, t);
       else {
         tool.input.held = t.input.held;
-        if (tool.base === undefined) tool.base = t.base;
+        if (tool.base === undefined && t.base !== undefined) tool.base = t.base;
       }
     }
     for (const t of s.tools.values()) {
