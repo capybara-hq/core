@@ -1747,12 +1747,12 @@ States: `markdown`, `streaming`, `file-chip`
 #### 6.16.5 Thinking row
 
 - Collapsed: a tool line "思考了 N 秒" / "Thought for N seconds" (seconds rounded) with a chevron; the whole line is the toggle.
-- Expanded: the thinking text below it in the prose font, `prose` size, `muted`, line breaks kept, `space.3` from a 2px `line` rule on its left.
+- Expanded: the thinking text below it in the prose font, `prose` size, `muted`, line breaks kept, `space.3` from a 2px `line` rule on its left. Inside a process rail (`inRail`, `data-in-rail="true"`) the rail is the rule: no left rule or padding and the text is `prose-small`.
 - Live: a `spinner` (16, like the tool rows'), "正在思考" / "Thinking" and the elapsed seconds in `faint`; the body streams with the cursor and cannot be collapsed until it ends.
 - Replaces §6.9's ThinkingRow.
 
 <!-- states: thinking-row -->
-States: `collapsed`, `expanded`, `live`
+States: `collapsed`, `expanded`, `live`, `in-rail`
 
 <!-- size-table: thinking-row -->
 | Part | State | Property | Value |
@@ -1766,6 +1766,10 @@ States: `collapsed`, `expanded`, `live`
 | thinking-body | expanded | padding-left | space.3 |
 | thinking-body | expanded | border-left-width | 2 |
 | thinking-body | expanded | border-left-color | color.line |
+| thinking-body | in-rail | font-size | type.prose-small |
+| thinking-body | in-rail | line-height | type.prose-small.line |
+| thinking-body | in-rail | padding-left | 0 |
+| thinking-body | in-rail | border-left-width | 0 |
 | spinner | live | color | color.accent |
 | spinner | live | width | space.4 |
 | cursor | live | width | space.2 |
@@ -1901,7 +1905,7 @@ widths; the disclosure chevron remains visible.
 
 
 - `row.dense` minimum height, padding `pad.default`, gap `space.2`, `small` `muted`; `hover` ground on hover (over `motion.hover`), a 1px `accent` outline at -1px on focus. A row with detail is a `button` with `aria-expanded` and a chevron at its end.
-- **Label** (one line, ellipsis), as the Claude Code VS Code extension draws it: the **name** in bold (600, the bold face; §2.2), then the key-argument preview (`muted`), then extra information after " · " (`faint`).
+- **Label** (one line, ellipsis), as the Claude Code VS Code extension draws it: the **name** in bold (600, the bold face; §2.2, `muted`), then the key-argument preview (`faint`), then extra information after " · " (`faint`).
   - **Name**: a builtin's tool name as is (`Bash`, `Read`, `Edit`, `Grep` …), untranslated, as a proper noun; a connector tool's connector display name, or an extension tool's plugin display name, followed by its local tool name in brackets (`Acme 工单 [search_tickets]`). The brackets show the local name, never the declared `title`: the title is the row's tooltip (`title` attribute).
   - **Preview**: a shell row (`Bash`) shows the `description` the model wrote; every other row its key argument: the tool's declared `keyArgs` (else the first string argument; Read / Write / Edit the path, Glob / Grep the pattern, Skill the skill). The preview is its first line, cut at 80 characters with "…".
   - Edits add "+a −b" as the extra, unless the edit could not be diffed (a `Write` over a binary or very large file: `truncated` without hunks), which shows no line counts and no diff.
@@ -1927,7 +1931,8 @@ States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `e
 | tool-row | default | font-size | type.small |
 | tool-row | default | color | color.muted |
 | tool-name | default | font-weight | 600 |
-| tool-name | default | color | color.ink |
+| tool-name | default | color | color.muted |
+| key-arg | default | color | color.faint |
 | tool-row[data-ref-forced=true] | hover | background-color | color.hover |
 | tool-row[data-ref-forced=true] | focus | outline-color | color.accent |
 | tool-row[data-ref-forced=true] | focus | outline-width | 1 |
