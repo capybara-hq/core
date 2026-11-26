@@ -25,6 +25,14 @@ import { named, orElse } from "./summary.js";
 
 const PAGE = 50;
 
+/** A process display setting as the confirmation summary names it; null is the default. */
+const PROCESS_DISPLAY_LABELS = {
+  zh: { detailed: "详细", brief: "简洁", off: "关闭", default: "默认" },
+  en: { detailed: "Detailed", brief: "Brief", off: "Off", default: "Default" },
+} as const;
+const processLabel = (v: "detailed" | "brief" | "off" | null, lang: "zh" | "en") =>
+  PROCESS_DISPLAY_LABELS[lang][v ?? "default"];
+
 /**
  * A connection as the tool shows it: the settings an admin sees on the channels page. The
  * non-secret config and whether each secret is set, never a secret value (the service view holds
@@ -237,14 +245,16 @@ export class ChannelsOperations implements OnModuleInit {
             keys.length > 0 && `设置 ${keys.join("、")}`,
             ask.length > 0 && `由本人填写 ${ask.map(named).join("、")}`,
             i.inboundMode === "webhook" && "入站方式：webhook",
-            typeof i.processDisplay === "string" && `过程显示：${i.processDisplay}`,
+            typeof i.processDisplay === "string" &&
+              `过程显示：${processLabel(i.processDisplay, "zh")}`,
           ].filter((p): p is string => typeof p === "string");
           const en = [
             `Create channel connection "${named(i.name)}" with plugin ${named(i.plugin)}, answered by agent ${named(i.agentId)}`,
             keys.length > 0 && `sets ${keys.join(", ")}`,
             ask.length > 0 && `the person enters ${ask.map(named).join(", ")}`,
             i.inboundMode === "webhook" && "inbound mode: webhook",
-            typeof i.processDisplay === "string" && `process display: ${i.processDisplay}`,
+            typeof i.processDisplay === "string" &&
+              `process display: ${processLabel(i.processDisplay, "en")}`,
           ].filter((p): p is string => typeof p === "string");
           return { zh: zh.join("；"), en: en.join("; ") };
         },
@@ -404,11 +414,14 @@ export class ChannelsOperations implements OnModuleInit {
             i.unboundPolicy !== undefined && `unbound people: ${i.unboundPolicy}`,
             i.status !== undefined && `status → ${i.status}`,
             i.inboundMode !== undefined && `inbound mode → ${i.inboundMode}`,
-            i.processDisplay !== undefined && `process display → ${i.processDisplay ?? "default"}`,
           ].filter((p): p is string => typeof p === "string");
+          const pd = i.processDisplay;
+          const zh = pd === undefined ? parts : [...parts, `过程显示 → ${processLabel(pd, "zh")}`];
+          const en =
+            pd === undefined ? parts : [...parts, `process display → ${processLabel(pd, "en")}`];
           return {
-            zh: `修改渠道连接「${name}」：${parts.join("，")}`,
-            en: `Update channel connection "${name}": ${parts.join(", ")}`,
+            zh: `修改渠道连接「${name}」：${zh.join("，")}`,
+            en: `Update channel connection "${name}": ${en.join(", ")}`,
           };
         },
         run: async (input, ctx) => {

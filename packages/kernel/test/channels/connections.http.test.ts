@@ -408,7 +408,12 @@ describe("渠道连接 HTTP", () => {
       .executeTakeFirstOrThrow();
     expect(row.process_display).toBeNull();
     // a PATCH without the field keeps it
-    await owner({ method: "PATCH", url: `${base()}/${ch.id}`, payload: { processDisplay: "off" } });
+    const off = await owner({
+      method: "PATCH",
+      url: `${base()}/${ch.id}`,
+      payload: { processDisplay: "off" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
     const renamed = await owner({
       method: "PATCH",
       url: `${base()}/${ch.id}`,

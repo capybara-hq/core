@@ -207,6 +207,19 @@ describe("channels", () => {
     const input = { connectionId: id, agentId: otherAgentId, unboundPolicy: "anonymous" };
     const summary = await o.summary?.(o.input.parse(input), ctxOf(ownerId));
     expect(summary?.en).toContain("Lark bot");
+    // the process display is named for people, never the raw enum
+    const brief = await o.summary?.(
+      o.input.parse({ connectionId: id, processDisplay: "brief" }),
+      ctxOf(ownerId),
+    );
+    expect(brief?.zh).toContain("过程显示 → 简洁");
+    expect(brief?.en).toContain("process display → Brief");
+    const reset = await o.summary?.(
+      o.input.parse({ connectionId: id, processDisplay: null }),
+      ctxOf(ownerId),
+    );
+    expect(reset?.zh).toContain("过程显示 → 默认");
+    expect(reset?.en).toContain("process display → Default");
     const r = await run("channels.update", input);
     expect(r).toMatchObject({
       channel: { agentId: otherAgentId, unboundPolicy: "anonymous", webhookUrl: null },
