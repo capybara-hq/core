@@ -12,6 +12,7 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   checkDeclaredParameters,
+  checkToolStream,
   describeModelProviderConformance,
   isPngBase64,
   MEDIA_SAMPLES,
@@ -318,5 +319,43 @@ describe("thinkingReplayParams", () => {
   it("sets nothing that is not declared", () => {
     expect(thinkingReplayParams([])).toEqual({});
     expect(thinkingReplayParams([knob("thinking", ["off"])])).toEqual({});
+  });
+});
+
+describe("checkToolStream", () => {
+  const done = (input: unknown, id = "call_1") =>
+    ({
+      type: "message_complete",
+      content: [{ type: "tool_call", id, name: "Write", input }],
+      stopReason: "tool_use",
+      usage: usage(0),
+    }) as Extract<ModelStreamEvent, { type: "message_complete" }>;
+
+  it("accepts start plus deltas that join to the final input", () => {
+    const events: ModelStreamEvent[] = [
+      { type: "tool_call_start", id: "call_1", name: "Write" },
+      { type: "tool_call_delta", id: "call_1", input: '{"a":' },
+      { type: "tool_call_delta", id: "call_1", input: "1}" },
+    ];
+    expect(checkToolStream(events, done({ a: 1 }))).toEqual([]);
+  });
+
+  it("rejects a delta before its start", () => {
+    const events: ModelStreamEvent[] = [{ type: "tool_call_delta", id: "call_x", input: "{}" }];
+    expect(checkToolStream(events, done({}))).toEqual(["tool_call_delta for unknown id call_x"]);
+  });
+
+  it("rejects streamed input that differs from the final input", () => {
+    const events: ModelStreamEvent[] = [
+      { type: "tool_call_start", id: "call_1", name: "Write" },
+      { type: "tool_call_delta", id: "call_1", input: '{"a":2}' },
+    ];
+    expect(checkToolStream(events, done({ a: 1 }))).toEqual([
+      "streamed input of call_1 does not parse to the final input",
+    ]);
+  });
+
+  it("accepts a stream with no tool events", () => {
+    expect(checkToolStream([], done({}))).toEqual([]);
   });
 });

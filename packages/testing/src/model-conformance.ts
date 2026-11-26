@@ -57,6 +57,40 @@ function streamOf(
  * `@2` 参数声明检查：每个模型的 `parameters` 须通过 `assertValidDeclarations`，
  * 每个声明的默认值须通过 `validateParams`。返回问题列表（形如 `<模型 id>: <原因>`），无问题为空。
  */
+/**
+ * Checks a stream's tool events against its final message: every delta follows its call's start,
+ * and the deltas of each started call join to JSON equal to the final call's input.
+ * Returns the problems (empty when fine); a stream with no tool events passes.
+ */
+export function checkToolStream(
+  events: ModelStreamEvent[],
+  done: Extract<ModelStreamEvent, { type: "message_complete" }>,
+): string[] {
+  const problems: string[] = [];
+  const streamed = new Map<string, string>();
+  for (const e of events) {
+    if (e.type === "tool_call_start") streamed.set(e.id, "");
+    else if (e.type === "tool_call_delta") {
+      const so_far = streamed.get(e.id);
+      if (so_far === undefined) problems.push(`tool_call_delta for unknown id ${e.id}`);
+      else streamed.set(e.id, so_far + e.input);
+    }
+  }
+  for (const [id, json] of streamed) {
+    const call = done.content.find((b) => b.type === "tool_call" && b.id === id);
+    if (call?.type !== "tool_call") {
+      problems.push(`streamed call ${id} is not in the final message`);
+      continue;
+    }
+    let same = false;
+    try {
+      same = JSON.stringify(JSON.parse(json)) === JSON.stringify(call.input);
+    } catch {}
+    if (!same) problems.push(`streamed input of ${id} does not parse to the final input`);
+  }
+  return problems;
+}
+
 export function checkDeclaredParameters(plugin: string, models: ModelInfo[]): string[] {
   const problems: string[] = [];
   for (const m of models) {
@@ -181,8 +215,9 @@ export function describeModelProviderConformance(
           { role: "user", content: [{ type: "text", text: "What is the weather in Paris?" }] },
         ],
       });
-      const { done } = await collect(t, first);
+      const { events, done } = await collect(t, first);
       expect(done.stopReason).toBe("tool_use");
+      expect(checkToolStream(events, done)).toEqual([]);
       const call = done.content.find((b) => b.type === "tool_call");
       expect(call).toBeDefined();
       if (call?.type !== "tool_call") return;

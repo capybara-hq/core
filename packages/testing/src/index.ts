@@ -239,6 +239,7 @@ export {
 export {
   type ConformanceTarget,
   checkDeclaredParameters,
+  checkToolStream,
   describeModelProviderConformance,
   MEDIA_SAMPLES,
   thinkingReplayParams,

@@ -653,4 +653,43 @@ describe("model-fake image generation", () => {
     );
     expect(res?.images).toHaveLength(1);
   });
+
+  it("streams a tool call's input", async () => {
+    const input = { file_path: "/w/a.txt", content: "hi" };
+    const evs = await run(mk(), req(`tool:Write:${JSON.stringify(input)}`));
+    const final = complete(evs).content.find((b) => b.type === "tool_call");
+    const tool = evs.filter((e) => e.type === "tool_call_start" || e.type === "tool_call_delta");
+    expect(final?.type === "tool_call" && tool[0]).toEqual({
+      type: "tool_call_start",
+      id: final?.type === "tool_call" ? final.id : "",
+      name: "Write",
+    });
+    const deltas = tool.flatMap((e) => (e.type === "tool_call_delta" ? [e.input] : []));
+    expect(deltas.length).toBeGreaterThan(1);
+    expect(deltas.join("")).toBe(JSON.stringify(input));
+  });
+
+  it("streams each call of a multi-call message in order", async () => {
+    const evs = await run(
+      mk(),
+      req('tools:[{"name":"A","input":{"x":1}},{"name":"B","input":{"y":2}}]'),
+    );
+    const starts = evs.flatMap((e) => (e.type === "tool_call_start" ? [e.name] : []));
+    expect(starts).toEqual(["A", "B"]);
+    const ids = complete(evs).content.flatMap((b) => (b.type === "tool_call" ? [b.id] : []));
+    expect(evs.flatMap((e) => (e.type === "tool_call_start" ? [e.id] : []))).toEqual(ids);
+  });
+
+  it("streamtool waits between fragments", async () => {
+    const waits: number[] = [];
+    const sleep: Sleep = async (ms) => {
+      waits.push(ms);
+    };
+    const input = { content: "0123456789" };
+    const json = JSON.stringify(input);
+    const evs = await run(mk(sleep), req(`streamtool:7:Write:${json}`));
+    const n = evs.filter((e) => e.type === "tool_call_delta").length;
+    expect(n).toBeGreaterThan(1);
+    expect(waits).toEqual(Array.from({ length: n - 1 }, () => 7));
+  });
 });
