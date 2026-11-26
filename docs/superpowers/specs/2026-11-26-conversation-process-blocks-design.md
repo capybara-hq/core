@@ -99,6 +99,8 @@ only where it is still useful (a burst of parallel calls).
   implemented.
 - Earlier blocks of a run that a queued message split show "已处理" / "Worked" without a time; the
   working time sits on the run's last block.
+- The head's pinned summary (the pinned card's title and badge) comes from the view cache only:
+  after a reload a finished head may omit it rather than read every old card (Execution ruling 11).
 
 ## 2. Icons
 
@@ -221,8 +223,9 @@ of the setting saves NULL (direct chats detailed, group chats brief).
 ### 6.3 Contract and data
 
 - `ChannelCard` gains `{ kind: "progress"; … }` (status, elapsed, todo items, recent steps,
-  pending links, web link, finished summary). Channel plugins render it by capability; the text
-  fallback renders it as Markdown. Public SDK change (same changeset as §5).
+  pending links, web link, finished summary). A plugin that renders it natively declares
+  `features.progress`; any other channel gets its `renderCardAsText` Markdown as a text message,
+  edited in place the same way (Execution ruling 12). Public SDK change (same changeset as §5).
 - The progress card is a second editable message per run besides the streaming draft:
   `channel_deliveries` records its message id and run (one expand-only migration; the table's RLS
   policy already covers new columns). Edits use the existing idempotency keys; an edit the
@@ -299,6 +302,21 @@ Steps 1–2 ship alone; 3–5 follow together.
 9. Earlier blocks of a run split by a queued message show 已处理 without a time (§1.3).
 10. Web: the Default option of the process setting saves NULL (direct chats detailed, group chats
     brief).
+11. The pinned head summary (title + badge) uses the view cache only; after a reload a finished
+    head may omit it (§1.3).
+12. Channels: the native `progress` card goes only to a plugin that declares `features.progress`
+    (released lark, slack and telegram have no `progress` branch, so the card would fail their
+    delivery); every other channel gets the same card as `renderCardAsText` text, sent once and
+    edited in place like the card (§6.3).
+13. A run that finishes with no non-empty answer after its last narration promotes that narration
+    to its answer: channels send it as the answer message at `run_finished` (progress modes; `off`
+    already sends narration); the web draws it as answer prose after the block, and it stays a
+    narration step in the block too.
+14. A channel without edits honours the display setting: `brief` sends no start message and no
+    milestones (only the answer, blocking cards and the merged handoffs); `detailed` also sends a
+    trailing milestone at run end when the pinned text differs from the last milestone sent.
+15. Release order: the todo plugin's `placement: "pinned"` ships in the same release as core;
+    otherwise todo cards stack as output cards.
 
 ## AGENTS.md rules touched
 

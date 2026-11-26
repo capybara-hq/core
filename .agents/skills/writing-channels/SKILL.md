@@ -33,7 +33,7 @@ Implementations:
 ```ts
 interface Channel {
   connectionSchema: ZodTypeAny;            // use secret() for secret fields
-  features: { cards: boolean; edit: boolean; threads: boolean; minEditIntervalMs?: number };
+  features: { cards: boolean; edit: boolean; threads: boolean; progress?: boolean; minEditIntervalMs?: number };
   verify(args): Promise<{ botUserId; botName; tenantId }>;
   connect(args: ChannelConnectArgs): Promise<void>;   // long connection loop
   send(args: ChannelSendArgs): Promise<{ messageId: string }>;
@@ -43,6 +43,9 @@ interface Channel {
 ```
 
 `features` also carries `files?: { maxBytes; imageMaxBytes? }`, present iff `sendFile` is implemented.
+`features.progress`: the plugin renders the `progress` card natively; without it the kernel sends
+the progress card as `renderCardAsText` text and edits that text in place (`progressCardMessage`
+in `features.ts`), so a plugin without a `progress` branch never receives the card.
 
 ### Setup guides, checks and drift (spec `2026-11-09-setup-guides-v2-design.md`)
 
@@ -134,7 +137,7 @@ The extension owns its reconnection loop inside `connect` (turning off SDK recon
 - For a channel with `features.cards` false, the kernel first falls each card back to text via `renderCardAsText(card, locale)`, joins them after the body separated by blank lines, and the message handed to the extension has no `cards` (Ruling A33, `packages/kernel/src/channels/features.ts`). The fallback text is **Markdown** (converted by the extension to native rich text, like `message.text`); model-controllable fields (approval title, call summary, question title, answer summary) are placed in inline code / fenced code blocks and won't turn into links; the extension's converter must display code content as is. An extension that declares `cards: true` receives `message.cards` and renders native cards itself; when a card can't be rendered (for example a button callback value over the limit) the extension falls back to a link or text itself.
 - For a channel with `features.threads` false (the platform has no threads), the target the kernel hands the extension has no `threadId`, and replies are sent straight into the chat. Inbound events generally carry no `threadId` either (the platform has no thread to fill in); without it, each @ message in a group opens its own conversation.
 - When `features.edit` is false no streaming draft is sent, only one message at finalization (see above).
-- **Progress card** (process blocks spec §6): on a channel with `features.edit` the kernel sends one `progress` card per run and edits it in place (`packages/kernel/src/channels/progress.ts`: a pure fold of the run's events, kept serializable between jobs; the message id lives in PG); the extension renders it by capability and edits it like any message. Its elapsed time refreshes only when its content changes, and the finished meta has no todo count (the kernel cannot read a pinned card's counts). Narration (the text of a step that also has a tool call) is never sent as its own message when a progress card is used: it is the card's status line. With the card the streaming draft is not used; the answer is one new message (edits do not notify). Without `features.edit` there is no card: one "working" message, then a milestone message when the pinned card's `text` changes, at most one a minute.
+- **Progress card** (process blocks spec §6): on a channel with `features.edit` the kernel sends one `progress` card per run and edits it in place (`packages/kernel/src/channels/progress.ts`: a pure fold of the run's events, kept serializable between jobs; the message id lives in PG); only a channel declaring `features.progress` gets the native card, any other gets its `renderCardAsText` text, sent once and edited in place the same way. A new run first lands the previous run's pending final edit. A run that finishes with no answer after its last narration sends that narration as its answer (`promotedAnswer`). Its elapsed time refreshes only when its content changes, and the finished meta has no todo count (the kernel cannot read a pinned card's counts). Narration (the text of a step that also has a tool call) is never sent as its own message when a progress card is used: it is the card's status line. With the card the streaming draft is not used; the answer is one new message (edits do not notify). Without `features.edit` there is no card: in `detailed`, one "working" message, then a milestone message when the pinned card's `text` changes, at most one a minute, and a trailing milestone at run end when the pinned text moved on since the last one sent; in `brief`, neither (only the answer, blocking cards and the merged handoffs).
 
 ### `sendFile` (spec `2026-11-18-channel-file-delivery-design.md`)
 
@@ -234,7 +237,7 @@ changes for channel extensions: these are ordinary cards (`kind` approval / ques
 | `question` | `form` (`InputForm`), `state` (`pending` / `answered` / `skipped` / `expired` / `cancelled`), `answerSummary`, `webUrl`, `textReply?` (`plain` in a DM, `mention` in a group thread; set on a pending card of the conversation's own run, never a sub-agent's) | when `questionRenderableInline(form, { textReply: card.textReply !== undefined })` is true (exactly one enum field, single-select ≤5 / multi-select ≤10; "other" only with `textReply`, and then no Other button: Other is a plain reply) it is answered inside the IM, otherwise only the web link is given; a pending card with `textReply` shows `questionTextReplyHint`; `skipped` = the person replied with a message instead (the kernel replaces the card); label states with `questionStateLabel` |
 | `connect` | `appName` (connect cards still carry it), `url` | link button |
 | `bind` | `text`, `url` | link button (the kernel sends it only in direct messages) |
-| `progress` | `state` (`running` / `waiting` / `finished` / `stopped` / `failed`), `title`, `meta?`, `status?` (the latest narration), `pinned?` (Markdown), `steps` (at most 3, plain text, model-written arguments: code spans in the text fallback), `pending` (handoff links), `url` / `urlText` (the run on the web) | none; edited in place by the kernel, never sent on a channel without `features.edit` |
+| `progress` | `state` (`running` / `waiting` / `finished` / `stopped` / `failed`), `title`, `meta?`, `status?` (the latest narration), `pinned?` (Markdown), `steps` (at most 3, plain text, model-written arguments: code spans in the text fallback), `pending` (handoff links), `url` / `urlText` (the run on the web) | none; edited in place by the kernel, never sent on a channel without `features.edit`; sent natively only with `features.progress` (else as its text fallback) |
 
 - Validate the structure with `validateChannelCard(card)` (returns a list of problems); URL fields must be absolute http(s) addresses of at most 2000 characters.
 - For fallback text always use `renderCardAsText(card, locale)` (Markdown, including links; model-controllable fields in code), and don't write your own; when `cards: false` is declared the kernel has already done it for you.
