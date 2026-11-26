@@ -65,6 +65,30 @@ export async function toolStep(page: Page | Locator, key: string): Promise<Locat
 }
 
 /**
+ * Waits until no process block runs or waits, then opens every closed one. A decided approval,
+ * question or connect is a rail step of its block, and a finished block is closed (process blocks
+ * spec §4): call this after the reply that ends the run, before asserting on decided cards.
+ */
+export async function openProcessBlocks(page: Page): Promise<void> {
+  await expect(
+    page.locator(
+      '[data-entry="process"][data-state="running"], [data-entry="process"][data-state="waiting"]',
+    ),
+  ).toHaveCount(0);
+  const heads = page.locator(
+    '[data-entry="process"] [data-part="process-head"] button[aria-expanded]',
+  );
+  const n = await heads.count();
+  for (let i = 0; i < n; i++) {
+    const head = heads.nth(i);
+    if ((await head.getAttribute("aria-expanded")) === "false") {
+      await head.click();
+      await expect(head).toHaveAttribute("aria-expanded", "true");
+    }
+  }
+}
+
+/**
  * Opens a new conversation with the agent from the Agents list (its card's primary 开始会话, a
  * link): the page is `/?agent=<id>` and nothing is created before the first send.
  */

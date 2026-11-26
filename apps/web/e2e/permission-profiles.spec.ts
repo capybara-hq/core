@@ -10,6 +10,7 @@ import {
   designZh,
   eventsOf,
   expectToolStatus,
+  openProcessBlocks,
   replies,
   send,
   zh,
@@ -268,12 +269,14 @@ test.describe("permission profiles", () => {
     await card
       .getByRole("button", { name: designZh("hitl.command.allowOnce"), exact: true })
       .click();
-    await expect(approval.getByText(designZh("hitl.command.allowedOnce"))).toBeVisible();
     await expectToolStatus(page, "Write", "done");
     // (the first use of the device prepends its start notice)
     await expect(replies(page).last()).toHaveText(
       new RegExp(`^Tool result: .*Created ${target} \\(1 bytes\\)\\.$`),
     );
+    // the decided card is a rail step of the (finished, closed) process block
+    await openProcessBlocks(page);
+    await expect(approval.getByText(designZh("hitl.command.allowedOnce"))).toBeVisible();
   });
 
   test("a device that cannot restrict execution: the mode menu says why once, nothing falls back to 自动模式", async ({

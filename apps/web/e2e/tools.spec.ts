@@ -6,6 +6,7 @@ import {
   expectToolStatus,
   newAgent,
   openAgentSection,
+  openProcessBlocks,
   replies,
   startChat,
   toolStep,
@@ -91,12 +92,17 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
 
   // 4. 批准（仅本次）→ 一行「你 批准了 …」；工具执行完成；回复包含工具结果
   await approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
-  await expect(approval.getByText(/批准了/)).toBeVisible();
   await expectToolStatus(page, "mcp__fixture__delete_item", "done");
   await expect(replies(page).last()).toHaveText(/deleted x1/);
+  // the decided card is a rail step of the (finished, closed) process block
+  await openProcessBlocks(page);
+  await expect(approval.getByText(/批准了/)).toBeVisible();
 
-  // 5. 刷新后由日志重建：审批卡片仍为已批准，工具结果可展开查看
+  // 5. Rebuilt from the log after a reload: the approval card is still approved, the tool result
+  // can be opened
   await page.reload();
+  await expect(replies(page).last()).toHaveText(/deleted x1/);
+  await openProcessBlocks(page);
   await expect(page.locator('[data-role="approval"]').getByText(/批准了/)).toBeVisible();
   // 工具调用是时间线里的一行（默认折叠）：点开看输入与输出
   // (the run's process block is closed: the step opens it first)
