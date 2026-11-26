@@ -564,7 +564,7 @@ function CredentialsTab({
 
 const PROCESS_DISPLAYS = ["detailed", "brief", "off"] as const;
 
-/** 设置：改名、绑定的 agent、未绑定策略、过程显示；危险区删除。 */
+/** Settings: name, the bound agent, the unbound policy and the process display; delete in the danger zone. */
 function SettingsTab({
   orgId,
   channel,
