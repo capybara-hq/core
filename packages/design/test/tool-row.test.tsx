@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DesignProvider,
   streamProgressText,
@@ -112,5 +112,58 @@ describe("ToolRow streaming (§6.16.9)", () => {
     const media = css.lastIndexOf("@media (prefers-reduced-motion: no-preference)", at);
     expect(media).toBeGreaterThan(0);
     expect(css.slice(media, at)).not.toContain("\n}\n");
+  });
+
+  it("a single streaming call starts no clock (nothing re-renders each second)", () => {
+    vi.useFakeTimers();
+    try {
+      const running = wrap(
+        <ToolGroup rows={[write({ id: "t_run", status: "running", startedAt: 0 })]} />,
+      );
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      running.unmount();
+      vi.clearAllTimers();
+      wrap(<ToolGroup rows={[write({ startedAt: 0 })]} />);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a streaming row is never waiting: the mark and the progress, no waiting word", () => {
+    const { container } = wrap(<ToolRow row={write({ waiting: "approval" })} />);
+    expect(container.querySelector('[data-part="waiting-word"]')).toBeNull();
+    expect(container.querySelector('[data-part="stream-mark"]')).not.toBeNull();
+    expect(container.querySelector('[data-part="stream-progress"]')).not.toBeNull();
+  });
+
+  it("a streaming text output carries the cursor and follows its tail", () => {
+    const row = (text: string) =>
+      write({
+        kind: "tool",
+        name: "Agent",
+        progress: { lines: 1, bytes: 9 },
+        detail: { output: text },
+      });
+    const { container, rerender } = wrap(<ToolRow row={row("Summarize")} open />);
+    const out = container.querySelector('[data-part="tool-output"]') as HTMLElement;
+    expect(out.hasAttribute("data-live")).toBe(true);
+    expect(out.lastElementChild?.classList.contains("cb-cursor")).toBe(true);
+    expect(container.querySelector("[aria-live]")).toBeNull();
+    const grow = (text: string, scrollHeight: number) => {
+      Object.defineProperty(out, "scrollHeight", { configurable: true, value: scrollHeight });
+      Object.defineProperty(out, "clientHeight", { configurable: true, value: 100 });
+      rerender(
+        <DesignProvider locale="zh">
+          <ToolRow row={row(text)} open />
+        </DesignProvider>,
+      );
+    };
+    grow("Summarize the", 400);
+    expect(out.scrollTop).toBe(400);
+    out.scrollTop = 100;
+    fireEvent.scroll(out);
+    grow("Summarize the report", 600);
+    expect(out.scrollTop).toBe(100);
   });
 });

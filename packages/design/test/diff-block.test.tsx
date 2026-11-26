@@ -115,9 +115,49 @@ describe("DiffBlock live (§6.16.10)", () => {
         diff={diff({ hunks: [{ oldStart: 1, newStart: 1, lines: [{ kind: "add", text: long }] }] })}
       />,
     );
-    const text = container.querySelector('[data-part="diff-line"]')?.textContent ?? "";
-    expect(text.length).toBeLessThan(DIFF_LINE_MAX_CHARS + 16);
+    const text = container.querySelector(".cb-diff-text")?.textContent ?? "";
     expect(DIFF_LINE_MAX_CHARS).toBe(2000);
+    expect(text.length).toBe(DIFF_LINE_MAX_CHARS);
+  });
+
+  it("never splits a surrogate pair at the cut", () => {
+    const text = `${"x".repeat(DIFF_LINE_MAX_CHARS - 1)}😀tail`;
+    const { container } = wrap(
+      <DiffBlock
+        diff={diff({ hunks: [{ oldStart: 1, newStart: 1, lines: [{ kind: "add", text }] }] })}
+      />,
+    );
+    const shown = container.querySelector(".cb-diff-text")?.textContent ?? "";
+    expect(shown).toBe("x".repeat(DIFF_LINE_MAX_CHARS - 1));
+    // no lone high surrogate at the end
+    expect(/[\uD800-\uDBFF]$/.test(shown)).toBe(false);
+  });
+
+  it("keeps the caret outside the text, so an over-wide line's ellipsis never hides it", () => {
+    const { container } = wrap(<DiffBlock diff={diff()} live />);
+    const caret = container.querySelector('[data-part="diff-caret"]');
+    expect(caret?.closest(".cb-diff-text")).toBeNull();
+    expect(caret?.parentElement?.lastElementChild).toBe(caret);
+  });
+
+  it("stays at the bottom when only the pending or earlier line changes", () => {
+    const at = (pending: number, totalLines?: number) => (
+      <DesignProvider locale="zh">
+        <DiffBlock
+          diff={diff(totalLines === undefined ? {} : { truncated: true, totalLines })}
+          live
+          pending={pending}
+        />
+      </DesignProvider>
+    );
+    const { container, rerender } = render(at(5));
+    const view = container.querySelector('[data-part="diff"]') as HTMLElement;
+    layout(view, { scrollHeight: 300, clientHeight: 100 });
+    rerender(at(4));
+    expect(view.scrollTop).toBe(300);
+    layout(view, { scrollHeight: 320, clientHeight: 100 });
+    rerender(at(4, 10));
+    expect(view.scrollTop).toBe(320);
   });
 
   it("follows the tail until the reader scrolls up, and again once back at the bottom", () => {

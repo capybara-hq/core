@@ -78,7 +78,11 @@ export function ToolGroup({
 
   const single = rows.length === 1 ? rows[0] : undefined;
   const clock = useClock(
-    single !== undefined && isRunning(single) && single.startedAt !== undefined,
+    // a streaming call shows no time: it never ticks
+    single !== undefined &&
+      isRunning(single) &&
+      !isStreaming(single) &&
+      single.startedAt !== undefined,
     now,
   );
   if (single) {

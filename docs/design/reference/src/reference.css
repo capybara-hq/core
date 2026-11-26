@@ -2065,9 +2065,10 @@ textarea {
 }
 .r-dcaret {
   display: inline-block;
+  flex: none;
   width: var(--cb-space-2);
   height: var(--cb-space-4);
-  margin-left: 1px;
+  margin-left: calc(1px - var(--cb-space-2));
   vertical-align: top;
   background: var(--cb-accent);
   animation: r-blink var(--cb-motion-cursor) steps(1) infinite;

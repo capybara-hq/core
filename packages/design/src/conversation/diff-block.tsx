@@ -86,7 +86,11 @@ export function DiffBlock({
   const view = useRef<HTMLDivElement>(null);
   const num = (v: number) => v.toLocaleString(locale === "zh" ? "zh-CN" : "en-US");
   const count = diff.hunks.reduce((n, h) => n + h.lines.length, 0);
-  const onScroll = useTailFollow(view, live, count);
+  // The live tail keeps the last lines: the ones left out come before them.
+  const earlier =
+    diff.truncated && diff.totalLines !== undefined ? Math.max(0, diff.totalLines - count) : 0;
+  // every change of what the viewport holds keeps a reader at the bottom there
+  const onScroll = useTailFollow(view, live, `${count}:${pending}:${earlier}`);
   const rows: ReactNode[] = [];
   let shown = 0;
   diff.hunks.forEach((h, hi) => {
@@ -113,10 +117,11 @@ export function DiffBlock({
           <span className="cb-diff-sign" aria-hidden={l.kind === "ctx" ? true : undefined}>
             {SIGN[l.kind]}
           </span>
-          <span className="cb-diff-text">
-            {cutLine(l.text)}
-            {last ? <span className="cb-cursor" data-part="diff-caret" aria-hidden="true" /> : null}
-          </span>
+          <span className="cb-diff-text">{cutLine(l.text)}</span>
+          {/* after the text, never shrunk: an over-wide line takes the ellipsis, the caret stays */}
+          {last ? (
+            <span className="cb-cursor cb-diff-caret" data-part="diff-caret" aria-hidden="true" />
+          ) : null}
         </div>,
       );
     });
@@ -144,9 +149,6 @@ export function DiffBlock({
       </div>
     );
   }
-  // The live tail keeps the last lines: the ones left out come before them.
-  const earlier =
-    diff.truncated && diff.totalLines !== undefined ? Math.max(0, diff.totalLines - shown) : 0;
   const collapsed = (part: string, text: string) => (
     <div className="cb-diff-line cb-diff-collapsed" data-part={part}>
       <span className="cb-diff-gutter" />

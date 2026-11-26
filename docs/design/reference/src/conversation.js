@@ -276,7 +276,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const sign = l.signs === false ? " " : x.kind === "add" ? "+" : x.kind === "del" ? "−" : " ";
       const n = l.gutter === "pending" ? "" : x.kind === "del" ? x.old : x.new;
       const last = i === l.lines.length - 1;
-      return `<div class="r-dl"${x.kind === "ctx" ? "" : ` data-kind="${x.kind}"`}><span class="r-ln">${n ?? ""}</span><span class="r-sign">${sign}</span><span class="r-dtext">${esc(x.text)}${last ? caret : ""}</span></div>`;
+      return `<div class="r-dl"${x.kind === "ctx" ? "" : ` data-kind="${x.kind}"`}><span class="r-ln">${n ?? ""}</span><span class="r-sign">${sign}</span><span class="r-dtext">${esc(x.text)}</span>${last ? caret : ""}</div>`;
     });
     const earlier = l.earlier ? collapsed("diff-earlier", `前面 ${l.earlier.toLocaleString("en-US")} 行`) : "";
     const pending = l.pending ? collapsed("diff-pending", `后面 ${l.pending.toLocaleString("en-US")} 行待对齐`) : "";

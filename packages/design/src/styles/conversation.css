@@ -1140,9 +1140,15 @@ button.cb-tool-toggle:focus-visible {
 .cb-tool-output[data-live] {
   max-height: var(--cb-layout-tool-live);
 }
-/* The caret (the §2.4 streaming cursor) at the line's height. */
-.cb-diff-line .cb-cursor {
-  margin-left: 1px;
+/*
+ * The caret (the §2.4 streaming cursor) at the line's height, a flex item after the text that
+ * never shrinks: it hugs the text (undoing the line's column gap) and stays visible after the
+ * ellipsis of an over-wide line.
+ */
+.cb-diff-caret {
+  flex: none;
+  align-self: flex-start;
+  margin-left: calc(1px - var(--cb-space-2));
   vertical-align: top;
 }
 .cb-diff-collapsed {
