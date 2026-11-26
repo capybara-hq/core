@@ -2134,6 +2134,12 @@ textarea {
   font-size: var(--cb-type-prose-size);
   line-height: var(--cb-type-prose-line);
 }
+.r-think[data-in-rail="true"] {
+  padding-left: 0;
+  border-left: 0;
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
 
 /* ── User bubble, attachments, queued messages ── */
 
