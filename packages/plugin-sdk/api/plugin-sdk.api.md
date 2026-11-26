@@ -2899,6 +2899,15 @@ export interface ModelUsage {
 }
 
 // @public
+export const NATIVE_FAILURE_GENERIC = "Native operation failed; check the path, scope and filesystem access";
+
+// @public
+export const NATIVE_NOT_REGULAR_FILE = "NOT_REGULAR_FILE";
+
+// @public
+export function nativeFailureText(code: string | undefined): string;
+
+// @public
 export const NAV_SECTION_ORDER: readonly NavSectionId[];
 
 // @public

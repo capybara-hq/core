@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NATIVE_NOT_REGULAR_FILE, nativeFailureText } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runNativeHelper } from "../src/exec/native-helper-client.js";
 import { stageRuntimeSource } from "../src/exec/runtime-source.js";
@@ -44,6 +45,34 @@ describe("private pinned descriptor helper transport", () => {
       expect(ready).toBe(true);
       expect(result).toEqual({ dataB64: Buffer.from("hel").toString("base64"), truncated: true });
       expect((await fd.stat()).isDirectory()).toBe(true);
+    } finally {
+      await fd.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it("answers a read of something other than a regular file with that cause (#907)", async () => {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), "cap-native-")));
+    const fd = await open(dir, "r");
+    try {
+      const helper = await stageRuntimeSource(dir);
+      await new Promise<void>((resolve, reject) =>
+        spawn("mkfifo", [join(dir, "pipe")]).once("exit", (code) =>
+          code === 0 ? resolve() : reject(new Error(`mkfifo exited ${code}`)),
+        ),
+      );
+      // a FIFO (like /dev/null on the issue's device): neither a regular file nor a directory
+      await expect(
+        runNativeHelper(
+          { method: "readFile", path: join(dir, "pipe"), maxBytes: 3 },
+          [{ path: dir, fd: fd.fd, access: "read" }],
+          {
+            pythonPath: "/usr/bin/python3",
+            helperPath: helper,
+            spawn: (command, args, opts) => spawn(command, args, opts),
+          },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow(nativeFailureText(NATIVE_NOT_REGULAR_FILE));
     } finally {
       await fd.close();
       await rm(dir, { recursive: true, force: true });
@@ -417,7 +446,8 @@ it("establishes only a narrow descriptor root and refuses sibling data and symli
         { pythonPath: "/usr/bin/python3", helperPath },
         new AbortController().signal,
       ),
-    ).rejects.toThrow(/Native/);
+      // a linked component is refused (ELOOP: a scope denial; ENOTDIR on macOS: its own text)
+    ).rejects.toThrow(/Native|not a directory/);
     await expect(stat(join(target, "child"))).rejects.toMatchObject({ code: "ENOENT" });
     expect((await fd.stat()).isDirectory()).toBe(true);
   } finally {
