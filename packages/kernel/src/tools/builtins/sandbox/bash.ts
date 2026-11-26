@@ -474,15 +474,22 @@ function launchRefusedWhy(e: unknown): { why: string; text?: string } {
           ? "denied"
           : isSandboxPermissionUnsupportedError(e)
             ? "unsupported"
-            : undefined,
+            : e instanceof ToolError
+              ? "failed"
+              : undefined,
     ),
   };
 }
 
-/** A typed refusal: the provider or admission proved the start had no effect. */
+/**
+ * A typed refusal: the provider or admission proved the start had no effect, or the provider
+ * answered that it failed (a `ToolError`, recorded as a definite failure: #903).
+ */
 const isRefusal = (e: unknown): boolean =>
   !isSandboxOperationOutcomeUnknownError(e) &&
-  (isSandboxScopeDeniedError(e) || isSandboxPermissionUnsupportedError(e));
+  (isSandboxScopeDeniedError(e) ||
+    isSandboxPermissionUnsupportedError(e) ||
+    e instanceof ToolError);
 
 /**
  * Sandbox-specific signals in a command's output: the EPERM a Seatbelt or Landlock write denial
