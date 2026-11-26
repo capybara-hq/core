@@ -325,6 +325,16 @@ export interface RetryMessage {
   skill?: string;
 }
 
+/**
+ * The model step an entry came from (its run and step), the same for a streaming draft and the
+ * step once it lands in the log: `groupProcess` keys a process block by it, so the block keeps its
+ * key while its first step goes from draft to log.
+ */
+export interface StepRef {
+  runId: string;
+  step: number;
+}
+
 export type TimelineEntry =
   | {
       kind: "user";
@@ -364,6 +374,7 @@ export type TimelineEntry =
       key: string;
       text: string;
       streaming: boolean;
+      step?: StepRef;
       /**
        * Narration, not an answer (process blocks spec §1.1): the step's content also has a
        * `tool_call` block (a draft: {@link TimelineDraft.toolCall}). `groupProcess` folds it into
@@ -379,9 +390,11 @@ export type TimelineEntry =
       live: boolean;
       /** The model that thought (decides whether thinking shows), or null. */
       model: ModelRef | null;
+      step?: StepRef;
     }
-  | { kind: "tools"; key: string; rows: TimelineTool[] }
-  | { kind: "subagents"; key: string; rows: TimelineSubagent[] }
+  /** `step`: the step of the group's first call. */
+  | { kind: "tools"; key: string; rows: TimelineTool[]; step?: StepRef }
+  | { kind: "subagents"; key: string; rows: TimelineSubagent[]; step?: StepRef }
   | {
       /**
        * A sub-agent waits for a person: its approval, question or connection, in the root (at any
@@ -694,6 +707,7 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
         seconds: null,
         live: d.text === "",
         model: base.modelOf(d.runId, d.step),
+        step: { runId: d.runId, step: d.step },
       });
     }
     if (d.text !== "") {
@@ -703,6 +717,7 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
         text: d.text,
         streaming: true,
         narration: d.toolCall === true,
+        step: { runId: d.runId, step: d.step },
       });
     }
   }
@@ -1031,25 +1046,27 @@ export function buildEventTimeline(
     if (!Number.isNaN(at)) row.startedAt = at;
   };
 
-  const openSubagents = (): Extract<TimelineEntry, { kind: "subagents" }> => {
+  const openSubagents = (step?: StepRef): Extract<TimelineEntry, { kind: "subagents" }> => {
     const last = out.at(-1);
     if (last?.kind === "subagents") return last;
     const g: Extract<TimelineEntry, { kind: "subagents" }> = {
       kind: "subagents",
       key: `s${out.length}`,
       rows: [],
+      ...(step !== undefined ? { step } : {}),
     };
     out.push(g);
     return g;
   };
 
-  const openGroup = (): Extract<TimelineEntry, { kind: "tools" }> => {
+  const openGroup = (step?: StepRef): Extract<TimelineEntry, { kind: "tools" }> => {
     const last = out.at(-1);
     if (last?.kind === "tools") return last;
     const g: Extract<TimelineEntry, { kind: "tools" }> = {
       kind: "tools",
       key: `g${out.length}`,
       rows: [],
+      ...(step !== undefined ? { step } : {}),
     };
     out.push(g);
     return g;
@@ -1188,6 +1205,8 @@ export function buildEventTimeline(
         const text = joinText(e.payload.content, "text");
         const thinking = joinText(e.payload.content, "thinking");
         const model = modelOf(e.runId, e.payload.step);
+        const at: StepRef | undefined =
+          e.runId === null ? undefined : { runId: e.runId, step: e.payload.step };
         if (thinking !== "") {
           const started =
             e.runId === null ? undefined : stepStarted.get(stepKey(e.runId, e.payload.step));
@@ -1203,11 +1222,20 @@ export function buildEventTimeline(
                 : Math.max(0, (ended - started) / 1000),
             live: false,
             model,
+            ...(at !== undefined ? { step: at } : {}),
           });
         }
         // narration when the step also calls a tool, else the answer (process blocks spec §1.1)
         const narration = e.payload.content.some((b) => b.type === "tool_call");
-        if (text !== "") out.push({ kind: "prose", key, text, streaming: false, narration });
+        if (text !== "")
+          out.push({
+            kind: "prose",
+            key,
+            text,
+            streaming: false,
+            narration,
+            ...(at !== undefined ? { step: at } : {}),
+          });
         for (const b of e.payload.content) {
           if (b.type !== "tool_call") continue;
           const ti = info.get(b.name);
@@ -1228,13 +1256,13 @@ export function buildEventTimeline(
               callId: b.id,
               input: b.input,
             };
-            openSubagents().rows.push(sub);
+            openSubagents(at).rows.push(sub);
             agentCalls.set(callKey(e.runId, b.id), { sub, runId: e.runId });
             continue;
           }
           const input = b.input;
           const rec = asRecord(input);
-          const group = openGroup();
+          const group = openGroup(at);
           const question = b.name === QUESTION_TOOL;
           const keyArg = question ? questionPreview(input, ti) : keyArgOf(input, ti);
           const kind: ToolRowData["kind"] = question ? "question" : (ti?.kind ?? "tool");

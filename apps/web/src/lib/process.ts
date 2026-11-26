@@ -1,4 +1,4 @@
-import { type DividerData, isCallKey, type TimelineEntry, type TimelineSubagent } from "./timeline";
+import type { DividerData, TimelineEntry, TimelineSubagent } from "./timeline";
 
 /**
  * Process blocks (conversation process blocks spec §1–§5): a pure pass after the timeline
@@ -8,19 +8,25 @@ import { type DividerData, isCallKey, type TimelineEntry, type TimelineSubagent 
  *
  * - A block opens at the first thinking, narration, tool group, process card, network fact or
  *   single synchronous sub-agent (a `subagents` entry with one row that is not in the background,
- *   spec §10.3).
+ *   spec §10.3). Its key is its first entry's step (`p<runId>:<step>`), the same for a streaming
+ *   draft and the step once logged, so the block keeps its key while its first step lands.
  * - It closes at an answer (prose that is not narration), a user message, a sub-agent task or
  *   report, a sub-agent group of two or more rows or a background one, a divider other than a
  *   fallback or a compaction, or the run's `run` entry; a fallback or a compaction inside an open
  *   block is a `note` step.
+ * - Every block of a run takes the run's end (`finished`, `stopped`, `failed`) from its `run` row;
+ *   the run's last block also its working time.
  * - An undecided approval, question or connect, a device code and a sub-agent's wait stand outside,
  *   right after the block (the block is `waiting` while one is undecided); once decided an
  *   approval, question or connect is a `decided` step at its place in the rail.
- * - Handoffs and reveals of the block merge into one `pending` entry after the blocking cards;
- *   `output` cards, files, sub-agent deliveries and background task notices follow, in log order.
- * - `pinned` cards: the run's latest one sits on the run's latest block that wrote one (earlier
- *   versions are only their call's rail row); after a `failed` / `stopped` run it stands outside,
- *   right after the block. `process` cards stay as steps after their tools step.
+ * - Handoffs and reveals of a turn (up to the next message that starts a run, so across the blocks
+ *   a sub-agent group or a queued message splits) merge into one `pending` entry, after the
+ *   blocking cards of the turn's last block; `output` cards, files, sub-agent deliveries and
+ *   background task notices follow each block, in log order.
+ * - `pinned` cards: the latest per (plugin, view) of a run, in first-seen order, sit on the run's
+ *   latest block that wrote one (earlier versions are only their call's rail row); after a
+ *   `failed` / `stopped` run they stand outside, right after that block. `process` cards stay as
+ *   steps after their tools step.
  */
 
 type Entry<K extends TimelineEntry["kind"]> = Extract<TimelineEntry, { kind: K }>;
@@ -35,13 +41,13 @@ export type ProcessStep =
 export type ProcessEntry = {
   kind: "process";
   key: string;
-  /** The run the block belongs to, when its entries name it (tool rows, drafts, the run row). */
+  /** The run the block belongs to, when its entries name it (steps, tool rows, the run row). */
   runId: string | null;
   state: "running" | "waiting" | "finished" | "stopped" | "failed";
   steps: ProcessStep[];
-  /** The latest pinned card of the block's run. */
-  pinned?: Entry<"card">;
-  /** The run's working time once it ended (its `run` row), else null. */
+  /** The run's pinned cards: the latest per (plugin, view), in first-seen order; empty if none. */
+  pinned: Entry<"card">[];
+  /** The run's working time on the run's last block once it ended (its `run` row), else null. */
   durationMs: number | null;
   /** Background tasks the block started that are still running. */
   backgroundRunning: number;
@@ -64,28 +70,26 @@ type Blocking = Entry<"approval" | "question" | "connect" | "device-code" | "sub
 interface OpenBlock {
   block: ProcessEntry;
   blocking: Blocking[];
-  pending: Entry<"handoff" | "reveal">[];
   /** Output cards, files and notices, in log order. */
   outputs: ThreadEntry[];
 }
 
-/** A draft's key (`d<runId>:<step>`, `…:thinking`) names its run. */
-const DRAFT_KEY = /^d(.+):\d+(?::thinking)?$/;
-
-/** The run an entry names, or null (log prose and thinking carry no run). */
+/** The run an entry names, or null. */
 function runIdOf(e: TimelineEntry): string | null {
-  switch (e.kind) {
-    case "tools":
-      for (const t of e.rows) if (isCallKey(t.row.id)) return t.row.id.split("\u0000")[0] || null;
-      return null;
-    case "reveal":
-      return e.runId;
-    case "thinking":
-    case "prose":
-      return DRAFT_KEY.exec(e.key)?.[1] ?? null;
-    default:
-      return null;
-  }
+  if ((e.kind === "thinking" || e.kind === "prose" || e.kind === "tools") && e.step)
+    return e.step.runId;
+  if (e.kind === "subagents" && e.step) return e.step.runId;
+  if (e.kind === "reveal") return e.runId;
+  return null;
+}
+
+/** The step an entry came from, as a block key part (`<runId>:<step>`), or null. */
+function stepKeyOf(e: TimelineEntry): string | null {
+  const at =
+    e.kind === "thinking" || e.kind === "prose" || e.kind === "tools" || e.kind === "subagents"
+      ? e.step
+      : undefined;
+  return at === undefined ? null : `${at.runId}:${at.step}`;
 }
 
 /** The tool rows of a block's steps. */
@@ -127,31 +131,45 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
   const s: {
     /** The block being filled, with what stands after it. */
     open: OpenBlock | null;
-    /** The block closed last, until a run row settles it (its run's end and working time). */
-    lastClosed: ProcessEntry | null;
-  } = { open: null, lastClosed: null };
-  /** Run → the block holding the run's latest pinned card. */
-  const pinnedBlock = new Map<string, ProcessEntry>();
+    /** Blocks since the last run row: the next run row settles those of its run (or of none). */
+    unsettled: ProcessEntry[];
+    /** A run is going (a block opened since the last run row): a message now is taken in by it. */
+    inRun: boolean;
+    /** The turn's handoffs and reveals, and where their pending entry goes in `out`. */
+    turn: { items: Entry<"handoff" | "reveal">[]; slot: number | null };
+  } = { open: null, unsettled: [], inRun: false, turn: { items: [], slot: null } };
+  /** Run → its pinned cards by (plugin, view) and the block that shows them. */
+  const pinnedOf = new Map<string, { block: ProcessEntry; cards: Map<string, Entry<"card">> }>();
+  const usedKeys = new Set<string>();
 
   const noteRun = (b: ProcessEntry, e: TimelineEntry) => {
     if (b.runId !== null) return;
     const runId = runIdOf(e);
     if (runId !== null) b.runId = runId;
   };
+  /** A key both a draft and its logged step give (made unique when a step opens two blocks). */
+  const blockKey = (first: TimelineEntry) => {
+    const base = `p${stepKeyOf(first) ?? first.key}`;
+    let key = base;
+    for (let n = 2; usedKeys.has(key); n++) key = `${base}:${n}`;
+    usedKeys.add(key);
+    return key;
+  };
   const ensure = (first: TimelineEntry): OpenBlock => {
     if (s.open === null) {
+      s.inRun = true;
       s.open = {
         block: {
           kind: "process",
-          key: `p${first.key}`,
+          key: blockKey(first),
           runId: null,
           state: "running",
           steps: [],
+          pinned: [],
           durationMs: null,
           backgroundRunning: 0,
         },
         blocking: [],
-        pending: [],
         outputs: [],
       };
     }
@@ -159,10 +177,17 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
     return s.open;
   };
   const addStep = (e: TimelineEntry, step: ProcessStep) => ensure(e).block.steps.push(step);
-  const pushPending = (items: Entry<"handoff" | "reveal">[]) => {
-    const last = out.at(-1);
-    if (last?.kind === "pending") last.items.push(...items);
-    else out.push({ kind: "pending", key: `pending:${items[0]?.key ?? ""}`, items: [...items] });
+  /** Places the turn's pending entry (after the blocking cards of its last block) and ends it. */
+  const endTurn = () => {
+    const { items, slot } = s.turn;
+    s.turn = { items: [], slot: null };
+    if (items.length === 0) return;
+    const entry: PendingEntry = {
+      kind: "pending",
+      key: `pending:${items[0]?.key ?? ""}`,
+      items,
+    };
+    out.splice(slot ?? out.length, 0, entry);
   };
   /**
    * Closes the open block: `ended` when its stretch is over, `live` when the run still goes on past
@@ -181,15 +206,38 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
         !finishedTasks.has(t.background.taskId),
     ).length;
     out.push(b, ...o.blocking);
-    if (o.pending.length > 0) pushPending(o.pending);
+    s.turn.slot = out.length;
     out.push(...o.outputs);
-    s.lastClosed = b;
+    s.unsettled.push(b);
   };
   /** Outside the block when one is open (after it, by class), else at its place. */
   const outside = (e: ThreadEntry, bucket: "blocking" | "outputs") => {
     if (s.open === null) out.push(e);
     else if (bucket === "blocking") s.open.blocking.push(e as Blocking);
     else s.open.outputs.push(e);
+  };
+  const pin = (e: Entry<"card">) => {
+    const b = ensure(e).block;
+    const runId = b.runId;
+    if (runId === null) {
+      // no run named yet: the latest per (plugin, view) on this block alone
+      const i = b.pinned.findIndex((c) => c.plugin === e.plugin && c.view === e.view);
+      if (i < 0) b.pinned.push(e);
+      else b.pinned[i] = e;
+      return;
+    }
+    let p = pinnedOf.get(runId);
+    if (p === undefined) {
+      p = { block: b, cards: new Map() };
+      pinnedOf.set(runId, p);
+    }
+    if (p.block !== b) {
+      p.block.pinned = [];
+      p.block = b;
+    }
+    // a Map keeps a key's first-seen position when its value is replaced
+    p.cards.set(`${e.plugin}\u0000${e.view}`, e);
+    b.pinned = [...p.cards.values()];
   };
 
   for (const e of entries) {
@@ -229,14 +277,8 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
         break;
       case "card":
         if (e.placement === "process") addStep(e, e);
-        else if (e.placement === "pinned") {
-          const b = ensure(e).block;
-          const runId = b.runId;
-          const prev = runId === null ? undefined : pinnedBlock.get(runId);
-          if (prev !== undefined && prev !== b) delete prev.pinned;
-          b.pinned = e;
-          if (runId !== null) pinnedBlock.set(runId, b);
-        } else outside(e, "outputs");
+        else if (e.placement === "pinned") pin(e);
+        else outside(e, "outputs");
         break;
       case "approval":
       case "question":
@@ -251,8 +293,9 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
         break;
       case "handoff":
       case "reveal":
-        if (s.open === null) pushPending([e]);
-        else s.open.pending.push(e);
+        // with no block open, the pending entry stands where the first of them does
+        if (s.open === null && s.turn.slot === null) s.turn.slot = out.length;
+        s.turn.items.push(e);
         break;
       case "files":
       case "background":
@@ -264,18 +307,23 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
           s.open.block.runId ??= e.runId;
           close("ended");
         }
-        const b = s.lastClosed;
-        s.lastClosed = null;
-        if (b !== null && (b.runId === null || b.runId === e.runId)) {
+        // every block of the run takes its end; the last one also its working time
+        const mine = s.unsettled.filter((b) => b.runId === null || b.runId === e.runId);
+        s.unsettled = [];
+        s.inRun = false;
+        for (const b of mine) {
           b.runId ??= e.runId;
           b.state = e.status === "ok" ? "finished" : e.status;
-          b.durationMs = e.durationMs;
         }
+        const last = mine.at(-1);
+        if (last !== undefined) last.durationMs = e.durationMs;
         out.push(e);
         break;
       }
       case "user":
         close(e.pending === true ? "live" : "ended");
+        // a message taken in by the going run (queued, or not yet) stays in the turn
+        if (!s.inRun) endTurn();
         out.push(e);
         break;
       case "task":
@@ -290,18 +338,19 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
     }
   }
   close("live");
+  endTurn();
 
-  // A stopped or failed run's pinned card stands outside, right after its block (spec §4).
+  // A stopped or failed run's pinned cards stand outside, right after their block (spec §4).
   const result: ThreadEntry[] = [];
   for (const e of out) {
     result.push(e);
     if (
       e.kind === "process" &&
-      e.pinned !== undefined &&
+      e.pinned.length > 0 &&
       (e.state === "stopped" || e.state === "failed")
     ) {
-      result.push(e.pinned);
-      delete e.pinned;
+      result.push(...e.pinned);
+      e.pinned = [];
     }
   }
   return result;

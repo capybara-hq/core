@@ -138,6 +138,21 @@ describe("groupProcess", () => {
     expect(block(landed).steps[1]).toMatchObject({ streaming: false });
     expect(block(landed).key).toBe(block(withCall).key);
     expect(block(landed).key).toBe(block(streaming).key);
+
+    // a block whose first step is a thinking draft keeps its key when that step lands
+    const start = [user(1, "go"), runStarted(2)];
+    const thinking = build(start, [{ runId: "r1", step: 0, text: "", thinking: "plan" }]);
+    expect(kinds(thinking)).toEqual(["user", "process"]);
+    expect(kinds(block(thinking).steps)).toEqual(["thinking"]);
+    const logged = build([
+      ...start,
+      step(3, [
+        { type: "thinking", text: "plan" },
+        { type: "tool_call", ...bash("a") },
+      ]),
+    ]);
+    expect(kinds(block(logged).steps)).toEqual(["thinking", "tools"]);
+    expect(block(logged).key).toBe(block(thinking).key);
   });
 
   it("one block across thinking, tools, narration", () => {
@@ -348,7 +363,7 @@ describe("groupProcess", () => {
     expect(kinds(out)).toEqual(["user", "process", "card", "approval", "run"]);
     const b = block(out);
     expect(b.state).toBe("stopped");
-    expect(b.pinned).toBeUndefined();
+    expect(b.pinned).toEqual([]);
     expect(out[2]).toMatchObject({ kind: "card", plugin: "todo", placement: "pinned" });
     expect(out[3]).toMatchObject({ kind: "approval", item: { decided: null } });
   });
@@ -373,6 +388,53 @@ describe("groupProcess", () => {
     expect(kinds(out)).toEqual(["user", "process", "pending", "prose", "run"]);
     const pending = out[2];
     expect(pending?.kind === "pending" && pending.items.map((i) => i.callId)).toEqual(["p1", "p2"]);
+
+    // one turn split by a sub-agent group and a queued message: still one pending entry, after
+    // the blocking cards of the turn's last block
+    const agent = (id: string) => ({ id, name: "Agent", input: { description: id, prompt: "p" } });
+    const split = build([
+      user(1, "set up"),
+      runStarted(2),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m", request: req(1) }),
+      calls(4, [platform("p1")]),
+      result(5, "p1", "Platform", { view: view("Connect Docs") }),
+      calls(6, [agent("k1"), agent("k2")]),
+      user(7, "and mail"),
+      ev(8, "model_call", { step: 1, provider: "p", model: "m", request: req(7) }),
+      calls(9, [platform("p2")]),
+      result(10, "p2", "Platform", { view: view("Connect Mail") }),
+      calls(11, [bash("x", "rm x")]),
+      ev(12, "approval_requested", {
+        step: 0,
+        callId: "x",
+        approvalId: "ap1",
+        toolKey: "Bash",
+        expiresAt: "x",
+      }),
+    ]);
+    expect(kinds(split)).toEqual([
+      "user",
+      "process",
+      "subagents",
+      "user",
+      "process",
+      "approval",
+      "pending",
+    ]);
+    const merged = split.at(-1);
+    expect(merged?.kind === "pending" && merged.items.map((i) => i.callId)).toEqual(["p1", "p2"]);
+
+    // the next turn's handoffs are a pending entry of their own
+    const next = build([
+      ...events,
+      user(8, "again"),
+      runStarted(9),
+      calls(10, [platform("p3")]),
+      result(11, "p3", "Platform", { view: view("Connect Chat") }),
+      answer(12, "One more."),
+      runFinished(13),
+    ]);
+    expect(kinds(next).filter((k) => k === "pending")).toHaveLength(2);
   });
 
   it("order outside: block, blocking, pending, files, answer", () => {
@@ -428,8 +490,28 @@ describe("groupProcess", () => {
     ];
     const one = build([user(1, "go"), runStarted(2), ...todo(3, "t1"), ...todo(5, "t2")]);
     expect(kinds(one)).toEqual(["user", "process"]);
-    expect(block(one).pinned).toMatchObject({ plugin: "todo", view: "tasks", cardKey: "t2" });
+    expect(block(one).pinned).toMatchObject([{ plugin: "todo", view: "tasks", cardKey: "t2" }]);
     expect(kinds(block(one).steps)).toEqual(["tools"]);
+
+    // two views: both kept, each its latest, in first-seen order
+    const plan = (seq: number, id: string) => [
+      calls(seq, [{ id, name: "plugin__plan__write", input: {} }]),
+      result(seq + 1, id, "plugin__plan__write", {
+        card: { plugin: "plan", view: "steps", placement: "pinned", key: id },
+      }),
+    ];
+    const two = build([
+      user(1, "go"),
+      runStarted(2),
+      ...todo(3, "t1"),
+      ...plan(5, "s1"),
+      ...todo(7, "t2"),
+      ...plan(9, "s2"),
+    ]);
+    expect(block(two).pinned.map((c) => [c.plugin, c.cardKey])).toEqual([
+      ["todo", "t2"],
+      ["plan", "s2"],
+    ]);
 
     // a queued message splits the run's block: the run's latest card lives on its latest block
     const split = build([
@@ -444,8 +526,8 @@ describe("groupProcess", () => {
       runFinished(11),
     ]);
     expect(kinds(split)).toEqual(["user", "process", "user", "process", "prose", "run"]);
-    expect(block(split, 0).pinned).toBeUndefined();
-    expect(block(split, 1).pinned).toMatchObject({ cardKey: "t2" });
+    expect(block(split, 0).pinned).toEqual([]);
+    expect(block(split, 1).pinned).toMatchObject([{ cardKey: "t2" }]);
   });
 
   it("pinned stays outside after a failed run", () => {
@@ -461,12 +543,32 @@ describe("groupProcess", () => {
     const out = build(events);
     expect(kinds(out)).toEqual(["user", "process", "card", "run"]);
     expect(block(out)).toMatchObject({ state: "failed" });
-    expect(block(out).pinned).toBeUndefined();
+    expect(block(out).pinned).toEqual([]);
 
     // a finished run keeps it on the block
     const ok = build([...events.slice(0, 4), answer(5, "Done."), runFinished(6)]);
     expect(kinds(ok)).toEqual(["user", "process", "prose", "run"]);
-    expect(block(ok).pinned).toMatchObject({ plugin: "todo", view: "tasks" });
+    expect(block(ok).pinned).toMatchObject([{ plugin: "todo", view: "tasks" }]);
+
+    // a split run that fails: every block takes the end, the pinned card (on the first block,
+    // the second wrote none) stands outside
+    const split = build([
+      user(1, "go"),
+      runStarted(2),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m", request: req(1) }),
+      calls(4, [{ id: "td", name: "plugin__todo__write", input: {} }]),
+      result(5, "td", "plugin__todo__write", {
+        card: { plugin: "todo", view: "tasks", placement: "pinned" },
+      }),
+      user(6, "and more"),
+      ev(7, "model_call", { step: 1, provider: "p", model: "m", request: req(6) }),
+      calls(8, [bash("b")]),
+      result(9, "b", "Bash"),
+      ev(10, "run_failed", { error: { code: "model.timeout", message: "x" } }),
+    ]);
+    expect(kinds(split)).toEqual(["user", "process", "card", "user", "process", "run"]);
+    expect(blocks(split).map((b) => b.state)).toEqual(["failed", "failed"]);
+    expect(blocks(split).map((b) => b.durationMs === null)).toEqual([true, false]);
   });
 
   it("log without placement", () => {
