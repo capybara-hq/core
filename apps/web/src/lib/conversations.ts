@@ -367,8 +367,18 @@ type EventBody =
         display?: ToolDisplay;
         /** Structured view of a builtin's result (display only). */
         view?: ToolView;
-        /** An inline card under the call (an `inline` ui contribution of the tool's extension). */
-        card?: { plugin: string; view: string; key?: string };
+        /**
+         * An inline card under the call (an `inline` ui contribution of the tool's extension).
+         * `placement` is absent for `output` (the default); `text` is a pinned card's Markdown
+         * for channels (process blocks spec §5).
+         */
+        card?: {
+          plugin: string;
+          view: string;
+          key?: string;
+          placement?: "pinned" | "process";
+          text?: string;
+        };
         /** The command review's decision on the call (auto mode spec §5.4; display only). */
         review?: ReviewRecord;
         /**
