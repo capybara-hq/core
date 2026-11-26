@@ -1,12 +1,4 @@
-import {
-  Children,
-  cloneElement,
-  isValidElement,
-  type JSX,
-  type ReactElement,
-  type ReactNode,
-  useId,
-} from "react";
+import { type JSX, type ReactNode, useId } from "react";
 import { formatDuration } from "../display/duration";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
@@ -26,7 +18,7 @@ export type ProcessBlockProps = {
   state: "running" | "waiting" | "finished" | "stopped" | "failed";
   /** Running / waiting: the current step's label. */
   current?: ReactNode;
-  /** The waiting words ("等待你批准") drawn in `accent` before the current step. */
+  /** The waiting words ("Waiting for your approval") drawn in `accent` before the current step. */
   waiting?: ReactNode;
   /** Elapsed time of the run; null when unknown. */
   elapsedMs: number | null;
@@ -40,7 +32,7 @@ export type ProcessBlockProps = {
   kinds: { key: string; icon: ProcessIcon; label: string }[];
   open: boolean;
   onToggle(): void;
-  /** Steps folded above the rail's first drawn step ("前 N 步"). */
+  /** Steps folded above the rail's first drawn step ("N earlier steps"). */
   hiddenBefore?: number;
   onShowEarlier?(): void;
   /** The pinned state card, under the head. */
@@ -89,22 +81,22 @@ export function ProcessBlock({
   const parts = [
     time,
     summary.pinned ? [summary.pinned.title, summary.pinned.badge].filter(Boolean).join(" ") : null,
-    summary.thoughts > 0 ? fillCopy(t("process.thoughts"), { n: summary.thoughts }) : null,
-    summary.tools > 0 ? fillCopy(t("process.tools"), { n: summary.tools }) : null,
+    summary.thoughts === 1
+      ? t("process.thoughts1")
+      : summary.thoughts > 0
+        ? fillCopy(t("process.thoughts"), { n: summary.thoughts })
+        : null,
+    summary.tools === 1
+      ? t("process.tools1")
+      : summary.tools > 0
+        ? fillCopy(t("process.tools"), { n: summary.tools })
+        : null,
   ].filter((p): p is string => p !== null);
 
   const errorLabel =
     summary.errors === 1
       ? t("tool.errorCount1")
       : fillCopy(t("tool.errorCount"), { n: summary.errors });
-
-  const steps = Children.toArray(children).filter(isValidElement);
-  const edged = steps.map((child, i) => {
-    if (child.type !== RailStep) return child;
-    const edge =
-      steps.length === 1 ? "only" : i === 0 ? "first" : i === steps.length - 1 ? "last" : undefined;
-    return edge ? cloneElement(child as ReactElement<RailStepProps>, { edge }) : child;
-  });
 
   let line: JSX.Element;
   if (live) {
@@ -153,13 +145,15 @@ export function ProcessBlock({
         onClick={onToggle}
       >
         {chips.length > 0 ? (
-          <span className="cb-process-chips" data-part="process-chips" aria-hidden="true">
+          <span className="cb-process-chips" data-part="process-chips">
             {chips.map((k) => (
               <span
                 key={k.key}
                 className="cb-process-chip"
                 data-part="process-chip"
                 data-kind={k.key}
+                role="img"
+                aria-label={k.label}
                 title={k.label}
               >
                 <ProcessMark icon={k.icon} size={12} />
@@ -198,7 +192,9 @@ export function ProcessBlock({
       </div>
       {backgroundRunning !== undefined && backgroundRunning > 0 ? (
         <div className="cb-process-bg cb-faint" data-part="process-background">
-          {fillCopy(t("process.background"), { n: backgroundRunning })}
+          {backgroundRunning === 1
+            ? t("process.background1")
+            : fillCopy(t("process.background"), { n: backgroundRunning })}
         </div>
       ) : null}
       {pinned ? (
@@ -218,10 +214,14 @@ export function ProcessBlock({
               <span className="cb-rail-gutter" aria-hidden="true">
                 <Icon name="chevron-up" size={12} />
               </span>
-              <span>{fillCopy(t("process.earlier"), { n: hiddenBefore })}</span>
+              <span>
+                {hiddenBefore === 1
+                  ? t("process.earlier1")
+                  : fillCopy(t("process.earlier"), { n: hiddenBefore })}
+              </span>
             </button>
           ) : null}
-          {edged}
+          {children}
         </div>
       ) : null}
     </div>
@@ -231,13 +231,11 @@ export function ProcessBlock({
 export type RailStepProps = {
   /** The step's mark in the gutter: a kind icon, a bare dot (narration), the live spinner or the hand. */
   icon: ProcessIcon | "dot" | "spinner" | "hand";
-  /** Set by `ProcessBlock`: where the step sits, so the rail rule runs first icon to last. */
-  edge?: "first" | "last" | "only";
   children: ReactNode;
 };
 
 /** One step of the rail: a 20 px gutter holding the icon on the rule, and the step's row. */
-export function RailStep({ icon, edge, children }: RailStepProps): JSX.Element {
+export function RailStep({ icon, children }: RailStepProps): JSX.Element {
   let mark: JSX.Element;
   if (icon === "dot") mark = <span className="cb-rail-dot" data-part="rail-dot" />;
   else if (icon === "spinner") mark = <Spinner size={16} />;
@@ -249,7 +247,7 @@ export function RailStep({ icon, edge, children }: RailStepProps): JSX.Element {
     );
   } else mark = <ProcessMark icon={icon} size={14} />;
   return (
-    <div className="cb-rail-step" data-part="rail-step" data-edge={edge}>
+    <div className="cb-rail-step" data-part="rail-step">
       <span className="cb-rail-gutter" data-part="rail-gutter" aria-hidden="true">
         {mark}
       </span>

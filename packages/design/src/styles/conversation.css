@@ -2458,14 +2458,18 @@ button.cb-file-card:focus-visible {
   width: 1px;
   background: var(--cb-line);
 }
-.cb-rail-step[data-edge="first"]::before {
+.cb-rail-step:first-of-type::before {
   top: calc(var(--cb-row-dense) / 2);
 }
-.cb-rail-step[data-edge="last"]::before {
+.cb-rail-step:last-of-type::before {
   bottom: calc(100% - var(--cb-row-dense) / 2);
 }
-.cb-rail-step[data-edge="only"]::before {
+.cb-rail-step:only-of-type::before {
   display: none;
+}
+/* Steps sit space.1 apart; the padding (not a gap) keeps the rule continuous. */
+.cb-rail-step:not(:last-of-type) {
+  padding-bottom: var(--cb-space-1);
 }
 .cb-rail-gutter {
   position: relative;

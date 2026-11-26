@@ -60,6 +60,11 @@ describe("ProcessBlock head", () => {
     );
     // the error dot names itself; the count is drawn once
     expect(within(h).getByRole("img", { name: "1 个调用返回了错误" })).toBeTruthy();
+    // each chip is an image named by its kind
+    expect(chips.map((c) => c.getAttribute("aria-label"))).toEqual(
+      KINDS.slice(0, 6).map((k) => k.label),
+    );
+    expect(chips.every((c) => c.getAttribute("role") === "img")).toBe(true);
     // a chevron and the toggle state
     expect(h.querySelector('[data-icon="chevron-right"]')).not.toBeNull();
     const toggle = within(h).getByRole("button");
@@ -128,6 +133,22 @@ describe("ProcessBlock head", () => {
     expect(fw?.classList.contains("cb-fail-word")).toBe(true);
   });
 
+  it("singular counts use the singular copy", () => {
+    const { container } = wrap(
+      <ProcessBlock
+        {...base({
+          summary: { thoughts: 1, tools: 1, errors: 0 },
+          backgroundRunning: 1,
+        })}
+      />,
+      "en",
+    );
+    expect(head(container).querySelector('[data-part="process-summary"]')?.textContent).toBe(
+      "Worked for 2m 43s · Thought once · 1 tool",
+    );
+    expect(screen.getByText("1 background task still running")).toBeTruthy();
+  });
+
   it("shows how many background tasks still run", () => {
     wrap(<ProcessBlock {...base({ backgroundRunning: 2 })} />);
     expect(screen.getByText("2 个后台任务仍在运行")).toBeTruthy();
@@ -160,25 +181,38 @@ describe("ProcessBlock rail", () => {
     ).toBe(container.querySelector('[data-part="process-rail"]'));
   });
 
-  it("rail rule spans first to last icon", () => {
-    const { container } = wrap(
-      <ProcessBlock {...base({ open: true })}>
-        <RailStep icon={{ name: "lightbulb" }}>a</RailStep>
+  it("rail rule spans first to last icon, however the steps are wrapped", () => {
+    const Wrapper = () => (
+      <>
         <RailStep icon="dot">b</RailStep>
         <RailStep icon="spinner">c</RailStep>
+      </>
+    );
+    const { container } = wrap(
+      <ProcessBlock {...base({ open: true, hiddenBefore: 2 })}>
+        <RailStep icon={{ name: "lightbulb" }}>a</RailStep>
+        <>
+          <Wrapper />
+        </>
       </ProcessBlock>,
     );
-    const steps = [...container.querySelectorAll('[data-part="rail-step"]')];
-    expect(steps.map((s) => s.getAttribute("data-edge"))).toEqual(["first", null, "last"]);
-    cleanup();
-    const one = wrap(
-      <ProcessBlock {...base({ open: true })}>
-        <RailStep icon="hand">only</RailStep>
-      </ProcessBlock>,
+    const rail = container.querySelector('[data-part="process-rail"]') as HTMLElement;
+    const steps = [...rail.querySelectorAll('[data-part="rail-step"]')];
+    expect(steps).toHaveLength(3);
+    // the edges come from CSS on the rail's own children; the fold row (a button) is not counted
+    expect(rail.querySelector(":scope > .cb-rail-step:first-of-type")).toBe(steps[0]);
+    expect(rail.querySelector(":scope > .cb-rail-step:last-of-type")).toBe(steps[2]);
+    const sels = parseCss(css("conversation.css")).map((r) => r.selector);
+    expect(sels).toContain(".cb-rail-step:first-of-type::before");
+    expect(sels).toContain(".cb-rail-step:last-of-type::before");
+    expect(sels).toContain(".cb-rail-step:not(:last-of-type)");
+  });
+
+  it("rail steps sit space.1 apart by padding", () => {
+    const r = parseCss(css("conversation.css")).find(
+      (x) => x.selector === ".cb-rail-step:not(:last-of-type)",
     );
-    expect(one.container.querySelector('[data-part="rail-step"]')?.getAttribute("data-edge")).toBe(
-      "only",
-    );
+    expect(r?.decls["padding-bottom"]).toBe("var(--cb-space-1)");
   });
 
   it("a step draws its icon in the gutter: kind icon, image, dot, spinner, hand", () => {
