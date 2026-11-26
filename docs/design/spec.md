@@ -1747,12 +1747,12 @@ States: `markdown`, `streaming`, `file-chip`
 #### 6.16.5 Thinking row
 
 - Collapsed: a tool line "思考了 N 秒" / "Thought for N seconds" (seconds rounded) with a chevron; the whole line is the toggle.
-- Expanded: the thinking text below it in the prose font, `prose` size, `muted`, line breaks kept, `space.3` from a 2px `line` rule on its left.
+- Expanded: the thinking text below it in the prose font, `prose` size, `muted`, line breaks kept, `space.3` from a 2px `line` rule on its left. Inside a process rail (`inRail`, `data-in-rail="true"`) the rail is the rule: no left rule or padding and the text is `prose-small`.
 - Live: a `spinner` (16, like the tool rows'), "正在思考" / "Thinking" and the elapsed seconds in `faint`; the body streams with the cursor and cannot be collapsed until it ends.
 - Replaces §6.9's ThinkingRow.
 
 <!-- states: thinking-row -->
-States: `collapsed`, `expanded`, `live`
+States: `collapsed`, `expanded`, `live`, `in-rail`
 
 <!-- size-table: thinking-row -->
 | Part | State | Property | Value |
@@ -1766,6 +1766,10 @@ States: `collapsed`, `expanded`, `live`
 | thinking-body | expanded | padding-left | space.3 |
 | thinking-body | expanded | border-left-width | 2 |
 | thinking-body | expanded | border-left-color | color.line |
+| thinking-body | in-rail | font-size | type.prose-small |
+| thinking-body | in-rail | line-height | type.prose-small.line |
+| thinking-body | in-rail | padding-left | 0 |
+| thinking-body | in-rail | border-left-width | 0 |
 | spinner | live | color | color.accent |
 | spinner | live | width | space.4 |
 | cursor | live | width | space.2 |
@@ -1863,7 +1867,7 @@ States: `stopped`, `failed`, `compacted`, `compacted-open`, `fallback`, `hook-de
 - **Two or more consecutive calls** form a group: a header tool line (the summary) and, when open, the **tool box**: `panel` ground, radius `md`, `small` type, overflow hidden, one row per call, rows divided by `line-soft`. A finished group is collapsed by default; a running group is open and its header has no chevron.
 - **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in a fixed order (commands, background task reads, tools, reads, edits, as reference set B draws it); calls that returned an error add the error dot (§2.4) and their count in the header's own color, a space after the text, the dot and the count `space.1` apart ("已运行 2 个命令 •1"; part `tool-errors`; the dot's accessible name "N 个调用返回了错误" / "N calls returned an error" names it once, the visible count is hidden from assistive technology; only rows in the failed state: a non-zero exit, a guard refusal and a not-loaded notice are not errors, §6.16.9); guard refusals add "（N 个已拦下）" / " (N blocked)" in the header's own color; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner` (16), the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`; when every live call waits for a person (§6.16.9), no spinner and the waiting word in `accent` instead of the verb ("等待你回答 · 已完成 N 个").
 - **One call with a link** (§6.16.9): the tool line holds its toggle (the label and the chevron) and, after it, the link; the two are separate buttons.
-- Groups sit between prose and end at prose, a user message, a human-in-the-loop card, a sub-agent group or a divider. Pages never group calls themselves: `apps/web/src/lib/timeline.ts` turns events into groups.
+- A group is the unit inside a process block (§6.16.8a) where a burst of parallel calls is still useful; what ends a block is the process-blocks spec §1.2 (an answer, a user message, a sub-agent group, the end of the run), not "prose". Pages never group calls themselves: `apps/web/src/lib/timeline.ts` turns events into groups.
 
 <!-- states: tool-group -->
 States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `expanded`, `edited`, `linked`
@@ -1893,6 +1897,57 @@ States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `exp
 | tool-link | linked | color | color.muted |
 | tool-link | linked | font-size | type.small |
 
+#### 6.16.8a Process block
+
+One run's thinking, tool calls and narration drawn as one block (conversation process blocks spec §1.3, §3, §4; `ProcessBlock`, `RailStep`, `PendingActions`). No frame: the only boxes are an expanded tool box and the cards, never a box inside a box.
+
+- **Head** (part `process-head`, the polite live region; one tool line, `row.dense`, never wraps; the label ellipsizes before the status words, the error mark and the chevron; its text changes only when the current step changes, the elapsed time is hidden from assistive technology). **Running**: a `spinner` (16, `accent`), "正在运行 · <当前步骤>" / "Running · <step>" in `ink` (part `process-summary`) and the elapsed time at the end (`process-time`, `faint`, tabular, live form of `formatDuration`); no chevron. **Waiting**: `hand` in `accent` (16), the waiting words in `accent` (`process-waiting`), " · " and the step label, the elapsed time; no spinner, no chevron. **Finished**: up to six **kind chips** (`process-chip`: 20 circles, `panel` ground, `line-soft` border, 11 icon in `muted`, overlapping by 5, first-use order; each chip is an image named by its kind, with the same title), the summary in `muted` ("已处理 2 分 43 秒 · 待办 4/4 · 思考 4 次 · 12 个工具" / "Worked for 2m 43s · Todos 4/4 · Thought 4 times · 12 tools": the pinned card's title and badge when the run has one; zero thoughts or tools are left out; no time known: "已处理" / "Worked"), the error dot and count when a call returned an error (§2.4, §6.16.8, the dot named "N 个调用返回了错误"), and a chevron (`aria-expanded`, `aria-controls` the rail). **Stopped** / **failed**: the finished head plus the word "已停止" / "Stopped" in `muted` or "失败" / "Failed" in `fail` (`process-state-word`, never shrinks).
+- **Background tasks**: after a run ends with tasks still going, a `small` `faint` line "N 个后台任务仍在运行" / "N background tasks still running" under the head.
+- **Pinned card**: under the head, before the rail, `space.1` below it.
+- **Rail** (`process-rail`, open only; `space.1` under the head): one `rail-step` per step, a 20 `rail-gutter` (`row.dense` high) holding the step's icon (14, `faint`; a plugin's image 14; the `spinner` and `hand` in `accent`; narration a 5 `rail-dot` in `line-strong`) on a 1px `line` rule that runs from the first icon's centre to the last (drawn by the first and last `rail-step` among the rail's children, so steps must be the rail's direct DOM children; wrapper components may not add an element); steps sit `space.1` apart (padding, so the rule stays continuous). Narration text is `prose-small` `muted`; thinking rows draw `inRail` (§6.16.5), tool lines and rows expand in place as before. The rail never repeats the icon on the line itself.
+- **Fold row** (`process-fold`): "前 N 步" / "N earlier steps" in `faint` with `chevron-up` (12) in the gutter, above the first drawn step; it opens the earlier steps. A running block shows only its last four steps.
+- **Touch** (`MOBILE_SIZE_QUERY`): the head and the fold row are `touch.hit` high; the head stays one line, the label yields.
+- **Pending actions** (`pending-actions`): things that need the person without blocking the run (handoff links), one box (`raised` ground, 1px `line` border, radius `md`, `hidden` overflow), rows divided by `line-soft` hairlines, each an icon (14, `muted`), a title (`body`, 600, `ink`), an optional description (`small`, `muted`) and its action in `accent`: a link to the page where it is done, or a button that starts it in place (a connector connection; `busy` disables it, `faint`), drawn alike. With two or more items the box opens with "N 项需要你处理 · 不阻塞，我已继续" / "N things need you · not blocking, I carried on" (`pending-many`, `micro` `faint`); one item has no such line. Order outside the block: block, blocking cards, pending actions, files and edits, answer.
+- The tool line's key argument is `faint` in every row state (a running label turns `ink`, its key argument does not).
+
+<!-- states: process-block -->
+States: `running`, `waiting`, `finished`, `open`, `stopped`, `failed`, `pending`, `pending-many`
+
+<!-- size-table: process-block -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| tool-line | running | height | row.dense |
+| tool-line | running | font-size | type.small |
+| spinner | running | color | color.accent |
+| spinner | running | width | space.4 |
+| process-summary | running | color | color.ink |
+| process-time | running | color | color.faint |
+| process-waiting | waiting | color | color.accent |
+| tool-line | finished | height | row.dense |
+| process-summary | finished | color | color.muted |
+| process-chip | finished | width | 20 |
+| process-chip | finished | height | 20 |
+| process-chip | finished | background-color | color.panel |
+| process-chip | finished | border-top-color | color.line-soft |
+| error-dot | finished | background-color | color.fail |
+| rail-gutter | open | width | 20 |
+| rail-gutter | open | height | row.dense |
+| rail-step | open | padding-bottom | space.1 |
+| rail-dot | open | width | 5 |
+| rail-dot | open | background-color | color.line-strong |
+| key-arg | open | color | color.faint |
+| process-fold | open | color | color.faint |
+| process-state-word | stopped | color | color.muted |
+| process-state-word | failed | color | color.fail |
+| pending-actions | pending | background-color | color.raised |
+| pending-actions | pending | border-radius | radius.md |
+| pending-title | pending | color | color.ink |
+| pending-title | pending | font-size | type.body |
+| pending-desc | pending | color | color.muted |
+| pending-action | pending | color | color.accent |
+| pending-many | pending-many | color | color.faint |
+| pending-many | pending-many | font-size | type.micro |
+
 #### 6.16.9 Tool row
 
 A single tool line reserves its complete waiting state without shrinking or wrapping it. Long
@@ -1901,7 +1956,7 @@ widths; the disclosure chevron remains visible.
 
 
 - `row.dense` minimum height, padding `pad.default`, gap `space.2`, `small` `muted`; `hover` ground on hover (over `motion.hover`), a 1px `accent` outline at -1px on focus. A row with detail is a `button` with `aria-expanded` and a chevron at its end.
-- **Label** (one line, ellipsis), as the Claude Code VS Code extension draws it: the **name** in bold (600, the bold face; §2.2), then the key-argument preview (`muted`), then extra information after " · " (`faint`).
+- **Label** (one line, ellipsis), as the Claude Code VS Code extension draws it: the **name** in bold (600, the bold face; §2.2, `muted`), then the key-argument preview (`faint`), then extra information after " · " (`faint`).
   - **Name**: a builtin's tool name as is (`Bash`, `Read`, `Edit`, `Grep` …), untranslated, as a proper noun; a connector tool's connector display name, or an extension tool's plugin display name, followed by its local tool name in brackets (`Acme 工单 [search_tickets]`). The brackets show the local name, never the declared `title`: the title is the row's tooltip (`title` attribute).
   - **Preview**: a shell row (`Bash`) shows the `description` the model wrote; every other row its key argument: the tool's declared `keyArgs` (else the first string argument; Read / Write / Edit the path, Glob / Grep the pattern, Skill the skill). The preview is its first line, cut at 80 characters with "…".
   - Edits add "+a −b" as the extra, unless the edit could not be diffed (a `Write` over a binary or very large file: `truncated` without hunks), which shows no line counts and no diff.
@@ -1927,7 +1982,8 @@ States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `e
 | tool-row | default | font-size | type.small |
 | tool-row | default | color | color.muted |
 | tool-name | default | font-weight | 600 |
-| tool-name | default | color | color.ink |
+| tool-name | default | color | color.muted |
+| key-arg | default | color | color.faint |
 | tool-row[data-ref-forced=true] | hover | background-color | color.hover |
 | tool-row[data-ref-forced=true] | focus | outline-color | color.accent |
 | tool-row[data-ref-forced=true] | focus | outline-width | 1 |

@@ -800,6 +800,100 @@ describe("工具显示摘要", () => {
     ).not.toContain("card-key-zz");
   });
 
+  it("keeps placement and text of a pinned card", async () => {
+    const extra = { placement: "pinned", text: "Build is green" };
+    await send(
+      `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: extra })}`,
+      1,
+    );
+    const [r] = await results();
+    expect(r?.payload.card).toEqual({
+      plugin: "ui-probe",
+      view: "card",
+      key: "card-key-zz",
+      placement: "pinned",
+      text: "Build is green",
+    });
+  });
+
+  it("keeps a process placement and omits the default output placement", async () => {
+    await send(
+      `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: { placement: "process" } })}`,
+      1,
+    );
+    await send(
+      `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: { placement: "output" } })}`,
+      2,
+    );
+    const [p, o] = await results();
+    expect(p?.payload.card).toEqual({
+      plugin: "ui-probe",
+      view: "card",
+      key: "card-key-zz",
+      placement: "process",
+    });
+    expect(o?.payload.card).toEqual({ plugin: "ui-probe", view: "card", key: "card-key-zz" });
+  });
+
+  it("drops text unless pinned", async () => {
+    const extra = { placement: "process", text: "ignored" };
+    await send(
+      `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: extra })}`,
+      1,
+    );
+    const [r] = await results();
+    expect(r?.payload.card).toEqual({
+      plugin: "ui-probe",
+      view: "card",
+      key: "card-key-zz",
+      placement: "process",
+    });
+    expect(
+      lines.some(
+        (l) =>
+          l.includes('"warn"') &&
+          l.includes("inline card text without a pinned placement; text dropped"),
+      ),
+    ).toBe(true);
+  });
+
+  it("drops an unknown placement", async () => {
+    await send(
+      `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: { placement: "floating" } })}`,
+      1,
+    );
+    const [r] = await results();
+    expect(r?.payload.card).toEqual({ plugin: "ui-probe", view: "card", key: "card-key-zz" });
+    expect(
+      lines.some(
+        (l) =>
+          l.includes('"warn"') && l.includes("inline card with an unknown placement; using output"),
+      ),
+    ).toBe(true);
+  });
+
+  it("text over 2000 characters is dropped", async () => {
+    const extra = { placement: "pinned", text: "x".repeat(2001) };
+    await send(
+      `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: extra })}`,
+      1,
+    );
+    const [r] = await results();
+    expect(r?.payload.card).toEqual({
+      plugin: "ui-probe",
+      view: "card",
+      key: "card-key-zz",
+      placement: "pinned",
+    });
+    expect(
+      lines.some(
+        (l) =>
+          l.includes('"warn"') &&
+          l.includes("inline card text that is empty or too long; text dropped"),
+      ),
+    ).toBe(true);
+  });
+
   it("插件给的摘要不合法 → 丢弃并告警，结果照常写入", async () => {
     await send('tool:plugin__ui-probe__probe:{"bad":true}', 1);
     await send("tool:plugin__ui-probe__probe:{}", 2);

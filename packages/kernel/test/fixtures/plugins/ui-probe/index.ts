@@ -66,19 +66,27 @@ export default defineExtension({
         description: "Probe tool for display summaries.",
         inputSchema: {
           type: "object",
-          properties: { bad: { type: "boolean" }, card: { type: "string" } },
+          properties: {
+            bad: { type: "boolean" },
+            card: { type: "string" },
+            cardExtra: { type: "object" },
+          },
         },
         defaultPolicy: "allow",
       },
       async (input) => {
-        const { bad, card } = input as { bad?: boolean; card?: string };
+        const { bad, card, cardExtra } = input as {
+          bad?: boolean;
+          card?: string;
+          cardExtra?: Record<string, unknown>;
+        };
         return {
           content: [{ type: "text", text: "probed" }],
           display: bad
             ? ({ summary: { zh: "", en: "x" } } as never)
             : { summary: { zh: "探测完成", en: "Probe done" } },
           // an inline card under the call (display only); `card` names the view to show
-          ...(card !== undefined && { card: { view: card, key: "card-key-zz" } }),
+          ...(card !== undefined && { card: { view: card, key: "card-key-zz", ...cardExtra } }),
         };
       },
     );

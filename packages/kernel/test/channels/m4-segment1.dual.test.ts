@@ -261,6 +261,8 @@ describe("M4 第一段验收（双副本）", () => {
       plugin: "fake-im",
       name: "Acme Bot",
       agentId,
+      // the segment's streaming draft path; the progress card has its own tests
+      processDisplay: "off",
       config: { platformUrl: im.url, appId: "cli_acme", appSecret: "acme-secret-9a8b7c6d" },
     });
     expect(ch.status, JSON.stringify(ch.json)).toBe(201);

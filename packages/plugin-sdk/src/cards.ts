@@ -56,7 +56,42 @@ export type ChannelCard =
       textReply?: "plain" | "mention";
     }
   | { kind: "connect"; appName: string; url: string }
-  | { kind: "bind"; url: string; text: string };
+  | { kind: "bind"; url: string; text: string }
+  | {
+      /**
+       * One edited progress card per run (kernel-produced; the channel edits the same message in
+       * place). Sent natively only to a channel that declares `features.progress`; any other
+       * channel gets {@link renderCardAsText} of it as a text message, edited in place. The title,
+       * meta, pending texts and link text are written and localized by the kernel and rendered as
+       * is; `status` (model narration) and `pinned` (extension Markdown) are rendered as Markdown,
+       * like an answer; `steps` are built from tool labels that include model-written arguments,
+       * so {@link renderCardAsText} puts each one in a code span.
+       */
+      kind: "progress";
+      state: "running" | "waiting" | "finished" | "stopped" | "failed";
+      /** The headline, e.g. "Working", "Waiting for your approval", "Worked for 2m 43s". */
+      title: string;
+      /** A short detail after the title, e.g. "Elapsed 0:42" or "Todo 4/4 · 12 tools". */
+      meta?: string;
+      /**
+       * The latest model narration, its first line (cut short without breaking Markdown syntax):
+       * model-written Markdown, rendered like an answer.
+       */
+      status?: string;
+      /** The pinned card's Markdown text (a plan or todo list), written by an extension. */
+      pinned?: string;
+      /** The latest steps, at most 3, oldest first. May hold model-written arguments: plain text. */
+      steps: string[];
+      /**
+       * Approvals or questions waiting on the person, each with its web link. `text` is the
+       * kernel-written, localized handoff title (not model text), so it is rendered as is.
+       */
+      pending: { text: string; url: string }[];
+      /** The run on the web. */
+      url: string;
+      /** The link text for `url`, e.g. "See the full process on the web". */
+      urlText: string;
+    };
 
 /**
  * A user action on an IM card, parsed by the channel plugin and handed to the kernel through an
@@ -97,7 +132,8 @@ export function questionRenderableInline(form: InputForm, opts?: { textReply?: b
   return f.multiSelect ? n <= MAX_INLINE_MULTI : n <= MAX_INLINE_SINGLE;
 }
 
-const KINDS = ["approval", "question", "connect", "bind"] as const;
+const KINDS = ["approval", "question", "connect", "bind", "progress"] as const;
+const PROGRESS_STATES = ["running", "waiting", "finished", "stopped", "failed"] as const;
 const SCOPES = ["once", "session", "always"] as const;
 const APPROVAL_STATES = [
   "pending",
@@ -197,6 +233,35 @@ export function validateChannelCard(card: unknown): string[] {
       url("url");
       nonEmpty("text");
       return out;
+    case "progress": {
+      nonEmpty("title");
+      nonEmpty("urlText");
+      optNonEmpty("meta");
+      optNonEmpty("status");
+      optNonEmpty("pinned");
+      oneOf("state", PROGRESS_STATES);
+      url("url");
+      if (
+        !Array.isArray(c.steps) ||
+        c.steps.length > 3 ||
+        c.steps.some((x) => typeof x !== "string")
+      )
+        out.push("steps must be an array of at most 3 strings");
+      const p = c.pending;
+      if (
+        !Array.isArray(p) ||
+        p.some(
+          (x) =>
+            typeof x !== "object" ||
+            x === null ||
+            typeof x.text !== "string" ||
+            x.text === "" ||
+            !isHttpUrl(x.url),
+        )
+      )
+        out.push("pending must be an array of { text, url } with an http(s) url");
+      return out;
+    }
     default:
       return [`kind must be one of ${list(KINDS)}`];
   }
@@ -377,5 +442,14 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
       return `${t.connect(card.appName)}\n${line(t.connectLink, card.url)}`;
     case "bind":
       return `${card.text}\n${card.url}`;
+    case "progress":
+      return [
+        card.meta ? `${card.title} · ${card.meta}` : card.title,
+        ...(card.status ? [card.status] : []),
+        ...(card.pinned ? [card.pinned] : []),
+        ...card.steps.map((s) => withCode("- ", asCode(s))),
+        ...card.pending.map((p) => `[${p.text}](${p.url})`),
+        `[${card.urlText}](${card.url})`,
+      ].join("\n");
   }
 }

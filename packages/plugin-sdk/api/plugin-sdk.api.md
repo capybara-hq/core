@@ -298,6 +298,9 @@ export interface CapybaraShell {
 }
 
 // @public
+export const CARD_TEXT_MAX = 2000;
+
+// @public
 export interface CardAction {
     action: "approve" | "deny" | "answer";
     answer?: FormAnswer;
@@ -320,6 +323,7 @@ export interface Channel {
         cards: boolean;
         edit: boolean;
         threads: boolean;
+        progress?: boolean;
         minEditIntervalMs?: number;
         files?: {
             maxBytes: number;
@@ -384,6 +388,20 @@ export type ChannelCard = {
     kind: "bind";
     url: string;
     text: string;
+} | {
+    kind: "progress";
+    state: "running" | "waiting" | "finished" | "stopped" | "failed";
+    title: string;
+    meta?: string;
+    status?: string;
+    pinned?: string;
+    steps: string[];
+    pending: {
+        text: string;
+        url: string;
+    }[];
+    url: string;
+    urlText: string;
 };
 
 // @public
@@ -4940,6 +4958,8 @@ export interface ToolResult {
     card?: {
         view: string;
         key?: string;
+        placement?: "output" | "pinned" | "process";
+        text?: string;
     };
     content: ToolContent[];
     display?: ToolDisplay;

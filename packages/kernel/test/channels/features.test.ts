@@ -1,6 +1,11 @@
 import { type ChannelCard, renderCardAsText } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { adaptTarget, adaptToFeatures } from "../../src/channels/features.js";
+import {
+  adaptTarget,
+  adaptToFeatures,
+  processDisplayOf,
+  progressCardMessage,
+} from "../../src/channels/features.js";
 
 const bind: ChannelCard = { kind: "bind", url: "https://cap.example/bind/x", text: "Link it" };
 const connect: ChannelCard = { kind: "connect", appName: "Docs", url: "https://cap.example/c" };
@@ -73,5 +78,54 @@ describe("adaptTarget", () => {
       chatType: "group",
     });
     expect(adaptTarget(all, target)).toBe(target);
+  });
+});
+
+describe("processDisplayOf", () => {
+  it("a stored setting wins over the chat type", () => {
+    expect(processDisplayOf("off", "dm")).toBe("off");
+    expect(processDisplayOf("detailed", "group")).toBe("detailed");
+  });
+
+  it("no setting: direct chats default to detailed, group chats to brief", () => {
+    expect(processDisplayOf(null, "dm")).toBe("detailed");
+    expect(processDisplayOf(null, "group")).toBe("brief");
+  });
+});
+
+describe("progressCardMessage", () => {
+  const card: Extract<ChannelCard, { kind: "progress" }> = {
+    kind: "progress",
+    state: "running",
+    title: "Working",
+    meta: "Elapsed 0:12",
+    status: "Reading **files**",
+    steps: ["Bash: ls"],
+    pending: [],
+    url: "https://cap.example/chat/c1",
+    urlText: "See the full process on the web",
+  };
+
+  it("a channel declaring features.progress gets the native card", () => {
+    expect(progressCardMessage({ ...all, progress: true }, card, "en")).toEqual({
+      text: "Working",
+      cards: [card],
+    });
+  });
+
+  it("any other channel gets the card's text, without cards", () => {
+    for (const features of [
+      all,
+      { ...all, progress: false },
+      { ...all, cards: false },
+      // progress without cards: the text once, no title repeated before it
+      { ...all, cards: false, progress: true },
+    ]) {
+      const m = progressCardMessage(features, card, "zh");
+      expect(m).toEqual({ text: renderCardAsText(card, "zh") });
+      // what the channel finally gets after the features adaptation: the title once
+      const sent = adaptToFeatures(features, target, m, "zh").message.text;
+      expect(sent.split("Working").length - 1).toBe(1);
+    }
   });
 });

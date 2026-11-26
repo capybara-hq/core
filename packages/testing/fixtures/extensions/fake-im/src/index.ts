@@ -117,6 +117,7 @@ export default defineExtension({
           cards: true,
           edit: true,
           threads: true,
+          progress: true,
           files: { maxBytes: 20_971_520, imageMaxBytes: 10_485_760 },
         },
         { webhook: true },

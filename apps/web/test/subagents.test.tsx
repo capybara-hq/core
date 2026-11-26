@@ -509,7 +509,8 @@ describe("sub-agents on the conversation page", () => {
     expect(await within(panel).findByText("All tests pass.")).toBeTruthy();
     // one live thread: the panel's record does not announce (I2)
     expect(within(panel).getByRole("log").getAttribute("aria-live")).toBe("off");
-    expect(panel.querySelector('[data-entry="tools"]')?.getAttribute("data-tool-keys")).toBe(
+    // its calls are steps of a process block, which names their tools
+    expect(panel.querySelector('[data-entry="process"]')?.getAttribute("data-tool-keys")).toBe(
       "Bash",
     );
     // no read-only copy (AC1); no composer inside, the child's own stream

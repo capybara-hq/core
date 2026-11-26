@@ -11,10 +11,18 @@ export type ThinkingRowProps = {
   live?: boolean;
   /** Starts expanded (finished rows only). */
   defaultOpen?: boolean;
+  /** Drawn inside a process rail: no left rule on the body, prose-small text. */
+  inRail?: boolean;
 };
 
 /** A thinking row (§6.16.5): a tool line "Thought for N seconds" that opens the thinking text. */
-export function ThinkingRow({ seconds, text, live, defaultOpen }: ThinkingRowProps): JSX.Element {
+export function ThinkingRow({
+  seconds,
+  text,
+  live,
+  defaultOpen,
+  inRail,
+}: ThinkingRowProps): JSX.Element {
   const t = useDesignT();
   const locale = useDesignLocale();
   const [open, setOpen] = useState(defaultOpen === true);
@@ -22,7 +30,7 @@ export function ThinkingRow({ seconds, text, live, defaultOpen }: ThinkingRowPro
   const n = seconds === null ? null : Math.max(0, Math.round(seconds));
   if (live) {
     return (
-      <div className="cb-thinking-row">
+      <div className="cb-thinking-row" data-in-rail={inRail ? "true" : undefined}>
         <div className="cb-tool-line" data-part="tool-line">
           <Spinner size={16} />
           <span className="cb-tool-label">
@@ -47,7 +55,7 @@ export function ThinkingRow({ seconds, text, live, defaultOpen }: ThinkingRowPro
         : t("conv.thoughtFor").replace("{n}", String(n));
   if (text === "") {
     return (
-      <div className="cb-thinking-row">
+      <div className="cb-thinking-row" data-in-rail={inRail ? "true" : undefined}>
         <div className="cb-tool-line" data-part="tool-line">
           <span className="cb-tool-label">{title}</span>
         </div>
@@ -55,7 +63,7 @@ export function ThinkingRow({ seconds, text, live, defaultOpen }: ThinkingRowPro
     );
   }
   return (
-    <div className="cb-thinking-row">
+    <div className="cb-thinking-row" data-in-rail={inRail ? "true" : undefined}>
       <button
         type="button"
         className="cb-tool-line"

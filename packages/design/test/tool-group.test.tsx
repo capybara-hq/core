@@ -141,6 +141,13 @@ describe("summarizeTools: background task reads (§7 task row)", () => {
 });
 
 describe("ToolRow (§6.16.9)", () => {
+  it("tool name is muted 600 and the key argument faint (the lighter process tier)", () => {
+    const name = rule(css, ".cb-tool-name");
+    expect(name).toContain("color: var(--cb-muted)");
+    expect(name).toContain("font-weight: 600");
+    expect(rule(css, '.cb-tool-row [data-part="key-arg"]')).toContain("color: var(--cb-faint)");
+  });
+
   it("a connector row: bold display name and [tool], the title as tooltip, then the key argument", () => {
     const { container } = wrap(<ToolRow row={row({ tooltip: "搜索工单", keyArg: "#反馈" })} />);
     const r = container.querySelector('[data-part="tool-row"]') as HTMLElement;

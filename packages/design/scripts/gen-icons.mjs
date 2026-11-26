@@ -32,6 +32,8 @@ const ICONS = {
   home: "house",
   agent: "bot",
   skills: "sparkles",
+  lightbulb: "lightbulb",
+  terminal: "terminal",
   inbox: "inbox",
   connector: "plug",
   catalog: "library",

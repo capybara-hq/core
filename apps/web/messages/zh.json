@@ -1466,6 +1466,26 @@
     }
   },
   "chat": {
+    "process": {
+      "thinking": "思考中",
+      "waiting": "等待你处理",
+      "subagent": "子智能体",
+      "subagentTools": "{n} 个工具",
+      "openSubagent": "打开",
+      "kind": {
+        "thinking": "思考",
+        "terminal": "命令",
+        "file-text": "读取",
+        "square-pen": "编辑",
+        "search": "搜索",
+        "globe": "网页",
+        "skills": "技能",
+        "agent": "子智能体",
+        "list-checks": "待办",
+        "connector": "连接器",
+        "extension": "扩展"
+      }
+    },
     "waitingFor": {
       "role": {
         "guest": "访客",
@@ -2972,6 +2992,14 @@
     "inboundModeHint": {
       "long_connection": "机器人与平台保持一条连接（默认，无需公网地址）。",
       "webhook": "平台每个事件都回调本部署，需要公网地址。"
+    },
+    "processDisplayLabel": "过程显示",
+    "processDisplayHint": "单聊默认详细，群聊默认简洁。",
+    "processDisplay": {
+      "default": "默认",
+      "detailed": "详细",
+      "brief": "简洁",
+      "off": "关闭"
     },
     "tabs": {
       "all": "全部",

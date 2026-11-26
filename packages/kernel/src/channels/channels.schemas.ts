@@ -3,6 +3,11 @@ import type { RouteSchemas } from "../platform/route-schemas.js";
 
 const Config = z.record(z.string().max(200), z.unknown());
 const Policy = z.enum(["bind", "anonymous"]);
+/**
+ * How the channel shows a run's process (one edited progress card per run); null = the default by
+ * chat type (direct chats detailed, group chats brief).
+ */
+const ProcessDisplay = z.enum(["detailed", "brief", "off"]).nullable().optional();
 
 export const ChannelCreateSchema = z
   .object({
@@ -13,6 +18,7 @@ export const ChannelCreateSchema = z
     unboundPolicy: Policy.optional(),
     // default long_connection; webhook needs plugin support and channels.webhookBaseUrl (409)
     inboundMode: z.enum(["long_connection", "webhook"]).optional(),
+    processDisplay: ProcessDisplay,
   })
   .strict();
 
@@ -24,6 +30,7 @@ export const ChannelPatchSchema = z
     status: z.enum(["active", "disabled"]).optional(),
     // webhook needs plugin support and channels.webhookBaseUrl (409 channel.webhook_unavailable)
     inboundMode: z.enum(["long_connection", "webhook"]).optional(),
+    processDisplay: ProcessDisplay,
     config: Config.optional(),
   })
   .strict();

@@ -3,11 +3,12 @@ import { expect, type Page, test } from "@playwright/test";
 import {
   composer,
   expectGroupAllOn,
+  expectToolStatus,
   newAgent,
   openAgentSection,
+  openProcessBlocks,
   replies,
   startChat,
-  toolGroup,
 } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
@@ -109,7 +110,9 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
   await expect(approval).toHaveCount(1);
   await expect(approval.locator('[data-part="tool-key"]')).toHaveText("mcp__pets__createPet");
   await approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
-  await expect(approval.getByText(/批准了/)).toBeVisible();
-  await expect(toolGroup(page, "mcp__pets__createPet")).toHaveAttribute("data-tool-status", "done");
+  await expectToolStatus(page, "mcp__pets__createPet", "done");
   await expect(replies(page).last()).toHaveText(/"name":\s*"Rex"/);
+  // the decided card is a rail step of the (finished, closed) process block
+  await openProcessBlocks(page);
+  await expect(approval.getByText(/批准了/)).toBeVisible();
 });

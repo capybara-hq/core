@@ -353,6 +353,76 @@ describe("渠道连接 HTTP", () => {
     expect((await owner({ method: "DELETE", url: `${base()}/${id}` })).statusCode).toBe(204);
   });
 
+  it("update stores processDisplay and returns it", async () => {
+    const res = await owner({ method: "POST", url: base(), payload: body() });
+    expect(res.statusCode, res.body).toBe(201);
+    const id = (res.json() as { channel: { id: string; processDisplay: unknown } }).channel.id;
+    // no setting yet: the default by chat type
+    expect((res.json() as { channel: { processDisplay: unknown } }).channel.processDisplay).toBe(
+      null,
+    );
+    const patched = await owner({
+      method: "PATCH",
+      url: `${base()}/${id}`,
+      payload: { processDisplay: "brief" },
+    });
+    expect(patched.statusCode, patched.body).toBe(200);
+    expect(patched.json()).toMatchObject({ channel: { processDisplay: "brief" } });
+    const got = await owner({ method: "GET", url: `${base()}/${id}` });
+    expect(got.json()).toMatchObject({ channel: { processDisplay: "brief" } });
+    const row = await db
+      .selectFrom("channel_connections")
+      .select("process_display")
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row.process_display).toBe("brief");
+    const bad = await owner({
+      method: "PATCH",
+      url: `${base()}/${id}`,
+      payload: { processDisplay: "verbose" },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect((await owner({ method: "DELETE", url: `${base()}/${id}` })).statusCode).toBe(204);
+  });
+
+  it("null resets to the default", async () => {
+    const res = await owner({
+      method: "POST",
+      url: base(),
+      payload: body({ processDisplay: "off" }),
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const ch = (res.json() as { channel: { id: string; processDisplay: unknown } }).channel;
+    expect(ch.processDisplay).toBe("off");
+    const reset = await owner({
+      method: "PATCH",
+      url: `${base()}/${ch.id}`,
+      payload: { processDisplay: null },
+    });
+    expect(reset.statusCode, reset.body).toBe(200);
+    expect(reset.json()).toMatchObject({ channel: { processDisplay: null } });
+    const row = await db
+      .selectFrom("channel_connections")
+      .select("process_display")
+      .where("id", "=", ch.id)
+      .executeTakeFirstOrThrow();
+    expect(row.process_display).toBeNull();
+    // a PATCH without the field keeps it
+    const off = await owner({
+      method: "PATCH",
+      url: `${base()}/${ch.id}`,
+      payload: { processDisplay: "off" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    const renamed = await owner({
+      method: "PATCH",
+      url: `${base()}/${ch.id}`,
+      payload: { name: "Renamed" },
+    });
+    expect(renamed.json()).toMatchObject({ channel: { processDisplay: "off" } });
+    expect((await owner({ method: "DELETE", url: `${base()}/${ch.id}` })).statusCode).toBe(204);
+  });
+
   it("组织设置带 locale（默认 en，可改为 zh）", async () => {
     const get = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/settings` });
     expect(get.json()).toMatchObject({ settings: { locale: "en" } });

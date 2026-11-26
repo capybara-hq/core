@@ -270,6 +270,10 @@ export const CHANNEL_PHRASES = {
    * link line follows it.
    */
   fileRoot: { zh: "文件 {name}：", en: "File {name}:" },
+  /** A run started, on a channel that cannot edit messages (no progress card, spec §6.2). */
+  runStarted: { zh: "已开始处理", en: "Working on it" },
+  /** The merged message of a run's handoff links after its answer (`{n}`: how many). */
+  handoffs: { zh: "需要你处理（{n}）", en: "Needs your action ({n})" },
   /** 运行被中止（收尾挂着的草稿时附在已有文本之后）。 */
   runStopped: { zh: "已停止。", en: "Stopped." },
   /** 运行失败。 */

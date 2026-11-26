@@ -25,6 +25,14 @@ import { named, orElse } from "./summary.js";
 
 const PAGE = 50;
 
+/** A process display setting as the confirmation summary names it; null is the default. */
+const PROCESS_DISPLAY_LABELS = {
+  zh: { detailed: "详细", brief: "简洁", off: "关闭", default: "默认" },
+  en: { detailed: "Detailed", brief: "Brief", off: "Off", default: "Default" },
+} as const;
+const processLabel = (v: "detailed" | "brief" | "off" | null, lang: "zh" | "en") =>
+  PROCESS_DISPLAY_LABELS[lang][v ?? "default"];
+
 /**
  * A connection as the tool shows it: the settings an admin sees on the channels page. The
  * non-secret config and whether each secret is set, never a secret value (the service view holds
@@ -38,6 +46,7 @@ const detail = (c: ChannelConnectionView) => ({
   status: c.status,
   unboundPolicy: c.unboundPolicy,
   inboundMode: c.inboundMode,
+  processDisplay: c.processDisplay,
   webhookSupported: c.webhookSupported,
   webhookUrl: c.webhookUrl,
   lastError: c.lastError,
@@ -152,7 +161,7 @@ export class ChannelsOperations implements OnModuleInit {
       defineOperation({
         id: "channels.create",
         description:
-          "Create a channel connection (IM bot) in the org (org admins): plugin, name, the agent that answers (agentId) and values, the non-secret connection config (read the fields with channels.schema). Secret fields (app secrets, tokens) are never in values: list them in askPerson and the person types them in a secure input request (on the web); required secrets are asked even when not listed. The plugin verifies the credentials before anything is saved. Turn on webhook inbound with inboundMode webhook (only where supported); a setup guide, if any, is in channels.schema.",
+          "Create a channel connection (IM bot) in the org (org admins): plugin, name, the agent that answers (agentId) and values, the non-secret connection config (read the fields with channels.schema). Secret fields (app secrets, tokens) are never in values: list them in askPerson and the person types them in a secure input request (on the web); required secrets are asked even when not listed. The plugin verifies the credentials before anything is saved. Turn on webhook inbound with inboundMode webhook (only where supported). processDisplay sets how runs show their process in the chat (detailed, brief or off; omit for the default: detailed in direct chats, brief in groups). A setup guide, if any, is in channels.schema.",
         input: z
           .object({
             plugin: ChannelCreateSchema.shape.plugin,
@@ -161,6 +170,7 @@ export class ChannelsOperations implements OnModuleInit {
             values: ChannelCreateSchema.shape.config,
             unboundPolicy: ChannelCreateSchema.shape.unboundPolicy,
             inboundMode: ChannelCreateSchema.shape.inboundMode,
+            processDisplay: ChannelCreateSchema.shape.processDisplay,
             askPerson: personFieldParams.askPerson,
           })
           .strict(),
@@ -235,12 +245,16 @@ export class ChannelsOperations implements OnModuleInit {
             keys.length > 0 && `设置 ${keys.join("、")}`,
             ask.length > 0 && `由本人填写 ${ask.map(named).join("、")}`,
             i.inboundMode === "webhook" && "入站方式：webhook",
+            typeof i.processDisplay === "string" &&
+              `过程显示：${processLabel(i.processDisplay, "zh")}`,
           ].filter((p): p is string => typeof p === "string");
           const en = [
             `Create channel connection "${named(i.name)}" with plugin ${named(i.plugin)}, answered by agent ${named(i.agentId)}`,
             keys.length > 0 && `sets ${keys.join(", ")}`,
             ask.length > 0 && `the person enters ${ask.map(named).join(", ")}`,
             i.inboundMode === "webhook" && "inbound mode: webhook",
+            typeof i.processDisplay === "string" &&
+              `process display: ${processLabel(i.processDisplay, "en")}`,
           ].filter((p): p is string => typeof p === "string");
           return { zh: zh.join("；"), en: en.join("; ") };
         },
@@ -255,6 +269,7 @@ export class ChannelsOperations implements OnModuleInit {
                 config: nestedConfig(input.values, entered, []),
                 unboundPolicy: input.unboundPolicy,
                 inboundMode: input.inboundMode,
+                processDisplay: input.processDisplay,
               },
               ctx.actorAccountId,
               undefined,
@@ -350,7 +365,7 @@ export class ChannelsOperations implements OnModuleInit {
       defineOperation({
         id: "channels.update",
         description:
-          "Change a channel connection's binding (org admins): its name, the agent that answers (agentId), what happens to people not yet bound to an account (unboundPolicy: bind or anonymous), active or disabled, and the inbound mode. Give only what changes. Credentials and config are changed on the web.",
+          "Change a channel connection's binding (org admins): its name, the agent that answers (agentId), what happens to people not yet bound to an account (unboundPolicy: bind or anonymous), active or disabled, the inbound mode, and how runs show their process in the chat (processDisplay: detailed, brief or off; null for the default, detailed in direct chats and brief in groups). Give only what changes. Credentials and config are changed on the web.",
         input: ChannelPatchSchema.omit({ config: true })
           .extend(ChannelPathParams.shape)
           .strict()
@@ -360,8 +375,11 @@ export class ChannelsOperations implements OnModuleInit {
               i.agentId !== undefined ||
               i.unboundPolicy !== undefined ||
               i.status !== undefined ||
-              i.inboundMode !== undefined,
-            { message: "give name, agentId, unboundPolicy, status or inboundMode" },
+              i.inboundMode !== undefined ||
+              i.processDisplay !== undefined,
+            {
+              message: "give name, agentId, unboundPolicy, status, inboundMode or processDisplay",
+            },
           ),
         example: { connectionId: "00000000-0000-4000-8000-000000000000", status: "disabled" },
         authz: { orgAction: "channels.manage" },
@@ -397,9 +415,13 @@ export class ChannelsOperations implements OnModuleInit {
             i.status !== undefined && `status → ${i.status}`,
             i.inboundMode !== undefined && `inbound mode → ${i.inboundMode}`,
           ].filter((p): p is string => typeof p === "string");
+          const pd = i.processDisplay;
+          const zh = pd === undefined ? parts : [...parts, `过程显示 → ${processLabel(pd, "zh")}`];
+          const en =
+            pd === undefined ? parts : [...parts, `process display → ${processLabel(pd, "en")}`];
           return {
-            zh: `修改渠道连接「${name}」：${parts.join("，")}`,
-            en: `Update channel connection "${name}": ${parts.join(", ")}`,
+            zh: `修改渠道连接「${name}」：${zh.join("，")}`,
+            en: `Update channel connection "${name}": ${en.join(", ")}`,
           };
         },
         run: async (input, ctx) => {

@@ -2,11 +2,11 @@ import { expect, type Page, test } from "@playwright/test";
 import {
   composer,
   designZh,
+  expectToolStatus,
   newAgent,
   openAgentSection,
   replies,
   startChat,
-  toolGroup,
   zh,
 } from "./support/chat";
 import { selectOption } from "./support/select";
@@ -122,11 +122,10 @@ test("web tools: two providers → default provider per point → WebFetch in th
   for (const key of ["hitl.approve", "hitl.approveSession", "hitl.approveAlways"]) {
     await expect(approval.getByRole("button", { name: designZh(key), exact: true })).toBeVisible();
   }
-  const tool = toolGroup(page, "WebFetch");
-  await expect(tool).toHaveAttribute("data-tool-status", "pending");
+  await expectToolStatus(page, "WebFetch", "pending");
 
   // 5. Approve once: the tool runs on the default provider (fake-web) and the run continues
   await approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
-  await expect(tool).toHaveAttribute("data-tool-status", "done");
+  await expectToolStatus(page, "WebFetch", "done");
   await expect(replies(page).last()).toHaveText(/Tool result:/);
 });

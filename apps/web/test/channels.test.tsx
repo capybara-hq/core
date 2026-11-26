@@ -72,6 +72,7 @@ const CHANNEL = {
   unboundPolicy: "bind",
   status: "error",
   inboundMode: "long_connection",
+  processDisplay: null,
   webhookSupported: true,
   webhookUrl: "https://hooks.example/channels/webhook/ch1",
   lastError: "connect failed with status 503",
@@ -639,6 +640,38 @@ describe("渠道连接详情（DetailPage）", () => {
     await user.click(within(dialog).getByRole("button", { name: d.delete }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/channels"));
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+  });
+
+  it("saves the process setting", async () => {
+    const calls = routes({
+      [`PATCH ${BASE}/channels/ch1`]: (c) =>
+        json(200, { channel: { ...CHANNEL, ...(bodyOf(c) as object) } }),
+    });
+    await renderDetail();
+    const d = en.channels.detail;
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: d.tabs.settings }));
+    // no setting yet: the default, explained by the hint
+    expect(screen.getByText(en.channels.processDisplayHint)).toBeTruthy();
+    const select = screen.getByRole("combobox", { name: en.channels.processDisplayLabel });
+    expect(select.textContent).toContain(en.channels.processDisplay.default);
+    await pickOption(select, en.channels.processDisplay.off, user);
+    await user.click(screen.getByRole("button", { name: d.save }));
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ processDisplay: "off" }),
+    );
+    // back to the default clears the setting
+    await pickOption(
+      await screen.findByRole("combobox", { name: en.channels.processDisplayLabel }),
+      en.channels.processDisplay.default,
+      user,
+    );
+    await user.click(screen.getByRole("button", { name: d.save }));
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({
+        processDisplay: null,
+      }),
+    );
   });
 });
 

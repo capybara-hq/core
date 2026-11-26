@@ -33,9 +33,60 @@ export const users = (page: Page): Locator =>
   page.locator('[data-entry="user"] [data-part="bubble"]');
 export const replies = (page: Page): Locator =>
   page.locator('[data-entry="prose"] [data-part="prose"]');
-/** The tool group that holds a call of `key`. */
-export const toolGroup = (page: Page, key: string): Locator =>
-  page.locator(`[data-entry="tools"][data-tool-keys~="${key}"]`);
+/**
+ * The process block that holds the latest call of `key` (a run's thinking, narration and tool
+ * calls are one block; its `data-tool-keys` lists the block's calls, open or closed).
+ */
+export const toolGroup = (page: Page | Locator, key: string): Locator =>
+  page.locator(`[data-entry="process"][data-tool-keys~="${key}"]`).last();
+
+/**
+ * Waits for the latest call of `key` to reach `status`. Read from its block's `data-tool-calls`
+ * (`<key>:<status>` per call, in log order), so it holds while the block is closed.
+ */
+export async function expectToolStatus(page: Page | Locator, key: string, status: string) {
+  const k = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  await expect(toolGroup(page, key)).toHaveAttribute(
+    "data-tool-calls",
+    new RegExp(`(?:^| )${k}:${status}(?!.*(?:^| )${k}:)`),
+  );
+}
+
+/**
+ * The rail step that holds the latest call of `key` (its tool line, input and output), once the
+ * run settled: a finished block is closed, so its head is opened first.
+ */
+export async function toolStep(page: Page | Locator, key: string): Promise<Locator> {
+  const block = toolGroup(page, key);
+  await expect(block).toHaveAttribute("data-state", /^(finished|stopped|failed)$/);
+  const closed = block.locator('[data-part="process-head"] button[aria-expanded="false"]');
+  if ((await closed.count()) > 0) await closed.click();
+  return block.locator(`[data-tool-step-keys~="${key}"]`).last();
+}
+
+/**
+ * Waits until no process block runs or waits, then opens every closed one. A decided approval,
+ * question or connect is a rail step of its block, and a finished block is closed (process blocks
+ * spec §4): call this after the reply that ends the run, before asserting on decided cards.
+ */
+export async function openProcessBlocks(page: Page): Promise<void> {
+  await expect(
+    page.locator(
+      '[data-entry="process"][data-state="running"], [data-entry="process"][data-state="waiting"]',
+    ),
+  ).toHaveCount(0);
+  const heads = page.locator(
+    '[data-entry="process"] [data-part="process-head"] button[aria-expanded]',
+  );
+  const n = await heads.count();
+  for (let i = 0; i < n; i++) {
+    const head = heads.nth(i);
+    if ((await head.getAttribute("aria-expanded")) === "false") {
+      await head.click();
+      await expect(head).toHaveAttribute("aria-expanded", "true");
+    }
+  }
+}
 
 /**
  * Opens a new conversation with the agent from the Agents list (its card's primary 开始会话, a

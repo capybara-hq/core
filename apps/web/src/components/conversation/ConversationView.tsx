@@ -22,6 +22,7 @@ import { Link } from "../../i18n/navigation";
 import { avatarValue } from "../../lib/agents";
 import { compactConversation, type ModelRef, type ProjectState } from "../../lib/conversations";
 import { canEditAgent } from "../../lib/org-settings";
+import { groupProcess } from "../../lib/process";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
@@ -318,6 +319,9 @@ export function useConversationPage(
     [conv.events, info, locale, conv.state.progress, views, whoWaits, tree, backgroundTasks],
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
+  // the thread draws a run's process as one block (process blocks spec §1); the right area reads
+  // the timeline itself
+  const threadEntries = useMemo(() => groupProcess(entries), [entries]);
   const pending = usePendingSends(conv.events);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
@@ -548,7 +552,7 @@ export function useConversationPage(
         <Thread
           orgId={orgId}
           conversationId={conversationId}
-          entries={entries}
+          entries={threadEntries}
           info={info}
           reasoningOf={selection.reasoningOf}
           compaction={conv.compaction}

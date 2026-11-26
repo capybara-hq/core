@@ -367,8 +367,18 @@ type EventBody =
         display?: ToolDisplay;
         /** Structured view of a builtin's result (display only). */
         view?: ToolView;
-        /** An inline card under the call (an `inline` ui contribution of the tool's extension). */
-        card?: { plugin: string; view: string; key?: string };
+        /**
+         * An inline card under the call (an `inline` ui contribution of the tool's extension).
+         * `placement` is absent for `output` (the default); `text` is a pinned card's Markdown
+         * for channels (process blocks spec §5).
+         */
+        card?: {
+          plugin: string;
+          view: string;
+          key?: string;
+          placement?: "pinned" | "process";
+          text?: string;
+        };
         /** The command review's decision on the call (auto mode spec §5.4; display only). */
         review?: ReviewRecord;
         /**
@@ -1232,11 +1242,30 @@ export const listQueue = (orgId: string, id: string) =>
 export const resumeQueue = (orgId: string, id: string) =>
   apiFetch<Record<string, never>>(`${one(orgId, id)}/queue/resume`, { method: "POST" });
 
+/** A step's icon (kernel `ToolIcon`): a named design icon, or a catalog item's icon. */
+export type ToolIcon =
+  | {
+      kind: "name";
+      name:
+        | "terminal"
+        | "file-text"
+        | "square-pen"
+        | "search"
+        | "globe"
+        | "skills"
+        | "agent"
+        | "list-checks"
+        | "connector"
+        | "extension";
+    }
+  | { kind: "catalog"; itemId: string };
+
 /** Display metadata of a tool (kernel `ToolInfo`). */
 export interface ToolInfo {
   key: string;
   title: string | null;
   kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "task" | "tool";
+  icon: ToolIcon;
   /** True exactly for the builtin tools that run in the conversation's sandbox. */
   sandbox: boolean;
   keyArgs: string[];

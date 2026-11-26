@@ -7,7 +7,7 @@ import {
   openConversation,
   replies,
   send,
-  toolGroup,
+  toolStep,
   users,
   zh,
 } from "./support/chat";
@@ -53,7 +53,7 @@ test("background Bash: the running task, its output, the finished notice and the
   // the launch returns at once: the reply quotes the launch result
   await expect(replies(page)).toHaveCount(1);
   await expect(replies(page).first()).toContainText("Started background task");
-  await expect(toolGroup(page, "Bash")).toContainText(zh.background.inBackground);
+  await expect(await toolStep(page, "Bash")).toContainText(zh.background.inBackground);
 
   // 1. the background section lists the running task with its stop button
   await expect(props.getByText(zh.subagents.background, { exact: true })).toBeVisible();

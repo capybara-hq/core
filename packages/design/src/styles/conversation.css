@@ -323,6 +323,13 @@ button.cb-tool-line:focus-visible {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Inside a process rail the rail is the rule: no left border, prose-small text. */
+.cb-thinking-row[data-in-rail="true"] .cb-thinking-body {
+  padding-left: 0;
+  border-left: 0;
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
 
 /* ── User bubble ── */
 
@@ -884,8 +891,17 @@ button.cb-tool-row {
   outline-offset: -1px;
 }
 .cb-tool-name {
-  color: var(--cb-ink);
+  color: var(--cb-muted);
   font-weight: 600;
+}
+/* The agent call block's header names the tool in `ink` (§6.16.28 Agent call block), unlike the
+   lighter tool-line tier. */
+.cb-tool-name[data-part="agent-call-name"] {
+  color: var(--cb-ink);
+}
+.cb-tool-row [data-part="key-arg"],
+.cb-tool-line [data-part="key-arg"]:not(.cb-ink) {
+  color: var(--cb-faint);
 }
 .cb-tool-row[data-status="running"] .cb-tool-label,
 .cb-tool-row[data-status="pending"] .cb-tool-label {
@@ -2354,4 +2370,296 @@ button.cb-file-card:focus-visible {
 .cb-hcard-command {
   min-width: 0;
   font-family: var(--cb-font-code);
+}
+
+/* ── Process block (conversation process blocks spec §1.3, §3, §4; design spec §6.16.8a): the head
+   is one tool line, the rail a 20 px gutter on a 1px rule, the fold row and the pending list.
+   No frame around the block: the only boxes are the tool box and the cards. ── */
+
+.cb-process {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* A block sits space.5 from what follows it in its turn (spec §3): the answer, cards, pending
+   actions (the thread's space.3 gap plus this). A user message or the run row after it keeps the
+   gap, and nothing is added before the block. Each thread entry is one stack item. */
+.cb-stack[data-gap="12"]
+  > :has(> .cb-process:only-child)
+  + :not(:has(> .cb-user-msg, > .cb-run-row)) {
+  margin-top: var(--cb-space-2);
+}
+.cb-process-head {
+  min-width: 0;
+}
+.cb-process-head > .cb-tool-line {
+  width: 100%;
+}
+/* The head never wraps: the label ellipsizes before the status words, chips and chevron. */
+.cb-process-head .cb-tool-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-process[data-state="running"] .cb-process-head .cb-tool-label {
+  color: var(--cb-ink);
+}
+.cb-process-time {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.cb-process-word {
+  flex: none;
+  white-space: nowrap;
+}
+.cb-process-lead {
+  display: inline-flex;
+  flex: none;
+}
+.cb-process-chips {
+  display: inline-flex;
+  flex: none;
+}
+.cb-process-chip {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--cb-line-soft);
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-panel);
+  color: var(--cb-muted);
+}
+.cb-process-chip + .cb-process-chip {
+  margin-left: -5px;
+}
+.cb-process-chip .cb-icon,
+.cb-process-chip .cb-process-img {
+  width: 11px;
+  height: 11px;
+}
+.cb-process-bg {
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-process-pinned {
+  margin-top: var(--cb-space-1);
+}
+.cb-process-rail {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--cb-space-1);
+}
+.cb-rail-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: var(--cb-space-2);
+}
+/* The rule runs from the first icon to the last: it starts at the first icon's centre and ends at
+   the last icon's centre (half a dense row down). */
+.cb-rail-step::before {
+  content: "";
+  position: absolute;
+  left: 9.5px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--cb-line);
+}
+.cb-rail-step:first-of-type::before {
+  top: calc(var(--cb-row-dense) / 2);
+}
+.cb-rail-step:last-of-type::before {
+  bottom: calc(100% - var(--cb-row-dense) / 2);
+}
+.cb-rail-step:only-of-type::before {
+  display: none;
+}
+/* Steps sit space.1 apart; the padding (not a gap) keeps the rule continuous. */
+.cb-rail-step:not(:last-of-type) {
+  padding-bottom: var(--cb-space-1);
+}
+.cb-rail-gutter {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  align-self: start;
+  width: 20px;
+  height: var(--cb-row-dense);
+  color: var(--cb-faint);
+}
+.cb-rail-gutter > span:not(.cb-rail-dot) {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-bg);
+}
+.cb-rail-gutter > .cb-accent-word,
+.cb-rail-gutter > .cb-conv-spin {
+  color: var(--cb-accent);
+}
+.cb-rail-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cb-line-strong);
+}
+.cb-rail-body {
+  min-width: 0;
+}
+/* Process rows inside the rail are the lighter tier: the name stays muted, arguments faint. A
+   step's tool group may sit in a plain wrapper (the thread marks a step's calls on it). */
+.cb-rail-body .cb-tool-group > .cb-tool-line,
+.cb-rail-body > .cb-thinking-row > .cb-tool-line {
+  width: 100%;
+}
+.cb-rail-say {
+  margin: 0;
+  padding: var(--cb-space-1) 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+  overflow-wrap: anywhere;
+}
+.cb-process-fold {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: var(--cb-space-2);
+  align-items: center;
+  min-height: var(--cb-row-dense);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cb-faint);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-align: left;
+  cursor: pointer;
+}
+.cb-process-fold:hover {
+  color: var(--cb-muted);
+}
+.cb-process-fold:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-process-fold > .cb-rail-gutter {
+  height: auto;
+}
+
+/* ── Pending actions (spec §4): things that need the person, not blocking the run ── */
+
+.cb-pending {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-raised);
+}
+.cb-pending-many {
+  padding: var(--cb-space-2) var(--cb-space-3) var(--cb-space-1);
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-pending-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-pending-item {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  padding: var(--cb-space-2) var(--cb-space-3);
+}
+.cb-pending-item + .cb-pending-item {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-pending-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-pending-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-pending-title {
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  font-weight: 600;
+  line-height: var(--cb-type-body-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-pending-desc {
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-pending-action {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  color: var(--cb-accent);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+  text-decoration: none;
+}
+.cb-pending-action:hover {
+  text-decoration: underline;
+}
+.cb-pending-action:disabled {
+  color: var(--cb-faint);
+  cursor: default;
+  text-decoration: none;
+}
+.cb-pending-action:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+
+/* Mobile sizes (MOBILE_SIZE_QUERY): the head is a touch row, still one line (the label yields). */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-process-head .cb-tool-line {
+    width: 100%;
+    min-height: var(--cb-touch-hit);
+  }
+  .cb-process-head .cb-tool-label {
+    flex: 1 1 auto;
+  }
+  .cb-process-fold {
+    min-height: var(--cb-touch-hit);
+  }
+  .cb-pending-action {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--cb-touch-hit);
+  }
 }

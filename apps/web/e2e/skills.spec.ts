@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
 import {
   composer,
+  expectToolStatus,
   newAgent,
   openAgentSection,
   saveSection,
   startChat,
-  toolGroup,
+  toolStep,
 } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
@@ -191,9 +192,8 @@ test("an admin uploads a skill package, on for a new agent by default; the Skill
   const input = composer(page);
   await input.fill(`tool:Skill:${JSON.stringify({ skill: SKILL })}`);
   await input.press("Enter");
-  const tool = toolGroup(page, "Skill");
-  await expect(tool).toHaveAttribute("data-tool-status", "done");
-  await expect(tool).toContainText(`加载技能 ${SKILL}（版本 1）`);
+  await expectToolStatus(page, "Skill", "done");
+  await expect(await toolStep(page, "Skill")).toContainText(`加载技能 ${SKILL}（版本 1）`);
 });
 
 test("the owner uploads a skill package on the agent page and shares it with the org", async ({
@@ -386,14 +386,13 @@ test("phase D: invoke skills from the / menu and typed, send one while running, 
   await expect(sent).not.toContainText(zh.chat.interjectionPending, { timeout: 60_000 });
   await expect(answered).toHaveCount(4, { timeout: 60_000 });
 
-  // 4. a forked skill: the sub-agent row under the bubble, the report, then the reply
+  // 4. a forked skill: its one foreground sub-agent as a step of a process block under the bubble,
+  // the report, then the reply
   await input.fill("/e2e-review src");
   await input.press("Enter");
   await expect(bubble("/e2e-review").locator('[data-part="bubble"]')).toHaveText("/e2e-reviewsrc");
   const report = page.locator('[data-entry="skill-report"]');
   await expect(report).toHaveCount(1, { timeout: 60_000 });
-  const rows = page.locator('[data-entry="subagents"]');
-  await expect(rows.last()).toContainText(designZh("subagent.done").replace("{n}", "1"));
   // Open the report once the run has settled: while the reply streams, the thread follows the
   // bottom, so each wrapped line moves the report up and a click whose press and release straddle
   // that move lands on another element and leaves the report closed.
@@ -402,11 +401,16 @@ test("phase D: invoke skills from the / menu and typed, send one while running, 
     "data-cap-state",
     /(^| )run=idle( |$)/,
   );
+  // the block before the report (closed once the report came) holds the sub-agent's line
+  const fork = page.locator('[data-entry="process"]:has(+ [data-entry="skill-report"])');
+  await fork.locator('[data-part="process-head"] button[aria-expanded="false"]').click();
+  await expect(fork.locator('[data-part="process-rail"]')).toContainText(zh.chat.process.subagent);
+  await expect(fork.locator('[data-part="process-rail"]')).toContainText("e2e-review");
   await report.getByRole("button", { name: zh.chat.skillReport }).click();
   await expect(report).toContainText('Report from the sub-agent that ran the skill "e2e-review"');
   const kinds = await page
     .locator("[data-entry]")
     .evaluateAll((els) => els.map((e) => e.getAttribute("data-entry")));
-  const at = kinds.lastIndexOf("subagents");
-  expect(kinds.slice(at - 1, at + 2)).toEqual(["user", "subagents", "skill-report"]);
+  const at = kinds.lastIndexOf("skill-report");
+  expect(kinds.slice(at - 2, at + 1)).toEqual(["user", "process", "skill-report"]);
 });

@@ -15,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useMemo } from "react";
 import type { ConversationEvent, ModelRef } from "../../lib/conversations";
+import { groupProcess } from "../../lib/process";
 import { conversationQuery } from "../../lib/query/conversation";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { subagentToolKeys, toolsLine } from "../../lib/subagents";
@@ -110,8 +111,9 @@ function ChildRecord({
   const keys = useMemo(() => toolKeysOf(child.events), [child.events]);
   const info = useToolInfo(orgId, subagentId, keys);
   const whoWaits = useWhoWaits(child.people);
+  // a run's process as one block (process blocks spec §1), as the conversation draws it
   const entries = useMemo(
-    () => buildTimeline(child.events, child.state.drafts, info, locale, { whoWaits }),
+    () => groupProcess(buildTimeline(child.events, child.state.drafts, info, locale, { whoWaits })),
     [child.events, child.state.drafts, info, locale, whoWaits],
   );
   const started = child.events.find(

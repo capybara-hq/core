@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { composer, toolGroup } from "./support/chat";
+import { composer, expectToolStatus, toolStep } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** 内核要求非安全方法带的 CSRF 头。 */
@@ -68,9 +68,10 @@ test("扩展视图（假扩展 fake-tools-ui）：plugin__fake-tools-ui__write �
   await expect(panel.locator('[aria-current="step"]')).toContainText("Cluster topics");
 
   // 时间线里这次调用是一行带摘要的工具调用，不再显示原样 JSON
-  const row = toolGroup(page, "plugin__fake-tools-ui__write");
-  await expect(row).toHaveAttribute("data-tool-status", "done");
-  await expect(row).toContainText("更新条目（3 项）");
+  await expectToolStatus(page, "plugin__fake-tools-ui__write", "done");
+  await expect(await toolStep(page, "plugin__fake-tools-ui__write")).toContainText(
+    "更新条目（3 项）",
+  );
 
   // 刷新后面板仍开着（地址里的 #panel=），badge 由视图重建
   await expect(page).toHaveURL(/#panel=fake-tools-ui\/tasks$/);

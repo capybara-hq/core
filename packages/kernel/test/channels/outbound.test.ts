@@ -187,6 +187,8 @@ beforeAll(async () => {
         name: plugin,
         agentId: agent,
         unboundPolicy,
+        // this file covers the streaming draft path; the progress card is outbound-progress.test.ts
+        processDisplay: "off",
         config: { platformUrl: im.url, appId, appSecret: "app-secret-1234567" },
       },
     });

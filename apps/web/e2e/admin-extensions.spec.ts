@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
-import { composer, replies, toolGroup } from "./support/chat";
+import { composer, expectToolStatus, replies } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -12,16 +12,13 @@ const zh = JSON.parse(
 const CSRF = { "X-Capybara-Csrf": "1" };
 const P = zh.admin.extensions;
 
-/** 在对话里让 model-fake 调用 greeter 的工具，返回这一轮工具行与助手回复。 */
+/** Has model-fake call the greeter tool in the conversation; returns the turn's reply. */
 async function callGreet(page: Page, convId: string) {
   await page.goto(`/chat/${convId}`);
   const input = composer(page);
   await input.fill("tool:plugin__greeter__greet:{}");
   await input.press("Enter");
-  return {
-    tool: toolGroup(page, "plugin__greeter__greet").last(),
-    reply: replies(page).last(),
-  };
+  return { reply: replies(page).last() };
 }
 
 test("admin extensions: import the plugin tgz -> review (acknowledge sensitive items) -> confirm installs and enables the extension -> edit deployment config -> call the tool in a conversation -> tool unavailable after disabling (no restart)", async ({
@@ -106,7 +103,8 @@ test("admin extensions: import the plugin tgz -> review (acknowledge sensitive i
   expect(conv.status(), await conv.text()).toBe(201);
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
   const first = await callGreet(page, convId);
-  await expect(first.tool).toHaveAttribute("data-tool-status", "done");
+  // the latest greet call's status, from its process block
+  await expectToolStatus(page, "plugin__greeter__greet", "done");
   await expect(first.reply).toHaveText(/bonjour from greeter/);
 
   // 6. 停用：确认框写明在途调用的等待时限；收敛后为已停用
@@ -123,7 +121,7 @@ test("admin extensions: import the plugin tgz -> review (acknowledge sensitive i
   // error result (no kernel restart). Tools default-on: the agent never referenced the tool, so it
   // is simply gone from its tools (tools/pipeline.ts unknownToolText)
   const second = await callGreet(page, convId);
-  await expect(second.tool).toHaveAttribute("data-tool-status", "failed");
+  await expectToolStatus(page, "plugin__greeter__greet", "failed");
   await expect(second.reply).toHaveText(
     /^Tool result: Unknown tool "plugin__greeter__greet"\. Available tools: /,
   );

@@ -31,11 +31,16 @@ import {
   InlineCard,
   type ModeMenuProps,
   PanelTabs,
+  PendingActions,
   type PickerProps,
+  ProcessBlock,
+  type ProcessBlockProps,
   PropertiesPanel,
   PropertySection,
   Prose,
   QuickActions,
+  RailStep,
+  RailText,
   ReferenceBoard,
   RightPanel,
   type RightPanelSwitcher,
@@ -47,10 +52,12 @@ import {
   SubagentTask,
   TaskList,
   TaskOutputPanel,
+  ThinkingRow,
   TitleBar,
   type TitleBarPanel,
   type TitleBarProps,
   ToolGroup,
+  type ToolRowData,
   TranscriptFrame,
   UserBubble,
   untitledLabel,
@@ -1512,6 +1519,128 @@ export function ConversationTemplateDemo() {
   );
 }
 
+// ── Process block ───────────────────────────────────────────────────────────
+
+const PROCESS_KINDS: ProcessBlockProps["kinds"] = [
+  { key: "thinking", icon: { name: "lightbulb" }, label: "思考" },
+  { key: "command", icon: { name: "terminal" }, label: "命令" },
+  { key: "read", icon: { name: "file-text" }, label: "读取" },
+  { key: "edit", icon: { name: "square-pen" }, label: "编辑" },
+  { key: "search", icon: { name: "search" }, label: "搜索" },
+  { key: "web", icon: { name: "globe" }, label: "网页" },
+];
+
+const processLine = (id: string, kind: ToolRowData["kind"], name: string, keyArg: string) => (
+  <ToolGroup rows={[{ id, kind, name, keyArg, status: "done" }]} />
+);
+
+function ProcessRail({ withWaiting }: { withWaiting?: boolean | undefined }) {
+  return (
+    <>
+      <RailStep icon={{ name: "lightbulb" }}>
+        <ThinkingRow seconds={4} text="先看一下报表的结构，再决定怎么改。" inRail />
+      </RailStep>
+      <RailStep icon="dot">
+        <RailText>先看一下报表的结构，再决定怎么改。</RailText>
+      </RailStep>
+      <RailStep icon={{ name: "file-text" }}>
+        {processLine("r1", "read", "Read", "report.md")}
+      </RailStep>
+      <RailStep icon={{ name: "terminal" }}>
+        {processLine("r2", "command", "Bash", "pnpm test")}
+      </RailStep>
+      {withWaiting ? (
+        <RailStep icon="hand">{processLine("r3", "command", "Bash", "rm -rf out")}</RailStep>
+      ) : null}
+      <RailStep icon={{ name: "square-pen" }}>
+        {processLine("r4", "edit", "Edit", "summary.md")}
+      </RailStep>
+    </>
+  );
+}
+
+function ProcessBlockFrame(
+  p: Partial<ProcessBlockProps> & { rail?: boolean; waitingStep?: boolean },
+) {
+  const { rail, waitingStep, ...over } = p;
+  return (
+    <ProcessBlock
+      state="finished"
+      elapsedMs={163_000}
+      summary={{ thoughts: 4, tools: 12, errors: 1, pinned: { title: "待办", badge: "4/4" } }}
+      kinds={PROCESS_KINDS}
+      open={false}
+      onToggle={noop}
+      {...over}
+    >
+      {rail ? <ProcessRail withWaiting={waitingStep} /> : null}
+    </ProcessBlock>
+  );
+}
+
+const PENDING = [
+  {
+    key: "p1",
+    icon: { name: "external-link" as const },
+    title: "设置发布渠道",
+    description: "在渠道页完成授权",
+    action: { label: "去处理", href: "#" },
+  },
+  {
+    key: "p2",
+    icon: { name: "external-link" as const },
+    title: "确认邀请链接",
+    description: "复制后发给新成员",
+    // the button form (a connection started in place) draws like the link
+    action: { label: "去处理", onClick: noop },
+  },
+];
+
+function processBlockBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="process-block-running">
+        <ProcessBlockFrame
+          state="running"
+          open
+          rail
+          elapsedMs={12_000}
+          current="读取 report.md"
+          hiddenBefore={3}
+          onShowEarlier={noop}
+        />
+      </Block>
+      <Block id="process-block-waiting">
+        <ProcessBlockFrame
+          state="waiting"
+          open
+          elapsedMs={64_000}
+          waiting="等待你批准"
+          current="运行 pnpm test"
+        />
+      </Block>
+      <Block id="process-block-finished">
+        <ProcessBlockFrame />
+      </Block>
+      <Block id="process-block-open">
+        <ProcessBlockFrame open rail waitingStep hiddenBefore={3} onShowEarlier={noop} />
+      </Block>
+      <Block id="process-block-stopped">
+        <ProcessBlockFrame state="stopped" />
+      </Block>
+      <Block id="process-block-failed">
+        <ProcessBlockFrame state="failed" />
+      </Block>
+      <Block id="process-block-pending">
+        <PendingActions items={PENDING.slice(0, 1)} />
+      </Block>
+      <Block id="process-block-pending-many">
+        <PendingActions items={PENDING} />
+      </Block>
+    </>
+  );
+}
+
 export const CONVERSATION_PAGE_BLOCKS = {
   "subagent-group": subagentGroupBlocks,
   "agent-map": agentMapBlocks,
@@ -1528,4 +1657,5 @@ export const CONVERSATION_PAGE_BLOCKS = {
   "task-output-panel": taskOutputBlocks,
   "right-panel": rightPanelBlocks,
   "template-conversation": templateConversationBlocks,
+  "process-block": processBlockBlocks,
 } as const;

@@ -494,7 +494,8 @@ describe("the agent map's entry points", () => {
     });
     window.history.replaceState(null, "", "/chat/ch1#agents");
     await renderChatRoute({ id: "ch1" });
-    await screen.findByText("Reading the docs first.");
+    // the narration is in the run's first process block (closed): wait for the message after it
+    await screen.findByText("Focus on the API docs");
     await waitFor(() => expect(window.location.hash).toBe(""));
     expect(within(titleBar()).queryByRole("button", { name: MAP })).toBeNull();
     expect(agentsChip()).toBeNull();
@@ -658,8 +659,8 @@ describe("the agent map's levels 2 and 3", () => {
       expect(b.querySelector('[data-part="bubble-sender"]')?.textContent).toBe(
         "From Release notes",
       );
-    // the conversation's own tool groups, collapsed
-    expect(log.querySelector('[data-entry="tools"]')).not.toBeNull();
+    // the conversation's own process blocks
+    expect(log.querySelector('[data-entry="process"]')).not.toBeNull();
     // read-only: no composer, the child's own stream, one live thread on the page
     expect(within(dialog).queryByRole("textbox")).toBeNull();
     expect(log.getAttribute("aria-live")).toBe("off");

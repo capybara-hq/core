@@ -37,6 +37,9 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *
  * - Consecutive tool calls form one `tools` entry; prose, thinking, a user message, a
  *   human-in-the-loop item or a divider ends the group. Prose is never folded into a group.
+ * - Prose is `narration` when its step also calls a tool, else an answer (process blocks spec
+ *   §1.1); a card carries its `placement` (`output` when the log has none). `groupProcess`
+ *   (`lib/process.ts`) folds a run's process into blocks after this builder.
  * - A call's `artifact_created` files and its inline card (`tool_result.card`) land right after the
  *   group that holds the call (files first), then its network facts (`network_blocked` hosts of the
  *   `org` and `address` layers; `device`-layer hosts are asked about in an approval instead), then
@@ -220,6 +223,11 @@ export interface TimelineTool {
   background?: { taskId: string | null };
   /** The images stored for the call (`tool_result.media`): the thread shows them on the row. */
   images?: ToolResultImage[];
+  /**
+   * The model step that made the call: a `tools` entry runs on across steps, and a process block
+   * draws each step's calls (one, or a parallel burst) as one rail step.
+   */
+  step?: StepRef;
 }
 
 export interface ApprovalItem {
@@ -322,6 +330,16 @@ export interface RetryMessage {
   skill?: string;
 }
 
+/**
+ * The model step an entry came from (its run and step), the same for a streaming draft and the
+ * step once it lands in the log: `groupProcess` keys a process block by it, so the block keeps its
+ * key while its first step goes from draft to log.
+ */
+export interface StepRef {
+  runId: string;
+  step: number;
+}
+
 export type TimelineEntry =
   | {
       kind: "user";
@@ -356,7 +374,19 @@ export type TimelineEntry =
       key: string;
       text: string;
     }
-  | { kind: "prose"; key: string; text: string; streaming: boolean }
+  | {
+      kind: "prose";
+      key: string;
+      text: string;
+      streaming: boolean;
+      step?: StepRef;
+      /**
+       * Narration, not an answer (process blocks spec §1.1): the step's content also has a
+       * `tool_call` block (a draft: {@link TimelineDraft.toolCall}). `groupProcess` folds it into
+       * the run's process block.
+       */
+      narration: boolean;
+    }
   | {
       kind: "thinking";
       key: string;
@@ -365,9 +395,11 @@ export type TimelineEntry =
       live: boolean;
       /** The model that thought (decides whether thinking shows), or null. */
       model: ModelRef | null;
+      step?: StepRef;
     }
-  | { kind: "tools"; key: string; rows: TimelineTool[] }
-  | { kind: "subagents"; key: string; rows: TimelineSubagent[] }
+  /** `step`: the step of the group's first call. */
+  | { kind: "tools"; key: string; rows: TimelineTool[]; step?: StepRef }
+  | { kind: "subagents"; key: string; rows: TimelineSubagent[]; step?: StepRef }
   | {
       /**
        * A sub-agent waits for a person: its approval, question or connection, in the root (at any
@@ -414,7 +446,20 @@ export type TimelineEntry =
   | { kind: "approval"; key: string; item: ApprovalItem }
   | { kind: "question"; key: string; item: QuestionItem }
   | { kind: "connect"; key: string; item: ConnectItem }
-  | { kind: "card"; key: string; plugin: string; view: string; callId: string; cardKey?: string }
+  | {
+      kind: "card";
+      key: string;
+      plugin: string;
+      view: string;
+      callId: string;
+      cardKey?: string;
+      /**
+       * Where the card stands (process blocks spec §5): `output` after the block (a log without
+       * a placement reads as `output`), `pinned` under the block head (latest only), `process` in
+       * the rail under its call.
+       */
+      placement: "output" | "pinned" | "process";
+    }
   | {
       /**
        * Network hosts a command was refused that no card can lift (`network_blocked`, layers
@@ -501,6 +546,11 @@ export interface TimelineDraft {
   step: number;
   text: string;
   thinking: string;
+  /**
+   * The step already started a tool call: its text is narration (process blocks spec §1.1), so it
+   * moves into the process block before the step lands in the log.
+   */
+  toolCall?: boolean;
 }
 
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
@@ -662,10 +712,18 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
         seconds: null,
         live: d.text === "",
         model: base.modelOf(d.runId, d.step),
+        step: { runId: d.runId, step: d.step },
       });
     }
     if (d.text !== "") {
-      out.push({ kind: "prose", key: `d${d.runId}:${d.step}`, text: d.text, streaming: true });
+      out.push({
+        kind: "prose",
+        key: `d${d.runId}:${d.step}`,
+        text: d.text,
+        streaming: true,
+        narration: d.toolCall === true,
+        step: { runId: d.runId, step: d.step },
+      });
     }
   }
   if (!added) return base.entries;
@@ -993,25 +1051,27 @@ export function buildEventTimeline(
     if (!Number.isNaN(at)) row.startedAt = at;
   };
 
-  const openSubagents = (): Extract<TimelineEntry, { kind: "subagents" }> => {
+  const openSubagents = (step?: StepRef): Extract<TimelineEntry, { kind: "subagents" }> => {
     const last = out.at(-1);
     if (last?.kind === "subagents") return last;
     const g: Extract<TimelineEntry, { kind: "subagents" }> = {
       kind: "subagents",
       key: `s${out.length}`,
       rows: [],
+      ...(step !== undefined ? { step } : {}),
     };
     out.push(g);
     return g;
   };
 
-  const openGroup = (): Extract<TimelineEntry, { kind: "tools" }> => {
+  const openGroup = (step?: StepRef): Extract<TimelineEntry, { kind: "tools" }> => {
     const last = out.at(-1);
     if (last?.kind === "tools") return last;
     const g: Extract<TimelineEntry, { kind: "tools" }> = {
       kind: "tools",
       key: `g${out.length}`,
       rows: [],
+      ...(step !== undefined ? { step } : {}),
     };
     out.push(g);
     return g;
@@ -1150,6 +1210,8 @@ export function buildEventTimeline(
         const text = joinText(e.payload.content, "text");
         const thinking = joinText(e.payload.content, "thinking");
         const model = modelOf(e.runId, e.payload.step);
+        const at: StepRef | undefined =
+          e.runId === null ? undefined : { runId: e.runId, step: e.payload.step };
         if (thinking !== "") {
           const started =
             e.runId === null ? undefined : stepStarted.get(stepKey(e.runId, e.payload.step));
@@ -1165,9 +1227,20 @@ export function buildEventTimeline(
                 : Math.max(0, (ended - started) / 1000),
             live: false,
             model,
+            ...(at !== undefined ? { step: at } : {}),
           });
         }
-        if (text !== "") out.push({ kind: "prose", key, text, streaming: false });
+        // narration when the step also calls a tool, else the answer (process blocks spec §1.1)
+        const narration = e.payload.content.some((b) => b.type === "tool_call");
+        if (text !== "")
+          out.push({
+            kind: "prose",
+            key,
+            text,
+            streaming: false,
+            narration,
+            ...(at !== undefined ? { step: at } : {}),
+          });
         for (const b of e.payload.content) {
           if (b.type !== "tool_call") continue;
           const ti = info.get(b.name);
@@ -1188,13 +1261,13 @@ export function buildEventTimeline(
               callId: b.id,
               input: b.input,
             };
-            openSubagents().rows.push(sub);
+            openSubagents(at).rows.push(sub);
             agentCalls.set(callKey(e.runId, b.id), { sub, runId: e.runId });
             continue;
           }
           const input = b.input;
           const rec = asRecord(input);
-          const group = openGroup();
+          const group = openGroup(at);
           const question = b.name === QUESTION_TOOL;
           const keyArg = question ? questionPreview(input, ti) : keyArgOf(input, ti);
           const kind: ToolRowData["kind"] = question ? "question" : (ti?.kind ?? "tool");
@@ -1219,7 +1292,14 @@ export function buildEventTimeline(
               ...(command ? { command: rec.command as string } : {}),
             },
           };
-          const tool: TimelineTool = { row, callId: b.id, toolKey: b.name, input, outputId: null };
+          const tool: TimelineTool = {
+            row,
+            callId: b.id,
+            toolKey: b.name,
+            input,
+            outputId: null,
+            ...(at !== undefined ? { step: at } : {}),
+          };
           if (b.name === BASH_TOOL && rec.run_in_background === true)
             tool.background = { taskId: null };
           if (TASK_TOOLS.has(b.name) && typeof rec.task_id === "string") {
@@ -1351,6 +1431,7 @@ export function buildEventTimeline(
             view: p.card.view,
             callId: p.callId,
             ...(p.card.key !== undefined ? { cardKey: p.card.key } : {}),
+            placement: p.card.placement ?? "output",
           });
           groupCards.set(c.group, list);
         }

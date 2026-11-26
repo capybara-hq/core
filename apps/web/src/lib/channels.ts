@@ -10,6 +10,8 @@ export type ChannelStatus = "active" | "disabled" | "error";
 export type UnboundPolicy = "bind" | "anonymous";
 /** How the bot receives messages: a long connection (default) or platform webhooks. */
 export type InboundMode = "long_connection" | "webhook";
+/** How the channel shows a run's process (one progress card per run), or not at all. */
+export type ProcessDisplay = "detailed" | "brief" | "off";
 
 /** 内核 `ChannelConnectionView`：`config` 只含非密钥字段，密钥只回显「是否已设置」。 */
 export interface ChannelConnection {
@@ -28,6 +30,8 @@ export interface ChannelConnection {
   unboundPolicy: UnboundPolicy;
   status: ChannelStatus;
   inboundMode: InboundMode;
+  /** Null: the default by chat type (direct chats detailed, group chats brief). */
+  processDisplay: ProcessDisplay | null;
   /** The plugin supports webhook inbound. */
   webhookSupported: boolean;
   /** Callback URL to register with the platform; null without plugin support or webhook base URL. */
@@ -83,6 +87,8 @@ export interface UpdateChannelInput {
   unboundPolicy?: UnboundPolicy;
   status?: "active" | "disabled";
   inboundMode?: InboundMode;
+  /** Null: back to the default by chat type. */
+  processDisplay?: ProcessDisplay | null;
   config?: Record<string, unknown>;
 }
 

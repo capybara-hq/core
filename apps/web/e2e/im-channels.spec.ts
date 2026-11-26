@@ -165,18 +165,19 @@ test("IM binding: enable fake channel → create connection → sign in and conf
   await expect(visitor.getByText(zh.bind.doneTitle)).toBeVisible();
   expect(confirmationPosts).toBe(1);
 
-  // 6. 已绑定：私聊得到 agent 的回复
+  // 6. Bound: the direct chat gets the agent's answer (a message of its own after the run's
+  // progress card, which is edited down to its summary)
   const before = sentTo("dm-u-e2e").length;
   expect(im.push(connId, mod.fakeDm("e2e-2", "u-e2e", "echo:hello from IM"))).toBe(1);
   await expect
     .poll(
-      () => {
-        const reply = sentTo("dm-u-e2e")[before];
-        return reply === undefined ? "" : im.finalText(reply);
-      },
+      () =>
+        sentTo("dm-u-e2e")
+          .slice(before)
+          .some((m) => im.finalText(m) === "hello from IM"),
       { timeout: 60_000 },
     )
-    .toBe("hello from IM");
+    .toBe(true);
 
   // 7. 个人设置里能看到这条已绑定的 IM 身份
   await visitor.goto("/account/identities");

@@ -156,6 +156,17 @@ export {
   LONG_PICKER_THRESHOLD,
   pickerItemCount,
 } from "./picker-groups";
+export {
+  MAX_PROCESS_CHIPS,
+  type PendingAction,
+  PendingActions,
+  ProcessBlock,
+  type ProcessBlockProps,
+  type ProcessIcon,
+  RailStep,
+  type RailStepProps,
+  RailText,
+} from "./process-block";
 export { Cursor, Prose, type ProseProps, Spinner } from "./prose";
 export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
 export {
@@ -233,6 +244,7 @@ export {
   type ToolVerbGroup,
   type ToolWaiting,
   verbGroup,
+  waitingText,
 } from "./tool-copy";
 export { ToolGroup, type ToolGroupProps } from "./tool-group";
 export {

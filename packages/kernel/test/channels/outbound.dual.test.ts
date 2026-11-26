@@ -136,6 +136,8 @@ async function bootstrap(platform: FakeChannelServer, appId: string) {
     plugin: "chan-mini",
     name: "Bot",
     agentId,
+    // the streaming draft path; the progress card is outbound-progress.dual.test.ts
+    processDisplay: "off",
     config: { platformUrl: platform.url, appId, appSecret: "rf3-secret-0a1b2c3d" },
   });
   expect(ch.status, JSON.stringify(ch.json)).toBe(201);

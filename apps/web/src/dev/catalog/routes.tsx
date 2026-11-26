@@ -135,6 +135,8 @@ export const REFERENCE_COMPONENTS = [
   "filter-chip",
   "prose",
   "thinking-row",
+  // the process block, its rail and the pending-actions list (process blocks spec §1.3, §4)
+  "process-block",
   "user-bubble",
   "run-divider",
   "tool-group",

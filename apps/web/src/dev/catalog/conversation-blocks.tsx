@@ -128,6 +128,9 @@ function thinkingRowBlocks(): ReactNode {
       <Block id="thinking-row-expanded">
         <ThinkingRow seconds={P.thinkingSeconds} text={P.thinking} defaultOpen />
       </Block>
+      <Block id="thinking-row-in-rail">
+        <ThinkingRow seconds={P.thinkingSeconds} text={P.thinking} defaultOpen inRail />
+      </Block>
       <Block id="thinking-row-live">
         <ThinkingRow seconds={4} text={P.thinking.slice(0, 22)} live />
       </Block>
@@ -557,7 +560,7 @@ function toolRowBlocks(): ReactNode {
   const perm = toRow(pick(T.expanded, 2));
   return (
     <>
-      <RowBlock id="tool-row-default" row={perm} />
+      <RowBlock id="tool-row-default" row={toRow(pick(T.expanded, 1))} />
       <RowBlock id="tool-row-hover" row={perm} force="hover" />
       <RowBlock id="tool-row-focus" row={perm} force="focus" />
       <RowBlock id="tool-row-running" row={toRow(pick(T.running, 2))} />

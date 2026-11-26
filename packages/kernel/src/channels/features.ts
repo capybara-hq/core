@@ -1,9 +1,39 @@
 import {
   type Channel,
+  type ChannelCard,
   type ChannelTarget,
   type OutboundMessage,
   renderCardAsText,
 } from "@capybara-hq/plugin-sdk";
+
+/** How a channel shows a run's process: a detailed or brief progress card, or none. */
+export type ProcessDisplay = "detailed" | "brief" | "off";
+
+/**
+ * The effective process display of a connection's chat: the stored setting, else the default by
+ * chat type (direct chats detailed, group chats brief).
+ */
+export function processDisplayOf(v: string | null, chatType: "dm" | "group"): ProcessDisplay {
+  if (v === "detailed" || v === "brief" || v === "off") return v;
+  return chatType === "dm" ? "detailed" : "brief";
+}
+
+/**
+ * A run's progress card as the message the channel gets: the native card (titled for the
+ * notification preview) only when the plugin declares `features.progress` and `cards`;
+ * otherwise its {@link renderCardAsText} text, which the kernel edits in place like the card
+ * (process blocks spec §10 Execution rulings: a released plugin without a `progress` branch
+ * would throw on it).
+ */
+export function progressCardMessage(
+  features: Channel["features"],
+  card: Extract<ChannelCard, { kind: "progress" }>,
+  locale: "zh" | "en",
+): OutboundMessage {
+  // `cards: false` would fall the card back to text after its title: the text alone instead
+  if (features.progress === true && features.cards) return { text: card.title, cards: [card] };
+  return { text: renderCardAsText(card, locale) };
+}
 
 /** `threads: false`: the target loses its `threadId` (the platform has no threads). */
 export function adaptTarget(features: Channel["features"], target: ChannelTarget): ChannelTarget {

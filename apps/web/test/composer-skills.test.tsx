@@ -640,16 +640,20 @@ describe("the invocation in the thread", () => {
     const kinds = [...document.querySelectorAll("[data-entry]")].map((e) =>
       e.getAttribute("data-entry"),
     );
-    expect(kinds).toEqual(["user", "subagents", "skill-report", "prose"]);
+    // the fork's one foreground sub-agent is a step of a process block (process blocks §10.3)
+    expect(kinds).toEqual(["user", "process", "skill-report", "prose"]);
     const bubble = document.querySelector('[data-entry="user"] [data-part="bubble"]');
     expect(bubble?.textContent).toBe("/reviewsrc");
-    const row = document.querySelector('[data-entry="subagents"]') as HTMLElement;
+    const row = document.querySelector('[data-entry="process"]') as HTMLElement;
     const user = userEvent.setup();
-    await user.click(within(row).getAllByRole("button")[0] as HTMLElement);
-    // the fork's child as an Agent call block: "Agent review", then its final state
-    const block = row.querySelector('[data-part="agent-call-block"]') as HTMLElement;
-    expect(block.querySelector('[data-part="agent-call-head"]')?.textContent).toBe("Agent review");
-    expect(block.dataset.status).toBe("completed");
+    await user.click(within(row).getByRole("button", { expanded: false }));
+    // the fork's child as one line: "Sub-agent review · 2 tools"
+    const line = row.querySelector(
+      '[data-part="rail-step"] [data-part="tool-line"]',
+    ) as HTMLElement;
+    expect(line.textContent).toContain("Sub-agent");
+    expect(line.textContent).toContain("review");
+    expect(line.textContent).toContain("2 tools");
     const report = document.querySelector('[data-entry="skill-report"]') as HTMLElement;
     expect(within(report).queryByText(/Looks good/)).toBeNull();
     await user.click(within(report).getByRole("button", { name: en.chat.skillReport }));

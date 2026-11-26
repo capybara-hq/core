@@ -40,7 +40,7 @@ import { isForbiddenAddress, isLoopbackHost, normalizeHost } from "../net/public
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
-import { adaptTarget, adaptToFeatures } from "./features.js";
+import { adaptTarget, adaptToFeatures, type ProcessDisplay } from "./features.js";
 import { ChannelJobs } from "./jobs.js";
 import type { ChannelLocale } from "./phrases.js";
 import { webhookBase, webhookUrlOf } from "./webhook-url.js";
@@ -99,6 +99,8 @@ export interface ChannelConnectionView {
   unboundPolicy: UnboundPolicy;
   status: ChannelStatus;
   inboundMode: InboundMode;
+  /** How the channel shows a run's process; null = the default by chat type (`processDisplayOf`). */
+  processDisplay: ProcessDisplay | null;
   /** The plugin implements `Channel.webhook`, so the connection can switch to webhook mode. */
   webhookSupported: boolean;
   /**
@@ -143,6 +145,8 @@ export interface CreateChannelInput {
   unboundPolicy?: UnboundPolicy | undefined;
   /** Default `long_connection`; `webhook` needs plugin support and `channels.webhookBaseUrl`. */
   inboundMode?: InboundMode | undefined;
+  /** Absent or null: the default by chat type. */
+  processDisplay?: ProcessDisplay | null | undefined;
 }
 
 /**
@@ -163,6 +167,8 @@ export interface UpdateChannelInput {
   unboundPolicy?: UnboundPolicy | undefined;
   status?: "active" | "disabled" | undefined;
   inboundMode?: InboundMode | undefined;
+  /** Absent = unchanged; null = back to the default by chat type. */
+  processDisplay?: ProcessDisplay | null | undefined;
   config?: Record<string, unknown> | undefined;
 }
 
@@ -220,6 +226,7 @@ const COLUMNS = [
   "unbound_policy",
   "status",
   "inbound_mode",
+  "process_display",
   "last_error",
   "bot_user_id",
   "tenant_id",
@@ -415,6 +422,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       unbound_policy: UnboundPolicy;
       status: ChannelStatus;
       inbound_mode: InboundMode;
+      process_display: ProcessDisplay | null;
       last_error: string | null;
       bot_user_id: string | null;
       tenant_id: string | null;
@@ -445,6 +453,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       unboundPolicy: r.unbound_policy,
       status: r.status,
       inboundMode: r.inbound_mode,
+      processDisplay: r.process_display,
       webhookSupported,
       webhookUrl: webhookSupported && base !== undefined ? webhookUrlOf(base, r.id) : null,
       lastError: r.last_error,
@@ -615,6 +624,7 @@ export class ChannelConnections implements OnApplicationShutdown {
         config: JSON.stringify(a.plain),
         unbound_policy: input.unboundPolicy ?? "bind",
         inbound_mode: input.inboundMode ?? "long_connection",
+        process_display: input.processDisplay ?? null,
         bot_user_id: a.verified.botUserId,
         tenant_id: a.verified.tenantId,
         guide_ack: a.guideAck === null ? null : JSON.stringify(a.guideAck),
@@ -800,6 +810,7 @@ export class ChannelConnections implements OnApplicationShutdown {
         ...(patch.unboundPolicy !== undefined && { unbound_policy: patch.unboundPolicy }),
         ...(patch.status !== undefined && { status: patch.status }),
         ...(patch.inboundMode !== undefined && { inbound_mode: patch.inboundMode }),
+        ...(patch.processDisplay !== undefined && { process_display: patch.processDisplay }),
         ...(a.guideAck !== undefined && {
           guide_ack: a.guideAck === null ? null : JSON.stringify(a.guideAck),
         }),
