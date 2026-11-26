@@ -66,6 +66,8 @@ today, a model fallback (`model_switched`) and a compaction, become rail rows in
 dividers when they fall inside a block. Blocking cards (§3) do **not** end a block: they are drawn
 after it, and the block continues when the run resumes.
 
+The parallel calls of one model step are one rail step (a burst), not one row per call.
+
 This replaces §6.16.8's "groups end at prose": the tool group survives as the unit inside a block
 only where it is still useful (a burst of parallel calls).
 
@@ -79,7 +81,8 @@ only where it is still useful (a burst of parallel calls).
   - Finished: up to six **kind chips** (20 px circles, `panel` ground, `line-soft` border, 11 px
     icon, overlapping by 5 px, in first-use order) + "已处理 2 分 43 秒 · 待办 4/4 · 思考 4 次 ·
     12 个工具" / "Worked for 2m 43s · Todos 4/4 · Thought 4 times · 12 tools" (the pinned card's title
-    and `UiView.badge`, when the run has a pinned card) + the error dot and
+    and `UiView.badge`, when the run has a pinned card; this todo count is for the web head only,
+    the channel progress card's finished meta has none, §6.2) + the error dot and
     count (§2.4) + chevron. Per-kind counts are not in the head (too long for compact); the chips
     carry the kinds.
   - Stopped / failed: the head keeps the summary and adds "已停止" / "Stopped" in `muted` or the
@@ -91,8 +94,11 @@ only where it is still useful (a burst of parallel calls).
 - **Default state**: open while running or waiting; collapsed when the run finishes. While
   running, the rail shows only the last four steps; earlier ones fold into a "前 N 步" /
   "N earlier steps" row that opens them.
-- **Long runs**: the rail is virtualized past 200 rows. When the run has a todo list, rail rows
-  are sectioned under the todo item that was current when they ran (a `faint` micro heading).
+- **Long runs**: the rail pages 200 steps at a time; a fold row adds 200 more (no virtualization).
+  Sectioning the rail under the todo item that was current when a step ran is a follow-up, not
+  implemented.
+- Earlier blocks of a run that a queued message split show "已处理" / "Worked" without a time; the
+  working time sits on the run's last block.
 
 ## 2. Icons
 
@@ -141,9 +147,13 @@ it. Four classes:
 | Class | Members | Place |
 |---|---|---|
 | **Blocking** | approval, question, connect, device code, secure input, person fields | Outside the block, right after it. The block head turns to the waiting words in `accent`. Once decided, the card shrinks into a rail row ("已允许 · 你" / "Allowed · you") |
-| **Must see, non-blocking** | handoff link cards, reveals (initial password, invitation link), delivered files, edit summaries ("变更 3 个文件 +40 −12") | Lifted out of the block **as soon as they appear** (also while running). Merged by class: all handoffs of a turn in one list card ("2 项需要你处理 · 不阻塞，我已继续" / "2 things need you · not blocking, I carried on"), files in one grid. The originating call keeps its rail row |
+| **Must see, non-blocking** | handoff link cards, reveals (initial password, invitation link), delivered files, edit summaries ("变更 3 个文件 +40 −12") | Lifted out of the block **as soon as they appear** (also while running). Merged by class: all handoffs and reveals of a turn in one pending entry, all handoffs of a turn in one list card ("2 项需要你处理 · 不阻塞，我已继续" / "2 things need you · not blocking, I carried on"), files in one grid. The originating call keeps its rail row |
 | **State** | todo (and any card declared pinned, §5) | Pinned under the block head, latest version only, updated in place; earlier versions are just rail rows. When the run finishes it folds into the head (its title and badge, "待办 4/4"); when the run stops or fails, the card stays outside the block (the kernel cannot tell whether items are left, the card shows it) |
 | **Process** | network facts, diffs, command output | Stay in the rail under their call |
+
+A pinned card is a list: the latest card per (extension, view), drawn together under the head.
+When the run stops or fails, the pinned cards stand outside the block. A device-code card and a
+sub-agent wait stay outside after completion too.
 
 Order outside the block is fixed: block → blocking cards → pending actions → files and edits →
 answer.
@@ -164,7 +174,8 @@ card?: {
 
 - `output` (default): the must-see class, lifted after the block.
 - `pinned`: the state class. For one extension and view, only the latest card of the run is drawn
-  (pinned under the head); older ones become rail rows. `text` is what channels show for it (§6.2): the kernel never renders
+  (pinned under the head; several views give several pinned cards); older ones become rail rows.
+  After a stopped or failed run the pinned cards stand outside the block. `text` is what channels show for it (§6.2): the kernel never renders
   an extension view server side. The todo plugin uses both (its checklist as Markdown).
 - `process`: stays in the rail under its call.
 
@@ -186,23 +197,26 @@ Measured on the scenario in the mockup (12-page invoice batch, 18 steps):
 | Content | Channels with `features.edit` | Channels without |
 |---|---|---|
 | Process (thinking, tools, narration, todo) | **One progress card per run**: sent once (notifies), then edited in place at the streaming draft's interval, immediately on a state change (a todo item done, a wait for a person). Body: status and elapsed time, the status line (the latest narration, §10.1), the pinned card's
-`text`, the last three steps as text lines, pending actions as links, "在网页查看完整过程" / "See the full process on the web". On finish it is edited down to one summary line with the same link | No progress card. One "已开始处理" / "Working on it" message at the start, then one milestone message (the pinned card's `text`) each time a pinned card changes, at most one
+`text`, the last three steps as text lines, pending actions as links, "在网页查看完整过程" / "See the full process on the web". On finish it is edited down to one summary line with the same link (its meta has no todo count: the kernel cannot read a pinned card's counts, so it shows the time and the tool count) | No progress card. One "已开始处理" / "Working on it" message at the start, then one milestone message (the pinned card's `text`) each time a pinned card changes, at most one
 a minute |
 | Blocking cards | New messages (they must notify), as today | Same |
 | Handoffs, reveals | Listed in the progress card while running; after the answer, one merged "需要你处理（N）" card | One merged card after the answer |
 | Files | Native file messages after the answer, as today | Same |
 | Answer | A new message (edits do not notify) | Same |
 
-Narration is never sent as its own message (rule §1.1). Thinking is never sent (unchanged).
+Narration is never sent as its own message when a progress card is in use (rule §1.1). Thinking is never sent (unchanged).
 With a progress card (`detailed` or `brief` on an edit channel) the streaming draft is not used: a
 step's streamed text shows as the card's status line, and the answer is sent whole when its step
-ends, as one notifying message. With `off`, today's streaming draft stays.
+ends, as one notifying message. The card's elapsed time is refreshed only when its content changes, not on a timer. With `off`
+nothing changes from today's delivery: the streaming draft and the narration messages stay (the
+escape hatch).
 Without card support (`cards: false`) every card falls back through `renderCardAsText` as today.
 Channel cards use no icons: text only, colour only on the head status strip.
 
 A per-connection setting **过程显示 / Process** (`detailed` | `brief` | `off`; default `detailed`
 in direct chats, `brief` in group chats): `brief` sends only the finished summary line, pending
-actions and the answer; `off` sends no progress card.
+actions and the answer; `off` sends no progress card and keeps today's delivery exactly. In the web, the Default option
+of the setting saves NULL (direct chats detailed, group chats brief).
 
 ### 6.3 Contract and data
 
@@ -267,6 +281,24 @@ Steps 1–2 ship alone; 3–5 follow together.
    two or more in one step, or a background one, keep the sub-agent group and end the block.
 4. No-edit channels: one milestone message each time the pinned card (the todo list) changes, at
    most one a minute (the todo plugin writes the list when an item completes).
+
+### Execution rulings (2026-11-26)
+
+1. The rail pages 200 steps at a time (a fold row adds 200 more) instead of virtualization (§1.3).
+2. Sectioning the rail by todo item (§1.3) is a follow-up, not implemented.
+3. The parallel calls of one model step are one rail step (§1.2).
+4. `ProcessEntry.pinned` is a list: the latest card per (extension, view); pinned cards of a
+   stopped or failed run stand outside (§4, §5).
+5. Handoffs and reveals merge into one pending entry per turn (§4); device-code and sub-agent-wait
+   entries stay outside after completion.
+6. The channel progress card's finished meta has no todo count, since the kernel cannot read a
+   pinned card's counts (§1.3 keeps it for the web head; §6.2 for channels).
+7. `process_display: off` keeps today's delivery exactly (streaming draft and narration messages)
+   as the escape hatch; narration is never sent "with a progress card" (§6.2).
+8. The progress card's elapsed time refreshes only when its content changes (§6.2).
+9. Earlier blocks of a run split by a queued message show 已处理 without a time (§1.3).
+10. Web: the Default option of the process setting saves NULL (direct chats detailed, group chats
+    brief).
 
 ## AGENTS.md rules touched
 
