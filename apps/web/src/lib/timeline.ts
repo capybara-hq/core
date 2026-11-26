@@ -223,6 +223,11 @@ export interface TimelineTool {
   background?: { taskId: string | null };
   /** The images stored for the call (`tool_result.media`): the thread shows them on the row. */
   images?: ToolResultImage[];
+  /**
+   * The model step that made the call: a `tools` entry runs on across steps, and a process block
+   * draws each step's calls (one, or a parallel burst) as one rail step.
+   */
+  step?: StepRef;
 }
 
 export interface ApprovalItem {
@@ -1287,7 +1292,14 @@ export function buildEventTimeline(
               ...(command ? { command: rec.command as string } : {}),
             },
           };
-          const tool: TimelineTool = { row, callId: b.id, toolKey: b.name, input, outputId: null };
+          const tool: TimelineTool = {
+            row,
+            callId: b.id,
+            toolKey: b.name,
+            input,
+            outputId: null,
+            ...(at !== undefined ? { step: at } : {}),
+          };
           if (b.name === BASH_TOOL && rec.run_in_background === true)
             tool.background = { taskId: null };
           if (TASK_TOOLS.has(b.name) && typeof rec.task_id === "string") {

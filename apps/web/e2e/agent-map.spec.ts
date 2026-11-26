@@ -68,7 +68,8 @@ test("agent map: open a child from its call block, its transcript, back to the t
   const transcript = dialog(page, HANDBACK);
   await expect(transcript.locator('[data-entry="task"]')).toContainText("SubagentHandback");
   await expect(transcript.locator('[data-part="bubble-sender"]').first()).toBeVisible();
-  await expect(transcript.locator('[data-entry="tools"]').first()).toHaveAttribute(
+  // the handback call is a step of the transcript's process block, which lists its calls
+  await expect(transcript.locator('[data-entry="process"]').first()).toHaveAttribute(
     "data-tool-keys",
     /SubagentHandback/,
   );

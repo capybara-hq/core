@@ -70,7 +70,7 @@ import {
 import { uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { ApprovalCard } from "../ApprovalCard";
-import { ConnectCard, connectionHref } from "../ConnectCard";
+import { ConnectCard, useConnectConnector } from "../ConnectCard";
 import { DeviceCodeCard } from "../DeviceCodeCard";
 import { useSlotContributions } from "../extension-ui/ExtensionSlot";
 import { InitialPasswordReveal } from "../InitialPasswordReveal";
@@ -460,6 +460,8 @@ const EntryView = memo(
               "aria-live": "off" as const,
               "data-tool-keys": rows.map((r) => r.toolKey).join(" "),
               "data-tool-status": rows.map((r) => r.row.status).join(" "),
+              // per call, in log order, for tests and e2e: the block may be closed
+              "data-tool-calls": rows.map((r) => `${r.toolKey}:${r.row.status}`).join(" "),
             }
           : {})}
       >
@@ -987,21 +989,14 @@ function DividerView({
 const imageSrcOf = (c: EntryContext, id: string) =>
   `${attachmentDownloadUrl(c.orgId, id)}${c.retried.has(id) ? "?retry=1" : ""}`;
 
-/**
- * One tool call as a single tool line (a rail step's row, spec §1.3): its line range or background
- * label, its result images (all navigable in one viewer) and the archived output's size.
- */
-function ToolStep({ r, c }: { r: TimelineTool; c: EntryContext }): ReactNode {
-  const t = useTranslations("chat");
-  const tb = useTranslations("background");
-  const toast = useToast();
-  const openDownload = useOpenDownload();
-  const [zoomId, setZoomId] = useState<string | null>(null);
+/** A tool row as the thread draws it: its line range or background label, images, output size. */
+function rowOf(
+  r: TimelineTool,
+  c: EntryContext,
+  t: ReturnType<typeof useTranslations<"chat">>,
+  tb: ReturnType<typeof useTranslations<"background">>,
+): ToolRowData {
   const cb = c.cb;
-  const onOpenTask = c.has.openTask
-    ? (taskId: string) => cb.current.onOpenTask?.(taskId)
-    : undefined;
-
   const taskId = r.background?.taskId;
   const base = r.lines
     ? { ...r.row, extra: t("toolLines", r.lines) }
@@ -1009,25 +1004,24 @@ function ToolStep({ r, c }: { r: TimelineTool; c: EntryContext }): ReactNode {
       ? {
           ...r.row,
           extra: tb("inBackground"),
-          ...(taskId && onOpenTask
+          ...(taskId && c.has.openTask
             ? {
                 link: {
                   label: tb("openTask", { name: r.row.description ?? taskId }),
-                  onOpen: () => onOpenTask(taskId),
+                  onOpen: () => cb.current.onOpenTask?.(taskId),
                 },
               }
             : {}),
         }
       : r.row;
   // the images the call's result carried (shown to the agent): thumbnails on the row
-  const pictures = r.images ?? [];
   const withImages: ToolRowData =
-    pictures.length > 0
+    r.images !== undefined && r.images.length > 0
       ? {
           ...base,
           detail: {
             ...base.detail,
-            images: pictures.map((m) => ({
+            images: r.images.map((m) => ({
               id: m.attachmentId,
               name: m.name,
               src: imageSrcOf(c, m.attachmentId),
@@ -1037,30 +1031,50 @@ function ToolStep({ r, c }: { r: TimelineTool; c: EntryContext }): ReactNode {
       : base;
   const total = r.outputId ? c.sizes.get(r.outputId) : undefined;
   const out = withImages.detail?.output;
-  const row: ToolRowData =
-    total === undefined || out === undefined
-      ? withImages
-      : {
-          ...withImages,
-          detail: { ...withImages.detail, outputBytes: total, outputShownBytes: out.length },
-        };
+  if (total === undefined || out === undefined) return withImages;
+  return {
+    ...withImages,
+    detail: { ...withImages.detail, outputBytes: total, outputShownBytes: out.length },
+  };
+}
+
+/**
+ * One model step's tool calls (a rail step's row, spec §1.2–§1.3): one call as a single tool
+ * line, a parallel burst as a tool group; their result images are navigable in one viewer.
+ */
+function ToolStep({ tools, c }: { tools: TimelineTool[]; c: EntryContext }): ReactNode {
+  const t = useTranslations("chat");
+  const tb = useTranslations("background");
+  const toast = useToast();
+  const openDownload = useOpenDownload();
+  const [zoomId, setZoomId] = useState<string | null>(null);
+  const cb = c.cb;
+  const byRow = (rowId: string) => tools.find((x) => x.row.id === rowId);
+  const pictures = tools.flatMap((r) => r.images ?? []);
   const zoomIndex = pictures.findIndex((m) => m.attachmentId === zoomId);
   const shown = pictures[zoomIndex];
   return (
-    <>
+    <div
+      // the step's calls for tests and e2e (the block's own attributes list all of its calls)
+      data-tool-step-keys={tools.map((r) => r.toolKey).join(" ")}
+      data-tool-step-status={tools.map((r) => r.row.status).join(" ")}
+    >
       <ToolGroup
-        rows={[row]}
-        onViewAll={() => cb.current.onOpenOutput?.(r.callId)}
-        onCopy={() => {
-          const text = r.row.detail?.output;
+        rows={tools.map((r) => rowOf(r, c, t, tb))}
+        onViewAll={(rowId) => {
+          const r = byRow(rowId);
+          if (r) cb.current.onOpenOutput?.(r.callId);
+        }}
+        onCopy={(rowId) => {
+          const text = byRow(rowId)?.row.detail?.output;
           if (text === undefined) return;
           navigator.clipboard?.writeText(text).then(
             () => toast.success(t("copied")),
             () => {},
           );
         }}
-        onOpenImage={(_rowId, i) => {
-          const m = pictures[i];
+        onOpenImage={(rowId, i) => {
+          const m = byRow(rowId)?.images?.[i];
           if (m) setZoomId(m.attachmentId);
         }}
         onImageError={c.onImageError}
@@ -1094,7 +1108,7 @@ function ToolStep({ r, c }: { r: TimelineTool; c: EntryContext }): ReactNode {
             : {})}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -1117,19 +1131,21 @@ const ANNOUNCE_MS = 3000;
 
 type Extra = Extract<ProcessStep, { kind: "network-facts" | "card" }>;
 
-/** One rail row: a step, with the process cards and network facts of its call under it. */
+/** One rail row: a step, with the process cards and network facts of its calls under it. */
 type RailItem =
   | { kind: "thinking"; key: string; e: Extract<ProcessStep, { kind: "thinking" }> }
   | { kind: "narration"; key: string; text: string }
-  | { kind: "tool"; key: string; tool: TimelineTool; extras: Extra[] }
+  | { kind: "tool"; key: string; tools: TimelineTool[]; extras: Extra[] }
   | { kind: "subagent"; key: string; row: TimelineSubagent }
   | { kind: "note"; key: string; step: Extract<ProcessStep, { kind: "note" }> }
   | { kind: "decided"; key: string; e: Extract<ProcessStep, { kind: "decided" }>["entry"] }
   | { kind: "extra"; key: string; extra: Extra };
 
 /**
- * A block's steps as rail rows: one per tool call; a process card or a network fact goes under
- * the call that made it; thinking the model does not show is left out.
+ * A block's steps as rail rows: one per model step's tool calls (a `tools` entry runs on across
+ * steps, so it is split where the step changes; the row's key is its first call's); a process
+ * card or a network fact goes under the step of the call that made it; thinking the model does
+ * not show is left out.
  */
 function railItems(b: ProcessEntry, reasoningOf: (m: ModelRef) => boolean | undefined) {
   const items: RailItem[] = [];
@@ -1143,13 +1159,21 @@ function railItems(b: ProcessEntry, reasoningOf: (m: ModelRef) => boolean | unde
       case "narration":
         items.push({ kind: "narration", key: s.key, text: s.text });
         break;
-      case "tools":
+      case "tools": {
+        let item: Extract<RailItem, { kind: "tool" }> | null = null;
+        let at: string | null = null;
         for (const r of s.rows) {
-          const item = { kind: "tool" as const, key: `${s.key}:${r.callId}`, tool: r, extras: [] };
+          const step = r.step === undefined ? `call:${r.callId}` : `${r.step.runId}:${r.step.step}`;
+          if (item === null || step !== at) {
+            item = { kind: "tool", key: `${s.key}:${r.callId}`, tools: [], extras: [] };
+            at = step;
+            items.push(item);
+          }
+          item.tools.push(r);
           byCall.set(r.callId, item);
-          items.push(item);
         }
         break;
+      }
       case "network-facts":
       case "card": {
         const at = byCall.get(s.callId);
@@ -1334,14 +1358,16 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       addKind({ key: "thinking", icon: { name: "lightbulb" }, label: t("process.kind.thinking") });
       current = t("process.thinking");
     } else if (it.kind === "tool") {
-      const r = it.tool.row;
-      tools++;
-      if (r.status === "failed") errors++;
-      addKind(kindOf(it.tool));
-      current = [r.name, r.description ?? r.keyArg].filter(Boolean).join(" ");
-      started(r.startedAt);
-      if (isLiveRow(r) && r.waiting !== undefined)
-        waitingWords ??= waitingText(r.waiting, r.waitingFor, locale);
+      for (const tool of it.tools) {
+        const r = tool.row;
+        tools++;
+        if (r.status === "failed") errors++;
+        addKind(kindOf(tool));
+        current = [r.name, r.description ?? r.keyArg].filter(Boolean).join(" ");
+        started(r.startedAt);
+        if (isLiveRow(r) && r.waiting !== undefined)
+          waitingWords ??= waitingText(r.waiting, r.waitingFor, locale);
+      }
     } else if (it.kind === "subagent") {
       const r = it.row.row;
       tools++;
@@ -1368,9 +1394,10 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       case "narration":
         return "dot";
       case "tool": {
-        const r = it.tool.row;
-        if (live && isLiveRow(r)) return r.waiting !== undefined ? "hand" : "spinner";
-        return kindOf(it.tool).icon;
+        const rows = it.tools.map((x) => x.row);
+        if (live && rows.some((r) => isLiveRow(r) && r.waiting === undefined)) return "spinner";
+        if (live && rows.some((r) => isLiveRow(r) && r.waiting !== undefined)) return "hand";
+        return it.tools[0] !== undefined ? kindOf(it.tools[0]).icon : { name: "extension" };
       }
       case "subagent": {
         const s = it.row.row.status;
@@ -1381,8 +1408,8 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       case "note":
         return { name: it.step.note === "compacted" ? "archive" : "refresh" };
       case "decided": {
-        const call = byCall.get(it.e.item.callId);
-        return call !== undefined ? kindOf(call.tool).icon : { name: "check" };
+        const call = byCall.get(it.e.item.callId)?.tools.find((x) => x.callId === it.e.item.callId);
+        return call !== undefined ? kindOf(call).icon : { name: "check" };
       }
       case "extra":
         return { name: it.extra.kind === "card" ? "extension" : "globe" };
@@ -1405,7 +1432,7 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       case "tool":
         return (
           <>
-            <ToolStep r={it.tool} c={c} />
+            <ToolStep tools={it.tools} c={c} />
             {it.extras.map((x) => (
               <Fragment key={x.key}>{extra(x)}</Fragment>
             ))}
@@ -1535,12 +1562,13 @@ function DecidedStep({
 }
 
 /**
- * A turn's handoffs and reveals (spec §4, must see, non-blocking): the handoffs as one list of
- * links (a connector's connection goes to its connection page), then what a call shows the run's
- * person once.
+ * A turn's handoffs and reveals (spec §4, must see, non-blocking): the handoffs as one list (a
+ * link opens its page; a connector's connection starts here, as its connect card does), then what
+ * a call shows the run's person once.
  */
 function PendingView({ e, c }: { e: PendingEntry; c: EntryContext }): ReactNode {
   const t = useTranslations("chat.handoff");
+  const { connect, busy } = useConnectConnector(c.orgId);
   const actions: PendingAction[] = [];
   const reveals: Extract<TimelineEntry, { kind: "reveal" }>[] = [];
   for (const it of e.items) {
@@ -1548,17 +1576,28 @@ function PendingView({ e, c }: { e: PendingEntry; c: EntryContext }): ReactNode 
       reveals.push(it);
       continue;
     }
-    const link = it.target.type === "link";
-    actions.push({
-      key: it.key,
-      icon: { name: link ? "external-link" : "connector" },
-      title: it.title,
-      description: t(link ? "linkBody" : "connectBody"),
-      action: {
-        label: t(link ? "open" : "connect"),
-        href: it.target.type === "link" ? it.target.url : connectionHref(it.target.connectorId),
-      },
-    });
+    const target = it.target;
+    actions.push(
+      target.type === "link"
+        ? {
+            key: it.key,
+            icon: { name: "external-link" },
+            title: it.title,
+            description: t("linkBody"),
+            action: { label: t("open"), href: target.url },
+          }
+        : {
+            key: it.key,
+            icon: { name: "connector" },
+            title: it.title,
+            description: t("connectBody"),
+            action: {
+              label: t("connect"),
+              onClick: () => void connect(target.connectorId),
+              busy: busy === target.connectorId,
+            },
+          },
+    );
   }
   return (
     <Stack gap={8}>

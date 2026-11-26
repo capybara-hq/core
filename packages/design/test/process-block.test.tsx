@@ -274,9 +274,44 @@ describe("PendingActions", () => {
     );
   });
 
+  it("a button action starts the thing in place; busy disables it", async () => {
+    const onClick = vi.fn();
+    const button = (busy?: boolean) => ({
+      ...item(1),
+      action: { label: "连接", onClick, ...(busy !== undefined ? { busy } : {}) },
+    });
+    wrap(<PendingActions items={[button()]} />);
+    const b = screen.getByRole("button", { name: "连接" });
+    expect(b.getAttribute("data-part")).toBe("pending-action");
+    expect(screen.queryByRole("link")).toBeNull();
+    await userEvent.setup().click(b);
+    expect(onClick).toHaveBeenCalledTimes(1);
+    cleanup();
+    wrap(<PendingActions items={[button(true)]} />);
+    const busy = screen.getByRole("button", { name: "连接" });
+    expect(busy).toHaveProperty("disabled", true);
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+  });
+
   it("no items draws nothing", () => {
     const { container } = wrap(<PendingActions items={[]} />);
     expect(container.firstChild).toBeNull();
+  });
+});
+
+describe("ProcessBlock spacing in the thread", () => {
+  it("space.5 only to what follows the block in its turn, never before it", () => {
+    const rules = parseCss(css("conversation.css"));
+    // the block itself adds no margin: a block after a message keeps the stack's gap
+    const own = rules.find((r) => r.at === null && r.selector === ".cb-process");
+    expect(own?.decls["margin-bottom"]).toBeUndefined();
+    expect(own?.decls["margin-top"]).toBeUndefined();
+    const after = rules.filter((r) => r.selector.includes(":has(> .cb-process:only-child) +"));
+    expect(after).toHaveLength(1);
+    // the thread's space.3 gap plus space.2; a user message or the run row after it is left out
+    expect(after[0]?.selector).toContain('.cb-stack[data-gap="12"]');
+    expect(after[0]?.selector).toContain(":not(:has(> .cb-user-msg, > .cb-run-row))");
+    expect(after[0]?.decls["margin-top"]).toBe("var(--cb-space-2)");
   });
 });
 

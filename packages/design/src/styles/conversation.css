@@ -2375,8 +2375,14 @@ button.cb-file-card:focus-visible {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  /* space.5 from the answer and the cards after it (spec §3): the thread's space.3 gap plus this */
-  margin-bottom: var(--cb-space-2);
+}
+/* A block sits space.5 from what follows it in its turn (spec §3): the answer, cards, pending
+   actions (the thread's space.3 gap plus this). A user message or the run row after it keeps the
+   gap, and nothing is added before the block. Each thread entry is one stack item. */
+.cb-stack[data-gap="12"]
+  > :has(> .cb-process:only-child)
+  + :not(:has(> .cb-user-msg, > .cb-run-row)) {
+  margin-top: var(--cb-space-2);
 }
 .cb-process-head {
   min-width: 0;
@@ -2504,8 +2510,9 @@ button.cb-file-card:focus-visible {
 .cb-rail-body {
   min-width: 0;
 }
-/* Process rows inside the rail are the lighter tier: the name stays muted, arguments faint. */
-.cb-rail-body > .cb-tool-group > .cb-tool-line,
+/* Process rows inside the rail are the lighter tier: the name stays muted, arguments faint. A
+   step's tool group may sit in a plain wrapper (the thread marks a step's calls on it). */
+.cb-rail-body .cb-tool-group > .cb-tool-line,
 .cb-rail-body > .cb-thinking-row > .cb-tool-line {
   width: 100%;
 }
@@ -2609,6 +2616,11 @@ button.cb-file-card:focus-visible {
 }
 .cb-pending-action {
   flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
   color: var(--cb-accent);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
@@ -2617,6 +2629,11 @@ button.cb-file-card:focus-visible {
 }
 .cb-pending-action:hover {
   text-decoration: underline;
+}
+.cb-pending-action:disabled {
+  color: var(--cb-faint);
+  cursor: default;
+  text-decoration: none;
 }
 .cb-pending-action:focus-visible {
   outline: 1px solid var(--cb-accent);

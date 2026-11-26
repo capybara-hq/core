@@ -270,12 +270,14 @@ export type PendingAction = {
   icon: ProcessIcon;
   title: string;
   description?: string;
-  action: { label: string; href: string };
+  /** A link to the page where it is done, or a button that starts it here (`busy` while it runs). */
+  action: { label: string; href: string } | { label: string; onClick(): void; busy?: boolean };
 };
 
 /**
- * Things that need the person but do not block the run (handoff links; spec §4): one box under
- * the block, rows divided by hairlines; with two or more a first line says the run carried on.
+ * Things that need the person but do not block the run (handoffs; spec §4): one box under the
+ * block, rows divided by hairlines; with two or more a first line says the run carried on. Each
+ * row's action is a link to its page, or a button that starts it in place (a connection).
  */
 export function PendingActions({ items }: { items: PendingAction[] }): JSX.Element | null {
   const t = useDesignT();
@@ -303,9 +305,22 @@ export function PendingActions({ items }: { items: PendingAction[] }): JSX.Eleme
                 </span>
               ) : null}
             </span>
-            <a className="cb-pending-action" data-part="pending-action" href={it.action.href}>
-              {it.action.label}
-            </a>
+            {"href" in it.action ? (
+              <a className="cb-pending-action" data-part="pending-action" href={it.action.href}>
+                {it.action.label}
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="cb-pending-action"
+                data-part="pending-action"
+                disabled={it.action.busy === true}
+                aria-busy={it.action.busy === true ? true : undefined}
+                onClick={it.action.onClick}
+              >
+                {it.action.label}
+              </button>
+            )}
           </li>
         ))}
       </ul>

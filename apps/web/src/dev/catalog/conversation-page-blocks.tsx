@@ -1591,7 +1591,8 @@ const PENDING = [
     icon: { name: "external-link" as const },
     title: "确认邀请链接",
     description: "复制后发给新成员",
-    action: { label: "去处理", href: "#" },
+    // the button form (a connection started in place) draws like the link
+    action: { label: "去处理", onClick: noop },
   },
 ];
 

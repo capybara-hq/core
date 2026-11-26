@@ -19,27 +19,40 @@ export const connectionHref = (connectorId: string) =>
  * the run ended only the explanation stays.
  * OAuth 连接器点「连接」直接发起授权（授权结束回到本页）；其余认证方式跳到个人连接页填写凭据。
  */
-export function ConnectCard({ orgId, item }: { orgId: string; item: ConnectItem }) {
-  const t = useTranslations("connect");
+/**
+ * Connects a connector for the viewer from where they are: an OAuth connector starts its
+ * authorization (coming back to this page), any other goes to the personal connections page to
+ * enter its credentials. `busy` names the connector whose connect is under way.
+ */
+export function useConnectConnector(orgId: string): {
+  connect(connectorId: string): Promise<void>;
+  busy: string | null;
+} {
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const { start, starting } = useStartConnect(orgId);
-  const [checking, setChecking] = useState(false);
+  const { start } = useStartConnect(orgId);
+  const [busy, setBusy] = useState<string | null>(null);
   const qc = useQueryClient();
 
-  async function connect() {
-    setChecking(true);
+  async function connect(connectorId: string) {
+    setBusy(connectorId);
     try {
-      const app = await qc.fetchQuery(connectorQuery(orgId, item.connectorId));
-      if (isOAuthCodeConnector(app.auth)) await start(item.connectorId);
-      else router.push(connectionHref(item.connectorId));
+      const app = await qc.fetchQuery(connectorQuery(orgId, connectorId));
+      if (isOAuthCodeConnector(app.auth)) await start(connectorId);
+      else router.push(connectionHref(connectorId));
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
-      setChecking(false);
+      setBusy(null);
     }
   }
+  return { connect, busy };
+}
+
+export function ConnectCard({ orgId, item }: { orgId: string; item: ConnectItem }) {
+  const t = useTranslations("connect");
+  const { connect, busy } = useConnectConnector(orgId);
 
   return (
     <div data-role="connect" data-connector-id={item.connectorId}>
@@ -52,8 +65,8 @@ export function ConnectCard({ orgId, item }: { orgId: string; item: ConnectItem 
         <ConnectBlock
           service={item.connectorName}
           reason={t("description", { connector: item.connectorName })}
-          busy={checking || starting}
-          onConnect={() => void connect()}
+          busy={busy === item.connectorId}
+          onConnect={() => void connect(item.connectorId)}
         />
       )}
     </div>

@@ -9,9 +9,9 @@ import {
   currentOrg,
   designZh,
   eventsOf,
+  expectToolStatus,
   replies,
   send,
-  toolGroup,
   zh,
 } from "./support/chat";
 import { signIn } from "./support/sign-in";
@@ -263,14 +263,13 @@ test.describe("permission profiles", () => {
     });
     await expect(granted.locator('[data-part="fact-value"]')).toContainText("/etc/capybara-e2e");
     await expect(card.getByText(zh.approval.permissionScope.hint)).toBeVisible();
-    const write = toolGroup(page, "Write");
-    await expect(write).toHaveAttribute("data-tool-status", "pending");
+    await expectToolStatus(page, "Write", "pending");
 
     await card
       .getByRole("button", { name: designZh("hitl.command.allowOnce"), exact: true })
       .click();
     await expect(approval.getByText(designZh("hitl.command.allowedOnce"))).toBeVisible();
-    await expect(write).toHaveAttribute("data-tool-status", "done");
+    await expectToolStatus(page, "Write", "done");
     // (the first use of the device prepends its start notice)
     await expect(replies(page).last()).toHaveText(
       new RegExp(`^Tool result: .*Created ${target} \\(1 bytes\\)\\.$`),
@@ -318,7 +317,7 @@ test.describe("permission profiles", () => {
       const convId = conversationIdOf(page);
       // The kernel refuses at admission with the typed unsupported refusal: the model gets the
       // actionable text that says nothing ran.
-      await expect(toolGroup(page, "Bash")).toHaveAttribute("data-tool-status", "failed");
+      await expectToolStatus(page, "Bash", "failed");
       await expect(replies(page).last()).toHaveText(/^Tool result: /);
       await expect(replies(page).last()).toContainText(
         "This device's runtime cannot enforce its sandbox, so nothing ran.",

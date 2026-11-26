@@ -2,9 +2,10 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import { navigateBrowser } from "../src/lib/browser";
 import { orgIconUrl } from "../src/lib/catalog";
 import type { ConversationEvent } from "../src/lib/conversations";
-import { json, stubApi } from "./support/api";
+import { bodyOf, json, stubApi } from "./support/api";
 import {
   AGENTS,
   CONV,
@@ -23,6 +24,7 @@ import { resetNavigation } from "./support/navigation";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
+vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
 
 const ORG = "/api/v1/orgs/o1";
 const BASE = `${ORG}/conversations/c1`;
@@ -105,6 +107,7 @@ const theBlock = () => {
 const railSteps = (b: HTMLElement) => b.querySelectorAll('[data-part="rail-step"]');
 
 beforeEach(() => {
+  vi.mocked(navigateBrowser).mockReset();
   resetNavigation("/chat/c1");
   window.history.replaceState(null, "", "/chat/c1");
   vi.stubGlobal("EventSource", FakeEventSource);
@@ -210,6 +213,79 @@ describe("the thread draws process blocks", () => {
     expect(within(pending).getByText("Set up the channel")).toBeTruthy();
     const link = within(pending).getByRole("link", { name: en.chat.handoff.open });
     expect(link.getAttribute("href")).toBe("/settings/channels");
+  });
+
+  it("connect target starts the connect flow", async () => {
+    const AUTH_URL = "https://auth.example.com/authorize?state=s1";
+    const calls = api(
+      [
+        userMsg(1, "connect my docs"),
+        runStarted(2),
+        step(3, 0, [{ type: "tool_call", id: "p1", name: "Platform", input: { action: "x" } }]),
+        ev(4, "tool_result", {
+          step: 0,
+          callId: "p1",
+          toolKey: "Platform",
+          content: "ok",
+          isError: false,
+          view: {
+            kind: "handoff",
+            title: { zh: "连接文档", en: "Connect Docs" },
+            target: { type: "connect", connectorId: "app1" },
+          },
+        }),
+        step(5, 1, [{ type: "text", text: "Connect it when you can." }], "end_turn"),
+        finished(6),
+      ],
+      {
+        [`GET ${ORG}/connectors/app1`]: () =>
+          json(200, { connector: { id: "app1", name: "Docs", auth: { type: "oauth_code" } } }),
+        [`POST ${ORG}/connectors/app1/connect`]: () => json(200, { authorizationUrl: AUTH_URL }),
+      },
+      [],
+    );
+    await renderChatRoute();
+    const pending = await vi.waitFor(() => {
+      const el = document.querySelector('[data-entry="pending"]');
+      if (el === null) throw new Error("no pending entry");
+      return el as HTMLElement;
+    });
+    expect(within(pending).getByText("Connect Docs")).toBeTruthy();
+    // a connection starts here, not on another page
+    expect(within(pending).queryByRole("link")).toBeNull();
+    await userEvent
+      .setup()
+      .click(within(pending).getByRole("button", { name: en.chat.handoff.connect }));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith(AUTH_URL));
+    // the authorization comes back to this conversation
+    const post = calls.find(
+      (c) => c.method === "POST" && c.url.endsWith("/connectors/app1/connect"),
+    );
+    expect(bodyOf(post)).toEqual({ returnTo: "/chat/c1" });
+  });
+
+  it("parallel calls of one step are one rail step", async () => {
+    api([
+      userMsg(1, "look around"),
+      runStarted(2),
+      // one model step calls two tools at once, the next step one more
+      step(3, 0, [bash("a", "ls src"), bash("b", "ls docs")]),
+      result(4, "a"),
+      result(5, "b"),
+      step(6, 1, [bash("c", "cat notes.md")]),
+      result(7, "c"),
+    ]);
+    await renderChatRoute();
+    const block = await vi.waitFor(theBlock);
+    // two rail steps: the burst as one tool group, then the single call
+    const steps = railSteps(block);
+    expect(steps).toHaveLength(2);
+    const [burst, single] = [...steps] as HTMLElement[];
+    expect(burst?.querySelector('[data-single="true"]')).toBeNull();
+    expect(single?.querySelector('[data-single="true"]')).not.toBeNull();
+    expect(within(single as HTMLElement).getByText("cat notes.md")).toBeTruthy();
+    // the head still counts every call
+    expect(block.getAttribute("data-tool-keys")).toBe("Bash Bash Bash");
   });
 
   it("pinned todo card renders under the head while running", async () => {

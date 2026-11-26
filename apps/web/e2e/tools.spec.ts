@@ -3,11 +3,12 @@ import {
   composer,
   designZh,
   expectGroupAllOn,
+  expectToolStatus,
   newAgent,
   openAgentSection,
   replies,
   startChat,
-  toolGroup,
+  toolStep,
   zh,
 } from "./support/chat";
 import { mainNavLink } from "./support/nav";
@@ -86,25 +87,24 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   await expect(page.locator('[data-part="conv-main"] [data-part="status-bar"]')).toContainText(
     zh.chat.status.waiting,
   );
-  const tool = toolGroup(page, "mcp__fixture__delete_item");
-  await expect(tool).toHaveAttribute("data-tool-status", "pending");
+  await expectToolStatus(page, "mcp__fixture__delete_item", "pending");
 
   // 4. 批准（仅本次）→ 一行「你 批准了 …」；工具执行完成；回复包含工具结果
   await approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
   await expect(approval.getByText(/批准了/)).toBeVisible();
-  await expect(tool).toHaveAttribute("data-tool-status", "done");
+  await expectToolStatus(page, "mcp__fixture__delete_item", "done");
   await expect(replies(page).last()).toHaveText(/deleted x1/);
 
   // 5. 刷新后由日志重建：审批卡片仍为已批准，工具结果可展开查看
   await page.reload();
   await expect(page.locator('[data-role="approval"]').getByText(/批准了/)).toBeVisible();
   // 工具调用是时间线里的一行（默认折叠）：点开看输入与输出
-  const row = toolGroup(page, "mcp__fixture__delete_item").getByRole("button").first();
+  // (the run's process block is closed: the step opens it first)
+  const step = await toolStep(page, "mcp__fixture__delete_item");
+  const row = step.getByRole("button").first();
   await expect(row).toHaveAttribute("aria-expanded", "false");
   await row.click();
-  await expect(
-    toolGroup(page, "mcp__fixture__delete_item").getByText("deleted x1", { exact: true }),
-  ).toBeVisible();
+  await expect(step.getByText("deleted x1", { exact: true })).toBeVisible();
 });
 
 test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；elicitation 表单回答后工具继续", async ({

@@ -9,9 +9,10 @@ import {
   currentOrg,
   designZh,
   eventsOf,
+  expectToolStatus,
   replies,
   send,
-  toolGroup,
+  toolStep,
   users,
   zh,
 } from "./support/chat";
@@ -164,10 +165,7 @@ test("approvals: once / this conversation / always; deny with a reason; stop whi
   await approval.getByRole("textbox", { name: designZh("hitl.denyReason") }).fill("not today");
   await approval.getByRole("button", { name: designZh("hitl.deny"), exact: true }).click();
   await expect(approval.getByText(/「not today」/)).toBeVisible();
-  await expect(toolGroup(page, "mcp__capfix__delete_item")).toHaveAttribute(
-    "data-tool-status",
-    "failed",
-  );
+  await expectToolStatus(page, "mcp__capfix__delete_item", "failed");
   // the model got the reason: model-fake answers a tool result with its text
   await expect(replies(page).last()).toContainText("Reason: not today");
 
@@ -372,9 +370,10 @@ test("a policy hook: a denied tool row names the extension; a denied run shows t
     const agentId = await createAgent(page, orgId, "Cap hooks");
     await newChat(page, agentId);
     await send(page, 'tool:plugin__hooks-probe__probe_echo:{"text":"x"}');
-    const row = toolGroup(page, "plugin__hooks-probe__probe_echo");
-    await expect(row).toHaveAttribute("data-tool-status", "failed");
-    await expect(row).toContainText("hooks-probe");
+    await expectToolStatus(page, "plugin__hooks-probe__probe_echo", "failed");
+    await expect(await toolStep(page, "plugin__hooks-probe__probe_echo")).toContainText(
+      "hooks-probe",
+    );
 
     expect((await probe({ denyModel: true })).ok()).toBe(true);
     await send(page, "echo:blocked");
@@ -397,8 +396,8 @@ test("View all of an archived output; a model switch is logged and used", async 
     page,
     `tool:Bash:${JSON.stringify({ command: "seq 1 60000", description: "Count to 60000" })}`,
   );
-  const group = toolGroup(page, "Bash");
-  await expect(group).toHaveAttribute("data-tool-status", "done");
+  await expectToolStatus(page, "Bash", "done");
+  const group = await toolStep(page, "Bash");
   await group.getByRole("button", { name: /Count to 60000/ }).click();
   // The detail grows in under `overflow: hidden`: a click on View all before that ends landed on
   // the output text the clipping box's scroll reset moved under the pointer (#638).
