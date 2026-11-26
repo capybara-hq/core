@@ -227,6 +227,7 @@ beforeAll(async () => {
       "u-m2",
       "u-g1",
       "u-x1",
+      "u-e1",
     ]) {
       await sql`INSERT INTO capybara.identities (source, external_id, account_id)
         VALUES (${source}, ${user}, ${ownerId})`.execute(raw);
@@ -580,16 +581,18 @@ describe("channel progress card (process blocks spec §6.2)", () => {
 
   it("rejected edit re-posts once", async () => {
     const chat = "dm-u-r1";
-    // every edit of this chat is rejected: one re-post, then no more edits or posts
+    // every edit of this chat is rejected: the first handoff's edit (the run still going)
+    // re-posts the card once; later edits, the final one included, post nothing more
     im.failNext("/update", 400, 50, undefined, "rejected", undefined, chat);
-    im.push(detailedId, dm("pr1", "u-r1", "narr rejected"));
+    im.push(detailedId, dm("pr1", "u-r1", "handoff rejected"));
     const conv = await convOf(detailedId, chat);
     await settled(conv);
     const msgs = sentTo("cli_pd", chat);
     const progress = msgs.filter((m) => progressOf(m) !== undefined);
     expect(progress).toHaveLength(2);
     expect(msgs.filter((m) => progressOf(m) === undefined).map((m) => m.message.text)).toEqual([
-      "narr answer",
+      "handoff answer",
+      "Needs your action (2)",
     ]);
     expect((await deliveryRow(conv)).progress_message_id).toBe(progress[1]?.messageId);
     expect(im.updated.filter((u) => u.target.chatId === chat)).toEqual([]);
@@ -641,6 +644,34 @@ describe("channel progress card (process blocks spec §6.2)", () => {
       progress_reposted: true,
       milestone_at: null,
     });
+  });
+
+  it("a job after an ended run does not touch its finished card", async () => {
+    const chat = "dm-u-e1";
+    im.push(detailedId, dm("pe1", "u-e1", "narr first"));
+    const conv = await convOf(detailedId, chat);
+    await settled(conv);
+    await finished(sentTo("cli_pd", chat)[0] as FakeChannelSent);
+    await jobsDone(conv);
+    // the finished card can no longer be edited (too old on a real platform)
+    im.failNext("/update", 400, 50, undefined, "rejected", undefined, {
+      chatId: chat,
+      textIncludes: "Worked",
+    });
+    const before = updatesOf((sentTo("cli_pd", chat)[0] as FakeChannelSent).messageId).length;
+    im.push(detailedId, dm("pe2", "u-e1", "and again"));
+    await waitFor(async () => (await runIds(conv)).length === 2, 10_000, "second run");
+    await settled(conv);
+    await jobsDone(conv);
+    const msgs = sentTo("cli_pd", chat);
+    // the old card is neither edited again nor posted anew; the new run has its own card
+    expect(msgs.map((m) => cardOf(m)?.kind ?? m.message.text)).toEqual([
+      "progress",
+      "narr answer",
+      "progress",
+      "done",
+    ]);
+    expect(updatesOf((msgs[0] as FakeChannelSent).messageId)).toHaveLength(before);
   });
 
   it("a retryable edit failure does not hold back the answer", async () => {

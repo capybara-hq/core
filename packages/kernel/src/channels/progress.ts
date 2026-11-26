@@ -174,7 +174,7 @@ const COPY = {
   },
 } as const;
 
-/** `2 分 43 秒` / `2m 43s`; the running meta uses `m:ss` instead. */
+/** A duration in words, e.g. `2m 43s` (zh likewise); the running meta uses `m:ss` instead. */
 function duration(ms: number, t: (typeof COPY)[ChannelLocale]): string {
   const total = Math.max(0, Math.round(ms / 1000));
   if (total >= 3600) return t.hours(Math.floor(total / 3600), Math.floor((total % 3600) / 60));
