@@ -1434,6 +1434,8 @@ def run_native(request):
             response = {"result": files.run(body)}
         except Exception as error:
             code = ("SCOPE_DENIED" if isinstance(error, native.ScopeDenied)
+                    else "NOT_REGULAR_FILE" if (isinstance(error, ValueError)
+                                                and str(error).endswith("require a regular file"))
                     else errno.errorcode.get(getattr(error, "errno", None), "INVALID_NATIVE_REQUEST"))
             response = {"error": {"code": code, "message": "Native operation failed; check the path, scope and filesystem access"}}
         send({"event": "native", "response": response})

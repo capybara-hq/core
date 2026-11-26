@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import {
   type ExecResult,
+  nativeFailureText,
   SANDBOX_HOME_WRITE_DENIES,
   SANDBOX_MANDATORY_WRITE_DENIES,
   SandboxPermissionUnsupportedError,
@@ -498,7 +499,7 @@ export function linuxOperationWorker(
           if (response?.error) {
             if (["SCOPE_DENIED", "EACCES", "EPERM", "ELOOP"].includes(response.error.code))
               throw new SandboxScopeDeniedError(response.error.message);
-            throw new Error(response.error.message);
+            throw new Error(nativeFailureText(response.error.code));
           }
           return response?.result ?? null;
         }

@@ -2,6 +2,7 @@ import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process"
 import { fstatSync } from "node:fs";
 import type { Readable } from "node:stream";
 import {
+  nativeFailureText,
   SANDBOX_RUNTIME_SOURCE,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
@@ -105,6 +106,7 @@ const PRELUDE_TAIL = String.raw`try:
     response={"result":AnchoredFiles(request["roots"]).run(request)}
 except Exception as error:
     code=("SCOPE_DENIED" if isinstance(error,source["ScopeDenied"])
+          else "NOT_REGULAR_FILE" if isinstance(error,ValueError) and str(error).endswith("require a regular file")
           else errno.errorcode.get(getattr(error,"errno",None),"INVALID_NATIVE_REQUEST"))
     response={"error":{"code":code,"message":"Native operation failed; check the path, scope and filesystem access"}}
 print(json.dumps(response),flush=True)
@@ -152,6 +154,7 @@ print('ready',flush=True)
     response={"result":AnchoredFiles(request["roots"]).run(request)}
 except Exception as error:
     code=("SCOPE_DENIED" if isinstance(error,source["ScopeDenied"])
+          else "NOT_REGULAR_FILE" if isinstance(error,ValueError) and str(error).endswith("require a regular file")
           else errno.errorcode.get(getattr(error,"errno",None),"INVALID_NATIVE_REQUEST"))
     response={"error":{"code":code,"message":"Native operation failed; check the path, scope and filesystem access"}}
 print(json.dumps(response),flush=True)
@@ -308,7 +311,7 @@ export async function runNativeHelper(
   if (response.error) {
     if (["SCOPE_DENIED", "EACCES", "EPERM", "ELOOP"].includes(response.error.code))
       throw new SandboxScopeDeniedError(response.error.message);
-    throw new Error(response.error.message);
+    throw new Error(nativeFailureText(response.error.code));
   }
   if (!Object.hasOwn(response, "result")) throw new Error("Native helper omitted result");
   return response.result ?? null;
@@ -463,7 +466,7 @@ export async function runContainerNativeHelper(
   if (parsed.error) {
     if (["SCOPE_DENIED", "EACCES", "EPERM", "ELOOP"].includes(parsed.error.code))
       throw new SandboxScopeDeniedError(parsed.error.message);
-    throw new Error(parsed.error.message);
+    throw new Error(nativeFailureText(parsed.error.code));
   }
   if (!Object.hasOwn(parsed, "result")) throw new Error("Native helper omitted result");
   return parsed.result ?? null;

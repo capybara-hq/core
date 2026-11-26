@@ -28,6 +28,7 @@ export * from "./identity.js";
 export * from "./marketplace.js";
 export * from "./model.js";
 export * from "./model-params.js";
+export * from "./native-failure.js";
 export * from "./net.js";
 export * from "./network-classes.js";
 export * from "./permissions.js";
