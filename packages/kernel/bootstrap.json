@@ -3,15 +3,15 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "5cb8d1fb8c322661922be66f6a4f83808010ac2e"
+    "commit": "8a89f4b0f4569bc29735a06edfb91e0c1f214206"
   },
   "plugins": [
     {
       "name": "openai-compatible",
       "source": "npm",
       "npm": "@capybara-hq/plugin-openai-compatible",
-      "version": "0.1.0-rc.12",
-      "integrity": "sha512-4bO5W4xw97s1SPCfgWunqNzCiCoUUE35YdGX9GX+0CJ8bBRLQDZi6XaYHvOt1qZ+zQdwh8gRl9ILavwn4prEEw==",
+      "version": "0.1.0-rc.13",
+      "integrity": "sha512-IXdGfR9nhUXFWcF+3Bpmemn6M2e/EgC7x1jhKg84H23vKANviVcGvyTugyAjyd7K3vd0DD8aYAW1CMnTksUpJg==",
       "required": false
     },
     {
@@ -26,40 +26,40 @@
       "name": "anthropic",
       "source": "npm",
       "npm": "@capybara-hq/plugin-anthropic",
-      "version": "0.1.0-rc.10",
-      "integrity": "sha512-fOZuAzmJLRdHj/IwsVA71jyu45FmK3VSQYKlOZk6JYv6WbCX5cUrieduN+PGHwszFysQ4QxFj4XQ23QltQMh+g==",
+      "version": "0.1.0-rc.11",
+      "integrity": "sha512-du0wCj2z3asIZk1mpDOBAtlZSmqB1WQTr8doHb8uPSKGCqfkcCgSVrJWP8dbqW//BHO8un0uWLs74TBvk+f9ug==",
       "required": false
     },
     {
       "name": "openai",
       "source": "npm",
       "npm": "@capybara-hq/plugin-openai",
-      "version": "0.1.0-rc.12",
-      "integrity": "sha512-bh4ydAdf7cJwod2crmd6q9mbAFYULtoSXm/FAWf5xOUvwfYCo6OWY+JD5fQGNZQDuD+0MV3wQbvSpYBA2/poNQ==",
+      "version": "0.1.0-rc.13",
+      "integrity": "sha512-96cLlSSDPNlAjeFjHYYVfupqUDYYmePMThmB1nhwDoNO15F3OXEUECRGUR8PbUSjjthZTQ7gmb+HfCx9CqBweg==",
       "required": false
     },
     {
       "name": "deepseek",
       "source": "npm",
       "npm": "@capybara-hq/plugin-deepseek",
-      "version": "0.1.0-rc.11",
-      "integrity": "sha512-AUgib6r+8sdNEu9Fs8NvatbYTe/eihW3Zo6zILzTIUxgCHRkvIJ/QKoWcH4O32gaiyvlsmYBocIlD3m0ntUhyA==",
+      "version": "0.1.0-rc.12",
+      "integrity": "sha512-bDl3SWO/SO23PaY7Jc9km79kctaGYKqjWOTaXcb+olJNHCNwP4lEXuAY7jylBMaDxL3WttWdHDS6c/QjHFbUeA==",
       "required": false
     },
     {
       "name": "bailian",
       "source": "npm",
       "npm": "@capybara-hq/plugin-bailian",
-      "version": "0.1.0-rc.11",
-      "integrity": "sha512-3LYmVw1KQL6qXYgU7XeymBvnRRZy8PM5OIP5CeUtypqMkBXHo1wR8leuwucLLLpRR5EgTJOWMdZNx5D99fp+rw==",
+      "version": "0.1.0-rc.12",
+      "integrity": "sha512-bEO6UTSlFJq5F+4ht/FQtgM2pOhRzaVY2+URWegR7lZ7utd9AhkTEoRAFnECUq3e7kI7/pJMoNyNX6KTMd9Xpw==",
       "required": false
     },
     {
       "name": "ark",
       "source": "npm",
       "npm": "@capybara-hq/plugin-ark",
-      "version": "0.1.0-rc.12",
-      "integrity": "sha512-8yrnD2AKpsqT7RKrokyH95xW8z8un5z4c3rgsxtgW49kVZ9Y+rOpsf+mNGW/XM/rEATSvQTj3LMPDBGPPZdPyw==",
+      "version": "0.1.0-rc.13",
+      "integrity": "sha512-dmS7jJcPGTsWBzRC8rIe5T/GUrqfNNzlQeS5iIfoZdXGNPJqNrylHLp12eRZspaTPkZzpGgowV0MOhiQvwDzMA==",
       "required": false
     },
     {
@@ -107,8 +107,8 @@
       "name": "todo",
       "source": "npm",
       "npm": "@capybara-hq/plugin-todo",
-      "version": "0.1.0-rc.13",
-      "integrity": "sha512-QApBFqo6PrFJlmR7Pokbkx6AmLZ8dIGApl+EneshGw6dpJbDYvyUaoRyvk2Os1pYyfQOTHnCc0FUEae5mrVj6g==",
+      "version": "0.1.0-rc.14",
+      "integrity": "sha512-HtGVlONC/l11Pw0lctdOMQc29ccUaVuU86LYx6cIq/plvfGKUXzSO9K/fAM3ED64eHNPSAUUYGRutloQY6HsfA==",
       "required": false
     },
     {
