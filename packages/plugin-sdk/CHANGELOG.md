@@ -1,5 +1,21 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.81
+
+### Minor Changes
+
+- fbb7a13: `ToolResult.card` gains `placement` (`output`, `pinned`, `process`) and `text` (Markdown for
+  surfaces that cannot draw the view, at most `CARD_TEXT_MAX` characters); `ChannelCard` gains the
+  `progress` kind (one edited progress card per run), rendered by `renderCardAsText` and checked by
+  `validateChannelCard`.
+  `Channel["features"]` gains `progress`: a plugin that renders the `progress` card natively declares
+  it; other channels get the card as text, edited in place.
+- 9105e1e: Stream events for tool calls and a display-only input preview. `ModelStreamEvent` gains
+  `tool_call_start` (`id`, `name`) and `tool_call_delta` (`id`, raw argument JSON `input`); a provider
+  may emit them while the model writes a call, and `message_complete` stays the source of truth.
+  `ToolSpec.inputView` (`ToolInputView`: `file_write`, `file_edit`, `command`, `text`) names the
+  string input properties the UI previews while they stream, checked by `validateToolPresentation`.
+
 ## 0.1.0-rc.80
 
 ### Patch Changes

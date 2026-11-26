@@ -1,5 +1,32 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.98
+
+### Minor Changes
+
+- ba80ae7: Conversation process blocks, kernel side: `ToolInfo` gains `icon` (the step kind the web draws
+  on the process rail); a tool result's card records its `placement` and Markdown `text`; channel
+  connections gain `process_display` (`detailed`, `brief`, `off`; migration 0185), and a run shows
+  in IM as one progress card edited in place (narration on its status line, the answer and blocking
+  cards as new messages, handoffs merged after the answer), or as text edited in place on a channel
+  that does not declare `features.progress`; a channel without edits gets a start message and
+  throttled milestones (none in `brief`). A run that finishes with no answer after its last
+  narration sends that narration as its answer. The fake-im fixture declares `features.progress`.
+
+### Patch Changes
+
+- ace1b2b: Streaming tool input (spec 2026-11-26): the kernel forwards a provider's `tool_call_start` /
+  `tool_call_delta` as display-only `tool_start` / `tool_input` stream deltas and keeps them in the live
+  draft (`tools`, capped at 512 KiB per step); every stream event re-arms the idle watchdog, so a long
+  tool call no longer times out. For a builtin `Write` over a file the conversation already read
+  unchanged, the kernel reads a display-only base (`tool_base`) through a new `write_base` kernel read
+  that never wakes a device. Tool info returns each tool's `inputView`. `@capybara-hq/testing` gains
+  `checkToolStream` in the model conformance suite; model-fake streams every tool call's input and adds
+  the `streamtool:<ms>:<name>:<json>` directive.
+- Updated dependencies [fbb7a13]
+- Updated dependencies [9105e1e]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.81
+
 ## 0.1.0-rc.97
 
 ### Patch Changes
