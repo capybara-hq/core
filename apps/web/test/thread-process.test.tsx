@@ -533,6 +533,17 @@ describe("the thread draws process blocks", () => {
       vi.advanceTimersByTime(500);
     });
     expect(label()).toBe("Running · Bash Read the notes");
+    // the live region keeps the announce interval: the visible label is hidden from it
+    const announced = () =>
+      (block.querySelector('[data-part="process-announce"]') as HTMLElement).textContent;
+    expect(block.querySelector('[data-part="process-summary"]')?.getAttribute("aria-hidden")).toBe(
+      "true",
+    );
+    expect(announced()).toBe("Running · Bash cat no");
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(announced()).toBe("Running · Bash Read the notes");
   });
 
   it("a run that ends without an answer shows its last narration as the answer", async () => {

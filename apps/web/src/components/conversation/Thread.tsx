@@ -1128,7 +1128,10 @@ const LIVE_STEPS = 4;
 const RAIL_PAGE = 200;
 /** How often at most the running head announces a new step (spec §7, accessibility). */
 const ANNOUNCE_MS = 3000;
-/** While the current call still streams its input, its label (path, description) follows sooner. */
+/**
+ * While the current call still streams its input, its visible label (path, description) follows
+ * sooner; what is announced (the live region) keeps {@link ANNOUNCE_MS}.
+ */
 const STREAM_ANNOUNCE_MS = 300;
 
 type Extra = Extract<ProcessStep, { kind: "network-facts" | "card" }>;
@@ -1389,6 +1392,7 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
     }
   }
   const label = useThrottled(current, currentStreaming ? STREAM_ANNOUNCE_MS : ANNOUNCE_MS);
+  const announced = useThrottled(current, ANNOUNCE_MS);
   const pinnedSummary = usePinnedSummary(c.orgId, c.conversationId, b.pinned[0]);
 
   // what the rail draws: the last steps, more behind the fold row
@@ -1473,6 +1477,7 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
     <ProcessBlock
       state={b.state}
       {...(label !== null ? { current: label } : {})}
+      {...(announced !== null ? { announce: announced } : {})}
       {...(b.state === "waiting" ? { waiting: waitingWords ?? t("process.waiting") } : {})}
       elapsedMs={live ? (startedAt === null ? null : Math.max(0, now - startedAt)) : b.durationMs}
       summary={{
