@@ -75,7 +75,7 @@ describe("interjections (spec D4)", () => {
 
   it("the maintainer's case, live: pending below the streaming reply", () => {
     const events = [...asked, user(4, "哈哈")];
-    const draft: TimelineDraft = { runId: "r1", step: 1, text: "我可以", thinking: "" };
+    const draft: TimelineDraft = { runId: "r1", step: 1, text: "我可以", thinking: "", tools: [] };
     expect(shape(timeline(events, [draft]))).toEqual([
       "user:你能理解你自己吗？",
       "prose:我可以 (draft)",
@@ -162,7 +162,7 @@ describe("interjections (spec D4)", () => {
     expect(out.at(-1)).toMatchObject({ key: "e5", seq: 5, pending: true });
     // the next step's draft streams from a request that took it in: no longer pending, above it
     const taken = [...events, toolResult(6, 1, "c1"), modelCall(7, 2, 5)];
-    const draft: TimelineDraft = { runId: "r1", step: 2, text: "好的", thinking: "" };
+    const draft: TimelineDraft = { runId: "r1", step: 2, text: "好的", thinking: "", tools: [] };
     expect(shape(timeline(taken, [draft]))).toEqual([
       "user:跑测试",
       "tools",
@@ -182,7 +182,7 @@ describe("interjections (spec D4)", () => {
       modelCall(6, 2, 1),
       user(7, "b"),
     ];
-    const draft: TimelineDraft = { runId: "r1", step: 2, text: "…", thinking: "hmm" };
+    const draft: TimelineDraft = { runId: "r1", step: 2, text: "…", thinking: "hmm", tools: [] };
     expect(shape(timeline(events, [draft]))).toEqual([
       "user:a",
       "tools",
@@ -223,7 +223,7 @@ describe("interjections (spec D4)", () => {
   it("withDrafts keeps the log's entries and puts the drafts before the pending tail", () => {
     const base = buildEventTimeline([...asked, user(4, "哈哈"), user(5, "还有")], new Map(), "en");
     expect(withDrafts(base, [])).toBe(base.entries);
-    const out = withDrafts(base, [{ runId: "r1", step: 1, text: "x", thinking: "" }]);
+    const out = withDrafts(base, [{ runId: "r1", step: 1, text: "x", thinking: "", tools: [] }]);
     expect(shape(out)).toEqual([
       "user:你能理解你自己吗？",
       "prose:x (draft)",

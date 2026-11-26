@@ -8,6 +8,7 @@ import {
   composerWait,
   latestUsage,
   runStats,
+  type TimelineDraft,
   type TimelineEntry,
   withDrafts,
   workingLineVisible,
@@ -714,14 +715,14 @@ describe("buildTimeline", () => {
   it("drafts stream at the end: live thinking, then prose", () => {
     const out = buildTimeline(
       [],
-      [{ runId: "r1", step: 0, text: "", thinking: "hmm" }],
+      [{ runId: "r1", step: 0, text: "", thinking: "hmm", tools: [] }],
       new Map(),
       "en",
     );
     expect(out).toMatchObject([{ kind: "thinking", live: true, text: "hmm" }]);
     const out2 = buildTimeline(
       [],
-      [{ runId: "r1", step: 0, text: "hel", thinking: "" }],
+      [{ runId: "r1", step: 0, text: "hel", thinking: "", tools: [] }],
       new Map(),
       "en",
     );
@@ -930,12 +931,17 @@ describe("final review fixes", () => {
     ];
     const base = buildEventTimeline(events, new Map(), "en");
     expect(withDrafts(base, [])).toBe(base.entries);
-    const out = withDrafts(base, [{ runId: "r1", step: 0, text: "hel", thinking: "" }]);
+    const out = withDrafts(base, [{ runId: "r1", step: 0, text: "hel", thinking: "", tools: [] }]);
     expect(out.slice(0, base.entries.length)).toEqual(base.entries);
     expect(out[0]).toBe(base.entries[0]);
     expect(out.at(-1)).toMatchObject({ kind: "prose", text: "hel", streaming: true });
     expect(out).toEqual(
-      buildTimeline(events, [{ runId: "r1", step: 0, text: "hel", thinking: "" }], new Map(), "en"),
+      buildTimeline(
+        events,
+        [{ runId: "r1", step: 0, text: "hel", thinking: "", tools: [] }],
+        new Map(),
+        "en",
+      ),
     );
   });
 });
@@ -1025,7 +1031,7 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
     ev(seq, "run_finished", { reason: "end_turn", consumedUpToSeq }, runId);
   const mine = (seq: number, text: string, cmid: string, extra: Record<string, unknown> = {}) =>
     user(seq, text, { clientMessageId: cmid, ...extra });
-  type Draft = { runId: string; step: number; text: string; thinking: string };
+  type Draft = TimelineDraft;
   const at = (
     events: ConversationEvent[],
     s: { waiting?: boolean; pending?: number; sent?: string[] } = {},
@@ -1080,8 +1086,12 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
 
   it("is gone at the first output: thinking, prose, a running tool", () => {
     const base = [user(1, "hi"), runStart(2)];
-    expect(at(base, {}, [{ runId: "r1", step: 0, text: "", thinking: "hmm" }])).toBe(false);
-    expect(at(base, {}, [{ runId: "r1", step: 0, text: "He", thinking: "" }])).toBe(false);
+    expect(at(base, {}, [{ runId: "r1", step: 0, text: "", thinking: "hmm", tools: [] }])).toBe(
+      false,
+    );
+    expect(at(base, {}, [{ runId: "r1", step: 0, text: "He", thinking: "", tools: [] }])).toBe(
+      false,
+    );
     const tool = [
       ...base,
       calls(3, [{ id: "c1", name: "Bash", input: { command: "ls" } }]),
@@ -1099,7 +1109,9 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
       result(5, "c1", "Bash"),
     ];
     expect(at(events)).toBe(true);
-    expect(at(events, {}, [{ runId: "r1", step: 1, text: "Done", thinking: "" }])).toBe(false);
+    expect(at(events, {}, [{ runId: "r1", step: 1, text: "Done", thinking: "", tools: [] }])).toBe(
+      false,
+    );
   });
 
   it("a retried run shows the line until its first output", () => {
@@ -1114,7 +1126,9 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
     const running = [...retry, runStart(5, "r2")];
     expect(at(running, { sent: ["m1", "m2"] })).toBe(true);
     expect(
-      at(running, { sent: ["m1", "m2"] }, [{ runId: "r2", step: 0, text: "Hi", thinking: "" }]),
+      at(running, { sent: ["m1", "m2"] }, [
+        { runId: "r2", step: 0, text: "Hi", thinking: "", tools: [] },
+      ]),
     ).toBe(false);
   });
 

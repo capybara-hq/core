@@ -26,9 +26,11 @@ import type {
   ToolResultImage,
 } from "./conversations";
 import type { OrgRole } from "./members";
+import { parsePartialJson } from "./partial-json";
 import type { PersonRef } from "./people";
 import { PersonWaits } from "./person-waits";
 import type { DraftTool } from "./run-drafts";
+import { streamingView } from "./streaming-tool-view";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 
 /**
@@ -383,8 +385,8 @@ export type TimelineEntry =
       step?: StepRef;
       /**
        * Narration, not an answer (process blocks spec §1.1): the step's content also has a
-       * `tool_call` block (a draft: {@link TimelineDraft.toolCall}). `groupProcess` folds it into
-       * the run's process block.
+       * `tool_call` block (a draft: a streamed call in {@link TimelineDraft.tools}). `groupProcess`
+       * folds it into the run's process block.
        */
       narration: boolean;
     }
@@ -548,12 +550,11 @@ export interface TimelineDraft {
   text: string;
   thinking: string;
   /**
-   * The step already started a tool call: its text is narration (process blocks spec §1.1), so it
-   * moves into the process block before the step lands in the log.
+   * The step's streamed tool calls (display only; rows are built from them by the timeline). A
+   * step with one already started a tool call: its text is narration (process blocks spec §1.1),
+   * so it moves into the process block before the step lands in the log.
    */
-  toolCall?: boolean;
-  /** The step's streamed tool calls (display only; rows are built from them by the timeline). */
-  tools?: readonly DraftTool[];
+  tools: readonly DraftTool[];
 }
 
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
@@ -589,6 +590,8 @@ function questionPreview(input: unknown, info: ToolInfo | undefined): string | u
 }
 const stepKey = (runId: string, step: number) => `${runId}:${step}`;
 const callKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
+/** A tool group's key: by its first call, so a streaming group and the logged one match (D8). */
+const toolGroupKey = (firstCallKey: string) => `g${firstCallKey}`;
 /** A row id that is a call key (an `agent` call never dispatched), not a sub-agent id. */
 export const isCallKey = (id: string) => id.includes("\u0000");
 
@@ -687,16 +690,82 @@ export interface EventTimeline {
   entries: TimelineEntry[];
   /** The model of a run's step (the thinking row of a draft names it). */
   modelOf(runId: string | null, step: number): ModelRef | null;
+  /** The tool info and locale the log's rows were built with (a draft's streaming rows use them). */
+  info: ReadonlyMap<string, ToolInfo>;
+  locale: "zh" | "en";
 }
 
 const isPending = (e: TimelineEntry | undefined): boolean =>
   e?.kind === "user" && e.pending === true;
+
+/** A streaming call's row as last built: rebuilt only when its draft, tool info or locale change. */
+interface StreamingRowMemo {
+  at: StepRef;
+  info: ToolInfo | undefined;
+  locale: "zh" | "en";
+  tool: TimelineTool;
+}
+/**
+ * By draft tool object: the reducer makes a new one only when the call changed, and it applies a
+ * frame's deltas at once, so a call's input is parsed at most once per animation frame (spec D5),
+ * and not at all while it does not grow.
+ */
+const streamingRows = new WeakMap<DraftTool, StreamingRowMemo>();
+
+/** A streamed call's row (spec §6.4), keyed like the logged call that replaces it (D8). */
+function streamingTool(
+  at: StepRef,
+  t: DraftTool,
+  info: ReadonlyMap<string, ToolInfo>,
+  locale: "zh" | "en",
+): TimelineTool {
+  const ti = info.get(t.name);
+  const memo = streamingRows.get(t);
+  if (
+    memo &&
+    memo.at.runId === at.runId &&
+    memo.at.step === at.step &&
+    memo.info === ti &&
+    memo.locale === locale
+  )
+    return memo.tool;
+  const parsed = parsePartialJson(t.input);
+  const input = parsed.value ?? {};
+  const view = streamingView(t, parsed, ti?.inputView ?? null);
+  const question = t.name === QUESTION_TOOL;
+  const keyArg = view.keyArg ?? (question ? questionPreview(input, ti) : keyArgOf(input, ti));
+  const label = ti ? toolLabel(ti, locale) : toolLabelOfKey(t.name);
+  const row: ToolRowData = {
+    id: callKey(at.runId, t.id),
+    kind: question ? "question" : (ti?.kind ?? "tool"),
+    name: label.name,
+    status: "streaming",
+    progress: view.progress,
+    ...(label.tool !== undefined ? { tool: label.tool } : {}),
+    ...(label.tooltip !== undefined ? { tooltip: label.tooltip } : {}),
+    ...(keyArg !== undefined && keyArg !== "" ? { keyArg } : {}),
+    ...(view.description !== undefined ? { description: view.description } : {}),
+    ...(view.added !== undefined ? { added: view.added } : {}),
+    ...(view.removed !== undefined ? { removed: view.removed } : {}),
+    ...(view.detail !== undefined ? { detail: view.detail } : {}),
+  };
+  // the step too: a process block draws a step's calls as one rail step, as it will once logged
+  const tool: TimelineTool = { row, callId: t.id, toolKey: t.name, input, outputId: null, step: at };
+  streamingRows.set(t, { at, info: ti, locale, tool });
+  return tool;
+}
 
 /**
  * The streaming drafts after the log's entries, before the pending interjections (spec D4: a
  * message the streaming step never saw stands below it). Cheap: the page memoizes
  * {@link buildEventTimeline} over the events and adds the drafts on each delta frame, so a token
  * does not rebuild the timeline (final review I3); the log's entry objects stay the same.
+ *
+ * A draft's streamed tool calls (streaming tool input spec §6.2) are `streaming` rows after its
+ * prose, grouped as the logged calls will be: one group, joining the log's last group when the
+ * draft wrote no prose, under the key the logged group gets, and each row with its call's id, so
+ * the logged step replaces them in place (D8). A streamed call the logged message lacks goes with
+ * the draft.
  */
 export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]): TimelineEntry[] {
   // the pending interjections are the log's last entries (buildEventTimeline puts them there)
@@ -705,33 +774,51 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
   const out = base.entries.slice(0, tail);
   let added = false;
   for (const d of drafts) {
-    if (d.text === "" && d.thinking === "") continue;
+    if (d.text === "" && d.thinking === "" && d.tools.length === 0) continue;
     added = true;
+    const calling = d.tools.length > 0;
     if (d.thinking !== "") {
       out.push({
         kind: "thinking",
         key: `d${d.runId}:${d.step}:thinking`,
         text: d.thinking,
         seconds: null,
-        live: d.text === "",
+        live: d.text === "" && !calling,
         model: base.modelOf(d.runId, d.step),
         step: { runId: d.runId, step: d.step },
       });
     }
     if (d.text !== "") {
+      // the text is written once the model starts a call, and is then narration
       out.push({
         kind: "prose",
         key: `d${d.runId}:${d.step}`,
         text: d.text,
-        streaming: true,
-        narration: d.toolCall === true,
+        streaming: !calling,
+        narration: calling,
         step: { runId: d.runId, step: d.step },
       });
     }
+    if (!calling) continue;
+    const at: StepRef = { runId: d.runId, step: d.step };
+    const rows = d.tools.map((t) => streamingTool(at, t, base.info, base.locale));
+    const last = out.at(-1);
+    if (last?.kind === "tools") out[out.length - 1] = { ...last, rows: [...last.rows, ...rows] };
+    else out.push({ kind: "tools", key: toolGroupKey(rows[0]?.row.id ?? ""), rows, step: at });
   }
   if (!added) return base.entries;
   for (let i = tail; i < base.entries.length; i++) out.push(base.entries[i] as TimelineEntry);
   return out;
+}
+
+/**
+ * The tool keys the drafts' streamed calls name, sorted and joined by newlines: a value that only
+ * changes when a new tool starts streaming (the page asks for their tool info with the log's).
+ */
+export function streamedToolKeys(drafts: readonly TimelineDraft[]): string {
+  const keys = new Set<string>();
+  for (const d of drafts) for (const t of d.tools) if (t.name !== "") keys.add(t.name);
+  return [...keys].sort().join("\n");
 }
 
 /** Events of a run that are its output (what replaces the working line, spec §2.2). */
@@ -859,7 +946,11 @@ export function workingLineVisible(
   if (s.pending > 0) return true;
   const run = activeRun(events);
   if (run === null) return awaitingRun(events, s.sentHere, s.now);
-  if (drafts.some((d) => d.runId === run.runId && (d.text !== "" || d.thinking !== "")))
+  if (
+    drafts.some(
+      (d) => d.runId === run.runId && (d.text !== "" || d.thinking !== "" || d.tools.length > 0),
+    )
+  )
     return false;
   const open = new Set<string>();
   let output = false;
@@ -1067,12 +1158,16 @@ export function buildEventTimeline(
     return g;
   };
 
-  const openGroup = (step?: StepRef): Extract<TimelineEntry, { kind: "tools" }> => {
+  /** The group a call joins; a new one is keyed by its first call, as its streaming form is (D8). */
+  const openGroup = (
+    firstCall: string,
+    step?: StepRef,
+  ): Extract<TimelineEntry, { kind: "tools" }> => {
     const last = out.at(-1);
     if (last?.kind === "tools") return last;
     const g: Extract<TimelineEntry, { kind: "tools" }> = {
       kind: "tools",
-      key: `g${out.length}`,
+      key: toolGroupKey(firstCall),
       rows: [],
       ...(step !== undefined ? { step } : {}),
     };
@@ -1270,7 +1365,7 @@ export function buildEventTimeline(
           }
           const input = b.input;
           const rec = asRecord(input);
-          const group = openGroup(at);
+          const group = openGroup(callKey(e.runId, b.id), at);
           const question = b.name === QUESTION_TOOL;
           const keyArg = question ? questionPreview(input, ti) : keyArgOf(input, ti);
           const kind: ToolRowData["kind"] = question ? "question" : (ti?.kind ?? "tool");
@@ -1973,7 +2068,7 @@ export function buildEventTimeline(
     groupReveals.size === 0 &&
     !shown.some((entry) => entry.kind === "tools" && entry.rows.some(generating))
   )
-    return { entries: shown, modelOf };
+    return { entries: shown, modelOf, info, locale };
   const withExtras: TimelineEntry[] = [];
   for (const entry of shown) {
     withExtras.push(entry);
@@ -2013,7 +2108,7 @@ export function buildEventTimeline(
     for (const handoff of groupHandoffs.get(entry.key) ?? []) withExtras.push(handoff);
     for (const reveal of groupReveals.get(entry.key) ?? []) withExtras.push(reveal);
   }
-  return { entries: withExtras, modelOf };
+  return { entries: withExtras, modelOf, info, locale };
 }
 
 /** Turns, elapsed time and the running state for the status bar. */
