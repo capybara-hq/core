@@ -894,6 +894,11 @@ button.cb-tool-row {
   color: var(--cb-muted);
   font-weight: 600;
 }
+/* The agent call block's header names the tool in `ink` (§6.16.28 Agent call block), unlike the
+   lighter tool-line tier. */
+.cb-tool-name[data-part="agent-call-name"] {
+  color: var(--cb-ink);
+}
 .cb-tool-row [data-part="key-arg"],
 .cb-tool-line [data-part="key-arg"]:not(.cb-ink) {
   color: var(--cb-faint);
