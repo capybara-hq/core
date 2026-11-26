@@ -2928,11 +2928,18 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
     };
   }
   const realTools = () => k.app.get(ToolRegistry);
-  const runWith = (reader: Reader, sink: StreamSink, kind: "chat" | "eval" | "subagent" = "chat") =>
+  const runWith = (
+    reader: Reader,
+    sink: StreamSink,
+    kind: "chat" | "eval" | "subagent" = "chat",
+    opts: { signal?: AbortSignal; settleMs?: number; log?: ModelStepDeps["log"] } = {},
+  ) =>
     runModelStep(
       {
         ...deps,
         writeBase: reader,
+        ...(opts.settleMs !== undefined && { writeBaseSettleMs: opts.settleMs }),
+        ...(opts.log !== undefined && { log: opts.log }),
         // a replay listing offers the sandbox tools (this test has no device): the builtin Write
         tools: {
           forAgent: (org, def, ...rest) =>
@@ -2948,7 +2955,7 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
         agent: writeAgent(),
         agentVersion: 1,
         absorbedUpToSeq: ALL_ABSORBED,
-        signal: new AbortController().signal,
+        signal: opts.signal ?? new AbortController().signal,
         sink,
         agentId: randomUUID(),
         accountId,
@@ -2988,6 +2995,64 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
     expect(deltas.some((d) => d.kind === "tool_base")).toBe(false);
     expect(deltas.filter((d) => d.kind === "stream_end")).toHaveLength(1);
     expect(await ofType("assistant_message")).toHaveLength(1);
+  });
+
+  /** A logger that records its warnings (the rest is silent). */
+  const warnings = () => {
+    const seen: string[] = [];
+    const log: ModelStepDeps["log"] = {
+      ...silent,
+      warn: (msg: string) => {
+        seen.push(msg);
+      },
+    };
+    return { seen, log };
+  };
+  const STRAY = "write base read still running after its abort; not waited for";
+
+  it("a reader that never settles does not hold the step past the bound", async () => {
+    stubImpl = writer(async () => "complete");
+    await say("write it");
+    const seen: ReadInput[] = [];
+    // a provider that ignores its abort: the read never ends
+    const reader: Reader = {
+      read: (input) => {
+        seen.push(input);
+        return new Promise<never>(() => {});
+      },
+    };
+    const { deltas, sink } = collector();
+    const w = warnings();
+    await runWith(reader, sink, "chat", { settleMs: 1, log: w.log });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.signal.aborted).toBe(true);
+    expect(w.seen.filter((m) => m === STRAY)).toHaveLength(1);
+    expect(deltas.some((d) => d.kind === "tool_base")).toBe(false);
+    expect(deltas.filter((d) => d.kind === "stream_end")).toHaveLength(1);
+    expect(await ofType("assistant_message")).toHaveLength(1);
+  });
+
+  it("Stop ends the step while a reader that never settles is still running", async () => {
+    const stall = pending<"complete">();
+    stubImpl = writer(() => stall.promise);
+    await say("write it");
+    const seen: ReadInput[] = [];
+    const reader: Reader = {
+      read: (input) => {
+        seen.push(input);
+        return new Promise<never>(() => {});
+      },
+    };
+    const { deltas, sink } = collector();
+    const stop = new AbortController();
+    const w = warnings();
+    const stepP = runWith(reader, sink, "chat", { signal: stop.signal, settleMs: 1, log: w.log });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    stop.abort();
+    expect(await stepP).toMatchObject({ aborted: true, stopReason: "aborted" });
+    expect(seen[0]?.signal.aborted).toBe(true);
+    expect(w.seen.filter((m) => m === STRAY)).toHaveLength(1);
+    expect(deltas.some((d) => d.kind === "tool_base")).toBe(false);
   });
 
   it.each([

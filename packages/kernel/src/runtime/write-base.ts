@@ -15,6 +15,12 @@ import type { ResolvedTool } from "../tools/registry.js";
 const KEY_MAX_CHARS = 256;
 /** The longest raw (still escaped) property value the scanner keeps: a longer path gets no base. */
 const VALUE_MAX_CHARS = 8192;
+/**
+ * How long an attempt waits for its base reads after aborting them. The abort reaches the lease
+ * and provider waits, so a read normally ends at once; a provider that ignores its signal never
+ * holds the step (and a Stop) past this bound for a display-only base.
+ */
+export const WRITE_BASE_SETTLE_MS = 3_000;
 
 /**
  * Reads the value of one top-level string property of a JSON object streamed in fragments, without
@@ -198,8 +204,10 @@ export interface WriteBaseReader {
  * declares `inputView.kind: "file_write"` starts one base read once its path property closed, at
  * most one per call id, without blocking the stream. A read that resolves after `signal` aborted
  * (a step reset, the stream's end, the run's abort) emits nothing; a read that throws is logged
- * and dropped. The attempt aborts `signal` and then awaits {@link settle}, so no read outlives
- * the attempt it serves (no admission, intent row or lease after its step moves on).
+ * and dropped. The attempt aborts `signal` and then awaits {@link settle}, so no admission starts
+ * after its step moves on (each read checks the signal right before its admission) and a read
+ * still running normally ends with it. The wait is bounded ({@link WRITE_BASE_SETTLE_MS}): a read
+ * whose provider ignores the abort is logged once and left to end in the background.
  */
 export function writeBaseWatcher(deps: {
   reader: WriteBaseReader;
@@ -208,10 +216,15 @@ export function writeBaseWatcher(deps: {
   conversationId: string;
   signal: AbortSignal;
   log: Pick<Logger, "warn">;
+  /** The bound of {@link settle} in milliseconds (default {@link WRITE_BASE_SETTLE_MS}). */
+  settleMs?: number;
 }): {
   onStart(callId: string, name: string): void;
   onInput(callId: string, fragment: string): void;
-  /** Resolves once every read started so far has finished (never rejects). */
+  /**
+   * Resolves once every read started so far has finished, or once the settle bound elapsed
+   * (logged once; the reads left keep running in the background). Never rejects.
+   */
   settle(): Promise<void>;
 } {
   const watching = new Map<string, TopLevelStringProperty>();
@@ -219,6 +232,7 @@ export function writeBaseWatcher(deps: {
   const inFlight = new Set<Promise<void>>();
   /** Call ids already seen: a repeated start never starts a second read. */
   const seen = new Set<string>();
+  let warnedStray = false;
 
   const read = async (callId: string, path: string): Promise<void> => {
     try {
@@ -263,7 +277,30 @@ export function writeBaseWatcher(deps: {
       void pending.finally(() => inFlight.delete(pending));
     },
     async settle() {
-      while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
+      if (inFlight.size === 0) return;
+      const boundMs = deps.settleMs ?? WRITE_BASE_SETTLE_MS;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // the attempt's own timer, cleared when the wait ends
+      const expired = new Promise<"expired">((resolve) => {
+        timer = setTimeout(() => resolve("expired"), boundMs);
+      });
+      try {
+        while (inFlight.size > 0) {
+          const all = Promise.allSettled([...inFlight]).then(() => "done" as const);
+          if ((await Promise.race([all, expired])) === "done") continue;
+          if (!warnedStray) {
+            warnedStray = true;
+            deps.log.warn("write base read still running after its abort; not waited for", {
+              conversationId: deps.conversationId,
+              pending: inFlight.size,
+              boundMs,
+            });
+          }
+          return;
+        }
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
 }

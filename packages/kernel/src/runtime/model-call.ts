@@ -250,6 +250,11 @@ export interface ModelStepDeps {
    * as `tool_base`. Only chat and sub-agent runs use it (never an eval replay); absent, no base.
    */
   writeBase?: WriteBaseReader;
+  /**
+   * How long an attempt waits for its aborted base reads (default `WRITE_BASE_SETTLE_MS`); tests
+   * shorten it.
+   */
+  writeBaseSettleMs?: number;
 }
 
 /** What the request boundary passes to {@link PermissionContextPort.beforeRequest}. */
@@ -2051,7 +2056,7 @@ async function ladder(
           );
         } finally {
           // the attempt's base reads end with it: aborted, then waited for (the abort reaches
-          // the lease and provider waits, so this is short)
+          // the lease and provider waits, so this is short), at most WRITE_BASE_SETTLE_MS
           baseStop.abort();
           await bases?.settle();
         }
@@ -2323,7 +2328,7 @@ function classify(err: unknown): Failure {
  * stop when `stop` fires or the run aborts; a base found in time goes out as `tool_base`.
  */
 function baseWatcher(
-  deps: Pick<ModelStepDeps, "writeBase" | "log">,
+  deps: Pick<ModelStepDeps, "writeBase" | "writeBaseSettleMs" | "log">,
   input: Pick<
     ModelStepInput,
     "conversationId" | "runId" | "step" | "signal" | "sink" | "conversationKind"
@@ -2344,6 +2349,7 @@ function baseWatcher(
     conversationId,
     signal: AbortSignal.any([input.signal, stop]),
     log: deps.log,
+    ...(deps.writeBaseSettleMs !== undefined && { settleMs: deps.writeBaseSettleMs }),
   });
 }
 

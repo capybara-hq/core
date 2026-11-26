@@ -6,6 +6,7 @@ import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import {
   closedStringProperty,
   TopLevelStringProperty,
+  WRITE_BASE_SETTLE_MS,
   type WriteBase,
   type WriteBaseReader,
   writeBaseViewOf,
@@ -216,6 +217,53 @@ describe("writeBaseWatcher", () => {
     await s;
     expect(settled).toBe(true);
     expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("stops waiting for a read that never settles once the bound elapsed, warning once", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const ac = new AbortController();
+      // a provider that ignores its abort: the read never ends
+      const { w, warn } = watcherWith(() => new Promise<never>(() => {}), ac.signal);
+      w.onStart("t1", "Write");
+      w.onInput("t1", '{"file_path":"/w/a.py"}');
+      ac.abort();
+      let settled = false;
+      const s = w.settle().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(WRITE_BASE_SETTLE_MS - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await s;
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[1]).toMatchObject({ conversationId: "c1", pending: 1 });
+      // a second wait on the same stray read is bounded too, and not logged again
+      const again = w.settle();
+      await vi.advanceTimersByTimeAsync(WRITE_BASE_SETTLE_MS);
+      await again;
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears its timer when the reads end before the bound", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const d = deferred<WriteBase | null>();
+      const { w, warn } = watcherWith(() => d.promise);
+      w.onStart("t1", "Write");
+      w.onInput("t1", '{"file_path":"/w/a.py"}');
+      const s = w.settle();
+      expect(vi.getTimerCount()).toBe(1);
+      d.resolve(null);
+      await s;
+      expect(vi.getTimerCount()).toBe(0);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("settles after a reader that throws", async () => {
