@@ -108,9 +108,14 @@ it starts one read, asynchronous and never blocking the stream:
    `checkToolWritable`, `normalizeSandboxPath`). A path `Write` would refuse gets no base.
 2. Find the latest recorded state of that path in this conversation's log (the same lookup as
    `assertReadAndUnchanged`). None: no base (a new file, or a call the guard will refuse).
-3. Only if the device is running (a read never wakes or resumes a suspended device, never takes
-   a device lease for long and holds no path lease), read at most `TOOL_VIEW_DIFF_MAX_BYTES`;
-   a size or sha256 different from the recorded state, a binary file or a read error: no base.
+3. Read it as a kernel read (permission activation L2: `SandboxService.withKernelRead`,
+   admitted and claimed per call by `SandboxOperationIntents`) with a second purpose beside
+   `project_root`: `write_base { path }`. Its admission differs from a run start's: the run's
+   current claim with the run `running` (not `queued`); the scope is exactly that one path, the
+   methods `stat` and `readFile` only; and the use never makes, wakes or resumes an instance (a
+   device that is not running gets no base). It holds no path lease. Read at most
+   `TOOL_VIEW_DIFF_MAX_BYTES`; a size or sha256 different from the recorded state, a binary file,
+   a refused admission or a read error: no base.
 4. Publish `{ delta: "tool_base", callId, text, sha256 }` on the conversation topic and keep it
    in the step's draft (counted in `DRAFT_TOOL_INPUT_MAX`; a base above
    `TOOL_VIEW_DIFF_MAX_TEXT_BYTES` is not sent).
