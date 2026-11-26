@@ -605,7 +605,11 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
       .split("\n")
       .map((p) => p.slice(src.length + 1))
       .sort();
-    expect(callers).toEqual(["runtime/project/knowledge.service.ts", "sandbox/sandbox.service.ts"]);
+    expect(callers).toEqual([
+      "runtime/project/knowledge.service.ts",
+      "runtime/write-base.service.ts",
+      "sandbox/sandbox.service.ts",
+    ]);
     const starters = execSync(`grep -rl "ensureRunningForOwner" ${src}`, { encoding: "utf8" })
       .trim()
       .split("\n")

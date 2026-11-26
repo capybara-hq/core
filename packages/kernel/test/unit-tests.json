@@ -128,6 +128,7 @@
   "runtime/skill-fork.test.ts",
   "runtime/stream.test.ts",
   "runtime/tool-map-render.test.ts",
+  "runtime/write-base.test.ts",
   "sandbox/cloud-snapshot-cases.test.ts",
   "sandbox/device-fake.test.ts",
   "sandbox/device-sandbox.test.ts",

@@ -94,6 +94,7 @@ import { type BoundProvider, ProviderListError, type ProviderRegistry } from "./
 import { ExecutionRevoked } from "./run-execution.js";
 import type { StepLog } from "./step-log.js";
 import { budgetRunOf, subagentBudgetUsedUp } from "./subagents/limits.js";
+import { type WriteBaseReader, writeBaseWatcher } from "./write-base.js";
 
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
 export const WRAP_UP_REMINDER =
@@ -244,6 +245,11 @@ export interface ModelStepDeps {
    * install only the recorded feeder (`evals/recorded-permission-context.ts`).
    */
   permissionContext?: PermissionContextPort;
+  /**
+   * Reads the display-only base of a streaming `Write` (streaming tool input spec §4.1), published
+   * as `tool_base`. Only chat and sub-agent runs use it (never an eval replay); absent, no base.
+   */
+  writeBase?: WriteBaseReader;
 }
 
 /** What the request boundary passes to {@link PermissionContextPort.beforeRequest}. */
@@ -2018,24 +2024,34 @@ async function ladder(
         );
         await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
         sentAt = Date.now();
-        const outcome = await consumeModelStream(
-          provider,
-          sentRequest,
-          info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
-          signal,
-          (ev) => {
-            if (ev.type === "text_delta") {
-              streamed.text += ev.text;
-              sink({ kind: "text", runId, step, text: ev.text });
-            } else if (ev.type === "thinking_delta") {
-              sink({ kind: "thinking", runId, step, text: ev.text });
-            } else if (ev.type === "tool_call_start") {
-              sink({ kind: "tool_start", runId, step, callId: ev.id, name: ev.name });
-            } else {
-              sink({ kind: "tool_input", runId, step, callId: ev.id, text: ev.input });
-            }
-          },
-        );
+        // this attempt's pending base reads end with its stream (a reset, the end, an abort)
+        const baseStop = new AbortController();
+        const bases = baseWatcher(deps, input, tools, baseStop.signal);
+        let outcome: StreamOutcome;
+        try {
+          outcome = await consumeModelStream(
+            provider,
+            sentRequest,
+            info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
+            signal,
+            (ev) => {
+              if (ev.type === "text_delta") {
+                streamed.text += ev.text;
+                sink({ kind: "text", runId, step, text: ev.text });
+              } else if (ev.type === "thinking_delta") {
+                sink({ kind: "thinking", runId, step, text: ev.text });
+              } else if (ev.type === "tool_call_start") {
+                sink({ kind: "tool_start", runId, step, callId: ev.id, name: ev.name });
+                bases?.onStart(ev.id, ev.name);
+              } else {
+                sink({ kind: "tool_input", runId, step, callId: ev.id, text: ev.input });
+                bases?.onInput(ev.id, ev.input);
+              }
+            },
+          );
+        } finally {
+          baseStop.abort();
+        }
         // the draft's last write, before the assistant_message is logged
         sink({ kind: "stream_end", runId, step });
         if (scope && deps.hooks) {
@@ -2296,6 +2312,35 @@ function classify(err: unknown): Failure {
     message: err instanceof Error ? err.message : String(err),
     retryAfterMs: undefined,
   };
+}
+
+/**
+ * The `Write` base watcher of one stream attempt (streaming tool input spec §4.1), or none: only a
+ * chat or sub-agent run with a reader gets one (an eval replay never reads a device). Its reads
+ * stop when `stop` fires or the run aborts; a base found in time goes out as `tool_base`.
+ */
+function baseWatcher(
+  deps: Pick<ModelStepDeps, "writeBase" | "log">,
+  input: Pick<
+    ModelStepInput,
+    "conversationId" | "runId" | "step" | "signal" | "sink" | "conversationKind"
+  >,
+  tools: Pick<StepTools, "list">,
+  stop: AbortSignal,
+): ReturnType<typeof writeBaseWatcher> | undefined {
+  const reader = deps.writeBase;
+  const kind = input.conversationKind;
+  if (reader === undefined || (kind !== "chat" && kind !== "subagent")) return undefined;
+  const { conversationId, runId, step, sink } = input;
+  return writeBaseWatcher({
+    reader,
+    inputViewOf: (name) => tools.list.find((t) => t.key === name)?.spec.inputView,
+    emit: (callId, base) =>
+      sink({ kind: "tool_base", runId, step, callId, text: base.text, sha256: base.sha256 }),
+    conversationId,
+    signal: AbortSignal.any([input.signal, stop]),
+    log: deps.log,
+  });
 }
 
 /** 可被中止的等待（本进程发起的模型调用自己的计时器，结束即清除）；中止 → StepAborted。 */

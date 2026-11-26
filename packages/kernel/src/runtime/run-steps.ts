@@ -18,6 +18,7 @@ import { PermissionContextRecorder } from "./permission-context.service.js";
 import { ProviderRegistry } from "./providers.js";
 import { StepLog } from "./step-log.js";
 import { SubagentsService } from "./subagents/subagents.service.js";
+import { WriteBaseService } from "./write-base.service.js";
 
 /**
  * Builds the agent loop a run executes (default {@link LangGraphLoop}: its checkpoints live in the
@@ -68,6 +69,7 @@ export class RunSteps {
     @Inject(CompactionSettingsService) compactionSettings: CompactionSettingsService,
     @Inject(CompactionProgressService) compactionProgress: CompactionProgressService,
     @Inject(PermissionContextRecorder) permissionContext: PermissionContextRecorder,
+    @Inject(WriteBaseService) writeBase: WriteBaseService,
   ) {
     this.deps = {
       get db(): KernelSchemaDb {
@@ -96,6 +98,8 @@ export class RunSteps {
       },
       // the request boundary of the recorded permission context (spec B2)
       ...livePermissionContext(permissionContext),
+      // the display-only base of a streaming Write (streaming tool input spec §4.1)
+      writeBase,
     };
   }
 }
