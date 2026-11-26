@@ -62,6 +62,10 @@ function statusLine(text: string): string | undefined {
 /**
  * Folds one event into the state. `label` is the tool title and key argument helper the approval
  * card uses; `base` is the web base (absent: no links, so no pending entries).
+ *
+ * Contract: only this run's events count. An event of another run (a previous run, a sub-agent's)
+ * is ignored, and so is every event after the run ended. Any approval or question decision flips
+ * `waiting` back to `running`, even when a parallel ask is still pending (accepted behavior).
  */
 export function reduceProgress(
   s: ProgressState,
@@ -69,6 +73,8 @@ export function reduceProgress(
   label: (toolKey: string, input: unknown) => string,
   base: string | undefined,
 ): ProgressState {
+  if (e.runId !== null && e.runId !== s.runId) return s;
+  if (s.endedAt !== undefined) return s;
   switch (e.type) {
     case "assistant_message": {
       const content = e.payload.content;

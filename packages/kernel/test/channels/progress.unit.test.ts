@@ -159,4 +159,44 @@ describe("reduceProgress", () => {
     });
     expect(renderCardAsText(card, "zh")).toContain("https://cap.example/chat/c1");
   });
+
+  it("events of another run leave the state unchanged", () => {
+    const s = start();
+    const foreign = (e: ConversationEvent) => ({ ...e, runId: "other" }) as ConversationEvent;
+    expect(reduce(s, foreign(ev("run_finished", { reason: "completed" })))).toEqual(s);
+    expect(reduce(s, foreign(result()))).toEqual(s);
+  });
+
+  it("an ended run ignores later events", () => {
+    for (const end of [
+      ev("run_finished", { reason: "completed" }),
+      ev("run_failed", { error: { code: "x", message: "y" } }),
+      ev("run_aborted", { byAccountId: null, reason: "user" }),
+    ]) {
+      const done = reduce(start(), end);
+      const after = reduce(
+        done,
+        ev("approval_requested", { approvalId: "a" }),
+        assistant([{ type: "text", text: "late" }, call("1", "a")]),
+        result(),
+      );
+      expect(after).toEqual(done);
+    }
+  });
+
+  it("hours, stopped and failed titles", () => {
+    const end = (e: ConversationEvent) => reduce(start(), e);
+    const fin = end(ev("run_finished", { reason: "completed" }, "2026-11-26T11:02:03.000Z"));
+    expect(progressCard(fin, opts()).title).toBe("已处理 1 小时 2 分");
+    expect(progressCard(fin, opts({ locale: "en" })).title).toBe("Worked for 1h 2m");
+    expect(
+      progressCard(end(ev("run_aborted", { byAccountId: null, reason: "user" })), opts()).title,
+    ).toBe("已停止");
+    expect(
+      progressCard(
+        end(ev("run_failed", { error: { code: "x", message: "y" } })),
+        opts({ locale: "en" }),
+      ).title,
+    ).toBe("Failed");
+  });
 });
