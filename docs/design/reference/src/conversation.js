@@ -169,8 +169,30 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   const WAITING = { input: "等待你回答", approval: "等待你批准", connect: "等待你连接" };
 
+  // The stream mark (§6.16.9): three accent dots pulsing in turn, decorative (the word says it).
+  const streamMark = () =>
+    '<span class="r-stream-mark" data-part="stream-mark" aria-hidden="true"><span class="r-stream-dot" data-part="stream-dot"></span><span class="r-stream-dot" data-part="stream-dot"></span><span class="r-stream-dot" data-part="stream-dot"></span></span>';
+
+  /** "Writing · 86 lines · 2.7 KB" (§6.16.9; formatBytes as the design package rounds it). */
+  function streamProgress(p) {
+    const bytes = (n) => {
+      if (n < 1024) return `${n} B`;
+      const v = Math.round((n / 1024) * 10) / 10;
+      return `${Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)} KB`;
+    };
+    const parts = [p.generic ? "生成参数中" : "生成中"];
+    if (p.lines !== undefined && !p.generic) parts.push(`${p.lines.toLocaleString("en-US")} 行`);
+    parts.push(bytes(p.bytes));
+    return parts.join(" · ");
+  }
+
   function toolRow(t, o = {}) {
     const expandable = Boolean(t.input || t.output || t.command || t.diff);
+    if (t.status === "streaming") {
+      // Input still being written: the mark, an ink label, the progress where the timer stands.
+      const end = `<span class="r-tend"><span class="r-stream-progress" data-part="stream-progress">${esc(streamProgress(t.progress))}</span>${expandable ? chev(o.open) : ""}</span>`;
+      return `<div class="r-trow" data-running aria-busy="true"${expandable ? ` role="button" aria-expanded="${Boolean(o.open)}"` : ""}>${streamMark()}${toolLabel(t)}${end}</div>`;
+    }
     // A call waiting for a person: no spinner, no timer, the waiting word in accent (§6.16.9).
     const waiting = t.status === "running" && t.waiting;
     const lead = t.status === "running" && !waiting ? spin(16) : "";
@@ -239,6 +261,27 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       ? `<div class="r-dcut">差异过长，已截断 · 显示前 ${t.diff.length.toLocaleString("en-US")} / 10,000 行 · <button class="r-linkbtn">${esc(K.viewAll)}</button></div>`
       : "";
     return `<div class="r-diff">${lines.join("")}${cut}</div>`;
+  }
+
+  /**
+   * The live diff block (§6.16.10 Live): a viewport that follows the tail, the caret on the last
+   * line receiving text, the pending line (base lines not reached yet), the earlier line (long
+   * text keeps its last lines) and the footer of the writing and edit forms.
+   */
+  function liveDiff(l) {
+    const caret = '<span class="r-dcaret" data-part="diff-caret" aria-hidden="true"></span>';
+    const collapsed = (part, text) =>
+      `<div class="r-dl r-dcollapsed" data-part="${part}"><span class="r-ln"></span><span class="r-sign"></span><span class="r-dtext">${esc(text)}</span></div>`;
+    const rows = l.lines.map((x, i) => {
+      const sign = l.signs === false ? " " : x.kind === "add" ? "+" : x.kind === "del" ? "−" : " ";
+      const n = l.gutter === "pending" ? "" : x.kind === "del" ? x.old : x.new;
+      const last = i === l.lines.length - 1;
+      return `<div class="r-dl"${x.kind === "ctx" ? "" : ` data-kind="${x.kind}"`}><span class="r-ln">${n ?? ""}</span><span class="r-sign">${sign}</span><span class="r-dtext">${esc(x.text)}</span>${last ? caret : ""}</div>`;
+    });
+    const earlier = l.earlier ? collapsed("diff-earlier", `前面 ${l.earlier.toLocaleString("en-US")} 行`) : "";
+    const pending = l.pending ? collapsed("diff-pending", `后面 ${l.pending.toLocaleString("en-US")} 行待对齐`) : "";
+    const foot = l.foot ? `<div class="r-dfoot" data-part="diff-foot">${esc(l.foot)}</div>` : "";
+    return `<div class="r-diff" data-live data-part="diff">${earlier}${rows.join("")}${pending}</div>${foot}`;
   }
 
   // ── Prose, thinking, bubbles, dividers ─────────────────────────────────
@@ -1230,6 +1273,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return col(toolGroup(rows, { open: o.state === "expanded", openRows: o.state === "expanded" ? ["t_exp_conn", "t_exp_cmd"] : [] }));
     },
     "tool-row": (o) => {
+      const STREAMING = { streaming: T.streaming[0], "streaming-input": T.streaming[1] };
+      if (STREAMING[o.state]) return col(`<div class="r-tbox">${toolRow(STREAMING[o.state])}</div>`);
       const pick = {
         default: [T.expanded[1], {}],
         hover: [T.expanded[2], { hover: true }],
@@ -1250,6 +1295,21 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return col(`<div class="r-tbox">${toolRow(pick[0], pick[1])}</div>`);
     },
     "diff-block": (o) => {
+      // The live forms (§6.16.10 Live), in TOOL_FIXTURES.live's order.
+      const live = { live: T.live[0], "live-writing": T.live[1], "live-edit": T.live[2], "live-cut": T.live[3] }[o.state];
+      if (live) {
+        const l = live.live ?? {};
+        const spec = {
+          lines: live.diff,
+          gutter: l.gutter,
+          signs: !l.preview,
+          pending: l.pending,
+          earlier: l.totalLines ? l.totalLines - live.diff.length : 0,
+          foot: l.gutter === "pending" ? "行号待定" : l.preview ? "写入预览" : "",
+        };
+        // the single tool line of a streaming call: the mark, the label, " · " and the progress
+        return col(`<div class="r-tline" role="button" aria-expanded="true" aria-busy="true">${streamMark()}${toolLabel(live)}<span class="r-stream-progress"> · ${esc(streamProgress(live.progress))}</span>${chev(true)}</div><div class="r-tbox">${liveDiff(spec)}</div>`);
+      }
       const t = T.diff[0];
       return col(`<div class="r-tline" role="button" aria-expanded="true">${toolLabel(t)}${chev(true)}</div><div class="r-tbox">${diffBlock(t, { truncated: o.state === "truncated" })}</div>`);
     },

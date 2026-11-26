@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Tool row</h1>
-<p>verb + source: title + key arguments (ink) + extra (faint). Expanded: key / value inputs, the command, output on the bg ground (max 120), duration and Copy output. Failure is the word, never a color alone. A call the Auto profile ran without asking, or the review model approved, adds the neutral words 已自动批准 / 审查模型已批准 after the label in muted.</p>
+<p>verb + source: title + key arguments (ink) + extra (faint). Expanded: key / value inputs, the command, output on the bg ground (max 120), duration and Copy output. Failure is the word, never a color alone. A call the Auto profile ran without asking, or the review model approved, adds the neutral words 已自动批准 / 审查模型已批准 after the label in muted. A call whose input is still being written: the stream mark (three accent dots pulsing in turn) where the spinner stands, the label ink, the progress word, lines and size in faint where the timer stands; no actions.</p>
 <div class="r-blocks">
 <section data-ref-block="tool-row-default" style="width:752px" data-pad>
   <template data-fixture="tool-row" data-opts='{"state": "default"}'></template>
@@ -56,6 +56,12 @@
 </section>
 <section data-ref-block="tool-row-review-approved" style="width:752px" data-pad>
   <template data-fixture="tool-row" data-opts='{"state": "review-approved"}'></template>
+</section>
+<section data-ref-block="tool-row-streaming" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "streaming"}'></template>
+</section>
+<section data-ref-block="tool-row-streaming-input" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "streaming-input"}'></template>
 </section>
 </div>
 </main>

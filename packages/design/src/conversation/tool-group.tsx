@@ -9,7 +9,10 @@ import {
   ErrorDot,
   hasDetail,
   isLive,
+  isStreaming,
   isWaiting,
+  StreamMark,
+  StreamProgress,
   ToolBox,
   ToolDetail,
   ToolLabel,
@@ -75,16 +78,21 @@ export function ToolGroup({
 
   const single = rows.length === 1 ? rows[0] : undefined;
   const clock = useClock(
-    single !== undefined && isRunning(single) && single.startedAt !== undefined,
+    // a streaming call shows no time: it never ticks
+    single !== undefined &&
+      isRunning(single) &&
+      !isStreaming(single) &&
+      single.startedAt !== undefined,
     now,
   );
   if (single) {
     const isOpen = open ?? own;
     const expandable = hasDetail(single);
-    const running = isRunning(single);
+    const running = isRunning(single) && !isStreaming(single);
+    const streaming = isStreaming(single);
     const label = (
       <>
-        {running ? <Spinner size={16} /> : null}
+        {running ? <Spinner size={16} /> : streaming ? <StreamMark /> : null}
         <ToolLabel row={single} />
         <ToolMeta row={single} />
         {running && single.startedAt !== undefined ? (
@@ -93,6 +101,7 @@ export function ToolGroup({
           </span>
         ) : null}
         <WaitingWord row={single} lead=" · " />
+        {streaming ? <StreamProgress row={single} lead=" · " /> : null}
       </>
     );
     const chevron = <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />;
@@ -100,7 +109,12 @@ export function ToolGroup({
       <div className="cb-tool-group" data-single="true">
         {single.link ? (
           // a call with a link (§6.16.9): the toggle and the link side by side, never nested
-          <div className="cb-tool-line" data-part="tool-line" data-linked="true">
+          <div
+            className="cb-tool-line"
+            data-part="tool-line"
+            data-linked="true"
+            aria-busy={streaming ? true : undefined}
+          >
             {expandable ? (
               <button
                 type="button"
@@ -122,6 +136,7 @@ export function ToolGroup({
             type="button"
             className="cb-tool-line"
             data-part="tool-line"
+            aria-busy={streaming ? true : undefined}
             aria-expanded={isOpen}
             aria-controls={isOpen ? id : undefined}
             onClick={toggle}
@@ -130,7 +145,11 @@ export function ToolGroup({
             {chevron}
           </button>
         ) : (
-          <div className="cb-tool-line" data-part="tool-line">
+          <div
+            className="cb-tool-line"
+            data-part="tool-line"
+            aria-busy={streaming ? true : undefined}
+          >
             {label}
           </div>
         )}

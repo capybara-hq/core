@@ -1,5 +1,5 @@
 import type { ConversationEvent } from "./conversations";
-import type { RunDraftSnapshot } from "./run-drafts";
+import type { DraftTool, RunDraftSnapshot } from "./run-drafts";
 import type { StreamDelta } from "./stream";
 
 /**
@@ -23,10 +23,20 @@ interface ChannelDraft {
   held: StreamDelta[];
 }
 
+/** One streamed tool call as this connection handed it on: its input is a channel of its own. */
+interface ToolDraft {
+  name: string;
+  input: ChannelDraft;
+  inputTruncated: boolean;
+  base?: { text: string; sha256: string };
+}
+
 /** What one connection knows of a step's draft. */
 interface StepDraft {
   text: ChannelDraft;
   thinking: ChannelDraft;
+  /** By call id, in the order the calls first showed. */
+  tools: Map<string, ToolDraft>;
   /** The draft reads of the current gap so far. */
   attempts: number;
   timer: ReturnType<typeof setTimeout> | null;
@@ -54,6 +64,27 @@ function applyHeld(c: ChannelDraft): boolean {
   return c.value !== before;
 }
 
+const toolDraft = (name: string): ToolDraft => ({
+  name,
+  input: { value: "", held: [] },
+  inputTruncated: false,
+});
+
+/** The tools as the `draft` update carries them. */
+function toolsOf(s: StepDraft): DraftTool[] {
+  return [...s.tools].map(([id, t]) => {
+    const tool: DraftTool = { id, name: t.name, input: t.input.value };
+    if (t.inputTruncated) tool.inputTruncated = true;
+    if (t.base !== undefined) tool.base = t.base;
+    return tool;
+  });
+}
+
+const holdsGap = (s: StepDraft): boolean =>
+  s.text.held.length > 0 ||
+  s.thinking.held.length > 0 ||
+  [...s.tools.values()].some((t) => !t.inputTruncated && t.input.held.length > 0);
+
 /**
  * The live drafts of one stream connection (spec 2026-11-07-run-input-and-live-drafts §4): turns
  * `event: draft` frames and offset-carrying deltas into gap-free updates for the stream's
@@ -65,6 +96,8 @@ function applyHeld(c: ChannelDraft): boolean {
  * `draft` the reducer merges (the longer of each channel wins). An `event: draft` frame resyncs
  * both channels (`resync`: a channel that is a prefix of what the page shows keeps the longer,
  * since the store lags the screen by up to its coalescing window; any other replaces it); a
+ * streamed tool call's input is one more channel per call id with the same rules (its deltas carry
+ * the characters of that call's input before them), and its base is kept once; a
  * channel's delta at offset 0 while this connection holds nothing of it replaces that channel
  * alone (it starts over: whatever an earlier connection left is stale).
  * Client state of one browser connection only (nothing shared across requests).
@@ -105,7 +138,13 @@ export class LiveDrafts {
   }
 
   /** `event: draft`: the step's draft at the open, resyncing both channels. */
-  draft(d: { runId: string; step: number; text: string; thinking: string }): void {
+  draft(d: {
+    runId: string;
+    step: number;
+    text: string;
+    thinking: string;
+    tools: readonly DraftTool[];
+  }): void {
     const key = stepKey(d.runId, d.step);
     if (this.ignored(d.runId, key)) return;
     const old = this.steps.get(key);
@@ -117,12 +156,36 @@ export class LiveDrafts {
       s[ch].held = old?.[ch].held ?? [];
       applyHeld(s[ch]);
     }
+    for (const t of d.tools) {
+      const tool = toolDraft(t.name);
+      tool.input.value = t.input;
+      tool.inputTruncated = t.inputTruncated === true;
+      if (t.base !== undefined) tool.base = t.base;
+      s.tools.set(t.id, tool);
+    }
+    // A call this connection saw (or holds deltas of) since its open that the frame does not list
+    // yet: the store lags the stream by its coalescing window, so it is kept. The frame's list is
+    // then every call of the step this connection knows; the reducer drops any other (one an
+    // earlier connection showed, before a `step_reset` during the disconnect).
+    for (const [id, t] of old?.tools ?? []) {
+      const tool = s.tools.get(id);
+      if (tool === undefined) s.tools.set(id, t);
+      else {
+        tool.input.held = t.input.held;
+        if (tool.base === undefined && t.base !== undefined) tool.base = t.base;
+      }
+    }
+    for (const t of s.tools.values()) {
+      if (t.inputTruncated) t.input.held = [];
+      else applyHeld(t.input);
+    }
     this.emit({
       runId: d.runId,
       step: d.step,
       delta: "draft",
       text: s.text.value,
       thinking: s.thinking.value,
+      tools: toolsOf(s),
       resync: true,
     });
     this.readAgain(d.runId, d.step, s);
@@ -137,30 +200,76 @@ export class LiveDrafts {
       return;
     }
     if (d.delta === "draft") return;
-    // a text or thinking delta always carries its offset (the kernel's delta frame)
+    if (d.delta === "tool_start" || d.delta === "tool_base") {
+      this.toolEvent(key, d);
+      return;
+    }
+    // a text, thinking or tool_input delta always carries its offset (the kernel's delta frame)
     const offset = d.offset as number;
     const text = d.text ?? "";
     if (text === "") return;
-    const ch: Channel = d.delta;
     const s = this.steps.get(key) ?? this.create(key);
-    const c = s[ch];
+    let tool: ToolDraft | undefined;
+    if (d.delta === "tool_input") {
+      if (d.callId === undefined) return;
+      tool = s.tools.get(d.callId);
+      if (tool === undefined) {
+        tool = toolDraft(d.name ?? "");
+        s.tools.set(d.callId, tool);
+      }
+    }
+    const ch = d.delta as Channel;
+    const c = tool !== undefined ? tool.input : s[ch];
+    const startOver = (): void => {
+      c.value = text;
+      this.emit(
+        tool !== undefined
+          ? {
+              runId: d.runId,
+              step: d.step,
+              delta: "draft",
+              tools: [{ id: d.callId as string, name: tool.name, input: text }],
+              replace: true,
+            }
+          : { runId: d.runId, step: d.step, delta: "draft", [ch]: text, replace: true },
+      );
+    };
     if (c.held.length > 0) {
       c.held.push(d);
       return;
     }
     if (offset === 0 && c.value === "") {
       // the channel starts over: it replaces what an earlier connection left of it, nothing else
-      c.value = text;
-      this.emit({ runId: d.runId, step: d.step, delta: "draft", [ch]: text, replace: true });
+      startOver();
       return;
     }
     const tail = append(c, offset, text);
     if (tail === null) {
+      // a truncated call's draft stops short of the stream: nothing to wait for, nothing to read
+      if (tool?.inputTruncated) return;
       c.held.push(d);
       this.readAgain(d.runId, d.step, s);
     } else if (tail !== "") {
       this.emit({ ...d, text: tail, offset: c.value.length - tail.length });
     }
+  }
+
+  /** `tool_start` (the call exists) and `tool_base` (kept once) pass through, recorded here. */
+  private toolEvent(key: string, d: StreamDelta): void {
+    if (d.callId === undefined) return;
+    const s = this.steps.get(key) ?? this.create(key);
+    let tool = s.tools.get(d.callId);
+    if (tool === undefined) {
+      tool = toolDraft(d.name ?? "");
+      s.tools.set(d.callId, tool);
+    } else if (d.name !== undefined && tool.name === "") {
+      tool.name = d.name;
+    }
+    if (d.delta === "tool_base") {
+      if (tool.base !== undefined || d.text === undefined || d.sha256 === undefined) return;
+      tool.base = { text: d.text, sha256: d.sha256 };
+    }
+    this.emit(d);
   }
 
   private ignored(runId: string, key: string): boolean {
@@ -171,6 +280,7 @@ export class LiveDrafts {
     const s: StepDraft = {
       text: { value: "", held: [] },
       thinking: { value: "", held: [] },
+      tools: new Map(),
       attempts: 0,
       timer: null,
       reading: false,
@@ -187,7 +297,7 @@ export class LiveDrafts {
 
   /** Schedules the next draft read while a channel holds deltas past a gap (none left: done). */
   private readAgain(runId: string, step: number, s: StepDraft): void {
-    if (s.text.held.length === 0 && s.thinking.held.length === 0) {
+    if (!holdsGap(s)) {
       s.attempts = 0;
       return;
     }
@@ -215,6 +325,28 @@ export class LiveDrafts {
           }
           if (applyHeld(s[ch])) changed = true;
         }
+        for (const st of got?.tools ?? []) {
+          let tool = s.tools.get(st.id);
+          if (tool === undefined) {
+            tool = toolDraft(st.name);
+            s.tools.set(st.id, tool);
+            changed = true;
+          }
+          if (st.input.length > tool.input.value.length) {
+            tool.input.value = st.input;
+            changed = true;
+          }
+          if (st.inputTruncated === true && !tool.inputTruncated) {
+            tool.inputTruncated = true;
+            tool.input.held = [];
+            changed = true;
+          }
+          if (tool.base === undefined && st.base !== undefined) {
+            tool.base = st.base;
+            changed = true;
+          }
+        }
+        for (const t of s.tools.values()) if (applyHeld(t.input)) changed = true;
         if (changed)
           this.emit({
             runId,
@@ -222,6 +354,7 @@ export class LiveDrafts {
             delta: "draft",
             text: s.text.value,
             thinking: s.thinking.value,
+            tools: toolsOf(s),
           });
         this.readAgain(runId, step, s);
       };

@@ -59,6 +59,7 @@ const INFO = new Map<string, ToolInfo>([
       icon: { kind: "name", name: "terminal" },
       sandbox: true,
       keyArgs: ["command"],
+      inputView: { kind: "command", command: "command", description: "description" },
       tool: null,
       source: { kind: "builtin" },
     },
@@ -107,7 +108,13 @@ describe("groupProcess", () => {
 
   it("streamed narration moves into the open block", () => {
     const base = [user(1, "go"), runStarted(2), calls(3, [bash("a")]), result(4, "a", "Bash")];
-    const draft: TimelineDraft = { runId: "r1", step: 1, text: "Now the next file", thinking: "" };
+    const draft: TimelineDraft = {
+      runId: "r1",
+      step: 1,
+      text: "Now the next file",
+      thinking: "",
+      tools: [],
+    };
 
     // the step streams its text: drawn as prose under the block, which is still running
     const streaming = build(base, [draft]);
@@ -115,11 +122,16 @@ describe("groupProcess", () => {
     expect(streaming[2]).toMatchObject({ streaming: true, narration: false });
     expect(block(streaming).state).toBe("running");
 
-    // its first tool call arrives: the text moves into the block
-    const withCall = build(base, [{ ...draft, toolCall: true }]);
+    // its first tool call arrives (streamed): the text, now written, moves into the block, and the
+    // call streams after it as the logged step will draw it
+    const withCall = build(base, [
+      { ...draft, tools: [{ id: "b", name: "Bash", input: '{"command":"l' }] },
+    ]);
     expect(kinds(withCall)).toEqual(["user", "process"]);
-    expect(kinds(block(withCall).steps)).toEqual(["tools", "narration"]);
-    expect(block(withCall).steps[1]).toMatchObject({ text: "Now the next file", streaming: true });
+    expect(kinds(block(withCall).steps)).toEqual(["tools", "narration", "tools"]);
+    expect(block(withCall).steps[1]).toMatchObject({ text: "Now the next file", streaming: false });
+    const streamed = block(withCall).steps[2] as Extract<TimelineEntry, { kind: "tools" }>;
+    expect(streamed.rows.map((r) => r.row.status)).toEqual(["streaming"]);
 
     // the step lands in the log (a reload mid-step reads the same): the same block, no second move
     const landed = build([
@@ -137,11 +149,18 @@ describe("groupProcess", () => {
     expect(kinds(block(landed).steps)).toEqual(["tools", "narration", "tools"]);
     expect(block(landed).steps[1]).toMatchObject({ streaming: false });
     expect(block(landed).key).toBe(block(withCall).key);
+    // the streamed call's group and row keep their keys as the logged ones (streaming spec D8)
+    const loggedCall = block(landed).steps[2] as Extract<TimelineEntry, { kind: "tools" }>;
+    expect(loggedCall.key).toBe(streamed.key);
+    expect(loggedCall.rows.map((r) => r.row.id)).toEqual(streamed.rows.map((r) => r.row.id));
+    expect(loggedCall.rows[0]?.step).toEqual(streamed.rows[0]?.step);
     expect(block(landed).key).toBe(block(streaming).key);
 
     // a block whose first step is a thinking draft keeps its key when that step lands
     const start = [user(1, "go"), runStarted(2)];
-    const thinking = build(start, [{ runId: "r1", step: 0, text: "", thinking: "plan" }]);
+    const thinking = build(start, [
+      { runId: "r1", step: 0, text: "", thinking: "plan", tools: [] },
+    ]);
     expect(kinds(thinking)).toEqual(["user", "process"]);
     expect(kinds(block(thinking).steps)).toEqual(["thinking"]);
     const logged = build([

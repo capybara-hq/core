@@ -232,7 +232,16 @@ export type FixtureTool = {
   keyArg?: string;
   /** Extra info after the key arguments (faint). */
   extra?: string;
-  status: "running" | "done" | "failed";
+  /** `streaming`: the model is still writing the input (§6.16.9). */
+  status: "streaming" | "running" | "done" | "failed";
+  /** A streaming call's progress: lines when counted, the size, and the generic wording. */
+  progress?: { lines?: number; bytes: number; generic?: boolean };
+  /**
+   * A streaming call's live diff form (§6.16.10 Live): the edit form (`gutter: "pending"`), the
+   * writing form (`preview`), base lines not reached yet (`pending`), and for a live tail the whole
+   * text's line count (`totalLines`: the earlier lines are left out).
+   */
+  live?: { gutter?: "pending"; pending?: number; preview?: boolean; totalLines?: number };
   /** A running call that waits for a person (§6.16.9): no spinner, no timer. */
   waiting?: "approval" | "input" | "connect";
   elapsed?: string;
@@ -282,7 +291,9 @@ export const TOOL_FIXTURES: Record<
   | "waiting"
   | "autoGranted"
   | "autoApproved"
-  | "reviewApproved",
+  | "reviewApproved"
+  | "streaming"
+  | "live",
   FixtureTool[]
 > = {
   // Two separate single calls (each one line, no box).
@@ -570,6 +581,107 @@ export const TOOL_FIXTURES: Record<
       keyArg: "#示例-支持",
       status: "done",
       approvedBy: "review-model",
+    },
+  ],
+  // Calls whose input the model is still writing (§6.16.9): a Write against its base (+a −b of
+  // the aligned part) and a connector tool (the generic form).
+  streaming: [
+    {
+      id: "t_stream_write",
+      kind: "edit",
+      name: "Write",
+      keyArg: "reports/对账报告.md",
+      added: 4,
+      removed: 1,
+      status: "streaming",
+      progress: { lines: 86, bytes: 2765 },
+      live: { pending: 42 },
+      diff: [{ kind: "ctx", old: 1, new: 1, text: "# 9 月对账报告" }],
+    },
+    {
+      id: "t_stream_conn",
+      kind: "connector",
+      name: "Acme 工单",
+      tool: "create_ticket",
+      keyArg: "对账差异：示例表第 118 行",
+      status: "streaming",
+      progress: { bytes: 1229, generic: true },
+      input: [
+        ["title", "对账差异：示例表第 118 行"],
+        ["body", "收款人与科目重复"],
+      ],
+    },
+  ],
+  // The live diff block's forms (§6.16.10 Live), in state order: against a base, the writing
+  // form, the edit form, a long text's live tail.
+  live: [
+    {
+      id: "t_live_base",
+      kind: "edit",
+      name: "Write",
+      keyArg: "reports/对账报告.md",
+      added: 3,
+      removed: 1,
+      status: "streaming",
+      progress: { lines: 5, bytes: 160 },
+      live: { pending: 42 },
+      diff: [
+        { kind: "ctx", old: 1, new: 1, text: "# 9 月对账报告" },
+        { kind: "del", old: 2, text: "生成时间：2026-09-30" },
+        { kind: "add", new: 2, text: "生成时间：2026-10-01" },
+        { kind: "ctx", old: 3, new: 3, text: "" },
+        { kind: "add", new: 4, text: "## 差异汇总（共 12 行）" },
+        { kind: "add", new: 5, text: "| 收款人 | 科目 | 差" },
+      ],
+    },
+    {
+      id: "t_live_writing",
+      kind: "edit",
+      name: "Write",
+      keyArg: "scripts/dedupe.py",
+      status: "streaming",
+      progress: { lines: 6, bytes: 140 },
+      live: { preview: true },
+      diff: [
+        { kind: "ctx", old: 1, new: 1, text: '"""同收款人 + 同科目只留第一行。"""' },
+        { kind: "ctx", old: 2, new: 2, text: "" },
+        { kind: "ctx", old: 3, new: 3, text: "def dedupe(entries):" },
+        { kind: "ctx", old: 4, new: 4, text: "    seen = set()" },
+        { kind: "ctx", old: 5, new: 5, text: "    out = []" },
+        { kind: "ctx", old: 6, new: 6, text: "    for e in entries:" },
+      ],
+    },
+    {
+      id: "t_live_edit",
+      kind: "edit",
+      name: "Edit",
+      keyArg: "scripts/calc.py",
+      status: "streaming",
+      progress: { lines: 3, bytes: 96 },
+      live: { gutter: "pending" },
+      diff: [
+        { kind: "del", text: "    if nm and cat:" },
+        { kind: "add", text: "    if nm and cat and not is_blank_row(r):" },
+        { kind: "add", text: "        # 同收款人 + 同科目只留第一行" },
+        { kind: "add", text: "        key = (nm, ca" },
+      ],
+    },
+    {
+      id: "t_live_cut",
+      kind: "edit",
+      name: "Write",
+      keyArg: "data/payees.csv",
+      status: "streaming",
+      progress: { lines: 1210, bytes: 52_430 },
+      live: { preview: true, totalLines: 1210 },
+      diff: [
+        { kind: "ctx", old: 1205, new: 1205, text: "P-1205,华东示例供应链有限公司,6602.01" },
+        { kind: "ctx", old: 1206, new: 1206, text: "P-1206,示例物流（上海）有限公司,6601.03" },
+        { kind: "ctx", old: 1207, new: 1207, text: "P-1207,示例数据服务有限公司,6602.07" },
+        { kind: "ctx", old: 1208, new: 1208, text: "P-1208,北京示例咨询有限公司,6602.01" },
+        { kind: "ctx", old: 1209, new: 1209, text: "P-1209,示例印务有限公司,6601.05" },
+        { kind: "ctx", old: 1210, new: 1210, text: "P-1210,示例" },
+      ],
     },
   ],
 };

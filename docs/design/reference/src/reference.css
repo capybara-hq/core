@@ -1926,6 +1926,37 @@ textarea {
 .r-trow[data-running] .r-tlabel {
   color: var(--cb-ink);
 }
+/* A streaming call (§6.16.9): the stream mark where the spinner stands, the progress at the end. */
+.r-stream-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: var(--cb-space-4);
+  height: var(--cb-space-4);
+}
+.r-stream-dot {
+  width: var(--cb-space-1);
+  height: var(--cb-space-1);
+  border-radius: 50%;
+  background: var(--cb-accent);
+  animation: r-stream-pulse var(--cb-motion-pulse) ease-in-out infinite;
+}
+.r-stream-dot:nth-child(2) {
+  animation-delay: calc(var(--cb-motion-pulse) / 3);
+}
+.r-stream-dot:nth-child(3) {
+  animation-delay: calc(var(--cb-motion-pulse) * 2 / 3);
+}
+@keyframes r-stream-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.r-stream-progress {
+  color: var(--cb-faint);
+  white-space: nowrap;
+}
 .r-tend {
   flex: none;
   display: inline-flex;
@@ -2026,6 +2057,30 @@ textarea {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* The live block (§6.16.10 Live): a viewport following the tail, caret, collapsed lines, footer. */
+.r-diff[data-live] {
+  max-height: var(--cb-layout-tool-live);
+  overflow-y: auto;
+}
+.r-dcaret {
+  display: inline-block;
+  flex: none;
+  width: var(--cb-space-2);
+  height: var(--cb-space-4);
+  margin-left: calc(1px - var(--cb-space-2));
+  vertical-align: top;
+  background: var(--cb-accent);
+  animation: r-blink var(--cb-motion-cursor) steps(1) infinite;
+}
+.r-dcollapsed {
+  color: var(--cb-faint);
+}
+.r-dfoot {
+  padding: 0 var(--cb-space-3) var(--cb-space-1);
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
 }
 .r-dcut {
   display: flex;
@@ -3727,7 +3782,9 @@ textarea {
   }
   /* The spinner is static and the cursor steady (spec §4.2 motion). */
   .r-spin .cb-icon,
-  .r-cursor {
+  .r-cursor,
+  .r-dcaret,
+  .r-stream-dot {
     animation: none !important;
   }
 }

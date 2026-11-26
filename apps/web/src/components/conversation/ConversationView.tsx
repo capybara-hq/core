@@ -57,6 +57,7 @@ import {
   latestUsage,
   type RunStats,
   runStats,
+  streamedToolKeys,
   toolKeysOf,
   usedTokens,
   withDrafts,
@@ -286,7 +287,13 @@ export function useConversationPage(
     viewedId: conversationId,
     rootId: permission.inheritedRootId,
   });
-  const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
+  // a streaming call's tool too: its row shows what the tool's `inputView` declares (spec §6.4)
+  const logKeys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
+  const streamed = useMemo(() => streamedToolKeys(conv.state.drafts), [conv.state.drafts]);
+  const keys = useMemo(
+    () => (streamed.length === 0 ? logKeys : [...new Set([...logKeys, ...streamed])]),
+    [logKeys, streamed],
+  );
   const info = useToolInfo(orgId, conversationId, keys);
   useDeviceRefresh(orgId, conversationId, conv.events);
   const subagents = useSubagents(

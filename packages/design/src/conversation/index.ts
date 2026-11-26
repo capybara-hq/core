@@ -48,7 +48,15 @@ export {
   shortDeviceLabel,
   shortModelLabel,
 } from "./composer-options";
-export { DiffBlock, type DiffData, type DiffHunk, type DiffLineData } from "./diff-block";
+export {
+  cutDiffLine,
+  DIFF_LINE_MAX_CHARS,
+  DiffBlock,
+  type DiffBlockLive,
+  type DiffData,
+  type DiffHunk,
+  type DiffLineData,
+} from "./diff-block";
 export { type DividerKind, RunDivider, type RunDividerProps } from "./divider";
 export {
   CsvPreview,
@@ -235,12 +243,15 @@ export {
 export {
   type SummaryPart,
   type SummaryRow,
+  streamProgressText,
   summarizeTools,
   summaryParts,
   type ToolAutoGranted,
   type ToolGuard,
   type ToolKind,
   type ToolNotice,
+  type ToolStatus,
+  type ToolStreamProgress,
   type ToolVerbGroup,
   type ToolWaiting,
   verbGroup,
@@ -248,6 +259,9 @@ export {
 } from "./tool-copy";
 export { ToolGroup, type ToolGroupProps } from "./tool-group";
 export {
+  isStreaming,
+  StreamMark,
+  StreamProgress,
   ToolBox,
   ToolDetail,
   ToolLabel,

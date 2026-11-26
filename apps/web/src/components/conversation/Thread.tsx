@@ -1236,7 +1236,9 @@ function toolKind(
   return { key: name, icon: { name }, label: label(name) };
 }
 
-const isLiveRow = (r: ToolRowData) => r.status === "running" || r.status === "pending";
+/** A live call: running, pending, or still streaming its input (its gutter shows the spinner). */
+const isLiveRow = (r: ToolRowData) =>
+  r.status === "running" || r.status === "pending" || r.status === "streaming";
 
 /**
  * A value that follows `value` at most every `ms`: the first change shows at once, later ones
