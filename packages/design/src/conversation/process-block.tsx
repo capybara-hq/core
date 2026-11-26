@@ -19,7 +19,7 @@ export type ProcessBlockProps = {
   /** Running / waiting: the current step's label. */
   current?: ReactNode;
   /**
-   * Running: the label assistive technology hears, when `current` follows a streaming call faster
+   * Running only (ignored while waiting): the label assistive technology hears, when `current` follows a streaming call faster
    * than it should be announced. The visible `current` is then hidden from the live region and this
    * (throttled by the page) is read instead.
    */
