@@ -599,7 +599,7 @@ export class ConversationsService {
       orgId,
       accountId,
       agentId,
-      undefined,
+      { conversationId: undefined, deviceId },
       agent.definition,
       input,
     );
@@ -1505,7 +1505,14 @@ export class ConversationsService {
     const invoked =
       agent === undefined
         ? undefined
-        : await this.prepareSkill(orgId, accountId, conv.agentId, conversationId, agent, input);
+        : await this.prepareSkill(
+            orgId,
+            accountId,
+            conv.agentId,
+            { conversationId, deviceId: conv.deviceId },
+            agent,
+            input,
+          );
     // one transaction: the sender, time zone and language are read with the message's write
     // (run context spec §3.2)
     let current = conv.selection;
@@ -1786,16 +1793,19 @@ export class ConversationsService {
     orgId: string,
     accountId: string,
     agentId: string,
-    conversationId: string | undefined,
+    /** The conversation (absent before it is created) and its device (its skills root). */
+    where: { conversationId: string | undefined; deviceId: string | null },
     agent: AgentDefinition,
     input: Pick<UserMessageInput, "skill" | "text">,
   ): Promise<RenderedInvocation | undefined> {
     if (input.skill === undefined) return undefined;
+    const { conversationId, deviceId } = where;
     return this.invoker.prepare({
       orgId,
       agentId,
       accountId,
       ...(conversationId !== undefined && { conversationId }),
+      deviceId,
       agent,
       name: input.skill.name,
       args: input.text,
@@ -1815,7 +1825,14 @@ export class ConversationsService {
   ): Promise<RenderedInvocation | undefined> {
     if (input.skill === undefined) return undefined;
     const agent = await this.agents.get(orgId, conv.agentId, accountId);
-    return this.prepareSkill(orgId, accountId, conv.agentId, conv.id, agent.definition, input);
+    return this.prepareSkill(
+      orgId,
+      accountId,
+      conv.agentId,
+      { conversationId: conv.id, deviceId: conv.deviceId },
+      agent.definition,
+      input,
+    );
   }
 
   /**

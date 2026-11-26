@@ -3637,6 +3637,7 @@ export interface RenderSkillInvocationInput {
     };
     name: string;
     skillName: string;
+    skillsRoot?: string;
     version: number;
 }
 

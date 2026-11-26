@@ -6,7 +6,8 @@
  * The argument rules follow Claude Code (re-checked 2026-10-27): `$ARGUMENTS` is the whole argument
  * string, `$ARGUMENTS[N]` / `$N` are 0-based positional values (a missing one stays as written),
  * `$name` takes its value from frontmatter `arguments` (a missing one becomes empty), `\$` is a
- * literal `$`, `${CLAUDE_SKILL_DIR}` is `/skills/<name>@<digest>` and every other `${…}` stays as written.
+ * literal `$`, `${CLAUDE_SKILL_DIR}` is `<skills root>/<name>@<digest>` (the device's skills root,
+ * default `/skills`) and every other `${…}` stays as written.
  * When the body has no argument placeholder and the arguments are not empty, they are appended as
  * `ARGUMENTS: <args>`. Substituted text is never scanned again. Nothing is executed: shell
  * injections (`` !`cmd` ``) stay text, and the model is told how to run them.
@@ -231,6 +232,11 @@ export interface RenderSkillInvocationInput {
   };
   /** false: leave out the lead sentence (a forked skill's task for the sub-agent). Default true. */
   lead?: boolean;
+  /**
+   * The skills root of the conversation's device (`SandboxRoots.skills`, e.g. a connected
+   * machine's real path), used for `${CLAUDE_SKILL_DIR}` and the files line. Default `/skills`.
+   */
+  skillsRoot?: string;
 }
 
 const CLOSE_TAG_RE = /<\/(skill_invocation)/gi;
@@ -259,10 +265,14 @@ const escapeAttr = (s: string): string =>
  */
 export function renderSkillInvocation(i: RenderSkillInvocationInput): string {
   const args = trimmedArgs(i.args);
-  const body = renderSkillBody(i.body, i.invocation, args, i.skillName, i.digest).replace(
-    CLOSE_TAG_RE,
-    "<\\/$1",
-  );
+  const body = renderSkillBody(
+    i.body,
+    i.invocation,
+    args,
+    i.skillName,
+    i.digest,
+    i.skillsRoot,
+  ).replace(CLOSE_TAG_RE, "<\\/$1");
   const parts: string[] = [];
   if (i.lead !== false) {
     parts.push(
@@ -276,7 +286,7 @@ export function renderSkillInvocation(i: RenderSkillInvocationInput): string {
   );
   if (i.lines.files === "load") {
     parts.push(
-      `Its files are not in the sandbox yet: call Skill with "${i.name}" to copy them to ${skillSandboxDir(i.skillName, i.digest)}/ before running its scripts.`,
+      `Its files are not in the sandbox yet: call Skill with "${i.name}" to copy them to ${skillSandboxDir(i.skillName, i.digest, i.skillsRoot)}/ before running its scripts.`,
     );
   } else if (i.lines.files === "unavailable") {
     parts.push("Its other files are not available in this conversation.");

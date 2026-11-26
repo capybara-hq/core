@@ -166,6 +166,7 @@ export async function advanceSkillForks(
     rendered = await d.invoker.renderTask({
       orgId: ctx.orgId,
       conversationId: ctx.conversationId,
+      deviceConversationId: ctx.parent?.rootConversationId ?? ctx.conversationId,
       skill,
     });
   } catch (e) {

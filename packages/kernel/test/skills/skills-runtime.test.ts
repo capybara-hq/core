@@ -14,6 +14,7 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -929,7 +930,8 @@ describe("phase D: Skill for invoked and forked skills", () => {
     const after = await call(conv, "Skill", { skill: "manual" }, 3);
     expect(after.isError, after.content).toBe(false);
     expect(after.content).toContain('Loaded skill "manual" (version 1).');
-    expect(after.content).toContain("Manual body.");
+    // the invocation already gave the instructions (#904): only the files and their directory
+    expect(after.content).not.toContain("Manual body.");
     const manualDir = /\/skills\/manual@[0-9a-f]{12}\//.exec(after.content)?.[0] as string;
     expect(manualDir).toBeTruthy();
     expect(await sandboxFile(conv, `${manualDir.slice(1)}run.sh`)).toBe("echo manual");
@@ -939,6 +941,47 @@ describe("phase D: Skill for invoked and forked skills", () => {
     const there = await call(other, "Skill", { skill: "manual" }, 1);
     expect(there.isError).toBe(true);
     expect(there.content).toContain("is not in the skills catalog");
+  });
+
+  it("after an inline invocation, Skill copies the files without repeating the instructions until a summary covers it (#904)", async () => {
+    const manual = await seedSkill({
+      name: "scan",
+      files: {
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: the Claude Code variable
+        "SKILL.md": skillMd("scan", "Scan body: sh ${CLAUDE_SKILL_DIR}/run.sh"),
+        "run.sh": "echo scan",
+      },
+      invocation: MANUAL,
+    });
+    const { agentId } = await agentWith([manual.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await invoke(conv, "scan", 1);
+    const copied = await call(conv, "Skill", { skill: "scan" }, 2);
+    expect(copied.isError, copied.content).toBe(false);
+    const dir = /\/skills\/scan@[0-9a-f]{12}/.exec(copied.content)?.[0] as string;
+    expect(dir).toBeTruthy();
+    expect(copied.content).toContain(`copied to ${dir}/ in the sandbox`);
+    expect(copied.content).toContain(
+      `Its instructions are in the invocation of "scan" above and are not repeated here; in them, \${CLAUDE_SKILL_DIR} is ${dir}.`,
+    );
+    expect(copied.content).not.toContain("Scan body");
+    expect(copied.content).not.toContain("<skill ");
+    expect(await sandboxFile(conv, `${dir.slice(1)}/run.sh`)).toBe("echo scan");
+
+    // other arguments: rendered again
+    const other = await call(conv, "Skill", { skill: "scan", args: "x" }, 3);
+    expect(other.content).toContain(`Scan body: sh ${dir}/run.sh`);
+
+    // a summary that covers the invocation: the instructions are no longer in context
+    const seq = (await eventsOf(db, conv)).at(-1)?.seq as number;
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "compaction_summary",
+        payload: { coversUpToSeq: seq, text: "Earlier work.", savedTokens: 0, step: 0 },
+      },
+    ]);
+    const again = await call(conv, "Skill", { skill: "scan" }, 4);
+    expect(again.content).toContain(`Scan body: sh ${dir}/run.sh`);
   });
 
   it("Review Focus 5: deleted after the invocation -> removed; a new skill of the same name is never loaded", async () => {
