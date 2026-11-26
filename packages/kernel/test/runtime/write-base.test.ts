@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ToolInputView } from "@capybara-hq/plugin-sdk";
+import { ToolError, type ToolInputView } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/errors.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
@@ -12,11 +12,18 @@ import {
   writeBaseViewOf,
   writeBaseWatcher,
 } from "../../src/runtime/write-base.js";
-import { readWriteBase, type WriteBaseReadDeps } from "../../src/runtime/write-base.service.js";
+import {
+  expectedNoBase,
+  readWriteBase,
+  type WriteBaseReadDeps,
+} from "../../src/runtime/write-base.service.js";
 import {
   KernelReadInstanceNotRunning,
   KernelReadNotAdmitted,
+  KernelReadUnsupported,
 } from "../../src/sandbox/kernel-read.js";
+import { sandboxBusy } from "../../src/sandbox/leases.js";
+import { recreateRequired, retirementPending } from "../../src/sandbox/sandbox.service.js";
 import { TOOL_VIEW_DIFF_MAX_TEXT_BYTES } from "../../src/tools/view.js";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -443,9 +450,37 @@ describe("readWriteBase", () => {
     for (const x of [a, b, c]) expect(x.withKernelRead).not.toHaveBeenCalled();
   });
 
-  it("gives none, logged at debug, when the instance is not running or the device is away", async () => {
+  it("classifies the outcomes that only mean no base now as expected", () => {
     for (const err of [
       new KernelReadInstanceNotRunning(),
+      new KernelReadNotAdmitted(new Error("refused")),
+      new KernelReadUnsupported(),
+      sandboxBusy(),
+      retirementPending(),
+      recreateRequired(),
+      new ApiError("device.unavailable", "off"),
+      new ApiError("device.not_found", "gone"),
+      new ToolError("bad path"),
+    ]) {
+      expect(expectedNoBase(err)).toBe(true);
+    }
+    for (const err of [
+      new Error("io"),
+      new ApiError("sandbox.create_failed", "no"),
+      new DOMException("x", "AbortError"),
+      null,
+    ]) {
+      expect(expectedNoBase(err)).toBe(false);
+    }
+  });
+
+  it("gives none, logged at debug, when the read is not possible now", async () => {
+    for (const err of [
+      new KernelReadInstanceNotRunning(),
+      new KernelReadNotAdmitted(new Error("refused")),
+      new KernelReadUnsupported(),
+      sandboxBusy(),
+      retirementPending(),
       new ApiError("device.unavailable", "off"),
       new ApiError("device.not_found", "gone"),
     ]) {
@@ -460,16 +495,7 @@ describe("readWriteBase", () => {
     }
   });
 
-  it("gives none, logged as a warning, when the read is refused or fails", async () => {
-    {
-      const { deps, warn } = readerDeps({
-        file,
-        recorded,
-        kernelRead: () => Promise.reject(new KernelReadNotAdmitted(new Error("refused"))),
-      });
-      expect(await readWriteBase(deps, input())).toBeNull();
-      expect(warn).toHaveBeenCalledTimes(1);
-    }
+  it("gives none, logged as a warning, when the read fails", async () => {
     const { deps, warn } = readerDeps({ file, recorded, readFileError: new Error("io") });
     expect(await readWriteBase(deps, input())).toBeNull();
     expect(warn).toHaveBeenCalledTimes(1);

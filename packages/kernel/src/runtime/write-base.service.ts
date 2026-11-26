@@ -6,8 +6,12 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { KernelReadInstanceNotRunning } from "../sandbox/kernel-read.js";
-import { SandboxService } from "../sandbox/sandbox.service.js";
+import {
+  KernelReadInstanceNotRunning,
+  KernelReadNotAdmitted,
+  KernelReadUnsupported,
+} from "../sandbox/kernel-read.js";
+import { RetirementPendingError, SandboxService } from "../sandbox/sandbox.service.js";
 import {
   checkFilePathShape,
   checkToolPath,
@@ -54,8 +58,8 @@ export interface WriteBaseReadDeps {
  *    directory (read-only to `Write`), a directory, a missing file, a cut read, a NUL byte, a size
  *    or sha256 other than the recorded state's: none. The state check is the guard that the base
  *    shows nothing the conversation had not already read unchanged (symlink targets included).
- * Every failure (a refused admission, `KernelReadInstanceNotRunning`, a read error, an abort) is
- * logged and gives none.
+ * Every failure (a refused admission, `KernelReadInstanceNotRunning`, a read error, an abort) gives
+ * none; an expected one ({@link expectedNoBase}) is logged at debug, any other as a warning.
  */
 export async function readWriteBase(
   deps: WriteBaseReadDeps,
@@ -127,15 +131,26 @@ function utf8(data: Uint8Array): string | null {
 }
 
 /**
- * The failures that only mean "no base now": the device's instance is not running, the device is
- * gone or its provider off, or the model's path is malformed (`Write` refuses it with the same
+ * The failures that only mean "no base now": the device's instance is not running, the read was
+ * not admitted (the run moved on, the authority refused it) or its runtime cannot enforce a
+ * read-only read, the sandbox is busy, the device is gone, its provider off or an earlier instance
+ * still awaits retirement, or the model's path is malformed (`Write` refuses it with the same
  * `ToolError`).
  */
-function expectedNoBase(err: unknown): boolean {
-  if (err instanceof KernelReadInstanceNotRunning || err instanceof ToolError) return true;
+export function expectedNoBase(err: unknown): boolean {
+  if (
+    err instanceof KernelReadInstanceNotRunning ||
+    err instanceof KernelReadNotAdmitted ||
+    err instanceof KernelReadUnsupported ||
+    err instanceof RetirementPendingError ||
+    err instanceof ToolError
+  )
+    return true;
   return (
     err instanceof ApiError &&
-    (err.code === "device.unavailable" || err.code === "device.not_found")
+    (err.code === "device.unavailable" ||
+      err.code === "device.not_found" ||
+      err.code === "sandbox.busy")
   );
 }
 
