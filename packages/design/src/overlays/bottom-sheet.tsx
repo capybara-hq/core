@@ -83,6 +83,8 @@ export type BottomSheetFrameProps = {
   closeLabel?: string | undefined;
   /** The page behind the sheet. */
   page?: ReactNode;
+  /** Drawn under the body, outside its scroll (a dialog's buttons). */
+  footer?: ReactNode;
   children?: ReactNode;
 };
 
@@ -98,6 +100,7 @@ export function BottomSheetFrame({
   handleLabel,
   closeLabel,
   page,
+  footer,
   children,
 }: BottomSheetFrameProps) {
   const t = useDesignT();
@@ -130,6 +133,7 @@ export function BottomSheetFrame({
             />
           }
           handleLabel={grab}
+          footer={footer}
         >
           {children}
         </BottomSheetInner>
@@ -165,6 +169,12 @@ export type BottomSheetContentProps = {
    * goes back too instead of closing. The `title` is then the page's.
    */
   back?: { label: string; onBack(): void } | undefined;
+  /**
+   * Whether focus goes back to where it was when the sheet opened, decided as it closes (default
+   * true). The composer menu's sheet passes `() => !isTouchPointer()`: on touch a choice never
+   * focuses the composer, whose focus would pop the keyboard.
+   */
+  returnFocus?: boolean | (() => boolean);
   children?: ReactNode;
 };
 
@@ -183,6 +193,7 @@ export function BottomSheetContent({
   footer,
   page,
   back,
+  returnFocus = true,
   children,
 }: BottomSheetContentProps) {
   const t = useDesignT();
@@ -231,7 +242,14 @@ export function BottomSheetContent({
               el?.querySelector<HTMLElement>(FIRST_FOCUSABLE),
           );
         }}
-        onCloseAutoFocus={focusReturn.restore}
+        onCloseAutoFocus={(e) => {
+          if (typeof returnFocus === "function" ? returnFocus() : returnFocus) {
+            focusReturn.restore(e);
+            return;
+          }
+          // no return at all, not even Radix's own to the element focused before
+          e.preventDefault();
+        }}
         onEscapeKeyDown={(e) => {
           // a drilled-in page: Esc goes back a page, the next one closes the sheet
           if (!back) return;

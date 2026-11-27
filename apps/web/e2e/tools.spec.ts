@@ -126,8 +126,11 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
 
   // 1. `/` → 面板 → /kb:summarize → 填参数 → 渲染结果进入输入框（不自动发送）
   await input.press("/");
-  // the label, then the description (phase D palette items; the skills group comes first)
-  await page.getByRole("option", { name: /^\/kb:summarize/ }).click();
+  // the prompt under its connector's group (the skills groups come first)
+  await page
+    .getByRole("group", { name: "Docs", exact: true })
+    .getByRole("option", { name: "summarize" })
+    .click();
   const dialog = page.getByRole("dialog", { name: "/kb:summarize" });
   await dialog.getByLabel(/topic/).fill("cats");
   await dialog.getByRole("button", { name: zh.chat.insertPrompt }).click();
@@ -140,7 +143,7 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   // 同一个假服务也被上一个用例装成了 Fixture：按连接器分组取 Docs 的那条
   await page
     .getByRole("group", { name: "Docs", exact: true })
-    .getByRole("option", { name: "Handbook · docs://handbook" })
+    .getByRole("option", { name: "Handbook" })
     .click();
   await expect(page.getByRole("group", { name: zh.chat.files })).toContainText("@Handbook");
   await input.press("Enter");

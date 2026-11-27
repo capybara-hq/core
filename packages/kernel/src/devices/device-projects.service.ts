@@ -52,7 +52,7 @@ export const MAX_DEVICE_PROJECTS = 100;
  * owner browse scope (`SandboxService.withBrowse`: owner-authenticated, no conversation, no Full
  * consent, its roots from the owner's browsing ceiling).
  */
-interface ProjectReader {
+export interface ProjectReader {
   /** The workspace root: the last known one. */
   workspace: string;
   list?: (
@@ -65,7 +65,7 @@ interface ProjectReader {
 }
 
 /** The owner browse route's reader: the browse scope's stat / list / scan only. */
-function browseReader(b: SandboxBrowse, workspace: string): ProjectReader {
+export function browseReader(b: SandboxBrowse, workspace: string): ProjectReader {
   return {
     workspace,
     list: (path, limit, signal) => b.list(path, { limit, signal }),
@@ -269,7 +269,7 @@ export class DeviceProjectsService {
     const path = trimSlash(
       posix.normalize(posix.join(early, input.path === "" ? "." : input.path)),
     );
-    if (aboveHome(path, scope.home)) throw tooBroad(path);
+    if (aboveHome(path, scope.home)) throw tooBroad(input.name);
     const resolved = await this.onDevice(
       orgId,
       accountId,
@@ -277,7 +277,7 @@ export class DeviceProjectsService {
       scope,
       signal,
       async (r, sig) => {
-        const path = resolve(scope, r.workspace, input.path);
+        const path = resolve(scope, r.workspace, input.path, input.name);
         const name = input.name ?? posix.basename(path);
         if (!isDeviceProjectName(name)) throw nameInvalid(name);
         const list = r.list;
@@ -537,13 +537,14 @@ const trimSlash = (path: string): string =>
 /**
  * The absolute path of `relative` against the scope's base (the home its provider reported, else
  * the instance's `workspace`), normalized; refused when the result is not a valid device path or
- * lies above the owner's home. Where a project may lie below that is the provider's rule.
+ * lies above the owner's home (named by `name`, the project's, when given). Where a project may
+ * lie below that is the provider's rule.
  */
-function resolve(scope: Scope, workspace: string, relative: string): string {
+function resolve(scope: Scope, workspace: string, relative: string, name?: string): string {
   const base = baseOf(scope, workspace);
   const path = trimSlash(posix.normalize(posix.join(base, relative === "" ? "." : relative)));
   if (validateSandboxPathShape(path).length > 0) throw outsideMode(path);
-  if (aboveHome(path, scope.home)) throw tooBroad(path);
+  if (aboveHome(path, scope.home)) throw tooBroad(name);
   return path;
 }
 
@@ -553,7 +554,7 @@ function resolve(scope: Scope, workspace: string, relative: string): string {
  * provider; a malformed device answer becomes `device.projects_unavailable` (the program's fault).
  * Undefined for anything else.
  */
-function passThrough(e: unknown): unknown {
+export function passThrough(e: unknown): unknown {
   if (isSandboxGoneError(e) || isFileSystemGoneError(e) || e instanceof ApiError) return e;
   if (e instanceof SandboxProviderUnreachableError) return e;
   if (e instanceof DeviceProtocolError) {
@@ -570,7 +571,7 @@ function passThrough(e: unknown): unknown {
  * lease): 503 `device.projects_unavailable`. Only a `ToolError`'s message (the relay's, written for
  * people) is passed on; a provider's own error text is not.
  */
-function unavailable(e: unknown): ApiError {
+export function unavailable(e: unknown): ApiError {
   return new ApiError(
     "device.projects_unavailable",
     e instanceof ToolError
@@ -594,12 +595,14 @@ const pathMissing = (path: string): ApiError =>
  * missing path `device.project_path_missing`, and a `stat` that fails too means the device could
  * not be asked (503 `device.projects_unavailable`).
  */
-async function listFailure(
+export async function listFailure(
   e: unknown,
   r: ProjectReader,
   path: string,
   signal: AbortSignal,
   logUnavailable: (err: unknown, statErr: unknown) => void,
+  /** How the messages name the path (default: the path itself). */
+  label: string = path,
 ): Promise<unknown> {
   const passed = passThrough(e);
   if (passed !== undefined) return passed;
@@ -612,7 +615,7 @@ async function listFailure(
   if (isSandboxScopeDeniedError(e)) {
     return new ApiError(
       "device.project_outside_mode",
-      `The device refused ${clipped(path)}: it is outside what the device lets a project reach`,
+      `The device refused ${clipped(label)}: it is outside what the device lets a project reach`,
     );
   }
   let st: { size: number; isDir: boolean } | null;
@@ -624,12 +627,12 @@ async function listFailure(
     logUnavailable(e, e2);
     return unavailable(e);
   }
-  if (st === null) return pathMissing(path);
+  if (st === null) return pathMissing(label);
   return new ApiError(
     "device.project_path_unreadable",
     st.isDir
-      ? `${clipped(path)} is a directory the device cannot read`
-      : `${clipped(path)} is a file, not a directory`,
+      ? `${clipped(label)} is a directory the device cannot read`
+      : `${clipped(label)} is a file, not a directory`,
   );
 }
 

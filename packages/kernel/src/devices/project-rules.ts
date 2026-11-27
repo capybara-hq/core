@@ -40,10 +40,14 @@ export const outsideMode = (path: string): ApiError =>
     "device.project_outside_mode",
     `${clipped(path)} is outside what the device lets a project reach; pick a directory inside its base`,
   );
-export const tooBroad = (path: string): ApiError =>
+/**
+ * A project directory above the owner's home: named by the project (`name`, when there is one),
+ * never by its absolute path, which stays out of the message.
+ */
+export const tooBroad = (name?: string): ApiError =>
   new ApiError(
     "device.project_path_too_broad",
-    `${clipped(path)} holds the owner's home directory (or other people's): pick the project's own directory, the home or below it`,
+    `${name === undefined ? "This directory" : `The project "${clipped(name)}"`} holds the owner's home directory (or other people's): pick the project's own directory, the home or below it`,
   );
 
 /** A device-supplied or person-supplied string inside a message, bounded. */

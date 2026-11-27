@@ -264,6 +264,17 @@ describe("AttachmentStrip (§6.16.21)", () => {
     expect(screen.queryByRole("button", { name: "重试 b.exe" })).toBeNull();
   });
 
+  it("a file chip without a size shows no size", () => {
+    const { container } = wrap(
+      <AttachmentStrip
+        items={[{ id: "p", kind: "file", name: "src/app.ts", onRemove: vi.fn() }]}
+      />,
+    );
+    const chip = container.querySelector('[data-part="attachment"]');
+    expect(chip?.textContent).toContain("src/app.ts");
+    expect(chip?.querySelector(".cb-muted")).toBeNull();
+  });
+
   it("thumbnails, file chips, progress and rejections, each removable", async () => {
     const remove = vi.fn();
     const { container } = wrap(

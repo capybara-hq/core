@@ -371,8 +371,8 @@ export type AttachmentStripItem = {
   kind: "image" | "file";
   name: string;
   contentType?: string;
-  /** Bytes. */
-  size: number;
+  /** Bytes; absent when unknown (a referenced file that is not an upload): no size shown. */
+  size?: number;
   /** A thumbnail source (a `blob:` preview or a served bitmap). */
   src?: string;
   /** Upload progress 0–1 while uploading. */
@@ -468,9 +468,9 @@ export function AttachmentStrip({ items }: { items: AttachmentStripItem[] }): JS
               <span className="cb-fail-word" role="alert">
                 {a.error}
               </span>
-            ) : (
+            ) : a.size !== undefined ? (
               <span className="cb-muted">{formatBytes(a.size)}</span>
-            )}
+            ) : null}
             {a.error && a.onRetry ? (
               <IconButton
                 density="dense"

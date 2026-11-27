@@ -353,23 +353,35 @@ export function fitReviewText(
 /** How many of the root conversation's latest person messages are read before bounding the text. */
 export const PERSON_MESSAGES_READ = 20;
 
-/** The text blocks of a `user_message` payload (its images, documents and attachments are skipped). */
+/**
+ * The person's own words of a `user_message` payload: `content[0]` when it is a text block (the
+ * typed text, or the rendered skill of an invocation) and the kernel-written lines naming the
+ * referenced project files (`payload.projectFiles`, blocks `1 + attachments.length + i`: the
+ * person's intent, worded by the kernel). The `@` resources' bodies (`payload.attachments`,
+ * blocks `1 .. attachments.length`) are content read from a connector, not the person's
+ * instructions, so they are skipped, like images, documents and uploaded files.
+ */
 function textOfUserMessage(payload: unknown): string {
-  const content = (payload as { content?: unknown } | null)?.content;
+  const p = payload as { content?: unknown; attachments?: unknown; projectFiles?: unknown } | null;
+  const content = p?.content;
   if (!Array.isArray(content)) return "";
-  return content
-    .flatMap((b) => {
-      if (b === null || typeof b !== "object") return [];
-      const block = b as { type?: unknown; text?: unknown };
-      return block.type === "text" && typeof block.text === "string" ? [block.text] : [];
-    })
+  const textAt = (i: number): string[] => {
+    const b = content[i] as { type?: unknown; text?: unknown } | null | undefined;
+    return b !== null && typeof b === "object" && b.type === "text" && typeof b.text === "string"
+      ? [b.text]
+      : [];
+  };
+  const resources = Array.isArray(p?.attachments) ? p.attachments.length : 0;
+  const projectFiles = Array.isArray(p?.projectFiles) ? p.projectFiles.length : 0;
+  const first = 1 + resources;
+  return [...textAt(0), ...Array.from({ length: projectFiles }, (_, i) => textAt(first + i)).flat()]
     .join("\n")
     .trim();
 }
 
 /**
- * The bounded text of the root conversation's last person messages: the `user_message` text blocks
- * only, never an assistant message or a tool result, newest {@link PERSON_MESSAGES_READ} read and
+ * The bounded text of the root conversation's last person messages: each `user_message`'s own
+ * words ({@link textOfUserMessage}), never an assistant message or a tool result, newest {@link PERSON_MESSAGES_READ} read and
  * bounded to `budget` estimated tokens (`sandbox.review.messageTokens`). The command review and the
  * tool review read the same messages.
  */

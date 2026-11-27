@@ -829,7 +829,7 @@ describe("输入框：只发文件、存储不可用与请求预算（修正波 
     expect(body).toMatchObject({ text: "", files: [ID1] });
   });
 
-  it("对象存储不可用（limits.available=false）：添加文件按钮禁用并提示，拖入 / 粘贴不上传", async () => {
+  it("without object storage (limits.available=false) the + menu's upload row is disabled with the reason; drop and paste upload nothing", async () => {
     const calls = stubApi({
       [`GET ${ATT}/limits`]: () =>
         json(200, {
@@ -843,10 +843,12 @@ describe("输入框：只发文件、存储不可用与请求预算（修正波 
         }),
     });
     const { container } = await renderChat("zh");
-    await vi.waitFor(() =>
-      expect(screen.getByRole("button", { name: "添加附件" })).toHaveProperty("disabled", true),
-    );
-    expect(fileInput(container).disabled).toBe(true);
+    await vi.waitFor(() => expect(fileInput(container).disabled).toBe(true));
+    // + still opens its menu (it holds more than the upload); the upload row says why it is off
+    await userEvent.setup().click(screen.getByRole("button", { name: "添加附件" }));
+    const upload = await screen.findByRole("option", { name: zh.chat.composerMenu.upload });
+    expect(upload.getAttribute("aria-disabled")).toBe("true");
+    expect(upload.textContent).toContain(zh.chat.filesUnavailable);
     const zone = dropZone(container);
     fireEvent.drop(zone, { dataTransfer: transfer([png()]) });
     const input = screen.getByLabelText(zh.chat.inputLabel);

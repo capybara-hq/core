@@ -19,10 +19,14 @@ import {
   CommandPalette,
   ComposerBox,
   type ComposerBoxProps,
+  ComposerMenu,
+  type ComposerMenuGroup,
+  type ComposerMenuProps,
   ContextSection,
   ConversationPage,
   type ConversationPageProps,
   CsvPreview,
+  ErrorDetail,
   FileCard,
   FilesSection,
   Greeting,
@@ -35,6 +39,8 @@ import {
   type PickerProps,
   ProcessBlock,
   type ProcessBlockProps,
+  ProjectFilePicker,
+  type ProjectFilePickerProps,
   PropertiesPanel,
   PropertySection,
   Prose,
@@ -62,15 +68,18 @@ import {
   TranscriptFrame,
   UserBubble,
   untitledLabel,
+  useComposerMenu,
   useDesignLocale,
 } from "@capybara-hq/design";
 import {
   AGENT_MAP_FIXTURE,
   AGENTS_CHIP_FIXTURE,
+  COMPOSER_MENU_FIXTURE,
   CONV_COPY,
   CONV_FIXTURE,
   DEVICE_FIXTURE,
   FILE_FIXTURE,
+  type FixtureComposerMenuGroup,
   type FixtureFile,
   type FixtureSubagent,
   LONG_MODELS_FIXTURE,
@@ -78,6 +87,7 @@ import {
   NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PERMISSION_FIXTURE,
+  PROJECT_FILES_FIXTURE,
   PROSE_FIXTURE,
   SKILL_FIXTURE,
   SUBAGENT_FIXTURE,
@@ -655,6 +665,169 @@ function commandPaletteBlocks(): ReactNode {
           />
         </Block>
       ))}
+    </>
+  );
+}
+
+// ── Composer menus (§6.16.30: +, / and @ anchored above the composer) ─────────
+
+const menuGroups = (groups: FixtureComposerMenuGroup[]): ComposerMenuGroup[] =>
+  groups.map((g) => ({ ...g, items: g.items.map((it) => ({ ...it, onSelect: noop })) }));
+
+/** A conversation's composer holding the text `value` with the menu open above it. */
+function ComposerMenuComposer({
+  value,
+  menu,
+}: {
+  value: string;
+  menu: Omit<ComposerMenuProps, "onClose" | "onSwitch">;
+}) {
+  const props: ComposerMenuProps = { ...menu, onClose: noop, onSwitch: noop };
+  const controller = useComposerMenu(props);
+  return (
+    <ComposerBox
+      {...composerProps("idle")}
+      value={value}
+      send={{ mode: "send", disabled: value === "", onClick: noop }}
+      {...(menu.kind === "plus" ? { attachOpen: true } : {})}
+      menu={{
+        // a wide state: in a phone window too it stays in its cell (the compact block is the sheet)
+        node: <ComposerMenu {...props} controller={controller} referenceAnchored />,
+        combobox: controller.combobox,
+        onKeyDown: controller.onKeyDown,
+      }}
+    />
+  );
+}
+
+/** The compact form: the `/` menu as a bottom sheet at rest at the phone size, over an empty page. */
+function ComposerMenuSheetBlock() {
+  const M = COMPOSER_MENU_FIXTURE;
+  const props: ComposerMenuProps = {
+    kind: "slash",
+    groups: menuGroups(M.slash),
+    query: "",
+    empty: M.empty.slash,
+    onClose: noop,
+    onQueryChange: noop,
+  };
+  const controller = useComposerMenu(props);
+  return <ComposerMenu {...props} controller={controller} referenceSheet={{}} />;
+}
+
+function composerMenuBlocks(): ReactNode {
+  const M = COMPOSER_MENU_FIXTURE;
+  return (
+    <>
+      <Block id="composer-menu-plus" offsetTop={420}>
+        <ComposerMenuComposer
+          value=""
+          menu={{ kind: "plus", groups: menuGroups(M.plus), query: "", empty: M.empty.slash }}
+        />
+      </Block>
+      <Block id="composer-menu-slash" offsetTop={420}>
+        <ComposerMenuComposer
+          value="/"
+          menu={{ kind: "slash", groups: menuGroups(M.slash), query: "", empty: M.empty.slash }}
+        />
+      </Block>
+      {/* the @ results come searched from the kernel: no ranking of its own */}
+      <Block id="composer-menu-at" offsetTop={420}>
+        <ComposerMenuComposer
+          value={`对比一下 @${M.atQuery}`}
+          menu={{
+            kind: "at",
+            groups: menuGroups(M.at),
+            query: M.atQuery,
+            filter: false,
+            empty: M.empty.at,
+          }}
+        />
+      </Block>
+      <Block id="composer-menu-empty" offsetTop={160}>
+        <ComposerMenuComposer
+          value={`@${M.emptyQuery}`}
+          menu={{ kind: "at", groups: [], query: M.emptyQuery, filter: false, empty: M.empty.at }}
+        />
+      </Block>
+      <Block id="composer-menu-loading" offsetTop={160}>
+        <ComposerMenuComposer
+          value={`@${M.atQuery}`}
+          menu={{
+            kind: "at",
+            groups: [],
+            query: M.atQuery,
+            filter: false,
+            loading: true,
+            empty: M.empty.at,
+          }}
+        />
+      </Block>
+      <RefBlock id="composer-menu-compact" width={390} height={844}>
+        <ComposerMenuSheetBlock />
+      </RefBlock>
+    </>
+  );
+}
+
+// ── Project file picker (§6.16.31: project files, referenced without an upload) ──
+
+/** The picker drawn in place (the dialog, or the compact sheet) for one state, with fixed data. */
+function ProjectFilePickerBlock({
+  sheet = false,
+  ...over
+}: Partial<ProjectFilePickerProps> & { sheet?: boolean }) {
+  const P = PROJECT_FILES_FIXTURE;
+  const props: ProjectFilePickerProps = {
+    open: true,
+    onOpenChange: noop,
+    project: P.project,
+    path: "",
+    onPathChange: noop,
+    entries: P.root,
+    filter: "",
+    onFilterChange: noop,
+    selected: [],
+    onSelectedChange: noop,
+    max: P.max,
+    onConfirm: noop,
+    ...over,
+  };
+  return sheet ? (
+    <ProjectFilePicker {...props} referenceSheet={{}} />
+  ) : (
+    <ProjectFilePicker {...props} referenceDialog />
+  );
+}
+
+function projectFilePickerBlocks(): ReactNode {
+  const P = PROJECT_FILES_FIXTURE;
+  return (
+    <>
+      <RefBlock id="project-file-picker-root" width={704} pad>
+        <ProjectFilePickerBlock />
+      </RefBlock>
+      <RefBlock id="project-file-picker-folder" width={704} pad>
+        <ProjectFilePickerBlock path={P.folderPath} entries={P.folder} truncated />
+      </RefBlock>
+      <RefBlock id="project-file-picker-filtered" width={704} pad>
+        <ProjectFilePickerBlock filter={P.filter} entries={P.filtered} />
+      </RefBlock>
+      <RefBlock id="project-file-picker-selected" width={704} pad>
+        <ProjectFilePickerBlock path={P.folderPath} entries={P.folder} selected={P.selected} />
+      </RefBlock>
+      <RefBlock id="project-file-picker-empty" width={704} pad>
+        <ProjectFilePickerBlock path={P.emptyPath} entries={[]} />
+      </RefBlock>
+      <RefBlock id="project-file-picker-loading" width={704} pad>
+        <ProjectFilePickerBlock path={P.folderPath} entries={[]} loading />
+      </RefBlock>
+      <RefBlock id="project-file-picker-unsupported" width={704} pad>
+        <ProjectFilePickerBlock entries={[]} error={<ErrorDetail summary={P.unsupported} />} />
+      </RefBlock>
+      <RefBlock id="project-file-picker-compact" width={390} height={844}>
+        <ProjectFilePickerBlock sheet selected={["README.md"]} />
+      </RefBlock>
     </>
   );
 }
@@ -1766,6 +1939,8 @@ export const CONVERSATION_PAGE_BLOCKS = {
   "agent-map": agentMapBlocks,
   "title-bar": titleBarBlocks,
   composer: composerBlocks,
+  "composer-menu": composerMenuBlocks,
+  "project-file-picker": projectFilePickerBlocks,
   "command-palette": commandPaletteBlocks,
   "picker-menu": pickerMenuBlocks,
   "mode-menu": modeMenuBlocks,

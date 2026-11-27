@@ -151,6 +151,8 @@ export function conversationsFor(
     { forNew: async () => null },
     // unbound conversations have no project to bind
     { resolveForBinding: refuse("resolveForBinding") },
+    // ... nor project files to check
+    { statAll: refuse("statAll") },
     // no runs here: a message skips no question
     { skipPendingIn: async () => ({ records: [], toSeq: null }) },
     { skipNetworkIn: async () => ({ records: [], seqs: new Map() }) },

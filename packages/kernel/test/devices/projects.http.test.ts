@@ -279,8 +279,19 @@ describe("device projects", () => {
   it("adds a readable directory: relative to the home, stored absolute, named by its basename", async () => {
     const d = await owned();
     const machine = await connect(d);
+    const resolves = vi.spyOn(k.app.get(SandboxOperationAuthority), "resolveBrowse");
     const res = await add(d.req, d.deviceId, { path: "src/capybara/" });
     expect(res.statusCode, res.body).toBe(201);
+    // the projects routes browse in the owner's whole ceiling: no call narrows it to a project
+    expect(resolves).toHaveBeenCalled();
+    for (const call of resolves.mock.calls) {
+      const narrow = call[2] as { readRoots: string[] } | undefined;
+      expect(
+        narrow === undefined || narrow.readRoots.every((r) => r === HOME),
+        String(narrow),
+      ).toBe(true);
+    }
+    resolves.mockRestore();
     expect(res.json()).toEqual({
       project: { name: "capybara", path: `${HOME}/src/capybara`, createdAt: expect.any(String) },
     });
@@ -419,7 +430,10 @@ describe("device projects", () => {
     const res = await add(d.req, d.deviceId, { path: "..", name: "lib" });
     expect(res.statusCode, res.body).toBe(422);
     expect(errCode(res)).toBe("device.project_path_too_broad");
-    expect((res.json() as { error: { message: string } }).error.message).toContain("/var/lib");
+    // named by the project, never by its absolute path
+    const message = (res.json() as { error: { message: string } }).error.message;
+    expect(message).toContain('"lib"');
+    expect(message).not.toContain("/var/lib");
     expect(reqsOf(machine, "list")).toEqual([]);
   });
 

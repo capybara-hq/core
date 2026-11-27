@@ -43,6 +43,19 @@ export {
   type PickerProps,
 } from "./composer";
 export {
+  ComposerMenu,
+  type ComposerMenuCombobox,
+  type ComposerMenuController,
+  type ComposerMenuGroup,
+  type ComposerMenuItem,
+  type ComposerMenuKind,
+  type ComposerMenuProps,
+  type ComposerMenuShownGroup,
+  type ComposerMenuShownItem,
+  rankComposerMenu,
+  useComposerMenu,
+} from "./composer-menu";
+export {
   ComposerOptions,
   type ComposerOptionsProps,
   shortDeviceLabel,
@@ -184,6 +197,11 @@ export {
   RailSection,
   type RailSectionProps,
 } from "./process-rail";
+export {
+  type ProjectFileEntry,
+  ProjectFilePicker,
+  type ProjectFilePickerProps,
+} from "./project-file-picker";
 export { Cursor, Prose, type ProseProps, Spinner } from "./prose";
 export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
 export {

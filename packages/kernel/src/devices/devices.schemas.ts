@@ -4,6 +4,7 @@ import {
   DeviceParams,
   DevicePatchBody,
   DeviceProjectAddBody,
+  DeviceProjectFilesQuery,
   DeviceProjectParams,
 } from "./dto.js";
 
@@ -31,4 +32,9 @@ export const DEVICE_ROUTES: readonly RouteSchemas[] = [
     body: DeviceProjectAddBody,
   },
   { route: "DELETE /api/v1/orgs/:orgId/devices/:id/projects/:name", params: DeviceProjectParams },
+  {
+    route: "GET /api/v1/orgs/:orgId/devices/:id/projects/:name/files",
+    params: DeviceProjectParams,
+    query: DeviceProjectFilesQuery,
+  },
 ];

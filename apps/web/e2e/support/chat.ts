@@ -26,7 +26,7 @@ export const OBJECT_ROW_MENU = "更多操作";
 
 /** The composer's textarea. */
 export const composer = (page: Page): Locator =>
-  page.getByRole("textbox", { name: zh.chat.inputLabel, exact: true });
+  page.getByRole("combobox", { name: zh.chat.inputLabel, exact: true });
 
 /** User bubbles and assistant prose of the thread, in order. */
 export const users = (page: Page): Locator =>
