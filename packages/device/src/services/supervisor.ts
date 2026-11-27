@@ -261,6 +261,8 @@ export interface ServiceSupervisorOptions {
    * `<device dir>/svc-install/<id>`. Absent: every install is the device's own.
    */
   installCache?: InstallCache;
+  /** Where a warning goes (the device's service log): a start that could not use the cache. */
+  warn?: (line: string) => void;
   now?: () => Date;
 }
 
@@ -832,18 +834,28 @@ export class ServiceSupervisor {
           signal,
           this.o.launcher()?.installVariant?.() ?? "",
         );
-      } catch {
+      } catch (error) {
         // a cache this start cannot use (its lock held too long, this process's start time
-        // unreadable, the root not private) falls back to the device's own install directory
+        // unreadable, the root not private, a file system without hard links) falls back to the
+        // device's own install directory, and says why
         signal.throwIfAborted();
         lease = undefined;
+        this.o.warn?.(
+          `The install cache is not used for device service ${spec.name}: ${(error as Error).message}; it installs into the device's own install directory instead`,
+        );
       }
     }
     if (lease) {
       install = { dir: lease.dir, sealed: lease.sealed };
       installRoot = (this.o.installCache as InstallCache).root;
-      // the device's own copy from before the cache is not used any more
-      await this.dropDeviceInstall(spec.name);
+      // the device's own copy is kept while it was made for these files (a later fallback reuses
+      // it sealed); one made for other files would be emptied by a fallback anyway
+      await this.dropDeviceInstall(
+        spec.name,
+        o.storedCode
+          ? (o.runningDigest ?? null)
+          : (filesDigest ?? (spec.files ? deviceServiceFilesDigest(spec.files) : null)),
+      );
     } else {
       install = await this.installDir(
         spec.name,
@@ -1013,11 +1025,13 @@ export class ServiceSupervisor {
   }
 
   /**
-   * Empties `<device dir>/svc-install/<id>` and drops its record: the install of a service that
-   * moved to the machine-wide cache (never through a link: rm removes a link itself).
+   * Empties `<device dir>/svc-install/<id>` and drops its record unless the record names `digest`
+   * (the files this start runs): the install of a service that moved to the machine-wide cache, no
+   * longer of use to a fallback (never through a link: rm removes a link itself).
    */
-  private async dropDeviceInstall(name: string): Promise<void> {
+  private async dropDeviceInstall(name: string, digest: string | null): Promise<void> {
     const root = await realDirectory(this.o.deviceDir, ["svc-install"]);
+    if (digest !== null && (await readSmallFile(join(root, `.${name}`))) === digest) return;
     await rm(join(root, name), { recursive: true, force: true });
     await rm(join(root, `.${name}`), { force: true });
   }

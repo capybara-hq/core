@@ -1171,7 +1171,9 @@ it("a cache this start cannot use falls back to the device's own install directo
     launcher: () => echo.launcher,
     socketAliasRoot: join(root, "a"),
     installCache: new InstallCache({ root: join(root, "open-cache"), scope: "https://x" }),
+    warn: (line) => warnings.push(line),
   });
+  const warnings: string[] = [];
   cleanups.push(() => supervisor.stopAll(signal()));
   const files = spec({ "main.js": "// v1", [DEVICE_SERVICE_INSTALL_KEY_FILE]: "chromium-1255\n" });
   expect(
@@ -1184,6 +1186,41 @@ it("a cache this start cannot use falls back to the device's own install directo
   expect(echo.calls[0]?.env[DEVICE_SERVICE_INSTALL_ENV]).toBe(
     join(deviceDir, "svc-install", "browser.browser"),
   );
+  // the device's log says why, once per fallback
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toMatch(
+    /install cache is not used for device service browser\.browser: .*not a private directory.*own install directory/,
+  );
+});
+
+it("a device copy made for the running files is kept beside the cache for a later fallback", async () => {
+  const { root, deviceDir, workspace, echo } = await fixture();
+  const cache = new InstallCache({ root: join(root, "cache"), scope: "https://x" });
+  const supervisor = new ServiceSupervisor({
+    deviceDir,
+    workspace,
+    launcher: () => echo.launcher,
+    socketAliasRoot: join(root, "a"),
+    installCache: cache,
+  });
+  cleanups.push(() => supervisor.stopAll(signal()));
+  const own = join(deviceDir, "svc-install", "browser.browser");
+  // a fallback start earlier installed and sealed the device's own copy for files d1
+  await mkdir(own, { recursive: true });
+  await writeFile(join(own, "chrome"), "chromium");
+  await writeFile(join(own, DEVICE_SERVICE_INSTALL_SEAL), "");
+  await writeFile(join(deviceDir, "svc-install", ".browser.browser"), "d1");
+  const keyed = (main: string) =>
+    spec({ "main.js": main, [DEVICE_SERVICE_INSTALL_KEY_FILE]: "chromium-1255\n" });
+  const ensure = (body: Record<string, unknown>) =>
+    serveServiceOp(supervisor, { op: "service.ensure", ...body }, signal());
+  // the cache works again, same files: the device copy stays (no download if it flips back)
+  expect(await ensure({ spec: keyed("// v1"), filesDigest: "d1" })).toMatchObject({ ok: true });
+  expect(await readFile(join(own, "chrome"), "utf8")).toBe("chromium");
+  await supervisor.stop("browser.browser", signal());
+  // new files: a fallback would empty it anyway, so it goes
+  expect(await ensure({ spec: keyed("// v2"), filesDigest: "d2" })).toMatchObject({ ok: true });
+  await expect(lstat(own)).rejects.toThrow(/ENOENT/);
 });
 
 it("only a regular seal file seals the install directory", async () => {

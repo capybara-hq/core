@@ -137,7 +137,10 @@ export interface StagedDeviceOptions {
   selfCheckRetryMs?: number;
   /** The clock of the self-check retry interval (default: `Date.now`). */
   selfCheckNow?: () => number;
-  /** Where a docker-mode bind logs which pinned image digest the container matched. */
+  /**
+   * The device's log: where a docker-mode bind logs which pinned image digest the container
+   * matched, and where a device service start says it could not use the install cache.
+   */
   log?: (line: string) => void;
   /** The image id (`sha256:…`) the docker-mode device's running container was created from. */
   containerImageDigest?: (containerName: string, signal: AbortSignal) => Promise<string>;
@@ -385,6 +388,7 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     workspace: hostRoots.workspace,
     launcher: () => (mode === "os" && platform === "darwin" ? serviceLauncher : undefined),
     installCache,
+    warn: o.log ?? ((line) => console.error(line)),
   });
 
   const binder = new InstanceBinder({

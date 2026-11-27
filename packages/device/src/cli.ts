@@ -94,7 +94,14 @@ export function defaultCreateStaged(stateDir: string, home: string, log?: (line:
         ...(log && { log }),
       });
     }
-    return createStagedDevice({ cred, stateDir, stateRoot, policy: store, home });
+    return createStagedDevice({
+      cred,
+      stateDir,
+      stateRoot,
+      policy: store,
+      home,
+      ...(log && { log }),
+    });
   };
 }
 
