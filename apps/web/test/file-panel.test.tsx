@@ -1,7 +1,9 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { DesignProvider } from "@capybara-hq/design";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { builtinPreview } from "../src/lib/files";
+import { FilesSection } from "../src/components/conversation/PropertiesSections";
+import { builtinPreview, type FileOutput } from "../src/lib/files";
 import { type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -171,6 +173,14 @@ describe("the file panel", () => {
     const panel = await screen.findByRole("complementary", { name: "report.docx" });
     expect(await within(panel).findByText(/No preview available/)).toBeTruthy();
     expect(within(panel).getAllByRole("button", { name: /Download/ }).length).toBeGreaterThan(0);
+  });
+
+  it("the header links the file to its place in the library", async () => {
+    api();
+    await openAt("#file=f1");
+    const panel = await screen.findByRole("complementary", { name: "report.docx" });
+    const link = within(panel).getByRole("link", { name: "View in Files" });
+    expect(link.getAttribute("href")).toBe("/files#item=f1");
   });
 
   it("a .csv renders a table; the header switches between the conversation's files", async () => {
@@ -446,6 +456,18 @@ describe("the file panel: HTML and Share", () => {
     await openAt("#file=f4");
     panel = await screen.findByRole("complementary", { name: "old.txt" });
     expect(within(panel).queryByRole("button", { name: /^Share/ })).toBeNull();
+  });
+});
+
+describe("the properties Files section", () => {
+  it("each row links to its place in the library", () => {
+    render(
+      <DesignProvider locale="en">
+        <FilesSection files={[DOCX, CSV] as unknown as FileOutput[]} onOpen={() => {}} />
+      </DesignProvider>,
+    );
+    const links = screen.getAllByRole("link", { name: "View in Files" });
+    expect(links.map((l) => l.getAttribute("href"))).toEqual(["/files#item=f1", "/files#item=f2"]);
   });
 });
 

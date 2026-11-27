@@ -4,7 +4,7 @@ import { formatBytes } from "../display/attachments";
 import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { Menu } from "../overlays/menus";
-import { useDesignT } from "../provider";
+import { useDesignLink, useDesignT } from "../provider";
 import { DragFill } from "../shell/drag-fill";
 import { isSafeImageSrc, TypeBadge, typeBadge } from "./files";
 import { Prose } from "./prose";
@@ -69,6 +69,8 @@ export type FilePreviewHeader = {
   onShare?(): void;
   /** The file has a live share: the Share button carries the marker and reads "Shared". */
   shared?: boolean;
+  /** Where the file lives in the library (`/files#item=<id>`): a "View in Files" link icon. */
+  libraryHref?: string;
   onDownload(): void;
   onFullscreen(): void;
   onClose(): void;
@@ -93,6 +95,7 @@ export function FilePreviewFrame({
   children,
 }: FilePreviewFrameProps): JSX.Element {
   const t = useDesignT();
+  const Link = useDesignLink();
   const full = useRightFull();
   const switcher = h.files && h.files.length > 0 && h.onSwitch;
   const title = switcher ? (
@@ -163,6 +166,18 @@ export function FilePreviewFrame({
           {h.version ? <span className="cb-faint cb-small cb-rpanel-meta">{h.version}</span> : null}
           <DragFill className="cb-rpanel-grow" />
           {previewerSwitch}
+          {h.libraryHref ? (
+            <Link
+              href={h.libraryHref}
+              className="cb-btn cb-icon-btn"
+              data-part="view-in-files"
+              data-variant="ghost"
+              aria-label={t("files.viewInFiles")}
+              title={t("files.viewInFiles")}
+            >
+              <Icon name="external-link" size={16} />
+            </Link>
+          ) : null}
           {h.onShare ? (
             <IconButton
               className="cb-share-btn"

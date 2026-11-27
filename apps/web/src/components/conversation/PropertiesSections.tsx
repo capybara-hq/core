@@ -23,6 +23,7 @@ import type {
 } from "../../lib/conversations";
 import { deviceCeilingMark, deviceState } from "../../lib/devices";
 import type { FileOutput } from "../../lib/files";
+import { libraryHref } from "../../lib/library-href";
 import { myRole, roleAtLeast } from "../../lib/members";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
@@ -222,6 +223,7 @@ export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id
         name: f.name,
         badge: typeBadge(f.name, f.contentType),
         size: formatBytes(f.size),
+        href: libraryHref(f.id),
         ...(f.from ? { from: f.from.name } : {}),
         ...(f.origin === "uploaded" ? { uploaded: true } : {}),
       }))}

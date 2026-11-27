@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { sourceUrls } from "../../lib/file-source";
 import type { FileOutput } from "../../lib/files";
+import { libraryHref } from "../../lib/library-href";
 import { uiLocale } from "../../lib/ui";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { FilePreviewBody } from "../file-preview/FilePreviewBody";
@@ -57,6 +58,7 @@ export function FilePanel({
     onSwitch,
     onPreviewer: setPicked,
     ...(available ? { onShare: () => setSharing(true), shared: file.shared === true } : {}),
+    libraryHref: libraryHref(file.id),
     onDownload: download,
     onFullscreen,
     onClose,
