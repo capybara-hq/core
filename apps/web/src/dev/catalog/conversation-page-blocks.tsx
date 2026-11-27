@@ -661,7 +661,7 @@ function commandPaletteBlocks(): ReactNode {
   );
 }
 
-// ── Composer menus (§6.16.30: ＋, / and @ anchored above the composer) ─────────
+// ── Composer menus (§6.16.30: +, / and @ anchored above the composer) ─────────
 
 const menuGroups = (groups: FixtureComposerMenuGroup[]): ComposerMenuGroup[] =>
   groups.map((g) => ({ ...g, items: g.items.map((it) => ({ ...it, onSelect: noop })) }));

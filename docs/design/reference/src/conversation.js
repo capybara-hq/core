@@ -659,7 +659,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         : `<button class="r-btn r-picker" data-variant="ghost" data-part="mode-button"${o.mode === "open" ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}>${icon(P.icon, 14)}${esc(P.label)}${icon("chevron-down", 12)}</button>`;
       return `<div class="r-composer"><label class="r-sr" for="msg">消息</label>${textarea}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${devicePicker({ device: "default" })}${picker(modelText)}<span class="r-grow"></span>${modeButton}${action}</div></div>`;
     }
-    // the ＋ menu open (§6.16.30): the button reads as pressed while its menu shows
+    // the + menu open (§6.16.30): the button reads as pressed while its menu shows
     const plus = o.plusOpen
       ? `<button class="r-icon-btn" data-state="hover" aria-haspopup="menu" aria-expanded="true" aria-label="${esc(K.attach)}">${icon("plus", 16)}</button>`
       : iconBtn("plus", K.attach);
@@ -794,7 +794,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       : bar;
   }
 
-  // ── Composer menus (§6.16.30: ＋, / and @ anchored above the composer) ─────
+  // ── Composer menus (§6.16.30: +, / and @ anchored above the composer) ─────
 
   /** One row: the lead (icon 16, the connector's mark, a file's type), name and hint, the line. */
   function cmmRow(it, active) {

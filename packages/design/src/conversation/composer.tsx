@@ -278,12 +278,12 @@ export type ComposerBoxProps = {
   hint?: string;
   /** The attachment strip, above the textarea. */
   attachments?: ReactNode;
-  /** The ＋ button: the file picker, or (with `attachOpen`) the ＋ menu (§6.16.30). */
+  /** The + button: the file picker, or (with `attachOpen`) the + menu (§6.16.30). */
   onAttach(): void;
   attachDisabled?: boolean;
   /**
-   * The ＋ menu is open: the ＋ button then carries `aria-haspopup="menu"` and this as
-   * `aria-expanded`. Absent: ＋ is a plain button (the file picker).
+   * The + menu is open: the + button then carries `aria-haspopup="menu"` and this as
+   * `aria-expanded`. Absent: + is a plain button (the file picker).
    */
   attachOpen?: boolean;
   /**

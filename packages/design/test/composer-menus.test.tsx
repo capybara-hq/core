@@ -1,5 +1,5 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { type ReactElement, useState } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { type ReactElement, type KeyboardEvent as ReactKeyboardEvent, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ComposerBox,
@@ -13,7 +13,7 @@ import {
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
 import { matchMediaFor } from "./width";
 
-// The composer's menus (spec §6.16.30): ＋, / and @ share one shell anchored above the composer
+// The composer's menus (spec §6.16.30): +, / and @ share one shell anchored above the composer
 // (a bottom sheet on compact); the textarea is the combobox, the list a listbox, and the query is
 // the composer text after the trigger.
 
@@ -89,7 +89,9 @@ function Harness({
   filter,
   loading,
   kind = "slash",
+  onSend,
 }: {
+  onSend?: () => void;
   groups: ComposerMenuGroup[];
   initial?: string;
   onClose?: () => void;
@@ -123,6 +125,15 @@ function Harness({
       onChange={setText}
       placeholder="输入消息"
       onAttach={() => {}}
+      {...(onSend
+        ? {
+            // the page's send: ↵ without Shift, never while an IME composes
+            onKeyDown: (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+              const composing = e.nativeEvent.isComposing || e.keyCode === 229;
+              if (e.key === "Enter" && !e.shiftKey && !composing) onSend();
+            },
+          }
+        : {})}
       pickers={{ model: { label: "切换模型", value: "m", groups: [], onPick: () => {} } }}
       send={{ mode: "send", onClick: () => {} }}
       menu={
@@ -570,5 +581,213 @@ describe("ComposerMenu (compact)", () => {
     wrap(<Compact />);
     fireEvent.click(screen.getAllByRole("option")[1] as HTMLElement);
     expect(picks["fix-issue"]).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ComposerMenu keyboard edges", () => {
+  it("↵ with no choosable row closes the menu and never sends; the next ↵ sends", () => {
+    const onClose = vi.fn();
+    const onSend = vi.fn();
+    wrap(<Harness groups={slashGroups()} initial="/zzz" onClose={onClose} onSend={onSend} />);
+    key("Enter");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.queryByRole("listbox")).toBeNull();
+    key("Enter");
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("↵ with only disabled rows closes and does not send", () => {
+    const onClose = vi.fn();
+    const onSend = vi.fn();
+    const groups: ComposerMenuGroup[] = [
+      {
+        id: "skills",
+        items: [{ id: "x", label: "release-check", disabled: true, onSelect: () => {} }],
+      },
+    ];
+    wrap(<Harness groups={groups} onClose={onClose} onSend={onSend} />);
+    key("Enter");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("↵ while results load waits: it neither closes nor sends", () => {
+    const onClose = vi.fn();
+    const onSend = vi.fn();
+    wrap(
+      <Harness kind="at" groups={[]} initial="@rep" loading onClose={onClose} onSend={onSend} />,
+    );
+    key("Enter");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("an IME composition's ↵ neither picks, closes nor sends", () => {
+    const picks: Picks = {};
+    const onClose = vi.fn();
+    const onSend = vi.fn();
+    wrap(<Harness groups={slashGroups(picks)} onClose={onClose} onSend={onSend} />);
+    key("Enter", { isComposing: true });
+    key("Enter", { keyCode: 229 });
+    expect(Object.values(picks).some((f) => f.mock.calls.length > 0)).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("closed (`a@b` mid-word opens nothing): the keys are the composer's, nothing is picked", () => {
+    const handled: boolean[] = [];
+    function Probe() {
+      const menu = useComposerMenu(null);
+      return (
+        <textarea
+          aria-label="probe"
+          defaultValue="a@b"
+          onKeyDown={(e) => {
+            handled.push(menu.onKeyDown(e));
+          }}
+        />
+      );
+    }
+    wrap(<Probe />);
+    const ta = screen.getByLabelText("probe");
+    for (const k of ["Enter", "ArrowDown", "Escape", "Backspace", " "]) {
+      fireEvent.keyDown(ta, { key: k });
+    }
+    expect(handled).toEqual([false, false, false, false, false]);
+  });
+
+  it("a space right after @ closes even with rows listed (the key still types)", () => {
+    const onClose = vi.fn();
+    const at: ComposerMenuGroup[] = [
+      { id: "github", items: [{ id: "r1", label: "report.md", onSelect: () => {} }] },
+    ];
+    wrap(<Harness kind="at" groups={at} initial="@" onClose={onClose} />);
+    expect(options()).toHaveLength(1);
+    const ev = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    textarea().dispatchEvent(ev);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it("Backspace with a selection is plain editing: the menu does not close on the key", () => {
+    const onClose = vi.fn();
+    wrap(<Harness groups={slashGroups()} initial="/" onClose={onClose} />);
+    textarea().setSelectionRange(0, 1);
+    const ev = new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true });
+    textarea().dispatchEvent(ev);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it("only key moves scroll the active row into view; the pointer never scrolls", () => {
+    const scroll = vi.fn();
+    const real = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      wrap(<Harness groups={slashGroups()} />);
+      fireEvent.mouseMove(options()[3] as HTMLElement);
+      expect(active()?.textContent).toContain("compact");
+      expect(scroll).not.toHaveBeenCalled();
+      key("ArrowDown");
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll.mock.contexts[0]).toBe(active());
+    } finally {
+      Element.prototype.scrollIntoView = real;
+    }
+  });
+
+  it("the footer's switch hints are not tab stops", () => {
+    wrap(<Harness groups={slashGroups()} onSwitch={() => {}} />);
+    const foot = document.querySelector('[data-part="composer-menu-foot"]') as HTMLElement;
+    const buttons = within(foot).getAllByRole("button");
+    expect(buttons.length).toBe(2);
+    for (const b of buttons) expect(b.getAttribute("tabindex")).toBe("-1");
+  });
+});
+
+/** A 390 wide window, with a coarse pointer when `touch`. */
+function compactWindow(touch: boolean): typeof window.matchMedia {
+  const base = matchMediaFor(390).matchMedia;
+  return ((q: string) => {
+    const coarse = q === "(pointer: coarse)" || q === "(any-pointer: coarse)";
+    if (touch && (coarse || q === "(any-pointer: fine)")) {
+      return { ...base(q), matches: coarse, media: q };
+    }
+    return base(q);
+  }) as typeof window.matchMedia;
+}
+
+describe("ComposerMenu (compact) focus and Esc", () => {
+  function Page({ onClose }: { onClose?: () => void }) {
+    const [open, setOpen] = useState(false);
+    const props: ComposerMenuProps | null = open
+      ? {
+          kind: "slash",
+          groups: slashGroups(),
+          query: "",
+          empty: "没有匹配",
+          onClose: () => {
+            onClose?.();
+            setOpen(false);
+          },
+          onQueryChange: () => {},
+        }
+      : null;
+    const menu = useComposerMenu(props);
+    return (
+      <>
+        <textarea aria-label="composer" />
+        <button type="button" onClick={() => setOpen(true)}>
+          open
+        </button>
+        {props ? <ComposerMenu {...props} controller={menu} /> : null}
+      </>
+    );
+  }
+  const openFromComposer = () => {
+    const ta = screen.getByLabelText("composer");
+    ta.focus();
+    // fireEvent.click moves no focus: the sheet opens with the composer focused
+    fireEvent.click(screen.getByText("open"));
+    return ta;
+  };
+  const sheet = () => screen.queryByRole("dialog", { name: "技能与命令" });
+
+  it("with a fine pointer closing hands focus back to the composer", async () => {
+    window.matchMedia = compactWindow(false);
+    wrap(<Page />);
+    const ta = openFromComposer();
+    await waitFor(() => expect(document.activeElement).not.toBe(ta));
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    });
+    await waitFor(() => expect(sheet()).toBeNull());
+    expect(document.activeElement).toBe(ta);
+  });
+
+  it("on touch closing never focuses the composer (it would pop the keyboard)", async () => {
+    window.matchMedia = compactWindow(true);
+    wrap(<Page />);
+    const ta = openFromComposer();
+    await waitFor(() => expect(document.activeElement).not.toBe(ta));
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    });
+    await waitFor(() => expect(sheet()).toBeNull());
+    expect(document.activeElement).not.toBe(ta);
+  });
+
+  it("Esc in the search field closes once", async () => {
+    window.matchMedia = compactWindow(false);
+    const onClose = vi.fn();
+    wrap(<Page onClose={onClose} />);
+    openFromComposer();
+    const search = within(sheet() as HTMLElement).getByRole("searchbox", { name: "搜索" });
+    act(() => {
+      fireEvent.keyDown(search, { key: "Escape" });
+    });
+    await waitFor(() => expect(sheet()).toBeNull());
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

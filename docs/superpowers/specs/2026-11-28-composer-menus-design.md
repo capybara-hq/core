@@ -65,8 +65,10 @@ A new design component replacing `CommandPalette` for the composer (the palette 
   `@report` searches files and resources), ranked with the palette's existing `commandScore`.
 - Footer (from 600 up): key hints as text (`@ 文件与资源 · / 技能与命令 · ↑↓ 选择 · ↵ 使用 · esc 关闭`)
   and a muted hint (「输入以搜索」); hints that switch menus are buttons.
-- Keys: ↑↓ move, ↵ picks, Esc closes and keeps the text, Backspace through the trigger closes, typing a
-  space after `@` with no match closes. IME composition is respected.
+- Keys: ↑↓ move, ↵ picks (no choosable row: ↵ closes the menu and never sends; the next ↵ sends), Esc
+  closes once and keeps the text, Backspace through the trigger closes (a selection's Backspace is plain
+  editing), a space right after `@` or after `@…` with no match closes. IME composition is respected
+  (its ↵ never picks). Only key moves scroll the list; the footer hints are not tab stops.
 - Compact (below 600): the same content in a `BottomSheet` (drag to dismiss, one history entry via
   `useOverlayHistory`), rows `touch.row`, no key hints, a search field at the sheet's top because the
   keyboard covers the composer; a choice never focuses the composer on touch.

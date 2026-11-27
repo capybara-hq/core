@@ -1,5 +1,5 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type JSX, type KeyboardEvent, type ReactNode, useEffect, useId, useState } from "react";
+import { type JSX, type KeyboardEvent, type ReactNode, useId, useState } from "react";
 import { Badge } from "../display/basic";
 import { ObjectMark } from "../display/object-mark";
 import { Icon } from "../icons/icon";
@@ -8,16 +8,17 @@ import { BottomSheetContent, BottomSheetFrame } from "../overlays/bottom-sheet";
 import { commandScore } from "../overlays/palette";
 import { useOverlayHistory } from "../overlays/use-overlay-history";
 import { useDesignLink, useDesignT } from "../provider";
+import { isTouchPointer } from "../shell/pointer";
 import { useSizeClass } from "../shell/size-class";
 import { TypeBadge, typeBadge } from "./files";
 import { Spinner } from "./prose";
 
-// The composer's menus (spec §6.16.30): ＋ (everything a person can add or use), `/` (skills and
+// The composer's menus (spec §6.16.30): + (everything a person can add or use), `/` (skills and
 // commands) and `@` (files and resources) share one shell anchored above the composer frame, a
 // bottom sheet on compact. It has no search box of its own: the query is the composer text after
 // the trigger, and the composer textarea stays focused as the combobox that drives the list.
 
-/** Which menu: ＋, `/` or `@`. */
+/** Which menu: +, `/` or `@`. */
 export type ComposerMenuKind = "plus" | "slash" | "at";
 
 /** One row: an icon (or a mark, or a file's type), the name, a muted line, a trailing badge. */
@@ -28,7 +29,7 @@ export type ComposerMenuItem = {
   label: string;
   /** One muted line under the name (a skill's description, a connector's). */
   description?: string;
-  /** The row's kind as an icon: `terminal` for a command, `skills` for a skill, a ＋ row's own. */
+  /** The row's kind as an icon: `terminal` for a command, `skills` for a skill, a + row's own. */
   icon?: IconName;
   /** A thing a plugin brings (a connector, its prompt or resource): `ObjectMark`, image or initial. */
   mark?: { text: string; image?: string };
@@ -36,13 +37,13 @@ export type ComposerMenuItem = {
   file?: { name: string };
   /** Faint text after the name (a skill's argument hint "[issue-number]"). */
   hint?: string;
-  /** A trailing mark in `warn` (待配置 on a connector waiting for setup). */
+  /** A trailing mark in `warn` (Needs setup on a connector waiting for setup). */
   badge?: string;
   /** Not choosable: drawn `disabled`, skipped by ↑↓, a click does nothing. */
   disabled?: boolean;
   /** More text the query matches, as `search` in `commandScore` ("superpowers:brainstorming"). */
   keywords?: string[];
-  /** The pick. The caller closes the menu or switches it (技能 opens `/`); the menu does neither. */
+  /** The pick. The caller closes the menu or switches it (Skills opens `/`); the menu does neither. */
   onSelect(): void;
 };
 
@@ -57,7 +58,7 @@ export type ComposerMenuProps = {
   kind: ComposerMenuKind;
   /** The rows by group, in the order shown; the groups keep this order whatever the query. */
   groups: ComposerMenuGroup[];
-  /** The composer text after the trigger (`/fix` → "fix"); "" for ＋. */
+  /** The composer text after the trigger (`/fix` → "fix"); "" for +. */
   query: string;
   /**
    * Rank and hide rows by `query` with `commandScore` (default true); `false` when the caller
@@ -74,7 +75,7 @@ export type ComposerMenuProps = {
   onSwitch?(kind: "slash" | "at"): void;
   /** The compact sheet's search field (the keyboard covers the composer there). */
   onQueryChange?(query: string): void;
-  /** The sheet's search field label (default 「搜索」 / "Search"). */
+  /** The sheet's search field label (default "Search"). */
   searchLabel?: string;
   /**
    * Guidance under the list, whatever it holds: a muted line and an optional next step, a link
@@ -118,9 +119,10 @@ export type ComposerMenuController = {
   /** Spread on the composer textarea (`ComposerBox menu.combobox`). */
   combobox: ComposerMenuCombobox;
   /**
-   * The composer textarea's keys: ↑↓ move, ↵ picks, Esc closes, Backspace through the trigger and
-   * a space after `@` with no match close (the key still types). `true` when the menu took the
-   * key (the composer then stops: no send on that ↵); never during an IME composition.
+   * The composer textarea's keys: ↑↓ move, ↵ picks (with nothing to choose it closes the menu,
+   * while results load it waits; it never sends), Esc closes, Backspace through the trigger (no
+   * selection) and a space right after `@` or after `@…` with no match close (the key still types). `true` when the
+   * menu took the key (the composer then stops); never during an IME composition.
    */
   onKeyDown(e: KeyboardEvent<HTMLElement>): boolean;
   /** The rows after ranking, for `ComposerMenu`. */
@@ -213,7 +215,11 @@ export function useComposerMenu(p: ComposerMenuProps | null): ComposerMenuContro
     if (enabled.length === 0) return;
     const at = enabled.findIndex((r) => r.key === activeKey);
     const next = enabled[(at + dir + enabled.length) % enabled.length];
-    if (next) choose(next.key);
+    if (!next) return;
+    choose(next.key);
+    // a key move keeps the new row in view (the pointer's never scrolls the list)
+    const el = document.getElementById(domId(flat.findIndex((r) => r.key === next.key)));
+    if (typeof el?.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
   };
   const pick = (item: ComposerMenuItem) => {
     if (item.disabled) return;
@@ -234,26 +240,38 @@ export function useComposerMenu(p: ComposerMenuProps | null): ComposerMenuContro
         pick(active.item);
         return true;
       }
-      // results on their way: the ↵ waits for them rather than sending the draft
-      if (p.loading) {
-        e.preventDefault();
-        return true;
-      }
-      return false;
+      e.preventDefault();
+      // results on their way: the ↵ waits for them; nothing to choose: it closes the menu (the
+      // next ↵ sends). It never sends the draft while the menu is open.
+      if (!p.loading) p.onClose();
+      return true;
     }
     if (e.key === "Escape") {
+      // in the sheet's field the sheet's own Esc closes it (once)
+      if (from === "field") return false;
       e.preventDefault();
       p.onClose();
       return true;
     }
     if (from === "composer" && p.kind !== "plus") {
-      // the caret right after the trigger: Backspace deletes it, and the menu goes with it
-      if (e.key === "Backspace" && p.query === "") {
+      const field = e.currentTarget as HTMLElement & {
+        selectionStart?: number | null;
+        selectionEnd?: number | null;
+      };
+      const collapsed = field.selectionStart === field.selectionEnd;
+      // the caret right after the trigger: Backspace deletes it, and the menu goes with it (a
+      // selection's Backspace deletes the selection instead)
+      if (e.key === "Backspace" && p.query === "" && collapsed) {
         p.onClose();
         return false;
       }
-      // "@" and a space with nothing found: the person is writing an address, not picking
-      if (e.key === " " && p.kind === "at" && flat.length === 0 && !p.loading) {
+      // a space right after "@", or after "@…" with nothing found: the person is writing an
+      // address or plain text, not picking
+      if (
+        e.key === " " &&
+        p.kind === "at" &&
+        (p.query === "" || (flat.length === 0 && !p.loading))
+      ) {
         p.onClose();
         return false;
       }
@@ -474,6 +492,8 @@ function Footer({ p }: { p: ComposerMenuProps }): JSX.Element {
         className="cb-cmm-switch"
         data-part="composer-menu-switch"
         aria-pressed={p.kind === kind}
+        // a pointer shortcut: the keys switch by typing the trigger, the tab order skips it
+        tabIndex={-1}
         // the composer keeps the focus through a click
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => p.onSwitch?.(kind)}
@@ -558,7 +578,13 @@ function ComposerMenuSheet({
         if (!o) p.onClose();
       }}
     >
-      <BottomSheetContent title={title} part="composer-menu-sheet" onDismiss={p.onClose}>
+      <BottomSheetContent
+        title={title}
+        part="composer-menu-sheet"
+        onDismiss={p.onClose}
+        // on touch a choice never focuses the composer (its focus pops the keyboard)
+        returnFocus={() => !isTouchPointer()}
+      >
         <SheetBody p={p} controller={controller} title={title} />
       </BottomSheetContent>
     </RD.Root>
@@ -583,11 +609,6 @@ export function ComposerMenu({
   const t = useDesignT();
   const compact = useSizeClass() === "compact";
   const title = t(`composerMenu.title.${p.kind}`);
-  // the active row stays in view as ↑↓ move it
-  const activeDom = controller.shown.flatMap((g) => g.items).find((r) => r.active)?.domId;
-  useEffect(() => {
-    if (activeDom) document.getElementById(activeDom)?.scrollIntoView({ block: "nearest" });
-  }, [activeDom]);
   if (referenceSheet) {
     return (
       <BottomSheetFrame title={title} state="idle" share={0} page={referenceSheet.page}>

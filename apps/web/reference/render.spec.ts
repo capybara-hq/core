@@ -23,7 +23,7 @@ const PAGES = [
   "template-conversation",
   "title-bar",
   "composer",
-  // the composer's ＋, / and @ menus, anchored above it (a bottom sheet on compact)
+  // the composer's +, / and @ menus, anchored above it (a bottom sheet on compact)
   "composer-menu",
   "picker-menu",
   // the composer's mode menu (approval profiles)

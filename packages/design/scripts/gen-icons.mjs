@@ -126,7 +126,7 @@ const ICONS = {
   info: "info",
   volume: "volume-2",
   globe: "globe",
-  // The composer's ＋ menu (§6.16.30): 项目文件, a file of the device's project.
+  // The composer's + menu (§6.16.30): Project files, a file of the device's project.
   folder: "folder",
 };
 

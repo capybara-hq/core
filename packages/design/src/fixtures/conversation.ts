@@ -1590,9 +1590,9 @@ export type FixtureComposerMenuGroup = {
 };
 
 /**
- * The composer's ＋, / and @ menus (§6.16.30): the ＋ groups (添加 and 能力 as one-line rows, one
+ * The composer's +, / and @ menus (§6.16.30): the + groups (Add and Capabilities as one-line rows, one
  * described row per connector, one waiting for setup), the / groups (skills by source, a connector's prompts, the command last)
- * and the @ results for 「季度」 (matching files, then resources by connector); the empty and
+ * and the @ results for the query "quarter" (matching files, then resources by connector); the empty and
  * loading states search the @ menu.
  */
 export const COMPOSER_MENU_FIXTURE: {
