@@ -838,8 +838,7 @@ export function summaryText(summary: string): string {
  * - messages：最近一条摘要（若有）作为首条 user 消息（摘要切在用户轮次内部时，该轮的开头消息按普通
  *   user_message 的渲染接在摘要文本之后、同一条消息里：摘要的 `openingSeqs`，{@link summaryOpeners}），其后按 seq 回放 `coversUpToSeq` 之后的
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放；媒体引用按
- *   {@link resolveMedia} 换成 base64 或文字占位; one with `stopReason: "max_tokens"` is followed by a
- *   `role: "system"` {@link OUTPUT_TRUNCATED_TEXT}) / `reminder`
+ *   {@link resolveMedia} 换成 base64 或文字占位）/ `reminder`
  *   （`role: "system"`，放在它所在的位置）/ `tools_changed` (`role: "system"`, the text of {@link toolsChangedText}, at its position) /
  *   `device_paths` (`role: "system"` at its position, `devicePathsText`; covered by the
  *   summary: the latest one follows the summary) /
@@ -857,6 +856,8 @@ export function summaryText(summary: string): string {
  *   （同一步的多个结果合并，按该 assistant 消息里 tool_call 的顺序；找不到对应调用的结果不进请求）。
  *   其他事件不进请求。提供 `absorbedUpToSeq` 时，
  *   尚未被吸收的可吸收事件不进请求，运行中途到达的放在吸收它的调用处（见 BuildModelRequestInput）。
+ * An `assistant_message` with `stopReason: "max_tokens"` is followed by a `role: "system"`
+ * {@link OUTPUT_TRUNCATED_TEXT} (issue #951).
  * 只追加：新事件只会在 messages 末尾追加；唯一的前缀变化来自新的压缩摘要。
  * `step` 与 `agentVersion` 不进请求内容（保证缓存前缀稳定），由调用方写入 `model_call` 事件。
  */
