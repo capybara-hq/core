@@ -1,5 +1,31 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.128
+
+### Patch Changes
+
+- a169b0f: Pin the model provider bootstrap plugins with the prompt-cache fixes (plugins#304): bailian
+  0.1.0-rc.13 (the history is cached, not only the system prompt), ark 0.1.0-rc.14 and
+  openai-compatible 0.1.0-rc.14 (implicit cache reported per model, a per-conversation
+  `prompt_cache_key`, qwen dialect cache markers), openai 0.1.0-rc.14 (`prompt_cache_key` per org and
+  system prompt); device-docker 0.1.0-rc.35 (docs only, listed at the same marketplace commit); and
+  the plugins marketplace commit with the compose sandbox image build contexts to 87ca221.
+- 3e0c357: The process block's planning row draws the capybara at 14 × 10 (one CSS pixel per art pixel),
+  no larger than the rail's other marks; it no longer shows while calls of a parallel step are still
+  queued, waiting or running (a sibling's result or an approval record ended the step too early);
+  and a running `Platform` row names its operation instead of just "call".
+- e948833: Live tool rows open by themselves: a streaming `Write` / `Edit` diff, an `Agent` prompt, a generic
+  tool's input and a running call whose output grows show their detail without a click and follow
+  its tail; when the call ends, a row the person never toggled folds back, a toggled row keeps the
+  person's choice. Every tool detail box (finished and live diffs, outputs, the IN command and
+  inputs, the trajectory view's IN / OUT blocks) is one compact viewport of about twelve lines that
+  scrolls, with an expand control (展开 / 收起) to a tall cap when its content overflows.
+- Updated dependencies [d7fd2a8]
+- Updated dependencies [7e996c8]
+- Updated dependencies [a169b0f]
+- Updated dependencies [2f6bb23]
+  - @capybara-hq/kernel@0.1.0-rc.103
+
 ## 0.1.0-rc.127
 
 ### Patch Changes
