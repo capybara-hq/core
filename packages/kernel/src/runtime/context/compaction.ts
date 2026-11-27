@@ -6,7 +6,7 @@ import { renderSubagentDelivery } from "../subagents/render.js";
 import { latestSummary } from "./build.js";
 import { planningBounds } from "./fit.js";
 import { UNKNOWN_RESULT_TEXT } from "./pairing.js";
-import { scheduleHeader, senderTranscriptLabel } from "./run-context.js";
+import { automationEventBlock, scheduleHeader, senderTranscriptLabel } from "./run-context.js";
 import { runOutcomeNotes } from "./run-outcome.js";
 import { estimateTokens } from "./tokens.js";
 import { toolsChangedText } from "./tool-changes.js";
@@ -319,7 +319,14 @@ export function openingSeqs(
   const start = sorted.findLast((e) => e.type === "run_started" && e.runId === runId);
   if (start?.type !== "run_started") return [];
   const trigger = start.payload.trigger;
-  if (trigger !== undefined && trigger !== "message" && trigger !== "schedule") return [];
+  if (
+    trigger !== undefined &&
+    trigger !== "message" &&
+    trigger !== "schedule" &&
+    trigger !== "automation_event"
+  ) {
+    return [];
+  }
   const first = sorted.find(
     (e) => e.type === "model_call" && e.runId === runId && e.seq > start.seq,
   );
@@ -467,9 +474,16 @@ function transcriptLine(e: ConversationEvent, notes: ReadonlyMap<number, string>
     case "user_message": {
       const body = renderBlocks(e.payload.content);
       if (!body) return null;
-      // scheduled tasks spec §12: the header the request shows, so the summary keeps the origin
+      // scheduled tasks spec §12, collaboration spec §4.6: the header or event block the request
+      // shows, so the summary keeps the origin
       const schedule = e.payload.schedule;
-      const text = schedule === undefined ? body : `${scheduleHeader(schedule)} ${body}`;
+      const event = e.payload.automationEvent;
+      const text =
+        schedule !== undefined
+          ? `${scheduleHeader(schedule)} ${body}`
+          : event !== undefined
+            ? `${automationEventBlock(event)}\n${body}`
+            : body;
       const labels = userMessageLabels(e.payload);
       return labels.length > 0 ? `User (${labels.join("; ")}): ${text}` : `User: ${text}`;
     }
