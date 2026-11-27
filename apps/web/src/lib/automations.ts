@@ -8,11 +8,33 @@ import type { ModelRef } from "./conversations";
  * kernel code.
  */
 
+/** One clause of an event trigger's filter (every clause must match the event's facts). */
+export interface EventFilterClause {
+  fact: string;
+  op: "eq" | "in" | "contains";
+  value: string | number | boolean | string[];
+}
+
+/**
+ * A time trigger, or an event trigger (collaboration spec §4.1): events of `types` from the
+ * extension `source`. An event automation has no zone and no next run time.
+ */
 export type AutomationTrigger =
   | { kind: "cron"; expr: string; timeZone: string }
-  | { kind: "once"; at: string; timeZone: string };
+  | { kind: "once"; at: string; timeZone: string }
+  | { kind: "event"; source: string; types: string[]; filter: EventFilterClause[] };
 
-export type AutomationMode = "new" | "conversation" | "chat";
+/** The time triggers: the ones the schedule editor and the calendar read. */
+export type AutomationTimeTrigger = Exclude<AutomationTrigger, { kind: "event" }>;
+
+/**
+ * `subject`: one conversation per event subject (collaboration spec §4.5); it needs an event
+ * trigger, and `chat` needs a time one.
+ */
+export type AutomationMode = "new" | "conversation" | "chat" | "subject";
+
+/** What a question asked in an unattended run does (`null` on an automation: the org's default). */
+export type UnattendedAsk = "fail" | "wait";
 
 export interface AutomationChat {
   connectionId: string;
@@ -54,6 +76,7 @@ export const SKIP_REASONS = [
   "unsupported_target",
   "task_deleted",
   "task_paused",
+  "subject_rate",
 ] as const;
 export type TaskRunSkipReason = (typeof SKIP_REASONS)[number];
 
@@ -77,10 +100,12 @@ export interface Automation {
   /** Null: the agent's effort. */
   effort: string | null;
   deviceId: string | null;
+  /** Null: the org's default. */
+  unattendedAsk: UnattendedAsk | null;
   status: AutomationStatus;
   pauseReason: AutomationPauseReason | null;
   pausedBy: string | null;
-  /** The next fire time, jitter included; null when not active. */
+  /** The next fire time, jitter included; null when not active (and for an event automation). */
   nextRunAt: string | null;
   jitterSeconds: number;
   expiresAt: string | null;
@@ -137,7 +162,8 @@ export interface GrantableTool {
 export interface TaskRun {
   id: string;
   taskId: string;
-  scheduledFor: string;
+  /** The tick; null for an event run. */
+  scheduledFor: string | null;
   firedAt: string | null;
   trial: boolean;
   conversationId: string | null;
@@ -167,8 +193,19 @@ export interface AutomationGrant {
   stale?: boolean | null;
 }
 
-/** When a task fires, before the zone is fixed (the create / patch body's `trigger`). */
-export type TriggerInput = { kind: "cron"; expr: string } | { kind: "once"; at: string };
+/** When a time task fires, before the zone is fixed. */
+export type TimeTriggerInput = { kind: "cron"; expr: string } | { kind: "once"; at: string };
+
+/** An event trigger as the body sends it (a missing filter keeps every event of the types). */
+export type EventTriggerInput = {
+  kind: "event";
+  source: string;
+  types: string[];
+  filter?: EventFilterClause[];
+};
+
+/** The create / patch body's `trigger`. */
+export type TriggerInput = TimeTriggerInput | EventTriggerInput;
 
 export interface AutomationCreateBody {
   agentId: string;
@@ -185,6 +222,8 @@ export interface AutomationCreateBody {
   expiresAt?: string | null;
   /** Tools by key, domains as `network:<host>` (one exact host). */
   grants?: { toolKey: string }[];
+  /** Absent or null: the org's default. */
+  unattendedAsk?: UnattendedAsk | null;
 }
 
 export interface AutomationUpdateBody {
@@ -199,6 +238,7 @@ export interface AutomationUpdateBody {
   model?: ModelRef | null;
   effort?: AutomationEffort | null;
   expiresAt?: string | null;
+  unattendedAsk?: UnattendedAsk | null;
 }
 
 /** The org's automations settings (`orgs.settings.automations`, spec §9). */
@@ -212,6 +252,14 @@ export interface AutomationsSettings {
   catchUpWindowMinutes: number;
   unattendedAsk: "fail" | "wait";
   pauseAfterFailures: number;
+  /** Event automations: the chain depth past which an event is not dispatched. */
+  maxEventDepth: number;
+  /** Event automations: the window, in seconds, that coalesces one subject's events. */
+  coalesceSeconds: number;
+  /** Event automations: up to this many runs of one automation for one subject per hour. */
+  maxEventRunsPerSubjectPerHour: number;
+  /** The trigger sources (extension names) whose events fire no automation of the org. */
+  eventSourcesOff: string[];
   forbiddenTools: string[];
   /**
    * In responses only: the stored list cannot be read (`forbiddenTools` reads `[]`); unattended
@@ -231,6 +279,10 @@ export const AUTOMATION_SETTINGS_DEFAULTS: AutomationsSettings = {
   catchUpWindowMinutes: 60,
   unattendedAsk: "fail",
   pauseAfterFailures: 5,
+  maxEventDepth: 8,
+  coalesceSeconds: 30,
+  maxEventRunsPerSubjectPerHour: 12,
+  eventSourcesOff: [],
   forbiddenTools: [],
 };
 
@@ -250,6 +302,32 @@ export const listConversationAutomations = (orgId: string, conversationId: strin
 /** The chats a `chat` task of mine can post into. */
 export const listChatTargets = (orgId: string) =>
   apiFetch<{ items: ChatTarget[] }>(`${base(orgId)}/chat-targets`);
+
+/** One fact of an event type: its value type and whether a filter may name it. */
+export interface EventFactDecl {
+  type: "string" | "number" | "boolean" | "string[]";
+  name: { zh: string; en: string };
+  filterable: boolean;
+}
+
+/** One event type of a trigger source. A directed one cannot trigger an automation. */
+export interface EventTypeDecl {
+  type: string;
+  name: { zh: string; en: string };
+  directed: boolean;
+  facts: Record<string, EventFactDecl>;
+}
+
+/** A trigger source that serves the org (`GET …/automations/event-sources`). */
+export interface EventSource {
+  source: string;
+  name: { zh: string; en: string };
+  events: EventTypeDecl[];
+}
+
+/** The trigger sources of the org with their event declarations (the event trigger's pickers). */
+export const listEventSources = (orgId: string) =>
+  apiFetch<{ items: EventSource[] }>(`${base(orgId)}/event-sources`);
 
 /** An agent's tools, each grantable in advance or why not. */
 export const listGrantableTools = (orgId: string, agentId: string) =>
@@ -431,8 +509,12 @@ function timeOf(minute: string, hour: string): string | null {
   return m === null || h === null ? null : `${pad(h)}:${pad(m)}`;
 }
 
-/** The preset a trigger reads as: one of the simple forms, else `custom` with the cron. */
-export function presetOf(trigger: AutomationTrigger | TriggerInput): AutomationPreset {
+/** A trigger's zone; null for an event trigger (it has none). */
+export const zoneOf = (trigger: AutomationTrigger): string | null =>
+  trigger.kind === "event" ? null : trigger.timeZone;
+
+/** The preset a time trigger reads as: one of the simple forms, else `custom` with the cron. */
+export function presetOf(trigger: AutomationTimeTrigger | TimeTriggerInput): AutomationPreset {
   if (trigger.kind === "once") return { kind: "once", at: trigger.at.slice(0, 16) };
   const expr = trigger.expr.trim();
   const f = expr.split(/\s+/);
@@ -470,7 +552,7 @@ function hm(time: string): [number, number] {
 }
 
 /** The trigger a preset writes. */
-export function triggerOf(p: AutomationPreset): TriggerInput {
+export function triggerOf(p: AutomationPreset): TimeTriggerInput {
   switch (p.kind) {
     case "once":
       return { kind: "once", at: p.at };
@@ -527,9 +609,12 @@ const cronText = (p: AutomationPreset): string => {
 
 /** The words for a schedule (no zone): the message key under `automations.when` and its values. */
 export function automationWords(trigger: AutomationTrigger | TriggerInput): {
-  key: "hourly" | "daily" | "weekdays" | "weekly" | "monthly" | "once" | "cron";
+  key: "hourly" | "daily" | "weekdays" | "weekly" | "monthly" | "once" | "cron" | "event";
   values: Record<string, string | number>;
 } {
+  if (trigger.kind === "event") {
+    return { key: "event", values: { source: trigger.source, types: trigger.types.join(", ") } };
+  }
   const p = presetOf(trigger);
   switch (p.kind) {
     case "hourly":
@@ -547,6 +632,131 @@ export function automationWords(trigger: AutomationTrigger | TriggerInput): {
       return { key: "cron", values: { expr: p.expr } };
   }
 }
+
+// ---- event triggers (collaboration spec §4.1, §4.3: the form builds its filter from the facts) ----
+
+/** One clause of the filter as the form edits it: the value as text, the fact's type kept. */
+export interface FilterRowDraft {
+  key: string;
+  fact: string;
+  /** The fact's declared type: it decides which operators and which value parse apply. */
+  factType: EventFactDecl["type"];
+  op: EventFilterClause["op"];
+  value: string;
+}
+
+/** An event trigger as the form edits it. */
+export interface EventDraft {
+  source: string;
+  types: string[];
+  filter: FilterRowDraft[];
+}
+
+export const emptyEventDraft = (): EventDraft => ({ source: "", types: [], filter: [] });
+
+/** A fact a filter row may name: filterable, declared by every selected type with one type. */
+export interface FilterableFact {
+  fact: string;
+  name: { zh: string; en: string };
+  type: EventFactDecl["type"];
+}
+
+/** The event types of a source a person may select: not the directed ones. */
+export const selectableTypes = (source: EventSource | undefined): EventTypeDecl[] =>
+  (source?.events ?? []).filter((e) => !e.directed);
+
+/** The facts a filter may name for the selected `types` of `source`, in declaration order. */
+export function filterableFacts(
+  source: EventSource | undefined,
+  types: string[],
+): FilterableFact[] {
+  const decls = selectableTypes(source).filter((e) => types.includes(e.type));
+  const first = decls[0];
+  if (first === undefined) return [];
+  return Object.entries(first.facts).flatMap(([fact, f]) =>
+    f.filterable &&
+    decls.every((d) => d.facts[fact]?.filterable === true && d.facts[fact]?.type === f.type)
+      ? [{ fact, name: f.name, type: f.type }]
+      : [],
+  );
+}
+
+/** The operators that fit a fact type (the kernel's `validateFilter`). */
+export const opsOf = (type: EventFactDecl["type"]): EventFilterClause["op"][] =>
+  type === "string" ? ["eq", "in"] : type === "string[]" ? ["contains"] : ["eq"];
+
+/** Splits a typed list: commas or new lines, trimmed, without empty entries or repeats. */
+export const splitList = (text: string): string[] => [
+  ...new Set(
+    text
+      .split(/[,\n]/)
+      .map((v) => v.trim())
+      .filter((v) => v !== ""),
+  ),
+];
+
+/** The clause a row writes; null while its value is empty or not of the fact's type. */
+export function clauseOf(row: FilterRowDraft): EventFilterClause | null {
+  const text = row.value.trim();
+  if (row.fact === "" || text === "") return null;
+  if (row.op === "in") {
+    const list = splitList(row.value);
+    return list.length === 0 ? null : { fact: row.fact, op: "in", value: list };
+  }
+  if (row.op === "contains") return { fact: row.fact, op: "contains", value: text };
+  if (row.factType === "number") {
+    return /^-?\d+(\.\d+)?$/.test(text) ? { fact: row.fact, op: "eq", value: Number(text) } : null;
+  }
+  if (row.factType === "boolean") {
+    return text === "true" || text === "false"
+      ? { fact: row.fact, op: "eq", value: text === "true" }
+      : null;
+  }
+  return { fact: row.fact, op: "eq", value: text };
+}
+
+/** Whether the event part can be sent (the kernel checks the declarations). */
+export const eventDraftValid = (e: EventDraft): boolean =>
+  e.source !== "" && e.types.length > 0 && e.filter.every((r) => clauseOf(r) !== null);
+
+/** The event trigger a draft writes. */
+export function eventBodyOf(e: EventDraft): EventTriggerInput {
+  const filter = e.filter.flatMap((r) => {
+    const c = clauseOf(r);
+    return c === null ? [] : [c];
+  });
+  return { kind: "event", source: e.source, types: e.types, filter };
+}
+
+let rowSeq = 0;
+/** A new row's key (stable across edits). */
+export const newRowKey = (): string => `row-${++rowSeq}`;
+
+/** A row for a saved clause; the fact's type is read back from the operator and the value. */
+function rowOf(c: EventFilterClause): FilterRowDraft {
+  const factType: EventFactDecl["type"] =
+    c.op === "contains"
+      ? "string[]"
+      : typeof c.value === "boolean"
+        ? "boolean"
+        : typeof c.value === "number"
+          ? "number"
+          : "string";
+  return {
+    key: newRowKey(),
+    fact: c.fact,
+    factType,
+    op: c.op,
+    value: Array.isArray(c.value) ? c.value.join(", ") : String(c.value),
+  };
+}
+
+/** The draft of a saved event trigger. */
+export const eventDraftOf = (t: Extract<AutomationTrigger, { kind: "event" }>): EventDraft => ({
+  source: t.source,
+  types: t.types,
+  filter: t.filter.map(rowOf),
+});
 
 /** The status a task shows: its state, or the pause's reason. */
 export type AutomationState = "active" | "ended" | `paused.${AutomationPauseReason}`;

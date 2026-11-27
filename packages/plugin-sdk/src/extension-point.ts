@@ -118,6 +118,13 @@ export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
     true,
     true,
   ),
+  "trigger-source": info(
+    [1],
+    "Declares the events an extension emits and which people may see their subjects.",
+    "multi",
+    true,
+    true,
+  ),
   "web-fetch": info(
     [1],
     "Fetches and extracts web pages for the WebFetch tool; each org picks a default provider.",

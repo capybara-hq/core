@@ -2,6 +2,7 @@ import { Inject, Module, type OnModuleInit } from "@nestjs/common";
 import { AgentLookupModule } from "../agents/agent-lookup.js";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { DialInModule } from "../dial-in/dial-in.module.js";
+import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { ExtensionRegistryModule } from "../extensions/registry.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
@@ -26,6 +27,8 @@ import { AutomationStoreModule } from "./store.module.js";
     AgentLookupModule,
     ConversationAccessModule,
     ExtensionRegistryModule,
+    // event automations: the trigger sources of an org and their display names
+    ExtensionsModule,
     ToolsModule,
     // a new-conversation task's model must resolve for the org
     ProvidersModule,

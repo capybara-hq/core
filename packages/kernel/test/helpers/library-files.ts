@@ -24,7 +24,7 @@ export interface SeedFile {
  * share a blob) and writes a file of `accountId` on it: by default a composer `draft` expiring in
  * 24 hours (an upload not sent yet, which a message attaches); `status: "ready"` for a file already
  * in the library. With `key`, the blob keeps that object key instead (a migrated attachment's
- * `attachments/<id>`, the 0189 way). Returns the file id.
+ * `attachments/<id>`, the 0190 way). Returns the file id.
  */
 export async function seedLibraryFile(
   app: Pick<INestApplicationContext, "get">,
@@ -119,7 +119,7 @@ export async function seedAttachedFile(
 }
 
 /**
- * Runs the 0189 data copy (`file_library_copy`) over everything: chat attachments, delivered
+ * Runs the 0190 data copy (`file_library_copy`) over everything: chat attachments, delivered
  * artifacts (`artifact_created` events) and shares written the old way become library files,
  * blobs and conversation references, exactly as the deploy migrated them. Idempotent.
  */

@@ -361,8 +361,10 @@ export class RunQueue {
     const runId = randomUUID();
     if (!(await this.oweJob(conversationId, runId, jobId.id, "chat", conv.org_id))) return null;
     // scheduled tasks spec §4: a task's message makes the run unattended; a wake inherits it
-    // from the run that produced its event; a person's message never does
-    const taskRunId = await automationRunAt(t, conversationId, trigger.seq);
+    // from the run that produced its event; a person's message never does. An event
+    // automation's message also records its last event (collaboration spec §4.7)
+    const lineage = await automationRunAt(t, conversationId, trigger.seq);
+    const taskRunId = lineage.automationRunId;
     await t
       .insertInto("runs")
       .values({
@@ -377,6 +379,7 @@ export class RunQueue {
         // comes from a run of it or of its tree); null would only make the wake run its own window
         budget_run_id: isWake ? await budgetWindowOf(t, conversationId) : null,
         automation_run_id: taskRunId,
+        trigger_event_id: lineage.triggerEventId,
       })
       .execute();
     // the task run its message started follows this run from now on (spec §6)
@@ -517,6 +520,8 @@ export class RunQueue {
     if (!(await this.oweJob(conversationId, runId, jobId.id, "subagent", conv.org_id))) {
       return null;
     }
+    // a parent's message or a wake: unattended when the run behind it was (automations §4)
+    const lineage = await automationRunAt(t, conversationId, wake.seq);
     await t
       .insertInto("runs")
       .values({
@@ -528,8 +533,8 @@ export class RunQueue {
         trigger_seq: wake.seq,
         job_id: jobId.recorded,
         budget_run_id: await budgetWindowOf(t, rootId),
-        // a parent's message or a wake: unattended when the run behind it was (automations §4)
-        automation_run_id: await automationRunAt(t, conversationId, wake.seq),
+        automation_run_id: lineage.automationRunId,
+        trigger_event_id: lineage.triggerEventId,
       })
       .execute();
     return runId;

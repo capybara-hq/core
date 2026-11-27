@@ -23,6 +23,7 @@ import {
   resumeAutomation,
   runAutomation,
   type TriggerInput,
+  zoneOf,
 } from "../lib/automations";
 import { inboxChangeKeys } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
@@ -172,7 +173,7 @@ export function automationColumns(
       key: "schedule",
       header: t("columns.schedule"),
       tone: "muted",
-      cell: (s) => when(s.trigger, s.trigger.timeZone),
+      cell: (s) => when(s.trigger, zoneOf(s.trigger) ?? undefined),
     },
     { key: "status", header: t("columns.status"), cell: (s) => <AutomationStateMark task={s} /> },
     {

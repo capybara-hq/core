@@ -10,7 +10,7 @@ migrated with preserved ids, and the kernel serves the library routes the Files 
 **Spec:** [2026-11-27-file-library-design.md](../specs/2026-11-27-file-library-design.md) (binding,
 including its "Maintainer decisions"). Issue #971.
 
-**Architecture:** One expand migration (`0189_file_library.sql`) creates `blobs`, `files`,
+**Architecture:** One expand migration (`0190_file_library.sql`) creates `blobs`, `files`,
 `conversation_files`, extends `file_shares`, copies data with preserved ids and ships RLS policies. A
 new `BlobsService` owns bytes (dedup rule, intent-first writes, outbox deletions); a new
 `LibraryFilesService` owns file rows (upload, finalize, attach, delete, list); every byte read in the
@@ -115,7 +115,7 @@ sketch, when they differ.
 
 | Task | Depends on | Files / areas | Risk | Wave | Review |
 |---|---|---|---|---|---|
-| K1 Migration 0189 + schema types + migration test | – | `migrations/0189_file_library.sql`, `db/kernel-schema.ts`, `test/migrations/0189.test.ts` | high | 1 | alone, most capable |
+| K1 Migration 0190 + schema types + migration test | – | `migrations/0190_file_library.sql`, `db/kernel-schema.ts`, `test/migrations/0190.test.ts` | high | 1 | alone, most capable |
 | K2 Ref rename `attachmentId`→`fileId` (SDK + log alias + readers), `FilePreviewArgs.conversationId?`, sdk-api, changeset | – | `plugin-sdk/src/{model,file-preview}.ts`, `conversations/events.ts`, `runtime/**`, `evals/reconstruct.ts`, `tools/result-images.ts`, `tools/builtins/sandbox/read.ts`, the block builder in `attachments.service.ts`, sdk-api report, `.changeset/*`, web mirror types | normal (replay) | 1 | batched + zero-drift evidence |
 | K3 Errors + config `files.deletedRetentionDays` | – | `errors.ts`, `config/schema.ts`, `docs/config.md`, web `messages/{zh,en}.json` (errors.file only) | normal | 1 | batched |
 | K4 Blobs + upload/finalize/discard/attach + draft cleanup + files controller (create/finalize/discard/limits) + outbox handlers + dual-replica finalize test | K1, K3 | `files/blobs.service.ts`, `files/library-files.service.ts`, `files/library.module.ts`, `files/library.controller.ts`, `files/library.schemas.ts`, `files/draft-cleanup.job.ts`, outbox registry, maintenance dispatch, worker module, `attachments.controller.ts` (remove chat POST/finalize), attachments service chat paths, platform-ops exemption check, tests | high | 2 | alone |
@@ -134,13 +134,13 @@ and K7 lands first within the wave if merge order matters (cherry-pick order K7,
 
 ---
 
-## Task K1: Migration 0189, schema types, migration test (high)
+## Task K1: Migration 0190, schema types, migration test (high)
 
 **Read first:** writing-migrations skill; `migrations/0161_file_shares.sql`, `0182_rls_policies.sql`,
 `0187_*.sql` (policy style); `test/migrations/0143.test.ts`, `0163.test.ts` (test pattern).
 
-**Files:** create `packages/kernel/src/migrations/0189_file_library.sql`,
-`packages/kernel/test/migrations/0189.test.ts`; modify `packages/kernel/src/db/kernel-schema.ts`
+**Files:** create `packages/kernel/src/migrations/0190_file_library.sql`,
+`packages/kernel/test/migrations/0190.test.ts`; modify `packages/kernel/src/db/kernel-schema.ts`
 (add `BlobsTable`, `FilesTable`, `ConversationFilesTable`, extend `FileSharesTable`, register them
 on the `KernelDatabase` interface).
 
@@ -211,10 +211,10 @@ Migrated blob ids are derived, so a re-run and the file rows compute the same id
    `object_key = NULL` for those rows (the blob owns the object now; K7 changes liveness to
    `blob_id IS NOT NULL`).
 
-**Test (`test/migrations/0189.test.ts`, integration):** migrate to 0188, seed an org, two accounts,
+**Test (`test/migrations/0190.test.ts`, integration):** migrate to 0189, seed an org, two accounts,
 a conversation per account, chat attachments (bound ready, unbound ready, pending), two
 `artifact_created` events with the same `sourcePath` (two versions) and one `generated/…`, a share
-with a snapshot key; migrate 0189; assert: every old id is a `files` row with the right owner/
+with a snapshot key; migrate 0190; assert: every old id is a `files` row with the right owner/
 origin/status, blobs carry the old keys and sizes/etags, conversation_files rows and `first_seq`,
 share has `blob_id` and null `object_key`, RLS policies exist on the three tables, re-running the
 file is a no-op (row counts equal). Add the test file to the integration list if the portfolio
@@ -402,7 +402,7 @@ ready, exactly one staging deletion owed. Port the relevant cases of
       `ConversationFiles.file` (verify; no event `objectKey` reads remain:
       `grep -rn "objectKey" packages/kernel/src` and justify every remaining hit in the report).
 - [ ] **After:** zero-drift rerun equal to before; add a reconstruct case where a migrated file
-      (row inserted the 0189 way) resolves with zero drift and a deleted file reports `media_missing`.
+      (row inserted the 0190 way) resolves with zero drift and a deleted file reports `media_missing`.
 - [ ] Update affected tests (`test/conversations/files.http.test.ts`, `test/attachments/media-*.test.ts`,
       `test/tools/sandbox/fetch-attachment.test.ts`, `test/tools/sandbox/sandbox-tools.test.ts`,
       `test/evals/reconstruct.test.ts` helpers that insert into `attachments`).
@@ -567,8 +567,8 @@ Routes on `files/library.controller.ts` (owner only, `@OrgAction("agents.use")`,
 
 ## Amendments after the wave 1 reviews
 
-- **K1:** the schema is `0189_file_library.sql` (tables, indexes, policies, the function
-  `file_library_copy(since timestamptz)`), the data copy is `0190_file_library_copy.sql`
+- **K1:** the schema is `0190_file_library.sql` (tables, indexes, policies, the function
+  `file_library_copy(since timestamptz)`), the data copy is `0191_file_library_copy.sql`
   (`SELECT file_library_copy('-infinity')`). `file_shares.object_key` is kept (contract migration
   drops it); `blobs (org_id, object_key)` is unique; deleted files may have no blob.
 - **K2:** stored payloads are never re-parsed: every reader of a stored content-block ref uses
@@ -580,10 +580,10 @@ Routes on `files/library.controller.ts` (owner only, `@OrgAction("agents.use")`,
 - **K7:** liveness and serving use `blob_id`; never read or clear `object_key`; the
   `share-object-delete` handler refuses any key a blob uses.
 - **K9:** a one-off catch-up job (`file-library-backfill`, deterministic id) calls
-  `file_library_copy(<0189 applied_at - 1 hour>)` once the rolling window is over (enqueued at
-  worker start with a 30-minute delay; skipped more than 7 days after 0189 was applied), so rows old
+  `file_library_copy(<0190 applied_at - 1 hour>)` once the rolling window is over (enqueued at
+  worker start with a 30-minute delay; skipped more than 7 days after 0190 was applied), so rows old
   replicas wrote during the deploy are migrated.
-- **Renumbering:** main took `0188` for the automations rename while this line was open, so the
-  file library migrations were renumbered to `0189_file_library.sql` and
-  `0190_file_library_copy.sql` (test `test/migrations/0189.test.ts`); this plan uses the new
+- **Renumbering:** main took `0188` (automations rename) and then `0189` (event automations) while
+  this line was open, so the file library migrations were renumbered to `0190_file_library.sql` and
+  `0191_file_library_copy.sql` (test `test/migrations/0190.test.ts`); this plan uses the new
   numbers throughout.

@@ -16,7 +16,7 @@ import { AutomationFirer } from "../../src/automations/fire.js";
 import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
 import { AutomationScanJob } from "../../src/automations/scan.job.js";
 import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
-import type { Automation, TaskRun } from "../../src/automations/types.js";
+import type { Automation, TaskRun, TimedTaskRun } from "../../src/automations/types.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { ConversationQueue } from "../../src/conversations/queue.service.js";
@@ -179,7 +179,7 @@ async function task(over: Partial<AutomationInsert> = {}): Promise<Automation> {
 async function pendingRun(
   t: Automation,
   over: { scheduledFor?: Date; firedAt?: Date | null; conversationId?: string } = {},
-): Promise<TaskRun> {
+): Promise<TimedTaskRun> {
   const r = await store.insertRun(db, {
     id: randomUUID(),
     taskId: t.id,
@@ -285,7 +285,7 @@ describe("scanning and firing", () => {
     await store.updateTask(db, t.id, { nextRunAt: tick1 });
     await scanner().scanAt(new Date());
     const [r1] = await store.listRuns(db, t.id, 10);
-    expect(r1?.scheduledFor.getTime()).toBe(tick1.getTime());
+    expect(r1?.scheduledFor?.getTime()).toBe(tick1.getTime());
     const done1 = await settled(r1?.id as string);
     expect(done1).toMatchObject({ status: "completed" });
     expect((await taskOf(t.id)).nextRunAt?.getTime()).toBe(tick1.getTime() + FIVE_MIN);
@@ -295,7 +295,7 @@ describe("scanning and firing", () => {
     const runs = await store.listRuns(db, t.id, 10);
     expect(runs).toHaveLength(2);
     const r2 = runs[0] as TaskRun;
-    expect(r2.scheduledFor.getTime()).toBe(tick1.getTime() + FIVE_MIN);
+    expect(r2.scheduledFor?.getTime()).toBe(tick1.getTime() + FIVE_MIN);
     const done2 = await settled(r2.id);
     expect(done2).toMatchObject({ status: "completed" });
 
@@ -375,12 +375,19 @@ describe("scanning and firing", () => {
     const hourAgo = () => new Date(Date.now() - 3600_000);
     const fired = await pendingRun(other, { scheduledFor: new Date(Date.now() - 2 * FIVE_MIN) });
     await store.updateRun(db, fired.id, { status: "completed", firedAt: new Date() });
-    const n = await store.countFiredSince(db, orgId, hourAgo());
+    const n = await store.countFiredSince(db, orgId, ownerId, hourAgo());
     expect(n).toBeGreaterThanOrEqual(1);
     // a skipped row does not count
     const skipped = await pendingRun(other, { scheduledFor: new Date(Date.now() - 3 * FIVE_MIN) });
     await store.updateRun(db, skipped.id, { status: "skipped", skipReason: "overlap" });
-    expect(await store.countFiredSince(db, orgId, hourAgo())).toBe(n);
+    expect(await store.countFiredSince(db, orgId, ownerId, hourAgo())).toBe(n);
+    // the limit is per person: another member's automation is not held back by the owner's runs
+    const carolId = (
+      await accountsFor(db).createLocal({ login: "carol", password: PW, displayName: "Carol" })
+    ).id;
+    await testMembers(db).add(orgId, carolId, "member", ownerId);
+    const carols = await task({ accountId: carolId });
+    expect(await store.countFiredSince(db, orgId, carolId, hourAgo())).toBe(0);
     await setAutomations({ maxRunsPerHour: n });
     try {
       const r = await pendingRun(t);
@@ -391,6 +398,10 @@ describe("scanning and firing", () => {
         firedAt: null,
       });
       expect((await taskOf(t.id)).status).toBe("active");
+      const b = await pendingRun(carols);
+      await firer().fire(b.id);
+      expect((await runOf(b.id)).skipReason).toBeNull();
+      expect((await settled(b.id)).status).toBe("completed");
     } finally {
       await setAutomations({ maxRunsPerHour: 60 });
     }

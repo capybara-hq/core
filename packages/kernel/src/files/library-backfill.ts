@@ -20,7 +20,7 @@ export const FILE_LIBRARY_BACKFILL_JOB = "file-library-backfill";
 export const FILE_LIBRARY_COPY_SETTLED = "fileLibraryCopySettled";
 
 /** The migration that created the file library and its copy function. */
-export const FILE_LIBRARY_MIGRATION = "0189_file_library.sql";
+export const FILE_LIBRARY_MIGRATION = "0190_file_library.sql";
 
 /** How long after it is owed the catch-up runs: once the rolling window of the deploy is over. */
 export const BACKFILL_DELAY_MS = 30 * 60_000;
@@ -40,7 +40,7 @@ interface CopySettled {
 /**
  * The one-off catch-up of the file library's data copy (plan amendment K9). During a rolling deploy
  * old replicas keep writing chat attachments, artifacts and shares the old way after migration
- * 0190 copied them; once the window is over this job runs `file_library_copy(<0189 applied_at - 1
+ * 0191 copied them; once the window is over this job runs `file_library_copy(<0190 applied_at - 1
  * hour>)` (idempotent) so those rows become library files, blobs and references too. It runs once
  * (deterministic job id `file-library-backfill`, the settled marker in the copy's own transaction)
  * and is skipped more than {@link BACKFILL_WINDOW_DAYS} days after the migration.

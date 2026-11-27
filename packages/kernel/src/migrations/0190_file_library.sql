@@ -4,7 +4,7 @@
 -- contract migration drops `file_shares.object_key` and the chat purpose of `attachments`.
 --
 -- The data copy is the function `file_library_copy(since)` defined here, run by
--- 0190_file_library_copy.sql in its own transaction (so this file's DDL locks are not held while
+-- 0191_file_library_copy.sql in its own transaction (so this file's DDL locks are not held while
 -- it scans). It copies chat attachments, `artifact_created` artifacts and share snapshots with
 -- preserved ids (every logged ref resolves on the first request after the deploy), restricted to
 -- source rows created at or after `since` ('-infinity' = everything), and catches up the rows old

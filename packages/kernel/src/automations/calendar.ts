@@ -5,9 +5,9 @@ import type {
   AutomationPauseReason,
   AutomationStatus,
   AutomationTrigger,
-  TaskRun,
   TaskRunSkipReason,
   TaskRunStatus,
+  TimedTaskRun,
 } from "./types.js";
 
 /**
@@ -147,7 +147,7 @@ export interface CalendarInput {
    * Their runs with `scheduledFor` in `[from, to)`, trial included, ordered by `scheduledFor`, at
    * most {@link calendarRunReadLimit} (rows past it are not read; the range is cut before them).
    */
-  runs: readonly TaskRun[];
+  runs: readonly TimedTaskRun[];
   /** The viewer: another creator's runs lose `conversationId`, `error` and `missingGrants`. */
   viewerAccountId: string;
   from: Date;
@@ -471,7 +471,7 @@ class TickHeap {
   }
 }
 
-function runItem(r: TaskRun, own: boolean): CalendarItem {
+function runItem(r: TimedTaskRun, own: boolean): CalendarItem {
   return {
     kind: "run",
     taskId: r.taskId,

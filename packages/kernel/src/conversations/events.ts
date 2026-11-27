@@ -26,7 +26,7 @@ import {
   DisabledToolRef,
   ModelRef,
 } from "../agents/definition.js";
-import type { ScheduleMarker } from "../automations/types.js";
+import type { AutomationEventMarker, ScheduleMarker } from "../automations/types.js";
 import { ORG_ROLES } from "../orgs/roles.js";
 import { coversHost } from "../sandbox/modes.js";
 import {
@@ -863,6 +863,34 @@ export const ScheduleMarkerSchema = z.object({
   localTime: z.string(),
 });
 
+/**
+ * `user_message.automationEvent` (collaboration spec §4.6): the `AutomationEventMarker` shape, the
+ * events an event automation's message reports (at least one; coalesced events in order; at most
+ * the first 5 and the latest 15, `omittedEvents` counting the ones between, absent when none).
+ */
+export const AutomationEventMarkerSchema = z.object({
+  automationId: z.string(),
+  automationRunId: z.string(),
+  automationName: z.string(),
+  source: z.string(),
+  events: z
+    .array(
+      z.object({
+        id: z.string(),
+        type: z.string(),
+        subject: z.object({
+          kind: z.string(),
+          id: z.string(),
+          title: z.string(),
+          url: z.string().optional(),
+        }),
+        summary: z.string(),
+      }),
+    )
+    .min(1),
+  omittedEvents: z.number().int().positive().optional(),
+});
+
 /** `run_context` (run context spec §3.1): every field optional, a later event holds changes only. */
 export const RunContextSchema = z.object({
   /** The agent itself: its name and its versioned description collapsed to one line. */
@@ -1072,6 +1100,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       schedule: ScheduleMarkerSchema.optional(),
       /**
+       * An event automation's message (collaboration spec §4.6): which automation and run posted
+       * it and the events it reports. Request building renders it, from these fields fixed at
+       * write time, as a block before the automation's prompt (`automationEventBlock`); the ids
+       * are not model-visible. The run this message triggers is unattended
+       * (`runs.automation_run_id`) and records its last event (`runs.trigger_event_id`).
+       */
+      automationEvent: AutomationEventMarkerSchema.optional(),
+      /**
        * Set on a sub-agent's task message (phase C, spec §6.3): which parent call dispatched it.
        * Not model-visible; the web renders the message as the task block.
        */
@@ -1131,9 +1167,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * (spec 2026-11-05-background-bash-design §3), `subagent` = a sub-agent's delivery woke it
        * (agent map spec §5.3), `schedule` = a scheduled task's message (scheduled tasks spec §6),
        * `compact` = a manual compaction run (context compaction spec §4.7): no message, no model
-       * step, only the summary and its usage.
+       * step, only the summary and its usage, `automation_event` = an event automation's message
+       * (collaboration spec §4.6).
        */
-      trigger: z.enum(["message", "background_task", "subagent", "schedule", "compact"]).optional(),
+      trigger: z
+        .enum(["message", "background_task", "subagent", "schedule", "compact", "automation_event"])
+        .optional(),
       /**
        * A wake run's boundary: the seq of the finish or delivery that woke it (full-run replay
        * seeds from it).
@@ -1164,6 +1203,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
            * renders another set (a request sent before the note existed).
            */
           runOutcomeSeqs: z.array(seqNo).optional(),
+          /**
+           * The `user_message` events whose event automation block (`automationEventBlock`) the
+           * request rendered, in seq order; absent when it rendered none. Reconstruction reports
+           * `automation_event_block` when the rebuild renders another set.
+           */
+          automationEventSeqs: z.array(seqNo).optional(),
           /**
            * The request's output cap: `min(model cap, maxOutputTokens knob ??
            * runtime.maxOutputTokens)`, clamped by the hard fit guard.
@@ -2193,6 +2238,11 @@ const _toolResult: Same<
 void _toolResult;
 const _schedule: Same<z.infer<typeof ScheduleMarkerSchema>, ScheduleMarker> = true;
 void _schedule;
+const _automationEvent: Same<
+  z.infer<typeof AutomationEventMarkerSchema>,
+  AutomationEventMarker
+> = true;
+void _automationEvent;
 void _blocks;
 void _logIsBlock;
 void _stop;

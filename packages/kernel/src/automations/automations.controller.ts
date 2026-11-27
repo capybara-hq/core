@@ -10,6 +10,8 @@ import {
   AutomationChatTargetsQueryDto,
   type AutomationCreateBody,
   AutomationCreateBodyDto,
+  type AutomationEventSourcesQuery,
+  AutomationEventSourcesQueryDto,
   type AutomationGrantableQuery,
   AutomationGrantableQueryDto,
   type AutomationGrantParams,
@@ -36,6 +38,7 @@ import {
   type AutomationListItem,
   AutomationsService,
   type ChatTarget,
+  type EventSourceView,
   type GrantableTool,
 } from "./automations.service.js";
 import type { CalendarAnswer } from "./calendar.js";
@@ -51,6 +54,8 @@ import type { Automation, AutomationGrant, TaskRun } from "./types.js";
  *   collapsed task-days; calendar spec §5.1), `org.read` like the list, `all` as the list's;
  * - `GET /chat-targets` → `{ items }`: the chats the caller can point a `chat` task at;
  * - `GET /grantable-tools?agentId=` → `{ items }`: the agent's tools, each grantable or why not;
+ * - `GET /event-sources` → `{ items }`: the trigger sources that serve the org (not switched off),
+ *   each `{ source, name, events }` with the event types and facts an event trigger can use;
  * - `POST /` → 201 `{ task }` (`timeZone` is the browser zone, a fallback only);
  *   `GET /:id`, `PATCH /:id`, `POST /:id/pause`, `POST /:id/resume` → `{ task }`;
  * - `DELETE /:id` → 204; `POST /:id/run { trial? }` → 202 `{ run }`;
@@ -120,6 +125,15 @@ export class AutomationsController {
   ): Promise<{ items: GrantableTool[] }> {
     const p = requireUser(principal);
     return { items: await this.tasks.grantableTools(org.orgId, p.account.id, q.agentId) };
+  }
+
+  @Get("event-sources")
+  @OrgAction("automations.use")
+  async eventSources(
+    @CurrentOrg() org: OrgContext,
+    @ZQuery(AutomationEventSourcesQueryDto) _q: z.infer<typeof AutomationEventSourcesQuery>,
+  ): Promise<{ items: EventSourceView[] }> {
+    return { items: await this.tasks.eventSources(org.orgId) };
   }
 
   @Post()

@@ -111,7 +111,7 @@ beforeEach(async () => {
 
 /**
  * Stores an object and logs its `artifact_created` the way `Deliver` did before the file library,
- * then runs the 0189 copy (a delivery migrated with its id and key).
+ * then runs the 0190 copy (a delivery migrated with its id and key).
  */
 async function deliver(
   name: string,
@@ -355,7 +355,7 @@ describe("file-preview@1", () => {
         status: "ready",
       })
       .execute();
-    // sent before the file library, migrated by 0189
+    // sent before the file library, migrated by 0190
     await migrateLegacyFiles(db);
     expect((await previewers(id)).body.previewers.map((p) => p.id)).toEqual(["docx", "docx-page"]);
     const r = await preview(id, "docx");

@@ -409,7 +409,7 @@ async function attachment(conv: string, bytes: Uint8Array) {
       purpose: "chat",
     })
     .execute();
-  // written as before the file library, then migrated by 0189
+  // written as before the file library, then migrated by 0190
   await migrateLegacyFiles(db);
   return { id, objectKey };
 }

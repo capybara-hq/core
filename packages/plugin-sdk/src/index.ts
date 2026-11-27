@@ -79,6 +79,8 @@ export * from "./theme-readability.js";
 export * from "./theme-tokens.generated.js";
 export * from "./tool.js";
 export * from "./tool-key.js";
+export * from "./trigger-source.js";
+export * from "./triggers.js";
 export * from "./ui.js";
 export * from "./ui-parts.js";
 export * from "./ui-resolve.js";

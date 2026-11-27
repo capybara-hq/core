@@ -38,8 +38,8 @@ import {
 
 /**
  * Plan amendment K9: old replicas may still write chat attachments the old way after migration
- * 0190 copied the data, so a one-off catch-up job (`file-library-backfill`, owed at the worker
- * start, deferred half an hour) copies from an hour before 0189 was applied, once (the settled
+ * 0191 copied the data, so a one-off catch-up job (`file-library-backfill`, owed at the worker
+ * start, deferred half an hour) copies from an hour before 0190 was applied, once (the settled
  * marker); more than a week after the migration it records a skip and copies nothing.
  *
  * File library spec §9 step 2: the hashing job fills the sha256 of migrated blobs and merges

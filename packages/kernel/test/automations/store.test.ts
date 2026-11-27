@@ -178,7 +178,14 @@ describe("AutomationStore", () => {
     });
     expect(updated).toMatchObject({ status: "failed", error: "boom", missingGrants: ["Bash"] });
     expect(await store.latestNonTerminalRun(db, t.id)).toBeNull();
-    expect(await store.countFiredSince(db, seed.orgId, new Date(NOW.getTime() - 3600_000))).toBe(1);
+    expect(
+      await store.countFiredSince(
+        db,
+        seed.orgId,
+        seed.accountId,
+        new Date(NOW.getTime() - 3600_000),
+      ),
+    ).toBe(1);
     expect((await store.listRuns(db, t.id, 1)).map((x) => x.id)).toEqual([r2.id]);
   });
 

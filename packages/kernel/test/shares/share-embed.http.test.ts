@@ -165,7 +165,7 @@ async function deliver(name: string, body: Buffer | string, contentType: string)
       },
     },
   ]);
-  // logged the way deliveries were before the file library, then migrated (0189)
+  // logged the way deliveries were before the file library, then migrated (0190)
   await migrateLegacyFiles(db);
   return artifactId;
 }

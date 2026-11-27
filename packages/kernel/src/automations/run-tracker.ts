@@ -126,8 +126,8 @@ export class AutomationRunTracker {
     // not claimed yet: its fire job is still to come (the run's unfired settle check skips it
     // when the job failed for good before its claim)
     if (tr.fired_at === null) return true;
-    // only a run with a target conversation is ever queued (`conversation`, `chat`): no scan of
-    // every queue's markers for the others
+    // only a run with a target conversation is ever queued (`conversation`, `chat`, `subject`):
+    // no scan of every queue's markers for the others
     const queued =
       tr.conversation_id === null
         ? undefined
@@ -135,7 +135,11 @@ export class AutomationRunTracker {
             .selectFrom("conversation_queue")
             .select("id")
             .where("conversation_id", "=", tr.conversation_id)
-            .where(sql<string>`schedule ->> 'taskRunId'`, "=", tr.id)
+            .where(
+              sql<string>`coalesce(schedule ->> 'taskRunId', automation_event ->> 'automationRunId')`,
+              "=",
+              tr.id,
+            )
             .limit(1)
             .executeTakeFirst();
     if (queued) return true;
@@ -175,7 +179,11 @@ export class AutomationRunTracker {
         .select("seq")
         .where("conversation_id", "=", conv)
         .where("type", "=", "user_message")
-        .where(sql<string>`payload -> 'schedule' ->> 'taskRunId'`, "=", tr.id)
+        .where(
+          sql<string>`coalesce(payload -> 'schedule' ->> 'taskRunId', payload -> 'automationEvent' ->> 'automationRunId')`,
+          "=",
+          tr.id,
+        )
         .limit(1)
         .executeTakeFirst();
       if (message) {
@@ -273,8 +281,8 @@ export class AutomationRunTracker {
  * transaction (`RunQueue.ensureRunIn`, which inserts the run). A task run already linked (a
  * sub-agent or wake run inheriting the marker) is left alone.
  */
-// org-filter: the task run id is the kernel-written schedule marker of the run's trigger message
-// (automationRunAt), set only through the kernel-internal schedule option, never by a person
+// org-filter: the task run id is the kernel-written schedule or event marker of the run's trigger
+// message (automationRunAt), set only through the kernel-internal options, never by a person
 export async function linkStartedRunIn(
   t: KernelSchemaDb,
   taskRunId: string,
@@ -295,15 +303,33 @@ export async function linkStartedRunIn(
 }
 
 /**
- * A person removed, edited or sent the queued item that carried `schedule` (the item's stored
- * marker, or null): its task run will never run as the task's, so it becomes `skipped`
+ * The automation run a queued item's stored marker names: its schedule marker's `taskRunId`, or
+ * its event marker's `automationRunId` (collaboration spec §4.6); undefined for a person's item.
+ */
+export function queuedAutomationRunId(item: {
+  schedule: unknown;
+  automation_event: unknown;
+}): string | undefined {
+  const fromSchedule = (item.schedule as { taskRunId?: unknown } | null)?.taskRunId;
+  if (typeof fromSchedule === "string") return fromSchedule;
+  const fromEvent = (item.automation_event as { automationRunId?: unknown } | null)
+    ?.automationRunId;
+  return typeof fromEvent === "string" ? fromEvent : undefined;
+}
+
+/**
+ * A person removed, edited or sent the queued item that carried a schedule or event marker (the
+ * item's stored columns): its task run will never run as the task's, so it becomes `skipped`
  * (`removed`) in the caller's transaction, and the next tick is not held by the overlap check.
  */
-// org-filter: the marker is the queued item's stored schedule column, written only through the
-// kernel-internal schedule option of the queue (never from a request body)
-export async function releaseQueuedTaskRunIn(t: KernelSchemaDb, schedule: unknown): Promise<void> {
-  const taskRunId = (schedule as { taskRunId?: unknown } | null)?.taskRunId;
-  if (typeof taskRunId !== "string") return;
+// org-filter: the marker is the queued item's stored schedule / automation_event column, written
+// only through the kernel-internal options of the queue (never from a request body)
+export async function releaseQueuedTaskRunIn(
+  t: KernelSchemaDb,
+  item: { schedule: unknown; automation_event: unknown },
+): Promise<void> {
+  const taskRunId = queuedAutomationRunId(item);
+  if (taskRunId === undefined) return;
   await t
     .updateTable("automation_runs")
     .set({ status: "skipped", skip_reason: "removed", fired_at: null })

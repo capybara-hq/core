@@ -142,7 +142,7 @@ async function callTool(conv: string, key: string, input: unknown, n: number): P
 
 /**
  * Stores an object and logs its `artifact_created` the way `Deliver` did before the file library,
- * then runs the 0189 copy: a delivery migrated with its id and key.
+ * then runs the 0190 copy: a delivery migrated with its id and key.
  */
 async function deliver(
   conv: string,
@@ -408,7 +408,7 @@ async function upload(name: string, contentType: string, bytes: Buffer): Promise
 
 /**
  * Stores an object and writes an attachment row directly, as attachments were before the file
- * library, then runs the 0189 copy (a bound ready chat attachment becomes a file the conversation
+ * library, then runs the 0190 copy (a bound ready chat attachment becomes a file the conversation
  * refers to, with the same id and key; other rows do not).
  */
 async function attachRow(

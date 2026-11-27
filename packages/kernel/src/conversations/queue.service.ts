@@ -250,6 +250,8 @@ export class ConversationQueue {
                   timeZone: internal.timeZoneOverride,
                 }),
               } satisfies QueuedSchedule),
+        automation_event:
+          internal.automationEvent === undefined ? null : JSON.stringify(internal.automationEvent),
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
@@ -262,8 +264,8 @@ export class ConversationQueue {
   /**
    * Changes a queued item's text (its resources and files stay as queued). A skill invocation's
    * text is its arguments: the skill is rendered again with them now. An automation's item
-   * becomes the person's message: its schedule marker (and the task's zone) is dropped, so the run
-   * it triggers is attended (scheduled tasks spec §7).
+   * becomes the person's message: its schedule or event marker (and the task's zone) is dropped,
+   * so the run it triggers is attended (scheduled tasks spec §7).
    */
   async edit(
     orgId: string,
@@ -304,14 +306,14 @@ export class ConversationQueue {
     const t = this.db.db;
     const cur = await t
       .selectFrom("conversation_queue")
-      .select(["attachments", "files", "content", "skill", "schedule"])
+      .select(["attachments", "files", "content", "skill", "schedule", "automation_event"])
       .where("id", "=", itemId)
       .where("conversation_id", "=", conversationId)
       .forUpdate()
       .executeTakeFirst();
     if (!cur) throw itemNotFound();
     // a person's words now: the task's run for this item will not happen (automations §6)
-    await releaseQueuedTaskRunIn(t, cur.schedule);
+    await releaseQueuedTaskRunIn(t, cur);
     const skill = cur.skill as QueuedSkill | null;
     checkText(
       text,
@@ -328,6 +330,7 @@ export class ConversationQueue {
         text: noNul(text),
         // edited by a person: no longer the task's message
         schedule: null,
+        automation_event: null,
         updated_at: sql`now()`,
         ...(stored !== undefined && {
           skill: stored.skill,
@@ -361,11 +364,11 @@ export class ConversationQueue {
       .deleteFrom("conversation_queue")
       .where("id", "=", itemId)
       .where("conversation_id", "=", conversationId)
-      .returning(["id", "schedule"])
+      .returning(["id", "schedule", "automation_event"])
       .executeTakeFirst();
     if (!gone) throw itemNotFound();
     // a task's queued message deleted by a person: its run is skipped (automations §6)
-    await releaseQueuedTaskRunIn(t, gone.schedule);
+    await releaseQueuedTaskRunIn(t, gone);
     await unpauseIfEmpty(t, conversationId);
     // the wakes an unpause releases for the tree are owed with it (transactional outbox spec §6)
     await this.runs.oweHeldTreeIn(conversationId);
@@ -439,8 +442,12 @@ export class ConversationQueue {
     if (!row) throw itemNotFound();
     const sent = await alreadySent(t, conversationId, row.client_message_id);
     // sent by a person: their message, not the task's, whose run is skipped
-    await releaseQueuedTaskRunIn(t, row.schedule);
-    const out = await appendQueuedIn(t, this.eventLog, conversationId, { ...row, schedule: null });
+    await releaseQueuedTaskRunIn(t, row);
+    const out = await appendQueuedIn(t, this.eventLog, conversationId, {
+      ...row,
+      schedule: null,
+      automation_event: null,
+    });
     await unpauseIfEmpty(t, conversationId);
     // sent during the run, the item is the author's message like a direct send: it skips the
     // pending questions they may answer (reply-while-question spec §4.2)

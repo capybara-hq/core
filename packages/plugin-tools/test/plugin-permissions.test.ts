@@ -26,6 +26,7 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     ["plugin-perm-ui-places", "perm-ui", 1],
     ["plugin-perm-hooks", "perm-hooks", 4],
     ["plugin-perm-device-access", "perm-device-access", 1],
+    ["plugin-perm-triggers", "perm-triggers", 1],
   ];
   for (const [dir, rule, count] of cases) {
     it(`${rule}`, () => {
@@ -47,6 +48,7 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     expect(msg("plugin-perm-models")).toContain("permissions.models");
     expect(msg("plugin-perm-hooks")).toContain("permissions.policyHooks");
     expect(msg("plugin-perm-device-access")).toContain("permissions.deviceAccess");
+    expect(msg("plugin-perm-triggers")).toContain("permissions.triggers");
   });
 });
 

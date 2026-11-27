@@ -98,7 +98,9 @@ function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolea
  * - `context_fit` (context compaction spec §4.9, never for a baseline): the candidate model's window
  *   makes the hard fit guard plan a different trim than the recorded `model_call.request.fit` (the
  *   recorded plan is replayed for a baseline; a candidate applies its recomputed plan);
- * - `run_outcome_note`: the rebuilt run outcome notes differ from the recorded `runOutcomeSeqs`.
+ * - `run_outcome_note`: the rebuilt run outcome notes differ from the recorded `runOutcomeSeqs`;
+ * - `automation_event_block`: the rebuilt event automation blocks differ from the recorded
+ *   `automationEventSeqs`.
  */
 
 /** 还原结果与原请求不一致的原因。 */
@@ -138,6 +140,13 @@ export type DriftReason =
    * the log alone, so a candidate cannot change them.
    */
   | "run_outcome_note"
+  /**
+   * Collaboration spec §4.6: the rebuild renders the event automation block
+   * (`automationEventBlock`) for another set of messages than the request recorded in
+   * `model_call.request.automationEventSeqs`: a request sent before the block was rendered.
+   * Judged for every reconstruction: the block comes from the log alone.
+   */
+  | "automation_event_block"
   /** 整轮回放（T5）：有工具调用没有匹配到记录（模型收到 REPLAY_NO_RECORDING）。 */
   | "tool_unmatched";
 
@@ -155,6 +164,7 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "media_changed",
   "context_fit",
   "run_outcome_note",
+  "automation_event_block",
   "tool_unmatched",
 ];
 
@@ -509,6 +519,12 @@ export function reconstructFromInputs(
   const recordedNotes = rec.runOutcomeSeqs ?? [];
   if (notes.length !== recordedNotes.length || notes.some((x, i) => x !== recordedNotes[i])) {
     drift.add("run_outcome_note");
+  }
+  // event automation blocks: from the log alone, so only a request sent before they existed differs
+  const blocks = meta.automationEventSeqs ?? [];
+  const recordedBlocks = rec.automationEventSeqs ?? [];
+  if (blocks.length !== recordedBlocks.length || blocks.some((x, i) => x !== recordedBlocks[i])) {
+    drift.add("automation_event_block");
   }
 
   // 媒体：按附件 id 与记录比较

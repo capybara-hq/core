@@ -69,6 +69,9 @@ describe("forbiddenTools", () => {
       maxTasksPerMemberCap: 100,
       maxTasksPerOrgCap: 2000,
       maxRunsPerHourCap: 600,
+      maxEventDepthCap: 16,
+      coalesceSecondsCap: 3600,
+      maxEventRunsPerSubjectPerHourCap: 120,
     };
     const org = parseOrgSettings({}).automations;
     expect(effectiveAutomationSettings(org, bounds).forbiddenToolsUnreadable).toBe(false);

@@ -29,6 +29,7 @@ import { permissionContextHistory } from "./permission-profile.js";
 import { pluginContextsAfterSummary, pluginContextText } from "./plugin-context.js";
 import { latestProjectRoot, projectRootText } from "./project-root.js";
 import {
+  automationEventBlock,
   currentRunContext,
   runContextEvents,
   runContextFullText,
@@ -81,6 +82,12 @@ export interface ModelCallMeta {
    * (`run_outcome_note`).
    */
   runOutcomeSeqs?: number[];
+  /**
+   * The seqs of the `user_message` events whose event automation block the request renders
+   * (`automationEventBlock`), sorted; absent when it renders none. Reconstruction compares it with
+   * the rebuild (`automation_event_block`).
+   */
+  automationEventSeqs?: number[];
   /** 构建时的 `absorbedUpToSeq`（见 {@link BuildModelRequestInput}）；未提供则没有该字段。 */
   absorbedUpToSeq?: number;
   /** 请求的模型参数（即 `ModelRequest.params`）。 */
@@ -967,6 +974,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   /** Run outcome notes by terminal event seq, and the ones this request rendered. */
   const outcomeNotes = runOutcomeNotes(events);
   const runOutcomeSeqs: number[] = [];
+  const automationEventSeqs = new Set<number>();
   const absorbed = input.absorbedUpToSeq;
   /** Where a model_call had taken in absorbable events. */
   const absorbedBy = (e: ConversationEvent & { type: "model_call" }) =>
@@ -1074,8 +1082,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   /**
    * A user message's blocks: its sender line first when the sender changed (a separate block, so
    * `content[0]` stays the typed text), then a scheduled task's header (scheduled tasks spec §12,
-   * from the marker in the log), then its own blocks, then its fork report when it has one (never
-   * for the re-sent opening message: its report follows the rules of a covered invocation).
+   * from the marker in the log) or an event automation's block (collaboration spec §4.6, from its
+   * marker), then its own blocks, then its fork report when it has one (never for the re-sent
+   * opening message: its report follows the rules of a covered invocation).
    */
   const userBlocks = (
     u: ConversationEvent & { type: "user_message" },
@@ -1084,12 +1093,17 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     const report = withReport ? forkReports.get(u.seq) : undefined;
     const line = senders.get(u.seq);
     const schedule = u.payload.schedule;
+    const event = u.payload.automationEvent;
+    if (event !== undefined) automationEventSeqs.add(u.seq);
     const blocks = blocksOf(u.payload.content);
     return [
       ...(line === undefined ? [] : [{ type: "text" as const, text: line }]),
       ...(schedule === undefined
         ? []
         : [{ type: "text" as const, text: scheduleHeader(schedule) }]),
+      ...(event === undefined
+        ? []
+        : [{ type: "text" as const, text: automationEventBlock(event) }]),
       ...blocks,
       ...(report === undefined ? [] : [{ type: "text" as const, text: report }]),
     ];
@@ -1445,6 +1459,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     ...(permissionHistory.meta !== undefined && { permissionContext: permissionHistory.meta }),
     reminderSeqs,
     ...(runOutcomeSeqs.length > 0 && { runOutcomeSeqs }),
+    ...(automationEventSeqs.size > 0 && {
+      automationEventSeqs: [...automationEventSeqs].sort((a, b) => a - b),
+    }),
     ...(absorbed !== undefined && { absorbedUpToSeq: absorbed }),
     params: { ...request.params },
     tools: tools.map((t) => ({ key: t.key, specHash: t.specHash })),

@@ -1,12 +1,18 @@
 import { OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Job, Worker } from "bullmq";
+import { EventCoalescer } from "../automations/events/coalesce.js";
+import { TriggerDispatcher, TriggerDispatchModule } from "../automations/events/dispatcher.js";
 import { AutomationFireModule, AutomationFirer } from "../automations/fire.js";
 import {
+  AUTOMATION_COALESCE_JOB,
   AUTOMATION_FIRE_JOB,
   AUTOMATION_SETTLE_JOB,
+  type AutomationCoalesceJobData,
   type AutomationFireJobData,
   type AutomationSettleJobData,
+  TRIGGER_DISPATCH_JOB,
+  type TriggerDispatchJobData,
 } from "../automations/job-ids.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { BG_WAKE_JOB, type BgWakeJobData } from "../background/wake-rules.js";
@@ -111,7 +117,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link DirectorySync}, `run-stop` → {@link Offboarding.stopRun}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
- * {@link OwnedPluginCleanup}, `automation-fire` and `automation-settle` → {@link AutomationFirer}, `share-object-delete` → {@link ShareObjects}, `blob-delete`, `file-staging-delete` and `file-release` →
+ * {@link OwnedPluginCleanup}, `automation-fire` and `automation-settle` → {@link AutomationFirer}, `automation-coalesce` → {@link EventCoalescer}, `share-object-delete` → {@link ShareObjects}, `blob-delete`, `file-staging-delete` and `file-release` →
  * {@link BlobObjects}, `file-library-hash`, `file-library-hash-org` → {@link FileLibraryHashJob},
  * `file-library-backfill` → {@link FileLibraryBackfill}, `platform-icon-delete` →
  * {@link PlatformIconObjects}, `device-conversation-notice` → {@link ConversationNoticeDelivery}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
@@ -157,6 +163,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     private readonly platformIcons: Pick<PlatformIconObjects, "deleteObject">,
     @Inject(ConversationNoticeDelivery)
     private readonly notices: Pick<ConversationNoticeDelivery, "attempt">,
+    @Inject(TriggerDispatcher) private readonly triggers: Pick<TriggerDispatcher, "dispatch">,
+    @Inject(EventCoalescer) private readonly coalescer: Pick<EventCoalescer, "flush">,
     @Optional()
     @Inject(CloudPermissionSnapshots)
     private readonly snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
@@ -259,6 +267,17 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case AUTOMATION_SETTLE_JOB:
         await this.automations.settle(job.data as AutomationSettleJobData);
         return;
+      // one stored trigger event's routing to the automations it fires (collaboration spec §4.2)
+      case TRIGGER_DISPATCH_JOB:
+        await this.triggers.dispatch(job.data as TriggerDispatchJobData, {
+          // a source that never answers leaves the event undelivered on the last attempt
+          finalAttempt: job.attemptsMade + 1 >= (job.opts?.attempts ?? 1),
+        });
+        return;
+      // one coalescing window of an event automation's events for one subject (spec §4.7)
+      case AUTOMATION_COALESCE_JOB:
+        await this.coalescer.flush(job.data as AutomationCoalesceJobData);
+        return;
       // a share snapshot a refresh or revoke stopped using (file sharing spec §2)
       case SHARE_OBJECT_DELETE_JOB:
         await this.shareObjects.deleteObject(job.data as ShareObjectDeleteData);
@@ -336,6 +355,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     OwnedPluginCleanupModule,
     // the automation fire job and the scanner (worker-only through this module)
     AutomationFireModule,
+    // the trigger event dispatch job (worker-only through this module)
+    TriggerDispatchModule,
     // the share snapshot deletion
     ShareObjectsModule,
     // the file library's blob and staging object deletions

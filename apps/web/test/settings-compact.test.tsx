@@ -155,6 +155,7 @@ describe("org settings tables at 390", () => {
     };
     stubApi({
       [`GET ${O}/settings`]: () => json(200, { settings }),
+      [`GET ${O}/automations/event-sources`]: () => json(200, { items: [] }),
       [`GET ${O}/automations?all=true`]: () =>
         json(200, {
           items: [

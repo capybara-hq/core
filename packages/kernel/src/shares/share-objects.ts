@@ -8,7 +8,7 @@ import { StorageService } from "../storage/storage.service.js";
  * Share snapshots of before the file library (file sharing spec §1, §2): generation `n` of share
  * `id` was the object `shares/<id>/<n>` under the org's kernel prefix (`kernel/<orgId>/`), and
  * deleting one was owed through the outbox ({@link SHARE_OBJECT_DELETE_JOB}). Shares now point at
- * blobs (file library spec §1; 0189 made every snapshot a blob keeping its key) and nothing owes this
+ * blobs (file library spec §1; 0190 made every snapshot a blob keeping its key) and nothing owes this
  * job any more; its handler stays for the rows owed before the deploy and for old replicas during
  * a rolling deploy, and never deletes a key a blob uses.
  */
@@ -41,7 +41,7 @@ export interface ShareObjectDeleteData {
 /**
  * Runs a {@link SHARE_OBJECT_DELETE_JOB} (the maintenance processor dispatches it here) for the rows
  * owed before the file library (or by an old replica during the rolling deploy). Delivered twice, it
- * is harmless: deleting a missing object is a no-op. A key any blob of the org uses (0189 made every
+ * is harmless: deleting a missing object is a no-op. A key any blob of the org uses (0190 made every
  * snapshot a blob keeping its key) is never deleted: the blob sweep owns it. A snapshot an old
  * replica's share may still serve (the row is neither revoked nor expired and names the key) is never
  * deleted either. `object_key` is never cleared (file library amendment K7: the contract migration

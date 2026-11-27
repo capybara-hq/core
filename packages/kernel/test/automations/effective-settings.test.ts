@@ -10,6 +10,9 @@ const bounds: AutomationBounds = {
   maxTasksPerMemberCap: 100,
   maxTasksPerOrgCap: 2000,
   maxRunsPerHourCap: 600,
+  maxEventDepthCap: 16,
+  coalesceSecondsCap: 3600,
+  maxEventRunsPerSubjectPerHourCap: 120,
 };
 
 describe("automation settings", () => {
@@ -24,6 +27,10 @@ describe("automation settings", () => {
       catchUpWindowMinutes: 60,
       unattendedAsk: "fail",
       pauseAfterFailures: 5,
+      maxEventDepth: 8,
+      coalesceSeconds: 30,
+      maxEventRunsPerSubjectPerHour: 12,
+      eventSourcesOff: [],
       forbiddenTools: [],
     });
   });
@@ -43,6 +50,27 @@ describe("automation settings", () => {
       maxTasksPerOrg: 2000,
       maxRunsPerHour: 600,
     });
+  });
+
+  it("the event settings above the caps are clamped", () => {
+    const org = parseOrgSettings({
+      automations: { maxEventDepth: 50, coalesceSeconds: 7200, maxEventRunsPerSubjectPerHour: 500 },
+    }).automations;
+    expect(effectiveAutomationSettings(org, bounds)).toMatchObject({
+      maxEventDepth: 16,
+      coalesceSeconds: 3600,
+      maxEventRunsPerSubjectPerHour: 120,
+    });
+  });
+
+  it("an invalid eventSourcesOff entry is dropped, the valid ones stay off", () => {
+    const org = parseOrgSettings({
+      automations: { eventSourcesOff: ["tracker", 7, "", "x".repeat(215), "docs"] },
+    }).automations;
+    expect(org.eventSourcesOff).toEqual(["tracker", "docs"]);
+    expect(
+      parseOrgSettings({ automations: { eventSourcesOff: "x" } }).automations.eventSourcesOff,
+    ).toEqual([]);
   });
 
   it("an invalid stored value falls back to the default", () => {

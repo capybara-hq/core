@@ -7,6 +7,7 @@ import {
   listAutomations,
   listChatTargets,
   listConversationAutomations,
+  listEventSources,
   listGrantableTools,
 } from "../automations";
 import { listConversations } from "../conversations";
@@ -88,4 +89,12 @@ export const conversationAutomationsQuery = (orgId: string, conversationId: stri
     key: keys.org(orgId).conversationAutomations(conversationId),
     fn: () => listConversationAutomations(orgId, conversationId),
     freshness: "live",
+  });
+
+/** The trigger sources that serve the org with their event declarations (the event trigger form). */
+export const eventSourcesQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).automationEventSources(),
+    fn: () => listEventSources(orgId),
+    freshness: "orgConfig",
   });

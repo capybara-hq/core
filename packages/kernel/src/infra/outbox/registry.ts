@@ -43,6 +43,31 @@ const SCOPE_JOB_OPTS = {
  * name without one does not type-check as an `OutboxJobName` (`add` does not check it at runtime).
  */
 export const OUTBOX_JOBS = {
+  // `automations/job-ids.ts` TRIGGER_DISPATCH_JOB: owed by the transaction that stores a trigger
+  // event (`TriggerEventsService.emit`, collaboration spec §4.2), under `trigger-dispatch-<eventId>`
+  "trigger-dispatch": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Dispatches one stored event by id; the dispatcher reads the event's state and delivers each automation at most once (deliveries keyed by automation and event)",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
+  // `automations/job-ids.ts` AUTOMATION_COALESCE_JOB: owed by the dispatch that opens a window of
+  // events for one (automation, subject) pair (`TriggerDispatcher`, collaboration spec §4.7), under
+  // `<coalesceJobId(automation, subject)>-<first event id>`, due when the window closes
+  "automation-coalesce": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Flushes the pair's deliveries still waiting for a run under the automation row lock; a repeat finds none and records nothing",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // removed once done, so a later window's add is never swallowed by a kept job
+    opts: {
+      attempts: 10,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
   // `shares/share-objects.ts` SHARE_OBJECT_DELETE_JOB: owed before the file library by a share's
   // refresh and revoke (`shareObjectDeleteJobId`); no longer owed, handled for rows owed before the
   // deploy (a key a blob uses is never deleted)

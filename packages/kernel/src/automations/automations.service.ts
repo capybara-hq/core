@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { CHANNEL_EXTENSION_POINT, type Channel } from "@capybara-hq/plugin-sdk";
+import {
+  CHANNEL_EXTENSION_POINT,
+  type Channel,
+  type EventFilter,
+  type LocalizedName,
+  type TriggerEventDeclaration,
+  type TriggerSource,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { AgentLookup, type AgentView } from "../agents/agent-lookup.js";
 import type { ModelRef } from "../agents/definition.js";
@@ -7,7 +14,9 @@ import { ConversationAccess } from "../conversations/access.js";
 import { readMessageContext } from "../conversations/message-context.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { enabledExtensionsByOrg, isExtensionEnabled } from "../extensions/enabled.js";
+import { ExtensionPointDefaults } from "../extensions/point-defaults.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
@@ -41,9 +50,15 @@ import {
   automationDisabled,
   automationForbidden,
   automationNotFound,
+  eventSourceUnavailable,
+  eventTypeUnknown,
+  filterInvalid,
   grantNotAllowed,
+  runNowUnsupported,
   targetInvalid,
 } from "./errors.js";
+import { TriggerSourceTimeout, withDeadline } from "./events/deadline.js";
+import { validateFilter } from "./events/guards.js";
 import {
   GIT_GRANT_SPEC_HASH,
   GIT_PUSH_GRANT,
@@ -67,14 +82,16 @@ import {
 import { oweAutomationFire, oweAutomationSettleUnfired } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { jitterForGap, minGapMinutes, nextTick, validateTrigger } from "./schedule-math.js";
-import { type AutomationPatch, AutomationStore } from "./store.js";
+import { type AutomationPatch, AutomationStore, runOrderMoment } from "./store.js";
 import type {
   Automation,
   AutomationChat,
   AutomationGrant,
   AutomationMode,
   AutomationPauseReason,
+  AutomationTimeTrigger,
   AutomationTrigger,
+  AutomationUnattendedAsk,
   TaskRun,
 } from "./types.js";
 
@@ -86,8 +103,24 @@ export {
   networkGrantRefusal,
 };
 
-/** When a task fires, before the zone is fixed (spec §5). */
-export type TriggerInput = { kind: "cron"; expr: string } | { kind: "once"; at: string };
+/**
+ * When a task fires, before the zone is fixed (spec §5); or on events of `types` from the
+ * extension `source` that match `filter` (absent: every event of the types).
+ */
+export type TriggerInput =
+  | { kind: "cron"; expr: string }
+  | { kind: "once"; at: string }
+  | { kind: "event"; source: string; types: string[]; filter?: EventFilter };
+
+/** An event trigger input. */
+type EventTriggerInput = Extract<TriggerInput, { kind: "event" }>;
+
+/** One trigger source that serves an org, as the automation form offers it. */
+export interface EventSourceView {
+  source: string;
+  name: LocalizedName;
+  events: TriggerEventDeclaration[];
+}
 
 /** An automation that needs its creator's attention (spec §8): the inbox item's payload. */
 export interface AutomationAttention {
@@ -150,16 +183,18 @@ export interface CreateTaskInput {
   effort?: string;
   deviceId?: string;
   /**
-   * When the task ends; it must lie in the future. Absent or null: for a cron task, now + the
-   * org's `defaultExpiryDays` when set; otherwise never.
+   * When the task ends; it must lie in the future. Absent or null: for a cron or event task, now +
+   * the org's `defaultExpiryDays` when set; otherwise never.
    */
   expiresAt?: Date | null;
   grants?: GrantInput[];
+  /** What a question in an unattended run does; absent or null: the org's default. */
+  unattendedAsk?: AutomationUnattendedAsk | null;
 }
 
 /**
  * Fields to change; `null` clears an optional one (`expiresAt: null` is the org's default expiry
- * for a cron task, as on create). Grants change through their own methods.
+ * for a cron or event task, as on create). Grants change through their own methods.
  */
 export interface UpdateTaskInput {
   agentId?: string;
@@ -174,6 +209,7 @@ export interface UpdateTaskInput {
   effort?: string | null;
   deviceId?: string | null;
   expiresAt?: Date | null;
+  unattendedAsk?: AutomationUnattendedAsk | null;
 }
 
 /**
@@ -296,6 +332,11 @@ export class AutomationsService {
     /** Network grants: the org's sandbox-mode network (network ask-to-allow spec §8.1). */
     @Inject(SandboxService)
     private readonly sandbox: Pick<SandboxService, "ceilingLimits" | "devicePolicy">,
+    /** Event automations: the trigger sources that serve an org (`trigger-source@1`). */
+    @Inject(ExtensionPointDefaults)
+    private readonly points: Pick<ExtensionPointDefaults, "providersFor">,
+    @Inject(ExtensionDisplayNames)
+    private readonly displayNames: Pick<ExtensionDisplayNames, "many">,
   ) {}
 
   @Transactional()
@@ -325,19 +366,27 @@ export class AutomationsService {
     const name = requiredText(input.name, "name", NAME_MAX);
     const prompt = requiredText(input.prompt, "prompt", PROMPT_MAX);
     const agent = await this.agents.get(orgId, input.agentId, accountId);
-    const timeZone =
-      input.timeZone ??
-      (
-        await readMessageContext(t, {
-          orgId,
-          accountId,
-          ...(browserTimeZone !== undefined && { browser: { timeZone: browserTimeZone } }),
-        })
-      ).timeZone ??
-      "UTC";
     const now = new Date();
-    const trigger = withZone(input.trigger, timeZone);
-    const gap = checkTrigger(trigger, now, settings);
+    let trigger: AutomationTrigger;
+    let gap: number | null = null;
+    if (input.trigger.kind === "event") {
+      trigger = await this.checkEventTrigger(orgId, input.trigger, settings);
+    } else {
+      const timeZone =
+        input.timeZone ??
+        (
+          await readMessageContext(t, {
+            orgId,
+            accountId,
+            ...(browserTimeZone !== undefined && { browser: { timeZone: browserTimeZone } }),
+          })
+        ).timeZone ??
+        "UTC";
+      const timed = withZone(input.trigger, timeZone);
+      gap = checkTrigger(timed, now, settings);
+      trigger = timed;
+    }
+    checkModeFits(input.mode, trigger);
     const target = {
       mode: input.mode,
       conversationId: input.conversationId ?? null,
@@ -372,6 +421,7 @@ export class AutomationsService {
       trigger,
       ...target,
       ...pick,
+      unattendedAsk: input.unattendedAsk ?? null,
       status: "active",
       nextRunAt: fireAt(trigger, now, jitter),
       jitterSeconds: jitter,
@@ -454,13 +504,29 @@ export class AutomationsService {
       Object.assign(changes, target);
     }
 
-    if (patch.trigger !== undefined || patch.timeZone !== undefined) {
-      const zone = patch.timeZone ?? task.trigger.timeZone;
-      const base: TriggerInput =
+    if (patch.trigger?.kind === "event") {
+      // an event automation has no zone, tick or jitter: the next run time is cleared
+      changes.trigger = await this.checkEventTrigger(orgId, patch.trigger, settings);
+      changes.jitterSeconds = 0;
+      changes.nextRunAt = null;
+    } else if (patch.trigger !== undefined || patch.timeZone !== undefined) {
+      // an event automation has no zone or tick to keep: a time trigger replacing its event
+      // trigger names both
+      const current = task.trigger.kind === "event" ? null : task.trigger;
+      const zone = patch.timeZone ?? current?.timeZone;
+      const base: TriggerInput | undefined =
         patch.trigger ??
-        (task.trigger.kind === "cron"
-          ? { kind: "cron", expr: task.trigger.expr }
-          : { kind: "once", at: task.trigger.at });
+        (current === null
+          ? undefined
+          : current.kind === "cron"
+            ? { kind: "cron", expr: current.expr }
+            : { kind: "once", at: current.at });
+      if (zone === undefined || base === undefined) {
+        throw new ApiError(
+          "validation_failed",
+          "An event automation takes a new trigger and a time zone together",
+        );
+      }
       const trigger = withZone(base, zone);
       const gap = checkTrigger(trigger, now, settings);
       changes.trigger = trigger;
@@ -469,14 +535,24 @@ export class AutomationsService {
         changes.nextRunAt = fireAt(trigger, now, changes.jitterSeconds);
       }
     }
-    // model, effort and device: `new` mode only (leaving it clears them), checked when they or
-    // the agent change
+    // the mode and the trigger after the patch must fit (subject needs events, chat needs time)
+    if (patch.trigger !== undefined || patch.mode !== undefined) {
+      checkModeFits(target.mode, changes.trigger ?? task.trigger);
+    }
+    if (patch.unattendedAsk !== undefined) changes.unattendedAsk = patch.unattendedAsk;
+    // model, effort and device: `new` mode takes all three and `subject` mode a model and effort
+    // (leaving them clears them), checked when they or the agent change
     const pick =
-      target.mode === "new"
+      target.mode === "new" || target.mode === "subject"
         ? {
             model: patch.model !== undefined ? patch.model : task.model,
             effort: patch.effort !== undefined ? patch.effort : task.effort,
-            deviceId: patch.deviceId !== undefined ? patch.deviceId : task.deviceId,
+            deviceId:
+              target.mode === "subject"
+                ? (patch.deviceId ?? null)
+                : patch.deviceId !== undefined
+                  ? patch.deviceId
+                  : task.deviceId,
           }
         : {
             model: patch.model ?? null,
@@ -549,8 +625,10 @@ export class AutomationsService {
     const settings = await readAutomationSettings(this.db.db, this.config, orgId);
     if (!settings.enabled) throw automationDisabled();
     const now = new Date();
-    const next = fireAt(task.trigger, now, task.jitterSeconds);
-    if (next === null) {
+    // an event automation has no next run time
+    const next =
+      task.trigger.kind === "event" ? null : fireAt(task.trigger, now, task.jitterSeconds);
+    if (next === null && task.trigger.kind !== "event") {
       throw new ApiError("automation.once_in_past", "The task's time has passed; set a new time");
     }
     const resumed = await this.store.updateTask(this.db.db, task.id, {
@@ -733,7 +811,7 @@ export class AutomationsService {
     const tasks = await this.withAccounts(plain);
     const rows = await this.db.db
       .selectFrom("automation_runs")
-      .select(["automation_id", "status", "skip_reason", "fired_at", "scheduled_for"])
+      .select(["automation_id", "status", "skip_reason", "fired_at", "scheduled_for", "created_at"])
       .distinctOn("automation_id")
       .where("org_id", "=", orgId)
       .where(
@@ -744,7 +822,7 @@ export class AutomationsService {
       .where("trial", "=", false)
       .where("status", "in", ["completed", "failed", "skipped"])
       .orderBy("automation_id")
-      .orderBy("scheduled_for", "desc")
+      .orderBy(runOrderMoment, "desc")
       .orderBy("id", "desc")
       .execute();
     const last = new Map(rows.map((r) => [r.automation_id, r]));
@@ -758,10 +836,109 @@ export class AutomationsService {
             : {
                 status: r.status as TaskLastRun["status"],
                 skipReason: r.skip_reason,
-                at: new Date(r.fired_at ?? r.scheduled_for),
+                at: runMoment(r.fired_at, r.scheduled_for, r.created_at),
               },
       };
     });
+  }
+
+  /**
+   * The trigger sources that serve the org now (`trigger-source@1` providers enabled in it with a
+   * valid config) and the org has not switched off (`eventSourcesOff`), each with its extension's
+   * display name and event declarations: what the automation form builds its event picker and
+   * filter rows from. A source whose `events()` fails or does not answer within `tools.timeoutMs`
+   * is left out (logged), so one broken source does not take the others' list down.
+   */
+  async eventSources(orgId: string): Promise<EventSourceView[]> {
+    const settings = await readAutomationSettings(this.db.db, this.config, orgId);
+    const { providers } = await this.points.providersFor<TriggerSource>(orgId, "trigger-source");
+    const on = providers.filter((p) => !settings.eventSourcesOff.includes(p.extension));
+    const declared = await Promise.all(
+      on.map(async (p) => {
+        try {
+          return { p, events: await this.declaredEvents(p) };
+        } catch (err) {
+          this.log.warn("trigger source events() failed; left out of the event sources", {
+            orgId,
+            plugin: p.extension,
+            err,
+          });
+          return null;
+        }
+      }),
+    );
+    const ok = declared.filter((d) => d !== null);
+    const names = await this.displayNames.many(ok.map((d) => d.p.extension));
+    return ok.map(({ p, events }) => ({
+      source: p.extension,
+      name: names.get(p.extension) ?? { zh: p.extension, en: p.extension },
+      events,
+    }));
+  }
+
+  /** A trigger source's declarations, within `tools.timeoutMs` (as the dispatcher asks it). */
+  private async declaredEvents(p: {
+    extension: string;
+    impl: TriggerSource;
+  }): Promise<TriggerEventDeclaration[]> {
+    const ms = this.config.get().tools.timeoutMs;
+    return withDeadline(p.extension, "events()", ms, () => p.impl.events());
+  }
+
+  /**
+   * An event trigger as stored: the source must serve the org and not be switched off
+   * (`automation.event_source_unavailable`), every type must be declared by it and not directed
+   * (`automation.event_type_unknown`: a directed event wakes one agent through acceptance, never
+   * through an automation), and the filter must fit the selected types' facts
+   * (`automation.filter_invalid`). Whether an owner may see a subject is not checked here: dispatch
+   * enforces it through the source's `visible()` for the automation's owner.
+   */
+  private async checkEventTrigger(
+    orgId: string,
+    input: EventTriggerInput,
+    settings: EffectiveAutomationSettings,
+  ): Promise<AutomationTrigger> {
+    const source = input.source.trim();
+    const { providers } = await this.points.providersFor<TriggerSource>(orgId, "trigger-source");
+    const provider = providers.find((p) => p.extension === source);
+    if (provider === undefined || settings.eventSourcesOff.includes(source)) {
+      throw eventSourceUnavailable(
+        `${source} is not an event source of this organization (it must be an enabled extension that provides trigger events, and not switched off in the automation settings)`,
+      );
+    }
+    let declared: TriggerEventDeclaration[];
+    try {
+      declared = await this.declaredEvents(provider);
+    } catch (err) {
+      this.log.warn("trigger source events() failed while checking an event trigger", {
+        orgId,
+        plugin: source,
+        err,
+      });
+      throw eventSourceUnavailable(
+        `${source} did not answer with its event types (${err instanceof TriggerSourceTimeout ? "it timed out" : "it failed"}); try again later, or use another source or a schedule`,
+      );
+    }
+    const types = [...new Set(input.types.map((x) => x.trim()))];
+    const decls: TriggerEventDeclaration[] = [];
+    for (const type of types) {
+      const d = declared.find((e) => e.type === type);
+      if (d === undefined) {
+        throw eventTypeUnknown(
+          `${source} declares no event type "${type}"; it declares: ${declared.map((e) => e.type).join(", ") || "none"}`,
+        );
+      }
+      if (d.directed) {
+        throw eventTypeUnknown(
+          `Event type "${type}" is directed at one agent and cannot trigger an automation`,
+        );
+      }
+      decls.push(d);
+    }
+    const filter = input.filter ?? [];
+    const problems = validateFilter(filter, decls);
+    if (problems.length > 0) throw filterInvalid(problems.join("; "));
+    return { kind: "event", source, types, filter };
   }
 
   /**
@@ -960,14 +1137,22 @@ export class AutomationsService {
     // the latest settled non-trial run of each task, and every grant of these tasks, in one query each
     const latest = await db
       .selectFrom("automation_runs")
-      .select(["automation_id", "fired_at", "scheduled_for", "missing_grants", "status", "error"])
+      .select([
+        "automation_id",
+        "fired_at",
+        "scheduled_for",
+        "created_at",
+        "missing_grants",
+        "status",
+        "error",
+      ])
       .distinctOn("automation_id")
       .where("org_id", "=", orgId)
       .where("automation_id", "in", ids)
       .where("trial", "=", false)
       .where("status", "<>", "skipped")
       .orderBy("automation_id")
-      .orderBy("scheduled_for", "desc")
+      .orderBy(runOrderMoment, "desc")
       .orderBy("id", "desc")
       .execute();
     const runs = new Map(latest.map((r) => [r.automation_id, r]));
@@ -1024,7 +1209,7 @@ export class AutomationsService {
           needsRole: [],
           needsAdmin: [],
           error: run.error,
-          at: run.fired_at ?? new Date(run.scheduled_for),
+          at: runMoment(run.fired_at, run.scheduled_for, run.created_at),
         });
       }
       const have = granted.get(task.id);
@@ -1071,7 +1256,7 @@ export class AutomationsService {
         needsAdmin,
         // the wire field stays for the web; no network grant is refused by a device now
         error: null,
-        at: run.fired_at ?? new Date(run.scheduled_for),
+        at: runMoment(run.fired_at, run.scheduled_for, run.created_at),
       });
     }
     return out.sort((a, b) => b.at.getTime() - a.at.getTime());
@@ -1146,6 +1331,8 @@ export class AutomationsService {
    * fire job its transaction owes. `trial`: an attended trial run whose approvals become the task's
    * grants (§7). Counted in the rate limit like any run. An ended task cannot run; a paused one
    * can (only its creator gets here: the run is `manual`, which the fire's paused check lets by).
+   * An event automation has neither (`automation.run_now_unsupported`): its runs are made from its
+   * events (collaboration spec §4.1).
    */
   @Transactional()
   async runNow(
@@ -1158,6 +1345,7 @@ export class AutomationsService {
     const t = this.db.db;
     const task = await this.lockOwn(orgId, accountId, role, id);
     if (task.status === "ended") throw new ApiError("conflict", "This automation has ended");
+    if (task.trigger.kind === "event") throw runNowUnsupported();
     const settings = await readAutomationSettings(t, this.config, orgId);
     if (!settings.enabled) throw automationDisabled();
     const run = await this.store.insertRun(t, {
@@ -1253,6 +1441,11 @@ export class AutomationsService {
     if (mode === "new" && (conversationId !== null || chat !== null)) {
       throw targetInvalid("A task that starts new conversations takes no conversation or chat");
     }
+    if (mode === "subject" && (conversationId !== null || chat !== null)) {
+      throw targetInvalid(
+        "A task that opens a conversation per subject takes no conversation or chat",
+      );
+    }
     if (mode === "conversation" && (conversationId === null || chat !== null)) {
       throw targetInvalid("A conversation task needs a conversation id and no chat");
     }
@@ -1326,9 +1519,10 @@ export class AutomationsService {
   }
 
   /**
-   * A task's model, effort and device (spec §4): `new` mode only, since a conversation or chat
-   * task runs with that conversation's selection and device (a task must not switch a person's
-   * conversation for their later turns), so another mode refuses them (`validation_failed`).
+   * A task's model, effort and device (spec §4): `new` mode takes all three and `subject` mode a
+   * model and effort (not a device). A conversation or chat task runs with that conversation's
+   * selection and device (a task must not switch a person's conversation for their later turns),
+   * so those modes refuse them (`validation_failed`).
    * The model must resolve for the org (`agent.model_unavailable`, as a message's switch) and
    * declare the effort (`validation_failed`); the device must be one of the creator's
    * (`checkDevice`, when `deviceChanged`).
@@ -1341,7 +1535,7 @@ export class AutomationsService {
     pick: { model: ModelRef | null; effort: string | null; deviceId: string | null },
     deviceChanged = true,
   ): Promise<void> {
-    if (mode !== "new") {
+    if (mode === "conversation" || mode === "chat") {
       if (pick.model !== null || pick.effort !== null || pick.deviceId !== null) {
         throw new ApiError(
           "validation_failed",
@@ -1349,6 +1543,12 @@ export class AutomationsService {
         );
       }
       return;
+    }
+    if (mode === "subject" && pick.deviceId !== null) {
+      throw new ApiError(
+        "validation_failed",
+        "A task with one conversation per subject takes a model and effort but no device; only a task that starts new conversations takes a device",
+      );
     }
     if (pick.model !== null || pick.effort !== null) {
       const { info } = await this.providers.resolve(orgId, pick.model ?? agent.definition.model);
@@ -1516,7 +1716,40 @@ function requiredText(v: string, field: string, max: number): string {
   return s;
 }
 
-function withZone(t: TriggerInput, timeZone: string): AutomationTrigger {
+/**
+ * When a run happened, for lists: its fire time, else its tick, else when it was recorded (an
+ * event run has no tick and no fire time before its claim).
+ */
+function runMoment(
+  firedAt: Date | string | null,
+  scheduledFor: Date | string | null,
+  createdAt: Date | string,
+): Date {
+  return new Date(firedAt ?? scheduledFor ?? createdAt);
+}
+
+/**
+ * The mode must fit the trigger: `subject` (one conversation per event subject) needs an event
+ * trigger, and an event automation does not post into an IM chat yet (`chat` is a time
+ * automation's mode).
+ */
+function checkModeFits(mode: AutomationMode, trigger: AutomationTrigger): void {
+  if (mode === "subject" && trigger.kind !== "event") {
+    throw targetInvalid(
+      "Mode subject (one conversation per event subject) needs an event trigger; use new, conversation or chat with a schedule",
+    );
+  }
+  if (mode === "chat" && trigger.kind === "event") {
+    throw targetInvalid(
+      "An event automation cannot post into an IM chat yet; use mode new, conversation or subject",
+    );
+  }
+}
+
+function withZone(
+  t: Exclude<TriggerInput, { kind: "event" }>,
+  timeZone: string,
+): AutomationTimeTrigger {
   return t.kind === "cron"
     ? { kind: "cron", expr: t.expr.trim(), timeZone }
     : { kind: "once", at: t.at, timeZone };
@@ -1527,7 +1760,7 @@ function withZone(t: TriggerInput, timeZone: string): AutomationTrigger {
  * the sampled gap (null for once), from which the jitter is derived.
  */
 function checkTrigger(
-  t: AutomationTrigger,
+  t: AutomationTimeTrigger,
   now: Date,
   settings: EffectiveAutomationSettings,
 ): number | null {
@@ -1568,8 +1801,9 @@ function fireAt(t: AutomationTrigger, now: Date, jitter: number): Date | null {
 
 /**
  * A task's expiry: an explicit one must lie in the future; null (not given) is now + the org's
- * `defaultExpiryDays` for a cron task when the org sets one, else never. The same on create and
- * update, so a creator cannot clear the org's expiry policy by sending null.
+ * `defaultExpiryDays` for a cron or event task when the org sets one (a `once` task ends at its
+ * run), else never. The same on create and update, so a creator cannot clear the org's expiry
+ * policy by sending null.
  */
 function expiryOf(
   v: Date | null,
@@ -1578,7 +1812,7 @@ function expiryOf(
   settings: EffectiveAutomationSettings,
 ): Date | null {
   if (v !== null) return checkExpiry(v, now);
-  return trigger.kind === "cron" && settings.defaultExpiryDays !== null
+  return trigger.kind !== "once" && settings.defaultExpiryDays !== null
     ? new Date(now.getTime() + settings.defaultExpiryDays * DAY_MS)
     : null;
 }

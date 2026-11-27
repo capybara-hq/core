@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
-import type { ConversationSource } from "@capybara-hq/plugin-sdk";
+import type { ConversationSource, TriggerSubject } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { AgentLookup, visibleTo } from "../agents/agent-lookup.js";
 import { avatarView } from "../agents/avatar-view.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { AgentAvatar, AgentAvatarView } from "../agents/profile.js";
-import type { ScheduleMarker } from "../automations/types.js";
+import type { AutomationEventMarker, ScheduleMarker } from "../automations/types.js";
 import { unbindConversation } from "../channels/threads.js";
-import type { TitleSource } from "../db/kernel-schema.js";
+import type { ConversationSubject, TitleSource } from "../db/kernel-schema.js";
 import { oweConversationDeletedNotice } from "../device-access/conversation-notices.js";
 import {
   ConversationDevices,
@@ -92,6 +92,11 @@ export interface ConversationView {
   deviceId: string | null;
   /** The automation that created it (a `new`-mode task's run); null otherwise (spec §4). */
   automationId: string | null;
+  /**
+   * The event subject it serves (a `subject`-mode automation's conversation, collaboration spec
+   * §4.5): the emitting extension and the subject; null for any other conversation.
+   */
+  subject: ConversationSubject | null;
   /**
    * The device project it is bound to (project root spec §4.3: chosen at creation, never
    * changed), as resolved then: its name and absolute path on the device; null in free mode (a
@@ -369,6 +374,7 @@ const COLUMNS = [
   "archived_at",
   "device_id",
   "automation_id",
+  "subject",
   "project_name",
   "project_path",
 ] as const;
@@ -389,6 +395,7 @@ function toView(r: {
   archived_at: Date | null;
   device_id: string | null;
   automation_id: string | null;
+  subject: ConversationSubject | null;
   project_name: string | null;
   project_path: string | null;
   activity?: "running" | "waiting" | null;
@@ -410,6 +417,15 @@ function toView(r: {
     archivedAt: r.archived_at,
     deviceId: r.device_id,
     automationId: r.automation_id,
+    subject:
+      r.subject === null
+        ? null
+        : {
+            source: r.subject.source,
+            kind: r.subject.kind,
+            id: r.subject.id,
+            title: r.subject.title,
+          },
     project:
       r.project_name !== null && r.project_path !== null
         ? { name: r.project_name, path: r.project_path }
@@ -465,8 +481,9 @@ export interface UserMessageInput {
 
 /**
  * Message options only kernel callers pass (an automation's fire, scheduled tasks spec §6), never
- * an HTTP body: the schedule marker the `user_message` carries and a zone that beats every other
- * source of the message's `timeZone` (`readMessageContext`).
+ * an HTTP body: the schedule marker or the event marker (collaboration spec §4.6) the
+ * `user_message` carries, and a zone that beats every other source of the message's `timeZone`
+ * (`readMessageContext`).
  */
 export interface InternalMessageOptions {
   initialPermission?: PermissionSelection;
@@ -474,6 +491,7 @@ export interface InternalMessageOptions {
   signal?: AbortSignal;
   createRequestHash?: string;
   schedule?: ScheduleMarker;
+  automationEvent?: AutomationEventMarker;
   timeZoneOverride?: string;
 }
 
@@ -484,6 +502,19 @@ export interface NewConversationOptions {
    * conversation that fell back to `web` would be offered what only the web and DMs may see.
    */
   source: ConversationSource;
+  /**
+   * The event subject a `subject`-mode automation's conversation serves (collaboration spec §4.5):
+   * `subject` of the subject's trigger events and the emitting extension (`source`), fixed at
+   * creation (`conversations.subject`).
+   */
+  subject?: TriggerSubject & { source: string };
+}
+
+/** `conversations.subject` as stored: the four fields, never the subject's link. */
+function storedSubject(s: (TriggerSubject & { source: string }) | undefined): string | null {
+  return s === undefined
+    ? null
+    : JSON.stringify({ source: s.source, kind: s.kind, id: s.id, title: s.title });
 }
 
 interface UsageRow {
@@ -591,6 +622,7 @@ export class ConversationsService {
         project_name: project?.name ?? null,
         project_path: project?.path ?? null,
         source: opts.source,
+        subject: storedSubject(opts.subject),
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
@@ -741,8 +773,9 @@ export class ConversationsService {
         project_path: project?.path ?? null,
         create_request_id: input.clientMessageId,
         create_request_hash: internal.createRequestHash ?? null,
-        automation_id: internal.schedule?.taskId ?? null,
+        automation_id: internal.schedule?.taskId ?? internal.automationEvent?.automationId ?? null,
         source: internal.source,
+        subject: storedSubject(internal.subject),
       })
       .onConflict((oc) =>
         oc
@@ -1255,6 +1288,7 @@ export class ConversationsService {
       updated_at: Date;
       parent_conversation_id: string | null;
       automation_id: string | null;
+      subject: ConversationSubject | null;
       subagent_type: string | null;
       archived_at: Date | null;
       device_id: string | null;
@@ -1278,7 +1312,7 @@ export class ConversationsService {
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         a.profile_avatar, a.profile_updated_at, cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
         cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
-        cs.archived_at, cs.device_id, cs.automation_id, cs.project_name, cs.project_path,
+        cs.archived_at, cs.device_id, cs.automation_id, cs.subject, cs.project_name, cs.project_path,
         cs.activity
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
@@ -1286,7 +1320,7 @@ export class ConversationsService {
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
           c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
-          c.archived_at, c.device_id, c.automation_id, c.project_name, c.project_path,
+          c.archived_at, c.device_id, c.automation_id, c.subject, c.project_name, c.project_path,
           ${activitySql("c")} AS activity
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
@@ -1842,9 +1876,7 @@ export class ConversationsService {
       im: input.im,
       timeZoneOverride: internal.timeZoneOverride,
     });
-    events.push(
-      this.userMessage(accountId, input, extra, blocks, invoked, context, internal.schedule),
-    );
+    events.push(this.userMessage(accountId, input, extra, blocks, invoked, context, internal));
     const { events: written, fresh } = await this.eventLog.appendInReport(conversationId, events);
     const message = written.at(-1) as ConversationEvent;
     // the run this message starts is owed with it: the direct ensureRun after the commit may never
@@ -2037,8 +2069,9 @@ export class ConversationsService {
     fileBlocks: LogContentBlock[],
     invoked: RenderedInvocation | undefined,
     context: MessageContext,
-    schedule?: ScheduleMarker,
+    markers: Pick<InternalMessageOptions, "schedule" | "automationEvent"> = {},
   ): AppendEvent {
+    const { schedule, automationEvent } = markers;
     // a skill invocation's rendered text replaces the typed arguments as content[0]
     const text = invoked?.text ?? input.text;
     return {
@@ -2062,6 +2095,7 @@ export class ConversationsService {
         ...(input.retryOf !== undefined && { retryOf: input.retryOf }),
         ...(invoked !== undefined && { skill: invoked.skill }),
         ...(schedule !== undefined && { schedule }),
+        ...(automationEvent !== undefined && { automationEvent }),
       },
     };
   }

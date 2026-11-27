@@ -11,13 +11,37 @@ export const AUTOMATION_PROMPT_MAX = 20_000;
 
 const Id = z.string().min(1).max(100);
 
+/** One clause of an event trigger's filter: a filterable fact, an operator and a value. */
+export const AutomationFilterClause = z
+  .object({
+    fact: z.string().trim().min(1).max(100),
+    op: z.enum(["eq", "in", "contains"]),
+    value: z.union([
+      z.string().max(500),
+      z.number(),
+      z.boolean(),
+      z.array(z.string().max(500)).max(100),
+    ]),
+  })
+  .strict();
+
 /**
- * When a task fires, before the zone is fixed: a 5-field cron, or a local date-time
- * (`2026-12-01T09:00`, no offset) for a one-off run.
+ * When an automation fires, before the zone is fixed: a 5-field cron, or a local date-time
+ * (`2026-12-01T09:00`, no offset) for a one-off run; or events (collaboration spec §4.1): the
+ * `types` the extension `source` declares, kept when every clause of `filter` matches the event's
+ * facts (a missing filter keeps every event of the types).
  */
 export const AutomationTriggerInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("cron"), expr: z.string().trim().min(1).max(200) }).strict(),
   z.object({ kind: z.literal("once"), at: z.string().trim().min(1).max(40) }).strict(),
+  z
+    .object({
+      kind: z.literal("event"),
+      source: z.string().trim().min(1).max(214),
+      types: z.array(z.string().trim().min(1).max(100)).min(1).max(64),
+      filter: z.array(AutomationFilterClause).max(20).optional(),
+    })
+    .strict(),
 ]);
 
 /** The IM chat a `chat`-mode task posts into. */
@@ -31,7 +55,7 @@ export const AutomationChatInput = z
 
 /**
  * A model pick: the same `{ provider, model }` an agent's definition uses, its strings bounded on
- * the fields (so the JSON schema shows the bounds). `new` mode only.
+ * the fields (so the JSON schema shows the bounds). `new` and `subject` modes.
  */
 export const AutomationModel = z
   .object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200) })
@@ -52,7 +76,13 @@ export const AutomationGrantInput = z
 
 const Name = z.string().trim().min(1).max(AUTOMATION_NAME_MAX);
 const Prompt = z.string().trim().min(1).max(AUTOMATION_PROMPT_MAX);
-const Mode = z.enum(["new", "conversation", "chat"]);
+/**
+ * Where a run posts. `subject` (one conversation per event subject) needs an event trigger and
+ * takes a model and effort but no device (only `new` does); `chat` needs a time trigger.
+ */
+const Mode = z.enum(["new", "conversation", "chat", "subject"]);
+/** What an unattended run does with a question: `null` follows the org's default. */
+const UnattendedAsk = z.enum(["fail", "wait"]);
 
 export const AutomationCreateBody = z
   .object({
@@ -65,12 +95,14 @@ export const AutomationCreateBody = z
     mode: Mode,
     conversationId: Id.optional(),
     chat: AutomationChatInput.optional(),
-    /** `new` mode only, as `effort` and `deviceId` (a conversation or chat task uses its own). */
+    /** `new` and `subject` modes, as `effort` (`deviceId`: `new` only); a conversation or chat task uses its own. */
     model: AutomationModel.optional(),
     effort: AutomationEffort.optional(),
     deviceId: Id.optional(),
     expiresAt: ExpiresAt.nullable().optional(),
     grants: z.array(AutomationGrantInput).max(50).optional(),
+    /** What a question in an unattended run does; absent or null: the org's default. */
+    unattendedAsk: UnattendedAsk.nullable().optional(),
   })
   .strict();
 
@@ -85,12 +117,14 @@ export const AutomationUpdateBody = z
     mode: Mode.optional(),
     conversationId: Id.nullable().optional(),
     chat: AutomationChatInput.nullable().optional(),
-    /** `new` mode only; switching to another mode clears them. */
+    /** `new` and `subject` modes (`deviceId`: `new` only); switching to another mode clears them. */
     model: AutomationModel.nullable().optional(),
     effort: AutomationEffort.nullable().optional(),
     deviceId: Id.nullable().optional(),
-    /** Null: the org's default expiry for a cron task (as on create), else never. */
+    /** Null: the org's default expiry for a cron or event task (as on create), else never. */
     expiresAt: ExpiresAt.nullable().optional(),
+    /** Null: the org's default. */
+    unattendedAsk: UnattendedAsk.nullable().optional(),
   })
   .strict();
 
@@ -119,6 +153,7 @@ export const AutomationCalendarQuery = z
   })
   .strict();
 export const AutomationChatTargetsQuery = z.object({}).strict();
+export const AutomationEventSourcesQuery = z.object({}).strict();
 export const AutomationGrantableQuery = z.object({ agentId: Id }).strict();
 export const AutomationParams = z.object({ id: Id });
 export const AutomationRunBody = z.object({ trial: z.boolean().optional() }).strict();
@@ -150,6 +185,10 @@ export class AutomationChatTargetsQueryDto extends createZodDto(
   AutomationChatTargetsQuery,
   "AutomationChatTargetsQuery",
 ) {}
+export class AutomationEventSourcesQueryDto extends createZodDto(
+  AutomationEventSourcesQuery,
+  "AutomationEventSourcesQuery",
+) {}
 export class AutomationGrantableQueryDto extends createZodDto(
   AutomationGrantableQuery,
   "AutomationGrantableQuery",
@@ -175,6 +214,10 @@ export const AUTOMATION_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/automations/calendar", query: AutomationCalendarQuery },
   { route: "GET /api/v1/orgs/:orgId/automations/chat-targets", query: AutomationChatTargetsQuery },
   { route: "GET /api/v1/orgs/:orgId/automations/grantable-tools", query: AutomationGrantableQuery },
+  {
+    route: "GET /api/v1/orgs/:orgId/automations/event-sources",
+    query: AutomationEventSourcesQuery,
+  },
   { route: "POST /api/v1/orgs/:orgId/automations", body: AutomationCreateBody },
   { route: "GET /api/v1/orgs/:orgId/automations/:id", params: AutomationParams },
   {

@@ -218,7 +218,7 @@ export interface SuggestionEligibilityInput {
 
 /**
  * Whether a finished run may get a suggestion by its outcome, conversation and trigger (spec §2):
- * `completed` or `max_steps`, a `chat` conversation from `web`, not a scheduled or compact run.
+ * `completed` or `max_steps`, a `chat` conversation from `web`, not an automation's or compact run.
  * The final reply, freshness and the switches are checked elsewhere.
  */
 export function suggestionEligible(i: SuggestionEligibilityInput): boolean {
@@ -227,6 +227,7 @@ export function suggestionEligible(i: SuggestionEligibilityInput): boolean {
     i.kind === "chat" &&
     i.source === "web" &&
     i.trigger !== "schedule" &&
+    i.trigger !== "automation_event" &&
     i.trigger !== "compact"
   );
 }
