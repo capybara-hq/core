@@ -263,17 +263,29 @@ export class FileLibraryHashJob {
     const hash = createHash("sha256");
     let read = 0;
     const reader = got.body.getReader();
+    let onAbort = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason);
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    });
+    aborted.catch(() => {});
     try {
       for (;;) {
-        signal.throwIfAborted();
-        const { done, value } = await reader.read();
+        // a read stalled in the store is interrupted by the abort, not only checked between chunks
+        const { done, value } = await Promise.race([reader.read(), aborted]);
         if (done) break;
         hash.update(value);
         read += value.byteLength;
       }
     } finally {
+      signal.removeEventListener("abort", onAbort);
       if (signal.aborted) await reader.cancel().catch(() => {});
-      reader.releaseLock();
+      try {
+        reader.releaseLock();
+      } catch {
+        // a read still pending after the cancel: the stream is dropped with the reader
+      }
     }
     if (read !== recorded.size) {
       throw new Error(`read ${read} bytes of blob ${row.id}, expected ${recorded.size}`);

@@ -445,6 +445,25 @@ describe("creating a share", () => {
 });
 
 describe("refreshing a share", () => {
+  it("a newer version whose blob is not ready is not offered (refresh would refuse it)", async () => {
+    const v1 = await deliver("nr.html", "one");
+    const s = await share(v1.artifactId);
+    const v2 = await deliver("nr.html", "two!", "/workspace/nr.html");
+    const offered = async () => {
+      const listed = await alice({ method: "GET", url: sharesUrl(v2.artifactId) });
+      expect(listed.statusCode).toBe(200);
+      return (listed.json() as { shares: ShareView[] }).shares.map((x) => [x.id, x.newerVersion]);
+    };
+    const v2Blob = await blobOf(v2.artifactId);
+    await db.updateTable("blobs").set({ status: "gone" }).where("id", "=", v2Blob).execute();
+    try {
+      expect(await offered()).toEqual([[s.id, false]]);
+    } finally {
+      await db.updateTable("blobs").set({ status: "ready" }).where("id", "=", v2Blob).execute();
+    }
+    expect(await offered()).toEqual([[s.id, true]]);
+  });
+
   it("a newer version is offered, then the share points at it as generation 2 under the same code; nothing is copied or owed", async () => {
     const v1 = await deliver("r.html", "one");
     const s = await share(v1.artifactId);

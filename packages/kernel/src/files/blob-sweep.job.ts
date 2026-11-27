@@ -1,3 +1,4 @@
+import type { ObjectHead } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type ExpressionBuilder, sql } from "kysely";
 import type { BlobStatus, KernelDatabase } from "../db/kernel-schema.js";
@@ -30,9 +31,11 @@ export const UNREFERENCED_AFTER_HOURS = 24;
 export const PENDING_AFTER_HOURS = 1;
 
 /**
- * A `deleting` blob older than this (hours) is reconciled: its deletion is owed again when nothing
- * refers to it, it is restored when something does (well past a merge's deferred deletion and the
- * deletion job's retries).
+ * A `deleting` blob created more than this many hours ago is reconciled: its deletion is owed
+ * again when nothing refers to it (deduplicated by its job id while the first deletion still
+ * waits, e.g. a merge's deferred one), it is restored when something does. The age is the blob's
+ * `created_at` (no column records when it became `deleting`); a blob whose deletion already
+ * claimed it is `gone`, never `deleting`, so a restore never races its object's deletion.
  */
 export const STALE_DELETING_AFTER_HOURS = 24;
 
@@ -339,15 +342,28 @@ export class BlobSweepJob {
       .execute();
     if (rows.length === 0) return { reowed: 0, restored: 0, last: null };
     const intact = new Set<string>();
+    const skipped = new Set<string>();
     for (const b of rows) {
       if (!b.referenced) continue;
-      const head = await this.storage.kernel(orgId).head(b.object_key);
+      let head: ObjectHead | null;
+      try {
+        head = await this.storage.kernel(orgId).head(b.object_key);
+      } catch (err) {
+        // storage unavailable: left `deleting` for the next sweep; other blobs and orgs go on
+        this.log.warn("cannot check a stale deleting blob's object; will retry", {
+          orgId,
+          blobId: b.id,
+          err,
+        });
+        skipped.add(b.id);
+        continue;
+      }
       if (head && blobContentMatches({ size: Number(b.size), etag: b.etag }, head))
         intact.add(b.id);
     }
     const done = await this.settleDeleting(
       orgId,
-      rows.map((b) => b.id),
+      rows.filter((b) => !skipped.has(b.id)).map((b) => b.id),
       intact,
     );
     return { ...done, last: rows.length < BATCH ? null : (rows.at(-1) as { id: string }).id };
@@ -360,6 +376,7 @@ export class BlobSweepJob {
     ids: readonly string[],
     intact: ReadonlySet<string>,
   ): Promise<{ reowed: number; restored: number }> {
+    if (ids.length === 0) return { reowed: 0, restored: 0 };
     const trx = this.db.db;
     const locked = await trx
       .selectFrom("blobs")

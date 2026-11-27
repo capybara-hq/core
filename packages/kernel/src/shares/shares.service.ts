@@ -683,11 +683,14 @@ export class SharesService {
         shareSourceOk(eb as unknown as ExpressionBuilder<KernelDatabase, "file_shares">).as(
           "source_ok",
         ),
-        // a newer ready version of the snapshot's file, the creator's (refresh offered): the group
+        // a newer ready version (its blob ready too, as refresh requires) of the snapshot's file,
+        // the creator's (refresh offered): the group
         // and order {@link nextVersion} uses, including its fallback when the current file row is
         // gone (the share's conversation, versions made after the share last moved)
         sql<boolean>`file_shares.source_path IS NOT NULL AND EXISTS (
           SELECT 1 FROM capybara.files later
+          JOIN capybara.blobs b ON b.org_id = later.org_id AND b.id = later.blob_id
+            AND b.status = 'ready'
           LEFT JOIN capybara.files cur
             ON cur.org_id = file_shares.org_id
            AND cur.id = coalesce(file_shares.source_file_id, file_shares.file_id)

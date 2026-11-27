@@ -158,7 +158,10 @@ export async function oweStagingDelete(
  * - A staging object is deleted only when the key is the file's own staging key, the file is no
  *   longer an upload in progress, and no blob of the org names that key (a blob adopted it).
  * - A blob is deleted only while its row is `deleting` and no file or share points at it, checked
- *   under `FOR UPDATE` on the blob row; then its object goes, then its row. The invariant that
+ *   under `FOR UPDATE` on the blob row, which the same transaction sets `gone` (so nothing, the
+ *   blob sweep's restore included, ever takes it for live bytes again); then its object goes, then
+ *   its row. A retry after a failed object delete finds it `gone` and goes on (references checked
+ *   again). The invariant that
  *   makes the check final: every transaction that inserts or moves a reference to a blob (a file
  *   row, a share, a repoint) first calls `BlobsService.lockReady`, which locks the blob `FOR SHARE`
  *   and requires `ready`, so once a `deleting` blob is seen unreferenced under the lock, nothing can
@@ -287,8 +290,9 @@ export class BlobObjects {
   }
 
   /**
-   * Under `FOR UPDATE` on the blob: its object key when it is `deleting` and nothing points at it,
-   * else null (logged when it is still referenced).
+   * Under `FOR UPDATE` on the blob: when it is `deleting` (or `gone`: a retry) and nothing points
+   * at it, sets it `gone` and returns its object key; else null (logged when it is still
+   * referenced).
    */
   @Transactional()
   async claimUnreferenced(data: BlobDeleteData): Promise<string | null> {
@@ -300,7 +304,7 @@ export class BlobObjects {
       .where("org_id", "=", data.orgId)
       .forUpdate()
       .executeTakeFirst();
-    if (blob?.status !== "deleting") return null;
+    if (blob?.status !== "deleting" && blob?.status !== "gone") return null;
     const file = await trx
       .selectFrom("files")
       .select("id")
@@ -319,17 +323,45 @@ export class BlobObjects {
       this.log.warn("a blob marked for deletion is still referenced; keeping it", { ...data });
       return null;
     }
+    await trx
+      .updateTable("blobs")
+      .set({ status: "gone" })
+      .where("id", "=", data.blobId)
+      .where("org_id", "=", data.orgId)
+      .execute();
     return blob.object_key;
   }
 
-  /** The last step of {@link deleteBlob}: the row, while it is still `deleting`. */
+  /** The last step of {@link deleteBlob}: the row, while it is `gone` and nothing points at it. */
   @Transactional()
   async dropRow(data: BlobDeleteData): Promise<void> {
     await this.db.db
       .deleteFrom("blobs")
       .where("id", "=", data.blobId)
       .where("org_id", "=", data.orgId)
-      .where("status", "=", "deleting")
+      .where("status", "=", "gone")
+      .where((eb) =>
+        eb.and([
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom("files")
+                .select("files.id")
+                .where("files.org_id", "=", data.orgId)
+                .whereRef("files.blob_id", "=", "blobs.id"),
+            ),
+          ),
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom("file_shares")
+                .select("file_shares.id")
+                .where("file_shares.org_id", "=", data.orgId)
+                .whereRef("file_shares.blob_id", "=", "blobs.id"),
+            ),
+          ),
+        ]),
+      )
       .execute();
   }
 }

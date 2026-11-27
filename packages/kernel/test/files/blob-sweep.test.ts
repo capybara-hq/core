@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { BlobObjects } from "../../src/files/blob-objects.js";
 import { BlobSweepJob } from "../../src/files/blob-sweep.job.js";
 import { BlobsService } from "../../src/files/blobs.service.js";
 import {
@@ -297,5 +298,55 @@ describe("blob sweep", () => {
     const r = await sweep();
     expect(r.deletionsReowed).toBeGreaterThanOrEqual(1);
     await deleted(blobId, key);
+  });
+
+  it("never restores a blob whose deletion claimed it, even when a reference appears afterwards", async () => {
+    const { fileId, blobId } = await seeded("claimed then referenced");
+    await ageBlob(blobId, "3 days");
+    await db
+      .updateTable("files")
+      .set({ blob_id: null, status: "deleted" })
+      .where("id", "=", fileId)
+      .execute();
+    await db.updateTable("blobs").set({ status: "deleting" }).where("id", "=", blobId).execute();
+    // the deletion claims it (its object is about to go) ...
+    const key = await k.app.get(BlobObjects).claimUnreferenced({ orgId, blobId });
+    expect(key).not.toBeNull();
+    expect(await blobRow(blobId)).toEqual({ status: "gone" });
+    // ... and a reference appears without the ready gate (as file_library_copy can do)
+    await db.updateTable("files").set({ blob_id: blobId }).where("id", "=", fileId).execute();
+    await sweep();
+    expect(await blobRow(blobId)).toEqual({ status: "gone" });
+  });
+
+  it("leaves a stale deleting blob whose object check fails for the next sweep, and goes on", async () => {
+    const failing = await seeded("storage down");
+    const other = await seeded("storage fine");
+    const failingKey = await blobKeyOf(db, failing.fileId);
+    for (const b of [failing.blobId, other.blobId]) {
+      await ageBlob(b, "3 days");
+      await db.updateTable("blobs").set({ status: "deleting" }).where("id", "=", b).execute();
+    }
+    const storage = k.app.get(StorageService);
+    const original = storage.kernel.bind(storage);
+    const spy = vi.spyOn(storage, "kernel").mockImplementation((org) => {
+      const s = original(org);
+      return {
+        ...s,
+        head: async (key) => {
+          if (key === failingKey) throw new Error("storage unavailable");
+          return s.head(key);
+        },
+      };
+    });
+    try {
+      await sweep();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await blobRow(failing.blobId)).toEqual({ status: "deleting" });
+    expect(await blobRow(other.blobId)).toEqual({ status: "ready" });
+    await sweep();
+    expect(await blobRow(failing.blobId)).toEqual({ status: "ready" });
   });
 });
