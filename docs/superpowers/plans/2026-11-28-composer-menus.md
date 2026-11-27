@@ -267,3 +267,6 @@ Rebase on main, then: composer top strip and control row per spec §6 / §7 (des
   unchanged (anti-aliasing only), fidelity for both components passes, verify --fast passes;
   reference-update (42069b21c) and visual-update (5c5bcaf3d) ran on the branch. Next: ci-ok, then
   Phase B once the file library is on main.
+- e2e: files.spec's upload goes through the ＋ menu's 上传文件 row (0c1dd8781, 9c1692422); ci-ok was
+  green on 9c1692422. origin/main merged again in 5dab885c2 (the automations rename dropped the old
+  schedules baselines); verify --fast and the project kernel tests pass; visual-update 6add25fdd.
