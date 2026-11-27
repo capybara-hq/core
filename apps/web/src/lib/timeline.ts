@@ -288,9 +288,26 @@ export interface RunTokens {
   total: number;
 }
 
+/** A limit a finished run stopped at (`run_finished.reason` other than `completed`). */
+export type RunLimit = "max_steps" | "max_duration" | "budget" | "max_output";
+
+const RUN_LIMITS: ReadonlySet<string> = new Set<RunLimit>([
+  "max_steps",
+  "max_duration",
+  "budget",
+  "max_output",
+]);
+
 /** How a run ended (its run row, spec §6.16.23). */
 export type RunEnd =
-  | { status: "ok" }
+  | {
+      status: "ok";
+      /**
+       * The run ended at a limit, not because the agent was done (`run_finished.reason`): the
+       * step or time limit, the token budget, or the output token limit (issue #951).
+       */
+      limit?: RunLimit;
+    }
   | { status: "stopped"; byAccountId: string | null }
   | {
       status: "failed";
@@ -2035,7 +2052,13 @@ export function buildEventTimeline(
         }
         break;
       case "run_finished":
-        out.push({ kind: "run", key, ...runData(e), status: "ok" });
+        out.push({
+          kind: "run",
+          key,
+          ...runData(e),
+          status: "ok",
+          ...(RUN_LIMITS.has(e.payload.reason) && { limit: e.payload.reason as RunLimit }),
+        });
         break;
       case "run_aborted":
         out.push({

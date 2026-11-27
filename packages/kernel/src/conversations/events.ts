@@ -777,6 +777,7 @@ export const SubagentFinishStatusSchema = z.enum([
   "max_steps",
   "max_duration",
   "budget",
+  "max_output",
   "aborted",
   "timed_out",
   "failed",
@@ -2031,8 +2032,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
   ev(
     "run_finished",
     z.object({
-      /** `budget`: a sub-agent stopped at its parent run's token cap (phase C, spec §8.3). */
-      reason: z.enum(["completed", "max_steps", "max_duration", "budget"]),
+      /**
+       * `budget`: a sub-agent stopped at its parent run's token cap (phase C, spec §8.3).
+       * `max_output`: the model's steps kept stopping at the output token limit (issue #951).
+       */
+      reason: z.enum(["completed", "max_steps", "max_duration", "budget", "max_output"]),
       consumedUpToSeq: seqNo,
     }),
   ),

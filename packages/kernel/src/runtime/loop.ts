@@ -118,8 +118,14 @@ export const subagentWaitingIdemKey = (childRunId: string, waitId: string): stri
 export const subagentsWaitId = (runId: string, step: number): string => `sa-${runId}-${step}`;
 
 export type LoopOutcome =
-  /** `budget`: a sub-agent run stopped at its parent run's token cap (phase C). */
-  | { kind: "completed" | "max_steps" | "max_duration" | "budget"; consumedUpToSeq: number }
+  /**
+   * `budget`: a sub-agent run stopped at its parent run's token cap (phase C). `max_output`: the
+   * model's steps kept stopping at the output token limit (issue #951).
+   */
+  | {
+      kind: "completed" | "max_steps" | "max_duration" | "budget" | "max_output";
+      consumedUpToSeq: number;
+    }
   | { kind: "aborted" }
   /** 停机：已在步骤边界保存好进度，任务需要回到队列。 */
   | { kind: "interrupted" }

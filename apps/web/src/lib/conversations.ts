@@ -722,6 +722,7 @@ export type SubagentEndStatus =
   | "max_steps"
   | "max_duration"
   | "budget"
+  | "max_output"
   | "aborted"
   | "timed_out"
   | "failed";
