@@ -211,6 +211,9 @@ describe("LibraryPage expanded (two panes)", () => {
     expect(screen.queryByText("季度报告.pdf")).toBeNull();
     expect(part("library-filters")).toBeTruthy();
     expect(container.querySelector('[aria-busy="true"]')).toBeTruthy();
+    // the placeholder preview is lines on the pane's ground, no card inside the pane
+    expect(part("loading-preview")).toBeTruthy();
+    expect(findNestedBoxes(container).map(describeNestedBox)).toEqual([]);
   });
 });
 
@@ -221,12 +224,44 @@ describe("LibraryPage medium (side sheet when two panes do not fit)", () => {
     renderAtClass(700, <LibraryPage {...props({ open: true, onBack })} />);
     const sheet = screen.getByRole("dialog", { name: "季度报告.pdf" });
     expect(within(sheet).getByText("THE PREVIEW")).toBeTruthy();
+    // mounted once: the hidden second pane of the stack holds no copy
+    expect(screen.getAllByText("THE PREVIEW")).toHaveLength(1);
     expect(within(sheet).getByRole("button", { name: "分享" })).toBeTruthy();
     // the region stays on the list, its row still the current one
     expect(part("list-detail")?.getAttribute("data-open")).toBe("false");
     expect(screen.getByText("季度报告.pdf", { selector: ".cb-ld-title" })).toBeTruthy();
     fireEvent.click(within(sheet).getByRole("button", { name: "关闭" }));
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a fractional width the container query still fits (679.5) as two panes", () => {
+    regionWidth(679.5);
+    renderAtClass(760, <LibraryPage {...props({ open: true })} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getAllByText("THE PREVIEW")).toHaveLength(1);
+  });
+
+  it("downloads a menu action with download through an anchor, not a navigation", () => {
+    const clicks: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clicks.push(`${this.getAttribute("href")} ${this.hasAttribute("download")}`);
+    });
+    const actions: LibraryAction[] = [
+      {
+        id: "dl",
+        label: "下载",
+        icon: "download",
+        href: "/f/1/download",
+        download: true,
+        menu: true,
+      },
+    ];
+    renderAtClass(1280, <LibraryPage {...props({ detailActions: actions })} />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "更多操作" }), { button: 0 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "下载" }));
+    expect(clicks).toEqual(["/f/1/download true"]);
   });
 
   it("keeps two panes and no sheet while the region fits both", () => {
@@ -262,6 +297,12 @@ describe("LibraryPage compact", () => {
     renderAtClass(390, <LibraryPage {...p} header={{ ...p.header, tabs }} />);
     fireEvent.click(screen.getByRole("radio", { name: "我上传的" }));
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("mounts no preview while a selected file is not open (the stack's hidden pane)", () => {
+    renderAtClass(390, <LibraryPage {...props({ open: false })} />);
+    expect(screen.queryByText("THE PREVIEW")).toBeNull();
+    expect(part("library-detail")).toBeNull();
   });
 
   it("draws the search as an icon that expands into the field and collapses again", () => {

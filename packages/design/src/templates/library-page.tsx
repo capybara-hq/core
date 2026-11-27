@@ -28,7 +28,7 @@ import {
   useRegisterShellPage,
 } from "../shell/index";
 import { HeadSearch } from "../shell/page-header";
-import { LoadingCards, loadingHeader, TemplateHead } from "./frame";
+import { loadingHeader, TemplateHead } from "./frame";
 
 /** The library's two panes: a 320 list beside a preview of at least 360 (spec §5.13, §6.47). */
 const LIST_MIN = 320;
@@ -106,8 +106,9 @@ export type LibraryPageProps = {
 
 /**
  * Whether the region is wide enough for both panes (`listMin + detailMin`): the same line the
- * ListDetail container query draws, read for the side sheet, which CSS cannot open. A region that
- * has no width yet (not laid out) counts as fitting, as the first paint does.
+ * ListDetail container query draws (`max-width: 679px` stacks, so a fractional 679.5 still fits),
+ * read for the side sheet, which CSS cannot open. A region that has no width yet (not laid out)
+ * counts as fitting, as the first paint does.
  */
 function useFits(el: HTMLElement | null): boolean {
   const [fits, setFits] = useState(true);
@@ -115,7 +116,7 @@ function useFits(el: HTMLElement | null): boolean {
     if (!el) return;
     const read = () => {
       const w = el.getBoundingClientRect().width;
-      setFits(w === 0 || w >= FIT);
+      setFits(w === 0 || w > FIT - 1);
     };
     read();
     if (typeof ResizeObserver === "undefined") return;
@@ -146,11 +147,22 @@ function LoadingRows({ rows }: { rows: number }) {
   );
 }
 
+/** Follows a download link the way a `download` anchor does (a menu item is no anchor). */
+function download(href: string): void {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = "";
+  a.rel = "noopener";
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
 function menuItem(a: LibraryAction): MenuItem {
   const base = { label: a.label, icon: a.icon, ...(a.danger ? { danger: true } : {}) };
-  return a.href !== undefined
-    ? { ...base, href: a.href }
-    : { ...base, onSelect: () => a.onSelect?.() };
+  const href = a.href;
+  if (href === undefined) return { ...base, onSelect: () => a.onSelect?.() };
+  return a.download ? { ...base, onSelect: () => download(href) } : { ...base, href };
 }
 
 /**
@@ -443,7 +455,13 @@ export function LibraryPage({
     <div className="cb-library-detail" data-part="library-detail">
       <BoxScope kind="card">
         <div className="cb-library-detail-body" data-part="library-detail-body">
-          <LoadingCards count={1} />
+          {/* placeholder lines on the pane's own ground: the pane is the one box */}
+          <div className="cb-loading-stack" data-part="loading-preview">
+            <SkeletonText width="30%" />
+            <SkeletonText width="100%" />
+            <SkeletonText width="70%" />
+            <SkeletonText width="55%" />
+          </div>
         </div>
       </BoxScope>
     </div>
@@ -457,6 +475,11 @@ export function LibraryPage({
     </div>
   ) : null;
   const opened = shownDetail !== null ? detailPane(shownDetail) : null;
+  // The selected file stands in the second pane only while two panes show (from 600, fitting):
+  // in the stack (compact, or the side-sheet form) the pane is hidden, and a preview mounted
+  // there would load a second time (an extra HTML token or embed) or load unseen. Before
+  // hydration the class is unknown, so nothing is mounted there until it is.
+  const twoPanes = form === "wide" && fits;
 
   const page = (
     <>
@@ -484,7 +507,7 @@ export function LibraryPage({
               <ListDetail
                 list={listPane}
                 detail={pushed ? opened : null}
-                preview={opened ?? placeholder}
+                preview={twoPanes ? (opened ?? placeholder) : null}
                 onBack={onBack}
                 listMin={LIST_MIN}
                 detailMin={DETAIL_MIN}
