@@ -135,6 +135,8 @@ export interface StaticExtensionManifest {
     ui?: { views?: string[]; embeds?: string[]; components?: string[] };
     /** Long-lived services the extension runs in conversations' devices (SDK `deviceAccess`). */
     deviceAccess?: { services: string[] };
+    /** The event types the extension emits for event automations (SDK `triggers`). */
+    triggers?: { emit: string[] };
   };
   /** The config fields the extension declares (SDK `StaticConfigField`). */
   config?: { deployment: StaticConfigField[] };
@@ -1758,6 +1760,7 @@ export function declaredPermissions(
       sensitive: true,
     },
     { category: "deviceAccess", items: p.deviceAccess?.services ?? [], sensitive: true },
+    { category: "triggers", items: p.triggers?.emit ?? [] },
   ];
   return groups
     .filter((g) => g.items.length > 0)

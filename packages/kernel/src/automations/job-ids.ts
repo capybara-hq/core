@@ -144,3 +144,19 @@ export function oweAutomationSettleUnfired(
     orgId,
   });
 }
+
+/**
+ * The one-off job that routes one trigger event to the automations it fires (collaboration spec
+ * §4.2), on `cap-kernel-maintenance`, owed by the transaction that stores the event.
+ */
+export const TRIGGER_DISPATCH_JOB = "trigger-dispatch";
+
+/** The data of a {@link TRIGGER_DISPATCH_JOB}. */
+export interface TriggerDispatchJobData {
+  orgId: string;
+  eventId: string;
+}
+
+/** The dispatch job's id: `trigger-dispatch-<eventId>` (no `:`, event ids are UUIDs). */
+export const triggerDispatchJobId = (eventId: string): string =>
+  `${TRIGGER_DISPATCH_JOB}-${eventId}`;

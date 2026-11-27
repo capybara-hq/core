@@ -43,6 +43,15 @@ const SCOPE_JOB_OPTS = {
  * name without one does not type-check as an `OutboxJobName` (`add` does not check it at runtime).
  */
 export const OUTBOX_JOBS = {
+  // `automations/job-ids.ts` TRIGGER_DISPATCH_JOB: owed by the transaction that stores a trigger
+  // event (`TriggerEventsService.emit`, collaboration spec §4.2), under `trigger-dispatch-<eventId>`
+  "trigger-dispatch": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Dispatches one stored event by id; the dispatcher reads the event's state and delivers each automation at most once (deliveries keyed by automation and event)",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
   // `shares/share-objects.ts` SHARE_OBJECT_DELETE_JOB: owed by a share's refresh (the previous
   // generation) and revoke (the current one), under `shareObjectDeleteJobId` (file sharing spec §2)
   "share-object-delete": {

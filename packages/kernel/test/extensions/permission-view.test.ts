@@ -37,6 +37,28 @@ describe("permissionGroups", () => {
     expect(permissionGroups(base)).toEqual([]);
   });
 
+  it("event types (permissions.triggers) form the last group, not sensitive", () => {
+    const groups = permissionGroups({
+      ...base,
+      permissions: {
+        ...base.permissions,
+        tools: ["emit"],
+        triggers: { emit: ["item.created", "item.updated"] },
+      },
+    });
+    expect(groups.map((g) => g.category)).toEqual(["tools", "triggers"]);
+    expect(groups[1]).toEqual({
+      category: "triggers",
+      sensitive: false,
+      items: ["item.created", "item.updated"],
+      entries: [
+        { value: "item.created", sensitive: false },
+        { value: "item.updated", sensitive: false },
+      ],
+    });
+    expect(isSensitivePermissionKey("permissions.triggers:item.created")).toBe(false);
+  });
+
   it("a secret field is prefixed like the config group", () => {
     const groups = permissionGroups({
       ...base,

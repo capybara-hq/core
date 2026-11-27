@@ -3130,7 +3130,8 @@
       "client": "Client code",
       "components": "Interface components",
       "dialIn": "Machine connections (protocol)",
-      "deviceAccess": "Device services"
+      "deviceAccess": "Device services",
+      "triggers": "Events it emits"
     },
     "configFirstHint": "This extension won't work in the organization until you fill in the organization's own copy of its configuration below",
     "sync": "Sync now",

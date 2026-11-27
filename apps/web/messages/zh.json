@@ -3118,7 +3118,8 @@
       "client": "客户端代码",
       "components": "界面组件",
       "dialIn": "机器接入（协议）",
-      "deviceAccess": "设备服务"
+      "deviceAccess": "设备服务",
+      "triggers": "发出的事件"
     },
     "configFirstHint": "需在下方填写本组织自己的配置副本，此扩展才能在本组织使用",
     "sync": "立即同步",

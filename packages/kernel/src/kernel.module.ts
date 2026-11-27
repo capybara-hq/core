@@ -3,6 +3,7 @@ import { APP_INTERCEPTOR } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import type { KernelAppOptions } from "./app.js";
+import { TriggerEventsModule } from "./automations/events/events.module.js";
 import { CatalogModule } from "./catalog/catalog.module.js";
 import { ChannelsModule } from "./channels/channels.module.js";
 import { ClientModule } from "./client/client.module.js";
@@ -130,6 +131,8 @@ export class KernelModule {
         ClientModule,
         // ctx.deviceAccess: extensions' device services (the host finds it at the time of use)
         ExtensionDeviceAccessModule,
+        // ctx.triggers: the events extensions emit (the host finds it at the time of use)
+        TriggerEventsModule,
         // the Platform tool's operation registry and actor facts
         PlatformModule,
         // its operations (skills, agents, ...), registered at start on every role
