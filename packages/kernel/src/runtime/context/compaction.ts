@@ -615,8 +615,9 @@ function renderBlocks(blocks: EventPayload<"user_message">["content"]): string {
  * The text to store as the compaction summary (context compaction spec §4.2.1): the `<summary>`
  * block when the model returned one, since the `<analysis>` scratchpad must never be sent in a
  * later request; otherwise the answer with any `<analysis>` block and any dangling `<summary>` tag
- * removed (a truncated response may have been cut off after the opening tag). Trimmed; an empty
- * result fails the attempt.
+ * removed (a truncated response may have been cut off after the opening tag). A closed `<summary>`
+ * that ends the answer also wins over an unclosed `<analysis>`. Trimmed; an empty result fails the
+ * attempt.
  */
 export function extractSummary(text: string): string {
   // Strip scratchpads before looking for a summary: a truncated analysis can itself contain
@@ -624,6 +625,12 @@ export function extractSummary(text: string): string {
   const answer = text.replace(/<analysis>[\s\S]*?(?:<\/analysis>|$)/gi, "");
   const block = /<summary>([\s\S]*?)<\/summary>/i.exec(answer);
   if (block) return (block[1] ?? "").trim();
+  // An unclosed analysis swallowed the rest, but a closed summary that ends the answer is the
+  // model's final text, not a draft: it wins. A cut-off answer (stop reason max_tokens) never
+  // reaches this function (the compaction loop retries it first); the summary must also end the
+  // text, and the last opening tag is used so an earlier draft summary is skipped.
+  const ending = /<summary>((?:(?!<summary>)[\s\S])*?)<\/summary>\s*$/i.exec(text);
+  if (ending) return (ending[1] ?? "").trim();
   return answer.replace(/<\/?summary>/gi, "").trim();
 }
 

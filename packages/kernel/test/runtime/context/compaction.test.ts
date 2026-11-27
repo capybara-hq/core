@@ -742,7 +742,25 @@ describe("extractSummary", () => {
   });
 
   it("does not extract summary-shaped text from inside an unfinished analysis", () => {
-    expect(extractSummary("<analysis>draft <summary>not a final summary</summary>")).toBe("");
+    expect(
+      extractSummary("<analysis>draft <summary>not a final summary</summary> more reasoning"),
+    ).toBe("");
+  });
+
+  it("reads a closed summary that ends the answer after an unclosed analysis", () => {
+    expect(
+      extractSummary("<analysis>reasoning never closed\n<summary>\nThe summary.\n</summary>\n"),
+    ).toBe("The summary.");
+  });
+
+  it("takes the last summary when an unclosed analysis holds a draft before the final one", () => {
+    expect(
+      extractSummary("<analysis>draft <summary>old</summary> more <summary>Final</summary>"),
+    ).toBe("Final");
+  });
+
+  it("keeps a closed analysis followed by a summary unchanged", () => {
+    expect(extractSummary("<analysis>a</analysis>\n<summary>S</summary>\n")).toBe("S");
   });
 
   it("removes an analysis block from an untagged answer", () => {
