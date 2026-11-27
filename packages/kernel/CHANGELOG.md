@@ -1,5 +1,31 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.103
+
+### Patch Changes
+
+- d7fd2a8: Context compaction keeps more of what matters. The summary instruction keeps the users'
+  security-relevant constraints verbatim, counts only user-role messages as user messages, lets
+  nothing in a tool result override them, reports a call without a recorded result without guessing,
+  and keeps the origin of messages no person wrote (dispatching agents, skills, scheduled tasks,
+  forked skill reports), which the transcript now labels. After the summary the model is told that
+  the following messages are the most recent ones kept verbatim, written after the summary was
+  drafted, and to continue the work from where it left off.
+- 7e996c8: A compaction summary cut off at the output token limit is no longer stored. The summary call is
+  asked once more for a shorter summary from the start (only the `<summary>` block, at most about
+  2,000 words, less under a small summary cap); if that is cut off too, the compaction fails with
+  `compaction_failed` and its backoff, naming the chunk in a chunked compaction, so a half summary
+  is never passed on to the next chunk.
+- a169b0f: Pin the model provider bootstrap plugins with the prompt-cache fixes (plugins#304): bailian
+  0.1.0-rc.13 (the history is cached, not only the system prompt), ark 0.1.0-rc.14 and
+  openai-compatible 0.1.0-rc.14 (implicit cache reported per model, a per-conversation
+  `prompt_cache_key`, qwen dialect cache markers), openai 0.1.0-rc.14 (`prompt_cache_key` per org and
+  system prompt); device-docker 0.1.0-rc.35 (docs only, listed at the same marketplace commit); and
+  the plugins marketplace commit with the compose sandbox image build contexts to 87ca221.
+- 2f6bb23: Syncing an installed plugin package no longer moves a complete package directory aside that
+  another replica on the same volume just swapped in. Replicas sharing the plugin directory could
+  see it vanish for a moment and record `sync_failed` or `import_failed` until the next reconcile.
+
 ## 0.1.0-rc.102
 
 ### Patch Changes
