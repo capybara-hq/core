@@ -217,7 +217,8 @@ describe("the / menu", () => {
       "fix-issue[issue-number]Fix a GitHub issue",
       `release-check${en.chat.skillTag.manual} · Run the release checks`,
       `review[path]${en.chat.skillTag.fork} · Review in a sub-agent`,
-      "brainstormingThink before building",
+      // a plugin's skill names its plugin
+      "brainstormingsuperpowers · Think before building",
       // a prompt leads with its connector's mark (no icon here: the initial)
       "DsummarizeSummarize a topic",
       // the built-in command closes the `/` menu, after the agent's skills and prompts
@@ -241,7 +242,7 @@ describe("the / menu", () => {
     expect(optionTexts(await menu())).toEqual(["fix-issue[issue-number]Fix a GitHub issue"]);
     await user.clear(input());
     await user.type(input(), "/superpowers:brain");
-    expect(optionTexts(await menu())).toEqual(["brainstormingThink before building"]);
+    expect(optionTexts(await menu())).toEqual(["brainstormingsuperpowers · Think before building"]);
   });
 
   it("picking a skill shows the chip; the text after it is sent as its arguments", async () => {

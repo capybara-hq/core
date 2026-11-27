@@ -63,7 +63,7 @@ A new design component replacing `CommandPalette` for the composer (the palette 
   (`image`, falling back to the initial).
 - No search box of its own: the query is the composer text after the trigger (`/fix` filters skills,
   `@report` searches files and resources), ranked with the palette's existing `commandScore`.
-- Footer (from 600 up): key hints as text (`@ 文件与资源 · / 技能与命令 · ↑↓ 选择 · ↵ 使用 · esc 关闭`)
+- Footer (from 841 up): key hints as text (`@ 文件与资源 · / 技能与命令 · ↑↓ 选择 · ↵ 使用 · esc 关闭`)
   and a muted hint (「输入以搜索」); hints that switch menus are buttons.
 - Keys: ↑↓ move, ↵ picks (no choosable row: ↵ closes the menu and never sends; the next ↵ sends), Esc
   closes once and keeps the text, Backspace through the trigger closes (a selection's Backspace is plain
@@ -88,7 +88,7 @@ No sub-agent row (there is no person-facing delegation). The ＋ button keeps `a
 ### 3. / menu
 
 Same groups and order as today (skills by source, connector prompts by connector, unavailable
-connectors, then commands last), with icons: skill (`sparkles`), connector prompt (the connector's
+connectors, then commands last), with icons: skill (`skills`), connector prompt (the connector's
 icon), command (`terminal`). Names without a leading `/`; the argument hint stays as muted text. The
 picked skill becomes the chip as today; prompts with arguments keep their dialog; `/compact` keeps its
 rules (no arguments, refused while running).

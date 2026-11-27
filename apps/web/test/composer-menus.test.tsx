@@ -13,9 +13,10 @@ import {
   userMsg,
 } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
+import { stubWindowWidth } from "./support/width";
 
 /**
- * Composer menus (spec 2026-11-28 composer menus §1–§4): ＋ opens a menu of what can be added or
+ * Composer menus (spec 2026-11-28 composer menus §1–§4): + opens a menu of what can be added or
  * used, `/` lists skills and commands, `@` searches connector resources; one menu anchored to the
  * composer whose query is the text after the trigger, never the command palette.
  */
@@ -144,6 +145,13 @@ const iconOf = (option: HTMLElement) =>
   option
     .querySelector('[data-part="composer-menu-lead"] [data-part="icon"]')
     ?.getAttribute("data-icon");
+/** Types each character at the end of the draft, one change each, with no time between them. */
+const typeAtEnd = (...chars: string[]) => {
+  for (const c of chars) {
+    const value = input().value + c;
+    fireEvent.change(input(), { target: { value, selectionStart: value.length } });
+  }
+};
 const resourceReads = (calls: Call[]) =>
   calls.filter((c) => c.method === "GET" && c.url.split("?")[0] === RESOURCES).map((c) => c.url);
 
@@ -329,11 +337,11 @@ describe("the @ menu", () => {
     expect(handbook.querySelector('[data-part="mark-image"]')?.getAttribute("src")).toBe(
       "/api/v1/orgs/o1/connectors/k1/icon",
     );
-    await user.type(input(), "rep");
+    // three keys with no time between them: only the query they leave is read
+    typeAtEnd("r", "e", "p");
     await vi.waitFor(() => expect(resourceReads(calls)).toContain(`${RESOURCES}?query=rep`));
     el = await menu();
     await vi.waitFor(() => expect(labelsOf(el)).toEqual(["Report"]));
-    // the query rested once: no read for the keys typed before
     expect(resourceReads(calls)).toEqual([RESOURCES, `${RESOURCES}?query=rep`]);
     await user.keyboard("{Enter}");
     expect(input().value).toBe("see ");
@@ -378,13 +386,202 @@ describe("the @ menu", () => {
     expect(input().value).toBe("@ ");
   });
 
-  it("an IME composition never opens it", async () => {
+  it("a key an IME commits directly (keyCode 229, no composition) opens it", async () => {
+    api();
+    await renderChatRoute({ locale: "zh" });
+    await screen.findByText("hi");
+    // a Chinese IME's Shift+2: the key reports 229 and commits "@" with no composition
+    fireEvent.keyDown(input(zh), { key: "Process", keyCode: 229 });
+    fireEvent.change(input(zh), { target: { value: "@", selectionStart: 1 } });
+    expect((await menu()).getAttribute("data-kind")).toBe("at");
+  });
+
+  it("a composition's intermediate text opens nothing; a composition committing @ does", async () => {
+    api();
+    await renderChatRoute({ locale: "zh" });
+    await screen.findByText("hi");
+    const el = input(zh);
+    fireEvent.compositionStart(el, { data: "" });
+    fireEvent.change(el, { target: { value: "@" } });
+    fireEvent.change(el, { target: { value: "你" } });
+    fireEvent.compositionEnd(el, { data: "你" });
+    noMenu();
+    fireEvent.change(el, { target: { value: "你 " } });
+    fireEvent.compositionStart(el, { data: "" });
+    fireEvent.change(el, { target: { value: "你 @" } });
+    noMenu();
+    fireEvent.compositionEnd(el, { data: "@" });
+    expect((await menu()).getAttribute("data-kind")).toBe("at");
+  });
+
+  it("inside the menu an IME's intermediate text is not searched; what it commits is", async () => {
+    const calls = api();
+    await renderChatRoute({ locale: "zh" });
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(zh), "@");
+    const el = await menu();
+    await within(el).findByText("Accounts");
+    const field = input(zh);
+    fireEvent.compositionStart(field, { data: "" });
+    fireEvent.change(field, { target: { value: "@z" } });
+    fireEvent.change(field, { target: { value: "@zh" } });
+    // the pinyin is no query: the rows stay, nothing loads
+    expect(labelsOf(await menu())).toEqual(["Handbook", "Report", "Accounts"]);
+    expect(document.querySelector('[data-part="composer-menu-loading"]')).toBeNull();
+    fireEvent.change(field, { target: { value: "@acc" } });
+    fireEvent.compositionEnd(field, { data: "acc" });
+    await vi.waitFor(() => expect(resourceReads(calls)).toContain(`${RESOURCES}?query=acc`));
+    await vi.waitFor(async () => expect(labelsOf(await menu())).toEqual(["Accounts"]));
+    expect(resourceReads(calls).filter((u) => u.includes("query=z"))).toEqual([]);
+  });
+
+  it("↵ before the query's results arrive picks among the rows that match it", async () => {
+    const calls = api();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    await within(await menu()).findByText("Accounts");
+    // typed and picked at once: the rows are still the empty query's
+    typeAtEnd("a", "c", "c");
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(await screen.findByText("@Accounts")).toBeTruthy();
+    expect(screen.queryByText("@Handbook")).toBeNull();
+    expect(input().value).toBe("");
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("Backspace through the @ closes it", async () => {
     api();
     await renderChatRoute();
     await screen.findByText("hi");
-    fireEvent.keyDown(input(), { key: "Process", keyCode: 229 });
-    fireEvent.change(input(), { target: { value: "@", selectionStart: 1 } });
+    const user = userEvent.setup();
+    await user.type(input(), "see @");
+    await menu();
+    await user.keyboard("{Backspace}");
     noMenu();
-    expect(input().value).toBe("@");
+    expect(input().value).toBe("see ");
+  });
+
+  it("a pick in the middle of the text leaves the caret where the trigger stood", async () => {
+    api();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(input());
+    await user.paste("ab later");
+    await user.type(input(), "@", { initialSelectionStart: 3, initialSelectionEnd: 3 });
+    expect(input().value).toBe("ab @later");
+    await user.click(await screen.findByRole("option", { name: "Handbook" }));
+    expect(input().value).toBe("ab later");
+    expect(input().selectionStart).toBe(3);
+    expect(input().selectionEnd).toBe(3);
+  });
+
+  it("draws at most 50 rows, also for one connector", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => resource("k1", "Docs", `Doc${i}`));
+    api({ [`GET ${RESOURCES}`]: () => json(200, { resources: many, unavailable: [] }) });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Attach files" }));
+    await user.click(await screen.findByRole("option", { name: "Docs" }));
+    const el = await menu();
+    await within(el).findByText("Doc0");
+    expect(within(el).getAllByRole("option")).toHaveLength(50);
+  });
+
+  it("an unavailable connector's row says why when clicked", async () => {
+    api({
+      [`GET ${RESOURCES}`]: () =>
+        json(200, {
+          resources: [],
+          unavailable: [{ connectorId: "k2", connectorName: "CRM", reason: "not_connected" }],
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    await user.click(await screen.findByRole("option", { name: /^CRM/ }));
+    expect(
+      await screen.findByText(
+        en.chat.connectorUnavailableHint.not_connected.replace("{connector}", "CRM"),
+      ),
+    ).toBeTruthy();
+    noMenu();
+  });
+
+  it("closes on a press outside the composer and keeps the text", async () => {
+    api();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "see @");
+    await menu();
+    fireEvent.pointerDown(screen.getByText("hi"));
+    noMenu();
+    expect(input().value).toBe("see @");
+  });
+});
+
+describe("menu switches and edges", () => {
+  it("+ over an open @ menu takes its trigger out of the text first", async () => {
+    api();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "see @rep");
+    await menu();
+    await user.click(screen.getByRole("button", { name: "Attach files" }));
+    expect((await menu()).getAttribute("data-kind")).toBe("plus");
+    expect(input().value).toBe("see ");
+  });
+
+  it('+ → Connector resources over a draft adds " @" and opens @', async () => {
+    api();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(input());
+    await user.paste("read");
+    await user.click(screen.getByRole("button", { name: "Attach files" }));
+    await user.click(await screen.findByRole("option", { name: en.chat.composerMenu.resources }));
+    expect(input().value).toBe("read @");
+    expect((await menu()).getAttribute("data-kind")).toBe("at");
+  });
+
+  it("a click on a connector waiting for setup does nothing", async () => {
+    const calls = api();
+    await renderChatRoute({ locale: "zh" });
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "添加附件" }));
+    const el = await menu();
+    await user.click(
+      await within(el).findByRole("option", { name: `CRM ${zh.chat.composerMenu.needsConfig}` }),
+    );
+    expect((await menu()).getAttribute("data-kind")).toBe("plus");
+    expect(input(zh).value).toBe("");
+    expect(resourceReads(calls)).toEqual([]);
+  });
+
+  it("compact: the sheet's search field rewrites the text after the trigger", async () => {
+    stubWindowWidth(390);
+    const calls = api();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(input());
+    await user.paste("see ");
+    fireEvent.change(input(), { target: { value: "see @", selectionStart: 5 } });
+    const field = await screen.findByRole("searchbox", { name: en.chat.composerMenu.search });
+    fireEvent.change(field, { target: { value: "rep" } });
+    expect(input().value).toBe("see @rep");
+    await vi.waitFor(() => expect(resourceReads(calls)).toContain(`${RESOURCES}?query=rep`));
+    await user.click(await screen.findByRole("option", { name: "Report" }));
+    expect(input().value).toBe("see ");
+    expect(screen.getByText("@Report")).toBeTruthy();
   });
 });

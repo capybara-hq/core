@@ -24,12 +24,14 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { useLocale, useTranslations } from "next-intl";
 import {
   type ChangeEvent,
+  type CompositionEvent,
   type KeyboardEvent,
   type ReactNode,
   type Ref,
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -103,7 +105,7 @@ export const promptCommand = (p: Pick<ConnectorPrompt, "connectorSlug" | "name">
 /**
  * The open composer menu (spec 2026-11-28 composer menus §1–§4): its kind; where its trigger
  * (`/` or `@`) stands in the text and where the query typed after it ends (the caret at the last
- * edit), or `at: null` for a menu opened without a trigger (＋, or Skills over a draft with text),
+ * edit), or `at: null` for a menu opened without a trigger (+, or Skills over a draft with text),
  * whose query is `q` (the compact sheet's search field); and what an `@` menu lists.
  */
 type MenuState = {
@@ -117,6 +119,9 @@ type MenuState = {
 /** How long the `@` query rests before the kernel is asked (each text is its own cache entry). */
 const RESOURCE_SEARCH_DELAY_MS = 200;
 
+/** At most this many `@` rows are drawn (the kernel's matches, or one connector's of them). */
+const MAX_RESOURCE_ROWS = 50;
+
 /** `value`, once it has not changed for `ms`. */
 function useDebounced<T>(value: T, ms: number): T {
   const [settled, setSettled] = useState(value);
@@ -126,6 +131,9 @@ function useDebounced<T>(value: T, ms: number): T {
   }, [value, ms]);
   return settled;
 }
+
+/** A menu's trigger in the text: `/` alone in the draft, `@` at the start or after whitespace. */
+type Trigger = { kind: "slash" | "at"; at: number; end: number };
 
 /** What the composer sends: the message without the switch (the caller adds model / effort). */
 export type ComposerMessage = Pick<
@@ -222,11 +230,11 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
  * nothing happens while an IME is composing.
  *
  * Carried over from the old composer: each draft keeps one `clientMessageId` until it is sent or
- * changed (the kernel dedupes retries); files come from ＋, drop or paste, upload at once and
+ * changed (the kernel dedupes retries); files come from +, drop or paste, upload at once and
  * block sending while uploading or failed; a send that fails keeps the draft.
  *
  * Menus (composer menus spec §1–§4): one `ComposerMenu` anchored to the composer, the textarea its
- * combobox. ＋ lists what can be added or used (upload, connector resources, skills, the usable
+ * combobox. + lists what can be added or used (upload, connector resources, skills, the usable
  * connectors); `/` in an empty composer lists the agent's skills, the connectors' prompts and the
  * commands last; `@` at the start or after whitespace (never mid-word, never from an IME
  * composition) searches the connectors' resources on the kernel. The trigger stays in the text and
@@ -366,8 +374,16 @@ export function ComposerBar({
   const draft = useRef<{ key: string; id: string } | undefined>(initialDraft?.id);
   /** A typed `/name` is being resolved (the skills read): a second ↵ waits for it. */
   const resolving = useRef(false);
-  /** The last key was an IME's: the edit it makes never opens a menu (its ↵ never picks). */
+  /**
+   * An IME composition is going (between compositionstart and compositionend): its intermediate
+   * text never opens or closes a menu and is never searched; what it commits is checked at its end.
+   * (Keys an IME commits directly, such as Shift+2 giving `@`, report keyCode 229 without a
+   * composition and open the menu like any typed character.)
+   */
   const composing = useRef(false);
+  const [composingNow, setComposingNow] = useState(false);
+  /** Where the caret goes once the text a pick left is rendered (the pick's position). */
+  const caretAfter = useRef<number | null>(null);
 
   // A new agent (a new conversation's picker) has other skills: its chip and list go.
   // (a change, not the mount: a given-back draft keeps its chip)
@@ -538,8 +554,6 @@ export function ComposerBar({
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    // the edit this key makes is an IME's while it composes (its text never opens a menu)
-    composing.current = e.nativeEvent.isComposing || e.keyCode === 229;
     // The one undo step of a fill: only while the text is still what the fill put there.
     const undo = undoFill.current;
     if (undo !== null && isUndoKey(e)) {
@@ -574,7 +588,37 @@ export function ComposerBar({
     if (!isTouchPointer()) focusText();
   };
 
-  /** ＋ (or the footer's `/`): the `/` menu, its trigger typed into an empty draft. */
+  /** The menu a character just put at `caret` opens, if it is a trigger there. */
+  const triggerAt = (next: string, caret: number): Trigger | null => {
+    if (next === "/" && caret === 1 && skill === null) return { kind: "slash", at: 0, end: 1 };
+    // `@` at the start or after whitespace; `a@b` is an address
+    if (next[caret - 1] === "@" && (caret === 1 || /\s/.test(next[caret - 2] ?? ""))) {
+      return { kind: "at", at: caret - 1, end: caret };
+    }
+    return null;
+  };
+
+  function onCompositionStart() {
+    composing.current = true;
+    setComposingNow(true);
+  }
+
+  /** The composition committed its text: the open menu follows it, a committed trigger opens one. */
+  function onCompositionEnd(e: CompositionEvent<HTMLTextAreaElement>) {
+    composing.current = false;
+    setComposingNow(false);
+    const el = e.currentTarget;
+    if (menu !== null && menu.at !== null) {
+      onChange(el.value, el);
+      return;
+    }
+    if (menu === null && (e.data === "@" || e.data === "/")) {
+      const trigger = triggerAt(el.value, el.selectionStart ?? el.value.length);
+      if (trigger !== null) openMenu({ ...trigger, q: "" });
+    }
+  }
+
+  /** + (or the footer's `/`): the `/` menu, its trigger typed into an empty draft. */
   function openSlash() {
     const base = withoutTrigger();
     if (base === "" && skill === null) {
@@ -588,7 +632,7 @@ export function ComposerBar({
     refocus();
   }
 
-  /** ＋ (or the footer's `@`): the `@` menu, its trigger typed at the end of the draft. */
+  /** + (or the footer's `@`): the `@` menu, its trigger typed at the end of the draft. */
   function openAt(scope?: MenuState["scope"]) {
     const base = withoutTrigger();
     const next = base === "" || /\s$/.test(base) ? `${base}@` : `${base} @`;
@@ -609,6 +653,12 @@ export function ComposerBar({
     const caret = el?.selectionStart ?? next.length;
     // a menu with a trigger follows the text after it, and goes when the trigger does
     if (menu !== null && menu.at !== null) {
+      // an IME's intermediate text: checked once the composition commits (onCompositionEnd)
+      if (composing.current) {
+        setMenu({ ...menu, end: Math.max(caret, menu.at + 1) });
+        setText(next);
+        return;
+      }
       const query = next.slice(menu.at + 1, caret);
       const gone =
         next[menu.at] !== (menu.kind === "slash" ? "/" : "@") ||
@@ -622,21 +672,16 @@ export function ComposerBar({
       setText(next);
       return;
     }
-    const typed = next.length === text.length + 1 ? next[caret - 1] : undefined;
-    if (!composing.current) {
-      if (text === "" && next === "/" && skill === null) {
+    // one character typed (an IME's intermediate text never opens a menu)
+    if (!composing.current && next.length === text.length + 1) {
+      const trigger = triggerAt(next, caret);
+      if (trigger !== null) {
         setText(next);
-        openMenu({ kind: "slash", at: 0, end: 1, q: "" });
-        return;
-      }
-      // `@` at the start or after whitespace; `a@b` is an address
-      if (typed === "@" && (caret === 1 || /\s/.test(next[caret - 2] ?? ""))) {
-        setText(next);
-        openMenu({ kind: "at", at: caret - 1, end: caret, q: "" });
+        openMenu({ ...trigger, q: "" });
         return;
       }
     }
-    // a menu opened without a trigger (＋) goes with any edit
+    // a menu opened without a trigger (+) goes with any edit
     if (menu !== null) setMenu(null);
     setText(next);
   }
@@ -675,18 +720,23 @@ export function ComposerBar({
     ]);
   }
 
-  /** A pick: the trigger and its query leave the text, the menu closes. */
+  /** A pick: the trigger and its query leave the text (the caret stays there), the menu closes. */
   const picked = () => {
+    if (menu !== null && menu.at !== null) caretAfter.current = menu.at;
     setText(withoutTrigger());
     setMenu(null);
   };
 
-  // What the menus list. The connectors give the ＋ menu its rows and every row of a connector
+  // What the menus list. The connectors give the + menu its rows and every row of a connector
   // its icon; the `@` menu's resources are searched on the kernel as the query rests.
   const query = menu === null ? "" : menu.at !== null ? text.slice(menu.at + 1, menu.end) : menu.q;
   const connectorList = useQuery({ ...connectorsQuery(orgId), enabled: menu !== null }).data
     ?.connectors;
-  const atQuery = menu?.kind === "at" ? query.trim() : "";
+  // while an IME composes inside the `@` menu its intermediate text (pinyin) is not the query
+  const liveAtQuery = menu?.kind === "at" ? query.trim() : "";
+  const heldAtQuery = useRef(liveAtQuery);
+  if (!composingNow) heldAtQuery.current = liveAtQuery;
+  const atQuery = heldAtQuery.current;
   const searched = useDebounced(atQuery, RESOURCE_SEARCH_DELAY_MS);
   const resourcesQ = useQuery({
     ...connectorResourcesQuery(orgId, searched),
@@ -694,6 +744,10 @@ export function ComposerBar({
     placeholderData: keepPreviousData,
   });
   const resources = resourcesQ.data;
+  // The rows are an earlier query's (the query has not rested yet, or its answer is on its way):
+  // the menu filters them by the query itself, so ↵ never attaches a row the query no longer
+  // matches.
+  const staleResources = searched !== atQuery || resourcesQ.isPlaceholderData;
   const connectorById = new Map<string, ConnectorSummary>(
     (connectorList ?? []).map((c) => [c.id, c]),
   );
@@ -744,7 +798,12 @@ export function ComposerBar({
       ...(sk.manual ? [t("skillTag.manual")] : []),
       ...(sk.fork ? [t("skillTag.fork")] : []),
     ];
-    const description = [...tags, ...(sk.description !== "" ? [sk.description] : [])].join(" · ");
+    // a plugin's skill names its plugin first ("superpowers · Think before building")
+    const description = [
+      ...(sk.plugin !== undefined ? [sk.plugin] : []),
+      ...tags,
+      ...(sk.description !== "" ? [sk.description] : []),
+    ].join(" · ");
     return {
       id: sk.id,
       label: sk.name,
@@ -798,9 +857,9 @@ export function ComposerBar({
   /** The `@` menu: the kernel's matches grouped by connector (one connector's when scoped). */
   const atContent = (scope: MenuState["scope"]): ComposerMenuGroup[] => {
     const only = typeof scope === "object" ? scope.connectorId : undefined;
-    const list = (resources?.resources ?? []).filter(
-      (r) => only === undefined || r.connectorId === only,
-    );
+    const list = (resources?.resources ?? [])
+      .filter((r) => only === undefined || r.connectorId === only)
+      .slice(0, MAX_RESOURCE_ROWS);
     return [
       ...byConnector(list).map((g) => ({
         id: `resources-${g.id}`,
@@ -824,7 +883,7 @@ export function ComposerBar({
     ];
   };
 
-  /** The ＋ menu (spec §2): Add, Abilities, then one row per usable connector. */
+  /** The + menu (spec §2): Add, Abilities, then one row per usable connector. */
   const plusContent = (): ComposerMenuGroup[] => {
     const usable = (connectorList ?? []).filter((c) => c.status === "active");
     return [
@@ -938,9 +997,10 @@ export function ComposerBar({
       : {
           kind: menu.kind,
           groups,
-          query,
-          // the `@` menu's rows are the kernel's matches already
-          filter: menu.kind !== "at",
+          // the `@` menu's query is the one searched (an IME's intermediate text is not)
+          query: menu.kind === "at" ? atQuery : query,
+          // the `@` menu's rows are the kernel's matches already, unless they are an earlier query's
+          filter: menu.kind !== "at" || staleResources,
           loading:
             menu.kind === "at" &&
             (resourcesQ.isFetching || searched !== atQuery) &&
@@ -1027,6 +1087,16 @@ export function ComposerBar({
   const undoFill = useRef<{ before: string; text: string } | null>(null);
   const textNow = useRef(text);
   textNow.current = text;
+  // a pick puts the caret where its trigger stood (a controlled value set moves it to the end)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once the picked text is rendered
+  useLayoutEffect(() => {
+    const at = caretAfter.current;
+    const el = textEl.current;
+    if (at === null || el === null) return;
+    caretAfter.current = null;
+    const pos = Math.min(at, el.value.length);
+    el.setSelectionRange(pos, pos);
+  }, [text]);
   // A pending composer frame hides the composer for up to 1.5 s (focus() is a no-op then): the
   // focus waits for the reveal or the winner's composer (client extensions spec §6.3)
   const cancelFocus = useRef<() => void>(() => {});
@@ -1069,6 +1139,8 @@ export function ComposerBar({
         onChange(v, textEl.current);
       }}
       onKeyDown={onKeyDown}
+      onCompositionStart={onCompositionStart}
+      onCompositionEnd={onCompositionEnd}
       placeholder={placeholder}
       {...(hint !== undefined ? { hint } : {})}
       {...(skill !== null
@@ -1090,12 +1162,14 @@ export function ComposerBar({
             ),
           }
         : {})}
-      // ＋ opens the ＋ menu (its upload row is the file picker) and closes it again
+      // + opens the + menu (its upload row is the file picker) and closes it again
       onAttach={() => {
         if (menu?.kind === "plus") {
           setMenu(null);
           return;
         }
+        // an open `/` or `@` menu's trigger and query leave the text first
+        if (menu !== null) setText(withoutTrigger());
         openMenu({ kind: "plus", at: null, end: 0, q: "" });
         refocus();
       }}
