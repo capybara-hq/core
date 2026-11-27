@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeExtensionEntry,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AgentsService } from "../../src/agents/agents.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -14,6 +19,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createOrgWithProviders,
+  enableExtensions,
   PW,
   runConfig,
   session,
@@ -38,7 +44,12 @@ beforeAll(async () => {
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
-  k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE] }));
+  k = await startKernel(
+    runConfig(
+      { pg: pgc.url, redis: rd.url },
+      { extensions: [MODEL_FAKE, fakeExtensionEntry("fake-trigger-source")] },
+    ),
+  );
   ops = k.app.get(PlatformOperations);
 });
 afterAll(async () => {
@@ -63,6 +74,7 @@ beforeEach(async () => {
   orgId = await createOrgWithProviders(k, await session(k, "owner"));
   await testMembers(db).add(orgId, aliceId, "member", ownerId);
   await testMembers(db).add(orgId, bobId, "member", ownerId);
+  await enableExtensions(db, orgId, "fake-trigger-source");
   const r = await k.app.get(AgentsService).create(orgId, aliceId, {
     definition: {
       name: "Helper",
@@ -147,6 +159,68 @@ describe("automations operations", () => {
       ctxOf(aliceId),
     );
     expect(card?.en).toContain('"N"');
+  });
+
+  it("event-sources lists the org's trigger sources; create takes an event trigger", async () => {
+    const out = (await run("automations.event-sources", {}, ctxOf(aliceId))) as {
+      items: { source: string; events: { type: string }[] }[];
+    };
+    expect(out.items.map((i) => i.source)).toEqual(["fake-trigger-source"]);
+    expect(out.items[0]?.events.map((e) => e.type)).toContain("item.created");
+    const trigger = {
+      kind: "event",
+      source: "fake-trigger-source",
+      types: ["item.created"],
+      filter: [{ fact: "status", op: "eq", value: "open" }],
+    };
+    const created = (await run(
+      "automations.create",
+      {
+        agentId,
+        name: "Watch items",
+        prompt: "Look.",
+        trigger,
+        mode: "subject",
+        unattendedAsk: "wait",
+      },
+      ctxOf(aliceId),
+    )) as { task: { trigger: unknown; mode: string; nextRunAt: unknown; unattendedAsk: string } };
+    expect(created.task).toMatchObject({
+      trigger,
+      mode: "subject",
+      nextRunAt: null,
+      unattendedAsk: "wait",
+    });
+    const card = await summary(
+      "automations.create",
+      { agentId, name: "Watch items", prompt: "p", trigger, mode: "subject" },
+      ctxOf(aliceId),
+    );
+    expect(card?.en).toContain("item.created");
+    expect(card?.en).toContain("fake-trigger-source");
+    expect(card?.zh).toContain("item.created");
+  });
+
+  it("an event trigger refused by the kernel names its next step", async () => {
+    const bad = {
+      agentId,
+      name: "N",
+      prompt: "p",
+      trigger: { kind: "event", source: "fake-trigger-source", types: ["item.vanished"] },
+      mode: "new",
+    };
+    const err = await run("automations.create", bad, ctxOf(aliceId)).catch((e: unknown) => e);
+    expect(String((err as Error).message)).toContain("automations.event-sources");
+    const filter = {
+      ...bad,
+      trigger: {
+        ...bad.trigger,
+        types: ["item.created"],
+        filter: [{ fact: "internalNote", op: "eq", value: "x" }],
+      },
+    };
+    const err2 = await run("automations.create", filter, ctxOf(aliceId)).catch((e: unknown) => e);
+    expect(String((err2 as Error).message)).toContain("filterable");
   });
 
   it("update takes automationId and names the task in its card", async () => {

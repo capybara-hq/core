@@ -33,6 +33,10 @@ import {
   type ToolHandler,
   type ToolSpec,
   type ToolWatcher,
+  type TriggerCause,
+  TriggerError,
+  type TriggerEvent,
+  type TriggersCtx,
   type UiSlotSpec,
   validateFilePreviewProvider,
   validateToolSpec,
@@ -45,6 +49,7 @@ import {
   Kysely,
   TransactionBuilder,
 } from "kysely";
+import type { TriggerEventsService } from "../automations/events/trigger-events.service.js";
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import type { DeviceAccessService } from "../device-access/device-access.service.js";
@@ -54,6 +59,7 @@ import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enable
 import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.js";
 import { RegistrationLedger } from "../extensions/ledger.js";
 import { audit } from "../identity/audit.js";
+import { withOrgScope } from "../infra/database/org-scope.js";
 import type { LockService } from "../infra/lock/lock.service.js";
 import type { ModelEmbeddings } from "../models/embeddings.js";
 import type { ModelImages } from "../models/images.js";
@@ -140,6 +146,12 @@ export interface KernelDeps {
    * a test, the CLI): `ctx.deviceAccess` calls are refused.
    */
   deviceAccess?: () => DeviceAccessBackend | undefined;
+  /**
+   * What `ctx.triggers` calls through (`TriggerEventsService`), found at the time of use like
+   * `deviceAccess`. Absent, or resolving to undefined (a ctx built alone in a test, the CLI):
+   * `ctx.triggers.emit` rejects.
+   */
+  triggers?: () => TriggersBackend | undefined;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
@@ -155,6 +167,40 @@ export type DeviceAccessBackend = Pick<
   | "addNetworkHosts"
   | "answerHandoff"
 >;
+
+/** What `ctx.triggers` calls through (`TriggerEventsService`). */
+export type TriggersBackend = Pick<TriggerEventsService, "emit">;
+
+/**
+ * A plain-data copy of an emitted event, taken once at the ctx boundary (check-then-use): every
+ * own enumerable field is read once (a getter cannot change a value after it was validated),
+ * prototypes and accessors are dropped. `cause.call` keeps its original reference, since the
+ * pipeline's call scope is a symbol-keyed field and the context holds an `AbortSignal`, neither of
+ * which a clone keeps; only its scope is read. Data that cannot be cloned is `invalid_event`.
+ */
+export function snapshotTriggerEvent(event: TriggerEvent): TriggerEvent {
+  if (typeof event !== "object" || event === null || Array.isArray(event))
+    throw new TriggerError("invalid_event", "the event must be an object");
+  try {
+    const { cause, ...rest } = event;
+    const snap = structuredClone(rest) as TriggerEvent;
+    if (cause === undefined) return snap;
+    if (typeof cause !== "object" || cause === null) {
+      snap.cause = cause;
+      return snap;
+    }
+    const plain: Record<string, unknown> = { ...cause };
+    if ("call" in plain) {
+      const { call, ...others } = plain;
+      snap.cause = { ...structuredClone(others), call } as TriggerCause;
+    } else {
+      snap.cause = structuredClone(plain) as TriggerCause;
+    }
+    return snap;
+  } catch (err) {
+    throw new TriggerError("invalid_event", "the event must be plain data", { cause: err });
+  }
+}
 
 /**
  * What `ctx.ui.verifyEmbedToken` returns for a valid token: the signed claims, with an org
@@ -429,7 +475,14 @@ export class LiveConfig {
 }
 
 /** The ctx members that are a plain property when allowed and a denying getter otherwise. */
-type GatedKey = "secrets" | "storage" | "models" | "dialIn" | "devices" | "deviceAccess";
+type GatedKey =
+  | "secrets"
+  | "storage"
+  | "models"
+  | "dialIn"
+  | "devices"
+  | "deviceAccess"
+  | "triggers";
 
 /**
  * Builds the namespaced ctx for one extension from its permission manifest, and returns its
@@ -445,6 +498,8 @@ type GatedKey = "secrets" | "storage" | "models" | "dialIn" | "devices" | "devic
  *   (through `deps.dialIn`; another device throws `ExtensionPermissionError`); `devices` only for
  *   an extension that provides `device-provider@1`, `reportChanged` only for a live device bound to
  *   this extension (through `deps.devices`; another device throws `ExtensionPermissionError`);
+ *   `triggers` only with `permissions.triggers`, each emit only of a declared event type, stored
+ *   in the event's org scope (through `deps.triggers`);
  *   `http.route`
  *   only the method + path declared in `permissions.http` (the record carries the declared access and
  *   its mount, see {@link Route}); `tools.register` only names declared in
@@ -683,6 +738,25 @@ export function createExtensionContext(
           addNetworkHosts: async (scope) => backend().addNetworkHosts(caller, scope),
           answerHandoff: async (scope) => backend().answerHandoff(caller, scope),
         } satisfies DeviceAccessCtx;
+      })()
+    : undefined;
+  // ctx.triggers: only with permissions.triggers; the event types come from the approved manifest
+  // (a frozen copy: the extension changing its manifest object later changes nothing), and the
+  // event is stored in its own org's scope (TriggerEventsService checks the rest)
+  const triggersApi: TriggersCtx | undefined = perms.triggers
+    ? (() => {
+        const declared: readonly string[] = Object.freeze([...(perms.triggers?.emit ?? [])]);
+        return {
+          emit: async (event) => {
+            const b = deps.triggers?.();
+            if (!b) throw new Error("Trigger events are not available in this process.");
+            // one snapshot, read once: what is checked is what is stored
+            const snap = snapshotTriggerEvent(event);
+            if (typeof snap.orgId !== "string" || snap.orgId === "")
+              throw new TriggerError("invalid_event", "invalid event: missing_org_id");
+            return withOrgScope(snap.orgId, () => b.emit(name, declared, snap));
+          },
+        } satisfies TriggersCtx;
       })()
     : undefined;
   // "METHOD path" -> the access the manifest declares for it (the approved manifest)
@@ -1158,7 +1232,7 @@ export function createExtensionContext(
       return closing;
     },
   };
-  // secrets / storage / models / dialIn / devices / deviceAccess: a plain property when declared; otherwise a
+  // secrets / storage / models / dialIn / devices / deviceAccess / triggers: a plain property when declared; otherwise a
   // non-enumerable getter that throws, so spreading or printing ctx triggers no denial and no audit
   const gated = (key: GatedKey, api: unknown, item = `permissions.${key}`): void => {
     if (api) {
@@ -1177,6 +1251,7 @@ export function createExtensionContext(
   gated("dialIn", dialInApi);
   gated("devices", devicesApi, `provides ${DEVICE_PROVIDER_EXTENSION_POINT}`);
   gated("deviceAccess", deviceAccessApi);
+  gated("triggers", triggersApi);
   return ctx as KernelExtensionContext;
 }
 

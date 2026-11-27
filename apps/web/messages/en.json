@@ -599,7 +599,11 @@
       "invalid_once_time": "The date and time aren't valid.",
       "invalid_time_zone": "The time zone isn't valid.",
       "limit_reached": "The limit of automations is reached.",
-      "once_in_past": "That time has already passed."
+      "once_in_past": "That time has already passed.",
+      "event_source_unavailable": "That event source is not available in this organization.",
+      "event_type_unknown": "That event type is not declared by the source, or it is only for assignments.",
+      "filter_invalid": "The event filter refers to an unknown or unfilterable fact, or its value does not fit.",
+      "run_now_unsupported": "Event automations run when their events arrive; they cannot be run now or tried."
     },
     "deployment": {
       "setting_readonly": "This setting is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
@@ -3159,7 +3163,8 @@
       "client": "Client code",
       "components": "Interface components",
       "dialIn": "Machine connections (protocol)",
-      "deviceAccess": "Device services"
+      "deviceAccess": "Device services",
+      "triggers": "Events it emits"
     },
     "configFirstHint": "This extension won't work in the organization until you fill in the organization's own copy of its configuration below",
     "sync": "Sync now",
@@ -3937,7 +3942,8 @@
       "permission_profile_changed": "The recorded permission context cannot be reproduced from the snapshot",
       "device_sandbox_changed": "The device sandbox changed between runs",
       "model_switched": "The candidate model replaces a model switch made in the conversation",
-      "run_outcome_note": "The recorded request lacks run outcome notes its log now gives"
+      "run_outcome_note": "The recorded request lacks run outcome notes its log now gives",
+      "automation_event_block": "The recorded request lacks event automation blocks its log now gives"
     },
     "tabs": {
       "sets": "Eval sets",
@@ -6796,7 +6802,8 @@
       "weekly": "Every {day} at {time}",
       "monthly": "Day {day} of every month at {time}",
       "once": "Once at {at}",
-      "cron": "Cron {expr}"
+      "cron": "Cron {expr}",
+      "event": "On {source} events ({types})"
     },
     "withZone": "{when} ({zone})",
     "state": {
@@ -6828,8 +6835,39 @@
       "noAgents": "No agent you can use. Create an agent first.",
       "prompt": "Prompt",
       "promptHelp": "Sent to the agent as a message on every run. It is never consent: tools still need approval.",
-      "schedule": "Schedule",
-      "scheduleHint": "When the task runs.",
+      "schedule": "Trigger",
+      "scheduleHint": "When the task runs: on a schedule, or when events happen.",
+      "triggerKind": "Starts",
+      "kind": {
+        "time": "On a schedule",
+        "event": "When events happen"
+      },
+      "eventSource": "Event source",
+      "pickEventSource": "Choose a source",
+      "noEventSources": "No extension that emits events is turned on in this organization.",
+      "eventTypes": "Events",
+      "filter": "Filter",
+      "filterHint": "Only events whose facts match every row start a run.",
+      "filterEmpty": "No filter: every selected event starts a run.",
+      "addFilter": "Add filter",
+      "filterFact": "Fact",
+      "filterOp": "Operator",
+      "filterValue": "Value",
+      "filterListPlaceholder": "one, two, three",
+      "op": {
+        "eq": "is",
+        "in": "is one of",
+        "contains": "includes"
+      },
+      "yes": "Yes",
+      "no": "No",
+      "unattendedAsk": "When a run needs an answer",
+      "unattendedAskHelp": "What an unattended run does when it needs your answer or approval. Without a choice the organization's setting applies.",
+      "orgDefault": "Organization default",
+      "ask": {
+        "fail": "Refuse and go on",
+        "wait": "Wait for me"
+      },
       "preset": "Repeat",
       "presets": {
         "hourly": "Every hour",
@@ -6859,7 +6897,9 @@
         "conversation": "One conversation",
         "conversationHint": "Every run continues the same conversation, which keeps its context.",
         "chat": "An IM chat",
-        "chatHint": "Runs post into a chat with the agent's bot."
+        "chatHint": "Runs post into a chat with the agent's bot.",
+        "subject": "One conversation per item",
+        "subjectHint": "Each item the events are about gets its own conversation, which later events continue."
       },
       "conversation": "Conversation",
       "noConversations": "You have no conversation with this agent yet.",
@@ -6953,7 +6993,8 @@
         "plugin_disabled": "The channel's plugin is turned off in this organization",
         "unsupported_target": "This target is not supported yet",
         "task_deleted": "The task was deleted",
-        "task_paused": "The task was paused"
+        "task_paused": "The task was paused",
+        "subject_rate": "The item's hourly run limit was reached"
       },
       "missing": "Refused: {tools}",
       "open": "Open conversation",
@@ -7080,17 +7121,27 @@
     "minIntervalMinutes": "Shortest interval (minutes)",
     "maxTasksPerMember": "Tasks per member",
     "maxTasksPerOrg": "Tasks in the organization",
-    "maxRunsPerHour": "Runs per hour",
+    "maxRunsPerHour": "Runs per member per hour",
     "catchUpWindowMinutes": "Catch-up window (minutes)",
     "catchUpHelp": "A run started later than this after its time is skipped.",
     "pauseAfterFailures": "Pause after failures in a row",
     "defaultExpiryDays": "End recurring tasks after (days)",
-    "defaultExpiryHelp": "For new recurring tasks. Leave empty for never.",
+    "defaultExpiryHelp": "For new recurring and event automations. Leave empty for never.",
     "forbidden": "Forbidden tools",
     "forbiddenHint": "Tools never allowed in scheduled runs, and never approved for an automation.",
     "forbiddenTools": "Tool keys",
     "forbiddenHelp": "One tool key per line, for example Bash or mcp__github__create_issue.",
     "forbiddenUnreadable": "This organization's forbidden tool list could not be read: unattended scheduled runs fail and no tool can be approved for an automation. Check the list below and save it to fix this.",
+    "events": "Event automations",
+    "eventsHint": "Limits for automations that start from events, and which event sources may start them.",
+    "maxEventDepth": "Longest chain of events",
+    "maxEventDepthHelp": "An event caused by a run that an event started counts one deeper; past this depth it is stored but starts nothing.",
+    "coalesceSeconds": "Coalescing window (seconds)",
+    "coalesceHelp": "Events about the same item within this window start one run.",
+    "maxEventRunsPerSubjectPerHour": "Runs per item per hour",
+    "maxEventRunsHelp": "One automation starts at most this many runs for one item per hour.",
+    "eventSources": "Event sources",
+    "eventSourcesHelp": "Unchecked sources start no automation of this organization.",
     "saveRepair": "Save the list",
     "invalid": "Enter a whole number of at least 1.",
     "save": "Save",

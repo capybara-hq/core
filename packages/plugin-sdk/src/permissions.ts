@@ -3,6 +3,7 @@ import { DIAL_IN_PROTOCOL_RE } from "./dial-in.js";
 import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
 import { HTTP_ACCESS, type HttpPermission } from "./http-access.js";
 import { SETUP_CHECK_ID_RE, SETUP_CHECK_LIMITS } from "./setup-check.js";
+import { TRIGGER_MAX_TYPES, TRIGGER_TYPE_RE } from "./triggers.js";
 import { UI_ICONS, type UiContribution } from "./ui.js";
 import { isCompactForm, parseSlotRef, uiSlot } from "./ui-slots.js";
 
@@ -71,6 +72,11 @@ export interface ExtensionPermissions {
    * not listed is refused. Any extension may declare it (no `provides` needed).
    */
   deviceAccess?: { services: string[] };
+  /**
+   * `ctx.triggers`: the event types this extension may emit (at most {@link TRIGGER_MAX_TYPES},
+   * each matching {@link TRIGGER_TYPE_RE}). An emit of another type is refused.
+   */
+  triggers?: { emit: string[] };
 }
 
 /** The most services `permissions.deviceAccess.services` may list. */
@@ -126,6 +132,7 @@ const KEYS = new Set([
   "setupChecks",
   "dialIn",
   "deviceAccess",
+  "triggers",
 ]);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
@@ -329,6 +336,19 @@ export function validatePermissions(
           errs.push(
             `permissions.deviceAccess.services entry "${name}" must match ${DEVICE_SERVICE_NAME_RE}`,
           );
+      }
+    }
+  }
+  if (p.triggers !== undefined) {
+    if (!isObj(p.triggers) || Object.keys(p.triggers).some((k) => k !== "emit")) {
+      errs.push("permissions.triggers must be { emit: string[] }");
+    } else {
+      const types = strList("permissions.triggers.emit", p.triggers.emit, errs);
+      if (types.length > TRIGGER_MAX_TYPES)
+        errs.push(`permissions.triggers.emit lists at most ${TRIGGER_MAX_TYPES} types`);
+      for (const t of types) {
+        if (!TRIGGER_TYPE_RE.test(t))
+          errs.push(`permissions.triggers.emit entry "${t}" must match ${TRIGGER_TYPE_RE}`);
       }
     }
   }

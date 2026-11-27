@@ -119,12 +119,15 @@ Notes for upgrades that need more than the steps above. Before 0.1.0 Capybara ke
 compatibility layers for its earlier builds: the kernel reads only the current formats, and the
 migrations rewrite stored data once where they can.
 
-### Scheduled tasks are renamed to automations (migration 0188)
+### Scheduled tasks are renamed to automations (migrations 0188 and 0189)
 
 Migration 0188 renames the scheduled task tables (to `automations`, `automation_runs` and
-`automation_grants`) and rewrites the stored values that name the feature. It cannot run beside
-old replicas: old code looks for the old table names. Stop the old `api`, `worker` and
-`gateway` replicas before migrating, then start the new ones.
+`automation_grants`) and rewrites the stored values that name the feature. Migration 0189 (event
+automations) ships in the same release and runs right after it. Neither can run beside old
+replicas: old code looks for the old table names, and after 0189 an old replica's run insert
+fails, because its conflict target (the tick's unique index) is gone and it leaves the now required
+`automation_runs.trigger_key` empty. Stop the old `api`, `worker` and `gateway` replicas before
+migrating, then start the new ones.
 
 - **Rename the kernel config group `schedules.*` to `automations.*` before starting the new
   version**: in the environment (`CAPYBARA_SCHEDULES__*` becomes `CAPYBARA_AUTOMATIONS__*`, the same

@@ -10,15 +10,21 @@ import type {
   SandboxPermissionSupport,
   SandboxRoots,
   SkillInvocation,
+  TriggerFactValue,
+  TriggerSubject,
 } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { ModelRef } from "../agents/definition.js";
 import type {
   AutomationChat,
+  AutomationEventMarker,
   AutomationMode,
+  AutomationOrigin,
   AutomationPauseReason,
+  AutomationPrincipal,
   AutomationStatus,
   AutomationTrigger,
+  AutomationUnattendedAsk,
   ScheduleMarker,
   TaskRunSkipReason,
   TaskRunStatus,
@@ -505,6 +511,8 @@ export interface ConversationsTable {
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0113, renamed in 0188: the automation that created it (`new` mode); null otherwise. */
   automation_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0189: the event subject the conversation serves (collaboration spec §4.5); null = none. */
+  subject: ColumnType<ConversationSubject | null, string | null | undefined, string | null>;
   /**
    * 0124: where the conversation comes from, set at creation and never changed. Required on insert
    * (the column's `web` default is not relied on: a forgotten source must not read as web).
@@ -572,11 +580,26 @@ export interface ConversationQueueTable {
     string | null | undefined,
     string | null
   >;
+  /** 0189: the event marker of an event automation's message; null otherwise. */
+  automation_event: ColumnType<
+    AutomationEventMarker | null,
+    string | null | undefined,
+    string | null
+  >;
   created_at: Ts;
   updated_at: Ts;
 }
 
 export type TitleSource = "generated" | "manual";
+
+/** `conversations.subject` (0189): what an event automation's conversation is about. */
+export interface ConversationSubject {
+  /** The extension that emitted the subject's events. */
+  source: string;
+  kind: string;
+  id: string;
+  title: string;
+}
 
 /** chat; eval (a hidden full-run replay conversation); subagent (0053: a sub-agent's conversation). */
 export type ConversationKind = "chat" | "eval" | "subagent";
@@ -638,6 +661,8 @@ export interface RunsTable {
    * inherited by its unattended descendants); null = a person's run.
    */
   automation_run_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0189: the trigger event an event automation's run serves; null otherwise. */
+  trigger_event_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
    * 0132: a manual compaction run (context compaction spec §4.7): it calls the shared compaction
    * execution with `force: true` instead of the agent loop, and writes no model step.
@@ -1765,6 +1790,16 @@ export interface AutomationsTable {
   created_at: Ts;
   updated_at: Ts;
   deleted_at: NullableTs;
+  /** 0189: who made it (collaboration spec §4.1). */
+  origin: ColumnType<AutomationOrigin, AutomationOrigin | undefined, AutomationOrigin>;
+  /** 0189: whom it acts as; null = the member `account_id` (reserved for agent principals). */
+  principal: ColumnType<AutomationPrincipal | null, string | null | undefined, string | null>;
+  /** 0189: what a question in an unattended run does; null = the default. */
+  unattended_ask: ColumnType<
+    AutomationUnattendedAsk | null,
+    AutomationUnattendedAsk | null | undefined,
+    AutomationUnattendedAsk | null
+  >;
 }
 
 /** Why a file share was revoked (0161). */
@@ -1817,13 +1852,19 @@ export interface FileSharesTable {
   updated_at: Ts;
 }
 
-/** 0113 (renamed in 0188 from the scheduled task runs table): one tick (or trial run) of an automation; unique per (task, tick) when not trial. */
+/**
+ * 0113 (renamed in 0188 from the scheduled task runs table): one tick, event fire (0189) or trial
+ * run of an automation; unique per (automation, trigger key) when not trial.
+ */
 export interface AutomationRunsTable {
   id: string;
   /** 0188: renamed from `task_id`. */
   automation_id: string;
   org_id: string;
-  scheduled_for: Date | string;
+  /** 0189: nullable; null for an event run. */
+  scheduled_for: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  /** 0189: the tick as `Date.toISOString()` for a time run, the event id for an event run. */
+  trigger_key: string;
   fired_at: NullableTs;
   trial: ColumnType<boolean, boolean | undefined, boolean>;
   /** A person's "run now" (trial or not): runs even while the task is paused. */
@@ -1838,6 +1879,59 @@ export interface AutomationRunsTable {
   >;
   error: NullableText;
   missing_grants: ColumnType<string[], string | undefined, string>;
+  /** 0189: when the run was recorded (an event run's moment before its claim). */
+  created_at: Ts;
+}
+
+/**
+ * 0189: an event an extension emitted (`ctx.triggers.emit`, collaboration spec §4.2); unique per
+ * (org, plugin, dedupe key).
+ */
+export interface TriggerEventsTable {
+  id: string;
+  org_id: string;
+  plugin: string;
+  type: string;
+  subject: ColumnType<TriggerSubject, string, string>;
+  facts: ColumnType<Record<string, TriggerFactValue>, string | undefined, string>;
+  summary: string;
+  dedupe_key: string;
+  audience: ColumnType<
+    { accountId: string; agentId: string } | null,
+    string | null | undefined,
+    string | null
+  >;
+  cause_account_id: NullableText;
+  cause_run_id: NullableText;
+  depth: ColumnType<number, number | undefined, number>;
+  state: ColumnType<TriggerEventState, TriggerEventState | undefined, TriggerEventState>;
+  created_at: Ts;
+}
+
+export type TriggerEventState = "pending" | "dispatched" | "undelivered" | "depth_stopped";
+
+/**
+ * 0189: an event that reached an automation, and the run that served it (null while it waits:
+ * events of one subject coalesce, collaboration spec §4.7).
+ */
+export interface AutomationEventDeliveriesTable {
+  org_id: string;
+  automation_id: string;
+  event_id: string;
+  /** `<subject kind>:<subject id>`. */
+  subject_key: string;
+  automation_run_id: NullableText;
+  created_at: Ts;
+}
+
+/** 0189: the one conversation per subject of a `subject`-mode automation (collaboration §4.5). */
+export interface AutomationConversationsTable {
+  org_id: string;
+  automation_id: string;
+  subject_kind: string;
+  subject_id: string;
+  conversation_id: string;
+  created_at: Ts;
 }
 
 /** 0113 (renamed in 0188 from the scheduled task grants table): an automation's remembered grants (same shape as `conversation_tool_grants`). */
@@ -2032,6 +2126,9 @@ export interface KernelDatabase {
   automations: AutomationsTable;
   automation_runs: AutomationRunsTable;
   automation_grants: AutomationGrantsTable;
+  trigger_events: TriggerEventsTable;
+  automation_event_deliveries: AutomationEventDeliveriesTable;
+  automation_conversations: AutomationConversationsTable;
   file_shares: FileSharesTable;
   platform_icons: PlatformIconsTable;
   skills: SkillsTable;

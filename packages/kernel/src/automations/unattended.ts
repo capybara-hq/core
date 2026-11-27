@@ -22,36 +22,59 @@ export async function unattendedTaskRunOf(
   return row ? { taskRunId: row.id, taskId: row.automation_id, trial: row.trial } : null;
 }
 
+/** What a new run takes from its boundary event ({@link automationRunAt}). */
+export interface AutomationLineage {
+  /** `runs.automation_run_id`: the automation run it serves (unattended); null = attended. */
+  automationRunId: string | null;
+  /** `runs.trigger_event_id`: the trigger event it started from (collaboration spec §4.7). */
+  triggerEventId: string | null;
+}
+
+const NO_LINEAGE: AutomationLineage = { automationRunId: null, triggerEventId: null };
+
 /**
- * The `automation_run_id` a new run whose boundary (`runs.trigger_seq`) is event `seq` of
- * `conversationId` gets (scheduled tasks spec §4), read in the caller's transaction:
- * - a `user_message`: its schedule marker's task run; a sub-agent's task or `SendMessage` message
- *   (`dispatch`): what its parent run has; a person's message: null;
+ * The `automation_run_id` and `trigger_event_id` a new run whose boundary (`runs.trigger_seq`) is
+ * event `seq` of `conversationId` gets (scheduled tasks spec §4, collaboration spec §4.7), read in
+ * the caller's transaction:
+ * - a `user_message`: its schedule marker's task run (no event), or its event marker's run and
+ *   last event (the most recent cause); a sub-agent's task or `SendMessage` message (`dispatch`):
+ *   what its parent run has; a person's message: neither;
  * - a `background_task_finished`: what the run that launched the task has;
  * - a `subagent_delivery`: what the child run that delivered it has (it inherited from its parent);
- * - anything else, or no such event: null.
+ * - anything else, or no such event: neither.
  */
 export async function automationRunAt(
   t: KernelSchemaDb,
   conversationId: string,
   seq: number | string,
-): Promise<string | null> {
+): Promise<AutomationLineage> {
   const ev = await t
     .selectFrom("conversation_events")
     .select(["type", "payload"])
     .where("conversation_id", "=", conversationId)
     .where("seq", "=", String(seq))
     .executeTakeFirst();
-  if (!ev) return null;
+  if (!ev) return NO_LINEAGE;
   const p = ev.payload as {
     schedule?: { taskRunId?: unknown };
+    automationEvent?: { automationRunId?: unknown; events?: Array<{ id?: unknown }> };
     dispatch?: { parentRunId?: unknown };
     taskId?: unknown;
     childRunId?: unknown;
   };
   let runId: string | undefined;
   if (ev.type === "user_message") {
-    if (typeof p.schedule?.taskRunId === "string") return p.schedule.taskRunId;
+    if (typeof p.schedule?.taskRunId === "string") {
+      return { automationRunId: p.schedule.taskRunId, triggerEventId: null };
+    }
+    const marker = p.automationEvent;
+    if (typeof marker?.automationRunId === "string") {
+      const last = marker.events?.at(-1)?.id;
+      return {
+        automationRunId: marker.automationRunId,
+        triggerEventId: typeof last === "string" ? last : null,
+      };
+    }
     if (typeof p.dispatch?.parentRunId === "string") runId = p.dispatch.parentRunId;
   } else if (ev.type === "background_task_finished" && typeof p.taskId === "string") {
     // org-filter: the task id is the kernel-written event payload, scoped by its conversation_id
@@ -65,13 +88,15 @@ export async function automationRunAt(
   } else if (ev.type === "subagent_delivery" && typeof p.childRunId === "string") {
     runId = p.childRunId;
   }
-  if (runId === undefined) return null;
+  if (runId === undefined) return NO_LINEAGE;
   const run = await t
     .selectFrom("runs")
-    .select("automation_run_id")
+    .select(["automation_run_id", "trigger_event_id"])
     .where("id", "=", runId)
     .executeTakeFirst();
-  return run?.automation_run_id ?? null;
+  return run
+    ? { automationRunId: run.automation_run_id, triggerEventId: run.trigger_event_id }
+    : NO_LINEAGE;
 }
 
 /** The tool result of an ask outside the task's grants in an unattended run, `fail` mode (§7). */
@@ -149,7 +174,7 @@ export const unattendedFails = (u: UnattendedRun | null | undefined): boolean =>
 /**
  * Whether the task's creator joined the run (automations rulings, Task 7 and Task 8): the run's
  * conversation holds a `user_message` after the run's boundary (`trigger_seq`) that the creator
- * wrote (no schedule marker, no sub-agent dispatch, `authorAccountId` = the task's account) and
+ * wrote (no schedule or event marker, no sub-agent dispatch, `authorAccountId` = the task's account) and
  * that the run already absorbed (at or below the `absorbedUpToSeq` of its latest model call). The
  * rest of such a run is attended. Another person's message (someone replying in a group thread the
  * task posted into) does not make it attended: the task's grants are the creator's, and only the
@@ -167,6 +192,7 @@ async function personJoined(db: KernelSchemaDb, runId: string): Promise<boolean>
           AND u.type = 'user_message'
           AND u.seq > r.trigger_seq
           AND NOT (u.payload ? 'schedule')
+          AND NOT (u.payload ? 'automationEvent')
           AND NOT (u.payload ? 'dispatch')
           AND u.payload->>'authorAccountId' = st.account_id
           AND u.seq <= (
@@ -188,6 +214,8 @@ async function personJoined(db: KernelSchemaDb, runId: string): Promise<boolean>
  * The automation context of a run's tool calls (`PolicyContext.unattended`), or null when the
  * run is attended: it serves no task run, or a person's message joined it ({@link personJoined}).
  * A trial run is returned with `trial: true` (attended; its approvals become task grants).
+ * `unattendedAsk` is the automation's own `unattended_ask` when set (collaboration spec §4.4),
+ * else the org's default.
  */
 export async function unattendedRunOf(
   db: KernelSchemaDb,
@@ -199,9 +227,15 @@ export async function unattendedRunOf(
   if (run === null) return null;
   if (!run.trial && (await personJoined(db, runId))) return null;
   const s = await readAutomationSettings(db, config, orgId);
+  // org-filter: the task id is read from the kernel run's own automation_run_id, never input
+  const own = await db
+    .selectFrom("automations")
+    .select("unattended_ask")
+    .where("id", "=", run.taskId)
+    .executeTakeFirst();
   return {
     ...run,
-    unattendedAsk: s.unattendedAsk,
+    unattendedAsk: own?.unattended_ask ?? s.unattendedAsk,
     forbiddenTools: s.forbiddenTools,
     forbiddenToolsUnreadable: s.forbiddenToolsUnreadable,
   };

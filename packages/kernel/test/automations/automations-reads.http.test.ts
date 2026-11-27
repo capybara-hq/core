@@ -267,6 +267,7 @@ describe("automation reads for the web", () => {
           automation_id: taskId,
           org_id: orgId,
           scheduled_for: runAt(h),
+          trigger_key: runAt(h).toISOString(),
           fired_at: runAt(h),
           status: "completed",
           ...over,

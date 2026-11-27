@@ -20,6 +20,9 @@ import type { Automation, TaskRun } from "./types.js";
 /** Due tasks per scan; what is left waits for the next minute. */
 const MAX_TASKS = 2000;
 
+/** How a task past its `expires_at` ends (a time task when due, an event task in the scan). */
+const EXPIRED: AutomationPatch = { status: "ended", pauseReason: "expired", nextRunAt: null };
+
 /**
  * The schedule math could not evaluate a due task's stored trigger (its transaction rolled back);
  * the scan pauses it. Only the math raises it: a database error fails the scan pass instead (the
@@ -46,7 +49,9 @@ class TaskScanFailed extends Error {
  * marks its tick missed itself, `AutomationFirer`), and the run's unfired settle check (a fire
  * job that failed for good before its claim: the tick is missed, `job-ids.ts`). A task whose stored
  * trigger the schedule math cannot evaluate is paused (`invalid_schedule`) instead of failing the
- * scan; a database error fails the pass (the next minute retries) and pauses nothing.
+ * scan; a database error fails the pass (the next minute retries) and pauses nothing. An event
+ * automation past its `expires_at` (it has no tick to be due at) ends the same way, `expired`, in
+ * one transaction per scan (the dispatcher already passes it over).
  */
 @Injectable()
 export class AutomationScanJob {
@@ -86,7 +91,17 @@ export class AutomationScanJob {
         await this.quarantine(err.taskId);
       }
     }
+    await this.endExpiredEvents(now);
     return total;
+  }
+
+  /** Ends the event automations past their expiry (see the class); returns how many. */
+  @Transactional()
+  async endExpiredEvents(now: Date): Promise<number> {
+    const t = this.db;
+    const expired = await this.store.lockExpiredEvent(t, now, MAX_TASKS);
+    for (const task of expired) await this.store.updateTask(t, task.id, EXPIRED);
+    return expired.length;
   }
 
   /**
@@ -176,7 +191,7 @@ export class AutomationScanJob {
       step.end === "done"
         ? { status: "ended", nextRunAt: null }
         : step.end === "expired"
-          ? { status: "ended", pauseReason: "expired", nextRunAt: null }
+          ? EXPIRED
           : { nextRunAt: step.nextRunAt };
     await this.store.updateTask(t, task.id, patch);
     return fired;

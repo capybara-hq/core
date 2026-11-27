@@ -3,25 +3,24 @@ import type { Selectable, Updateable } from "kysely";
 import { sql } from "kysely";
 import type { AutomationRunsTable, AutomationsTable, KernelSchemaDb } from "../db/kernel-schema.js";
 import { asPlatform } from "../infra/database/org-scope.js";
-import type { Automation, AutomationGrant, TaskRun, TaskRunStatus } from "./types.js";
+import type { Automation, AutomationGrant, TaskRun, TaskRunStatus, TimedTaskRun } from "./types.js";
 
 /** What a caller supplies to create a task; the counters, pause fields and timestamps default. */
 export type AutomationInsert = Omit<
   Automation,
-  "pauseReason" | "pausedBy" | "consecutiveFailures" | "createdAt" | "updatedAt"
->;
+  "pauseReason" | "pausedBy" | "consecutiveFailures" | "createdAt" | "updatedAt" | "unattendedAsk"
+> & { unattendedAsk?: Automation["unattendedAsk"] };
 
 /** The fields a task update may change (`updated_at` is always refreshed). */
 export type AutomationPatch = Partial<
   Omit<Automation, "id" | "orgId" | "accountId" | "createdAt" | "updatedAt">
 >;
 
-/** What a caller supplies to create a task run; it starts `pending`. */
-export interface TaskRunInsert {
+/** The fields of a task run insert either kind of run has; it starts `pending`. */
+interface TaskRunInsertBase {
   id: string;
   taskId: string;
   orgId: string;
-  scheduledFor: Date;
   trial: boolean;
   /** A person's "run now" (default false: a tick of the schedule). */
   manual?: boolean;
@@ -31,7 +30,31 @@ export interface TaskRunInsert {
   conversationId?: string | null;
 }
 
-export type TaskRunPatch = Partial<Omit<TaskRun, "id" | "taskId" | "orgId" | "trial" | "manual">>;
+/** A time run: a tick of the schedule (or a person's "run now" at a moment). */
+export interface TimedTaskRunInsert extends TaskRunInsertBase {
+  scheduledFor: Date;
+  /** Default: the tick as `Date.toISOString()`. */
+  triggerKey?: string;
+}
+
+/** An event run (collaboration spec §4.7): no tick; keyed by the first event it serves. */
+export interface EventTaskRunInsert extends TaskRunInsertBase {
+  scheduledFor: null;
+  triggerKey: string;
+}
+
+/** What a caller supplies to create a task run; it starts `pending`. */
+export type TaskRunInsert = TimedTaskRunInsert | EventTaskRunInsert;
+
+/**
+ * The moment a run is ordered by in the run lists: its tick, else its claim, else when it was
+ * recorded (an event run has no tick and no claim before its fire job takes it).
+ */
+export const runOrderMoment = sql<Date>`coalesce(scheduled_for, fired_at, created_at)`;
+
+export type TaskRunPatch = Partial<
+  Omit<TaskRun, "id" | "taskId" | "orgId" | "trial" | "manual" | "triggerKey">
+>;
 
 const NON_TERMINAL: TaskRunStatus[] = ["pending", "running"];
 
@@ -52,6 +75,7 @@ const toTask = (r: Selectable<AutomationsTable>): Automation => ({
   model: r.model,
   effort: r.effort,
   deviceId: r.device_id,
+  unattendedAsk: r.unattended_ask,
   status: r.status,
   pauseReason: r.pause_reason,
   pausedBy: r.paused_by,
@@ -67,7 +91,8 @@ const toRun = (r: Selectable<AutomationRunsTable>): TaskRun => ({
   id: r.id,
   taskId: r.automation_id,
   orgId: r.org_id,
-  scheduledFor: date(r.scheduled_for),
+  scheduledFor: dateOrNull(r.scheduled_for),
+  triggerKey: r.trigger_key,
   firedAt: dateOrNull(r.fired_at),
   trial: r.trial,
   manual: r.manual,
@@ -78,6 +103,13 @@ const toRun = (r: Selectable<AutomationRunsTable>): TaskRun => ({
   error: r.error,
   missingGrants: r.missing_grants,
 });
+
+/** A run read back from a row written with a tick (a time run). */
+const toTimedRun = (r: Selectable<AutomationRunsTable>): TimedTaskRun => {
+  const run = toRun(r);
+  if (run.scheduledFor === null) throw new Error(`automation run ${r.id} has no tick`);
+  return { ...run, scheduledFor: run.scheduledFor };
+};
 
 const json = (v: unknown) => (v === null ? null : JSON.stringify(v));
 
@@ -94,6 +126,7 @@ function taskColumns(p: AutomationPatch): Updateable<AutomationsTable> {
   if (p.model !== undefined) c.model = json(p.model);
   if (p.effort !== undefined) c.effort = p.effort;
   if (p.deviceId !== undefined) c.device_id = p.deviceId;
+  if (p.unattendedAsk !== undefined) c.unattended_ask = p.unattendedAsk;
   if (p.status !== undefined) c.status = p.status;
   if (p.pauseReason !== undefined) c.pause_reason = p.pauseReason;
   if (p.pausedBy !== undefined) c.paused_by = p.pausedBy;
@@ -128,6 +161,7 @@ export class AutomationStore {
         model: json(task.model),
         effort: task.effort,
         device_id: task.deviceId,
+        unattended_ask: task.unattendedAsk ?? null,
         status: task.status,
         next_run_at: task.nextRunAt,
         jitter_seconds: task.jitterSeconds,
@@ -261,9 +295,38 @@ export class AutomationStore {
   }
 
   /**
-   * Inserts a task run; null when a non-trial run for the same tick already exists (the
-   * exactly-once guard, `UNIQUE (automation_id, scheduled_for) WHERE NOT trial`).
+   * Locks up to `limit` active live event automations past their `expires_at` (an event
+   * automation has no `next_run_at`, so {@link lockDue} never selects it), skipping rows another
+   * transaction holds. Call it inside a transaction: the scan ends each as it ends an expired time
+   * task.
    */
+  // org-filter: the scan's deployment-wide expired event automation sweep (LockedCron), each task
+  // ended by its own id
+  async lockExpiredEvent(t: KernelSchemaDb, now: Date, limit: number): Promise<Automation[]> {
+    return asPlatform("deployment-wide expired event automation sweep", async () => {
+      const rows = await t
+        .selectFrom("automations")
+        .selectAll()
+        .where("status", "=", "active")
+        .where("deleted_at", "is", null)
+        .where(sql<boolean>`trigger->>'kind' = 'event'`)
+        .where("expires_at", "<=", now)
+        .orderBy("expires_at")
+        .orderBy("id")
+        .limit(limit)
+        .forUpdate()
+        .skipLocked()
+        .execute();
+      return rows.map(toTask);
+    });
+  }
+
+  /**
+   * Inserts a task run; null when a non-trial run for the same trigger key (a time run's tick)
+   * already exists (the exactly-once guard, `UNIQUE (automation_id, trigger_key) WHERE NOT trial`).
+   */
+  async insertRun(t: KernelSchemaDb, run: TimedTaskRunInsert): Promise<TimedTaskRun | null>;
+  async insertRun(t: KernelSchemaDb, run: EventTaskRunInsert): Promise<TaskRun | null>;
   async insertRun(t: KernelSchemaDb, run: TaskRunInsert): Promise<TaskRun | null> {
     const row = await t
       .insertInto("automation_runs")
@@ -272,6 +335,10 @@ export class AutomationStore {
         automation_id: run.taskId,
         org_id: run.orgId,
         scheduled_for: run.scheduledFor,
+        trigger_key:
+          run.scheduledFor === null
+            ? run.triggerKey
+            : (run.triggerKey ?? run.scheduledFor.toISOString()),
         trial: run.trial,
         manual: run.manual ?? false,
         status: run.status ?? "pending",
@@ -280,11 +347,12 @@ export class AutomationStore {
         conversation_id: run.conversationId ?? null,
       })
       .onConflict((oc) =>
-        oc.columns(["automation_id", "scheduled_for"]).where("trial", "=", false).doNothing(),
+        oc.columns(["automation_id", "trigger_key"]).where("trial", "=", false).doNothing(),
       )
       .returningAll()
       .executeTakeFirst();
-    return row ? toRun(row) : null;
+    if (!row) return null;
+    return run.scheduledFor === null ? toRun(row) : toTimedRun(row);
   }
 
   /** Patches a task run; null when it does not exist. */
@@ -334,7 +402,7 @@ export class AutomationStore {
       .where("status", "in", NON_TERMINAL);
     if (exceptId !== undefined) q = q.where("id", "!=", exceptId);
     const row = await q
-      .orderBy("scheduled_for", "desc")
+      .orderBy(runOrderMoment, "desc")
       .orderBy("id", "desc")
       .limit(1)
       .executeTakeFirst();
@@ -342,28 +410,38 @@ export class AutomationStore {
   }
 
   /**
-   * Runs of the org fired at or after `since` (the `maxRunsPerHour` count; trial runs included,
-   * skipped runs not: a run whose queued message a person removed was never run).
+   * Runs of the org's automations owned by `accountId` fired at or after `since` (the
+   * `maxRunsPerHour` count, per person: collaboration spec §4.7; trial runs included, skipped runs
+   * not: a run whose queued message a person removed was never run). Deleted automations count:
+   * their runs were made.
    */
-  async countFiredSince(t: KernelSchemaDb, orgId: string, since: Date): Promise<number> {
+  async countFiredSince(
+    t: KernelSchemaDb,
+    orgId: string,
+    accountId: string,
+    since: Date,
+  ): Promise<number> {
     const row = await t
-      .selectFrom("automation_runs")
+      .selectFrom("automation_runs as r")
+      .innerJoin("automations as a", "a.id", "r.automation_id")
       .select((eb) => eb.fn.countAll<string>().as("n"))
-      .where("org_id", "=", orgId)
-      .where("fired_at", ">=", since)
-      .where("status", "!=", "skipped")
+      .where("r.org_id", "=", orgId)
+      .where("a.org_id", "=", orgId)
+      .where("a.account_id", "=", accountId)
+      .where("r.fired_at", ">=", since)
+      .where("r.status", "!=", "skipped")
       .executeTakeFirstOrThrow();
     return Number(row.n);
   }
 
-  /** A task's runs, latest tick first. */
+  /** A task's runs, latest first (by tick, else claim, else record: {@link runOrderMoment}). */
   // org-filter: by the id of a task its caller read under an org filter (AutomationsService.get)
   async listRuns(t: KernelSchemaDb, taskId: string, limit: number): Promise<TaskRun[]> {
     const rows = await t
       .selectFrom("automation_runs")
       .selectAll()
       .where("automation_id", "=", taskId)
-      .orderBy("scheduled_for", "desc")
+      .orderBy(runOrderMoment, "desc")
       .orderBy("id", "desc")
       .limit(limit)
       .execute();
@@ -381,7 +459,7 @@ export class AutomationStore {
     from: Date,
     to: Date,
     limit: number,
-  ): Promise<TaskRun[]> {
+  ): Promise<TimedTaskRun[]> {
     if (taskIds.length === 0) return [];
     const rows = await t
       .selectFrom("automation_runs")
@@ -394,7 +472,8 @@ export class AutomationStore {
       .orderBy("id")
       .limit(limit)
       .execute();
-    return rows.map(toRun);
+    // the range admits only runs with a tick
+    return rows.map(toRun).filter((r): r is TimedTaskRun => r.scheduledFor !== null);
   }
 
   async listGrants(t: KernelSchemaDb, taskId: string): Promise<AutomationGrant[]> {

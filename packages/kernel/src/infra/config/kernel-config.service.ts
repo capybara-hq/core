@@ -73,6 +73,11 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "automations.maxTasksPerMemberCap": () => {},
   "automations.maxTasksPerOrgCap": () => {},
   "automations.maxRunsPerHourCap": () => {},
+  "automations.maxEventDepthCap": () => {},
+  "automations.coalesceSecondsCap": () => {},
+  "automations.maxEventRunsPerSubjectPerHourCap": () => {},
+  // The trigger event sweep reads the retention at every tick.
+  "automations.eventRetentionDays": () => {},
   // Run start reads the skills catalog budget when it records a snapshot.
   "skills.catalogBudgetChars": () => {},
   // The attribution defaults are read live at every run start, admin settings view and org settings.

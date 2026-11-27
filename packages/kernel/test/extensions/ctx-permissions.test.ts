@@ -15,6 +15,7 @@ import { createKeyring } from "../../src/ctx/secrets.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { currentScope } from "../../src/infra/database/org-scope.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import { EmbedTokens } from "../../src/ui/embed-token.js";
@@ -203,6 +204,96 @@ describe("ctx.models (permissions.models)", () => {
     await expect(ctx.models.describe({ orgId: "o", purpose: "perm-test.m" })).rejects.toThrow(
       /not available/,
     );
+    await ctx.close();
+  });
+});
+
+describe("ctx.triggers (permissions.triggers)", () => {
+  const event = {
+    orgId: "o1",
+    type: "item.created",
+    subject: { kind: "item", id: "1", title: "One" },
+    facts: {},
+    summary: "Item one was created.",
+    dedupeKey: "k",
+  };
+
+  it("without permissions.triggers ctx.triggers throws and audits", async () => {
+    const ctx = createExtensionContext(deps, mf(), {});
+    expect(() => ctx.triggers).toThrow(ExtensionPermissionError);
+    expect(Object.keys(ctx)).not.toContain("triggers");
+    await ctx.close();
+    expect((await denials())[0]?.detail).toMatchObject({ item: "permissions.triggers" });
+  });
+
+  it("emits through the backend as this extension, with a frozen copy of the declared types, in the event's org scope", async () => {
+    const seen: { plugin: string; declared: readonly string[]; scope: unknown }[] = [];
+    const triggers = () => ({
+      emit: async (plugin: string, declared: readonly string[]) => {
+        seen.push({ plugin, declared, scope: currentScope() });
+        return { eventId: "e1", duplicate: false };
+      },
+    });
+    const emit = ["item.created"];
+    const ctx = createExtensionContext(
+      { ...deps, triggers },
+      mf({ permissions: { triggers: { emit } } }),
+      {},
+    );
+    // the extension changes its manifest object after approval: the ctx keeps the approved copy
+    emit.push("item.secret");
+    expect(await ctx.triggers.emit(event)).toEqual({ eventId: "e1", duplicate: false });
+    expect(seen).toEqual([
+      { plugin: "perm-test", declared: ["item.created"], scope: { kind: "org", orgId: "o1" } },
+    ]);
+    expect(Object.isFrozen(seen[0]?.declared)).toBe(true);
+    await expect(ctx.triggers.emit({ ...event, orgId: "" })).rejects.toMatchObject({
+      code: "invalid_event",
+    });
+    await ctx.close();
+  });
+
+  it("the backend gets one plain snapshot: getters read once, cause.call kept by reference", async () => {
+    const got: unknown[] = [];
+    const triggers = () => ({
+      emit: async (_plugin: string, _declared: readonly string[], e: unknown) => {
+        got.push(e);
+        return { eventId: "e1", duplicate: false };
+      },
+    });
+    const ctx = createExtensionContext(
+      { ...deps, triggers },
+      mf({ permissions: { triggers: { emit: ["item.created"] } } }),
+      {},
+    );
+    let reads = 0;
+    const call = { orgId: "o1", signal: new AbortController().signal } as never;
+    const e = { ...event, cause: { call } };
+    Object.defineProperty(e, "type", {
+      enumerable: true,
+      get: () => (reads++ === 0 ? "item.created" : "item.secret"),
+    });
+    await ctx.triggers.emit(e);
+    expect(reads).toBe(1);
+    const snap = got[0] as typeof e;
+    expect(snap).not.toBe(e);
+    expect(Object.getOwnPropertyDescriptor(snap, "type")?.value).toBe("item.created");
+    expect(snap.cause.call).toBe(call);
+    // data that cannot be cloned is refused, never passed on
+    await expect(
+      ctx.triggers.emit({ ...event, facts: { f: (() => 1) as never } }),
+    ).rejects.toMatchObject({ code: "invalid_event" });
+    expect(got).toHaveLength(1);
+    await ctx.close();
+  });
+
+  it("without a backend (a ctx built alone, the CLI) emit rejects", async () => {
+    const ctx = createExtensionContext(
+      deps,
+      mf({ permissions: { triggers: { emit: ["item.created"] } } }),
+      {},
+    );
+    await expect(ctx.triggers.emit(event)).rejects.toThrow("not available");
     await ctx.close();
   });
 });

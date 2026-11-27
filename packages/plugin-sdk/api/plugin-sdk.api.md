@@ -1664,6 +1664,16 @@ export interface EntryImport {
 export const escapeSkillInvocationTags: (s: string) => string;
 
 // @public
+export type EventFilter = EventFilterClause[];
+
+// @public
+export interface EventFilterClause {
+    fact: string;
+    op: "eq" | "in" | "contains";
+    value: TriggerFactValue;
+}
+
+// @public
 export interface ExecResult {
     exitCode: number | null;
     network?: {
@@ -1762,6 +1772,7 @@ export interface ExtensionContext {
             watch?: ToolWatcher;
         }): void;
     };
+    triggers: TriggersCtx;
     ui: {
         view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
         action(id: string, handler: (args: UiActionArgs) => Promise<UiActionResult>): void;
@@ -1902,6 +1913,9 @@ export interface ExtensionPermissions {
     setupChecks?: string[];
     storage?: boolean;
     tools?: string[];
+    triggers?: {
+        emit: string[];
+    };
     ui?: {
         views?: string[];
         embeds?: string[];
@@ -2679,6 +2693,9 @@ export type MarketplaceSource = {
         integrity: string;
     };
 };
+
+// @public
+export function matchesFilter(filter: EventFilter, facts: Record<string, TriggerFactValue>): boolean;
 
 // @public
 export const MAX_DEVICE_LIST_ENTRIES = 1000;
@@ -5094,6 +5111,100 @@ export interface ToolWatchContext extends Omit<ToolCallContext, "resume"> {
 export type ToolWatcher = (ctx: ToolWatchContext) => Promise<"settle" | "pending">;
 
 // @public
+export const TRIGGER_MAX_TYPES = 64;
+
+// @public
+export const TRIGGER_SOURCE_EXTENSION_POINT: ExtensionPointRef;
+
+// @public
+export const TRIGGER_SUMMARY_MAX_BYTES = 4096;
+
+// @public
+export const TRIGGER_TYPE_RE: RegExp;
+
+// @public
+export type TriggerCause = {
+    call: ToolCallContext;
+} | {
+    accountId: string;
+};
+
+// @public
+export class TriggerError extends Error {
+    constructor(code: TriggerErrorCode, message: string, opts?: {
+        cause?: unknown;
+    });
+    readonly code: TriggerErrorCode;
+}
+
+// @public
+export type TriggerErrorCode = "type_not_declared" | "invalid_event" | "org_disabled";
+
+// @public
+export interface TriggerEvent {
+    audience?: {
+        accountId: string;
+        agentId: string;
+    };
+    cause?: TriggerCause;
+    dedupeKey: string;
+    facts: Record<string, TriggerFactValue>;
+    orgId: string;
+    subject: TriggerSubject;
+    summary: string;
+    type: string;
+}
+
+// @public
+export interface TriggerEventDeclaration {
+    directed: boolean;
+    facts: Record<string, TriggerFactDeclaration>;
+    name: LocalizedName;
+    type: string;
+}
+
+// @public
+export interface TriggerFactDeclaration {
+    filterable: boolean;
+    name: LocalizedName;
+    type: "string" | "number" | "boolean" | "string[]";
+}
+
+// @public
+export type TriggerFactValue = string | number | boolean | string[];
+
+// @public
+export interface TriggersCtx {
+    emit(event: TriggerEvent): Promise<{
+        eventId: string;
+        duplicate: boolean;
+    }>;
+}
+
+// @public
+export interface TriggerSource {
+    events(): TriggerEventDeclaration[];
+    subjectLink?(args: {
+        orgId: string;
+        subject: TriggerSubject;
+    }): Promise<string | null>;
+    visible(args: {
+        orgId: string;
+        accountIds: string[];
+        subject: TriggerSubject;
+        config?: unknown;
+    }): Promise<string[]>;
+}
+
+// @public
+export interface TriggerSubject {
+    id: string;
+    kind: string;
+    title: string;
+    url?: string;
+}
+
+// @public
 export function ui<T extends z.ZodTypeAny>(schema: T, hints: ConfigUiHints): T;
 
 // @public
@@ -5491,6 +5602,9 @@ export function validateToolPresentation(spec: Pick<ToolSpec, "title" | "keyArgs
 
 // @public
 export function validateToolSpec(spec: ToolSpec): string[];
+
+// @public
+export function validateTriggerEvent(e: TriggerEvent, declared: readonly string[]): string[];
 
 // @public
 export function validateUiContributions(ui: unknown, permissions: unknown): string[];

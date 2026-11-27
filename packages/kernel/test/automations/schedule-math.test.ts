@@ -10,9 +10,9 @@ import {
   ticksIn,
   validateTrigger,
 } from "../../src/automations/schedule-math.js";
-import type { AutomationTrigger } from "../../src/automations/types.js";
+import type { AutomationTimeTrigger, AutomationTrigger } from "../../src/automations/types.js";
 
-const cron = (expr: string, timeZone = "UTC"): AutomationTrigger => ({
+const cron = (expr: string, timeZone = "UTC"): AutomationTimeTrigger => ({
   kind: "cron",
   expr,
   timeZone,
@@ -40,7 +40,7 @@ describe("schedule math", () => {
   });
 
   it("rejects a once task in the past and accepts a future one", () => {
-    const once = (at: string): AutomationTrigger => ({
+    const once = (at: string): AutomationTimeTrigger => ({
       kind: "once",
       at,
       timeZone: "Asia/Shanghai",

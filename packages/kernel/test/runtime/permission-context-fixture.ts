@@ -368,9 +368,16 @@ export async function seedTask(
 /** An automation run of `taskId` (not a trial): its id goes on the run it serves. */
 export async function seedTaskRun(db: Db, orgId: string, taskId: string): Promise<string> {
   const id = randomUUID();
+  const tick = new Date();
   await db
     .insertInto("automation_runs")
-    .values({ id, automation_id: taskId, org_id: orgId, scheduled_for: new Date() })
+    .values({
+      id,
+      automation_id: taskId,
+      org_id: orgId,
+      scheduled_for: tick,
+      trigger_key: tick.toISOString(),
+    })
     .execute();
   return id;
 }

@@ -1049,7 +1049,12 @@ export const KernelConfigSchema = z.strictObject({
         .int()
         .positive()
         .default(60000)
-        .meta(meta({ description: "Timeout of one tool call in milliseconds" })),
+        .meta(
+          meta({
+            description:
+              "Timeout of one tool call in milliseconds; also the deadline of a trigger source's events() and visible() calls when an event is dispatched",
+          }),
+        ),
       maxTimeoutMs: z
         .number()
         .int()
@@ -1829,7 +1834,55 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Largest number of automation runs per organization per hour an organization may allow; a higher org value is clamped down to it",
+              "Largest value an organization may set for maxRunsPerHour, the automation runs one member's automations may start per hour; a higher org value is clamped down to it",
+          }),
+        ),
+      maxEventDepthCap: z
+        .number()
+        .int()
+        .positive()
+        .default(16)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Largest event chain depth an organization may allow before an event caused by an automation run stops being dispatched; a higher org value is clamped down to it",
+          }),
+        ),
+      coalesceSecondsCap: z
+        .number()
+        .int()
+        .positive()
+        .default(3600)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Longest window, in seconds, an organization may set for coalescing one subject's events into one automation run; a longer org value is clamped down to it",
+          }),
+        ),
+      maxEventRunsPerSubjectPerHourCap: z
+        .number()
+        .int()
+        .positive()
+        .default(120)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Largest value an organization may set for maxEventRunsPerSubjectPerHour: one event automation makes up to that many runs per subject per hour, and a window past it is recorded as a run skipped with subject_rate; a higher org value is clamped down to it",
+          }),
+        ),
+      eventRetentionDays: z
+        .number()
+        .int()
+        .positive()
+        .default(30)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Days a trigger event is kept after it was stored: a dispatched, undelivered or depth-stopped event older than this, none of whose deliveries still waits for a run, is deleted with its deliveries by the trigger event sweep (every five minutes)",
           }),
         ),
     })
