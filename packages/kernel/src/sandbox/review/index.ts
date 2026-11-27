@@ -43,6 +43,7 @@ export {
 } from "./review.service.js";
 export {
   parseCommand,
+  reviewRead,
   reviewRules,
   reviewWrite,
   writtenPaths,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseCommand,
   type ReviewFacts,
+  reviewRead,
   reviewRules,
   reviewWrite,
 } from "../../src/sandbox/review/index.js";
@@ -1364,6 +1365,49 @@ describe("reviewRules: credential producers", () => {
     for (const command of ["declare -x FOO=bar", "typeset -i count=0"]) {
       expect(outcomeOf(command), command).toBe("unsure");
     }
+  });
+});
+
+describe("reviewRead", () => {
+  const readOf = (path: string) => {
+    const result = reviewRead(path, { ...facts, home: "/home/dev" });
+    return { outcome: result.outcome, hits: result.hits.map((h) => [h.id, h.reason]) };
+  };
+  const READ = ["allow.read", "Reads files; reading is allowed."];
+
+  it("labels workspace, tmp and git hook reads as reads", () => {
+    expect(readOf("/home/dev/workspace/src/app.ts")).toEqual({ outcome: "allow", hits: [READ] });
+    expect(readOf("/home/dev/workspace/.env")).toEqual({ outcome: "allow", hits: [READ] });
+    expect(readOf("/tmp/build/output.json")).toEqual({ outcome: "allow", hits: [READ] });
+    expect(readOf("/home/dev/workspace/.git/hooks/pre-commit")).toEqual({
+      outcome: "allow",
+      hits: [READ],
+    });
+  });
+
+  it("carries no write finding for a read outside the workspace", () => {
+    expect(readOf("/etc/hosts")).toEqual({ outcome: "allow", hits: [] });
+    expect(readOf("~/.gitconfig")).toEqual({ outcome: "allow", hits: [] });
+  });
+
+  it("asks for credential reads with a read's reason and denies device files", () => {
+    expect(readOf("~/.ssh/id_ed25519")).toEqual({
+      outcome: "ask",
+      hits: [["ask.ssh", "Reads SSH keys or configuration; this needs approval."]],
+    });
+    expect(readOf("~/.aws/credentials")).toEqual({
+      outcome: "ask",
+      hits: [["ask.secret-file", "Reads a credential file; this needs approval each time."]],
+    });
+    expect(readOf("/etc/capybara-device/policy.json")).toEqual({
+      outcome: "deny",
+      hits: [
+        [
+          "deny.tooling-edit",
+          "Reads Capybara's own device files or the device directory's marker.",
+        ],
+      ],
+    });
   });
 });
 

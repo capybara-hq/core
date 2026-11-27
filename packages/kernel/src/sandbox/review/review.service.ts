@@ -34,7 +34,7 @@ import {
 
 export { escalationAskReason, quotedJustification } from "./permission-candidate.js";
 
-import { reviewRules, reviewWrite, writtenPaths } from "./rules.js";
+import { reviewRead, reviewRules, reviewWrite, writtenPaths } from "./rules.js";
 import {
   applySessionGrants,
   isSessionGrantableRule,
@@ -494,8 +494,11 @@ export class CommandReviewService implements CommandReview {
       ...(input.serviceEntry !== undefined && { serviceEntry: input.serviceEntry }),
     };
     // running a file this conversation wrote is not a development command (hardening spec R1)
+    // a `Read` is judged as a read (its hits never carry a write rule's label)
     const result = isWrite
-      ? reviewWrites(paths, facts)
+      ? input.toolKey === "Read"
+        ? reviewRead(paths[0] as string, facts)
+        : reviewWrites(paths, facts)
       : reviewRules(target, {
           ...facts,
           written: await this.writtenInTree(input.orgId, await rootOf(), facts),
