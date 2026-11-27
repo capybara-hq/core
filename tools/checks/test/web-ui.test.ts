@@ -167,6 +167,8 @@ describe("checkWebUi", () => {
   it("别名导入的模板通过", () => expect(run("aliased-template")).toEqual([]));
   it("本地同名组件不算模板", () => one("local-template", "web-ui-template"));
   it("styled-components 导入 -> web-ui-import", () => one("styled-import", "web-ui-import", 1));
+  // drag and drop is the design Board's (spec §6.69); a page never drags with the library itself
+  it("a @dnd-kit import -> web-ui-import", () => one("dnd-kit-import", "web-ui-import", 1));
   it("require 的 .css -> web-ui-import", () => one("require-css", "web-ui-import", 3));
   it("大写十六进制 -> web-ui-color", () => one("uppercase-hex", "web-ui-color", 3));
   it("模板字面量里的颜色函数 -> web-ui-color", () => one("template-color", "web-ui-color", 3));

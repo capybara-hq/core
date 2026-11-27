@@ -2,9 +2,10 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
 
 /**
- * Calls an extension with a time limit and an abort signal (plugin views, actions and file
- * previewers): over the limit the signal aborts and the call is 504 `ui.timeout`; a throw is
- * `failCode` (502) without echoing the extension's message. An `ApiError` thrown by `fn` passes.
+ * Calls an extension with a time limit and an abort signal (plugin views, actions, component
+ * queries and file previewers): over the limit the signal aborts and the call is 504
+ * `timeoutCode` (default `ui.timeout`); a throw is `failCode` (502) without echoing the
+ * extension's message. An `ApiError` thrown by `fn` passes.
  */
 export async function callExtension<T>(o: {
   log: Pick<Logger, "warn">;
@@ -12,7 +13,8 @@ export async function callExtension<T>(o: {
   what: string;
   fields: Record<string, unknown>;
   timeoutMs: number;
-  failCode: "ui.render_failed" | "ui.action_failed";
+  failCode: "ui.render_failed" | "ui.action_failed" | "ui.query_failed";
+  timeoutCode?: "ui.timeout" | "ui.query_timeout";
   failMessage: string;
   fn: (signal: AbortSignal) => Promise<T>;
 }): Promise<T> {
@@ -34,7 +36,7 @@ export async function callExtension<T>(o: {
     if (r === "timeout") {
       o.log.warn(`plugin ui ${o.what} timed out`, { ...o.fields, timeoutMs: o.timeoutMs });
       throw new ApiError(
-        "ui.timeout",
+        o.timeoutCode ?? "ui.timeout",
         `Plugin ${o.plugin} did not respond within ${o.timeoutMs / 1000}s`,
       );
     }

@@ -149,6 +149,7 @@ import { orgSharesQuery, shareMetaQuery } from "./shares";
 import {
   conversationGroupsQuery,
   conversationListQuery,
+  extensionPagesQuery,
   maybeMeQuery,
   readinessQuery,
 } from "./shell";
@@ -1366,6 +1367,14 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
             q(platformThemeQuery()),
             q(uiArrangementQuery(orgId)),
           ],
+  },
+  {
+    pattern: "/settings/navigation",
+    // Org admins: the settings (the saved placements) and the org's plugin pages.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin")
+        ? []
+        : [q(orgSettingsQuery(orgId)), q(extensionPagesQuery(orgId))],
   },
   {
     pattern: "/settings/automations",

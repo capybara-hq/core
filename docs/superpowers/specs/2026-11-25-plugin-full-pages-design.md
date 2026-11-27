@@ -1,6 +1,7 @@
 # Plugin full pages (L2)
 
-Status: draft for review (2026-11-25). Companion to
+Status: implemented on `feat/plugin-full-pages` (F1-F8); *As built* notes below mark where the
+code differs from the draft. Drafted 2026-11-25. Companion to
 `2026-11-25-collaboration-design.md`: the `collab` plugin's project list, board, item detail and
 settings are L2 client components built only from design components re-exported by
 `@capybara-hq/plugin-client` (*decided*: no iframe embeds). Calls marked *my call* are open to
@@ -97,6 +98,12 @@ function usePluginQuery<T = unknown>(query: string, params?: JsonValue, opts?: {
 - Limits: params ≤ 16 KB, result ≤ 1 MB (`UI_LIMITS.componentQueryBytes` = 1 048 576), 10 s
   timeout, `signal` honored. Larger lists page through params.
 - The web runs it as a TanStack query keyed `["plugin-query", plugin, id, query, params]`.
+  *As built:* the key is `["org", orgId, "plugin-query", plugin, id, query, paramsJson, restJson]`
+  (`web-query-keys` wants keys in `keys.ts`; the org prefix lets `resetSession` drop them; `rest` holds
+  locale and conversation / agent ids). `staleMs` defaults to 0 and overrides the `live` class.
+  Error codes: 404 `ui.query_not_found`, 413 `ui.query_params_too_large`, 502 `ui.query_failed`
+  (also an unknown query name inside the handler), 504 `ui.query_timeout`, 502
+  `ui.query_result_too_large`. Each querying component opens its own org UI stream.
 - `ctx.ui.invalidate({ orgId, contribution })` now also invalidates that contribution's queries
   (the same bus message), and an action result may name `invalidate: string[]` query names.
 
@@ -119,8 +126,23 @@ view block payloads keep 2 000.
   `navigate(to: { params: Record<string, string | null>; replace?: boolean } | { page: { id: string; params?: Record<string, string> } } | { conversation: string })`:
   same page with new params, another page of the same plugin, or a conversation the viewer can
   open. No other targets.
+- *As built:* params are capped at 2 048 UTF-8 bytes of keys plus values; `navigate({ params })` is a
+  server round trip; plugin `href`s go through `safeHref` (apps/web/src/lib/page-params.ts): it
+  keeps same-origin paths (`/x`), `?…` / `#…` of this page and absolute http(s) URLs, and drops
+  values with control characters, `//host` and `/\host`, and every other scheme (`javascript:`,
+  `data:`, `mailto:`, …) with a warning. Wrapped (`HOST_DESIGN`): the four templates (header path,
+  actions and their menus, header tabs, `tabs.items`, `nav[].items`, `empty.action`), `DataTable`
+  `rowMenu`, `EmptyState` `action`, `ItemList` rows and `empty.action`, `ItemListItem`, `Menu`
+  items (submenus too) and `Tabs` items; `Button` takes no `href`. `DataTable` `empty.action` is a
+  `ReactNode` and cannot be checked. The host counts forwarded templates and throws unless exactly
+  one is mounted (a host-framed component: unless none is); the host's query names `safe-ui` and
+  `org` never reach a plugin's params. `SelectProps.density` is now the design's
+  `"dense" | "default" | "prominent"` (the old `comfortable | compact` never worked).
+  The org UI stream's first open refetches only queries answered before the stream was created
+  (a page load does not read twice): in a small window a change made during the first read is
+  picked up only with the next frame.
 - Inbox items (collaboration spec §4.9) a plugin posts may only link to `/p/<that plugin>/…`;
-  the kernel refuses other links.
+  the kernel refuses other links. *As built:* not enforced yet, pending kernel task C1.
 
 ## 6. Board
 
@@ -144,11 +166,19 @@ interface BoardProps<C extends BoardCard> {
   shows the column's `hint` while hovering.
 - Compact: columns scroll horizontally with snap; drag is off; each card has a "Move to…" menu.
 - `onMove` returning a rejected promise snaps the card back.
+- *As built:* pointer sensors are `MouseSensor` (6 px) and `TouchSensor` (250 ms hold within 5 px, so
+  touch scroll still works). The keyboard model is the board's own, by position (one roving tab stop;
+  dnd-kit's `KeyboardSensor` coordinates fail on a sortable board), and a polite live region announces
+  moves, a refused column (`board.refusedHere` while held, `board.refused` on drop) and cancel.
 - Library (*my call*): `@dnd-kit/core` + `@dnd-kit/sortable` as dependencies of
   `@capybara-hq/design` only (accessible, pointer and keyboard sensors, maintained); the native
   HTML5 drag in `Repeater` stays as is.
 
 ## 7. PrincipalPicker
+
+*As built:* design spec §6.70 (packages/design `PrincipalPicker`; `Popover` gained `flush` and `part`);
+local filtering by name always applies, even with `onSearch`; forwarded to plugins with the props
+of `PrincipalPickerProps`.
 
 A combobox that picks people and agents (one or many), with search, avatars, groups and a hint
 line:
@@ -181,6 +211,9 @@ profile fields. (Added to the kernel plan's task C3.)
 - Org admins decide: org setting `navigation.pluginPages: { contribution: string; section: "primary" | "more" }[]`,
   edited on the org settings' navigation section; a suggestion applies until an admin saves a
   choice. At most 3 plugin pages in primary (*my call*), after the built-in entries.
+- *As built:* the setting key is `<plugin>/<id>` (as arrangement uses); strict schema, no duplicates,
+  replaced whole by PATCH, null clears; over 3 primary is 400 `org_settings.nav_primary_limit`; the
+  edit page is `/settings/navigation`; the Platform op `org-settings.update` takes the same schema.
 
 ## 10. Tests (outline)
 

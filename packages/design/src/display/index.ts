@@ -32,6 +32,14 @@ export {
   visibleAvatarChoices,
 } from "./avatar";
 export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
+export {
+  Board,
+  type BoardCard,
+  type BoardColumn,
+  BoardFrame,
+  type BoardPlace,
+  type BoardProps,
+} from "./board";
 export { type BrandMark, brandArtStyle, cssUrlValue, useBrandMark } from "./brand-art";
 export { Callout, type CalloutAction, type CalloutProps } from "./callout";
 export {

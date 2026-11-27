@@ -222,8 +222,22 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
 
 describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 28)", () => {
   const EXT = [
-    { id: "acme/board", label: "看板", href: "/p/acme/board", compact: "kept" as const },
-    { id: "acme/wide", label: "宽表", href: "/p/acme/wide", compact: "hidden" as const },
+    {
+      id: "acme/board",
+      label: "看板",
+      href: "/p/acme/board",
+      compact: "kept" as const,
+      section: "more" as const,
+      icon: "extension" as const,
+    },
+    {
+      id: "acme/wide",
+      label: "宽表",
+      href: "/p/acme/wide",
+      compact: "hidden" as const,
+      section: "more" as const,
+      icon: "extension" as const,
+    },
   ];
   function drawer(level: NavLevel, pending = { count: 0, more: false }) {
     function DrawerProbe() {
@@ -323,6 +337,7 @@ describe("org settings nav", () => {
     expect(items.map((i) => i.id)).toEqual([
       "organization",
       "appearance",
+      "navigation",
       "members",
       "models",
       "tokens",

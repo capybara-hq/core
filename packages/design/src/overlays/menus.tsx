@@ -68,10 +68,16 @@ export function Popover({
   children,
   open,
   onOpenChange,
+  flush,
+  part,
 }: {
   trigger: ReactElement<Record<string, unknown>>;
   active?: boolean;
   children: ReactNode;
+  /** No padding of its own: the content (a picker's search field and list) pads itself. */
+  flush?: boolean;
+  /** The panel's `data-part` (a component that owns the popover names it). */
+  part?: string;
   /** Controlled open state: a choice inside closes the popover (the calendar's 「+N」 list). */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -88,6 +94,8 @@ export function Popover({
         <RP.Content
           className="cb-popover"
           data-cap-part="menu"
+          {...(flush ? { "data-flush": "true" } : {})}
+          {...(part ? { "data-part": part } : {})}
           sideOffset={4}
           align="start"
           collisionPadding={COLLISION_PADDING}

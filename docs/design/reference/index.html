@@ -32,7 +32,7 @@
 <body>
 <header>
   <h1>Reference set review</h1>
-  <div>408 blocks × dark | light, rendered at 2× from docs/design/reference/src (sizes are token steps of docs/design/tokens.json).</div>
+  <div>424 blocks × dark | light, rendered at 2× from docs/design/reference/src (sizes are token steps of docs/design/tokens.json).</div>
   <nav><div><a class="g" href="#g-0">UI refresh A: shell, list and form pages</a> <a href="#c-template-list">template-list</a> <a href="#c-template-form">template-form</a> <a href="#c-sidebar">sidebar</a> <a href="#c-page-header">page-header</a> <a href="#c-stat-cards">stat-cards</a> <a href="#c-action-row">action-row</a> <a href="#c-button">button</a> <a href="#c-input">input</a> <a href="#c-segmented">segmented</a> <a href="#c-switch">switch</a> <a href="#c-filter-chip">filter-chip</a> <a href="#c-table">table</a> <a href="#c-icon">icon</a></div><div><a class="g" href="#g-1">UI refresh B: conversation page</a> <a href="#c-template-conversation">template-conversation</a> <a href="#c-title-bar">title-bar</a> <a href="#c-composer">composer</a> <a href="#c-picker-menu">picker-menu</a> <a href="#c-command-palette">command-palette</a> <a href="#c-prose">prose</a> <a href="#c-thinking-row">thinking-row</a> <a href="#c-user-bubble">user-bubble</a> <a href="#c-run-divider">run-divider</a> <a href="#c-tool-group">tool-group</a> <a href="#c-tool-row">tool-row</a> <a href="#c-diff-block">diff-block</a> <a href="#c-approval-block">approval-block</a> <a href="#c-network-facts">network-facts</a> <a href="#c-question-block">question-block</a> <a href="#c-connect-block">connect-block</a> <a href="#c-queued-message">queued-message</a> <a href="#c-subagent-group">subagent-group</a> <a href="#c-agent-map">agent-map</a> <a href="#c-inline-card">inline-card</a> <a href="#c-property-section">property-section</a> <a href="#c-right-panel">right-panel</a> <a href="#c-file-card">file-card</a> <a href="#c-file-outputs">file-outputs</a> <a href="#c-attachment-strip">attachment-strip</a> <a href="#c-file-preview">file-preview</a> <a href="#c-run-row">run-row</a> <a href="#c-working-line">working-line</a> <a href="#c-greeting">greeting</a> <a href="#c-agent-row">agent-row</a> <a href="#c-quick-actions">quick-actions</a></div><div><a class="g" href="#g-2">Agents: avatar presets and picker</a> <a href="#c-avatar">avatar</a></div><div><a class="g" href="#g-3">Role pass: no access, danger zone, secret reveal</a> <a href="#c-no-access">no-access</a> <a href="#c-danger-zone">danger-zone</a> <a href="#c-secret-reveal">secret-reveal</a> <a href="#c-content-section">content-section</a></div><div><a class="g" href="#g-4">Config forms: repeater, field row, key / value editor</a> <a href="#c-repeater">repeater</a> <a href="#c-field-row">field-row</a> <a href="#c-key-value-editor">key-value-editor</a></div><div><a class="g" href="#g-5">Loading states: skeleton primitives and template loading states</a> <a href="#c-skeleton">skeleton</a> <a href="#c-template-detail">template-detail</a> <a href="#c-template-overview">template-overview</a> <a href="#c-template-inbox">template-inbox</a> <a href="#c-template-trace">template-trace</a> <a href="#c-template-settings">template-settings</a> <a href="#c-template-wizard">template-wizard</a> <a href="#c-template-auth">template-auth</a></div><div><a class="g" href="#g-6">Theme brand: the fixture brand's graphics</a> <a href="#c-empty-state">empty-state</a></div><div><a class="g" href="#g-7">Mobile layout: list-detail, sheet drag states</a> <a href="#c-list-detail">list-detail</a> <a href="#c-sheet">sheet</a></div> <a href="#tokens">tokens</a></nav>
 </header>
 <main>
@@ -2368,7 +2368,56 @@
     <div class="shot light"><img src="sheet-settling-light.png" alt="sheet-settling, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-other">other <small>85 blocks</small></h2>
+<section><h2 id="c-other">other <small>101 blocks</small></h2>
+<figure id="board-compact">
+  <figcaption><a href="#board-compact">board-compact</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="board-compact-dark.png" alt="board-compact, dark" loading="lazy"></div>
+    <div class="shot light"><img src="board-compact-light.png" alt="board-compact, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="board-dragging">
+  <figcaption><a href="#board-dragging">board-dragging</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="board-dragging-dark.png" alt="board-dragging, dark" loading="lazy"></div>
+    <div class="shot light"><img src="board-dragging-light.png" alt="board-dragging, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="board-empty">
+  <figcaption><a href="#board-empty">board-empty</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="board-empty-dark.png" alt="board-empty, dark" loading="lazy"></div>
+    <div class="shot light"><img src="board-empty-light.png" alt="board-empty, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="board-idle">
+  <figcaption><a href="#board-idle">board-idle</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="board-idle-dark.png" alt="board-idle, dark" loading="lazy"></div>
+    <div class="shot light"><img src="board-idle-light.png" alt="board-idle, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="board-loading">
+  <figcaption><a href="#board-loading">board-loading</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="board-loading-dark.png" alt="board-loading, dark" loading="lazy"></div>
+    <div class="shot light"><img src="board-loading-light.png" alt="board-loading, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="board-locked-over">
+  <figcaption><a href="#board-locked-over">board-locked-over</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="board-locked-over-dark.png" alt="board-locked-over, dark" loading="lazy"></div>
+    <div class="shot light"><img src="board-locked-over-light.png" alt="board-locked-over, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="board-over">
+  <figcaption><a href="#board-over">board-over</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="board-over-dark.png" alt="board-over, dark" loading="lazy"></div>
+    <div class="shot light"><img src="board-over-light.png" alt="board-over, light" loading="lazy"></div>
+  </div>
+</figure>
 <figure id="bottom-nav-active">
   <figcaption><a href="#bottom-nav-active">bottom-nav-active</a></figcaption>
   <div class="pair">
@@ -2689,6 +2738,69 @@
   <div class="pair">
     <div class="shot dark"><img src="overview-section-loading-dark.png" alt="overview-section-loading, dark" loading="lazy"></div>
     <div class="shot light"><img src="overview-section-loading-light.png" alt="overview-section-loading, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="principal-picker-closed">
+  <figcaption><a href="#principal-picker-closed">principal-picker-closed</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="principal-picker-closed-dark.png" alt="principal-picker-closed, dark" loading="lazy"></div>
+    <div class="shot light"><img src="principal-picker-closed-light.png" alt="principal-picker-closed, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="principal-picker-compact">
+  <figcaption><a href="#principal-picker-compact">principal-picker-compact</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="principal-picker-compact-dark.png" alt="principal-picker-compact, dark" loading="lazy"></div>
+    <div class="shot light"><img src="principal-picker-compact-light.png" alt="principal-picker-compact, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="principal-picker-disabled-option">
+  <figcaption><a href="#principal-picker-disabled-option">principal-picker-disabled-option</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="principal-picker-disabled-option-dark.png" alt="principal-picker-disabled-option, dark" loading="lazy"></div>
+    <div class="shot light"><img src="principal-picker-disabled-option-light.png" alt="principal-picker-disabled-option, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="principal-picker-empty">
+  <figcaption><a href="#principal-picker-empty">principal-picker-empty</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="principal-picker-empty-dark.png" alt="principal-picker-empty, dark" loading="lazy"></div>
+    <div class="shot light"><img src="principal-picker-empty-light.png" alt="principal-picker-empty, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="principal-picker-grouped">
+  <figcaption><a href="#principal-picker-grouped">principal-picker-grouped</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="principal-picker-grouped-dark.png" alt="principal-picker-grouped, dark" loading="lazy"></div>
+    <div class="shot light"><img src="principal-picker-grouped-light.png" alt="principal-picker-grouped, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="principal-picker-loading">
+  <figcaption><a href="#principal-picker-loading">principal-picker-loading</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="principal-picker-loading-dark.png" alt="principal-picker-loading, dark" loading="lazy"></div>
+    <div class="shot light"><img src="principal-picker-loading-light.png" alt="principal-picker-loading, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="principal-picker-multi">
+  <figcaption><a href="#principal-picker-multi">principal-picker-multi</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="principal-picker-multi-dark.png" alt="principal-picker-multi, dark" loading="lazy"></div>
+    <div class="shot light"><img src="principal-picker-multi-light.png" alt="principal-picker-multi, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="principal-picker-open">
+  <figcaption><a href="#principal-picker-open">principal-picker-open</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="principal-picker-open-dark.png" alt="principal-picker-open, dark" loading="lazy"></div>
+    <div class="shot light"><img src="principal-picker-open-light.png" alt="principal-picker-open, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="principal-picker-searching">
+  <figcaption><a href="#principal-picker-searching">principal-picker-searching</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="principal-picker-searching-dark.png" alt="principal-picker-searching, dark" loading="lazy"></div>
+    <div class="shot light"><img src="principal-picker-searching-light.png" alt="principal-picker-searching, light" loading="lazy"></div>
   </div>
 </figure>
 <figure id="project-file-picker-compact">
@@ -3044,7 +3156,7 @@
 <tr><td><code>pad</code></td><td>dense 4/8 · default 6/12</td></tr>
 <tr><td><code>radius</code></td><td>sm 4 · md 8 · bubble 10 · pill 999</td></tr>
 <tr><td><code>type</code></td><td>micro 11/14 · small 12/16 · body 13/20 · h2 16/24 · h1 20/28 · prose 15/26 · prose-small 13/20 · metric 18/24</td></tr>
-<tr><td><code>layout</code></td><td>sidebar 256 · sidebar-rail 48 · content 1120 · chat 720 · action-row 40 · gutter 20 · title-bar 48 · properties 300 · panel-min 360 · panel 560 · chat-min 480 · tool-detail 204 · file-card 240 · thumb 56 · inline-image 360 · menu-max-height 328 · bubble-clamp 208 · head-path 12 · head-description 4 · head-tabs 16 · head-tabs-content 16 · head-content 24 · card-min 280 · policy-select 160 · swatch-min 160 · calendar-axis 48 · calendar-hour 48 · calendar-day-min 76 · calendar-cell 112 · content-min 552 · bottom-nav 56 · top-bar 44 · drawer 320</td></tr>
+<tr><td><code>layout</code></td><td>sidebar 256 · sidebar-rail 48 · content 1120 · chat 720 · action-row 40 · gutter 20 · title-bar 48 · properties 300 · panel-min 360 · panel 560 · chat-min 480 · tool-detail 204 · file-card 240 · thumb 56 · inline-image 360 · menu-max-height 328 · bubble-clamp 208 · head-path 12 · head-description 4 · head-tabs 16 · head-tabs-content 16 · head-content 24 · card-min 280 · policy-select 160 · swatch-min 160 · calendar-axis 48 · calendar-hour 48 · calendar-day-min 76 · calendar-cell 112 · content-min 552 · bottom-nav 56 · top-bar 44 · drawer 320 · board-column 280 · board-gap 12</td></tr>
 <tr><td><code>touch</code></td><td>hit 44 · float 48 · primary 48 · prominent 52 · composer 60 · row 52 · row-roomy 56 · icon 22 · icon-float 24 · sheet-inset 14 · sheet-close 30 · sheet-close-icon 14 · sheet-title 15</td></tr></table></details>
 </section>
 </main>

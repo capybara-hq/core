@@ -4,6 +4,7 @@ import {
   getUiArrangement,
   getUiView,
   listAdminUiContributions,
+  postUiQuery,
   type UiLocale,
 } from "../ui";
 import { defineQuery } from "./define";
@@ -55,6 +56,46 @@ export const uiViewQuery = (
     freshness: "live",
   });
 };
+
+/**
+ * One component query (`usePluginQuery`, plugin full pages spec §4.1): the component's
+ * `ctx.ui.query` handler run with `query` and `params` (each read is the extension answering
+ * again; `live`, and the hook serves the component's own `staleMs`). Refetched when the
+ * contribution is invalidated (`event: ui` with `queries`) or an action names the query.
+ */
+export const pluginQueryQuery = (
+  orgId: string,
+  t: { plugin: string; id: string },
+  query: string,
+  params: unknown,
+  opts: { conversationId?: string; agentId?: string; locale: UiLocale },
+) =>
+  defineQuery({
+    key: keys
+      .org(orgId)
+      .pluginQuery(
+        t.plugin,
+        t.id,
+        query,
+        JSON.stringify(params ?? null),
+        JSON.stringify([opts.locale, opts.conversationId ?? null, opts.agentId ?? null]),
+      ),
+    fn: ({ signal }) =>
+      postUiQuery(
+        orgId,
+        t.plugin,
+        t.id,
+        {
+          query,
+          ...(params !== undefined && params !== null && { params }),
+          ...(opts.conversationId !== undefined && { conversationId: opts.conversationId }),
+          ...(opts.agentId !== undefined && { agentId: opts.agentId }),
+          locale: opts.locale,
+        },
+        signal,
+      ).then((r) => r.data),
+    freshness: "live",
+  });
 
 /** The platform's page contributions (`platform.page`, super admins): the admin 扩展 group. */
 export const adminUiContributionsQuery = () =>

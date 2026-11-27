@@ -93,6 +93,11 @@ export type SidebarContext =
       primary: SidebarNavItem[];
       /** The 更多 flyout's fixed items. */
       more: SidebarNavItem[];
+      /**
+       * Extension pages an org admin put in the primary navigation (plugin full pages spec §9),
+       * after the built-in primary entries with their icon and title.
+       */
+      primaryExtensions?: SidebarNavItem[];
       /** Extension pages, in the 更多 flyout after a separator. */
       moreExtensions?: SidebarNavItem[];
       /**
@@ -829,7 +834,11 @@ function SidebarNav({
   const Link = useDesignLink();
   const ctx = p.context;
   const work = ctx.kind === "work";
-  const primary = work ? ctx.primary : ctx.kind === "admin" ? ctx.items : [];
+  const primary = work
+    ? [...ctx.primary, ...(ctx.primaryExtensions ?? [])]
+    : ctx.kind === "admin"
+      ? ctx.items
+      : [];
   const more = work ? ctx.more : [];
   const moreExtensions = work ? (ctx.moreExtensions ?? []) : [];
   const hasMore = work && more.length + moreExtensions.length > 0;
@@ -1165,7 +1174,7 @@ function withNativeMore(
   if (p.nativeNav !== true || ctx.kind !== "work" || account.menu.length === 0) return account;
   const sections = NATIVE_DRAWER_SECTIONS;
   const entries = [
-    ...ctx.primary.filter((n) => !sections.includes(n.id)),
+    ...[...ctx.primary, ...(ctx.primaryExtensions ?? [])].filter((n) => !sections.includes(n.id)),
     ...ctx.more,
     ...(ctx.moreExtensions ?? []),
   ];

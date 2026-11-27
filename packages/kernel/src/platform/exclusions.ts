@@ -785,6 +785,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Runs an extension UI action from the web app",
   },
   {
+    route: "POST /api/v1/orgs/:orgId/ui/query/:plugin/:id",
+    category: "transport",
+    reason: "the web's channel for plugin components; agents use the plugin's tools",
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token",
     category: "transport",
     reason: "Issues an embed token for an iframe",

@@ -480,6 +480,25 @@ export const keys = {
         rest: string,
       ): readonly unknown[] => [...all, "uiView", scope, plugin, contribution, rest],
       /**
+       * Component queries (`usePluginQuery`, plugin full pages spec §4.1): every query of one
+       * contribution, or of one query name of it (prefixes), or one read (`params` and `rest`:
+       * the JSON of the params, and of the locale and scope ids).
+       */
+      pluginQueries: (plugin: string, contribution: string, query?: string): readonly unknown[] => [
+        ...all,
+        "plugin-query",
+        plugin,
+        contribution,
+        ...(query === undefined ? [] : [query]),
+      ],
+      pluginQuery: (
+        plugin: string,
+        contribution: string,
+        query: string,
+        params: string,
+        rest: string,
+      ): readonly unknown[] => [...all, "plugin-query", plugin, contribution, query, params, rest],
+      /**
        * The person's file library (file library spec §6): one list per filter set, normalized as
        * the request is (`libraryFilterQuery`: `q` trimmed, an empty `q` or `agentId` left out), so
        * equal requests share one entry.

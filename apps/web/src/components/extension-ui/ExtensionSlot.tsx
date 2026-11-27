@@ -62,7 +62,12 @@ export type SlotArgs = {
    * `direct`: the page's contribution when an arrangement hides it from the list (hidden means not
    * listed; the direct URL still renders, UI slots spec §5).
    */
-  "org.page": { orgId: string; direct?: UiContributionItem };
+  "org.page": {
+    orgId: string;
+    direct?: UiContributionItem;
+    /** The page's URL params (plugin full pages spec §5), the component's `params` prop. */
+    params?: Record<string, string>;
+  };
   "file.preview": { orgId: string; conversationId: string; fileId: string };
   "agent.detail.section": { orgId: string; agentId: string };
   "org.settings.section": { orgId: string };
@@ -90,7 +95,11 @@ export type SlotHost = {
   };
   "conversation.properties.section": { onOpenTarget: OnOpenTarget };
   "conversation.tool-result.card": { onOpenTarget: OnOpenTarget };
-  "org.page": Record<string, never>;
+  /**
+   * `page`: the host's page for a `frame: "page"` component's states other than its own render
+   * (loading, failed, off, crashed): the component draws its page itself (plugin full pages §2).
+   */
+  "org.page": { page?: (body: ReactNode) => ReactNode };
   /**
    * A file previewer comes from the file's previewer list (`file-preview@1`, ordered by the
    * previewer setting), not from the contributions list: the host names it and gives the file.
@@ -132,7 +141,8 @@ type SlotProps<S extends UiSlotId> = {
   select?: { plugin: string; id: string };
   /** A slot with anchors: renders the contributions placed after this anchor. */
   anchor?: string;
-} & (SlotHost[S] extends Record<string, never> ? { host?: SlotHost[S] } : { host: SlotHost[S] });
+  // a slot whose host props are all optional takes `host` optionally
+} & (Record<string, never> extends SlotHost[S] ? { host?: SlotHost[S] } : { host: SlotHost[S] });
 
 /** {@link SlotProps} as one union over the slots, so `slot` narrows `args` and `host`. */
 type AnySlotProps = {
@@ -211,7 +221,7 @@ export function ExtensionSlot<S extends UiSlotId>(props: SlotProps<S>): ReactNod
     case "conversation.tool-result.card":
       return p.host && p.select ? <CardSlot args={p.args} select={p.select} host={p.host} /> : null;
     case "org.page":
-      return p.select ? <OrgPageSlot args={p.args} select={p.select} /> : null;
+      return p.select ? <OrgPageSlot args={p.args} select={p.select} host={p.host} /> : null;
     case "file.preview":
       return p.host && p.select ? (
         <FilePreviewSlot args={p.args} select={p.select} host={p.host} />
@@ -283,6 +293,8 @@ function OverlaySlot({ args }: { args: SlotArgs["shell.overlay"] }) {
 }
 
 const NO_PROPS: Record<string, unknown> = {};
+const NO_PARAMS: Record<string, string> = {};
+const bare = (body: ReactNode) => body;
 
 type Select = { plugin: string; id: string } | undefined;
 
@@ -490,27 +502,35 @@ function CardSlot({
 function OrgPageSlot({
   args,
   select,
+  host,
 }: {
   args: SlotArgs["org.page"];
   select: { plugin: string; id: string };
+  host: SlotHost["org.page"] | undefined;
 }) {
   const locale = uiLocale(useLocale());
   const { items } = useSlotContributions(args.orgId, "org.page");
   const c = items.find((x) => matches(x, select)) ?? args.direct;
+  const params = args.params ?? NO_PARAMS;
+  const hostProps = useMemo(() => ({ params }), [params]);
   if (!c) return null;
   const key = uiKey(c.plugin, c.id);
-  if (c.kind === "component")
+  if (c.kind === "component") {
+    // a full page (`frame: "page"`) draws its own page; the host's is only around the other states
+    const page = c.frame === "page" ? (host?.page ?? bare) : undefined;
     return (
       <CompactGate c={c}>
         <ClientComponentBody
           key={key}
           c={c}
-          args={{ orgId: args.orgId }}
-          hostProps={NO_PROPS}
+          args={{ orgId: args.orgId, params }}
+          hostProps={hostProps}
           size="page"
+          {...(page !== undefined && { page })}
         />
       </CompactGate>
     );
+  }
   return (
     <CompactGate c={c}>
       <BlockBoundary name={c.title[locale]}>

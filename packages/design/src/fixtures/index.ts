@@ -918,3 +918,60 @@ export const SCHEDULE_CALENDAR_FIXTURE = {
   errorCode: "internal · req_7f3a9c",
 };
 export * from "./shell";
+
+// ── Board (spec §6.69) ───────────────────────────────────────────────────────
+
+/**
+ * A kanban board's columns and cards (spec §6.69; docs/design/reference/src/board.html draws the
+ * same copy): the pending-approval column is locked (a gate), the done column is empty. `held` is the card the
+ * dragging, over and locked-over blocks hold.
+ */
+export const BOARD_FIXTURE = {
+  columns: [
+    { id: "todo", title: "待处理", count: 3 },
+    { id: "doing", title: "进行中", count: 2 },
+    {
+      id: "review",
+      title: "待审批",
+      count: 1,
+      locked: true,
+      hint: "放到这里会发起审批请求，审批通过后才会移动。",
+    },
+    { id: "done", title: "已完成", count: 0 },
+  ],
+  cards: [
+    { id: "t1", columnId: "todo", title: "整理 11 月客户反馈", meta: "CAP-12 · 研究助手" },
+    { id: "t2", columnId: "todo", title: "更新部署手册的回滚章节", meta: "CAP-15 · grant" },
+    { id: "t3", columnId: "todo", title: "核对发票抬头", meta: "CAP-18 · lin" },
+    { id: "t4", columnId: "doing", title: "接入审批回调", meta: "CAP-9 · 周报助手" },
+    { id: "t5", columnId: "doing", title: "迁移旧版 webhook", meta: "CAP-11 · grant" },
+    { id: "t6", columnId: "review", title: "开通生产环境只读账号", meta: "CAP-7 · lin" },
+  ],
+  held: "t2",
+  empty: {
+    text: "还没有任务",
+    hint: "新建一个任务，它会出现在「待处理」里。",
+    action: "新建任务",
+  },
+} as const;
+
+/**
+ * The PrincipalPicker's fixed data (spec §6.70): the options of every block and test. The first
+ * option has no hint, so a plain row comes first; the invoice-check agent is a disabled agent whose hint is the
+ * reason; `search` is the query of the searching block and `active` the option it has active.
+ */
+export const PRINCIPAL_PICKER_FIXTURE = {
+  options: [
+    { kind: "person", id: "u-lin", name: "林远" },
+    { kind: "person", id: "u-zhou", name: "周宁", hint: "产品经理" },
+    { kind: "person", id: "u-grace", name: "Grace Chen", hint: "客户成功" },
+    { kind: "agent", id: "a-support", name: "客服助手", hint: "回答客户问题" },
+    { kind: "agent", id: "a-invoice", name: "发票核对", hint: "尚未配置", disabled: true },
+  ],
+  label: "指派给",
+  placeholder: "选择成员",
+  search: "周",
+  searchGrace: "grace",
+  noMatch: "没有这个人",
+  active: "u-zhou",
+} as const;

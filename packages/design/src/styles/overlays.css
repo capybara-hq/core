@@ -192,6 +192,9 @@
 .cb-popover {
   padding: 12px;
 }
+.cb-popover[data-flush="true"] {
+  padding: 0;
+}
 .cb-menu {
   padding: 4px 0;
 }
