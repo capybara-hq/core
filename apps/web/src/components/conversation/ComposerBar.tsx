@@ -67,6 +67,7 @@ import { useRunStateValue } from "../client-ext/run-state";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { type DraftFile, useDraftFiles } from "../use-draft-files";
 import { modeMenuFromPickers } from "./PermissionPicker";
+import { MAX_PROJECT_FILES, ProjectFilesPicker } from "./ProjectFilesPicker";
 import type { SendResult } from "./useConversation";
 
 /** At most this many `@` resources per message (kernel `MAX_ATTACHMENTS`). */
@@ -90,13 +91,37 @@ export function newClientMessageId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** A draft's identity: text + resources + files + skill (any change makes it a new message). */
+/**
+ * A draft's identity: text + resources + files + project files + skill (any change makes it a new
+ * message).
+ */
 const draftKey = (
   text: string,
   attachments: DraftAttachment[],
   files: string[],
+  projectFiles: string[],
   skill: string | undefined,
-) => JSON.stringify([text, attachments.map((a) => [a.connectorId, a.uri]), files, skill ?? null]);
+) =>
+  JSON.stringify([
+    text,
+    attachments.map((a) => [a.connectorId, a.uri]),
+    files,
+    projectFiles,
+    skill ?? null,
+  ]);
+
+/** The last segment of a project file's path (its chip's name). */
+const baseName = (path: string) => path.split("/").at(-1) ?? path;
+
+/** The paths a `conversation.project_file_unavailable` refusal names (none for another error). */
+function missingProjectFiles(e: unknown): string[] {
+  if (!(e instanceof ApiClientError) || e.code !== "conversation.project_file_unavailable")
+    return [];
+  return e.rawDetails.flatMap((d) => {
+    const path = (d as { path?: unknown } | null)?.path;
+    return typeof path === "string" ? [path] : [];
+  });
+}
 
 /** A slash command: `/<connector slug>:<prompt name>`. */
 export const promptCommand = (p: Pick<ConnectorPrompt, "connectorSlug" | "name">) =>
@@ -138,7 +163,7 @@ type Trigger = { kind: "slash" | "at"; at: number; end: number };
 /** What the composer sends: the message without the switch (the caller adds model / effort). */
 export type ComposerMessage = Pick<
   MessageInput,
-  "text" | "clientMessageId" | "attachments" | "files" | "skill"
+  "text" | "clientMessageId" | "attachments" | "files" | "projectFiles" | "skill"
 > & {
   /**
    * What a pending bubble shows until the log has the message (never sent): the skill's chip
@@ -152,12 +177,17 @@ export type ComposerMessage = Pick<
   draft?: ComposerDraft;
 };
 
-/** A composer's draft handed from one composer to the next (text, chip, resources, files, id). */
+/**
+ * A composer's draft handed from one composer to the next (text, chip, resources, files, project
+ * files, id).
+ */
 export type ComposerDraft = {
   text: string;
   skill: InvocableSkill | null;
   attachments: DraftAttachment[];
   files: DraftFile[];
+  /** Referenced project file paths (composer menus §5). */
+  projectFiles?: string[];
   /** The draft's `clientMessageId`, kept for the retry (the kernel dedupes it). */
   id?: { key: string; id: string };
 };
@@ -267,6 +297,7 @@ export function ComposerBar({
   onCompact,
   control,
   suggestion,
+  project,
 }: {
   orgId: string;
   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
@@ -323,6 +354,12 @@ export function ComposerBar({
    * dismissed it stays away for that run.
    */
   suggestion?: Pick<PromptSuggestion, "runId" | "text"> | undefined;
+  /**
+   * The device project the message goes to (composer menus §5): the conversation's binding, or
+   * the new conversation's pick, and only for the device's owner (the listing is the owner's).
+   * Its files can be referenced from the + menu (项目文件); a change of it drops the references.
+   */
+  project?: { deviceId: string; name: string } | undefined;
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
@@ -335,6 +372,25 @@ export function ComposerBar({
   );
   /** The picked skill (the chip), or null. */
   const [skill, setSkill] = useState<InvocableSkill | null>(initialDraft?.skill ?? null);
+  /** Referenced project file paths (composer menus §5), in pick order. */
+  const [projectFiles, setProjectFiles] = useState<string[]>(initialDraft?.projectFiles ?? []);
+  /** Paths the kernel refused at the last send (`conversation.project_file_unavailable`). */
+  const [missingFiles, setMissingFiles] = useState<readonly string[]>([]);
+  const [pickingFiles, setPickingFiles] = useState(false);
+  /** The device cannot list its project files: the + row shows why, disabled. */
+  const [listUnsupported, setListUnsupported] = useState<string | null>(null);
+  // another project (the new conversation's picker) has other files: the references go
+  const projectKey =
+    project === undefined ? null : JSON.stringify([project.deviceId, project.name]);
+  const projectAt = useRef(projectKey);
+  useEffect(() => {
+    if (projectAt.current === projectKey) return;
+    projectAt.current = projectKey;
+    setProjectFiles([]);
+    setMissingFiles([]);
+    setPickingFiles(false);
+    setListUnsupported(null);
+  }, [projectKey]);
   const qc = useQueryClient();
   /** The agent's invocable skills (read again when the menu opens once they are stale). */
   const skillsQ = invocableSkillsQuery(orgId, agentId ?? "", conversationId);
@@ -410,11 +466,11 @@ export function ComposerBar({
     }
   }
 
+  /** `@` resources or project files are attached: they need text (their blocks follow it). */
+  const needsText = attachments.length > 0 || projectFiles.length > 0;
   // A lone "/" is the menu's trigger, not a message.
   const empty = (value: string) =>
-    skill === null &&
-    (value === "" || value === "/") &&
-    (files.length === 0 || attachments.length > 0);
+    skill === null && (value === "" || value === "/") && (files.length === 0 || needsText);
 
   /**
    * Runs the built-in `/compact` (shared by the typed command and the `/` menu entry): the
@@ -436,11 +492,13 @@ export function ComposerBar({
     const sentText = text;
     const sentSkill = skill;
     const sentAttachments = attachments;
+    const sentProjectFiles = projectFiles;
     const value = text.trim();
     if (sendDisabled && !empty(value)) onBlocked?.();
     if (drafts.blocking || sendDisabled || resolving.current) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
-    // Files alone can be sent; `@` resources need text (their bodies follow content[0]).
+    // Files alone can be sent; `@` resources and project files need text (their blocks follow
+    // content[0]).
     if (empty(value)) return;
     // The built-in /compact command (context compaction spec §4.10), before the skill lookup: no
     // arguments, no user message. A skill chip owns the text after it, so it is not a command then.
@@ -493,6 +551,8 @@ export function ComposerBar({
     );
     setSkill((cur) => (cur === sentSkill ? null : cur));
     setAttachments((cur) => cur.filter((a) => !sentAttachments.includes(a)));
+    setProjectFiles((cur) => cur.filter((p) => !sentProjectFiles.includes(p)));
+    setMissingFiles([]);
     const taken = drafts.take(sent.map((f) => f.key));
     const restore = () => {
       setText((cur) => (cur.trim() === "" ? sentText : `${sentText}\n${cur}`));
@@ -501,20 +561,30 @@ export function ComposerBar({
         ...sentAttachments,
         ...cur.filter((a) => !sentAttachments.includes(a)),
       ]);
+      setProjectFiles((cur) => [
+        ...sentProjectFiles,
+        ...cur.filter((p) => !sentProjectFiles.includes(p)),
+      ]);
       drafts.restore(taken);
     };
     const message = (text: string, name: string | undefined): ComposerMessage => {
-      const key = draftKey(text, attachments, fileIds, name);
+      const key = draftKey(text, attachments, fileIds, sentProjectFiles, name);
       if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
       return {
         text,
         clientMessageId: draft.current.id,
         attachments: attachments.map((a) => ({ connectorId: a.connectorId, uri: a.uri })),
         files: fileIds,
+        ...(sentProjectFiles.length > 0
+          ? { projectFiles: sentProjectFiles.map((path) => ({ path })) }
+          : {}),
         ...(name !== undefined ? { skill: { name } } : {}),
         // the chip shows the bare name, as the thread's bubble does
         display: {
-          files: shownFiles,
+          files: [
+            ...shownFiles,
+            ...sentProjectFiles.map((path) => ({ name: path, kind: "file" as const })),
+          ],
           ...(name !== undefined ? { skill: skillChipLabel(name) } : {}),
         },
         draft: {
@@ -522,6 +592,7 @@ export function ComposerBar({
           skill: sentSkill,
           attachments: sentAttachments,
           files: taken,
+          projectFiles: sentProjectFiles,
           id: draft.current,
         },
       };
@@ -546,6 +617,7 @@ export function ComposerBar({
       } else {
         restore();
         drafts.markFailed(r.error);
+        setMissingFiles(missingProjectFiles(r.error));
       }
     } catch (e) {
       restore();
@@ -903,7 +975,24 @@ export function ComposerBar({
               fileInput.current?.click();
             },
           },
-          // the file library row joins with the file library, project files with their picker
+          // the file library row joins with the file library
+          ...(project !== undefined
+            ? [
+                {
+                  id: "project-files",
+                  label: t("composerMenu.projectFiles"),
+                  icon: "folder",
+                  description:
+                    listUnsupported ??
+                    t("composerMenu.projectFilesHint", { project: project.name }),
+                  ...(listUnsupported !== null ? { disabled: true } : {}),
+                  onSelect: () => {
+                    setMenu(null);
+                    setPickingFiles(true);
+                  },
+                } satisfies ComposerMenuItem,
+              ]
+            : []),
           {
             id: "resources",
             label: t("composerMenu.resources"),
@@ -1056,6 +1145,19 @@ export function ComposerBar({
         onRemove: () => drafts.remove(f.key),
       };
     }),
+    ...projectFiles.map(
+      (path): AttachmentStripItem => ({
+        id: `project:${path}`,
+        kind: "file",
+        name: baseName(path),
+        size: 0,
+        ...(missingFiles.includes(path) ? { error: t("projectFileMissing", { path }) } : {}),
+        onRemove: () => {
+          setProjectFiles((list) => list.filter((x) => x !== path));
+          setMissingFiles((list) => list.filter((x) => x !== path));
+        },
+      }),
+    ),
     ...attachments.map(
       (a): AttachmentStripItem => ({
         id: `@${a.connectorId}:${a.uri}`,
@@ -1077,7 +1179,9 @@ export function ComposerBar({
         ? t("waitingHint")
         : running
           ? t("runningHint")
-          : undefined;
+          : needsText && skill === null && empty(text.trim())
+            ? t("referencesNeedText")
+            : undefined;
   const runState = useRunStateValue().state;
   const textEl = useRef<HTMLTextAreaElement>(null);
   /**
@@ -1238,6 +1342,29 @@ export function ComposerBar({
           if (picked.length > 0) addFiles(picked);
         }}
       />
+      {project !== undefined ? (
+        <ProjectFilesPicker
+          orgId={orgId}
+          deviceId={project.deviceId}
+          project={project.name}
+          open={pickingFiles}
+          initial={projectFiles}
+          onClose={() => {
+            setPickingFiles(false);
+            refocus();
+          }}
+          onConfirm={(paths) => {
+            dismissSuggestion();
+            setProjectFiles(paths.slice(0, MAX_PROJECT_FILES));
+            setMissingFiles((list) => list.filter((x) => paths.includes(x)));
+          }}
+          onUnsupported={(e) => {
+            const reason = errorMessage(e);
+            setListUnsupported(reason);
+            toast.error(reason);
+          }}
+        />
+      ) : null}
       <Dialog
         open={argsFor !== null}
         onOpenChange={(open) => {

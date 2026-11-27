@@ -1,6 +1,7 @@
 import {
   getDevice,
   listDeviceProjectCandidates,
+  listDeviceProjectFiles,
   listDeviceProjects,
   listDevices,
 } from "../devices";
@@ -31,6 +32,23 @@ export const deviceProjectsQuery = (orgId: string, id: string) =>
   defineQuery({
     key: keys.org(orgId).deviceProjects(id),
     fn: () => listDeviceProjects(orgId, id),
+    freshness: "live",
+  });
+
+/**
+ * One directory of a device project (composer menus §5), read only while the project file picker
+ * shows it: listing asks the device (it is started for its owner).
+ */
+export const deviceProjectFilesQuery = (
+  orgId: string,
+  id: string,
+  name: string,
+  path: string,
+  q: string,
+) =>
+  defineQuery({
+    key: keys.org(orgId).deviceProjectFiles(id, name, path, q),
+    fn: () => listDeviceProjectFiles(orgId, id, name, { path, q }),
     freshness: "live",
   });
 

@@ -62,7 +62,7 @@ export function firstMessageControls(orgId: string, r: FirstMessageRequest): str
 
 /**
  * The logical request apart from its id and the browser context: org, agent, text, resources,
- * files, skill, device, project, profile with its consent revision, model and effort. Any change
+ * files, project files, skill, device, project, profile with its consent revision, model and effort. Any change
  * makes a new logical request with a new id; the composer's narrower draft key is not the
  * authority here.
  */
@@ -74,6 +74,7 @@ export function firstMessageIntent(orgId: string, r: FirstMessageRequest): strin
     m.text,
     (m.attachments ?? []).map((a) => [a.connectorId, a.uri]),
     m.files ?? [],
+    (m.projectFiles ?? []).map((f) => f.path),
     m.skill?.name ?? null,
     m.model ?? null,
     m.effort ?? null,

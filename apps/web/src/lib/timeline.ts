@@ -371,6 +371,11 @@ export type TimelineEntry =
       text: string;
       files: MessageFile[];
       attachments: MessageAttachment[];
+      /**
+       * Referenced project files (composer menus §5), paths relative to the project root: chips on
+       * the bubble, their English blocks never part of `text`. Absent: none.
+       */
+      projectFiles?: string[];
       /** A skill invocation (phase D): the chip ("/fix-issue") and how it runs. */
       skill?: { label: string; mode: "inline" | "fork" };
       /** An inline invocation's rendered text, sent in the person's name (`content[0]`). */
@@ -657,10 +662,14 @@ export function messageFiles(content: ContentBlock[]): MessageFile[] {
   );
 }
 
-/** The text a person typed (with `@` resources only `content[0]`; their bodies stay folded). */
+/**
+ * The text a person typed (with `@` resources or project files only `content[0]`: the resources'
+ * bodies stay folded, the project files' blocks are the model's, shown as chips).
+ */
 function userText(e: Extract<ConversationEvent, { type: "user_message" }>): string {
   const attachments = e.payload.attachments ?? [];
-  return attachments.length > 0
+  const projectFiles = e.payload.projectFiles ?? [];
+  return attachments.length > 0 || projectFiles.length > 0
     ? joinText(e.payload.content.slice(0, 1), "text")
     : joinText(e.payload.content, "text");
 }
@@ -1399,6 +1408,8 @@ export function buildEventTimeline(
             attachments: e.payload.attachments ?? [],
             authorAccountId: e.payload.authorAccountId,
           };
+          const projectFiles = e.payload.projectFiles ?? [];
+          if (projectFiles.length > 0) entry.projectFiles = projectFiles.map((f) => f.path);
           if (skill) {
             entry.skill = { label: `/${skill.name}`, mode: skill.mode };
             // A fork's content[0] is the lead for the model, not the instructions: those are the

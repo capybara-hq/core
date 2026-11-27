@@ -85,6 +85,16 @@ export const keys = {
        */
       deviceProjects: (id: string): readonly unknown[] => [...all, "device", id, "projects"],
       /**
+       * One directory of a device project, filtered by `q` (composer menus §5): under the device's
+       * projects key, so a change of them reads it again.
+       */
+      deviceProjectFiles: (
+        id: string,
+        name: string,
+        path: string,
+        q: string,
+      ): readonly unknown[] => [...all, "device", id, "projects", "files", name, path, q],
+      /**
        * The project suggestions of a device: outside the device's key, so no device change reads
        * them again (asking the device starts or resumes it).
        */
@@ -420,7 +430,7 @@ export const keys = {
       connectorKinds: (): readonly unknown[] => [...all, "connectorKinds"],
       /** One connector's detail. */
       connector: (connectorId: string): readonly unknown[] => [...all, "connector", connectorId],
-      /** The viewer's own tool policies for their connection of one connector (权限). */
+      /** The viewer's own tool policies for their connection of one connector (its Permissions tab). */
       connectorMyPolicies: (connectorId: string): readonly unknown[] => [
         ...all,
         "connectorMyPolicies",

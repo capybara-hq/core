@@ -744,6 +744,16 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
               ...(f.kind === "image" ? { src: srcOf(f.attachmentId) } : {}),
             }),
           ),
+          // referenced project files: named by their path, nothing to open or download
+          ...(e.projectFiles ?? []).map(
+            (path): BubbleAttachment => ({
+              id: `project:${path}`,
+              kind: "file",
+              name: path,
+              type: typeBadge(path, ""),
+              downloadable: false,
+            }),
+          ),
           ...e.attachments.map(
             (a): BubbleAttachment => ({
               id: `@${a.appId}:${a.uri}`,

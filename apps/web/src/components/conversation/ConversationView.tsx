@@ -611,6 +611,17 @@ export function useConversationPage(
               ? undefined
               : conversationId
           }
+          // the project's files can be referenced by its owner (the listing is the owner's)
+          {...(conv.conversation?.project &&
+          conv.conversation.deviceId &&
+          conv.conversation.accountId === session.me.account.id
+            ? {
+                project: {
+                  deviceId: conv.conversation.deviceId,
+                  name: conv.conversation.project.name,
+                },
+              }
+            : {})}
           running={active}
           waiting={waitHint}
           stop={{ onStop: conv.stop, stopping: conv.stopping }}

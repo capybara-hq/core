@@ -286,6 +286,7 @@ export function useNewConversationPage(
         text: m.text,
         ...(m.attachments !== undefined ? { attachments: m.attachments } : {}),
         ...(m.files !== undefined ? { files: m.files } : {}),
+        ...(m.projectFiles !== undefined ? { projectFiles: m.projectFiles } : {}),
         ...(m.skill !== undefined ? { skill: m.skill } : {}),
         ...selection.pending,
       },
@@ -483,6 +484,9 @@ export function useNewConversationPage(
           }}
           onSend={send}
           control={composer}
+          {...(device.deviceId !== undefined && device.project !== undefined
+            ? { project: { deviceId: device.deviceId, name: device.project } }
+            : {})}
           pickers={{
             ...(device.picker ? { device: device.picker } : {}),
             permission: permission.picker,
