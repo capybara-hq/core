@@ -874,9 +874,11 @@ export async function recordManagedDevicePaths(
   );
 }
 
-/** The conversation whose device a call uses (the root conversation's for a sub-agent). */
-export const sandboxConversationOf = (ctx: BuiltinCallContext): string =>
-  ctx.sandboxConversationId ?? ctx.conversationId;
+/**
+ * The conversation whose device a call uses (sub-agents spec §10.1, agent map spec §6): the tree
+ * root for a sub-agent's call at any depth, the conversation itself otherwise.
+ */
+export const sandboxConversationOf = (ctx: BuiltinCallContext): string => ctx.rootConversationId;
 
 /**
  * Runs `fn` under the per-path lease of `path` in the session's device (spec §10.4: the

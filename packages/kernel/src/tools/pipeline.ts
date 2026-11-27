@@ -1586,6 +1586,7 @@ export class ToolPipeline {
         accountId: ctx.accountId,
         agentId: ctx.agentId,
         conversationId: ctx.conversationId,
+        rootConversationId: ctx.parent?.rootConversationId ?? ctx.conversationId,
         runId: ctx.runId,
         callId: call.id,
         rawInput: call.input,
@@ -3540,9 +3541,6 @@ export class ToolPipeline {
         reviewed?.escalationRefusal !== undefined && {
           sandboxEscalationRefusal: reviewed.escalationRefusal,
         }),
-      // a sub-agent works in its root conversation's sandbox (spec §10.1, at every depth)
-      ...(tool.source.kind === "builtin" &&
-        ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { parentRunId: ctx.parent.runId }),
       ...(tool.source.kind === "builtin" &&

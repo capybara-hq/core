@@ -138,7 +138,7 @@ describe("Skill: project skills", () => {
     const t = setup({ project: usable, files: { [PATH]: skillMd("fix-issue", "Body.") } });
     await t.run(
       { skill: "project:fix-issue" },
-      { conversationId: "child", sandboxConversationId: "root" },
+      { conversationId: "child", rootConversationId: "root" },
     );
     expect(t.asked).toContainEqual({ conversation: "child", type: "project_root" });
     expect(t.asked.some((a) => a.conversation === "root" && a.type === "project_root")).toBe(false);

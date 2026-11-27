@@ -3603,6 +3603,22 @@ export interface PushTarget {
 }
 
 // @public
+export function questionBody(form: InputForm, locale: Locale): string | undefined;
+
+// @public
+export interface QuestionChoiceButton {
+    label: string;
+    primary: boolean;
+    value: string | boolean;
+}
+
+// @public
+export function questionChoiceButtons(form: InputForm, locale: Locale): {
+    key: string;
+    buttons: QuestionChoiceButton[];
+} | undefined;
+
+// @public
 export function questionRenderableInline(form: InputForm, opts?: {
     textReply?: boolean;
 }): boolean;

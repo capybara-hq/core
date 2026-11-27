@@ -147,7 +147,7 @@ async function childCtx(parent: Conv, childId: string): Promise<BuiltinCallConte
   const run = await startClaimedRun(k, raw, childId, parent.accountId);
   return ctxOf(parent, {
     conversationId: childId,
-    sandboxConversationId: parent.conversationId,
+    rootConversationId: parent.conversationId,
     runId: run.runId,
     executionClaim: run.claim,
   });
@@ -461,7 +461,7 @@ describe("TaskOutput", () => {
       [ctxOf(parent), child],
       [ctxOf(parent), grandchild.toUpperCase()],
       [
-        ctxOf(parent, { conversationId: child, sandboxConversationId: parent.conversationId }),
+        ctxOf(parent, { conversationId: child, rootConversationId: parent.conversationId }),
         grandchild,
       ],
     ];
@@ -807,11 +807,7 @@ describe("TaskList", () => {
 
     // the sub-agent lists its own task only
     const fromChild = textOf(
-      await list(
-        parent,
-        {},
-        { conversationId: child, sandboxConversationId: parent.conversationId },
-      ),
+      await list(parent, {}, { conversationId: child, rootConversationId: parent.conversationId }),
     );
     expect(fromChild).toContain(childs);
     expect(fromChild).not.toContain(mine);

@@ -39,6 +39,8 @@ import {
   PropertySection,
   Prose,
   QuickActions,
+  type RailRow,
+  RailSection,
   RailStep,
   RailText,
   ReferenceBoard,
@@ -1578,6 +1580,34 @@ function ProcessBlockFrame(
   );
 }
 
+/** A finished rail cut by todo item (#924): a done item's section closed, the last one open. */
+const SECTION_ROWS: RailRow[] = [
+  {
+    key: "s1",
+    render: () => <RailSection title="读取报表结构" done steps={3} open={false} onToggle={noop} />,
+  },
+  {
+    key: "s2",
+    render: () => <RailSection title="更新汇总" done={false} steps={2} open onToggle={noop} />,
+  },
+  {
+    key: "r2",
+    render: () => (
+      <RailStep icon={{ name: "terminal" }}>
+        {processLine("r2", "command", "Bash", "pnpm test")}
+      </RailStep>
+    ),
+  },
+  {
+    key: "r4",
+    render: () => (
+      <RailStep icon={{ name: "square-pen" }}>
+        {processLine("r4", "edit", "Edit", "summary.md")}
+      </RailStep>
+    ),
+  },
+];
+
 const PENDING = [
   {
     key: "p1",
@@ -1624,6 +1654,9 @@ function processBlockBlocks(): ReactNode {
       </Block>
       <Block id="process-block-open">
         <ProcessBlockFrame open rail waitingStep hiddenBefore={3} onShowEarlier={noop} />
+      </Block>
+      <Block id="process-block-sections">
+        <ProcessBlockFrame open rows={SECTION_ROWS} />
       </Block>
       <Block id="process-block-stopped">
         <ProcessBlockFrame state="stopped" />

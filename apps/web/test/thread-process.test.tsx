@@ -659,4 +659,107 @@ describe("the thread draws process blocks", () => {
     act(() => es.emit("event", finished(7)));
     await vi.waitFor(() => expect(entries()).toEqual(["user", "process", "prose", "run"]));
   });
+
+  it("the rail is sectioned by todo item; a done item's section starts closed", async () => {
+    const todo = (seq: number, s: number, id: string, text: string) => [
+      step(seq, s, [{ type: "tool_call", id, name: "plugin__todo__write", input: {} }]),
+      ev(seq + 1, "tool_result", {
+        step: s,
+        callId: id,
+        toolKey: "plugin__todo__write",
+        content: "ok",
+        isError: false,
+        card: { plugin: "todo", view: "tasks-card", placement: "pinned", key: id, text },
+      }),
+    ];
+    api([
+      userMsg(1, "plan it"),
+      runStarted(2),
+      ...todo(3, 0, "td1", "- [ ] **Reading the spec** (in progress)\n- [ ] Write the code"),
+      step(5, 1, [bash("t1", "cat spec.md")]),
+      result(6, "t1"),
+      ...todo(7, 2, "td2", "- [x] Read the spec\n- [ ] **Writing the code** (in progress)"),
+      step(9, 3, [bash("t2", "make")]),
+      result(10, "t2"),
+      step(11, 4, [{ type: "text", text: "Done." }], "end_turn"),
+      finished(12),
+    ]);
+    await renderChatRoute();
+    await screen.findByText("Done.");
+    const block = theBlock();
+    const user = userEvent.setup();
+    await user.click(within(block).getByRole("button", { name: /Worked/ }));
+    const sections = [...block.querySelectorAll<HTMLElement>('[data-part="rail-section"]')];
+    expect(sections.map((x) => x.textContent)).toEqual([
+      expect.stringContaining("Read the spec"),
+      expect.stringContaining("Writing the code"),
+    ]);
+    // Read the spec is done: its section is closed, its steps hidden; the open item's steps show
+    const [read, write] = sections.map((x) => within(x).getByRole("button"));
+    expect(read?.getAttribute("aria-expanded")).toBe("false");
+    expect(read?.textContent).toContain("2 steps");
+    expect(write?.getAttribute("aria-expanded")).toBe("true");
+    expect(within(block).queryByText("cat spec.md")).toBeNull();
+    expect(within(block).getByText("make")).toBeTruthy();
+    // the rail's ends: the first write (before any list) starts the rule, the last step ends it
+    const rows = [...block.querySelectorAll<HTMLElement>("[data-edge]")];
+    expect(rows.map((r) => r.getAttribute("data-edge"))).toEqual(["first", "mid", "mid", "last"]);
+    if (read === undefined) throw new Error("no section");
+    await user.click(read);
+    expect(read.getAttribute("aria-expanded")).toBe("true");
+    expect(within(block).getByText("cat spec.md")).toBeTruthy();
+  });
+
+  it("a long rail mounts only the rows near the viewport", async () => {
+    const events: ConversationEvent[] = [userMsg(1, "go"), runStarted(2)];
+    const n = 400;
+    for (let i = 0; i < n; i++) {
+      events.push(step(3 + 2 * i, i, [bash(`t${i}`, `echo ${i}`)]));
+      events.push(result(4 + 2 * i, `t${i}`));
+    }
+    events.push(step(3 + 2 * n, n, [{ type: "text", text: "All done." }], "end_turn"));
+    events.push(finished(4 + 2 * n));
+    api(events);
+    await renderChatRoute();
+    await screen.findByText("All done.");
+    const block = theBlock();
+    await userEvent.setup().click(within(block).getByRole("button", { name: /Worked/ }));
+    // no fold row: the whole rail is there, windowed
+    expect(within(block).queryByRole("button", { name: /earlier step/ })).toBeNull();
+    const mounted = railSteps(block).length;
+    expect(mounted).toBeGreaterThan(0);
+    expect(mounted).toBeLessThan(n);
+    const list = block.querySelector('[data-part="rail-list"]') as HTMLElement;
+    expect(list.getAttribute("data-virtual")).toBe("true");
+    // the first row starts the rule; the rows not mounted are one spacer after them
+    expect(railSteps(block)[0]?.getAttribute("data-edge")).toBe("first");
+    const spacers = list.querySelectorAll('[data-part="rail-spacer"]');
+    expect(spacers).toHaveLength(1);
+    expect(list.lastElementChild?.getAttribute("data-part")).toBe("rail-spacer");
+    expect(within(block).getByText("echo 0")).toBeTruthy();
+    expect(within(block).queryByText(`echo ${n - 1}`)).toBeNull();
+  });
+
+  it("a device code stands outside while its call runs and folds into the rail once used", async () => {
+    const head = [
+      userMsg(1, "log in"),
+      runStarted(2),
+      step(3, 0, [bash("g", "gh auth login --web")]),
+      ev(4, "device_code", { callId: "g", url: "https://github.com/login/device", code: "AB-12" }),
+    ];
+    api(head);
+    await renderChatRoute();
+    await vi.waitFor(() => expect(entries()).toEqual(["user", "process", "device-code"]));
+    expect(screen.getByText("AB-12")).toBeTruthy();
+    const es = FakeEventSource.instances.at(-1);
+    if (es === undefined) throw new Error("no stream");
+    act(() => es.emit("event", result(5, "g")));
+    await vi.waitFor(() => expect(entries()).toEqual(["user", "process"]));
+    const block = theBlock();
+    const row = block.querySelector('[data-role="device-code"]') as HTMLElement;
+    expect(row.getAttribute("data-state")).toBe("used");
+    expect(row.textContent).toContain(en.chat.deviceCode.used);
+    // the spent code is not shown again
+    expect(screen.queryByText("AB-12")).toBeNull();
+  });
 });

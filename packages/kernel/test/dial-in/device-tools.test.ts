@@ -268,6 +268,7 @@ describe("a dial-in device through the sandbox tools", () => {
           tool.run(input, {
             orgId,
             conversationId,
+            rootConversationId: conversationId,
             runId,
             callId,
             accountId: m.accountId,

@@ -3,6 +3,8 @@ import {
   asCode,
   type ChannelCard,
   type InputForm,
+  questionBody,
+  questionChoiceButtons,
   questionRenderableInline,
   questionStateLabel,
   questionTextReplyHint,
@@ -685,5 +687,58 @@ describe("validateChannelCard: progress", () => {
     expect(validateChannelCard({ ...ok, state: "paused" }).length).toBe(1);
     expect(validateChannelCard({ ...ok, urlText: undefined }).length).toBe(1);
     expect(validateChannelCard({ ...ok, steps: [1] }).length).toBe(1);
+  });
+});
+
+const confirmForm: InputForm = {
+  title: "Browser handoff",
+  body: { zh: "请在浏览器中完成登录", en: "Finish the login in the browser" },
+  fields: [
+    {
+      key: "done",
+      label: "Done",
+      required: true,
+      schema: { type: "boolean" },
+      choices: [
+        { value: true, label: { zh: "完成", en: "Done" } },
+        { value: false, label: { zh: "取消", en: "Cancel" } },
+      ],
+    },
+  ],
+};
+
+describe("question choices and body", () => {
+  it("a choices form is renderable inline, even a boolean", () => {
+    expect(questionRenderableInline(confirmForm)).toBe(true);
+  });
+
+  it("resolves the buttons in the locale, the first primary", () => {
+    expect(questionChoiceButtons(confirmForm, "zh")).toEqual({
+      key: "done",
+      buttons: [
+        { value: true, label: "完成", primary: true },
+        { value: false, label: "取消", primary: false },
+      ],
+    });
+    expect(questionChoiceButtons(enumForm(2), "en")).toBeUndefined();
+  });
+
+  it("resolves the body in the locale", () => {
+    expect(questionBody(confirmForm, "en")).toBe("Finish the login in the browser");
+    expect(questionBody(enumForm(2), "en")).toBeUndefined();
+  });
+
+  it("the fallback text shows the body and the choices while pending", () => {
+    const card: ChannelCard = {
+      kind: "question",
+      id: "q1",
+      form: confirmForm,
+      state: "pending",
+      webUrl: "https://x.test/c/1",
+    };
+    const t = renderCardAsText(card, "en");
+    expect(t).toContain("`Finish the login in the browser`");
+    expect(t).toContain("Options: `Done` / `Cancel`");
+    expect(renderCardAsText({ ...card, state: "answered" }, "en")).not.toContain("Options");
   });
 });

@@ -9,6 +9,9 @@ import {
   PendingActions,
   ProcessBlock,
   type ProcessBlockProps,
+  RAIL_VIRTUAL_MIN,
+  type RailRow,
+  RailSection,
   RailStep,
   ToolGroup,
   type ToolRowData,
@@ -407,5 +410,105 @@ describe("the tool line's key argument stays faint", () => {
     for (const r of hits) {
       expect(r.decls.color, r.selector).toBe("var(--cb-faint)");
     }
+  });
+});
+
+describe("ProcessBlock rail list (#924, #925)", () => {
+  const stepRows = (n: number): RailRow[] =>
+    Array.from({ length: n }, (_, i) => ({
+      key: `s${i}`,
+      render: () => (
+        <RailStep icon="dot">
+          <button type="button">{`step ${i}`}</button>
+        </RailStep>
+      ),
+    }));
+  const rail = (c: HTMLElement) => c.querySelector('[data-part="rail-list"]') as HTMLElement;
+  const edges = (c: HTMLElement) =>
+    [...c.querySelectorAll("[data-edge]")].map((e) => e.getAttribute("data-edge"));
+
+  it("a short list mounts every row with its place on the rule", () => {
+    const { container } = wrap(<ProcessBlock {...base({ open: true, rows: stepRows(3) })} />);
+    expect(rail(container).getAttribute("data-virtual")).toBeNull();
+    expect(edges(container)).toEqual(["first", "mid", "last"]);
+    cleanup();
+    const one = wrap(<ProcessBlock {...base({ open: true, rows: stepRows(1) })} />);
+    expect(edges(one.container)).toEqual(["only"]);
+  });
+
+  it("the edge rules follow data-edge after the child-position rules", () => {
+    const rules = parseCss(css("conversation.css"));
+    const at = (sel: string) => rules.findIndex((r) => r.selector === sel);
+    expect(at('.cb-rail-step[data-edge="first"]::before')).toBeGreaterThan(
+      at(".cb-rail-step:first-of-type::before"),
+    );
+    expect(at('.cb-rail-step[data-edge="last"]::before')).toBeGreaterThan(
+      at(".cb-rail-step:last-of-type::before"),
+    );
+    expect(rules[at('.cb-rail-step[data-edge="only"]::before')]?.decls.display).toBe("none");
+    // a spacer carries the rule through the rows it stands for
+    expect(rules.find((r) => r.selector === ".cb-rail-spacer::before")?.decls.width).toBe("1px");
+  });
+
+  it("a long list mounts the rows near the viewport, a spacer keeps the rest", () => {
+    const n = RAIL_VIRTUAL_MIN * 4;
+    const { container } = wrap(<ProcessBlock {...base({ open: true, rows: stepRows(n) })} />);
+    const list = rail(container);
+    expect(list.getAttribute("data-virtual")).toBe("true");
+    const mounted = list.querySelectorAll('[data-part="rail-step"]');
+    expect(mounted.length).toBeGreaterThan(0);
+    expect(mounted.length).toBeLessThan(n);
+    expect(mounted[0]?.getAttribute("data-edge")).toBe("first");
+    const spacer = list.lastElementChild as HTMLElement;
+    expect(spacer.getAttribute("data-part")).toBe("rail-spacer");
+    expect(spacer.getAttribute("aria-hidden")).toBe("true");
+    expect(Number.parseFloat(spacer.style.height)).toBeGreaterThan(0);
+  });
+
+  it("a focused row stays mounted when the window moves away from it", async () => {
+    const n = RAIL_VIRTUAL_MIN * 4;
+    const { container, rerender } = wrap(
+      <ProcessBlock {...base({ open: true, rows: stepRows(n) })} />,
+    );
+    const first = screen.getByRole("button", { name: "step 0" });
+    first.focus();
+    // the list moves far above the viewport: its rows near the top leave the window
+    const list = rail(container);
+    list.getBoundingClientRect = () => ({ top: -20_000, bottom: 0 }) as DOMRect;
+    rerender(
+      <DesignProvider locale="zh">
+        <ProcessBlock {...base({ open: true, rows: stepRows(n) })} />
+      </DesignProvider>,
+    );
+    expect(screen.queryByRole("button", { name: "step 1" })).toBeNull();
+    // the focused row is still there, alone between two spacers, in rail order
+    expect(document.activeElement).toBe(first);
+    expect(first.closest("[data-edge]")?.getAttribute("data-edge")).toBe("first");
+    const parts = [...list.children].map((c) => c.getAttribute("data-part"));
+    expect(parts[0]).toBe("rail-step");
+    expect(parts[1]).toBe("rail-spacer");
+  });
+
+  it("a section header names its item, counts its steps and toggles", async () => {
+    const onToggle = vi.fn();
+    const rows: RailRow[] = [
+      {
+        key: "sec",
+        render: () => (
+          <RailSection title="Read the spec" done steps={3} open={false} onToggle={onToggle} />
+        ),
+      },
+      ...stepRows(1),
+    ];
+    const { container } = wrap(<ProcessBlock {...base({ open: true, rows })} />, "en");
+    const header = container.querySelector('[data-part="rail-section"]') as HTMLElement;
+    expect(header.getAttribute("data-edge")).toBe("first");
+    expect(header.querySelector('[data-icon="check"]')).not.toBeNull();
+    const toggle = within(header).getByRole("button");
+    expect(toggle.textContent).toContain("Read the spec");
+    expect(toggle.textContent).toContain("3 steps");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledTimes(1);
   });
 });
