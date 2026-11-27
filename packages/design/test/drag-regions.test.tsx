@@ -434,10 +434,10 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
   });
 
   it("no hairline closes the band where the rail drops: band, rail and gutters are one ground", () => {
-    const line =
-      ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"]):has(> .cb-sidebar[data-mode="rail"])::after';
-    expect(decl(line, "content", BAND_QUERY)).toBeUndefined();
-    expect(decl(line, "content")).toBeUndefined();
+    const pseudo = parseCss(css("shell-environment.css")).filter(
+      (r) => /::(after|before)/.test(r.selector) && /\.cb-shell\b/.test(r.selector),
+    );
+    expect(pseudo.filter((r) => r.decls.content !== undefined)).toEqual([]);
   });
 
   it("the expand button sits in the band right after the controls, and leaves the rail", () => {

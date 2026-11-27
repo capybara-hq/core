@@ -26,7 +26,7 @@
 
 - **Context meter threshold:** members cannot read the org's compaction settings (only `/admin/settings` reads them), so the meter turns `fail` at `COMPACTION_DEFAULTS.threshold` (80 %) from `apps/web/src/lib/compaction.ts`. No new kernel API.
 - **System status source:** the product sets no shell-wide system status today; the account menu API takes an optional `status` (shown only when given, with a `fail` dot on the account row) and the web passes none. Version and time zone always go to the footer line.
-- **Run state announcement:** the StatusBar's first item was the page's polite live region. The conversation page keeps a visually hidden `role="status"` element (`data-part="run-status"`) with the run state text, so screen readers still hear idle / running / waiting / stopped / failed.
+- **Run state announcement:** the StatusBar's first item was the page's polite live region. The conversation page keeps a visually hidden `role="status"` element (`data-part="run-announce"`) with the run state text, so screen readers still hear idle / running / waiting / stopped / failed.
 - **`status-bar` UI part** (`packages/plugin-sdk/src/ui-parts.ts`) is removed with its owner (pre-0.1.0). This changes the SDK's public API report (`UI_PART_NAMES`) → changeset on `@capybara-hq/plugin-sdk` (and `@capybara-hq/plugin-client` if its report changes). The spec's "Public API reports: not touched" missed this; the plan corrects it. Follow-up outside this repo: `plugins/theme-cyberpunk` has a dead `[data-cap-part~="status-bar"]` rule.
 - **`layout.status-bar` token** is deleted; its two non-StatusBar uses (`templates.css` `--cb-segment-trail-block`, the Duo calc in `conversation-page.css`) drop the term.
 - **Sub-agent panel footer** (a StatusBar with "上下文 N%") goes; the percentage joins the panel head's `meta` (`<duration> · 上下文 N%`).
@@ -145,7 +145,7 @@ Wave 1 tasks have disjoint files; tests across tasks may be red until wave 2 lan
 
 **Interfaces — Produces:**
 - `AppShellProps`: `status` and `ownStatusBar` removed. `SetupPage`: `status` removed.
-- `ConversationPageProps`: `status: ConversationStatus` removed (and the type); new `announce?: string` → `<span className="cb-sr-only" role="status" data-part="run-status">{announce}</span>` inside the main column.
+- `ConversationPageProps`: `status: ConversationStatus` removed (and the type); new `announce?: string` → `<span className="cb-sr-only" role="status" data-part="run-announce">{announce}</span>` inside the main column.
 - No `StatusBar` / `StatusBarProps` / `useStatusBar` exports.
 - `styles/index.css` imports `./context-meter.css` (Task 3) and no longer `./layering.css`.
 
@@ -178,10 +178,10 @@ Wave 1 tasks have disjoint files; tests across tasks may be red until wave 2 lan
 
 **Interfaces — Consumes:** Task 3 (`context`, `rounds`), Task 4 (`account.status`, `account.footnote`), Task 6 (`announce`, removed `status` / `ownStatusBar`).
 
-- [ ] **Step 1: Failing tests** (`conversation-page.test.tsx`): replace status-bar assertions with `the run state is announced in [data-part="run-status"]` (idle / running / stopped / failed / waiting texts), `the composer shows the context meter at 43%`, `the meter is fail at 80%` (from `COMPACTION_DEFAULTS.threshold`), `no meter before any usage`, `the properties Context section shows 第 N 轮 · 已用 … in [data-part="context-rounds"]`. `inbox.test.tsx`: drop the `useStatusBar` mock and its cases (the head `count` already shows the pending number; keep or add an assertion on it).
+- [ ] **Step 1: Failing tests** (`conversation-page.test.tsx`): replace status-bar assertions with `the run state is announced in [data-part="run-announce"]` (idle / running / stopped / failed / waiting texts), `the composer shows the context meter at 43%`, `the meter is fail at 80%` (from `COMPACTION_DEFAULTS.threshold`), `no meter before any usage`, `the properties Context section shows 第 N 轮 · 已用 … in [data-part="context-rounds"]`. `inbox.test.tsx`: drop the `useStatusBar` mock and its cases (the head `count` already shows the pending number; keep or add an assertion on it).
 - [ ] **Step 2:** Run `pnpm exec vitest run apps/web/test/conversation-page.test.tsx apps/web/test/inbox.test.tsx`: FAIL.
 - [ ] **Step 3:** Implement: `ConversationView` passes `announce={statusText}`, `context={{ pct: contextPct, over: contextPct >= COMPACTION_DEFAULTS.threshold * 100 }}` to the composer when `contextPct !== null`, `rounds={<RunStatsText …/>}` (when `stats.turns > 0`) through `useRightAreaSlot` → `PropertiesSections` → `ContextSection`; `ComposerBar` forwards `context`. `AppFrame`: drop `status` / `ownStatusBar` props on `AppShell` and `SetupPage`; `account.footnote = [version, timeZone].filter(v => v !== "").join(" · ")`; keep the drawer's account sheet `status` unchanged (it still uses `statusPrompt`). `SubagentPanel`: no footer; meta gets ` · ${tc("contextPct", { n: pct })}` when `pct !== null`. Inbox views: delete `useStatusBar`.
-- [ ] **Step 4:** e2e specs: `statusBar(page)` → `page.locator('[data-part="conv-main"] [data-part="run-status"]')`; `tools.spec.ts` the same.
+- [ ] **Step 4:** e2e specs: `statusBar(page)` → `page.locator('[data-part="conv-main"] [data-part="run-announce"]')`; `tools.spec.ts` the same.
 - [ ] **Step 5:** `pnpm exec vitest run --project web` PASS; `pnpm check:web-ui`, `pnpm check:i18n` PASS.
 - [ ] **Step 6:** Commit `feat(web): rewire the status bar's content into the composer, properties and account menu`.
 

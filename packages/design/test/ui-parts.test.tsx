@@ -51,9 +51,7 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
   it("every rendered token is a catalog part", () => {
     render(
       <DesignProvider locale="zh">
-        <AppShell
-          sidebar={sidebarProps()}
-        />
+        <AppShell sidebar={sidebarProps()} />
       </DesignProvider>,
     );
     for (const token of parts()) expect(UI_PART_NAMES as readonly string[]).toContain(token);
@@ -106,10 +104,7 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
   it("AppShell renders capState as data-cap-state on the shell element", () => {
     const { container } = render(
       <DesignProvider locale="zh">
-        <AppShell
-          sidebar={sidebarProps()}
-          capState="run=idle theme=builtin"
-        />
+        <AppShell sidebar={sidebarProps()} capState="run=idle theme=builtin" />
       </DesignProvider>,
     );
     const shell = container.querySelector('[data-cap-part~="shell"]') as HTMLElement;
@@ -123,10 +118,7 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
       window.matchMedia = matchMediaFor(px).matchMedia;
       const { container, unmount } = render(
         <DesignProvider locale="zh">
-          <AppShell
-            sidebar={sidebarProps()}
-            {...(collapsed === undefined ? {} : { collapsed })}
-          />
+          <AppShell sidebar={sidebarProps()} {...(collapsed === undefined ? {} : { collapsed })} />
         </DesignProvider>,
       );
       const v = (container.querySelector('[data-cap-part~="shell"]') as HTMLElement).getAttribute(

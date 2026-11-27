@@ -1914,6 +1914,10 @@ button.cb-property-row {
     gap: 0;
     padding: 0 0 var(--cb-keyboard-inset, 0px);
   }
+  /* No ground above the papers there, so no top gutter filler over the title bar. */
+  .cb-shell-column:has(.cb-conv-page) > .cb-shell-gutter {
+    display: none;
+  }
 }
 .cb-conv-scrim {
   position: fixed;
