@@ -1,10 +1,10 @@
+import * as sdk from "@capybara-hq/plugin-sdk";
 import {
   type ConfigUiHints,
   defineExtension,
   MODEL_PROVIDER_EXTENSION_POINT_V2,
   type ModelCacheInfo,
   ModelError,
-  validateModelCache,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { createFakeProvider } from "./script.js";
@@ -87,7 +87,11 @@ const DeploymentConfig = z.object({
           ])
           .superRefine((cache, ctx) => {
             if (cache === "none") return;
-            const message = validateModelCache(cache as ModelCacheInfo);
+            // an older host SDK has no validateModelCache: skip the check there
+            const validate: unknown =
+              "validateModelCache" in sdk ? sdk.validateModelCache : undefined;
+            if (typeof validate !== "function") return;
+            const message = (validate as typeof sdk.validateModelCache)(cache as ModelCacheInfo);
             if (message !== null) ctx.addIssue({ code: "custom", message });
           })
           .optional()
@@ -118,7 +122,7 @@ const DeploymentConfig = z.object({
  * Provides model-provider@2: declares three effort levels and `model-fake.style` (`shout` upper-
  * cases the reply).
  * No in-process state: cache hit records live in ctx.kv (TTL `cacheTtl` or the declared default,
- * 300 seconds).
+ * else 300 seconds; a hit re-sets the record when the model declares `refreshOnHit`).
  */
 export default defineExtension({
   name: "model-fake",

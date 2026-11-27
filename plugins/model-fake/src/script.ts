@@ -540,29 +540,37 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
 
   /**
    * Cacheable system prefix: the first appearance counts as a cache write, a repeat as a cache read
-   * (hit records live in kv with `req.cacheTtl ?? defaultTtl` seconds; a model without a cache
-   * counts nothing).
+   * (hit records live in kv for the request's tier: `req.cacheTtl ?? defaultTtl` seconds; a hit
+   * re-sets the record with that TTL when the model declares `refreshOnHit`; a model without a
+   * cache counts nothing). A model with no `ttlOptions` and no `defaultTtl` ignores `cacheTtl`,
+   * reports no tier (`ttl` null) and keeps its records for 300 seconds.
    * `cachedChars` is the prefix length in characters, deducted from inputTokens (inputTokens counts
    * only the uncached part).
    */
   async function cacheUsage(
     req: ModelRequest,
     call: ModelCallOptions | undefined,
-  ): Promise<{ read: number; write: number; cachedChars: number; ttl: number }> {
+  ): Promise<{ read: number; write: number; cachedChars: number; ttl: number | null }> {
     const info = infosFor(call).find((i) => i.id === req.model);
-    const none = { read: 0, write: 0, cachedChars: 0, ttl: 0 };
+    const none = { read: 0, write: 0, cachedChars: 0, ttl: null };
     if (info?.cache === undefined || info.cache.mechanism === "none") return none;
-    const ttl = req.cacheTtl ?? info.cache.defaultTtl ?? FAKE_CACHE.defaultTtl ?? 300;
+    const hasOptions = info.cache.ttlOptions.length > 0;
+    // the tier reported in cacheWriteByTtl; null when the model declares no lifetime at all
+    const tier = (hasOptions ? req.cacheTtl : undefined) ?? info.cache.defaultTtl ?? null;
+    const storeTtl = tier ?? 300;
     const cached = req.system.filter((s) => s.cache).map((s) => s.text);
     const prefix = cached.join("\n");
     if (prefix === "") return none;
     const key = `model-fake:prefix:${createHash("sha256").update(prefix).digest("hex")}`;
     const cachedChars = cached.reduce((n, t) => n + t.length, 0);
     if ((await opts.kv.get(key)) !== null) {
-      return { read: tokens(cachedChars), write: 0, cachedChars, ttl };
+      if (info.cache.refreshOnHit) {
+        await opts.kv.set(key, String(cachedChars), { ttlSeconds: storeTtl });
+      }
+      return { read: tokens(cachedChars), write: 0, cachedChars, ttl: tier };
     }
-    await opts.kv.set(key, String(cachedChars), { ttlSeconds: ttl });
-    return { read: 0, write: tokens(cachedChars), cachedChars, ttl };
+    await opts.kv.set(key, String(cachedChars), { ttlSeconds: storeTtl });
+    return { read: 0, write: tokens(cachedChars), cachedChars, ttl: tier };
   }
 
   return {
@@ -652,7 +660,9 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
         outputTokens: tokens(outChars),
         cacheReadTokens: cache.read,
         cacheWriteTokens: cache.write,
-        ...(cache.write > 0 ? { cacheWriteByTtl: [{ ttl: cache.ttl, tokens: cache.write }] } : {}),
+        ...(cache.write > 0 && cache.ttl !== null
+          ? { cacheWriteByTtl: [{ ttl: cache.ttl, tokens: cache.write }] }
+          : {}),
       });
 
       if (p.kind === "tool") {
