@@ -23,3 +23,4 @@ The table `scheduled_tasks` keeps `scheduled_task_runs`, and the tool `ScheduleC
 Set `CAPYBARA_SCHEDULES__MAX_TASKS_PER_ORG` and read `schedule_attention` in the inbox.
 The org setting `scheduledTasks.forbiddenToolsUnreadable` is read by `ScheduledTaskStore`.
 The index `scheduled_tasks_org_idx` is renamed with its table.
+The run row keeps `scheduledTaskId` and a `scheduledTaskRuns` list.
