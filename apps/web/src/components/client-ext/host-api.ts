@@ -6,18 +6,45 @@
 // package (it reads the generated export list `lib/client-host/api.generated.ts`). The shapes
 // copy the package's `context.ts`, `define.ts` and `hooks.ts`; keep them in step.
 import {
+  ActionRow,
+  Avatar,
   Badge,
+  Board,
   Button,
+  CellTitle,
+  DangerConfirm,
+  DataTable,
+  DetailPage,
+  Dialog,
+  EmptyState,
+  Field,
+  FilterChip,
+  FormPage,
+  FormSection,
   Icon,
+  Input,
+  ItemList,
+  ItemListItem,
   Kbd,
   KeyValue,
+  ListPage,
   Logo,
+  Markdown,
+  Menu,
+  PersonName,
+  Popover,
+  PrincipalPicker,
   PropertySection,
+  Segmented,
   Select,
+  SettingsPage,
+  Sheet,
   Spinner,
   Stack,
   Switch,
+  Tabs,
   Text,
+  Textarea,
   Tooltip,
   useSizeClass,
   useViewportSegments,
@@ -321,23 +348,83 @@ function ViewBlocks({ view }: { view: UiView }) {
   return createElement(UiViewRenderer, { view, onAction });
 }
 
+/** One crumb of a page's path line. */
+export interface PageCrumb {
+  label: string;
+  href?: string;
+}
+
+/**
+ * The crumbs the host puts first in every forwarded template's path line: the org and the plugin
+ * page's own name. Empty outside a plugin page (the /p host page provides them).
+ */
+const PageCrumbsContext = createContext<readonly PageCrumb[]>([]);
+export const PageCrumbsProvider = PageCrumbsContext.Provider;
+
+type WithHeader = { header: { path?: PageCrumb[] } };
+
+/** A forwarded template: the design template with the host's crumbs before the plugin's path. */
+function hostTemplate<P extends WithHeader>(
+  Template: ComponentType<never>,
+  name: string,
+): ComponentType<P> {
+  const Hosted = (props: P) => {
+    const crumbs = useContext(PageCrumbsContext);
+    const header = { ...props.header, path: [...crumbs, ...(props.header.path ?? [])] };
+    return createElement(Template as ComponentType<object>, { ...props, header });
+  };
+  Hosted.displayName = name;
+  return Hosted;
+}
+
 /** The design components a client bundle may use (`DESIGN_SUBSET`; their props are frozen per API). */
 export const HOST_DESIGN: Record<string, ComponentType<never>> = {
+  ActionRow,
+  Avatar,
   Badge,
+  Board,
   Button,
+  CellTitle,
+  DangerConfirm,
+  DataTable,
+  DetailPage: hostTemplate(DetailPage as unknown as ComponentType<never>, "DetailPage"),
+  Dialog,
+  EmptyState,
+  Field,
+  FilterChip,
+  FormPage: hostTemplate(FormPage as unknown as ComponentType<never>, "FormPage"),
+  FormSection,
   Icon,
+  Input,
+  ItemList,
+  ItemListItem,
   Kbd,
   KeyValue,
+  ListPage: hostTemplate(ListPage as unknown as ComponentType<never>, "ListPage"),
   Logo,
+  Markdown,
+  Menu,
+  PersonName,
+  Popover,
+  PrincipalPicker,
   PropertySection,
+  Segmented,
   Select,
+  SettingsPage: hostTemplate(SettingsPage as unknown as ComponentType<never>, "SettingsPage"),
+  Sheet,
   Spinner,
   Stack,
   Switch,
+  Tabs,
   Text,
+  Textarea,
   Tooltip,
   ViewBlocks,
 } as unknown as Record<string, ComponentType<never>>;
+
+function notYet(hook: string): never {
+  throw new Error(`${hook}() is not supported until full pages ship`);
+}
 
 /** Every runtime export of `@capybara-hq/plugin-client`, implemented by the host. */
 export const PLUGIN_CLIENT: Record<string, unknown> = {
@@ -378,4 +465,8 @@ export const PLUGIN_CLIENT: Record<string, unknown> = {
   useSignIn: () => useHost("useSignIn").api.signIn,
   useSizeClass: () => useHost("useSizeClass").api.sizeClass,
   useViewportSegments: () => useHost("useViewportSegments").api.viewportSegments,
+  // TODO(full-pages F6): the real page hooks; until then they throw so the export list is complete.
+  useNavigate: () => notYet("useNavigate"),
+  usePageParams: () => notYet("usePageParams"),
+  usePluginQuery: () => notYet("usePluginQuery"),
 };

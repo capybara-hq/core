@@ -18,11 +18,19 @@ import {
 } from "../context.js";
 import type { ClientExtension } from "../define.js";
 import {
+  type BoardCard,
+  type BoardProps,
   clientHost,
+  type DataTableProps,
   DESIGN_NAMES,
+  type DialogProps,
+  type InputProps,
+  type PrincipalPickerProps,
   type SelectProps,
   type SwitchProps,
   setClientHost,
+  type TabsProps,
+  type TextareaProps,
 } from "../design.js";
 import type { ComponentSlotId } from "../slots.generated.js";
 import type {
@@ -86,7 +94,11 @@ export interface FakeHost {
 /**
  * Plain stand-ins for the host's design components: `<span data-fake-design="Name">`. `Select` is
  * a native select over its options and `Switch` a `role="switch"` button, so a test picks a value
- * or flips the switch the way a person would.
+ * or flips the switch the way a person would. `DataTable` is a table of its rows (a click on a
+ * row calls `onOpen`), `Tabs` a row of `role="tab"` buttons, `Dialog` a `role="dialog"` while
+ * open, `Input` / `Textarea` plain controls, `PrincipalPicker` a button per option, and `Board`
+ * its cards with one "Move <card> to <column>" button per column (they call `onMove` at index 0,
+ * unless `canMove` refuses).
  */
 function fakeDesign(): Record<string, ComponentType<never>> {
   const out: Record<string, ComponentType<never>> = {};
@@ -128,6 +140,173 @@ function fakeDesign(): Record<string, ComponentType<never>> {
       onClick: () => props.onChange(!props.checked),
     });
   out.Switch = FakeSwitch as ComponentType<never>;
+  const FakeDataTable = (props: DataTableProps<unknown>) =>
+    createElement(
+      "table",
+      { "data-fake-design": "DataTable", "aria-label": props.label },
+      createElement(
+        "thead",
+        null,
+        createElement(
+          "tr",
+          null,
+          ...props.columns.map((c) => createElement("th", { key: c.key }, c.header)),
+        ),
+      ),
+      createElement(
+        "tbody",
+        null,
+        ...props.rows.map((row) =>
+          createElement(
+            "tr",
+            {
+              key: props.rowKey(row),
+              "data-row-key": props.rowKey(row),
+              onClick: props.onOpen ? () => props.onOpen?.(row) : undefined,
+            },
+            ...props.columns.map((c) => createElement("td", { key: c.key }, c.cell(row))),
+          ),
+        ),
+      ),
+    );
+  out.DataTable = FakeDataTable as ComponentType<never>;
+  const FakeTabs = (props: TabsProps) =>
+    createElement(
+      "div",
+      { role: "tablist", "aria-label": props.label, "data-fake-design": "Tabs" },
+      ...props.items.map((it) =>
+        createElement(
+          "button",
+          {
+            key: it.id,
+            type: "button",
+            role: "tab",
+            disabled: it.disabled,
+            "aria-selected": it.id === props.value,
+            onClick: () => props.onChange?.(it.id),
+          },
+          it.label,
+        ),
+      ),
+    );
+  out.Tabs = FakeTabs as ComponentType<never>;
+  const FakeDialog = (props: DialogProps) =>
+    props.open
+      ? createElement(
+          "div",
+          { role: "dialog", "aria-label": props.title, "data-fake-design": "Dialog" },
+          createElement(
+            "button",
+            { type: "button", "aria-label": "Close", onClick: () => props.onOpenChange(false) },
+            "x",
+          ),
+          props.children,
+          props.footer,
+        )
+      : null;
+  out.Dialog = FakeDialog as ComponentType<never>;
+  const FakeInput = (props: InputProps) =>
+    createElement("input", {
+      type: props.type ?? "text",
+      value: props.value,
+      placeholder: props.placeholder,
+      disabled: props.disabled,
+      readOnly: props.readOnly,
+      id: props.id,
+      name: props.name,
+      "aria-label": props["aria-label"],
+      "aria-describedby": props["aria-describedby"],
+      "aria-invalid": props.invalid ? true : undefined,
+      "data-fake-design": "Input",
+      onChange: (e: { target: { value: string } }) =>
+        props.onChange?.({ target: { value: e.target.value } }),
+    });
+  out.Input = FakeInput as ComponentType<never>;
+  const FakeTextarea = (props: TextareaProps) =>
+    createElement("textarea", {
+      value: props.value,
+      placeholder: props.placeholder,
+      disabled: props.disabled,
+      readOnly: props.readOnly,
+      rows: props.rows,
+      id: props.id,
+      name: props.name,
+      "aria-label": props["aria-label"],
+      "aria-describedby": props["aria-describedby"],
+      "data-fake-design": "Textarea",
+      onChange: (e: { target: { value: string } }) =>
+        props.onChange?.({ target: { value: e.target.value } }),
+    });
+  out.Textarea = FakeTextarea as ComponentType<never>;
+  const FakePrincipalPicker = (props: PrincipalPickerProps) =>
+    createElement(
+      "div",
+      { role: "group", "aria-label": props["aria-label"], "data-fake-design": "PrincipalPicker" },
+      ...props.options.map((o) =>
+        createElement(
+          "button",
+          {
+            key: o.id,
+            type: "button",
+            disabled: props.disabled || o.disabled,
+            "aria-pressed": props.value.includes(o.id),
+            onClick: () =>
+              props.onChange(
+                props.multiple
+                  ? props.value.includes(o.id)
+                    ? props.value.filter((id) => id !== o.id)
+                    : [...props.value, o.id]
+                  : [o.id],
+              ),
+          },
+          o.name,
+        ),
+      ),
+    );
+  out.PrincipalPicker = FakePrincipalPicker as ComponentType<never>;
+  const FakeBoard = (props: BoardProps<BoardCard>) =>
+    props.cards.length === 0 && !props.loading && props.empty !== undefined
+      ? createElement("div", { "data-fake-design": "Board" }, props.empty)
+      : createElement(
+          "div",
+          { "data-fake-design": "Board" },
+          ...props.columns.map((col) =>
+            createElement(
+              "section",
+              { key: col.id, "data-column": col.id, "aria-label": col.title },
+              createElement("h3", null, col.title),
+              ...props.cards
+                .filter((c) => c.columnId === col.id)
+                .map((card) =>
+                  createElement(
+                    "div",
+                    { key: card.id, "data-card": card.id },
+                    createElement(
+                      "button",
+                      { type: "button", onClick: () => props.onOpen?.(card.id) },
+                      props.renderCard(card),
+                    ),
+                    ...props.columns
+                      .filter((to) => to.id !== card.columnId)
+                      .map((to) =>
+                        createElement(
+                          "button",
+                          {
+                            key: to.id,
+                            type: "button",
+                            "aria-label": `Move ${card.id} to ${to.id}`,
+                            disabled: props.canMove ? !props.canMove(card, to.id) : false,
+                            onClick: () => void props.onMove(card.id, to.id, 0),
+                          },
+                          "move",
+                        ),
+                      ),
+                  ),
+                ),
+            ),
+          ),
+        );
+  out.Board = FakeBoard as ComponentType<never>;
   return out;
 }
 

@@ -18,6 +18,38 @@ export type ActionFn = (actionId: string, input?: {
 }>;
 
 // @public
+export const ActionRow: ComponentType<ActionRowProps>;
+
+// @public
+export interface ActionRowProps {
+    cancel?: {
+        label: string;
+        onSelect(): void;
+        disabled?: boolean;
+    };
+    errors?: number;
+    primary: ActionButton;
+    // Warning: (ae-forgotten-export) The symbol "ActionButton" needs to be exported by the entry point index.d.ts
+    //
+    secondary?: ActionButton;
+    unsaved?: number;
+}
+
+// @public
+export const Avatar: ComponentType<AvatarProps>;
+
+// @public
+export interface AvatarProps {
+    name: string;
+    shape?: "square" | "circle";
+    size: 16 | 24 | 28 | 40 | 64;
+    value: {
+        kind: "image";
+        src: string;
+    } | null;
+}
+
+// @public
 export const Badge: ComponentType<BadgeProps>;
 
 // @public
@@ -31,6 +63,36 @@ export interface BaseComponentProps {
     contribution: string;
     plugin: string;
     slot: ComponentSlotId;
+}
+
+// @public
+export const Board: <C extends BoardCard>(props: BoardProps<C>) => React.ReactElement | null;
+
+// @public
+export interface BoardCard {
+    columnId: string;
+    id: string;
+}
+
+// @public
+export interface BoardColumn {
+    count?: number;
+    hint?: string;
+    id: string;
+    locked?: boolean;
+    title: string;
+}
+
+// @public
+export interface BoardProps<C extends BoardCard> {
+    canMove?(card: C, toColumnId: string): boolean;
+    cards: C[];
+    columns: BoardColumn[];
+    empty?: ReactNode;
+    loading?: boolean;
+    onMove(cardId: string, toColumnId: string, index: number): void | Promise<void>;
+    onOpen?(cardId: string): void;
+    renderCard(card: C): ReactNode;
 }
 
 // @public
@@ -85,6 +147,18 @@ export type CapybaraEventOf<K extends CapybaraEventType> = Extract<CapybaraEvent
 export type CapybaraEventType = "run.started" | "run.finished" | "run.failed" | "message.sent" | "message.received" | "tool.started" | "tool.finished" | "approval.requested";
 
 // @public
+export const CellTitle: ComponentType<CellTitleProps>;
+
+// @public
+export interface CellTitleProps {
+    description?: string;
+    initial?: string;
+    mono?: boolean;
+    title: string;
+    trailing?: string;
+}
+
+// @public
 export const CLIENT_API_VERSION = 1;
 
 // @public
@@ -134,16 +208,203 @@ export type ComponentProps<S extends ComponentSlotId> = BaseComponentProps & Slo
 export type ComponentSlotId = "conversation.panel" | "conversation.properties.section" | "conversation.tool-result.card" | "org.page" | "agent.detail.section" | "org.settings.section" | "platform.page" | "shell.brand" | "shell.overlay" | "conversation.empty" | "conversation.composer.frame";
 
 // @public
+export const DangerConfirm: ComponentType<DangerConfirmProps>;
+
+// @public
+export interface DangerConfirmProps {
+    confirmDisabled?: boolean;
+    confirmLabel: string;
+    confirmName: string;
+    description: ReactNode;
+    onConfirm(): void | Promise<void>;
+    onOpenChange(open: boolean): void;
+    open: boolean;
+    title: string;
+}
+
+// @public
+export const DataTable: <T>(props: DataTableProps<T>) => React.ReactElement | null;
+
+// @public
+export interface DataTableColumn<T> {
+    align?: "left" | "right";
+    cell(row: T): ReactNode;
+    compact?: "title" | "subtitle" | "meta" | "trailing" | "hidden";
+    fit?: boolean;
+    header: string;
+    interactive?: boolean;
+    key: string;
+    sortable?: boolean;
+    tone?: "ink" | "muted";
+    width?: number;
+    wrap?: boolean;
+}
+
+// @public
+export interface DataTableProps<T> extends ListMoreProps {
+    activeKey?: string;
+    columns: DataTableColumn<T>[];
+    empty?: {
+        title: string;
+        hint?: string;
+        action?: ReactNode;
+    };
+    error?: {
+        code: string;
+        requestId?: string;
+        onRetry(): void;
+    };
+    framed?: boolean;
+    isDisabled?(row: T): boolean;
+    label: string;
+    noResults?: {
+        description: string;
+        onClear(): void;
+    };
+    onOpen?(row: T): void;
+    pagination?: {
+        page: number;
+        pageSize: number;
+        total: number;
+        pageSizes?: number[];
+        onPage: (p: number) => void;
+        onPageSize?: (s: number) => void;
+    };
+    rowHeight?: "dense" | "default" | "roomy";
+    rowKey(row: T): string;
+    rowLabel?(row: T): string;
+    rowMenu?(row: T): MenuItem[];
+    rows: T[];
+    sort?: {
+        key: string;
+        dir: "asc" | "desc";
+        onChange(key: string, dir: "asc" | "desc"): void;
+    };
+    state?: "ready" | "loading" | "error";
+    toolbar?: ReactNode;
+    toolbarEnd?: ReactNode;
+}
+
+// @public
 export function defineClientExtension(def: ClientExtensionDefinition): ClientExtension;
 
 // @public
 export function defineComponent<S extends ComponentSlotId>(slot: S, render: ComponentType<ComponentProps<S>>): ClientComponent<S>;
 
 // @public
+export const DetailPage: ComponentType<DetailPageProps>;
+
+// @public
+export interface DetailPageProps {
+    children?: ReactNode;
+    facts?: ReactNode;
+    header: PageHeader;
+    loading?: {
+        facts?: boolean;
+        blocks?: number;
+    };
+    tabs?: TabsProps | undefined;
+}
+
+// @public
+export const Dialog: ComponentType<DialogProps>;
+
+// @public
+export interface DialogProps {
+    children?: ReactNode;
+    danger?: boolean;
+    footer: ReactNode;
+    initialFocus?: "primary" | "cancel" | undefined;
+    onOpenChange(open: boolean): void;
+    open: boolean;
+    size?: 480 | 640 | 760 | 1060;
+    title: string;
+}
+
+// @public
+export const EmptyState: ComponentType<EmptyStateProps>;
+
+// @public
+export interface EmptyStateProps {
+    // Warning: (ae-forgotten-export) The symbol "HeaderButton" needs to be exported by the entry point index.d.ts
+    //
+    action?: (HeaderButton & {
+        onSelect?(): void;
+        href?: undefined;
+    }) | (HeaderButton & {
+        href: string;
+        onSelect?: undefined;
+    });
+    hint?: string;
+    size?: "page" | "panel" | "compact";
+    text: string;
+}
+
+// @public
 export interface EventBase {
     at: string;
     conversationId: string;
     seq: number;
+}
+
+// @public
+export const Field: ComponentType<FieldProps>;
+
+// @public
+export interface FieldProps {
+    action?: ReactNode;
+    children: React.ReactElement<Record<string, unknown>>;
+    count?: {
+        value: number;
+        max: number;
+    };
+    error?: string;
+    help?: string;
+    label: string;
+    onReset?: () => void;
+    optional?: boolean;
+    required?: boolean;
+}
+
+// @public
+export const FilterChip: ComponentType<FilterChipProps>;
+
+// @public
+export interface FilterChipProps {
+    count?: number | string;
+    density?: "dense" | "default" | "prominent";
+    label: string;
+    onSelect: () => void;
+    selected: boolean;
+}
+
+// @public
+export const FormPage: ComponentType<FormPageProps>;
+
+// @public
+export interface FormPageProps {
+    actionRow: ActionRowProps;
+    children?: ReactNode;
+    create?: boolean;
+    header: PageHeader;
+    loading?: boolean;
+}
+
+// @public
+export const FormSection: ComponentType<FormSectionProps>;
+
+// @public
+export interface FormSectionProps {
+    children?: ReactNode;
+    description?: string;
+    flush?: boolean;
+    id: string;
+    layout?: "stacked";
+    loading?: {
+        fields: number;
+    };
+    marks?: ReactNode;
+    title: string;
 }
 
 // @public
@@ -154,6 +415,81 @@ export interface IconProps {
     label?: string;
     name: string;
     size?: 16 | 14 | 12;
+}
+
+// @public
+export const Input: ComponentType<InputProps>;
+
+// @public
+export interface InputProps {
+    "aria-describedby"?: string;
+    "aria-label"?: string;
+    autoFocus?: boolean;
+    density?: "dense" | "default" | "prominent";
+    disabled?: boolean;
+    id?: string;
+    invalid?: boolean;
+    maxLength?: number;
+    name?: string;
+    onChange?: (e: {
+        target: {
+            value: string;
+        };
+    }) => void;
+    placeholder?: string;
+    prefix?: ReactNode;
+    readOnly?: boolean;
+    suffix?: ReactNode;
+    type?: "text" | "email" | "url" | "number" | "search" | "password" | "date" | "time";
+    value?: string;
+}
+
+// @public
+export const ItemList: ComponentType<ItemListProps>;
+
+// @public
+export const ItemListItem: ComponentType<ItemListItemProps>;
+
+// @public
+export interface ItemListItemProps {
+    actions?: ReactNode;
+    children?: ReactNode;
+    code?: string;
+    href?: string;
+    invalid?: boolean;
+    marks?: ReactNode;
+    meta?: ReactNode;
+    tag?: {
+        label: string;
+        tone?: "default" | "accent";
+    };
+    title: string;
+}
+
+// @public
+export interface ItemListProps extends ListMoreProps {
+    children?: ReactNode;
+    empty?: string | Omit<EmptyStateProps, "size">;
+    inset?: "card" | "flush";
+    label: string;
+    rows?: ItemListRow[];
+}
+
+// @public
+export interface ItemListRow {
+    actions?: ReactNode;
+    href?: string;
+    id: string;
+    meta?: string;
+    status?: {
+        label: string;
+        tone?: "default" | "accent";
+    };
+    tag?: {
+        label: string;
+        tone?: "default" | "accent";
+    };
+    title: string;
 }
 
 // @public
@@ -183,6 +519,31 @@ export interface KeyValueProps {
 }
 
 // @public
+export interface ListMoreProps {
+    hasMore?: boolean | undefined;
+    loadingMore?: boolean | undefined;
+    loadMoreError?: string | null | undefined;
+    onLoadMore?: (() => void) | undefined;
+}
+
+// @public
+export const ListPage: ComponentType<ListPageProps>;
+
+// @public
+export interface ListPageProps {
+    actionRow?: ActionRowProps;
+    children?: ReactNode;
+    empty?: EmptyStateProps;
+    filterCount?: number;
+    filters?: ReactNode;
+    header: PageHeader;
+    listLabel?: string;
+    loading?: boolean;
+    more?: ListMoreProps;
+    variant?: "objects" | "records" | "cards";
+}
+
+// @public
 export const Logo: ComponentType<LogoProps>;
 
 // @public
@@ -190,6 +551,49 @@ export interface LogoProps {
     scale?: 2 | 3 | 6;
     tone?: "accent" | "muted";
     wordmark?: boolean;
+}
+
+// @public
+export const Markdown: ComponentType<MarkdownProps>;
+
+// @public
+export interface MarkdownProps {
+    text: string;
+}
+
+// @public
+export const Menu: ComponentType<MenuProps>;
+
+// @public
+export type MenuItem = ({
+    label: string;
+    shortcut?: string;
+    danger?: boolean;
+    disabled?: boolean;
+    checked?: boolean;
+    description?: string;
+} & ({
+    onSelect(): void;
+    href?: undefined;
+    submenu?: undefined;
+} | {
+    href: string;
+    onSelect?(): void;
+    submenu?: undefined;
+} | {
+    submenu: MenuItem[];
+    onSelect?: undefined;
+    href?: undefined;
+})) | "separator";
+
+// @public
+export interface MenuProps {
+    items: MenuItem[];
+    label?: string;
+    onOpenChange?: (open: boolean) => void;
+    open?: boolean;
+    side?: "bottom" | "right";
+    trigger: React.ReactElement<Record<string, unknown>>;
 }
 
 // @public
@@ -206,8 +610,100 @@ export type NavigateTarget = {
 };
 
 // @public
+export type PageAction = (HeaderButton & {
+    onSelect?(): void;
+    href?: undefined;
+}) | (HeaderButton & {
+    href: string;
+    onSelect?: undefined;
+}) | {
+    menu: MenuItem[];
+    label: string;
+};
+
+// @public
+export interface PageHeader {
+    actions?: PageAction[];
+    activeTab?: string;
+    count?: ReactNode;
+    description?: string;
+    path?: {
+        label: string;
+        href?: string;
+    }[];
+    search?: {
+        label: string;
+        value: string;
+        onChange(v: string): void;
+    };
+    status?: ReactNode;
+    tabs?: {
+        id: string;
+        label: string;
+        count?: number;
+        href?: string;
+        onSelect?(): void;
+    }[];
+    title: string;
+}
+
+// @public
+export const PersonName: ComponentType<PersonNameProps>;
+
+// @public
+export interface PersonNameProps {
+    avatarUrl: string | null;
+    name: string;
+    secondary?: string;
+    size: 16 | 24;
+}
+
+// @public
 export class PluginClientContextError extends Error {
     constructor(hook: string);
+}
+
+// @public
+export const Popover: ComponentType<PopoverProps>;
+
+// @public
+export interface PopoverProps {
+    active?: boolean;
+    children: ReactNode;
+    flush?: boolean;
+    onOpenChange?: (open: boolean) => void;
+    open?: boolean;
+    trigger: React.ReactElement<Record<string, unknown>>;
+}
+
+// @public
+export interface PrincipalOption {
+    avatar?: {
+        kind: "image";
+        src: string;
+    } | null;
+    disabled?: boolean;
+    hint?: string;
+    id: string;
+    kind: "person" | "agent";
+    name: string;
+}
+
+// @public
+export const PrincipalPicker: ComponentType<PrincipalPickerProps>;
+
+// @public
+export interface PrincipalPickerProps {
+    "aria-label"?: string;
+    disabled?: boolean;
+    groups?: boolean;
+    loading?: boolean;
+    multiple?: boolean;
+    onChange(ids: string[]): void;
+    onSearch?(query: string): void;
+    options: PrincipalOption[];
+    placeholder?: string;
+    value: string[];
 }
 
 // @public
@@ -238,6 +734,22 @@ export interface QueryState<T = unknown> {
 export type RunState = "idle" | "running" | "waiting" | "failed";
 
 // @public
+export const Segmented: ComponentType<SegmentedProps>;
+
+// @public
+export interface SegmentedProps {
+    density?: "dense" | "default" | "prominent";
+    fill?: boolean;
+    label: string;
+    onChange: (v: string) => void;
+    options: {
+        value: string;
+        label: string;
+    }[];
+    value: string;
+}
+
+// @public
 export const Select: ComponentType<SelectProps>;
 
 // @public
@@ -251,7 +763,7 @@ export interface SelectOption {
 export interface SelectProps {
     "aria-label"?: string;
     "aria-labelledby"?: string;
-    density?: "comfortable" | "compact";
+    density?: "dense" | "default" | "prominent";
     disabled?: boolean;
     onChange?: (e: {
         target: {
@@ -261,6 +773,42 @@ export interface SelectProps {
     options: SelectOption[];
     placeholder?: string;
     value?: string;
+}
+
+// @public
+export const SettingsPage: ComponentType<SettingsPageProps>;
+
+// @public
+export interface SettingsPageProps {
+    actionRow?: ActionRowProps;
+    activeNav: string;
+    children?: ReactNode;
+    header: PageHeader;
+    nav: {
+        group: string;
+        items: {
+            id: string;
+            label: string;
+            href: string;
+            count?: number;
+        }[];
+    }[];
+}
+
+// @public
+export const Sheet: ComponentType<SheetProps>;
+
+// @public
+export interface SheetProps {
+    children?: ReactNode;
+    dirty?: boolean;
+    footer?: ReactNode;
+    meta?: ReactNode;
+    onOpenChange(open: boolean): void;
+    open: boolean;
+    tabs?: ReactNode;
+    title: string;
+    width?: 480 | 720;
 }
 
 // @public
@@ -351,8 +899,51 @@ export interface SwitchProps {
 }
 
 // @public
+export const Tabs: ComponentType<TabsProps>;
+
+// @public
+export interface TabsProps {
+    items: {
+        id: string;
+        label: string;
+        count?: number | string;
+        badge?: string;
+        alert?: boolean;
+        disabled?: boolean;
+        href?: string;
+    }[];
+    label: string;
+    look?: "underline" | "segmented-compact";
+    onChange?: (id: string) => void;
+    value: string;
+}
+
+// @public
 const Text_2: ComponentType<TextProps>;
 export { Text_2 as Text }
+
+// @public
+export const Textarea: ComponentType<TextareaProps>;
+
+// @public
+export interface TextareaProps {
+    "aria-describedby"?: string;
+    "aria-label"?: string;
+    code?: boolean;
+    disabled?: boolean;
+    id?: string;
+    maxLength?: number;
+    name?: string;
+    onChange?: (e: {
+        target: {
+            value: string;
+        };
+    }) => void;
+    placeholder?: string;
+    readOnly?: boolean;
+    rows?: number;
+    value?: string;
+}
 
 // @public
 export interface TextProps {
