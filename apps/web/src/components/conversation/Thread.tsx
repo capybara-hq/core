@@ -16,6 +16,8 @@ import {
   ProcessBlock,
   type ProcessBlockProps,
   Prose,
+  type RailRow,
+  RailSection,
   RailStep,
   type RailStepProps,
   RailText,
@@ -54,7 +56,15 @@ import type { ModelRef, ToolInfo } from "../../lib/conversations";
 import { type ModelConfigViewer, modelConfigViewer } from "../../lib/model-config";
 import { withNode } from "../../lib/node-slot";
 import { PeopleContext, type PeopleMap, usePersonLookup } from "../../lib/people";
-import type { PendingEntry, ProcessEntry, ProcessStep, ThreadEntry } from "../../lib/process";
+import {
+  type PendingEntry,
+  type ProcessEntry,
+  type ProcessStep,
+  type RailItem,
+  railItems,
+  sectionRail,
+  type ThreadEntry,
+} from "../../lib/process";
 import { toolOutputSizeQuery } from "../../lib/query/conversation";
 import { uiViewQuery } from "../../lib/query/ui";
 import { canViewTrajectory, configureModelsHref, runParts } from "../../lib/run-row";
@@ -500,7 +510,10 @@ function sameBlock(a: ThreadEntry, b: ThreadEntry): boolean {
     a.steps.length === b.steps.length &&
     a.steps.every((x, i) => sameStep(x, b.steps[i])) &&
     a.pinned.length === b.pinned.length &&
-    a.pinned.every((x, i) => x === b.pinned[i])
+    a.pinned.every((x, i) => x === b.pinned[i]) &&
+    a.taskLists.latest === b.taskLists.latest &&
+    a.taskLists.cards.length === b.taskLists.cards.length &&
+    a.taskLists.cards.every((x, i) => x === b.taskLists.cards[i])
   );
 }
 
@@ -1118,14 +1131,14 @@ function ToolStep({ tools, c }: { tools: TimelineTool[]; c: EntryContext }): Rea
 type BlockUi = {
   /** Their open toggle, kept while the block's state is the one it was made in. */
   open?: { value: boolean; state: ProcessEntry["state"] };
-  /** How many of the rail's last steps are drawn (more after "N earlier steps"). */
-  shown?: number;
+  /** "N earlier steps" was opened: the whole rail is drawn, not only its last steps. */
+  all?: boolean;
+  /** Their toggles of the rail's sections, by section key (a done item's starts closed). */
+  sections?: Readonly<Record<string, boolean>>;
 };
 
 /** Steps a running, waiting, stopped or failed block draws before its fold row (spec §1.3). */
 const LIVE_STEPS = 4;
-/** The rail draws at most this many steps at a time; the fold row adds as many again. */
-const RAIL_PAGE = 200;
 /** How often at most the running head announces a new step (spec §7, accessibility). */
 const ANNOUNCE_MS = 3000;
 /**
@@ -1135,70 +1148,6 @@ const ANNOUNCE_MS = 3000;
 const STREAM_ANNOUNCE_MS = 300;
 
 type Extra = Extract<ProcessStep, { kind: "network-facts" | "card" }>;
-
-/** One rail row: a step, with the process cards and network facts of its calls under it. */
-type RailItem =
-  | { kind: "thinking"; key: string; e: Extract<ProcessStep, { kind: "thinking" }> }
-  | { kind: "narration"; key: string; text: string }
-  | { kind: "tool"; key: string; tools: TimelineTool[]; extras: Extra[] }
-  | { kind: "subagent"; key: string; row: TimelineSubagent }
-  | { kind: "note"; key: string; step: Extract<ProcessStep, { kind: "note" }> }
-  | { kind: "decided"; key: string; e: Extract<ProcessStep, { kind: "decided" }>["entry"] }
-  | { kind: "extra"; key: string; extra: Extra };
-
-/**
- * A block's steps as rail rows: one per model step's tool calls (a `tools` entry runs on across
- * steps, so it is split where the step changes; the row's key is its first call's); a process
- * card or a network fact goes under the step of the call that made it; thinking the model does
- * not show is left out.
- */
-function railItems(b: ProcessEntry, reasoningOf: (m: ModelRef) => boolean | undefined) {
-  const items: RailItem[] = [];
-  const byCall = new Map<string, Extract<RailItem, { kind: "tool" }>>();
-  for (const s of b.steps) {
-    switch (s.kind) {
-      case "thinking":
-        if (s.model === null || reasoningOf(s.model) !== false)
-          items.push({ kind: "thinking", key: s.key, e: s });
-        break;
-      case "narration":
-        items.push({ kind: "narration", key: s.key, text: s.text });
-        break;
-      case "tools": {
-        let item: Extract<RailItem, { kind: "tool" }> | null = null;
-        let at: string | null = null;
-        for (const r of s.rows) {
-          const step = r.step === undefined ? `call:${r.callId}` : `${r.step.runId}:${r.step.step}`;
-          if (item === null || step !== at) {
-            item = { kind: "tool", key: `${s.key}:${r.callId}`, tools: [], extras: [] };
-            at = step;
-            items.push(item);
-          }
-          item.tools.push(r);
-          byCall.set(r.callId, item);
-        }
-        break;
-      }
-      case "network-facts":
-      case "card": {
-        const at = byCall.get(s.callId);
-        if (at !== undefined) at.extras.push(s);
-        else items.push({ kind: "extra", key: s.key, extra: s });
-        break;
-      }
-      case "subagent":
-        items.push({ kind: "subagent", key: s.key, row: s.row });
-        break;
-      case "note":
-        items.push({ kind: "note", key: s.key, step: s });
-        break;
-      case "decided":
-        items.push({ kind: "decided", key: s.key, e: s.entry });
-        break;
-    }
-  }
-  return { items, byCall };
-}
 
 /** The kind icon of a tool row whose info is not read yet (the tools read is on its way). */
 const ROW_KIND_ICON: Record<ToolRowData["kind"], IconName> = {
@@ -1395,10 +1344,11 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
   const announced = useThrottled(current, ANNOUNCE_MS);
   const pinnedSummary = usePinnedSummary(c.orgId, c.conversationId, b.pinned[0]);
 
-  // what the rail draws: the last steps, more behind the fold row
-  const base = b.state === "finished" ? RAIL_PAGE : LIVE_STEPS;
-  const shown = ui?.shown ?? base;
-  const from = Math.max(0, items.length - shown);
+  // what the rail draws: a live (or stopped) block its last steps, the rest behind the fold row;
+  // the steps cut into sections by the task list item that was current when they ran (#924)
+  const from =
+    b.state === "finished" || ui?.all === true ? 0 : Math.max(0, items.length - LIVE_STEPS);
+  const sections = useMemo(() => sectionRail(items, b.taskLists), [items, b.taskLists]);
 
   const stepIcon = (it: RailItem): RailStepProps["icon"] => {
     switch (it.kind) {
@@ -1421,13 +1371,21 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       case "note":
         return { name: it.step.note === "compacted" ? "archive" : "refresh" };
       case "decided": {
-        const call = byCall.get(it.e.item.callId)?.tools.find((x) => x.callId === it.e.item.callId);
+        if (it.e.kind === "subagent-wait") return { name: "agent" };
+        const callId = it.e.kind === "device-code" ? it.e.callId : it.e.item.callId;
+        const call = byCall.get(callId)?.tools.find((x) => x.callId === callId);
         return call !== undefined ? kindOf(call).icon : { name: "check" };
       }
       case "extra":
         return { name: it.extra.kind === "card" ? "extension" : "globe" };
     }
   };
+
+  /** The call a folded device code came from (its status says whether the code was used). */
+  const callOf = (e: Extract<RailItem, { kind: "decided" }>["e"]) =>
+    e.kind === "device-code"
+      ? byCall.get(e.callId)?.tools.find((x) => x.callId === e.callId)
+      : undefined;
 
   const extra = (x: Extra): ReactNode =>
     x.kind === "card" ? (
@@ -1456,11 +1414,48 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       case "note":
         return <DividerView e={{ kind: "divider", key: it.key, ...it.step.divider }} c={c} />;
       case "decided":
-        return <DecidedStep e={it.e} c={c} />;
+        return <DecidedStep e={it.e} c={c} call={callOf(it.e)} />;
       case "extra":
         return extra(it.extra);
     }
   };
+
+  // the rail's rows: each section's header (when it ran under a task list item) and, while the
+  // section is open, its steps; only the steps from `from` on (a header with any of them)
+  const rows: RailRow[] = [];
+  for (const sec of sections) {
+    const end = sec.start + sec.items.length;
+    if (end <= from) continue;
+    const task = sec.task;
+    const secOpen = task === null || (ui?.sections?.[sec.key] ?? !task.done);
+    if (task !== null) {
+      const steps = sec.items.length;
+      rows.push({
+        key: sec.key,
+        render: () => (
+          <RailSection
+            title={task.label}
+            done={task.done}
+            steps={steps}
+            open={secOpen}
+            onToggle={() =>
+              c.setBlockUi(b.key, (u) => ({
+                ...u,
+                sections: { ...u.sections, [sec.key]: !secOpen },
+              }))
+            }
+          />
+        ),
+      });
+    }
+    if (!secOpen) continue;
+    for (const it of sec.items.slice(Math.max(0, from - sec.start))) {
+      rows.push({
+        key: it.key,
+        render: () => <RailStep icon={stepIcon(it)}>{stepBody(it)}</RailStep>,
+      });
+    }
+  }
 
   const toggle = () =>
     c.setBlockUi(b.key, (u) => ({ ...u, open: { value: !open, state: b.state } }));
@@ -1490,19 +1485,11 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       open={open}
       onToggle={toggle}
       hiddenBefore={from}
-      onShowEarlier={() =>
-        c.setBlockUi(b.key, (u) => ({ ...u, shown: (u.shown ?? base) + RAIL_PAGE }))
-      }
+      onShowEarlier={() => c.setBlockUi(b.key, (u) => ({ ...u, all: true }))}
       {...(pinned !== undefined ? { pinned } : {})}
       backgroundRunning={b.backgroundRunning}
-    >
-      {/* the steps are the rail's direct children: its rule's ends come from their positions */}
-      {items.slice(from).map((it) => (
-        <RailStep key={it.key} icon={stepIcon(it)}>
-          {stepBody(it)}
-        </RailStep>
-      ))}
-    </ProcessBlock>
+      rows={rows}
+    />
   );
 }
 
@@ -1550,16 +1537,36 @@ function SubagentStep({ row, c }: { row: TimelineSubagent; c: EntryContext }): R
   return <ToolGroup rows={[line]} />;
 }
 
-/** A decided approval, question or connect in the rail: the card's one-line decided form. */
+/**
+ * A decided approval, question or connect in the rail: the card's one-line decided form; a used or
+ * expired device code and an ended sub-agent wait likewise (#926).
+ */
 function DecidedStep({
   e,
   c,
+  call,
 }: {
   e: Extract<ProcessStep, { kind: "decided" }>["entry"];
   c: EntryContext;
+  /** A device code's call (its status: the code used, or expired / failed). */
+  call: TimelineTool | undefined;
 }): ReactNode {
-  const questionPanel = c.cb.current.questionPanel;
+  const { questionPanel, onOpenAgent, onOpenSubagent } = c.cb.current;
   switch (e.kind) {
+    case "device-code":
+      return (
+        <DeviceCodeCard
+          url={e.url}
+          code={e.code}
+          ended={call?.row.status === "done" ? "used" : "expired"}
+        />
+      );
+    case "subagent-wait": {
+      const open = e.deep ? onOpenAgent && ((id: string) => onOpenAgent(id, true)) : onOpenSubagent;
+      return (
+        <SubagentWait orgId={c.orgId} wait={e} info={c.info} {...(open ? { onOpen: open } : {})} />
+      );
+    }
     case "approval":
       return <ApprovalCard orgId={c.orgId} item={e.item} info={c.info.get(e.item.toolKey)} />;
     case "question":

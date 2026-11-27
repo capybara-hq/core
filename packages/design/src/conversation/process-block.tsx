@@ -3,6 +3,7 @@ import { formatDuration } from "../display/duration";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
+import { RailList, type RailRow, useRailRow } from "./process-rail";
 import { Spinner } from "./prose";
 import { fillCopy } from "./tool-copy";
 import { ErrorDot } from "./tool-row";
@@ -45,7 +46,12 @@ export type ProcessBlockProps = {
   pinned?: ReactNode;
   /** Background tasks still running after the run ended. */
   backgroundRunning?: number;
-  /** `RailStep` elements. */
+  /**
+   * The rail's rows (`RailStep` / `RailSection` elements, each drawn when mounted): windowed once
+   * there are many (#925). Takes the place of `children`.
+   */
+  rows?: readonly RailRow[];
+  /** `RailStep` elements, all mounted (a short rail drawn by hand). */
   children?: ReactNode;
 };
 
@@ -74,6 +80,7 @@ export function ProcessBlock({
   onShowEarlier,
   pinned,
   backgroundRunning,
+  rows,
   children,
 }: ProcessBlockProps): JSX.Element {
   const t = useDesignT();
@@ -239,7 +246,7 @@ export function ProcessBlock({
               </span>
             </button>
           ) : null}
-          {children}
+          {rows !== undefined ? <RailList rows={rows} /> : children}
         </div>
       ) : null}
     </div>
@@ -254,6 +261,8 @@ export type RailStepProps = {
 
 /** One step of the rail: a 20 px gutter holding the icon on the rule, and the step's row. */
 export function RailStep({ icon, children }: RailStepProps): JSX.Element {
+  // its place on the rail, when a RailList draws it
+  const row = useRailRow();
   let mark: JSX.Element;
   if (icon === "dot") mark = <span className="cb-rail-dot" data-part="rail-dot" />;
   else if (icon === "spinner") mark = <Spinner size={16} />;
@@ -265,7 +274,7 @@ export function RailStep({ icon, children }: RailStepProps): JSX.Element {
     );
   } else mark = <ProcessMark icon={icon} size={14} />;
   return (
-    <div className="cb-rail-step" data-part="rail-step">
+    <div className="cb-rail-step" data-part="rail-step" {...row}>
       <span className="cb-rail-gutter" data-part="rail-gutter" aria-hidden="true">
         {mark}
       </span>

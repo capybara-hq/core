@@ -60,7 +60,9 @@ function ChildQuestion({ orgId, wait }: { orgId: string; wait: Wait }) {
  * A sub-agent waiting for a person (`subagent_waiting`), in its parent: the child's approval or
  * question with the existing blocks, under a line naming the sub-agent; a connection is made in the
  * child's own record, so that is a line that opens it. The kernel decides who may act (the
- * conversation's starter): anyone else sees a waiting line.
+ * conversation's starter): anyone else sees a waiting line. Once the wait ended (`wait.ended`, in
+ * the process block's rail) a connection is one line saying so; an approval or question draws its
+ * decided line, read from its API.
  */
 export function SubagentWait({
   orgId,
@@ -74,6 +76,15 @@ export function SubagentWait({
   onOpen?(id: string): void;
 }) {
   const t = useTranslations("subagents");
+  if (wait.wait === "connect" && wait.ended === true) {
+    return (
+      <div data-role="subagent-connect" data-state="ended">
+        <Text variant="small" tone="muted">
+          {t("connectEnded", { name: wait.subagent.name })}
+        </Text>
+      </div>
+    );
+  }
   if (wait.wait === "connect") {
     return (
       <div data-role="subagent-connect">
