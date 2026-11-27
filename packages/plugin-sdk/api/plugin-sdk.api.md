@@ -298,6 +298,9 @@ export interface CapybaraShell {
 }
 
 // @public
+export const CARD_BADGE_MAX = 32;
+
+// @public
 export const CARD_TEXT_MAX = 2000;
 
 // @public
@@ -4987,6 +4990,7 @@ export interface ToolResult {
         key?: string;
         placement?: "output" | "pinned" | "process";
         text?: string;
+        badge?: string;
     };
     content: ToolContent[];
     display?: ToolDisplay;

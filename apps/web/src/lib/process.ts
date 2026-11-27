@@ -15,7 +15,9 @@ import type { DividerData, TimelineEntry, TimelineSubagent } from "./timeline";
  *   fallback or a compaction, or the run's `run` entry; a fallback or a compaction inside an open
  *   block is a `note` step.
  * - Every block of a run takes the run's end (`finished`, `stopped`, `failed`) from its `run` row;
- *   the run's last block also its working time.
+ *   the run's last block also its working time. While the run goes, its latest block carries the
+ *   run's working clock (`clock`, from the caller's `runStats`), so the head counts from the run's
+ *   start; earlier blocks of the run carry none (they show no time).
  * - An undecided approval, question or connect, a device code and a sub-agent's wait stand outside,
  *   right after the block (the block is `waiting` while one is undecided); once decided an
  *   approval or question is a `decided` step at its place in the rail, a connect once its run
@@ -52,6 +54,12 @@ export type ProcessEntry = {
   pinned: Entry<"card">[];
   /** The run's working time on the run's last block once it ended (its `run` row), else null. */
   durationMs: number | null;
+  /**
+   * The going run's working clock on its latest block while that block is live (running or
+   * waiting), else null: its working time since `run_started` (waits for a person left out) up to
+   * `resumedAt`, when it last started working (null while it waits). The head's elapsed time.
+   */
+  clock: { workedMs: number; resumedAt: number | null } | null;
   /** Background tasks the block started that are still running. */
   backgroundRunning: number;
 };
@@ -66,6 +74,9 @@ export type ThreadEntry =
   | Exclude<TimelineEntry, { kind: "thinking" | "tools" | "network-facts" | "handoff" | "reveal" }>
   | ProcessEntry
   | PendingEntry;
+
+/** The going run's working clock, as `runStats` reads it from the log. */
+export type RunClockState = { runId: string | null; workedMs: number; resumedAt: number | null };
 
 /** The cards that wait for a person: outside the block, right after it. */
 type Blocking = Entry<"approval" | "question" | "connect" | "device-code" | "subagent-wait">;
@@ -137,7 +148,10 @@ function waits(o: OpenBlock): boolean {
  * Folds each stretch of a run into one `process` entry and orders the cards around it (spec §1–§5;
  * the rules are in this module's header). Pure: the timeline's entry objects are reused.
  */
-export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
+export function groupProcess(
+  entries: readonly TimelineEntry[],
+  run?: RunClockState,
+): ThreadEntry[] {
   const finishedTasks = new Set<string>();
   for (const e of entries) if (e.kind === "background") finishedTasks.add(e.taskId);
 
@@ -189,6 +203,7 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
           steps: [],
           pinned: [],
           durationMs: null,
+          clock: null,
           backgroundRunning: 0,
         },
         blocking: [],
@@ -373,6 +388,17 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
   }
   close("live");
   endTurn();
+
+  // the going run's clock on its latest block, while that block is live (spec §1.3)
+  if (run !== undefined && run.runId !== null) {
+    const last = out.findLast((e): e is ProcessEntry => e.kind === "process");
+    if (
+      last !== undefined &&
+      (last.runId === run.runId || last.runId === null) &&
+      (last.state === "running" || last.state === "waiting")
+    )
+      last.clock = { workedMs: run.workedMs, resumedAt: run.resumedAt };
+  }
 
   // A stopped or failed run's pinned cards stand outside, right after their block (spec §4).
   const result: ThreadEntry[] = [];

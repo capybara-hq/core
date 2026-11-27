@@ -462,6 +462,11 @@ export type TimelineEntry =
        * the rail under its call.
        */
       placement: "output" | "pinned" | "process";
+      /**
+       * A pinned card's state as the tool recorded it (its view's badge, "3/5"): the finished
+       * process head shows it without reading the view.
+       */
+      badge?: string;
     }
   | {
       /**
@@ -1613,6 +1618,7 @@ export function buildEventTimeline(
             callId: p.callId,
             ...(p.card.key !== undefined ? { cardKey: p.card.key } : {}),
             placement: p.card.placement ?? "output",
+            ...(p.card.badge !== undefined ? { badge: p.card.badge } : {}),
           });
           groupCards.set(c.group, list);
         }
@@ -2214,6 +2220,8 @@ export function buildEventTimeline(
 export interface RunStats {
   /** `run_started` count. */
   turns: number;
+  /** The run going now (between its `run_started` and its terminal event), else null. */
+  runId: string | null;
   /** Start of the current or last run (ms), or null. */
   startedAt: number | null;
   /** End of the last run (ms); null while one is active. */
@@ -2315,6 +2323,7 @@ export function runStats(events: readonly ConversationEvent[]): RunStats {
   }
   return {
     turns,
+    runId: active,
     startedAt,
     endedAt,
     last,

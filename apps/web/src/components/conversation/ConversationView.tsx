@@ -328,7 +328,10 @@ export function useConversationPage(
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
   // the thread draws a run's process as one block (process blocks spec §1); the right area reads
   // the timeline itself
-  const threadEntries = useMemo(() => groupProcess(entries), [entries]);
+  // the window's runs after those started above it (history paging spec §5)
+  const windowStats = useMemo(() => runStats(conv.events), [conv.events]);
+  // the going run's clock times its latest block's head from the run's start (spec §1.3)
+  const threadEntries = useMemo(() => groupProcess(entries, windowStats), [entries, windowStats]);
   const pending = usePendingSends(conv.events);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
@@ -347,8 +350,6 @@ export function useConversationPage(
   const awaiting = awaitingRun(conv.events, sentHere, awaitAt);
   const busy = conv.running || pending.shown.length > 0 || awaiting;
   const active = busy || conv.waiting;
-  // the window's runs after those started above it (history paging spec §5)
-  const windowStats = useMemo(() => runStats(conv.events), [conv.events]);
   // what a message does while the run waits for a person: skips the viewer's question, or waits
   const viewerId = session.me.account.id;
   const waitHint = useMemo(

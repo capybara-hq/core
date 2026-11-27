@@ -111,10 +111,16 @@ function ChildRecord({
   const keys = useMemo(() => toolKeysOf(child.events), [child.events]);
   const info = useToolInfo(orgId, subagentId, keys);
   const whoWaits = useWhoWaits(child.people);
+  // the latest run's working time (waits for a person left out, as the status bar counts it)
+  const stats = useMemo(() => runStats(child.events), [child.events]);
   // a run's process as one block (process blocks spec §1), as the conversation draws it
   const entries = useMemo(
-    () => groupProcess(buildTimeline(child.events, child.state.drafts, info, locale, { whoWaits })),
-    [child.events, child.state.drafts, info, locale, whoWaits],
+    () =>
+      groupProcess(
+        buildTimeline(child.events, child.state.drafts, info, locale, { whoWaits }),
+        stats,
+      ),
+    [child.events, child.state.drafts, info, locale, whoWaits, stats],
   );
   const started = child.events.find(
     (e): e is Extract<ConversationEvent, { type: "subagent_started" }> =>
@@ -122,9 +128,7 @@ function ChildRecord({
   )?.payload as Started | undefined;
   const model = latestModel(child.events);
   const active = child.running || child.waiting;
-  // the latest run's working time (waits for a person left out, as the status bar counts it):
-  // it ticks each second only while the child works and stops at a wait
-  const stats = useMemo(() => runStats(child.events), [child.events]);
+  // the header's elapsed time ticks each second only while the child works and stops at a wait
   const now = useNow(stats.resumedAt !== null ? 1000 : 0);
   const ms = workedMsAt(stats, now) ?? undefined;
   const duration =

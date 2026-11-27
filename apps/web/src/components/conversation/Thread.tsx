@@ -496,6 +496,8 @@ function sameBlock(a: ThreadEntry, b: ThreadEntry): boolean {
     a.state === b.state &&
     a.runId === b.runId &&
     a.durationMs === b.durationMs &&
+    a.clock?.workedMs === b.clock?.workedMs &&
+    a.clock?.resumedAt === b.clock?.resumedAt &&
     a.backgroundRunning === b.backgroundRunning &&
     a.steps.length === b.steps.length &&
     a.steps.every((x, i) => sameStep(x, b.steps[i])) &&
@@ -521,6 +523,15 @@ function sameStep(x: ProcessStep, y: ProcessStep | undefined): boolean {
       return false;
   }
 }
+
+/**
+ * A live head's elapsed time (spec §1.3): the run's working time since `run_started`, counting on
+ * while it works; null on a block without the clock (an earlier block of the run: no time).
+ */
+const clockMs = (clock: ProcessEntry["clock"], now: number): number | null =>
+  clock === null
+    ? null
+    : clock.workedMs + (clock.resumedAt === null ? 0 : Math.max(0, now - clock.resumedAt));
 
 const hasCards = (b: ProcessEntry) => b.pinned.length > 0 || b.steps.some((s) => s.kind === "card");
 
@@ -1273,8 +1284,9 @@ function useThrottled<T>(value: T, ms: number): T {
 
 /**
  * The head's pinned summary (spec §1.3: "Todos 4/4"): the first pinned card's title (its
- * contribution's) and badge, from its view in the query cache. Read only when the card has been
- * drawn: a finished run read after a reload says nothing rather than reading every old card.
+ * contribution's) and badge. The badge is its view's in the query cache when the card has been
+ * drawn, else the one the tool recorded on its result (`card.badge`), so a finished run read
+ * after a reload shows it without reading every old card; with neither, nothing.
  */
 function usePinnedSummary(
   orgId: string,
@@ -1302,8 +1314,11 @@ function usePinnedSummary(
   const view = useQuery({ ...q, enabled: false }).data;
   if (card === undefined) return undefined;
   const c = items.find((x) => x.plugin === card.plugin && x.id === card.view);
-  if (c === undefined || view === undefined) return undefined;
-  return { title: c.title[locale], ...(view.badge !== undefined ? { badge: view.badge } : {}) };
+  if (c === undefined) return undefined;
+  if (view === undefined)
+    return card.badge === undefined ? undefined : { title: c.title[locale], badge: card.badge };
+  const badge = view.badge ?? card.badge;
+  return { title: c.title[locale], ...(badge !== undefined ? { badge } : {}) };
 }
 
 /**
@@ -1316,7 +1331,8 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
   const t = useTranslations("chat");
   const locale = useLocale() === "zh" ? "zh" : "en";
   const live = b.state === "running" || b.state === "waiting";
-  const now = useNow(live ? 1000 : 0);
+  // the run's working clock (its latest block only): ticks while the run works, stops at a wait
+  const now = useNow(live && b.clock?.resumedAt != null ? 1000 : 0);
   const ui = c.blockUi.get(b.key);
   const open =
     ui?.open !== undefined && ui.open.state === b.state ? ui.open.value : b.state !== "finished";
@@ -1355,10 +1371,6 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
   let current: string | null = null;
   let currentStreaming = false;
   let waitingWords: string | null = null;
-  let startedAt: number | null = null;
-  const started = (ms: number | undefined) => {
-    if (ms !== undefined && (startedAt === null || ms < startedAt)) startedAt = ms;
-  };
   for (const it of items) {
     if (it.kind === "thinking") {
       thoughts++;
@@ -1375,7 +1387,6 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
         const arg = r.kind === "command" ? (r.description ?? r.keyArg) : r.keyArg;
         current = [r.name, arg?.split("\n")[0]].filter(Boolean).join(" ");
         currentStreaming = r.status === "streaming";
-        started(r.startedAt);
         if (isLiveRow(r) && r.waiting !== undefined)
           waitingWords ??= waitingText(r.waiting, r.waitingFor, locale);
       }
@@ -1386,7 +1397,6 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       addKind({ key: "agent", icon: { name: "agent" }, label: t("process.kind.agent") });
       current = `${t("process.subagent")} ${r.description}`;
       currentStreaming = false;
-      started(r.startedAt);
       if (r.status === "waiting")
         waitingWords ??= waitingText(r.waiting ?? "approval", undefined, locale);
     }
@@ -1479,7 +1489,7 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       {...(label !== null ? { current: label } : {})}
       {...(announced !== null ? { announce: announced } : {})}
       {...(b.state === "waiting" ? { waiting: waitingWords ?? t("process.waiting") } : {})}
-      elapsedMs={live ? (startedAt === null ? null : Math.max(0, now - startedAt)) : b.durationMs}
+      elapsedMs={live ? clockMs(b.clock, now) : b.durationMs}
       summary={{
         thoughts,
         tools,

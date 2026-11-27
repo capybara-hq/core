@@ -41,6 +41,7 @@ import { useStopUnderWay } from "../../lib/stop";
 import {
   buildEventTimeline,
   latestUsage,
+  runStats,
   type TimelineEntry,
   toolKeysOf,
   usedTokens,
@@ -437,7 +438,9 @@ function AgentLevel({
     [transcript, base, child.state.drafts],
   );
   // the transcript draws a run's process as one block, as the conversation does
-  const threadEntries = useMemo(() => groupProcess(entries), [entries]);
+  // (the going run's clock times its latest block's head from the run's start)
+  const stats = useMemo(() => runStats(child.events), [child.events]);
+  const threadEntries = useMemo(() => groupProcess(entries, stats), [entries, stats]);
   const background = useMemo(
     () =>
       (bg.data ?? [])
