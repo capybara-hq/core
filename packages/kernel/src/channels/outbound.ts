@@ -781,6 +781,8 @@ class Delivery {
   private progressRetry: Error | undefined;
   /** The seq of the run's end event (its final edit's idempotency key); undefined while running. */
   private progressEndSeq: number | undefined;
+  /** The ended card's final edit landed; the next advance records it (`progress_final`). */
+  private progressFinalPending = false;
   /**
    * The run's card was re-posted after a rejected edit (once per run: in this job, or in an earlier
    * one, `progress_reposted`); a rejection after that stops the edits.
@@ -1116,6 +1118,7 @@ class Delivery {
       card?: { kind: "approval" | "question"; id: string; messageId: string };
     } = {},
   ): Promise<void> {
+    const progressFinal = opts.progressFinal ?? (this.progressFinalPending ? true : undefined);
     const advanced = await this.d.writes.advanceIn({
       conversationId: this.conversationId,
       persisted: this.persisted,
@@ -1123,13 +1126,14 @@ class Delivery {
       ...(opts.draft !== undefined && { draft: opts.draft }),
       ...(opts.progress !== undefined && { progress: opts.progress }),
       ...(opts.milestoneAt !== undefined && { milestoneAt: opts.milestoneAt }),
-      ...(opts.progressFinal && { progressFinal: opts.progressFinal }),
+      ...(progressFinal && { progressFinal }),
       ...(opts.card && {
         card: { ...opts.card, connectionId: this.s.row.id, target: this.target },
       }),
     });
     if (!advanced) throw new DeliveryLostError();
     this.persisted = seq;
+    if (progressFinal) this.progressFinalPending = false;
     if (opts.draft !== undefined) {
       this.draftId = opts.draft;
       if (opts.draft === null) {
@@ -1857,7 +1861,9 @@ class Delivery {
       case "run_finished":
       case "run_failed":
       case "run_aborted":
-        await this.endProgress(e.seq);
+        // the event's usual handling follows (the failure message, closing a draft) and advances
+        // past it: `last_seq` must not pass the event before what it owes has been sent
+        await this.endProgress(e.seq, true);
         return false;
       default:
         return false;
@@ -1881,6 +1887,7 @@ class Delivery {
     this.progressBroken = false;
     this.progressRetry = undefined;
     this.progressEndSeq = undefined;
+    this.progressFinalPending = false;
     this.milestoneAt = null;
     this.milestoneText = undefined;
     if (this.progressKind === "card") {
@@ -1968,7 +1975,7 @@ class Delivery {
    * text as a trailing milestone when the last one sent differs (a change the minute throttle
    * held back), and the handoff links no answer took along (a run that failed or stopped first).
    */
-  private async endProgress(seq: number): Promise<void> {
+  private async endProgress(seq: number, handledNext = false): Promise<void> {
     const s = this.progress;
     const promoted = s === undefined ? undefined : promotedAnswer(s);
     let sent = false;
@@ -1989,12 +1996,15 @@ class Delivery {
     if (this.progressKind === "card") {
       if (promoted !== undefined && (await this.sendHandoffs(seq))) sent = true;
       this.progressEndSeq = seq;
-      if (await this.editProgress(seq)) await this.advance(seq, { progressFinal: true });
-      else if (sent) await this.advance(seq);
+      if (await this.editProgress(seq)) {
+        // the final mark is written by the advance that passes the event
+        if (handledNext) this.progressFinalPending = true;
+        else await this.advance(seq, { progressFinal: true });
+      } else if (sent && !handledNext) await this.advance(seq);
       return;
     }
     if (await this.sendHandoffs(seq)) sent = true;
-    if (sent) await this.advance(seq);
+    if (sent && !handledNext) await this.advance(seq);
   }
 
   /** Folds one event into the state; a step's tool labels are looked up first. */
