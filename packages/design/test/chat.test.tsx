@@ -114,25 +114,10 @@ describe("ToolCallRow", () => {
 });
 
 describe("IoBlock", () => {
-  it("不超过 12 行不折叠", () => {
+  it("draws the whole text, with no control while it fits", () => {
     wrap(<IoBlock label="IN" text={lines(12)} />);
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByText(/line 12/)).toBeTruthy();
-  });
-  it("超过 12 行时折叠，「展开全部」后显示全部", async () => {
-    wrap(<IoBlock label="OUT" text={lines(20)} />);
-    expect(screen.queryByText(/line 20/)).toBeNull();
-    expect(screen.getByText(/line 12/)).toBeTruthy();
-    const btn = screen.getByRole("button", { name: /展开全部/ });
-    expect(btn.getAttribute("aria-expanded")).toBe("false");
-    await userEvent.click(btn);
-    expect(screen.getByText(/line 20/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /收起/ }).getAttribute("aria-expanded")).toBe("true");
-  });
-  it("collapsedLines 可调", () => {
-    wrap(<IoBlock label="OUT" text={lines(5)} collapsedLines={3} />);
-    expect(screen.queryByText(/line 4/)).toBeNull();
-    expect(screen.getByRole("button", { name: /展开全部/ })).toBeTruthy();
   });
 });
 

@@ -1108,8 +1108,6 @@ button.cb-tool-toggle:focus-visible {
 }
 .cb-tool-output {
   margin: 0;
-  max-height: var(--cb-layout-tool-output);
-  overflow: auto;
   padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
   border-radius: var(--cb-radius-sm);
   background: var(--cb-bg);
@@ -1176,14 +1174,6 @@ button.cb-tool-toggle:focus-visible {
   border-bottom: 1px solid var(--cb-line-soft);
   margin-bottom: var(--cb-space-1);
 }
-/* The live block (§6.16.10 Live): a viewport that follows the tail, the footer outside it. */
-.cb-diff[data-live] {
-  max-height: var(--cb-layout-tool-live);
-  overflow-y: auto;
-}
-.cb-tool-output[data-live] {
-  max-height: var(--cb-layout-tool-live);
-}
 /*
  * The caret (the §2.4 streaming cursor) at the line's height, a flex item after the text that
  * never shrinks: it hugs the text (undoing the line's column gap) and stays visible after the
@@ -1204,12 +1194,12 @@ button.cb-tool-toggle:focus-visible {
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
 }
+/* under the diff's viewport (its own space.1 bottom padding above the rule), outside the scroll */
 .cb-diff-cut {
   display: flex;
   justify-content: center;
   gap: var(--cb-space-1);
-  margin-top: var(--cb-space-1);
-  padding: var(--cb-space-1) var(--cb-space-3) 0;
+  padding: var(--cb-space-1) var(--cb-space-3);
   border-top: 1px solid var(--cb-line-soft);
   color: var(--cb-muted);
 }
@@ -1403,7 +1393,7 @@ button.cb-tool-toggle:focus-visible {
 }
 .cb-hcard-json {
   align-self: stretch;
-  max-height: var(--cb-layout-tool-output);
+  max-height: var(--cb-layout-tool-detail);
   margin: 0;
   overflow: auto;
   padding: var(--cb-pad-default-y) var(--cb-pad-default-x);

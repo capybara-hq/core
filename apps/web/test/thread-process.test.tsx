@@ -508,7 +508,8 @@ describe("the thread draws process blocks", () => {
     const streamingStep = block.querySelector('[data-tool-step-status="streaming"]');
     expect(streamingStep).not.toBeNull();
     const railStep = streamingStep?.closest('[data-part="rail-step"]') as HTMLElement;
-    expect(within(railStep).getByText("cat no")).toBeTruthy();
+    // the key argument (the open detail repeats the input parsed so far)
+    expect(railStep.querySelector('[data-part="key-arg"]')?.textContent).toBe("cat no");
     expect(within(block).getByText("Next, the notes.")).toBeTruthy();
 
     act(() =>
@@ -521,12 +522,65 @@ describe("the thread draws process blocks", () => {
     expect(entries()).toEqual(["user", "process"]);
     expect(theBlock()).toBe(block);
     expect(block.querySelector('[data-tool-step-status="streaming"]')).toBeNull();
-    expect(within(railStep).getByText("cat notes.md")).toBeTruthy();
+    expect(railStep.querySelector('[data-part="key-arg"]')?.textContent).toBe("cat notes.md");
     expect(railStep.isConnected).toBe(true);
     expect(railSteps(block)[railSteps(block).length - 1]).toBe(railStep);
     expect(
       railStep.querySelector("[data-tool-step-status]")?.getAttribute("data-tool-step-status"),
     ).toBe("pending");
+  });
+
+  // design spec §6.16.9 "Opens by itself" (maintainer decision 2026-11-27)
+  async function streamCall(toggle: boolean) {
+    api([userMsg(1, "go"), runStarted(2), step(3, 0, [bash("t1", "ls")]), result(4, "t1")]);
+    await renderChatRoute();
+    await vi.waitFor(theBlock);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    act(() => {
+      es.emit("delta", { runId: "r1", step: 1, delta: "tool_start", callId: "t2", name: "Bash" });
+      es.emit("delta", {
+        runId: "r1",
+        step: 1,
+        delta: "tool_input",
+        callId: "t2",
+        text: '{"command":"cat no',
+        offset: 0,
+      });
+    });
+    act(() => {
+      for (const f of frames.splice(0)) f(0);
+    });
+    const railStep = theBlock().querySelector('[data-tool-step-status="streaming"]') as HTMLElement;
+    const line = railStep.querySelector('[data-part="tool-line"]') as HTMLElement;
+    // the live detail stands open without a click: the input parsed so far
+    expect(line.getAttribute("aria-expanded")).toBe("true");
+    expect(railStep.querySelector('[data-part="kv"]')?.hasAttribute("data-live")).toBe(true);
+    if (toggle) {
+      const user = userEvent.setup();
+      await user.click(line);
+      expect(line.getAttribute("aria-expanded")).toBe("false");
+      await user.click(line);
+    }
+    act(() => es.emit("event", step(5, 1, [bash("t2", "cat notes.md")])));
+    // logged and still live: the same line stays open
+    expect(railStep.querySelector('[data-part="tool-line"]')).toBe(line);
+    expect(line.getAttribute("aria-expanded")).toBe("true");
+    act(() => es.emit("event", result(6, "t2")));
+    return { railStep, line };
+  }
+
+  it("a streaming call's detail opens by itself and folds back once the call ends", async () => {
+    const { railStep, line } = await streamCall(false);
+    expect(railStep.getAttribute("data-tool-step-status")).toBe("done");
+    expect(line.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("a streaming call the person toggled keeps the person's choice once it ends", async () => {
+    const { line } = await streamCall(true);
+    expect(line.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("the head announces step changes, not rows", async () => {

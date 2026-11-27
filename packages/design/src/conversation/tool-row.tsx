@@ -1,10 +1,11 @@
-import { type JSX, type ReactNode, useId, useRef, useState } from "react";
+import { type JSX, type ReactNode, useId, useState } from "react";
 import { formatBytes, isSafeAttachmentHref } from "../display/attachments";
+import { DetailViewport } from "../display/detail-viewport";
 import { formatDuration } from "../display/duration";
 import { Icon } from "../icons/icon";
 import { useDesignLocale, useDesignT } from "../provider";
 import { useClock } from "./clock";
-import { DiffBlock, type DiffBlockLive, type DiffData, useTailFollow } from "./diff-block";
+import { DiffBlock, type DiffBlockLive, type DiffData } from "./diff-block";
 import { Spinner } from "./prose";
 import {
   fillCopy,
@@ -356,6 +357,41 @@ export function hasDetail(row: ToolRowData): boolean {
   );
 }
 
+/**
+ * The row's detail is live and opens by itself (§6.16.9 "Opens by itself"): the call is streaming
+ * its input, or it is live (pending, waiting, running) with a live diff or a growing output, or it
+ * streamed in this view and is still live (`streamed`), so it never folds between its streaming and
+ * its logged form.
+ */
+export function isDetailLive(row: ToolRowData, streamed = false): boolean {
+  if (!hasDetail(row)) return false;
+  if (isStreaming(row)) return true;
+  if (!isLive(row)) return false;
+  return streamed || row.detail?.live !== undefined || row.detail?.output !== undefined;
+}
+
+/**
+ * The open state of a tool row (§6.16.9): the person's choice once they toggled it, else open while
+ * its detail is live, so a row the person never toggled folds back when its call ends.
+ * `streamed` remembers that the row streamed in this view.
+ */
+export function useRowOpen(
+  row: ToolRowData | undefined,
+  /** Open at first, as if the person had opened it. */
+  initial = false,
+): {
+  open: boolean;
+  /** Flips the open state as the person sees it. */
+  toggle(): void;
+} {
+  const [own, setOwn] = useState<boolean | null>(initial ? true : null);
+  const streaming = row !== undefined && isStreaming(row);
+  const [streamed, setStreamed] = useState(streaming);
+  if (streaming && !streamed) setStreamed(true);
+  const open = own ?? (row !== undefined && isDetailLive(row, streamed));
+  return { open, toggle: () => setOwn(!open) };
+}
+
 /** The thumbnails of a result's images (`tool-images`), each a button that opens the image. */
 function ToolImages({
   images,
@@ -488,11 +524,21 @@ export function ToolDetail({
       {hasIn ? (
         <IoSection label={t("tool.in")} which="in">
           {d.command !== undefined ? (
-            <div className="cb-tool-command" data-part="tool-command">
+            <DetailViewport
+              className="cb-tool-command"
+              part="tool-command"
+              live={streaming}
+              change={d.command.length}
+            >
               <span className="cb-faint">$</span> {d.command}
-            </div>
+            </DetailViewport>
           ) : (
-            <div className="cb-kv" data-part="kv">
+            <DetailViewport
+              className="cb-kv"
+              part="kv"
+              live={streaming}
+              change={(d.input ?? []).reduce((n, [k, v]) => n + k.length + v.length, 0)}
+            >
               {(d.input ?? []).map(([k, v], i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: input keys may repeat; order is stable
                 <span key={i} className="cb-kv-pair">
@@ -504,20 +550,26 @@ export function ToolDetail({
                   </span>
                 </span>
               ))}
-            </div>
+            </DetailViewport>
           )}
         </IoSection>
       ) : null}
       {hasOut ? (
         <IoSection label={t("tool.out")} which="out">
           {out !== undefined ? (
-            streaming ? (
-              <LiveOutput text={out} change={`${row.progress?.bytes ?? 0}:${out.length}`} />
-            ) : (
-              <pre className="cb-tool-output" data-part="tool-output">
-                {out}
-              </pre>
-            )
+            // a live call's output (an `Agent` prompt being written, a running command's output)
+            // follows its tail; the streaming cursor only while the input is written (§6.16.9)
+            <DetailViewport
+              as="pre"
+              className="cb-tool-output"
+              part="tool-output"
+              live={isLive(row)}
+              // the input's size grows on after the text stops at the web's cap
+              change={`${row.progress?.bytes ?? 0}:${out.length}`}
+            >
+              {out}
+              {streaming ? <span className="cb-cursor" aria-hidden="true" /> : null}
+            </DetailViewport>
           ) : null}
           {images !== undefined ? (
             <ToolImages
@@ -534,28 +586,6 @@ export function ToolDetail({
         </IoSection>
       ) : null}
     </div>
-  );
-}
-
-/**
- * A streaming `text` view (an `Agent` prompt) in OUT: the text with the streaming cursor at its
- * end, folded at `layout.tool-live` and following its tail (§6.16.9).
- */
-function LiveOutput({ text, change }: { text: string; change: string }): JSX.Element {
-  const ref = useRef<HTMLPreElement>(null);
-  // `change` holds the input's size, which grows on after the text stops at the web's cap
-  const onScroll = useTailFollow(ref, true, change);
-  return (
-    <pre
-      ref={ref}
-      className="cb-tool-output"
-      data-part="tool-output"
-      data-live=""
-      onScroll={onScroll}
-    >
-      {text}
-      <span className="cb-cursor" aria-hidden="true" />
-    </pre>
   );
 }
 
@@ -581,8 +611,13 @@ function IoSection({
 
 export type ToolRowProps = {
   row: ToolRowData;
-  /** Controlled open state; uncontrolled when omitted. */
+  /**
+   * Controlled open state; uncontrolled when omitted: open while the detail is live until the
+   * person toggles it (§6.16.9 "Opens by itself").
+   */
   open?: boolean;
+  /** Uncontrolled: open at first, as if the person had opened it. */
+  defaultOpen?: boolean;
   onToggle?(): void;
   onViewAll?(): void;
   onCopy?(): void;
@@ -597,6 +632,7 @@ export type ToolRowProps = {
 export function ToolRow({
   row,
   open,
+  defaultOpen = false,
   onToggle,
   onViewAll,
   onCopy,
@@ -605,10 +641,10 @@ export function ToolRow({
   now,
 }: ToolRowProps): JSX.Element {
   const locale = useDesignLocale();
-  const [own, setOwn] = useState(false);
+  const own = useRowOpen(row, defaultOpen);
   const [animate, setAnimate] = useState(false);
   const id = useId();
-  const isOpen = open ?? own;
+  const isOpen = open ?? own.open;
   const expandable = hasDetail(row);
   const waiting = isWaiting(row);
   const streaming = isStreaming(row);
@@ -646,7 +682,7 @@ export function ToolRow({
   );
   const toggle = () => {
     setAnimate(true);
-    if (open === undefined) setOwn((o) => !o);
+    if (open === undefined) own.toggle();
     onToggle?.();
   };
   const detail =

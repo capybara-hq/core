@@ -5,6 +5,7 @@ import type { IconName } from "../icons/paths";
 import { useInBox } from "../layout/box";
 import { useDesignT } from "../provider";
 import { StatusMark } from "./basic";
+import { DetailViewport, type DetailViewportLabels } from "./detail-viewport";
 import { useScrollbarRelayout } from "./scrollbar-relayout";
 
 /* 对话时间线与渲染 schema 积木（spec §6.9）。只接收普通 props，不依赖 SDK 类型。 */
@@ -142,49 +143,32 @@ export function ToolCallRow({
   );
 }
 
-export type IoBlockLabels = {
-  /** 「展开全部」按钮，`{n}` 为总行数。 */
-  expand?: string;
-  collapse?: string;
-};
+export type IoBlockLabels = DetailViewportLabels;
 
 export type IoBlockProps = {
   label: "IN" | "OUT";
   text: string;
-  /** 超过此行数时折叠，默认 12。 */
-  collapsedLines?: number;
+  /** The expand control's names (default: the design copy 「展开」 / 「收起」). */
   labels?: IoBlockLabels | undefined;
 };
 
-/** @deprecated Use ToolRow's expanded detail (spec §6.16.9). */
-export function IoBlock({ label, text, collapsedLines = 12, labels }: IoBlockProps) {
-  const t = useDesignT();
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  const all = text.split("\n");
-  const limit = Math.max(1, Math.floor(collapsedLines));
-  const overflow = all.length > limit;
-  const shown = overflow && !open ? all.slice(0, limit).join("\n") : text;
+/**
+ * @deprecated Use ToolRow's expanded detail (spec §6.16.9). The text stands in the tool detail
+ * viewport (§6.16.9): `layout.tool-detail` high, scrolling, with the expand control on overflow.
+ */
+export function IoBlock({ label, text, labels }: IoBlockProps) {
   return (
     <div className="cb-io" data-label={label}>
       <span className="cb-io-label">{label}</span>
       <div className="cb-io-body">
-        <pre id={id} className="cb-io-text" data-collapsed={overflow && !open ? "true" : undefined}>
-          {shown}
-        </pre>
-        {overflow ? (
-          <button
-            type="button"
-            className="cb-row-link"
-            aria-expanded={open}
-            aria-controls={id}
-            onClick={() => setOpen((o) => !o)}
-          >
-            {open
-              ? (labels?.collapse ?? t("chat.collapse"))
-              : fill(labels?.expand ?? t("chat.expandAll"), all.length)}
-          </button>
-        ) : null}
+        <DetailViewport
+          as="pre"
+          className="cb-io-text"
+          part="io-text"
+          {...(labels ? { labels } : {})}
+        >
+          {text}
+        </DetailViewport>
       </div>
     </div>
   );

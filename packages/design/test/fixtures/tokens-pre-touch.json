@@ -67,7 +67,6 @@
     "--cb-layout-panel-min": "360px",
     "--cb-layout-panel": "560px",
     "--cb-layout-chat-min": "480px",
-    "--cb-layout-tool-output": "120px",
     "--cb-layout-file-card": "240px",
     "--cb-layout-thumb": "56px",
     "--cb-layout-inline-image": "360px",

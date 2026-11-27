@@ -1,4 +1,5 @@
-import { type JSX, type ReactNode, type RefObject, useLayoutEffect, useRef } from "react";
+import type { JSX, ReactNode } from "react";
+import { DetailViewport } from "../display/detail-viewport";
 import { useDesignLocale, useDesignT } from "../provider";
 import { fillCopy } from "./tool-copy";
 
@@ -43,30 +44,6 @@ export function cutDiffLine(text: string): string {
 
 const SIGN = { ctx: " ", add: "+", del: "−" } as const;
 
-/**
- * Keeps a scrolling viewport at its bottom while `active` and the reader is there: a scroll up
- * stops following, a scroll back to the bottom resumes it (§6.16.10 tail-follow). `change`
- * is what grows (the lines drawn).
- */
-export function useTailFollow(
-  ref: RefObject<HTMLElement | null>,
-  active: boolean,
-  change: unknown,
-): () => void {
-  const follow = useRef(true);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `change` re-runs it as the text grows
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!active || !el || !follow.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [active, change, ref]);
-  return () => {
-    const el = ref.current;
-    if (!el) return;
-    follow.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
-  };
-}
-
 /** The expanded form of an edit (§6.16.10): numbered lines tinted by kind, no colored text. */
 export function DiffBlock({
   diff,
@@ -89,14 +66,11 @@ export function DiffBlock({
 } & DiffBlockLive): JSX.Element {
   const t = useDesignT();
   const locale = useDesignLocale();
-  const view = useRef<HTMLDivElement>(null);
   const num = (v: number) => v.toLocaleString(locale === "zh" ? "zh-CN" : "en-US");
   const count = diff.hunks.reduce((n, h) => n + h.lines.length, 0);
   // The live tail keeps the last lines: the ones left out come before them.
   const earlier =
     diff.truncated && diff.totalLines !== undefined ? Math.max(0, diff.totalLines - count) : 0;
-  // every change of what the viewport holds keeps a reader at the bottom there
-  const onScroll = useTailFollow(view, live, `${count}:${pending}:${earlier}`);
   const rows: ReactNode[] = [];
   let shown = 0;
   diff.hunks.forEach((h, hi) => {
@@ -137,8 +111,10 @@ export function DiffBlock({
   });
   if (!live) {
     return (
-      <div className="cb-diff" data-part="diff">
-        {rows}
+      <div className="cb-diff-block">
+        <DetailViewport className="cb-diff" part="diff">
+          {rows}
+        </DetailViewport>
         {diff.truncated ? (
           <div className="cb-diff-cut" data-part="diff-cut">
             <span>
@@ -169,7 +145,13 @@ export function DiffBlock({
     gutter === "pending" ? t("tool.diffNumbersPending") : preview ? t("tool.diffPreview") : null;
   return (
     <div className="cb-diff-live">
-      <div ref={view} className="cb-diff" data-part="diff" data-live="" onScroll={onScroll}>
+      <DetailViewport
+        className="cb-diff"
+        part="diff"
+        live
+        // every change of what the viewport holds keeps a reader at the bottom there
+        change={`${count}:${pending}:${earlier}`}
+      >
         {earlier > 0
           ? collapsed("diff-earlier", fillCopy(t("tool.diffEarlier"), { n: num(earlier) }))
           : null}
@@ -177,7 +159,7 @@ export function DiffBlock({
         {pending > 0
           ? collapsed("diff-pending", fillCopy(t("tool.diffPending"), { n: num(pending) }))
           : null}
-      </div>
+      </DetailViewport>
       {foot ? (
         <div className="cb-diff-foot" data-part="diff-foot">
           {foot}
@@ -186,3 +168,5 @@ export function DiffBlock({
     </div>
   );
 }
+
+export { useTailFollow } from "../display/detail-viewport";

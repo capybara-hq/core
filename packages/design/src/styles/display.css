@@ -887,6 +887,33 @@
 }
 
 /* IN / OUT 块：等宽、左侧标签列，超长折叠 */
+/*
+ * The tool detail viewport (§6.16.9): a scroll box at most layout.tool-detail high (about twelve
+ * small lines); expanded, the tall cap. The expand control stands in its top corner, clear of a
+ * classic scrollbar (--cb-viewport-bar, measured), on the panel ground so text under it is hidden.
+ */
+.cb-viewport {
+  position: relative;
+  min-width: 0;
+}
+.cb-viewport > [data-viewport] {
+  max-height: var(--cb-layout-tool-detail);
+  overflow: auto;
+}
+.cb-viewport > [data-viewport][data-expanded] {
+  max-height: 70dvh;
+}
+.cb-viewport > .cb-viewport-toggle[data-variant] {
+  position: absolute;
+  top: var(--cb-space-1);
+  right: calc(var(--cb-space-1) + var(--cb-viewport-bar, 0px));
+  border-color: var(--cb-line-soft);
+  background: var(--cb-panel);
+}
+/* the hover tint over the opaque ground, so the text under the control stays hidden */
+.cb-viewport > .cb-viewport-toggle[data-variant]:hover:not(:disabled) {
+  background: linear-gradient(var(--cb-hover), var(--cb-hover)), var(--cb-panel);
+}
 .cb-io {
   display: flex;
   min-width: 0;

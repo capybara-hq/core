@@ -184,6 +184,13 @@ final parse equals `JSON.parse`).
 A streaming row is never actionable: no approve, no answer, no stop (stopping the run stops it).
 It has `aria-busy`, and its growing text is not a live region.
 
+**The detail opens by itself while live** (maintainer decision 2026-11-27, design spec §6.16.9
+"Opens by itself"): a streaming row with detail shows its expanded area without a click and keeps
+it open while the call stays live (pending, waiting, running), following the tail. When the call
+ends, a row the person never toggled folds back to collapsed; a row the person toggled keeps the
+person's choice. Every box of the expanded area is the compact detail viewport
+(`layout.tool-detail`, with an expand control to a tall cap; design spec §6.16.9 "Detail viewport").
+
 ### 6.5 Design package (spec §10 process)
 
 - `ToolRow` status `streaming`: the word 生成中 / Writing, a progress meta (lines for text
