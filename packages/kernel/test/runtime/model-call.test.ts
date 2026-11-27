@@ -1614,13 +1614,15 @@ describe("runModelStep", () => {
         (await ofType("usage")).filter((e) => e.payload.purpose === "compaction");
 
       it("a proactive summary and a forced one in the same step write two summaries and two usages", async () => {
-        // the agent's model (W 2000) compacts proactively and then fails; the fallback (W 700)
+        // the agent's model (W 3000) compacts proactively and then fails; the fallback (W 700)
         // overflows and compacts again with its own model: each compaction has its own keys, so
         // the second summary and its usage are not dropped as a repeat of the first (spec §4.4)
         let fbCalls = 0;
         const s = stub(
           [
-            stubInfo("main", { contextWindow: 2000, maxOutputTokens: 100 }),
+            // W 3000 at threshold 0.5: compacts proactively in one summary call (the instruction's
+            // overhead leaves room for the whole transcript)
+            stubInfo("main", { contextWindow: 3000, maxOutputTokens: 100 }),
             stubInfo("fb", { contextWindow: 700, maxOutputTokens: 100 }),
           ],
           (req) => {
@@ -1641,7 +1643,7 @@ describe("runModelStep", () => {
           model: { provider: "stub", model: "main" },
           fallback: { provider: "stub", model: "fb" },
         });
-        await withSettings({ reserveTokens: 0 }, async () => {
+        await withSettings({ reserveTokens: 0, threshold: 0.5 }, async () => {
           expect((await step({ agent })).content).toEqual([{ type: "text", text: "fb answer" }]);
           expect(s.calls.filter(isCompactionCall).map((c) => c.model)).toEqual(["main", "fb"]);
           const summaries = await ofType("compaction_summary");
@@ -1659,7 +1661,9 @@ describe("runModelStep", () => {
         let fbCalls = 0;
         const s = stub(
           [
-            stubInfo("main", { contextWindow: 2000, maxOutputTokens: 100 }),
+            // W 3000 at threshold 0.5: compacts proactively in one summary call (the instruction's
+            // overhead leaves room for the whole transcript)
+            stubInfo("main", { contextWindow: 3000, maxOutputTokens: 100 }),
             stubInfo("fb", { contextWindow: 700, maxOutputTokens: 100 }),
           ],
           (req) => {
@@ -1696,7 +1700,7 @@ describe("runModelStep", () => {
           fallback: { provider: "stub", model: "fb" },
         });
         try {
-          await withSettings({ reserveTokens: 0 }, async () => {
+          await withSettings({ reserveTokens: 0, threshold: 0.5 }, async () => {
             expect((await step({ step: 2, agent })).content).toEqual([
               { type: "text", text: "fb answer" },
             ]);

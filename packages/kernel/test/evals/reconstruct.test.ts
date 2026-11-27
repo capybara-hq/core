@@ -1128,6 +1128,11 @@ describe("reconstructRequest：基线零漂移", () => {
     expect(head?.role).toBe("user");
     const blocks = Array.isArray(head?.content) ? head.content : [];
     expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(/^<conversation_summary>/);
+    // the post-summary framing (spec §4.2.2), derived from the log: the re-rendered opening
+    // message, then the kept pair the summary did not see
+    expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(
+      /<\/conversation_summary>\n\nThe message that opened the current turn follows, shown again verbatim; the summary covers it\. The messages after those are the most recent ones in the conversation, kept verbatim\..*Continue the work from where it left off\.$/s,
+    );
     expect(blocks.slice(1).some((b) => b.type === "text" && b.text === ask)).toBe(true);
     // after the system texts that follow a summary (run context, skills), the kept tool pair
     const rest = (request?.messages ?? []).slice(1).filter((m) => m.role !== "system");

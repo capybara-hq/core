@@ -822,9 +822,55 @@ export function latestSummary(events: ConversationEvent[]): SummaryEvent | null 
   return found;
 }
 
-/** 摘要作为首条 user 消息时的文本。 */
-export function summaryText(summary: string): string {
-  return `<conversation_summary>\n${summary}\n</conversation_summary>`;
+/**
+ * Whether messages from before the summary was written stay verbatim after it (context compaction
+ * spec §4.2.2): a user, assistant or absorbed message logged after the summary's boundary and
+ * before the summary itself (the kept tail, or a message logged while the summary call ran). Read
+ * only from events older than the summary, so the answer never changes once it is written and the
+ * summary's message stays the same from one request to the next. `events` sorted by seq.
+ */
+export function summaryKeepsTail(
+  events: readonly ConversationEvent[],
+  summary: SummaryEvent,
+): boolean {
+  const after = summary.payload.coversUpToSeq;
+  return events.some(
+    (e) =>
+      e.seq > after &&
+      e.seq < summary.seq &&
+      (isAbsorbable(e) ||
+        e.type === "reminder" ||
+        e.type === "skill_fork_result" ||
+        (e.type === "assistant_message" && e.payload.content.length > 0)),
+  );
+}
+
+/**
+ * The text of the summary's user message (context compaction spec §4.2.2): the summary, then what
+ * follows it. `openers` is the number of covered opening messages re-rendered right after this
+ * text ({@link summaryOpeners}); `keptTail` says whether newer messages kept verbatim follow
+ * ({@link summaryKeepsTail}). Model-facing English, derived from the log alone.
+ */
+export function summaryText(
+  summary: string,
+  framing: { openers: number; keptTail: boolean },
+): string {
+  const parts: string[] = [];
+  if (framing.openers > 0) {
+    parts.push(
+      framing.openers === 1
+        ? "The message that opened the current turn follows, shown again verbatim; the summary covers it."
+        : "The messages that opened the current turn follow, shown again verbatim; the summary covers them.",
+    );
+  }
+  if (framing.keptTail) {
+    const anchor = framing.openers === 0 ? "this summary" : "those";
+    parts.push(
+      `The messages after ${anchor} are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them.`,
+    );
+  }
+  parts.push("Continue the work from where it left off.");
+  return `<conversation_summary>\n${summary}\n</conversation_summary>\n\n${parts.join(" ")}`;
 }
 
 /**
@@ -1105,7 +1151,13 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     messages.push({
       role: "user",
       content: [
-        { type: "text", text: summaryText(summary.payload.text) },
+        {
+          type: "text",
+          text: summaryText(summary.payload.text, {
+            openers: openers.length,
+            keptTail: summaryKeepsTail(events, summary),
+          }),
+        },
         ...openers.flatMap((o) => userBlocks(o, false)),
       ],
     });
