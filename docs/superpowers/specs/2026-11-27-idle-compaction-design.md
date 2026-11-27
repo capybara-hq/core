@@ -800,7 +800,8 @@ already accepted. A history too large for one request has no single cached prefi
 Coverage stays the plan's (`coversUpToSeq`, `openingSeqs`): the model sees the kept tail too, and
 the instruction marks the last event the summary covers, so the kept turns are not folded into the
 summary. If the model cannot be held to the mark, the summary covers everything and the tail is
-empty (decided in the phase 1 plan with an eval, Q9).
+empty (decided in the phase 1 plan with an eval, Q9: it cannot, so the in-context summary covers
+everything; the result closes this section).
 
 Append-only history and replay: the summary request is a side request, not a step; it appends
 nothing to the history the model sees and never changes an earlier request's bytes. Its output is
@@ -813,6 +814,25 @@ as today; usage shows the cache reads, which is how the benefit is measured.
 
 It applies to **every** compaction (inline, manual, idle): a compaction right after a step finds a
 warm cache on any vendor that cached the prefix, including best-effort ones such as DeepSeek.
+
+Q9 result (2026-11-28, `in-context-boundary.live.test.ts`): 20 seeded coding conversations
+(64k–126k estimated tokens, 8 head facts before the plan's `keepRecentTurns: 4` boundary, 4 tail
+facts after it, each with a unique codeword, head fact H1 the constraint "never touch `secrets/`"),
+sent as the in-context request with a marked boundary and as the transcript request over the
+plan's transcript (the baseline), through raw vendor clients, summary cap 20,000:
+
+| model | tail leakage | head recall (in-context / transcript) | constraint kept (in-context / transcript) |
+|---|---|---|---|
+| Anthropic `claude-haiku-5-5` | 9/20 | 68.1% / 81.9% | 16/20 / 20/20 |
+| OpenAI `gpt-5-nano` | 11/20 | 21.3% / 38.8% | 10/20 / 12/20 |
+| DeepSeek `deepseek-flash` | 18/20 | 90.0% / 88.8% | 20/20 / 20/20 |
+| Qwen `qwen3.8-flash` | 18/20 | 91.9% / 86.9% | 20/20 / 17/20 |
+
+The rule (`"marked"` only if every model keeps tail leakage ≤ 1/20, head recall ≥ transcript
+recall − 0.05 and the constraint in ≥ 19/20) fails on tail leakage for all four models (9 to 18
+of 20; Anthropic and OpenAI also miss recall and the constraint). Decision: **`"all"`**: the
+in-context summary covers everything up to the compaction point and keeps no verbatim tail. The
+transcript path keeps the plan's tail as before.
 
 ### 9.5 Plugin gaps (plugins repository)
 
@@ -929,10 +949,14 @@ Decided by the maintainer (2026-11-27):
 
 Still open (recommended answers):
 
-- **Q9. In-context summary boundary (§9.4).** Whether the model can be held to "summarize up to the
-  marked point" reliably enough to keep the kept tail. Recommend deciding in the phase 1 plan with
-  an eval over recorded long conversations; if it cannot, the in-context summary covers everything
-  and keeps no verbatim tail.
+- **Q9. In-context summary boundary (§9.4). Decided 2026-11-28 by the phase 1 eval (gate G1):
+  `"all"`.** Whether the model can be held to "summarize up to the marked point" reliably enough to
+  keep the kept tail. It cannot: over 20 seeded conversations the in-context summary named a tail
+  fact in 9/20 (Anthropic `claude-haiku-5-5`), 11/20 (OpenAI `gpt-5-nano`), 18/20 (DeepSeek
+  `deepseek-flash`) and 18/20 (Qwen `qwen3.8-flash`) conversations against a limit of 1/20; head
+  recall in-context / transcript 68.1/81.9%, 21.3/38.8%, 90.0/88.8%, 91.9/86.9%; constraint kept
+  16/20, 10/20, 20/20, 20/20 (transcript 20, 12, 20, 17). The in-context summary covers everything
+  up to the compaction point and keeps no verbatim tail (table in §9.4).
 - **Q12. Unverified vendor facts (§9.1). Closed 2026-11-28 (task P0), with two items left
   unverified.**
   - OpenAI `prompt_cache_options` on Chat Completions: accepted on 5.6+ (usage then has no TTL split),
