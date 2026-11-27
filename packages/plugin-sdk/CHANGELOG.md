@@ -1,5 +1,30 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.83
+
+### Minor Changes
+
+- 7238964: Watched input waits (plugins#207, browser long waits spec): an extension tool's `InputRequired`
+  may carry `watch: { deadlineMs }` and its registration a watcher (`ctx.tools.register(spec,
+  handler, { watch })`, `ToolWatcher`). The kernel parks the run as a question (no model turns, no
+  worker held) and polls the watcher every 10 s on the new `cap-kernel-tool-watch` queue; a settle
+  wakes the question (new status and card state `woken`), and `ctx.resume.outcome` tells the handler
+  how the round ended (`answered` / `woken` / `expired`). `ctx.deviceAccess.request` gains
+  `ifRunning` (`DeviceAccessError` `not_running`), forced for watchers, which never resume or start
+  anything. New config `tools.watchConcurrency` and `tools.maxWatchedWaitsPerAccount`; a watched
+  wait skipped by a message reads `WAIT_SKIPPED_TEXT`; the web draws a wait card with one end button.
+  The testing package gains the `fake-watch` fixture.
+
+### Patch Changes
+
+- 4ccde8f: Deleting a conversation now tells its device's services right away: the kernel owes a
+  conversation-deleted notice in the deleting transaction and delivers it to every running extension
+  service of the device (an offline device gets it once it is back; a stopped service once it runs
+  again within the restore window). The SDK's device service protocol gains the notice
+  (`encodeConversationDeleted`, `parseConversationDeleted`) and `DEVICE_SERVICE_RESTORE_MAX_AGE_MS`,
+  the window within which a service may restore saved state. The browser plugin uses it to close a
+  deleted conversation's tabs at once.
+
 ## 0.1.0-rc.82
 
 ### Patch Changes

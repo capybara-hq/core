@@ -1,5 +1,22 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.125
+
+### Patch Changes
+
+- 7238964: Watched input waits (plugins#207, browser long waits spec): an extension tool's `InputRequired`
+  may carry `watch: { deadlineMs }` and its registration a watcher (`ctx.tools.register(spec,
+  handler, { watch })`, `ToolWatcher`). The kernel parks the run as a question (no model turns, no
+  worker held) and polls the watcher every 10 s on the new `cap-kernel-tool-watch` queue; a settle
+  wakes the question (new status and card state `woken`), and `ctx.resume.outcome` tells the handler
+  how the round ended (`answered` / `woken` / `expired`). `ctx.deviceAccess.request` gains
+  `ifRunning` (`DeviceAccessError` `not_running`), forced for watchers, which never resume or start
+  anything. New config `tools.watchConcurrency` and `tools.maxWatchedWaitsPerAccount`; a watched
+  wait skipped by a message reads `WAIT_SKIPPED_TEXT`; the web draws a wait card with one end button.
+  The testing package gains the `fake-watch` fixture.
+- Updated dependencies [7238964]
+  - @capybara-hq/design@0.2.0-rc.48
+
 ## 0.1.0-rc.124
 
 No changes in this release.
