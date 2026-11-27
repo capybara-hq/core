@@ -1438,7 +1438,7 @@ export interface DeviceProjectsTable {
 }
 
 /**
- * 0186: a notice owed to a device's services about a conversation (close tabs on delete design
+ * 0187: a notice owed to a device's services about a conversation (close tabs on delete design
  * §4.1): written by the deleting transaction, deleted once delivered.
  */
 export interface DeviceConversationNoticesTable {
