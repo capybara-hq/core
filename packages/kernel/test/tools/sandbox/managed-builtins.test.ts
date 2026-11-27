@@ -456,6 +456,11 @@ function imageToolOf(deps: SandboxToolDeps): BuiltinTool {
     log: { warn: () => {} },
     db: kernelDb(raw),
     attachments: { openForConversation: async () => null },
+    files: {
+      referenced: async () => [],
+      referencingConversations: async () => [],
+      open: async () => null,
+    },
     sandbox: deps,
   });
 }

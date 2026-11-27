@@ -494,19 +494,30 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
         read: {
           files: {
             db: noRowsDb(),
-            storage: {} as never,
-            attachments: {
-              openForConversation: async (_org: string, _conv: string, id: string) => {
-                const f = opts.byId?.get(id);
-                if (f === undefined) return null;
-                return {
-                  name: f.name,
-                  contentType: f.contentType,
-                  size: f.data.byteLength,
-                  body: new Blob([new Uint8Array(f.data)]).stream(),
-                };
-              },
+            // the files by id are library files the conversation refers to
+            files: {
+              referencingConversations: async (_org: string, id: string) =>
+                opts.byId?.has(id) ? ["c"] : [],
+              referenced: async (_org: string, _convs: string[], ids: string[]) =>
+                ids.flatMap((id) => {
+                  const f = opts.byId?.get(id);
+                  if (f === undefined) return [];
+                  return [
+                    {
+                      id,
+                      name: f.name,
+                      contentType: f.contentType,
+                      origin: "delivered",
+                      blob: { size: f.data.byteLength },
+                      data: f.data,
+                    },
+                  ];
+                }),
+              open: async (_org: string, file: { data: Uint8Array }) => ({
+                body: new Blob([new Uint8Array(file.data)]).stream(),
+              }),
             },
+            attachments: { openForConversation: async () => null },
           },
         } as unknown as NonNullable<SandboxToolDeps["read"]>,
       }),

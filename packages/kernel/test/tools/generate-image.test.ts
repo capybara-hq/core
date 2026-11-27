@@ -20,13 +20,14 @@ import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { ApiError } from "../../src/errors.js";
 import { RecordedToolPipeline, recordedCalls } from "../../src/evals/recorded-tools.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
+import { FileDeliveries } from "../../src/files/deliveries.js";
 import { ModelImages } from "../../src/models/images.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { StorageService } from "../../src/storage/storage.service.js";
-import { NO_STORAGE_REASON } from "../../src/tools/builtins/artifacts.js";
+import { NO_STORAGE_REASON, storeArtifacts } from "../../src/tools/builtins/artifacts.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import {
   DEVICE_UNUSABLE_LINE,
@@ -42,6 +43,7 @@ import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.j
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { seedAttachedFile } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -421,31 +423,9 @@ async function deviceFiles(name: string): Promise<Buffer[]> {
   return Promise.all(hits.map((p) => readFile(join(root, p))));
 }
 
-/** A ready `chat` attachment of `conv` holding `bytes`. */
+/** A file attached in `conv` (a sent message's), holding `bytes`. */
 async function attachment(conv: string, bytes: Uint8Array, contentType = "image/png") {
-  const id = randomUUID();
-  const objectKey = `attachments/${id}`;
-  await k.app.get(StorageService).kernel(orgId).put(objectKey, bytes, {
-    contentType,
-    size: bytes.byteLength,
-  });
-  await db
-    .insertInto("attachments")
-    .values({
-      id,
-      org_id: orgId,
-      conversation_id: conv,
-      account_id: ownerId,
-      name: "ref.png",
-      content_type: contentType,
-      size: bytes.byteLength,
-      object_key: objectKey,
-      status: "ready",
-      etag: null,
-      purpose: "chat",
-    })
-    .execute();
-  return id;
+  return seedAttachedFile(k.app, orgId, conv, ownerId, { name: "ref.png", contentType, bytes });
 }
 
 describe("GenerateImage availability", () => {
@@ -591,28 +571,29 @@ describe("GenerateImage calls", () => {
 
   it("accepts a Deliver'ed image as a reference", async () => {
     const conv = await createConv(owner, orgId, agentId);
-    // the event `Deliver` writes: a device file's bytes stored under the conversation
+    // what `Deliver` stores: a device file's bytes as a blob, its event and its library file
     const bytes = Buffer.concat([PNG, Buffer.from([1, 2, 3])]);
-    const artifactId = randomUUID();
-    const objectKey = `artifacts/${conv}/${artifactId}`;
-    await k.app.get(StorageService).kernel(orgId).put(objectKey, bytes, {
-      contentType: "image/png",
-      size: bytes.byteLength,
-    });
-    await k.app.get(EventLog).append(conv, [
+    const [delivered] = await storeArtifacts(
+      { deliveries: k.app.get(FileDeliveries), eventLog: k.app.get(EventLog) },
       {
-        type: "artifact_created",
-        payload: {
-          artifactId,
+        orgId,
+        accountId: ownerId,
+        agentId,
+        conversationId: conv,
+        rootConversationId: conv,
+        callId: "call-deliver",
+        signal: new AbortController().signal,
+      },
+      [
+        {
           name: "photo.png",
           contentType: "image/png",
-          size: bytes.byteLength,
-          objectKey,
+          data: new Uint8Array(bytes),
           sourcePath: "/workspace/photo.png",
-          callId: "call-deliver",
         },
-      },
-    ]);
+      ],
+    );
+    const artifactId = delivered?.artifactId as string;
     const seen = providerCalls();
     await direct(conv, { prompt: "like it", reference_images: [artifactId] });
     expect(seen[0]?.referenceImages).toEqual([

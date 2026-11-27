@@ -31,13 +31,8 @@ export interface ConversationFileDeps {
   db: Pick<KernelDb, "selectFrom">;
   /** The `read` copies. */
   attachments: Pick<AttachmentsService, "openForConversation">;
-  /**
-   * The library files the conversations refer to, and their bytes. Absent (a caller not wired to
-   * the library yet): no library file resolves, only `read` copies.
-   */
-  files?: Pick<ReferencedFiles, "referenced" | "referencingConversations" | "open">;
-  /** Unused: bytes are read through `files` (kept so older callers' objects still fit). */
-  storage?: unknown;
+  /** The library files the conversations refer to, and their bytes. */
+  files: Pick<ReferencedFiles, "referenced" | "referencingConversations" | "open">;
 }
 
 /** Lower-case or upper-case UUIDs: file and `read` copy ids. */
@@ -109,7 +104,7 @@ async function ownersOf(
   orgId: string,
   id: string,
 ): Promise<{ conversationIds: string[]; readCopy: boolean }> {
-  const referring = (await deps.files?.referencingConversations(orgId, id)) ?? [];
+  const referring = await deps.files.referencingConversations(orgId, id);
   if (referring.length > 0) return { conversationIds: referring, readCopy: false };
   const att = await deps.db
     .selectFrom("attachments")
@@ -160,8 +155,8 @@ export async function findConversationFile(
   }
 
   const files = deps.files;
-  const [file] = files ? await files.referenced(q.orgId, conversations, [id]) : [];
-  if (files && file !== undefined) {
+  const [file] = await files.referenced(q.orgId, conversations, [id]);
+  if (file !== undefined) {
     const max = q.maxBytes;
     // only a larger object is ranged (a range on an empty object is unsatisfiable)
     const got = await files.open(q.orgId, file, {

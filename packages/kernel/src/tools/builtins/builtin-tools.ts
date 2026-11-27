@@ -186,6 +186,7 @@ export class BuiltinTools {
         hooks: host?.hooks,
         db,
         attachments,
+        files: referencedFiles,
         sandbox: sandboxDeps,
       }),
       // the platform's own operations and docs, as the run's person (Platform tool spec)

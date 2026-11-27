@@ -49,7 +49,7 @@ import {
   type StoredArtifact,
   storeArtifacts,
 } from "../artifacts.js";
-import { findConversationFile } from "../conversation-files.js";
+import { type ConversationFileDeps, findConversationFile } from "../conversation-files.js";
 import {
   checkFilePathShape,
   checkToolWritable,
@@ -270,6 +270,8 @@ export interface GenerateImageDeps {
   /** The artifact lookup of `reference_images`. */
   db: Pick<KernelDb, "selectFrom">;
   attachments: Pick<AttachmentsService, "openForConversation">;
+  /** The library files of `reference_images` (attached or delivered in the conversation set). */
+  files: ConversationFileDeps["files"];
   /** The device copy of `file_path` (the sandbox tools' own dependencies). */
   sandbox: SandboxToolDeps;
 }
@@ -443,7 +445,7 @@ async function resolveReferences(
   for (const [k, id] of ids.entries()) {
     try {
       const found = await findConversationFile(
-        { db: deps.db, attachments: deps.attachments, storage: deps.storage },
+        { db: deps.db, attachments: deps.attachments, files: deps.files },
         { orgId: ctx.orgId, conversationId: ctx.conversationId, rootConversationId: root, id },
       );
       if (found === null) throw new ToolError(unknownReferenceText(k));
