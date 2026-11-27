@@ -161,6 +161,8 @@ export const REFERENCE_COMPONENTS = [
   "subagent-group",
   "title-bar",
   "composer",
+  // the composer's ＋, / and @ menus (composer menus spec §1)
+  "composer-menu",
   "picker-menu",
   "mode-menu",
   "command-palette",

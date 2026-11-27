@@ -626,7 +626,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         : running
           ? K.runningHint
           : K.placeholder;
-    const value = o.state === "attachments" ? "帮我对一下这几个文件" : o.state === "focus" ? "再按收款人汇总一张表" : "";
+    const value = o.value ?? (o.state === "attachments" ? "帮我对一下这几个文件" : o.state === "focus" ? "再按收款人汇总一张表" : "");
     // a picked skill can be sent without arguments
     const action = running
       ? `<button class="r-icon-btn r-stop" aria-label="${esc(K.stop)}">${icon("square", 14)}</button>`
@@ -659,7 +659,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         : `<button class="r-btn r-picker" data-variant="ghost" data-part="mode-button"${o.mode === "open" ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}>${icon(P.icon, 14)}${esc(P.label)}${icon("chevron-down", 12)}</button>`;
       return `<div class="r-composer"><label class="r-sr" for="msg">消息</label>${textarea}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${devicePicker({ device: "default" })}${picker(modelText)}<span class="r-grow"></span>${modeButton}${action}</div></div>`;
     }
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}${suggestionHint}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${o.permission ? picker(F.PERMISSION_FIXTURE.items.find((i) => i.id === F.PERMISSION_FIXTURE.selected).label, { open: o.menu === "permission" }) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${useSuggestion}${action}</div></div>`;
+    // the ＋ menu open (§6.16.30): the button reads as pressed while its menu shows
+    const plus = o.plusOpen
+      ? `<button class="r-icon-btn" data-state="hover" aria-haspopup="menu" aria-expanded="true" aria-label="${esc(K.attach)}">${icon("plus", 16)}</button>`
+      : iconBtn("plus", K.attach);
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}${suggestionHint}<div class="r-composer-bar">${plus}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${o.permission ? picker(F.PERMISSION_FIXTURE.items.find((i) => i.id === F.PERMISSION_FIXTURE.selected).label, { open: o.menu === "permission" }) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${useSuggestion}${action}</div></div>`;
   }
 
   /**
@@ -788,6 +792,73 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     return o.open
       ? `<div class="r-menu-stage">${bar}<div class="r-menu r-anchored-menu" data-part="menu" role="menu" aria-label="${esc(QUICK_LABEL)}">${items}</div></div>`
       : bar;
+  }
+
+  // ── Composer menus (§6.16.30: ＋, / and @ anchored above the composer) ─────
+
+  /** One row: the lead (icon 16, the connector's mark, a file's type), name and hint, the line. */
+  function cmmRow(it, active) {
+    const lead = it.mark
+      ? `<span class="r-cmm-mark" data-part="object-mark">${esc([...it.mark.text][0].toUpperCase())}</span>`
+      : it.file
+        ? typeBadge((it.file.name.split(".").pop() || "FILE").toUpperCase())
+        : it.icon
+          ? icon(it.icon, 16)
+          : "";
+    const hint = it.hint ? `<span class="r-cmm-hint" data-part="composer-menu-hint">${esc(it.hint)}</span>` : "";
+    const desc = it.description ? `<span class="r-cmm-desc" data-part="composer-menu-desc">${esc(it.description)}</span>` : "";
+    const badge = it.badge ? `<span class="r-cmm-badge" data-part="composer-menu-badge">${esc(it.badge)}</span>` : "";
+    return `<div class="r-cmm-item" data-part="composer-menu-item" role="option" aria-selected="${active}"${it.description ? " data-described" : ""}${it.disabled ? ' aria-disabled="true" data-disabled' : ""}><span class="r-cmm-lead" data-part="composer-menu-lead" aria-hidden="true">${lead}</span><span class="r-cmm-body"><span class="r-cmm-head"><span class="r-ellipsis">${esc(it.label)}</span>${hint}</span>${desc}</span>${badge}</div>`;
+  }
+
+  /** The groups (the first choosable row active), then the loading row or the empty line. */
+  function cmmList(groups, o = {}) {
+    let first = true;
+    const list = groups
+      .map((g) => {
+        const rows = g.items
+          .map((it) => {
+            const active = first && !it.disabled;
+            if (active) first = false;
+            return cmmRow(it, active);
+          })
+          .join("");
+        return `<div class="r-cmm-group" role="group" aria-label="${esc(g.label)}"><div class="${o.sheet ? "r-cmm-sheet-heading" : "r-cmm-label"}" data-part="composer-menu-label">${esc(g.label)}</div>${o.sheet ? `<div class="r-cmm-rows">${rows}</div>` : rows}</div>`;
+      })
+      .join("");
+    const status = o.loading
+      ? `<div class="r-cmm-loading" data-part="composer-menu-loading">${spin()}<span>正在加载</span></div>`
+      : groups.length === 0
+        ? `<div class="r-cmm-empty" data-part="composer-menu-empty">${esc(o.empty)}</div>`
+        : "";
+    return `<div class="r-cmm-list" role="listbox">${list}</div>${status}`;
+  }
+
+  /**
+   * The menu shell (§6.16.30): as wide as the composer, space.2 above it, the list capped by
+   * layout.menu-max-height, the key hints at its foot (the menu switches as buttons).
+   */
+  function composerMenu(o) {
+    const M = F.COMPOSER_MENU_FIXTURE;
+    if (o.state === "compact") return composerMenuSheet();
+    const kind = { plus: "plus", slash: "slash" }[o.state] ?? "at";
+    const groups = { plus: M.plus, slash: M.slash, at: M.at }[o.state] ?? [];
+    const value = { plus: "", slash: "/", at: `对比一下 @${M.atQuery}`, empty: `@${M.emptyQuery}`, loading: `@${M.atQuery}` }[o.state];
+    const key = (k, label) => `<span class="r-cmm-key">${esc(k)}</span> ${esc(label)}`;
+    const sw = (k, label, on) => `<button class="r-cmm-switch" data-part="composer-menu-switch" aria-pressed="${on}">${key(k, label)}</button>`;
+    const dot = '<span aria-hidden="true">·</span>';
+    const foot = `<div class="r-cmm-foot" data-part="composer-menu-foot">${sw("@", "文件与资源", kind === "at")}${dot}${sw("/", "技能与命令", kind === "slash")}${dot}<span>${key("↑↓", "选择")}</span>${dot}<span>${key("↵", "使用")}</span>${dot}<span>${key("esc", "关闭")}</span><span class="r-grow"></span>${kind === "plus" ? "" : '<span class="r-cmm-type" data-part="composer-menu-type">输入以搜索</span>'}</div>`;
+    const menu = `<div class="r-cmm" data-part="composer-menu"><div class="r-cmm-scroll">${cmmList(groups, { loading: o.state === "loading", empty: M.empty.at })}</div>${foot}</div>`;
+    const bar = composer({ state: "idle", value, plusOpen: kind === "plus" });
+    return `<div class="r-cmm-stage"${groups.length === 0 ? " data-short" : ""}><div class="r-cmm-anchor">${menu}${bar}</div></div>`;
+  }
+
+  /** Compact: the `/` menu as a bottom sheet at rest (§6.59 anatomy), a search field on top. */
+  function composerMenuSheet() {
+    const M = F.COMPOSER_MENU_FIXTURE;
+    const head = `<div class="r-sh-handle-zone" data-part="handle-zone"><span class="r-sh-handle" data-part="sheet-handle" aria-label="拖动以关闭"></span></div><div class="r-cmm-sheet-head" data-part="sheet-head"><h2 class="r-cmm-sheet-title">技能与命令</h2><button class="r-cmm-sheet-close" data-part="sheet-close" aria-label="关闭">${icon("x", 14)}</button></div>`;
+    const body = `<div class="r-cmm-sheet-body"><input class="r-cmm-search" data-part="composer-menu-search" type="search" placeholder="搜索" aria-label="搜索"><div data-part="composer-menu">${cmmList(M.slash, { sheet: true, empty: M.empty.slash })}</div></div>`;
+    return `<div class="r-sh-stage" data-part="sheet-stage" style="--r-drag:0"><div class="r-sh-scrim" data-part="scrim"></div><div class="r-sh r-cmm-sheet" role="dialog" aria-modal="true" aria-label="技能与命令" data-part="composer-menu-sheet">${head}${body}</div></div>`;
   }
 
   // ── Command palette (phase D: the `/` menu's tagged, searchable items) ─────
@@ -1258,6 +1329,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     "conv-template": template,
     "title-bar": (o) => `<div class="r-titlebar-stage">${titleBar(o)}</div>`,
     composer: (o) => col(composer(o)),
+    "composer-menu": (o) => (o.state === "compact" ? composerMenu(o) : col(composerMenu(o))),
     "picker-menu": (o) => col(pickerMenu({ menu: o.state })),
     "mode-menu": (o) => col(modeMenu(o)),
     "quick-actions": (o) => col(quickMenu({ open: o.state === "menu", state: o.state === "hover" ? "hover" : undefined })),

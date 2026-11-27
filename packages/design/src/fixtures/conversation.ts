@@ -7,6 +7,7 @@
 
 import type { ImageRatio } from "../conversation/image-ratios";
 import type { PresetId } from "../display/avatar-presets";
+import type { IconName } from "../icons/paths";
 
 // ── Page, agent, models ─────────────────────────────────────────────────────
 
@@ -1566,4 +1567,189 @@ export const AGENT_MAP_FIXTURE: {
     ],
     contextPercent: 31,
   },
+};
+
+// ── Composer menus (§6.16.30) ───────────────────────────────────────────────
+
+export type FixtureComposerMenuItem = {
+  id: string;
+  label: string;
+  description?: string;
+  icon?: IconName;
+  mark?: { text: string };
+  file?: { name: string };
+  hint?: string;
+  badge?: string;
+  disabled?: boolean;
+  keywords?: string[];
+};
+export type FixtureComposerMenuGroup = {
+  id: string;
+  label: string;
+  items: FixtureComposerMenuItem[];
+};
+
+/**
+ * The composer's ＋, / and @ menus (§6.16.30): the ＋ groups (添加 and 能力 as one-line rows, one
+ * described row per connector, one waiting for setup), the / groups (skills by source, a connector's prompts, the command last)
+ * and the @ results for 「季度」 (matching files, then resources by connector); the empty and
+ * loading states search the @ menu.
+ */
+export const COMPOSER_MENU_FIXTURE: {
+  plus: FixtureComposerMenuGroup[];
+  slash: FixtureComposerMenuGroup[];
+  at: FixtureComposerMenuGroup[];
+  atQuery: string;
+  emptyQuery: string;
+  empty: { slash: string; at: string };
+} = {
+  plus: [
+    {
+      id: "add",
+      label: "添加",
+      items: [
+        { id: "upload", label: "上传文件", icon: "upload" },
+        { id: "library", label: "文件库", icon: "file-text" },
+        { id: "project", label: "项目文件", icon: "folder" },
+        { id: "resources", label: "连接器资源", icon: "connector" },
+      ],
+    },
+    {
+      id: "abilities",
+      label: "能力",
+      items: [{ id: "skills", label: "技能", icon: "skills" }],
+    },
+    {
+      id: "connectors",
+      label: "连接器",
+      items: [
+        {
+          id: "github",
+          label: "GitHub",
+          mark: { text: "GitHub" },
+          description: "仓库、issue 和拉取请求",
+        },
+        {
+          id: "docs",
+          label: "飞书文档",
+          mark: { text: "飞书文档" },
+          description: "团队的文档和知识库",
+        },
+        {
+          id: "jira",
+          label: "Jira",
+          mark: { text: "Jira" },
+          description: "项目和工单",
+          badge: "待配置",
+          disabled: true,
+        },
+      ],
+    },
+  ],
+  slash: [
+    {
+      id: "project-skills",
+      label: "项目技能",
+      items: [
+        {
+          id: "fix-issue",
+          label: "fix-issue",
+          icon: "skills",
+          hint: "[issue-number]",
+          description: "按团队规范修复一个 GitHub issue",
+        },
+        {
+          id: "release-check",
+          label: "release-check",
+          icon: "skills",
+          description: "运行发布前的检查脚本",
+        },
+      ],
+    },
+    {
+      id: "plugin-skills",
+      label: "插件技能",
+      items: [
+        {
+          id: "brainstorming",
+          label: "brainstorming",
+          icon: "skills",
+          keywords: ["superpowers:brainstorming"],
+          description: "动手之前先梳理需求和方案",
+        },
+      ],
+    },
+    {
+      id: "prompts-github",
+      label: "GitHub",
+      items: [
+        {
+          id: "create-issue",
+          label: "create-issue",
+          mark: { text: "GitHub" },
+          hint: "[title]",
+          description: "按模板新建一个 issue",
+        },
+      ],
+    },
+    {
+      id: "commands",
+      label: "命令",
+      items: [
+        {
+          id: "compact",
+          label: "compact",
+          icon: "terminal",
+          description: "压缩这段对话的上下文",
+        },
+      ],
+    },
+  ],
+  at: [
+    {
+      id: "files",
+      label: "匹配的文件",
+      items: [
+        {
+          id: "f1",
+          label: "2026年第三季度报告.xlsx",
+          file: { name: "2026年第三季度报告.xlsx" },
+          description: "2026-11-24 上传",
+        },
+        {
+          id: "f2",
+          label: "季度复盘.md",
+          file: { name: "季度复盘.md" },
+          description: "研究助手 2026-11-20 生成",
+        },
+      ],
+    },
+    {
+      id: "res-docs",
+      label: "飞书文档",
+      items: [
+        {
+          id: "r1",
+          label: "第四季度计划",
+          mark: { text: "飞书文档" },
+          description: "产品组 / 计划",
+        },
+      ],
+    },
+    {
+      id: "res-github",
+      label: "GitHub",
+      items: [
+        {
+          id: "r2",
+          label: "docs/quarterly-review.md",
+          mark: { text: "GitHub" },
+          description: "acme/acme-web",
+        },
+      ],
+    },
+  ],
+  atQuery: "季度",
+  emptyQuery: "预算表2019",
+  empty: { slash: "没有匹配的技能或命令", at: "没有匹配的文件或资源" },
 };

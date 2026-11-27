@@ -43,6 +43,19 @@ export {
   type PickerProps,
 } from "./composer";
 export {
+  ComposerMenu,
+  type ComposerMenuCombobox,
+  type ComposerMenuController,
+  type ComposerMenuGroup,
+  type ComposerMenuItem,
+  type ComposerMenuKind,
+  type ComposerMenuProps,
+  type ComposerMenuShownGroup,
+  type ComposerMenuShownItem,
+  rankComposerMenu,
+  useComposerMenu,
+} from "./composer-menu";
+export {
   ComposerOptions,
   type ComposerOptionsProps,
   shortDeviceLabel,

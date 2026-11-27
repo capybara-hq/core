@@ -19,6 +19,9 @@ import {
   CommandPalette,
   ComposerBox,
   type ComposerBoxProps,
+  ComposerMenu,
+  type ComposerMenuGroup,
+  type ComposerMenuProps,
   ContextSection,
   ConversationPage,
   type ConversationPageProps,
@@ -63,15 +66,18 @@ import {
   TranscriptFrame,
   UserBubble,
   untitledLabel,
+  useComposerMenu,
   useDesignLocale,
 } from "@capybara-hq/design";
 import {
   AGENT_MAP_FIXTURE,
   AGENTS_CHIP_FIXTURE,
+  COMPOSER_MENU_FIXTURE,
   CONV_COPY,
   CONV_FIXTURE,
   DEVICE_FIXTURE,
   FILE_FIXTURE,
+  type FixtureComposerMenuGroup,
   type FixtureFile,
   type FixtureSubagent,
   LONG_MODELS_FIXTURE,
@@ -651,6 +657,106 @@ function commandPaletteBlocks(): ReactNode {
           />
         </Block>
       ))}
+    </>
+  );
+}
+
+// ── Composer menus (§6.16.30: ＋, / and @ anchored above the composer) ─────────
+
+const menuGroups = (groups: FixtureComposerMenuGroup[]): ComposerMenuGroup[] =>
+  groups.map((g) => ({ ...g, items: g.items.map((it) => ({ ...it, onSelect: noop })) }));
+
+/** A conversation's composer holding the text `value` with the menu open above it. */
+function ComposerMenuComposer({
+  value,
+  menu,
+}: {
+  value: string;
+  menu: Omit<ComposerMenuProps, "onClose" | "onSwitch">;
+}) {
+  const props: ComposerMenuProps = { ...menu, onClose: noop, onSwitch: noop };
+  const controller = useComposerMenu(props);
+  return (
+    <ComposerBox
+      {...composerProps("idle")}
+      value={value}
+      send={{ mode: "send", disabled: value === "", onClick: noop }}
+      {...(menu.kind === "plus" ? { attachOpen: true } : {})}
+      menu={{
+        node: <ComposerMenu {...props} controller={controller} />,
+        combobox: controller.combobox,
+        onKeyDown: controller.onKeyDown,
+      }}
+    />
+  );
+}
+
+/** The compact form: the `/` menu as a bottom sheet at rest at the phone size, over an empty page. */
+function ComposerMenuSheetBlock() {
+  const M = COMPOSER_MENU_FIXTURE;
+  const props: ComposerMenuProps = {
+    kind: "slash",
+    groups: menuGroups(M.slash),
+    query: "",
+    empty: M.empty.slash,
+    onClose: noop,
+    onQueryChange: noop,
+  };
+  const controller = useComposerMenu(props);
+  return <ComposerMenu {...props} controller={controller} referenceSheet={{}} />;
+}
+
+function composerMenuBlocks(): ReactNode {
+  const M = COMPOSER_MENU_FIXTURE;
+  return (
+    <>
+      <Block id="composer-menu-plus" offsetTop={420}>
+        <ComposerMenuComposer
+          value=""
+          menu={{ kind: "plus", groups: menuGroups(M.plus), query: "", empty: M.empty.slash }}
+        />
+      </Block>
+      <Block id="composer-menu-slash" offsetTop={420}>
+        <ComposerMenuComposer
+          value="/"
+          menu={{ kind: "slash", groups: menuGroups(M.slash), query: "", empty: M.empty.slash }}
+        />
+      </Block>
+      {/* the @ results come searched from the kernel: no ranking of its own */}
+      <Block id="composer-menu-at" offsetTop={420}>
+        <ComposerMenuComposer
+          value={`对比一下 @${M.atQuery}`}
+          menu={{
+            kind: "at",
+            groups: menuGroups(M.at),
+            query: M.atQuery,
+            filter: false,
+            empty: M.empty.at,
+          }}
+        />
+      </Block>
+      <Block id="composer-menu-empty" offsetTop={160}>
+        <ComposerMenuComposer
+          value={`@${M.emptyQuery}`}
+          menu={{ kind: "at", groups: [], query: M.emptyQuery, filter: false, empty: M.empty.at }}
+        />
+      </Block>
+      <Block id="composer-menu-loading" offsetTop={160}>
+        <ComposerMenuComposer
+          value={`@${M.atQuery}`}
+          menu={{
+            kind: "at",
+            groups: [],
+            query: M.atQuery,
+            filter: false,
+            loading: true,
+            empty: M.empty.at,
+          }}
+        />
+      </Block>
+      <RefBlock id="composer-menu-compact" width={390} height={844}>
+        <ComposerMenuSheetBlock />
+      </RefBlock>
     </>
   );
 }
@@ -1776,6 +1882,7 @@ export const CONVERSATION_PAGE_BLOCKS = {
   "agent-map": agentMapBlocks,
   "title-bar": titleBarBlocks,
   composer: composerBlocks,
+  "composer-menu": composerMenuBlocks,
   "command-palette": commandPaletteBlocks,
   "picker-menu": pickerMenuBlocks,
   "mode-menu": modeMenuBlocks,

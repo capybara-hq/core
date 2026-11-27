@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Composer menu · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Composer menu</h1>
+<p>The composer's ＋, / and @ menus share one shell (spec §6.16.30): as wide as the composer, attached space.2 above it, the menu ground and line, the list capped by layout.menu-max-height. Rows carry an icon for their kind (a command's terminal, a skill's sparkles), a connector's mark for its rows, prompts and resources, a file's type for files; names never start with / or $; the active row is on selected. No search box of its own: the query is the composer text after the trigger. The footer's key hints (from 841 up): @ and / switch menus. Plus: 添加, 能力 and one row per connector (one waiting for setup, 待配置, disabled). Slash: skills by source, a connector's prompts, the command last. At: the files matching 「季度」, then resources by connector. Empty: nothing matches. Loading: results on their way. Compact: the / menu as a bottom sheet with a search field on top, rows touch.row high, no key hints.</p>
+<div class="r-blocks">
+<section data-ref-block="composer-menu-plus" style="width:752px" data-pad>
+  <template data-fixture="composer-menu" data-opts='{"state": "plus"}'></template>
+</section>
+<section data-ref-block="composer-menu-slash" style="width:752px" data-pad>
+  <template data-fixture="composer-menu" data-opts='{"state": "slash"}'></template>
+</section>
+<section data-ref-block="composer-menu-at" style="width:752px" data-pad>
+  <template data-fixture="composer-menu" data-opts='{"state": "at"}'></template>
+</section>
+<section data-ref-block="composer-menu-empty" style="width:752px" data-pad>
+  <template data-fixture="composer-menu" data-opts='{"state": "empty"}'></template>
+</section>
+<section data-ref-block="composer-menu-loading" style="width:752px" data-pad>
+  <template data-fixture="composer-menu" data-opts='{"state": "loading"}'></template>
+</section>
+<section data-ref-block="composer-menu-compact" style="width:390px;height:844px">
+  <template data-fixture="composer-menu" data-opts='{"state": "compact"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>
