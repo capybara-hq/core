@@ -310,7 +310,7 @@ describe("prompt suggestions end to end", () => {
   it("a scheduled run gets no suggestion", async () => {
     const task = await owner({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/schedules`,
+      url: `/api/v1/orgs/${orgId}/automations`,
       payload: {
         agentId,
         name: "Digest",
@@ -323,7 +323,7 @@ describe("prompt suggestions end to end", () => {
     const taskId = (task.json() as { task: { id: string } }).task.id;
     const run = await owner({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/schedules/${taskId}/run`,
+      url: `/api/v1/orgs/${orgId}/automations/${taskId}/run`,
       payload: {},
     });
     expect(run.statusCode, run.body).toBe(202);
@@ -331,7 +331,7 @@ describe("prompt suggestions end to end", () => {
       async () => {
         const r = await owner({
           method: "GET",
-          url: `/api/v1/orgs/${orgId}/schedules/${taskId}/runs?limit=5`,
+          url: `/api/v1/orgs/${orgId}/automations/${taskId}/runs?limit=5`,
         });
         const items = (r.json() as { items: { conversationId: string | null }[] }).items;
         return items.find((i) => i.conversationId !== null);

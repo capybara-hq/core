@@ -58,7 +58,7 @@ function drawerData(over: Partial<DrawerNavData> = {}): DrawerNavData {
     sections: [
       { id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox", badge: { count: 3 } },
       { id: "agents", label: "智能体", href: "/agents", icon: "agent" },
-      { id: "schedules", label: "定时任务", href: "/schedules", icon: "clock" },
+      { id: "automations", label: "自动化", href: "/automations", icon: "clock" },
     ],
     more: [
       { id: "skills", label: "技能", href: "/skills", icon: "skills" },
@@ -415,7 +415,7 @@ describe("the drawer from the menu button", () => {
     expect(sections.map((s) => s.getAttribute("data-nav-section"))).toEqual([
       "inbox",
       "agents",
-      "schedules",
+      "automations",
     ]);
     expect(sections[0]?.querySelector('[data-part="navrow-badge"]')?.textContent).toBe("3");
     expect(within(panel).getByRole("link", { name: /沙箱内 pnpm 安装失败/ })).toBeTruthy();
@@ -452,7 +452,7 @@ describe("the drawer from the menu button", () => {
     await waitFor(() => expect(drawerEl()).toBeNull());
   });
 
-  it("a guest's data without schedules renders two sections", async () => {
+  it("a guest's data without automations renders two sections", async () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const data = drawerData();
     render(shell({ drawer: { ...data, sections: data.sections.slice(0, 2) } }));

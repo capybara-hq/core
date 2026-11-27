@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
  * One report-driven permission path (device-provider spec §6.7): the kernel's permission code
  * never branches on a device's location or on the kernel's own local provider; it reads the
  * provider's stored report and permission support, the same for every provider. Beyond the
- * permission code, devices, the sandbox service, tools, schedules, platform operations and health
+ * permission code, devices, the sandbox service, tools, automations, platform operations and health
  * handle every device through its provider (a dial-in one through the generic channel).
  */
 
@@ -48,7 +48,7 @@ const KERNEL_MARKERS = [
   /source !== "local"/,
 ];
 
-describe("devices, sandbox, tools and schedules have no local branches", () => {
+describe("devices, sandbox, tools and automations have no local branches", () => {
   it("packages/kernel/src/local-devices does not exist", () => {
     expect(existsSync(join(SRC, "local-devices"))).toBe(false);
   });

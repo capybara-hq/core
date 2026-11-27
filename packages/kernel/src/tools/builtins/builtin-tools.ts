@@ -1,5 +1,6 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
+import { AutomationStore } from "../../automations/store.js";
 import { BackgroundTaskFinisher } from "../../background/finish.js";
 import { BackgroundTaskStopper } from "../../background/stop.js";
 import { BackgroundTaskStore } from "../../background/store.js";
@@ -28,12 +29,12 @@ import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-conte
 import { StepLog } from "../../runtime/step-log.js";
 import { ManagedDeviceContextRecorder } from "../../sandbox/managed-device-context.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
-import { ScheduledTaskStore } from "../../schedules/store.js";
 import { StorageService } from "../../storage/storage.service.js";
 import { ToolOutputs } from "../outputs.js";
 import type { BuiltinCallContext, BuiltinTool } from "../registry.js";
 import { agentTool } from "./agent.js";
 import { askUserTool } from "./ask-user.js";
+import { AutomationToolsPort, AutomationUpdates, automationTools } from "./automations.js";
 import { currentTimeTool } from "./current-time.js";
 import { handbackTool } from "./handback.js";
 import { generateImageTool } from "./image/index.js";
@@ -42,7 +43,6 @@ import { readToolOutputTool } from "./read-tool-output.js";
 import type { SandboxToolDeps } from "./sandbox/common.js";
 import { sandboxTools } from "./sandbox/index.js";
 import type { ReadFileDeps } from "./sandbox/read.js";
-import { ScheduleToolsPort, ScheduleUpdates, scheduleTools } from "./schedules.js";
 import { sendMessageTool } from "./send-message.js";
 import { skillLoadTool } from "./skill-load.js";
 import { toolSearchTool } from "./tool-search.js";
@@ -84,12 +84,12 @@ export class BuiltinTools {
     @Inject(SealedInputs) sealedInputs: SealedInputs,
     /** A Platform write's file reference: a conversation file (spec §5). */
     @Inject(FileRefs) fileRefs: FileRefs,
-    /** The schedule tools read tasks and grants; their writes go through the task service. */
-    @Inject(ScheduledTaskStore) scheduleStore: ScheduledTaskStore,
-    /** `ScheduleUpdate`'s write: its field change and grant changes in one transaction. */
-    @Inject(ScheduleUpdates) scheduleUpdates: ScheduleUpdates,
-    /** The task service, bound by `SchedulesModule` at start (a registration port: no cycle). */
-    @Inject(ScheduleToolsPort) schedulePort: ScheduleToolsPort,
+    /** The automation tools read tasks and grants; their writes go through the task service. */
+    @Inject(AutomationStore) automationStore: AutomationStore,
+    /** `AutomationUpdate`'s write: its field change and grant changes in one transaction. */
+    @Inject(AutomationUpdates) automationUpdates: AutomationUpdates,
+    /** The task service, bound by `AutomationsModule` at start (a registration port: no cycle). */
+    @Inject(AutomationToolsPort) automationPort: AutomationToolsPort,
     /** `GenerateImage`: the image calls, and the image model's availability per listing. */
     @Inject(ModelImages) images: ModelImages,
     @Inject(ProviderRegistry) providers: ProviderRegistry,
@@ -234,13 +234,13 @@ export class BuiltinTools {
         timeZoneOf: ({ orgId, conversationId }) =>
           conversationTimeZone(db.db, orgId, conversationId),
       }),
-      // the person's scheduled tasks (scheduled tasks spec §11)
-      ...scheduleTools({
+      // the person's automations (scheduled tasks spec §11)
+      ...automationTools({
         db: () => db.db,
         config,
-        store: scheduleStore,
-        service: () => schedulePort.get(),
-        updates: scheduleUpdates,
+        store: automationStore,
+        service: () => automationPort.get(),
+        updates: automationUpdates,
         timeZoneOf: (orgId, conversationId) => conversationTimeZone(db.db, orgId, conversationId),
         now: now ?? Date.now,
       }),

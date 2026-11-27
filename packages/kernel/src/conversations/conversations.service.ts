@@ -6,6 +6,7 @@ import { AgentLookup, visibleTo } from "../agents/agent-lookup.js";
 import { avatarView } from "../agents/avatar-view.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { AgentAvatar, AgentAvatarView } from "../agents/profile.js";
+import type { ScheduleMarker } from "../automations/types.js";
 import { unbindConversation } from "../channels/threads.js";
 import type { TitleSource } from "../db/kernel-schema.js";
 import { oweConversationDeletedNotice } from "../device-access/conversation-notices.js";
@@ -31,7 +32,6 @@ import { RunDeletion } from "../runtime/run-deletion.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { permissionScopeHash } from "../sandbox/permission-facts.js";
-import type { ScheduleMarker } from "../schedules/types.js";
 import { revokeSharesIn } from "../shares/revoke.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { type ApprovalRecord, ApprovalsService } from "../tools/approvals.service.js";
@@ -87,8 +87,8 @@ export interface ConversationView {
    * sub-agent's is null: it works in its root conversation's.
    */
   deviceId: string | null;
-  /** The scheduled task that created it (a `new`-mode task's run); null otherwise (spec §4). */
-  scheduledTaskId: string | null;
+  /** The automation that created it (a `new`-mode task's run); null otherwise (spec §4). */
+  automationId: string | null;
   /**
    * The device project it is bound to (project root spec §4.3: chosen at creation, never
    * changed), as resolved then: its name and absolute path on the device; null in free mode (a
@@ -337,7 +337,7 @@ const COLUMNS = [
   "subagent_type",
   "archived_at",
   "device_id",
-  "scheduled_task_id",
+  "automation_id",
   "project_name",
   "project_path",
 ] as const;
@@ -357,7 +357,7 @@ function toView(r: {
   subagent_type: string | null;
   archived_at: Date | null;
   device_id: string | null;
-  scheduled_task_id: string | null;
+  automation_id: string | null;
   project_name: string | null;
   project_path: string | null;
   activity?: "running" | "waiting" | null;
@@ -378,7 +378,7 @@ function toView(r: {
     subagentType: r.subagent_type,
     archivedAt: r.archived_at,
     deviceId: r.device_id,
-    scheduledTaskId: r.scheduled_task_id,
+    automationId: r.automation_id,
     project:
       r.project_name !== null && r.project_path !== null
         ? { name: r.project_name, path: r.project_path }
@@ -428,7 +428,7 @@ export interface UserMessageInput {
 }
 
 /**
- * Message options only kernel callers pass (a scheduled task's fire, scheduled tasks spec §6), never
+ * Message options only kernel callers pass (an automation's fire, scheduled tasks spec §6), never
  * an HTTP body: the schedule marker the `user_message` carries and a zone that beats every other
  * source of the message's `timeZone` (`readMessageContext`).
  */
@@ -564,8 +564,8 @@ export class ConversationsService {
    * `agent.not_found` and nothing is written. Queues a run afterwards, like `postUserMessage`.
    * `events` are every event the create wrote, in seq order from seq 1 (a `model_switched` before
    * the message when the send switched), so a client can seed the new conversation's log whole.
-   * `internal`: the conversation's source and, for kernel callers only, a scheduled task's marker,
-   * which also sets `conversations.scheduled_task_id`, and its zone override. `pick.project` binds
+   * `internal`: the conversation's source and, for kernel callers only, an automation's marker,
+   * which also sets `conversations.automation_id`, and its zone override. `pick.project` binds
    * the conversation to one of its device's projects inside the write ({@link bindingFor}); a
    * retry answers with the conversation the first send created, its binding unchanged.
    */
@@ -687,7 +687,7 @@ export class ConversationsService {
         project_path: project?.path ?? null,
         create_request_id: input.clientMessageId,
         create_request_hash: internal.createRequestHash ?? null,
-        scheduled_task_id: internal.schedule?.taskId ?? null,
+        automation_id: internal.schedule?.taskId ?? null,
         source: internal.source,
       })
       .onConflict((oc) =>
@@ -1200,7 +1200,7 @@ export class ConversationsService {
       created_at: Date;
       updated_at: Date;
       parent_conversation_id: string | null;
-      scheduled_task_id: string | null;
+      automation_id: string | null;
       subagent_type: string | null;
       archived_at: Date | null;
       device_id: string | null;
@@ -1224,7 +1224,7 @@ export class ConversationsService {
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         a.profile_avatar, a.profile_updated_at, cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
         cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
-        cs.archived_at, cs.device_id, cs.scheduled_task_id, cs.project_name, cs.project_path,
+        cs.archived_at, cs.device_id, cs.automation_id, cs.project_name, cs.project_path,
         cs.activity
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
@@ -1232,7 +1232,7 @@ export class ConversationsService {
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
           c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
-          c.archived_at, c.device_id, c.scheduled_task_id, c.project_name, c.project_path,
+          c.archived_at, c.device_id, c.automation_id, c.project_name, c.project_path,
           ${activitySql("c")} AS activity
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'

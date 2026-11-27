@@ -820,8 +820,8 @@ export interface Conversation {
   owner?: PersonRef | null;
   /** The device it runs in, bound at the first message (null: none). */
   deviceId: string | null;
-  /** The scheduled task that started it (a `new`-mode task); null otherwise. */
-  scheduledTaskId?: string | null;
+  /** The automation that started it (a `new`-mode task); null otherwise. */
+  automationId?: string | null;
   /**
    * The device project it is bound to (project root §4.3: chosen at creation, never changed);
    * null in free mode.

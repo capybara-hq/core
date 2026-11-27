@@ -1,18 +1,18 @@
 import { sql } from "kysely";
 import { normalizeStoredDefinition } from "../agents/definition.js";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import type { KernelLogger } from "../log.js";
-import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
-import { FORBIDDEN_TOOLS_UNREADABLE_ERROR, readOrgSettings } from "../orgs/settings.service.js";
-import { grantRefusalOf } from "../schedules/grant-rules.js";
-import { findTaskGrant } from "../schedules/store.js";
+import { grantRefusalOf } from "../automations/grant-rules.js";
+import { findTaskGrant } from "../automations/store.js";
 import {
   changesAgentSkills,
   UNATTENDED_ASK_ERROR,
   UNATTENDED_FIXED_ASK_ERROR,
   UNATTENDED_QUESTION_ERROR,
   unattendedRules,
-} from "../schedules/unattended.js";
+} from "../automations/unattended.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelLogger } from "../log.js";
+import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { FORBIDDEN_TOOLS_UNREADABLE_ERROR, readOrgSettings } from "../orgs/settings.service.js";
 import { BUILTIN, SANDBOX_ASK_TOOL_NAMES } from "./builtin-names.js";
 import { personalAuth } from "./connector-account-policies.js";
 import { isFixedAsk } from "./fixed-ask.js";
@@ -26,7 +26,7 @@ const RANK: Record<ToolPolicy, number> = { allow: 0, ask: 1, deny: 2 };
 
 /**
  * What allowed an ask without an approval: this conversation's grant, an "always" grant, or a
- * scheduled task's grant (its unattended runs, scheduled tasks spec §7).
+ * automation's grant (its unattended runs, scheduled tasks spec §7).
  */
 export type GrantKind = "session" | "always" | "task";
 
@@ -40,10 +40,10 @@ export interface PolicyInput {
   connectorDefault: ToolPolicy;
   /** agent 负责人的收紧（`definition.toolPolicies[key]`）。 */
   agentOverride?: "ask" | "deny";
-  /** `requiresUserInteraction`。 */
+  /** `requiresUserInteraction`. */
   fixedAsk: boolean;
   /**
-   * 已记住且 specHash 与当前一致的授权; `task`: a scheduled task's grant in its unattended run.
+   * A remembered grant whose specHash matches the current one; `task`: an automation's grant in its unattended run.
    */
   grant: GrantKind | null;
 }

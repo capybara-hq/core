@@ -72,7 +72,7 @@ for (const theme of THEMES) {
         });
       }
 
-      // The member pages (agents, skills, connectors, schedules' list, conversations, inbox and
+      // The member pages (agents, skills, connectors, automations' list, conversations, inbox and
       // the account profile): the real views at a member's role from a seeded query cache, so the
       // grouped rows, the row actions and the primaries draw as a person sees them.
       for (const p of MEMBER_PAGES) {
@@ -86,7 +86,7 @@ for (const theme of THEMES) {
     });
   }
 
-  // The org admin pages phase 2 changed (settings members, tokens, schedules, audit, extensions,
+  // The org admin pages phase 2 changed (settings members, tokens, automations, audit, extensions,
   // trajectories, evals with a set and a run): a fine pointer at every width, 390 included (they
   // have no touch form).
   for (const width of [390, 768, 1440]) {

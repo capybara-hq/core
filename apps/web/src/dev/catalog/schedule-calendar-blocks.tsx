@@ -3,7 +3,7 @@ import { SCHEDULE_CALENDAR_FIXTURE as F, PERSON_FIXTURE } from "@capybara-hq/des
 import type { ReactNode } from "react";
 import { RefBlock } from "./ref-block";
 
-// ScheduleCalendar (spec §6.40): the scheduled tasks calendar in its states. The blocks have the
+// ScheduleCalendar (spec §6.40): the automations calendar in its states. The blocks have the
 // same ids and boxes as docs/design/reference/src/schedule-calendar.html.
 
 const W = 1120;

@@ -456,7 +456,7 @@ it.each(["request-approval", "approve-for-me"] as const)(
 
 it("an unattended run cannot escalate", async () => {
   const f = await escalated("request-approval");
-  // the authority's own facts say the run serves a scheduled task (unattended)
+  // the authority's own facts say the run serves an automation (unattended)
   const authority = k.app.get(SandboxOperationAuthority);
   const preview = authority.previewCall.bind(authority);
   vi.spyOn(authority, "previewCall").mockImplementation(async (...args) => ({

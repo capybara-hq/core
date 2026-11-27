@@ -28,7 +28,7 @@ export class PushPreferencesService {
       .select(["category", "enabled"])
       .where("account_id", "=", accountId)
       .execute();
-    const out: PushPreferences = { waiting: true, replies: true, tasks: true, schedules: true };
+    const out: PushPreferences = { waiting: true, replies: true, tasks: true, automations: true };
     for (const r of rows) out[r.category] = r.enabled;
     return out;
   }

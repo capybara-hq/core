@@ -61,7 +61,7 @@ says it was approved automatically or by the review model. An unsure or unavaila
 you. Tools that themselves require a person to act still ask under every profile. Choosing Auto takes
 a short confirmation bound to the device and its ceilings (without a device, a shorter one):
 switching device or widening a ceiling returns the conversation to Approve for me until you confirm
-again (a narrowing keeps it). Scheduled tasks run as Request approval with every ask refused, and
+again (a narrowing keeps it). Automations run as Request approval with every ask refused, and
 never escalate. Conversations opened from a chat app (Slack, Lark, Telegram) have no picker: they
 start as Approve for me, so their tool asks go to the review model; open the conversation on the web
 and choose Request approval to see every card.
@@ -148,7 +148,7 @@ review error, timeout or unreadable answer is a question, never an allow.
   dynamic paths and `sudo` are asked every time, and a classifier-decided ask has no rule to
   remember, so its card offers once only. Inline interpreter code (`python -c`), fetched packages
   (`npx some-tool`) and scripts the agent itself wrote are reviewed as code the rules cannot read. An unattended run
-  (a scheduled task) never waits: an ask is refused with a note the model reads, and the run
+  (an automation's run) never waits: an ask is refused with a note the model reads, and the run
   continues. Existing `ctx.hooks` policy hooks run after the review, so an org's policy extension
   can add rules.
 

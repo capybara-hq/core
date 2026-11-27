@@ -102,7 +102,7 @@ describe("渠道队列优先级（行为）", () => {
       { get: config },
       log,
       {} as never,
-      // no scheduled task is delivered here
+      // no automation is delivered here
       { pauseFor: async () => {} },
       // no conversation file is delivered here
       {} as never,

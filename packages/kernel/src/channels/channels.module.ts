@@ -1,6 +1,7 @@
 import { OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { type DynamicModule, Inject, Injectable, Module } from "@nestjs/common";
 import { type Job, UnrecoverableError, type Worker } from "bullmq";
+import { AutomationsModule } from "../automations/automations.module.js";
 import type { KernelConfig } from "../config/schema.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
@@ -16,7 +17,6 @@ import { runJob } from "../infra/queue/run-job.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
-import { SchedulesModule } from "../schedules/schedules.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { ChannelConnections } from "./connections.service.js";
@@ -53,8 +53,8 @@ const CHANNEL_QUEUE_MODULE = QueueModule.registerQueue(CHANNEL_QUEUE_NAME);
     ToolsModule,
     ConversationsModule,
     RuntimeModule,
-    // outbound pauses the scheduled task of a run whose chat is gone (scheduled tasks spec §8)
-    SchedulesModule,
+    // outbound pauses the automation of a run whose chat is gone (scheduled tasks spec §8)
+    AutomationsModule,
     // outbound reads conversation files to send them into the chat (channel file delivery §4.2)
     StorageModule,
     CHANNEL_QUEUE_MODULE,

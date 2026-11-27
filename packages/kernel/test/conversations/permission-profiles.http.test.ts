@@ -867,7 +867,7 @@ describe("Conversation permission profiles", () => {
     });
     const taskId = randomUUID();
     await db
-      .insertInto("scheduled_tasks")
+      .insertInto("automations")
       .values({
         id: taskId,
         org_id: orgId,
@@ -881,7 +881,7 @@ describe("Conversation permission profiles", () => {
       .execute();
     await db
       .updateTable("conversations")
-      .set({ scheduled_task_id: taskId })
+      .set({ automation_id: taskId })
       .where("id", "=", conv.id)
       .execute();
     expect(

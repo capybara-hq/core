@@ -750,9 +750,9 @@ it("profile writer versus inherited claim fence refuses replaced and cancelled w
   expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
 });
 
+import { AutomationStore } from "../../src/automations/store.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { buildPermissionCandidate } from "../../src/sandbox/review/permission-candidate.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
 
 it("system reset reaches scheduled child without lending interactive call authority", async () => {
   const f = await pending();
@@ -782,7 +782,7 @@ it("system reset reaches scheduled child without lending interactive call author
       parent_conversation_id: f.conversationId,
     })
     .execute();
-  const store = new ScheduledTaskStore();
+  const store = new AutomationStore();
   await store.insertTask(f.db, {
     id: taskId,
     orgId: f.orgId,
@@ -819,7 +819,7 @@ it("system reset reaches scheduled child without lending interactive call author
       agent_version: 1,
       trigger_account_id: f.accountId,
       trigger_seq: 0,
-      scheduled_task_run_id: taskRunId,
+      automation_run_id: taskRunId,
     })
     .execute();
   const input = { file_path: "/outside/reports/report.txt" };

@@ -272,7 +272,7 @@ export const SIZE_BRANCH_ALLOWED: readonly SizeBranchAllowed[] = [
     reason: "an extension slot gates a contribution by the current size class",
   },
   {
-    path: "components/ScheduleCalendarView.tsx",
+    path: "components/AutomationCalendarView.tsx",
     reason:
       "pending: the calendar reads the compact class at click time to pick its phone gesture; that per-class form moves into a design component (follow-up), then the entry goes",
   },

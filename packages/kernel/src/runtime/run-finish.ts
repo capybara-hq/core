@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { AutomationRunTracker } from "../automations/run-tracker.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { pauseQueueIn } from "../conversations/queue.js";
@@ -9,7 +10,6 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
-import { ScheduledTaskRunTracker } from "../schedules/run-tracker.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { QuestionsService } from "../tools/questions.service.js";
 import {
@@ -48,9 +48,9 @@ export class RunFinish {
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** A scheduled task's run follows its kernel run's end in the same transaction (spec §6). */
-    @Inject(ScheduledTaskRunTracker)
-    private readonly taskRuns: Pick<ScheduledTaskRunTracker, "onRunFinished">,
+    /** An automation's run follows its kernel run's end in the same transaction (spec §6). */
+    @Inject(AutomationRunTracker)
+    private readonly taskRuns: Pick<AutomationRunTracker, "onRunFinished">,
     /** The run's git tickets are revoked and its fetch summaries written after the commit. */
     @Inject(GitRunEnd) private readonly gitRunEnd: Pick<GitRunEnd, "onRunFinished">,
     /** The run's end owes the conversation's ensure-run backstop (transactional outbox spec §6). */

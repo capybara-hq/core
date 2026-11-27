@@ -134,7 +134,7 @@ describe("every platform component kind has its labels", () => {
 describe("every builtin tool the Tools section lists has its label", () => {
   // The section labels each name of BUILTIN_TOOLS through `form.builtin.<name>`, a template key
   // the static check cannot follow: a tool added there without a label threw MISSING_MESSAGE on
-  // every agent page (FetchAttachment, ScheduleTargets).
+  // every agent page (FetchAttachment, AutomationTargets).
   for (const locale of ["zh", "en"]) {
     it(locale, () => {
       const messages = load(locale) as { agents: { form: { builtin: Record<string, unknown> } } };

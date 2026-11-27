@@ -196,6 +196,8 @@ type PushPlatform = "ios" | "android";
  * (`@capybara-hq/plugin-sdk`; apps/web depends only on the design system and may not import it),
  * keep in step. Capability keys are `name@major`; a rejected call carries `{ code: ShellCallError }`.
  */
+// The nav@1 section id `"schedules"` below is a frozen contract name kept from before the
+// automations rename (the web maps it to `/automations`).
 export const SHELL_CAPABILITY_KEYS = {
   chrome: "chrome@1",
   notify: "notify@1",

@@ -29,7 +29,7 @@ let accounts: AccountsService;
 let alice: Account;
 let bob: Account;
 
-const ALL_ON = { waiting: true, replies: true, tasks: true, schedules: true };
+const ALL_ON = { waiting: true, replies: true, tasks: true, automations: true };
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -125,11 +125,11 @@ describe("GET / PUT /api/v1/me/push-preferences", () => {
       method: "PUT",
       url: URL,
       headers,
-      payload: { schedules: false },
+      payload: { automations: false },
     });
     expect(put.statusCode).toBe(200);
     const get = await k.http.inject({ method: "GET", url: URL, headers });
-    expect(get.json()).toEqual({ ...ALL_ON, schedules: false });
+    expect(get.json()).toEqual({ ...ALL_ON, automations: false });
     expect((await k.http.inject({ method: "GET", url: URL })).statusCode).toBe(401);
   });
 
@@ -203,11 +203,11 @@ describe("Platform operations", () => {
     expect(o.mirrors).toEqual(["PUT /api/v1/me/push-preferences"]);
     expect(o.input.safeParse({}).success).toBe(false);
     expect(o.input.safeParse({ replies: false, extra: 1 }).success).toBe(false);
-    const input = o.input.parse({ replies: false, schedules: true });
+    const input = o.input.parse({ replies: false, automations: true });
     const c = ctxOf(alice.id);
     expect(await o.summary?.(input, c)).toEqual({
-      zh: "关闭「智能体回复」通知；开启「定时任务」通知",
-      en: 'Turn off "Agent replies" notifications; Turn on "Scheduled tasks" notifications',
+      zh: "关闭「智能体回复」通知；开启「自动化」通知",
+      en: 'Turn off "Agent replies" notifications; Turn on "Automations" notifications',
     });
     expect(await o.run(input, c)).toEqual({ ...ALL_ON, replies: false });
     expect(await k.app.get(PushPreferencesService).get(alice.id)).toEqual({

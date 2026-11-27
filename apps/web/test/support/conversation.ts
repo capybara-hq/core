@@ -344,8 +344,8 @@ export function snapshotDefaults(id = "c1"): Parameters<typeof renderRouteWithCa
     "GET /api/v1/orgs/o1/ui/contributions": ok({ items: [] }),
     "GET /api/v1/orgs/o1/connectors": ok({ connectors: [] }),
     "GET /api/v1/orgs/o1/attachments/limits": ok(LIMITS),
-    // the properties panel's scheduled tasks (none)
-    "GET /api/v1/orgs/o1/schedules": ok({ items: [] }),
+    // the properties panel's automations (none)
+    "GET /api/v1/orgs/o1/automations": ok({ items: [] }),
     "GET /api/v1/orgs/o1/agents/ag1/invocable-skills": ok({ skills: [] }),
     "GET /api/v1/orgs/o1/agents/ag2/invocable-skills": ok({ skills: [] }),
   };

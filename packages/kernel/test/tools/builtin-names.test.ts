@@ -9,6 +9,7 @@ import { invokedSkillsText, SKILL_TEXTS } from "../../src/runtime/context/skills
 import {
   AGENT_BUILTIN_NAMES,
   AGENT_TOOL,
+  AUTOMATION_TOOL_NAMES,
   BUILTIN,
   BUILTIN_TOOL_KINDS,
   BUILTIN_TOOL_NAMES,
@@ -16,7 +17,6 @@ import {
   R3_FIXED_ASK_TOOL_KEYS,
   SANDBOX_ASK_TOOL_NAMES,
   SANDBOX_TOOL_NAMES,
-  SCHEDULE_TOOL_NAMES,
   WEB_TOOL_NAMES,
 } from "../../src/tools/builtin-names.js";
 import { agentToolSpec } from "../../src/tools/builtins/agent.js";
@@ -180,32 +180,32 @@ describe("builtin names", () => {
     expect(CLAUDE_CODE_TOOL_MAP).not.toMatch(/for example WebFetch/);
   });
 
-  it("the schedule tools: default-on, create and update fixed asks, removed from sub-agents", () => {
-    expect([...SCHEDULE_TOOL_NAMES]).toEqual([
-      "ScheduleCreate",
-      "ScheduleUpdate",
-      "ScheduleList",
-      "ScheduleTargets",
-      "ScheduleDelete",
+  it("the automation tools: default-on, create and update fixed asks, removed from sub-agents", () => {
+    expect([...AUTOMATION_TOOL_NAMES]).toEqual([
+      "AutomationCreate",
+      "AutomationUpdate",
+      "AutomationList",
+      "AutomationTargets",
+      "AutomationDelete",
     ]);
-    for (const n of SCHEDULE_TOOL_NAMES) {
+    for (const n of AUTOMATION_TOOL_NAMES) {
       expect(AGENT_BUILTIN_NAMES).toContain(n);
       expect(CHILD_REMOVED_TOOLS as readonly string[]).toContain(n);
       expect(BUILTIN_TOOL_KINDS[n]).toBe("tool");
     }
     // a person approves every task an agent creates or widens, on any agent (spec §11)
-    expect(R3_FIXED_ASK_TOOL_KEYS.has("ScheduleCreate")).toBe(true);
-    expect(R3_FIXED_ASK_TOOL_KEYS.has("ScheduleUpdate")).toBe(true);
+    expect(R3_FIXED_ASK_TOOL_KEYS.has("AutomationCreate")).toBe(true);
+    expect(R3_FIXED_ASK_TOOL_KEYS.has("AutomationUpdate")).toBe(true);
     // listing reads, deleting one's own task only narrows
-    expect(R3_FIXED_ASK_TOOL_KEYS.has("ScheduleList")).toBe(false);
-    expect(R3_FIXED_ASK_TOOL_KEYS.has("ScheduleTargets")).toBe(false);
-    expect(R3_FIXED_ASK_TOOL_KEYS.has("ScheduleDelete")).toBe(false);
+    expect(R3_FIXED_ASK_TOOL_KEYS.has("AutomationList")).toBe(false);
+    expect(R3_FIXED_ASK_TOOL_KEYS.has("AutomationTargets")).toBe(false);
+    expect(R3_FIXED_ASK_TOOL_KEYS.has("AutomationDelete")).toBe(false);
     const byName = new Map(builtins().map((t) => [t.spec.name, t]));
-    expect(byName.get("ScheduleList")?.defaultPolicy).toBe("allow");
-    expect(byName.get("ScheduleTargets")?.defaultPolicy).toBe("allow");
-    expect(byName.get("ScheduleDelete")?.defaultPolicy).toBe("allow");
-    expect(byName.get("ScheduleCreate")?.callPolicy).toBeTypeOf("function");
-    expect(byName.get("ScheduleUpdate")?.callPolicy).toBeTypeOf("function");
+    expect(byName.get("AutomationList")?.defaultPolicy).toBe("allow");
+    expect(byName.get("AutomationTargets")?.defaultPolicy).toBe("allow");
+    expect(byName.get("AutomationDelete")?.defaultPolicy).toBe("allow");
+    expect(byName.get("AutomationCreate")?.callPolicy).toBeTypeOf("function");
+    expect(byName.get("AutomationUpdate")?.callPolicy).toBeTypeOf("function");
   });
 });
 

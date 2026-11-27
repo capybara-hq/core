@@ -484,7 +484,7 @@ export async function commitDispatchIn(
     .executeTakeFirst();
   const parent = await t
     .selectFrom("runs")
-    .select(["status", "subagent_tokens_used", "budget_run_id", "scheduled_task_run_id"])
+    .select(["status", "subagent_tokens_used", "budget_run_id", "automation_run_id"])
     .where("id", "=", ctx.runId)
     .forUpdate()
     .executeTakeFirst();
@@ -591,7 +591,7 @@ export async function commitDispatchIn(
       trigger_seq: task.seq,
       budget_run_id: budgetRunId,
       // an unattended parent's sub-agents are unattended too (scheduled tasks spec §4)
-      scheduled_task_run_id: parent.scheduled_task_run_id,
+      automation_run_id: parent.automation_run_id,
     })
     .execute();
   await t

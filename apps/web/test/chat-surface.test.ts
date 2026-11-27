@@ -15,7 +15,7 @@ describe("isChatSurface", () => {
     "/chat",
     "/chat/",
     "/chat/c1/x",
-    "/schedules",
+    "/automations",
     "/account/profile",
   ])("%s is not", (path) => {
     expect(isChatSurface(path)).toBe(false);

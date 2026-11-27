@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AdminModule } from "../admin/admin.module.js";
 import { AgentsModule } from "../agents/agents.module.js";
+import { AutomationsModule } from "../automations/automations.module.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { AppearanceModule } from "../catalog/appearance.service.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
@@ -16,7 +17,6 @@ import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { PushModule } from "../push/push.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
-import { SchedulesModule } from "../schedules/schedules.module.js";
 import { SetupModule } from "../setup/setup.module.js";
 import { SharesModule } from "../shares/shares.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
@@ -29,6 +29,7 @@ import { AgentSkillsOperations } from "./ops/agent-skills.ops.js";
 import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
 import { ApprovalsOperations } from "./ops/approvals.ops.js";
+import { AutomationsOperations } from "./ops/automations.ops.js";
 import { BackgroundOperations } from "./ops/background.ops.js";
 import { CatalogAdminOperations } from "./ops/catalog-admin.ops.js";
 import { ChannelsOperations } from "./ops/channels.ops.js";
@@ -51,7 +52,6 @@ import { PlatformIconsOperations } from "./ops/platform-icons.ops.js";
 import { PluginsOperations } from "./ops/plugins.ops.js";
 import { PreviewersOperations } from "./ops/previewers.ops.js";
 import { RequestsOperations } from "./ops/requests.ops.js";
-import { SchedulesOperations } from "./ops/schedules.ops.js";
 import { SetupOperations } from "./ops/setup.ops.js";
 import { SharesOperations } from "./ops/shares.ops.js";
 import { SkillsOperations } from "./ops/skills.ops.js";
@@ -105,8 +105,8 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   UiOperations,
   // every org's agents and connectors, the conversation org's through the tool (spec §4.5)
   AdminItemsOperations,
-  // scheduled tasks (scheduled tasks spec §10)
-  SchedulesOperations,
+  // automations (scheduled tasks spec §10)
+  AutomationsOperations,
   // dead outbox rows (transactional outbox spec §3.4)
   OutboxOperations,
   // shared file links (file sharing spec §10)
@@ -143,7 +143,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     FilesModule,
     ThemesModule,
     SetupModule,
-    SchedulesModule,
+    AutomationsModule,
     SharesModule,
     PushModule,
   ],
