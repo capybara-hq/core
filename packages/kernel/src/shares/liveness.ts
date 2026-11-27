@@ -19,7 +19,7 @@ export interface LiveShare {
   orgId: string;
   code: string;
   audience: "internal" | "external";
-  conversationId: string;
+  conversationId: string | null;
   createdBy: string;
   createdByName: string;
   name: string;

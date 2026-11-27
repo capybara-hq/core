@@ -54,7 +54,7 @@ export interface ShareView {
    */
   url: string | null;
   audience: "internal" | "external";
-  conversationId: string;
+  conversationId: string | null;
   fileId: string;
   sourcePath: string | null;
   name: string;
@@ -320,7 +320,7 @@ export class SharesService {
           .where(notExpired)
           .executeTakeFirst();
         if (!s) throw notFound();
-        if (s.source_path === null) {
+        if (s.source_path === null || s.conversation_id === null) {
           throw new ApiError(
             "validation_failed",
             "A share of an uploaded file cannot be updated: it has no newer versions. Share the new file instead.",
