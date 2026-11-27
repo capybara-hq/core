@@ -172,6 +172,30 @@ describe("CompactionSettingsService.resolve", () => {
   });
 });
 
+describe("CompactionSettingsService.resolvePromptCache", () => {
+  it("platform value, org override, and null following the platform", async () => {
+    await createOrg("org-cache");
+    expect(await service().resolvePromptCache("org-cache")).toEqual({ longTtl: false });
+    await db
+      .insertInto("deployment_settings")
+      .values({ key: "promptCache", value: JSON.stringify({ longTtl: true }) })
+      .execute();
+    expect(await service().resolvePromptCache("org-cache")).toEqual({ longTtl: true });
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ promptCache: { longTtl: false } }) })
+      .where("id", "=", "org-cache")
+      .execute();
+    expect(await service().resolvePromptCache("org-cache")).toEqual({ longTtl: false });
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({}) })
+      .where("id", "=", "org-cache")
+      .execute();
+    expect(await service().resolvePromptCache("org-cache")).toEqual({ longTtl: true });
+  });
+});
+
 describe("partial compaction forms", () => {
   it("an org override keeps only the fields the org gives (no defaults injected)", () => {
     expect(OrgSettingsSchema.parse({ compaction: { keepRecentTurns: 2 } }).compaction).toEqual({
