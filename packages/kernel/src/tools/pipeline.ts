@@ -1,5 +1,6 @@
 import {
   type AuthInjection,
+  CARD_BADGE_MAX,
   CARD_TEXT_MAX,
   type ConnectorSession,
   type ConversationSource,
@@ -490,6 +491,8 @@ type ToolCard = {
   placement?: "pinned" | "process";
   /** Only with `placement: "pinned"`. */
   text?: string;
+  /** Only with `placement: "pinned"`: the card's state (`UiView.badge`), for the process head. */
+  badge?: string;
 };
 
 /** Optional provider: the pipeline's {@link ToolPipelineHooks} (tests). */
@@ -4116,7 +4119,7 @@ export class ToolPipeline {
    * be an `inline` ui contribution of the same extension and `key` at most 200 characters; anything
    * else is dropped with a warning and the result is written as usual. `placement` is kept when
    * `pinned` or `process` (an unknown value means `output`); `text` only with `pinned`, 1 to
-   * {@link CARD_TEXT_MAX} characters.
+   * {@link CARD_TEXT_MAX} characters; `badge` only with `pinned`, 1 to {@link CARD_BADGE_MAX}.
    */
   private cardOf(result: unknown, plugin: string, toolKey: string): ToolCard | undefined {
     const c = (result as { card?: unknown } | null)?.card;
@@ -4163,12 +4166,28 @@ export class ToolPipeline {
         );
       } else text = x.text;
     }
+    // badge: only a pinned card carries it, at most CARD_BADGE_MAX characters
+    let badge: string | undefined;
+    if (x.badge !== undefined) {
+      if (placement !== "pinned") {
+        this.deps.log.warn(
+          "tool returned an inline card badge without a pinned placement; badge dropped",
+          { toolKey },
+        );
+      } else if (typeof x.badge !== "string" || x.badge === "" || x.badge.length > CARD_BADGE_MAX) {
+        this.deps.log.warn(
+          "tool returned an inline card badge that is empty or too long; badge dropped",
+          { toolKey },
+        );
+      } else badge = x.badge;
+    }
     return {
       plugin,
       view: x.view,
       ...(x.key !== undefined && { key: x.key as string }),
       ...(placement !== undefined && { placement }),
       ...(text !== undefined && { text }),
+      ...(badge !== undefined && { badge }),
     };
   }
 

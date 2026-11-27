@@ -8,7 +8,12 @@ import {
   sectionRail,
   type ThreadEntry,
 } from "../src/lib/process";
-import { buildTimeline, type TimelineDraft, type TimelineEntry } from "../src/lib/timeline";
+import {
+  buildTimeline,
+  runStats,
+  type TimelineDraft,
+  type TimelineEntry,
+} from "../src/lib/timeline";
 
 // Log fixtures: the same helpers as timeline.test.ts.
 let t = 0;
@@ -592,6 +597,59 @@ describe("groupProcess", () => {
     expect(kinds(split)).toEqual(["user", "process", "card", "user", "process", "run"]);
     expect(blocks(split).map((b) => b.state)).toEqual(["failed", "failed"]);
     expect(blocks(split).map((b) => b.durationMs === null)).toEqual([true, false]);
+  });
+
+  it("the going run's clock times its latest live block from run_started (#927)", () => {
+    const events = [
+      user(1, "go"),
+      runStarted(2),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m", request: req(1) }),
+      calls(4, [bash("a")]),
+      result(5, "a", "Bash"),
+      user(6, "also check the logs"),
+      ev(7, "model_call", { step: 1, provider: "p", model: "m", request: req(6) }),
+      calls(8, [bash("b", "tail log")]),
+    ];
+    const stats = runStats(events);
+    const started = Date.parse(events[1]?.createdAt ?? "");
+    expect(stats).toMatchObject({ runId: "r1", workedMs: 0, resumedAt: started });
+    const out = groupProcess(buildTimeline(events, [], INFO, "en"), stats);
+    expect(kinds(out)).toEqual(["user", "process", "user", "process"]);
+    // the earlier block of the split run carries no clock (it shows no time, ruling 9)
+    expect(block(out, 0)).toMatchObject({ state: "finished", clock: null, durationMs: null });
+    // the latest one counts from the run's start, not from its first row
+    expect(block(out, 1)).toMatchObject({
+      state: "running",
+      clock: { workedMs: 0, resumedAt: started },
+    });
+
+    // without the run's clock, or once the run ended, no block has one
+    expect(blocks(build(events)).map((b) => b.clock)).toEqual([null, null]);
+    const ended = [...events, result(9, "b", "Bash"), answer(10, "Done."), runFinished(11)];
+    const done = groupProcess(buildTimeline(ended, [], INFO, "en"), runStats(ended));
+    expect(blocks(done).map((b) => b.clock)).toEqual([null, null]);
+    expect(blocks(done).map((b) => b.durationMs === null)).toEqual([true, false]);
+
+    // a block of an earlier run takes none of the going run's clock
+    const next = [...ended, user(12, "again"), runStarted(13)];
+    (next[12] as { runId: string }).runId = "r2";
+    const later = groupProcess(buildTimeline(next, [], INFO, "en"), runStats(next));
+    expect(runStats(next).runId).toBe("r2");
+    expect(blocks(later).map((b) => b.clock)).toEqual([null, null]);
+  });
+
+  it("a pinned card keeps the badge its tool recorded (#928)", () => {
+    const out = build([
+      user(1, "go"),
+      runStarted(2),
+      calls(3, [{ id: "td", name: "plugin__todo__write", input: {} }]),
+      result(4, "td", "plugin__todo__write", {
+        card: { plugin: "todo", view: "tasks", placement: "pinned", badge: "3/5" },
+      }),
+      answer(5, "Done."),
+      runFinished(6),
+    ]);
+    expect(block(out).pinned).toMatchObject([{ plugin: "todo", view: "tasks", badge: "3/5" }]);
   });
 
   it("log without placement", () => {

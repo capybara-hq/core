@@ -816,6 +816,75 @@ describe("工具显示摘要", () => {
     });
   });
 
+  it("keeps the badge of a pinned card (display only, never in the model request)", async () => {
+    const extra = { placement: "pinned", badge: "3/5" };
+    await send(
+      `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: extra })}`,
+      1,
+    );
+    const [r] = await results();
+    expect(r?.payload.card).toEqual({
+      plugin: "ui-probe",
+      view: "card",
+      key: "card-key-zz",
+      placement: "pinned",
+      badge: "3/5",
+    });
+    const { request } = buildModelRequest({
+      events: await eventsOf(db, convId),
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 7,
+    });
+    // the call's input names the badge; the result the model sees does not
+    const toolResults = request.messages.flatMap((m) =>
+      Array.isArray(m.content)
+        ? m.content.filter((b: { type: string }) => b.type === "tool_result")
+        : [],
+    );
+    expect(toolResults).toHaveLength(1);
+    expect(JSON.stringify(toolResults)).not.toContain("3/5");
+  });
+
+  it("drops a badge unless pinned, and an empty or over-long one", async () => {
+    await send(
+      `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: { badge: "1/2" } })}`,
+      1,
+    );
+    await send(
+      `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: { placement: "pinned", badge: "x".repeat(33) } })}`,
+      2,
+    );
+    await send(
+      `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: { placement: "pinned", badge: "" } })}`,
+      3,
+    );
+    const [output, long, empty] = await results();
+    expect(output?.payload.card).toEqual({ plugin: "ui-probe", view: "card", key: "card-key-zz" });
+    for (const r of [long, empty])
+      expect(r?.payload.card).toEqual({
+        plugin: "ui-probe",
+        view: "card",
+        key: "card-key-zz",
+        placement: "pinned",
+      });
+    expect(
+      lines.some(
+        (l) =>
+          l.includes('"warn"') &&
+          l.includes("inline card badge without a pinned placement; badge dropped"),
+      ),
+    ).toBe(true);
+    expect(
+      lines.filter(
+        (l) =>
+          l.includes('"warn"') &&
+          l.includes("inline card badge that is empty or too long; badge dropped"),
+      ),
+    ).toHaveLength(2);
+  });
+
   it("keeps a process placement and omits the default output placement", async () => {
     await send(
       `tool:plugin__ui-probe__probe:${JSON.stringify({ card: "card", cardExtra: { placement: "process" } })}`,

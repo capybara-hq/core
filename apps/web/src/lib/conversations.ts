@@ -370,7 +370,8 @@ type EventBody =
         /**
          * An inline card under the call (an `inline` ui contribution of the tool's extension).
          * `placement` is absent for `output` (the default); `text` is a pinned card's Markdown
-         * for channels (process blocks spec §5).
+         * for channels and `badge` its state ("3/5", its view's badge) for the process head
+         * (process blocks spec §5).
          */
         card?: {
           plugin: string;
@@ -378,6 +379,7 @@ type EventBody =
           key?: string;
           placement?: "pinned" | "process";
           text?: string;
+          badge?: string;
         };
         /** The command review's decision on the call (auto mode spec §5.4; display only). */
         review?: ReviewRecord;
