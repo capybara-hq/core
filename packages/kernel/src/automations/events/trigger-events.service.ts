@@ -26,6 +26,15 @@ export const TRIGGER_MAX_FACTS = 64;
 /** Most UTF-8 bytes of one string fact value (also of each item of a `string[]` fact). */
 export const TRIGGER_FACT_STRING_MAX_BYTES = 256;
 
+/** Most UTF-8 bytes of `subject.kind`, `subject.id`, `dedupeKey` and each fact name. */
+export const TRIGGER_KEY_MAX_BYTES = 256;
+
+/** Most UTF-8 bytes of `subject.title`. */
+export const TRIGGER_TITLE_MAX_BYTES = 1024;
+
+/** Most UTF-8 bytes of `subject.url`. */
+export const TRIGGER_URL_MAX_BYTES = 2048;
+
 /** Most items of one `string[]` fact. */
 export const TRIGGER_FACT_LIST_MAX_ITEMS = 64;
 
@@ -46,13 +55,24 @@ const nonEmpty = (v: unknown): v is string => typeof v === "string" && v !== "";
 const invalid = (message: string): TriggerError => new TriggerError("invalid_event", message);
 
 /**
- * What the SDK's `validateTriggerEvent` leaves to the kernel boundary: `facts` is a flat object
+ * What the SDK's `validateTriggerEvent` leaves to the kernel boundary: lengths in UTF-8 bytes
+ * (`subject.kind`, `subject.id`, `dedupeKey` and fact names {@link TRIGGER_KEY_MAX_BYTES},
+ * `subject.title` {@link TRIGGER_TITLE_MAX_BYTES}, `subject.url` {@link TRIGGER_URL_MAX_BYTES});
+ * `facts` is a flat object
  * of at most {@link TRIGGER_MAX_FACTS} values, each a string (at most
  * {@link TRIGGER_FACT_STRING_MAX_BYTES} bytes), a finite number, a boolean or a list of such
  * strings (at most {@link TRIGGER_FACT_LIST_MAX_ITEMS}); `subject.url` is a string when given;
  * `audience` names an account and an agent; `cause` is one of its two shapes.
  */
 function checkShape(e: TriggerEvent): void {
+  const capped: [string, string, number][] = [
+    ["subject.kind", e.subject.kind, TRIGGER_KEY_MAX_BYTES],
+    ["subject.id", e.subject.id, TRIGGER_KEY_MAX_BYTES],
+    ["subject.title", e.subject.title, TRIGGER_TITLE_MAX_BYTES],
+    ["dedupeKey", e.dedupeKey, TRIGGER_KEY_MAX_BYTES],
+  ];
+  for (const [field, value, max] of capped)
+    if (bytes(value) > max) throw invalid(`${field} is at most ${max} bytes`);
   if (!isPlainObject(e.facts)) throw invalid("facts must be an object of fact values");
   const facts = Object.entries(e.facts);
   if (facts.length > TRIGGER_MAX_FACTS)
@@ -60,6 +80,8 @@ function checkShape(e: TriggerEvent): void {
   const okString = (s: unknown): boolean =>
     typeof s === "string" && bytes(s) <= TRIGGER_FACT_STRING_MAX_BYTES;
   for (const [name, v] of facts) {
+    if (bytes(name) > TRIGGER_KEY_MAX_BYTES)
+      throw invalid(`fact names are at most ${TRIGGER_KEY_MAX_BYTES} bytes`);
     const ok =
       typeof v === "boolean" ||
       (typeof v === "number" && Number.isFinite(v)) ||
@@ -72,6 +94,8 @@ function checkShape(e: TriggerEvent): void {
   }
   if (e.subject.url !== undefined && typeof e.subject.url !== "string")
     throw invalid("subject.url must be a string");
+  if (e.subject.url !== undefined && bytes(e.subject.url) > TRIGGER_URL_MAX_BYTES)
+    throw invalid(`subject.url is at most ${TRIGGER_URL_MAX_BYTES} bytes`);
   if (e.audience !== undefined) {
     if (
       !isPlainObject(e.audience) ||

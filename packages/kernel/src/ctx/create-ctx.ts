@@ -33,7 +33,9 @@ import {
   type ToolHandler,
   type ToolSpec,
   type ToolWatcher,
+  type TriggerCause,
   TriggerError,
+  type TriggerEvent,
   type TriggersCtx,
   type UiSlotSpec,
   validateFilePreviewProvider,
@@ -168,6 +170,37 @@ export type DeviceAccessBackend = Pick<
 
 /** What `ctx.triggers` calls through (`TriggerEventsService`). */
 export type TriggersBackend = Pick<TriggerEventsService, "emit">;
+
+/**
+ * A plain-data copy of an emitted event, taken once at the ctx boundary (check-then-use): every
+ * own enumerable field is read once (a getter cannot change a value after it was validated),
+ * prototypes and accessors are dropped. `cause.call` keeps its original reference, since the
+ * pipeline's call scope is a symbol-keyed field and the context holds an `AbortSignal`, neither of
+ * which a clone keeps; only its scope is read. Data that cannot be cloned is `invalid_event`.
+ */
+export function snapshotTriggerEvent(event: TriggerEvent): TriggerEvent {
+  if (typeof event !== "object" || event === null || Array.isArray(event))
+    throw new TriggerError("invalid_event", "the event must be an object");
+  try {
+    const { cause, ...rest } = event;
+    const snap = structuredClone(rest) as TriggerEvent;
+    if (cause === undefined) return snap;
+    if (typeof cause !== "object" || cause === null) {
+      snap.cause = cause;
+      return snap;
+    }
+    const plain: Record<string, unknown> = { ...cause };
+    if ("call" in plain) {
+      const { call, ...others } = plain;
+      snap.cause = { ...structuredClone(others), call } as TriggerCause;
+    } else {
+      snap.cause = structuredClone(plain) as TriggerCause;
+    }
+    return snap;
+  } catch (err) {
+    throw new TriggerError("invalid_event", "the event must be plain data", { cause: err });
+  }
+}
 
 /**
  * What `ctx.ui.verifyEmbedToken` returns for a valid token: the signed claims, with an org
@@ -717,10 +750,11 @@ export function createExtensionContext(
           emit: async (event) => {
             const b = deps.triggers?.();
             if (!b) throw new Error("Trigger events are not available in this process.");
-            const orgId = (event as { orgId?: unknown } | null)?.orgId;
-            if (typeof orgId !== "string" || orgId === "")
+            // one snapshot, read once: what is checked is what is stored
+            const snap = snapshotTriggerEvent(event);
+            if (typeof snap.orgId !== "string" || snap.orgId === "")
               throw new TriggerError("invalid_event", "invalid event: missing_org_id");
-            return withOrgScope(orgId, () => b.emit(name, declared, event));
+            return withOrgScope(snap.orgId, () => b.emit(name, declared, snap));
           },
         } satisfies TriggersCtx;
       })()

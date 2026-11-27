@@ -244,6 +244,37 @@ describe("ctx.triggers.emit", () => {
     await expect(emit(over)).rejects.toMatchObject({ code: "invalid_event" });
   });
 
+  const cap = (n: number) => "a".repeat(n);
+  const subject = { kind: "item", id: "ITEM-1", title: "First item" };
+  it.each([
+    ["subject.kind", 256, (s: string) => ({ subject: { ...subject, kind: s } })],
+    ["subject.id", 256, (s: string) => ({ subject: { ...subject, id: s } })],
+    ["subject.title", 1024, (s: string) => ({ subject: { ...subject, title: s } })],
+    ["subject.url", 2048, (s: string) => ({ subject: { ...subject, url: s } })],
+    ["dedupeKey", 256, (s: string) => ({ dedupeKey: s })],
+    ["a fact name", 256, (s: string) => ({ facts: { [s]: "x" } })],
+  ] as [string, number, (s: string) => Partial<TriggerEvent>][])(
+    "%s is capped at %i bytes",
+    async (_field, max, over) => {
+      await expect(emit(over(cap(max)))).resolves.toMatchObject({ duplicate: false });
+      await expect(emit(over(cap(max + 1)))).rejects.toMatchObject({ code: "invalid_event" });
+    },
+  );
+
+  it("the event is read once: a getter cannot change what was validated", async () => {
+    let reads = 0;
+    const tricky = ev({ dedupeKey: "getter" });
+    Object.defineProperty(tricky, "type", {
+      enumerable: true,
+      get: () => (reads++ === 0 ? "item.created" : "item.secret"),
+    });
+    const fn = probe()?.emit;
+    if (!fn) throw new Error("fake-trigger-source did not set up");
+    const r = await fn(tricky);
+    expect(reads).toBe(1);
+    expect((await eventRow(r.eventId)).type).toBe("item.created");
+  });
+
   it("emit refuses an org where the plugin is not enabled", async () => {
     const other = await createOrgWithProviders(k, owner, "Other");
     await expect(emit({ orgId: other })).rejects.toMatchObject({ code: "org_disabled" });

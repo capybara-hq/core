@@ -253,6 +253,40 @@ describe("ctx.triggers (permissions.triggers)", () => {
     await ctx.close();
   });
 
+  it("the backend gets one plain snapshot: getters read once, cause.call kept by reference", async () => {
+    const got: unknown[] = [];
+    const triggers = () => ({
+      emit: async (_plugin: string, _declared: readonly string[], e: unknown) => {
+        got.push(e);
+        return { eventId: "e1", duplicate: false };
+      },
+    });
+    const ctx = createExtensionContext(
+      { ...deps, triggers },
+      mf({ permissions: { triggers: { emit: ["item.created"] } } }),
+      {},
+    );
+    let reads = 0;
+    const call = { orgId: "o1", signal: new AbortController().signal } as never;
+    const e = { ...event, cause: { call } };
+    Object.defineProperty(e, "type", {
+      enumerable: true,
+      get: () => (reads++ === 0 ? "item.created" : "item.secret"),
+    });
+    await ctx.triggers.emit(e);
+    expect(reads).toBe(1);
+    const snap = got[0] as typeof e;
+    expect(snap).not.toBe(e);
+    expect(Object.getOwnPropertyDescriptor(snap, "type")?.value).toBe("item.created");
+    expect(snap.cause.call).toBe(call);
+    // data that cannot be cloned is refused, never passed on
+    await expect(
+      ctx.triggers.emit({ ...event, facts: { f: (() => 1) as never } }),
+    ).rejects.toMatchObject({ code: "invalid_event" });
+    expect(got).toHaveLength(1);
+    await ctx.close();
+  });
+
   it("without a backend (a ctx built alone, the CLI) emit rejects", async () => {
     const ctx = createExtensionContext(
       deps,
