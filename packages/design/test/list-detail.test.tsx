@@ -124,11 +124,7 @@ describe("inside the shell the open item is a pushed page", () => {
     const onBack = vi.fn();
     render(
       <DesignProvider locale="zh">
-        <AppShell
-          sidebar={SIDEBAR}
-          status={{ context: "grant@acme:/", version: "0.1.0" }}
-          pathname="/inbox"
-        >
+        <AppShell sidebar={SIDEBAR} pathname="/inbox">
           <ListDetail
             list={<p>L</p>}
             detail={<p>D</p>}

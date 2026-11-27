@@ -2,15 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  Badge,
-  ConversationPage,
-  DesignProvider,
-  Dither,
-  ListPage,
-  ObjectRow,
-  StatusBar,
-} from "../src/index";
+import { Badge, ConversationPage, DesignProvider, Dither, ListPage, ObjectRow } from "../src/index";
 
 // The colour roles (spec §2.3, unslop audit 2026-11-03): orange is the primary action, focus and
 // the current location; yellow needs attention; red is failure; selection is neutral.
@@ -126,37 +118,6 @@ describe("attention is a yellow text mark", () => {
     expect(chip).toContain("border-color: transparent");
     expect(chip).toContain("padding: 0");
     expect(chip).not.toContain("background");
-  });
-});
-
-describe("failure in the status bar is red", () => {
-  it("StatusBar systemTone colours the first system item", () => {
-    zh(<StatusBar context="g@c:~" version="v1" system={["失败", "上下文 3%"]} systemTone="fail" />);
-    expect(screen.getByText("失败").getAttribute("data-tone")).toBe("fail");
-    expect(screen.getByText("上下文 3%").getAttribute("data-tone")).toBeNull();
-    expect(rule(style("shell.css"), '.cb-statusbar-right > [data-tone="fail"]')).toContain(
-      "color: var(--cb-fail)",
-    );
-  });
-
-  it("ConversationPage passes status.tone to the status bar", () => {
-    zh(
-      <ConversationPage
-        titleBar={{
-          title: "t",
-          untitled: "u",
-          menu: [],
-          properties: { pressed: false, onToggle: () => {} },
-          panels: [],
-        }}
-        thread={null}
-        composer={null}
-        status={{ context: "g@c:~", version: "v1", right: ["失败"], tone: "fail" }}
-        right="none"
-        onCloseRight={() => {}}
-      />,
-    );
-    expect(screen.getByText("失败").getAttribute("data-tone")).toBe("fail");
   });
 });
 

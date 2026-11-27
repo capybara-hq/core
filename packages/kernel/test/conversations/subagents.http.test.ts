@@ -233,6 +233,7 @@ interface SubagentRow {
   usage: Usage;
   pendingApprovalIds: string[];
   pendingQuestionIds: string[];
+  watchedQuestionIds: string[];
 }
 
 async function listSubagents(
@@ -347,6 +348,7 @@ describe("GET /conversations/:id/subagents", () => {
       usage: await usageOf(tool.subagentId),
       pendingApprovalIds: [],
       pendingQuestionIds: [],
+      watchedQuestionIds: [],
     });
     expect(byId.get(tool.subagentId)?.usage.inputTokens).toBeGreaterThan(0);
     expect(byId.get(write.subagentId)).toEqual({
@@ -360,6 +362,7 @@ describe("GET /conversations/:id/subagents", () => {
       usage: await usageOf(write.subagentId),
       pendingApprovalIds: [approval.id],
       pendingQuestionIds: [],
+      watchedQuestionIds: [],
     });
 
     // pages of one, newest first, with the cursor

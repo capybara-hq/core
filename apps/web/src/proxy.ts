@@ -13,7 +13,7 @@ import {
   SIGN_IN_HEADER,
 } from "./lib/headers";
 import { trustedPeer } from "./lib/peer";
-import { isPublicPath, isSharePath, LINK_PAGE_PATH } from "./lib/routes";
+import { isHandoffPath, isPublicPath, isSharePath, LINK_PAGE_PATH } from "./lib/routes";
 import { ACCESS_COOKIE, serverNeedsSetup } from "./lib/server-setup";
 import { accessTokenExpiresSoon, renewSession, setCookieValue } from "./lib/session-renewal";
 import {
@@ -99,7 +99,8 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
  * 7. a share page (`/s/<code>`, file sharing design §6) answers with `referrer-policy:
  *    no-referrer` (the code never leaks to the hosts it loads from or links to) and
  *    `x-robots-tag: noindex`; the link page (`/login/link?ticket=…`) sends no referrer either
- *    (its ticket never leaks to the avatar host).
+ *    (its ticket never leaks to the avatar host), nor do the browser handoff pages
+ *    (`/handoff/<ticket>`, shell external authorization spec §2).
  * The client host shims (`/_capybara/client-host/<build>/<name>.mjs`) get step 4 only.
  * Before all that, a native form POST (the client JS did not load) is answered by
  * `lib/form-post.ts` (sign-in and setup run server side, other pages get a 303 back), and a GET of
@@ -233,7 +234,9 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
     res.headers.set("referrer-policy", "no-referrer");
     res.headers.set("x-robots-tag", "noindex");
   }
-  if (pathname === LINK_PAGE_PATH) res.headers.set("referrer-policy", "no-referrer");
+  if (pathname === LINK_PAGE_PATH || isHandoffPath(pathname)) {
+    res.headers.set("referrer-policy", "no-referrer");
+  }
   return withCookies(res, setCookies);
 }
 

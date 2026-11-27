@@ -10,7 +10,6 @@ const PAGES = [
   "sidebar",
   "page-header",
   "stat-cards",
-  "status-bar",
   "action-row",
   "controls",
   // the form select: the design system's own list (maintainer decision R)

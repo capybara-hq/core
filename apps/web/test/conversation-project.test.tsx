@@ -452,7 +452,7 @@ describe("the / menu groups entries by source", () => {
     ],
   };
 
-  it("one menu, a heading per source, project:fix-issue under the project's; it is sent by its name", async () => {
+  it("one menu, a heading per source, fix-issue tagged as the project's under its heading; it is sent as project:fix-issue", async () => {
     resetNavigation("/chat/c1");
     const calls = chatApi([userMsg(1, "hi"), runStarted(2), projectRoot(3, {})], {
       [`GET ${INVOCABLE}`]: () => json(200, SKILLS),
@@ -464,7 +464,7 @@ describe("the / menu groups entries by source", () => {
     const user = userEvent.setup();
     await user.type(input(), "/");
     const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText("/project:fix-issue");
+    await within(dialog).findByText("/fix-issue");
     const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
     expect(headings).toEqual([
       en.chat.skillSource.project,
@@ -481,12 +481,37 @@ describe("the / menu groups entries by source", () => {
       within(group(en.chat.skillSource.project))
         .getAllByRole("option")
         .map((o) => o.textContent),
-    ).toEqual(["/project:fix-issueFix an issue"]);
+    ).toEqual([`/fix-issueFix an issue${en.chat.skillSourceTag.project}`]);
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
-    await user.click(within(dialog).getByRole("option", { name: /^\/project:fix-issue/ }));
+    await user.click(within(dialog).getByRole("option", { name: /^\/fix-issue/ }));
     await user.type(input(), "42{Enter}");
     const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
     expect(post).toHaveLength(1);
+    expect(bodyOf(post[0] as Call)).toMatchObject({
+      text: "42",
+      skill: { name: "project:fix-issue" },
+    });
+  });
+
+  it("a typed bare /fix-issue no other skill has is the project's: sent as project:fix-issue", async () => {
+    resetNavigation("/chat/c1");
+    const calls = chatApi([userMsg(1, "hi"), runStarted(2), projectRoot(3, {})], {
+      [`GET ${INVOCABLE}`]: () => json(200, SKILLS),
+      [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
+      [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(9, "x") }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(input());
+    await user.paste("/fix-issue 42");
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`)).toHaveLength(
+        1,
+      ),
+    );
+    const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
     expect(bodyOf(post[0] as Call)).toMatchObject({
       text: "42",
       skill: { name: "project:fix-issue" },

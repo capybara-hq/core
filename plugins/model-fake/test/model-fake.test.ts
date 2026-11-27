@@ -6,10 +6,11 @@ import {
   type ModelStreamEvent,
 } from "@capybara-hq/plugin-sdk";
 import { FAKE_PNG_BASE64 } from "@capybara-hq/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import plugin from "../src/index.js";
 import {
   createFakeProvider,
+  FAKE_CACHE,
   FAKE_PNG_BASE64 as FAKE_PNG_BASE64_LOCAL,
   type Kv,
   type Sleep,
@@ -64,7 +65,6 @@ describe("model-fake", () => {
       tools: true,
       vision: false,
       reasoning: false,
-      caching: true,
     });
   });
 
@@ -274,7 +274,89 @@ describe("model-fake", () => {
     expect(u2.inputTokens).toBe(Math.ceil(10 / 4));
     expect(u2.cacheReadTokens).toBe(10);
     expect(u2.cacheWriteTokens).toBe(0);
+    // the hit re-sets the entry with the same tier TTL (refreshOnHit: true)
+    expect(kv.ttls).toEqual([300, 300]);
+  });
+
+  it("a hit refreshes the entry with the tier TTL of the request", async () => {
+    const kv = memKv();
+    const p = createFakeProvider({ kv, sleep: noSleep });
+    const r = req("echo:a", { system: [{ text: "x".repeat(40), cache: true }], cacheTtl: 3600 });
+    await run(p, r);
+    await run(p, r);
+    expect(kv.ttls).toEqual([3600, 3600]);
+    const u3 = complete(await run(p, r)).usage;
+    expect(u3.cacheReadTokens).toBeGreaterThan(0);
+    expect(kv.ttls).toEqual([3600, 3600, 3600]);
+  });
+
+  it("a model without ttlOptions or defaultTtl reports no tier and ignores cacheTtl", async () => {
+    const kv = memKv();
+    const implicit = {
+      mechanism: "implicit" as const,
+      ttlOptions: [],
+      ttlIsMinimum: false,
+      refreshOnHit: false,
+      ttlClock: "unknown" as const,
+      guaranteed: false,
+    };
+    const p = createFakeProvider({
+      kv,
+      sleep: noSleep,
+      models: [{ id: "fake-1", cache: implicit }],
+    });
+    const r = req("echo:a", { system: [{ text: "x".repeat(40), cache: true }], cacheTtl: 3600 });
+    const u1 = complete(await run(p, r)).usage;
+    expect(u1.cacheWriteTokens).toBeGreaterThan(0);
+    expect(u1).not.toHaveProperty("cacheWriteByTtl");
+    const u2 = complete(await run(p, r)).usage;
+    expect(u2.cacheReadTokens).toBeGreaterThan(0);
+    // storage falls back to 300 s, whatever cacheTtl says; refreshOnHit false: no re-set
     expect(kv.ttls).toEqual([300]);
+  });
+
+  it("declares FAKE_CACHE by default and no cache for a model scripted with none", async () => {
+    const [m] = await mk().listModels();
+    expect(m?.cache).toEqual(FAKE_CACHE);
+    const p = createFakeProvider({
+      kv: memKv(),
+      sleep: noSleep,
+      models: [{ id: "fake-1", cache: "none" }],
+    });
+    const [n] = await p.listModels();
+    expect(n).not.toHaveProperty("cache");
+  });
+
+  it("honors cacheTtl: write by ttl, kv TTL, then a read on the repeat", async () => {
+    const kv = memKv();
+    const p = createFakeProvider({ kv, sleep: noSleep });
+    const r = req("echo:a", { system: [{ text: "x".repeat(40), cache: true }], cacheTtl: 3600 });
+    const u1 = complete(await run(p, r)).usage;
+    expect(u1.cacheWriteTokens).toBeGreaterThan(0);
+    expect(u1.cacheWriteByTtl).toEqual([{ ttl: 3600, tokens: u1.cacheWriteTokens }]);
+    expect(kv.ttls).toEqual([3600]);
+    const u2 = complete(await run(p, r)).usage;
+    expect(u2.cacheReadTokens).toBeGreaterThan(0);
+    expect(u2.cacheWriteTokens).toBe(0);
+    const u3 = complete(
+      await run(createFakeProvider({ kv: memKv(), sleep: noSleep }), req("echo:a")),
+    ).usage;
+    expect(u3.cacheWriteByTtl).toEqual([{ ttl: 300, tokens: u3.cacheWriteTokens }]);
+  });
+
+  it("a cache: none model reports no cache tokens", async () => {
+    const p = createFakeProvider({
+      kv: memKv(),
+      sleep: noSleep,
+      models: [{ id: "fake-1", cache: "none" }],
+    });
+    const r = req("echo:a", { system: [{ text: "x".repeat(40), cache: true }] });
+    for (let i = 0; i < 2; i++) {
+      const u = complete(await run(p, r)).usage;
+      expect(u.cacheReadTokens).toBe(0);
+      expect(u.cacheWriteTokens).toBe(0);
+      expect(u.inputTokens).toBeGreaterThanOrEqual(10);
+    }
   });
 
   it("supports mid-conversation system messages", async () => {
@@ -419,6 +501,53 @@ describe("model-fake", () => {
   it("deployment config accepts vision / documents per model", () => {
     const models = [{ id: "fake-1", vision: true, documents: true }];
     expect(plugin.config?.deployment?.parse({ models })).toEqual({ models });
+  });
+});
+
+describe("model-fake cache config", () => {
+  const cache = {
+    mechanism: "explicit",
+    ttlOptions: [300],
+    defaultTtl: 300,
+    ttlIsMinimum: false,
+    refreshOnHit: true,
+    ttlClock: "request_start",
+    guaranteed: true,
+  };
+  it("accepts a valid cache and rejects an invalid declaration", () => {
+    const deployment = plugin.config?.deployment;
+    const parse = (c: unknown) => deployment?.safeParse({ models: [{ id: "m", cache: c }] });
+    expect(parse(cache)?.success).toBe(true);
+    expect(parse("none")?.success).toBe(true);
+    expect(parse({ ...cache, defaultTtl: 60 })?.success).toBe(false);
+  });
+
+  it("honors a cacheTtl outside the declared ttlOptions as given", async () => {
+    const kv = memKv();
+    const p = createFakeProvider({ kv, sleep: noSleep });
+    const r = req("echo:a", { system: [{ text: "x".repeat(40), cache: true }], cacheTtl: 42 });
+    const u = complete(await run(p, r)).usage;
+    expect(u.cacheWriteByTtl).toEqual([{ ttl: 42, tokens: u.cacheWriteTokens }]);
+    expect(kv.ttls).toEqual([42]);
+  });
+
+  it("loads on a host SDK without validateModelCache and skips the check", async () => {
+    vi.resetModules();
+    vi.doMock("@capybara-hq/plugin-sdk", async (importOriginal) => {
+      const { validateModelCache: _, ...rest } =
+        await importOriginal<typeof import("@capybara-hq/plugin-sdk")>();
+      return rest;
+    });
+    try {
+      const { default: old } = await import("../src/index.js");
+      const parsed = old.config?.deployment?.safeParse({
+        models: [{ id: "m", cache: { ...cache, defaultTtl: 60 } }],
+      });
+      expect(parsed?.success).toBe(true);
+    } finally {
+      vi.doUnmock("@capybara-hq/plugin-sdk");
+      vi.resetModules();
+    }
   });
 });
 

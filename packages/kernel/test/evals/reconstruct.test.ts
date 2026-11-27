@@ -1140,6 +1140,58 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
+  it("a manual compaction inside the latest turn (spec §4.7, maintainer decision 2026-11-28): earlier turns and the turn's message summarized, the latest pair kept, zero drift", async () => {
+    reset();
+    // fake-1 (W 32000): the manual tail budget is a fifth of the window (6400). The tool call's
+    // input (≈7.5k tokens) puts the latest pair over it, below the automatic trigger; the call is
+    // to a tool the agent lacks, so its result and the reply stay short
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    await turn("echo:first");
+    const ask = `tool:noop:${JSON.stringify({ pad: "Tally each row. ".repeat(1900) })}`;
+    await turn(ask);
+    expect((await eventsOf(db, conv)).some((e) => e.type === "compaction_summary")).toBe(false);
+
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/compact`,
+      payload: {},
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, conv, ++n, 30_000);
+    const events = await eventsOf(db, conv);
+    const summary = events.findLast((e) => e.type === "compaction_summary");
+    const message = events.findLast((e) => e.type === "user_message");
+    const call = events.findLast(
+      (e) =>
+        e.type === "assistant_message" && e.payload.content.some((b) => b.type === "tool_call"),
+    );
+    expect(summary?.type).toBe("compaction_summary");
+    if (summary?.type !== "compaction_summary") return;
+    // the boundary sits inside the latest turn, right before its tool pair; the opener is recorded
+    expect(summary.payload.coversUpToSeq).toBeGreaterThanOrEqual(message?.seq ?? 0);
+    expect(summary.payload.coversUpToSeq).toBeLessThan(call?.seq ?? 0);
+    expect(summary.payload.openingSeqs).toEqual([message?.seq]);
+
+    await turn("echo:after");
+    const request = sent.at(-1);
+    const head = request?.messages[0];
+    const blocks = Array.isArray(head?.content) ? head.content : [];
+    expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(/^<conversation_summary>/);
+    expect(blocks[0]?.type === "text" && blocks[0].text).toContain(
+      "The message that opened the current turn follows, shown again verbatim; the summary covers it.",
+    );
+    expect(blocks.slice(1).some((b) => b.type === "text" && b.text === ask)).toBe(true);
+    // the earlier turn is only in the summary
+    expect(JSON.stringify(request?.messages.slice(1))).not.toContain("echo:first");
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
   it("plugin_context events before and after a summary (memory spec §6.1): zero drift", async () => {
     reset();
     const agentId = await createAgent({ provider: "model-fake", model: "fake-small" });

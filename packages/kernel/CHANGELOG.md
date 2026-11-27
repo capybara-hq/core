@@ -1,5 +1,31 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.105
+
+### Patch Changes
+
+- d05a120: A connector created from a template takes its default slug even when a loaded extension has the
+  same name: re-creating the Slack connector is `slack` again, not `slack_2`. Connector tools are
+  `mcp__<slug>__<tool>` and extension tools `plugin__<plugin>__<tool>`, so the names never meet; an
+  explicit slug already worked this way.
+- 252bdfa: A manual compaction (`/compact`) now summarizes every turn before the latest one, whatever
+  `keepRecentTurns` says, and inside the latest turn keeps verbatim only the most recent tool pairs
+  that fit about a fifth of the model's context window. It records `compaction_skipped` (reason
+  `nothing_to_summarize`) only when nothing precedes the kept tail; the web divider reads "Nothing to
+  compact · the conversation is still short". Automatic and reactive compaction are unchanged.
+- 6bab73b: A bound conversation's run-start project read bounds the device's start (60 s) and the read itself
+  (30 s) apart, so a device whose instance is recreated no longer runs the read out of time and leaves
+  the conversation without its project's instructions and skills.
+- 6c9f1d6: Native shells finish connector OAuth and login-method linking in the system browser: the connect
+  and link starts take `handoff: { returnScheme? }` and answer a single-use handoff URL; the web page
+  `/handoff/<ticket>` redeems it in the person's signed-in browser (`POST /api/v1/auth/handoffs/redeem`)
+  and the flow comes back to `/handoff/done`, which links back into the app.
+- 2fbe6d2: A watched wait (a tool watching something, such as a browser wait with a condition) reads 正在等待 / Waiting instead of "waiting for your answer".
+- Updated dependencies [b363b71]
+- Updated dependencies [e11129c]
+- Updated dependencies [f2e3e9b]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.84
+
 ## 0.1.0-rc.104
 
 ### Patch Changes

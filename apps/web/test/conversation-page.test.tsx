@@ -92,7 +92,7 @@ afterEach(() => {
 });
 
 describe("the conversation page (ConversationPage)", () => {
-  it("renders the template with the untitled placeholder, the status bar and the thread", async () => {
+  it("renders the template with the untitled placeholder, the run state and the thread", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
     });
@@ -107,8 +107,9 @@ describe("the conversation page (ConversationPage)", () => {
     expect(screen.getByText("hi")).toBeTruthy();
     // (the title button; the flat title bar's plain copy of the title is drawn beside it)
     expect(container.querySelector('[data-part="title"]')?.textContent).toMatch(/^未命名会话 · /);
-    expect(screen.getByText(zh.chat.status.running)).toBeTruthy();
-    expect(screen.getByText(/第 1 轮 · 已用/)).toBeTruthy();
+    expect(container.querySelector('[role="status"][data-part="run-announce"]')?.textContent).toBe(
+      zh.chat.status.running,
+    );
     expect(screen.getByText("hi").closest("[data-entry]")?.getAttribute("data-entry")).toBe("user");
   });
 
@@ -145,42 +146,102 @@ describe("the conversation page (ConversationPage)", () => {
     expect(bar.textContent).not.toContain("Echo agent");
   });
 
-  it("the status bar signs like every page: <login>@<slug>:~/chat/<id>, then version and time zone", async () => {
-    params.conversationId = "9f60c1e6-1111-4222-8333-444455556666";
-    const id = params.conversationId;
-    api(
-      { [`GET /api/v1/orgs/o1/conversations/${id}/events`]: () => json(200, { events: [] }) },
-      id,
-    );
-    const { container } = await renderChatRoute({
-      id,
-      locale: "en",
-      session: { version: "v9.9.9", timeZone: "UTC+8" },
-    });
-    const bar = container.querySelector('[data-part="status-bar"]') as HTMLElement;
-    expect((bar.querySelector('[data-part="status-bar-context"]') as HTMLElement).textContent).toBe(
-      "grant@acme:~/chat/9f60c1e6",
-    );
-    expect(bar.textContent).toMatch(/v9\.9\.9.*UTC\+8/);
-    params.conversationId = "c1";
+  it('the run state is announced in [data-part="run-announce"], a polite live region', async () => {
+    api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
+    const { container } = await renderChat("en");
+    await screen.findByText("hi");
+    const live = container.querySelector(
+      '[data-part="conv-main"] [role="status"][data-part="run-announce"]',
+    ) as HTMLElement;
+    expect(live.getAttribute("role")).toBe("status");
+    expect(live.textContent).toBe(en.chat.status.idle);
   });
 
-  it("a failed last run reads in fail in the status bar", async () => {
-    api({
-      [`GET ${BASE}/events`]: () =>
-        json(200, {
-          events: [
-            userMsg(1, "hello"),
-            runStarted(2),
-            ev(3, "run_failed", { error: { code: "model.timeout", message: "x" } }),
-          ],
-        }),
-    });
+  it.each([
+    [
+      "stopped",
+      [
+        userMsg(1, "hello"),
+        runStarted(2),
+        ev(3, "run_aborted", { byAccountId: "a1", reason: "user" }),
+      ],
+    ],
+    [
+      "failed",
+      [
+        userMsg(1, "hello"),
+        runStarted(2),
+        ev(3, "run_failed", { error: { code: "model.timeout", message: "x" } }),
+      ],
+    ],
+  ] as const)("a %s last run is announced as such", async (state, events) => {
+    api({ [`GET ${BASE}/events`]: () => json(200, { events }) });
     const { container } = await renderChat("en");
     await screen.findByText("hello");
-    const bar = container.querySelector('[data-part="status-bar"]') as HTMLElement;
-    const failed = within(bar).getByText(en.chat.status.failed);
-    expect(failed.getAttribute("data-tone")).toBe("fail");
+    await vi.waitFor(() =>
+      expect(
+        container.querySelector('[role="status"][data-part="run-announce"]')?.textContent,
+      ).toBe(en.chat.status[state]),
+    );
+  });
+
+  describe("the composer's context meter (layered shell §6)", () => {
+    const usage = (seq: number, input: number, output: number) =>
+      ev(seq, "usage", {
+        step: 0,
+        provider: "model-fake",
+        model: "fake-1",
+        inputTokens: input,
+        outputTokens: output,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      });
+    const meter = (c: HTMLElement) =>
+      c.querySelector('[data-part="composer"] [data-part="composer-context-meter"]');
+    const finished = (input: number) => [
+      userMsg(1, "hi"),
+      runStarted(2),
+      usage(3, input, 30),
+      ev(4, "run_finished", { reason: "end_turn", consumedUpToSeq: 1 }),
+    ];
+
+    it("the composer shows the context meter at 43%", async () => {
+      api({ [`GET ${BASE}/events`]: () => json(200, { events: finished(400) }) });
+      const { container } = await renderChat("en");
+      await screen.findByText("hi");
+      const m = await vi.waitFor(() => meter(container) as HTMLElement);
+      expect(m.getAttribute("aria-valuenow")).toBe("43");
+      expect(m.getAttribute("data-tone")).toBeNull();
+    });
+
+    it("the meter is fail at 80% (the default compaction threshold)", async () => {
+      api({ [`GET ${BASE}/events`]: () => json(200, { events: finished(770) }) });
+      const { container } = await renderChat("en");
+      await screen.findByText("hi");
+      const m = await vi.waitFor(() => meter(container) as HTMLElement);
+      expect(m.getAttribute("aria-valuenow")).toBe("80");
+      expect(m.getAttribute("data-tone")).toBe("fail");
+    });
+
+    it("no meter before any usage", async () => {
+      api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
+      const { container } = await renderChat("en");
+      await screen.findByText("hi");
+      expect(container.querySelector('[data-part="composer"]')).not.toBeNull();
+      expect(meter(container)).toBeNull();
+    });
+
+    it('the properties Context section shows the rounds in [data-part="context-rounds"]', async () => {
+      api({ [`GET ${BASE}/events`]: () => json(200, { events: finished(400) }) });
+      window.history.replaceState(null, "", "/chat/c1#properties");
+      await renderChat("en");
+      const props = await screen.findByRole("complementary", { name: "Properties" });
+      const rounds = await vi.waitFor(
+        () => props.querySelector('[data-part="context-rounds"]') as HTMLElement,
+      );
+      expect(rounds.textContent).toMatch(/^Turn 1 · \S+ elapsed$/);
+      window.history.replaceState(null, "", "/");
+    });
   });
 
   it("the composer is a sibling of the scrolling thread, not inside it", async () => {
@@ -769,7 +830,8 @@ describe("the conversation page (ConversationPage)", () => {
       const { container } = await renderChat();
       await screen.findByText("hi");
       const status = () =>
-        (container.querySelector('[data-part="status-bar"]') as HTMLElement).textContent ?? "";
+        (container.querySelector('[role="status"][data-part="run-announce"]') as HTMLElement)
+          .textContent ?? "";
       expect(status()).toContain(en.chat.status.idle);
       fireEvent.change(input(), { target: { value: "next" } });
       fireEvent.keyDown(input(), { key: "Enter" });
@@ -1075,7 +1137,7 @@ describe("the conversation page (ConversationPage)", () => {
     expect(await screen.findByText(en.errors.internal)).toBeTruthy();
   });
 
-  it("while the run waits for a person the status bar's elapsed time stops at the wait (no running timer)", async () => {
+  it("while the run waits for a person the properties' elapsed time stops at the wait (no running timer)", async () => {
     const at = (e: ReturnType<typeof ev>, s: number) => ({
       ...e,
       createdAt: new Date(Date.UTC(2026, 9, 26, 6, 0, 0) + s * 1000).toISOString(),
@@ -1099,15 +1161,17 @@ describe("the conversation page (ConversationPage)", () => {
           ],
         }),
     });
+    window.history.replaceState(null, "", "/chat/c1#properties");
     await renderChat("en");
     await screen.findByText("hi");
     // 7 s of work before the question; the days since then are waiting, not working
-    expect(screen.getByText("Turn 1 · 7s elapsed")).toBeTruthy();
+    expect(await screen.findByText("Turn 1 · 7s elapsed")).toBeTruthy();
     expect(screen.getAllByText(en.chat.status.waiting).length).toBeGreaterThan(0);
     // a later render (the answer typed, a refetch) reads the same: the wait never ticks
     await act(() => new Promise((r) => setTimeout(r, 1100)));
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "queue" }));
     expect(screen.getByText("Turn 1 · 7s elapsed")).toBeTruthy();
+    window.history.replaceState(null, "", "/");
   });
 
   it("a run starting, waiting and ending tells the sidebar (its state dot follows)", async () => {
@@ -1545,19 +1609,6 @@ describe("a new conversation (/)", () => {
     });
   });
 
-  it("the new conversation's status bar reads <login>@<slug>:~ with the time zone", async () => {
-    resetNavigation("/");
-    expectNoFirstPaintFetch();
-    const { container } = await renderRouteWithCache("/", NEW_CHAT, {
-      session: { timeZone: "UTC+8" },
-    });
-    const bar = container.querySelector('[data-part="status-bar"]') as HTMLElement;
-    expect((bar.querySelector('[data-part="status-bar-context"]') as HTMLElement).textContent).toBe(
-      "grant@acme:~",
-    );
-    expect(bar.textContent).toContain("UTC+8");
-  });
-
   it("without ?agent= the agent most recently talked to is picked, and the agents row changes it", async () => {
     resetNavigation("/");
     expectNoFirstPaintFetch();
@@ -1772,8 +1823,6 @@ describe("the conversation page in the app frame", () => {
       version: "v0",
     });
     await screen.findByText("hi");
-    // The page draws its own status bar with the version.
-    expect(screen.getAllByText("v0").length).toBeGreaterThan(0);
     const user = userEvent.setup();
     await user.click(
       screen.getByRole("button", { name: /^Current organization: .*, switch organization$/ }),

@@ -57,6 +57,7 @@ describe("GET /api/v1/meta", () => {
       protocols: { device: { min: 6, max: 6 } },
       features: { appSignIn: false, push: [] },
       appRedirectUris: [],
+      appSchemes: [],
     });
   });
 
@@ -107,6 +108,24 @@ describe("GET /api/v1/meta", () => {
     expect(real.auth.appRedirectUris).toEqual(["capybara://auth/callback"]);
     const off = (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
     expect(off.appRedirectUris).toEqual([]);
+  });
+
+  it("lists the schemes a browser handoff may return to only while app sign-in is available", async () => {
+    const config = app.get(KernelConfigService);
+    const real = config.get();
+    const spy = vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      http: { ...real.http, publicUrl: "https://cap.example.com" },
+      auth: {
+        ...real.auth,
+        appRedirectUris: ["capybara://auth/callback", "capy-dev://auth/callback", "https://x/cb"],
+      },
+    });
+    const on = (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
+    spy.mockRestore();
+    expect(on.appSchemes).toEqual(["capybara", "capy-dev"]);
+    const off = (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
+    expect(off.appSchemes).toEqual([]);
   });
 
   it("returns each platform icon URL, null for the default; icon is icons.app", async () => {

@@ -23,7 +23,7 @@ import { orgSettingsQuery } from "../../lib/query/settings";
 import { meQuery, readinessQuery } from "../../lib/query/shell";
 import type { Me } from "../../lib/session";
 import { COMMANDS } from "./fixtures";
-import { sidebarProps, statusFixture } from "./shell-fixture";
+import { sidebarProps } from "./shell-fixture";
 
 /**
  * `/dev/ui/pages/automations-calendar[-month|-admin]`: the real `/automations` calendar view drawn
@@ -266,7 +266,7 @@ export function AutomationsPageCatalog({ variant }: { variant: AutomationsPageVa
   const { onOpenCommands: _, ...sidebar } = sidebarProps({ active: "automations" }, () => "#");
   return (
     <QueryClientProvider client={client}>
-      <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture("/automations")}>
+      <AppShell sidebar={sidebar} commands={COMMANDS}>
         <AutomationsView
           initial={{
             view: "calendar",

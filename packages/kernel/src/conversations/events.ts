@@ -2083,16 +2083,17 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
   ),
   /**
    * A manual compaction (a compact run, context compaction spec §4.7) found nothing to summarize:
-   * the kept tail (the latest `keepRecentTurns` user turns) already holds every user turn since
-   * the last summary (`turns`). Display only, never model-visible; written once per compact run
-   * (maintainer decision 2026-11-28). An automatic compaction's skip writes nothing.
+   * nothing precedes the kept tail (the latest user turn, or its latest tool pairs; maintainer
+   * decision 2026-11-28), reason `nothing_to_summarize`. Display only, never model-visible; written
+   * once per compact run. An automatic compaction's skip writes nothing. `too_few_turns` (with
+   * `keepRecentTurns`) is the reason an earlier manual plan wrote, still read.
    */
   ev(
     "compaction_skipped",
     z.object({
-      reason: z.enum(["too_few_turns"]),
-      /** The effective `keepRecentTurns` setting the plan used. */
-      keepRecentTurns: count,
+      reason: z.enum(["nothing_to_summarize", "too_few_turns"]),
+      /** The effective `keepRecentTurns` an earlier manual plan used (`too_few_turns` only). */
+      keepRecentTurns: count.optional(),
       /** The user turns since the last summary (all of them without one). */
       turns: count,
       /** The step the compaction ran in (0 for a manual compact run). */

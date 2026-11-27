@@ -84,8 +84,8 @@ Goals:
    waiting for the browser sign-in, the errors on the way, the signed-out page, the main window's
    "session expired" and "platform unreachable" pages and every confirmation are local pages
    (§6.1, §6.8, §7.4); the deployment's web sign-in page never appears in the app. Setup,
-   invitations, connector OAuth and every setting stay the deployment's own web pages in the main
-   window. Sign-in happens in the system browser, never in a window (§6.5) **(decided)**.
+   invitations and every setting stay the deployment's own web pages in the main window; connector
+   OAuth and login linking finish in the system browser (§7.1). Sign-in happens in the system browser, never in a window (§6.5) **(decided)**.
 3. The web adapts when it detects the desktop shell through the Shell environment contract (title
    bar insets for the macOS traffic lights, drag regions), by capability detection, never by
    user-agent sniffing **(decided)**.
@@ -541,8 +541,11 @@ while it shows); the window keeps its size. Board `MainErrors`.
 - The shell loads the profile's origin in a `BrowserWindow` with the profile's partition.
   First-run setup and invitations are the deployment's own pages **(decided)**; sign-in is the
   browser flow of §6.5.
-- Top-level navigation may leave the origin in the same window for connector OAuth, a full-page
-  redirect through the provider and back. Off the origin the shell injects nothing (§8).
+- A profile window never navigates off its origin: `will-navigate` and `will-redirect` to another
+  origin are prevented, and an http or https target is handed to the system browser
+  (`openExternal`). Connector OAuth and linking a login method finish in the system browser
+  through a handoff link (`2026-11-28-shell-external-authorization-design.md`); the browser's
+  done page links back with `capybara://open?url=…`.
 - `target=_blank` and `window.open` to other origins open in the system browser (http and https
   only); same-origin ones open a new shell window of the profile (file previews, shared pages).
 - The app sets no user-agent token of its own; the web never reads the user agent (§7.3).

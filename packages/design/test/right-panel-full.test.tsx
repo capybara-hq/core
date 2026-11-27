@@ -23,7 +23,6 @@ function page(p: { full: boolean; onFull: (v: boolean) => void; layout?: "inline
         }}
         thread={<div data-testid="thread">thread</div>}
         composer={<div data-testid="composer">composer</div>}
-        status={{ context: "c", version: "v" }}
         right="panel"
         panel={
           <RightPanel title="输出" onClose={() => {}} onFullscreen={() => p.onFull(!p.full)}>

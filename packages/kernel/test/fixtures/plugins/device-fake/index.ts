@@ -90,7 +90,7 @@ import { z } from "zod";
  *   started first (the contract's auto-start, logged as `autostart`);
  * - `root/instances/<id>/procs/<pid>`: running exec commands (process group id), content = the
  *   holder tag; `killAll` kills them all, `killTagged` only those with one of the tags;
- * - `root/delays.json` (optional): `{ create?, resume?, suspend?, destroy?, exec?, update? }` in ms, slow
+ * - `root/delays.json` (optional): `{ create?, resume?, suspend?, destroy?, exec?, update?, stat? }` in ms, slow
  *   operations (read at each operation, abortable); `exec` holds the command open before it starts;
  * - `root/fs-ids-by-name` (optional, {@link setFakeFileSystemIdsByName}): `createFileSystem` gives
  *   a new file system the id `fs-<name>`, as sandbox-docker names its volumes, so a file system
@@ -262,6 +262,8 @@ export interface FakeSandboxDelays {
   exec?: number;
   /** Held inside `update` (only with an `updateMode`). */
   update?: number;
+  /** Held inside `stat`, before the path is looked at. */
+  stat?: number;
 }
 
 /** create 时记下的参数（`root/instances/<id>/meta.json`）。 */
@@ -1330,6 +1332,7 @@ export function createFakeSandbox(
 
     async stat(h, path, signal) {
       signal.throwIfAborted();
+      await delay("stat", signal);
       await requireRunning(h);
       const s = await stat(await real(h, path)).catch(() => null);
       return s === null ? null : { size: s.size, isDir: s.isDirectory() };

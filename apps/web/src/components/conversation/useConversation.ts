@@ -111,7 +111,7 @@ export type ConversationState = {
   state: ChatState;
   /** The cached window of the log (its latest part; earlier pages once loaded). */
   events: ConversationEvent[];
-  /** How many runs started before the window's first event (the status bar's turn count). */
+  /** How many runs started before the window's first event (the Turns row's count). */
   turnsBefore: number;
   /** The accounts the events name, by id; an id it lacks has left the platform. */
   people: Readonly<Record<string, PersonRef>>;

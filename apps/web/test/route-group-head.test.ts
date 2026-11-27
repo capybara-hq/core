@@ -54,7 +54,7 @@ const THEME: ThemeRef = {
   cssUrl: themeCssUrl(ID, "1"),
 };
 const ME = { memberships: [{ orgId: "o1" }], currentOrgId: "o1" };
-const META = { name: null, icons: { app: null, maskable: null, favicon: null } };
+const META = { name: null, icons: { app: null, maskable: null, favicon: null }, appSchemes: [] };
 const down = () => {
   throw new Error("upstream_unavailable");
 };

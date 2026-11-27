@@ -52,8 +52,13 @@ const FAVICON = `/api/v1/platform/icon/favicon?v=${"c".repeat(64)}`;
 const CUSTOM: PlatformMeta = {
   name: "Example Corp",
   icons: { app: APP, maskable: MASKABLE, favicon: FAVICON },
+  appSchemes: [],
 };
-const DEFAULT: PlatformMeta = { name: null, icons: { app: null, maskable: null, favicon: null } };
+const DEFAULT: PlatformMeta = {
+  name: null,
+  icons: { app: null, maskable: null, favicon: null },
+  appSchemes: [],
+};
 /** A meta answer without `icons` (a kernel replica that does not send it yet). */
 const NO_ICONS = { name: "X" } as unknown as PlatformMeta;
 
@@ -117,7 +122,10 @@ describe("manifest()", () => {
   });
 
   it("an uploaded app icon without a maskable one is listed with purpose any only", () => {
-    const m = webManifest({ name: null, icons: { app: APP, maskable: null, favicon: null } }, null);
+    const m = webManifest(
+      { name: null, icons: { app: APP, maskable: null, favicon: null }, appSchemes: [] },
+      null,
+    );
     expect(m.icons).toEqual([{ src: APP, sizes: "512x512", type: "image/png", purpose: "any" }]);
   });
 
@@ -142,6 +150,7 @@ describe("app icons follow the platform default theme (theme brand coverage §6)
   const UPLOADED: PlatformMeta = {
     name: null,
     icons: { app: APP, maskable: MASKABLE, favicon: null },
+    appSchemes: [],
   };
 
   it("manifest icons: upload > theme appIcon > built-in", async () => {
@@ -170,7 +179,11 @@ describe("app icons follow the platform default theme (theme brand coverage §6)
   });
 
   it("an uploaded maskable icon is listed beside the theme's app icon", () => {
-    const meta = { name: null, icons: { app: null, maskable: MASKABLE, favicon: null } };
+    const meta = {
+      name: null,
+      icons: { app: null, maskable: MASKABLE, favicon: null },
+      appSchemes: [],
+    };
     expect(webManifest(meta, APP_ONLY).icons).toEqual([
       { src: T_ASSET("app.png"), ...png, purpose: "any" },
       { src: MASKABLE, ...png, purpose: "maskable" },
@@ -178,7 +191,7 @@ describe("app icons follow the platform default theme (theme brand coverage §6)
   });
 
   it("an uploaded app icon is not paired with the theme's maskable one", () => {
-    const meta = { name: null, icons: { app: APP, maskable: null, favicon: null } };
+    const meta = { name: null, icons: { app: APP, maskable: null, favicon: null }, appSchemes: [] };
     expect(webManifest(meta, THEME).icons).toEqual([{ src: APP, ...png, purpose: "any" }]);
   });
 

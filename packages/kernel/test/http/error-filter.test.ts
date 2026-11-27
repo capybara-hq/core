@@ -130,6 +130,8 @@ describe("ErrorFilter 日志脱敏", () => {
     ["/api/v1/s/Ab3dEf9hJk/previews/p/v", "/api/v1/s/:code/previews/p/v"],
     ["/s/Ab3dEf9hJk", "/s/:code"],
     ["/api/v1/sessions/x", "/api/v1/sessions/x"],
+    // the web's browser handoff page names its ticket
+    ["/handoff/cap_ho_AbC-dEf_123", "/handoff/:redacted"],
   ])("redactPath(%s) → %s", (input, expected) => {
     expect(redactPath(input)).toBe(expected);
   });

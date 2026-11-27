@@ -11,6 +11,9 @@ import {
   compactionRequestOverhead,
   compactionRetryNote,
   extractSummary,
+  MANUAL_TAIL_SHARE,
+  manualOpeningSeqs,
+  manualTailBudget,
   shouldCompact,
   summarySavedTokens,
   turnsSinceSummary,
@@ -393,6 +396,142 @@ describe("compactionPlan: inside the latest user turn (spec §4.2, revision 2026
     pair(log, 1, 40);
     const plan = compactionPlan(log.events, settings({ keepRecentTurns: 2 }), 300);
     expect(plan?.coversUpToSeq).toBe(task.seq - 1);
+  });
+});
+
+describe("compactionPlan: manual compaction (spec §4.7, maintainer decision 2026-11-28)", () => {
+  /** An assistant step calling one tool, then its result (`result <turn>.<n>: ` + `size` chars). */
+  const pair = (log: Log, id: string, size = 400) => {
+    const call = log.assistant(
+      [{ type: "tool_call", id: `call-${id}`, name: "Read", input: { id } }],
+      "tool_use",
+    );
+    log.add({
+      type: "tool_result",
+      payload: {
+        step: 0,
+        callId: `call-${id}`,
+        toolKey: "Read",
+        content: `result ${id}: ${"y".repeat(size)}`,
+        isError: false,
+      },
+    });
+    return call;
+  };
+  /** Three user turns, each a message, a run start and `pairs` tool pairs of ≈125 tokens. */
+  const agentic = (pairs: number) => {
+    const log = new Log();
+    const turns: { user: number; calls: number[] }[] = [];
+    for (let t = 1; t <= 3; t++) {
+      const user = log.user(`task ${t}`);
+      log.add(
+        {
+          type: "run_started",
+          payload: {
+            agentVersion: 1,
+            model: { provider: "model-fake", model: "fake-1" },
+            triggerAccountId: "acc-1",
+            trigger: "message",
+          },
+        },
+        `run-${t}`,
+      );
+      const calls = [];
+      for (let n = 1; n <= pairs; n++) calls.push(pair(log, `${t}.${n}`).seq);
+      log.assistant(`done ${t}`);
+      turns.push({ user: user.seq, calls });
+    }
+    return { log, turns };
+  };
+
+  it("the manual tail budget is a fifth of the window, never above the tail budget", () => {
+    expect(MANUAL_TAIL_SHARE).toBe(0.2);
+    expect(manualTailBudget(200_000, 150_000)).toBe(40_000);
+    expect(manualTailBudget(200_000, 30_000)).toBe(30_000);
+  });
+
+  it("summarizes the earlier turns and the older pairs of the latest turn, whatever keepRecentTurns says", () => {
+    // 3 turns of 20 pairs (≈125 tokens each): the latest turn alone is ≈2.5k, the budget ≈1k
+    const { log, turns } = agentic(20);
+    const latest = turns[2] as { user: number; calls: number[] };
+    const plan = compactionPlan(log.events, settings({ keepRecentTurns: 4 }), 1_000, {
+      manual: true,
+    });
+    expect(plan).not.toBeNull();
+    const covers = plan?.coversUpToSeq ?? 0;
+    // the boundary is a tool-pair boundary inside the latest turn: before one of its calls
+    const firstKept = latest.calls.findIndex((seq) => seq === covers + 1);
+    expect(firstKept).toBeGreaterThan(0);
+    expect(plan?.transcript).toContain("User: task 1");
+    expect(plan?.transcript).toContain("User: task 2");
+    expect(plan?.transcript).toContain("User: task 3");
+    expect(plan?.transcript).toContain("result 1.20:");
+    expect(plan?.transcript).toContain("result 3.1:");
+    expect(plan?.transcript).not.toContain("result 3.20:");
+    // the kept pairs fit the budget, and one more pair would not (oldest first)
+    const keptPairs = latest.calls.length - firstKept;
+    expect(keptPairs).toBeGreaterThanOrEqual(1);
+    expect(keptPairs).toBeLessThan(10);
+    // the same log under the automatic plan keeps every turn (3 < keepRecentTurns 4): nothing
+    expect(compactionPlan(log.events, settings({ keepRecentTurns: 4 }), NO_LIMIT)).toBeNull();
+  });
+
+  it("re-renders the latest turn's opening message after the summary (manualOpeningSeqs)", () => {
+    const { log, turns } = agentic(20);
+    const plan = compactionPlan(log.events, settings(), 1_000, { manual: true });
+    const covers = plan?.coversUpToSeq ?? 0;
+    // a compact run after the turns: started by no message, so the latest message run's opener
+    log.add(
+      {
+        type: "run_started",
+        payload: {
+          agentVersion: 1,
+          model: { provider: "model-fake", model: "fake-1" },
+          triggerAccountId: "acc-1",
+          trigger: "compact",
+        },
+      },
+      "run-compact",
+    );
+    expect(manualOpeningSeqs(log.events, covers, Number.POSITIVE_INFINITY)).toEqual([
+      turns[2]?.user,
+    ]);
+  });
+
+  it("keeps a latest turn that fits whole and summarizes only the earlier turns", () => {
+    const { log, turns } = agentic(2);
+    const plan = compactionPlan(log.events, settings(), 10_000, { manual: true });
+    expect(plan?.coversUpToSeq).toBe((turns[2]?.user ?? 0) - 1);
+    expect(
+      manualOpeningSeqs(log.events, plan?.coversUpToSeq ?? 0, Number.POSITIVE_INFINITY),
+    ).toEqual([]);
+  });
+
+  it("always keeps the latest tool pair, even over the budget", () => {
+    const log = new Log();
+    log.user("task");
+    pair(log, "1");
+    const last = pair(log, "2", 4000);
+    const plan = compactionPlan(log.events, settings(), 50, { manual: true });
+    expect(plan?.coversUpToSeq).toBe(last.seq - 1);
+    expect(plan?.transcript).toContain("result 1:");
+  });
+
+  it("returns null for a short single turn: nothing precedes the kept tail", () => {
+    const log = new Log();
+    log.user("hi");
+    log.assistant("hello");
+    expect(compactionPlan(log.events, settings(), 10_000, { manual: true })).toBeNull();
+    // a single pair over the budget: still nothing before it
+    const one = new Log();
+    one.user("task");
+    pair(one, "1", 4000);
+    expect(compactionPlan(one.events, settings(), 0, { manual: true })).not.toBeNull();
+    const covered = new Log();
+    const task = covered.user("task");
+    covered.summary(task.seq, "They asked for a task.");
+    pair(covered, "1", 4000);
+    expect(compactionPlan(covered.events, settings(), 50, { manual: true })).toBeNull();
   });
 });
 

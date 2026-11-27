@@ -334,6 +334,8 @@ export function useRightAreaSlot(p: {
   contextPct: number | null;
   /** The Context section's last-run line (model, duration, tokens), once a run ended. */
   lastRun?: readonly string[] | undefined;
+  /** The Context section's rounds line ("Turn N · … elapsed"), once the conversation had a run. */
+  rounds?: ReactNode;
   /** The conversation's sub-agents (`GET …/subagents`), once there are any. */
   subagents?: SubagentView[] | undefined;
   /** The Context section's tokens-with-sub-agents line. */
@@ -729,6 +731,7 @@ export function useRightAreaSlot(p: {
         model={p.model}
         contextPct={p.contextPct}
         lastRun={p.lastRun}
+        {...(p.rounds !== undefined ? { rounds: p.rounds } : {})}
         files={files}
         onOpenFile={openFile}
         background={

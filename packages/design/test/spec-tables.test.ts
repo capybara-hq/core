@@ -156,7 +156,6 @@ describe("checkSpecTables", () => {
         "sidebar",
         "page-header",
         "stat-cards",
-        "status-bar",
         "action-row",
         "button",
         "input",

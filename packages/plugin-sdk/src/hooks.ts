@@ -99,8 +99,13 @@ export type HookModelMessage =
   | { role: "assistant"; content: HookContentBlock[] }
   | { role: "system"; content: string };
 
-/** The request of a `model.request` payload: the request sent to the provider, without media bytes. */
-export type HookModelRequest = Omit<ModelRequest, "messages"> & { messages: HookModelMessage[] };
+/**
+ * The request of a `model.request` payload: the request sent to the provider, without media bytes
+ * and without the transport option `cacheTtl`.
+ */
+export type HookModelRequest = Omit<ModelRequest, "messages" | "cacheTtl"> & {
+  messages: HookModelMessage[];
+};
 
 /**
  * `model.request` of a chat model call (see {@link ModelRequestHookPayload}): once per attempt of a

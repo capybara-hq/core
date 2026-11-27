@@ -1062,7 +1062,6 @@ const convProps = (over: Partial<ConversationPageProps> = {}): ConversationPageP
   },
   thread: <p>REAL THREAD</p>,
   composer: <textarea aria-label="REAL COMPOSER" />,
-  status: { context: "grant@示例组织:/chat/9f3a", version: "v0.1.0" },
   properties: <p>REAL PROPERTIES</p>,
   panel: <p>REAL PANEL</p>,
   right: "none",

@@ -84,7 +84,7 @@ const MODELS = {
         {
           id: "fake-1",
           displayName: "Fake 1",
-          capabilities: { tools: true, vision: false, reasoning: false, caching: false },
+          capabilities: { tools: true, vision: false, reasoning: false },
           parameters: [],
         },
       ],

@@ -309,7 +309,6 @@ export const SIDEBAR_COPY = {
   noMatch: "没有匹配的会话",
   clearFilter: "清除筛选",
   archived: "已归档",
-  adminScope: "整个部署 · /admin",
   back: "回到工作区",
 };
 
@@ -499,7 +498,6 @@ export const FORM_PAGE_FIXTURE: {
   title: string;
   sections: { title: string; description: string; fields: FixtureFormField[] }[];
   actionRow: { unsaved: string; errors: string; discard: string; save: string; clean: string };
-  status: { context: string; pageStatus: string };
 } = {
   path: [
     { label: "capybara", href: "/" },
@@ -591,13 +589,9 @@ export const FORM_PAGE_FIXTURE: {
     save: "保存",
     clean: "没有未保存的修改",
   },
-  status: {
-    context: `${FIXTURE_USER.name}@${FIXTURE_ORG}:/agents/研究助手/edit`,
-    pageStatus: "当前版本 v12",
-  },
 };
 
-// ── Page header, status bar, controls ───────────────────────────────────────
+// ── Page header, controls ───────────────────────────────────────
 
 export const PAGE_HEADER_FIXTURE = {
   title: "Agents",
@@ -611,14 +605,6 @@ export const PAGE_HEADER_FIXTURE = {
   search: "搜索名称或模型",
   longTitle:
     "季度经营分析与预算执行跟踪复盘助手的全部历史版本与发布记录以及每个版本的变更说明和审批意见汇总页面",
-};
-
-export const STATUS_FIXTURE = {
-  context: `${FIXTURE_USER.name}@${FIXTURE_ORG}:/connectors`,
-  pageStatus: "已筛选 24 / 24",
-  system: "系统正常",
-  version: "v0.1.0",
-  timeZone: "UTC+8",
 };
 
 export const CONTROLS_FIXTURE = {

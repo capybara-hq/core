@@ -50,7 +50,10 @@ export type SidebarNavItem = {
   desktopOnly?: boolean;
 };
 
-/** The current org in the switcher: `~/<slug> · <role>` under its name; `menu` switches it. */
+/**
+ * The current org in the switcher: its name (the slug and the role are the caller's switch menu's
+ * to show); `menu` switches it.
+ */
 export type SidebarOrg = {
   name: string;
   /** Drawn on `ink` in the 24 box (and alone in the rail). */
@@ -117,6 +120,21 @@ export type SidebarContext =
       adminHref?: string;
     };
 
+/**
+ * The account row and its menu (spec §6.13). `status` is the system status, given only when it is
+ * not ok: a `fail` dot on the row and the status line at the top of the menu. `footnote` is the
+ * menu's last line (version · time zone).
+ */
+export type SidebarAccount = {
+  name: string;
+  avatarUrl?: string | null;
+  menu: MenuItem[];
+  status?: { text: string; tone: "fail" };
+  footnote?: string;
+  /** Draw the menu open (the reference set); it then leaves the page usable. */
+  menuOpen?: boolean;
+};
+
 /** The panel a `brand` is drawn in: the full sidebar or the rail (collapsed). */
 export type SidebarBrandVariant = { collapsed: boolean; panel: "full" | "rail" };
 
@@ -139,7 +157,7 @@ export type SidebarProps = {
   /** The work context's conversation section (unused in the admin and setup contexts). */
   conversations?: SidebarConversations;
   /** The account row: the avatar and name open the account menu. */
-  account: { name: string; avatarUrl?: string | null; menu: MenuItem[] };
+  account: SidebarAccount;
   /**
    * The theme switch, drawn after the account (the full sidebar); the rail has no room,
    * so there it is the account menu's first item. The language is the caller's account submenu.
@@ -637,7 +655,10 @@ function RailTip({
   );
 }
 
-/** The org switcher: a 40 block on `bg`, the initial on `ink`, name and `~/<slug> · <role>`. */
+/**
+ * The org switcher: a 40 row on the sidebar's ground with no frame, the initial on `ink` and the
+ * org's name (layered shell spec §4); hover shows `hover`.
+ */
 export function OrgSwitcher({
   org,
   rail,
@@ -667,9 +688,6 @@ export function OrgSwitcher({
       {initial}
       <span className="cb-sidebar-org-text">
         <span className="cb-sidebar-org-name">{org.name}</span>
-        <span className="cb-sidebar-org-meta">
-          ~/{org.slug} · {org.role}
-        </span>
       </span>
       {org.menu.length > 0 ? <Icon name="chevrons-up-down" size={14} /> : null}
     </>
@@ -711,27 +729,11 @@ export function OrgSwitcher({
   return <Menu items={org.menu} trigger={button} />;
 }
 
-/** The admin context's block: static, the shield in the accent tint. */
-export function ContextBlock({ rail }: { rail: boolean }) {
-  const t = useDesignT();
-  return (
-    <div className="cb-sidebar-org" data-part="context-block" data-static="true">
-      <span className="cb-sidebar-org-initial" data-tone="accent" aria-hidden="true">
-        <Icon name="admin" size={14} />
-      </span>
-      {rail ? (
-        <span className="cb-sr-only">{t("sidebar.admin")}</span>
-      ) : (
-        <span className="cb-sidebar-org-text">
-          <span className="cb-sidebar-org-name">{t("sidebar.admin")}</span>
-          <span className="cb-sidebar-org-meta">{t("sidebar.adminScope")}</span>
-        </span>
-      )}
-    </div>
-  );
-}
-
-/** The admin context block and the way back. */
+/**
+ * The admin context's block (layered shell spec §4): static, the shield in the accent tint. The
+ * full sidebar draws one row: the shield, the Admin console label and the way back to the
+ * workspace as a dense link at its end. The rail keeps the shield, with the back button under it.
+ */
 function AdminBlock({
   back,
   rail,
@@ -742,28 +744,44 @@ function AdminBlock({
   const t = useDesignT();
   const Link = useDesignLink();
   const backLabel = back.slug === null ? t("sidebar.back") : `${t("sidebar.back")} ~/${back.slug}`;
-  return (
-    <div className="cb-sidebar-context">
-      <ContextBlock rail={rail} />
-      {rail ? (
-        <RailTip label={backLabel}>
-          <Link
-            href={back.href}
-            className="cb-sidebar-back"
-            data-part="back"
-            aria-label={backLabel}
-          >
-            <Icon name="arrow-left" size={14} />
-            <LinkPendingMark />
-          </Link>
-        </RailTip>
-      ) : (
-        <Link href={back.href} className="cb-sidebar-back" data-part="back">
+  const shield = (
+    <span className="cb-sidebar-org-initial" data-tone="accent" aria-hidden="true">
+      <Icon name="admin" size={14} />
+    </span>
+  );
+  if (!rail) {
+    return (
+      <div className="cb-sidebar-org" data-part="context-block" data-static="true">
+        {shield}
+        <span className="cb-sidebar-org-text">
+          <span className="cb-sidebar-org-name">{t("sidebar.admin")}</span>
+        </span>
+        <Link
+          href={back.href}
+          className="cb-sidebar-admin-back"
+          data-part="back"
+          aria-label={backLabel}
+          title={backLabel}
+        >
           <Icon name="arrow-left" size={14} />
-          <span className="cb-sidebar-label">{backLabel}</span>
+          <span>{t("sidebar.back")}</span>
           <LinkPendingMark />
         </Link>
-      )}
+      </div>
+    );
+  }
+  return (
+    <div className="cb-sidebar-context">
+      <div className="cb-sidebar-org" data-part="context-block" data-static="true">
+        {shield}
+        <span className="cb-sr-only">{t("sidebar.admin")}</span>
+      </div>
+      <RailTip label={backLabel}>
+        <Link href={back.href} className="cb-sidebar-back" data-part="back" aria-label={backLabel}>
+          <Icon name="arrow-left" size={14} />
+          <LinkPendingMark />
+        </Link>
+      </RailTip>
     </div>
   );
 }
@@ -1188,7 +1206,19 @@ function Account({
   trailing?: ReactNode;
 }) {
   const t = useDesignT();
+  const [menuOpen, setMenuOpen] = useState(account.menuOpen ?? false);
   const text = account.name;
+  const status = account.status;
+  // The system status (only when not ok): a dot on the row, its text in the row's name and at the
+  // top of the menu.
+  const dot = status ? (
+    <span
+      className="cb-sidebar-dot"
+      data-part="account-status-dot"
+      data-tone={status.tone}
+      aria-hidden="true"
+    />
+  ) : null;
   const content = (
     <>
       <Avatar
@@ -1198,13 +1228,23 @@ function Account({
         value={account.avatarUrl ? { kind: "image", src: account.avatarUrl } : null}
       />
       {rail ? null : <span className="cb-sidebar-label">{text}</span>}
+      {dot}
+      {/* the static row has no aria-label: the status joins its accessible text */}
+      {status && account.menu.length === 0 ? (
+        <span className="cb-sr-only"> · {status.text}</span>
+      ) : null}
     </>
   );
   // Without menu items (the session is loading) nothing opens, so it is not a button.
   if (account.menu.length === 0) {
     return (
       <div className="cb-sidebar-foot">
-        <span className="cb-sidebar-account" data-part="account" data-static="true" title={text}>
+        <span
+          className="cb-sidebar-account"
+          data-part="account"
+          data-static="true"
+          title={status ? `${text} · ${status.text}` : text}
+        >
           {content}
         </span>
         {trailing}
@@ -1215,12 +1255,26 @@ function Account({
     <div className="cb-sidebar-foot">
       <Menu
         items={account.menu}
+        head={
+          status ? (
+            <>
+              <span className="cb-sidebar-dot" data-tone={status.tone} aria-hidden="true" />
+              {status.text}
+            </>
+          ) : undefined
+        }
+        foot={account.footnote ? account.footnote : undefined}
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+        // Drawn open for the reference set: it neither locks the page nor takes the focus (the
+        // sidebar page's checks expect the open More menu to hold it).
+        {...(account.menuOpen ? { modal: false, autoFocus: false } : {})}
         trigger={
           <button
             type="button"
             className="cb-sidebar-account"
             data-part="account"
-            aria-label={`${t("shell.account")}: ${text}`}
+            aria-label={`${t("shell.account")}: ${text}${status ? ` · ${status.text}` : ""}`}
             title={text}
           >
             {content}

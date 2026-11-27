@@ -65,7 +65,7 @@ const SANDBOX_FAKE = fileURLToPath(
   new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
-type Line = { level: string; msg: string; timedOut?: boolean };
+type Line = { level: string; msg: string; timedOut?: boolean; timedOutIn?: string };
 
 const SANDBOX_TOOLS = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Deliver"];
 type ProjectRootEvent = Extract<ConversationEvent, { type: "project_root" }>;
@@ -84,8 +84,9 @@ let agentId: string;
 let coderId: string;
 /** The owner's default cloud device. */
 let ownerDevice: string;
-/** The run-start read's time limit (the seam); tests shorten it. */
-let readTimeoutMs = 30_000;
+/** The run-start read's time limits (the seam); tests shorten them. */
+const DEFAULT_LIMITS = { startMs: 60_000, readMs: 30_000 };
+let limits = DEFAULT_LIMITS;
 const lines: Line[] = [];
 
 beforeAll(async () => {
@@ -106,7 +107,7 @@ beforeAll(async () => {
     ),
     {
       logger: createLogger("warn", { write: (l) => lines.push(JSON.parse(l) as Line) }),
-      overrides: [{ provide: PROJECT_KNOWLEDGE_TIMEOUT, useValue: () => readTimeoutMs }],
+      overrides: [{ provide: PROJECT_KNOWLEDGE_TIMEOUT, useValue: () => limits }],
     },
   );
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
@@ -630,7 +631,7 @@ describe("project knowledge at run start", () => {
     expect(roots[0]?.payload.unavailable?.reason).toBe("unsupported");
   });
 
-  it("gives up a read past its time limit, records nothing and finishes the run", async () => {
+  it("gives up a device start past its time limit, records nothing and finishes the run", async () => {
     const member = await newMember();
     const convId = await insertBound({
       accountId: member.id,
@@ -640,18 +641,68 @@ describe("project knowledge at run start", () => {
     lines.length = 0;
     // the member's device has no instance yet: the read's create waits until the limit aborts it
     await setFakeSandboxDelays(root, { create: 120_000 });
-    readTimeoutMs = 200;
+    limits = { startMs: 200, readMs: 30_000 };
     try {
       const events = await run(convId, 1, member.req);
       expect(events.find((e) => e.type === "run_finished")).toBeDefined();
       expect(projectRoots(events)).toEqual([]);
     } finally {
-      readTimeoutMs = 30_000;
+      limits = DEFAULT_LIMITS;
       await setFakeSandboxDelays(root, {});
     }
-    expect(lines.some((l) => l.msg.includes("project knowledge") && l.timedOut === true)).toBe(
-      true,
-    );
+    expect(
+      lines.some(
+        (l) =>
+          l.msg.includes("project knowledge") && l.timedOut === true && l.timedOutIn === "start",
+      ),
+    ).toBe(true);
+  });
+
+  it("gives up a read past its time limit once the device runs, records nothing and finishes the run", async () => {
+    const member = await newMember();
+    const convId = await insertBound({
+      accountId: member.id,
+      deviceId: member.deviceId,
+      path: "/workspace/app",
+    });
+    lines.length = 0;
+    await setFakeSandboxDelays(root, { stat: 120_000 });
+    limits = { startMs: 60_000, readMs: 200 };
+    try {
+      const events = await run(convId, 1, member.req);
+      expect(events.find((e) => e.type === "run_finished")).toBeDefined();
+      expect(projectRoots(events)).toEqual([]);
+    } finally {
+      limits = DEFAULT_LIMITS;
+      await setFakeSandboxDelays(root, {});
+    }
+    expect(
+      lines.some(
+        (l) =>
+          l.msg.includes("project knowledge") && l.timedOut === true && l.timedOutIn === "read",
+      ),
+    ).toBe(true);
+  });
+
+  it("a slow device start does not use up the read's time: the snapshot is recorded", async () => {
+    const member = await newMember();
+    const convId = await insertBound({
+      accountId: member.id,
+      deviceId: member.deviceId,
+      path: "/workspace/app",
+    });
+    // the start takes longer than the whole read may; before the limits were apart, it timed out
+    // (a missing root is recorded too: what counts is that a snapshot was written)
+    await setFakeSandboxDelays(root, { create: 3_000 });
+    limits = { startMs: 60_000, readMs: 1_500 };
+    try {
+      const events = await run(convId, 1, member.req);
+      expect(events.find((e) => e.type === "run_finished")).toBeDefined();
+      expect(projectRoots(events)).toHaveLength(1);
+    } finally {
+      limits = DEFAULT_LIMITS;
+      await setFakeSandboxDelays(root, {});
+    }
   });
 
   it("offers Skill from the log only for a project skill it can be called with", async () => {

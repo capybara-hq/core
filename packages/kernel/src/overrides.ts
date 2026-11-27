@@ -20,7 +20,10 @@ import { OUTBOX_FAST_PATH_SETTLED } from "./infra/outbox/outbox.module.js";
 import { PRESENCE_INTERVAL_MS } from "./infra/presence/replica-presence.js";
 import type { KernelQueueName } from "./infra/queue/queue-names.js";
 import { PUSH_SEND_TIMEOUT_MS } from "./push/delivery.js";
-import { PROJECT_KNOWLEDGE_TIMEOUT } from "./runtime/project/knowledge.service.js";
+import {
+  PROJECT_KNOWLEDGE_TIMEOUT,
+  type ProjectKnowledgeTimeouts,
+} from "./runtime/project/knowledge.service.js";
 import { LIST_MODELS_TIMEOUT } from "./runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "./runtime/run-context.service.js";
 import { ENSURE_RUN_FAILS } from "./runtime/run-queue.js";
@@ -65,8 +68,8 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `OUTBOX_FAST_PATH_SETTLED`: receives each detached outbox fast-path pass (a test awaits them);
  * - `ENSURE_RUN_FAILS`: returns true to make `RunQueue.ensureRun` throw (Redis unreachable, or the
  *   direct call after a commit skipped by a crash);
- * - `PROJECT_KNOWLEDGE_TIMEOUT`: the run-start read of a bound project's time limit, read at every
- *   read (a test shortens it for one run);
+ * - `PROJECT_KNOWLEDGE_TIMEOUT`: the run-start read of a bound project's time limits (the device's
+ *   start, the read), read at every read (a test shortens them for one run);
  * - `PUSH_SEND_TIMEOUT_MS`: one push send's time limit, read at every send (a test shortens it
  *   for a hanging provider);
  * - `BACKGROUND_STOP_ATTEMPT_MS`: one exact background task stop attempt's time limit, read at
@@ -106,7 +109,7 @@ interface KernelSeams {
   [OUTBOX_FAST_PATH_SETTLED]: (pass: Promise<void>) => void;
   [ENSURE_RUN_FAILS]: () => boolean;
   [SCOPE_ORG_CHUNK_SIZE]: number;
-  [PROJECT_KNOWLEDGE_TIMEOUT]: () => number;
+  [PROJECT_KNOWLEDGE_TIMEOUT]: () => ProjectKnowledgeTimeouts;
   [PROMPT_SUGGESTION_TIMEOUT]: () => number;
   [PUSH_SEND_TIMEOUT_MS]: () => number;
   [BACKGROUND_STOP_ATTEMPT_MS]: () => number;

@@ -109,9 +109,19 @@ export function Menu({
   onOpenChange,
   label,
   modal,
+  autoFocus,
+  head,
+  foot,
 }: {
   trigger: ReactElement<Record<string, unknown>>;
   items: MenuItem[];
+  /**
+   * A line above the first item (the account menu's system status): a Radix menu label, `small`,
+   * `muted`, not a menu item and not focusable; a separator follows it.
+   */
+  head?: ReactNode;
+  /** A line below the last item (the account menu's version · time zone), like `head`. */
+  foot?: ReactNode;
   /** Called before focus returns to the trigger; `preventDefault()` keeps focus where an item put it. */
   onCloseAutoFocus?: (e: Event) => void;
   /** Where the menu opens (default below the trigger); `right` for a flyout beside a sidebar row. */
@@ -124,6 +134,12 @@ export function Menu({
   label?: string;
   /** Default true; false leaves the page usable while it is open (drawn open in the catalog). */
   modal?: boolean;
+  /**
+   * Default true: the menu takes focus as it opens. False keeps the focus where it is and the menu
+   * open while the focus is elsewhere (a menu drawn open in the catalog beside another one that a
+   * page's checks expect to hold the focus).
+   */
+  autoFocus?: boolean;
 }) {
   const [own, setOwn] = useState(false);
   const isOpen = open ?? own;
@@ -174,8 +190,33 @@ export function Menu({
           {...(side ? { side } : {})}
           {...(label ? { "aria-label": label } : {})}
           {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}
+          // (Radix's menu content takes `onOpenAutoFocus`; the dropdown's types leave it out)
+          // A menu that does not take the focus also stays open when the focus is elsewhere (the
+          // other menu drawn open on the same catalog page holds it).
+          {...((autoFocus === false
+            ? {
+                onOpenAutoFocus: (e: Event) => e.preventDefault(),
+                onFocusOutside: (e: Event) => e.preventDefault(),
+              }
+            : {}) as Record<string, never>)}
         >
+          {head !== undefined && head !== null ? (
+            <>
+              <RM.Label className="cb-menu-note" data-part="menu-head">
+                {head}
+              </RM.Label>
+              <RM.Separator className="cb-menu-sep" />
+            </>
+          ) : null}
           <MenuItems items={items} />
+          {foot !== undefined && foot !== null ? (
+            <>
+              <RM.Separator className="cb-menu-sep" />
+              <RM.Label className="cb-menu-note" data-part="menu-foot">
+                {foot}
+              </RM.Label>
+            </>
+          ) : null}
         </RM.Content>
       </RM.Portal>
     </RM.Root>

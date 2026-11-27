@@ -18,7 +18,11 @@ export function useErrorMessage(): (error: unknown) => string {
       const code = error instanceof ApiClientError ? error.code : "unknown";
       if (!t.has(code)) return t("unknown");
       const copy: unknown = t.raw(code);
-      if (typeof copy === "string") return t(code);
+      if (typeof copy === "string") {
+        return code === "handoff.account_mismatch" && error instanceof ApiClientError
+          ? t(code, { login: handoffOwner(error) })
+          : t(code);
+      }
       if (copy !== null && typeof copy === "object") {
         const entries = copy as Record<string, unknown>;
         const reason = error instanceof ApiClientError ? reasonOf(error) : undefined;
@@ -31,6 +35,20 @@ export function useErrorMessage(): (error: unknown) => string {
     },
     [t],
   );
+}
+
+/**
+ * The `{login}` of `handoff.account_mismatch`: the ticket's account, by its login, else its email
+ * (an account without a login), else its display name.
+ */
+function handoffOwner(e: ApiClientError): string {
+  const d = e.rawDetails[0] as
+    | { login?: unknown; displayName?: unknown; email?: unknown }
+    | undefined;
+  for (const v of [d?.login, d?.email, d?.displayName]) {
+    if (typeof v === "string" && v !== "") return v;
+  }
+  return "";
 }
 
 /** The `reason` of an error's first detail, if any. */
