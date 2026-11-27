@@ -4550,7 +4550,7 @@ export const THEME_TOKENS: {
     readonly color: {
         readonly bg: {
             readonly dark: "#0A0A0A";
-            readonly light: "#FAF9F6";
+            readonly light: "#FDFDFC";
         };
         readonly panel: {
             readonly dark: "#111110";
@@ -4561,11 +4561,11 @@ export const THEME_TOKENS: {
             readonly light: "#FCFBF9";
         };
         readonly sidebar: {
-            readonly dark: "#111110";
-            readonly light: "#F3F2EE";
+            readonly dark: "#171716";
+            readonly light: "#EDECE7";
         };
         readonly "sidebar-active": {
-            readonly dark: "#1A1A18";
+            readonly dark: "rgba(255,255,255,0.07)";
             readonly light: "rgba(26,26,24,0.09)";
         };
         readonly raised: {
@@ -4577,7 +4577,7 @@ export const THEME_TOKENS: {
             readonly light: "rgba(26,26,24,0.07)";
         };
         readonly hover: {
-            readonly dark: "#171716";
+            readonly dark: "rgba(255,255,255,0.04)";
             readonly light: "rgba(26,26,24,0.04)";
         };
         readonly "line-soft": {

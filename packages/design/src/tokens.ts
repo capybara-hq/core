@@ -100,7 +100,6 @@ export const SIZES = {
     content: 1120,
     "content-pad": 32,
     chat: 720,
-    "status-bar": 24,
     "action-row": 40,
     gutter: 20,
     "title-bar": 48,
@@ -149,4 +148,4 @@ export const SIZES = {
 } as const;
 
 /** The page background (`bg`) per theme, for what cannot read `--cb-bg` (the PWA manifest). */
-export const PAGE_BACKGROUND = { dark: "#0A0A0A", light: "#FAF9F6" } as const;
+export const PAGE_BACKGROUND = { dark: "#0A0A0A", light: "#FDFDFC" } as const;
