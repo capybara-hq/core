@@ -286,7 +286,7 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
     // names (`ScheduleMarker*`, `user_message.schedule`, `trigger: "schedule"`, `execution:
     // "scheduled"`), the design component `schedule-calendar`, the model-visible "scheduled run" and
     // the unrelated `infra/schedule`; none of them matches these spellings.
-    re: /\bscheduled_task(?:s|_runs|_grants|_run_id|_id)\b|\bSchedule(?:Create|Update|List|Targets|Delete)\b|\bCAPYBARA_SCHEDULES(?:__\w*)?\b|\bschedule_attention\b|\/api\/v1\/orgs\/:orgId\/schedules\b/,
+    re: /\bscheduled_tasks?(?:_\w+)?\b|\bscheduledTasks?\b|\bScheduledTask\w*|\bSchedule(?:Create|Update|List|Targets|Delete)\b|\bCAPYBARA_SCHEDULES(?:__\w*)?\b|\bschedule_attention\b|\/api\/v1\/orgs\/:orgId\/schedules\b/,
     what: "an old scheduled task name (now automations / Automation* / CAPYBARA_AUTOMATIONS__ / automation_attention)",
     allowedIn: [
       {
