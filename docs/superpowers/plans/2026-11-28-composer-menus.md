@@ -254,3 +254,10 @@ Rebase on main, then: composer top strip and control row per spec §6 / §7 (des
   compact sheet top hairline) being fixed by agent a0be250abcd52f9f1.
 - Next: those fixes + compare3 check, ACCEPTED entries, changesets (kernel, capybara, design),
   verify --fast, push, ready PR (Refs #973), visual-update, ci-ok green.
+- Blind review 2 moderates: all three were reference-side against the spec, fixed in c3c5883e3
+  (disabled primary keeps the `line` border and `disabled` text, §6.1; the menu and picker sheets
+  keep the bottom sheet's top line, §6.59; an empty state without an action draws no action slot).
+  Compare rerun in the Linux image: every pair pixel-equal but anti-aliasing (no moderate left, so
+  no third blind pass). ACCEPTED + changesets 92469e2af; origin/main merged (project skills' bare
+  names carried into the menu); verify --fast, check:platform-ops, check:web-ui and the changed
+  kernel tests pass. Next: push, ready PR, reference-update + visual-update, ci-ok.
