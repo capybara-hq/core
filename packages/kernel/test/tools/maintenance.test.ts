@@ -216,6 +216,22 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         deleteStaging: async (d) => void calls.push(["file-staging-delete", d]),
         releaseFile: async (d) => void calls.push(["file-release", d]),
       },
+      {
+        dispatch: async () => {
+          calls.push(["file-library-hash"]);
+          return 0;
+        },
+        runOrgBatch: async (d) => {
+          calls.push(["file-library-hash-org", d]);
+          return { ran: true, outcomes: {}, next: null };
+        },
+      },
+      {
+        run: async () => {
+          calls.push(["file-library-backfill"]);
+          return "copied";
+        },
+      },
       { deleteObject: async (d) => void calls.push(["platform-icon-delete", d]) },
       {
         attempt: async (orgId, noticeId, opts) => {
@@ -247,6 +263,9 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     const staging = { orgId: "o", fileId: "f1", objectKey: "uploads/f1" };
     await processor.process(job("file-staging-delete", staging));
     await processor.process(job("file-release", { orgId: "o", fileId: "f2" }));
+    await processor.process(job("file-library-hash", null));
+    await processor.process(job("file-library-hash-org", { orgId: "o", after: null }));
+    await processor.process(job("file-library-backfill", null));
     const iconObject = { purpose: "app", objectKey: `platform-icons/app-${"a".repeat(64)}.png` };
     await processor.process(job("platform-icon-delete", iconObject));
     await processor.process(job("device-conversation-notice", { orgId: "o", noticeId: "n1" }));
@@ -275,6 +294,9 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["blob-delete", { orgId: "o", blobId: "b1" }],
       ["file-staging-delete", staging],
       ["file-release", { orgId: "o", fileId: "f2" }],
+      ["file-library-hash"],
+      ["file-library-hash-org", { orgId: "o", after: null }],
+      ["file-library-backfill"],
       ["platform-icon-delete", iconObject],
       // the prompt attempt runs on a short device budget
       ["conversation-notice", "o", "n1", 5_000],

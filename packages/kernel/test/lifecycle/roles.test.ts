@@ -243,11 +243,13 @@ describe("role modules", () => {
       "AccountAvatarCleanupJob",
       "AttachmentCleanupJob",
       "BackgroundTaskPollJob",
+      "BlobSweepJob",
       "CatalogJobs",
       "ClientReportsCron",
       "ConversationNoticeSweepJob",
       "DirectoryScanJob",
       "FileDraftCleanupJob",
+      "FileLibraryKickoffJob",
       "GatewayCheckJob",
       "InitialPasswordCleanupJob",
       "LegacySandboxCleanupJob",
@@ -269,7 +271,7 @@ describe("role modules", () => {
   it("all roles in one process: the same crons and consumers, once each", async () => {
     const a = await start(["api", "worker", "gateway"]);
     const { jobHosts, processors } = scan(a);
-    expect(jobHosts).toHaveLength(21);
+    expect(jobHosts).toHaveLength(23);
     // the same cron jobs and intervals as the worker-only process, each registered once
     expect(workerSchedules).toBeDefined();
     expect(schedulesOf(a)).toEqual(workerSchedules);

@@ -25,8 +25,11 @@ import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { PluginsReconcileJob } from "../extensions/lifecycle.js";
 import { LifecycleHookWorkersModule } from "../extensions/lifecycle-hooks.js";
+import { BlobSweepJob } from "../files/blob-sweep.job.js";
 import { FileDraftCleanupJob } from "../files/draft-cleanup.job.js";
+import { FileLibraryKickoffJob } from "../files/hash-job.js";
 import { LibraryFilesModule } from "../files/library.module.js";
+import { FileLibraryJobsModule } from "../files/library-jobs.module.js";
 import { AccountAvatarCleanupJob } from "../identity/account-avatars.service.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { InitialPasswordCleanupJob } from "../identity/initial-passwords.job.js";
@@ -100,6 +103,8 @@ export class WorkerModule {
         AttachmentsModule,
         // the hourly cleanup of expired uploads and drafts
         LibraryFilesModule,
+        // the hashing and catch-up copy the kickoff owes
+        FileLibraryJobsModule,
         IdentityModule,
         StorageModule,
         SandboxModule,
@@ -124,6 +129,9 @@ export class WorkerModule {
         AttachmentCleanupJob,
         // expired uploads and composer drafts of the file library (file library spec §3)
         FileDraftCleanupJob,
+        // the daily blob sweep and the hourly kickoff of hashing and the catch-up copy (§7, §9)
+        BlobSweepJob,
+        FileLibraryKickoffJob,
         StoragePurgeJob,
         SandboxSweepJobs,
         LegacySandboxCleanupJob,

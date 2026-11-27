@@ -15,6 +15,6 @@ import { LibraryFilesService } from "./library-files.service.js";
 @Module({
   imports: [StorageModule, BlobObjectsModule, EventLogModule],
   providers: [BlobHashLock, BlobsService, LibraryFilesService],
-  exports: [BlobsService, LibraryFilesService],
+  exports: [BlobHashLock, BlobsService, LibraryFilesService],
 })
 export class LibraryFilesModule {}

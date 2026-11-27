@@ -53,13 +53,57 @@ export const OUTBOX_JOBS = {
     opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
   },
   // `files/blob-objects.ts` BLOB_DELETE_JOB: owed with a blob turned `deleting` (an upload dropped
-  // before use whose own blob nothing else points at; the blob sweep), under `blobDeleteJobId`
+  // before use whose own blob nothing else points at; the blob sweep; a hashing merge's
+  // duplicate), under `blobDeleteJobId`
   "blob-delete": {
     queue: "cap-kernel-maintenance",
     idempotent:
       "Deletes the object and row only of a blob still in deleting status that no file or share points at; deleting a missing object is a no-op",
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
     opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
+  // `files/hash-job.ts` FILE_LIBRARY_HASH_JOB: the hashing dispatcher, owed by the hourly kickoff
+  // under its own name as id
+  "file-library-hash": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Owes each org's first hashing batch under a deterministic id; a second run owes the same ids, deduplicated",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // removed either way, so the next kickoff can owe it again
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
+  // `files/hash-job.ts` FILE_LIBRARY_HASH_ORG_JOB: one org's hashing batch, owed by the dispatcher
+  // and by the previous batch, under `fileLibraryHashOrgJobId`
+  "file-library-hash-org": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Holds the org's hashing lock and re-checks each blob under its row lock and the hash's lock; a blob already hashed or merged is skipped",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
+  // `files/library-backfill.ts` FILE_LIBRARY_BACKFILL_JOB: the one-off catch-up copy, owed by the
+  // kickoff until it settled, under its own name as id
+  "file-library-backfill": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Does nothing once the settled marker exists; the copy itself is idempotent and writes the marker in its own transaction",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 30000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
   },
   // `files/blob-objects.ts` FILE_RELEASE_JOB: owed, deferred, by every discard and draft cleanup
   // of an upload, under `fileReleaseJobId`
