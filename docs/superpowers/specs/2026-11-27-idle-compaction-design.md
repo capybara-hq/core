@@ -865,7 +865,7 @@ which also cost the three constraints). `deepseek-v4-pro` keeps the user facts b
 tool-result and assistant-text facts in the in-context form. `gpt-6.2-astra`, the largest GPT-5.6+
 model the key lists, ran through the Responses API (it refuses function tools on Chat Completions
 with its default effort); the account's credits ran out after 4 seeds, so it is undecided and stays
-on the transcript path until it is gated in full. Phase 2: idle compaction only pays off on
+on the transcript path until it is gated in full (follow-up #1002). Phase 2: idle compaction only pays off on
 families where the in-context summary is used, and GPT-5.6+ is the only family whose default
 (`30m`) cache qualifies for idle compaction without the long tier, so whether an OpenAI model is in
 this table decides whether phase 2 does anything by default; today none is.
