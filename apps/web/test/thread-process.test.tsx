@@ -337,6 +337,69 @@ describe("the thread draws process blocks", () => {
     expect(document.querySelectorAll('[data-extension-card="todo/tasks-card"]')).toHaveLength(1);
   });
 
+  it("a running head times the run from run_started, not from its first row (#927)", async () => {
+    const at = (e: ConversationEvent, s: number) => ({
+      ...e,
+      createdAt: new Date(Date.UTC(2026, 9, 26, 6, 0, 0) + s * 1000).toISOString(),
+    });
+    api(
+      [
+        at(userMsg(1, "go"), 0),
+        at(runStarted(2), 1),
+        // the first model call thinks for 29 s before its first row
+        at(step(3, 0, [bash("t1", "rm -rf build")]), 30),
+        // the approval stops the run's clock: 39 s of work, whenever the page is read
+        at(
+          ev(4, "approval_requested", {
+            step: 0,
+            callId: "t1",
+            approvalId: "ap1",
+            toolKey: "Bash",
+            expiresAt: "2099-01-01T00:00:00.000Z",
+          }),
+          40,
+        ),
+      ],
+      {
+        [`GET ${ORG}/approvals/ap1`]: () => json(404, { error: { code: "not_found" } }),
+      },
+    );
+    await renderChatRoute();
+    const block = await vi.waitFor(theBlock);
+    expect(block.getAttribute("data-state")).toBe("waiting");
+    expect(block.querySelector('[data-part="process-time"]')?.textContent).toBe("39s");
+  });
+
+  it("a finished head shows the pinned badge its tool recorded, without reading the view (#928)", async () => {
+    const view = vi.fn(() => json(200, { view: { badge: "9/9", blocks: [] } }));
+    api(
+      [
+        userMsg(1, "plan it"),
+        runStarted(2),
+        step(3, 0, [{ type: "tool_call", id: "td", name: "plugin__todo__write", input: {} }]),
+        ev(4, "tool_result", {
+          step: 0,
+          callId: "td",
+          toolKey: "plugin__todo__write",
+          content: "ok",
+          isError: false,
+          card: { plugin: "todo", view: "tasks-card", placement: "pinned", badge: "3/5" },
+        }),
+        step(5, 1, [{ type: "text", text: "Planned." }], "end_turn"),
+        finished(6),
+      ],
+      {
+        [`GET ${ORG}/ui/contributions`]: () => json(200, { items: [TODO_CARD] }),
+        [`GET ${ORG}/ui/views/todo/tasks-card`]: view,
+      },
+    );
+    await renderChatRoute();
+    await screen.findByText("Planned.");
+    const head = within(theBlock()).getByRole("button", { name: /Worked/ });
+    await vi.waitFor(() => expect(head.textContent).toContain("Todos 3/5"));
+    expect(view).not.toHaveBeenCalled();
+  });
+
   it("chips use the catalog icon of an extension tool", async () => {
     api(
       [

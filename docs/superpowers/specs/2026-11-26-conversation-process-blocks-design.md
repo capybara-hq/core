@@ -75,7 +75,9 @@ only where it is still useful (a burst of parallel calls).
 
 - **Head** (one tool line, `row.dense`, never wraps, ellipsis before the status words):
   - Running: `spinner` (accent) + "正在运行 · <current step label>" / "Running · <label>" + the
-    elapsed time at the end (`faint`, tabular).
+    elapsed time at the end (`faint`, tabular): the run's working time from its `run_started`
+    (waits for a person left out, as the status bar and the finished head count it), on the run's
+    latest block only.
   - Waiting for a person: `hand` in `accent` + "等待你批准" (or the existing waiting words,
     `waitingFor` aware: "等待 张三 批准") + the step label.
   - Finished: up to six **kind chips** (20 px circles, `panel` ground, `line-soft` border, 11 px
@@ -101,8 +103,10 @@ only where it is still useful (a burst of parallel calls).
   closed once the run's latest list has the item done (#924).
 - Earlier blocks of a run that a queued message split show "已处理" / "Worked" without a time; the
   working time sits on the run's last block.
-- The head's pinned summary (the pinned card's title and badge) comes from the view cache only:
-  after a reload a finished head may omit it rather than read every old card (Execution ruling 11).
+- The head's pinned summary (the pinned card's title and badge): the title is the card
+  contribution's, the badge its view's from the view cache when the card has been drawn, else the
+  badge the tool recorded on its result (`ToolResult.card.badge`, pinned only), so a finished head
+  shows it after a reload without reading every old card (Execution ruling 11, amended).
 
 ## 2. Icons
 
@@ -175,6 +179,8 @@ card?: {
   placement?: "output" | "pinned" | "process";
   /** Pinned only: the card as Markdown (at most 2000 characters), for channels. */
   text?: string;
+  /** Pinned only: the card's state (its view's badge, at most 32 characters), for the head. */
+  badge?: string;
 };
 ```
 
@@ -308,7 +314,9 @@ Steps 1–2 ship alone; 3–5 follow together.
 10. Web: the Default option of the process setting saves NULL (direct chats detailed, group chats
     brief).
 11. The pinned head summary (title + badge) uses the view cache only; after a reload a finished
-    head may omit it (§1.3).
+    head may omit it (§1.3). Amended (#928): the tool also records the badge on its result
+    (`card.badge`, pinned only, at most 32 characters), which the head uses when the view is not
+    in the cache.
 12. Channels: the native `progress` card goes only to a plugin that declares `features.progress`
     and `cards` (released lark, slack and telegram have no `progress` branch, so the card would
     fail their delivery); every other channel gets the same card as `renderCardAsText` text, sent once and
