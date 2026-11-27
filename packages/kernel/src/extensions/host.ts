@@ -13,6 +13,7 @@ import {
   type StaticExtensionManifest,
   type ToolHandler,
   type ToolSpec,
+  type ToolWatcher,
   type UiContribution,
   type UiSlotSpec,
 } from "@capybara-hq/plugin-sdk";
@@ -2542,12 +2543,20 @@ export class ExtensionHost {
    * 所有插件经 `ctx.tools.register` 注册的工具（按加载顺序、注册顺序），附带实例的在途计数：
    * 执行时经 `inflight.run` 调用 handler，实例撤销时排空 / 中止。
    */
-  tools(): { plugin: string; spec: ToolSpec; handler: ToolHandler; inflight: InflightTracker }[] {
+  tools(): {
+    plugin: string;
+    spec: ToolSpec;
+    handler: ToolHandler;
+    /** The tool's watcher for watched waits (`ctx.tools.register(…, { watch })`), if any. */
+    watch?: ToolWatcher;
+    inflight: InflightTracker;
+  }[] {
     return this.registry.all().flatMap((i) =>
       i.tools.map((t) => ({
         plugin: i.name,
         spec: t.spec,
         handler: t.handler,
+        ...(t.watch !== undefined && { watch: t.watch }),
         inflight: i.inflight,
       })),
     );

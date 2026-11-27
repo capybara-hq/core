@@ -56,7 +56,7 @@ describe("内置工具的显示摘要", () => {
     ];
     const answered = await t.run(
       { questions },
-      ctx({ resume: { answer: { q0: "A" }, state: null } }),
+      ctx({ resume: { answer: { q0: "A" }, state: null, outcome: "answered" } }),
     );
     expect(summaryOf(answered)).toEqual({
       zh: "用户回答了 1 个问题",
@@ -64,13 +64,16 @@ describe("内置工具的显示摘要", () => {
     });
     const timedOut = await t.run(
       { questions },
-      ctx({ resume: { answer: null, state: { hours: 24 } } }),
+      ctx({ resume: { answer: null, state: { hours: 24 }, outcome: "expired" } }),
     );
     expect(summaryOf(timedOut)).toEqual({
       zh: "用户未在 24 小时内回答",
       en: "No answer within 24h",
     });
-    const dismissed = await t.run({ questions }, ctx({ resume: { answer: null, state: null } }));
+    const dismissed = await t.run(
+      { questions },
+      ctx({ resume: { answer: null, state: null, outcome: "expired" } }),
+    );
     expect(summaryOf(dismissed)).toEqual({
       zh: "用户关闭了提问",
       en: "User dismissed the question",

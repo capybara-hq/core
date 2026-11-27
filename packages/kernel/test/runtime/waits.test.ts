@@ -546,7 +546,10 @@ describe("输入请求等待", () => {
     const evs = await eventsOf(db, convId);
     expect(memState().askCalls).toEqual([
       { input: { rounds: 1 }, resume: null },
-      { input: { rounds: 1 }, resume: { state: { n: 1 }, answer: { color: "red" } } },
+      {
+        input: { rounds: 1 },
+        resume: { state: { n: 1 }, answer: { color: "red" }, outcome: "answered" },
+      },
     ]);
     expect(ofType(evs, "question_answered").map((e) => e.payload)).toEqual([
       {
@@ -583,7 +586,11 @@ describe("输入请求等待", () => {
         outcome: "expired",
       },
     ]);
-    expect(memState().askCalls.at(-1)?.resume).toEqual({ state: { n: 1 }, answer: null });
+    expect(memState().askCalls.at(-1)?.resume).toEqual({
+      state: { n: 1 },
+      answer: null,
+      outcome: "expired",
+    });
     expect(resultsOf(evs)).toMatchObject([{ content: "no answer", isError: false }]);
   });
 

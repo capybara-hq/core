@@ -321,7 +321,20 @@ export interface InputRequired {
    * warning and the form is asked as usual.
    */
   open?: UiOpen;
+  /**
+   * A watched wait: besides the person's answer and the deadline, the tool's registered watcher
+   * ({@link ToolWatcher}, `ctx.tools.register(spec, handler, { watch })`) may settle it. The
+   * kernel parks the run (no model turn, no worker held) and calls the watcher every 10 s while
+   * the wait is pending. `deadlineMs` is a positive integer number of milliseconds (anything else
+   * is refused with an invalid-form result), bounded by the deployment's
+   * `tools.approvalTimeoutHours`; a shorter kernel deadline resumes the call with
+   * `outcome: "expired"`.
+   */
+  watch?: { deadlineMs: number };
 }
+
+/** How an input round ended when the handler is called again ({@link ToolCallContext.resume}). */
+export type ToolResumeOutcome = "answered" | "woken" | "expired";
 
 export type FormAnswer = Record<string, string | number | boolean | string[]>;
 
@@ -369,8 +382,14 @@ export interface ToolCallContext {
    */
   idempotencyKey?: string;
   signal: AbortSignal;
-  /** null = the user cancelled or it timed out. */
-  resume?: { state: unknown; answer: FormAnswer | null };
+  /**
+   * The previous input round's state and answer. `answer` is null unless the person answered.
+   * `outcome`: `answered` (the person answered), `woken` (a watched wait's watcher settled it, or
+   * the kernel ended the watch early: the watcher failed, is gone, or the tool is no longer
+   * available) or `expired` (the deadline passed). A tool with its own source of truth (a watched
+   * condition) asks it first and uses `outcome` only for what happened otherwise.
+   */
+  resume?: { state: unknown; answer: FormAnswer | null; outcome: ToolResumeOutcome };
   /**
    * The extension's effective deployment config for this org: the platform's deployment config
    * with the org's copy applied to the overridable fields (every field not marked `platformOnly`),
@@ -390,6 +409,30 @@ export type ToolHandler = (
   input: unknown,
   ctx: ToolCallContext,
 ) => Promise<ToolResult | InputRequired>;
+
+/**
+ * What a watcher gets: the call's context as the handler got it (the same `callId`,
+ * `idempotencyKey`, accounts, conversations and effective config), without `resume`, plus the
+ * state the handler returned with its watched `InputRequired`.
+ */
+export interface ToolWatchContext extends Omit<ToolCallContext, "resume"> {
+  state: unknown;
+}
+
+/**
+ * A watched wait's watcher (`ctx.tools.register(spec, handler, { watch })`). The kernel calls it
+ * every 10 s while the wait is pending, never twice at once for one wait, never after it
+ * settled; `settle` ends the wait (the handler is called again with `resume.outcome: "woken"`),
+ * `pending` keeps it. It must be cheap: the kernel aborts `ctx.signal` and stops waiting for it
+ * after 5 s, which counts as a failure, as a throw does; 3 consecutive failures end the wait. A
+ * watcher that ignores the signal keeps running after that, so a later poll may overlap it, and a
+ * poll already running when the wait ends (the person answered) may overlap the resumed handler:
+ * keep the watcher read-only and honour `ctx.signal`. Its
+ * `ctx.deviceAccess.request` calls run as `ifRunning` (a stopped device or service answers
+ * `not_running`, nothing is resumed or started), `ensureService` is refused, and
+ * `reportBlockedHosts` calls are dropped.
+ */
+export type ToolWatcher = (ctx: ToolWatchContext) => Promise<"settle" | "pending">;
 
 /**
  * Tool error categories:

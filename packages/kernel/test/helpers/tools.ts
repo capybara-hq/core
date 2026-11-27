@@ -76,6 +76,10 @@ export function credentialsFor(
 
 /** No run resumes here: a hand-built decision leaves its run as it is (no kernel, no outbox). */
 const noResume = { resumeIn: async () => "not-waiting" as const };
+/** No outbox here: a hand-built watched ask owes no poll (nothing would consume it). */
+const noOutbox = { add: async () => true };
+/** No advisory lock here: a hand-built watched ask checks its cap without one. */
+const noWatchLock = { lock: async () => {} };
 
 /**
  * The approvals over a test's Kysely and an event log; `events` gets `approval.decided`.
@@ -139,14 +143,24 @@ export function questionsFor(
   events: KernelEvents = new KernelEvents(quiet),
 ): QuestionsService {
   const h = handlesFor(db);
-  return new QuestionsService(h.db, configFrom(config), eventLog, events, h.txHost, noResume);
+  return new QuestionsService(
+    h.db,
+    configFrom(config),
+    eventLog,
+    events,
+    h.txHost,
+    noResume,
+    noOutbox,
+    noWatchLock,
+  );
 }
 
 /** What a hand-built pipeline runs on (the shape of the old `ToolPipelineDeps`). */
 export interface PipelineTestDeps {
   db: Kysely<any>;
   eventLog: EventLog;
-  registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">;
+  registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler"> &
+    Partial<Pick<ToolRegistry, "watcher">>;
   credentials: Pick<Credentials, "injection" | "onUnauthorized">;
   breaker: Pick<Breaker, "check" | "failure" | "success">;
   outputs: Pick<ToolOutputs, "save" | "load">;
@@ -213,7 +227,7 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
     undefined,
     // no messages between agents: `SendMessage` / `SubagentHandback` calls are refused
     undefined,
-    d.registry,
+    { watcher: () => undefined, ...d.registry },
     d.credentials,
     d.breaker,
     d.outputs,

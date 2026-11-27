@@ -206,7 +206,7 @@ describe("validateChannelCard", () => {
   it("question：id、state、webUrl、form", () => {
     expect(validateChannelCard({ ...question, id: "" })).toEqual(["id must be a non-empty string"]);
     expect(validateChannelCard({ ...question, state: "approved" })).toEqual([
-      'state must be one of "pending", "answered", "skipped", "expired", "cancelled"',
+      'state must be one of "pending", "answered", "skipped", "expired", "cancelled", "woken"',
     ]);
     expect(validateChannelCard({ ...question, webUrl: "javascript:alert(1)" })).toEqual([
       "webUrl must be an absolute http(s) URL of at most 2000 characters",
@@ -395,6 +395,13 @@ describe("renderCardAsText", () => {
     // without labels (and once decided) the text is unchanged
     expect(renderCardAsText(approval, "en")).not.toContain("Options");
     expect(renderCardAsText({ ...c, state: "approved" }, "en")).not.toContain("Options");
+  });
+
+  it("a woken question (a watched wait its watcher ended): zh 等待已结束 / en Wait ended", () => {
+    expect(validateChannelCard({ ...question, state: "woken" })).toEqual([]);
+    expect(renderCardAsText({ ...question, state: "woken" }, "zh")).toContain("状态：等待已结束");
+    expect(renderCardAsText({ ...question, state: "woken" }, "en")).toContain("Status: Wait ended");
+    expect(questionStateLabel("woken", "en")).toBe("Wait ended");
   });
 
   it("a skipped approval: zh 已跳过 / en Skipped", () => {

@@ -40,6 +40,7 @@ function ChildQuestion({ orgId, wait }: { orgId: string; wait: Wait }) {
         callId: "",
         form: question.form,
         expiresAt: question.expiresAt,
+        ...(question.watch === true || wait.watch === true ? { watch: true as const } : {}),
         answered:
           question.status === "pending"
             ? null

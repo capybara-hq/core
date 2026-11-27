@@ -259,6 +259,8 @@ export interface QuestionItem {
   expiresAt: string;
   /** A plugin tool's `InputRequired.open`: the panel the question names (the card's action). */
   open?: { plugin: string; contribution: string; item?: string };
+  /** A watched wait (the agent waits for a condition): drawn as a wait card. */
+  watch?: true;
   /** `byPerson`: the answerer as a question read names them (a sub-agent's wait), when known. */
   answered: (QuestionOutcome & { byPerson?: PersonRef | null }) | null;
 }
@@ -420,6 +422,8 @@ export type TimelineEntry =
       approver?: Waiter;
       toolKey: string;
       expiresAt?: string;
+      /** The child's question is a watched wait. */
+      watch?: true;
       /**
        * The wait is over: a later wait of the same sub-agent replaced it, or its row no longer
        * waits (decided, answered, connected, finished). The process block folds it into its rail.
@@ -1866,6 +1870,7 @@ export function buildEventTimeline(
           ...(e.payload.questionId !== undefined ? { questionId: e.payload.questionId } : {}),
           ...approverField(e.payload),
           ...(e.payload.expiresAt !== undefined ? { expiresAt: e.payload.expiresAt } : {}),
+          ...(e.payload.watch === true ? { watch: true as const } : {}),
         };
         out.push(wait);
         const list = subagentWaits.get(top) ?? [];
@@ -1953,6 +1958,7 @@ export function buildEventTimeline(
             form: e.payload.form,
             expiresAt: e.payload.expiresAt,
             ...(e.payload.open !== undefined ? { open: e.payload.open } : {}),
+            ...(e.payload.watch === true ? { watch: true as const } : {}),
             answered: null,
           },
         });

@@ -1270,7 +1270,10 @@ export type QuestionState =
   | { kind: "skipped"; who?: string | PersonLike }
   /** The run ended (stopped, failed) before an answer. */
   | { kind: "cancelled" }
-  | { kind: "expired" };
+  /** `wait`: a watched wait (the agent waited for a condition) that reached its deadline. */
+  | { kind: "expired"; wait?: boolean }
+  /** A watched wait its watcher ended (the condition held, or it could no longer be watched). */
+  | { kind: "woken" };
 
 export type QuestionBlockProps = {
   /** The question (the form title). */
@@ -1618,7 +1621,11 @@ export function QuestionBlock(p: QuestionBlockProps): JSX.Element {
                 ? "hitl.skipped"
                 : s.kind === "cancelled"
                   ? "hitl.cancelledQuestion"
-                  : "hitl.expiredQuestion",
+                  : s.kind === "woken"
+                    ? "hitl.waitEnded"
+                    : s.wait === true
+                      ? "hitl.waitTimedOut"
+                      : "hitl.expiredQuestion",
             )}
             {who}
           </span>

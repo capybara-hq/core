@@ -20,6 +20,8 @@ describe("tools 配置段", () => {
       outputPreviewChars: 2000,
       outputRetentionDays: 30,
       approvalTimeoutHours: 24,
+      watchConcurrency: 50,
+      maxWatchedWaitsPerAccount: 10,
       searchThresholdTools: 30,
       searchThresholdTokens: 8000,
       driftIntervalHours: 24,

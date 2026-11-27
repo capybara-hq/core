@@ -19,7 +19,7 @@ import type {
 import type { ExtensionNet } from "./net.js";
 import type { SetupCheckDefinition } from "./setup-check.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
-import type { ToolCallContext, ToolHandler, ToolSpec } from "./tool.js";
+import type { ToolCallContext, ToolHandler, ToolSpec, ToolWatcher } from "./tool.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
 
 /** Logger interface. */
@@ -192,10 +192,15 @@ export interface DeviceAccessCtx {
    * closed) and starts it through the device's provider.
    */
   ensureService(call: ToolCallContext, spec: DeviceServiceSpec): Promise<DeviceServiceStatus>;
-  /** One request to the service's socket; resolves its answer. */
+  /**
+   * One request to the service's socket; resolves its answer. `ifRunning`: only a running
+   * instance with the service running answers, otherwise {@link DeviceAccessError}
+   * `not_running`; nothing is resumed or started (a running instance's last use is refreshed). A
+   * watcher's requests ({@link ToolWatcher}) always run so.
+   */
   request(
     call: ToolCallContext,
-    req: { service: string; body: Uint8Array; timeoutMs: number },
+    req: { service: string; body: Uint8Array; timeoutMs: number; ifRunning?: boolean },
   ): Promise<Uint8Array>;
   /**
    * The service saw requests to `hosts` refused by the device's network during this call, each
@@ -246,7 +251,9 @@ export type DeviceAccessErrorCode =
   | "provider_unavailable"
   | "capability_missing"
   | "not_owner"
-  | "service_not_declared";
+  | "service_not_declared"
+  /** An `ifRunning` request found the device's instance or the service not running. */
+  | "not_running";
 
 /** A {@link DeviceAccessCtx} call was refused; the message is actionable English for the model. */
 export class DeviceAccessError extends Error {
@@ -314,8 +321,11 @@ export interface ExtensionContext {
     ): void;
   };
   tools: {
-    /** Registers a tool; callable only during `setup`, names must not repeat. */
-    register(spec: ToolSpec, handler: ToolHandler): void;
+    /**
+     * Registers a tool; callable only during `setup`, names must not repeat. `opts.watch`: the
+     * tool's watcher for watched waits (`InputRequired.watch`, see {@link ToolWatcher}).
+     */
+    register(spec: ToolSpec, handler: ToolHandler, opts?: { watch?: ToolWatcher }): void;
   };
   /**
    * Consume extension points provided by other extensions: only non-brokered refs declared in the

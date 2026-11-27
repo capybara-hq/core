@@ -139,6 +139,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   (`attachmentReferenceText`, with the object URI and `FetchAttachment`) — never bytes, never a truncated inline,
   recorded as outcome `reference`. No new model-visible input is logged, so no `DriftReason`. Case in
   `reconstruct.test.ts` ("a text attachment over the inline cap …").
+- **A watched wait** (browser long waits spec §5.4): what the model reads is the resumed handler's `tool_result`, or
+  `WAIT_SKIPPED_TEXT` for one skipped by a message (a logged `tool_result`); `question_asked.watch` and
+  `question_answered` outcome `woken` are not model-visible. No `DriftReason`; full-run replay returns the recorded
+  result and never creates questions or polls (`reconstruct.test.ts` "watched waits").
 - **A question skipped by a message** (reply-while-question spec §12): the skipped result is a logged `tool_result`,
   the message a logged `user_message` taken in at the recorded `absorbedUpToSeq`; `question_answered` (outcome
   `skipped`, `skippedBySeq`) is not model-visible. No `DriftReason`; full-run replay returns the recorded skipped

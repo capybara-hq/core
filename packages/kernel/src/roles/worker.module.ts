@@ -49,6 +49,7 @@ import { StoragePurgeJob } from "../storage/purge.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ConnectorToolsWorkersModule } from "../tools/connector-tools.processor.js";
 import { ToolJobs } from "../tools/jobs.js";
+import { ToolWatchWorkersModule } from "../tools/tool-watch.processor.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { WorkerRole } from "./worker-role.js";
 
@@ -83,6 +84,8 @@ export class WorkerModule {
         PushWorkersModule,
         // connector tool listings owed after a create or a setup (`cap-connector-tools`)
         ConnectorToolsWorkersModule,
+        // watched-wait polls owed with a watched ask (`cap-kernel-tool-watch`)
+        ToolWatchWorkersModule.forRoot(config),
         // template connectors an org never had, owed by installs and extension switch-ons
         // (`cap-template-connectors`)
         TemplateConnectorsWorkersModule,

@@ -88,6 +88,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-push": { provides: ["push-provider@1"] },
   "fake-client": { provides: [] },
   "fake-client-broken": { provides: [] },
+  "fake-watch": { provides: [] },
 };
 
 let out: string;

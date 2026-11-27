@@ -7,7 +7,7 @@ import type { PersonRef } from "./people";
  * （与 plugin-sdk `validateAnswer` 同一套规则的子集；最终以内核校验为准）。
  */
 
-export type QuestionStatus = "pending" | "answered" | "skipped" | "expired" | "cancelled";
+export type QuestionStatus = "pending" | "answered" | "skipped" | "expired" | "cancelled" | "woken";
 
 export interface Question {
   id: string;
@@ -20,6 +20,8 @@ export interface Question {
   /** The person who answered (null while open or when the account is gone). */
   answeredByPerson: PersonRef | null;
   expiresAt: string;
+  /** A watched wait (the agent waits for a condition): drawn as a wait card. */
+  watch?: true;
 }
 
 type FormField = InputForm["fields"][number];
