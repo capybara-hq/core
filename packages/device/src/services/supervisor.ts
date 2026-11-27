@@ -51,6 +51,12 @@ export const SERVICE_READY_TIMEOUT_MS = 15_000;
 /** How long a stopped service gets to exit on its own before it is killed. */
 export const SERVICE_STOP_GRACE_MS = 2_000;
 
+/**
+ * How long a service that removed its socket (it is stopping on its own: an idle stop, a crash
+ * handler) gets to exit before this program stops it, so a request can start a fresh one.
+ */
+export const SERVICE_EXITING_GRACE_MS = 2_000;
+
 /** The record in `svc/` that the bare-name entries from before ids were removed (once). */
 const LEGACY_PRUNED_MARKER = ".ids-v1";
 
@@ -223,6 +229,8 @@ interface Running {
   conns: Set<Socket>;
   /** Resolves when the process is gone and the record is cleared. */
   gone: Promise<void>;
+  /** Set when this program stops it (a stop, a restart, a reconcile): it is not started again. */
+  stopping: boolean;
 }
 
 export interface ServiceSupervisorOptions {
@@ -237,6 +245,8 @@ export interface ServiceSupervisorOptions {
   readyTimeoutMs?: number;
   /** A test seam: runs right before the launch, after every directory was made and checked. */
   beforeLaunch?: () => Promise<void>;
+  /** How long a service without its socket gets to exit ({@link SERVICE_EXITING_GRACE_MS}). */
+  exitingGraceMs?: number;
   now?: () => Date;
 }
 
@@ -377,8 +387,8 @@ export function checkRelativePath(p: string, what: string): string {
  */
 export class ServiceSupervisor {
   private readonly running = new Map<string, Running>();
-  /** The ensure in flight per name (ensures of one name run one after another). */
-  private readonly starting = new Map<string, Promise<DeviceServiceStatus>>();
+  /** The ensure or restart in flight per name (they run one after another per name). */
+  private readonly starting = new Map<string, Promise<unknown>>();
   /** Aborts the start in flight per name (a stop during a start). */
   private readonly startCtl = new Map<string, AbortController>();
   private readonly aliasRoot: string;
@@ -444,9 +454,9 @@ export class ServiceSupervisor {
     if (opts.ifRunning) checkName(spec.name);
     else checkSpec(spec);
     const name = spec.name;
-    const previous = this.starting.get(name);
-    const run = (async () => {
-      await previous?.catch(() => {});
+    const run = this.serialize(name, async () => {
+      // a process that removed its socket is on its way out: it is not running for this ensure
+      await this.settleExiting(name);
       // the effective network now (the owner's ceiling may have narrowed since the start)
       const launcher = this.o.launcher();
       const key = launcher?.networkKey ? await launcher.networkKey(network) : networkKey(network);
@@ -467,19 +477,26 @@ export class ServiceSupervisor {
       if (!opts.ifRunning && spec.files === undefined)
         await this.checkStoredDigest(name, opts.filesDigest);
       if (current) {
+        current.stopping = true;
         await current.proc.stop(SERVICE_STOP_GRACE_MS);
         await current.gone;
       }
-      const ctl = new AbortController();
-      this.startCtl.set(name, ctl);
-      try {
-        return await this.start(launch, network, key, ctl.signal, {
+      return this.controlledStart(name, (startSignal) =>
+        this.start(launch, network, key, startSignal, {
           ...(opts.ifRunning ? { storedCode: true, runningDigest: current?.filesDigest } : {}),
           ...(opts.filesDigest !== undefined && { filesDigest: opts.filesDigest }),
-        });
-      } finally {
-        if (this.startCtl.get(name) === ctl) this.startCtl.delete(name);
-      }
+        }),
+      );
+    });
+    return withSignal(run, signal);
+  }
+
+  /** Runs `fn` after the ensure or restart of `name` in flight, as the one in flight now. */
+  private serialize<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.starting.get(name);
+    const run = (async () => {
+      await previous?.catch(() => {});
+      return fn();
     })();
     this.starting.set(name, run);
     void run
@@ -487,7 +504,69 @@ export class ServiceSupervisor {
         if (this.starting.get(name) === run) this.starting.delete(name);
       })
       .catch(() => {});
-    return withSignal(run, signal);
+    return run;
+  }
+
+  /** Runs a start under an internal signal that a stop of `name` aborts. */
+  private async controlledStart<T>(name: string, fn: (signal: AbortSignal) => Promise<T>) {
+    const ctl = new AbortController();
+    this.startCtl.set(name, ctl);
+    try {
+      return await fn(ctl.signal);
+    } finally {
+      if (this.startCtl.get(name) === ctl) this.startCtl.delete(name);
+    }
+  }
+
+  /**
+   * A running service whose socket is gone is stopping on its own (it removes its socket first and
+   * exits a moment later): waits up to {@link SERVICE_EXITING_GRACE_MS} for the process to exit,
+   * then stops it, so the name is free for a fresh start. Called only under {@link serialize}.
+   */
+  private async settleExiting(name: string): Promise<void> {
+    const r = this.running.get(name);
+    if (!r || (await isSocket(join(serviceRoot(this.o.deviceDir), name, SOCKET_NAME)))) return;
+    const graceMs = this.o.exitingGraceMs ?? SERVICE_EXITING_GRACE_MS;
+    let timer: NodeJS.Timeout | undefined;
+    const exited = await Promise.race([
+      r.gone.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), graceMs);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (exited) return;
+    // it was stopping on its own: still not a stop by this program, so a request revives it
+    await r.proc.stop(SERVICE_STOP_GRACE_MS);
+    await r.gone;
+  }
+
+  /**
+   * Starts again a service that a connection found without its socket (`was`, the record it
+   * found): once the old process is gone, the spec it was launched with runs on the code already
+   * in its code directory, as an `ifRunning` restart does. A service this program stopped stays
+   * stopped; one another caller started meanwhile is answered as it is.
+   */
+  private revive(name: string, was: Running): Promise<Running> {
+    return this.serialize(name, async () => {
+      await this.settleExiting(name);
+      const current = this.running.get(name);
+      if (current) return current;
+      if (was.stopping) throw new ServiceNotRunningError(name);
+      const launcher = this.o.launcher();
+      const key = launcher?.networkKey
+        ? await launcher.networkKey(was.launchNetwork)
+        : networkKey(was.launchNetwork);
+      await this.controlledStart(name, (startSignal) =>
+        this.start({ ...was.spec }, was.launchNetwork, key, startSignal, {
+          storedCode: true,
+          runningDigest: was.filesDigest,
+        }),
+      );
+      const started = this.running.get(name);
+      if (!started) throw new ServiceNotRunningError(name);
+      return started;
+    });
   }
 
   async stop(name: string, signal: AbortSignal, graceMs = SERVICE_STOP_GRACE_MS): Promise<void> {
@@ -496,6 +575,7 @@ export class ServiceSupervisor {
     const r = this.running.get(name);
     if (!r) return;
     signal.throwIfAborted();
+    r.stopping = true;
     await r.proc.stop(graceMs);
     await r.gone;
   }
@@ -530,6 +610,7 @@ export class ServiceSupervisor {
       stale.map(async (name) => {
         const r = this.running.get(name);
         if (!r || this.starting.has(name)) return;
+        r.stopping = true;
         await r.proc.stop(SERVICE_STOP_GRACE_MS);
         await r.gone;
       }),
@@ -615,15 +696,41 @@ export class ServiceSupervisor {
     return this.connect(name, "stream", signal);
   }
 
-  /** Connects to a running service's socket and sends the connection's kind. */
+  /**
+   * Connects to a running service's socket and sends the connection's kind. A start in flight is
+   * waited for first. A socket that is gone (or refuses) while the process still runs means the
+   * service is stopping on its own: it is started again once that process exited
+   * ({@link revive}), and the connection goes to the fresh one.
+   */
   private async connect(
     name: string,
     kind: "request" | "stream",
     signal: AbortSignal,
   ): Promise<Socket> {
     signal.throwIfAborted();
+    const inFlight = this.starting.get(name);
+    if (inFlight)
+      await withSignal(
+        inFlight.catch(() => {}),
+        signal,
+      );
     const r = this.running.get(name);
     if (!r) throw new ServiceNotRunningError(name);
+    let conn: Socket;
+    try {
+      conn = await this.dial(r, signal);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ECONNREFUSED") throw error;
+      conn = await this.dial(await withSignal(this.revive(name, r), signal), signal);
+    }
+    conn.write(encodeServiceMessage(Buffer.from(JSON.stringify({ kind }))));
+    return conn;
+  }
+
+  /** Opens a connection to the socket of `r`, tracked until it closes. */
+  private async dial(r: Running, signal: AbortSignal): Promise<Socket> {
+    signal.throwIfAborted();
     const conn = await new Promise<Socket>((resolve, reject) => {
       const c = createConnection(r.socket);
       const onAbort = () => {
@@ -642,7 +749,6 @@ export class ServiceSupervisor {
     });
     r.conns.add(conn);
     conn.once("close", () => r.conns.delete(conn));
-    conn.write(encodeServiceMessage(Buffer.from(JSON.stringify({ kind }))));
     return conn;
   }
 
@@ -762,6 +868,7 @@ export class ServiceSupervisor {
         () => {},
         () => {},
       ),
+      stopping: false,
     };
     let exited = false;
     record.gone = record.gone.then(async () => {
@@ -919,6 +1026,16 @@ async function readSmallFile(path: string): Promise<string | undefined> {
 }
 
 /** Whether `path` is a regular file itself (a link to one is not). */
+/** Whether `path` is a socket now (false when it is missing). */
+async function isSocket(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isSocket();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 async function isRegularFile(path: string): Promise<boolean> {
   try {
     return (await lstat(path)).isFile();
