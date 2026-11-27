@@ -260,9 +260,9 @@ Wave C4, parallel with Task 5 (disjoint: `apps/web` only).
 
 **Interfaces:**
 - Consumes: the HTTP shape of Task 4 (`promptCache.longTtl` in `GET/PATCH /admin/settings` and the org settings routes).
-- Copy (spec §6.4, exact): title "Prompt cache" / "提示缓存"; field `promptCache.longTtl`: "Long prompt cache" / "长提示缓存"; hint en "Requests use the model's cache tier of at least 30 minutes (such as 1 hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price instead of 1.25×). Idle compaction runs on these models only with this on." zh "请求改用模型至少 30 分钟的缓存档（如 1 小时），缓存写入按长档计价（Anthropic 约为输入价的 2 倍，而 5 分钟档约 1.25 倍）。开启后空闲压缩才会在这些模型上运行。" Phase 1 note: idle compaction ships in phase 2; the hint's last sentence stays (it describes the setting's purpose) — the maintainer may ask to drop it until phase 2 (decision point D7).
+- Copy (spec §6.4 without its last sentence, decision D7): title "Prompt cache" / "提示缓存"; field `promptCache.longTtl`: "Long prompt cache" / "长提示缓存"; hint en "Requests use the model's cache tier of at least 30 minutes (such as 1 hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price instead of 1.25×)." zh "请求改用模型至少 30 分钟的缓存档（如 1 小时），缓存写入按长档计价（Anthropic 约为输入价的 2 倍，而 5 分钟档约 1.25 倍）。" The spec's last sentence ("Idle compaction runs on these models only with this on." / "开启后空闲压缩才会在这些模型上运行。") is left out: UI copy does not describe a feature that has not shipped. Phase 2 restores it (see "Notes for phase 2"). The test asserts that the hint does not mention idle compaction.
 
-- [ ] **Step 1: Write the failing test** `prompt-cache-settings.test.tsx` (`renderRouteWithCache`): the platform settings page shows the "Long prompt cache" switch off by default; toggling it sends `PATCH /admin/settings` with `{ promptCache: { longTtl: true } }`; the org page shows "Follow the platform settings" with the platform's value, and saving an override sends `{ promptCache: { longTtl: true } }`, resetting sends `{ promptCache: null }`; a member without the settings role sees the read-only state (roles everywhere).
+- [ ] **Step 1: Write the failing test** `prompt-cache-settings.test.tsx` (`renderRouteWithCache`): the platform settings page shows the "Long prompt cache" switch off by default, with the hint text above in en and zh and no mention of idle compaction (`/idle|空闲/` does not match); toggling it sends `PATCH /admin/settings` with `{ promptCache: { longTtl: true } }`; the org page shows "Follow the platform settings" with the platform's value, and saving an override sends `{ promptCache: { longTtl: true } }`, resetting sends `{ promptCache: null }`; a member without the settings role sees the read-only state (roles everywhere).
 - [ ] **Step 2: Run** `pnpm exec vitest run apps/web/test/prompt-cache-settings.test.tsx` — FAIL.
 - [ ] **Step 3: Implement** the section and wire it; reads via the existing `defineQuery` of each page, writes via the existing `useAppMutation`.
 - [ ] **Step 4: Run** the test, `apps/web/test/admin-settings.test.tsx`, `apps/web/test/org-settings.test.tsx` — PASS; `pnpm check:web-ui`, `pnpm check:i18n`, `pnpm check:web-api-parity` — PASS.
@@ -383,7 +383,7 @@ Wave C6. Decides `IN_CONTEXT_BOUNDARY_MODE` for Task 9. Nothing depending on the
 - Fixtures: 20 conversations (fixed seeds), each 60–150k estimated tokens of realistic tool-using work (file reads, edits, command output, user corrections), built as event logs so `buildInContextCompactionRequest` builds the real request (marked mode, the plan's own `compactionPlan` boundary with `keepRecentTurns: 4`). Each plants 8 head facts before the boundary and 4 tail facts after it, every fact carrying a unique codeword (`ZQ-<seed>-H3`), one head fact being a security constraint ("never touch `secrets/`").
 - Models: every vendor with a key in `~/.capybara-test.env`: Anthropic (`CAPYBARA_TEST_ANTHROPIC_MODEL`, default `claude-haiku-5-5`), OpenAI (`CAPYBARA_TEST_OPENAI_MODEL`), DeepSeek and Qwen through `CAPYBARA_TEST_OAICOMPAT_*`. The test sends the request through a minimal raw client per protocol (as review-live does), never the plugins.
 - Metrics per model: tail leakage = share of conversations whose `<summary>` contains any tail codeword; head recall = share of head codewords present; constraint kept verbatim = share keeping the security constraint text. The same fixtures through the transcript request (`buildCompactionRequest` with the plan's transcript) give the baseline recall.
-- **Decision rule:** `"marked"` if, for every model tested, tail leakage ≤ 1/20, head recall ≥ transcript recall − 0.05 and the constraint is kept in ≥ 19/20; otherwise `"all"` (the in-context summary covers everything up to the compaction point and keeps no verbatim tail; spec §9.4 fallback). At least two vendors must have been tested; with fewer, the rule cannot decide and the orchestrator stops for the maintainer.
+- **Decision rule:** `"marked"` if, for every model tested, tail leakage ≤ 1/20, head recall ≥ transcript recall − 0.05 and the constraint is kept in ≥ 19/20; otherwise `"all"` (the in-context summary covers everything up to the compaction point and keeps no verbatim tail; spec §9.4 fallback). At least two vendors must have been tested; with fewer, the rule cannot decide: the gate stops and the coordinator decides (D4).
 
 - [ ] **Step 1: Write** the generator with a unit assertion (always runs): every fixture's planted codewords sit on the intended side of `compactionPlan(...).coversUpToSeq`, and the in-context builder returns a request (no skip) for each.
 - [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/runtime/context/in-context-boundary.live.test.ts` without the env — the fixture assertion PASSES, the live block is skipped.
@@ -432,7 +432,7 @@ Behavior:
 - [ ] **Step 7: Run** the four files, `packages/kernel/test/runtime/context/current-turn-compaction.test.ts`, `packages/kernel/test/runtime/permission-context-boundary.test.ts` and the full zero-drift file — PASS.
 - [ ] **Step 8: Commit** `feat(runtime): summarize from the cached prefix for every compaction` (changeset `@capybara-hq/capybara`: compaction summaries reuse the prompt cache; `compaction_summary.method`).
 
-**After wave C7:** `pnpm verify --fast` plus the changed tests; open core PR-B (Tasks 4–10, P0's and Task 8's spec revisions), body `Refs #974`, with the P0 fact table, the Q9 metric table and decision, and the decision points D1–D7 below.
+**After wave C7:** `pnpm verify --fast` plus the changed tests; open core PR-B (Tasks 4–10, P0's and Task 8's spec revisions), body `Refs #974`, with the P0 fact table, the Q9 metric table and decision, and the decisions D1–D7 below.
 
 ### Task P1: Plugins move to the new SDK
 
@@ -489,15 +489,31 @@ Wave C8, after R3 (and R1).
 
 ---
 
-## Decision points for the maintainer (repeated in PR-B)
+## Decisions (PR #976 review, 2026-11-28; delegated by the maintainer to the coordinator)
 
-- **D1 Per-tier write pricing.** Spec §9.2 says cost reports price writes by tier, but the price table (`model_prices`) has one `cacheWritePerMTok`. Phase 1 as planned records `cacheWriteByTtl` in `usage` events (the log keeps it) and leaves `costOf` unchanged. Pricing by tier needs a price data model (a per-TTL map or a "long tier" column, a migration, the price editor, Platform parity): recommended as a follow-up issue, not phase 1.
-- **D2 What the in-context request extends.** Spec §9.4 says "last request + its reply + the instruction"; at an inline compaction mid-run the tool results (and absorbed messages) after that reply would be missing from what the model sees while the plan covers them. The plan extends the reference with exactly what the next step's request would add, prefix-checked byte for byte, and appends the instruction to the trailing user message.
-- **D3 `refreshOnHit` is per model, OpenAI's differs per tier** (30m refreshes, 12h does not). Declared as `true` for GPT-5.6+, safe because the kernel only ever selects 1800 s; a per-option field would be a contract change.
-- **D4 Q9 decision rule** (Task 8): `"marked"` only with tail leakage ≤ 1/20, head recall within 5 points of the transcript path and the security constraint kept in ≥ 19/20, on at least two vendors.
-- **D5 Two core PRs**, PR-A (SDK, released first) and PR-B (kernel), so the plugins start a wave earlier.
-- **D6 Candidate replays recompute `cacheTtl`** from the candidate's declaration with the recorded intent (long tier on or off); baselines replay the recorded value or omit an option the plugin no longer offers; neither is drift.
-- **D7 Settings copy in phase 1.** The `longTtl` hint mentions idle compaction, which ships in phase 2; keep (planned) or drop that sentence until phase 2.
+Repeated in the PR-B description.
+
+- **D1 Per-tier write pricing: deferred to #977.** Spec §9.2 says cost reports price writes by tier, but the price table (`model_prices`) has a single `cacheWritePerMTok`. Phase 1 records `cacheWriteByTtl` in `usage` events, so the log keeps the breakdown, and leaves `costOf` unchanged. #977 covers the price data model, the migration and the billing views (spec §8.2).
+- **D2 What the in-context request extends: accepted as planned.** The reference is extended with exactly what the next step's request would add, prefix-checked byte for byte. The instruction is appended to the trailing user message. Spec §9.4's literal "last request + its reply + the instruction" would miss the tool results after the reply in a mid-run compaction.
+- **D3 `refreshOnHit` for OpenAI: accepted as planned.** GPT-5.6+ declares `true`. That describes the 30m tier, and the kernel only ever selects 1800 s. A per-option field would be a contract change.
+- **D4 Q9 decision rule: accepted as planned** (Task 8). `"marked"` requires all three, on at least two vendors:
+  - tail leakage ≤ 1/20;
+  - head recall within 5 points of the transcript path;
+  - the security constraint kept in ≥ 19/20.
+
+  With fewer than two vendors testable, the gate stops and the coordinator decides.
+- **D5 Two core PRs: accepted.** PR-A (the SDK) is released first, and PR-B (the kernel) follows.
+- **D6 `cacheTtl` in replays: accepted as planned.**
+  - A candidate recomputes it from its declaration with the recorded intent.
+  - A baseline replays the recorded value, or omits an option the plugin no longer offers.
+  - Neither case is drift.
+- **D7 Settings copy in phase 1: the idle compaction sentence is dropped** from the `longTtl` hint (Task 10). Phase 2 restores it.
+- **S1–S10** (spec ambiguities found while planning, listed in the PR): accepted as resolved in this plan.
+
+## Notes for phase 2
+
+- Restore the last sentence of the `promptCache.longTtl` hint from spec §6.4 when idle compaction ships: en "Idle compaction runs on these models only with this on.", zh "开启后空闲压缩才会在这些模型上运行。" (D7). Update `apps/web/test/prompt-cache-settings.test.tsx`, which asserts its absence in phase 1.
+- Phase 2 consumes `deriveCacheExpiry` (Task 6) and adds `CompactOptions.requireInContext` (Task 9).
 
 ## AGENTS.md rules touched
 

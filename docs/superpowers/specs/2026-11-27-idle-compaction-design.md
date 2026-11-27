@@ -432,6 +432,9 @@ No per-conversation switch (decision Q4).
     才会在这些模型上运行。" / "Requests use the model's cache tier of at least 30 minutes (such as 1
     hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price
     instead of 1.25×). Idle compaction runs on these models only with this on."
+    Phase 1 ships this hint without its last sentence (zh "开启后空闲压缩才会在这些模型上运行。", en "Idle
+    compaction runs on these models only with this on."), because UI copy does not describe a feature
+    that has not shipped (decision D7, phase 1 plan); phase 2 restores it.
 - **Account preferences.** "空闲时压缩我的对话" / "Compact my conversations while I'm away", with
   the org state shown when the org has it off ("组织已关闭").
 - **Conversation page.** An idle compaction is quiet:
