@@ -16,6 +16,7 @@ import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 import type { NewConversationDevice } from "../devices/conversation-devices.js";
 import type { DeviceView } from "../devices/devices.service.js";
+import { requestSignal } from "../http/request-signal.js";
 import type { PersonRef } from "../identity/account-avatar.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
@@ -50,6 +51,7 @@ import {
   type ConversationListRow,
   ConversationsService,
   type ConversationView,
+  MAX_PROJECT_FILES,
   type SubagentView,
   type UsageTotals,
 } from "./conversations.service.js";
@@ -110,6 +112,17 @@ const MessageFields = z.object({
    * 这里的 100 只是硬上限。
    */
   files: z.array(z.uuid()).max(100).optional(),
+  /**
+   * Files of the conversation's device project, by path relative to its root (composer menus §5):
+   * checked on the device, never read or uploaded; each becomes a text block after the `@`
+   * resources' bodies. A path repeated (after normalization) is referenced once, so
+   * `payload.projectFiles` may be shorter than this list. A new conversation needs `project` in
+   * the create body.
+   */
+  projectFiles: z
+    .array(z.object({ path: z.string().min(1).max(4096) }).strict())
+    .max(MAX_PROJECT_FILES)
+    .optional(),
   /** Switch the conversation's model from the next run (UI refresh B); the agent's own = back. */
   model: ModelRef.strict().optional(),
   /** Switch the effort: one of the (selected) model's declared `effort` values. */
@@ -139,14 +152,16 @@ const MessageFields = z.object({
   locale: z.enum(["zh", "en"]).optional(),
 });
 
-// The body of `@` resource i is `content[i + 1]`, so `content[0]` must be the user's text: with
-// `@` resources the text must not be empty. A skill invocation's `content[0]` is the rendered
-// skill, so its text (the arguments) may be empty.
+// The body of `@` resource i is `content[i + 1]` and project file i's block follows them, so
+// `content[0]` must be the user's text: with `@` resources or project files the text must not be
+// empty. A skill invocation's `content[0]` is the rendered skill, so its text (the arguments) may
+// be empty.
 const textRule: [
   (b: {
     text: string;
     files?: string[] | undefined;
     attachments?: unknown[] | undefined;
+    projectFiles?: unknown[] | undefined;
     skill?: unknown;
   }) => boolean,
   { message: string; path: string[] },
@@ -154,10 +169,10 @@ const textRule: [
   (b) =>
     b.text.length > 0 ||
     b.skill !== undefined ||
-    ((b.files?.length ?? 0) > 0 && !b.attachments?.length),
+    ((b.files?.length ?? 0) > 0 && !b.attachments?.length && !b.projectFiles?.length),
   {
     message:
-      "Text is required unless the message invokes a skill or carries files (and no @ resources)",
+      "Text is required unless the message invokes a skill or carries files (and no @ resources or project files)",
     path: ["text"],
   },
 ];
@@ -279,6 +294,7 @@ export class ConversationsController {
         clientMessageId: m.clientMessageId,
         ...(m.attachments !== undefined && { attachments: m.attachments }),
         ...(m.files !== undefined && { files: m.files }),
+        ...(m.projectFiles !== undefined && { projectFiles: m.projectFiles }),
         ...(m.model !== undefined && { model: m.model }),
         ...(m.effort !== undefined && { effort: m.effort }),
         ...(m.skill !== undefined && { skill: m.skill }),
@@ -286,7 +302,7 @@ export class ConversationsController {
         ...(m.locale !== undefined && { locale: m.locale }),
       },
       pick,
-      { source: "web" },
+      { source: "web", signal: requestSignal(reply) },
     );
     reply.status(out.created ? 201 : 200);
     return { conversation: out.conversation, event: out.event, events: out.events };
@@ -655,21 +671,29 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @ZBody(ConversationMessageBodyDto) body: z.infer<typeof MessageBody>,
+    @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ event: ConversationEvent }> {
     const p = requireUser(principal);
     return {
-      event: await this.conversations.postUserMessage(org.orgId, id, p.account.id, {
-        text: body.text,
-        ...(body.clientMessageId !== undefined && { clientMessageId: body.clientMessageId }),
-        ...(body.attachments !== undefined && { attachments: body.attachments }),
-        ...(body.files !== undefined && { files: body.files }),
-        ...(body.model !== undefined && { model: body.model }),
-        ...(body.effort !== undefined && { effort: body.effort }),
-        ...(body.retryOf !== undefined && { retryOf: body.retryOf }),
-        ...(body.skill !== undefined && { skill: body.skill }),
-        ...(body.timeZone !== undefined && { timeZone: body.timeZone }),
-        ...(body.locale !== undefined && { locale: body.locale }),
-      }),
+      event: await this.conversations.postUserMessage(
+        org.orgId,
+        id,
+        p.account.id,
+        {
+          text: body.text,
+          ...(body.clientMessageId !== undefined && { clientMessageId: body.clientMessageId }),
+          ...(body.attachments !== undefined && { attachments: body.attachments }),
+          ...(body.files !== undefined && { files: body.files }),
+          ...(body.projectFiles !== undefined && { projectFiles: body.projectFiles }),
+          ...(body.model !== undefined && { model: body.model }),
+          ...(body.effort !== undefined && { effort: body.effort }),
+          ...(body.retryOf !== undefined && { retryOf: body.retryOf }),
+          ...(body.skill !== undefined && { skill: body.skill }),
+          ...(body.timeZone !== undefined && { timeZone: body.timeZone }),
+          ...(body.locale !== undefined && { locale: body.locale }),
+        },
+        requestSignal(reply),
+      ),
     };
   }
 

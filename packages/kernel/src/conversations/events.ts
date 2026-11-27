@@ -25,9 +25,9 @@ import {
   DisabledToolRef,
   ModelRef,
 } from "../agents/definition.js";
+import type { ScheduleMarker } from "../automations/types.js";
 import { ORG_ROLES } from "../orgs/roles.js";
 import { coversHost } from "../sandbox/modes.js";
-import type { ScheduleMarker } from "../schedules/types.js";
 import {
   TOOL_VIEW_DIFF_MAX_LINES,
   TOOL_VIEW_LINE_MAX_CHARS,
@@ -978,6 +978,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           z.object({ appId: z.string(), appName: z.string(), uri: z.string(), name: z.string() }),
         )
         .optional(),
+      /**
+       * The referenced project files (composer menus §5), paths relative to the conversation's
+       * project root: the text block of file i is `content[1 + attachments.length + i]`, before
+       * the uploaded files' blocks. Normalized and deduplicated, so possibly shorter than the
+       * body's list. Absent: none.
+       */
+      projectFiles: z.array(z.object({ path: z.string() })).optional(),
       authorAccountId: z.string(),
       /**
        * Who wrote the message, at send time (run context spec §3.2): display name and org role
@@ -1036,7 +1043,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * Not model-visible as such: request building renders only `taskName` and `localTime`, fixed
        * here at write time, as the header `[Scheduled task "<name>", run for <local time>]`
        * (`scheduleHeader`). The run this message triggers is unattended
-       * (`runs.scheduled_task_run_id`).
+       * (`runs.automation_run_id`).
        */
       schedule: ScheduleMarkerSchema.optional(),
       /**

@@ -1,6 +1,6 @@
 import type { Redis } from "ioredis";
+import { gitPushGrantKey, normalizeGitRepo } from "../automations/grant-rules.js";
 import { GIT_ASK_MAX_REFS, GIT_REF_MAX_CHARS } from "../conversations/events.js";
-import { gitPushGrantKey, normalizeGitRepo } from "../schedules/grant-rules.js";
 import { type ApprovalRecord, GIT_ASK_CANCELLED_NOTE } from "./approvals.service.js";
 import { clipKeptWith } from "./network-asks.js";
 

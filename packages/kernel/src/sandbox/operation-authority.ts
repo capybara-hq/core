@@ -31,6 +31,7 @@ import {
   withTransactionFencePrelude,
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { narrowReadRoots } from "./browse-roots.js";
 import type { DeviceSandbox } from "./device-sandbox.js";
 import { hostGrantable } from "./device-sandbox.js";
 import {
@@ -234,11 +235,17 @@ export class SandboxOperationAuthority {
     @Inject(PermissionAuthorityLock) private readonly locks: PermissionAuthorityLock,
     @Inject(PermissionAuthorityEpochStore) private readonly epochs: PermissionAuthorityEpochStore,
   ) {}
-  /** Owner project browsing has no conversation, profile, or fabricated root identity. */
+  /**
+   * Owner project browsing has no conversation, profile, or fabricated root identity. `narrow`
+   * (absolute paths, e.g. a project root) replaces the scope's read roots with those of its paths
+   * that lie inside the owner's ceiling ({@link narrowReadRoots}), never wider; when none does the
+   * browse is refused (`device.project_outside_mode`).
+   */
   @Transactional()
   async resolveBrowse(
     ctx: { orgId: string; deviceId: string; accountId: string },
     signal: AbortSignal,
+    narrow?: { readRoots: readonly string[] },
   ): Promise<SandboxBrowseScope> {
     signal.throwIfAborted();
     await this.locks.acquire({ orgId: ctx.orgId, deviceId: ctx.deviceId }, { kind: "admit" });
@@ -253,6 +260,15 @@ export class SandboxOperationAuthority {
         "device.projects_unsupported",
         "Current owner and organization ceilings do not permit browsing",
       );
+    // the base the picker starts from: the provider's reported home, else the workspace (what
+    // the device answers within it is the provider's rule)
+    const ceiling = [scope.home ?? scope.workspace];
+    const readRoots = narrow === undefined ? ceiling : narrowReadRoots(ceiling, narrow.readRoots);
+    if (readRoots.length === 0)
+      throw new ApiError(
+        "device.project_outside_mode",
+        "The project lies outside what the device lets its owner browse; remove it and add it again from a directory under the device's base",
+      );
     const operationId = randomUUID();
     const vector = await this.epochs.readLocked({ orgId: ctx.orgId, deviceId: ctx.deviceId });
     return parseSandboxBrowseScope({
@@ -261,9 +277,7 @@ export class SandboxOperationAuthority {
       accountId: ctx.accountId,
       admitBeforeMs: Date.now() + 30000,
       ceilingRevision: permissionScopeHash(vector),
-      // the base the picker starts from: the provider's reported home, else the workspace (what
-      // the device answers within it is the provider's rule)
-      readRoots: [scope.home ?? scope.workspace],
+      readRoots,
       tag: operationId,
     });
   }
@@ -691,7 +705,7 @@ export class SandboxOperationAuthority {
       ctx.deviceId,
       root.project_name ?? undefined,
     );
-    let unattended = root.scheduled_task_id !== null;
+    let unattended = root.automation_id !== null;
     if (ctx.actor.runId)
       unattended ||= await this.runScheduledLocked(
         ctx.holderConversationId,
@@ -795,7 +809,7 @@ export class SandboxOperationAuthority {
 
   /**
    * The actual run of an operation or context read: still this conversation's, triggered by this
-   * actor and not ended; true when it serves a scheduled task run (an unattended child or wake
+   * actor and not ended; true when it serves an automation run (an unattended child or wake
    * included). Shared by admission and the recorded permission context.
    */
   private async runScheduledLocked(
@@ -805,7 +819,7 @@ export class SandboxOperationAuthority {
   ): Promise<boolean> {
     const run = await this.db
       .selectFrom("runs")
-      .select(["conversation_id", "trigger_account_id", "scheduled_task_run_id", "status"])
+      .select(["conversation_id", "trigger_account_id", "automation_run_id", "status"])
       .where("id", "=", runId)
       .executeTakeFirst();
     if (
@@ -815,7 +829,7 @@ export class SandboxOperationAuthority {
       !["running", "queued", "waiting"].includes(run.status)
     )
       throw new ApiError("forbidden", "The operation run is no longer authorized");
-    return run.scheduled_task_run_id !== null;
+    return run.automation_run_id !== null;
   }
 
   /**
@@ -988,7 +1002,7 @@ export class SandboxOperationAuthority {
     await this.publication.assertCurrent();
     const scheduled =
       (await this.runScheduledLocked(input.conversationId, input.accountId, input.runId)) ||
-      root.scheduled_task_id !== null;
+      root.automation_id !== null;
     const header = {
       version: 2 as const,
       // only a supported context carries the device sandbox block (below)

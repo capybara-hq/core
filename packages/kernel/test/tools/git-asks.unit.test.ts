@@ -8,7 +8,7 @@ import {
   isGitGrantKey,
   normalizeGitGrantKey,
   normalizeGitRepo,
-} from "../../src/schedules/grant-rules.js";
+} from "../../src/automations/grant-rules.js";
 import type { ApprovalRecord } from "../../src/tools/approvals.service.js";
 import { GIT_ASK_CANCELLED_NOTE } from "../../src/tools/approvals.service.js";
 import {

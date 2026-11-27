@@ -1,5 +1,39 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.130
+
+### Patch Changes
+
+- d05a120: A connector created from a template takes its default slug even when a loaded extension has the
+  same name: re-creating the Slack connector is `slack` again, not `slack_2`. Connector tools are
+  `mcp__<slug>__<tool>` and extension tools `plugin__<plugin>__<tool>`, so the names never meet; an
+  explicit slug already worked this way.
+- e0a95f0: Layered shell: from 600 up the sidebar and gutters sit on a ground and the page, the conversation
+  and the right panel are paper on it (inset, rounded, no border or shadow), told apart by colour
+  alone. The status bar is gone: the run state is announced to screen readers, round and elapsed
+  time are in the properties panel's Context section, the context used is a small meter beside the
+  composer's send button, and version and time zone are the account menu's last line. First-level
+  pages draw no path row, the org switcher shows the org's name only, and the admin context is one
+  row with its way back. Compact is unchanged.
+- 252bdfa: A manual compaction (`/compact`) now summarizes every turn before the latest one, whatever
+  `keepRecentTurns` says, and inside the latest turn keeps verbatim only the most recent tool pairs
+  that fit about a fifth of the model's context window. It records `compaction_skipped` (reason
+  `nothing_to_summarize`) only when nothing precedes the kept tail; the web divider reads "Nothing to
+  compact · the conversation is still short". Automatic and reactive compaction are unchanged.
+- a17f265: The `/` menu shows a project skill by its bare name, tagged "project" like a plugin's skill, and a
+  typed `/<name>` no other skill has invokes the project's skill.
+- 6c9f1d6: Native shells finish connector OAuth and login-method linking in the system browser: the connect
+  and link starts take `handoff: { returnScheme? }` and answer a single-use handoff URL; the web page
+  `/handoff/<ticket>` redeems it in the person's signed-in browser (`POST /api/v1/auth/handoffs/redeem`)
+  and the flow comes back to `/handoff/done`, which links back into the app.
+- 2fbe6d2: A watched wait (a tool watching something, such as a browser wait with a condition) reads 正在等待 / Waiting instead of "waiting for your answer".
+- Updated dependencies [d05a120]
+- Updated dependencies [252bdfa]
+- Updated dependencies [6bab73b]
+- Updated dependencies [6c9f1d6]
+- Updated dependencies [2fbe6d2]
+  - @capybara-hq/kernel@0.1.0-rc.105
+
 ## 0.1.0-rc.129
 
 ### Patch Changes

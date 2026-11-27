@@ -3,6 +3,7 @@
 import { applyTheme, Button, Card, Stack, Text, useDesignLink } from "@capybara-hq/design";
 import { lazy, Suspense } from "react";
 import { AdminPageCatalog } from "./admin-pages";
+import { AutomationsPageCatalog } from "./automations-page";
 import { BrandFixtureCatalog } from "./brand-blocks";
 import { ComponentsCatalog } from "./components";
 import { MemberPageCatalog } from "./member-pages";
@@ -20,7 +21,6 @@ import {
   referenceComponentOf,
   type SuperAdminPage,
 } from "./routes";
-import { SchedulesPageCatalog } from "./schedules-page";
 import { StressCatalog } from "./stress";
 import { SuperAdminPageCatalog } from "./super-admin-pages";
 import { TableCatalog } from "./table";
@@ -42,9 +42,11 @@ export function Catalog({ route }: { route: string }) {
   if (isTemplateRoute(route)) return <TemplateCatalog route={route} />;
   // Not lazy: the calendar's phone case checks the first paint with JavaScript off, and a lazy
   // boundary streams its content hidden until a script reveals it.
-  if (route === "pages/schedules-calendar") return <SchedulesPageCatalog variant="week" />;
-  if (route === "pages/schedules-calendar-month") return <SchedulesPageCatalog variant="month" />;
-  if (route === "pages/schedules-calendar-admin") return <SchedulesPageCatalog variant="admin" />;
+  if (route === "pages/automations-calendar") return <AutomationsPageCatalog variant="week" />;
+  if (route === "pages/automations-calendar-month")
+    return <AutomationsPageCatalog variant="month" />;
+  if (route === "pages/automations-calendar-admin")
+    return <AutomationsPageCatalog variant="admin" />;
   if (route.startsWith("pages/member-") && isPageRoute(route))
     return <MemberPageCatalog page={route.slice("pages/member-".length) as MemberPage} />;
   if (route.startsWith("pages/org-") && isPageRoute(route))

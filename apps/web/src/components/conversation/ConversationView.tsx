@@ -25,6 +25,7 @@ import { compactConversation, type ModelRef, type ProjectState } from "../../lib
 import { canEditAgent } from "../../lib/org-settings";
 import { groupProcess } from "../../lib/process";
 import { agentsQuery } from "../../lib/query/agents";
+import { automationQuery } from "../../lib/query/automations";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
   conversationDeviceQuery,
@@ -34,7 +35,6 @@ import {
 } from "../../lib/query/conversation";
 import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
-import { scheduleQuery } from "../../lib/query/schedules";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
 import { browserShare, shareOrCopy } from "../../lib/share";
@@ -257,7 +257,7 @@ export function useConversationPage(
     };
   }
   // The permission profile (owner only; a shared viewer reads and sees nothing): editable on an
-  // interactive root once confirmed, locked on a child (inherited) or a scheduled task's.
+  // interactive root once confirmed, locked on a child (inherited) or an automation's.
   const permission = useConversationPermission({
     orgId,
     conversationId,
@@ -389,6 +389,10 @@ export function useConversationPage(
         text: d.retry.text,
         clientMessageId,
         files: d.retry.files.map((f) => f.attachmentId),
+        ...(d.retry.attachments !== undefined ? { attachments: d.retry.attachments } : {}),
+        ...(d.retry.projectFiles !== undefined
+          ? { projectFiles: d.retry.projectFiles.map((path) => ({ path })) }
+          : {}),
         retryOf: d.retry.seq,
         ...(d.retry.skill !== undefined ? { skill: { name: d.retry.skill } } : {}),
         ...pick,
@@ -548,7 +552,7 @@ export function useConversationPage(
     },
     thread: (
       <>
-        <StartedBy orgId={orgId} taskId={conv.conversation?.scheduledTaskId ?? null} />
+        <StartedBy orgId={orgId} taskId={conv.conversation?.automationId ?? null} />
         <div ref={projectNotice}>
           <ProjectLine
             project={conv.conversation?.project ?? null}
@@ -599,6 +603,17 @@ export function useConversationPage(
               ? undefined
               : conversationId
           }
+          // the project's files can be referenced by its owner (the listing is the owner's)
+          {...(conv.conversation?.project &&
+          conv.conversation.deviceId &&
+          conv.conversation.accountId === session.me.account.id
+            ? {
+                project: {
+                  deviceId: conv.conversation.deviceId,
+                  name: conv.conversation.project.name,
+                },
+              }
+            : {})}
           running={active}
           waiting={waitHint}
           stop={{ onStop: conv.stop, stopping: conv.stopping }}
@@ -765,13 +780,13 @@ function ProjectLine({
 }
 
 /**
- * A conversation a scheduled task started (`conversation.scheduledTaskId`): "Started by the
- * scheduled task <name>", linking to the task (scheduled tasks spec §10); the task's name is read
+ * A conversation an automation started (`conversation.automationId`): "Started by the
+ * automation <name>", linking to the task (automations spec §10); the task's name is read
  * through the cache, and a task I can no longer read (deleted) is named without a link.
  */
 function StartedBy({ orgId, taskId }: { orgId: string; taskId: string | null }) {
-  const t = useTranslations("schedules");
-  const q = scheduleQuery(orgId, taskId ?? "");
+  const t = useTranslations("automations");
+  const q = automationQuery(orgId, taskId ?? "");
   const task = useQuery({
     ...q,
     enabled: taskId !== null,
@@ -791,7 +806,7 @@ function StartedBy({ orgId, taskId }: { orgId: string; taskId: string | null }) 
     <Text variant="small" tone="muted">
       {t.rich("startedBy", {
         name,
-        link: (chunks) => <Link href={`/schedules/${encodeURIComponent(taskId)}`}>{chunks}</Link>,
+        link: (chunks) => <Link href={`/automations/${encodeURIComponent(taskId)}`}>{chunks}</Link>,
       })}
     </Text>
   );

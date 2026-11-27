@@ -1,4 +1,4 @@
-// The org settings tables at 390: members, tokens, schedules and the audit log declare their compact
+// The org settings tables at 390: members, tokens, automations and the audit log declare their compact
 // rows (title, subtitle, trailing; responsive spec §4.2), and the audit log pages by infinite scroll.
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -136,11 +136,11 @@ describe("org settings tables at 390", () => {
     expect(subtitle.indexOf("2026")).toBeLessThan(subtitle.indexOf("Grant"));
   });
 
-  it("schedules: the task leads, its owner under it, the state at the end", async () => {
-    resetNavigation("/settings/schedules");
+  it("automations: the task leads, its owner under it, the state at the end", async () => {
+    resetNavigation("/settings/automations");
     const settings = {
       toolSearch: "on",
-      scheduledTasks: {
+      automations: {
         enabled: true,
         minIntervalMinutes: 60,
         maxTasksPerMember: 20,
@@ -155,7 +155,7 @@ describe("org settings tables at 390", () => {
     };
     stubApi({
       [`GET ${O}/settings`]: () => json(200, { settings }),
-      [`GET ${O}/schedules?all=true`]: () =>
+      [`GET ${O}/automations?all=true`]: () =>
         json(200, {
           items: [
             {
@@ -199,7 +199,7 @@ describe("org settings tables at 390", () => {
           ],
         }),
     });
-    await renderRouteWithCache("/settings/schedules", lastStubRoutes(), { me: admin });
+    await renderRouteWithCache("/settings/automations", lastStubRoutes(), { me: admin });
     await screen.findByText("Daily report");
     expect(part("title").join()).toContain("Daily report");
     expect(await screen.findByText("Mei")).toBeTruthy();
@@ -207,8 +207,8 @@ describe("org settings tables at 390", () => {
     expect(part("subtitle").join()).toContain("Mei");
     expect(part("subtitle").join()).not.toContain("Helper");
     expect(await vi.waitFor(() => part("meta").join())).toContain("Helper");
-    expect(part("trailing").join()).toContain(en.schedules.state.active);
-    expect(compact().queryByText(en.schedules.columns.lastResult)).toBeNull();
+    expect(part("trailing").join()).toContain(en.automations.state.active);
+    expect(compact().queryByText(en.automations.columns.lastResult)).toBeNull();
   });
   describe("audit paging at 390", () => {
     const EVENT = (id: string, name: string) => ({

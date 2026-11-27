@@ -148,7 +148,7 @@ export class PermissionProfilesService {
     binding: { deviceId: string | null; projectName: string | null; projectPath: string | null },
   ) {
     let row = await this.store.own(orgId, id, accountId);
-    if (row.parent_conversation_id || row.kind !== "chat" || row.scheduled_task_id)
+    if (row.parent_conversation_id || row.kind !== "chat" || row.automation_id)
       throw new ApiError(
         "forbidden",
         "Only interactive root conversations have editable permissions",

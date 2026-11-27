@@ -78,6 +78,8 @@ export function macServiceLauncher(o: MacServiceLauncherOptions): ServiceLaunche
     async ceilingRevision() {
       return (await o.readOwnerCeiling()).revision;
     },
+    // the Mach allowances every launch sets below: the browser installs the full build under them
+    installVariant: () => `${DEVICE_SERVICE_MACH_ENV}=${DEVICE_SERVICE_MACH_CHROMIUM}`,
     async launch(req: ServiceLaunch, signal: AbortSignal): Promise<ServiceProcess> {
       signal.throwIfAborted();
       const runtimeHash = o.runtimeHash();

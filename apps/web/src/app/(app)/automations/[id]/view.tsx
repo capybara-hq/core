@@ -1,0 +1,481 @@
+"use client";
+
+import {
+  Callout,
+  type Column,
+  DangerZone,
+  DangerZoneItem,
+  DataTable,
+  DateTime,
+  ErrorDetail,
+  FormPage,
+  FormSection,
+  StatusMark,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+import {
+  ApprovedToolsSection,
+  type AutomationDraft,
+  AutomationFormSections,
+  changedCount,
+  draftOf,
+  draftValid,
+  LOADING_SECTIONS,
+  NetworkAccessSection,
+  patchOf,
+  useGrantableTools,
+} from "../../../../components/AutomationForm";
+import {
+  AutomationStateMark,
+  DeleteAutomationDialog,
+  useAutomationActions,
+} from "../../../../components/AutomationParts";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
+import { Person } from "../../../../components/Person";
+import { usePagePath } from "../../../../components/shell/path";
+import { useRouter } from "../../../../i18n/navigation";
+import type { ProviderModels } from "../../../../lib/agents";
+import {
+  type Automation,
+  addAutomationGrants,
+  removeAutomationGrant,
+  type TaskRun,
+  updateAutomation,
+} from "../../../../lib/automations";
+import { roleAtLeast } from "../../../../lib/members";
+import { withNode } from "../../../../lib/node-slot";
+import type { PersonRef } from "../../../../lib/people";
+import { agentsQuery } from "../../../../lib/query/agents";
+import {
+  automationGrantsQuery,
+  automationQuery,
+  automationRunsQuery,
+} from "../../../../lib/query/automations";
+import { retryOnMountOf } from "../../../../lib/query/client";
+import { modelsQuery } from "../../../../lib/query/conversation";
+import { inboxChangeKeys } from "../../../../lib/query/inbox";
+import { keys } from "../../../../lib/query/keys";
+import { useMemberNames } from "../../../../lib/query/member-names";
+import { useAppMutation } from "../../../../lib/query/mutation";
+import { usePageQuery } from "../../../../lib/query/page-query";
+import { orgSettingsQuery } from "../../../../lib/query/settings";
+import { useWorkspace } from "../../../../lib/query/workspace";
+import { useErrorMessage } from "../../../../lib/use-error-message";
+import NotFound from "../../not-found";
+
+/**
+ * `/automations/[id]`: one automation (FormPage, spec §10): the task's fields (basics, schedule
+ * with its zone, where runs go, model and effort), its approved tools (added or removed at once,
+ * with what the latest runs were refused) and its run history. The head runs it now, runs a trial
+ * (its approvals become the task's grants) and pauses or resumes it; the danger zone deletes it.
+ * An org admin opening another member's task sees it read-only and may only pause, resume or delete
+ * it. Members up (guests: the no-access state). From the query cache (the layout prefetched the
+ * task, its runs and grants on a first load).
+ */
+export default function AutomationView({ id }: { id: string }) {
+  const ws = useWorkspace({ min: "member" });
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return (
+    <Schedule
+      orgId={ws.orgId}
+      id={id}
+      me={ws.me.account.id}
+      admin={roleAtLeast(ws.role, "admin")}
+    />
+  );
+}
+
+function Schedule({
+  orgId,
+  id,
+  me,
+  admin,
+}: {
+  orgId: string;
+  id: string;
+  me: string;
+  admin: boolean;
+}) {
+  const scope = usePagePath("org");
+  const t = useTranslations("automations");
+  const read = usePageQuery(automationQuery(orgId, id));
+  const agentsQ = agentsQuery(orgId);
+  const agentsRead = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) });
+  // The agents name the picker's options; when they can't be read the task's own id shows
+  const agents = agentsRead.data ?? (agentsRead.error ? { agents: [] } : undefined);
+  const modelsQ = modelsQuery(orgId);
+  const models = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data;
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading" || agents === undefined) {
+    return (
+      <FormPage
+        loading
+        header={{
+          path: [...scope, { label: "automations", href: "/automations" }, { label: id }],
+          title: t("title"),
+          loading: { title: true, actions: 3 },
+        }}
+        actionRow={{ unsaved: 0, primary: { label: t("form.save"), onSelect: () => {} } }}
+      >
+        <FormSection
+          id="basic"
+          title={t("form.basic")}
+          description={t("form.basicHint")}
+          loading={{ fields: LOADING_SECTIONS.basic }}
+        />
+        <FormSection
+          id="schedule"
+          title={t("form.schedule")}
+          description={t("form.scheduleHint")}
+          loading={{ fields: LOADING_SECTIONS.schedule }}
+        />
+        <FormSection
+          id="target"
+          title={t("form.target")}
+          description={t("form.targetHint")}
+          loading={{ fields: LOADING_SECTIONS.target }}
+        />
+      </FormPage>
+    );
+  }
+  const task = read.data.task;
+  return (
+    <AutomationForm
+      // one draft per task: a refetch (after a pause, say) keeps unsaved edits; this form's own
+      // save starts the draft over from the answer
+      key={task.id}
+      orgId={orgId}
+      task={task}
+      agents={agents.agents}
+      providers={models?.providers ?? []}
+      own={task.accountId === me}
+      admin={admin}
+    />
+  );
+}
+
+function AutomationForm({
+  orgId,
+  task,
+  agents,
+  providers,
+  own,
+  admin,
+}: {
+  orgId: string;
+  task: Automation;
+  agents: Parameters<typeof AutomationFormSections>[0]["agents"];
+  providers: ProviderModels[];
+  /** The task is mine: I edit it; else I am an org admin looking at it. */
+  own: boolean;
+  admin: boolean;
+}) {
+  const scope = usePagePath("org");
+  const t = useTranslations("automations");
+  const tc = useTranslations("common");
+  const router = useRouter();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const names = useMemberNames(orgId);
+  const actions = useAutomationActions(orgId);
+  const saved = draftOf(task);
+  const [draft, setDraft] = useState<AutomationDraft>(saved);
+  const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  // a refused network grant, shown in its section with the kernel's reason
+  const [networkError, setNetworkError] = useState<unknown>(null);
+  const readOnly = !own;
+  const touched = [
+    keys.org(orgId).automationsAll(),
+    keys.org(orgId).automation(task.id),
+    ...inboxChangeKeys(orgId),
+  ];
+  const save = useAppMutation({
+    fn: () => updateAutomation(orgId, task.id, patchOf(saved, draft)),
+    invalidates: () => touched,
+  });
+  const grantsQ = automationGrantsQuery(orgId, task.id);
+  const grants = useQuery({ ...grantsQ, retryOnMount: retryOnMountOf(grantsQ.queryKey) }).data;
+  const runsQ = automationRunsQuery(orgId, task.id);
+  const runs = useQuery({ ...runsQ, retryOnMount: retryOnMountOf(runsQ.queryKey) });
+  const addGrant = useAppMutation({
+    fn: (toolKey: string) => addAutomationGrants(orgId, task.id, [toolKey]),
+    invalidates: () => [keys.org(orgId).automationGrants(task.id), ...inboxChangeKeys(orgId)],
+  });
+  const removeGrant = useAppMutation({
+    fn: (toolKey: string) => removeAutomationGrant(orgId, task.id, toolKey),
+    invalidates: () => [keys.org(orgId).automationGrants(task.id)],
+  });
+  const tools = useGrantableTools(orgId, readOnly ? "" : draft.agentId);
+  const settingsQ = orgSettingsQuery(orgId);
+  const minInterval = useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) })
+    .data?.settings.automations.minIntervalMinutes;
+  const unsaved = readOnly ? 0 : changedCount(saved, draft);
+  const valid = draftValid(draft);
+  const granted = grants?.items ?? [];
+  // What the latest runs were refused and the task still lacks
+  const refused = [...new Set((runs.data?.items ?? []).flatMap((r) => r.missingGrants))];
+
+  const act = async (p: Promise<unknown>, done: string) => {
+    try {
+      await p;
+      toast.success(done);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+  const submit = async () => {
+    if (!valid || unsaved === 0) return;
+    setError(null);
+    try {
+      const { task: next } = await save.mutateAsync(undefined);
+      setDraft(draftOf(next));
+      toast.success(t("actions.saved"));
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+  const busy = actions.pause.isPending || actions.resume.isPending || actions.run.isPending;
+  const toggle =
+    task.status === "active"
+      ? {
+          label: t("actions.pause"),
+          onSelect: () => void act(actions.pause.mutateAsync(task.id), t("actions.paused")),
+          loading: actions.pause.isPending,
+        }
+      : {
+          label: t("actions.resume"),
+          onSelect: () => void act(actions.resume.mutateAsync(task.id), t("actions.resumed")),
+          loading: actions.resume.isPending,
+        };
+  // undefined while the members are read; null for a creator who left ("Former member")
+  const creator: PersonRef | null | undefined =
+    names.kind === "ready" ? (names.refs[task.accountId] ?? null) : undefined;
+  return (
+    <>
+      <FormPage
+        header={{
+          path: [...scope, { label: "automations", href: "/automations" }, { label: task.name }],
+          title: task.name,
+          status: <AutomationStateMark task={task} />,
+          // An org admin on another member's task: pause or resume only (no run, no edit)
+          actions: readOnly
+            ? []
+            : [
+                {
+                  label: t("actions.runNow"),
+                  variant: "default" as const,
+                  disabled: busy || task.status === "ended",
+                  loading: actions.run.isPending && actions.run.variables?.trial === false,
+                  onSelect: () =>
+                    void act(
+                      actions.run.mutateAsync({ id: task.id, trial: false }),
+                      t("actions.started"),
+                    ),
+                },
+                {
+                  label: t("actions.trialRun"),
+                  variant: "default" as const,
+                  disabled: busy,
+                  loading: actions.run.isPending && actions.run.variables?.trial === true,
+                  onSelect: () =>
+                    void act(
+                      actions.run.mutateAsync({ id: task.id, trial: true }),
+                      t("actions.trialStarted"),
+                    ),
+                },
+                ...(task.status === "ended"
+                  ? []
+                  : [{ ...toggle, variant: "default" as const, disabled: busy }]),
+              ],
+        }}
+        actionRow={
+          readOnly
+            ? {
+                // What an org admin may do with another member's task
+                primary: { ...toggle, disabled: busy || task.status === "ended" },
+              }
+            : {
+                unsaved,
+                cancel: { label: tc("cancel"), onSelect: () => setDraft(saved) },
+                primary: {
+                  label: t("form.save"),
+                  onSelect: () => void submit(),
+                  loading: save.isPending,
+                  disabled: save.isPending || unsaved === 0 || !valid,
+                },
+              }
+        }
+      >
+        {readOnly && creator !== undefined ? (
+          <Callout tone="info">
+            {withNode(
+              (mark) => t("form.readOnlyOwner", { name: mark }),
+              <Person person={creator} size={16} />,
+            )}
+          </Callout>
+        ) : null}
+        <AutomationFormSections
+          orgId={orgId}
+          draft={draft}
+          setDraft={setDraft}
+          agents={agents}
+          providers={providers}
+          existing={task}
+          readOnly={readOnly}
+          {...(minInterval !== undefined ? { minIntervalMinutes: minInterval } : {})}
+        />
+        <ApprovedToolsSection
+          granted={granted}
+          tools={tools}
+          refused={refused}
+          readOnly={readOnly}
+          pending={addGrant.isPending || removeGrant.isPending}
+          onAdd={(k) => void act(addGrant.mutateAsync(k), t("actions.toolAdded"))}
+          onRemove={(k) => void act(removeGrant.mutateAsync(k), t("actions.toolRemoved"))}
+        />
+        <NetworkAccessSection
+          granted={granted.map((g) => g.toolKey)}
+          refused={refused}
+          readOnly={readOnly}
+          pending={addGrant.isPending || removeGrant.isPending}
+          error={networkError}
+          onAdd={(k) => {
+            setNetworkError(null);
+            addGrant.mutateAsync(k).then(
+              () => toast.success(t("actions.domainAdded")),
+              (e: unknown) => setNetworkError(e),
+            );
+          }}
+          onRemove={(k) => {
+            setNetworkError(null);
+            void act(removeGrant.mutateAsync(k), t("actions.domainRemoved"));
+          }}
+        />
+        <RunHistory runs={runs.data?.items ?? null} />
+        {error !== null ? <FormError message={error} /> : null}
+        {(own || admin) && (
+          <DangerZone title={t("actions.danger")}>
+            <DangerZoneItem
+              title={t("actions.danger")}
+              description={t("actions.deleteDescription")}
+              action={{ label: t("actions.delete"), onSelect: () => setDeleting(true) }}
+            />
+          </DangerZone>
+        )}
+      </FormPage>
+      {deleting && (
+        <DeleteAutomationDialog
+          name={task.name}
+          onClose={() => setDeleting(false)}
+          onDelete={async () => {
+            await actions.remove.mutateAsync(task.id);
+            toast.success(t("actions.deleted"));
+            router.push(own ? "/automations" : "/settings/automations");
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+/** The latest runs (a flush section holding the table): time, kind, status and what happened. */
+function RunHistory({ runs }: { runs: TaskRun[] | null }) {
+  const t = useTranslations("automations.runs");
+  const router = useRouter();
+  const skipOrMissing = (r: TaskRun) => {
+    if (r.skipReason !== null) return t(`skip.${r.skipReason}`);
+    if (r.missingGrants.length > 0) return t("missing", { tools: r.missingGrants.join(", ") });
+    return null;
+  };
+  const columns: Column<TaskRun>[] = [
+    {
+      key: "at",
+      compact: "title",
+      header: t("columns.scheduledFor"),
+      fit: true,
+      cell: (r) => <DateTime value={r.firedAt ?? r.scheduledFor} />,
+    },
+    {
+      key: "kind",
+      compact: "meta",
+      header: t("columns.kind"),
+      tone: "muted",
+      fit: true,
+      cell: (r) => t(r.trial ? "kind.trial" : "kind.scheduled"),
+    },
+    {
+      key: "status",
+      compact: "trailing",
+      header: t("columns.status"),
+      fit: true,
+      cell: (r) => (
+        <StatusMark
+          status={
+            r.status === "completed"
+              ? "success"
+              : r.status === "failed"
+                ? "failed"
+                : r.status === "running"
+                  ? "running"
+                  : r.status === "pending"
+                    ? "queued"
+                    : "cancelled"
+          }
+          label={t(`status.${r.status}`)}
+        />
+      ),
+    },
+    {
+      // Plain text only (skip reason, refused tools, the error's first line): it is the compact
+      // rows' subtitle only (`compactOnly`); the wide table's `detail` column shows it instead
+      key: "reason",
+      header: t("columns.reason"),
+      compact: "subtitle",
+      compactOnly: true,
+      wrap: true,
+      tone: "muted",
+      cell: (r) => skipOrMissing(r) ?? r.error?.split("\n")[0] ?? null,
+    },
+    {
+      // The wide table's one reason: the skip or refused-tools text, then the full error,
+      // expandable (a failed run can carry both)
+      key: "detail",
+      header: t("columns.detail"),
+      compact: "hidden",
+      wrap: true,
+      tone: "muted",
+      cell: (r) => (
+        <>
+          {skipOrMissing(r)}
+          {r.error !== null ? <ErrorDetail summary={t("failed")} detail={r.error} /> : null}
+        </>
+      ),
+    },
+  ];
+  return (
+    <FormSection id="runs" title={t("title")} description={t("hint")} flush>
+      <DataTable<TaskRun>
+        label={t("label")}
+        columns={columns}
+        rows={runs ?? []}
+        rowKey={(r) => r.id}
+        state={runs === null ? "loading" : "ready"}
+        empty={{ title: t("empty") }}
+        onOpen={(r) => {
+          if (r.conversationId !== null)
+            router.push(`/chat/${encodeURIComponent(r.conversationId)}`);
+        }}
+        isDisabled={(r) => r.conversationId === null}
+      />
+    </FormSection>
+  );
+}

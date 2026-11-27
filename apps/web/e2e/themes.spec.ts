@@ -521,7 +521,7 @@ test.describe("theme brand coverage", () => {
     await setOrgTheme(page, null);
     await setPlatformTheme(page, brandKit.id);
     try {
-      await page.goto("/schedules");
+      await page.goto("/automations");
       const empty = page.locator('[data-part="empty-state"]').first();
       await expect(empty).toBeVisible();
       await expect(empty.locator('[data-part="empty-brand-art"]')).toHaveCount(1);

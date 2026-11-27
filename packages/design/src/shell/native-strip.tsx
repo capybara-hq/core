@@ -2,12 +2,14 @@ import { type MutableRefObject, type ReactNode, useEffect, useRef, useState } fr
 import { initialOf } from "../display/initial";
 import type { NavBadge } from "../display/nav-badge";
 import {
+  drawerIdOfNative,
   NATIVE_MENU_ID,
   NATIVE_NAV_ACCOUNT_NAME,
   NATIVE_NAV_LIMITS,
   type NativeNavHandle,
   type NativeNavState,
   type NativeSectionId,
+  nativeIdOfSection,
   useHaptics,
 } from "../native";
 import { popOverlaysThen } from "../overlays/use-overlay-history";
@@ -68,7 +70,7 @@ export function useNativeStrip(input: NativeStripInput): ReactNode {
         items: [
           { id: "chats" as const, label: navLabel(t("shell.chats")) },
           ...drawer.sections.map((s) => ({
-            id: s.id,
+            id: nativeIdOfSection(s.id) as NativeSectionId,
             label: navLabel(s.label),
             ...navBadge(s.badge),
           })),
@@ -282,7 +284,8 @@ function currentSection(
   if (surface) return "chats";
   if (pathname === undefined) return null;
   if (under(pathname, drawer.allConversations.href)) return "chats";
-  return drawer.sections.find((s) => under(pathname, s.href))?.id ?? null;
+  const found = drawer.sections.find((s) => under(pathname, s.href))?.id;
+  return found === undefined ? null : (nativeIdOfSection(found) as NativeSectionId);
 }
 
 /**
@@ -291,5 +294,5 @@ function currentSection(
  */
 function sectionHref(id: NativeSectionId, drawer: DrawerNavData): string | undefined {
   if (id === "chats") return drawer.allConversations.href;
-  return drawer.sections.find((s) => s.id === id)?.href;
+  return drawer.sections.find((s) => s.id === drawerIdOfNative(id))?.href;
 }

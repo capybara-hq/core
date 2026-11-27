@@ -139,6 +139,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   (`attachmentReferenceText`, with the object URI and `FetchAttachment`) — never bytes, never a truncated inline,
   recorded as outcome `reference`. No new model-visible input is logged, so no `DriftReason`. Case in
   `reconstruct.test.ts` ("a text attachment over the inline cap …").
+- **Referenced project files** (composer menus spec `docs/superpowers/specs/2026-11-28-composer-menus-design.md`
+  §5): checked with `stat` at send time and logged in the `user_message` as one English text block per file
+  (`projectFileText`: the relative path and the project root), after the `@` resources' bodies and before the
+  uploaded files' blocks, with `payload.projectFiles` (block i at `content[1 + attachments.length + i]`). Nothing is
+  read at build time or in a replay, so no `DriftReason`. The command review reads these lines as the person's
+  intent, never the `@` resources' bodies. Case in `reconstruct.test.ts` ("referenced project files …").
 - **A reply cut off at the output token limit** (issue #951): an `assistant_message` with `stopReason:
   "max_tokens"` is followed in the request by the `role: "system"` `OUTPUT_TRUNCATED_TEXT`
   (`runtime/context/output-truncated.ts`), derived from the logged stop reason alone, so no event
@@ -186,9 +192,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - **`plugin_context`** (memory spec §6.1, `runtime/context/plugin-context.ts`): a `context@1` provider's text `{ plugin, text, hash }`, rendered at its position as `<plugin-context plugin="…">` (empty text: nothing), the latest non-empty one per plugin again after a summary (name order, after `device_paths`), left out of the compaction transcript; in the log, so no `DriftReason`; full-run replay copies the run's events as recorded.
 - **`project_root`** (project root spec §4.4–§5, `runtime/context/project-root.ts`): a bound conversation's project as its run start read it (`AGENTS.md`, skills by name / description / digest, or `unavailable`), rendered at its position as a system message (`projectRootText`: after the agent's own instructions, skills as `project:<name>`, a name over `Skill`'s 64 characters left out with a warning at the run's first step; unavailable: one line), the latest one again after a summary (after `plugin_context`), left out of the compaction transcript; a logged project with skills offers `Skill` (`hasProjectSkills`). In the log, so no `DriftReason`; `Skill`'s project body is an ordinary tool result; full-run replay copies the run's event as recorded and never reads a device.
 - **Conversation source in a replay** (memory spec §6.2): a case records the original conversation's `source`; a full-run replay seeds its eval conversation with it and lists that source's tools (a `channel_group` case never offers a `sources: ["web", ...]` tool). A case taken before the field existed replays as `web` (a child case as `subagent`).
-- **Scheduled task messages** (scheduled tasks spec §6, §12): a task's `user_message` carries `schedule { taskId,
+- **Automation messages** (scheduled tasks spec §6, §12; the log keeps the frozen names `schedule`, `ScheduleMarker`): an automation's `user_message` carries `schedule { taskId,
   taskRunId, scheduledFor, trial, taskName, localTime }`, fixed at write time; request building renders only the
-  header `[Scheduled task "<name>", run for <local time>]` (`scheduleHeader`, a text block after the sender line),
+  header `[Scheduled task "<name>", run for <local time>]` (`scheduleHeader`, a text block after the sender line; the wording "Scheduled task" is model-visible and
+  stays after the rename),
   never the task row, so a rename changes no rebuilt request. Its zone is the message's `timeZone` (the
   `timeZoneOverride` of `readMessageContext`), so `run_context` follows. `run_started.trigger: "schedule"` is
   display only. In the log: no `DriftReason`.

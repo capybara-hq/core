@@ -946,7 +946,7 @@ export class SandboxService {
   }
 
   /**
-   * The org's limits for a standing network grant (a scheduled task's grant, a network approval):
+   * The org's limits for a standing network grant (an automation's grant, a network approval):
    * {@link deviceLimits} with the org's per-call host ceiling as an allowlist (`hostGrantCeiling`
    * with no device). Where that ceiling is bounded by the kernel only (`any`, which an allowlist
    * cannot carry with its exclusions), the org's effective hosts: a standing grant never reaches
@@ -1496,13 +1496,18 @@ export class SandboxService {
       sig,
     );
   }
-  /** Owner browse scopes never manufacture a conversation or Full consent. */
+  /**
+   * Owner browse scopes never manufacture a conversation or Full consent. `narrow.readRoots`
+   * roots every call's scope at those paths (a project's files: its root), each inside the owner's
+   * ceiling and never wider; none inside it is `device.project_outside_mode`.
+   */
   async withBrowse<T>(
     ctx: { orgId: string; deviceId: string; accountId: string },
     fn: (p: SandboxBrowse, signal: AbortSignal) => Promise<T>,
     signal: AbortSignal,
+    narrow?: { readRoots: readonly string[] },
   ): Promise<T> {
-    await this.authority.resolveBrowse(ctx, signal);
+    await this.authority.resolveBrowse(ctx, signal, narrow);
     const row = await this.readRow(ctx);
     if (!row) throw deviceNotRunning();
     const entry = await this.require(ctx.deviceId, ctx.orgId);
@@ -1532,6 +1537,7 @@ export class SandboxService {
             method,
             input,
             combined,
+            narrow,
           );
           const admitted = await this.operationIntents.claimBrowse(ctx, intent.operation_id);
           combined.throwIfAborted();
@@ -1576,13 +1582,16 @@ export class SandboxService {
    * use takes (the exclusive lease creates or resumes the instance through the retirement gate,
    * the B-11 reconcile marker, `maxRunningSandboxes` and fencing), and the lease
    * is left at once. No conversation holds it and nothing runs in it; what the start caused is
-   * not marked seen, so each conversation's next use still learns of it.
+   * not marked seen, so each conversation's next use still learns of it. `narrow` is the browse's
+   * own (see {@link withBrowse}), checked before the start, so a browse the narrowed scope refuses
+   * (`device.project_outside_mode`) never starts the device.
    */
   async ensureRunningForOwner(
     ctx: { orgId: string; deviceId: string; accountId: string },
     signal: AbortSignal,
+    narrow?: { readRoots: readonly string[] },
   ): Promise<void> {
-    await this.authority.resolveBrowse(ctx, signal);
+    await this.authority.resolveBrowse(ctx, signal, narrow);
     const p = await this.require(ctx.deviceId, ctx.orgId);
     const use: SandboxUseContext = {
       orgId: ctx.orgId,

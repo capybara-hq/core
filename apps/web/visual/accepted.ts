@@ -72,6 +72,11 @@ export const ACCEPTED: string[] = [
   // place; the reference PNGs and the side-by-side review wait for the reference-update and
   // visual-update workflows
   "mode-menu",
+  // the composer's +, / and @ menus and its project file picker (§6.16.30, §6.16.31; composer menus
+  // plan Task 7): accepted side by side in the Playwright Linux image; the reference PNGs wait for
+  // the reference-update workflow
+  "composer-menu",
+  "project-file-picker",
   // mobile touch (Task 25): size tables and state lists in the spec, reference blocks in the catalog
   "drawer",
   "floating-button",
@@ -184,7 +189,7 @@ export const ACCEPTED: string[] = [
   // in place; the reference PNGs, the maintainer sign-off and the side-by-side review wait for
   // the reference-update and visual-update workflows
   "trend-chart",
-  // the scheduled tasks calendar (scheduled tasks calendar design §6, §11): blocks and size table
+  // the automations calendar (automations calendar design §6, §11): blocks and size table
   // in place; the reference PNGs and the side-by-side review wait for the reference-update and
   // visual-update workflows
   "schedule-calendar",

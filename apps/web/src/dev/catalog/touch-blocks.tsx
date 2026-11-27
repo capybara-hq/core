@@ -42,7 +42,7 @@ function rows(): ReactNode {
       <NavRow icon="search" label="搜索" onSelect={noop} />
       <NavRow icon="inbox" label="收件箱" href="#" badge={{ count: 3 }} />
       <NavRow icon="agent" label="智能体" href="#" />
-      <NavRow icon="clock" label="定时任务" href="#" />
+      <NavRow icon="clock" label="自动化" href="#" />
       <NavRow icon="skills" label="技能、连接器、设备…" trailing="chevron" onSelect={noop} />
     </>
   );

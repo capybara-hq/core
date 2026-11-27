@@ -105,6 +105,16 @@ export const DeviceProjectAddBody = z
 /** `DELETE /devices/:id/projects/:name`. */
 export const DeviceProjectParams = DeviceParams.extend({ name: DeviceProjectName });
 
+/**
+ * `GET /devices/:id/projects/:name/files` (composer menus §5): `path` is the directory to list,
+ * relative to the project root (absent or empty: the root; the service normalizes it and refuses
+ * one that leaves the project, `device.path_outside_project`); `q` filters the names in it.
+ */
+export const DeviceProjectFilesQuery = z.object({
+  path: z.string().max(4096).optional(),
+  q: z.string().max(200).optional(),
+});
+
 export class DeviceCreateBodyDto extends createZodDto(DeviceCreateBody, "DeviceCreateBody") {}
 export class DevicePatchBodyDto extends createZodDto(DevicePatchBody, "DevicePatchBody") {}
 export class DeviceParamsDto extends createZodDto(DeviceParams, "DeviceParams") {}
@@ -115,4 +125,8 @@ export class DeviceProjectAddBodyDto extends createZodDto(
 export class DeviceProjectParamsDto extends createZodDto(
   DeviceProjectParams,
   "DeviceProjectParams",
+) {}
+export class DeviceProjectFilesQueryDto extends createZodDto(
+  DeviceProjectFilesQuery,
+  "DeviceProjectFilesQuery",
 ) {}

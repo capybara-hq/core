@@ -536,7 +536,7 @@ describe("the conversation page from the cache", () => {
     });
     expect(page.querySelector("[aria-busy='true']")).not.toBeNull();
     // the composer is real while the thread loads: it can be typed in, not sent from
-    const box = screen.getByRole("textbox", { name: en.chat.inputLabel, hidden: true });
+    const box = screen.getByRole("combobox", { name: en.chat.inputLabel, hidden: true });
     await userEvent.setup().type(box, "early");
     const send = screen.getByRole("button", { name: en.chat.send, hidden: true });
     expect(send).toHaveProperty("disabled", true);
@@ -793,7 +793,7 @@ describe("owner permission read boundaries through the actual route", () => {
       "o1",
       "c1",
       [],
-      CONV("c1", { scheduledTaskId: "schedule-1" }).conversation,
+      CONV("c1", { automationId: "schedule-1" }).conversation,
       "a1",
     );
     const read = queries.find((q) => q.queryKey?.at(-1) === "permissions");

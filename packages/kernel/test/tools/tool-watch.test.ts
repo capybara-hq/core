@@ -337,7 +337,12 @@ describe("watched input waits", () => {
       .where("id", "=", waiting.payload.questionId as string)
       .executeTakeFirstOrThrow();
     expect(q.conversation_id).not.toBe(conv);
-    await waitFor(async () => (await polls("sub1")) >= 1, 10_000, "a poll of the child's wait");
+    // The watcher bumps the poll count before it writes its ctx record: wait for the record.
+    await waitFor(
+      async () => (await kv.get("fake-watch:sub1:ctx")) !== null,
+      10_000,
+      "a poll of the child's wait",
+    );
     const watched = JSON.parse((await kv.get("fake-watch:sub1:ctx")) as string);
     expect(watched).toMatchObject({ conversationId: q.conversation_id, rootConversationId: conv });
     await kv.set("fake-watch:sub1", "go", { ttlSeconds: 60 });

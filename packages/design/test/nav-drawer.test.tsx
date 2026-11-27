@@ -13,7 +13,7 @@ const data: DrawerNavData = {
   sections: [
     { id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox", badge: { count: 120 } },
     { id: "agents", label: "智能体", href: "/agents", icon: "agent" },
-    { id: "schedules", label: "定时任务", href: "/schedules", icon: "clock" },
+    { id: "automations", label: "自动化", href: "/automations", icon: "clock" },
   ],
   more: [{ id: "skills", label: "技能", href: "/skills", icon: "skills" }],
   moreLabel: "技能、连接器、设备…",
@@ -94,13 +94,13 @@ describe("NavDrawer", () => {
     expect(panel().querySelector('[data-part="drawer-foot"] a')).toBeNull();
   });
 
-  it("the navigation is one card: 收件箱 with its count, 智能体, 定时任务, 更多", () => {
+  it("the navigation is one card: 收件箱 with its count, 智能体, 自动化, 更多", () => {
     open();
     const card = panel().querySelector('[data-part="drawer-nav-card"]') as HTMLElement;
     const rows = [...card.querySelectorAll('[data-part="nav-row"]')].map(
       (r) => r.querySelector(".cb-navrow-label")?.textContent,
     );
-    expect(rows).toEqual(["收件箱", "智能体", "定时任务", "更多"]);
+    expect(rows).toEqual(["收件箱", "智能体", "自动化", "更多"]);
     expect(card.querySelector('[data-part="navrow-badge"]')?.textContent).toBe("99+");
   });
 

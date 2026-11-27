@@ -22,6 +22,10 @@ const PAGES = [
   "template-conversation",
   "title-bar",
   "composer",
+  // the composer's +, / and @ menus, anchored above it (a bottom sheet on compact)
+  "composer-menu",
+  // the composer's project files picker: one folder at a time, multi-select (a sheet on compact)
+  "project-file-picker",
   "picker-menu",
   // the composer's mode menu (approval profiles)
   "mode-menu",
@@ -99,7 +103,7 @@ const PAGES = [
   "overview-section",
   // the usage chart: two panels on one x-axis (admin overview design §10.1)
   "trend-chart",
-  // the scheduled tasks calendar: week, month and the phone agenda (calendar design §11)
+  // the automations calendar: week, month and the phone agenda (calendar design §11)
   "schedule-calendar",
   // the kanban board: columns, a held card, a locked column, the phone form (spec §6.69)
   "board",

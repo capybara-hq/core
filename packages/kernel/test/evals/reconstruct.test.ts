@@ -14,12 +14,16 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
+import { AutomationFirer } from "../../src/automations/fire.js";
+import { AutomationStore } from "../../src/automations/store.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
+import { projectFileText } from "../../src/conversations/conversations.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { createKv } from "../../src/ctx/kv.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DeviceProjectFilesService } from "../../src/devices/device-project-files.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { ApiError } from "../../src/errors.js";
@@ -55,8 +59,6 @@ import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { catalogLineChars, SkillsCatalogService } from "../../src/skills/catalog.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { allowedOnceNote } from "../../src/tools/network-asks.js";
@@ -1649,6 +1651,71 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, snap);
   });
 
+  it("referenced project files: their logged blocks before an uploaded file's, zero drift, nothing read at build time", async () => {
+    reset();
+    const root = "/Users/u/src/ledger";
+    const stat = vi
+      .spyOn(k.app.get(DeviceProjectFilesService), "statAll")
+      .mockResolvedValue({ missing: [] });
+    // the run start reads the bound project as in production: the device holds no project of
+    // that name, so it logs the project as unavailable (a project_root event) and the run goes on
+    const kernelRead = vi.spyOn(k.app.get(SandboxService), "withKernelRead");
+    try {
+      const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+      const conv = await createConv(owner, orgId, agentId);
+      await db
+        .updateTable("conversations")
+        .set({ project_name: "ledger" as never, project_path: root as never })
+        .where("id", "=", conv)
+        .execute();
+      const id = await attach("notes.txt", Buffer.from("notes", "utf8"), "text/plain");
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload: {
+          text: "echo:read them",
+          files: [id],
+          projectFiles: [{ path: "src/a.ts" }, { path: "./docs/b.md" }],
+        },
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      await waitForTerminal(db, conv, 1, 30_000);
+      expect(stat).toHaveBeenCalledTimes(1);
+      const message = (await eventsOf(db, conv)).find((e) => e.type === "user_message") as Extract<
+        ConversationEvent,
+        { type: "user_message" }
+      >;
+      expect(message.payload.projectFiles).toEqual([{ path: "src/a.ts" }, { path: "docs/b.md" }]);
+      expect(message.payload.content.slice(0, 3)).toEqual([
+        { type: "text", text: "echo:read them" },
+        { type: "text", text: projectFileText("src/a.ts", root) },
+        { type: "text", text: projectFileText("docs/b.md", root) },
+      ]);
+      expect(message.payload.content[3]).toMatchObject({
+        type: "document",
+        source: { attachmentId: id },
+      });
+      // the request carries the logged blocks as they are
+      expect(JSON.stringify(sent[0]?.messages)).toContain(
+        "Referenced project file: docs/b.md (in the project root /Users/u/src/ledger; read it with Read when needed).",
+      );
+      const events = await eventsOf(db, conv);
+      const projectRoot = events.find((e) => e.type === "project_root");
+      expect(projectRoot?.payload).toMatchObject({ project: "ledger", root, skills: [] });
+      expect(projectRoot?.payload).toHaveProperty("unavailable");
+      expect(projectRoot?.seq ?? 0).toBeGreaterThan(message.seq);
+      // the replay rebuilds every request from the log alone: the device is never asked
+      stat.mockClear();
+      kernelRead.mockClear();
+      await expectZeroDrift(conv, await snapshotOf(conv));
+      expect(stat).not.toHaveBeenCalled();
+      expect(kernelRead).not.toHaveBeenCalled();
+    } finally {
+      stat.mockRestore();
+      kernelRead.mockRestore();
+    }
+  });
+
   it("不支持视觉的模型：图片换成占位，不取字节", async () => {
     reset();
     const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
@@ -2934,12 +3001,12 @@ describe("reconstructRequest: the command review (auto mode spec §5.4–§5.5)"
   });
 });
 
-describe("reconstructRequest: scheduled tasks", () => {
-  const store = new ScheduledTaskStore();
+describe("reconstructRequest: automations", () => {
+  const store = new AutomationStore();
   const task = (
     agentId: string,
-    over: Partial<Parameters<ScheduledTaskStore["insertTask"]>[1]>,
-  ): Parameters<ScheduledTaskStore["insertTask"]>[1] => ({
+    over: Partial<Parameters<AutomationStore["insertTask"]>[1]>,
+  ): Parameters<AutomationStore["insertTask"]>[1] => ({
     id: randomUUID(),
     orgId,
     accountId: ownerId,
@@ -2969,7 +3036,7 @@ describe("reconstructRequest: scheduled tasks", () => {
       trial: false,
     });
     if (!run) throw new Error("tick taken");
-    await k.app.get(ScheduledTaskFirer).fire(run.id);
+    await k.app.get(AutomationFirer).fire(run.id);
     return run.id;
   };
 
@@ -3029,7 +3096,7 @@ describe("reconstructRequest: scheduled tasks", () => {
     const row = await db
       .selectFrom("conversations")
       .select("id")
-      .where("scheduled_task_id", "=", t.id)
+      .where("automation_id", "=", t.id)
       .where("create_request_id", "=", runId)
       .executeTakeFirstOrThrow();
     await waitForTerminal(db, row.id, 1, 30_000);

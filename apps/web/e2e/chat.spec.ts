@@ -118,7 +118,7 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
       .filter({ hasText: /.+/ })
       .first(),
   ).toBeVisible();
-  await expect(page.getByRole("textbox", { name: zh.chat.inputLabel })).toBeEnabled();
+  await expect(page.getByRole("combobox", { name: zh.chat.inputLabel })).toBeEnabled();
   await interject(page, "echo:interject");
   await expect(assistants(page).filter({ hasText: SECOND_TEXT })).toHaveCount(1);
   await expect(assistants(page).filter({ hasText: /^.*interject$/ })).toHaveCount(1);

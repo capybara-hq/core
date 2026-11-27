@@ -1,7 +1,7 @@
 import { apiFetch } from "./api";
 
 /** The push categories a person switches (kernel `PUSH_CATEGORIES`); every one is on by default. */
-export const PUSH_CATEGORIES = ["waiting", "replies", "tasks", "schedules"] as const;
+export const PUSH_CATEGORIES = ["waiting", "replies", "tasks", "automations"] as const;
 export type PushCategory = (typeof PUSH_CATEGORIES)[number];
 
 /** The four switches (`GET` / `PUT /api/v1/me/push-preferences`). */

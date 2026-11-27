@@ -1,14 +1,14 @@
 import { sql } from "kysely";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { budgetRunOf } from "../runtime/subagents/limits.js";
 import {
   GIT_PUSH_GRANT,
   gitPushForbidden,
   gitPushGrantKey,
   normalizeGitRepo,
-} from "../schedules/grant-rules.js";
-import { type UnattendedRun, unattendedRules, unattendedRunOf } from "../schedules/unattended.js";
+} from "../automations/grant-rules.js";
+import { type UnattendedRun, unattendedRules, unattendedRunOf } from "../automations/unattended.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { budgetRunOf } from "../runtime/subagents/limits.js";
 import { gitPushPolicyName, personalAuth } from "./connector-account-policies.js";
 import { type GitRunState, gitRepoKey } from "./git-asks.js";
 import { connectorPolicy } from "./policy.js";
@@ -22,8 +22,8 @@ import type { ToolPolicy } from "./registry.js";
  * Storage (no new table): the org's default is `connectors.git_push_policy` (default `ask`); a
  * member's standing allow (or deny) for one repository is their `connector_tool_account_policies`
  * row `git_push:<host>/<owner>/<repo>` (a personal connector only: an org connector's push acts as the
- * org); a run grant is an approved `once` git ask of the run tree; a scheduled task's grants are
- * `git:push` and `git:push:<owner>/<repo>` in `scheduled_task_grants`.
+ * org); a run grant is an approved `once` git ask of the run tree; an automation's grants are
+ * `git:push` and `git:push:<owner>/<repo>` in `automation_grants`.
  */
 
 /** The statuses of a run that has not ended: its run grants still apply. */
@@ -40,7 +40,7 @@ export type GitPushReason =
   | "member_allow"
   /** An approved 「这次允许」 of the run tree for the repository. */
   | "run_grant"
-  /** The scheduled task's `git:push` / `git:push:<owner>/<repo>` grant (unattended run). */
+  /** The automation's `git:push` / `git:push:<owner>/<repo>` grant (unattended run). */
   | "task_grant"
   /** The policy asks the actor. */
   | "ask"
@@ -83,7 +83,7 @@ export interface GitPushInput {
   /** `<owner>/<repo>` (a trailing `.git` and case are normalized here). */
   repo: string;
   /**
-   * The scheduled task context of the run, when the caller has it (`unattendedRunOf`); undefined:
+   * The automation context of the run, when the caller has it (`unattendedRunOf`); undefined:
    * read here. Null: an attended run.
    */
   unattended?: UnattendedRun | null;
@@ -170,9 +170,9 @@ export async function decideGitPush(
   }
   if (rules !== null) {
     const granted = await db
-      .selectFrom("scheduled_task_grants")
+      .selectFrom("automation_grants")
       .select("tool_key")
-      .where("task_id", "=", rules.taskId)
+      .where("automation_id", "=", rules.taskId)
       .where("tool_key", "in", [GIT_PUSH_GRANT, key])
       .executeTakeFirst();
     if (granted !== undefined) return { decision: "allow", reason: "task_grant", repo };

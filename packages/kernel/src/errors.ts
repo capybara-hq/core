@@ -383,6 +383,12 @@ export const ERROR_CODES = {
   "conversation.queue_item_not_found": 404,
   /** A sub-agent's conversation takes no messages from people (sub-agents spec §6.1). */
   "conversation.read_only": 409,
+  /**
+   * A referenced project file is not there to reference (composer menus §5): the conversation has
+   * no device project, the path leaves it, or the device reports no file there;
+   * `details: [{ path?, reason? }]`.
+   */
+  "conversation.project_file_unavailable": 422,
   "run.not_active": 409,
   /** A run that is not one of the conversation's (the live draft route, spec 2026-11-07 §3.2). */
   "run.not_found": 404,
@@ -561,6 +567,13 @@ export const ERROR_CODES = {
   "device.project_path_unreadable": 422,
   /** The device provider refused the project's directory (its reason is the message and details). */
   "device.project_refused": 422,
+  /**
+   * A path relative to a device project that leaves it (composer menus §5): absolute, `..` above
+   * the root, a backslash or a control character; `details: [{ path }]`.
+   */
+  "device.path_outside_project": 422,
+  /** The device's provider cannot list its directories for its owner (no `list` / owner browse). */
+  "device.list_unsupported": 409,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
   "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */
@@ -577,28 +590,28 @@ export const ERROR_CODES = {
   "device.credential_invalid": 401,
   /** A device stream hop from another gateway replica without a valid MAC (or replayed). */
   "device.stream_hop_refused": 401,
-  /** The scheduled task is missing, deleted, in another org or not the caller's to see. */
-  "schedule.not_found": 404,
+  /** The automation is missing, deleted, in another org or not the caller's to see. */
+  "automation.not_found": 404,
   /** Not a 5-field cron expression (no seconds field). */
-  "schedule.invalid_cron": 400,
+  "automation.invalid_cron": 400,
   /** Not an IANA time zone. */
-  "schedule.invalid_time_zone": 400,
+  "automation.invalid_time_zone": 400,
   /** A `once` time that is not a local date-time `YYYY-MM-DDTHH:mm[:ss]`. */
-  "schedule.invalid_once_time": 400,
+  "automation.invalid_once_time": 400,
   /** A `once` time that is not in the future. */
-  "schedule.once_in_past": 400,
+  "automation.once_in_past": 400,
   /** Two fire times closer than the org's `minIntervalMinutes`. */
-  "schedule.interval_too_short": 400,
+  "automation.interval_too_short": 400,
   /** The creator or the org has as many active and paused tasks as the org allows. */
-  "schedule.limit_reached": 409,
-  /** The org turned scheduled tasks off. */
-  "schedule.disabled": 409,
+  "automation.limit_reached": 409,
+  /** The org turned automations off. */
+  "automation.disabled": 409,
   /** Where the task runs is inconsistent or not the creator's to use (conversation, chat, device). */
-  "schedule.target_invalid": 400,
+  "automation.target_invalid": 400,
   /** A tool the creator cannot pre-approve for the task (spec §7). */
-  "schedule.grant_not_allowed": 400,
+  "automation.grant_not_allowed": 400,
   /** An org admin may pause, resume and delete another person's task, never edit it. */
-  "schedule.forbidden": 403,
+  "automation.forbidden": 403,
   "skill.not_found": 404,
   /** The skill's file routes: no such version of the skill, or no such path in that version. */
   "skill.file_not_found": 404,

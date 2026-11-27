@@ -213,6 +213,11 @@ type EventBody =
         content: ContentBlock[];
         /** `@` 资源引用的附件：第 i 个附件的正文是 `content[i + 1]`。 */
         attachments?: MessageAttachment[];
+        /**
+         * Referenced project files (composer menus §5), relative to the conversation's project
+         * root: file i's text block is `content[1 + attachments.length + i]`.
+         */
+        projectFiles?: { path: string }[];
         authorAccountId: string;
         /**
          * Who wrote it, at send time (model-facing data; the page names authors from the live
@@ -820,8 +825,8 @@ export interface Conversation {
   owner?: PersonRef | null;
   /** The device it runs in, bound at the first message (null: none). */
   deviceId: string | null;
-  /** The scheduled task that started it (a `new`-mode task); null otherwise. */
-  scheduledTaskId?: string | null;
+  /** The automation that started it (a `new`-mode task); null otherwise. */
+  automationId?: string | null;
   /**
    * The device project it is bound to (project root §4.3: chosen at creation, never changed);
    * null in free mode.
@@ -936,6 +941,11 @@ export interface MessageInput {
   clientMessageId: string;
   attachments?: { connectorId: string; uri: string }[];
   files?: string[];
+  /**
+   * Files of the conversation's device project, referenced, not uploaded (composer menus §5):
+   * paths relative to the project root, at most 10; they need text like `@` resources.
+   */
+  projectFiles?: { path: string }[];
   /** Switch the conversation's model from the next run (the agent's own model = back to it). */
   model?: ModelRef;
   effort?: Effort;
@@ -969,6 +979,8 @@ const messageBody = (m: MessageInput) => ({
   clientMessageId: m.clientMessageId,
   ...(m.attachments !== undefined && m.attachments.length > 0 && { attachments: m.attachments }),
   ...(m.files !== undefined && m.files.length > 0 && { files: m.files }),
+  ...(m.projectFiles !== undefined &&
+    m.projectFiles.length > 0 && { projectFiles: m.projectFiles }),
   ...(m.model !== undefined && { model: m.model }),
   ...(m.effort !== undefined && { effort: m.effort }),
   ...(m.retryOf !== undefined && { retryOf: m.retryOf }),

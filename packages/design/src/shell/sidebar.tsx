@@ -16,7 +16,7 @@ import { Logo } from "../display/logo";
 import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
-import { NATIVE_SECTION_ORDER } from "../native";
+import { drawerIdOfNative, NATIVE_SECTION_ORDER } from "../native";
 import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { Menu, type MenuItem } from "../overlays/index";
@@ -1144,15 +1144,18 @@ function SetupNav({
   );
 }
 
+/** The drawer ids of the strip's sections (`nav@1` ids mapped back to the drawer's). */
+const NATIVE_DRAWER_SECTIONS: readonly string[] = NATIVE_SECTION_ORDER.map(drawerIdOfNative);
+
 /**
- * A native strip's marks (mobile layout spec §4.3): a section entry (Agents, Scheduled tasks) carries
+ * A native strip's marks (mobile layout spec §4.3): a section entry (Agents, Automations) carries
  * `data-nav-section`, every other navigation entry `data-nav-other`; both are hidden while the
  * strip shows (`[data-native-nav]`), when the sections come from the strip. Search, New
  * conversation and the recents carry `data-nav-pill`: the strip's pill holds them too
  * (interaction model §10.5), so they are hidden with it.
  */
 function navSectionAttrs(id: string): Record<string, string> {
-  return (NATIVE_SECTION_ORDER as readonly string[]).includes(id)
+  return NATIVE_DRAWER_SECTIONS.includes(id)
     ? { "data-nav-section": id }
     : { "data-nav-other": "" };
 }
@@ -1169,7 +1172,7 @@ function withNativeMore(
 ): SidebarProps["account"] {
   const ctx = p.context;
   if (p.nativeNav !== true || ctx.kind !== "work" || account.menu.length === 0) return account;
-  const sections = NATIVE_SECTION_ORDER as readonly string[];
+  const sections = NATIVE_DRAWER_SECTIONS;
   const entries = [
     ...[...ctx.primary, ...(ctx.primaryExtensions ?? [])].filter((n) => !sections.includes(n.id)),
     ...ctx.more,

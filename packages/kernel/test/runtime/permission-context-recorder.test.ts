@@ -1191,7 +1191,7 @@ describe("permission context projection", () => {
       availability: { state: "unsupported" },
       scope: null,
     });
-    // an interactive Full root whose child run serves a scheduled task run (a wake or a child)
+    // an interactive Full root whose child run serves an automation run (a wake or a child)
     const f = await seedContext(k, raw, { profile: "full-access" });
     const taskId = await seedTask(f.db, f, ["api.example.com"]);
     const taskRun = await seedTaskRun(f.db, f.orgId, taskId);

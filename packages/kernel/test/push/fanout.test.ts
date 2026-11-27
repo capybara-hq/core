@@ -10,6 +10,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AutomationRunTracker } from "../../src/automations/run-tracker.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -21,16 +22,15 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import { PushFanout } from "../../src/push/fanout.js";
 import {
+  automationRunEventId,
   conversationEventId,
   PUSH_QUEUE,
   type PushFanoutData,
   pushFanoutJobId,
-  scheduleRunEventId,
 } from "../../src/push/jobs.js";
 import { PushPreferencesService } from "../../src/push/preferences.service.js";
 import { PushOwed } from "../../src/push/push-owed.js";
 import { PushTokenStore } from "../../src/push/token-store.js";
-import { ScheduledTaskRunTracker } from "../../src/schedules/run-tracker.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -174,7 +174,7 @@ async function seedConv(
   return id;
 }
 
-async function seedRun(convId: string, triggerId: string, scheduledTaskRunId?: string) {
+async function seedRun(convId: string, triggerId: string, automationRunId?: string) {
   const id = randomUUID();
   await db
     .insertInto("runs")
@@ -185,7 +185,7 @@ async function seedRun(convId: string, triggerId: string, scheduledTaskRunId?: s
       status: "waiting",
       agent_version: 1,
       trigger_seq: 0,
-      scheduled_task_run_id: scheduledTaskRunId ?? null,
+      automation_run_id: automationRunId ?? null,
     })
     .execute();
   return id;
@@ -607,12 +607,12 @@ describe("recipients when the fanout runs", () => {
   });
 });
 
-describe("scheduled task runs", () => {
+describe("automation runs", () => {
   /** A task of member1 with one running task run whose kernel run is `runId`. */
   async function taskRun(name: string) {
     const taskId = randomUUID();
     await db
-      .insertInto("scheduled_tasks")
+      .insertInto("automations")
       .values({
         id: taskId,
         org_id: orgId,
@@ -628,10 +628,10 @@ describe("scheduled task runs", () => {
     const taskRunId = randomUUID();
     const runId = await seedRun(conv, ids.member1 as string, undefined);
     await db
-      .insertInto("scheduled_task_runs")
+      .insertInto("automation_runs")
       .values({
         id: taskRunId,
-        task_id: taskId,
+        automation_id: taskId,
         org_id: orgId,
         scheduled_for: new Date(),
         fired_at: new Date(),
@@ -642,31 +642,31 @@ describe("scheduled task runs", () => {
       .execute();
     await db
       .updateTable("runs")
-      .set({ scheduled_task_run_id: taskRunId })
+      .set({ automation_run_id: taskRunId })
       .where("id", "=", runId)
       .execute();
     return { taskId, taskRunId, runId, conv };
   }
 
   it.each([
-    ["completed", "your scheduled task ran"],
-    ["failed", "your scheduled task failed"],
+    ["completed", "your automation ran"],
+    ["failed", "your automation failed"],
   ] as const)(
-    "a %s run owes push-fanout-sched-<taskRunId> to the task's owner",
+    "a %s run owes push-fanout-automation-<taskRunId> to the task's owner",
     async (outcome, body) => {
       const t = await taskRun(`Nightly ${outcome}`);
-      await k.app.get(ScheduledTaskRunTracker, { strict: false }).onRunFinished(t.runId, outcome);
-      const eventId = scheduleRunEventId(t.taskRunId);
+      await k.app.get(AutomationRunTracker, { strict: false }).onRunFinished(t.runId, outcome);
+      const eventId = automationRunEventId(t.taskRunId);
       const got = await delivered(eventId, 1);
       expect(got.get(ids["reg-member1"] as string)).toEqual({
         title: `Nightly ${outcome}`,
         body,
         path: `/chat/${t.conv}?org=${orgId}`,
-        threadId: `schedule-${t.taskId}`,
+        threadId: `automation-${t.taskId}`,
         collapseId: eventId,
         origin: ORIGIN,
       });
-      // its kernel run's end pushes no reply (the schedule's push stands for it)
+      // its kernel run's end pushes no reply (the automation's push stands for it)
       expect(await fanout().run(await seedEvent(t.conv, "run_finished", finished, t.runId))).toBe(
         0,
       );
@@ -675,19 +675,19 @@ describe("scheduled task runs", () => {
   it("a deleted task's run pushes nothing", async () => {
     const t = await taskRun("Deleted");
     await db
-      .updateTable("scheduled_task_runs")
+      .updateTable("automation_runs")
       .set({ status: "completed" })
       .where("id", "=", t.taskRunId)
       .execute();
     await db
-      .updateTable("scheduled_tasks")
+      .updateTable("automations")
       .set({ deleted_at: new Date() })
       .where("id", "=", t.taskId)
       .execute();
     expect(
       await fanout().run({
-        eventId: scheduleRunEventId(t.taskRunId),
-        source: { kind: "schedule", taskRunId: t.taskRunId },
+        eventId: automationRunEventId(t.taskRunId),
+        source: { kind: "automation", taskRunId: t.taskRunId },
       }),
     ).toBe(0);
   });

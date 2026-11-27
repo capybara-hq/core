@@ -655,22 +655,22 @@ describe("org security settings read narrow", () => {
   });
 
   it("a write that does not save forbiddenTools keeps an unreadable list unreadable", async () => {
-    await store({ scheduledTasks: { forbiddenTools: "Bash", maxRunsPerHour: 7 } });
+    await store({ automations: { forbiddenTools: "Bash", maxRunsPerHour: 7 } });
     const s = settingsWith();
     await s.update(orgId, { locale: "zh" }, accountId);
-    await s.update(orgId, { scheduledTasks: { enabled: false } }, accountId);
-    expect((await storedSettings()).scheduledTasks).toMatchObject({
+    await s.update(orgId, { automations: { enabled: false } }, accountId);
+    expect((await storedSettings()).automations).toMatchObject({
       enabled: false,
       maxRunsPerHour: 7,
       forbiddenTools: "Bash",
     });
     // a group that is not an object: written with a null list, still unreadable
-    await store({ scheduledTasks: "junk" });
+    await store({ automations: "junk" });
     await s.update(orgId, { locale: "zh" }, accountId);
-    expect((await storedSettings()).scheduledTasks).toMatchObject({ forbiddenTools: null });
+    expect((await storedSettings()).automations).toMatchObject({ forbiddenTools: null });
     // saving the list fixes it, even when it saves what the list read as ([])
-    await s.update(orgId, { scheduledTasks: { forbiddenTools: [] } }, accountId);
-    expect((await storedSettings()).scheduledTasks).toMatchObject({ forbiddenTools: [] });
+    await s.update(orgId, { automations: { forbiddenTools: [] } }, accountId);
+    expect((await storedSettings()).automations).toMatchObject({ forbiddenTools: [] });
   });
 
   it("saving sandboxToolPolicy as what it read as repairs the stored value", async () => {
@@ -680,19 +680,19 @@ describe("org security settings read narrow", () => {
   });
 
   it("the responses flag an unreadable list; the flag is never stored; a repair is audited", async () => {
-    await store({ scheduledTasks: { forbiddenTools: 7 } });
+    await store({ automations: { forbiddenTools: 7 } });
     const s = settingsWith();
-    expect((await s.get(orgId)).scheduledTasks).toMatchObject({
+    expect((await s.get(orgId)).automations).toMatchObject({
       forbiddenTools: [],
       forbiddenToolsUnreadable: true,
     });
     // a write that keeps it unreadable says so too, and stores no flag
     const kept = await s.update(orgId, { locale: "zh" }, accountId);
-    expect(kept.scheduledTasks.forbiddenToolsUnreadable).toBe(true);
-    expect((await storedSettings()).scheduledTasks).not.toHaveProperty("forbiddenToolsUnreadable");
-    const fixed = await s.update(orgId, { scheduledTasks: { forbiddenTools: [] } }, accountId);
-    expect(fixed.scheduledTasks).not.toHaveProperty("forbiddenToolsUnreadable");
-    expect((await s.get(orgId)).scheduledTasks).not.toHaveProperty("forbiddenToolsUnreadable");
+    expect(kept.automations.forbiddenToolsUnreadable).toBe(true);
+    expect((await storedSettings()).automations).not.toHaveProperty("forbiddenToolsUnreadable");
+    const fixed = await s.update(orgId, { automations: { forbiddenTools: [] } }, accountId);
+    expect(fixed.automations).not.toHaveProperty("forbiddenToolsUnreadable");
+    expect((await s.get(orgId)).automations).not.toHaveProperty("forbiddenToolsUnreadable");
     const details = (
       await db
         .selectFrom("audit_events")
@@ -707,7 +707,7 @@ describe("org security settings read narrow", () => {
 
   it("a write still validates forbiddenTools", () => {
     expect(
-      OrgSettingsPatchSchema.safeParse({ scheduledTasks: { forbiddenTools: "Bash" } }).success,
+      OrgSettingsPatchSchema.safeParse({ automations: { forbiddenTools: "Bash" } }).success,
     ).toBe(false);
   });
 });

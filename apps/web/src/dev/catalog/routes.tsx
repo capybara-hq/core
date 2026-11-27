@@ -36,21 +36,21 @@ export const OVERLAY_ROUTES = [
  */
 export const PAGE_ROUTES = [
   "pages/admin-overview",
-  "pages/schedules-calendar",
-  "pages/schedules-calendar-month",
-  "pages/schedules-calendar-admin",
+  "pages/automations-calendar",
+  "pages/automations-calendar-month",
+  "pages/automations-calendar-admin",
   // the member pages of the responsive matrix (`member-pages.tsx`)
   "pages/member-agents",
   "pages/member-skills",
   "pages/member-connectors",
-  "pages/member-schedules",
+  "pages/member-automations",
   "pages/member-conversations",
   "pages/member-inbox",
   "pages/member-profile",
   // the org admin pages of phase 2 (`admin-pages.tsx`)
   "pages/org-members",
   "pages/org-tokens",
-  "pages/org-schedules",
+  "pages/org-automations",
   "pages/org-audit",
   "pages/org-extensions",
   "pages/org-trajectories",
@@ -160,6 +160,10 @@ export const REFERENCE_COMPONENTS = [
   "subagent-group",
   "title-bar",
   "composer",
+  // the composer's +, / and @ menus (composer menus spec §1)
+  "composer-menu",
+  // the composer's project files picker (composer menus spec §5)
+  "project-file-picker",
   "picker-menu",
   "mode-menu",
   "command-palette",
@@ -212,7 +216,7 @@ export const REFERENCE_COMPONENTS = [
   "overview-section",
   // the usage chart: two panels on one x-axis, never a second y-scale (admin overview design §10.1)
   "trend-chart",
-  // the scheduled tasks calendar: week, month and the phone agenda (scheduled tasks calendar design §6)
+  // the automations calendar: week, month and the phone agenda (automations calendar design §6)
   "schedule-calendar",
   // the kanban board: columns, a held card, a locked column, the phone form (spec §6.69)
   "board",

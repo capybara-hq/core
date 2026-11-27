@@ -19,3 +19,10 @@ Only accounts with `isEnterpriseAdmin` may call it.
 The `EnterpriseAdminLock` provider serializes `countEnterpriseAdmins()`.
 The column `is_enterprise_admin` and the error `account.last_enterprise_admin` are gone.
 The decorator lives in `identity/enterprise-admin.ts`.
+The table `scheduled_tasks` keeps `scheduled_task_runs`, and the tool `ScheduleCreate` lists them.
+Set `CAPYBARA_SCHEDULES__MAX_TASKS_PER_ORG` and read `schedule_attention` in the inbox.
+The org setting `scheduledTasks.forbiddenToolsUnreadable` is read by `ScheduledTaskStore`.
+The index `scheduled_tasks_org_idx` is renamed with its table.
+The run row keeps `scheduledTaskId` and a `scheduledTaskRuns` list.
+The jobs `sched-fire` and `sched-settle` run under the roles `schedules.use` and `schedules.manage`.
+The copy lives under `scheduleSettings.title` and `inboxSchedule.label`.

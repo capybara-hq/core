@@ -6,8 +6,9 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
-import { ZBody, ZParam } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { DeviceProjectFilesService, type ProjectFileList } from "./device-project-files.service.js";
 import {
   type DeviceProjectCandidates,
   type DeviceProjectList,
@@ -24,6 +25,8 @@ import {
   DevicePatchBodyDto,
   type DeviceProjectAddBody,
   DeviceProjectAddBodyDto,
+  type DeviceProjectFilesQuery,
+  DeviceProjectFilesQueryDto,
   type DeviceProjectParams,
   DeviceProjectParamsDto,
 } from "./dto.js";
@@ -52,13 +55,17 @@ import {
  *   `device.not_found`): `GET /:id/projects` → the ones its current mode can read;
  *   `GET /:id/projects/candidates` → the device's suggestions under its base;
  *   `POST /:id/projects { path, name? }` → 201 `{ project }` (path relative to the base);
- *   `DELETE /:id/projects/:name` → 204 (idempotent).
+ *   `DELETE /:id/projects/:name` → 204 (idempotent);
+ *   `GET /:id/projects/:name/files?path=&q=` → `{ entries, truncated }`: one directory of the
+ *   project (path relative to its root; 422 `device.path_outside_project` for one leaving it),
+ *   read through the owner browse scope (composer menus §5).
  */
 @Controller("api/v1/orgs/:orgId/devices")
 export class DevicesController {
   constructor(
     @Inject(DevicesService) private readonly devices: DevicesService,
     @Inject(DeviceProjectsService) private readonly projects: DeviceProjectsService,
+    @Inject(DeviceProjectFilesService) private readonly files: DeviceProjectFilesService,
   ) {}
 
   @Get()
@@ -170,6 +177,21 @@ export class DevicesController {
   ): Promise<DeviceProjectCandidates> {
     const p = requireUser(principal);
     return this.projects.candidates(org.orgId, p.account.id, params.id);
+  }
+
+  @Get(":id/projects/:name/files")
+  @OrgAction("agents.use")
+  async listProjectFiles(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(DeviceProjectParamsDto) params: z.infer<typeof DeviceProjectParams>,
+    @ZQuery(DeviceProjectFilesQueryDto) query: z.infer<typeof DeviceProjectFilesQuery>,
+  ): Promise<ProjectFileList> {
+    const p = requireUser(principal);
+    return this.files.list(org.orgId, p.account.id, params.id, params.name, {
+      ...(query.path !== undefined && { path: query.path }),
+      ...(query.q !== undefined && { q: query.q }),
+    });
   }
 
   @Post(":id/projects")

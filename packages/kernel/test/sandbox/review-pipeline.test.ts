@@ -15,6 +15,10 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
+import { AutomationFirer } from "../../src/automations/fire.js";
+import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
+import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
+import type { TaskRun } from "../../src/automations/types.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import {
   ACTOR_NOT_DEVICE_OWNER_REASON,
@@ -30,10 +34,6 @@ import { Waits } from "../../src/runtime/waits.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
-import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
-import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
-import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { TaskRun } from "../../src/schedules/types.js";
 import {
   admissionUnavailableText,
   DEVICE_OF_ANOTHER_ACCOUNT_TEXT,
@@ -99,7 +99,7 @@ let orgId: string;
 let agentId: string;
 let taskAgentId: string;
 let connId: string;
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -119,7 +119,7 @@ beforeAll(async () => {
     ),
   );
   // the tests fire scheduled runs themselves: the worker's scan would race them
-  k.app.get(SchedulerRegistry).getCronJob(SCHED_SCAN_JOB).stop();
+  k.app.get(SchedulerRegistry).getCronJob(AUTOMATION_SCAN_JOB).stop();
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
@@ -146,7 +146,7 @@ beforeAll(async () => {
   });
   expect(created.statusCode, created.body).toBe(201);
   agentId = (created.json() as { agent: { id: string } }).agent.id;
-  // a second agent whose model is scripted: a scheduled task's message carries its schedule
+  // a second agent whose model is scripted: an automation's message carries its schedule
   // header before the prompt, which `model-fake`'s `tool:` directive does not accept
   const taskAgent = await owner({
     method: "POST",
@@ -252,7 +252,7 @@ const conversationOfTaskRun = async (taskId: string): Promise<string> => {
       db
         .selectFrom("conversations")
         .select("id")
-        .where("scheduled_task_id", "=", taskId)
+        .where("automation_id", "=", taskId)
         .executeTakeFirst(),
     30_000,
     "the task conversation",
@@ -261,7 +261,7 @@ const conversationOfTaskRun = async (taskId: string): Promise<string> => {
 };
 
 /**
- * Inserts an active scheduled task with a due run, scripts the first reply of its prompt to call
+ * Inserts an active automation with a due run, scripts the first reply of its prompt to call
  * `toolCalls`, fires the run and waits for its terminal event.
  */
 async function fireScheduled(
@@ -286,7 +286,7 @@ async function fireScheduled(
     nextRunAt: new Date(Date.now() + 86_400_000),
     jitterSeconds: 0,
     expiresAt: null,
-  } satisfies ScheduledTaskInsert);
+  } satisfies AutomationInsert);
   const run = await store.insertRun(db, {
     id: randomUUID(),
     taskId: task.id,
@@ -296,7 +296,7 @@ async function fireScheduled(
   });
   if (!run) throw new Error("tick taken");
   scriptRules([{ when: { lastUserIncludes: prompt, assistantTurns: 0 }, reply: { toolCalls } }]);
-  await k.app.get(ScheduledTaskFirer).fire(run.id);
+  await k.app.get(AutomationFirer).fire(run.id);
   const conv = await conversationOfTaskRun(task.id);
   const terminal = await waitFor(
     async () => {
@@ -752,7 +752,7 @@ describe("the command review in the pipeline", () => {
       nextRunAt: new Date(Date.now() + 86_400_000),
       jitterSeconds: 0,
       expiresAt: null,
-    } satisfies ScheduledTaskInsert);
+    } satisfies AutomationInsert);
     const run = await store.insertRun(db, {
       id: randomUUID(),
       taskId: task.id,
@@ -769,7 +769,7 @@ describe("the command review in the pipeline", () => {
         reply: { toolCalls: [{ name: "Bash", input: PUSH }] },
       },
     ]);
-    await k.app.get(ScheduledTaskFirer).fire(run.id);
+    await k.app.get(AutomationFirer).fire(run.id);
     const conv = await conversationOfTaskRun(task.id);
     const terminal = await waitFor(
       async () => {
@@ -799,14 +799,14 @@ describe("the command review in the pipeline", () => {
     expect(taskRun.missingGrants ?? []).toEqual([]);
   });
 
-  it("a scheduled task hitting sudo gets no approval and no wait: the ask is a deny, the run continues", async () => {
+  it("an automation hitting sudo gets no approval and no wait: the ask is a deny, the run continues", async () => {
     const { terminal, conversationId } = await fireScheduled("Update the system packages", [
       { name: "Bash", input: { command: "sudo apt-get update", description: "Update packages" } },
     ]);
     await expectUnattendedDeny(conversationId, terminal, "ask.sudo");
   });
 
-  it("a scheduled task writing outside the workspace is denied at once with ask.outside-write", async () => {
+  it("an automation writing outside the workspace is denied at once with ask.outside-write", async () => {
     const { terminal, conversationId } = await fireScheduled("Write the shared config", [
       {
         name: "Write",

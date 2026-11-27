@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  parseSandboxBrowseScope,
   parseSandboxExecutionRef,
   parseSandboxOperationScope,
   type SandboxExecutionRef,
@@ -358,8 +359,9 @@ export class SandboxOperationIntents {
     method: "stat" | "list" | "scan",
     input: unknown,
     signal: AbortSignal,
+    narrow?: { readRoots: readonly string[] },
   ): Promise<OperationIntent> {
-    const scope = await this.authority.resolveBrowse(ctx, signal);
+    const scope = await this.authority.resolveBrowse(ctx, signal, narrow);
     const described = describeOperationPayload(input);
     const payload = payloadReference("input", described);
     const vector = await this.epochs.readLocked({ orgId: ctx.orgId, deviceId: ctx.deviceId });
@@ -599,7 +601,14 @@ export class SandboxOperationIntents {
       denied("The browse admission does not match this owner");
     if (row.state !== "admitted" || row.deadline.getTime() <= Date.now())
       denied("Browse admission was revoked or expired");
-    await this.authority.resolveBrowse(ctx, new AbortController().signal);
+    // checked again with the read roots it was admitted with (a project's root narrows them), so
+    // a ceiling that moved since then refuses the browse instead of widening or keeping it
+    const admitted = parseSandboxBrowseScope(row.scope);
+    const fresh = await this.authority.resolveBrowse(ctx, new AbortController().signal, {
+      readRoots: admitted.readRoots,
+    });
+    if (JSON.stringify(fresh.readRoots) !== JSON.stringify(admitted.readRoots))
+      denied("Authority changed before the browse was dispatched");
     await this.db
       .updateTable("sandbox_operation_intents")
       .set({ state: "dispatching", updated_at: new Date() })

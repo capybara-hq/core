@@ -1,4 +1,5 @@
 import {
+  chmod,
   link,
   lstat,
   mkdir,
@@ -16,6 +17,7 @@ import { join } from "node:path";
 import {
   DEVICE_SERVICE_FILES_DIGEST_VECTOR,
   DEVICE_SERVICE_INSTALL_ENV,
+  DEVICE_SERVICE_INSTALL_KEY_FILE,
   DEVICE_SERVICE_INSTALL_SEAL,
   DEVICE_SERVICE_MACH_CHROMIUM,
   DEVICE_SERVICE_MACH_ENV,
@@ -26,6 +28,7 @@ import {
 import { afterEach, expect, it } from "vitest";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
+import { InstallCache } from "../src/services/install-cache.js";
 import { macServiceLauncher } from "../src/services/mac-launcher.js";
 import { parseServiceOpBody, serveServiceOp } from "../src/services/ops.js";
 import {
@@ -1101,6 +1104,123 @@ it("the install directory is read only once sealed and emptied when the service'
   await expect(lstat(join(installDir, DEVICE_SERVICE_INSTALL_SEAL))).rejects.toThrow(/ENOENT/);
   // the digest record sits beside the install directory, out of the service's reach
   expect(await readFile(join(deviceDir, "svc-install", ".browser.browser"), "utf8")).toBe("d2");
+});
+
+it("a service naming its install key gets the machine-wide cache, shared across upgrades and devices", async () => {
+  const { root, deviceDir, workspace, supervisor: _unused, echo } = await fixture();
+  const cache = new InstallCache({ root: join(root, "cache"), scope: "https://prod.example.com" });
+  const supervisorOf = (dir: string, ws: string) => {
+    const s = new ServiceSupervisor({
+      deviceDir: dir,
+      workspace: ws,
+      launcher: () => echo.launcher,
+      socketAliasRoot: join(root, "a"),
+      installCache: cache,
+    });
+    cleanups.push(() => s.stopAll(signal()));
+    return s;
+  };
+  const supervisor = supervisorOf(deviceDir, workspace);
+  const keyed = (main: string) =>
+    spec({ "main.js": main, [DEVICE_SERVICE_INSTALL_KEY_FILE]: "chromium-1255\n" });
+  // an install the device kept before the cache: removed once the service moves to the cache
+  await mkdir(join(deviceDir, "svc-install", "browser.browser"), { recursive: true });
+  await writeFile(join(deviceDir, "svc-install", "browser.browser", "old"), "380 MB");
+  const ensure = (s: ServiceSupervisor, body: Record<string, unknown>) =>
+    serveServiceOp(s, { op: "service.ensure", ...body }, signal());
+  expect(await ensure(supervisor, { spec: keyed("// v1"), filesDigest: "d1" })).toMatchObject({
+    ok: true,
+  });
+  const staging = echo.calls[0]?.env[DEVICE_SERVICE_INSTALL_ENV] as string;
+  expect(staging.startsWith(`${join(root, "cache")}/`)).toBe(true);
+  expect(echo.calls[0]?.writeRoots).toContain(staging);
+  await expect(lstat(join(deviceDir, "svc-install", "browser.browser"))).rejects.toThrow(/ENOENT/);
+  // the service installs and seals, then exits: published before the name is free again
+  await writeFile(join(staging, "chrome"), "chromium");
+  await writeFile(join(staging, DEVICE_SERVICE_INSTALL_SEAL), "");
+  echo.exitAll(0);
+  await supervisor.exited("browser.browser");
+  // a plugin upgrade that keeps the key: the sealed install, read only, nothing to download
+  expect(await ensure(supervisor, { spec: keyed("// v2"), filesDigest: "d2" })).toMatchObject({
+    ok: true,
+  });
+  const entry = echo.calls[1]?.env[DEVICE_SERVICE_INSTALL_ENV] as string;
+  expect(entry).toMatch(/\/entries\/chromium-1255@[0-9a-f]{12}$/);
+  expect(echo.calls[1]?.readRoots).toContain(entry);
+  expect(echo.calls[1]?.writeRoots).not.toContain(entry);
+  expect(await readFile(join(entry, "chrome"), "utf8")).toBe("chromium");
+  // another device of the same deployment on this machine: the same entry
+  const other = join(root, "d2");
+  await mkdir(join(other, "workspace"), { recursive: true });
+  const second = supervisorOf(other, join(other, "workspace"));
+  expect(await ensure(second, { spec: keyed("// v2"), filesDigest: "d2" })).toMatchObject({
+    ok: true,
+  });
+  expect(echo.calls[2]?.env[DEVICE_SERVICE_INSTALL_ENV]).toBe(entry);
+  expect(echo.calls[2]?.readRoots).toContain(entry);
+});
+
+it("a cache this start cannot use falls back to the device's own install directory", async () => {
+  const { root, deviceDir, workspace, echo } = await fixture();
+  // a cache root another user could write: refused by the cache
+  await mkdir(join(root, "open-cache"), { mode: 0o777 });
+  await chmod(join(root, "open-cache"), 0o777);
+  const supervisor = new ServiceSupervisor({
+    deviceDir,
+    workspace,
+    launcher: () => echo.launcher,
+    socketAliasRoot: join(root, "a"),
+    installCache: new InstallCache({ root: join(root, "open-cache"), scope: "https://x" }),
+    warn: (line) => warnings.push(line),
+  });
+  const warnings: string[] = [];
+  cleanups.push(() => supervisor.stopAll(signal()));
+  const files = spec({ "main.js": "// v1", [DEVICE_SERVICE_INSTALL_KEY_FILE]: "chromium-1255\n" });
+  expect(
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: files, filesDigest: "d1" },
+      signal(),
+    ),
+  ).toMatchObject({ ok: true });
+  expect(echo.calls[0]?.env[DEVICE_SERVICE_INSTALL_ENV]).toBe(
+    join(deviceDir, "svc-install", "browser.browser"),
+  );
+  // the device's log says why, once per fallback
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toMatch(
+    /install cache is not used for device service browser\.browser: .*not a private directory.*own install directory/,
+  );
+});
+
+it("a device copy made for the running files is kept beside the cache for a later fallback", async () => {
+  const { root, deviceDir, workspace, echo } = await fixture();
+  const cache = new InstallCache({ root: join(root, "cache"), scope: "https://x" });
+  const supervisor = new ServiceSupervisor({
+    deviceDir,
+    workspace,
+    launcher: () => echo.launcher,
+    socketAliasRoot: join(root, "a"),
+    installCache: cache,
+  });
+  cleanups.push(() => supervisor.stopAll(signal()));
+  const own = join(deviceDir, "svc-install", "browser.browser");
+  // a fallback start earlier installed and sealed the device's own copy for files d1
+  await mkdir(own, { recursive: true });
+  await writeFile(join(own, "chrome"), "chromium");
+  await writeFile(join(own, DEVICE_SERVICE_INSTALL_SEAL), "");
+  await writeFile(join(deviceDir, "svc-install", ".browser.browser"), "d1");
+  const keyed = (main: string) =>
+    spec({ "main.js": main, [DEVICE_SERVICE_INSTALL_KEY_FILE]: "chromium-1255\n" });
+  const ensure = (body: Record<string, unknown>) =>
+    serveServiceOp(supervisor, { op: "service.ensure", ...body }, signal());
+  // the cache works again, same files: the device copy stays (no download if it flips back)
+  expect(await ensure({ spec: keyed("// v1"), filesDigest: "d1" })).toMatchObject({ ok: true });
+  expect(await readFile(join(own, "chrome"), "utf8")).toBe("chromium");
+  await supervisor.stop("browser.browser", signal());
+  // new files: a fallback would empty it anyway, so it goes
+  expect(await ensure({ spec: keyed("// v2"), filesDigest: "d2" })).toMatchObject({ ok: true });
+  await expect(lstat(own)).rejects.toThrow(/ENOENT/);
 });
 
 it("only a regular seal file seals the install directory", async () => {

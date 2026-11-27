@@ -44,8 +44,8 @@ const EXPECTED: Record<OrgAction, OrgRole[]> = {
   "catalog.request": [M, A, O],
   "catalog.decide": [A, O],
   "catalog.upload": [A, O],
-  "schedules.use": [M, A, O],
-  "schedules.manage": [A, O],
+  "automations.use": [M, A, O],
+  "automations.manage": [A, O],
 };
 
 /** 服务令牌可执行的动作（不在 HUMAN_ONLY 中）。 */
@@ -91,8 +91,8 @@ describe("roles", () => {
       "catalog.request",
       "catalog.decide",
       "catalog.upload",
-      "schedules.use",
-      "schedules.manage",
+      "automations.use",
+      "automations.manage",
     ] as const)
       expect(HUMAN_ONLY.has(a)).toBe(true);
     const rest = (Object.keys(EXPECTED) as OrgAction[]).filter((a) => !SERVICE_OK.includes(a));

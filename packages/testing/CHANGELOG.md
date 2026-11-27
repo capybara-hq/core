@@ -1,5 +1,36 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.46
+
+### Patch Changes
+
+- 0948b05: The model conformance suite checks the cache contract (#974): a `declares a valid cache` case
+  (`validateModelCache`, exported as `checkCacheDeclaration`; it also fails when `expect.caching` is
+  true but the model declares no cache or `mechanism: "none"`), a `cache ttl options` case that sends
+  a caching request with its own prefix once per declared `ttlOptions` entry with `cacheTtl` set, so
+  each writes, and checks that reported `cacheWriteByTtl` holds only that ttl (exported as
+  `checkCacheWriteTiers`), and the `usage` case checks `cacheWriteByTtl` with
+  `validateCacheWriteByTtl`.
+- e11129c: Declare prompt caches per model (#974). `ModelInfo.cache` (`ModelCacheInfo`: `mechanism` explicit /
+  implicit / none, `ttlOptions` in seconds, `defaultTtl` (required when `ttlOptions` is non-empty),
+  `ttlIsMinimum`, `refreshOnHit`, `ttlClock`,
+  `minTokens`, `guaranteed`; absent = none; checked by `validateModelCache`) replaces
+  `capabilities.caching`, which is removed. `ModelRequest.cacheTtl` asks for one of the model's
+  `ttlOptions`; `ModelUsage.cacheWriteByTtl` (`CacheWriteByTtl[]`, summing to `cacheWriteTokens`;
+  `validateCacheWriteByTtl`) reports cache writes per lifetime tier. model-fake and the test fixtures
+  no longer declare `capabilities.caching`.
+- Updated dependencies [d05a120]
+- Updated dependencies [b363b71]
+- Updated dependencies [252bdfa]
+- Updated dependencies [e11129c]
+- Updated dependencies [6bab73b]
+- Updated dependencies [f2e3e9b]
+- Updated dependencies [6c9f1d6]
+- Updated dependencies [2fbe6d2]
+  - @capybara-hq/kernel@0.1.0-rc.105
+  - @capybara-hq/plugin-sdk@0.1.0-rc.84
+  - @capybara-hq/plugin-tools@0.1.0-rc.25
+
 ## 0.1.0-rc.45
 
 ### Patch Changes

@@ -281,6 +281,46 @@ describe("staged device parts (W3-M)", () => {
     expect(s.checks[1]).toMatchObject({ stateDir: state, platform: "darwin" });
   });
 
+  it("a sandboxed agent operation's grant denies the machine-wide install cache (plugins#311)", async () => {
+    const s = staged();
+    await s.device.binder.bind(request(G1, B1, null), signal());
+    const bound = s.device.binder.current();
+    if (!bound) throw new Error("unbound");
+    const op = await bound.backend
+      .forExecution({ operationId: "scoped-1", orgNetwork: { kind: "open-public", hosts: [] } })
+      .operation(
+        bound.handle,
+        {
+          operationId: "scoped-1",
+          admitBeforeMs: Date.now() + 30_000,
+          deviceId: "d",
+          rootConversationId: "r",
+          profileRevision: 1,
+          ceilingRevision: "c",
+          profile: "request-approval",
+          actor: { accountId: "a", conversationId: "r" },
+          tag: "scoped-1",
+          filesystem: { kind: "scoped", projectRoot: null, writeRoots: [] },
+          network: { kind: "none" },
+        },
+        signal(),
+      );
+    const running = op.exec({
+      command: "true",
+      timeoutMs: 1000,
+      maxOutputBytes: 4,
+      signal: signal(),
+    });
+    await vi.waitFor(() => expect(s.launched.length).toBeGreaterThan(0));
+    const grant = s.launched.at(-1)?.grant;
+    expect(grant?.full).toBe(false);
+    expect(grant?.deniedReadRoots).toEqual(
+      expect.arrayContaining([join(root, "home", "capybara-device", ".install-cache")]),
+    );
+    for (const f of s.finishers) f();
+    await running.catch(() => undefined);
+  });
+
   it("macOS reports restricted support only after the self-check at bind passed", async () => {
     const answer = (await staged().device.binder.bind(
       request(G1, B1, null),

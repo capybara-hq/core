@@ -1,0 +1,263 @@
+import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
+import { GIT_REPO_MAX_CHARS } from "../conversations/events.js";
+import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { orgAllows } from "../sandbox/network-grants.js";
+import { isFixedAsk } from "../tools/fixed-ask.js";
+import type { ResolvedTool } from "../tools/registry.js";
+import { changesAgentSkills } from "./unattended.js";
+
+/**
+ * The one rule for what can be an automation's grant (spec §7): the task form and
+ * `addGrants`, a trial run's kept approvals and the unattended policy's `missing_grants` all ask
+ * it. A plain module (no provider): the tool policy imports it.
+ */
+
+/** Who asks for a grant and where: the inputs of {@link grantRefusalOf}. */
+export interface GrantContext {
+  role: OrgRole;
+  forbiddenTools: readonly string[];
+}
+
+/**
+ * Why a tool can't be a task's grant, as a code the UI words: `forbidden` (the org's
+ * `forbiddenTools`), `not_grantable` (by design: a Platform call that changes the agent's
+ * skills, or any other per-call key such as `Platform:<operation>`), `not_available` (not one of the agent's tools now), `needs_role` (a
+ * `requiredRole` above the creator's), `fixed_ask` (always asks a person). A network grant
+ * (`network:<host>`, {@link networkGrantRefusal}) adds `needs_admin` (outside the org's network
+ * allowlist: only an org admin can add the host) and `device_refuses` (the task's device cannot
+ * take network changes from the deployment: Docker mode or an older program); an invalid or
+ * wildcard host is `not_grantable`.
+ */
+export type GrantRefusalCode =
+  | "forbidden"
+  | "not_grantable"
+  | "not_available"
+  | "needs_role"
+  | "fixed_ask"
+  | "needs_admin"
+  | "device_refuses";
+
+/**
+ * Why `toolKey` cannot be one of a task's grants, or null when it can: the creator could approve
+ * it with scope `always` themselves (no `requiredRole` above their role, not a fixed ask), it is
+ * the tool's own key (a per-call key such as `Platform:<operation>` is decided per call and never
+ * a task grant), it changes none of the agent's skills (an unattended run never does) and
+ * the org forbids neither the key nor the tool. `tool`: the agent's tool `toolKey` belongs to,
+ * undefined when the agent does not have it now.
+ */
+export function grantRefusalOf(
+  toolKey: string,
+  tool: ResolvedTool | undefined,
+  ctx: GrantContext,
+): { code: GrantRefusalCode; message: string } | null {
+  // a git push grant belongs to no tool (sandbox git credentials spec §7)
+  if (isGitGrantKey(toolKey)) return gitGrantRefusal(toolKey, ctx);
+  if (
+    ctx.forbiddenTools.includes(toolKey) ||
+    (tool !== undefined && ctx.forbiddenTools.includes(tool.key))
+  ) {
+    return {
+      code: "forbidden",
+      message: `The organization does not allow ${toolKey} in scheduled runs`,
+    };
+  }
+  if (changesAgentSkills(toolKey)) {
+    return {
+      code: "not_grantable",
+      message: `${toolKey} cannot be approved for an automation: an unattended run never changes the agent's skills`,
+    };
+  }
+  if (!tool) {
+    return { code: "not_available", message: `${toolKey} is not one of the agent's tools now` };
+  }
+  if (toolKey !== tool.key) {
+    return {
+      code: "not_grantable",
+      message: `${toolKey} is decided per call and cannot be approved in advance for an automation`,
+    };
+  }
+  if (tool.requiredRole !== undefined && !roleAtLeast(ctx.role, tool.requiredRole)) {
+    return {
+      code: "needs_role",
+      message: `${toolKey} needs the ${tool.requiredRole} role to approve; you cannot approve it for the task`,
+    };
+  }
+  if (isFixedAsk(tool)) {
+    return {
+      code: "fixed_ask",
+      message: `${toolKey} always asks a person and cannot be approved in advance`,
+    };
+  }
+  return null;
+}
+
+/** {@link grantRefusalOf}'s message alone; null when the tool can be granted. */
+export function grantRefusal(
+  toolKey: string,
+  tool: ResolvedTool | undefined,
+  ctx: GrantContext,
+): string | null {
+  return grantRefusalOf(toolKey, tool, ctx)?.message ?? null;
+}
+
+/** The prefix of a network grant's key (network ask-to-allow spec §8.1). */
+export const NETWORK_GRANT_PREFIX = "network:";
+
+/** The `spec_hash` a network grant is stored with (no tool definition behind it; plan P-D7). */
+export const NETWORK_GRANT_SPEC_HASH = "network";
+
+/** Whether a grant key is a network grant (`network:<host>`). */
+export const isNetworkGrantKey = (key: string): boolean => key.startsWith(NETWORK_GRANT_PREFIX);
+
+/** The host of a network grant key (`network:<host>`). */
+export const networkGrantHost = (key: string): string => key.slice(NETWORK_GRANT_PREFIX.length);
+
+/** What {@link networkGrantRefusal} checks a host against. */
+export interface NetworkGrantContext {
+  /**
+   * The org's sandbox-mode network now (`SandboxService.ceilingLimits`): the most a device's
+   * command may reach in sandbox mode.
+   */
+  limits: Pick<SandboxLimits, "network">;
+  /** Whether a host is beyond the platform's ceiling (org egress ceiling spec §D2). */
+  outsideCeiling?: (host: string) => boolean;
+}
+
+/**
+ * Why `host` cannot be one of a task's network grants (network ask-to-allow spec §8.1), or null
+ * when it can: `not_grantable` (not an exact, valid host name: no wildcard, no address),
+ * `needs_admin` (the org's sandbox network does not admit it: only an org admin can add it). The
+ * host is compared as given (callers lower-case it first).
+ */
+export function networkGrantRefusal(
+  host: string,
+  ctx: NetworkGrantContext,
+): { code: GrantRefusalCode; message: string } | null {
+  if (host.startsWith("*.") || validateAllowHost(host).length > 0) {
+    return {
+      code: "not_grantable",
+      message: `${host} cannot be approved for an automation: give one exact domain name (no wildcard, no IP address or local name)`,
+    };
+  }
+  if (!orgAllows(host, ctx.limits)) {
+    return {
+      code: "needs_admin",
+      message:
+        ctx.outsideCeiling?.(host) === true
+          ? `${host} is not in the platform's network allowlist, which limits this organization; only a super admin can add it`
+          : `${host} is not in the organization's network allowlist; only an organization admin can add it`,
+    };
+  }
+  return null;
+}
+
+/**
+ * A git push grant (sandbox git credentials spec §7): `git:push` lets the task's unattended runs
+ * push to any repository the creator's git source reaches, `git:push:<owner>/<repo>` to that one.
+ */
+export const GIT_PUSH_GRANT = "git:push";
+
+/** The prefix of a per-repository git push grant (`git:push:<owner>/<repo>`). */
+export const GIT_PUSH_REPO_GRANT_PREFIX = `${GIT_PUSH_GRANT}:`;
+
+/** The `spec_hash` a git push grant is stored with (no tool definition behind it). */
+export const GIT_GRANT_SPEC_HASH = "git";
+
+/** The shape of `<owner>/<repo>` (one owner segment, one repository segment). */
+const GIT_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/**
+ * A repository as policies, grants and asks key it: `<owner>/<repo>` lower-cased (hosts compare
+ * repositories without case), a trailing `.git` dropped; null when it is not of that shape or a
+ * segment is `.` / `..`.
+ */
+export function normalizeGitRepo(repo: string): string | null {
+  const r = repo
+    .trim()
+    .replace(/\.git$/i, "")
+    .toLowerCase();
+  if (r.length > GIT_REPO_MAX_CHARS || !GIT_REPO_PATTERN.test(r)) return null;
+  if (r.split("/").some((seg) => seg === "." || seg === "..")) return null;
+  return r;
+}
+
+/** Whether a grant key is a git push grant (`git:push` or `git:push:<owner>/<repo>`). */
+export const isGitGrantKey = (key: string): boolean =>
+  key === GIT_PUSH_GRANT || key.startsWith(GIT_PUSH_REPO_GRANT_PREFIX);
+
+/** The grant key of pushes to `repo` (normalized by the caller), or to any repository. */
+export const gitPushGrantKey = (repo?: string): string =>
+  repo === undefined ? GIT_PUSH_GRANT : `${GIT_PUSH_REPO_GRANT_PREFIX}${repo}`;
+
+/**
+ * Why a git push grant key cannot be one of a task's grants, or null when it can: the org forbids
+ * it (`forbiddenTools` lists the key or `git:push`) or the repository is not `<owner>/<repo>`
+ * (`not_grantable`). The key is compared as given (callers normalize it with
+ * {@link normalizeGitGrantKey} first).
+ */
+export function gitGrantRefusal(
+  key: string,
+  ctx: Pick<GrantContext, "forbiddenTools">,
+): { code: GrantRefusalCode; message: string } | null {
+  if (gitPushForbidden(ctx.forbiddenTools, key)) {
+    return {
+      code: "forbidden",
+      message: `The organization does not allow ${key} in scheduled runs`,
+    };
+  }
+  if (key === GIT_PUSH_GRANT) return null;
+  const repo = key.slice(GIT_PUSH_REPO_GRANT_PREFIX.length);
+  if (normalizeGitRepo(repo) !== repo) {
+    return {
+      code: "not_grantable",
+      message: `${key} cannot be approved for an automation: name one repository as git:push:<owner>/<repo>`,
+    };
+  }
+  return null;
+}
+
+/** The prefix of a former sandbox tier grant's key (`tier:<tier>`); no such grant exists now. */
+export const TIER_GRANT_PREFIX = "tier:";
+
+/** Whether a grant key is a former sandbox tier grant (`tier:<tier>`), refused as not grantable. */
+export const isTierGrantKey = (key: string): boolean => key.startsWith(TIER_GRANT_PREFIX);
+
+/** Whether a grant key names no tool: a network grant or a former tier grant. */
+export const isPolicyGrantKey = (key: string): boolean =>
+  isNetworkGrantKey(key) || isTierGrantKey(key);
+
+/**
+ * Why `key` cannot be a task's grant: a `tier:` key is a stale sandbox-level grant from before auto
+ * mode, and no tier can be granted now (`not_grantable`). Null for other keys.
+ */
+export function tierGrantRefusal(key: string): { code: GrantRefusalCode; message: string } | null {
+  if (!isTierGrantKey(key)) return null;
+  return {
+    code: "not_grantable",
+    message: `${key} cannot be approved for an automation: sandbox levels are no longer task grants`,
+  };
+}
+
+/**
+ * Whether the org's `forbiddenTools` forbid the git push grant `key` (normalized): it lists
+ * `git:push` or the key, each entry compared normalized (`git:push:Acme/App` forbids
+ * `git:push:acme/app`).
+ */
+export function gitPushForbidden(forbiddenTools: readonly string[], key: string): boolean {
+  return forbiddenTools.some((entry) => {
+    const lowered = entry.trim().toLowerCase();
+    if (!isGitGrantKey(lowered)) return false;
+    const e = normalizeGitGrantKey(lowered);
+    return e === GIT_PUSH_GRANT || e === key;
+  });
+}
+
+/**
+ * A git push grant key as stored: the repository normalized ({@link normalizeGitRepo}); the key
+ * unchanged when its repository is not of the shape (then {@link gitGrantRefusal} refuses it).
+ */
+export function normalizeGitGrantKey(key: string): string {
+  if (key === GIT_PUSH_GRANT || !key.startsWith(GIT_PUSH_REPO_GRANT_PREFIX)) return key;
+  const repo = normalizeGitRepo(key.slice(GIT_PUSH_REPO_GRANT_PREFIX.length));
+  return repo === null ? key : gitPushGrantKey(repo);
+}

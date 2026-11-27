@@ -259,7 +259,7 @@ function seeded(): QueryClient {
 
 /** `/dev/ui/pages/<page>`: one app page in the admin console's shell. */
 export function PageCatalog({ route }: { route: PageRoute }) {
-  // the schedules pages are drawn by the catalog's index (not lazy)
+  // the automations pages are drawn by the catalog's index (not lazy)
   return route === "pages/admin-overview" ? <AdminOverviewCatalog /> : null;
 }
 

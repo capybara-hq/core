@@ -301,7 +301,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.agents, "/agents"],
       [zh.nav.skills, "/skills"],
       [zh.nav.connectors, "/connectors"],
-      [zh.nav.schedules, "/schedules"],
+      [zh.nav.automations, "/automations"],
     ]);
     // the inbox is the brand row's icon button
     expect(screen.getByRole("link", { name: zh.nav.inbox }).getAttribute("href")).toBe("/inbox");
