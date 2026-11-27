@@ -21,6 +21,7 @@ import type { ConversationEvent } from "../conversations/events.js";
 import { recipientLocale } from "../conversations/message-context.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { type BlobRef, BlobsService } from "../files/blobs.service.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -33,7 +34,6 @@ import {
 } from "../runtime/conversation-lock.js";
 import type { StreamBus } from "../runtime/stream.js";
 import { ScheduledTasksService } from "../schedules/scheduled-tasks.service.js";
-import { StorageService } from "../storage/storage.service.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { type ToolInfo, toolInfo } from "../tools/info.js";
 import { QuestionsService } from "../tools/questions.service.js";
@@ -63,6 +63,7 @@ import {
   planFileDelivery,
   pluginFileName,
   readArtifactCapped,
+  referencedBlob,
 } from "./file-delivery.js";
 import { ChannelInbound } from "./inbound.js";
 import {
@@ -257,8 +258,11 @@ interface DeliveryDeps {
   questions: Pick<QuestionsService, "forCall">;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "error" | "warn" | "info">;
-  /** Conversation files are read under the connection's org (`kernel(orgId)`, spec §4.7). */
-  storage: Pick<StorageService, "kernel">;
+  /**
+   * Conversation files are read from their blobs under the connection's org (spec §4.7; file
+   * library spec §4), with the recorded size and etag checked.
+   */
+  blobs: Pick<BlobsService, "open">;
   /** At most `channels.fileConcurrency` file reads and uploads at once in this process (§4.2). */
   fileSlots: FileSlots;
   /**
@@ -338,8 +342,8 @@ export class ChannelOutbound {
     /** Pauses the task of a scheduled run whose chat is gone (scheduled tasks spec §8). */
     @Inject(ScheduledTasksService)
     private readonly schedules: Pick<ScheduledTasksService, "pauseFor">,
-    /** Conversation files sent into the chat (channel file delivery spec §4.2). */
-    @Inject(StorageService) storage: Pick<StorageService, "kernel">,
+    /** The blobs of conversation files sent into the chat (channel file delivery spec §4.2). */
+    @Inject(BlobsService) blobs: Pick<BlobsService, "open">,
   ) {
     this.lock = lock.scoped(DELIVER_LOCK_PREFIX);
     this.d = {
@@ -354,7 +358,7 @@ export class ChannelOutbound {
       questions,
       config,
       log,
-      storage,
+      blobs,
       // one per process: it bounds this replica's memory (not shared state)
       fileSlots: new FileSlots(config.get().channels.fileConcurrency),
       writes: this,
@@ -1361,16 +1365,23 @@ class Delivery {
    */
   private async deliverArtifact(e: ArtifactCreated): Promise<void> {
     const a = e.payload;
+    // the file the event created (its id is the artifact id; earlier events name no fileId)
+    const blob = await referencedBlob(
+      this.d.db,
+      this.s.row.orgId,
+      this.conversationId,
+      a.fileId ?? a.artifactId,
+    );
     const plan = planFileDelivery({
-      conversationId: this.conversationId,
+      referenced: blob !== null,
       artifact: a,
       features: this.s.features,
       canSendFile: this.s.sendFile !== undefined,
       fileMaxBytes: this.d.config.get().channels.fileMaxBytes,
     });
-    if (plan.mode === "link") {
-      if (plan.reason === "foreign_key") {
-        this.d.log.warn("channel file outside the conversation's artifacts sent as a link", {
+    if (plan.mode === "link" || blob === null) {
+      if (blob === null) {
+        this.d.log.warn("channel file not referenced by the conversation sent as a link", {
           conversationId: this.conversationId,
           seq: e.seq,
         });
@@ -1387,7 +1398,7 @@ class Delivery {
     }
     let sent: boolean;
     try {
-      sent = await this.sendNative(e.seq, a, plan);
+      sent = await this.sendNative(e.seq, a, blob, plan);
     } finally {
       release();
     }
@@ -1402,6 +1413,7 @@ class Delivery {
   private async sendNative(
     seq: number,
     a: ArtifactPayload,
+    blob: BlobRef,
     plan: Extract<FileDeliveryPlan, { mode: "native" }>,
   ): Promise<boolean> {
     // the replica stopped while this delivery waited for its slot: hand the job back untouched
@@ -1415,8 +1427,7 @@ class Delivery {
     try {
       // the read stops with the replica: nothing has reached the platform yet
       read = await readArtifactCapped(
-        this.d.storage.kernel(this.s.row.orgId),
-        a.objectKey,
+        (signal) => this.d.blobs.open(this.s.row.orgId, blob, { signal }),
         plan.cap,
         AbortSignal.any([this.stopping, AbortSignal.timeout(FILE_CALL_TIMEOUT_MS)]),
       );

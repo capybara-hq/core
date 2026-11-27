@@ -35,6 +35,7 @@ import {
 } from "../../../devices/conversation-devices.js";
 import { canonicalRoot, workingRootOf } from "../../../devices/working-root.js";
 import { ApiError } from "../../../errors.js";
+import type { FileDeliveries } from "../../../files/deliveries.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import {
   ATTACHMENTS_ROOT,
@@ -115,6 +116,8 @@ export interface SandboxToolDeps {
   };
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "deployment" | "available">;
+  /** `Deliver`'s blobs and delivery transaction (file library spec §4); absent in test stubs. */
+  deliveries?: Pick<FileDeliveries, "ensureBlob" | "appendDelivered">;
   /**
    * `readDeliveryScope`: `Deliver`'s delivery scope (truthful delivery spec §2). `publishChanged`:
    * `Deliver` announces `changed: files` (UI refresh B).

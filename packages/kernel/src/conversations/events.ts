@@ -1710,6 +1710,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     "artifact_created",
     z.object({
       artifactId: z.uuid(),
+      /**
+       * The library file the delivery created (file library spec §4): the artifact id itself.
+       * Optional because earlier events lack it (their file, migrated, kept the artifact id).
+       */
+      fileId: z.uuid().optional(),
       name: ArtifactNameSchema,
       contentType: z.string().min(1).max(200),
       size: z.number().int().nonnegative(),

@@ -14,6 +14,7 @@ import type { AppendEvent, EventLog } from "../../../conversations/event-log.js"
 import { isValidArtifactName } from "../../../conversations/events.js";
 import type { DeviceUnusableReason } from "../../../devices/conversation-devices.js";
 import { ApiError } from "../../../errors.js";
+import type { FileDeliveries } from "../../../files/deliveries.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import type { KernelDb } from "../../../infra/database/kernel-db.js";
 import {
@@ -257,8 +258,10 @@ export interface GenerateImageDeps {
   purposes: Pick<ModelPurposesService, "resolve">;
   providers: Pick<ProviderRegistry, "resolve">;
   storage: Pick<StorageService, "kernel" | "available">;
-  eventLog: Pick<EventLog, "append" | "notify" | "readDeliveryScope"> &
+  eventLog: Pick<EventLog, "notify" | "readDeliveryScope"> &
     Partial<Pick<EventLog, "publishChanged">>;
+  /** The images' blobs and their delivery transaction ({@link storeArtifacts}). */
+  deliveries: Pick<FileDeliveries, "ensureBlob" | "appendDelivered">;
   stepLog: Pick<StepLog, "appendCounted" | "appendReported" | "appendAudited">;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "warn">;

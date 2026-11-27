@@ -8,6 +8,7 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { FileDeliveries } from "../../src/files/deliveries.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { FileCardDetail, ResolvedFile } from "../../src/platform/file-ref.js";
 import type { OperationContext } from "../../src/platform/operation.js";
@@ -259,7 +260,7 @@ describe("acceptance: files instead of uploads", () => {
       .executeTakeFirstOrThrow();
     // what Deliver stores for /workspace/out/weekly-report.zip (the zip extension's type)
     const [delivered] = await storeArtifacts(
-      { storage: k.app.get(StorageService), eventLog: k.app.get(EventLog) },
+      { deliveries: k.app.get(FileDeliveries), eventLog: k.app.get(EventLog) },
       {
         orgId,
         accountId: rootId,

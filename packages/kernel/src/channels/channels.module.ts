@@ -6,6 +6,7 @@ import { ConversationsModule } from "../conversations/conversations.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { DevicesModule } from "../devices/devices.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { LibraryFilesModule } from "../files/library.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import {
   configuredProcessor,
@@ -17,7 +18,6 @@ import { OrgLockModule } from "../orgs/org-lock.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { SchedulesModule } from "../schedules/schedules.module.js";
-import { StorageModule } from "../storage/storage.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { ChannelConnections } from "./connections.service.js";
 import { ChannelInbound } from "./inbound.js";
@@ -55,8 +55,9 @@ const CHANNEL_QUEUE_MODULE = QueueModule.registerQueue(CHANNEL_QUEUE_NAME);
     RuntimeModule,
     // outbound pauses the scheduled task of a run whose chat is gone (scheduled tasks spec §8)
     SchedulesModule,
-    // outbound reads conversation files to send them into the chat (channel file delivery §4.2)
-    StorageModule,
+    // outbound reads conversation files from their blobs to send them into the chat (channel
+    // file delivery §4.2, file library spec §4)
+    LibraryFilesModule,
     CHANNEL_QUEUE_MODULE,
   ],
   providers: [

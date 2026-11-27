@@ -340,6 +340,27 @@ const ATTACHMENT = "11111111-2222-4333-8444-555555555555";
 /** Files of the kernel object store stub (skill versions), by key. */
 const stored = new Map<string, Uint8Array>();
 
+/**
+ * Deliveries without an object store: every file a new blob (never written), the events into the
+ * real log.
+ */
+const deliveriesStub = (): NonNullable<SandboxToolDeps["deliveries"]> => ({
+  ensureBlob: async (orgId, sha256, bytes) => {
+    const id = randomUUID();
+    return {
+      id,
+      orgId,
+      sha256,
+      size: bytes.byteLength,
+      etag: null,
+      objectKey: `blobs/${id}`,
+      status: "ready",
+    };
+  },
+  appendDelivered: (_orgId, conversationId, events) =>
+    k.app.get(EventLog).append(conversationId, events),
+});
+
 /** The builtin deps as `BuiltinTools` builds them. */
 function depsOf(): SandboxToolDeps {
   return {
@@ -371,6 +392,7 @@ function depsOf(): SandboxToolDeps {
         },
       }),
     } as never,
+    deliveries: deliveriesStub(),
     eventLog: k.app.get(EventLog),
     config: k.app.get(KernelConfigService),
     managedDeviceContext: k.app.get(ManagedDeviceContextRecorder),
@@ -428,6 +450,7 @@ function imageToolOf(deps: SandboxToolDeps): BuiltinTool {
     providers: { resolve: async () => ({}) as never },
     storage: deps.storage as never,
     eventLog: k.app.get(EventLog),
+    deliveries: deliveriesStub(),
     stepLog: k.app.get(StepLog),
     config: k.app.get(KernelConfigService),
     log: { warn: () => {} },

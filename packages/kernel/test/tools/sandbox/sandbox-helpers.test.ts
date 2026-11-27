@@ -469,9 +469,26 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
         }),
       } as unknown as SandboxToolDeps["storage"],
       eventLog: {
-        append: opts.append ?? appended,
         readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
       } as unknown as SandboxToolDeps["eventLog"],
+      // every delivered file is a new blob here (`puts`); its events go to `append`
+      deliveries: {
+        ensureBlob: async (orgId: string, sha256: string, bytes: Uint8Array) => {
+          const id = `blob-${puts.length}`;
+          puts.push(`blobs/${id}`);
+          return {
+            id,
+            orgId,
+            sha256,
+            size: bytes.byteLength,
+            etag: null,
+            objectKey: `blobs/${id}`,
+            status: "ready" as const,
+          };
+        },
+        appendDelivered: async (_org: string, conv: string, evs: unknown[]) =>
+          (await (opts.append ?? appended)(conv, evs as never)) as never,
+      },
       config: { get: () => cfg },
       ...(opts.byId !== undefined && {
         read: {
@@ -569,7 +586,7 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
     expect(r.puts).toEqual([]);
   });
 
-  it("deliver deletes the uploaded object when writing artifact_created fails", async () => {
+  it("deliver leaves the blob for the sweep when writing artifact_created fails", async () => {
     const r = rig({
       append: async () => {
         throw new Error("db down");
@@ -580,7 +597,8 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
       r.tool("Deliver").run({ file_path: "/workspace/out.txt" }, callCtx()),
     ).rejects.toThrow("db down");
     expect(r.puts).toHaveLength(1);
-    expect(r.deletes).toEqual(r.puts);
+    // a blob may serve other files: an unreferenced one is the blob sweep's
+    expect(r.deletes).toEqual([]);
   });
 
   it("grep exit 2 with partial matches returns them with the error note", async () => {
