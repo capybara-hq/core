@@ -1,5 +1,13 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.45
+
+### Patch Changes
+
+- 428474e: A device service that removed its socket and is still exiting no longer fails requests with
+  `connect ENOENT`: an ensure or request waits (bounded) for the old process to exit, starts the
+  service again and waits for its socket.
+
 ## 0.1.0-rc.44
 
 ### Patch Changes
