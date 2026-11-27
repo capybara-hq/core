@@ -1,5 +1,14 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.126
+
+### Patch Changes
+
+- 9615f3c: A streaming `Write` from a model that sends `content` before `file_path` now gets a live diff: the
+  kernel guesses the file from the conversation's recent unchanged files, the row marks the path as a
+  guess until the path confirms it, and a wrong guess is withdrawn at once. `Write`'s `file_path`
+  description asks for the path first, and each streamed `Write` logs its input order.
+
 ## 0.1.0-rc.125
 
 ### Patch Changes
