@@ -80,6 +80,7 @@ function setup(
       enabledPlugins: async () => new Set(["late"]),
     },
     { file: async () => FILE } as never,
+    { live: async () => FILE } as never,
     ignoringBlobs as never,
     skillFiles as never,
     ignoringStore as never,

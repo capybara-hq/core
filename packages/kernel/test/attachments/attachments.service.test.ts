@@ -64,6 +64,7 @@ describe("AttachmentsService", () => {
         },
         {} as never,
         {} as never,
+        {} as never,
       );
     expect(mk({}).limits()).toEqual({
       types: [

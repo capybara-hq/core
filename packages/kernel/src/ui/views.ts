@@ -126,12 +126,13 @@ interface UiViewsDeps {
   checkWritable?(orgId: string, conversationId: string, accountId: string): Promise<void>;
   /**
    * A `file.preview` embed token: whether that extension's previewer with `embed: contribution`
-   * takes this file of the conversation (the viewer must read it; not found throws 404).
+   * takes this file of the conversation (the viewer must read it), or without `conversationId`
+   * this library file of the viewer's own; not found throws 404.
    */
   previewEmbedAllowed?(t: {
     orgId: string;
     accountId: string;
-    conversationId: string;
+    conversationId?: string;
     fileId: string;
     plugin: string;
     contribution: string;
@@ -530,6 +531,9 @@ export class UiViews {
     else {
       const { fileId: f, skillFile, ...org } = t;
       if (skillFile !== undefined) return this.skillFileEmbed({ ...org, skillFile }, f);
+      if (f !== undefined && org.conversationId === undefined && org.agentId === undefined) {
+        return this.libraryFileEmbed(org, f);
+      }
       fileId = f;
       target = { ...org, locale: "en" };
     }
@@ -616,6 +620,43 @@ export class UiViews {
           });
     if (file === null) throw notFound();
     return { plugin: t.plugin, contribution: t.id, path, skillFile: file };
+  }
+
+  /**
+   * A `file.preview` embed for one of the caller's own library files (file library spec §6; no
+   * conversation or agent): the caller's role may use agents (`agents.use`) and the slot, the
+   * contribution is a loaded `file.preview` embed of an extension enabled in the org, and an
+   * enabled previewer of that extension with `embed: <this contribution>` takes the file (another
+   * account's file throws 404 `file.not_found`); anything else is 404.
+   */
+  private async libraryFileEmbed(
+    t: Omit<UiOrgTarget, "locale">,
+    fileId: string,
+  ): Promise<UiEmbedTarget> {
+    const entry = this.d.host
+      .uiContributions()
+      .find(
+        (c) =>
+          c.plugin === t.plugin &&
+          c.contribution.id === t.id &&
+          c.contribution.kind === "embed" &&
+          c.slot.id === "file.preview",
+      );
+    const path = entry?.contribution.path;
+    if (entry === undefined || path === undefined) throw notFound();
+    if (!canUseSlot(entry.slot, t.role) || !can(t.role, "agents.use")) throw notFound();
+    if (!(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
+    const allowed =
+      this.d.previewEmbedAllowed !== undefined &&
+      (await this.d.previewEmbedAllowed({
+        orgId: t.orgId,
+        accountId: t.accountId,
+        fileId,
+        plugin: t.plugin,
+        contribution: t.id,
+      }));
+    if (!allowed) throw notFound();
+    return { plugin: t.plugin, contribution: t.id, path, fileId };
   }
 
   /**

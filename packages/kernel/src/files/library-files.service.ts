@@ -7,15 +7,18 @@ import {
   normalizeContentType,
   sniffMatches,
 } from "../conversations/attachments.service.js";
+import { EventLog } from "../conversations/event-log.js";
 import type { LogContentBlock } from "../conversations/events.js";
 import { isImageContentType, isMediaContentType } from "../conversations/media-types.js";
 import type { FileStatus } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { revokeSharesIn } from "../shares/revoke.js";
 import { StorageService } from "../storage/storage.service.js";
 import {
   afterUploadForm,
@@ -223,6 +226,8 @@ export class LibraryFilesService {
     @Inject(BlobsService)
     private readonly blobs: Pick<BlobsService, "writeVerified" | "settle" | "lockReady">,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    /** The `files` change of the conversations that referred to a deleted file. */
+    @Inject(EventLog) private readonly eventLog: Pick<EventLog, "publishChanged">,
   ) {}
 
   /** This replica's bound on finalizes reading and copying at once ({@link LocalSlots}). */
@@ -832,5 +837,44 @@ export class LibraryFilesService {
       .onConflict((oc) => oc.columns(["conversation_id", "file_id"]).doNothing())
       .execute();
     return blocks;
+  }
+
+  /**
+   * Deletes one of the account's ready files from the library (file library spec §6; the owner
+   * only, else `file.not_found`): `deleted` with `deleted_at`, its shares revoked
+   * (`file_deleted`) in the same transaction. Its bytes stay until the blob sweep frees them after
+   * `files.deletedRetentionDays`; conversations that referred to it show it as no longer available
+   * and later model requests render the placeholder. Each referring conversation gets a `files`
+   * change after the commit (a lost publish only delays the panel's refresh).
+   */
+  @Transactional()
+  async delete(orgId: string, accountId: string, fileId: string): Promise<void> {
+    const trx = this.db.db;
+    const row = await trx
+      .selectFrom("files")
+      .select("id")
+      .where("id", "=", fileId)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("status", "=", "ready")
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    await trx
+      .updateTable("files")
+      .set({ status: "deleted", deleted_at: sql<Date>`now()`, expires_at: null })
+      .where("id", "=", fileId)
+      .where("org_id", "=", orgId)
+      .execute();
+    await revokeSharesIn(trx, this.outbox, { fileIds: [fileId] }, "file_deleted");
+    const refs = await trx
+      .selectFrom("conversation_files")
+      .select("conversation_id")
+      .where("org_id", "=", orgId)
+      .where("file_id", "=", fileId)
+      .execute();
+    for (const r of refs) {
+      afterCommit(() => this.eventLog.publishChanged(r.conversation_id, "files"));
+    }
   }
 }

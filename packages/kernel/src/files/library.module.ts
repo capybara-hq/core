@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { EventLogModule } from "../conversations/event-log.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { BlobObjectsModule } from "./blob-objects.js";
 import { BlobHashLock, BlobsService } from "./blobs.service.js";
@@ -12,7 +13,7 @@ import { LibraryFilesService } from "./library-files.service.js";
  * tools can use it.
  */
 @Module({
-  imports: [StorageModule, BlobObjectsModule],
+  imports: [StorageModule, BlobObjectsModule, EventLogModule],
   providers: [BlobHashLock, BlobsService, LibraryFilesService],
   exports: [BlobsService, LibraryFilesService],
 })

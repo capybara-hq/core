@@ -10,6 +10,7 @@ import { DevicesModule } from "../devices/devices.module.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { FilesModule } from "../files/files.module.js";
+import { LibraryReadModule } from "../files/library-read.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { InboxModule } from "../inbox/inbox.module.js";
 import { ModelsModule } from "../models/models.module.js";
@@ -39,6 +40,7 @@ import { DevicesOperations } from "./ops/devices.ops.js";
 import { EvalsOperations } from "./ops/evals.ops.js";
 import { ExtensionsOperations } from "./ops/extensions.ops.js";
 import { ExtensionsAdminOperations } from "./ops/extensions-admin.ops.js";
+import { FilesOperations } from "./ops/files.ops.js";
 import { InboxOperations } from "./ops/inbox.ops.js";
 import { MarketplacesOperations } from "./ops/marketplaces.ops.js";
 import { ModelsOperations } from "./ops/models.ops.js";
@@ -113,6 +115,8 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   SharesOperations,
   // the platform icon (mobile layout spec §10.2.1)
   PlatformIconsOperations,
+  // the person's file library (file library spec §6)
+  FilesOperations,
 ] as const;
 
 /**
@@ -141,6 +145,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     DevicesModule,
     BackgroundModule,
     FilesModule,
+    LibraryReadModule,
     ThemesModule,
     SetupModule,
     SchedulesModule,

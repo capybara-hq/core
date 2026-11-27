@@ -312,6 +312,7 @@ describe("browse, search, describe, read", () => {
       "connectors",
       "extensions",
       "conversations",
+      "files",
       "orgs",
       "login-sources",
       "accounts",

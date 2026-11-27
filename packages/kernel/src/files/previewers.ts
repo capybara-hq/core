@@ -28,6 +28,7 @@ import { type ResolvedSkillFile, SkillFiles } from "../skills/skill-files.js";
 import { StorageService } from "../storage/storage.service.js";
 import { callExtension } from "../ui/call-extension.js";
 import { type BlobRef, BlobsService } from "./blobs.service.js";
+import { LibraryQuery } from "./library-query.js";
 
 /** Time limit of a previewer's render (UI refresh spec §5.3: 10 s on the conversation page). */
 export const FILE_PREVIEW_TIMEOUT_MS = 10_000;
@@ -57,6 +58,8 @@ interface PreviewerRegistryDeps {
   /** Extensions enabled in the org (queried every time). */
   enabledPlugins(orgId: string): Promise<Set<string>>;
   files: Pick<ConversationFiles, "file">;
+  /** A library file of the viewer's own (no conversation; file library spec §6). */
+  library: Pick<LibraryQuery, "live">;
   /** A conversation file's bytes, read through its blob (size and etag checked). */
   blobs: Pick<BlobsService, "open">;
   /** Skill files: visibility as `GET /skills/:id`, manifest paths only, verified reads. */
@@ -180,6 +183,7 @@ export class PreviewerRegistry {
     @Inject(KernelDb) kdb: Pick<KernelDb, "db">,
     @Inject(ExtensionHost) host: Pick<ExtensionHost, "list" | "enabledPlugins">,
     @Inject(ConversationFiles) files: Pick<ConversationFiles, "file">,
+    @Inject(LibraryQuery) library: Pick<LibraryQuery, "live">,
     @Inject(BlobsService) blobs: Pick<BlobsService, "open">,
     @Inject(SkillFiles) skillFiles: Pick<SkillFiles, "resolve" | "bytes">,
     @Inject(StorageService) storage: Pick<StorageService, "kernel">,
@@ -197,6 +201,7 @@ export class PreviewerRegistry {
       host,
       enabledPlugins: (orgId) => host.enabledPlugins(orgId),
       files,
+      library,
       blobs,
       skillFiles,
       storage,
@@ -321,14 +326,33 @@ export class PreviewerRegistry {
     });
   }
 
-  /** Previewers that take this file (viewer must read the conversation), in the org's order. */
+  /**
+   * The file a conversation or library previewer reads: with `conversationId`, a file of that
+   * conversation (the viewer must read it; `ConversationFiles.file`); without, one of the viewer's
+   * own library files (`LibraryQuery.live`: 404 `file.not_found` for anyone else's).
+   */
+  private async fileFor(
+    orgId: string,
+    conversationId: string | undefined,
+    viewer: string,
+    fileId: string,
+  ): Promise<PreviewFile & { id: string; blob: BlobRef }> {
+    return conversationId === undefined
+      ? this.d.library.live(orgId, viewer, fileId)
+      : this.d.files.file(orgId, conversationId, viewer, fileId);
+  }
+
+  /**
+   * Previewers that take this file, in the org's order: a file of the conversation (the viewer
+   * must read it), or without `conversationId` one of the viewer's library files.
+   */
   async forFile(
     orgId: string,
-    conversationId: string,
+    conversationId: string | undefined,
     viewer: string,
     fileId: string,
   ): Promise<PreviewerItem[]> {
-    const file = await this.d.files.file(orgId, conversationId, viewer, fileId);
+    const file = await this.fileFor(orgId, conversationId, viewer, fileId);
     return (await this.accepting(orgId, file)).map(item);
   }
 
@@ -366,19 +390,21 @@ export class PreviewerRegistry {
   }
 
   /**
-   * Renders a view previewer for one file: 404 `ui.not_found` when it does not take the file (or is
-   * disabled, not enabled, an embed); the render's errors as for plugin views (504 / 502).
+   * Renders a view previewer for one file (of a conversation, or without `conversationId` of the
+   * viewer's library; args `source: "conversation"` then carry no `conversationId`): 404
+   * `ui.not_found` when it does not take the file (or is disabled, not enabled, an embed); the
+   * render's errors as for plugin views (504 / 502).
    */
   async render(t: {
     orgId: string;
     accountId: string;
-    conversationId: string;
+    conversationId?: string;
     fileId: string;
     plugin: string;
     id: string;
     locale: "zh" | "en";
   }): Promise<UiView> {
-    const file = await this.d.files.file(t.orgId, t.conversationId, t.accountId, t.fileId);
+    const file = await this.fileFor(t.orgId, t.conversationId, t.accountId, t.fileId);
     const l = await this.viewPreviewer(t.orgId, file, t.plugin, t.id);
     return this.renderWith(
       l,
@@ -387,7 +413,7 @@ export class PreviewerRegistry {
         source: "conversation",
         orgId: t.orgId,
         accountId: t.accountId,
-        conversationId: t.conversationId,
+        ...(t.conversationId !== undefined && { conversationId: t.conversationId }),
         file: { id: file.id, name: file.name, contentType: file.contentType, size: file.size },
       },
       async (signal) => {
@@ -647,18 +673,19 @@ export class PreviewerRegistry {
 
   /**
    * Whether an embed token for a `file.preview` contribution may be issued for this file: the
-   * viewer reads the conversation, the file is in it, and an enabled previewer of that extension
-   * with `embed: contribution` takes it. Conversation / file not found throws 404.
+   * viewer reads the conversation and the file is in it (without `conversationId`: the file is
+   * one of the viewer's own library files), and an enabled previewer of that extension with
+   * `embed: contribution` takes it. Conversation / file not found throws 404.
    */
   async embedAllowed(t: {
     orgId: string;
     accountId: string;
-    conversationId: string;
+    conversationId?: string;
     fileId: string;
     plugin: string;
     contribution: string;
   }): Promise<boolean> {
-    const file = await this.d.files.file(t.orgId, t.conversationId, t.accountId, t.fileId);
+    const file = await this.fileFor(t.orgId, t.conversationId, t.accountId, t.fileId);
     return (await this.accepting(t.orgId, file)).some(
       (l) => l.plugin === t.plugin && l.previewer.embed === t.contribution,
     );

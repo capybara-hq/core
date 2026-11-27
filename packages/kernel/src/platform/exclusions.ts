@@ -209,7 +209,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Confirms a staged plugin review (reached by the link card of the staged plugin), a trust decision by the person",
   },
   // channels
-  // files (the upload routes; the library's read routes come with their operations)
+  // files (the upload routes; list, details, usage and delete are operations)
   {
     route: "GET /api/v1/orgs/:orgId/files/limits",
     category: "internal",
@@ -233,6 +233,31 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "internal",
     reason:
       "Composer housekeeping: drops a draft the person removed before sending; an agent never holds a draft",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/files/:id/content",
+    category: "transport",
+    reason: "Serves a library file's text bytes for the Files page's preview",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/files/:id/download",
+    category: "transport",
+    reason: "Serves a library file's bytes",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/files/:id/previewers",
+    category: "transport",
+    reason: "Previewer lookup feeding the Files page's viewer",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/files/:id/previews/:plugin/:previewerId",
+    category: "transport",
+    reason: "Serves a rendered library file preview",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/files/:id/html-token",
+    category: "transport",
+    reason: "Mints the HTML document's load token for the Files page",
   },
   // attachments
   {

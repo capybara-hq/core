@@ -16,7 +16,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import type { PreviewProbeState } from "../fixtures/plugins/preview-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
-import { migrateLegacyFiles } from "../helpers/library-files.js";
+import { migrateLegacyFiles, seedLibraryFile } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -463,5 +463,94 @@ describe("file-preview@1", () => {
       payload: { conversationId: conv, fileId: docx },
     });
     expect(stranger.statusCode).toBe(404);
+  });
+});
+
+describe("file-preview@1 for library files", () => {
+  const libBase = () => `/api/v1/orgs/${orgId}/files`;
+  const docx = () =>
+    seedLibraryFile(
+      k.app,
+      orgId,
+      ownerId,
+      { name: "Library.docx", contentType: DOCX, bytes: Buffer.from("PK docx bytes") },
+      { status: "ready" },
+    );
+
+  it("lists and renders previewers for the caller's own file, with no conversation", async () => {
+    await enable();
+    const id = await docx();
+    const listed = await owner({ method: "GET", url: `${libBase()}/${id}/previewers` });
+    expect(listed.statusCode, listed.body).toBe(200);
+    expect(listed.headers["cache-control"]).toBe("private, no-store");
+    expect(
+      (listed.json() as { previewers: { id: string; kind: string }[] }).previewers.map((p) => [
+        p.id,
+        p.kind,
+      ]),
+    ).toEqual([
+      ["docx", "view"],
+      ["docx-page", "embed"],
+    ]);
+    const r = await owner({
+      method: "GET",
+      url: `${libBase()}/${id}/previews/preview-fake/docx?locale=zh`,
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toEqual({
+      view: { blocks: [{ type: "text", markdown: "13 PK docx bytes" }] },
+    });
+    expect(probe().last).toEqual({
+      source: "conversation",
+      orgId,
+      accountId: ownerId,
+      locale: "zh",
+      config: expect.anything(),
+      file: { id, name: "Library.docx", contentType: DOCX, size: 13 },
+    });
+    expect(probe().last).not.toHaveProperty("conversationId");
+    // another member: not found on both routes
+    const listedByOther = await other({ method: "GET", url: `${libBase()}/${id}/previewers` });
+    expect(listedByOther.statusCode).toBe(404);
+    expect(errCode(listedByOther)).toBe("file.not_found");
+    const renderedByOther = await other({
+      method: "GET",
+      url: `${libBase()}/${id}/previews/preview-fake/docx`,
+    });
+    expect(renderedByOther.statusCode).toBe(404);
+    expect(probe().last).toMatchObject({ accountId: ownerId });
+  });
+
+  it("an embed token for a library file names the file alone; another member gets 404", async () => {
+    await enable();
+    const id = await docx();
+    const tokenUrl = `/api/v1/orgs/${orgId}/ui/embeds/preview-fake/docx-embed/token`;
+    const ok = await owner({ method: "POST", url: tokenUrl, payload: { fileId: id } });
+    expect(ok.statusCode, ok.body).toBe(200);
+    const claims = JSON.parse(
+      Buffer.from(
+        (ok.json() as { token: string }).token.split(".")[0] as string,
+        "base64url",
+      ).toString("utf8"),
+    ) as Record<string, unknown>;
+    expect(claims).toMatchObject({ contribution: "docx-embed", fileId: id, accountId: ownerId });
+    expect(claims).not.toHaveProperty("conversationId");
+    const stranger = await other({ method: "POST", url: tokenUrl, payload: { fileId: id } });
+    expect(stranger.statusCode).toBe(404);
+    // a file this embed's previewers do not take is not found either
+    const pdf = await seedLibraryFile(
+      k.app,
+      orgId,
+      ownerId,
+      { name: "a.pdf", contentType: "application/pdf", bytes: Buffer.from("%PDF") },
+      { status: "ready" },
+    );
+    const wrong = await owner({ method: "POST", url: tokenUrl, payload: { fileId: pdf } });
+    expect(wrong.statusCode).toBe(404);
+    // a deleted file is not found
+    expect((await owner({ method: "DELETE", url: `${libBase()}/${id}` })).statusCode).toBe(204);
+    expect(
+      (await owner({ method: "POST", url: tokenUrl, payload: { fileId: id } })).statusCode,
+    ).toBe(404);
   });
 });

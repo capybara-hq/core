@@ -4,6 +4,7 @@ import { AgentsService } from "../../src/agents/agents.service.js";
 import { OrgAgentTemplates } from "../../src/agents/org-templates.js";
 import { ConversationsService } from "../../src/conversations/conversations.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
+import { ToolViewSchema } from "../../src/conversations/events.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
@@ -11,12 +12,14 @@ import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
+import { seedLibraryFile } from "../helpers/library-files.js";
 import { seedConnector } from "../helpers/tool-fixtures.js";
 
 /**
  * Task 11 of the Platform tool: evals, connectors (delete, refresh), the agents routes beyond the
  * basics (delete, versions, pending connectors, readiness), the org's agent templates, org models,
- * background tasks and file previewers, against PG with the real services. Operations run by
+ * background tasks, file previewers and the person's file library, against PG with the real
+ * services. Operations run by
  * `op.run(input, ctx)`, refusals by `availability()`.
  */
 
@@ -795,5 +798,79 @@ describe("background tasks and previewers", () => {
     expect(await summarize("extensions.set-previewers", { items: [] }, c)).toMatchObject({
       en: expect.stringContaining("Set the order of file previewers"),
     });
+  });
+});
+
+const seed = (accountId: string, name: string, text: string) =>
+  seedLibraryFile(
+    env.k.app,
+    env.orgId,
+    accountId,
+    { name, contentType: "text/plain", bytes: Buffer.from(text) },
+    { status: "ready" },
+  );
+
+describe("files operations (file library spec §6)", () => {
+  beforeEach(async () => {
+    await env.db.deleteFrom("files").execute();
+  });
+
+  it("list, get and usage read only the actor's own files", async () => {
+    const notes = await seed(env.memId, "notes.txt", "four");
+    const plan = await seed(env.memId, "Plan.txt", "seven!!");
+    const theirs = await seed(env.bossId, "boss.txt", "b");
+    const mine = ctxOf(env.memId);
+
+    const listed = (await run("files.list", {}, mine)) as {
+      files: { id: string; name: string; origin: string; versions: number }[];
+      next: string | null;
+    };
+    expect(listed.next).toBeNull();
+    expect(listed.files.map((f) => f.id).sort()).toEqual([notes, plan].sort());
+    expect(listed.files[0]).toMatchObject({ origin: "upload", versions: 1 });
+    const searched = (await run("files.list", { q: "PLAN" }, mine)) as { files: { id: string }[] };
+    expect(searched.files.map((f) => f.id)).toEqual([plan]);
+    // a cursor the list did not hand out: the error says what to pass
+    await expect(run("files.list", { cursor: "nope" }, mine)).rejects.toThrow(/params\.cursor/);
+
+    const got = (await run("files.get", { fileId: notes }, mine)) as {
+      file: { id: string; name: string };
+      conversations: unknown[];
+      versions: { id: string }[];
+    };
+    expect(got.file).toMatchObject({ id: notes, name: "notes.txt" });
+    expect(got.conversations).toEqual([]);
+    expect(got.versions.map((v) => v.id)).toEqual([notes]);
+    await expect(run("files.get", { fileId: theirs }, mine)).rejects.toThrow(/files\.list/);
+
+    expect(await run("files.usage", {}, mine)).toEqual({ files: 2, bytes: 4 + 7 });
+    expect(await run("files.usage", {}, ctxOf(env.bossId))).toEqual({ files: 1, bytes: 1 });
+    // every member may read their own files
+    expect(availability(op("files.list"), facts("guest"))).toEqual({ ok: true });
+  });
+
+  it("delete deletes nothing: it checks the file and hands the person the Files page", async () => {
+    const id = await seed(env.memId, "keep.txt", "k");
+    const o = op("files.delete");
+    expect(o.confirm).toBe("read");
+    const out = await run("files.delete", { fileId: id }, ctxOf(env.memId));
+    expect(out).toMatchObject({ id, name: "keep.txt" });
+    const row = await env.db
+      .selectFrom("files")
+      .select("status")
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row.status).toBe("ready");
+    const card = o.handoff?.(o.input.parse({ fileId: id }), out, ctxOf(env.memId));
+    expect(card).toEqual({
+      kind: "handoff",
+      title: expect.objectContaining({ en: "Confirm deleting this file on the Files page" }),
+      target: { type: "link", url: `/files#item=${id}` },
+    });
+    expect(ToolViewSchema.safeParse(card).success).toBe(true);
+    // another member's file is not found, and gets no card
+    await expect(run("files.delete", { fileId: id }, ctxOf(env.bossId))).rejects.toThrow(
+      /files\.list/,
+    );
   });
 });

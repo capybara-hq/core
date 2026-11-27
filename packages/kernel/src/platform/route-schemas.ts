@@ -22,6 +22,7 @@ import { CONVERSATION_ROUTES } from "../conversations/conversations.schemas.js";
 import { DEVICE_ROUTES } from "../devices/devices.schemas.js";
 import { EVAL_ROUTES } from "../evals/evals.schemas.js";
 import { EXTENSION_POINT_ROUTES } from "../extensions/point-defaults.schemas.js";
+import { FILE_ROUTES } from "../files/library.schemas.js";
 import { FILE_PREVIEWER_ROUTES } from "../files/previewers.schemas.js";
 import { ME_ROUTES } from "../identity/me.schemas.js";
 import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
@@ -118,4 +119,6 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...LOGIN_SOURCE_ROUTES,
   // shares of conversation files (file sharing spec §10)
   ...SHARE_ROUTES,
+  // the person's file library (file library spec §6)
+  ...FILE_ROUTES,
 ];
