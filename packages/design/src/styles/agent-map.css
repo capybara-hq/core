@@ -428,6 +428,16 @@
   margin: 0;
   padding-left: var(--cb-space-5);
 }
+/* No background tasks: one muted line under the title, where the rows would start. */
+.cb-amap-section-body > .cb-empty-state[data-size="compact"] {
+  padding: 0 0 0 var(--cb-space-5);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-row-dense);
+}
+.cb-amap-section-body > .cb-empty-state > .cb-empty-state-words > .cb-empty-state-text {
+  color: var(--cb-muted);
+  font-family: inherit;
+}
 .cb-amap-calls {
   margin: 0;
   padding: 0;

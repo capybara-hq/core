@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Button, IconButton } from "../controls/button";
 import { formatDuration } from "../display/duration";
+import { EmptyState } from "../display/empty-state";
 import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
@@ -687,7 +688,11 @@ export function AgentDetail({
           count={background.length}
           defaultOpen={false}
         >
-          <TaskRows tasks={background} now={clock} />
+          {background.length > 0 ? (
+            <TaskRows tasks={background} now={clock} />
+          ) : (
+            <EmptyState size="compact" text={t("agentMap.backgroundEmpty")} />
+          )}
         </DetailSection>
         <DetailSection
           title={t("agentMap.section.toolCalls")}
