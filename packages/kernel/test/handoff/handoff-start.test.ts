@@ -253,6 +253,18 @@ describe("connector handoff start", () => {
     expect(await handoffKeys()).toEqual([]);
   });
 
+  it("an account without connectors.use in the org cannot start a connect handoff", async () => {
+    const connectorId = await installDcr();
+    // not a member of the org: no role, so no connectors.use
+    await accountsFor(db).createLocal({ login: "outsider", password: PW, displayName: "X" });
+    const outsider = await session(k, "outsider");
+    const res = await connect(connectorId, { handoff: { returnScheme: "capybara" } }, outsider);
+    // a non-member is not told the org exists
+    expect(res.statusCode, res.body).toBe(404);
+    expect(errCode(res)).toBe("org.not_found");
+    expect(await handoffKeys()).toEqual([]);
+  });
+
   it("an unknown connector → connector.not_found, no ticket", async () => {
     const res = await connect("nope", { handoff: { returnScheme: "capybara" } });
     expect(res.statusCode, res.body).toBe(404);
@@ -314,6 +326,17 @@ describe("login-method link handoff start", () => {
     const res = await startLink("fake-idp", { handoff: { returnScheme: "evil" } });
     expect(res.statusCode, res.body).toBe(400);
     expect(errCode(res)).toBe("handoff.scheme_not_allowed");
+    expect(await handoffKeys()).toEqual([]);
+  });
+
+  it("a link handoff start without the CSRF header → 403, no ticket", async () => {
+    const res = await req({
+      method: "POST",
+      url: "/api/v1/auth/sso/fake-idp/start",
+      payload: { intent: "link", handoff: { returnScheme: "capybara" } },
+      csrf: false,
+    });
+    expect(res.statusCode).toBe(403);
     expect(await handoffKeys()).toEqual([]);
   });
 

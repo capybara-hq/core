@@ -150,9 +150,8 @@ export class OAuthFlow {
 
   /**
    * Builds the authorization URL. `binding` is this browser's binding value (the controller writes
-   * the cookie). With `handoff` (a
-   * browser handoff redeemed in this browser), the state's return page is the handoff done page
-   * built from the ticket's record, and `returnTo` is ignored.
+   * the cookie). With `handoff` (a browser handoff redeemed in this browser), the state's return
+   * page is the handoff done page built from the ticket's record, and `returnTo` is ignored.
    */
   async start(
     orgId: string,

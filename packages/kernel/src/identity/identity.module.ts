@@ -1,7 +1,6 @@
 import { Module } from "@nestjs/common";
 import { SetupLockModule } from "../admin/setup-lock.js";
 import { ExtensionRegistryModule } from "../extensions/registry.js";
-import { HandoffTicketsModule } from "../handoff/handoff-tickets.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { StorageModule } from "../storage/storage.module.js";
@@ -35,8 +34,6 @@ import { SuperAdminLockModule } from "./super-admin.js";
     SuperAdminLockModule,
     ExtensionRegistryModule,
     StorageModule,
-    // browser handoff tickets: the link start's handoff (and, through this export, the connect's)
-    HandoffTicketsModule,
   ],
   providers: [
     AccountAvatarsService,
@@ -55,7 +52,6 @@ import { SuperAdminLockModule } from "./super-admin.js";
   ],
   exports: [
     AccountsModule,
-    HandoffTicketsModule,
     AccountAvatarsService,
     SessionService,
     ApiTokenService,

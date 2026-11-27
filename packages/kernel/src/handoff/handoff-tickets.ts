@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Redis } from "ioredis";
+import { z } from "zod";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { REDIS } from "../infra/tokens.js";
 import { publicUrlRequired } from "../tools/oauth/flow-paths.js";
@@ -14,6 +15,28 @@ export const HANDOFF_TTL_SECONDS = 600;
 /** The `cap_` prefix keeps the ticket masked in logged paths and queries. */
 const TICKET_PREFIX = "cap_ho_";
 const TICKET_RE = /^cap_ho_[A-Za-z0-9_-]{43}$/;
+/**
+ * What a stored record must look like to be redeemed: a value that does not parse (another
+ * writer, a format from another version) is treated as no ticket, never trusted as written.
+ */
+const HandoffRecordSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("connector"),
+    accountId: z.string().min(1),
+    orgId: z.string().min(1),
+    connectorId: z.string().min(1),
+    returnTo: z.string(),
+    returnScheme: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("identity-link"),
+    accountId: z.string().min(1),
+    plugin: z.string().min(1),
+    returnTo: z.string(),
+    returnScheme: z.string().optional(),
+  }),
+]);
+
 const sha256 = (s: string) => createHash("sha256").update(s).digest("base64url");
 /** Redis holds only the ticket's hash: reading Redis gives no usable ticket. */
 const ticketKey = (ticket: string) => `capk:handoff:${sha256(ticket)}`;
@@ -38,11 +61,24 @@ export class HandoffTickets {
     return ticket;
   }
 
-  /** Takes the ticket's record and deletes it in one step; null when malformed, unknown or used. */
+  /**
+   * Takes the ticket's record and deletes it in one step; null when the ticket is malformed,
+   * unknown or used, or the stored value is not a handoff record.
+   */
   async take(ticket: string): Promise<HandoffRecord | null> {
     if (!TICKET_RE.test(ticket)) return null;
     const raw = await this.redis.getdel(ticketKey(ticket));
-    return raw === null ? null : (JSON.parse(raw) as HandoffRecord);
+    if (raw === null) return null;
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    const parsed = HandoffRecordSchema.safeParse(value);
+    if (!parsed.success) return null;
+    const { returnScheme, ...rest } = parsed.data;
+    return { ...rest, ...(returnScheme !== undefined && { returnScheme }) } as HandoffRecord;
   }
 
   /** The web page that redeems the ticket; needs `http.publicUrl`. */
