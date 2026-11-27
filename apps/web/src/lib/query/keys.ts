@@ -467,8 +467,9 @@ export const keys = {
         rest: string,
       ): readonly unknown[] => [...all, "uiView", scope, plugin, contribution, rest],
       /**
-       * The person's file library (file library spec §6): one list per filter set (the filter's
-       * fields in a fixed order, absent ones left out).
+       * The person's file library (file library spec §6): one list per filter set, normalized as
+       * the request is (`libraryFilterQuery`: `q` trimmed, an empty `q` or `agentId` left out), so
+       * equal requests share one entry.
        */
       files: (filter: {
         origin?: string;
@@ -482,9 +483,9 @@ export const keys = {
         "files",
         {
           origin: filter.origin ?? null,
-          agentId: filter.agentId ?? null,
+          agentId: filter.agentId === undefined || filter.agentId === "" ? null : filter.agentId,
           type: filter.type ?? null,
-          q: filter.q ?? null,
+          q: filter.q === undefined || filter.q.trim() === "" ? null : filter.q.trim(),
           limit: filter.limit ?? null,
           cursor: filter.cursor ?? null,
         },
@@ -836,14 +837,33 @@ export const keys = {
   },
 };
 
+/** Stands for "any conversation id" in a pattern built from the key builders. */
+const ANY_CONVERSATION = "\u0000any-conversation";
+
+type ConversationKeys = ReturnType<ReturnType<(typeof keys)["org"]>["conversation"]>;
+
 /**
- * Whether a key is one conversation's file list (`keys.org(orgId).conversation(id).files()`) in the
- * org: a library write (a delete, a share) changes what every conversation's file panel shows, and
- * those lists have no common prefix that leaves the conversations' other reads alone.
+ * Whether a key is a conversation's read of the given part in the org, whatever the conversation
+ * (`exact`: the part's key itself; otherwise the part as a prefix). The pattern comes from the key
+ * builders, so it follows them. A library write (a delete, a share) changes what every
+ * conversation's file panel shows, and those reads have no common prefix that leaves the
+ * conversations' other reads alone.
  */
+export function isConversationKey(
+  orgId: string,
+  key: readonly unknown[],
+  part: (c: ConversationKeys) => readonly unknown[],
+  exact = false,
+): boolean {
+  const pattern = part(keys.org(orgId).conversation(ANY_CONVERSATION));
+  if (exact ? key.length !== pattern.length : key.length < pattern.length) return false;
+  return pattern.every((p, i) => p === ANY_CONVERSATION || key[i] === p);
+}
+
+/** Whether a key is one conversation's file list (`conversation(id).files()`) in the org. */
 export const isConversationFilesKey = (orgId: string, key: readonly unknown[]): boolean =>
-  key.length === 5 &&
-  key[0] === "org" &&
-  key[1] === orgId &&
-  key[2] === "conversation" &&
-  key[4] === "files";
+  isConversationKey(orgId, key, (c) => c.files(), true);
+
+/** Whether a key is one of a conversation's per-file share lists (`conversation(id).fileShares`). */
+export const isConversationFileSharesKey = (orgId: string, key: readonly unknown[]): boolean =>
+  isConversationKey(orgId, key, (c) => c.fileSharesAll());

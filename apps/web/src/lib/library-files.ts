@@ -119,7 +119,3 @@ export const uploadLibraryFile = (
 /** The first bytes of a text file for the built-in previews; `truncated` when cut. */
 export const libraryFileText = (orgId: string, id: string, signal?: AbortSignal) =>
   readTextPreview(`${one(orgId, id)}/content?limit=${TEXT_PREVIEW_BYTES}`, signal);
-
-/** The download address (same origin; the kernel redirects to a presigned address). */
-export const libraryDownloadUrl = (orgId: string, id: string, opts: { inline?: boolean } = {}) =>
-  `${one(orgId, id)}/download${opts.inline ? "?inline=1" : ""}`;

@@ -30,7 +30,7 @@ import { useDeleteLibraryFile, useUploadLibraryFile } from "../src/lib/query/lib
 import { useCreateLibraryShare } from "../src/lib/query/share-mutations";
 import type { SharePolicy } from "../src/lib/shares";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
-import { renderPage, testQueryClient } from "./support/render";
+import { currentPageClient, renderPage, testQueryClient } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -122,6 +122,13 @@ describe("the library loaders", () => {
     expect(calls[0]?.url).toBe(`${FILES}?q=rep&limit=8`);
   });
 
+  it("equal requests share one list key: q trimmed, an empty q or agentId left out", () => {
+    const k = keys.org("o1");
+    expect(k.files({ q: " rep ", agentId: "" })).toEqual(k.files({ q: "rep" }));
+    expect(k.files({ q: "  " })).toEqual(k.files({}));
+    expect(k.files({ agentId: "a1" })).not.toEqual(k.files({}));
+  });
+
   it("every read lives under the org's scope", () => {
     for (const q of [
       libraryFilesQuery("o1", {}),
@@ -191,10 +198,15 @@ describe("library mutations", () => {
     );
     await waitFor(() => expect(reads(calls, `${O}/conversations/c1/files`)).toBe(1));
     await waitFor(() => expect(reads(calls, FILES)).toBe(1));
+    // a conversation's share list of the file (deleting revokes its shares)
+    client.setQueryData(keys.org("o1").conversation("c1").fileShares("f1"), { shares: [] });
     await act(() => result.current.mutateAsync({ fileId: "f1" }));
     expect(reads(calls, FILES)).toBe(2);
     expect(reads(calls, `${FILES}/usage`)).toBe(2);
     expect(reads(calls, `${O}/conversations/c1/files`)).toBe(2);
+    expect(
+      client.getQueryState(keys.org("o1").conversation("c1").fileShares("f1"))?.isInvalidated,
+    ).toBe(true);
     // the conversation's other reads are left alone
     expect(client.getQueryState(keys.org("o1").conversation("c1").events())?.isInvalidated).toBe(
       false,
@@ -386,6 +398,54 @@ describe("the file body for a library file", () => {
 
 describe("the share dialog for a library file", () => {
   const ALLOWED: SharePolicy = { external: "allowed", maxExpiryDays: 30 };
+
+  it("revoking a share made from a conversation invalidates that conversation's share lists", async () => {
+    const live = {
+      id: "sh0",
+      code: "ZZZZZZZZZZ",
+      url: "https://cap.example/s/ZZZZZZZZZZ",
+      audience: "internal",
+      conversationId: "c1",
+      fileId: "f1",
+      sourcePath: "/w/f1.txt",
+      name: "f1.txt",
+      contentType: "text/plain",
+      size: 10,
+      generation: 1,
+      createdBy: { id: "a1", displayName: "Grant", avatarUrl: null },
+      createdAt: "2026-11-28T06:00:00.000Z",
+      expiresAt: null,
+      lastOpenedAt: null,
+      state: "live",
+      revokedAt: null,
+      revokeReason: null,
+      newerVersion: false,
+    };
+    const calls = stubApi({
+      [`GET ${FILES}/f1/shares`]: () => json(200, { shares: [live], policy: ALLOWED }),
+      [`DELETE ${O}/shares/sh0`]: () => noContent(),
+    });
+    renderPage(
+      <ShareDialog
+        orgId="o1"
+        target={{ kind: "library", file: view("f1") }}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    const client = currentPageClient();
+    client.setQueryData(keys.org("o1").conversation("c1").fileShares("f1"), { shares: [] });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Revoke" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "DELETE" && c.url === `${O}/shares/sh0`)).toBe(true),
+    );
+    await waitFor(() =>
+      expect(
+        client.getQueryState(keys.org("o1").conversation("c1").fileShares("f1"))?.isInvalidated,
+      ).toBe(true),
+    );
+  });
 
   it("lists and creates through the library file's share routes", async () => {
     const calls = stubApi({

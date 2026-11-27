@@ -79,7 +79,8 @@ export function ShareDialog({
   onOpenChange(open: boolean): void;
 }) {
   const { file } = target;
-  // A library file's shares name no conversation (refresh and revoke invalidate by it)
+  // A library file's shares name no conversation; refresh and revoke invalidate by each share's
+  // own conversation (a library file lists the shares made from a conversation too)
   const conversationId = target.kind === "conversation" ? target.conversationId : null;
   const t = useTranslations("shares.dialog");
   const share = useShareCapability();
@@ -225,7 +226,7 @@ export function ShareDialog({
                         disabled={busy}
                         onClick={() =>
                           refresh.mutate(
-                            { shareId: s.id, conversationId },
+                            { shareId: s.id, conversationId: s.conversationId ?? conversationId },
                             { onSuccess: () => toast.success(t("updated")), onError: fail },
                           )
                         }
@@ -238,7 +239,10 @@ export function ShareDialog({
                       variant="danger"
                       disabled={busy}
                       onClick={() =>
-                        revoke.mutate({ shareId: s.id, conversationId }, { onError: fail })
+                        revoke.mutate(
+                          { shareId: s.id, conversationId: s.conversationId ?? conversationId },
+                          { onError: fail },
+                        )
                       }
                     >
                       {t("revoke")}
@@ -267,7 +271,10 @@ export function ShareDialog({
                       variant="danger"
                       disabled={busy}
                       onClick={() =>
-                        revoke.mutate({ shareId: s.id, conversationId }, { onError: fail })
+                        revoke.mutate(
+                          { shareId: s.id, conversationId: s.conversationId ?? conversationId },
+                          { onError: fail },
+                        )
                       }
                     >
                       {t("revoke")}

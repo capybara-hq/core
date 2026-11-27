@@ -3,23 +3,27 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { deleteLibraryFile, uploadLibraryFile } from "../library-files";
 import type { UploadedFile } from "../uploads";
-import { isConversationFilesKey, keys } from "./keys";
+import { isConversationFileSharesKey, isConversationFilesKey, keys } from "./keys";
 import { useAppMutation } from "./mutation";
 
 // Writes on the person's file library (file library spec §6). Reads: `./library`.
 
 /**
  * Deletes a library file (its shares are revoked with it): the library lists, the usage, the
- * org's share lists and every conversation's file list (the file shows as no longer available
- * there) are read again; the file's own reads are forgotten when the caller leaves.
+ * org's share lists, every conversation's file list (the file shows as no longer available
+ * there) and every conversation's per-file share lists (the revoked shares) are read again; the file's own reads are forgotten when the caller leaves.
  */
 export function useDeleteLibraryFile(orgId: string) {
   const qc = useQueryClient();
   return useAppMutation<{ fileId: string }, void>({
     fn: async (v) => {
       await deleteLibraryFile(orgId, v.fileId);
-      // No common prefix holds every conversation's file list alone: match them.
-      await qc.invalidateQueries({ predicate: (q) => isConversationFilesKey(orgId, q.queryKey) });
+      // No common prefix holds every conversation's file and share lists alone: match them.
+      await qc.invalidateQueries({
+        predicate: (q) =>
+          isConversationFilesKey(orgId, q.queryKey) ||
+          isConversationFileSharesKey(orgId, q.queryKey),
+      });
     },
     invalidates: () => [
       keys.org(orgId).filesAll(),

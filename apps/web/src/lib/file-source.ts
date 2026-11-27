@@ -1,6 +1,6 @@
 import { artifactDownloadUrl } from "./artifacts";
 import type { FileOutput } from "./files";
-import { type LibraryFileView, libraryDownloadUrl } from "./library-files";
+import type { LibraryFileView } from "./library-files";
 import type { FilePreviewerItem } from "./previewers";
 import { skillFileContentUrl } from "./skills";
 import { fileDownloadUrl } from "./uploads";
@@ -79,10 +79,10 @@ export function sourceUrls(s: FileSource): {
     };
   }
   if (s.kind === "library") {
-    const download = libraryDownloadUrl(s.orgId, s.file.id);
+    const download = fileDownloadUrl(s.orgId, s.file.id);
     return {
       download,
-      inline: libraryDownloadUrl(s.orgId, s.file.id, { inline: true }),
+      inline: fileDownloadUrl(s.orgId, s.file.id, { inline: true }),
       content: download,
     };
   }

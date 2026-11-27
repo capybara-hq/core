@@ -175,9 +175,12 @@ export const discardDraft = (orgId: string, id: string) =>
     () => undefined,
   );
 
-/** The download address (same origin; the kernel redirects to a presigned address). */
-export const fileDownloadUrl = (orgId: string, id: string) =>
-  `${base(orgId)}/${encodeURIComponent(id)}/download`;
+/**
+ * A file's download address (same origin; the kernel redirects to a presigned address), the
+ * library's and the composer upload's alike; `inline`: shown in place (bitmaps only).
+ */
+export const fileDownloadUrl = (orgId: string, id: string, opts: { inline?: boolean } = {}) =>
+  `${base(orgId)}/${encodeURIComponent(id)}/download${opts.inline ? "?inline=1" : ""}`;
 
 /** 直传失败（网络 / CORS / 存储拒绝 / 过期）的客户端错误码。 */
 export const UPLOAD_FAILED = "file.upload_failed";
