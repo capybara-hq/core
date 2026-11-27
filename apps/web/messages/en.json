@@ -188,7 +188,10 @@
       "queue_full": "The queue is full. Wait for queued messages to go out, or remove some.",
       "queue_item_not_found": "The queued message has already been sent or removed.",
       "read_only": "This is a sub-agent's conversation; it doesn't take messages.",
-      "project_file_unavailable": "A referenced project file is no longer available. Check that it still exists in the project, then remove it and try again.",
+      "project_file_unavailable": {
+        "default": "A referenced project file is no longer available. Check that it still exists in the project, then remove it and try again.",
+        "no_project": "This conversation has no device project, so it can't reference project files. Remove them, or start the conversation in a project."
+      },
       "busy": "The conversation is busy. Wait for the current run to finish."
     },
     "background_task": {

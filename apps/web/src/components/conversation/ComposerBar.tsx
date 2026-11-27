@@ -17,6 +17,7 @@ import {
   isTouchPointer,
   type PickerProps,
   Stack,
+  typeBadge,
   useComposerMenu,
   useToast,
 } from "@capybara-hq/design";
@@ -110,17 +111,38 @@ const draftKey = (
     skill ?? null,
   ]);
 
-/** The last segment of a project file's path (its chip's name). */
-const baseName = (path: string) => path.split("/").at(-1) ?? path;
+/**
+ * A project-relative path as the kernel normalizes it (`./a//b/` -> `a/b`, `..` resolved), so a
+ * refusal's path matches the chip it came from.
+ */
+function normalizeProjectPath(path: string): string {
+  const out: string[] = [];
+  for (const seg of path.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return out.join("/");
+}
 
-/** The paths a `conversation.project_file_unavailable` refusal names (none for another error). */
-function missingProjectFiles(e: unknown): string[] {
-  if (!(e instanceof ApiClientError) || e.code !== "conversation.project_file_unavailable")
+/**
+ * The draft's project file paths a refusal names: `conversation.project_file_unavailable` (not a
+ * file in the project) or `device.path_outside_project` (leaves it), compared normalized; none
+ * for another error.
+ */
+export function missingProjectFiles(e: unknown, draft: readonly string[]): string[] {
+  if (
+    !(e instanceof ApiClientError) ||
+    (e.code !== "conversation.project_file_unavailable" && e.code !== "device.path_outside_project")
+  )
     return [];
-  return e.rawDetails.flatMap((d) => {
-    const path = (d as { path?: unknown } | null)?.path;
-    return typeof path === "string" ? [path] : [];
-  });
+  const named = new Set(
+    e.rawDetails.flatMap((d) => {
+      const path = (d as { path?: unknown } | null)?.path;
+      return typeof path === "string" ? [normalizeProjectPath(path)] : [];
+    }),
+  );
+  return draft.filter((p) => named.has(normalizeProjectPath(p)));
 }
 
 /** A slash command: `/<connector slug>:<prompt name>`. */
@@ -169,7 +191,11 @@ export type ComposerMessage = Pick<
    * What a pending bubble shows until the log has the message (never sent): the skill's chip
    * label and the files' names.
    */
-  display?: { skill?: string; files: { name: string; kind: "image" | "file" }[] };
+  display?: {
+    skill?: string;
+    /** `type`: the file's type badge, as the thread's chip shows it. */
+    files: { name: string; kind: "image" | "file"; type?: string }[];
+  };
   /**
    * The draft as it was sent, for a view that outlives this composer (the new conversation's
    * layout switch remounts it): a failed send gives it to the next composer's `initialDraft`.
@@ -188,6 +214,8 @@ export type ComposerDraft = {
   files: DraftFile[];
   /** Referenced project file paths (composer menus §5). */
   projectFiles?: string[];
+  /** Of those, the paths the failed send was refused for (marked on their chips). */
+  missing?: string[];
   /** The draft's `clientMessageId`, kept for the retry (the kernel dedupes it). */
   id?: { key: string; id: string };
 };
@@ -357,7 +385,8 @@ export function ComposerBar({
   /**
    * The device project the message goes to (composer menus §5): the conversation's binding, or
    * the new conversation's pick, and only for the device's owner (the listing is the owner's).
-   * Its files can be referenced from the + menu (项目文件); a change of it drops the references.
+   * Its files can be referenced from the + menu (Project files); a change of it drops the
+   * references.
    */
   project?: { deviceId: string; name: string } | undefined;
 }) {
@@ -374,8 +403,8 @@ export function ComposerBar({
   const [skill, setSkill] = useState<InvocableSkill | null>(initialDraft?.skill ?? null);
   /** Referenced project file paths (composer menus §5), in pick order. */
   const [projectFiles, setProjectFiles] = useState<string[]>(initialDraft?.projectFiles ?? []);
-  /** Paths the kernel refused at the last send (`conversation.project_file_unavailable`). */
-  const [missingFiles, setMissingFiles] = useState<readonly string[]>([]);
+  /** Paths the kernel refused at the last send ({@link missingProjectFiles}). */
+  const [missingFiles, setMissingFiles] = useState<readonly string[]>(initialDraft?.missing ?? []);
   const [pickingFiles, setPickingFiles] = useState(false);
   /** The device cannot list its project files: the + row shows why, disabled. */
   const [listUnsupported, setListUnsupported] = useState<string | null>(null);
@@ -583,7 +612,11 @@ export function ComposerBar({
         display: {
           files: [
             ...shownFiles,
-            ...sentProjectFiles.map((path) => ({ name: path, kind: "file" as const })),
+            ...sentProjectFiles.map((path) => ({
+              name: path,
+              kind: "file" as const,
+              type: typeBadge(path, ""),
+            })),
           ],
           ...(name !== undefined ? { skill: skillChipLabel(name) } : {}),
         },
@@ -617,7 +650,7 @@ export function ComposerBar({
       } else {
         restore();
         drafts.markFailed(r.error);
-        setMissingFiles(missingProjectFiles(r.error));
+        setMissingFiles(missingProjectFiles(r.error, sentProjectFiles));
       }
     } catch (e) {
       restore();
@@ -1149,8 +1182,8 @@ export function ComposerBar({
       (path): AttachmentStripItem => ({
         id: `project:${path}`,
         kind: "file",
-        name: baseName(path),
-        size: 0,
+        // the whole path: src/index.ts and test/index.ts are two chips
+        name: path,
         ...(missingFiles.includes(path) ? { error: t("projectFileMissing", { path }) } : {}),
         onRemove: () => {
           setProjectFiles((list) => list.filter((x) => x !== path));
@@ -1356,7 +1389,8 @@ export function ComposerBar({
           onConfirm={(paths) => {
             dismissSuggestion();
             setProjectFiles(paths.slice(0, MAX_PROJECT_FILES));
-            setMissingFiles((list) => list.filter((x) => paths.includes(x)));
+            // picked again: the marks of the last refusal no longer hold
+            setMissingFiles([]);
           }}
           onUnsupported={(e) => {
             const reason = errorMessage(e);

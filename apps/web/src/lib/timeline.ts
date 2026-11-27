@@ -343,11 +343,18 @@ export type RunData = {
 
 export type FailedRun = Extract<TimelineEntry, { kind: "run"; status: "failed" }>;
 
-/** What Retry repeats: the text (an invocation's arguments), files and the skill invoked. */
+/**
+ * What Retry repeats: the text (an invocation's arguments), files, `@` resources, project files and
+ * the skill invoked.
+ */
 export interface RetryMessage {
   seq: number;
   text: string;
   files: MessageFile[];
+  /** The `@` resources, as the send body names them. Absent: none. */
+  attachments?: { connectorId: string; uri: string }[];
+  /** The referenced project files' paths (composer menus §5). Absent: none. */
+  projectFiles?: string[];
   /** A skill invocation: the name to invoke again (`<plugin>:<name>` for a plugin's skill). */
   skill?: string;
 }
@@ -1427,10 +1434,17 @@ export function buildEventTimeline(
         if (skill?.mode === "fork") {
           forks.set(e.seq, { label: `/${skill.name}`, dispatched: false, reported: false });
         }
+        const retryAttachments = (e.payload.attachments ?? []).map((a) => ({
+          connectorId: a.appId,
+          uri: a.uri,
+        }));
+        const retryProjectFiles = (e.payload.projectFiles ?? []).map((f) => f.path);
         lastUser = {
           seq: retryOf ?? e.seq,
           text,
           files,
+          ...(retryAttachments.length > 0 ? { attachments: retryAttachments } : {}),
+          ...(retryProjectFiles.length > 0 ? { projectFiles: retryProjectFiles } : {}),
           ...(skill ? { skill: skill.plugin ? `${skill.plugin}:${skill.name}` : skill.name } : {}),
         };
         break;

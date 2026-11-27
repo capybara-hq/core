@@ -687,6 +687,31 @@ describe("buildTimeline", () => {
     });
   });
 
+  it("Retry of a failed message repeats its resources and project files", () => {
+    const events = [
+      user(1, "look", {
+        content: [
+          { type: "text", text: "look" },
+          { type: "text", text: "the handbook body" },
+          { type: "text", text: "Referenced project file: src/app.ts (...)" },
+        ],
+        attachments: [{ appId: "k1", appName: "Docs", uri: "docs://h", name: "Handbook" }],
+        projectFiles: [{ path: "src/app.ts" }],
+      }),
+      ev(2, "run_failed", { error: { code: "model.timeout", message: "x" } }),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(out[1]).toMatchObject({
+      status: "failed",
+      retry: {
+        seq: 1,
+        text: "look",
+        attachments: [{ connectorId: "k1", uri: "docs://h" }],
+        projectFiles: ["src/app.ts"],
+      },
+    });
+  });
+
   it("phase D: Retry of a failed skill invocation repeats the skill with its arguments, not the rendered text", () => {
     const skill = {
       id: "s1",

@@ -402,6 +402,10 @@ export function useConversationPage(
         text: d.retry.text,
         clientMessageId,
         files: d.retry.files.map((f) => f.attachmentId),
+        ...(d.retry.attachments !== undefined ? { attachments: d.retry.attachments } : {}),
+        ...(d.retry.projectFiles !== undefined
+          ? { projectFiles: d.retry.projectFiles.map((path) => ({ path })) }
+          : {}),
         retryOf: d.retry.seq,
         ...(d.retry.skill !== undefined ? { skill: { name: d.retry.skill } } : {}),
         ...pick,

@@ -45,6 +45,7 @@ import {
   type ComposerControl,
   type ComposerDraft,
   type ComposerMessage,
+  missingProjectFiles,
   newClientMessageId,
 } from "./ComposerBar";
 import { useStatusSignature } from "./ConversationView";
@@ -266,7 +267,11 @@ export function useNewConversationPage(
       if (m) {
         pending.drop(attempt.clientMessageId);
         setBlocked(false);
-        setRestore((r) => ({ n: r.n + 1, ...(m.draft !== undefined ? { draft: m.draft } : {}) }));
+        // the next composer marks the refused project files (this one is gone with the remount)
+        const missing = missingProjectFiles(e, m.draft?.projectFiles ?? []);
+        const draft =
+          m.draft !== undefined && missing.length > 0 ? { ...m.draft, missing } : m.draft;
+        setRestore((r) => ({ n: r.n + 1, ...(draft !== undefined ? { draft } : {}) }));
       }
       return { ok: false, error: e };
     } finally {
