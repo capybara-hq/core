@@ -458,6 +458,13 @@ export const ERROR_CODES = {
   "attachment.too_large": 413,
   "attachment.type_not_allowed": 415,
   "attachment.too_many_pending": 429,
+  "file.not_found": 404,
+  "file.not_ready": 409,
+  "file.hash_mismatch": 422,
+  "file.deleted": 410,
+  "file.too_large": 413,
+  "file.type_not_allowed": 415,
+  "file.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
   /** A cloud sandbox provider refused an instance with the open public network. */

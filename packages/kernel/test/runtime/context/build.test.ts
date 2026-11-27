@@ -407,7 +407,7 @@ describe("buildModelRequest", () => {
     const fileBlock = (name?: string): LogContentBlock => ({
       type: "file",
       mediaType: XLSX,
-      source: { kind: "ref", attachmentId: id },
+      source: { kind: "ref", fileId: id },
       ...(name !== undefined && { name }),
       size: 1_234_567,
     });
@@ -475,7 +475,7 @@ describe("buildModelRequest", () => {
       const block: LogContentBlock = {
         type: "document",
         mediaType: "text/markdown",
-        source: { kind: "ref", attachmentId: id },
+        source: { kind: "ref", fileId: id },
         name: "notes.md",
       };
       const textBuild = (text: string) =>
@@ -899,9 +899,7 @@ describe("images from Read (vision-read design §1.4)", () => {
       {
         type: "user_message",
         payload: {
-          content: [
-            { type: "image", mediaType: "image/png", source: { kind: "ref", attachmentId: id } },
-          ],
+          content: [{ type: "image", mediaType: "image/png", source: { kind: "ref", fileId: id } }],
           authorAccountId: "acc-1",
         },
       },
@@ -916,7 +914,7 @@ describe("images from Read (vision-read design §1.4)", () => {
             {
               type: "image",
               mediaType: "image/png",
-              source: { kind: "ref", attachmentId: id },
+              source: { kind: "ref", fileId: id },
               name: "cat.png",
             },
           ],

@@ -19,8 +19,14 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import type { FileOutput } from "../../lib/files";
-import { useCreateShare, useRefreshShare, useRevokeShare } from "../../lib/query/share-mutations";
-import { fileSharesQuery } from "../../lib/query/shares";
+import type { LibraryFileView } from "../../lib/library-files";
+import {
+  useCreateLibraryShare,
+  useCreateShare,
+  useRefreshShare,
+  useRevokeShare,
+} from "../../lib/query/share-mutations";
+import { fileSharesQuery, libraryFileSharesQuery } from "../../lib/query/shares";
 import { browserShare, shareOrCopy } from "../../lib/share";
 import { SHARE_EXPIRIES, type ShareExpiry, type ShareView, shareUrl } from "../../lib/shares";
 import { useShareCapability } from "../../lib/shell";
@@ -28,6 +34,14 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 
 type Audience = "internal" | "external";
+
+/**
+ * What is shared: a conversation's file (the right panel), or one of the person's library files
+ * (the Files page; its shares belong to no conversation).
+ */
+export type ShareTarget =
+  | { kind: "conversation"; conversationId: string; file: FileOutput }
+  | { kind: "library"; file: LibraryFileView };
 
 /** The expiry choices an audience may pick: within the platform maximum, never only internal. */
 export function expiryChoices(audience: Audience, maxExpiryDays: number): ShareExpiry[] {
@@ -45,7 +59,8 @@ const expiryValue = (d: ShareExpiry) => (d === null ? "never" : String(d));
 const parseExpiry = (v: string): ShareExpiry => (v === "never" ? null : (Number(v) as 1 | 7 | 30));
 
 /**
- * The Share dialog of a file in the right panel (file sharing design §5): who can open the link
+ * The Share dialog of a file in the right panel or on the Files page (file sharing design §5, file
+ * library spec §6): who can open the link
  * (organization members, or anyone with it when external sharing is allowed; otherwise disabled
  * with the reason) and when it expires (choices bounded by the platform maximum), then the link
  * with Copy. Below, the file's active links (Copy, Update to latest when a newer version exists,
@@ -54,29 +69,39 @@ const parseExpiry = (v: string): ShareExpiry => (v === "never" ? null : (Number(
  */
 export function ShareDialog({
   orgId,
-  conversationId,
-  file,
+  target,
   open,
   onOpenChange,
 }: {
   orgId: string;
-  conversationId: string;
-  file: FileOutput;
+  target: ShareTarget;
   open: boolean;
   onOpenChange(open: boolean): void;
 }) {
+  const { file } = target;
+  // A library file's shares name no conversation; refresh and revoke invalidate by each share's
+  // own conversation (a library file lists the shares made from a conversation too)
+  const conversationId = target.kind === "conversation" ? target.conversationId : null;
   const t = useTranslations("shares.dialog");
   const share = useShareCapability();
   const tc = useTranslations("common");
   const toast = useToast();
   const timeZone = useTimeZone();
   const errorMessage = useErrorMessage();
-  const q = useQuery({ ...fileSharesQuery(orgId, conversationId, file.id), enabled: open });
+  const q = useQuery({
+    ...(conversationId === null
+      ? libraryFileSharesQuery(orgId, file.id)
+      : fileSharesQuery(orgId, conversationId, file.id)),
+    enabled: open,
+  });
   const [audience, setAudience] = useState<Audience>("internal");
   const [expiry, setExpiry] = useState<ShareExpiry>(null);
   const [created, setCreated] = useState<ShareView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const create = useCreateShare(orgId, conversationId, file.id);
+  // Both hooks are called (hook order is fixed); the target picks which one creates.
+  const createInConversation = useCreateShare(orgId, conversationId ?? "", file.id);
+  const createInLibrary = useCreateLibraryShare(orgId, file.id);
+  const create = conversationId === null ? createInLibrary : createInConversation;
   const refresh = useRefreshShare(orgId);
   const revoke = useRevokeShare(orgId);
   const origin = typeof window === "undefined" ? "" : window.location.origin;
@@ -201,7 +226,7 @@ export function ShareDialog({
                         disabled={busy}
                         onClick={() =>
                           refresh.mutate(
-                            { shareId: s.id, conversationId },
+                            { shareId: s.id, conversationId: s.conversationId ?? conversationId },
                             { onSuccess: () => toast.success(t("updated")), onError: fail },
                           )
                         }
@@ -214,7 +239,10 @@ export function ShareDialog({
                       variant="danger"
                       disabled={busy}
                       onClick={() =>
-                        revoke.mutate({ shareId: s.id, conversationId }, { onError: fail })
+                        revoke.mutate(
+                          { shareId: s.id, conversationId: s.conversationId ?? conversationId },
+                          { onError: fail },
+                        )
                       }
                     >
                       {t("revoke")}
@@ -243,7 +271,10 @@ export function ShareDialog({
                       variant="danger"
                       disabled={busy}
                       onClick={() =>
-                        revoke.mutate({ shareId: s.id, conversationId }, { onError: fail })
+                        revoke.mutate(
+                          { shareId: s.id, conversationId: s.conversationId ?? conversationId },
+                          { onError: fail },
+                        )
                       }
                     >
                       {t("revoke")}

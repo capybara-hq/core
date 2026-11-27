@@ -52,7 +52,7 @@ export class SharesOperations implements OnModuleInit {
       defineOperation({
         id: "conversations.list-shares",
         description:
-          "List shared links to conversation files, newest first: your own (scope mine, the default) or every member's in the org (scope all, org admins only). Each row has the file name, state (live, suspended, expired, revoked), the audience (internal: signed-in members; external: anyone with the link), the expiry and who shared it; revoked and expired links stay listed for 7 days. Pages by 50: pass the returned next as params.cursor.",
+          "List shared links to files, newest first: your own (scope mine, the default) or every member's in the org (scope all, org admins only). Each row has the file name, state (live, suspended, expired, revoked), the audience (internal: signed-in members; external: anyone with the link), the expiry and who shared it; revoked and expired links stay listed for 7 days. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ scope: ListSharesQuery.shape.scope, cursor: Cursor.optional() }).strict(),
         example: { scope: "mine" },
         authz: { orgAction: "agents.use" },
@@ -75,7 +75,7 @@ export class SharesOperations implements OnModuleInit {
       defineOperation({
         id: "conversations.revoke-share",
         description:
-          "Revoke a shared link to a conversation file: the link stops working at once and its snapshot is deleted. Takes the share id from conversations.list-shares. Your own shares, or any member's for org admins. Revoking a link already revoked changes nothing. The person confirms every revoke.",
+          "Revoke a shared link to a file: the link stops working at once (the file itself is kept). Takes the share id from conversations.list-shares. Your own shares, or any member's for org admins. Revoking a link already revoked changes nothing. The person confirms every revoke.",
         input: z.object({ shareId: ShareIdParams.shape.shareId }).strict(),
         example: { shareId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
         authz: { orgAction: "agents.use" },

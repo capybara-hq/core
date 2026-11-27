@@ -37,7 +37,6 @@ import {
   useState,
 } from "react";
 import { ApiClientError } from "../../lib/api";
-import { acceptAttribute, fileContentType } from "../../lib/attachments";
 import {
   type ConnectorPrompt,
   type ConnectorResource,
@@ -64,6 +63,7 @@ import {
   skillShownName,
 } from "../../lib/skills";
 import type { PromptSuggestion } from "../../lib/stream";
+import { acceptAttribute, fileContentType } from "../../lib/uploads";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useRunStateValue } from "../client-ext/run-state";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";

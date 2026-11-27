@@ -67,7 +67,8 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   // Skills and Connectors sit under Agents (acceptance 2026-11-07). Skills is for members up.
   const primaryGuest = ["agents", "connectors"];
   // Automations for members up (guests can't create tasks; automations spec §10)
-  const primary = ["agents", "skills", "connectors", "automations"];
+  // Files for members up too (guests have no library; file library spec §6)
+  const primary = ["agents", "skills", "connectors", "automations", "files"];
   // Organization settings is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
   // 智能体模板 is no item: it is the 模板 tab of 智能体 (ruling P4-14)
@@ -102,7 +103,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     }
   });
 
-  it("the nav reads 智能体 技能 连接器 自动化 after 新会话; members see 设备 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
+  it("the nav reads 智能体 技能 连接器 自动化 文件 after 新会话; members see 设备 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -128,6 +129,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
         ["技能", "skills", "/skills"],
         ["连接器", "connector", "/connectors"],
         ["自动化", "clock", "/automations"],
+        ["文件", "file", "/files"],
       ],
       more: [
         ["设备", "cpu", "/devices"],
@@ -237,7 +239,7 @@ describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 
     return out as ReturnType<typeof useDrawerNav>;
   }
 
-  it("a member: 收件箱 with the count, 智能体, 自动化; more holds 技能 连接器 设备 and an org page", () => {
+  it("a member: 收件箱 with the count, 智能体, 自动化; more holds 技能 连接器 文件 设备 and an org page", () => {
     const d = drawer("member", { count: 3, more: false });
     expect(d.sections.map((s) => [s.id, s.label, s.href])).toEqual([
       ["inbox", "收件箱", "/inbox"],
@@ -249,6 +251,7 @@ describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 
     expect(d.more.map((m) => m.href)).toEqual([
       "/skills",
       "/connectors",
+      "/files",
       "/devices",
       "/p/acme/board",
     ]);
@@ -346,6 +349,7 @@ describe("activeNavOf", () => {
     ["/devices/e1", "devices"],
     ["/automations", "automations"],
     ["/automations/s1", "automations"],
+    ["/files", "files"],
     ["/plugins", "plugins"],
     ["/plugins/i1/enable", "plugins"],
     ["/extensions", "extensions"],

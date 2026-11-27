@@ -33,6 +33,7 @@ import { conversationsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { seedLibraryFile } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -787,37 +788,12 @@ describe("POST …/messages with skill", () => {
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
       "base64",
     );
-    const created = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: { name: "a.png", contentType: "image/png", size: png.length },
+    const id = await seedLibraryFile(k.app, orgId, ownerId, {
+      name: "a.png",
+      contentType: "image/png",
+      bytes: png,
     });
-    expect(created.statusCode, created.body).toBe(201);
-    const c = created.json() as {
-      id: string;
-      upload: {
-        method: string;
-        url: string;
-        headers: Record<string, string>;
-        fields?: Record<string, string>;
-      };
-    };
-    let up: Response;
-    if (c.upload.method === "PUT") {
-      up = await fetch(c.upload.url, { method: "PUT", headers: c.upload.headers, body: png });
-    } else {
-      const form = new FormData();
-      for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, v);
-      form.append("file", new Blob([png], { type: "image/png" }));
-      up = await fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
-    }
-    expect(up.status).toBeLessThan(300);
-    const fin = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/attachments/${c.id}/finalize`,
-    });
-    expect(fin.statusCode, fin.body).toBe(200);
-    const res = await send(conv, { text: "9", skill: { name: "fix-issue" }, files: [c.id] });
+    const res = await send(conv, { text: "9", skill: { name: "fix-issue" }, files: [id] });
     expect(res.statusCode, res.body).toBe(202);
     const [m] = await userMessages(conv);
     expect(m?.payload.content.map((b) => b.type)).toEqual(["text", "image"]);

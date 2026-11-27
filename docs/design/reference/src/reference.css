@@ -7889,6 +7889,55 @@ span.r-scal-daynum {
   font-weight: 600;
 }
 
+/* LibraryPage (spec §5.13): the filter row, then the list card (in its 320 column, space.3 short of
+   it) beside the preview card; only template-library draws these. */
+.r-lib-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-height: 0;
+  padding: 0 var(--cb-content-pad, 32px) var(--cb-space-4);
+}
+.r-lib-filters {
+  display: flex;
+  gap: var(--cb-space-2);
+}
+.r-lib-select {
+  display: inline-flex;
+  align-items: center;
+  height: var(--cb-control-default);
+  padding: 0 var(--cb-space-3);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+}
+.r-lib-split {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 320px minmax(0, 1fr);
+  min-height: 0;
+}
+.r-lib-list,
+.r-lib-detail {
+  overflow: hidden;
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+}
+.r-lib-list {
+  margin-right: var(--cb-space-3);
+}
+.r-lib-detail {
+  min-width: 360px;
+}
+.r-lib-detail-body {
+  padding: var(--cb-space-4);
+}
+.r-lib-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
 /* ── Composer menus (§6.16.30): ＋, / and @ anchored above the composer ── */
 
 /* Room above the composer for the menu (the catalog's offsetTop). */

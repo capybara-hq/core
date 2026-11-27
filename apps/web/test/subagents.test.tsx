@@ -963,7 +963,7 @@ describe("the conversation page's server snapshot (web-SSR spec §6.2)", () => {
   it("reads every first-paint piece on the server; the view mounts with it and reads nothing", async () => {
     const calls = api({
       [`GET ${ORG}/agents/ag1/invocable-skills`]: () => json(200, { skills: [] }),
-      [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+      [`GET ${ORG}/files/limits`]: () => json(200, LIMITS),
     });
     window.history.replaceState(null, "", "/chat/c1#properties");
     const { calls: server } = await renderChat();
@@ -982,7 +982,7 @@ describe("the conversation page's server snapshot (web-SSR spec §6.2)", () => {
         `${PARENT}/device`,
         `${ORG}/connectors`,
         `${ORG}/agents/ag1/invocable-skills`,
-        `${ORG}/attachments/limits`,
+        `${ORG}/files/limits`,
       ]),
     );
     // the group, the sub-agents' progress and the properties panel (opened from the hash) are

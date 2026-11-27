@@ -50,8 +50,8 @@ interface FetchAttachmentInput {
   file: string;
 }
 
-/** An attachment of the conversation as resolving and naming read it. */
-type ConversationAttachment = { id: string; name: string };
+/** A file sent into the conversation as resolving and naming read it (`uri`: its reference). */
+type ConversationAttachment = { id: string; name: string; uri: string; available?: boolean };
 
 /** Attachment ids are lower-case UUIDs; the reference's last path segment is the id. */
 const ATTACHMENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -75,11 +75,11 @@ const copyFailedText = (name: string): string =>
   `Copying "${clip(name, 200)}" into the device failed (a temporary error); retry the call, or check that the device has free space.`;
 
 /**
- * The attachment `file` names, among the conversation's ready ones (the caller's list): the exact
- * file name, then the name the copy assigns it (a sanitized or de-duplicated name shown in an
- * earlier result's path), then the bare attachment id or a reference whose last path segment is the
- * id (`s3://<bucket>/<key>/attachments/<id>`, `capybara://attachments/<id>`). Names are exact and
- * case-sensitive; nothing else resolves.
+ * The attachment `file` names, among the files sent into the conversation (the caller's list): the
+ * exact file name, then the name the copy assigns it (a sanitized or de-duplicated name shown in an
+ * earlier result's path), then the unsigned reference a reference line showed (the file's blob
+ * `s3://<bucket>/<key>`, or `capybara://attachments/<id>`), then the bare file id or a reference
+ * whose last path segment is the id. Names are exact and case-sensitive; nothing else resolves.
  */
 function resolveAttachment(
   file: string,
@@ -90,6 +90,8 @@ function resolveAttachment(
   if (byName !== undefined) return byName;
   const byAssigned = list.find((a) => assigned.get(a.id) === file);
   if (byAssigned !== undefined) return byAssigned;
+  const byUri = list.find((a) => a.uri === file);
+  if (byUri !== undefined) return byUri;
   const tail = file.slice(file.lastIndexOf("/") + 1);
   if (!ATTACHMENT_ID.test(tail)) return undefined;
   const id = tail.toLowerCase();
@@ -97,11 +99,12 @@ function resolveAttachment(
 }
 
 /**
- * The builtin `FetchAttachment`: copy one attachment of this conversation into the device
- * ({@link attachmentsDir}); it runs nothing. Names come from the conversation's whole attachment
- * list ({@link assignAttachmentNames}), so a given attachment always lands on the same path;
- * copying it twice writes the same bytes and returns the same path. A failure is an ordinary tool
- * error and the run continues.
+ * The builtin `FetchAttachment`: copy one file sent into this conversation (its root's: the files
+ * its messages attached, file library spec §5) into the device ({@link attachmentsDir}); it runs
+ * nothing. A library file the person never attached to the conversation is not in the list.
+ * Names come from the conversation's whole attachment list ({@link assignAttachmentNames}), so a
+ * given attachment always lands on the same path; copying it twice writes the same bytes and
+ * returns the same path. A failure is an ordinary tool error and the run continues.
  */
 export function sandboxFetchAttachmentTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -113,8 +116,11 @@ export function sandboxFetchAttachmentTool(deps: SandboxToolDeps): BuiltinTool {
       const file = (input as FetchAttachmentInput).file;
       const conv = sandboxConversationOf(ctx);
       // the list is read before any device is touched: an unknown file starts no device
-      const list = await deps.attachments.listForConversation(ctx.orgId, conv);
-      const assigned = assignAttachmentNames(list, new Set());
+      const all = await deps.attachments.listForConversation(ctx.orgId, conv);
+      // names over every file ever sent here (a deleted one keeps its name taken), copies of the
+      // available ones only
+      const assigned = assignAttachmentNames(all, new Set());
+      const list = all.filter((a) => a.available !== false);
       const attachment = resolveAttachment(file, list, assigned);
       if (attachment === undefined) {
         if (list.length === 0) throw new ToolError(noAttachmentsText(file));

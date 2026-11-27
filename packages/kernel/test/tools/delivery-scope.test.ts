@@ -10,7 +10,7 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { StorageService } from "../../src/storage/storage.service.js";
+import { FileDeliveries } from "../../src/files/deliveries.js";
 import {
   type ArtifactStoreDeps,
   REPEAT_TEXT,
@@ -114,10 +114,30 @@ const ofType = <T extends ConversationEvent["type"]>(events: ConversationEvent[]
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
-/** The conversation's objects in the kernel store (`artifacts/<conversationId>/…`). */
-async function objectsOf(conv: string): Promise<string[]> {
-  const r = await k.app.get(StorageService).kernel(orgId).list(`artifacts/${conv}/`);
-  return r.items.map((o) => o.key);
+/** The keys of the distinct blobs the conversation's delivered files point at. */
+async function blobsOf(conv: string): Promise<string[]> {
+  const rows = await db
+    .selectFrom("conversation_files as cf")
+    .innerJoin("files as f", "f.id", "cf.file_id")
+    .innerJoin("blobs as b", "b.id", "f.blob_id")
+    .select("b.object_key")
+    .distinct()
+    .where("cf.conversation_id", "=", conv)
+    .where("cf.org_id", "=", orgId)
+    .execute();
+  return rows.map((r) => r.object_key);
+}
+
+/** The ids of the conversation's delivered files. */
+async function filesOf(conv: string): Promise<string[]> {
+  const rows = await db
+    .selectFrom("conversation_files")
+    .select("file_id")
+    .where("conversation_id", "=", conv)
+    .where("org_id", "=", orgId)
+    .where("role", "=", "delivered")
+    .execute();
+  return rows.map((r) => r.file_id).sort();
 }
 
 const write = (file_path: string, content: string) => ({
@@ -216,7 +236,8 @@ describe("Deliver within a delivery scope", () => {
       zh: "已交付过（内容相同）b.txt",
       en: "Already delivered (same content): b.txt",
     });
-    expect(await objectsOf(conv)).toEqual([first.payload.objectKey]);
+    expect(await blobsOf(conv)).toEqual([first.payload.objectKey]);
+    expect(await filesOf(conv)).toEqual([first.payload.artifactId]);
   });
 
   it("a new run delivers again", async () => {
@@ -225,7 +246,9 @@ describe("Deliver within a delivery scope", () => {
     await step(conv, [deliver(`${d}/a.txt`)], 2);
     await step(conv, [deliver(`${d}/a.txt`)], 3);
     expect(ofType(await eventsOf(db, conv), "artifact_created")).toHaveLength(2);
-    expect(await objectsOf(conv)).toHaveLength(2);
+    // two files on one blob: the second delivery reused the bytes
+    expect(await filesOf(conv)).toHaveLength(2);
+    expect(await blobsOf(conv)).toHaveLength(1);
   });
 
   it("a mid-run user message starts a new scope", async () => {
@@ -309,14 +332,14 @@ describe("Deliver within a delivery scope", () => {
     const results = await deliverResults(conv);
     expect(results).toHaveLength(2);
     for (const r of results) expect(r.content).toContain(id);
-    expect(await objectsOf(conv)).toHaveLength(1);
+    expect(await filesOf(conv)).toEqual([id]);
   });
 });
 
 describe("storeArtifacts against the real log", () => {
   const log = () => k.app.get(EventLog);
   const deps = (over: Partial<ArtifactStoreDeps["eventLog"]> = {}): ArtifactStoreDeps => ({
-    storage: k.app.get(StorageService),
+    deliveries: k.app.get(FileDeliveries),
     eventLog: Object.assign(Object.create(log()), over) as ArtifactStoreDeps["eventLog"],
   });
   const ctx = (conversationId: string, runId?: string): BuiltinCallContext => ({
@@ -429,7 +452,7 @@ describe("storeArtifacts against the real log", () => {
       size: 4,
       repeatOf: { artifactId: out[0]?.artifactId, name: "x.txt" },
     });
-    expect(await objectsOf(conv)).toHaveLength(1);
+    expect(await filesOf(conv)).toEqual([out[0]?.artifactId]);
   });
 
   it("parallel identical calls that both read an empty scope store one artifact", async () => {
@@ -464,8 +487,9 @@ describe("storeArtifacts against the real log", () => {
         repeatOf: { artifactId: winner.artifactId, name: winner.name },
       }),
     ]);
-    // the loser's upload was removed
-    expect(await objectsOf(conv)).toEqual([winner.objectKey]);
+    // the loser recorded no file; both stored the bytes as the one blob of the hash
+    expect(await filesOf(conv)).toEqual([winner.artifactId]);
+    expect(await blobsOf(conv)).toEqual([winner.objectKey]);
   });
 
   it("without a run nothing is deduped", async () => {
@@ -477,6 +501,7 @@ describe("storeArtifacts against the real log", () => {
     const artifacts = ofType(await eventsOf(db, conv), "artifact_created");
     expect(artifacts).toHaveLength(2);
     expect(artifacts.every((e) => e.payload.sha256 === sha("norun"))).toBe(true);
-    expect(await objectsOf(conv)).toHaveLength(2);
+    expect(await filesOf(conv)).toHaveLength(2);
+    expect(await blobsOf(conv)).toHaveLength(1);
   });
 });

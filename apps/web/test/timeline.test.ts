@@ -7,6 +7,7 @@ import {
   buildTimeline,
   composerWait,
   latestUsage,
+  messageFiles,
   runStats,
   type TimelineDraft,
   type TimelineEntry,
@@ -2614,5 +2615,25 @@ describe("command rows: the display summary, the exit code and the time of a que
     // the second call is still queued: it counts from when it was logged
     expect(rows[1]?.status).toBe("pending");
     expect(typeof rows[1]?.startedAt).toBe("number");
+  });
+});
+
+describe("messageFiles", () => {
+  it("reads a ref's file id under fileId and under the key logged before the file library", () => {
+    const a = "00000000-0000-4000-8000-000000000001";
+    const b = "00000000-0000-4000-8000-000000000002";
+    const files = messageFiles([
+      { type: "text", text: "see" },
+      { type: "image", mediaType: "image/png", source: { kind: "ref", fileId: a }, name: "a.png" },
+      {
+        type: "file",
+        mediaType: "application/zip",
+        source: { kind: "ref", attachmentId: b } as never,
+      },
+    ]);
+    expect(files.map((f) => [f.attachmentId, f.name])).toEqual([
+      [a, "a.png"],
+      [b, b],
+    ]);
   });
 });

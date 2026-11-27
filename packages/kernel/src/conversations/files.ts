@@ -1,20 +1,25 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { ApiError } from "../errors.js";
+import type { BlobRef } from "../files/blobs.service.js";
+import {
+  type FileReference,
+  isLive,
+  type ReferencedFile,
+  ReferencedFiles,
+} from "../files/referenced-files.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { StorageService } from "../storage/storage.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { ConversationAccess } from "./access.js";
 import { isInlineArtifactType, isTextArtifactType } from "./artifacts.js";
-import { AttachmentsService, type BoundAttachment } from "./attachments.service.js";
-import type { EventPayload } from "./events.js";
 
 /**
- * A conversation's files (UI refresh B, spec §5.8 / §5.9): the files the agent delivered
- * (`artifact_created`), grouped by `sourcePath` into versions, and the files users sent in it
- * (ready `chat` attachments bound to the conversation), newest first. Read on every request (no
- * cache); `status` comes from the object store. Both kinds are read under the conversation's
- * access: whoever may read the conversation may read the attachments sent in it, nobody else.
+ * A conversation's files (UI refresh B, spec §5.8 / §5.9; file library spec §2): the library files
+ * the conversation refers to (`conversation_files`). Files an agent delivered or generated are
+ * grouped by `source_path` into versions; files a person uploaded are listed one by one; newest
+ * first. Read on every request (no cache); `status` comes from the file and its blob (a deleted
+ * file, or a blob gone or replaced, is `removed`). Everything is read under the conversation's
+ * access: whoever may read the conversation may read the files it refers to, nobody else.
  */
 
 /** Versions listed per file (newest first). */
@@ -25,7 +30,7 @@ export const FILES_PAGE_MAX = 100;
 export const FILE_CONTENT_MAX_BYTES = 1024 * 1024;
 
 export interface FileOutput {
-  /** artifactId of the latest version. */
+  /** The file id of the latest version (an artifact id for a delivery). */
   id: string;
   name: string;
   contentType: string;
@@ -37,18 +42,18 @@ export interface FileOutput {
   versions: { id: string; size: number; createdAt: Date }[];
   callId: string;
   createdAt: Date;
-  /** `removed`: the latest version's object is gone from storage (decision 8). */
+  /** `removed`: the latest version's file was deleted or its bytes are gone (decision 8). */
   status: "available" | "removed";
   previewable: "image" | "text" | null;
   /**
-   * `delivered`: the agent delivered it (`artifact_created`); `uploaded`: a user sent it with a
-   * message (an attachment: `id` is the attachment id, one version, `sourcePath` is its name and
-   * `callId` is empty).
+   * `delivered`: an agent delivered or generated it (`artifact_created`); `uploaded`: a person
+   * uploaded it and sent it with a message (one version, `sourcePath` is its name and `callId` is
+   * empty).
    */
   origin: "delivered" | "uploaded";
   /**
    * The viewer has a share of this file that is not revoked or expired (file sharing spec §5): of
-   * its source path for a delivered file (any version), of the attachment for an uploaded one.
+   * its source path for a delivered file (any version), of the file for an uploaded one.
    */
   shared: boolean;
 }
@@ -72,16 +77,57 @@ const artifactNotFound = () =>
 const removed = () =>
   new ApiError("conversation.artifact_removed", "The file is no longer available");
 
-type Delivery = EventPayload<"artifact_created"> & { createdAt: Date };
-
-/** One entry of the merged list: a delivered file (its versions) or an uploaded one. */
+/** One entry of the merged list: a delivered file (its versions, oldest first) or an uploaded one. */
 type Entry =
-  | { origin: "delivered"; at: Date; id: string; group: Delivery[] }
-  | { origin: "uploaded"; at: Date; id: string; upload: BoundAttachment };
+  | { origin: "delivered"; at: Date; id: string; group: FileReference[] }
+  | { origin: "uploaded"; at: Date; id: string; upload: FileReference };
 
 /** Whether `a` lists before `b`: newer first, then the larger id (a total, stable order). */
 const before = (a: Entry, b: Entry): boolean =>
   a.at.getTime() !== b.at.getTime() ? a.at.getTime() > b.at.getTime() : a.id > b.id;
+
+/**
+ * Whether a file is listed as an upload in this conversation (one version) rather than a version of
+ * one of its deliveries: everything the conversation got by a message (an upload, or a file another
+ * conversation delivered that the person sent here), and anything without a version group.
+ */
+const isUpload = (f: FileReference): boolean => f.role === "attached" || f.sourcePath === null;
+
+/** Log order of two deliveries of one conversation: the event that referred to each, then time. */
+const deliveryOrder = (a: FileReference, b: FileReference): number => {
+  if (a.firstSeq !== null && b.firstSeq !== null && a.firstSeq !== b.firstSeq) {
+    return a.firstSeq - b.firstSeq;
+  }
+  const t = a.referencedAt.getTime() - b.referencedAt.getTime();
+  return t !== 0 ? t : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+};
+
+/** One readable file version of the conversation, for the kernel only (the key never leaves it). */
+export interface ResolvedConversationFile {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  /** The blob's key (relative to the org's kernel prefix). */
+  objectKey: string;
+  /** The version group of a delivered file; null for an upload. */
+  sourcePath: string | null;
+  /** What a later read of the object must still match (`blobContentMatches`). */
+  recorded: { size: number; etag: string | null };
+  /** The blob, for `BlobsService.open` / `head`. */
+  blob: BlobRef;
+}
+
+const resolvedOf = (f: ReferencedFile): ResolvedConversationFile => ({
+  id: f.id,
+  name: f.name,
+  contentType: f.contentType,
+  size: f.size,
+  objectKey: f.blob.objectKey,
+  sourcePath: isUpload(f) ? null : f.sourcePath,
+  recorded: { size: f.blob.size, etag: f.blob.etag },
+  blob: { id: f.blob.id, objectKey: f.blob.objectKey, size: f.blob.size, etag: f.blob.etag },
+});
 
 /** The built-in preview kind of a content type (the files list's `previewable`; share metadata too). */
 export const previewKind = (contentType: string): FileOutput["previewable"] =>
@@ -142,12 +188,11 @@ async function mapLimit<T, R>(xs: T[], limit: number, fn: (x: T) => Promise<R>):
 export class ConversationFiles {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
     /** Same visibility as the event stream. */
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
-    /** The attachments sent in the conversation, and the rule their stored content must meet. */
-    @Inject(AttachmentsService)
-    private readonly attachments: Pick<AttachmentsService, "boundRows" | "storedMatches">,
+    /** The files the conversation refers to, and their bytes (size and etag checked). */
+    @Inject(ReferencedFiles)
+    private readonly files: Pick<ReferencedFiles, "references" | "open" | "head">,
   ) {}
 
   private async checkAccess(orgId: string, conversationId: string, viewer: string) {
@@ -156,79 +201,46 @@ export class ConversationFiles {
       throw conversationNotFound();
   }
 
-  /** Every delivery of the conversation in log order. */
-  private async deliveries(conversationId: string): Promise<Delivery[]> {
-    const rows = await this.db
-      .selectFrom("conversation_events")
-      .select(["payload", "created_at"])
-      .where("conversation_id", "=", conversationId)
-      .where("type", "=", "artifact_created")
-      .orderBy("seq")
-      .execute();
-    return rows.map((r) => ({
-      ...(r.payload as EventPayload<"artifact_created">),
-      createdAt: r.created_at,
-    }));
+  /** Whether a reference can be read now: live, and its stored head still the recorded bytes. */
+  private async available(orgId: string, f: FileReference): Promise<boolean> {
+    return isLive(f) && (await this.files.head(orgId, f)) !== null;
   }
 
   /**
-   * One file of the conversation by id: a delivered version first, then an attachment sent in it;
-   * neither → `conversation.artifact_not_found`. An attachment carries `upload`, the row its stored
-   * object must still match. Call after {@link checkAccess}.
+   * One file the conversation refers to by id (any status: a deleted file still resolves, so its
+   * shares are found); none → `conversation.artifact_not_found`. Call after {@link checkAccess}.
    */
   private async resolve(
     orgId: string,
     conversationId: string,
     fileId: string,
-  ): Promise<{
-    id: string;
-    name: string;
-    contentType: string;
-    size: number;
-    objectKey: string;
-    /** The version group of a delivered file; null for an attachment. */
-    sourcePath: string | null;
-    upload?: BoundAttachment;
-  }> {
+  ): Promise<FileReference> {
     if (!UUID_RE.test(fileId)) throw artifactNotFound();
-    const row = await this.db
+    const [f] = await this.files.references(orgId, [conversationId], { ids: [fileId] });
+    if (!f) throw artifactNotFound();
+    return f;
+  }
+
+  /** The tool call of each delivery logged in the conversation, by artifact (= file) id. */
+  private async callIds(conversationId: string): Promise<Map<string, string>> {
+    const rows = await this.db
       .selectFrom("conversation_events")
-      .select("payload")
+      .select([
+        sql<string>`payload->>'artifactId'`.as("id"),
+        sql<string>`payload->>'callId'`.as("callId"),
+      ])
       .where("conversation_id", "=", conversationId)
       .where("type", "=", "artifact_created")
-      .where(sql<string>`payload->>'artifactId'`, "=", fileId)
-      .limit(1)
-      .executeTakeFirst();
-    if (row) {
-      const a = row.payload as EventPayload<"artifact_created">;
-      return {
-        id: a.artifactId,
-        name: a.name,
-        contentType: a.contentType,
-        size: a.size,
-        objectKey: a.objectKey,
-        sourcePath: a.sourcePath,
-      };
-    }
-    const [u] = await this.attachments.boundRows(orgId, conversationId, fileId);
-    if (!u) throw artifactNotFound();
-    return {
-      id: u.id,
-      name: u.name,
-      contentType: u.contentType,
-      size: u.size,
-      objectKey: u.objectKey,
-      sourcePath: null,
-      upload: u,
-    };
+      .execute();
+    return new Map(rows.map((r) => [r.id, r.callId]));
   }
 
   /**
    * Files newest first: a delivered file by its **first** delivery, so a new version keeps the
    * file's place and a cursor stays stable while files are re-delivered (review M2); an uploaded
-   * file by its upload time; equal times by id. `after` is a file id from the previous page (any
-   * version's id finds its file); a cursor that names no file gives an empty page. Storage HEADs run
-   * at most {@link HEAD_CONCURRENCY} at a time.
+   * file by when the conversation started referring to it; equal times by id. `after` is a file id
+   * from the previous page (any version's id finds its file); a cursor that names no file gives an
+   * empty page. Storage HEADs run at most {@link HEAD_CONCURRENCY} at a time.
    */
   async list(
     orgId: string,
@@ -237,25 +249,29 @@ export class ConversationFiles {
     opts: { after?: string; limit: number },
   ): Promise<{ files: FileOutput[]; next: string | null }> {
     await this.checkAccess(orgId, conversationId, viewer);
-    const groups = new Map<string, Delivery[]>();
-    for (const d of await this.deliveries(conversationId)) {
-      // insertion order = first delivery (oldest first)
-      const g = groups.get(d.sourcePath) ?? [];
-      g.push(d);
-      groups.set(d.sourcePath, g);
+    const refs = await this.files.references(orgId, [conversationId]);
+    const groups = new Map<string, FileReference[]>();
+    const uploads: FileReference[] = [];
+    for (const f of refs) {
+      if (isUpload(f)) {
+        uploads.push(f);
+        continue;
+      }
+      const g = groups.get(f.sourcePath as string) ?? [];
+      g.push(f);
+      groups.set(f.sourcePath as string, g);
     }
-    const delivered: Entry[] = [...groups.values()].reverse().map((g) => {
-      const first = g[0] as Delivery;
-      return { origin: "delivered", at: first.createdAt, id: first.artifactId, group: g };
-    });
+    const delivered: Entry[] = [...groups.values()]
+      .map((g) => g.sort(deliveryOrder))
+      .map((g): Entry => {
+        const first = g[0] as FileReference;
+        return { origin: "delivered", at: first.referencedAt, id: first.id, group: g };
+      })
+      .sort((a, b) => (before(a, b) ? -1 : 1));
     // newest first, the larger id first at equal times
-    const bound = (await this.attachments.boundRows(orgId, conversationId)).reverse();
-    const uploaded: Entry[] = bound.map((u) => ({
-      origin: "uploaded",
-      at: u.createdAt,
-      id: u.id,
-      upload: u,
-    }));
+    const uploaded: Entry[] = uploads
+      .map((u): Entry => ({ origin: "uploaded", at: u.referencedAt, id: u.id, upload: u }))
+      .sort((a, b) => (before(a, b) ? -1 : 1));
     // merge the two newest-first lists (each keeps its own order)
     const ordered: Entry[] = [];
     let i = 0;
@@ -275,19 +291,19 @@ export class ConversationFiles {
     if (opts.after !== undefined) {
       const after = opts.after;
       const at = ordered.findIndex((e) =>
-        e.origin === "delivered" ? e.group.some((d) => d.artifactId === after) : e.id === after,
+        e.origin === "delivered" ? e.group.some((d) => d.id === after) : e.id === after,
       );
       if (at < 0) return { files: [], next: null };
       start = at + 1;
     }
     const page = ordered.slice(start, start + opts.limit);
     const shares = await this.viewerShares(orgId, conversationId, viewer);
-    const store = this.storage.kernel(orgId);
+    const calls = page.some((e) => e.origin === "delivered")
+      ? await this.callIds(conversationId)
+      : new Map<string, string>();
     const files = await mapLimit(page, HEAD_CONCURRENCY, async (e): Promise<FileOutput> => {
       if (e.origin === "uploaded") {
         const u = e.upload;
-        const head = await store.head(u.objectKey);
-        const same = this.attachments.storedMatches(u, head, { orgId, conversationId });
         return {
           id: u.id,
           name: u.name,
@@ -295,35 +311,35 @@ export class ConversationFiles {
           size: u.size,
           sourcePath: u.name,
           version: 1,
-          versions: [{ id: u.id, size: u.size, createdAt: u.createdAt }],
+          versions: [{ id: u.id, size: u.size, createdAt: u.referencedAt }],
           callId: "",
-          createdAt: u.createdAt,
-          status: same ? "available" : "removed",
+          createdAt: u.referencedAt,
+          status: (await this.available(orgId, u)) ? "available" : "removed",
           previewable: previewKind(u.contentType),
           origin: "uploaded",
           shared: shares.uploads.has(u.id),
         };
       }
       const g = e.group;
-      const latest = g.at(-1) as Delivery;
-      const head = await store.head(latest.objectKey);
+      const latest = g.at(-1) as FileReference;
+      const sourcePath = latest.sourcePath as string;
       return {
-        id: latest.artifactId,
+        id: latest.id,
         name: latest.name,
         contentType: latest.contentType,
         size: latest.size,
-        sourcePath: latest.sourcePath,
+        sourcePath,
         version: g.length,
         versions: g
           .slice(-FILE_VERSIONS_MAX)
           .reverse()
-          .map((d) => ({ id: d.artifactId, size: d.size, createdAt: d.createdAt })),
-        callId: latest.callId,
-        createdAt: latest.createdAt,
-        status: head ? "available" : "removed",
+          .map((d) => ({ id: d.id, size: d.size, createdAt: d.referencedAt })),
+        callId: calls.get(latest.id) ?? "",
+        createdAt: latest.referencedAt,
+        status: (await this.available(orgId, latest)) ? "available" : "removed",
         previewable: previewKind(latest.contentType),
         origin: "delivered",
-        shared: shares.paths.has(latest.sourcePath),
+        shared: shares.paths.has(sourcePath),
       };
     });
     const next = start + opts.limit < ordered.length ? (files.at(-1)?.id ?? null) : null;
@@ -331,39 +347,28 @@ export class ConversationFiles {
   }
 
   /**
-   * One file version of the conversation (any version's id, or an attachment sent in it) with its
-   * object key, after checking the viewer can read the conversation. For the kernel only
-   * (previewers, embed grants): the key never leaves the kernel. An attachment whose stored object
-   * is gone or no longer the one finalize checked → `conversation.artifact_removed`; `recorded` is
-   * then what a later read of the object must still match ({@link attachmentContentMatches}).
-   * `sourcePath` is the version group of a delivered file, null for an attachment.
+   * One file version of the conversation (any version's id, or an upload sent in it) with its
+   * blob, after checking the viewer can read the conversation. For the kernel only (previewers,
+   * embed grants, documents): the key never leaves the kernel. A deleted file, or a blob gone or no
+   * longer the recorded bytes → `conversation.artifact_removed`; `recorded` is what a later read of
+   * the object must still match. `sourcePath` is the version group of a delivered file, null for
+   * an upload.
    */
   async file(
     orgId: string,
     conversationId: string,
     viewer: string,
     fileId: string,
-  ): Promise<{
-    id: string;
-    name: string;
-    contentType: string;
-    size: number;
-    objectKey: string;
-    /** The version group of a delivered file; null for an attachment. */
-    sourcePath: string | null;
-    recorded?: { size: number; etag: string | null };
-  }> {
+  ): Promise<ResolvedConversationFile> {
     await this.checkAccess(orgId, conversationId, viewer);
-    const { upload, ...f } = await this.resolve(orgId, conversationId, fileId);
-    if (!upload) return f;
-    const head = await this.storage.kernel(orgId).head(upload.objectKey);
-    if (!this.attachments.storedMatches(upload, head, { orgId, conversationId })) throw removed();
-    return { ...f, recorded: { size: upload.size, etag: upload.etag } };
+    const f = await this.resolve(orgId, conversationId, fileId);
+    if (!isLive(f) || (await this.files.head(orgId, f)) === null) throw removed();
+    return resolvedOf(f);
   }
 
   /**
-   * Which file a file id names (any version's id, or an attachment sent in the conversation), after
-   * checking the viewer can read the conversation; storage is not read, so a removed file still
+   * Which file a file id names (any version's id, or an upload sent in the conversation), after
+   * checking the viewer can read the conversation; storage is not read, and a deleted file still
    * resolves (its shares are listed and revoked by it).
    */
   async identify(
@@ -374,14 +379,15 @@ export class ConversationFiles {
   ): Promise<{ id: string; sourcePath: string | null }> {
     await this.checkAccess(orgId, conversationId, viewer);
     const f = await this.resolve(orgId, conversationId, fileId);
-    return { id: f.id, sourcePath: f.sourcePath };
+    return { id: f.id, sourcePath: isUpload(f) ? null : f.sourcePath };
   }
 
   /**
-   * The newest delivered version of `sourcePath` whose object is still stored, after checking the
-   * viewer can read the conversation (a share's "update to latest", file sharing spec §2); with
-   * `after` (a version id), only versions delivered after it. Versions whose object is gone are
-   * skipped; at most {@link FILE_VERSIONS_MAX} are looked at. Null when none is available.
+   * The newest delivered version of `sourcePath` the conversation refers to that is still
+   * readable, after checking the viewer can read the conversation (a share's "update to latest",
+   * file sharing spec §2); with `after` (a version id), only versions delivered after it. Versions
+   * deleted or whose bytes are gone are skipped; at most {@link FILE_VERSIONS_MAX} are looked at.
+   * Null when none is available.
    */
   async latestAvailable(
     orgId: string,
@@ -389,44 +395,25 @@ export class ConversationFiles {
     viewer: string,
     sourcePath: string,
     opts: { after?: string } = {},
-  ): Promise<{
-    id: string;
-    name: string;
-    contentType: string;
-    size: number;
-    objectKey: string;
-  } | null> {
+  ): Promise<ResolvedConversationFile | null> {
     await this.checkAccess(orgId, conversationId, viewer);
-    const rows = await this.db
-      .selectFrom("conversation_events")
-      .select(["payload", "seq"])
-      .where("conversation_id", "=", conversationId)
-      .where("type", "=", "artifact_created")
-      .where(sql<string>`payload->>'sourcePath'`, "=", sourcePath)
-      .orderBy("seq", "desc")
-      .execute();
-    let candidates = rows.map((r) => r.payload as EventPayload<"artifact_created">);
+    const refs = await this.files.references(orgId, [conversationId]);
+    let candidates = refs
+      .filter((f) => !isUpload(f) && f.sourcePath === sourcePath)
+      .sort(deliveryOrder)
+      .reverse();
     if (opts.after !== undefined) {
-      const at = candidates.findIndex((d) => d.artifactId === opts.after);
+      const at = candidates.findIndex((d) => d.id === opts.after);
       if (at >= 0) candidates = candidates.slice(0, at);
     }
-    const store = this.storage.kernel(orgId);
     for (const d of candidates.slice(0, FILE_VERSIONS_MAX)) {
-      if (await store.head(d.objectKey)) {
-        return {
-          id: d.artifactId,
-          name: d.name,
-          contentType: d.contentType,
-          size: d.size,
-          objectKey: d.objectKey,
-        };
-      }
+      if (isLive(d) && (await this.files.head(orgId, d)) !== null) return resolvedOf(d);
     }
     return null;
   }
 
   /**
-   * The source paths and attachments the viewer has a share of in the conversation that is not
+   * The source paths and uploads the viewer has a share of in the conversation that is not
    * revoked or expired ({@link FileOutput.shared}).
    */
   private async viewerShares(
@@ -453,10 +440,10 @@ export class ConversationFiles {
   }
 
   /**
-   * The first `limit` bytes of a text file version (any version's id, or an attachment sent in the
-   * conversation). Not text, or NUL bytes in
-   * what was read → `conversation.artifact_not_previewable`; the object is gone →
-   * `conversation.artifact_removed`. A cut never splits a UTF-8 character.
+   * The first `limit` bytes of a text file version (any version's id, or an upload sent in the
+   * conversation). Not text, or NUL bytes in what was read → `conversation.artifact_not_previewable`;
+   * the file deleted or its bytes gone → `conversation.artifact_removed`. A cut never splits a
+   * UTF-8 character.
    */
   async content(
     orgId: string,
@@ -470,19 +457,10 @@ export class ConversationFiles {
     if (!isTextArtifactType(a.contentType)) {
       throw new ApiError("conversation.artifact_not_previewable", "Only text files have content");
     }
+    if (!isLive(a)) throw removed();
     const max = Math.min(limit, FILE_CONTENT_MAX_BYTES);
-    const got = await this.storage
-      .kernel(orgId)
-      .get(a.objectKey, { range: { start: 0, end: max - 1 } });
+    const got = await this.files.open(orgId, a, { range: { start: 0, end: max - 1 } });
     if (!got) throw removed();
-    // an attachment whose object changed after finalize is not the upload any more
-    if (
-      a.upload &&
-      !this.attachments.storedMatches(a.upload, got.head, { orgId, conversationId })
-    ) {
-      await got.body.cancel().catch(() => {});
-      throw removed();
-    }
     let body = await readPrefix(got.body, max);
     if (body.includes(0)) {
       throw new ApiError(

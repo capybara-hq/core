@@ -19,6 +19,19 @@ const OrderBody = FilePreviewersOrderBody;
 /** The previewer named in a preview path (the other path parameters are read as they are). */
 const PreviewParams = z.object({ plugin: Id, previewerId: Id });
 
+/** `…/files/:id/previewers` (a library file). */
+const LibraryFileParams = z.object({ id: Id });
+/** `…/files/:id/previews/:plugin/:previewerId` (a library file). */
+const LibraryFilePreviewParams = LibraryFileParams.extend(PreviewParams.shape);
+
+class LibraryFilePreviewersParamsDto extends createZodDto(
+  LibraryFileParams,
+  "LibraryFilePreviewersParams",
+) {}
+class LibraryFilePreviewParamsDto extends createZodDto(
+  LibraryFilePreviewParams,
+  "LibraryFilePreviewParams",
+) {}
 class FilePreviewQueryDto extends createZodDto(PreviewQuery, "FilePreviewQuery") {}
 class FilePreviewParamsDto extends createZodDto(PreviewParams, "FilePreviewParams") {}
 class FilePreviewersOrderBodyDto extends createZodDto(OrderBody, "FilePreviewersOrderBody") {}
@@ -48,6 +61,10 @@ class SkillFilePreviewQueryDto extends createZodDto(
  *   render (10 s → 504 `ui.timeout`, throws → 502 `ui.render_failed`, invalid → 502
  *   `ui.invalid_view`); an embed previewer gets its token from the ui embed-token route with
  *   `{ conversationId, fileId }` and the file over the message bridge;
+ * - `GET /api/v1/orgs/:orgId/files/:id/previewers` and `GET .../files/:id/previews/:plugin/:previewerId`
+ *   (file library spec §6): the same for one of the caller's own library files (anyone else's:
+ *   404 `file.not_found`); args `source: "conversation"` without a `conversationId`; an embed
+ *   previewer's token takes `{ fileId }` alone;
  * - `GET /api/v1/orgs/:orgId/skills/:id/files/previewers?version=&path=` and
  *   `GET .../skills/:id/files/previews/:plugin/:previewerId?version=&path=&locale=` (`skills.read`,
  *   skill file browser spec): the same for one file of a skill version, visibility as
@@ -92,6 +109,41 @@ export class FilePreviewersController {
       fileId,
       plugin,
       id: previewerId,
+      locale: q.locale,
+    });
+    return { view };
+  }
+
+  @Get("files/:id/previewers")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async forLibraryFile(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(LibraryFilePreviewersParamsDto) params: z.infer<typeof LibraryFileParams>,
+  ): Promise<{ previewers: PreviewerItem[] }> {
+    const p = requireUser(principal);
+    return {
+      previewers: await this.previewers.forFile(org.orgId, undefined, p.account.id, params.id),
+    };
+  }
+
+  @Get("files/:id/previews/:plugin/:previewerId")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async previewLibraryFile(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(LibraryFilePreviewParamsDto) params: z.infer<typeof LibraryFilePreviewParams>,
+    @ZQuery(FilePreviewQueryDto) q: z.infer<typeof PreviewQuery>,
+  ) {
+    const p = requireUser(principal);
+    const view = await this.previewers.render({
+      orgId: org.orgId,
+      accountId: p.account.id,
+      fileId: params.id,
+      plugin: params.plugin,
+      id: params.previewerId,
       locale: q.locale,
     });
     return { view };

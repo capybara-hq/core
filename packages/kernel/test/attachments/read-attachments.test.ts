@@ -172,12 +172,18 @@ describe("storeRead", () => {
     expect((await svc.fetchMedia(ORG, "c2", [r.attachmentId])).get(r.attachmentId)).toBeNull();
   });
 
-  it("is invisible to the chat attachment lookups", async () => {
+  it("is found by the read lookups of its own conversation only", async () => {
     const r = await storeOk("c1");
     const svc = service();
-    expect(await svc.listForConversation(ORG, "c1")).toEqual([]);
-    expect(await svc.boundRows(ORG, "c1", r.attachmentId)).toEqual([]);
-    expect(await svc.openForConversation(ORG, "c1", r.attachmentId)).toBeNull();
+    expect((await svc.boundRows(ORG, "c1", r.attachmentId)).map((a) => a.id)).toEqual([
+      r.attachmentId,
+    ]);
+    const opened = await svc.openForConversation(ORG, "c1", r.attachmentId);
+    expect(opened?.name).toBe("shot.png");
+    await opened?.body.cancel();
+    await conversation("c2");
+    expect(await svc.boundRows(ORG, "c2", r.attachmentId)).toEqual([]);
+    expect(await svc.openForConversation(ORG, "c2", r.attachmentId)).toBeNull();
   });
 
   it("falls back to the conversation's account when the call has none", async () => {

@@ -224,6 +224,25 @@ describe("EmbedTokens", () => {
     expect(() => t.issue({ ...CLAIMS, conversationId: conv, skillFile })).toThrow(/invalid/);
   });
 
+  it("a fileId without a conversation is a library file; never with an agent or a skill file", () => {
+    const t = tokens(T0);
+    const exp = (T0 + 300_000) / 1000;
+    const fileId = "66666666-6666-4666-8666-666666666666";
+    const { token } = t.issue({ ...CLAIMS, contribution: "docx-embed", fileId });
+    expect(t.verify(token, CLAIMS.plugin)).toEqual({
+      ...CLAIMS,
+      contribution: "docx-embed",
+      fileId,
+      exp,
+    });
+    const org = { ...CLAIMS, exp };
+    expect(t.verify(signK1({ ...org, fileId, agentId: fileId }), CLAIMS.plugin)).toBeNull();
+    expect(t.verify(signK1({ ...org, fileId: "" }), CLAIMS.plugin)).toBeNull();
+    expect(t.verify(signK1({ ...org, fileId: 7 }), CLAIMS.plugin)).toBeNull();
+    const skillFile = { skillId: fileId, version: 1, path: "a.md" };
+    expect(t.verify(signK1({ ...org, fileId, skillFile }), CLAIMS.plugin)).toBeNull();
+  });
+
   it("superAdmin role only with platform scope", () => {
     const t = tokens(T0);
     const exp = (T0 + 300_000) / 1000;

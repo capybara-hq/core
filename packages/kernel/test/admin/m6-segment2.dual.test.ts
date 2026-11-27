@@ -721,10 +721,12 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       status: "pending_config",
     });
     const attach = (i: 0 | 1, name: string, bytes: Buffer) =>
-      at(i, "POST", `${base}/attachments`, {
+      at(i, "POST", `${base}/files`, {
         name,
         contentType: "text/plain",
         size: bytes.length,
+        sha256: sha(bytes),
+        purpose: "library",
       });
     for (const i of [0, 1] as const) {
       const r = await attach(i, "x.txt", Buffer.from("x"));
@@ -770,7 +772,11 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       }
       expect(res.status, await res.clone().text()).toBeLessThan(300);
       const other: 0 | 1 = i === 0 ? 1 : 0;
-      const f = await at(other, "POST", `${base}/attachments/${c.json.id as string}/finalize`);
+      const fileId = (c.json.file as { id: string }).id;
+      const f = await at(other, "POST", `${base}/files/${fileId}/finalize`, {
+        sha256: sha(bytes),
+        purpose: "library",
+      });
       expect(f.status, JSON.stringify(f.json)).toBe(200);
     }
 

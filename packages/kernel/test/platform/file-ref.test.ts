@@ -25,6 +25,7 @@ import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import type { BuiltinCallContext } from "../../src/tools/registry.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { migrateLegacyFiles } from "../helpers/library-files.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -171,6 +172,8 @@ async function attachment(conv: string, bytes: Uint8Array, name: string, content
       purpose: "chat",
     })
     .execute();
+  // written as before the file library, then migrated by 0190
+  await migrateLegacyFiles(db);
   return id;
 }
 

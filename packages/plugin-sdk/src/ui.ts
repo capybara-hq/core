@@ -567,7 +567,10 @@ export interface OrgEmbedClaims extends EmbedClaimsBase {
   conversationId?: string;
   /** Only an agent embed's token (`agent.detail.section`): the agent it was issued for. */
   agentId?: string;
-  /** Only a `file-preview` embed's token: the one file (of `conversationId`) it previews. */
+  /**
+   * Only a `file-preview` embed's token: the one file it previews, of `conversationId`, or without
+   * one a library file of `accountId`'s own.
+   */
   fileId?: string;
   /**
    * Only a `file-preview` embed's token for a skill file (no `conversationId`, `agentId` or

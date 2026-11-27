@@ -239,7 +239,7 @@ describe("上传技能包", () => {
     expect(other.json().error.code).toBe("attachment.not_found");
 
     const pending = await uploadZip(admin, zipOf("other"));
-    await admin({ method: "POST", url: `/api/v1/orgs/${orgId}/attachments/${pending}/finalize` });
+    await k.app.get(AttachmentsService).finalize(orgId, adminId, pending);
     const agentId = await createAgent(admin, orgId);
     const convId = await createConv(admin, orgId, agentId);
     const msg = await admin({
@@ -248,7 +248,7 @@ describe("上传技能包", () => {
       payload: { text: "hi", files: [pending] },
     });
     expect(msg.statusCode).toBe(404);
-    expect(msg.json().error.code).toBe("attachment.not_found");
+    expect(msg.json().error.code).toBe("file.not_found");
     const dl = await admin({
       method: "GET",
       url: `/api/v1/orgs/${orgId}/attachments/${pending}/download`,
@@ -303,8 +303,14 @@ describe("上传技能包", () => {
     expect(over.json().error.code).toBe("attachment.too_many_pending");
     const chat = await admin({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: { name: "a.txt", contentType: "text/plain", size: 3 },
+      url: `/api/v1/orgs/${orgId}/files`,
+      payload: {
+        name: "a.txt",
+        contentType: "text/plain",
+        size: 3,
+        sha256: sha("abc"),
+        purpose: "composer",
+      },
     });
     expect(chat.statusCode).toBe(201);
     const big = await admin({
@@ -313,11 +319,17 @@ describe("上传技能包", () => {
       payload: { name: "big.zip", size: 50 * 1024 * 1024 + 1 },
     });
     expect(big.statusCode).toBe(400);
-    // the chat attachment endpoint refuses a type outside attachments.allowedTypes (zip is one now)
+    // the file upload endpoint refuses a type outside attachments.allowedTypes (zip is one now)
     const exe = await admin({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: { name: "a.exe", contentType: "application/x-msdownload", size: 3 },
+      url: `/api/v1/orgs/${orgId}/files`,
+      payload: {
+        name: "a.exe",
+        contentType: "application/x-msdownload",
+        size: 3,
+        sha256: sha("abc"),
+        purpose: "composer",
+      },
     });
     expect(exe.statusCode).toBe(415);
   });
@@ -656,7 +668,7 @@ describe("清理", () => {
     expect((await createSkill(admin, used)).statusCode).toBe(201);
     // 处理到一半就失败的：文件已写、没有版本
     const orphan = await uploadZip(admin, zipOf("orphan"));
-    await admin({ method: "POST", url: `/api/v1/orgs/${orgId}/attachments/${orphan}/finalize` });
+    await k.app.get(AttachmentsService).finalize(orgId, adminId, orphan);
     await store.put(`skills/${orphan}/SKILL.md`, new Uint8Array([1]), {
       contentType: "application/octet-stream",
     });

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ContentBlockSchema, ConversationEventSchema } from "../../src/conversations/events.js";
+import {
+  ContentBlockSchema,
+  ConversationEventSchema,
+  refFileId,
+} from "../../src/conversations/events.js";
 
 describe("ContentBlockSchema", () => {
   it("text 块的 opaque 原样保留（如 OpenAI message 输出项 id，回放时要用）", () => {
@@ -16,7 +20,7 @@ describe("ContentBlockSchema", () => {
   });
 
   it("image / document 只认 ref：字节（base64）不进事件日志", () => {
-    const ref = { kind: "ref", attachmentId: "3f0c1a52-6b7e-4f43-9a9b-2c1d0e8f7a61" };
+    const ref = { kind: "ref", fileId: "3f0c1a52-6b7e-4f43-9a9b-2c1d0e8f7a61" };
     const img = { type: "image", mediaType: "image/png", source: ref, name: "a.png" };
     const pdf = { type: "document", mediaType: "application/pdf", source: ref };
     expect(ContentBlockSchema.parse(img)).toEqual(img);
@@ -25,17 +29,18 @@ describe("ContentBlockSchema", () => {
     expect(ContentBlockSchema.safeParse({ ...img, source: b64 }).success).toBe(false);
     expect(ContentBlockSchema.safeParse({ ...pdf, source: b64 }).success).toBe(false);
     expect(
-      ContentBlockSchema.safeParse({ ...img, source: { kind: "ref", attachmentId: "" } }).success,
+      ContentBlockSchema.safeParse({ ...img, source: { kind: "ref", fileId: "" } }).success,
     ).toBe(false);
     expect(ContentBlockSchema.safeParse({ ...img, mediaType: "image/svg+xml" }).success).toBe(
       false,
     );
     expect(ContentBlockSchema.safeParse({ ...pdf, mediaType: "image/png" }).success).toBe(false);
-    // attachmentId 必须是 UUID；name 不超过 255 字符、不含控制字符
-    expect(
-      ContentBlockSchema.safeParse({ ...img, source: { kind: "ref", attachmentId: "att_1" } })
-        .success,
-    ).toBe(false);
+    // fileId must be a UUID (the alias too); name is at most 255 chars, no control characters
+    for (const key of ["fileId", "attachmentId"]) {
+      expect(
+        ContentBlockSchema.safeParse({ ...img, source: { kind: "ref", [key]: "att_1" } }).success,
+      ).toBe(false);
+    }
     expect(ContentBlockSchema.safeParse({ ...img, name: "a".repeat(255) }).success).toBe(true);
     expect(ContentBlockSchema.safeParse({ ...img, name: "a".repeat(256) }).success).toBe(false);
     expect(ContentBlockSchema.safeParse({ ...img, name: "a\nb" }).success).toBe(false);
@@ -52,6 +57,36 @@ describe("ContentBlockSchema", () => {
     });
     expect(ConversationEventSchema.safeParse(ev(ref)).success).toBe(true);
     expect(ConversationEventSchema.safeParse(ev(b64)).success).toBe(false);
+  });
+
+  it("a ref logged before the file library (attachmentId) parses to fileId; a new one round-trips", () => {
+    const id = "3f0c1a52-6b7e-4f43-9a9b-2c1d0e8f7a61";
+    const old = {
+      type: "file",
+      mediaType: "application/zip",
+      source: { kind: "ref", attachmentId: id },
+    };
+    expect(ContentBlockSchema.parse(old)).toEqual({ ...old, source: { kind: "ref", fileId: id } });
+    const fresh = { ...old, source: { kind: "ref", fileId: id } };
+    expect(ContentBlockSchema.parse(fresh)).toEqual(fresh);
+    expect(ContentBlockSchema.parse(JSON.parse(JSON.stringify(fresh)))).toEqual(fresh);
+    // both keys: fileId wins, the old key is dropped
+    const other = "00000000-0000-4000-8000-000000000001";
+    expect(
+      ContentBlockSchema.parse({
+        ...old,
+        source: { kind: "ref", fileId: id, attachmentId: other },
+      }),
+    ).toEqual(fresh);
+  });
+});
+
+describe("refFileId", () => {
+  it("reads the id of a stored ref under either key", () => {
+    const id = "3f0c1a52-6b7e-4f43-9a9b-2c1d0e8f7a61";
+    expect(refFileId({ kind: "ref", fileId: id })).toBe(id);
+    // a payload read back as stored, logged before the rename
+    expect(refFileId(JSON.parse(`{"kind":"ref","attachmentId":"${id}"}`))).toBe(id);
   });
 });
 

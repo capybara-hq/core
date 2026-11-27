@@ -112,7 +112,7 @@ export default defineExtension({
           accepts: { extensions: [".decl"] },
           maxBytes: 1024,
           async render(args): Promise<UiView> {
-            if (args.source !== "conversation") {
+            if (args.source !== "conversation" || args.conversationId === undefined) {
               throw new Error("this previewer needs the conversation");
             }
             return { blocks: [{ type: "text", markdown: args.conversationId }] };

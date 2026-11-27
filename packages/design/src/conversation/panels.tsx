@@ -15,7 +15,7 @@ import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { BoxScope, useInBox } from "../layout/box";
-import { useDesignT } from "../provider";
+import { useDesignLink, useDesignT } from "../provider";
 import { DragFill } from "../shell/drag-fill";
 import { useRegisterShellPage } from "../shell/shell-page";
 import { LoadFailed } from "./file-preview";
@@ -407,6 +407,8 @@ export function FilesSection({
     size: string;
     from?: string;
     uploaded?: boolean;
+    /** Where the file lives in the library: a "View in Files" link icon after the row. */
+    href?: string;
   }[];
   total?: number;
   max?: number;
@@ -414,32 +416,45 @@ export function FilesSection({
   onAll(): void;
 }): JSX.Element {
   const t = useDesignT();
+  const Link = useDesignLink();
   const n = total ?? files.length;
   return (
     <PropertySection title={t("props.files")} value={String(n)}>
       <div className="cb-property-list">
         {files.slice(0, max).map((f) => (
-          <button
-            key={f.id}
-            type="button"
-            className="cb-property-row"
-            data-part="property-row"
-            title={f.name}
-            onClick={() => onOpen(f.id)}
-          >
-            <TypeBadge label={f.badge} />
-            <span className="cb-property-name">{f.name}</span>
-            {f.from ? (
-              <span className="cb-property-from" data-part="file-from">
-                {fillCopy(t("props.fileFrom"), { name: f.from })}
-              </span>
-            ) : f.uploaded ? (
-              <span className="cb-property-from" data-part="file-uploaded">
-                {t("files.uploaded")}
-              </span>
+          <div key={f.id} className="cb-property-line" data-part="property-line">
+            <button
+              type="button"
+              className="cb-property-row"
+              data-part="property-row"
+              title={f.name}
+              onClick={() => onOpen(f.id)}
+            >
+              <TypeBadge label={f.badge} />
+              <span className="cb-property-name">{f.name}</span>
+              {f.from ? (
+                <span className="cb-property-from" data-part="file-from">
+                  {fillCopy(t("props.fileFrom"), { name: f.from })}
+                </span>
+              ) : f.uploaded ? (
+                <span className="cb-property-from" data-part="file-uploaded">
+                  {t("files.uploaded")}
+                </span>
+              ) : null}
+              <span className="cb-muted">{f.size}</span>
+            </button>
+            {f.href ? (
+              <Link
+                href={f.href}
+                className="cb-property-view"
+                data-part="view-in-files"
+                aria-label={t("files.viewInFiles")}
+                title={t("files.viewInFiles")}
+              >
+                <Icon name="arrow-up-right" size={14} />
+              </Link>
             ) : null}
-            <span className="cb-muted">{f.size}</span>
-          </button>
+          </div>
         ))}
         <button type="button" className="cb-property-row cb-property-more" onClick={onAll}>
           {fillCopy(t("props.allFiles"), { n })}

@@ -66,7 +66,7 @@ test("上传 PNG（＋ 按钮）：进度后就绪、随消息发送；时间线
   await expect(thumb).toBeVisible();
   await expect(thumb).toHaveAttribute(
     "src",
-    /\/api\/v1\/orgs\/[^/]+\/attachments\/[^/]+\/download$/,
+    /\/api\/v1\/orgs\/[^/]+\/files\/[^/]+\/download\?inline=1$/,
   );
   await expect
     .poll(() => thumb.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth))
@@ -116,7 +116,7 @@ test("前端拦下不允许的类型：显示与内核错误码一致的文案�
     buffer: Buffer.from("MZ"),
   });
   const files = draftFiles(page);
-  // 文案由内核 GET /attachments/limits 返回的类型拼出（至多六个标签，再补数量）
+  // The text is built from the types GET /files/limits returns (at most six labels, then a count)
   await expect(files.getByRole("alert")).toHaveText(
     zh.chat.fileTypeNotAllowed.replace("{types}", "PNG / JPEG / GIF / WebP / PDF / TXT 等 13 种"),
   );

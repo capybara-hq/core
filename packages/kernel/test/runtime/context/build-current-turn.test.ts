@@ -156,7 +156,7 @@ describe("buildModelRequest: a summary inside the latest user turn", () => {
       {
         type: "image",
         mediaType: "image/png",
-        source: { kind: "ref", attachmentId: img },
+        source: { kind: "ref", fileId: img },
         name: "receipt.png",
       },
     ]);

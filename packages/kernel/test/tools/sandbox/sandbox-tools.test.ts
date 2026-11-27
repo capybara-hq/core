@@ -39,6 +39,7 @@ import {
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
+import { blobKeyOf, migrateLegacyFiles, seedLibraryFile } from "../../helpers/library-files.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
@@ -724,7 +725,8 @@ describe("sandbox tools", () => {
       size: 8,
       sourcePath: "/workspace/out/report.csv",
     });
-    expect(a.objectKey).toBe(`artifacts/${conv}/${a.artifactId}`);
+    // the event names the key of the file's blob (file library spec §4)
+    expect(a.objectKey).toBe(await blobKeyOf(db, a.artifactId));
     expect(r.content).toContain(a.artifactId);
     const got = await k.app.get(StorageService).kernel(orgId).get(a.objectKey);
     expect(got).not.toBeNull();
@@ -878,6 +880,8 @@ describe("sandbox tools", () => {
           },
         },
       ]);
+      // logged the way deliveries were before the file library, then migrated (0190)
+      await migrateLegacyFiles(db);
       return owner({
         method: "GET",
         url: `/api/v1/orgs/${orgId}/conversations/${conv}/artifacts/${artifactId}/preview`,
@@ -988,29 +992,16 @@ describe("sandbox tools", () => {
     bytes: Buffer,
     n: number,
   ): Promise<void> {
-    const created = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: { name, contentType: "text/csv", size: bytes.length },
-    });
-    expect(created.statusCode, created.body).toBe(201);
-    const c = created.json() as {
-      id: string;
-      upload: { method: string; url: string; headers: Record<string, string>; fields?: object };
+    const me = (await owner({ method: "GET", url: "/api/v1/me" })).json() as {
+      account: { id: string };
     };
-    const form = new FormData();
-    for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, String(v));
-    form.append("file", new Blob([new Uint8Array(bytes)], { type: "text/csv" }));
-    const up =
-      c.upload.method === "PUT"
-        ? await fetch(c.upload.url, { method: "PUT", headers: c.upload.headers, body: bytes })
-        : await fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
-    expect(up.status).toBeLessThan(300);
-    const fin = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/attachments/${c.id}/finalize`,
-    });
-    expect(fin.statusCode, fin.body).toBe(200);
+    const c = {
+      id: await seedLibraryFile(k.app, orgId, me.account.id, {
+        name,
+        contentType: "text/csv",
+        bytes,
+      }),
+    };
     const sent = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
@@ -1145,6 +1136,47 @@ describe("sandbox tools", () => {
     );
     expect(ls.content).toContain(attDir(a).split("/").at(-1) as string);
     expect(ls.content).toContain(attDir(b).split("/").at(-1) as string);
+  });
+
+  it("a library file of the same owner never attached here is out of reach: FetchAttachment, Deliver file_id, Read", async () => {
+    const me = (await owner({ method: "GET", url: "/api/v1/me" })).json() as {
+      account: { id: string };
+    };
+    // in the owner's library (ready), and sent into another conversation of theirs
+    const secret = await seedLibraryFile(
+      k.app,
+      orgId,
+      me.account.id,
+      { name: "secret.csv", contentType: "text/csv", bytes: Buffer.from("top,secret\n") },
+      { status: "ready" },
+    );
+    const elsewhere = await sandboxConversation();
+    const sent = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${elsewhere}/messages`,
+      payload: { text: "echo:kept", files: [secret] },
+    });
+    expect(sent.statusCode, sent.body).toBe(202);
+    await waitForTerminal(db, elsewhere, 1, 30_000);
+
+    const conv = await sandboxConversation();
+    await sendWithAttachment(conv, "mine.csv", "echo:mine", Buffer.from("a,b\n"), 1);
+    const fetched = await call(conv, "FetchAttachment", { file: secret }, 2);
+    expect(fetched.isError).toBe(true);
+    expect(fetched.content).toContain("this conversation has: mine.csv");
+    const byName = await call(conv, "FetchAttachment", { file: "secret.csv" }, 3);
+    expect(byName.isError).toBe(true);
+    const delivered = await call(conv, "Deliver", { file_id: secret }, 4);
+    expect(delivered.isError).toBe(true);
+    expect(delivered.content).toContain(secret);
+    const read = await call(conv, "Read", { file_id: secret }, 5);
+    expect(read.isError).toBe(true);
+    expect(read.content).toContain(secret);
+    expect(JSON.stringify(await eventsOf(db, conv))).not.toContain("top,secret");
+    // where it was attached, the same id is reachable
+    const there = await call(elsewhere, "Read", { file_id: secret }, 2);
+    expect(there.isError, there.content).toBe(false);
+    expect(there.content).toContain("top,secret");
   });
 
   it("restart notice says files are kept", async () => {

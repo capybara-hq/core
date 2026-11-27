@@ -30,7 +30,7 @@ export type NavLevel = "guest" | "member" | "admin";
 
 /**
  * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
- * `primary` items follow New conversation (Agents, Skills, Connectors, Devices, Automations; there is no home page: the new
+ * `primary` items follow New conversation (Agents, Skills, Connectors, Devices, Automations, Files; there is no home page: the new
  * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the More
  * flyout (then the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
  * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
@@ -86,6 +86,17 @@ const NAV: readonly {
     icon: "clock",
     section: "primary",
     drawer: "section",
+  },
+  // Files: the person's file library (file library spec §6); in the drawer's "more" level, never
+  // a drawer section (the drawer's sections are closed)
+  {
+    id: "files",
+    key: "files",
+    href: "/files",
+    audience: "member",
+    icon: "file",
+    section: "primary",
+    drawer: "more",
   },
   // Devices: where a person's conversations run their commands and keep their files
   // (set up once, then rarely visited: under More)
@@ -215,6 +226,7 @@ export function activeNavOf(pathname: string): string {
   if (under(pathname, "/connectors")) return "connectors";
   if (under(pathname, "/devices")) return "devices";
   if (under(pathname, "/automations")) return "automations";
+  if (under(pathname, "/files")) return "files";
   return "";
 }
 

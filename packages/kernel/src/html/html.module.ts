@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConversationsModule } from "../conversations/conversations.module.js";
+import { LibraryReadModule } from "../files/library-read.module.js";
 import { ShareLivenessModule } from "../shares/liveness.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { HtmlDocumentService } from "./html-document.service.js";
@@ -10,7 +11,13 @@ import { HtmlTokensModule } from "./html-token.js";
  * (`HtmlTokens`) and the service that mints them and serves the document.
  */
 @Module({
-  imports: [ConversationsModule, ShareLivenessModule, StorageModule, HtmlTokensModule],
+  imports: [
+    ConversationsModule,
+    LibraryReadModule,
+    ShareLivenessModule,
+    StorageModule,
+    HtmlTokensModule,
+  ],
   providers: [HtmlDocumentService],
   exports: [HtmlDocumentService, HtmlTokensModule],
 })

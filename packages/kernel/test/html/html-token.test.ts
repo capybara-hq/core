@@ -63,6 +63,19 @@ describe("HtmlTokens", () => {
     expect(t.verify(t.issue(SHARE).token)).toEqual({ ...SHARE, exp: exp0 });
   });
 
+  it("round-trips a library file token, with exactly its keys", () => {
+    const t = tokens(T0);
+    const { conversationId: _c, kind: _k, ...rest } = FILE;
+    const library = { kind: "library" as const, ...rest };
+    expect(t.verify(t.issue(library).token)).toEqual({ ...library, exp: exp0 });
+    // a library token naming a conversation, or missing its account, is not one
+    expect(t.verify(signK1({ ...library, conversationId: FILE.conversationId, exp: exp0 }))).toBe(
+      null,
+    );
+    const { accountId: _a, ...noAccount } = library;
+    expect(t.verify(signK1({ ...noAccount, exp: exp0 }))).toBeNull();
+  });
+
   it("refuses to issue invalid claims", () => {
     const t = tokens(T0);
     expect(() => t.issue({ ...FILE, orgId: "" })).toThrow();

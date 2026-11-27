@@ -1478,7 +1478,7 @@ describe("runModelStep", () => {
                 {
                   type: "image",
                   mediaType: "image/png",
-                  source: { kind: "ref", attachmentId },
+                  source: { kind: "ref", fileId: attachmentId },
                   name: "pic.png",
                 },
               ],

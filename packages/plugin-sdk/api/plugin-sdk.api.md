@@ -2016,7 +2016,7 @@ export interface FilePreviewArgsBase {
 // @public
 export interface FilePreviewConversationArgs extends FilePreviewArgsBase {
     accountId: string;
-    conversationId: string;
+    conversationId?: string;
     orgId: string;
     source: "conversation";
 }
@@ -2476,6 +2476,9 @@ export function isDialInAnswerTimeoutError(e: unknown): e is DialInAnswerTimeout
 export function isDisallowedSkillRef(v: unknown): v is string;
 
 // @public
+export function isFileId(s: unknown): s is string;
+
+// @public
 export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
 
 // @public
@@ -2727,7 +2730,7 @@ type MediaSource_2 = {
     data: string;
 } | {
     kind: "ref";
-    attachmentId: string;
+    fileId: string;
 };
 export { MediaSource_2 as MediaSource }
 

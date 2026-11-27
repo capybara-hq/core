@@ -71,7 +71,7 @@ describe("hookRequestOf", () => {
           {
             role: "user",
             content: [
-              { type: "image", mediaType: "image/gif", source: { kind: "ref", attachmentId: id } },
+              { type: "image", mediaType: "image/gif", source: { kind: "ref", fileId: id } },
             ],
           },
         ],

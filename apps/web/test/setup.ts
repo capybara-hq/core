@@ -1,3 +1,4 @@
+import { webcrypto } from "node:crypto";
 import { notifyManager } from "@tanstack/react-query";
 import { vi } from "vitest";
 
@@ -28,3 +29,19 @@ window.matchMedia ??= ((query: string) => ({
   addEventListener: () => {},
   removeEventListener: () => {},
 })) as unknown as typeof window.matchMedia;
+
+// jsdom has neither `crypto.subtle` nor `Blob.arrayBuffer`; the composer hashes a file's bytes
+// (SHA-256) before it uploads.
+if (globalThis.crypto?.subtle === undefined) {
+  Object.defineProperty(globalThis, "crypto", { value: webcrypto, configurable: true });
+}
+if (typeof Blob.prototype.arrayBuffer !== "function") {
+  Blob.prototype.arrayBuffer = function (this: Blob) {
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as ArrayBuffer);
+      r.onerror = () => reject(r.error);
+      r.readAsArrayBuffer(this);
+    });
+  };
+}

@@ -81,7 +81,7 @@ function shellRoutes(readiness: typeof READY, extra: Parameters<typeof serverRou
     [`GET ${O}/agents`]: () => json(200, { agents: [] }),
     [`GET ${O}/members`]: () => json(200, { members: [] }),
     [`GET ${O}/components`]: () => json(200, { components: [] }),
-    [`GET ${O}/attachments/limits`]: () => json(200, { available: false }),
+    [`GET ${O}/files/limits`]: () => json(200, { available: false }),
     // and the setup step /settings/models (the purposes)
     [`GET ${O}/model-purposes`]: () => json(200, { purposes: [] }),
     // and the admin console's /admin/extensions (the deployment's extensions)

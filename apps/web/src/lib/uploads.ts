@@ -1,12 +1,13 @@
 import { ApiClientError, apiFetch } from "./api";
+import { sha256Hex } from "./sha256";
 
 /**
  * 对话附件（上传的文件）：登记 → 浏览器直传对象存储（预签名）→ finalize → 发消息时在 `files` 里引用 id。
  * 与 `@` 资源引用（`DraftAttachment`，内核读取连接器资源）是两回事。
  */
 
-/** 附件上限（内核 `GET /attachments/limits`）。 */
-export interface AttachmentLimits {
+/** Upload limits (the kernel's `GET /files/limits`). */
+export interface UploadLimits {
   types: string[];
   /** Extensions accepted beside the types (lower case, no dot); the kernel's `allowedExtensions`. */
   extensions: string[];
@@ -27,7 +28,7 @@ export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"
  * 上限接口还没返回（或取不到）时的兜底：抄写内核的默认值（`attachments.*` 配置与 plugin-sdk 的
  * `MEDIA_LIMITS.imageBytes`）。以内核的错误码为准，这里只是提前拦下。
  */
-export const DEFAULT_LIMITS: AttachmentLimits = {
+export const DEFAULT_LIMITS: UploadLimits = {
   types: [
     ...IMAGE_TYPES,
     "application/pdf",
@@ -52,8 +53,8 @@ export const DEFAULT_LIMITS: AttachmentLimits = {
 };
 
 /** 读取上限（组织成员可读，不需要对象存储）。 */
-export const getAttachmentLimits = (orgId: string) =>
-  apiFetch<AttachmentLimits>(`/api/v1/orgs/${encodeURIComponent(orgId)}/attachments/limits`);
+export const getUploadLimits = (orgId: string) =>
+  apiFetch<UploadLimits>(`/api/v1/orgs/${encodeURIComponent(orgId)}/files/limits`);
 
 /** 浏览器没给类型（常见于 .md）时按扩展名推断。 */
 const BY_EXTENSION: Record<string, string> = {
@@ -87,14 +88,14 @@ const isImageType = (ct: string) => (IMAGE_TYPES as readonly string[]).includes(
 /** 前端预检：返回与内核一致的错误码，通过时返回 null。 */
 export function precheckFile(
   file: { name: string; type: string; size: number },
-  limits: AttachmentLimits,
-): "attachment.type_not_allowed" | "attachment.too_large" | null {
+  limits: UploadLimits,
+): "file.type_not_allowed" | "file.too_large" | null {
   const ct = fileContentType(file);
   if (!limits.types.includes(ct) && !limits.extensions.includes(extensionOf(file.name))) {
-    return "attachment.type_not_allowed";
+    return "file.type_not_allowed";
   }
   const max = isImageType(ct) ? limits.imageMaxBytes : limits.maxBytes;
-  if (file.size > max) return "attachment.too_large";
+  if (file.size > max) return "file.too_large";
   return null;
 }
 
@@ -107,7 +108,7 @@ export const extensionOf = (name: string): string => {
 };
 
 /** `accept` 属性的取值：内容类型，加上允许扩展名的 `.ext` 写法。 */
-export const acceptAttribute = (limits: AttachmentLimits): string =>
+export const acceptAttribute = (limits: UploadLimits): string =>
   [...limits.types, ...limits.extensions.map((e) => `.${e}`)].join(",");
 
 /** 预签名上传（plugin-sdk `PresignedUpload`）。 */
@@ -118,46 +119,78 @@ export interface PresignedUpload {
   fields?: Record<string, string>;
 }
 
+/** An avatar or skill-package upload slot (their own routes answer it): a presigned form to fill. */
 export interface CreatedAttachment {
   id: string;
   upload: PresignedUpload;
   expiresAt: string;
 }
 
-export interface AttachmentView {
+export interface CreatedFile {
+  file: UploadedFile;
+  /** `null` when the caller already holds these bytes: the file exists at once. */
+  upload: PresignedUpload | null;
+  expiresAt: string | null;
+}
+
+export interface UploadedFile {
   id: string;
   name: string;
   contentType: string;
   size: number;
+  status?: string;
 }
 
-const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/attachments`;
+const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/files`;
 
-/** 登记：内核核对类型与大小，返回预签名上传（有效 300 秒）。 */
-export const createAttachment = (
+/**
+ * Where an upload is made: `composer` (a draft until a message sends it) or `library` (the Files
+ * page: ready at once).
+ */
+export type UploadPurpose = "composer" | "library";
+
+/** Registers an upload: the kernel checks type and size and returns the presigned form. */
+export const createFile = (
   orgId: string,
-  input: { name: string; contentType: string; size: number },
+  input: { name: string; contentType: string; size: number; sha256: string },
   signal?: AbortSignal,
+  purpose: UploadPurpose = "composer",
 ) =>
-  apiFetch<CreatedAttachment>(base(orgId), {
+  apiFetch<CreatedFile>(base(orgId), {
     method: "POST",
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, purpose }),
     ...(signal && { signal }),
   });
 
-/** 上传完成后核对大小与类型，附件变为可发送。 */
-export const finalizeAttachment = (orgId: string, id: string, signal?: AbortSignal) =>
-  apiFetch<AttachmentView>(`${base(orgId)}/${encodeURIComponent(id)}/finalize`, {
+/** After the bytes are stored: the kernel checks size and type and the file becomes sendable. */
+export const finalizeFile = (orgId: string, id: string, signal?: AbortSignal) =>
+  apiFetch<UploadedFile>(`${base(orgId)}/${encodeURIComponent(id)}/finalize`, {
     method: "POST",
     ...(signal && { signal }),
   });
 
-/** 下载地址（同源；内核 302 到预签名地址）。 */
+/** Drops a composer upload that was never sent (best effort: the kernel's cleanup is the backstop). */
+export const discardDraft = (orgId: string, id: string) =>
+  apiFetch<void>(`${base(orgId)}/${encodeURIComponent(id)}/draft`, { method: "DELETE" }).catch(
+    () => undefined,
+  );
+
+/**
+ * A file's download address (same origin; the kernel redirects to a presigned address), the
+ * library's and the composer upload's alike; `inline`: shown in place (bitmaps only).
+ */
+export const fileDownloadUrl = (orgId: string, id: string, opts: { inline?: boolean } = {}) =>
+  `${base(orgId)}/${encodeURIComponent(id)}/download${opts.inline ? "?inline=1" : ""}`;
+
+/**
+ * A `read` copy's download address: an image a tool showed the agent (a tool result's media) is an
+ * attachment of the kernel, not a library file.
+ */
 export const attachmentDownloadUrl = (orgId: string, id: string) =>
-  `${base(orgId)}/${encodeURIComponent(id)}/download`;
+  `/api/v1/orgs/${encodeURIComponent(orgId)}/attachments/${encodeURIComponent(id)}/download`;
 
 /** 直传失败（网络 / CORS / 存储拒绝 / 过期）的客户端错误码。 */
-export const UPLOAD_FAILED = "attachment.upload_failed";
+export const UPLOAD_FAILED = "file.upload_failed";
 
 /**
  * 按预签名直传存储（跨源，不带 Cookie）。用 XMLHttpRequest 以取得上传进度（fetch 没有上传进度）。
@@ -198,21 +231,37 @@ export function uploadToStorage(
   });
 }
 
-/** 完整上传：登记 → 直传 → finalize。中止时抛 AbortError。 */
-export async function uploadAttachment(
+/** The whole upload: hash, register, store (skipped when the kernel holds the bytes), finalize. */
+export async function uploadFile(
   orgId: string,
   file: File,
-  opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
-): Promise<AttachmentView> {
-  const created = await createAttachment(
+  opts: {
+    onProgress?: (fraction: number) => void;
+    signal?: AbortSignal;
+    /** Called with the file id once the kernel registered it (a removal in flight can discard it). */
+    onCreated?: (id: string) => void;
+    /** `composer` (default) or `library`. */
+    purpose?: UploadPurpose;
+  } = {},
+): Promise<UploadedFile> {
+  const sha256 = await sha256Hex(file, opts.signal);
+  opts.signal?.throwIfAborted();
+  const created = await createFile(
     orgId,
-    { name: file.name, contentType: fileContentType(file), size: file.size },
+    { name: file.name, contentType: fileContentType(file), size: file.size, sha256 },
     opts.signal,
+    opts.purpose ?? "composer",
   );
+  opts.onCreated?.(created.file.id);
   opts.signal?.throwIfAborted();
-  await uploadToStorage(created.upload, file, opts);
-  opts.signal?.throwIfAborted();
-  return finalizeAttachment(orgId, created.id, opts.signal);
+  // The kernel already holds these bytes: the file exists at once (a composer draft, or ready in
+  // the library), nothing to store or finalize.
+  if (created.upload === null && created.file.status !== "uploading") return created.file;
+  if (created.upload !== null) {
+    await uploadToStorage(created.upload, file, opts);
+    opts.signal?.throwIfAborted();
+  }
+  return finalizeFile(orgId, created.file.id, opts.signal);
 }
 
 /** How many labels the refusal line shows before the count. */

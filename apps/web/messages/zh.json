@@ -362,6 +362,15 @@
       "type_not_allowed": "不支持这种文件类型。",
       "not_ready": "文件还没有上传完成，请稍候再发送。",
       "not_found": "文件不存在或已过期，请重新上传。",
+      "too_many_pending": "未完成的上传太多，请先等它们完成或移除后再添加。"
+    },
+    "file": {
+      "not_found": "文件不存在或已被删除。",
+      "not_ready": "文件还没有上传完成，请稍候再试。",
+      "hash_mismatch": "文件在上传时发生变化，请重新上传。",
+      "deleted": "文件已被删除。",
+      "too_large": "文件太大，超过了大小上限。",
+      "type_not_allowed": "不支持这种文件类型。",
       "too_many_pending": "未完成的上传太多，请先等它们完成或移除后再添加。",
       "upload_failed": "上传失败，请检查网络后移除并重新添加。"
     },
@@ -1995,6 +2004,81 @@
       "pathHelp": "相对于 {base}。留空表示 {base} 本身。"
     }
   },
+  "files": {
+    "title": "文件",
+    "tabs": {
+      "all": "全部",
+      "delivered": "智能体交付",
+      "generated": "智能体生成",
+      "upload": "我上传的"
+    },
+    "search": "搜索文件",
+    "upload": "上传",
+    "uploaded": "已上传 {name}",
+    "listLabel": "文件",
+    "filters": {
+      "agent": "智能体",
+      "allAgents": "全部智能体",
+      "type": "类型",
+      "allTypes": "全部类型"
+    },
+    "types": {
+      "image": "图片",
+      "document": "文档",
+      "text": "文本",
+      "other": "其他"
+    },
+    "groups": {
+      "today": "今天",
+      "week": "本周",
+      "older": "更早"
+    },
+    "usage": "已用 {size} · {count} 个文件",
+    "origin": {
+      "upload": "我上传的",
+      "delivered": "智能体交付",
+      "generated": "智能体生成"
+    },
+    "unknownAgent": "已删除的智能体",
+    "versionsShort": "{count} 个版本",
+    "conversationDeleted": "已删除的会话",
+    "untitled": "未命名会话",
+    "detail": {
+      "pick": "选择一个文件查看预览",
+      "gone": "这个文件已不可用",
+      "previewers": "预览方式"
+    },
+    "facts": {
+      "origin": "来源",
+      "agent": "智能体",
+      "size": "大小",
+      "created": "时间",
+      "conversation": "来自会话",
+      "referencedBy": "引用它的会话",
+      "versions": "版本",
+      "none": "无"
+    },
+    "actions": {
+      "openConversation": "打开会话",
+      "share": "分享",
+      "download": "下载",
+      "delete": "删除"
+    },
+    "delete": {
+      "title": "删除 {name}？",
+      "body": "文件会从你的文件中移除，它的分享链接随之失效；引用它的会话会显示这个文件已不可用。",
+      "bodyNewest": "只删除最新版本：文件会从你的文件中移除，它的分享链接随之失效，引用它的会话会显示这个文件已不可用。较早的 {count} 个版本会保留。",
+      "confirm": "删除",
+      "done": "已删除 {name}"
+    },
+    "empty": {
+      "text": "还没有文件",
+      "hint": "你上传的文件和智能体交付给你的文件都会出现在这里。",
+      "filtered": "没有符合条件的文件",
+      "filteredHint": "换个来源、筛选条件或搜索词再试。",
+      "clear": "清除筛选"
+    }
+  },
   "nav": {
     "agents": "智能体",
     "goto": "跳转",
@@ -2009,7 +2093,8 @@
     "admin": "管理后台",
     "plugins": "插件",
     "extensions": "扩展",
-    "automations": "自动化"
+    "automations": "自动化",
+    "files": "文件"
   },
   "conversations": {
     "title": "会话",

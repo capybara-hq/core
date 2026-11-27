@@ -12,6 +12,8 @@ import { ConversationDevices } from "../../devices/conversation-devices.js";
 import { ApiError } from "../../errors.js";
 import { ExtensionHost } from "../../extensions/host.js";
 import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
+import { FileDeliveries } from "../../files/deliveries.js";
+import { ReferencedFiles } from "../../files/referenced-files.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../../infra/tokens.js";
@@ -96,6 +98,10 @@ export class BuiltinTools {
     /** The clock `CurrentTime` reads (the run context's clock seam; `Date.now` by default). */
     /** The managed sandbox route's device context writer (permission context replay spec B3). */
     @Inject(ManagedDeviceContextRecorder) managedDeviceContext: ManagedDeviceContextRecorder,
+    /** The library files a conversation refers to (`Read` / `Deliver` by id, `FetchAttachment`). */
+    @Inject(ReferencedFiles) referencedFiles: ReferencedFiles,
+    /** `Deliver` and `GenerateImage` store files as library files on shared blobs. */
+    @Inject(FileDeliveries) deliveries: FileDeliveries,
     @Optional() @Inject(RUN_CONTEXT_CLOCK) now?: () => number,
   ) {
     // `Read` beyond the device (vision-read design §1): files by id, the vision read with its
@@ -107,7 +113,7 @@ export class BuiltinTools {
           return db.db;
         },
         attachments,
-        storage,
+        files: referencedFiles,
       },
       reads: attachments,
       vision,
@@ -123,8 +129,9 @@ export class BuiltinTools {
           id !== root && (await conversationAncestors(db.db, id)).includes(root),
         childrenOf: (orgId, conversationId) => readChildAgents(db.db, orgId, conversationId),
       },
-      attachments,
+      attachments: referencedFiles,
       storage,
+      deliveries,
       eventLog,
       config,
       log,
@@ -148,7 +155,7 @@ export class BuiltinTools {
         config,
         sandbox,
         devices,
-        attachments,
+        attachments: referencedFiles,
         eventLog,
         log,
         managedDeviceContext,
@@ -172,12 +179,14 @@ export class BuiltinTools {
         providers,
         storage,
         eventLog,
+        deliveries,
         stepLog,
         config,
         log,
         hooks: host?.hooks,
         db,
         attachments,
+        files: referencedFiles,
         sandbox: sandboxDeps,
       }),
       // the platform's own operations and docs, as the run's person (Platform tool spec)

@@ -8,8 +8,8 @@ import {
   normalizeContentType,
   sniffMatches,
 } from "../conversations/attachments.service.js";
+import { ReferencedFiles } from "../files/referenced-files.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { StorageService } from "../storage/storage.service.js";
 import { findConversationFile } from "../tools/builtins/conversation-files.js";
 
 /**
@@ -49,6 +49,14 @@ export const FileRefSchema: z.ZodType<FileRef> = z.strictObject(
 export interface FileLimits {
   maxBytes: number;
   contentTypes?: readonly string[];
+  /** A lower byte limit per content type (normalized), e.g. images smaller than documents. */
+  typeMaxBytes?: Readonly<Record<string, number>>;
+  /**
+   * `true`: a library file of an account other than the context's `actorAccountId` is refused
+   * ({@link OTHERS_FILE_TEXT}): a file has one owner (file library spec §2). A `read` copy is no
+   * library file and stays allowed.
+   */
+  ownFilesOnly?: boolean;
 }
 
 /** A resolved reference: the bytes and what the card shows of them. */
@@ -78,6 +86,8 @@ export interface FileRefContext {
   conversationId: string;
   /** The root of the conversation tree, from the call's context. */
   rootConversationId: string;
+  /** The account the call acts as (checked by {@link FileLimits.ownFilesOnly}). */
+  actorAccountId?: string;
   signal: AbortSignal;
 }
 
@@ -102,6 +112,9 @@ export const fileTooLargeText = (size: number, max: number) =>
 /** Model-visible: the referenced file's type is not one the operation takes. */
 export const fileTypeText = (contentType: string, types: readonly string[]) =>
   `The file is ${contentType}; this operation takes ${types.join(", ")}.`;
+/** Model-visible: the referenced library file is another account's ({@link FileLimits.ownFilesOnly}). */
+export const OTHERS_FILE_TEXT =
+  "This file belongs to another person; ask them to add it to their files.";
 /** Model-visible: the bytes at run time differ from the ones the person confirmed. */
 export const FILE_CHANGED_TEXT =
   "The file changed after the person confirmed it; call the operation again.";
@@ -163,7 +176,8 @@ export class FileRefs {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
-    @Inject(StorageService) private readonly storage: StorageService,
+    /** The library files the conversation set refers to (file library spec §2). */
+    @Inject(ReferencedFiles) private readonly files: ReferencedFiles,
   ) {}
 
   async resolve(ref: FileRef, limits: FileLimits, ctx: FileRefContext): Promise<ResolvedFile> {
@@ -181,7 +195,7 @@ export class FileRefs {
   private async conversationFile(id: string, limits: FileLimits, ctx: FileRefContext) {
     const db = this.db.db;
     const file = await findConversationFile(
-      { db, attachments: this.attachments, storage: this.storage },
+      { db, attachments: this.attachments, files: this.files },
       {
         orgId: ctx.orgId,
         conversationId: ctx.conversationId,
@@ -193,20 +207,29 @@ export class FileRefs {
       },
     );
     if (file === null) throw new ToolError(notFoundText(id));
-    if (file.size > limits.maxBytes) {
+    if (
+      limits.ownFilesOnly === true &&
+      file.accountId !== undefined &&
+      file.accountId !== ctx.actorAccountId
+    ) {
       await file.discard();
-      throw new ToolError(fileTooLargeText(file.size, limits.maxBytes));
+      throw new ToolError(OTHERS_FILE_TEXT);
     }
     const types = limits.contentTypes;
     const declared = normalizeContentType(file.contentType);
+    const max = Math.min(limits.maxBytes, limits.typeMaxBytes?.[declared] ?? limits.maxBytes);
+    if (file.size > max) {
+      await file.discard();
+      throw new ToolError(fileTooLargeText(file.size, max));
+    }
     if (types !== undefined && !types.includes(declared)) {
       await file.discard();
       throw new ToolError(fileTypeText(declared, types));
     }
-    const bytes = await file.open({ maxBytes: limits.maxBytes + 1 });
-    if (bytes.byteLength > limits.maxBytes) {
+    const bytes = await file.open({ maxBytes: max + 1 });
+    if (bytes.byteLength > max) {
       await file.discard();
-      throw new ToolError(fileTooLargeText(bytes.byteLength, limits.maxBytes));
+      throw new ToolError(fileTooLargeText(bytes.byteLength, max));
     }
     // the bytes must be what the type says (the upload routes sniff the same way)
     if (types !== undefined && !sniffMatches(declared, bytes.subarray(0, 4096))) {

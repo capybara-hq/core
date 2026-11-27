@@ -676,11 +676,11 @@ describe("其他模板行为", () => {
 });
 
 describe("PAGE_TEMPLATES", () => {
-  // 14 templates; ConversationPage replaced PlaygroundPage when the conversation page moved over;
+  // 15 templates; ConversationPage replaced PlaygroundPage when the conversation page moved over;
   // SetupPage is the guided setup layout (acceptance round 2, D); SharedFilePage is a shared
-  // file's public page (file sharing design §6).
-  it("has 14 entries, each an exported component", () => {
-    expect(PAGE_TEMPLATES.length).toBe(14);
+  // file's public page (file sharing design §6); LibraryPage is the Files page (file library §6).
+  it("has 15 entries, each an exported component", () => {
+    expect(PAGE_TEMPLATES.length).toBe(15);
     for (const n of PAGE_TEMPLATES) {
       expect(typeof (design as Record<string, unknown>)[n]).toBe("function");
     }
