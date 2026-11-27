@@ -140,7 +140,8 @@ interface TriggerEvent {
   A plugin that must not lose an event writes it to its own table in its transaction and emits from
   a `ctx.queue` job; the kernel dedupes on `(plugin, dedupeKey)`, so retries are safe.
 - `emit` inserts a `trigger_events` row (org-scoped, RLS policy in the same migration) and owes a
-  `cap-trigger-dispatch` job through the outbox in the same kernel transaction.
+  `trigger-dispatch` job (kernel maintenance queue, job id `trigger-dispatch-<eventId>`) through the
+  outbox in the same kernel transaction.
 - `cause.call` is the tool call context the plugin's tool received; the kernel reads the run from
   the pipeline's call facts (`callScopeOf`, refusing a context the pipeline did not make), checks
   the run is in the org and derives the chain depth (§4.7). `cause.accountId` is the person behind
