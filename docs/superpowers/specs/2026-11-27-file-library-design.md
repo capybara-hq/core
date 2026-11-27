@@ -197,6 +197,19 @@ Every table carries `org_id` and ships its `org_scope` policy (`rls_admits(org_i
 5. The answer and the time it takes are the same whether or not the bytes existed in the org: the
    bytes are always uploaded and always read once at finalize.
 
+**Builder amendment (2026-11-28, implementation review).** Adopting the staging object leaves a
+hole: the uploader's form stays valid for its TTL after finalize, so rewriting through it and
+reading the file afterwards tells whether the file was deduplicated onto another account's blob
+(it still reads) or adopted its own object (it reads as gone), and a rewritten adopted object can
+poison a hash for later uploads. The implementation therefore never adopts a staging object:
+finalize, having read and hashed the bytes, always writes them to a fresh kernel-owned key
+`blobs/<blobId>` (intent row first), then in one transaction either points the file at an existing
+ready blob of that hash (owing the extra object's deletion) or marks its own blob ready with the
+hash (`ON CONFLICT (org_id, sha256)`, the loser points at the winner); the staging object's
+deletion is always owed. Every branch does the same work, no form can write a key a blob uses, and
+`dedup_after` is set to the creation time (kept for migrated rows). The declared hash and the upload
+purpose are stored on the `files` row at create (`sha256`, `upload_purpose`).
+
 `dedup_after` closes the reuse window: a presigned form stays valid for its TTL, so within it the
 uploader could replace the staging object; no other account's file is pointed at that blob until the
 form has expired. Reads keep checking size + etag, so a replaced object is treated as gone (as today).
