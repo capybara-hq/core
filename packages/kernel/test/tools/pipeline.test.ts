@@ -1218,7 +1218,7 @@ describe("ToolPipeline.runStep", () => {
         conversationId: seed.conversationId,
         callId: "c1",
         idempotencyKey: key,
-        resume: { state: { step: "asked" }, answer: { a: "x" } },
+        resume: { state: { step: "asked" }, answer: { a: "x" }, outcome: "answered" },
       },
     ]);
     // a call id is unique only within its run: the same id in another run is another call

@@ -17,6 +17,7 @@ import { RunJobsModule } from "../runtime/run-jobs.js";
 import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { ConnectorToolsQueueModule } from "../tools/connector-tools-jobs.js";
+import { ToolWatchQueueModule } from "../tools/tool-watch-queue.module.js";
 import { AuditLogService } from "./audit-log.service.js";
 import { AdminHealthService } from "./health.service.js";
 import { OrgNetworkAdmin } from "./org-network.service.js";
@@ -55,6 +56,7 @@ import { AdminUsageService } from "./usage.service.js";
     PushModule,
     // the connector tools and template connectors queues the overview counts
     ConnectorToolsQueueModule,
+    ToolWatchQueueModule,
     TemplateConnectorsQueueModule,
     // the price table of the usage aggregate
     ModelsModule,

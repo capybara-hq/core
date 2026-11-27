@@ -185,6 +185,26 @@ const handlers: Record<string, ToolHandler> = {
     };
   },
 };
+handlers.plugin__probe__watched = async () => {
+  calls.push("watched");
+  return {
+    kind: "input_required",
+    form: {
+      title: "w",
+      fields: [
+        {
+          key: "end",
+          label: "End",
+          schema: { type: "string", enum: ["end"] },
+          required: true,
+          choices: [{ value: "end", label: "End" }],
+        },
+      ],
+    },
+    state: null,
+    watch: { deadlineMs: 120_000 },
+  } as never;
+};
 const builtinHandlers: Record<string, BuiltinHandler> = {
   Platform: async () => {
     calls.push("register-skill");
@@ -235,6 +255,8 @@ function pipeline(): ToolPipeline {
           : source.kind === "builtin"
             ? builtinHandlers[source.name]
             : undefined,
+      watcher: (source) =>
+        source.kind === "plugin" && source.name === "watched" ? async () => "pending" : undefined,
     },
     credentials: {
       async injection(_orgId: string, connectorId: string, auth: ConnectorAuth) {
@@ -405,6 +427,7 @@ beforeEach(async () => {
     ASK_USER,
     PER_CALL,
     pluginTool("form", "allow"),
+    pluginTool("watched", "allow"),
   ];
 });
 
@@ -668,6 +691,14 @@ describe("unattended runs (spec §7)", () => {
     expect(calls).toEqual(["form"]);
     expect(await db.selectFrom("questions").selectAll().execute()).toEqual([]);
     expect(await missingGrants()).toEqual([]);
+  });
+
+  it("a watched wait is allowed in fail mode: it needs nobody (browser long waits spec §5.2)", async () => {
+    const { outcome } = await runCalls([{ id: "c1", name: "plugin__probe__watched", input: {} }]);
+    expect(outcome).toMatchObject({ kind: "suspended", waitingFor: { kind: "input" } });
+    expect(calls).toEqual(["watched"]);
+    const [q] = await db.selectFrom("questions").select("spec").execute();
+    expect((q?.spec as { watch?: boolean } | undefined)?.watch).toBe(true);
   });
 
   it("AskUserQuestion waits as today in wait mode", async () => {

@@ -136,6 +136,22 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `tools/tool-watch-queue.ts` TOOL_WATCH_JOB: the first poll of a watched question, owed with
+  // its ask under `toolWatchJobId`; later polls re-delay the same job (browser long waits §5.3)
+  "tool-watch": {
+    queue: "cap-kernel-tool-watch",
+    idempotent:
+      "deterministic job id per question; the job re-reads the question and acts only while it is pending, and the wake is conditional on pending under the row lock",
+    processedIn: "packages/kernel/src/tools/tool-watch.processor.ts",
+    // one job polls a wait of up to a day: kernel errors are re-delayed in the job itself; only a
+    // failing re-delay (Redis gone) uses an attempt, retried every 10 s for a day's worth
+    opts: {
+      attempts: 8_640,
+      backoff: { type: "fixed", delay: 10_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
   // `runtime/subagents/tree-jobs.ts` STOP_TREE_JOB: owed by a run's terminal transaction that
   // leaves an active fork child (or a person-stopped sub-agent's descendants), under
   // `stopChildrenJobId`, and by a root's delete, under `stopDeletedTreeJobId` (spec §6)

@@ -17,6 +17,7 @@ import type { AgentDefinition } from "../../src/agents/definition.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
+import { createKv } from "../../src/ctx/kv.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
@@ -36,6 +37,7 @@ import {
 import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { REDIS } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
 import { type MediaInfo, TEXT_INLINE_MAX_CHARS } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
@@ -54,8 +56,13 @@ import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { catalogLineChars, SkillsCatalogService } from "../../src/skills/catalog.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { allowedOnceNote } from "../../src/tools/network-asks.js";
-import { hookDeniedText, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
+import {
+  hookDeniedText,
+  QUESTION_SKIPPED_TEXT,
+  WAIT_SKIPPED_TEXT,
+} from "../../src/tools/pipeline.js";
 import { specHash } from "../../src/tools/registry.js";
+import { TOOL_WATCH_TIMINGS } from "../../src/tools/tool-watch-queue.js";
 import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -86,6 +93,7 @@ import { onlySkills } from "../helpers/skills.js";
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
+const FAKE_WATCH = fakeExtensionEntry("fake-watch");
 const TOOLS_PROBE = fileURLToPath(
   new URL("../fixtures/plugins/tools-probe/index.ts", import.meta.url),
 );
@@ -143,6 +151,7 @@ beforeAll(async () => {
           TOOLS_PROBE,
           HOOKS_PROBE,
           SANDBOX_FAKE,
+          FAKE_WATCH,
         ],
         runtime: { maxSteps: 4 },
         tools: { searchThresholdTools: 1 },
@@ -167,7 +176,13 @@ beforeAll(async () => {
       },
     ),
     // run context spec §10: the day a run start reads (a test moves it forward)
-    { overrides: [{ provide: RUN_CONTEXT_CLOCK, useValue: () => clockMs ?? Date.now() }] },
+    {
+      overrides: [
+        { provide: RUN_CONTEXT_CLOCK, useValue: () => clockMs ?? Date.now() },
+        // watched waits poll fast here (browser long waits spec §5.3)
+        { provide: TOOL_WATCH_TIMINGS, useValue: { intervalMs: 150, timeoutMs: 300 } },
+      ],
+    },
   );
   // the compaction settings this fixture used to set through `runtime.keepRecentTurns` (context
   // compaction spec §4.8 moved them to the deployment settings, read live per model step). The
@@ -278,7 +293,7 @@ async function createAgent(
   // only the skills the test names: the org's other skills (seeded by earlier tests) are off
   const disabledSkills = await onlySkills(db, orgId, skills);
   const named = new Set((tools ?? []).flatMap((r) => (r.kind === "plugin" ? [r.plugin] : [])));
-  const extensionsOff = ["tools-probe", "hooks-probe"]
+  const extensionsOff = ["tools-probe", "hooks-probe", "fake-watch"]
     .filter((p) => !named.has(p))
     .map((plugin) => ({ kind: "plugin", plugin, tools: "all" }));
   const res = await owner({
@@ -929,6 +944,75 @@ describe("reconstructRequest：基线零漂移", () => {
     expect(resultAt).toBeGreaterThan(-1);
     expect(messageAt).toBeGreaterThanOrEqual(resultAt);
     await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("watched waits (browser long waits spec §5.4): a woken wait's result and a skipped wait's text; zero drift", async () => {
+    reset();
+    const on = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/fake-watch`,
+      payload: { enabled: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    try {
+      const agentId = await createAgent(
+        { provider: "model-fake", model: "fake-1" },
+        { tools: [{ kind: "plugin", plugin: "fake-watch", name: "wait" }] },
+      );
+      const kv = createKv(k.app.get(REDIS), "fake-watch");
+      const parkedIn = async (conv: string, key: string) => {
+        // tool search is on in this kernel: load the tool first
+        await postMessage(owner, orgId, conv, 'tool:ToolSearch:{"query":"wait signal"}');
+        await waitForTerminal(db, conv, 1, 30_000);
+        await postMessage(owner, orgId, conv, `tool:plugin__fake-watch__wait:{"key":"${key}"}`);
+        const asked = await waitForEvent(db, conv, (e) => e.type === "question_asked");
+        await waitFor(
+          async () =>
+            (
+              await db
+                .selectFrom("runs")
+                .select("status")
+                .where("id", "=", asked.runId as string)
+                .executeTakeFirst()
+            )?.status === "waiting",
+          10_000,
+          "run waiting",
+        );
+      };
+      // woken: the watcher settles, the resumed handler's result is what the model reads
+      const woken = await createConv(owner, orgId, agentId);
+      await parkedIn(woken, "replay-woken");
+      await kv.set("fake-watch:replay-woken", "go", { ttlSeconds: 60 });
+      await waitForTerminal(db, woken, 2, 30_000);
+      expect(
+        (await eventsOf(db, woken)).flatMap((e) =>
+          e.type === "question_answered" ? [e.payload.outcome] : [],
+        ),
+      ).toEqual(["woken"]);
+      await expectZeroDrift(woken, await snapshotOf(woken));
+      // skipped: the wait's own text, then the message
+      reset();
+      const skipped = await createConv(owner, orgId, agentId);
+      await parkedIn(skipped, "replay-skipped");
+      await postMessage(owner, orgId, skipped, "echo:stop waiting");
+      await waitForTerminal(db, skipped, 2, 30_000);
+      const last = sent.at(-1) as ModelRequest;
+      expect(
+        last.messages.some(
+          (m) =>
+            typeof m.content !== "string" &&
+            m.content.some((b) => b.type === "tool_result" && b.content === WAIT_SKIPPED_TEXT),
+        ),
+      ).toBe(true);
+      await expectZeroDrift(skipped, await snapshotOf(skipped));
+    } finally {
+      const off = await owner({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/fake-watch`,
+        payload: { enabled: false },
+      });
+      expect(off.statusCode, off.body).toBe(200);
+    }
   });
 
   it("a message sent while the asking step streamed: not a skip, the answer then the message; zero drift", async () => {

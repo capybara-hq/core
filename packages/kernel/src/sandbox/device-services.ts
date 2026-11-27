@@ -108,15 +108,23 @@ export class DeviceServices {
     return r.kind === "ran" ? r.value : null;
   }
 
-  /** One request to the service's socket; resolves its answer (throws when it is not running). */
+  /**
+   * One request to the service's socket; resolves its answer (throws when it is not running).
+   * A request is a use of the device: a suspended instance is resumed. With `ifRunning` it never
+   * is: only the instance running now answers, under a shared lease that moves its last use
+   * forward ({@link SandboxService.ifRunning}); a missing, suspended or replaced instance, or a
+   * service the provider reports stopped, rejects with `DeviceAccessError("not_running")`.
+   */
   async request(
     use: SandboxUseContext,
     name: string,
     body: Uint8Array,
     timeoutMs: number,
     signal: AbortSignal,
+    opts: { ifRunning?: boolean } = {},
   ): Promise<Uint8Array> {
     assertServiceName(name);
+    if (opts.ifRunning === true) return this.requestIfRunning(use, name, body, timeoutMs, signal);
     return this.sandbox.withDeviceServices(
       use,
       requireServices,
@@ -127,6 +135,35 @@ export class DeviceServices {
         }),
       signal,
     );
+  }
+
+  private async requestIfRunning(
+    use: SandboxUseContext,
+    name: string,
+    body: Uint8Array,
+    timeoutMs: number,
+    signal: AbortSignal,
+  ): Promise<Uint8Array> {
+    const current = await this.sandbox.currentInstance(use.deviceId);
+    if (!current) throw notRunning();
+    const r = await this.sandbox.ifRunning(
+      use.deviceId,
+      { createdAt: current.createdAt },
+      async (p, h, sig) => {
+        requireServices(p);
+        if (p.serviceStatus) {
+          const st = await p.serviceStatus(h, name, sig);
+          if (st !== null && st.state !== "running") throw notRunning();
+        }
+        return (p.serviceRequest as NonNullable<typeof p.serviceRequest>)(h, name, body, {
+          timeoutMs,
+          signal: sig,
+        });
+      },
+      signal,
+    );
+    if (r.kind !== "ran") throw notRunning();
+    return r.value;
   }
 
   /**
@@ -245,6 +282,14 @@ function assertServiceName(name: string): void {
     throw new Error(
       `Invalid device service id ${JSON.stringify(name)}: use <extension>.<name> (${DEVICE_SERVICE_ID_RE}).`,
     );
+}
+
+/** An `ifRunning` request found no running instance or service. */
+function notRunning(): DeviceAccessError {
+  return new DeviceAccessError(
+    "not_running",
+    "The device or its service is not running; nothing was resumed or started.",
+  );
 }
 
 /** Refuses a provider that lacks any of the methods a service needs (`openStream` is optional). */

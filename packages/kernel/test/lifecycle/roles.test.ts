@@ -40,6 +40,7 @@ import {
 import { CONNECTOR_TOOLS_QUEUE } from "../../src/tools/connector-tools-jobs.js";
 import { ToolDrift } from "../../src/tools/drift.js";
 import { ToolJobs } from "../../src/tools/jobs.js";
+import { TOOL_WATCH_QUEUE } from "../../src/tools/tool-watch-queue.js";
 import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
 
 const SLOW = fileURLToPath(new URL("../fixtures/plugins/slow/index.ts", import.meta.url));
@@ -64,6 +65,7 @@ const KERNEL_QUEUES = [
   PUSH_QUEUE,
   CONNECTOR_TOOLS_QUEUE,
   TEMPLATE_CONNECTORS_QUEUE,
+  TOOL_WATCH_QUEUE,
 ];
 
 let pgc: TestContainer;

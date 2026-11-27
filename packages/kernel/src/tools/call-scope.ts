@@ -33,6 +33,12 @@ export interface CallScope {
   /** Absent for a scope attached outside the pipeline (nothing reads it then). */
   facts?: CallFacts;
   /**
+   * A watched wait's watcher call (browser long waits spec §5.3), not a handler's: its
+   * `ctx.deviceAccess.request` runs `ifRunning`, `ensureService` is refused, and refused hosts are
+   * dropped (no call result carries them). Nothing reads this scope after the watcher returns.
+   */
+  watch?: true;
+  /**
    * The device a `ctx.deviceAccess` call of this call resolved (`ensureService` / `request`), or
    * null when none did yet.
    */
@@ -71,8 +77,15 @@ export interface CallScope {
 
 type Scoped = ToolCallContext & { [CALL_SCOPE]?: CallScope };
 
-/** Attaches a fresh scope to the call's context (the pipeline, before the handler runs). */
-export function attachCallScope(ctx: ToolCallContext, facts?: CallFacts): CallScope {
+/**
+ * Attaches a fresh scope to the call's context (the pipeline, before the handler runs; the
+ * watched-wait job before a watcher runs, with `opts.watch`).
+ */
+export function attachCallScope(
+  ctx: ToolCallContext,
+  facts?: CallFacts,
+  opts: { watch?: boolean } = {},
+): CallScope {
   const scope: CallScope = {
     device: null,
     review: null,
@@ -80,6 +93,7 @@ export function attachCallScope(ctx: ToolCallContext, facts?: CallFacts): CallSc
     starting: 0,
     reached: false,
     ...(facts !== undefined && { facts }),
+    ...(opts.watch === true && { watch: true as const }),
   };
   (ctx as Scoped)[CALL_SCOPE] = scope;
   return scope;

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-watch",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: an extension tool with a watched input wait, scripted through ctx.kv"
+}

@@ -17,6 +17,7 @@ const ALL: Record<KernelQueueName, true> = {
   "cap-kernel-subagent-runs": true,
   "cap-kernel-channels": true,
   "cap-kernel-maintenance": true,
+  "cap-kernel-tool-watch": true,
   "cap-kernel-plugin-scope": true,
   "cap-kernel-titles": true,
   "cap-kernel-suggestions": true,

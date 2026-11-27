@@ -65,7 +65,7 @@ export interface TrajectoryToolCall {
     questionId: string;
     askedAt: string;
     /** `skipped`: the run's starter sent a message instead of answering. */
-    outcome: "answered" | "skipped" | "expired" | "cancelled" | null;
+    outcome: "answered" | "skipped" | "expired" | "cancelled" | "woken" | null;
     byAccountId: string | null;
     /** `skipped` only: the seq of the user message that skipped it. */
     skippedBySeq?: number;

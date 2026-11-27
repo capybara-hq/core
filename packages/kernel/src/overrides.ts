@@ -37,6 +37,7 @@ import {
 } from "./sandbox/permission-auto-grants.js";
 import { SETUP_CHECK_TIMEOUT } from "./setup/setup-checks.service.js";
 import { TOOL_PIPELINE_HOOKS, type ToolPipelineHooks } from "./tools/pipeline.js";
+import { TOOL_WATCH_TIMINGS, type ToolWatchTimings } from "./tools/tool-watch-queue.js";
 import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
 
 /**
@@ -77,6 +78,7 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `EXTENSION_NET_SEAMS`: `ctx.net`'s DNS and dispatcher (a hostname resolving to a private address
  *   served by a loopback fake);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes);
+ * - `TOOL_WATCH_TIMINGS`: shorter watched-wait poll timings (interval, watcher timeout);
  * - `PERMISSION_AUTO_GRANT_HOOKS`: a barrier after a Full access auto-grant's precheck (two
  *   replicas racing the same crossing).
  */
@@ -112,6 +114,7 @@ interface KernelSeams {
   [EXTENSION_NET_SEAMS]: ExtensionNetSeams;
   [APP_INTERCEPTOR]: NestInterceptor;
   [PERMISSION_AUTO_GRANT_HOOKS]: PermissionAutoGrantHooks;
+  [TOOL_WATCH_TIMINGS]: Partial<ToolWatchTimings>;
 }
 
 /**
@@ -156,6 +159,7 @@ const SEAM_TOKENS = [
   EXTENSION_NET_SEAMS,
   APP_INTERCEPTOR,
   PERMISSION_AUTO_GRANT_HOOKS,
+  TOOL_WATCH_TIMINGS,
 ] as const satisfies readonly (keyof KernelSeams)[];
 
 /** Compiles only while {@link SEAM_TOKENS} lists every key of {@link KernelSeams}. */
