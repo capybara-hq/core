@@ -47,6 +47,7 @@ import {
 import { usePagePath } from "../../../components/shell/path";
 import { Link, useRouter } from "../../../i18n/navigation";
 import type { Approval, ApprovalScope } from "../../../lib/approvals";
+import { addAutomationGrants, connectionOf } from "../../../lib/automations";
 import {
   type CatalogRequest,
   decideOrgRequest,
@@ -60,12 +61,12 @@ import {
 } from "../../../lib/catalog";
 import { useHashItem } from "../../../lib/hash-item";
 import {
+  type AutomationAttention,
   dismissNotice,
   hasNotice,
   type InboxItem,
   isShowable,
   type OrgNotice,
-  type ScheduleAttention,
 } from "../../../lib/inbox";
 import { networkGrantHost } from "../../../lib/network-hosts";
 import { entryOfRequest } from "../../../lib/pending-connectors";
@@ -75,7 +76,6 @@ import { keys } from "../../../lib/query/keys";
 import { useAppMutation } from "../../../lib/query/mutation";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
-import { addScheduleGrants, connectionOf } from "../../../lib/schedules";
 import type { SkillChange } from "../../../lib/skills";
 import { approvalToolLabel, toolLabelText } from "../../../lib/tool-label";
 import { useErrorMessage } from "../../../lib/use-error-message";
@@ -149,13 +149,14 @@ function Inbox({
     invalidates: () => inboxChangeKeys(orgId),
   });
   const tdd = useTranslations("inbox.requestDecided");
-  const tsa = useTranslations("inboxSchedule");
+  const tsa = useTranslations("inboxAutomation");
   const tnr = useTranslations("inbox.network");
   const departed = useTranslations("people")("departed");
   // Approving a refused tool for my task changes the task's grants and the inbox
   const addGrantMutation = useAppMutation({
-    fn: (v: { taskId: string; toolKey: string }) => addScheduleGrants(orgId, v.taskId, [v.toolKey]),
-    invalidates: (v) => [keys.org(orgId).scheduleGrants(v.taskId), ...inboxChangeKeys(orgId)],
+    fn: (v: { taskId: string; toolKey: string }) =>
+      addAutomationGrants(orgId, v.taskId, [v.toolKey]),
+    invalidates: (v) => [keys.org(orgId).automationGrants(v.taskId), ...inboxChangeKeys(orgId)],
   });
   async function addGrant(taskId: string, toolKey: string) {
     try {
@@ -211,7 +212,7 @@ function Inbox({
     approved: tdd("approved"),
     rejected: tdd("rejected"),
     schedule: tsa("label"),
-    scheduleReason: (a) => scheduleReason(a, tsa, departed),
+    automationReason: (a) => automationReason(a, tsa, departed),
     network: tnr("label"),
     networkDecided: tnr("decidedLabel"),
   };
@@ -303,13 +304,14 @@ function Inbox({
   const detail: Detail | null =
     active === undefined
       ? null
-      : active.type === "schedule_attention"
-        ? scheduleDetail({
+      : active.type === "automation_attention"
+        ? automationDetail({
             attention: active.attention,
             createdAt: active.createdAt,
             pending: addGrantMutation.isPending,
             onAdd: (k) => void addGrant(active.attention.taskId, k),
-            onOpen: () => router.push(`/schedules/${encodeURIComponent(active.attention.taskId)}`),
+            onOpen: () =>
+              router.push(`/automations/${encodeURIComponent(active.attention.taskId)}`),
             tsa,
             t,
             departed,
@@ -492,7 +494,7 @@ function Inbox({
 const waitsForMe = (i: InboxItem): boolean =>
   i.type === "tool_approval" ||
   i.type === "skill_change" ||
-  i.type === "schedule_attention" ||
+  i.type === "automation_attention" ||
   i.type === "catalog_request";
 
 /** The id of what an item asks to decide (the approval, the skill change, the request, the notice). */
@@ -501,7 +503,7 @@ const subjectOf = (i: InboxItem): string =>
     ? i.approval.id
     : i.type === "skill_change"
       ? i.skillChange.id
-      : i.type === "schedule_attention"
+      : i.type === "automation_attention"
         ? i.id
         : hasNotice(i)
           ? i.notice.id
@@ -518,7 +520,7 @@ interface Labels {
   approved: string;
   rejected: string;
   schedule: string;
-  scheduleReason(a: ScheduleAttention): string;
+  automationReason(a: AutomationAttention): string;
   network: string;
   networkDecided: string;
 }
@@ -534,12 +536,12 @@ function rowOf(
   locale: string,
 ): { title: string; trailing: string | null; description: string } {
   const joined = (...parts: string[]) => parts.filter((p) => p !== "").join(" · ");
-  if (item.type === "schedule_attention") {
+  if (item.type === "automation_attention") {
     const a = item.attention;
     return {
       title: a.name,
       trailing: null,
-      description: joined(labels.schedule, labels.scheduleReason(a)),
+      description: joined(labels.schedule, labels.automationReason(a)),
     };
   }
   if (item.type === "skill_change") {
@@ -621,18 +623,18 @@ function rowOf(
 }
 
 /** Why a task needs me, in one line. */
-function scheduleReason(a: ScheduleAttention, tsa: Translate, departed: string): string {
+function automationReason(a: AutomationAttention, tsa: Translate, departed: string): string {
   // an admin pause always names its admin: null is one who has left ("Former member")
   if (a.reason === "admin") return tsa("reason.admin", { name: a.pausedBy?.name ?? departed });
   return tsa(`reason.${a.reason}`);
 }
 
 /**
- * My scheduled task that needs me (scheduled tasks spec §8): why, and for refused tools each one
+ * My automation that needs me (automations spec §8): why, and for refused tools each one
  * with what to do: 加入预先批准的工具, 需要你没有的角色 (no action), or 连接 <slug> for a personal
  * connector. The primary opens the task.
  */
-function scheduleDetail({
+function automationDetail({
   attention: a,
   createdAt,
   pending,
@@ -642,7 +644,7 @@ function scheduleDetail({
   t,
   departed,
 }: {
-  attention: ScheduleAttention;
+  attention: AutomationAttention;
   createdAt: string;
   pending: boolean;
   onAdd(toolKey: string): void;
@@ -652,7 +654,7 @@ function scheduleDetail({
   /** "Former member": the name of an admin who has left. */
   departed: string;
 }): Detail {
-  const reason = scheduleReason(a, tsa, departed);
+  const reason = automationReason(a, tsa, departed);
   return {
     facts: [
       { label: tsa("task"), value: a.name },

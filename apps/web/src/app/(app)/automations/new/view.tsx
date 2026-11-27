@@ -4,24 +4,25 @@ import { Callout, FormPage, FormSection, useTimeZone, useToast } from "@capybara
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { ErrorFrame } from "../../../../components/ErrorFrame";
-import { FormError } from "../../../../components/form-error";
-import { NoAccess } from "../../../../components/NoAccess";
 import {
   ApprovedToolsSection,
+  type AutomationDraft,
+  AutomationFormSections,
   createBodyOf,
   draftValid,
   emptyDraft,
   LOADING_SECTIONS,
   NetworkAccessSection,
-  type ScheduleDraft,
-  ScheduleFormSections,
   useGrantableTools,
-} from "../../../../components/ScheduleForm";
+} from "../../../../components/AutomationForm";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent, ProviderModels } from "../../../../lib/agents";
 import { ApiClientError } from "../../../../lib/api";
+import { browserTimeZone, createAutomation } from "../../../../lib/automations";
 import { networkGrantHost } from "../../../../lib/network-hosts";
 import { preferencesQuery } from "../../../../lib/query/account";
 import { agentsQuery } from "../../../../lib/query/agents";
@@ -32,25 +33,24 @@ import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { orgSettingsQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";
-import { browserTimeZone, createSchedule } from "../../../../lib/schedules";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
- * `/schedules/new`: a new scheduled task (FormPage, spec §10): basics, the schedule (presets that
+ * `/automations/new`: a new automation (FormPage, spec §10): basics, the schedule (presets that
  * write cron; the task takes my time zone), where runs go, model and effort, and the tools approved
  * up front. A create form: focus starts on the name, the primary waits for a valid form; creating
  * opens the task. Members up (guests: the no-access state). From the query cache (the layout
  * prefetched the agents and the models on a first load).
  */
-export default function NewScheduleView() {
+export default function NewAutomationView() {
   const ws = useWorkspace({ min: "member" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <NewSchedule orgId={ws.orgId} accountId={ws.me.account.id} />;
+  return <NewAutomation orgId={ws.orgId} accountId={ws.me.account.id} />;
 }
 
-function NewSchedule({ orgId, accountId }: { orgId: string; accountId: string }) {
+function NewAutomation({ orgId, accountId }: { orgId: string; accountId: string }) {
   const read = usePageQuery(agentsQuery(orgId));
   const modelsQ = modelsQuery(orgId);
   const models = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data;
@@ -58,7 +58,7 @@ function NewSchedule({ orgId, accountId }: { orgId: string; accountId: string })
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   const agents = read.kind === "ready" ? read.data.agents : null;
   return (
-    <NewScheduleForm
+    <NewAutomationForm
       key={agents === null ? "loading" : "ready"}
       orgId={orgId}
       accountId={accountId}
@@ -68,7 +68,7 @@ function NewSchedule({ orgId, accountId }: { orgId: string; accountId: string })
   );
 }
 
-function NewScheduleForm({
+function NewAutomationForm({
   orgId,
   accountId,
   agents,
@@ -81,14 +81,14 @@ function NewScheduleForm({
   providers: ProviderModels[];
 }) {
   const scope = usePagePath("org");
-  const t = useTranslations("schedules");
+  const t = useTranslations("automations");
   const tc = useTranslations("common");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const list = agents ?? [];
   const loading = agents === null;
-  const [draft, setDraft] = useState<ScheduleDraft>(() => emptyDraft(list[0]?.id ?? ""));
+  const [draft, setDraft] = useState<AutomationDraft>(() => emptyDraft(list[0]?.id ?? ""));
   const [grants, setGrants] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   // a create refused for a network grant: shown in the Network access section with the reason
@@ -103,12 +103,12 @@ function NewScheduleForm({
   const tools = useGrantableTools(orgId, draft.agentId);
   const settingsQ = orgSettingsQuery(orgId);
   const settings = useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) }).data
-    ?.settings.scheduledTasks;
+    ?.settings.automations;
   // Turned off by the org: the form shows, read-only, under the notice
   const off = settings?.enabled === false;
   const create = useAppMutation({
-    fn: () => createSchedule(orgId, createBodyOf(draft, grants, browserTimeZone(), zone)),
-    invalidates: () => [keys.org(orgId).schedulesAll()],
+    fn: () => createAutomation(orgId, createBodyOf(draft, grants, browserTimeZone(), zone)),
+    invalidates: () => [keys.org(orgId).automationsAll()],
   });
   const unsaved = [draft.name, draft.prompt].filter((v) => v.trim() !== "").length + grants.length;
   const valid = draftValid(draft);
@@ -120,11 +120,11 @@ function NewScheduleForm({
     try {
       const { task } = await create.mutateAsync(undefined);
       toast.success(t("actions.created"));
-      router.push(`/schedules/${encodeURIComponent(task.id)}`);
+      router.push(`/automations/${encodeURIComponent(task.id)}`);
     } catch (e) {
       if (
         e instanceof ApiClientError &&
-        e.code === "schedule.grant_not_allowed" &&
+        e.code === "automation.grant_not_allowed" &&
         grants.some((k) => networkGrantHost(k) !== null)
       ) {
         setNetworkError(e);
@@ -137,13 +137,13 @@ function NewScheduleForm({
       create
       loading={loading}
       header={{
-        path: [...scope, { label: "schedules", href: "/schedules" }, { label: "new" }],
+        path: [...scope, { label: "automations", href: "/automations" }, { label: "new" }],
         title: t("form.createTitle"),
         ...(off ? { notice: <Callout tone="warn">{t("turnedOff")}</Callout> } : {}),
       }}
       actionRow={{
         unsaved,
-        cancel: { label: tc("cancel"), onSelect: () => router.push("/schedules") },
+        cancel: { label: tc("cancel"), onSelect: () => router.push("/automations") },
         primary: {
           label: t("form.create"),
           onSelect: () => void submit(),
@@ -175,7 +175,7 @@ function NewScheduleForm({
         </>
       ) : (
         <>
-          <ScheduleFormSections
+          <AutomationFormSections
             orgId={orgId}
             draft={draft}
             setDraft={setDraft}

@@ -13,14 +13,14 @@ import type { MenuItem } from "./overlays/menus";
  * The native strip's items (`nav@1`), in display order: the four sections and `search`, which
  * opens the command palette (never current).
  */
-export type NativeSectionId = "chats" | "inbox" | "agents" | "schedules" | "search";
+export type NativeSectionId = "chats" | "inbox" | "agents" | "automations" | "search";
 
 /** The strip's items in display order (the SDK's `NAV_SECTION_ORDER`). */
 export const NATIVE_SECTION_ORDER: readonly NativeSectionId[] = [
   "chats",
   "inbox",
   "agents",
-  "schedules",
+  "automations",
   "search",
 ];
 

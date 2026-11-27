@@ -4,6 +4,12 @@ import { connectorStatusOf } from "../admin-items";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
 import {
+  AUTOMATIONS_VIEW_COOKIE,
+  automationsUrlOf,
+  dayIn,
+  rangeBounds,
+} from "../automation-calendar";
+import {
   type CatalogItem,
   ownerOrgOf,
   type PlatformUpdatePreview,
@@ -26,7 +32,6 @@ import { labelLocale } from "../extension-label";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
-import { dayIn, rangeBounds, SCHEDULES_VIEW_COOKIE, schedulesUrlOf } from "../schedule-calendar";
 import type { Me } from "../session";
 import {
   parseSkillAddress,
@@ -78,6 +83,17 @@ import {
 } from "./agents";
 import { platformMetaQuery } from "./app-auth";
 import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
+import {
+  automationCalendarQuery,
+  automationGrantsQuery,
+  automationQuery,
+  automationRunsQuery,
+  automationsQuery,
+  automationTargetsQuery,
+  chatTargetsQuery,
+  conversationAutomationsQuery,
+  grantableToolsQuery,
+} from "./automations";
 import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import { adminComponentsQuery, componentVersionsQuery, orgComponentsQuery } from "./components";
@@ -112,17 +128,6 @@ import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
 import { permissionPreviewQuery } from "./permissions";
 import { pushPreferencesQuery, pushRegistrationsQuery } from "./push";
-import {
-  chatTargetsQuery,
-  conversationSchedulesQuery,
-  grantableToolsQuery,
-  scheduleCalendarQuery,
-  scheduleGrantsQuery,
-  scheduleQuery,
-  scheduleRunsQuery,
-  schedulesQuery,
-  scheduleTargetsQuery,
-} from "./schedules";
 import {
   extensionPointDefaultsQuery,
   invitationsQuery,
@@ -828,8 +833,8 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
       const id = params.conversationId;
       if (orgId === null || id === undefined) return [];
       return [
-        // members up: my tasks posting into it (the properties panel's 定时任务 section)
-        ...(atLeast(me, "member") ? [q(conversationSchedulesQuery(orgId, id))] : []),
+        // members up: my tasks posting into it (the properties panel's 自动化 section)
+        ...(atLeast(me, "member") ? [q(conversationAutomationsQuery(orgId, id))] : []),
         q(conversationQuery(orgId, id)),
         q(eventsQuery(orgId, id)),
         q(agentsQuery(orgId)),
@@ -853,8 +858,8 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
         [
           ...conversationFollowUps(orgId, id, events, row, me?.account.id),
           // the task that started it, named above the thread
-          ...(row.scheduledTaskId != null && atLeast(me, "member")
-            ? [q(scheduleQuery(orgId, row.scheduledTaskId))]
+          ...(row.automationId != null && atLeast(me, "member")
+            ? [q(automationQuery(orgId, row.automationId))]
             : []),
         ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
@@ -1221,15 +1226,15 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
           ],
   },
   {
-    pattern: "/schedules",
+    pattern: "/automations",
     // Members up (guests get no access): my tasks, the agents that name them and the org's
     // settings (turned off; sections). The calendar view (the address, else the remembered view)
     // also needs the range it shows, keyed by the viewer's zone: only when the server knows it
     // (the `cb-tz` cookie), else the view reads it on mount (calendar spec §9).
     queries: ({ orgId, me, search, cookie, now }) => {
       if (orgId === null || !atLeast(me, "member")) return [];
-      const base = [q(schedulesQuery(orgId)), q(agentsQuery(orgId)), q(orgSettingsQuery(orgId))];
-      const url = schedulesUrlOf(search, cookie(SCHEDULES_VIEW_COOKIE));
+      const base = [q(automationsQuery(orgId)), q(agentsQuery(orgId)), q(orgSettingsQuery(orgId))];
+      const url = automationsUrlOf(search, cookie(AUTOMATIONS_VIEW_COOKIE));
       const timeZone = parseTimeZone(cookie(TIME_ZONE_COOKIE));
       if (url.view !== "calendar" || timeZone === undefined) return base;
       const all = url.scope === "all" && atLeast(me, "admin");
@@ -1237,18 +1242,18 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
       return [
         ...base,
         q(
-          scheduleCalendarQuery(orgId, {
+          automationCalendarQuery(orgId, {
             ...rangeBounds(url.range, date, timeZone),
             timeZone,
             all,
           }),
         ),
-        ...(all ? [q(schedulesQuery(orgId, "all")), q(membersQuery(orgId))] : []),
+        ...(all ? [q(automationsQuery(orgId, "all")), q(membersQuery(orgId))] : []),
       ];
     },
   },
   {
-    pattern: "/schedules/new",
+    pattern: "/automations/new",
     // Members up: the agents to pick, the models, my chats (the chat picker), the org's settings
     // (turned off, the shortest interval) and my preferences (the zone the task takes, which the
     // end date is read in); then the first agent's grantable tools.
@@ -1271,16 +1276,16 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
     },
   },
   {
-    pattern: "/schedules/[id]",
+    pattern: "/automations/[id]",
     // Members up: the task (an org admin may open another member's, read-only), its runs and
     // approved tools, the agents, the models and the members (the creator's name; sections).
     queries: ({ orgId, me, params }) =>
       orgId === null || params.id === undefined || !atLeast(me, "member")
         ? []
         : [
-            q(scheduleQuery(orgId, params.id)),
-            q(scheduleRunsQuery(orgId, params.id)),
-            q(scheduleGrantsQuery(orgId, params.id)),
+            q(automationQuery(orgId, params.id)),
+            q(automationRunsQuery(orgId, params.id)),
+            q(automationGrantsQuery(orgId, params.id)),
             q(agentsQuery(orgId)),
             q(modelsQuery(orgId)),
             q(membersQuery(orgId)),
@@ -1295,13 +1300,13 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
       }
       const task = qc.getQueryData<{
         task: { agentId: string; mode: string; accountId: string };
-      }>(scheduleQuery(orgId, params.id).queryKey)?.task;
+      }>(automationQuery(orgId, params.id).queryKey)?.task;
       if (task === undefined || task.accountId !== me.account.id) return;
       await Promise.all(
         [
           q(grantableToolsQuery(orgId, task.agentId)),
           q(chatTargetsQuery(orgId)),
-          ...(task.mode === "conversation" ? [q(scheduleTargetsQuery(orgId, task.agentId))] : []),
+          ...(task.mode === "conversation" ? [q(automationTargetsQuery(orgId, task.agentId))] : []),
         ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
     },
@@ -1322,15 +1327,15 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
           ],
   },
   {
-    pattern: "/settings/schedules",
-    // Org admins (schedules.manage): the settings, every task of the org, and the agents and
+    pattern: "/settings/automations",
+    // Org admins (automations.manage): the settings, every task of the org, and the agents and
     // members that name them (sections).
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "admin")
         ? []
         : [
             q(orgSettingsQuery(orgId)),
-            q(schedulesQuery(orgId, "all")),
+            q(automationsQuery(orgId, "all")),
             q(agentsQuery(orgId)),
             q(membersQuery(orgId)),
           ],

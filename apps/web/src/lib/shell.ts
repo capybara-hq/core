@@ -318,14 +318,14 @@ export const MENU_ITEM_ID = /^[A-Za-z0-9_.-]{1,64}$/;
  * The strip's items: the four sections and, last, `search` (opens the web's command palette; never
  * `current`).
  */
-export type NavSectionId = "chats" | "inbox" | "agents" | "schedules" | "search";
+export type NavSectionId = "chats" | "inbox" | "agents" | "automations" | "search";
 
 /** The strip's items in display order. */
 export const NAV_SECTION_ORDER: readonly NavSectionId[] = [
   "chats",
   "inbox",
   "agents",
-  "schedules",
+  "automations",
   "search",
 ];
 
@@ -361,7 +361,7 @@ export interface NavAccountV1 {
 }
 
 export interface NavStateV1 {
-  /** The items the person sees, in NAV_SECTION_ORDER (a guest has no `schedules`). */
+  /** The items the person sees, in NAV_SECTION_ORDER (a guest has no `automations`). */
   items: NavItemV1[];
   /**
    * The section of the page on screen; `null`: no section is selected and the shell clears its

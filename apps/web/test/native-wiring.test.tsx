@@ -112,7 +112,7 @@ describe("AppFrame with nav@1", () => {
       "chats",
       "inbox",
       "agents",
-      "schedules",
+      "automations",
       "search",
     ]);
     expect(state.items[1]?.count).toBe(3);

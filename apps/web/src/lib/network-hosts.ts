@@ -26,7 +26,7 @@ export function allowHostProblem(
 /** A typed host as it is sent: trimmed and lowercased. */
 export const normalizeHost = (h: string): string => h.trim().toLowerCase();
 
-/** The prefix of a scheduled task's network grant key (`network:<host>`). */
+/** The prefix of an automation's network grant key (`network:<host>`). */
 export const NETWORK_GRANT_PREFIX = "network:";
 
 /** The host of a network grant key, or null for a tool key. */

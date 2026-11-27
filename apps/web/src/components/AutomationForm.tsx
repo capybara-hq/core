@@ -19,21 +19,16 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { timeZoneOptions } from "../lib/account-preferences";
 import type { Agent, ProviderModels } from "../lib/agents";
-import { labelLocale } from "../lib/extension-label";
-import { decodeModel, encodeModel, pickerOptions } from "../lib/models";
 import {
-  allowHostProblem,
-  NETWORK_GRANT_PREFIX,
-  networkGrantHost,
-  normalizeHost,
-} from "../lib/network-hosts";
-import { retryOnMountOf } from "../lib/query/client";
-import {
-  chatTargetsQuery,
-  grantableToolsQuery,
-  scheduleTargetsQuery,
-} from "../lib/query/schedules";
-import {
+  AUTOMATION_EFFORTS,
+  type Automation,
+  type AutomationChat,
+  type AutomationCreateBody,
+  type AutomationEffort,
+  type AutomationGrant,
+  type AutomationMode,
+  type AutomationPreset,
+  type AutomationUpdateBody,
   type ChatTarget,
   chatKey,
   connectionOf,
@@ -46,32 +41,37 @@ import {
   type PresetKind,
   presetOf,
   presetValid,
-  SCHEDULE_EFFORTS,
-  type ScheduleChat,
-  type ScheduleCreateBody,
-  type ScheduledTask,
-  type ScheduledTaskGrant,
-  type ScheduleEffort,
-  type ScheduleMode,
-  type SchedulePreset,
-  type ScheduleUpdateBody,
   switchPreset,
   triggerOf,
-} from "../lib/schedules";
+} from "../lib/automations";
+import { labelLocale } from "../lib/extension-label";
+import { decodeModel, encodeModel, pickerOptions } from "../lib/models";
+import {
+  allowHostProblem,
+  NETWORK_GRANT_PREFIX,
+  networkGrantHost,
+  normalizeHost,
+} from "../lib/network-hosts";
+import {
+  automationTargetsQuery,
+  chatTargetsQuery,
+  grantableToolsQuery,
+} from "../lib/query/automations";
+import { retryOnMountOf } from "../lib/query/client";
 import { ApiErrorDetail } from "./ApiErrorDetail";
 
 /** The fields the task form edits (the approved tools are their own section). */
-export interface ScheduleDraft {
+export interface AutomationDraft {
   name: string;
   agentId: string;
   prompt: string;
-  preset: SchedulePreset;
+  preset: AutomationPreset;
   /** The task's own zone (an existing task only). */
   timeZone: string | null;
-  mode: ScheduleMode;
+  mode: AutomationMode;
   conversationId: string;
   /** Kept as it is: a chat is set from the chat itself (through the agent's tools). */
-  chat: ScheduleChat | null;
+  chat: AutomationChat | null;
   /** `encodeModel` of the pick; "" = the agent's model. `new` mode only. */
   model: string;
   /** "" = the agent's effort. `new` mode only. */
@@ -80,7 +80,7 @@ export interface ScheduleDraft {
   expires: string;
 }
 
-export const emptyDraft = (agentId: string): ScheduleDraft => ({
+export const emptyDraft = (agentId: string): AutomationDraft => ({
   name: "",
   agentId,
   prompt: "",
@@ -94,7 +94,7 @@ export const emptyDraft = (agentId: string): ScheduleDraft => ({
   expires: "",
 });
 
-export const draftOf = (task: ScheduledTask): ScheduleDraft => ({
+export const draftOf = (task: Automation): AutomationDraft => ({
   name: task.name,
   agentId: task.agentId,
   prompt: task.prompt,
@@ -109,7 +109,7 @@ export const draftOf = (task: ScheduledTask): ScheduleDraft => ({
 });
 
 /** Whether the draft can be sent (the kernel checks the rest: cron, interval, target). */
-export const draftValid = (d: ScheduleDraft): boolean =>
+export const draftValid = (d: AutomationDraft): boolean =>
   d.name.trim() !== "" &&
   d.prompt.trim() !== "" &&
   d.agentId !== "" &&
@@ -119,12 +119,12 @@ export const draftValid = (d: ScheduleDraft): boolean =>
 
 /** The create body of a draft (`grants`: the tools approved up front). */
 export function createBodyOf(
-  d: ScheduleDraft,
+  d: AutomationDraft,
   grants: string[],
   timeZone: string | undefined,
   /** The zone the end date is read in (the creator's). */
   displayZone: string,
-): ScheduleCreateBody {
+): AutomationCreateBody {
   const model = d.model === "" ? null : decodeModel(d.model);
   return {
     agentId: d.agentId,
@@ -137,7 +137,7 @@ export function createBodyOf(
     ...(d.mode === "chat" && d.chat !== null ? { chat: d.chat } : {}),
     // model and effort: a new-conversation task's only (another runs with its conversation's)
     ...(d.mode === "new" && model !== null ? { model } : {}),
-    ...(d.mode === "new" && d.effort !== "" ? { effort: d.effort as ScheduleEffort } : {}),
+    ...(d.mode === "new" && d.effort !== "" ? { effort: d.effort as AutomationEffort } : {}),
     // an end date is a recurring task's (a one-off one has none)
     ...(d.expires !== "" && d.preset.kind !== "once"
       ? { expiresAt: endOfDayIn(d.expires, displayZone) }
@@ -146,12 +146,12 @@ export function createBodyOf(
   };
 }
 
-const sameTrigger = (a: SchedulePreset, b: SchedulePreset) =>
+const sameTrigger = (a: AutomationPreset, b: AutomationPreset) =>
   JSON.stringify(triggerOf(a)) === JSON.stringify(triggerOf(b));
 
 /** The patch of what changed between the saved task and the draft (empty: nothing). */
-export function patchOf(saved: ScheduleDraft, d: ScheduleDraft): ScheduleUpdateBody {
-  const p: ScheduleUpdateBody = {};
+export function patchOf(saved: AutomationDraft, d: AutomationDraft): AutomationUpdateBody {
+  const p: AutomationUpdateBody = {};
   if (d.name.trim() !== saved.name) p.name = d.name.trim();
   if (d.prompt.trim() !== saved.prompt) p.prompt = d.prompt.trim();
   if (d.agentId !== saved.agentId) p.agentId = d.agentId;
@@ -168,7 +168,7 @@ export function patchOf(saved: ScheduleDraft, d: ScheduleDraft): ScheduleUpdateB
   if (d.mode === "new") {
     if (d.model !== saved.model) p.model = d.model === "" ? null : decodeModel(d.model);
     if (d.effort !== saved.effort) {
-      p.effort = d.effort === "" ? null : (d.effort as ScheduleEffort);
+      p.effort = d.effort === "" ? null : (d.effort as AutomationEffort);
     }
   }
   if (d.expires !== saved.expires && d.preset.kind !== "once") {
@@ -179,7 +179,7 @@ export function patchOf(saved: ScheduleDraft, d: ScheduleDraft): ScheduleUpdateB
 }
 
 /** How many sections' fields differ (the ActionRow's count). */
-export const changedCount = (saved: ScheduleDraft, d: ScheduleDraft): number =>
+export const changedCount = (saved: AutomationDraft, d: AutomationDraft): number =>
   Object.keys(patchOf(saved, d)).length;
 
 /** The form's static field shapes while its data loads. */
@@ -190,14 +190,14 @@ export const LOADING_SECTIONS = {
   model: [{ control: "select" as const }, { control: "select" as const }],
 };
 
-type SetDraft = (f: (d: ScheduleDraft) => ScheduleDraft) => void;
+type SetDraft = (f: (d: AutomationDraft) => AutomationDraft) => void;
 
 /**
  * The task form's sections (spec §10): basics (name, agent, prompt), the schedule (presets that
  * write cron, the zone), where runs go and the model. `readOnly`: an org admin looking at another
  * member's task.
  */
-export function ScheduleFormSections({
+export function AutomationFormSections({
   orgId,
   draft,
   setDraft,
@@ -209,24 +209,24 @@ export function ScheduleFormSections({
   createZone,
 }: {
   orgId: string;
-  draft: ScheduleDraft;
+  draft: AutomationDraft;
   setDraft: SetDraft;
   agents: Agent[];
   providers: ProviderModels[];
   /** The saved task (edit): its zone, chat and expiry show. */
-  existing?: ScheduledTask;
+  existing?: Automation;
   readOnly?: boolean;
   /** The org's shortest interval between runs (the schedule section's hint). */
   minIntervalMinutes?: number;
   /** A new task: the zone it will take (my account's, else the browser's). */
   createZone?: string;
 }) {
-  const t = useTranslations("schedules.form");
-  const tw = useTranslations("schedules");
+  const t = useTranslations("automations.form");
+  const tw = useTranslations("automations");
   const te = useTranslations("chat.effort");
   const locale = labelLocale(useLocale());
   const zone = useTimeZone();
-  const set = <K extends keyof ScheduleDraft>(k: K, v: ScheduleDraft[K]) =>
+  const set = <K extends keyof AutomationDraft>(k: K, v: AutomationDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
   const agentOptions = agents.map((a) => ({ value: a.id, label: a.definition.name || a.id }));
   if (draft.agentId !== "" && !agentOptions.some((o) => o.value === draft.agentId)) {
@@ -240,7 +240,7 @@ export function ScheduleFormSections({
     modelOptions.push({ value: draft.model, label: draft.model });
   }
   const p = draft.preset;
-  const setPreset = (preset: SchedulePreset) => set("preset", preset);
+  const setPreset = (preset: AutomationPreset) => set("preset", preset);
   const targetsQ = chatTargetsQuery(orgId);
   const targets = useQuery({
     ...targetsQ,
@@ -248,7 +248,7 @@ export function ScheduleFormSections({
     retryOnMount: retryOnMountOf(targetsQ.queryKey),
   }).data?.items;
   const offerChat = draft.chat !== null || (targets?.length ?? 0) > 0;
-  const modes: ScheduleMode[] = ["new", "conversation", ...(offerChat ? ["chat" as const] : [])];
+  const modes: AutomationMode[] = ["new", "conversation", ...(offerChat ? ["chat" as const] : [])];
   // A chat task's agent is its connection's
   const agentFixed = draft.mode === "chat";
   return (
@@ -413,7 +413,7 @@ export function ScheduleFormSections({
             variant="card"
             value={draft.mode}
             disabled={readOnly}
-            onChange={(v) => set("mode", v as ScheduleMode)}
+            onChange={(v) => set("mode", v as AutomationMode)}
             options={modes.map((m) => ({
               value: m,
               label: t(`mode.${m}`),
@@ -471,7 +471,7 @@ export function ScheduleFormSections({
                 onChange={(e) => set("effort", e.target.value)}
                 options={[
                   { value: "", label: t("agentDefault") },
-                  ...SCHEDULE_EFFORTS.map((e) => ({ value: e, label: te(e) })),
+                  ...AUTOMATION_EFFORTS.map((e) => ({ value: e, label: te(e) })),
                 ]}
               />
             </Field>
@@ -496,8 +496,8 @@ function TargetConversation({
   disabled: boolean;
   onChange(v: string): void;
 }) {
-  const t = useTranslations("schedules.form");
-  const q = scheduleTargetsQuery(orgId, agentId);
+  const t = useTranslations("automations.form");
+  const q = automationTargetsQuery(orgId, agentId);
   const read = useQuery({
     ...q,
     enabled: agentId !== "",
@@ -529,11 +529,11 @@ function TargetChat({
   onChange,
 }: {
   targets: ChatTarget[] | undefined;
-  value: ScheduleChat | null;
+  value: AutomationChat | null;
   disabled: boolean;
   onChange(c: ChatTarget): void;
 }) {
-  const t = useTranslations("schedules.form");
+  const t = useTranslations("automations.form");
   const list = targets ?? [];
   const label = (c: ChatTarget) =>
     t("chatOption", { name: c.label, type: t(`chatType.${c.chatType}`) });
@@ -584,7 +584,7 @@ export function ApprovedToolsSection({
   onAdd,
   onRemove,
 }: {
-  granted: Pick<ScheduledTaskGrant, "toolKey" | "stale">[];
+  granted: Pick<AutomationGrant, "toolKey" | "stale">[];
   /** The agent's tools with their flags; undefined while they load. */
   tools: GrantableTool[] | undefined;
   refused: string[];
@@ -593,7 +593,7 @@ export function ApprovedToolsSection({
   onAdd(toolKey: string): void;
   onRemove(toolKey: string): void;
 }) {
-  const t = useTranslations("schedules.form");
+  const t = useTranslations("automations.form");
   const [pick, setPick] = useState("");
   // domains (`network:<host>`) are the Network access section's
   const granted = grantedAll.filter((g) => networkGrantHost(g.toolKey) === null);
@@ -711,7 +711,7 @@ export function NetworkAccessSection({
   onAdd(key: string): void;
   onRemove(key: string): void;
 }) {
-  const t = useTranslations("schedules.form");
+  const t = useTranslations("automations.form");
   const [host, setHost] = useState("");
   const [problem, setProblem] = useState<string>();
   const keys = granted.filter((k) => networkGrantHost(k) !== null);
@@ -797,7 +797,7 @@ export function NetworkAccessSection({
           <ApiErrorDetail
             error={error}
             open
-            summaries={{ "schedule.grant_not_allowed": t("networkRefused") }}
+            summaries={{ "automation.grant_not_allowed": t("networkRefused") }}
           />
         )}
       </Stack>

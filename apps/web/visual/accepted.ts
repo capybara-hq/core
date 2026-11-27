@@ -185,7 +185,7 @@ export const ACCEPTED: string[] = [
   // in place; the reference PNGs, the maintainer sign-off and the side-by-side review wait for
   // the reference-update and visual-update workflows
   "trend-chart",
-  // the scheduled tasks calendar (scheduled tasks calendar design §6, §11): blocks and size table
+  // the automations calendar (automations calendar design §6, §11): blocks and size table
   // in place; the reference PNGs and the side-by-side review wait for the reference-update and
   // visual-update workflows
   "schedule-calendar",

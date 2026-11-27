@@ -4,47 +4,47 @@ import { type Column, DataTable, ListPage, useToast } from "@capybara-hq/design"
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { AutomationCalendarView } from "../../../components/AutomationCalendarView";
+import {
+  type AutomationColumnKey,
+  automationColumns,
+  DeleteAutomationDialog,
+  useAutomationActions,
+  useAutomationWords,
+} from "../../../components/AutomationParts";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
-import { ScheduleCalendarView } from "../../../components/ScheduleCalendarView";
-import {
-  DeleteScheduleDialog,
-  type ScheduleColumnKey,
-  scheduleColumns,
-  useScheduleActions,
-  useScheduleWords,
-} from "../../../components/ScheduleParts";
 import { usePagePath } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
+import type { AutomationsUrl } from "../../../lib/automation-calendar";
+import type { AutomationListItem } from "../../../lib/automations";
+import { useAutomationsUrl } from "../../../lib/automations-url";
 import { roleAtLeast } from "../../../lib/members";
 import { agentsQuery } from "../../../lib/query/agents";
+import { automationsQuery } from "../../../lib/query/automations";
 import { retryOnMountOf } from "../../../lib/query/client";
 import { usePageQuery } from "../../../lib/query/page-query";
-import { schedulesQuery } from "../../../lib/query/schedules";
 import { orgSettingsQuery } from "../../../lib/query/settings";
 import { useWorkspace } from "../../../lib/query/workspace";
-import type { SchedulesUrl } from "../../../lib/schedule-calendar";
-import type { ScheduledTaskListItem } from "../../../lib/schedules";
-import { useSchedulesUrl } from "../../../lib/schedules-url";
 import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
 /**
- * `/schedules` (定时任务): my scheduled tasks, as a calendar or a list (the page head's tabs 日历 /
+ * `/automations` (自动化): my automations, as a calendar or a list (the page head's tabs 日历 /
  * 列表, calendar spec §4.1; the calendar is the default). The list (`?view=list`) is ListPage + DataTable: name, agent, the schedule in words
  * with its zone, status, next run and last result; a row opens the task, its menu pauses, resumes
- * or deletes it. The calendar (the bare `/schedules`) is ListPage + `ScheduleCalendar`
- * (`components/ScheduleCalendarView`). Members up (guests can't create tasks: the no-access
+ * or deletes it. The calendar (the bare `/automations`) is ListPage + `ScheduleCalendar`
+ * (`components/AutomationCalendarView`). Members up (guests can't create tasks: the no-access
  * state). From the query cache (the layout prefetched the list, the agents and, for a remembered
  * calendar, its range on a first load). `initial` is the view `page.tsx` read from the address and
- * the `cap_schedules_view` cookie.
+ * the `cap_automations_view` cookie.
  */
-export default function SchedulesView({ initial }: { initial: SchedulesUrl }) {
+export default function AutomationsView({ initial }: { initial: AutomationsUrl }) {
   const ws = useWorkspace({ min: "member" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
   return (
-    <Schedules
+    <Automations
       orgId={ws.orgId}
       accountId={ws.me.account.id}
       admin={roleAtLeast(ws.role, "admin")}
@@ -53,7 +53,7 @@ export default function SchedulesView({ initial }: { initial: SchedulesUrl }) {
   );
 }
 
-function Schedules({
+function Automations({
   orgId,
   accountId,
   admin,
@@ -62,20 +62,20 @@ function Schedules({
   orgId: string;
   accountId: string;
   admin: boolean;
-  initial: SchedulesUrl;
+  initial: AutomationsUrl;
 }) {
   const scope = usePagePath("org");
-  const t = useTranslations("schedules");
-  const [url, setUrl] = useSchedulesUrl(initial);
-  const list = usePageQuery(schedulesQuery(orgId));
+  const t = useTranslations("automations");
+  const [url, setUrl] = useAutomationsUrl(initial);
+  const list = usePageQuery(automationsQuery(orgId));
   const settingsQ = orgSettingsQuery(orgId);
   const off =
     useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) }).data?.settings
-      .scheduledTasks.enabled === false;
+      .automations.enabled === false;
   const header = {
-    path: [...scope, { label: "schedules" }],
+    path: [...scope, { label: "automations" }],
     title: t("title"),
-    actions: [{ label: t("new"), variant: "primary" as const, href: "/schedules/new" }],
+    actions: [{ label: t("new"), variant: "primary" as const, href: "/automations/new" }],
     tabs: [
       {
         id: "calendar",
@@ -91,7 +91,7 @@ function Schedules({
   const tasks = list.kind === "ready" ? list.data.items : null;
   if (url.view === "calendar") {
     return (
-      <ScheduleCalendarView
+      <AutomationCalendarView
         orgId={orgId}
         accountId={accountId}
         admin={admin}
@@ -103,11 +103,11 @@ function Schedules({
       />
     );
   }
-  return <ScheduleList orgId={orgId} header={header} tasks={tasks} off={off} />;
+  return <AutomationList orgId={orgId} header={header} tasks={tasks} off={off} />;
 }
 
 /** Compact rows (below 600): the name leads, the next run under it, the state at the end. */
-const COMPACT: Record<ScheduleColumnKey, NonNullable<Column<ScheduledTaskListItem>["compact"]>> = {
+const COMPACT: Record<AutomationColumnKey, NonNullable<Column<AutomationListItem>["compact"]>> = {
   name: "title",
   next: "subtitle",
   agent: "meta",
@@ -118,7 +118,7 @@ const COMPACT: Record<ScheduleColumnKey, NonNullable<Column<ScheduledTaskListIte
 
 type Header = Parameters<typeof ListPage>[0]["header"];
 
-function ScheduleList({
+function AutomationList({
   orgId,
   header,
   tasks,
@@ -126,22 +126,22 @@ function ScheduleList({
 }: {
   orgId: string;
   header: Header;
-  tasks: ScheduledTaskListItem[] | null;
+  tasks: AutomationListItem[] | null;
   off: boolean;
 }) {
-  const t = useTranslations("schedules");
+  const t = useTranslations("automations");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const when = useScheduleWords();
-  const actions = useScheduleActions(orgId);
-  const [deleting, setDeleting] = useState<ScheduledTaskListItem | null>(null);
+  const when = useAutomationWords();
+  const actions = useAutomationActions(orgId);
+  const [deleting, setDeleting] = useState<AutomationListItem | null>(null);
   const agentsQ = agentsQuery(orgId);
   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data;
   // Agent names are display only: the id shows when they can't be read.
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
-  const columns = scheduleColumns(t, when, agentName).map((c) => {
+  const columns = automationColumns(t, when, agentName).map((c) => {
     const compact = COMPACT[c.key];
     return compact === undefined ? c : { ...c, compact };
   });
@@ -166,12 +166,12 @@ function ScheduleList({
               empty: {
                 text: t("empty"),
                 hint: t("emptyHint"),
-                action: { label: t("new"), variant: "primary" as const, href: "/schedules/new" },
+                action: { label: t("new"), variant: "primary" as const, href: "/automations/new" },
               },
             }
           : {})}
       >
-        <DataTable<ScheduledTaskListItem>
+        <DataTable<AutomationListItem>
           label={t("listLabel")}
           columns={columns}
           rows={tasks}
@@ -179,7 +179,7 @@ function ScheduleList({
           rowLabel={(s) => s.name}
           state="ready"
           empty={{ title: t("empty"), hint: t("emptyHint") }}
-          onOpen={(s) => router.push(`/schedules/${encodeURIComponent(s.id)}`)}
+          onOpen={(s) => router.push(`/automations/${encodeURIComponent(s.id)}`)}
           rowMenu={(s) => [
             s.status === "active"
               ? {
@@ -196,7 +196,7 @@ function ScheduleList({
         />
       </ListPage>
       {deleting !== null && (
-        <DeleteScheduleDialog
+        <DeleteAutomationDialog
           name={deleting.name}
           onClose={() => setDeleting(null)}
           onDelete={async () => {

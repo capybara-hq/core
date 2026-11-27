@@ -128,7 +128,7 @@ function drawerData(): DrawerNavData {
     sections: [
       { id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox", badge: { count: 3 } },
       { id: "agents", label: "智能体", href: "/agents", icon: "agent" },
-      { id: "schedules", label: "定时任务", href: "/schedules", icon: "clock" },
+      { id: "automations", label: "自动化", href: "/automations", icon: "clock" },
     ],
     more: [
       { id: "skills", label: "技能", href: "/skills", icon: "skills" },
@@ -157,7 +157,7 @@ const sidebar = {
     primary: [
       { id: "agents", label: "智能体", href: "/agents", icon: "agent" as const },
       { id: "skills", label: "技能", href: "/skills", icon: "skills" as const },
-      { id: "schedules", label: "定时任务", href: "/schedules", icon: "clock" as const },
+      { id: "automations", label: "自动化", href: "/automations", icon: "clock" as const },
     ],
     more: [{ id: "devices", label: "设备", href: "/devices", icon: "cpu" as const }],
     inbox: { href: "/inbox", count: 3 },
@@ -251,7 +251,7 @@ describe("the Duo at 382 with data-native-nav", () => {
       '[data-part="drawer-recent"]',
       '[data-nav-section="inbox"]',
       '[data-nav-section="agents"]',
-      '[data-nav-section="schedules"]',
+      '[data-nav-section="automations"]',
     ];
     drawer(true);
     for (const s of pill) expect(hiddenAt(q(s), OUTER), s).toBe(true);
@@ -437,7 +437,7 @@ describe("the rail and the sidebar beside the strip (the inner display)", () => 
       '[data-part="new-conversation"]',
       ".cb-sidebar-recents",
       '[data-nav-section="agents"]',
-      '[data-nav-section="schedules"]',
+      '[data-nav-section="automations"]',
     ]) {
       expect(hiddenAt(side.querySelector(s), EXPANDED), s).toBe(true);
     }

@@ -1,20 +1,25 @@
-import type { CalendarCollapsed, CalendarItem, ScheduleTrigger, TaskRunStatus } from "./schedules";
+import type {
+  AutomationTrigger,
+  CalendarCollapsed,
+  CalendarItem,
+  TaskRunStatus,
+} from "./automations";
 
 /**
- * The calendar view of `/schedules` (calendar spec §4, §9), pure: the view and range kept in the
- * address and the `cap_schedules_view` cookie, the days a range shows, its bounds in the viewer's
+ * The calendar view of `/automations` (calendar spec §4, §9), pure: the view and range kept in the
+ * address and the `cap_automations_view` cookie, the days a range shows, its bounds in the viewer's
  * zone, where an instant sits on the grid, the range label and the words for a collapsed task.
  * Days are `YYYY-MM-DD` strings in the viewer's zone; nothing here reads the clock.
  */
 
-export type SchedulesView = "list" | "calendar";
+export type AutomationsView = "list" | "calendar";
 export type CalendarRange = "week" | "month";
 export type CalendarScope = "mine" | "all";
 export type CalendarItemState = "upcoming" | "running" | "completed" | "failed" | "skipped";
 
 /** What the address says (`?view=list`, or the calendar's `?range=week|month&date=YYYY-MM-DD&scope=all`). */
-export interface SchedulesUrl {
-  view: SchedulesView;
+export interface AutomationsUrl {
+  view: AutomationsView;
   range: CalendarRange;
   /** A day of the shown week or month; null: today. */
   date: string | null;
@@ -22,7 +27,7 @@ export interface SchedulesUrl {
 }
 
 /** The last chosen tab and range, per browser (calendar spec §4.1, Q5). */
-export const SCHEDULES_VIEW_COOKIE = "cap_schedules_view";
+export const AUTOMATIONS_VIEW_COOKIE = "cap_automations_view";
 const COOKIE_MAX_AGE = 365 * 24 * 60 * 60;
 
 const DAY = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -35,14 +40,14 @@ export function isDay(s: string | null | undefined): s is string {
   return t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
 }
 
-const parseView = (v: string | null | undefined): SchedulesView | undefined =>
+const parseView = (v: string | null | undefined): AutomationsView | undefined =>
   v === "list" || v === "calendar" ? v : undefined;
 const parseRange = (v: string | null | undefined): CalendarRange | undefined =>
   v === "week" || v === "month" ? v : undefined;
 
 /** The cookie's view and range (`calendar.month`); anything else reads as nothing. */
 export function parseViewCookie(value: string | undefined): {
-  view?: SchedulesView;
+  view?: AutomationsView;
   range?: CalendarRange;
 } {
   const [v, r] = (value ?? "").split(".");
@@ -52,8 +57,8 @@ export function parseViewCookie(value: string | undefined): {
 }
 
 /** The cookie a choice of tab and range writes (`SameSite=Lax`, a year, the whole site). */
-export function viewCookie(view: SchedulesView, range: CalendarRange): string {
-  return `${SCHEDULES_VIEW_COOKIE}=${view}.${range}; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax`;
+export function viewCookie(view: AutomationsView, range: CalendarRange): string {
+  return `${AUTOMATIONS_VIEW_COOKIE}=${view}.${range}; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax`;
 }
 
 type SearchLike = URLSearchParams | Record<string, string | string[] | undefined>;
@@ -68,7 +73,7 @@ function param(search: SearchLike, name: string): string | undefined {
  * The effective state of the page: the address wins, then the cookie (the view and the range), then
  * the calendar and the week. The admin scope is never remembered.
  */
-export function schedulesUrlOf(search: SearchLike, cookie?: string): SchedulesUrl {
+export function automationsUrlOf(search: SearchLike, cookie?: string): AutomationsUrl {
   const remembered = parseViewCookie(cookie);
   const date = param(search, "date");
   return {
@@ -80,7 +85,7 @@ export function schedulesUrlOf(search: SearchLike, cookie?: string): SchedulesUr
 }
 
 /** The address of a state (`?view=list` for the list; the calendar with what differs). */
-export function schedulesSearch(s: SchedulesUrl): string {
+export function automationsSearch(s: AutomationsUrl): string {
   if (s.view === "list") return "?view=list";
   const q = new URLSearchParams();
   if (s.range === "month") q.set("range", "month");
@@ -313,7 +318,7 @@ export function itemRef(it: CalendarItem): RunPanelRef {
  * only the count.
  */
 export function collapsedWords(
-  trigger: ScheduleTrigger,
+  trigger: AutomationTrigger,
 ):
   | { key: "minutes"; n: number }
   | { key: "hourly" }

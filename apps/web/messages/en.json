@@ -582,17 +582,17 @@
       "startingDescription": "The backend isn't ready yet. The page retries by itself.",
       "startingStill": "The backend still isn't ready. Try again later, or contact your administrator."
     },
-    "schedule": {
-      "not_found": "The scheduled task doesn't exist or was deleted.",
+    "automation": {
+      "not_found": "The automation doesn't exist or was deleted.",
       "forbidden": "Only the task's creator can change its prompt, schedule, target or approved tools.",
-      "disabled": "Scheduled tasks are turned off in this organization.",
+      "disabled": "Automations are turned off in this organization.",
       "target_invalid": "Where runs go isn't valid: pick a conversation of yours with this agent.",
       "grant_not_allowed": "This tool can't be approved for the task.",
       "interval_too_short": "The task runs too often for this organization's shortest interval.",
       "invalid_cron": "The cron expression isn't valid.",
       "invalid_once_time": "The date and time aren't valid.",
       "invalid_time_zone": "The time zone isn't valid.",
-      "limit_reached": "The limit of scheduled tasks is reached.",
+      "limit_reached": "The limit of automations is reached.",
       "once_in_past": "That time has already passed."
     },
     "deployment": {
@@ -673,11 +673,11 @@
         "GenerateImage": "Generate images",
         "Platform": "Use the platform",
         "CurrentTime": "Current time",
-        "ScheduleCreate": "Create scheduled tasks",
-        "ScheduleUpdate": "Change scheduled tasks",
-        "ScheduleList": "List scheduled tasks",
-        "ScheduleTargets": "List chats scheduled tasks can send to",
-        "ScheduleDelete": "Delete scheduled tasks"
+        "AutomationCreate": "Create automations",
+        "AutomationUpdate": "Change automations",
+        "AutomationList": "List automations",
+        "AutomationTargets": "List chats automations can send to",
+        "AutomationDelete": "Delete automations"
       },
       "connectorsLabel": "Connectors",
       "noConnectors": "No connectors are installed.",
@@ -1747,7 +1747,7 @@
       "configureReview": "Set up the review model",
       "locked": {
         "inherited": "Follows the main conversation's permissions",
-        "scheduled": "Scheduled tasks keep their own unattended approval rules"
+        "scheduled": "Automations keep their own unattended approval rules"
       },
       "full": {
         "title": "Use Auto on {device}?",
@@ -1987,7 +1987,7 @@
     "admin": "Admin console",
     "plugins": "Plugins",
     "extensions": "Extensions",
-    "schedules": "Scheduled tasks"
+    "automations": "Automations"
   },
   "conversations": {
     "title": "Conversations",
@@ -2201,7 +2201,7 @@
     "skill_change": "A skill change is waiting for your decision",
     "catalog_request": "A catalog request is waiting for you",
     "catalog_request_decided": "Your request has been decided",
-    "schedule_attention": "A scheduled task needs you",
+    "automation_attention": "An automation needs you",
     "other": "There is something new in your inbox"
   },
   "inbox": {
@@ -2673,7 +2673,7 @@
       "profile": "Profile",
       "preferences": "Preferences",
       "appearance": "Appearance",
-      "schedules": "Scheduled tasks",
+      "automations": "Automations",
       "audit": "Audit log",
       "shares": "Shares",
       "myShares": "My shares",
@@ -4504,13 +4504,13 @@
         "pluginOrgInstalled": "Installed a plugin",
         "pluginOrgUninstalled": "Uninstalled a plugin",
         "pluginScopeSyncFailed": "A plugin scope sync failed",
-        "scheduleCreated": "Created a scheduled task",
-        "scheduleDeleted": "Deleted a scheduled task",
-        "scheduleGrantsChanged": "Changed a scheduled task's permissions",
-        "schedulePaused": "Paused a scheduled task",
-        "scheduleResumed": "Resumed a scheduled task",
-        "scheduleRunNow": "Ran a scheduled task now",
-        "scheduleUpdated": "Updated a scheduled task",
+        "automationCreated": "Created an automation",
+        "automationDeleted": "Deleted an automation",
+        "automationGrantsChanged": "Changed an automation's permissions",
+        "automationPaused": "Paused an automation",
+        "automationResumed": "Resumed an automation",
+        "automationRunNow": "Ran an automation now",
+        "automationUpdated": "Updated an automation",
         "shareCreated": "Shared a file",
         "shareOpened": "Opened a shared file",
         "shareRefreshed": "Updated a shared file to its latest version",
@@ -6736,12 +6736,12 @@
       "platformTheme": "This plugin's theme cannot be the platform default: it must be offered to all organizations and on. Set the plugin's scope to all organizations, then apply again."
     }
   },
-  "schedules": {
-    "title": "Scheduled tasks",
-    "listLabel": "Scheduled tasks",
-    "new": "New scheduled task",
-    "empty": "No scheduled tasks yet",
-    "emptyHint": "A scheduled task sends a prompt to an agent on a schedule, for example a daily report at 09:00.",
+  "automations": {
+    "title": "Automations",
+    "listLabel": "Automations",
+    "new": "New automation",
+    "empty": "No automations yet",
+    "emptyHint": "An automation sends a prompt to an agent on a schedule, for example a daily report at 09:00.",
     "columns": {
       "name": "Name",
       "agent": "Agent",
@@ -6789,7 +6789,7 @@
     "noResult": "No runs yet",
     "failedInARow": "{n, plural, one {Failed once} other {Failed # times in a row}}",
     "form": {
-      "createTitle": "New scheduled task",
+      "createTitle": "New automation",
       "create": "Create task",
       "save": "Save",
       "basic": "Basics",
@@ -6940,8 +6940,8 @@
       "deleteDescription": "The task stops and is removed. Conversations it started stay.",
       "deleteConfirm": "Delete “{name}”?",
       "deleteConfirmBody": "The task stops and is removed. Conversations it started stay.",
-      "created": "Scheduled task created",
-      "saved": "Scheduled task saved",
+      "created": "Automation created",
+      "saved": "Automation saved",
       "started": "Run started",
       "trialStarted": "Trial run started: approvals reach you as usual and are added to the task's approved tools",
       "paused": "Task paused",
@@ -6952,10 +6952,10 @@
       "domainAdded": "Domain allowed for the task",
       "domainRemoved": "Domain removed from the task"
     },
-    "startedBy": "Started by the scheduled task <link>{name}</link>",
-    "turnedOff": "Scheduled tasks are turned off in this organization: no task runs, and none can be created.",
-    "startedByGone": "Started by a scheduled task that no longer exists",
-    "panelTitle": "Scheduled tasks",
+    "startedBy": "Started by the automation <link>{name}</link>",
+    "turnedOff": "Automations are turned off in this organization: no task runs, and none can be created.",
+    "startedByGone": "Started by an automation that no longer exists",
+    "panelTitle": "Automations",
     "nextRunAt": "Next run {at}",
     "tabs": {
       "list": "List",
@@ -6972,7 +6972,7 @@
       "emptyMonth": "No runs this month",
       "nextRun": "The next run is at {at}.",
       "jumpToNext": "Go to the next run",
-      "allPaused": "All scheduled tasks are paused",
+      "allPaused": "All automations are paused",
       "allPausedHint": "Resume a task to see its planned runs here.",
       "showList": "Show the list",
       "state": {
@@ -7032,12 +7032,12 @@
       }
     }
   },
-  "scheduleSettings": {
-    "title": "Scheduled tasks",
+  "automationSettings": {
+    "title": "Automations",
     "readonly": "Only organization admins change these settings.",
     "general": "General",
-    "generalHint": "Whether members can schedule tasks, and what a run does when a tool needs approval.",
-    "enabled": "Scheduled tasks",
+    "generalHint": "Whether members can create automations, and what a run does when a tool needs approval.",
+    "enabled": "Automations",
     "enabledHint": "Off: no task runs and none can be created; existing tasks show as turned off.",
     "unattendedAsk": "When a tool needs approval",
     "ask": {
@@ -7067,11 +7067,11 @@
     "save": "Save",
     "saved": "Settings saved",
     "tasks": "All tasks",
-    "tasksHint": "Every scheduled task in the organization. You can pause, resume or delete them; only their creators edit them.",
-    "tasksEmpty": "No scheduled tasks in the organization"
+    "tasksHint": "Every automation in the organization. You can pause, resume or delete them; only their creators edit them.",
+    "tasksEmpty": "No automations in the organization"
   },
-  "inboxSchedule": {
-    "label": "Scheduled task",
+  "inboxAutomation": {
+    "label": "Automation",
     "reason": {
       "missing_grants": "Its latest run was refused tools it isn't approved for",
       "failed": "Its latest run failed",
@@ -7081,7 +7081,7 @@
       "agent_gone": "Paused: its agent is gone",
       "target_gone": "Paused: its chat can't be reached",
       "conversation_gone": "Paused: its conversation is gone",
-      "org_disabled": "Paused: scheduled tasks are turned off in the organization",
+      "org_disabled": "Paused: automations are turned off in the organization",
       "expired": "Ended: past its end date",
       "invalid_schedule": "Paused: its schedule can't be read",
       "creator": "Paused"
@@ -7211,8 +7211,8 @@
       "repliesHint": "A conversation run finished or failed.",
       "tasks": "Task status",
       "tasksHint": "A background task or a sub-agent finished.",
-      "schedules": "Scheduled tasks",
-      "schedulesHint": "One of your scheduled tasks ran or failed."
+      "automations": "Automations",
+      "automationsHint": "One of your automations ran or failed."
     },
     "deviceName": {
       "ios": "iOS device",

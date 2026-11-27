@@ -3,32 +3,37 @@
 import { AppShell, useTimeZone } from "@capybara-hq/design";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
-import SchedulesView from "../../app/(app)/schedules/view";
-import { agentsQuery } from "../../lib/query/agents";
-import { membersQuery } from "../../lib/query/members";
-import { scheduleCalendarQuery, schedulesQuery } from "../../lib/query/schedules";
-import { orgSettingsQuery } from "../../lib/query/settings";
-import { meQuery, readinessQuery } from "../../lib/query/shell";
-import { addDays, type CalendarRange, rangeBounds, startOfDay } from "../../lib/schedule-calendar";
+import AutomationsView from "../../app/(app)/automations/view";
+import {
+  addDays,
+  type CalendarRange,
+  rangeBounds,
+  startOfDay,
+} from "../../lib/automation-calendar";
 import type {
+  AutomationListItem,
   CalendarAnswer,
   CalendarItem,
   CalendarTask,
-  ScheduledTaskListItem,
-} from "../../lib/schedules";
+} from "../../lib/automations";
+import { agentsQuery } from "../../lib/query/agents";
+import { automationCalendarQuery, automationsQuery } from "../../lib/query/automations";
+import { membersQuery } from "../../lib/query/members";
+import { orgSettingsQuery } from "../../lib/query/settings";
+import { meQuery, readinessQuery } from "../../lib/query/shell";
 import type { Me } from "../../lib/session";
 import { COMMANDS } from "./fixtures";
 import { sidebarProps, statusFixture } from "./shell-fixture";
 
 /**
- * `/dev/ui/pages/schedules-calendar[-month|-admin]`: the real `/schedules` calendar view drawn
+ * `/dev/ui/pages/automations-calendar[-month|-admin]`: the real `/automations` calendar view drawn
  * from a seeded query cache (no kernel), for its screenshot and interaction specs
  * (`visual/schedules-calendar.spec.ts`). The week of 2026-11-12 (today Thursday, the spec fixes
  * the clock at 10:24) in the browser's zone: every run state, an overlap that ends in 「+N」, a
  * trial run, planned runs and an hourly task collapsed per day; the month adds the days around it;
  * the admin view adds another member's tasks (全组织).
  */
-export type SchedulesPageVariant = "week" | "month" | "admin";
+export type AutomationsPageVariant = "week" | "month" | "admin";
 
 const ORG = "o1";
 const DATE = "2026-11-12";
@@ -94,7 +99,7 @@ const calTask = ([id, name, agentId, expr, accountId]: TaskSeed, zone: string): 
   nextRunAt: null,
 });
 
-const listTask = (t: CalendarTask): ScheduledTaskListItem => ({
+const listTask = (t: CalendarTask): AutomationListItem => ({
   ...t,
   orgId: ORG,
   prompt: "",
@@ -213,7 +218,7 @@ function answerFor(range: CalendarRange, all: boolean, zone: string): CalendarAn
 }
 
 /** A query cache holding the page's answers, never read again (no kernel behind the catalog). */
-function seeded(variant: SchedulesPageVariant, zone: string): QueryClient {
+function seeded(variant: AutomationsPageVariant, zone: string): QueryClient {
   const qc = new QueryClient({
     defaultOptions: { queries: { staleTime: Number.POSITIVE_INFINITY, retry: false } },
   });
@@ -227,11 +232,11 @@ function seeded(variant: SchedulesPageVariant, zone: string): QueryClient {
   });
   qc.setQueryData(agentsQuery(ORG).queryKey, { agents: AGENTS });
   qc.setQueryData(orgSettingsQuery(ORG).queryKey, {
-    settings: { scheduledTasks: { enabled: true, minIntervalMinutes: 60 } },
+    settings: { automations: { enabled: true, minIntervalMinutes: 60 } },
   });
   const mine = TASKS.filter((t) => t.length < 5).map((t) => listTask(calTask(t, zone)));
-  qc.setQueryData(schedulesQuery(ORG).queryKey, { items: mine });
-  qc.setQueryData(schedulesQuery(ORG, "all").queryKey, {
+  qc.setQueryData(automationsQuery(ORG).queryKey, { items: mine });
+  qc.setQueryData(automationsQuery(ORG, "all").queryKey, {
     items: TASKS.map((t) => listTask(calTask(t, zone))),
   });
   qc.setQueryData(membersQuery(ORG).queryKey, {
@@ -243,7 +248,7 @@ function seeded(variant: SchedulesPageVariant, zone: string): QueryClient {
   for (const range of ["week", "month"] as const) {
     for (const all of [false, true]) {
       qc.setQueryData(
-        scheduleCalendarQuery(ORG, { ...rangeBounds(range, DATE, zone), timeZone: zone, all })
+        automationCalendarQuery(ORG, { ...rangeBounds(range, DATE, zone), timeZone: zone, all })
           .queryKey,
         answerFor(range, all, zone),
       );
@@ -252,16 +257,16 @@ function seeded(variant: SchedulesPageVariant, zone: string): QueryClient {
   return qc;
 }
 
-/** The schedules page in the workspace shell. */
-export function SchedulesPageCatalog({ variant }: { variant: SchedulesPageVariant }) {
+/** The automations page in the workspace shell. */
+export function AutomationsPageCatalog({ variant }: { variant: AutomationsPageVariant }) {
   // the zone the page draws in (the server render's from `cb-tz`, as the view reads it)
   const zone = useTimeZone() ?? new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const [client] = useState(() => seeded(variant, zone));
-  const { onOpenCommands: _, ...sidebar } = sidebarProps({ active: "schedules" }, () => "#");
+  const { onOpenCommands: _, ...sidebar } = sidebarProps({ active: "automations" }, () => "#");
   return (
     <QueryClientProvider client={client}>
-      <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture("/schedules")}>
-        <SchedulesView
+      <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture("/automations")}>
+        <AutomationsView
           initial={{
             view: "calendar",
             range: variant === "month" ? "month" : "week",

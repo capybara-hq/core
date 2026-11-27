@@ -582,17 +582,17 @@
       "startingDescription": "后端服务还没就绪，页面会自动重试。",
       "startingStill": "后端服务仍未就绪。稍后再试，或联系管理员。"
     },
-    "schedule": {
-      "not_found": "定时任务不存在或已被删除。",
+    "automation": {
+      "not_found": "自动化不存在或已被删除。",
       "forbidden": "只有任务创建人可以修改提示、时间、目标或预先批准的工具。",
-      "disabled": "本组织已关闭定时任务。",
+      "disabled": "本组织已关闭自动化。",
       "target_invalid": "运行结果的去处无效：请选择你和这个智能体的会话。",
       "grant_not_allowed": "这个工具不能被预先批准。",
       "interval_too_short": "任务运行太频繁，短于组织的最短间隔。",
       "invalid_cron": "Cron 表达式无效。",
       "invalid_once_time": "日期和时刻无效。",
       "invalid_time_zone": "时区无效。",
-      "limit_reached": "定时任务数量已达上限。",
+      "limit_reached": "自动化数量已达上限。",
       "once_in_past": "这个时间已经过去了。"
     },
     "deployment": {
@@ -673,11 +673,11 @@
         "GenerateImage": "生成图片",
         "Platform": "操作平台",
         "CurrentTime": "获取当前时间",
-        "ScheduleCreate": "创建定时任务",
-        "ScheduleUpdate": "修改定时任务",
-        "ScheduleList": "查看定时任务",
-        "ScheduleTargets": "查看定时任务可发送的会话",
-        "ScheduleDelete": "删除定时任务"
+        "AutomationCreate": "创建自动化",
+        "AutomationUpdate": "修改自动化",
+        "AutomationList": "查看自动化",
+        "AutomationTargets": "查看自动化可发送的会话",
+        "AutomationDelete": "删除自动化"
       },
       "connectorsLabel": "连接器",
       "noConnectors": "还没有安装连接器。",
@@ -1735,7 +1735,7 @@
       "configureReview": "设置审查模型",
       "locked": {
         "inherited": "跟随主对话的权限",
-        "scheduled": "定时任务沿用自身的无人值守审批规则"
+        "scheduled": "自动化沿用自身的无人值守审批规则"
       },
       "full": {
         "title": "在 {device} 上使用自动模式？",
@@ -1975,7 +1975,7 @@
     "admin": "管理后台",
     "plugins": "插件",
     "extensions": "扩展",
-    "schedules": "定时任务"
+    "automations": "自动化"
   },
   "conversations": {
     "title": "会话",
@@ -2189,7 +2189,7 @@
     "skill_change": "一项技能变更在等你决定",
     "catalog_request": "一个目录申请在等你处理",
     "catalog_request_decided": "你的申请有了结果",
-    "schedule_attention": "一个定时任务需要你处理",
+    "automation_attention": "一个自动化需要你处理",
     "other": "收件箱里有新消息"
   },
   "inbox": {
@@ -2661,7 +2661,7 @@
       "profile": "个人资料",
       "preferences": "偏好设置",
       "appearance": "外观",
-      "schedules": "定时任务",
+      "automations": "自动化",
       "audit": "审计日志",
       "shares": "分享",
       "myShares": "我的分享",
@@ -4492,13 +4492,13 @@
         "pluginOrgInstalled": "安装了插件",
         "pluginOrgUninstalled": "卸载了插件",
         "pluginScopeSyncFailed": "插件范围同步失败",
-        "scheduleCreated": "创建了定时任务",
-        "scheduleDeleted": "删除了定时任务",
-        "scheduleGrantsChanged": "修改了定时任务的授权",
-        "schedulePaused": "暂停了定时任务",
-        "scheduleResumed": "恢复了定时任务",
-        "scheduleRunNow": "立即运行了定时任务",
-        "scheduleUpdated": "修改了定时任务",
+        "automationCreated": "创建了自动化",
+        "automationDeleted": "删除了自动化",
+        "automationGrantsChanged": "修改了自动化的授权",
+        "automationPaused": "暂停了自动化",
+        "automationResumed": "恢复了自动化",
+        "automationRunNow": "立即运行了自动化",
+        "automationUpdated": "修改了自动化",
         "shareCreated": "分享了文件",
         "shareOpened": "打开了分享的文件",
         "shareRefreshed": "把分享的文件更新到最新版本",
@@ -6724,12 +6724,12 @@
       "platformTheme": "此插件的主题不能作为平台默认主题：它必须向所有组织提供并处于启用状态。请先把此插件的范围设为所有组织，再重新应用。"
     }
   },
-  "schedules": {
-    "title": "定时任务",
-    "listLabel": "定时任务",
-    "new": "新建定时任务",
-    "empty": "还没有定时任务",
-    "emptyHint": "定时任务按时把一段提示发给智能体，例如每天 09:00 出一份日报。",
+  "automations": {
+    "title": "自动化",
+    "listLabel": "自动化",
+    "new": "新建自动化",
+    "empty": "还没有自动化",
+    "emptyHint": "自动化按时把一段提示发给智能体，例如每天 09:00 出一份日报。",
     "columns": {
       "name": "名称",
       "agent": "智能体",
@@ -6769,7 +6769,7 @@
         "agent_gone": "已暂停：智能体已不存在",
         "target_gone": "已暂停：无法送达聊天",
         "conversation_gone": "已暂停：会话已不存在",
-        "org_disabled": "已暂停：组织已关闭定时任务",
+        "org_disabled": "已暂停：组织已关闭自动化",
         "expired": "已结束：已过结束日期",
         "invalid_schedule": "已暂停：时间设置无法解析"
       }
@@ -6777,7 +6777,7 @@
     "noResult": "还没有运行",
     "failedInARow": "{n, plural, other {连续失败 # 次}}",
     "form": {
-      "createTitle": "新建定时任务",
+      "createTitle": "新建自动化",
       "create": "创建任务",
       "save": "保存",
       "basic": "基本信息",
@@ -6908,7 +6908,7 @@
         "agent_gone": "智能体已不存在",
         "target_gone": "无法送达聊天",
         "conversation_gone": "会话已不存在",
-        "org_disabled": "组织已关闭定时任务",
+        "org_disabled": "组织已关闭自动化",
         "plugin_disabled": "组织已停用该聊天插件",
         "unsupported_target": "暂不支持这个目标",
         "task_deleted": "任务已删除",
@@ -6928,8 +6928,8 @@
       "deleteDescription": "任务会停止并被移除，它创建的会话会保留。",
       "deleteConfirm": "删除「{name}」？",
       "deleteConfirmBody": "任务会停止并被移除，它创建的会话会保留。",
-      "created": "定时任务已创建",
-      "saved": "定时任务已保存",
+      "created": "自动化已创建",
+      "saved": "自动化已保存",
       "started": "已开始运行",
       "trialStarted": "试运行已开始：审批照常发给你，你批准的工具会加入任务的预先批准",
       "paused": "任务已暂停",
@@ -6940,10 +6940,10 @@
       "domainAdded": "已为任务允许这个域名",
       "domainRemoved": "已从任务移除这个域名"
     },
-    "startedBy": "由定时任务 <link>{name}</link> 发起",
-    "turnedOff": "本组织已关闭定时任务：任务不会运行，也不能新建。",
-    "startedByGone": "由一个已不存在的定时任务发起",
-    "panelTitle": "定时任务",
+    "startedBy": "由自动化 <link>{name}</link> 发起",
+    "turnedOff": "本组织已关闭自动化：任务不会运行，也不能新建。",
+    "startedByGone": "由一个已不存在的自动化发起",
+    "panelTitle": "自动化",
     "nextRunAt": "下次运行 {at}",
     "tabs": {
       "list": "列表",
@@ -6960,7 +6960,7 @@
       "emptyMonth": "本月没有运行",
       "nextRun": "下一次运行在 {at}。",
       "jumpToNext": "跳到下一次运行",
-      "allPaused": "所有定时任务都已暂停",
+      "allPaused": "所有自动化都已暂停",
       "allPausedHint": "恢复任务后，计划运行会出现在日历上。",
       "showList": "查看列表",
       "state": {
@@ -7020,12 +7020,12 @@
       }
     }
   },
-  "scheduleSettings": {
-    "title": "定时任务",
+  "automationSettings": {
+    "title": "自动化",
     "readonly": "只有组织管理员可以修改这些设置。",
     "general": "通用",
-    "generalHint": "成员能否创建定时任务，以及运行中工具需要审批时怎么办。",
-    "enabled": "定时任务",
+    "generalHint": "成员能否创建自动化，以及运行中工具需要审批时怎么办。",
+    "enabled": "自动化",
     "enabledHint": "关闭后任务不再运行，也不能新建；已有任务显示为已被组织关闭。",
     "unattendedAsk": "工具需要审批时",
     "ask": {
@@ -7049,17 +7049,17 @@
     "forbiddenHint": "定时运行中永远不允许使用的工具，也不能被预先批准。",
     "forbiddenTools": "工具键",
     "forbiddenHelp": "每行一个工具键，例如 Bash 或 mcp__github__create_issue。",
-    "forbiddenUnreadable": "组织的禁用工具列表无法读取：定时任务的无人值守运行会失败，也不能为任务批准工具。请检查下方的列表并保存来修复。",
+    "forbiddenUnreadable": "组织的禁用工具列表无法读取：自动化的无人值守运行会失败，也不能为任务批准工具。请检查下方的列表并保存来修复。",
     "saveRepair": "保存列表",
     "invalid": "请输入不小于 1 的整数。",
     "save": "保存",
     "saved": "设置已保存",
     "tasks": "全部任务",
-    "tasksHint": "组织中的所有定时任务。你可以暂停、恢复或删除；只有创建人能修改。",
-    "tasksEmpty": "组织中还没有定时任务"
+    "tasksHint": "组织中的所有自动化。你可以暂停、恢复或删除；只有创建人能修改。",
+    "tasksEmpty": "组织中还没有自动化"
   },
-  "inboxSchedule": {
-    "label": "定时任务",
+  "inboxAutomation": {
+    "label": "自动化",
     "reason": {
       "missing_grants": "最近一次运行中有工具未被预先批准而被拒绝",
       "failed": "最近一次运行失败",
@@ -7069,7 +7069,7 @@
       "agent_gone": "已暂停：智能体已不存在",
       "target_gone": "已暂停：无法送达聊天",
       "conversation_gone": "已暂停：会话已不存在",
-      "org_disabled": "已暂停：组织已关闭定时任务",
+      "org_disabled": "已暂停：组织已关闭自动化",
       "expired": "已结束：已过结束日期",
       "invalid_schedule": "已暂停：时间设置无法解析",
       "creator": "已暂停"
@@ -7199,8 +7199,8 @@
       "repliesHint": "会话的一次运行已完成或失败。",
       "tasks": "任务状态",
       "tasksHint": "后台任务或子智能体已结束。",
-      "schedules": "定时任务",
-      "schedulesHint": "你的定时任务已运行或运行失败。"
+      "automations": "自动化",
+      "automationsHint": "你的自动化已运行或运行失败。"
     },
     "deviceName": {
       "ios": "iOS 设备",

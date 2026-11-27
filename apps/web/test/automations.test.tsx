@@ -13,7 +13,7 @@ import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch } from "./support/server";
 import { stubWindowWidth } from "./support/width";
 
-// `/schedules` reads the remembered view's cookie (calendar spec §4.1): none here, the list.
+// `/automations` reads the remembered view's cookie (calendar spec §4.1): none here, the list.
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -26,10 +26,10 @@ vi.mock("next/navigation", () => ({
 }));
 
 const ORG = "/api/v1/orgs/o1";
-const BASE = `${ORG}/schedules`;
+const BASE = `${ORG}/automations`;
 const T = "2026-11-11T08:00:00.000Z";
-const E = en.schedules;
-const Z = zh.schedules;
+const E = en.automations;
+const Z = zh.automations;
 
 const asRole = (role: "owner" | "admin" | "member" | "guest"): Me => ({
   ...ME,
@@ -165,7 +165,7 @@ const common = {
   [`GET ${BASE}/grantable-tools?agentId=ag1`]: ok({ items: TOOLS }),
   [`GET ${BASE}/grantable-tools?agentId=ag2`]: ok({ items: TOOLS }),
   [`GET ${ORG}/settings`]: ok({
-    settings: { toolSearch: "on", scheduledTasks: { enabled: true, minIntervalMinutes: 60 } },
+    settings: { toolSearch: "on", automations: { enabled: true, minIntervalMinutes: 60 } },
   }),
   // my preferences: no zone of my own (the browser's applies)
   "GET /api/v1/me/preferences": ok({ timeZone: null }),
@@ -175,13 +175,13 @@ const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 const actionRow = () => screen.queryByRole("region", { name: "Pending changes" });
 
-beforeEach(() => resetNavigation("/schedules"));
+beforeEach(() => resetNavigation("/automations"));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-describe("/schedules (my scheduled tasks)", () => {
+describe("/automations (my automations)", () => {
   const routes = {
     ...common,
     [`GET ${BASE}`]: ok({
@@ -203,7 +203,7 @@ describe("/schedules (my scheduled tasks)", () => {
 
   it("lists the tasks from the hydrated cache with no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/schedules?view=list", routes);
+    await renderRouteWithCache("/automations?view=list", routes);
     expect(template("ListPage")).not.toBeNull();
     const rows = screen.getAllByRole("row").slice(1);
     expect(rows).toHaveLength(2);
@@ -221,9 +221,9 @@ describe("/schedules (my scheduled tasks)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("zh: the schedule in words and the 定时任务 title", async () => {
+  it("zh: the schedule in words and the 自动化 title", async () => {
     stubApi(routes);
-    await renderRouteWithCache("/schedules?view=list", routes, { locale: "zh" });
+    await renderRouteWithCache("/automations?view=list", routes, { locale: "zh" });
     expect(screen.getByRole("heading", { level: 1, name: Z.title })).toBeTruthy();
     expect(screen.getByText("工作日 09:00（Asia/Shanghai）")).toBeTruthy();
     expect(screen.getByText("每周一 08:30（UTC）")).toBeTruthy();
@@ -234,7 +234,7 @@ describe("/schedules (my scheduled tasks)", () => {
     const held = new Promise<void>((r) => {
       release = r;
     });
-    await renderRouteEmptyCache("/schedules?view=list", {
+    await renderRouteEmptyCache("/automations?view=list", {
       ...routes,
       [`GET ${BASE}`]: async () => {
         await held;
@@ -251,7 +251,7 @@ describe("/schedules (my scheduled tasks)", () => {
 
   it("no tasks: the empty state offers a new task", async () => {
     stubApi({ ...common, [`GET ${BASE}`]: ok({ items: [] }) });
-    await renderRouteWithCache("/schedules?view=list", lastStubRoutes());
+    await renderRouteWithCache("/automations?view=list", lastStubRoutes());
     expect(screen.getByText(E.empty)).toBeTruthy();
     expect(screen.getAllByRole("link", { name: E.new }).length).toBeGreaterThan(0);
   });
@@ -269,7 +269,7 @@ describe("/schedules (my scheduled tasks)", () => {
       [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
       [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
     });
-    await renderRouteWithCache("/schedules?view=list", lastStubRoutes());
+    await renderRouteWithCache("/automations?view=list", lastStubRoutes());
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Row actions" }));
     await user.click(await screen.findByRole("menuitem", { name: E.actions.pause }));
@@ -280,22 +280,22 @@ describe("/schedules (my scheduled tasks)", () => {
 
   it("a guest sees the no-access state and nothing is read", async () => {
     const calls = stubApi({});
-    await renderRouteWithCache("/schedules", {}, { me: asRole("guest") });
+    await renderRouteWithCache("/automations", {}, { me: asRole("guest") });
     expect(screen.getByText(en.roles.noAccess.title)).toBeTruthy();
     await settle();
     expect(calls).toEqual([]);
   });
 });
 
-describe("/schedules/new", () => {
+describe("/automations/new", () => {
   it("creates a task from a preset: cron, browser zone and the approved tools", async () => {
-    resetNavigation("/schedules/new");
+    resetNavigation("/automations/new");
     const calls = stubApi({
       ...common,
       [`POST ${BASE}`]: () => json(201, { task: task({ id: "s9" }) }),
       [`GET ${BASE}`]: ok({ items: [] }),
     });
-    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    await renderRouteWithCache("/automations/new", lastStubRoutes());
     expect(template("FormPage")).not.toBeNull();
     const create = screen.getByRole("button", { name: E.form.create });
     expect(create).toHaveProperty("disabled", true);
@@ -324,23 +324,23 @@ describe("/schedules/new", () => {
       grants: [{ toolKey: "WebSearch" }],
     });
     expect(typeof body.timeZone).toBe("string");
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/schedules/s9"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/automations/s9"));
   });
 
   it("Network access: domains become network:<host> grants; a refusal shows the kernel's reason", async () => {
-    resetNavigation("/schedules/new");
+    resetNavigation("/automations/new");
     const calls = stubApi({
       ...common,
       [`POST ${BASE}`]: () =>
         json(400, {
           error: {
-            code: "schedule.grant_not_allowed",
+            code: "automation.grant_not_allowed",
             message: "network:api.example.com: only an org admin can allow this host",
           },
         }),
       [`GET ${BASE}`]: ok({ items: [] }),
     });
-    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    await renderRouteWithCache("/automations/new", lastStubRoutes());
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: E.form.name }), "Export");
     await user.type(screen.getByRole("textbox", { name: E.form.prompt }), "Export it");
@@ -366,7 +366,7 @@ describe("/schedules/new", () => {
   });
 
   it("a chat target fixes the agent to its connection's and goes in the body", async () => {
-    resetNavigation("/schedules/new");
+    resetNavigation("/automations/new");
     const calls = stubApi({
       ...common,
       [`GET ${ORG}/agents`]: ok({
@@ -375,7 +375,7 @@ describe("/schedules/new", () => {
       [`POST ${BASE}`]: () => json(201, { task: task({ id: "s9" }) }),
       [`GET ${BASE}`]: ok({ items: [] }),
     });
-    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    await renderRouteWithCache("/automations/new", lastStubRoutes());
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: E.form.name }), "Chat brief");
     await user.type(screen.getByRole("textbox", { name: E.form.prompt }), "Go.");
@@ -403,14 +403,14 @@ describe("/schedules/new", () => {
   });
 
   it("the end date is the end of that day in my account's zone; a one-off sends none", async () => {
-    resetNavigation("/schedules/new");
+    resetNavigation("/automations/new");
     const calls = stubApi({
       ...common,
       "GET /api/v1/me/preferences": ok({ timeZone: "America/New_York" }),
       [`POST ${BASE}`]: () => json(201, { task: task({ id: "s9" }) }),
       [`GET ${BASE}`]: ok({ items: [] }),
     });
-    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    await renderRouteWithCache("/automations/new", lastStubRoutes());
     expect(screen.getByText(E.form.zoneCreate.replace("{zone}", "America/New_York"))).toBeTruthy();
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: E.form.name }), "Brief");
@@ -425,9 +425,9 @@ describe("/schedules/new", () => {
     expect(bodyOf(posts()[0])).toMatchObject({ expiresAt: "2027-01-01T04:59:59.000Z" });
 
     // the same draft as a one-off: no end date goes out
-    resetNavigation("/schedules/new");
+    resetNavigation("/automations/new");
     cleanup();
-    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    await renderRouteWithCache("/automations/new", lastStubRoutes());
     await user.type(screen.getByRole("textbox", { name: E.form.name }), "Once");
     await user.type(screen.getByRole("textbox", { name: E.form.prompt }), "Go.");
     await user.type(
@@ -447,14 +447,14 @@ describe("/schedules/new", () => {
   });
 
   it("turned off by the org: a notice and a form that can't create", async () => {
-    resetNavigation("/schedules/new");
+    resetNavigation("/automations/new");
     stubApi({
       ...common,
       [`GET ${ORG}/settings`]: ok({
-        settings: { toolSearch: "on", scheduledTasks: { enabled: false, minIntervalMinutes: 60 } },
+        settings: { toolSearch: "on", automations: { enabled: false, minIntervalMinutes: 60 } },
       }),
     });
-    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    await renderRouteWithCache("/automations/new", lastStubRoutes());
     expect(screen.getByText(E.turnedOff)).toBeTruthy();
     expect(screen.getByRole("textbox", { name: E.form.name })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: E.form.create })).toHaveProperty("disabled", true);
@@ -463,12 +463,12 @@ describe("/schedules/new", () => {
 
   it("a guest sees the no-access state", async () => {
     stubApi({});
-    await renderRouteWithCache("/schedules/new", {}, { me: asRole("guest") });
+    await renderRouteWithCache("/automations/new", {}, { me: asRole("guest") });
     expect(screen.getByText(en.roles.noAccess.title)).toBeTruthy();
   });
 });
 
-describe("/schedules/[id]", () => {
+describe("/automations/[id]", () => {
   const routes = (over: Record<string, unknown> = {}) => ({
     ...common,
     [`GET ${BASE}/s1`]: ok({ task: task(over) }),
@@ -490,11 +490,11 @@ describe("/schedules/[id]", () => {
     }),
   });
 
-  beforeEach(() => resetNavigation("/schedules/s1"));
+  beforeEach(() => resetNavigation("/automations/s1"));
 
   it("renders the task, grants and run history from the cache with no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/schedules/s1", routes());
+    await renderRouteWithCache("/automations/s1", routes());
     expect(template("FormPage")).not.toBeNull();
     expect(screen.getByRole("heading", { level: 1, name: "Daily report" })).toBeTruthy();
     expect((screen.getByRole("textbox", { name: E.form.name }) as HTMLInputElement).value).toBe(
@@ -530,7 +530,7 @@ describe("/schedules/[id]", () => {
       release = r;
     });
     const r = routes();
-    await renderRouteEmptyCache("/schedules/s1", {
+    await renderRouteEmptyCache("/automations/s1", {
       ...r,
       [`GET ${BASE}/s1`]: async () => {
         await held;
@@ -553,7 +553,7 @@ describe("/schedules/[id]", () => {
       [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
       [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
     });
-    await renderRouteWithCache("/schedules/s1", lastStubRoutes());
+    await renderRouteWithCache("/automations/s1", lastStubRoutes());
     const user = userEvent.setup();
     const name = screen.getByRole("textbox", { name: E.form.name });
     await user.clear(name);
@@ -586,7 +586,7 @@ describe("/schedules/[id]", () => {
       [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
       [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
     });
-    await renderRouteWithCache("/schedules/s1", lastStubRoutes());
+    await renderRouteWithCache("/automations/s1", lastStubRoutes());
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: E.actions.runNow }));
     await user.click(screen.getByRole("button", { name: E.actions.trialRun }));
@@ -623,7 +623,7 @@ describe("/schedules/[id]", () => {
       [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
       [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
     });
-    await renderRouteWithCache("/schedules/s1", lastStubRoutes());
+    await renderRouteWithCache("/automations/s1", lastStubRoutes());
     const domains = within(await screen.findByRole("list", { name: E.form.networkLabel }));
     expect(domains.getByText("api.example.com")).toBeTruthy();
     // the tools list does not show the domain
@@ -649,13 +649,13 @@ describe("/schedules/[id]", () => {
       [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
       [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
     });
-    await renderRouteWithCache("/schedules/s1", lastStubRoutes());
+    await renderRouteWithCache("/automations/s1", lastStubRoutes());
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: E.actions.delete }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: E.actions.delete }));
     expect(calls.some((c) => c.method === "DELETE" && c.url === `${BASE}/s1`)).toBe(true);
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/schedules"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/automations"));
   });
 
   it("a pause refetch keeps unsaved edits; the form's own save starts over", async () => {
@@ -675,7 +675,7 @@ describe("/schedules/[id]", () => {
       [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
       [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
     });
-    await renderRouteWithCache("/schedules/s1", lastStubRoutes());
+    await renderRouteWithCache("/automations/s1", lastStubRoutes());
     const user = userEvent.setup();
     const name = screen.getByRole("textbox", { name: E.form.name });
     await user.clear(name);
@@ -710,7 +710,7 @@ describe("/schedules/[id]", () => {
       [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
       [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
     });
-    await renderRouteWithCache("/schedules/s1", lastStubRoutes());
+    await renderRouteWithCache("/automations/s1", lastStubRoutes());
     const user = userEvent.setup();
     const end = screen.getByLabelText(new RegExp(`^${E.form.expires}`)) as HTMLInputElement;
     await user.type(end, "2026-12-31");
@@ -722,7 +722,7 @@ describe("/schedules/[id]", () => {
 
   it("an org admin on the task of a creator who left: the notice names a former member", async () => {
     stubApi(routes({ accountId: "gone" }));
-    await renderRouteWithCache("/schedules/s1", lastStubRoutes(), { me: asRole("admin") });
+    await renderRouteWithCache("/automations/s1", lastStubRoutes(), { me: asRole("admin") });
     const notice = await screen.findByRole("note");
     expect(within(notice).getByText(en.people.departed)).toBeTruthy();
     expect(notice.textContent).not.toContain("gone");
@@ -730,7 +730,7 @@ describe("/schedules/[id]", () => {
 
   it("an org admin on another member's task: read-only, pause in the action row, no run", async () => {
     stubApi(routes({ accountId: "a2" }));
-    await renderRouteWithCache("/schedules/s1", lastStubRoutes(), { me: asRole("admin") });
+    await renderRouteWithCache("/automations/s1", lastStubRoutes(), { me: asRole("admin") });
     const notice = screen.getByRole("note");
     // one sentence with the person in it (zh punctuation follows the message, not fragments)
     expect(notice.textContent).toBe(E.form.readOnlyOwner.replace("{name}", "Mei"));
@@ -745,17 +745,17 @@ describe("/schedules/[id]", () => {
 
   it("a guest sees the no-access state", async () => {
     stubApi({});
-    await renderRouteWithCache("/schedules/s1", {}, { me: asRole("guest") });
+    await renderRouteWithCache("/automations/s1", {}, { me: asRole("guest") });
     expect(screen.getByText(en.roles.noAccess.title)).toBeTruthy();
   });
 });
 
-describe("/settings/schedules (org admins)", () => {
-  const S = en.scheduleSettings;
+describe("/settings/automations (org admins)", () => {
+  const S = en.automationSettings;
   const SETTINGS = `${ORG}/settings`;
   const settings = {
     toolSearch: "on",
-    scheduledTasks: {
+    automations: {
       enabled: true,
       minIntervalMinutes: 60,
       maxTasksPerMember: 20,
@@ -774,14 +774,14 @@ describe("/settings/schedules (org admins)", () => {
     [`GET ${BASE}?all=true`]: ok({ items: [task({ accountId: "a2" })] }),
   };
 
-  beforeEach(() => resetNavigation("/settings/schedules"));
+  beforeEach(() => resetNavigation("/settings/automations"));
 
   it("renders the settings and every task from the cache with no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { container } = await renderRouteWithCache("/settings/schedules", routes);
+    const { container } = await renderRouteWithCache("/settings/automations", routes);
     expect(template("SettingsPage")).not.toBeNull();
     const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
-    expect(current?.textContent).toBe(en.connections.nav.schedules);
+    expect(current?.textContent).toBe(en.connections.nav.automations);
     const tasks = within(screen.getByRole("table", { name: S.tasks }));
     expect(tasks.getByText("Daily report")).toBeTruthy();
     expect(tasks.getByText("Mei")).toBeTruthy();
@@ -796,7 +796,7 @@ describe("/settings/schedules (org admins)", () => {
     const held = new Promise<void>((r) => {
       release = r;
     });
-    await renderRouteEmptyCache("/settings/schedules", {
+    await renderRouteEmptyCache("/settings/automations", {
       ...routes,
       [`GET ${SETTINGS}`]: async () => {
         await held;
@@ -812,17 +812,17 @@ describe("/settings/schedules (org admins)", () => {
   it.each(["zh", "en"] as const)(
     "saves the §9 fields through the org settings PATCH, only the changed ones (%s)",
     async (locale) => {
-      const s = (locale === "zh" ? zh : en).scheduleSettings;
+      const s = (locale === "zh" ? zh : en).automationSettings;
       const calls = stubApi({
         ...routes,
         [`PATCH ${SETTINGS}`]: (c) => {
-          const patch = (bodyOf(c) as { scheduledTasks: object }).scheduledTasks;
+          const patch = (bodyOf(c) as { automations: object }).automations;
           return json(200, {
-            settings: { ...settings, scheduledTasks: { ...settings.scheduledTasks, ...patch } },
+            settings: { ...settings, automations: { ...settings.automations, ...patch } },
           });
         },
       });
-      await renderRouteWithCache("/settings/schedules", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/settings/automations", lastStubRoutes(), { locale });
       const user = userEvent.setup();
       await user.click(screen.getByRole("switch", { name: s.enabled }));
       await user.click(screen.getByRole("radio", { name: new RegExp(`^${s.ask.wait}`) }));
@@ -839,7 +839,7 @@ describe("/settings/schedules (org admins)", () => {
       });
       await user.click(within(row).getByRole("button", { name: s.save }));
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-        scheduledTasks: {
+        automations: {
           enabled: false,
           unattendedAsk: "wait",
           maxRunsPerHour: 30,
@@ -854,18 +854,18 @@ describe("/settings/schedules (org admins)", () => {
   it.each(["zh", "en"] as const)(
     "an unreadable forbidden list shows a notice whose save sends the list unchanged, not a pending change (%s)",
     async (locale) => {
-      const s = (locale === "zh" ? zh : en).scheduleSettings;
+      const s = (locale === "zh" ? zh : en).automationSettings;
       const calls = stubApi({
         ...routes,
         [`GET ${SETTINGS}`]: ok({
           settings: {
             ...settings,
-            scheduledTasks: { ...settings.scheduledTasks, forbiddenToolsUnreadable: true },
+            automations: { ...settings.automations, forbiddenToolsUnreadable: true },
           },
         }),
         [`PATCH ${SETTINGS}`]: () => json(200, { settings }),
       });
-      await renderRouteWithCache("/settings/schedules", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/settings/automations", lastStubRoutes(), { locale });
       expect(screen.getByText(s.forbiddenUnreadable)).toBeTruthy();
       const user = userEvent.setup();
       // nothing edited: no pending change, the notice carries the repair
@@ -874,7 +874,7 @@ describe("/settings/schedules (org admins)", () => {
       ).toBeNull();
       await user.click(screen.getByRole("button", { name: s.saveRepair }));
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-        scheduledTasks: { forbiddenTools: [] },
+        automations: { forbiddenTools: [] },
       });
       expect(await screen.findByText(s.saved)).toBeTruthy();
       expect(screen.queryByText(s.forbiddenUnreadable)).toBeNull();
@@ -883,7 +883,7 @@ describe("/settings/schedules (org admins)", () => {
 
   it("an invalid number blocks the save", async () => {
     stubApi(routes);
-    await renderRouteWithCache("/settings/schedules", lastStubRoutes());
+    await renderRouteWithCache("/settings/automations", lastStubRoutes());
     const user = userEvent.setup();
     const min = screen.getByRole("textbox", { name: S.minIntervalMinutes });
     await user.clear(min);
@@ -895,19 +895,19 @@ describe("/settings/schedules (org admins)", () => {
     );
   });
 
-  it("a member sees the no-access state and the settings nav has no 定时任务 item", async () => {
+  it("a member sees the no-access state and the settings nav has no 自动化 item", async () => {
     const calls = stubApi({});
-    await renderRouteWithCache("/settings/schedules", {}, { me: asRole("member") });
+    await renderRouteWithCache("/settings/automations", {}, { me: asRole("member") });
     expect(screen.getByText(en.roles.noAccess.title)).toBeTruthy();
     await settle();
     expect(calls).toEqual([]);
   });
 });
 
-describe("/schedules/[id] run reasons on a wide window", () => {
+describe("/automations/[id] run reasons on a wide window", () => {
   it("a failed run's detail cell holds the ErrorDetail, and the first error line is not drawn", async () => {
-    resetNavigation("/schedules/s1");
-    await renderRouteWithCache("/schedules/s1", {
+    resetNavigation("/automations/s1");
+    await renderRouteWithCache("/automations/s1", {
       ...common,
       [`GET ${BASE}/s1`]: ok({ task: task() }),
       [`GET ${BASE}/s1/grants`]: ok({ items: [] }),
@@ -930,12 +930,12 @@ describe("/schedules/[id] run reasons on a wide window", () => {
   });
 });
 
-describe("schedules at 390", () => {
+describe("automations at 390", () => {
   beforeEach(() => void stubWindowWidth(390));
 
   it("the list rows show the name, the next run and the state", async () => {
     const routes = { ...common, [`GET ${BASE}`]: ok({ items: [task()] }) };
-    await renderRouteWithCache("/schedules?view=list", routes);
+    await renderRouteWithCache("/automations?view=list", routes);
     await screen.findByText("Daily report");
     const rows = document.querySelector('[data-part="table-compact"]') as HTMLElement;
     expect(rows).not.toBeNull();
@@ -961,8 +961,8 @@ describe("schedules at 390", () => {
         ],
       }),
     };
-    resetNavigation("/schedules/s1");
-    await renderRouteWithCache("/schedules/s1", routes);
+    resetNavigation("/automations/s1");
+    await renderRouteWithCache("/automations/s1", routes);
     await screen.findByText(E.runs.status.failed);
     const compact = document.querySelector('[data-part="table-compact"]') as HTMLElement;
     expect(compact).not.toBeNull();

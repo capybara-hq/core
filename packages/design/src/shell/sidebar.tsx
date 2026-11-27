@@ -1118,7 +1118,7 @@ function SetupNav({
 }
 
 /**
- * A native strip's marks (mobile layout spec §4.3): a section entry (Agents, Scheduled tasks) carries
+ * A native strip's marks (mobile layout spec §4.3): a section entry (Agents, Automations) carries
  * `data-nav-section`, every other navigation entry `data-nav-other`; both are hidden while the
  * strip shows (`[data-native-nav]`), when the sections come from the strip. Search, New
  * conversation and the recents carry `data-nav-pill`: the strip's pill holds them too

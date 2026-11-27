@@ -66,8 +66,8 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   // The inbox is the brand row's button (acceptance round 2, B2). No home item: 新会话 is the home;
   // 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07). 技能 is for members up.
   const primaryGuest = ["agents", "connectors"];
-  // 定时任务 for members up (guests can't create tasks; scheduled tasks spec §10)
-  const primary = ["agents", "skills", "connectors", "schedules"];
+  // 自动化 for members up (guests can't create tasks; automations spec §10)
+  const primary = ["agents", "skills", "connectors", "automations"];
   // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
   // 智能体模板 is no item: it is the 模板 tab of 智能体 (ruling P4-14)
@@ -102,7 +102,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     }
   });
 
-  it("the nav reads 智能体 技能 连接器 定时任务 after 新会话; members see 设备 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
+  it("the nav reads 智能体 技能 连接器 自动化 after 新会话; members see 设备 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -127,7 +127,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
         ["智能体", "agent", "/agents"],
         ["技能", "skills", "/skills"],
         ["连接器", "connector", "/connectors"],
-        ["定时任务", "clock", "/schedules"],
+        ["自动化", "clock", "/automations"],
       ],
       more: [
         ["设备", "cpu", "/devices"],
@@ -237,12 +237,12 @@ describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 
     return out as ReturnType<typeof useDrawerNav>;
   }
 
-  it("a member: 收件箱 with the count, 智能体, 定时任务; more holds 技能 连接器 设备 and an org page", () => {
+  it("a member: 收件箱 with the count, 智能体, 自动化; more holds 技能 连接器 设备 and an org page", () => {
     const d = drawer("member", { count: 3, more: false });
     expect(d.sections.map((s) => [s.id, s.label, s.href])).toEqual([
       ["inbox", "收件箱", "/inbox"],
       ["agents", "智能体", "/agents"],
-      ["schedules", "定时任务", "/schedules"],
+      ["automations", "自动化", "/automations"],
     ]);
     expect(d.sections[0]?.badge).toEqual({ count: 3 });
     expect(d.menuBadge).toEqual({ count: 3 });
@@ -265,7 +265,7 @@ describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 
     expect(hrefs).not.toContain("/admin");
   });
 
-  it("a guest: no 定时任务 and no 技能; nothing pending, no badge", () => {
+  it("a guest: no 自动化 and no 技能; nothing pending, no badge", () => {
     const d = drawer("guest");
     expect(d.sections.map((s) => s.id)).toEqual(["inbox", "agents"]);
     expect(d.more.map((m) => m.href)).toEqual(["/connectors", "/devices", "/p/acme/board"]);
@@ -326,7 +326,7 @@ describe("org settings nav", () => {
       "shares",
       "audit",
       "sandbox",
-      "schedules",
+      "automations",
     ]);
     expect(items.some((i) => i.href === "/settings/extensions")).toBe(false);
     expect(items.some((i) => i.href === "/settings/plugins")).toBe(false);
@@ -344,8 +344,8 @@ describe("activeNavOf", () => {
     ["/connectors/c1", "connectors"],
     ["/devices", "devices"],
     ["/devices/e1", "devices"],
-    ["/schedules", "schedules"],
-    ["/schedules/s1", "schedules"],
+    ["/automations", "automations"],
+    ["/automations/s1", "automations"],
     ["/plugins", "plugins"],
     ["/plugins/i1/enable", "plugins"],
     ["/extensions", "extensions"],

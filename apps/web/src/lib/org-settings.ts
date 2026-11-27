@@ -1,6 +1,6 @@
 import { apiFetch } from "./api";
+import type { AutomationsSettings } from "./automations";
 import type { CompactionSettings, CompactionSettingsPatch } from "./compaction";
-import type { ScheduledTasksSettings } from "./schedules";
 import type { UiArrangementEntry } from "./ui";
 
 /** A device sandbox network: the open public internet (private networks blocked) or an allowlist. */
@@ -92,8 +92,8 @@ export interface OrgSettings {
    * (themes spec §7); absent: follow the platform, allowed.
    */
   theme?: OrgThemeSetting;
-  /** Scheduled tasks (scheduled tasks spec §9). */
-  scheduledTasks: ScheduledTasksSettings;
+  /** Automations (automations spec §9). */
+  automations: AutomationsSettings;
   /**
    * The organization's conversation compaction overrides (context compaction spec §4.8); absent
    * follows the platform.
@@ -179,14 +179,14 @@ export type OrgSettingsPatch = Partial<
     | "deviceDefaultProvider"
     | "timeZone"
     | "theme"
-    | "scheduledTasks"
+    | "automations"
     | "compaction"
     | "promptSuggestions"
   >
 > & {
-  /** The scheduled-task fields to change; the rest keep their value. */
+  /** The automation fields to change; the rest keep their value. */
   /** `forbiddenToolsUnreadable` is in responses only. */
-  scheduledTasks?: Partial<Omit<ScheduledTasksSettings, "forbiddenToolsUnreadable">>;
+  automations?: Partial<Omit<AutomationsSettings, "forbiddenToolsUnreadable">>;
   /** null clears the theme setting (follow the platform, allowed). */
   theme?: OrgThemeSetting | null;
   /** null clears it (follow the platform). */

@@ -40,7 +40,7 @@ describe("desktopOnly routes", () => {
     "/conversations",
     "/inbox",
     "/agents",
-    "/schedules",
+    "/automations",
     "/skills",
     "/connectors",
     "/devices",

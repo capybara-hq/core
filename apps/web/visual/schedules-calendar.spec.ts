@@ -1,8 +1,8 @@
 import { expect, type Page, test } from "@playwright/test";
 
 /**
- * The scheduled tasks calendar page (calendar spec §11): the real `/schedules` calendar view drawn
- * from a seeded query cache at `/dev/ui/pages/schedules-calendar[-month|-admin]` (no kernel), with
+ * The automations calendar page (calendar spec §11): the real `/automations` calendar view drawn
+ * from a seeded query cache at `/dev/ui/pages/automations-calendar[-month|-admin]` (no kernel), with
  * the clock fixed at Thursday 2026-11-12 10:24 in Asia/Shanghai. Baselines: the week and the month
  * at the desktop width, the admin's 全组织, the open run panel and the phone's agenda (390), dark
  * and light; rendered only by the `visual-update` workflow. Then the keyboard path and, with
@@ -39,12 +39,12 @@ async function open(
 }
 
 const CASES = [
-  { name: "week-1440", route: "schedules-calendar" },
-  { name: "month-1440", route: "schedules-calendar-month" },
-  { name: "admin-1440", route: "schedules-calendar-admin" },
+  { name: "week-1440", route: "automations-calendar" },
+  { name: "month-1440", route: "automations-calendar-month" },
+  { name: "admin-1440", route: "automations-calendar-admin" },
   // the failed run of Monday 14:00, opened from the hash
-  { name: "sheet-1440", route: "schedules-calendar", hash: "#run=tr5" },
-  { name: "agenda-390", route: "schedules-calendar", width: 390 },
+  { name: "sheet-1440", route: "automations-calendar", hash: "#run=tr5" },
+  { name: "agenda-390", route: "automations-calendar", width: 390 },
 ] as const;
 
 for (const theme of THEMES) {
@@ -66,7 +66,7 @@ for (const theme of THEMES) {
 test("keyboard: one tab stop, arrows move between runs, Enter opens the run panel", async ({
   page,
 }) => {
-  await open(page, "schedules-calendar");
+  await open(page, "automations-calendar");
   const grid = page.locator('[data-part="schedule-calendar-grid"]');
   const stop = grid.locator('[tabindex="0"]');
   await expect(stop).toHaveCount(1);
@@ -95,7 +95,7 @@ test.describe("first paint without JavaScript", () => {
       .context()
       .addCookies([{ name: "cb-tz", value: "Asia/Shanghai", url: `http://localhost:${PORT}` }]);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/dev/ui/pages/schedules-calendar");
+    await page.goto("/dev/ui/pages/automations-calendar");
     await expect(page.locator('[data-part="schedule-calendar-agenda"]')).toBeVisible();
     await expect(page.locator('[data-part="schedule-calendar-grid"]')).toBeHidden();
     const overflow = await page.evaluate(

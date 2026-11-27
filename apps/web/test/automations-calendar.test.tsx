@@ -4,8 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { addDays, dayIn, rangeBounds, startOfDay } from "../src/lib/automation-calendar";
 import { keys } from "../src/lib/query/keys";
-import { addDays, dayIn, rangeBounds, startOfDay } from "../src/lib/schedule-calendar";
 import type { Me } from "../src/lib/session";
 import { json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
@@ -30,17 +30,17 @@ vi.mock("next/navigation", () => ({
 }));
 
 const ORG = "/api/v1/orgs/o1";
-const BASE = `${ORG}/schedules`;
+const BASE = `${ORG}/automations`;
 const CAL = `${BASE}/calendar`;
-const E = en.schedules;
-const C = en.schedules.calendar;
+const E = en.automations;
+const C = en.automations.calendar;
 /** The zone the browser (this process) draws in: the server knows it from `cb-tz`. */
 const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** Thursday 2026-11-12 in most zones (Wednesday or Friday at the far ones: the same week). */
 const NOW = Date.parse("2026-11-12T12:00:00.000Z");
 const TODAY = dayIn(NOW, ZONE);
 const WEEK = rangeBounds("week", TODAY, ZONE);
-const COOKIES = `cb-tz=${encodeURIComponent(ZONE)}; cap_schedules_view=calendar.week`;
+const COOKIES = `cb-tz=${encodeURIComponent(ZONE)}; cap_automations_view=calendar.week`;
 
 const asRole = (role: "owner" | "admin" | "member" | "guest"): Me => ({
   ...ME,
@@ -149,7 +149,7 @@ const ok = (body: unknown) => () => json(200, body);
 const routes = (over: Record<string, () => unknown> = {}) => ({
   [`GET ${ORG}/agents`]: ok({ agents: [AGENT] }),
   [`GET ${ORG}/settings`]: ok({
-    settings: { scheduledTasks: { enabled: true, minIntervalMinutes: 60 } },
+    settings: { automations: { enabled: true, minIntervalMinutes: 60 } },
   }),
   [`GET ${BASE}`]: ok({ items: [listTask()] }),
   [`GET ${CAL}`]: ok(ANSWER),
@@ -195,10 +195,10 @@ const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
-  resetNavigation("/schedules");
-  window.history.replaceState(null, "", "/schedules");
+  resetNavigation("/automations");
+  window.history.replaceState(null, "", "/automations");
   // biome-ignore lint/suspicious/noDocumentCookie: the test clears what the page wrote
-  document.cookie = "cap_schedules_view=; Max-Age=0; Path=/";
+  document.cookie = "cap_automations_view=; Max-Age=0; Path=/";
 });
 
 afterEach(() => {
@@ -208,10 +208,10 @@ afterEach(() => {
   req.cookie = "";
 });
 
-describe("/schedules?view=calendar", () => {
+describe("/automations?view=calendar", () => {
   it("a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await load("/schedules?view=calendar");
+    const { calls } = await load("/automations?view=calendar");
     // the server read the shown week in the viewer's zone, mine
     expect(calendarReads(calls)).toEqual([{ ...WEEK, timeZone: ZONE }]);
     expect(screen.getByRole("tab", { name: E.tabs.calendar }).getAttribute("aria-selected")).toBe(
@@ -227,7 +227,7 @@ describe("/schedules?view=calendar", () => {
   });
 
   it("the bare page is the calendar, its tab first", async () => {
-    await load("/schedules", { cookie: `cb-tz=${encodeURIComponent(ZONE)}` });
+    await load("/automations", { cookie: `cb-tz=${encodeURIComponent(ZONE)}` });
     expect(grid()).not.toBeNull();
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
       E.tabs.calendar,
@@ -236,7 +236,7 @@ describe("/schedules?view=calendar", () => {
   });
 
   it("the cookie restores the list on a document load of the bare page", async () => {
-    await load("/schedules", { cookie: "cap_schedules_view=list.week" });
+    await load("/automations", { cookie: "cap_automations_view=list.week" });
     expect(screen.getByRole("tab", { name: E.tabs.list }).getAttribute("aria-selected")).toBe(
       "true",
     );
@@ -244,7 +244,7 @@ describe("/schedules?view=calendar", () => {
 
   it("the cookie restores the calendar on a document load of the bare page", async () => {
     const browser = expectNoFirstPaintFetch();
-    await load("/schedules");
+    await load("/automations");
     expect(grid()).not.toBeNull();
     expect(block("run=tr1")).not.toBeNull();
     await settle();
@@ -253,8 +253,8 @@ describe("/schedules?view=calendar", () => {
 
   it("without the viewer's zone the server reads no range: the view reads it on mount", async () => {
     const calls = stubApi(routes());
-    const { calls: server } = await load("/schedules", {
-      cookie: "cap_schedules_view=calendar.month",
+    const { calls: server } = await load("/automations", {
+      cookie: "cap_automations_view=calendar.month",
     });
     expect(calendarReads(server)).toEqual([]);
     await vi.waitFor(() => expect(block("run=tr1")).not.toBeNull());
@@ -270,7 +270,7 @@ describe("/schedules?view=calendar", () => {
     });
     req.cookie = COOKIES;
     await renderRouteEmptyCache(
-      "/schedules?view=calendar",
+      "/automations?view=calendar",
       routes({
         [`GET ${CAL}`]: async () => {
           await held;
@@ -288,23 +288,23 @@ describe("/schedules?view=calendar", () => {
 
   it("the tabs switch without a read and are remembered in the address and the cookie", async () => {
     const calls = stubApi(routes());
-    await load("/schedules?view=calendar");
+    await load("/automations?view=calendar");
     const user = userEvent.setup();
     await user.click(screen.getByRole("tab", { name: E.tabs.list }));
     expect(screen.getAllByRole("row").length).toBeGreaterThan(1);
     expect(window.location.search).toBe("?view=list");
-    expect(document.cookie).toContain("cap_schedules_view=list.week");
+    expect(document.cookie).toContain("cap_automations_view=list.week");
     await user.click(screen.getByRole("tab", { name: E.tabs.calendar }));
     expect(block("run=tr1")).not.toBeNull();
     expect(window.location.search).toBe("");
-    expect(document.cookie).toContain("cap_schedules_view=calendar.week");
+    expect(document.cookie).toContain("cap_automations_view=calendar.week");
     await settle();
     expect(calls.filter((c) => c.method === "GET")).toEqual([]);
   });
 
   it("previous / next change the range read; the month is remembered", async () => {
     const calls = stubApi(routes());
-    await load("/schedules?view=calendar");
+    await load("/automations?view=calendar");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Next week" }));
     await vi.waitFor(() => expect(calendarReads(calls)).toHaveLength(1));
@@ -317,20 +317,20 @@ describe("/schedules?view=calendar", () => {
       ...rangeBounds("month", next, ZONE),
       timeZone: ZONE,
     });
-    expect(document.cookie).toContain("cap_schedules_view=calendar.month");
+    expect(document.cookie).toContain("cap_automations_view=calendar.month");
   });
 
-  it("a task change elsewhere invalidates the calendar (its key is under schedulesAll)", async () => {
+  it("a task change elsewhere invalidates the calendar (its key is under automationsAll)", async () => {
     const calls = stubApi(routes());
-    const { client } = await load("/schedules?view=calendar");
-    await act(() => client.invalidateQueries({ queryKey: keys.org("o1").schedulesAll() }));
+    const { client } = await load("/automations?view=calendar");
+    await act(() => client.invalidateQueries({ queryKey: keys.org("o1").automationsAll() }));
     await vi.waitFor(() => expect(calendarReads(calls).length).toBeGreaterThan(0));
   });
 
   it("the run panel opens from the hash: my run, its conversation and the task", async () => {
     stubApi(routes());
-    window.history.replaceState(null, "", "/schedules?view=calendar#run=tr2");
-    await load("/schedules?view=calendar");
+    window.history.replaceState(null, "", "/automations?view=calendar#run=tr2");
+    await load("/automations?view=calendar");
     const sheet = await screen.findByRole("dialog");
     expect(within(sheet).getByText("Daily report", { selector: "h2" })).toBeTruthy();
     expect(within(sheet).getByText(C.panel.run)).toBeTruthy();
@@ -338,7 +338,7 @@ describe("/schedules?view=calendar", () => {
       within(sheet).getByRole("link", { name: C.panel.openConversation }).getAttribute("href"),
     ).toBe("/chat/c2");
     expect(within(sheet).getByRole("link", { name: C.panel.openTask }).getAttribute("href")).toBe(
-      "/schedules/s1",
+      "/automations/s1",
     );
     // the task's zone differs from the viewer's (unless the viewer is in New York)
     if (ZONE !== "America/New_York") {
@@ -353,7 +353,7 @@ describe("/schedules?view=calendar", () => {
 
   it("an occurrence opens as planned, with why it may still be skipped", async () => {
     stubApi(routes());
-    await load("/schedules?view=calendar");
+    await load("/automations?view=calendar");
     await userEvent.setup().click(block("at=s1/2026-11-13T14:00:00.000Z") as HTMLElement);
     const sheet = await screen.findByRole("dialog");
     expect(within(sheet).getByText(C.panel.plannedHint)).toBeTruthy();
@@ -369,11 +369,11 @@ describe("/schedules?view=calendar", () => {
           (fail ? json(500, { code: "internal", message: "boom" }) : json(200, ANSWER)) as never,
       }),
     );
-    window.history.replaceState(null, "", "/schedules?view=calendar#run=tr2");
-    const { client } = await load("/schedules?view=calendar");
+    window.history.replaceState(null, "", "/automations?view=calendar#run=tr2");
+    const { client } = await load("/automations?view=calendar");
     expect(await screen.findByRole("dialog")).toBeTruthy();
     fail = true;
-    await act(() => client.refetchQueries({ queryKey: keys.org("o1").schedulesAll() }));
+    await act(() => client.refetchQueries({ queryKey: keys.org("o1").automationsAll() }));
     await vi.waitFor(() =>
       expect(document.querySelector('[data-part="schedule-calendar-error"]')).not.toBeNull(),
     );
@@ -438,7 +438,7 @@ describe("/schedules?view=calendar", () => {
     );
     req.cookie = COOKIES;
     await renderRouteWithCache(
-      "/schedules?view=calendar",
+      "/automations?view=calendar",
       routes({ [`GET ${CAL}`]: ok(dense) }) as never,
       { cookie: COOKIES },
     );
@@ -464,7 +464,7 @@ describe("/schedules?view=calendar", () => {
 
   it("an admin's remembered 全组织 address is prefetched on a document load", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await load("/schedules?view=calendar&scope=all", { me: asRole("admin") });
+    const { calls } = await load("/automations?view=calendar&scope=all", { me: asRole("admin") });
     expect(calendarReads(calls)).toEqual([{ ...WEEK, timeZone: ZONE, all: "true" }]);
     expect(calls.some((c) => c.url === `${BASE}?all=true`)).toBe(true);
     expect(calls.some((c) => c.url === `${ORG}/members`)).toBe(true);
@@ -474,7 +474,7 @@ describe("/schedules?view=calendar", () => {
 
   it("a member never sees the scope control", async () => {
     stubApi(routes());
-    await load("/schedules?view=calendar&scope=all", { me: asRole("member") });
+    await load("/automations?view=calendar&scope=all", { me: asRole("member") });
     expect(screen.queryByRole("radio", { name: C.all })).toBeNull();
   });
 
@@ -504,7 +504,7 @@ describe("/schedules?view=calendar", () => {
         }),
       }),
     );
-    await load("/schedules?view=calendar", { me: asRole("admin") });
+    await load("/automations?view=calendar", { me: asRole("admin") });
     const user = userEvent.setup();
     await user.click(screen.getByRole("radio", { name: C.all }));
     await vi.waitFor(() => expect(block("run=tr9")).not.toBeNull());
@@ -551,7 +551,7 @@ describe("/schedules?view=calendar", () => {
         }),
       }),
     );
-    await load("/schedules?view=calendar", { me: asRole("admin") });
+    await load("/automations?view=calendar", { me: asRole("admin") });
     const user = userEvent.setup();
     await user.click(screen.getByRole("radio", { name: C.all }));
     await vi.waitFor(() => expect(block("run=tr9")).not.toBeNull());
@@ -568,7 +568,7 @@ describe("/schedules?view=calendar", () => {
     stubApi(routes());
     req.cookie = COOKIES;
     await renderRouteWithCache(
-      "/schedules?view=calendar",
+      "/automations?view=calendar",
       routes({
         [`GET ${CAL}`]: ok({
           ...ANSWER,
@@ -586,7 +586,7 @@ describe("/schedules?view=calendar", () => {
     const calls = stubApi(routes());
     req.cookie = COOKIES;
     await renderRouteWithCache(
-      "/schedules?view=calendar",
+      "/automations?view=calendar",
       routes({
         [`GET ${CAL}`]: ok({ ...ANSWER, tasks: [], items: [] }),
         [`GET ${BASE}`]: ok({ items: [listTask({ nextRunAt: "2026-11-20T14:00:12.000Z" })] }),
@@ -603,7 +603,7 @@ describe("/schedules?view=calendar", () => {
     stubApi(routes());
     req.cookie = COOKIES;
     await renderRouteWithCache(
-      "/schedules?view=calendar",
+      "/automations?view=calendar",
       routes({
         [`GET ${CAL}`]: ok({ ...ANSWER, tasks: [], items: [] }),
         [`GET ${BASE}`]: ok({
@@ -621,8 +621,8 @@ describe("/schedules?view=calendar", () => {
 
   it("zh: 日历 tab, 智能体-free copy and the zone line", async () => {
     stubApi(routes());
-    await load("/schedules?view=calendar", { locale: "zh" });
-    expect(screen.getByRole("tab", { name: zh.schedules.tabs.calendar })).toBeTruthy();
+    await load("/automations?view=calendar", { locale: "zh" });
+    expect(screen.getByRole("tab", { name: zh.automations.tabs.calendar })).toBeTruthy();
     expect(document.body.textContent).toContain(`时间按 ${ZONE} 显示。`);
     expect(block("run=tr2")?.getAttribute("aria-label")).toMatch(
       /^Daily report，Helper，11月\d+日 周.+ \d\d:\d\d，失败$/,

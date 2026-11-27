@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  automationsSearch,
+  automationsUrlOf,
   collapsedState,
   collapsedWords,
   dayIn,
@@ -11,38 +13,36 @@ import {
   rangeDays,
   rangeLabel,
   refId,
-  schedulesSearch,
-  schedulesUrlOf,
   shiftDate,
   startOfDay,
   viewCookie,
-} from "../src/lib/schedule-calendar";
+} from "../src/lib/automation-calendar";
 
 const SH = "Asia/Shanghai";
 const NY = "America/New_York";
 
 describe("schedule calendar: address and cookie", () => {
   it("the address wins over the cookie, the cookie over the calendar and the week", () => {
-    expect(schedulesUrlOf({})).toEqual({
+    expect(automationsUrlOf({})).toEqual({
       view: "calendar",
       range: "week",
       date: null,
       scope: "mine",
     });
-    expect(schedulesUrlOf({}, "list.month")).toMatchObject({ view: "list", range: "month" });
-    expect(schedulesUrlOf({ view: "calendar" }, "list.month")).toMatchObject({
+    expect(automationsUrlOf({}, "list.month")).toMatchObject({ view: "list", range: "month" });
+    expect(automationsUrlOf({ view: "calendar" }, "list.month")).toMatchObject({
       view: "calendar",
       range: "month",
     });
-    expect(schedulesUrlOf({ view: "list" }, "calendar.month")).toMatchObject({
+    expect(automationsUrlOf({ view: "list" }, "calendar.month")).toMatchObject({
       view: "list",
       range: "month",
     });
     expect(
-      schedulesUrlOf(new URLSearchParams("view=calendar&range=week&date=2026-11-12&scope=all")),
+      automationsUrlOf(new URLSearchParams("view=calendar&range=week&date=2026-11-12&scope=all")),
     ).toEqual({ view: "calendar", range: "week", date: "2026-11-12", scope: "all" });
     // nonsense reads as nothing
-    expect(schedulesUrlOf({ view: "grid", date: "2026-02-30" }, "x.y")).toEqual({
+    expect(automationsUrlOf({ view: "grid", date: "2026-02-30" }, "x.y")).toEqual({
       view: "calendar",
       range: "week",
       date: null,
@@ -52,16 +52,16 @@ describe("schedule calendar: address and cookie", () => {
 
   it("writes the calendar as the bare page with what differs, the list as ?view=list", () => {
     const base = { view: "calendar", range: "week", date: null, scope: "mine" } as const;
-    expect(schedulesSearch(base)).toBe("");
-    expect(schedulesSearch({ ...base, range: "month", date: "2026-11-01", scope: "all" })).toBe(
+    expect(automationsSearch(base)).toBe("");
+    expect(automationsSearch({ ...base, range: "month", date: "2026-11-01", scope: "all" })).toBe(
       "?range=month&date=2026-11-01&scope=all",
     );
-    expect(schedulesSearch({ ...base, view: "list" })).toBe("?view=list");
+    expect(automationsSearch({ ...base, view: "list" })).toBe("?view=list");
   });
 
   it("the cookie holds the tab and the range for a year, Lax", () => {
     expect(viewCookie("calendar", "month")).toBe(
-      "cap_schedules_view=calendar.month; Path=/; Max-Age=31536000; SameSite=Lax",
+      "cap_automations_view=calendar.month; Path=/; Max-Age=31536000; SameSite=Lax",
     );
     expect(parseViewCookie("list.week")).toEqual({ view: "list", range: "week" });
     expect(parseViewCookie(undefined)).toEqual({});

@@ -17,43 +17,43 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import {
+  type AutomationColumnKey,
+  automationColumns,
+  DeleteAutomationDialog,
+  useAutomationActions,
+  useAutomationWords,
+} from "../../../../components/AutomationParts";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { Person } from "../../../../components/Person";
-import {
-  DeleteScheduleDialog,
-  type ScheduleColumnKey,
-  scheduleColumns,
-  useScheduleActions,
-  useScheduleWords,
-} from "../../../../components/ScheduleParts";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
+import {
+  AUTOMATION_SETTINGS_DEFAULTS,
+  type AutomationListItem,
+  type AutomationsSettings,
+  splitToolKeys,
+} from "../../../../lib/automations";
 import {
   type OrgSettingsPatch,
   type OrgSettingsResponse,
   updateOrgSettings,
 } from "../../../../lib/org-settings";
 import { agentsQuery } from "../../../../lib/query/agents";
+import { automationsQuery } from "../../../../lib/query/automations";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { useMemberNames } from "../../../../lib/query/member-names";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
-import { schedulesQuery } from "../../../../lib/query/schedules";
 import { orgSettingsQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";
-import {
-  SCHEDULE_SETTINGS_DEFAULTS,
-  type ScheduledTaskListItem,
-  type ScheduledTasksSettings,
-  splitToolKeys,
-} from "../../../../lib/schedules";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
- * `/settings/schedules` (org admins, `schedules.manage`; SettingsPage): the scheduled-task settings
+ * `/settings/automations` (org admins, `automations.manage`; SettingsPage): the automation settings
  * of spec §9 (on / off, what an ask outside the grants does, the limits, the forbidden tools), saved
  * through the shared org-settings PATCH with only the changed fields (while the kernel flags the
  * forbidden list unreadable, a notice with its own save sends the list shown to repair it; that is
@@ -62,11 +62,11 @@ import NotFound from "../../not-found";
  * member's task). From the query cache (the layout prefetched the settings and the tasks on a first
  * load).
  */
-export default function ScheduleSettingsView() {
+export default function AutomationSettingsView() {
   const ws = useWorkspace({ min: "admin" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <ScheduleSettings orgId={ws.orgId} />;
+  return <AutomationSettings orgId={ws.orgId} />;
 }
 
 /** The number fields, in the order the form shows them. */
@@ -95,9 +95,9 @@ const count = (s: string): number | null =>
 const sameList = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((v, i) => v === b[i]);
 
-function ScheduleSettings({ orgId }: { orgId: string }) {
+function AutomationSettings({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
-  const t = useTranslations("scheduleSettings");
+  const t = useTranslations("automationSettings");
   const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -115,7 +115,11 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
       })),
   });
   const header = {
-    path: [...scope, { label: "settings", href: "/settings/organization" }, { label: "schedules" }],
+    path: [
+      ...scope,
+      { label: "settings", href: "/settings/organization" },
+      { label: "automations" },
+    ],
     title: t("title"),
   };
   if (read.kind === "notFound") return <NotFound />;
@@ -125,7 +129,7 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
       <SettingsPage
         header={header}
         nav={nav}
-        activeNav="schedules"
+        activeNav="automations"
         loading={{
           sections: [
             {
@@ -144,9 +148,9 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
       />
     );
   }
-  const saved: ScheduledTasksSettings = {
-    ...SCHEDULE_SETTINGS_DEFAULTS,
-    ...read.data.settings.scheduledTasks,
+  const saved: AutomationsSettings = {
+    ...AUTOMATION_SETTINGS_DEFAULTS,
+    ...read.data.settings.automations,
   };
   const enabled = draft.enabled ?? saved.enabled;
   const ask = draft.unattendedAsk ?? saved.unattendedAsk;
@@ -161,7 +165,7 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
   const expiry = expiryText.trim() === "" ? null : count(expiryText);
   if (expiryText.trim() !== "" && expiry === null) invalid.add("defaultExpiryDays");
   // Only the changed fields go in the PATCH
-  const patch: Partial<ScheduledTasksSettings> = {
+  const patch: Partial<AutomationsSettings> = {
     ...(enabled !== saved.enabled ? { enabled } : {}),
     ...(ask !== saved.unattendedAsk ? { unattendedAsk: ask } : {}),
     ...Object.fromEntries(
@@ -181,7 +185,7 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
   async function save() {
     if (invalid.size > 0) return;
     try {
-      await update.mutateAsync({ scheduledTasks: patch });
+      await update.mutateAsync({ automations: patch });
       setDraft({});
       toast.success(t("saved"));
     } catch (e) {
@@ -190,7 +194,7 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
   }
   async function repair() {
     try {
-      await update.mutateAsync({ scheduledTasks: { forbiddenTools: forbidden } });
+      await update.mutateAsync({ automations: { forbiddenTools: forbidden } });
       setDraft((d) => {
         const { forbidden: _, ...rest } = d;
         return rest;
@@ -207,7 +211,7 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
     <SettingsPage
       header={header}
       nav={nav}
-      activeNav="schedules"
+      activeNav="automations"
       {...(dirty
         ? {
             actionRow: {
@@ -229,7 +233,7 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
           {t("forbiddenUnreadable")}
         </Callout>
       )}
-      <FormSection id="schedules-general" title={t("general")} description={t("generalHint")}>
+      <FormSection id="automations-general" title={t("general")} description={t("generalHint")}>
         <Stack gap={12}>
           <Field label={t("enabled")} help={t("enabledHint")}>
             <SwitchField
@@ -251,7 +255,7 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
           />
         </Stack>
       </FormSection>
-      <FormSection id="schedules-limits" title={t("limits")} description={t("limitsHint")}>
+      <FormSection id="automations-limits" title={t("limits")} description={t("limitsHint")}>
         <Stack gap={12}>
           {COUNTS.map((k) => (
             <Field
@@ -282,7 +286,11 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
           </Field>
         </Stack>
       </FormSection>
-      <FormSection id="schedules-forbidden" title={t("forbidden")} description={t("forbiddenHint")}>
+      <FormSection
+        id="automations-forbidden"
+        title={t("forbidden")}
+        description={t("forbiddenHint")}
+      >
         <Field label={t("forbiddenTools")} help={t("forbiddenHelp")}>
           <Textarea
             code
@@ -301,7 +309,7 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
  * Compact rows (below 600): the task leads, its owner under it, the agent after, the state at
  * the end.
  */
-const COMPACT: Record<ScheduleColumnKey, NonNullable<Column<ScheduledTaskListItem>["compact"]>> = {
+const COMPACT: Record<AutomationColumnKey, NonNullable<Column<AutomationListItem>["compact"]>> = {
   name: "title",
   agent: "meta",
   status: "trailing",
@@ -312,33 +320,33 @@ const COMPACT: Record<ScheduleColumnKey, NonNullable<Column<ScheduledTaskListIte
 
 /** Every task of the org (a flush section holding the table), with the creator. */
 function AllTasks({ orgId }: { orgId: string }) {
-  const t = useTranslations("scheduleSettings");
-  const ts = useTranslations("schedules");
+  const t = useTranslations("automationSettings");
+  const ts = useTranslations("automations");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const when = useScheduleWords();
-  const actions = useScheduleActions(orgId);
+  const when = useAutomationWords();
+  const actions = useAutomationActions(orgId);
   const names = useMemberNames(orgId);
-  const [deleting, setDeleting] = useState<ScheduledTaskListItem | null>(null);
-  const tasksQ = schedulesQuery(orgId, "all");
+  const [deleting, setDeleting] = useState<AutomationListItem | null>(null);
+  const tasksQ = automationsQuery(orgId, "all");
   const tasks = useQuery({ ...tasksQ, retryOnMount: retryOnMountOf(tasksQ.queryKey) });
   const agentsQ = agentsQuery(orgId);
   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data;
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
   const refs = names.kind === "ready" ? names.refs : {};
-  const base = scheduleColumns(ts, when, agentName).map((c) => ({
+  const base = automationColumns(ts, when, agentName).map((c) => ({
     ...c,
     compact: COMPACT[c.key],
   }));
-  const creator: Column<ScheduledTaskListItem> = {
+  const creator: Column<AutomationListItem> = {
     key: "creator",
     header: ts("columns.creator"),
     compact: "subtitle",
     cell: (s) => <Person person={refs[s.accountId] ?? null} size={16} />,
   };
-  const columns: Column<ScheduledTaskListItem>[] = [...base.slice(0, 1), creator, ...base.slice(1)];
+  const columns: Column<AutomationListItem>[] = [...base.slice(0, 1), creator, ...base.slice(1)];
   const act = async (p: Promise<unknown>, done: string) => {
     try {
       await p;
@@ -348,8 +356,8 @@ function AllTasks({ orgId }: { orgId: string }) {
     }
   };
   return (
-    <FormSection id="schedules-tasks" title={t("tasks")} description={t("tasksHint")} flush>
-      <DataTable<ScheduledTaskListItem>
+    <FormSection id="automations-tasks" title={t("tasks")} description={t("tasksHint")} flush>
+      <DataTable<AutomationListItem>
         label={t("tasks")}
         columns={columns}
         rows={tasks.data?.items ?? []}
@@ -360,7 +368,7 @@ function AllTasks({ orgId }: { orgId: string }) {
           ? { error: { code: tasks.error.code, onRetry: () => void tasks.refetch() } }
           : {})}
         empty={{ title: t("tasksEmpty") }}
-        onOpen={(s) => router.push(`/schedules/${encodeURIComponent(s.id)}`)}
+        onOpen={(s) => router.push(`/automations/${encodeURIComponent(s.id)}`)}
         rowMenu={(s) => [
           s.status === "active"
             ? {
@@ -376,7 +384,7 @@ function AllTasks({ orgId }: { orgId: string }) {
         ]}
       />
       {deleting !== null && (
-        <DeleteScheduleDialog
+        <DeleteAutomationDialog
           name={deleting.name}
           onClose={() => setDeleting(null)}
           onDelete={async () => {

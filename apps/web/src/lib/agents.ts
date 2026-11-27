@@ -64,11 +64,11 @@ export const BUILTIN_TOOLS = [
   "GenerateImage",
   "Platform",
   "CurrentTime",
-  "ScheduleCreate",
-  "ScheduleUpdate",
-  "ScheduleList",
-  "ScheduleTargets",
-  "ScheduleDelete",
+  "AutomationCreate",
+  "AutomationUpdate",
+  "AutomationList",
+  "AutomationTargets",
+  "AutomationDelete",
 ] as const;
 
 /**

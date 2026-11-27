@@ -32,11 +32,11 @@ export interface DrawerRecent {
 export const DRAWER_RECENT_MAX = 20;
 
 /** The drawer's section entries (mobile layout spec §4.2). */
-export type DrawerSectionId = "inbox" | "agents" | "schedules";
+export type DrawerSectionId = "inbox" | "agents" | "automations";
 
 /** What the chat-first compact shell's drawer holds (design spec §6.54). */
 export interface DrawerNavData {
-  /** The sections in order (a guest has no schedules); `badge` is the pending inbox count. */
+  /** The sections in order (a guest has no automations); `badge` is the pending inbox count. */
   sections: {
     id: DrawerSectionId;
     label: string;
@@ -82,7 +82,7 @@ const under = (pathname: string, href: string) =>
 /**
  * The chat-first compact shell's drawer (design spec §6.54): at the top the search field and the
  * New conversation button, then the navigation as one grouped card (Inbox with the pending count,
- * Agents, Scheduled tasks, and More, which opens the "Skills, connectors, devices…" level, Decision 18), the recent
+ * Agents, Automations, and More, which opens the "Skills, connectors, devices…" level, Decision 18), the recent
  * conversations by time under Recent with All (the conversations page), and at the foot the
  * account row, which opens the account sheet (§6.55). A pick closes the drawer; the system back
  * closes the account sheet first, then the drawer (Decision 25). While a native strip shows

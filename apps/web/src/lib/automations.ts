@@ -3,24 +3,24 @@ import { apiFetch } from "./api";
 import type { ModelRef } from "./conversations";
 
 /**
- * The kernel's scheduled tasks API (`packages/kernel/src/schedules/schedules.controller.ts`,
+ * The kernel's automations API (`packages/kernel/src/automations/automations.controller.ts`,
  * spec 2026-11-11-scheduled-tasks §10; only the fields the UI uses). Web code never imports
  * kernel code.
  */
 
-export type ScheduleTrigger =
+export type AutomationTrigger =
   | { kind: "cron"; expr: string; timeZone: string }
   | { kind: "once"; at: string; timeZone: string };
 
-export type ScheduleMode = "new" | "conversation" | "chat";
+export type AutomationMode = "new" | "conversation" | "chat";
 
-export interface ScheduleChat {
+export interface AutomationChat {
   connectionId: string;
   chatId: string;
   chatType: "dm" | "group";
 }
 
-export type ScheduleStatus = "active" | "paused" | "ended";
+export type AutomationStatus = "active" | "paused" | "ended";
 
 export const PAUSE_REASONS = [
   "creator",
@@ -34,7 +34,7 @@ export const PAUSE_REASONS = [
   "expired",
   "invalid_schedule",
 ] as const;
-export type SchedulePauseReason = (typeof PAUSE_REASONS)[number];
+export type AutomationPauseReason = (typeof PAUSE_REASONS)[number];
 
 export type TaskRunStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
@@ -57,10 +57,10 @@ export const SKIP_REASONS = [
 ] as const;
 export type TaskRunSkipReason = (typeof SKIP_REASONS)[number];
 
-export { EFFORTS as SCHEDULE_EFFORTS } from "./agents";
-export type ScheduleEffort = Effort;
+export { EFFORTS as AUTOMATION_EFFORTS } from "./agents";
+export type AutomationEffort = Effort;
 
-export interface ScheduledTask {
+export interface Automation {
   id: string;
   orgId: string;
   /** The creator: every run acts as this account. */
@@ -68,17 +68,17 @@ export interface ScheduledTask {
   agentId: string;
   name: string;
   prompt: string;
-  trigger: ScheduleTrigger;
-  mode: ScheduleMode;
+  trigger: AutomationTrigger;
+  mode: AutomationMode;
   conversationId: string | null;
-  chat: ScheduleChat | null;
+  chat: AutomationChat | null;
   /** Null: the agent's model. */
   model: ModelRef | null;
   /** Null: the agent's effort. */
   effort: string | null;
   deviceId: string | null;
-  status: ScheduleStatus;
-  pauseReason: SchedulePauseReason | null;
+  status: AutomationStatus;
+  pauseReason: AutomationPauseReason | null;
   pausedBy: string | null;
   /** The next fire time, jitter included; null when not active. */
   nextRunAt: string | null;
@@ -98,9 +98,9 @@ export interface TaskLastRun {
 }
 
 /** A task in a list, with its latest settled run. */
-export type ScheduledTaskListItem = ScheduledTask & { lastRun: TaskLastRun | null };
+export type AutomationListItem = Automation & { lastRun: TaskLastRun | null };
 
-/** A chat a `chat` task can post into (`GET …/schedules/chat-targets`). */
+/** A chat a `chat` task can post into (`GET …/automations/chat-targets`). */
 export interface ChatTarget {
   connectionId: string;
   connectionName: string;
@@ -124,7 +124,7 @@ export type GrantRefusal =
   /** A network grant the task's device cannot take (Docker mode or an older program). */
   | "device_refuses";
 
-/** One of an agent's tools as the grant picker offers it (`GET …/schedules/grantable-tools`). */
+/** One of an agent's tools as the grant picker offers it (`GET …/automations/grantable-tools`). */
 export interface GrantableTool {
   key: string;
   title: string | null;
@@ -156,7 +156,7 @@ export interface TaskRun {
  * A tool the task may use without asking, or a domain (`toolKey: "network:<host>"`, `specHash:
  * "network"`, no connector: its unattended runs may reach the host on the task's device).
  */
-export interface ScheduledTaskGrant {
+export interface AutomationGrant {
   toolKey: string;
   specHash: string;
   connectorId: string | null;
@@ -170,39 +170,39 @@ export interface ScheduledTaskGrant {
 /** When a task fires, before the zone is fixed (the create / patch body's `trigger`). */
 export type TriggerInput = { kind: "cron"; expr: string } | { kind: "once"; at: string };
 
-export interface ScheduleCreateBody {
+export interface AutomationCreateBody {
   agentId: string;
   name: string;
   prompt: string;
   trigger: TriggerInput;
   /** The browser's zone: used only when the account has none. */
   timeZone?: string;
-  mode: ScheduleMode;
+  mode: AutomationMode;
   conversationId?: string;
-  chat?: ScheduleChat;
+  chat?: AutomationChat;
   model?: ModelRef;
-  effort?: ScheduleEffort;
+  effort?: AutomationEffort;
   expiresAt?: string | null;
   /** Tools by key, domains as `network:<host>` (one exact host). */
   grants?: { toolKey: string }[];
 }
 
-export interface ScheduleUpdateBody {
+export interface AutomationUpdateBody {
   agentId?: string;
   name?: string;
   prompt?: string;
   trigger?: TriggerInput;
   timeZone?: string;
-  mode?: ScheduleMode;
+  mode?: AutomationMode;
   conversationId?: string | null;
-  chat?: ScheduleChat | null;
+  chat?: AutomationChat | null;
   model?: ModelRef | null;
-  effort?: ScheduleEffort | null;
+  effort?: AutomationEffort | null;
   expiresAt?: string | null;
 }
 
-/** The org's scheduled-tasks settings (`orgs.settings.scheduledTasks`, spec §9). */
-export interface ScheduledTasksSettings {
+/** The org's automations settings (`orgs.settings.automations`, spec §9). */
+export interface AutomationsSettings {
   enabled: boolean;
   minIntervalMinutes: number;
   maxTasksPerMember: number;
@@ -221,7 +221,7 @@ export interface ScheduledTasksSettings {
 }
 
 /** The defaults of spec §9. */
-export const SCHEDULE_SETTINGS_DEFAULTS: ScheduledTasksSettings = {
+export const AUTOMATION_SETTINGS_DEFAULTS: AutomationsSettings = {
   enabled: true,
   minIntervalMinutes: 60,
   maxTasksPerMember: 20,
@@ -235,19 +235,17 @@ export const SCHEDULE_SETTINGS_DEFAULTS: ScheduledTasksSettings = {
 };
 
 const enc = encodeURIComponent;
-const base = (orgId: string) => `/api/v1/orgs/${enc(orgId)}/schedules`;
+const base = (orgId: string) => `/api/v1/orgs/${enc(orgId)}/automations`;
 const one = (orgId: string, id: string) => `${base(orgId)}/${enc(id)}`;
 const post = (body: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(body) });
 
 /** My tasks; `all`: every task of the org (org admins). */
-export const listSchedules = (orgId: string, all = false) =>
-  apiFetch<{ items: ScheduledTaskListItem[] }>(`${base(orgId)}${all ? "?all=true" : ""}`);
+export const listAutomations = (orgId: string, all = false) =>
+  apiFetch<{ items: AutomationListItem[] }>(`${base(orgId)}${all ? "?all=true" : ""}`);
 
 /** My tasks that post into a conversation (its side panel). */
-export const listConversationSchedules = (orgId: string, conversationId: string) =>
-  apiFetch<{ items: ScheduledTaskListItem[] }>(
-    `${base(orgId)}?conversationId=${enc(conversationId)}`,
-  );
+export const listConversationAutomations = (orgId: string, conversationId: string) =>
+  apiFetch<{ items: AutomationListItem[] }>(`${base(orgId)}?conversationId=${enc(conversationId)}`);
 
 /** The chats a `chat` task of mine can post into. */
 export const listChatTargets = (orgId: string) =>
@@ -257,48 +255,48 @@ export const listChatTargets = (orgId: string) =>
 export const listGrantableTools = (orgId: string, agentId: string) =>
   apiFetch<{ items: GrantableTool[] }>(`${base(orgId)}/grantable-tools?agentId=${enc(agentId)}`);
 
-export const getSchedule = (orgId: string, id: string) =>
-  apiFetch<{ task: ScheduledTask }>(one(orgId, id));
+export const getAutomation = (orgId: string, id: string) =>
+  apiFetch<{ task: Automation }>(one(orgId, id));
 
-export const createSchedule = (orgId: string, body: ScheduleCreateBody) =>
-  apiFetch<{ task: ScheduledTask }>(base(orgId), post(body));
+export const createAutomation = (orgId: string, body: AutomationCreateBody) =>
+  apiFetch<{ task: Automation }>(base(orgId), post(body));
 
-export const updateSchedule = (orgId: string, id: string, body: ScheduleUpdateBody) =>
-  apiFetch<{ task: ScheduledTask }>(one(orgId, id), {
+export const updateAutomation = (orgId: string, id: string, body: AutomationUpdateBody) =>
+  apiFetch<{ task: Automation }>(one(orgId, id), {
     method: "PATCH",
     body: JSON.stringify(body),
   });
 
-export const deleteSchedule = (orgId: string, id: string) =>
+export const deleteAutomation = (orgId: string, id: string) =>
   apiFetch<void>(one(orgId, id), { method: "DELETE" });
 
-export const pauseSchedule = (orgId: string, id: string) =>
-  apiFetch<{ task: ScheduledTask }>(`${one(orgId, id)}/pause`, post({}));
+export const pauseAutomation = (orgId: string, id: string) =>
+  apiFetch<{ task: Automation }>(`${one(orgId, id)}/pause`, post({}));
 
-export const resumeSchedule = (orgId: string, id: string) =>
-  apiFetch<{ task: ScheduledTask }>(`${one(orgId, id)}/resume`, post({}));
+export const resumeAutomation = (orgId: string, id: string) =>
+  apiFetch<{ task: Automation }>(`${one(orgId, id)}/resume`, post({}));
 
 /** Run now (`trial`: an attended run whose approvals become the task's grants). */
-export const runSchedule = (orgId: string, id: string, trial: boolean) =>
+export const runAutomation = (orgId: string, id: string, trial: boolean) =>
   apiFetch<{ run: TaskRun }>(`${one(orgId, id)}/run`, post(trial ? { trial: true } : {}));
 
 /** The task's latest runs, newest first. */
-export const listScheduleRuns = (orgId: string, id: string, limit = RUNS_SHOWN) =>
+export const listAutomationRuns = (orgId: string, id: string, limit = RUNS_SHOWN) =>
   apiFetch<{ items: TaskRun[] }>(`${one(orgId, id)}/runs?limit=${limit}`);
 
-export const listScheduleGrants = (orgId: string, id: string) =>
-  apiFetch<{ items: ScheduledTaskGrant[] }>(`${one(orgId, id)}/grants`);
+export const listAutomationGrants = (orgId: string, id: string) =>
+  apiFetch<{ items: AutomationGrant[] }>(`${one(orgId, id)}/grants`);
 
-export const addScheduleGrants = (orgId: string, id: string, toolKeys: string[]) =>
-  apiFetch<{ items: ScheduledTaskGrant[] }>(
+export const addAutomationGrants = (orgId: string, id: string, toolKeys: string[]) =>
+  apiFetch<{ items: AutomationGrant[] }>(
     `${one(orgId, id)}/grants`,
     post({ grants: toolKeys.map((toolKey) => ({ toolKey })) }),
   );
 
-export const removeScheduleGrant = (orgId: string, id: string, toolKey: string) =>
+export const removeAutomationGrant = (orgId: string, id: string, toolKey: string) =>
   apiFetch<void>(`${one(orgId, id)}/grants/${enc(toolKey)}`, { method: "DELETE" });
 
-// ---- the calendar (calendar spec §5.1: `GET …/schedules/calendar`) ----
+// ---- the calendar (calendar spec §5.1: `GET …/automations/calendar`) ----
 
 /** A task an item of the calendar names. */
 export interface CalendarTask {
@@ -306,10 +304,10 @@ export interface CalendarTask {
   name: string;
   agentId: string;
   accountId: string;
-  status: ScheduleStatus;
-  pauseReason: SchedulePauseReason | null;
-  trigger: ScheduleTrigger;
-  mode: ScheduleMode;
+  status: AutomationStatus;
+  pauseReason: AutomationPauseReason | null;
+  trigger: AutomationTrigger;
+  mode: AutomationMode;
   jitterSeconds: number;
   nextRunAt: string | null;
 }
@@ -380,7 +378,7 @@ export interface CalendarParams {
 }
 
 /** The runs and planned occurrences of a range. */
-export const getScheduleCalendar = (orgId: string, p: CalendarParams) => {
+export const getAutomationCalendar = (orgId: string, p: CalendarParams) => {
   const q = new URLSearchParams({ from: p.from, to: p.to, timeZone: p.timeZone });
   if (p.all) q.set("all", "true");
   if (p.taskId !== undefined) q.set("taskId", p.taskId);
@@ -393,7 +391,7 @@ export const RUNS_SHOWN = 20;
 // ---- schedule presets (spec §5: the UI offers presets that write cron) ----
 
 /** A schedule as the form edits it. `time` is `HH:MM`; `at` is a local `YYYY-MM-DDTHH:MM`. */
-export type SchedulePreset =
+export type AutomationPreset =
   | { kind: "hourly"; minute: number }
   | { kind: "daily"; time: string }
   | { kind: "weekdays"; time: string }
@@ -402,7 +400,7 @@ export type SchedulePreset =
   | { kind: "once"; at: string }
   | { kind: "custom"; expr: string };
 
-export type PresetKind = SchedulePreset["kind"];
+export type PresetKind = AutomationPreset["kind"];
 
 /** The minutes the hourly preset offers; another minute reads as a custom cron. */
 export const HOURLY_MINUTES: readonly number[] = [0, 5, 10, 15, 20, 30, 45];
@@ -434,7 +432,7 @@ function timeOf(minute: string, hour: string): string | null {
 }
 
 /** The preset a trigger reads as: one of the simple forms, else `custom` with the cron. */
-export function presetOf(trigger: ScheduleTrigger | TriggerInput): SchedulePreset {
+export function presetOf(trigger: AutomationTrigger | TriggerInput): AutomationPreset {
   if (trigger.kind === "once") return { kind: "once", at: trigger.at.slice(0, 16) };
   const expr = trigger.expr.trim();
   const f = expr.split(/\s+/);
@@ -472,7 +470,7 @@ function hm(time: string): [number, number] {
 }
 
 /** The trigger a preset writes. */
-export function triggerOf(p: SchedulePreset): TriggerInput {
+export function triggerOf(p: AutomationPreset): TriggerInput {
   switch (p.kind) {
     case "once":
       return { kind: "once", at: p.at };
@@ -496,14 +494,14 @@ export function triggerOf(p: SchedulePreset): TriggerInput {
 }
 
 /** Whether the preset can be sent (the kernel checks the cron and the time itself). */
-export function presetValid(p: SchedulePreset): boolean {
+export function presetValid(p: AutomationPreset): boolean {
   if (p.kind === "custom") return p.expr.trim().split(/\s+/).length === 5;
   if (p.kind === "once") return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(p.at);
   return true;
 }
 
 /** A fresh preset of `kind`, keeping the time of `from` where it has one. */
-export function switchPreset(from: SchedulePreset, kind: PresetKind): SchedulePreset {
+export function switchPreset(from: AutomationPreset, kind: PresetKind): AutomationPreset {
   const time = "time" in from ? from.time : "09:00";
   switch (kind) {
     case "hourly":
@@ -522,13 +520,13 @@ export function switchPreset(from: SchedulePreset, kind: PresetKind): SchedulePr
   }
 }
 
-const cronText = (p: SchedulePreset): string => {
+const cronText = (p: AutomationPreset): string => {
   const t = triggerOf(p);
   return t.kind === "cron" ? t.expr : "";
 };
 
-/** The words for a schedule (no zone): the message key under `schedules.when` and its values. */
-export function scheduleWords(trigger: ScheduleTrigger | TriggerInput): {
+/** The words for a schedule (no zone): the message key under `automations.when` and its values. */
+export function automationWords(trigger: AutomationTrigger | TriggerInput): {
   key: "hourly" | "daily" | "weekdays" | "weekly" | "monthly" | "once" | "cron";
   values: Record<string, string | number>;
 } {
@@ -551,9 +549,9 @@ export function scheduleWords(trigger: ScheduleTrigger | TriggerInput): {
 }
 
 /** The status a task shows: its state, or the pause's reason. */
-export type ScheduleState = "active" | "ended" | `paused.${SchedulePauseReason}`;
+export type AutomationState = "active" | "ended" | `paused.${AutomationPauseReason}`;
 
-export const scheduleState = (t: Pick<ScheduledTask, "status" | "pauseReason">): ScheduleState =>
+export const automationState = (t: Pick<Automation, "status" | "pauseReason">): AutomationState =>
   t.status === "paused" ? `paused.${t.pauseReason ?? "creator"}` : t.status;
 
 /** The browser's IANA zone (sent on create; the kernel uses it only when the account has none). */
@@ -570,7 +568,7 @@ export const connectionOf = (key: string): string | null =>
   key.startsWith("connection:") ? key.slice("connection:".length) : null;
 
 /** A chat target's value in a select (and back). */
-export const chatKey = (c: Pick<ScheduleChat, "connectionId" | "chatId" | "chatType">): string =>
+export const chatKey = (c: Pick<AutomationChat, "connectionId" | "chatId" | "chatType">): string =>
   `${c.connectionId}\n${c.chatId}\n${c.chatType}`;
 
 /** Tool keys typed one per line (commas and spaces split too), trimmed, without repeats. */

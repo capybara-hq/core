@@ -17,9 +17,6 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
-import type { PersonRef } from "../lib/people";
-import { retryOnMountOf } from "../lib/query/client";
-import { scheduleCalendarQuery } from "../lib/query/schedules";
 import {
   addDays,
   type CalendarItemState,
@@ -28,11 +25,14 @@ import {
   type RunPanelRef,
   startOfDay,
   timeIn,
-} from "../lib/schedule-calendar";
-import type { CalendarAnswer, CalendarItem, CalendarTask } from "../lib/schedules";
+} from "../lib/automation-calendar";
+import type { CalendarAnswer, CalendarItem, CalendarTask } from "../lib/automations";
+import type { PersonRef } from "../lib/people";
+import { automationCalendarQuery } from "../lib/query/automations";
+import { retryOnMountOf } from "../lib/query/client";
+import { AutomationStateMark, useAutomationWords } from "./AutomationParts";
+import { useCalendarDayLabel, useCalendarWords } from "./automation-calendar-words";
 import { Person } from "./Person";
-import { ScheduleStateMark, useScheduleWords } from "./ScheduleParts";
-import { useCalendarDayLabel, useCalendarWords } from "./schedule-calendar-words";
 
 const STATE_ICON = {
   upcoming: "clock",
@@ -77,7 +77,7 @@ const findItem = (items: CalendarItem[], ref: RunPanelRef) =>
  * be skipped; a collapsed day: that task's items of the day (read with `taskId`), each opening in
  * the same Sheet with a way back. The footer opens the task page, the one place a task is changed.
  */
-export function ScheduleRunSheet({
+export function AutomationRunSheet({
   orgId,
   accountId,
   all,
@@ -99,11 +99,11 @@ export function ScheduleRunSheet({
   person(id: string): PersonRef | null;
   onOpen(next: RunPanelRef | null): void;
 }) {
-  const t = useTranslations("schedules.calendar.panel");
+  const t = useTranslations("automations.calendar.panel");
   const dayLabel = useCalendarDayLabel();
   // A collapsed day: that task's items of the day, never collapsed (the read the panel owns).
   const day = panel?.kind === "day" ? panel : null;
-  const dayQ = scheduleCalendarQuery(orgId, {
+  const dayQ = automationCalendarQuery(orgId, {
     from: new Date(startOfDay(day?.day ?? "1970-01-01", timeZone)).toISOString(),
     to: new Date(startOfDay(addDays(day?.day ?? "1970-01-01", 1), timeZone)).toISOString(),
     timeZone,
@@ -196,7 +196,9 @@ export function ScheduleRunSheet({
       }}
       title={task.name}
       footer={
-        <LinkButton href={`/schedules/${encodeURIComponent(task.id)}`}>{t("openTask")}</LinkButton>
+        <LinkButton href={`/automations/${encodeURIComponent(task.id)}`}>
+          {t("openTask")}
+        </LinkButton>
       }
     >
       <Stack gap={12}>
@@ -232,8 +234,8 @@ function ItemDetail({
   own: boolean;
   timeZone: string;
 }) {
-  const t = useTranslations("schedules.calendar.panel");
-  const tr = useTranslations("schedules.runs");
+  const t = useTranslations("automations.calendar.panel");
+  const tr = useTranslations("automations.runs");
   const state = itemState(item);
   const at = item.kind === "run" ? (item.firedAt ?? item.scheduledFor) : item.at;
   const when = formatDateTime(at, "full", timeZone);
@@ -278,7 +280,7 @@ function ItemDetail({
             ) : null}
             {own && (item.missingGrants ?? 0) > 0 ? (
               <Stack direction="row">
-                <LinkButton density="dense" href={`/schedules/${encodeURIComponent(task.id)}`}>
+                <LinkButton density="dense" href={`/automations/${encodeURIComponent(task.id)}`}>
                   {t("missing", { n: item.missingGrants ?? 0 })}
                 </LinkButton>
               </Stack>
@@ -310,9 +312,9 @@ function TaskRegion({
   agentName(id: string): string;
   person: ((id: string) => PersonRef | null) | null;
 }) {
-  const t = useTranslations("schedules.calendar.panel");
-  const tf = useTranslations("schedules.form.mode");
-  const when = useScheduleWords();
+  const t = useTranslations("automations.calendar.panel");
+  const tf = useTranslations("automations.form.mode");
+  const when = useAutomationWords();
   const rows: { k: ReactNode; v: ReactNode }[] = [
     { k: t("schedule"), v: when(task.trigger, task.trigger.timeZone) },
     { k: t("agent"), v: agentName(task.agentId) },
@@ -320,7 +322,7 @@ function TaskRegion({
       ? [{ k: t("creator"), v: <Person person={person(task.accountId)} size={16} /> }]
       : []),
     { k: t("target"), v: tf(task.mode) },
-    { k: t("taskStatus"), v: <ScheduleStateMark task={task} /> },
+    { k: t("taskStatus"), v: <AutomationStateMark task={task} /> },
     {
       k: t("nextRun"),
       v: task.nextRunAt !== null ? <DateTime value={task.nextRunAt} /> : t("none"),

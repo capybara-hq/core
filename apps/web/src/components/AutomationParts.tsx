@@ -12,32 +12,32 @@ import {
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type ComponentProps, useState } from "react";
+import {
+  type Automation,
+  type AutomationListItem,
+  type AutomationTrigger,
+  automationState,
+  automationWords,
+  deleteAutomation,
+  pauseAutomation,
+  resumeAutomation,
+  runAutomation,
+  type TriggerInput,
+} from "../lib/automations";
 import { inboxChangeKeys } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
-import {
-  deleteSchedule,
-  pauseSchedule,
-  resumeSchedule,
-  runSchedule,
-  type ScheduledTask,
-  type ScheduledTaskListItem,
-  type ScheduleTrigger,
-  scheduleState,
-  scheduleWords,
-  type TriggerInput,
-} from "../lib/schedules";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
 /** A schedule in words, with its zone when given ("Every day at 09:00 (Asia/Shanghai)"). */
-export function useScheduleWords(): (
-  trigger: ScheduleTrigger | TriggerInput,
+export function useAutomationWords(): (
+  trigger: AutomationTrigger | TriggerInput,
   zone?: string,
 ) => string {
-  const t = useTranslations("schedules");
+  const t = useTranslations("automations");
   return (trigger, zone) => {
-    const w = scheduleWords(trigger);
+    const w = automationWords(trigger);
     const values =
       w.key === "weekly"
         ? { ...w.values, day: t(`weekday.${w.values.day}` as "weekday.0") }
@@ -48,13 +48,13 @@ export function useScheduleWords(): (
 }
 
 /** The status mark of a task: its state, or why it is paused. */
-export function ScheduleStateMark({
+export function AutomationStateMark({
   task,
 }: {
-  task: Pick<ScheduledTask, "status" | "pauseReason">;
+  task: Pick<Automation, "status" | "pauseReason">;
 }) {
-  const t = useTranslations("schedules.state");
-  const state = scheduleState(task);
+  const t = useTranslations("automations.state");
+  const state = automationState(task);
   const status: ComponentProps<typeof StatusMark>["status"] =
     state === "active"
       ? "success"
@@ -70,34 +70,34 @@ export function ScheduleStateMark({
  * A task's actions (pause, resume, run, delete): each invalidates the task lists, the task and,
  * since the creator's inbox derives attention from the task, the inbox.
  */
-export function useScheduleActions(orgId: string) {
+export function useAutomationActions(orgId: string) {
   const touched = (id: string) => [
-    keys.org(orgId).schedulesAll(),
-    keys.org(orgId).schedule(id),
+    keys.org(orgId).automationsAll(),
+    keys.org(orgId).automation(id),
     ...inboxChangeKeys(orgId),
   ];
   const pause = useAppMutation({
-    fn: (id: string) => pauseSchedule(orgId, id),
+    fn: (id: string) => pauseAutomation(orgId, id),
     invalidates: (id) => touched(id),
   });
   const resume = useAppMutation({
-    fn: (id: string) => resumeSchedule(orgId, id),
+    fn: (id: string) => resumeAutomation(orgId, id),
     invalidates: (id) => touched(id),
   });
   const run = useAppMutation({
-    fn: (v: { id: string; trial: boolean }) => runSchedule(orgId, v.id, v.trial),
-    invalidates: (v) => [keys.org(orgId).scheduleRuns(v.id), keys.org(orgId).schedulesAll()],
+    fn: (v: { id: string; trial: boolean }) => runAutomation(orgId, v.id, v.trial),
+    invalidates: (v) => [keys.org(orgId).automationRuns(v.id), keys.org(orgId).automationsAll()],
   });
   const remove = useAppMutation({
-    fn: (id: string) => deleteSchedule(orgId, id),
-    invalidates: () => [keys.org(orgId).schedulesAll(), ...inboxChangeKeys(orgId)],
-    forgetsOnLeave: (id) => [keys.org(orgId).schedule(id)],
+    fn: (id: string) => deleteAutomation(orgId, id),
+    invalidates: () => [keys.org(orgId).automationsAll(), ...inboxChangeKeys(orgId)],
+    forgetsOnLeave: (id) => [keys.org(orgId).automation(id)],
   });
   return { pause, resume, run, remove };
 }
 
 /** Delete a task: asks first (a dangerous dialog that starts on Cancel). */
-export function DeleteScheduleDialog({
+export function DeleteAutomationDialog({
   name,
   onClose,
   onDelete,
@@ -106,7 +106,7 @@ export function DeleteScheduleDialog({
   onClose(): void;
   onDelete(): Promise<void>;
 }) {
-  const t = useTranslations("schedules.actions");
+  const t = useTranslations("automations.actions");
   const tc = useTranslations("common");
   const errorMessage = useErrorMessage();
   const [pending, setPending] = useState(false);
@@ -155,16 +155,16 @@ export function DeleteScheduleDialog({
 }
 
 /** The keys of the task table's columns (the compact layout maps are typed against them). */
-export type ScheduleColumnKey = "name" | "agent" | "schedule" | "status" | "next" | "last";
+export type AutomationColumnKey = "name" | "agent" | "schedule" | "status" | "next" | "last";
 
-type ScheduleT = ReturnType<typeof useTranslations<"schedules">>;
+type AutomationT = ReturnType<typeof useTranslations<"automations">>;
 
 /** A task table's columns (the loading table draws the same header). */
-export function scheduleColumns(
-  t: ScheduleT,
-  when: ReturnType<typeof useScheduleWords>,
+export function automationColumns(
+  t: AutomationT,
+  when: ReturnType<typeof useAutomationWords>,
   agentName: (id: string) => string,
-): (Column<ScheduledTaskListItem> & { key: ScheduleColumnKey })[] {
+): (Column<AutomationListItem> & { key: AutomationColumnKey })[] {
   return [
     { key: "name", header: t("columns.name"), cell: (s) => <CellTitle title={s.name} /> },
     { key: "agent", header: t("columns.agent"), cell: (s) => agentName(s.agentId) },
@@ -174,7 +174,7 @@ export function scheduleColumns(
       tone: "muted",
       cell: (s) => when(s.trigger, s.trigger.timeZone),
     },
-    { key: "status", header: t("columns.status"), cell: (s) => <ScheduleStateMark task={s} /> },
+    { key: "status", header: t("columns.status"), cell: (s) => <AutomationStateMark task={s} /> },
     {
       key: "next",
       header: t("columns.nextRun"),

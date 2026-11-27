@@ -1273,12 +1273,12 @@ describe("inbox: org notices of phase 3 (org admins)", () => {
   });
 });
 
-describe("inbox: my scheduled task needs me", () => {
-  const S = en.inboxSchedule;
+describe("inbox: my automation needs me", () => {
+  const S = en.inboxAutomation;
   const attention = (over: Record<string, unknown> = {}) => ({
     items: [
       {
-        type: "schedule_attention",
+        type: "automation_attention",
         id: "s1:grants",
         createdAt: T,
         attention: {
@@ -1303,7 +1303,7 @@ describe("inbox: my scheduled task needs me", () => {
       const { calls } = await renderInbox(
         {
           [LIST]: () => json(200, attention()),
-          "POST /api/v1/orgs/o1/schedules/s1/grants": () =>
+          "POST /api/v1/orgs/o1/automations/s1/grants": () =>
             json(200, { items: [{ toolKey: "Bash", specHash: "h", connectorId: null }] }),
           "GET /api/v1/orgs/o1/inbox/count": () => json(200, { count: 0, more: false }),
         },
@@ -1312,24 +1312,24 @@ describe("inbox: my scheduled task needs me", () => {
       const table = await screen.findByRole("list", { name: m.inbox.listLabel });
       expect(
         within(table).getByText(
-          `${m.inboxSchedule.label} · ${m.inboxSchedule.reason.missing_grants}`,
+          `${m.inboxAutomation.label} · ${m.inboxAutomation.reason.missing_grants}`,
         ),
       ).toBeTruthy();
-      const missing = within(screen.getByRole("list", { name: m.inboxSchedule.missing }));
-      expect(missing.getByText(m.inboxSchedule.needsRole)).toBeTruthy();
+      const missing = within(screen.getByRole("list", { name: m.inboxAutomation.missing }));
+      expect(missing.getByText(m.inboxAutomation.needsRole)).toBeTruthy();
       expect(
-        missing.getByRole("link", { name: m.inboxSchedule.connect.replace("{slug}", "github") }),
+        missing.getByRole("link", { name: m.inboxAutomation.connect.replace("{slug}", "github") }),
       ).toBeTruthy();
       const user = userEvent.setup();
       // only Bash can be added (the role-gated tool has no button)
-      const add = missing.getAllByRole("button", { name: m.inboxSchedule.add });
+      const add = missing.getAllByRole("button", { name: m.inboxAutomation.add });
       expect(add).toHaveLength(1);
       await user.click(add[0] as HTMLElement);
       expect(
-        bodyOf(calls.find((c) => c.method === "POST" && c.url.endsWith("/schedules/s1/grants"))),
+        bodyOf(calls.find((c) => c.method === "POST" && c.url.endsWith("/automations/s1/grants"))),
       ).toEqual({ grants: [{ toolKey: "Bash" }] });
-      await user.click(screen.getByRole("button", { name: m.inboxSchedule.open }));
-      expect(router.push).toHaveBeenCalledWith("/schedules/s1");
+      await user.click(screen.getByRole("button", { name: m.inboxAutomation.open }));
+      expect(router.push).toHaveBeenCalledWith("/automations/s1");
     },
   );
 
@@ -1467,11 +1467,11 @@ describe("inbox: network requests (network ask spec §5.3)", () => {
 });
 
 describe("inbox: a task refused domains", () => {
-  const S = en.inboxSchedule;
+  const S = en.inboxAutomation;
   const attention = (over: Record<string, unknown> = {}) => ({
     items: [
       {
-        type: "schedule_attention",
+        type: "automation_attention",
         id: "s1:grants",
         createdAt: T,
         attention: {
@@ -1493,7 +1493,7 @@ describe("inbox: a task refused domains", () => {
   it("a domain the org allows can be added; one outside it needs an admin", async () => {
     const { calls } = await renderInbox({
       [LIST]: () => json(200, attention()),
-      "POST /api/v1/orgs/o1/schedules/s1/grants": () =>
+      "POST /api/v1/orgs/o1/automations/s1/grants": () =>
         json(200, {
           items: [{ toolKey: "network:files.slack.com", specHash: "network", connectorId: null }],
         }),
@@ -1506,7 +1506,7 @@ describe("inbox: a task refused domains", () => {
     expect(add).toHaveLength(1);
     await userEvent.setup().click(add[0] as HTMLElement);
     expect(
-      bodyOf(calls.find((c) => c.method === "POST" && c.url.endsWith("/schedules/s1/grants"))),
+      bodyOf(calls.find((c) => c.method === "POST" && c.url.endsWith("/automations/s1/grants"))),
     ).toEqual({ grants: [{ toolKey: "network:files.slack.com" }] });
   });
 });

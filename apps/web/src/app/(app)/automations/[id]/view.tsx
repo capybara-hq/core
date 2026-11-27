@@ -17,34 +17,46 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { ErrorFrame } from "../../../../components/ErrorFrame";
-import { FormError } from "../../../../components/form-error";
-import { NoAccess } from "../../../../components/NoAccess";
-import { Person } from "../../../../components/Person";
 import {
   ApprovedToolsSection,
+  type AutomationDraft,
+  AutomationFormSections,
   changedCount,
   draftOf,
   draftValid,
   LOADING_SECTIONS,
   NetworkAccessSection,
   patchOf,
-  type ScheduleDraft,
-  ScheduleFormSections,
   useGrantableTools,
-} from "../../../../components/ScheduleForm";
+} from "../../../../components/AutomationForm";
 import {
-  DeleteScheduleDialog,
-  ScheduleStateMark,
-  useScheduleActions,
-} from "../../../../components/ScheduleParts";
+  AutomationStateMark,
+  DeleteAutomationDialog,
+  useAutomationActions,
+} from "../../../../components/AutomationParts";
+import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { FormError } from "../../../../components/form-error";
+import { NoAccess } from "../../../../components/NoAccess";
+import { Person } from "../../../../components/Person";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { ProviderModels } from "../../../../lib/agents";
+import {
+  type Automation,
+  addAutomationGrants,
+  removeAutomationGrant,
+  type TaskRun,
+  updateAutomation,
+} from "../../../../lib/automations";
 import { roleAtLeast } from "../../../../lib/members";
 import { withNode } from "../../../../lib/node-slot";
 import type { PersonRef } from "../../../../lib/people";
 import { agentsQuery } from "../../../../lib/query/agents";
+import {
+  automationGrantsQuery,
+  automationQuery,
+  automationRunsQuery,
+} from "../../../../lib/query/automations";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { modelsQuery } from "../../../../lib/query/conversation";
 import { inboxChangeKeys } from "../../../../lib/query/inbox";
@@ -52,25 +64,13 @@ import { keys } from "../../../../lib/query/keys";
 import { useMemberNames } from "../../../../lib/query/member-names";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
-import {
-  scheduleGrantsQuery,
-  scheduleQuery,
-  scheduleRunsQuery,
-} from "../../../../lib/query/schedules";
 import { orgSettingsQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";
-import {
-  addScheduleGrants,
-  removeScheduleGrant,
-  type ScheduledTask,
-  type TaskRun,
-  updateSchedule,
-} from "../../../../lib/schedules";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
- * `/schedules/[id]`: one scheduled task (FormPage, spec §10): the task's fields (basics, schedule
+ * `/automations/[id]`: one automation (FormPage, spec §10): the task's fields (basics, schedule
  * with its zone, where runs go, model and effort), its approved tools (added or removed at once,
  * with what the latest runs were refused) and its run history. The head runs it now, runs a trial
  * (its approvals become the task's grants) and pauses or resumes it; the danger zone deletes it.
@@ -78,7 +78,7 @@ import NotFound from "../../not-found";
  * it. Members up (guests: the no-access state). From the query cache (the layout prefetched the
  * task, its runs and grants on a first load).
  */
-export default function ScheduleView({ id }: { id: string }) {
+export default function AutomationView({ id }: { id: string }) {
   const ws = useWorkspace({ min: "member" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
@@ -104,8 +104,8 @@ function Schedule({
   admin: boolean;
 }) {
   const scope = usePagePath("org");
-  const t = useTranslations("schedules");
-  const read = usePageQuery(scheduleQuery(orgId, id));
+  const t = useTranslations("automations");
+  const read = usePageQuery(automationQuery(orgId, id));
   const agentsQ = agentsQuery(orgId);
   const agentsRead = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) });
   // The agents name the picker's options; when they can't be read the task's own id shows
@@ -119,7 +119,7 @@ function Schedule({
       <FormPage
         loading
         header={{
-          path: [...scope, { label: "schedules", href: "/schedules" }, { label: id }],
+          path: [...scope, { label: "automations", href: "/automations" }, { label: id }],
           title: t("title"),
           loading: { title: true, actions: 3 },
         }}
@@ -148,7 +148,7 @@ function Schedule({
   }
   const task = read.data.task;
   return (
-    <ScheduleForm
+    <AutomationForm
       // one draft per task: a refetch (after a pause, say) keeps unsaved edits; this form's own
       // save starts the draft over from the answer
       key={task.id}
@@ -162,7 +162,7 @@ function Schedule({
   );
 }
 
-function ScheduleForm({
+function AutomationForm({
   orgId,
   task,
   agents,
@@ -171,53 +171,53 @@ function ScheduleForm({
   admin,
 }: {
   orgId: string;
-  task: ScheduledTask;
-  agents: Parameters<typeof ScheduleFormSections>[0]["agents"];
+  task: Automation;
+  agents: Parameters<typeof AutomationFormSections>[0]["agents"];
   providers: ProviderModels[];
   /** The task is mine: I edit it; else I am an org admin looking at it. */
   own: boolean;
   admin: boolean;
 }) {
   const scope = usePagePath("org");
-  const t = useTranslations("schedules");
+  const t = useTranslations("automations");
   const tc = useTranslations("common");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const names = useMemberNames(orgId);
-  const actions = useScheduleActions(orgId);
+  const actions = useAutomationActions(orgId);
   const saved = draftOf(task);
-  const [draft, setDraft] = useState<ScheduleDraft>(saved);
+  const [draft, setDraft] = useState<AutomationDraft>(saved);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   // a refused network grant, shown in its section with the kernel's reason
   const [networkError, setNetworkError] = useState<unknown>(null);
   const readOnly = !own;
   const touched = [
-    keys.org(orgId).schedulesAll(),
-    keys.org(orgId).schedule(task.id),
+    keys.org(orgId).automationsAll(),
+    keys.org(orgId).automation(task.id),
     ...inboxChangeKeys(orgId),
   ];
   const save = useAppMutation({
-    fn: () => updateSchedule(orgId, task.id, patchOf(saved, draft)),
+    fn: () => updateAutomation(orgId, task.id, patchOf(saved, draft)),
     invalidates: () => touched,
   });
-  const grantsQ = scheduleGrantsQuery(orgId, task.id);
+  const grantsQ = automationGrantsQuery(orgId, task.id);
   const grants = useQuery({ ...grantsQ, retryOnMount: retryOnMountOf(grantsQ.queryKey) }).data;
-  const runsQ = scheduleRunsQuery(orgId, task.id);
+  const runsQ = automationRunsQuery(orgId, task.id);
   const runs = useQuery({ ...runsQ, retryOnMount: retryOnMountOf(runsQ.queryKey) });
   const addGrant = useAppMutation({
-    fn: (toolKey: string) => addScheduleGrants(orgId, task.id, [toolKey]),
-    invalidates: () => [keys.org(orgId).scheduleGrants(task.id), ...inboxChangeKeys(orgId)],
+    fn: (toolKey: string) => addAutomationGrants(orgId, task.id, [toolKey]),
+    invalidates: () => [keys.org(orgId).automationGrants(task.id), ...inboxChangeKeys(orgId)],
   });
   const removeGrant = useAppMutation({
-    fn: (toolKey: string) => removeScheduleGrant(orgId, task.id, toolKey),
-    invalidates: () => [keys.org(orgId).scheduleGrants(task.id)],
+    fn: (toolKey: string) => removeAutomationGrant(orgId, task.id, toolKey),
+    invalidates: () => [keys.org(orgId).automationGrants(task.id)],
   });
   const tools = useGrantableTools(orgId, readOnly ? "" : draft.agentId);
   const settingsQ = orgSettingsQuery(orgId);
   const minInterval = useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) })
-    .data?.settings.scheduledTasks.minIntervalMinutes;
+    .data?.settings.automations.minIntervalMinutes;
   const unsaved = readOnly ? 0 : changedCount(saved, draft);
   const valid = draftValid(draft);
   const granted = grants?.items ?? [];
@@ -263,9 +263,9 @@ function ScheduleForm({
     <>
       <FormPage
         header={{
-          path: [...scope, { label: "schedules", href: "/schedules" }, { label: task.name }],
+          path: [...scope, { label: "automations", href: "/automations" }, { label: task.name }],
           title: task.name,
-          status: <ScheduleStateMark task={task} />,
+          status: <AutomationStateMark task={task} />,
           // An org admin on another member's task: pause or resume only (no run, no edit)
           actions: readOnly
             ? []
@@ -323,7 +323,7 @@ function ScheduleForm({
             )}
           </Callout>
         ) : null}
-        <ScheduleFormSections
+        <AutomationFormSections
           orgId={orgId}
           draft={draft}
           setDraft={setDraft}
@@ -373,13 +373,13 @@ function ScheduleForm({
         )}
       </FormPage>
       {deleting && (
-        <DeleteScheduleDialog
+        <DeleteAutomationDialog
           name={task.name}
           onClose={() => setDeleting(false)}
           onDelete={async () => {
             await actions.remove.mutateAsync(task.id);
             toast.success(t("actions.deleted"));
-            router.push(own ? "/schedules" : "/settings/schedules");
+            router.push(own ? "/automations" : "/settings/automations");
           }}
         />
       )}
@@ -389,7 +389,7 @@ function ScheduleForm({
 
 /** The latest runs (a flush section holding the table): time, kind, status and what happened. */
 function RunHistory({ runs }: { runs: TaskRun[] | null }) {
-  const t = useTranslations("schedules.runs");
+  const t = useTranslations("automations.runs");
   const router = useRouter();
   const skipOrMissing = (r: TaskRun) => {
     if (r.skipReason !== null) return t(`skip.${r.skipReason}`);

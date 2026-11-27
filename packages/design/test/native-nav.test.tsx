@@ -50,7 +50,7 @@ function drawerData(over: Partial<DrawerNavData> = {}): DrawerNavData {
     sections: [
       { id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox", badge: { count: 3 } },
       { id: "agents", label: "智能体", href: "/agents", icon: "agent" },
-      { id: "schedules", label: "定时任务", href: "/schedules", icon: "clock" },
+      { id: "automations", label: "自动化", href: "/automations", icon: "clock" },
     ],
     more: [{ id: "skills", label: "技能", href: "/skills", icon: "skills" }],
     moreLabel: "技能、连接器、设备…",
@@ -78,7 +78,7 @@ const sidebar = {
     primary: [
       { id: "agents", label: "智能体", href: "/agents", icon: "agent" as const },
       { id: "skills", label: "技能", href: "/skills", icon: "skills" as const },
-      { id: "schedules", label: "定时任务", href: "/schedules", icon: "clock" as const },
+      { id: "automations", label: "自动化", href: "/automations", icon: "clock" as const },
     ],
     more: [{ id: "devices", label: "设备", href: "/devices", icon: "cpu" as const }],
     inbox: { href: "/inbox", count: 3 },
@@ -163,7 +163,7 @@ const FOUR = [
   { id: "chats", label: "对话" },
   { id: "inbox", label: "收件箱", count: 3 },
   { id: "agents", label: "智能体" },
-  { id: "schedules", label: "定时任务" },
+  { id: "automations", label: "自动化" },
 ];
 const NEW = { id: "new-conversation", label: "新会话", icon: "square-pen" };
 const ACCOUNT = { name: "Grant", initial: "G" };
@@ -326,7 +326,7 @@ describe("the native strip (nav@1)", () => {
     const rows = [...document.querySelectorAll("[data-nav-section]")].map((r) =>
       r.getAttribute("data-nav-section"),
     );
-    expect(rows).toEqual(expect.arrayContaining(["inbox", "agents", "schedules"]));
+    expect(rows).toEqual(expect.arrayContaining(["inbox", "agents", "automations"]));
     // the "Skills, connectors, devices…" row stays
     expect(screen.getByText("更多").closest("[data-nav-section]")).toBeNull();
   });
@@ -338,7 +338,7 @@ describe("the native strip (nav@1)", () => {
     const side = document.querySelector(".cb-sidebar") as HTMLElement;
     const section = (id: string) => side.querySelector(`[data-nav-section="${id}"]`);
     expect(section("agents")).not.toBeNull();
-    expect(section("schedules")).not.toBeNull();
+    expect(section("automations")).not.toBeNull();
     expect(section("inbox")).not.toBeNull();
     expect(side.querySelector('a[href="/skills"]')?.hasAttribute("data-nav-other")).toBe(true);
     expect(side.querySelector('[data-part="more-toggle"]')?.hasAttribute("data-nav-other")).toBe(
@@ -359,7 +359,7 @@ describe("the native strip (nav@1)", () => {
     expect(items.map((i) => i.textContent)).toEqual(["个人设置"]);
   });
 
-  it("a guest's items omit schedules, the route picks current, medium keeps 新会话 (D14)", () => {
+  it("a guest's items omit automations, the route picks current, medium keeps 新会话 (D14)", () => {
     const mm = matchMediaFor(390);
     window.matchMedia = mm.matchMedia;
     const { nav } = fakeNav();

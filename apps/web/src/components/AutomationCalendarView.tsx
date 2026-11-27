@@ -14,12 +14,8 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type ComponentProps, useRef } from "react";
 import type { ApiClientError } from "../lib/api";
-import type { PersonRef } from "../lib/people";
-import { agentsQuery } from "../lib/query/agents";
-import { retryOnMountOf } from "../lib/query/client";
-import { useMemberNames } from "../lib/query/member-names";
-import { scheduleCalendarQuery, schedulesQuery } from "../lib/query/schedules";
 import {
+  type AutomationsUrl,
   type CalendarRange,
   collapsedState,
   dayIn,
@@ -32,15 +28,19 @@ import {
   rangeDays,
   rangeLabel,
   refId,
-  type SchedulesUrl,
   shiftDate,
-} from "../lib/schedule-calendar";
-import type { CalendarAnswer, CalendarTask, ScheduledTaskListItem } from "../lib/schedules";
-import { browserTimeZone } from "../lib/schedules";
-import { useRunPanelHash } from "../lib/schedules-url";
+} from "../lib/automation-calendar";
+import type { AutomationListItem, CalendarAnswer, CalendarTask } from "../lib/automations";
+import { browserTimeZone } from "../lib/automations";
+import { useRunPanelHash } from "../lib/automations-url";
+import type { PersonRef } from "../lib/people";
+import { agentsQuery } from "../lib/query/agents";
+import { automationCalendarQuery, automationsQuery } from "../lib/query/automations";
+import { retryOnMountOf } from "../lib/query/client";
+import { useMemberNames } from "../lib/query/member-names";
+import { AutomationRunSheet } from "./AutomationRunSheet";
+import { useCalendarDayLabel, useCalendarWords } from "./automation-calendar-words";
 import { ErrorFrame } from "./ErrorFrame";
-import { ScheduleRunSheet } from "./ScheduleRunSheet";
-import { useCalendarDayLabel, useCalendarWords } from "./schedule-calendar-words";
 
 type Header = ComponentProps<typeof ListPage>["header"];
 
@@ -48,12 +48,12 @@ type Header = ComponentProps<typeof ListPage>["header"];
 const LIVE_MS = 60_000;
 
 /**
- * The calendar view of `/schedules` (calendar spec §4, §8, §9): ListPage with the page head's tabs
+ * The calendar view of `/automations` (calendar spec §4, §8, §9): ListPage with the page head's tabs
  * and `ScheduleCalendar` (week or month, the phone's agenda by CSS), the range read with the
  * previous range kept while the next one loads, a live poll while the range holds now, the admin
- * 全组织 scope and the run panel (`ScheduleRunSheet`, its item in the address hash).
+ * 全组织 scope and the run panel (`AutomationRunSheet`, its item in the address hash).
  */
-export function ScheduleCalendarView({
+export function AutomationCalendarView({
   orgId,
   accountId,
   admin,
@@ -66,15 +66,15 @@ export function ScheduleCalendarView({
   orgId: string;
   accountId: string;
   admin: boolean;
-  url: SchedulesUrl;
-  setUrl(next: SchedulesUrl): void;
+  url: AutomationsUrl;
+  setUrl(next: AutomationsUrl): void;
   header: Header;
   /** My tasks (the list); null while it loads. */
-  tasks: ScheduledTaskListItem[] | null;
+  tasks: AutomationListItem[] | null;
   off: boolean;
 }) {
-  const t = useTranslations("schedules");
-  const tc = useTranslations("schedules.calendar");
+  const t = useTranslations("automations");
+  const tc = useTranslations("automations.calendar");
   const departed = useTranslations("people")("departed");
   const words = useCalendarWords();
   const dayLabel = useCalendarDayLabel();
@@ -85,7 +85,7 @@ export function ScheduleCalendarView({
   const all = admin && url.scope === "all";
   const bounds = rangeBounds(url.range, date, timeZone);
   const holdsNow = Date.parse(bounds.from) <= now && now < Date.parse(bounds.to);
-  const calQ = scheduleCalendarQuery(orgId, { ...bounds, timeZone, all });
+  const calQ = automationCalendarQuery(orgId, { ...bounds, timeZone, all });
   const cal = useQuery({
     ...calQ,
     placeholderData: keepPreviousData,
@@ -103,7 +103,7 @@ export function ScheduleCalendarView({
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
   // 全组织: the org's tasks (the empty state's next run) and who created them.
-  const allQ = schedulesQuery(orgId, "all");
+  const allQ = automationsQuery(orgId, "all");
   const allTasks = useQuery({
     ...allQ,
     enabled: all,
@@ -116,7 +116,7 @@ export function ScheduleCalendarView({
   const personOf = (id: string): PersonRef | null => refs[id] ?? null;
   const [panel, setPanel] = useRunPanelHash();
 
-  const go = (next: Partial<SchedulesUrl>) => setUrl({ ...url, ...next });
+  const go = (next: Partial<AutomationsUrl>) => setUrl({ ...url, ...next });
   const scope = admin
     ? {
         value: url.scope,
@@ -139,7 +139,7 @@ export function ScheduleCalendarView({
         empty={{
           text: t("empty"),
           hint: t("emptyHint"),
-          action: { label: t("new"), variant: "primary" as const, href: "/schedules/new" },
+          action: { label: t("new"), variant: "primary" as const, href: "/automations/new" },
         }}
       />
     );
@@ -323,7 +323,7 @@ export function ScheduleCalendarView({
           day={date}
         />
       </ListPage>
-      <ScheduleRunSheet
+      <AutomationRunSheet
         orgId={orgId}
         accountId={accountId}
         all={all}

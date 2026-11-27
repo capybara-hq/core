@@ -26,7 +26,7 @@ const registration = (id: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const ALL_ON = { waiting: true, replies: true, tasks: true, schedules: true };
+const ALL_ON = { waiting: true, replies: true, tasks: true, automations: true };
 
 function installPush(permission: "granted" | "denied" | "prompt") {
   const push = {
@@ -111,7 +111,7 @@ describe("/account/notifications", () => {
     expect(switchOf(m.waiting).getAttribute("aria-checked")).toBe("true");
     expect(switchOf(m.replies).getAttribute("aria-checked")).toBe("false");
     expect(switchOf(m.tasks).getAttribute("aria-checked")).toBe("true");
-    expect(switchOf(m.schedules).getAttribute("aria-checked")).toBe("true");
+    expect(switchOf(m.automations).getAttribute("aria-checked")).toBe("true");
     await userEvent.setup().click(switchOf(m.replies));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ replies: true });
