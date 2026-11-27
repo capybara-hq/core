@@ -7,6 +7,7 @@ import { latestSummary } from "./build.js";
 import { planningBounds } from "./fit.js";
 import { UNKNOWN_RESULT_TEXT } from "./pairing.js";
 import { scheduleHeader, senderTranscriptLabel } from "./run-context.js";
+import { runOutcomeNotes } from "./run-outcome.js";
 import { estimateTokens } from "./tokens.js";
 import { toolsChangedText } from "./tool-changes.js";
 
@@ -150,6 +151,12 @@ export function shouldCompact(
   return estimate >= Math.min(settings.threshold * window, target);
 }
 
+/** The user turns since the latest summary (all of them without one): `events` in any order. */
+export function turnsSinceSummary(events: readonly ConversationEvent[]): number {
+  const floor = latestSummary([...events])?.payload.coversUpToSeq ?? Number.NEGATIVE_INFINITY;
+  return events.filter((e) => e.type === "user_message" && e.seq > floor).length;
+}
+
 /**
  * The compaction plan: keep the most recent `settings.keepRecentTurns` turns verbatim (a maximum,
  * not a rule) and transcribe everything older that the previous summary does not cover yet (that
@@ -180,7 +187,9 @@ export function compactionPlan(
     if (e.type === "user_message") userIdx.push(i);
   });
   const atPair = pairBoundaries(candidate);
-  const tail = tailTokens(candidate);
+  // run outcome notes (./run-outcome.ts), read from the whole log: a run's start may be older
+  const notes = runOutcomeNotes(sorted);
+  const tail = tailTokens(candidate, notes);
   const keep = settings.keepRecentTurns;
   let boundary: number;
   if (keep <= 0) boundary = candidate.length;
@@ -223,7 +232,7 @@ export function compactionPlan(
   }
   const lines: string[] = [];
   for (const e of covered) {
-    const line = transcriptLine(e);
+    const line = transcriptLine(e, notes);
     if (line) lines.push(line);
     if (e.type !== "assistant_message") continue;
     for (const b of e.payload.content) {
@@ -291,10 +300,10 @@ export function openingSeqs(
  * `out[length]` = 0): the events rendered as the transcript renders them, then estimated with the
  * request estimator.
  */
-function tailTokens(candidate: ConversationEvent[]): number[] {
+function tailTokens(candidate: ConversationEvent[], notes: ReadonlyMap<number, string>): number[] {
   const out = new Array<number>(candidate.length + 1).fill(0);
   for (let i = candidate.length - 1; i >= 0; i--) {
-    const line = transcriptLine(candidate[i] as ConversationEvent);
+    const line = transcriptLine(candidate[i] as ConversationEvent, notes);
     const own = line
       ? estimateTokens([{ role: "user", content: [{ type: "text", text: line }] }], [])
       : 0;
@@ -353,7 +362,7 @@ function keepToolPairs(atPair: boolean[], userIdx: number[], boundary: number): 
   return 0;
 }
 
-function transcriptLine(e: ConversationEvent): string | null {
+function transcriptLine(e: ConversationEvent, notes: ReadonlyMap<number, string>): string | null {
   switch (e.type) {
     case "user_message": {
       const body = renderBlocks(e.payload.content);
@@ -389,6 +398,13 @@ function transcriptLine(e: ConversationEvent): string | null {
     // so the summary never carries the project's instructions in a paraphrase
     // run_context is left out: its current values follow the summary anyway (build.ts), and
     // stale names should not be summarised as current
+    // a run that ended before it finished is a system message of the request (build.ts); a compact
+    // run's end has no note
+    case "run_aborted":
+    case "run_failed": {
+      const note = notes.get(e.seq);
+      return note === undefined ? null : `System reminder: ${note}`;
+    }
     case "tool_result":
       return `Tool result ${e.payload.toolKey}${e.payload.isError ? " (error)" : ""}: ${e.payload.content}`;
     // Every other event type is left out of the transcript: not model-visible, or re-rendered
@@ -420,9 +436,8 @@ function transcriptLine(e: ConversationEvent): string | null {
     case "subagent_finished":
     case "compaction_summary":
     case "compaction_failed":
+    case "compaction_skipped":
     case "run_finished":
-    case "run_aborted":
-    case "run_failed":
     // permission_context, like device_paths, follows the summary (the latest covered ones again,
     // build.ts); the profile change and the review record are not model-visible
     case "permission_context":

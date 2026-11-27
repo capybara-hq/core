@@ -393,6 +393,24 @@ function runDividerBlocks(): ReactNode {
           action={{ onClick: noop }}
         />
       </Block>
+      {/* notice lines from outside a run (maintainer decision 2026-11-28): a person's model
+          switch, a manual compaction's other outcomes, a sub-agent's report and finish in one */}
+      <Block id="run-divider-notice-switched">
+        <RunDivider kind="notice" text="已切换到 deepseek-v4，推理强度 高" />
+      </Block>
+      <Block id="run-divider-notice-compact-skipped">
+        <RunDivider kind="notice" text="无需压缩 · 对话未超过 4 轮，最近 4 轮会原样保留" />
+      </Block>
+      <Block id="run-divider-notice-compact-failed">
+        <RunDivider kind="notice" text="压缩失败：the model is unavailable" />
+      </Block>
+      <Block id="run-divider-notice-report-finished">
+        <RunDivider
+          kind="notice"
+          text="扫描文档 交回报告并已完成"
+          action={{ label: "查看", expanded: false, onClick: noop }}
+        />
+      </Block>
       <Block id="run-divider-hook-denied">
         <RunDivider
           kind="hook-denied"

@@ -152,6 +152,35 @@ describe("manual compaction", () => {
     expect(ev(events, "assistant_message").filter((e) => e.runId === runId)).toEqual([]);
   });
 
+  it("records a compaction with nothing to summarize and still finishes the compact run", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 1);
+
+    const res = await compact(conv, orgId);
+    expect(res.statusCode, res.body).toBe(202);
+    const { runId } = res.json() as { runId: string };
+    await waitFor(
+      async () => {
+        const row = await db
+          .selectFrom("runs")
+          .select("status")
+          .where("id", "=", runId)
+          .executeTakeFirst();
+        return row?.status === "completed" ? row : null;
+      },
+      30_000,
+      "compact run completed",
+    );
+    const events = (await eventsOf(db, conv)).filter((e) => e.runId === runId);
+    expect(ev(events, "compaction_skipped").map((e) => e.payload)).toEqual([
+      { reason: "too_few_turns", keepRecentTurns: 4, turns: 1, step: 0 },
+    ]);
+    expect(ev(events, "compaction_summary")).toEqual([]);
+    expect(ev(events, "compaction_failed")).toEqual([]);
+    expect(ev(events, "usage")).toEqual([]);
+    expect(ev(events, "run_finished").map((e) => e.payload.reason)).toEqual(["completed"]);
+  });
+
   it("returns the compact run already queued instead of starting a second one", async () => {
     const { orgId, conv } = await setup();
     await seedTurns(orgId, conv, 5);

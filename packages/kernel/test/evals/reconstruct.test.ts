@@ -1131,7 +1131,7 @@ describe("reconstructRequest：基线零漂移", () => {
     // the post-summary framing (spec §4.2.2), derived from the log: the re-rendered opening
     // message, then the kept pair the summary did not see
     expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(
-      /<\/conversation_summary>\n\nThe message that opened the current turn follows, shown again verbatim; the summary covers it\. The messages after those are the most recent ones in the conversation, kept verbatim\..*Continue the work from where it left off\.$/s,
+      /<\/conversation_summary>\n\nThe earlier part of this conversation was compacted into the summary above and is no longer shown verbatim\. The message that opened the current turn follows, shown again verbatim; the summary covers it\. The messages after those are the most recent ones in the conversation, kept verbatim\..*Continue the work from where it left off\.$/s,
     );
     expect(blocks.slice(1).some((b) => b.type === "text" && b.text === ask)).toBe(true);
     // after the system texts that follow a summary (run context, skills), the kept tool pair
@@ -2578,6 +2578,36 @@ describe("reconstructRequest: replies cut off at the output limit (issue #951)",
   });
 });
 
+describe("reconstructRequest: run outcome notes (maintainer decision 2026-11-28)", () => {
+  it("a failed run is followed by its note in the next requests, at its position; zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "fail:invalid_request");
+    await waitForTerminal(db, conv, 1, 30_000);
+    await postMessage(owner, orgId, conv, "echo:after");
+    await waitForTerminal(db, conv, 2, 30_000);
+
+    const events = await eventsOf(db, conv);
+    const failed = events.find((e) => e.type === "run_failed");
+    expect(failed?.type === "run_failed" && failed.payload.error.code).toBe(
+      "model.invalid_request",
+    );
+    const note =
+      "The previous run ended before it finished: the model service rejected the request.";
+    const last = sent.at(-1) as ModelRequest;
+    const at = last.messages.findIndex((m) => m.role === "system" && m.content === note);
+    expect(at).toBeGreaterThan(0);
+    // after the failed turn, right before the next user turn; the provider's text never shows
+    expect(last.messages[at + 1]?.role).toBe("user");
+    expect(JSON.stringify(last)).not.toContain("Scripted invalid_request failure");
+    const calls = modelCalls(events);
+    expect(calls.at(-1)?.payload.request.runOutcomeSeqs).toEqual([failed?.seq]);
+    expect(calls[0]?.payload.request).not.toHaveProperty("runOutcomeSeqs");
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+});
+
 describe("reconstructRequest: UI refresh B model switches", () => {
   it("two mid-conversation switches (model, then back with an effort): zero drift, equal to what the provider received", async () => {
     reset();
@@ -3102,6 +3132,22 @@ describe("reconstructRequest：漂移原因", () => {
       "permission_profile_changed",
       "device_sandbox_changed",
     ]);
+  });
+
+  it("run_outcome_note: a request recorded without the notes its log now renders", () => {
+    const s = clone();
+    const call = modelCalls(toEvents(s)).at(-1) as ModelCallEvent;
+    // a failed earlier run inside the recorded range that the request (as one sent before the
+    // notes existed) did not render
+    const first = s.events.find((e) => e.seq === call.payload.request.fromSeq);
+    s.events.push({
+      seq: call.payload.request.fromSeq + 0.5,
+      type: "run_failed",
+      runId: "run-earlier",
+      payload: { error: { code: "model.timeout", message: "x" } },
+      createdAt: first?.createdAt ?? new Date(0).toISOString(),
+    } as (typeof s.events)[number]);
+    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual(["run_outcome_note"]);
   });
 
   it("快照里没有这个 model_call → eval.call_not_found", () => {

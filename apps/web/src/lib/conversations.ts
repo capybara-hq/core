@@ -572,6 +572,14 @@ type EventBody =
     }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | {
+      /**
+       * A manual compaction found nothing to summarize: every user turn since the last summary is
+       * in the kept tail (`keepRecentTurns`). Display only.
+       */
+      type: "compaction_skipped";
+      payload: { reason: "too_few_turns"; keepRecentTurns: number; turns: number; step: number };
+    }
+  | {
       type: "media_excluded";
       payload: { attachmentIds: string[]; reason: "provider_rejected" };
     }
