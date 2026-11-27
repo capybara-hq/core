@@ -22,7 +22,6 @@ import {
   type GuideAck,
   PluginGuides,
 } from "../extensions/plugin-guides.js";
-import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
 import type { WriteActor } from "../identity/write-actor.js";
@@ -459,11 +458,6 @@ export class ConnectorsService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(ToolRegistry) private readonly registry: ToolRegistry,
-    /**
-     * Extension manifests: a derived default slug avoids an extension's name (an explicit slug may
-     * take one; connector and extension tool keys live in separate namespaces).
-     */
-    @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "manifests">,
     @Inject(Credentials) private readonly credentials: Credentials,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ToolDrift) private readonly drift: ToolDrift,
@@ -528,7 +522,9 @@ export class ConnectorsService {
 
   /**
    * The first free default name and slug ({@link CreateConnectorInput.slugDefault}), read in the
-   * caller's transaction under the org lock.
+   * caller's transaction under the org lock. Only live connectors hold a slug: an extension's name
+   * does not, as for an explicit slug, since connector tools are `mcp__<slug>__<tool>` and extension
+   * tools `plugin__<plugin>__<tool>` (a template's default slug is often its plugin's name: slack).
    */
   private async freeName(
     t: KernelSchemaDb,
@@ -549,7 +545,6 @@ export class ConnectorsService {
           .execute()
       ).map((r) => r.slug),
     );
-    for (const m of this.extensions.manifests()) taken.add(m.name);
     for (let n = 1; ; n++) {
       const suffix = n === 1 ? "" : `_${n}`;
       const slug = `${base.slice(0, 24 - suffix.length).replace(/_+$/, "")}${suffix}`;
