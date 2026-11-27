@@ -564,3 +564,22 @@ Routes on `files/library.controller.ts` (owner only, `@OrgAction("agents.use")`,
       one beyond the SDK changeset.
 - [ ] `pnpm verify --fast`; then `pnpm exec vitest run` on every changed/added test file.
 - [ ] Final whole-branch review (most capable model), fixes, push, PR.
+
+## Amendments after the wave 1 reviews
+
+- **K1:** the schema is `0188_file_library.sql` (tables, indexes, policies, the function
+  `file_library_copy(since timestamptz)`), the data copy is `0189_file_library_copy.sql`
+  (`SELECT file_library_copy('-infinity')`). `file_shares.object_key` is kept (contract migration
+  drops it); `blobs (org_id, object_key)` is unique; deleted files may have no blob.
+- **K2:** stored payloads are never re-parsed: every reader of a stored content-block ref uses
+  `refFileId(source)` (kernel, `conversations/events.ts`) or `refId(source)` (web).
+- **K4:** `AttachmentsService.deleteExpired` filters `purpose <> 'chat'` (migrated drafts keep their
+  old unbound attachment row; its object is now a blob's). Cleanup reads `files.staging_key` before
+  falling back to `uploads/<id>`.
+- **K5/K7/K9:** migrated artifact and share blobs have `etag NULL`: compare size only then.
+- **K7:** liveness and serving use `blob_id`; never read or clear `object_key`; the
+  `share-object-delete` handler refuses any key a blob uses.
+- **K9:** a one-off catch-up job (`file-library-backfill`, deterministic id) calls
+  `file_library_copy(<0188 applied_at - 1 hour>)` once the rolling window is over (enqueued at
+  worker start with a 30-minute delay; skipped more than 7 days after 0188 was applied), so rows old
+  replicas wrote during the deploy are migrated.
