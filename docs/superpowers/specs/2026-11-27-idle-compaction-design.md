@@ -46,10 +46,12 @@ kernel. Hence two phases (maintainer direction, 2026-11-27):
 
 - **Phase 1 (build first):** a fixed idle delay, set by the platform and overridable per org.
   Latency benefit only.
-- **Phase 2 (designed here, built later):** model providers declare per-model cache behavior and
-  report the cache lifetime a call actually used; the summary request learns to reuse the
-  conversation's cached prefix; where both hold, idle compaction fires shortly before the cache
-  expires, otherwise it keeps the fixed delay (§9).
+- **Phase 2 (designed here, built later):** model providers declare per-model cache behavior
+  (mechanism, lifetime options, refresh rules); the request names its lifetime tier; the kernel
+  derives the expiry from the last request that read or wrote the cache (no vendor reports one);
+  the summary request learns to continue the conversation's request so it reuses the cached
+  prefix; where both hold, idle compaction fires before the cache expires, otherwise it keeps the
+  fixed delay (§9).
 
 ## 2. Goals and non-goals
 
@@ -182,7 +184,7 @@ Notes on the guards:
 - **Staleness (5)** replaces Claude Code's "timer late by more than 60 s / cache lapsed". Phase 1
   has no cache to lapse, so lateness costs nothing except when the worker was down for hours and
   a backlog of jobs would compact many conversations at once on restart; 6 h bounds that. Phase 2
-  re-adds a cache-lapse check for the cache-timed mode (§9.5).
+  re-adds a cache-lapse check for the cache-timed mode (§9.6).
 - **Size (8).** `triggerLine = min(threshold * W, W - O_p - R_p)` from compaction spec §4.1 (the
   same `planningBounds`; `shouldCompact` without the hard-line shortcut). A conversation over the
   trigger line would compact on the next step anyway: idle compaction only moves that cost earlier
@@ -333,7 +335,8 @@ semantics carry over unchanged:
 `enabled: false` (automatic compaction off) also turns idle compaction off: it is automatic
 compaction. Manual compaction stays available whatever these say.
 
-Phase 2 adds one platform/org field, `idleTiming: "fixed" | "cache"` (default `cache`), §9.5.
+Phase 2 adds two platform/org fields: `idleTiming: "fixed" | "cache"` (default `cache`, §9.6) and
+`promptCache.longTtl` (default off, §9.3).
 
 ### 6.2 Platform tool parity
 
@@ -448,129 +451,269 @@ The rollout (§10) measures the return rate before the default stays on.
 Two benefits phase 1 leaves on the table:
 
 1. **A cheap summary.** If the summary request reuses the conversation's cached prefix, its input
-   is billed at the cache-read price instead of full price.
+   is billed at the cache-read price (about a tenth of the input price or less at the explicit-cache
+   vendors below) instead of full price.
 2. **Timing against the cache.** If the kernel knows when the conversation's cache expires, it can
-   compact just before, so the summary is cheap *and* the returning person's first request reads a
+   compact before that, so the summary is cheap *and* the returning person's first request reads a
    small context instead of re-reading a large one at full price.
 
-**A cache declaration alone buys nothing.** As long as the summary is a transcript (compaction spec
-§4.5), it hits no cache, and firing "before expiry" saves nothing. 9.3 (the cache-reusing summary)
-is the prerequisite for 9.4 (timing); 9.2 (declarations) is the prerequisite for both.
+**A cache declaration alone buys nothing.** Today's summary request
+(`runtime/context/compaction.ts` `buildCompactionRequest`) replaces the system prompt with the
+compaction instruction (`cache: false`), sends `tools: []` and one user message holding a transcript
+of the events (chunked when large, compaction spec §4.5). It shares **no prefix** with any of the
+conversation's requests, so no provider can serve it from cache, whatever the provider caches and
+however precisely the kernel knows the expiry. 9.3 (a summary request that continues the
+conversation's request byte for byte) is the prerequisite for 9.4 (timing); 9.2 (declarations) is
+the prerequisite for both.
 
-### 9.2 Provider declarations (model-provider@2, public SDK API)
+### 9.2 Provider landscape
 
-Provider landscape (as understood at writing; to be re-verified per vendor when building):
+Checked against the vendors' official documentation on 2026-11-27 (each fact cites its source;
+"unverified" marks what the official pages do not state). Prices are relative to the model's input
+price.
 
-- **Anthropic**: explicit caching (`cache_control` breakpoints); a 5-minute default lifetime,
-  refreshed on each hit, and an optional 1-hour lifetime at a higher cache-write price. Our
-  anthropic plugin sends 5-minute ephemeral markers only.
-- **OpenAI**: automatic prefix caching on longer prompts; short-lived (minutes of inactivity,
-  sometimes longer), no lifetime the caller sets.
-- **DeepSeek**: automatic, disk-backed context caching; best-effort, typically kept for hours.
-- **Gemini**: implicit caching on recent models, plus explicit cached contents with a
-  caller-chosen TTL that is billed for storage.
-- **Bailian**: our plugin sends explicit 5-minute ephemeral markers (implicit caching did not hit
-  in our live check).
+| Vendor / our plugin | Mechanism | Lifetime | Hit refreshes | Chosen per request | Fire before expiry? |
+|---|---|---|---|---|---|
+| Anthropic (`anthropic`) | explicit `cache_control` breakpoints (≤ 4, a top-level automatic one counts) | 5 min default, or 1 h | yes, from the request's start | `cache_control.ttl: "1h"` | **yes** |
+| OpenAI, GPT-5.6 and later (`openai`, Responses) | implicit by default (automatic breakpoint at the latest message); explicit breakpoints optional | `prompt_cache_options.ttl` `30m` (default) or `12h`, a **minimum** | 30m: kept ≥ 30 min after a read; 12h: a read does not restart it | `prompt_cache_options.ttl` | **yes** (30m tier) |
+| OpenAI, earlier models | automatic prefix caching | `prompt_cache_retention` `in_memory` (about 5–10 min idle, at most 1 h) or `24h` (often about 30 min, at most 24 h) | in_memory counts idle time; 24h unverified | `prompt_cache_retention` | weak (a range, not a time) |
+| DeepSeek (`deepseek`, openai-compatible `deepseek`) | automatic disk cache, best-effort | cleared hours to days after last use | unverified | no | no need (and no guarantee) |
+| Bailian explicit (`bailian`) | `cache_control: {type: "ephemeral"}` (≤ 4, 20-block lookback) | 5 min fixed; Qwen4 `5m` or `1h` | yes, each hit restarts it | general models: no; Qwen4: `prompt_cache_options.ttl` | **yes** (5 min; Qwen4 1 h) |
+| Bailian implicit (openai-compatible `qwen`) | automatic prefix, not guaranteed | no fixed lifetime, cleared periodically | unverified | no | no |
+| Ark implicit (`ark`, openai-compatible `ark`) | automatic on supported models, not guaranteed; `prompt_cache_key` only for routing affinity | no fixed lifetime, capacity eviction | unverified | no | no |
+| Ark explicit (Responses API only; our plugin uses Chat) | `caching.type=enabled`, session or prefix | `expire_at`, 3 days default, 7 max | no | `expire_at` | not applicable (days; Chat API cannot use it) |
 
-Contract additions (additive, in `packages/plugin-sdk/src/model.ts`):
+Sources and details:
 
-- `ModelInfo.promptCache?: { mode: "none" | "automatic" | "explicit"; ttlSeconds?: number }`:
-  `mode` says whether the model caches at all and whether the request decides it; `ttlSeconds` is
-  the approximate lifetime of an entry after its last use, when the vendor documents one and it
-  does not depend on the request. Absent = unknown, treated as `none` for timing.
-- `ModelUsage.cacheTtlSeconds?: number`: the lifetime the call actually requested or got, when it
-  depends on the request (Anthropic 5 min vs 1 h). Claude Code also works from the last request's
-  actual TTL, not a model-level constant. The kernel records it on the call's `usage` event
-  (additive; not model-visible; no `DriftReason`).
-- Which TTL a provider requests (Anthropic 1 h) is the provider plugin's parameter (a declared
-  param, so org/agent can choose it), not the kernel's; the 1-hour write price is the trade-off the
-  admin makes there.
-- The kernel never creates vendor-side explicit caches (Gemini cached contents) for this; storage
-  billed per hour is out of scope.
+- **Anthropic** ([prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)):
+  explicit breakpoints, at most 4, the top-level `cache_control` is automatic caching and takes one
+  slot; each breakpoint looks back at most 20 blocks; the prefix must match exactly. Default 5
+  minutes, `"ttl": "1h"` for one hour; every hit resets the lifetime at no cost, counted from the
+  **start** of the request that read or wrote the entry; a request that reads a 5-minute entry
+  restarts its 5 minutes even if it asked for `1h`; 1 h entries must come before 5 min entries.
+  Minimum cacheable length 512–4096 tokens depending on the model; shorter prompts are silently not
+  cached. Writes 1.25× (5 min) or 2× (1 h), reads 0.1× (lower on some newer models). Usage reports
+  `cache_read_input_tokens`, `cache_creation_input_tokens` and the split
+  `cache_creation.ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`. No response field
+  states an expiry.
+- **OpenAI** ([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)):
+  GPT-5.6 and later default to implicit mode with an automatic breakpoint at the end of the latest
+  cacheable message; `prompt_cache_options.mode: "explicit"` uses only developer breakpoints
+  (not allowed on `instructions`). `prompt_cache_options.ttl` is `"30m"` (default) or `"12h"` and is
+  a minimum ("OpenAI may retain entries longer than the requested minimum"); a read keeps a 30m
+  entry for at least another 30 minutes; a read does not restart the 12h clock. Reads 0.1× (0.05× on
+  some models), writes 1.25× (30m) or 2.5× (12h); minimum 1024 tokens. Earlier models cache
+  automatically with `prompt_cache_retention` `in_memory` or `24h` and no write surcharge. Usage
+  reports `input_tokens_details.cached_tokens`, `cache_write_tokens` and, on 5.6+,
+  `cache_write_tokens_details.ttl_30m_tokens` / `ttl_12h_tokens`. Unverified: whether
+  `prompt_cache_options` works on Chat Completions (the page names Responses), whether the 24h tier
+  refreshes on a hit, the 24h tier's price.
+- **DeepSeek** ([context caching](https://api-docs.deepseek.com/guides/kv_cache),
+  [pricing](https://api-docs.deepseek.com/quick_start/pricing)): on for everyone, no request
+  option; prefix units saved at request boundaries; entries usually cleared "a few hours to a few
+  days" after last use; best-effort. Hits cost about 2–3.3% of a miss; no write surcharge, no
+  storage fee. Usage `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`. Unverified: minimum
+  length and unit size, any configurable lifetime.
+- **Bailian** ([context cache](https://help.aliyun.com/zh/model-studio/context-cache),
+  [Qwen4 explicit cache](https://help.aliyun.com/en/model-studio/explicit-cache-qwen4)): implicit
+  cache automatic, not guaranteed, no fixed lifetime, minimum 1024 (512 for GLM / MiniMax), hits
+  usually 0.2×. Explicit cache `cache_control: {"type": "ephemeral"}`, 5 minutes, each hit restarts
+  it, minimum 1024, at most 4 markers, 20-block lookback, writes 1.25×, hits 0.1×. **Explicit and
+  implicit caching are mutually exclusive within one request.** Qwen4 adds `prompt_cache_options`
+  `{mode, ttl}` with `5m` or `1h` (a hit renews by the current request's TTL and keeps the later
+  expiry), writes about 1.25× / 2×, and a TTL split in usage. Unverified: whether Qwen4's
+  `prompt_cache_options` applies to the DashScope native `generation` endpoint our plugin uses
+  (the page lists Chat Completions, Responses and the Anthropic-compatible API).
+- **Ark** ([context cache](https://docs.volcengine.com/docs/ark/context-cache)): implicit cache on
+  supported models, cannot be turned off, not guaranteed, no fixed lifetime (capacity and
+  eviction), minimum 1024 by default (128–8960 on some models); `prompt_cache_key` is a routing hint
+  only. Explicit cache only on the Responses API, `expire_at` default 3 days after creation, at most
+  7, use does not extend it, billed per hour of storage. Unverified: hit and storage prices; the
+  older Context API's TTL range ([context API](https://docs.volcengine.com/docs/82379/1529329): a
+  search summary says default 86400 s, 3600–604800, reset on use; the page body was not read).
 
-Public API: `pnpm gen:sdk-api` plus a changeset bumping `@capybara-hq/plugin-sdk`
-(`check:sdk-api`, `check:api-changeset`); the conformance suite gains a check that a declared
-`ttlSeconds` / reported `cacheTtlSeconds` is a positive integer. Provider plugins (anthropic,
-bailian, openai, deepseek, openai-compatible) declare in `capybara-hq/plugins`.
+**No vendor returns an expiry.** Ark's `expire_at` is a request parameter (and unused by us);
+everything else reports only how many tokens were read or written (some split by TTL tier). So the
+kernel derives expiry itself (9.4).
 
-### 9.3 A summary request that reuses the cached prefix ("in-context summary")
+Phase 2c (cache-timed firing) applies only to the first group: **Anthropic** (5 min / 1 h),
+**OpenAI GPT-5.6+** at the 30m tier, **Bailian explicit** (5 min; Qwen4 1 h). DeepSeek needs none
+(its cache outlives any idle delay, best-effort); Bailian implicit and Ark implicit have no lifetime
+to time against; Ark explicit is Responses-only. For all of these the fixed delay stays, and 2b's
+in-context summary still benefits whenever their cache happens to hit.
 
-Today's summary request is `[instruction] + transcript text`, chunked when it is large. The
-in-context variant follows the prompt suggestions technique (`conversations/prompt-suggestion-request.ts`):
+### 9.3 Contract changes (model-provider@2, public SDK API)
 
-- Rebuild the conversation's **last request exactly as recorded** (the eval zero-drift path:
-  `reconstructInputs` / `assembleModelRequest`), append the last assistant reply, then one user
-  message with the summary instruction (the Claude Code template, adapted: "summarize the
-  conversation above" instead of "the transcript below"). Same model, same system, same tool
-  definitions (kept for the prefix; the instruction forbids tool calls and a tool call in the reply
-  fails the attempt), so the provider's cache serves everything up to the instruction.
-- **When it applies**: the same model as the conversation's last call (a model switch breaks the
-  prefix, like Claude Code's guard); the rebuild has no drift (else fall back); and it fits: last
-  request + reply + instruction + `maxOutputTokens` + reserve `<= W`. Every sent request already
-  fits `W - O_p - R_p` (compaction spec §4.3), and the summary cap (20k) is usually below `O_p`, so
-  it usually fits when the last reply is not huge.
-- **Otherwise** the transcript path, chunked when needed (§4.5), exactly as today. Chunking and the
-  in-context summary do not combine: chunking exists because the material exceeds one request;
-  the in-context request is by construction one request the model already accepted. A history
-  too large for one request has no cached prefix to reuse in one call anyway.
-- **Coverage stays the plan's.** The summary still covers the plan's prefix (`coversUpToSeq`,
-  `openingSeqs`); the model sees the kept tail too, and the instruction says to summarize only up
-  to a marked point (the last event the plan covers is identified in the instruction) so the kept
-  turns are not duplicated into the summary. The builder tests this boundary carefully; if the
-  model cannot be held to it, the summary covers everything and the kept tail is empty (a builder
-  decision recorded in the phase 2 plan).
-- **Append-only history and replay.** The summary request is a side request, not a step: it adds
-  nothing to the conversation's history and does not change any later request's prefix. Its result
-  is the ordinary `compaction_summary` text, which is what later requests and replays use; replays
-  never re-run the summary request. `compaction_summary` gains an optional `method: "transcript" |
-  "in_context"` for observability (not model-visible, no `DriftReason`). The in-context request
-  sees what the transcript omits (images, plugin context, project root), so summaries may differ in
-  quality; zero drift is unaffected because the summary is read from the log.
-- **Usage and hooks**: `model.request` fires with purpose `compaction` as today; `usage` shows the
-  cache reads, which is how the benefit is measured.
+In `packages/plugin-sdk/src/model.ts`. Before 0.1.0, changed directly, no compatibility layer
+(AGENTS.md "Before 0.1.0").
 
-The in-context summary is useful for **every** compaction (inline, manual, idle), not only idle:
-any compaction right after a step finds a warm cache. Phase 2b should use it for all of them.
+- **Per-model cache declaration** replaces `ModelInfo.capabilities.caching: boolean`:
 
-It also helps with the fixed delay alone: for providers with long automatic caches (DeepSeek), a
-10-minute idle compaction already reads a warm prefix.
+  ```ts
+  cache?: {
+    /** explicit: the plugin places breakpoints and the lifetime is known; implicit: the service
+     *  caches on its own, best-effort; none: no prompt caching. */
+    mechanism: "explicit" | "implicit" | "none";
+    /** Lifetimes a request can choose, in seconds ([300, 3600] Anthropic / Qwen4, [1800, 43200]
+     *  OpenAI 5.6+, [300] Bailian); empty for implicit. */
+    ttlOptions: number[];
+    /** The option used when the request names none. */
+    defaultTtl?: number;
+    /** OpenAI: the lifetime is a floor, entries may live longer; Anthropic / Bailian: exact. */
+    ttlIsMinimum: boolean;
+    /** A read restarts the lifetime (Anthropic, Bailian, OpenAI 30m; not OpenAI 12h). */
+    refreshOnHit: boolean;
+    /** When the lifetime starts counting; Anthropic: the request's start. */
+    ttlClock: "request_start" | "unknown";
+    /** Below this many prompt tokens nothing is cached. */
+    minTokens?: number;
+    /** A hit on an unchanged prefix within the lifetime is expected (explicit), not best-effort. */
+    guaranteed: boolean;
+  };
+  ```
 
-### 9.4 Fire timing against the cache
+  Absent or `mechanism: "none"` = no caching; `implicit` = may hit, never timed against. What the
+  kernel used `caching` for today reads `mechanism !== "none"`.
+- **Request-level TTL**: `ModelRequest.cacheTtl?: number` (seconds, one of the model's
+  `ttlOptions`; a plugin of an `implicit` / `none` model ignores it; an unknown value is a request
+  validation error in the kernel, never sent). The plugin maps it to the vendor's field
+  (`cache_control.ttl`, `prompt_cache_options.ttl`). It is recorded in `model_call.request` (a
+  transport option, not model-visible content: no `DriftReason`; a replay may send it unchanged).
+- **Per-TTL write breakdown**: `ModelUsage.cacheWriteByTtl?: { ttl: number; tokens: number }[]`
+  (optional; sums to `cacheWriteTokens`), from `ephemeral_5m/1h_input_tokens`,
+  `ttl_30m/12h_tokens`, Qwen4's split. Usage and cost reports price writes by tier with it (a 1 h
+  write costs more than a 5 min one).
+- There is **no** "actual TTL / expiry" usage field: no vendor reports one.
+- Who picks the TTL: the kernel sends the model's `defaultTtl` unless a platform / org setting asks
+  for the longer tier for chat conversations (`promptCache.longTtl`, off by default; it raises
+  every write's price, so it is an admin's choice; Q10). The kernel never creates vendor-side
+  stored caches (Ark explicit, cached-content APIs billed per hour).
 
-When the conversation's last call has a known lifetime `L` (its recorded `cacheTtlSeconds`, else
-the model's declared `promptCache.ttlSeconds`) **and** the in-context summary applies (9.3):
+Public API: `pnpm gen:sdk-api` plus a changeset bumping `@capybara-hq/plugin-sdk` (`check:sdk-api`,
+`check:api-changeset`). The conformance suite checks the declaration (positive integer TTLs,
+`defaultTtl` in `ttlOptions`, `implicit` / `none` with no options) and that a reported
+`cacheWriteByTtl` sums to `cacheWriteTokens`.
 
-- `runAt = lastCallFinishedAt + 0.9 * L`, if `0.9 * L >= IDLE_CACHE_MIN_SECONDS` (30 min);
-- otherwise the fixed delay.
+### 9.4 Deriving the expiry
 
-Short caches (5 min) keep the fixed delay: compacting at 4.5 minutes of idle time catches people
-still reading (Claude Code does not use its 5-minute cache for this either), and after 5 minutes
-the cache is gone, so the summary reverts to full price. Long caches (1 h, or a provider's
-documented hours) fire just before expiry.
+Per conversation, the kernel derives from the log the **last request that read or wrote the
+cache**: the latest `model_call` whose `usage` has `cacheReadTokens + cacheWriteTokens > 0`, on a
+model with `mechanism: "explicit"` (or an implicit model with a declared TTL floor, such as OpenAI
+5.6+ in implicit mode). Its recorded `cacheTtl` (else the model's `defaultTtl`) is `L`, and its
+start time `t0` (the attempt's start; `model_call` gains an optional `startedAt` if its event time
+is not the start).
 
-The arm-time decision is a best guess (the in-context fit is re-checked at fire). The job data
-gains `{ timing: "cache" | "fixed", expiresAt? }`.
+- `refreshOnHit: true`: `expiresAt = t0 + L` from that last request (Anthropic counts from the
+  request's start, `ttlClock: "request_start"`; with `"unknown"` the kernel takes the request's end,
+  which is later, then subtracts a margin, below).
+- `refreshOnHit: false` (OpenAI 12h): `expiresAt = t0 + L` from the request that **wrote** the
+  entry (the latest with `cacheWriteTokens > 0`), not the last read.
+- `ttlIsMinimum: true`: `expiresAt` is a lower bound, so firing before it is safe.
+- Margin: fire at `t0 + 0.9 * L`, never later than `expiresAt - 30 s`.
 
-### 9.5 Phase 2 guards and settings
+Nothing new is stored outside the log; the derivation reads recorded fields only.
 
-- A new guard for cache timing: if the job starts after `expiresAt` (worker backlog), it falls back
-  to the fixed-delay behavior (the cache is gone; compacting is still worth the latency) unless the
-  fixed delay would not yet have fired.
-- `idleTiming: "fixed" | "cache"` (platform + org, default `cache`): `fixed` keeps phase 1
-  timing even where the cache allows otherwise (an admin who prefers a predictable delay).
+### 9.5 A summary request that continues the conversation's request ("in-context summary")
 
-### 9.6 Phase boundaries (recommended)
+The request:
+
+- the conversation's **last request exactly as recorded**: the same `system` (blocks and `cache`
+  flags), the same `tools`, the same history, rebuilt through the eval zero-drift path
+  (`reconstructInputs` / `assembleModelRequest`, the technique of
+  `conversations/prompt-suggestion-request.ts`);
+- then that request's assistant reply, then **one appended user message** with the summary
+  instruction (the Claude Code template, worded for "the conversation above");
+- `toolChoice: "none"` (the tools stay declared because removing them changes the prefix); a tool
+  call in the reply fails the attempt;
+- the same model, the same `cacheTtl` as the last request (a different tier can split the entry:
+  Anthropic requires 1 h entries before 5 min ones).
+
+Only the appended message is new, so the vendor serves everything before it from the cache when the
+cache is alive. **This is what makes 9.4 worth anything.**
+
+When it applies: the same model as the last call (a model switch breaks the prefix, Claude Code's
+guard too); the rebuild has no drift (else fall back); it fits (last request + reply + instruction +
+`maxOutputTokens` + reserve `<= W`: every sent request already fits `W - O_p - R_p`, compaction
+spec §4.3, and the 20k summary cap is usually below `O_p`, so it usually fits unless the last reply
+is large). Otherwise the transcript path as today.
+
+Interaction with chunked compaction (§4.5): they do not combine. Chunking exists because the
+material exceeds one request; the in-context request is by construction one request the model
+already accepted. A history too large for one request has no single cached prefix to reuse.
+
+Coverage stays the plan's (`coversUpToSeq`, `openingSeqs`): the model sees the kept tail too, and
+the instruction marks the last event the summary covers, so the kept turns are not folded into the
+summary. If the model cannot be held to the mark, the summary covers everything and the tail is
+empty (a phase 2 plan decision, measured with an eval, Q9).
+
+Append-only history and replay: the summary request is a side request, not a step; it appends
+nothing to the history the model sees and never changes an earlier request's bytes. Its output is
+the ordinary `compaction_summary` text, which later requests and replays read; replays never re-run
+it. `compaction_summary` gains an optional `method: "transcript" | "in_context"` (not
+model-visible, no `DriftReason`). The in-context request sees what the transcript leaves out
+(images, plugin context, project root), so summaries may read differently; zero drift is
+unaffected because the summary comes from the log. `model.request` fires with purpose `compaction`
+as today; usage shows the cache reads, which is how the benefit is measured.
+
+It is useful for **every** compaction (inline, manual, idle), not only idle: a compaction right
+after a step finds a warm cache. It also helps the fixed delay alone: DeepSeek's long best-effort
+cache is usually still warm after 10 minutes.
+
+### 9.6 Fire timing against the cache
+
+At arming (and re-checked at fire), when the model is in the 9.2 first group, the in-context
+summary applies (9.5) and the expiry is derivable (9.4):
+
+- `runAt = min(finishedAt + idleDelay, t0 + 0.9 * L)`, but never earlier than
+  `finishedAt + IDLE_MIN_DELAY` (3 min);
+- if `t0 + 0.9 * L` falls before that floor (the cache will be gone before it is polite to
+  compact), the fixed delay, and the summary pays full price.
+
+So a long cache (1 h, OpenAI 30m) is alive at the fixed delay and the summary is cheap with no
+change in timing; a short one (5 min) brings the fire forward to about 4.5 minutes. Whether to do
+that for 5-minute caches (it compacts while some people are still reading) is Q11; Claude Code
+does not time against its 5-minute cache.
+
+The job data gains `{ timing: "cache" | "fixed", expiresAt? }`. A new guard: a cache-timed job that
+starts after `expiresAt` (worker backlog) proceeds as a fixed-delay one if the fixed delay has
+passed, else re-owes itself for the fixed delay.
+
+`idleTiming: "fixed" | "cache"` (platform + org, default `cache`): `fixed` keeps phase 1 timing.
+
+### 9.7 Plugin gaps (plugins repository, tracked separately)
+
+From reading the plugins' code against the documents above; each needs its own issue in
+`capybara-hq/plugins`:
+
+1. **bailian**: marks only the last cached **system** block; the history carries no marker, and
+   because explicit and implicit caching are mutually exclusive per request, the history gets
+   neither. A long conversation is cached only up to its system prompt, so a prefix-reusing summary
+   would not hit. Needs a breakpoint at the end of the history (append-only safe, as the anthropic
+   plugin's top-level automatic breakpoint is) within the 20-block lookback; no 1 h option (Qwen4
+   has one, endpoint support unverified).
+2. **anthropic**: no 1 h option (always 5 min); does not read the
+   `cache_creation.ephemeral_5m/1h_input_tokens` split; no per-model minimum length declared.
+3. **openai**: sends none of `prompt_cache_options`, `prompt_cache_retention`, `prompt_cache_key`;
+   does not read `cache_write_tokens_details`.
+4. **openai-compatible `qwen` dialect**: implicit only (sends no marker), so no deterministic
+   lifetime; it reads `cache_creation_input_tokens`, which implicit caching never reports.
+5. **ark**: `caching` is true only for ids starting with `deepseek-`, which is outdated: the
+   official page lists implicit caching on doubao-seed, kimi and glm models too, with per-model
+   minimums; it should follow the model list's context-cache capability. No `prompt_cache_key`.
+6. DeepSeek and Ark report no cache writes (`cacheWriteTokens` 0): a vendor limit, not a plugin bug.
+
+### 9.8 Phase boundaries (recommended)
 
 | Phase | Content | Behavior change |
 |---|---|---|
 | 1 | idle job, guards, idle compact run, preemption, settings, personal opt-out, UI, logs | idle compaction at a fixed delay |
-| 2a | SDK `promptCache` / `cacheTtlSeconds`, kernel records them, provider plugins declare/report | none (observability) |
+| 2a | SDK cache declaration, `ModelRequest.cacheTtl`, `ModelUsage.cacheWriteByTtl`; plugin declarations and the 9.7 fixes | none for timing; correct cache costs, bailian history caching |
 | 2b | in-context summary for all compactions, `compaction_summary.method` | cheaper, faster summaries where the cache is warm |
-| 2c | cache-timed fire (`idleTiming`), Anthropic 1 h as a provider param | idle compaction near cache expiry on long caches |
+| 2c | expiry derivation (9.4), cache-timed fire (9.6), `idleTiming`, `promptCache.longTtl` | idle compaction before expiry for the first group |
 
-2a is cheap and gives the data to decide 2b/2c (how often caches hit, which TTLs are in use). 2c
-should be built only if phase 1's `idle_return` logs show many returns between the fixed delay and
-an hour, where a cache-timed summary would have been both cheap and in time.
+2a is cheap and gives data (hit rates, tiers). 2b is the real cost win and applies everywhere. 2c
+matters mainly for 5-minute caches (long ones are alive at the fixed delay anyway) and should wait
+for phase 1's `idle_return` logs.
 
 ## 10. Rollout
 
@@ -597,8 +740,11 @@ Unit (`unit-tests.json`):
   `aborted`, suspended excluded), settings off.
 - Settings: the three fields' defaults, ranges, merge (org over platform, `null` clears), strict
   patches; `PreferencesSchema.idleCompaction`.
-- Phase 2 (when built): fire-time calculation (recorded TTL over declared, the 30-min floor,
-  fallback), in-context applicability (model switch, drift, fit).
+- Phase 2 (when built): expiry derivation (recorded `cacheTtl` over `defaultTtl`, refresh on hit
+  vs from the write, `ttlIsMinimum`, the margin), fire time (the minimum with the fixed delay, the
+  3-minute floor, fallback), in-context applicability (model switch, drift, fit), the in-context
+  request's prefix equals the recorded request byte for byte (system, tools, history,
+  `toolChoice: "none"`), SDK declaration validation in the conformance suite.
 
 Integration (default project; prefer extending existing files over new ≤5-test files):
 
@@ -639,10 +785,20 @@ Container (`container-tests.json`, only what one replica cannot show):
    it is short; a dedicated queue only if measurements show it delaying other maintenance work.
 7. **Arming for `background_task` / `subagent` wakes.** Recommend **yes** (they continue a
    conversation a person reads); **no** for `schedule`.
-8. **Phase 2 ordering.** Recommend 2a now-ish (cheap, data), 2b next (benefits all compactions),
-   2c only if the data shows returns in the 10–60 min window.
-9. **In-context summary boundary (9.3).** Whether the model can be held to "summarize up to the
+8. **Phase 2 ordering.** Recommend 2a soon (cheap; fixes cache costs and bailian's history
+   caching), 2b next (benefits all compactions), 2c only after the `idle_return` data (§9.8).
+9. **In-context summary boundary (§9.5).** Whether the model can be held to "summarize up to the
    marked point" reliably enough to keep the kept tail; decide in the phase 2 plan with an eval.
+10. **Longer cache tier (`promptCache.longTtl`, §9.3).** Recommend **off** by default: a 1 h /
+    12 h write costs more on every request (Anthropic 2× vs 1.25×, OpenAI 12h 2.5×), and long
+    caches matter less once the in-context summary exists; an admin turns it on for orgs with long,
+    interrupted conversations.
+11. **Bring the fire forward for 5-minute caches (§9.6)?** Recommend **yes, with the 3-minute
+    floor**, measured: it is the only case where timing changes the price; turn the floor or
+    `idleTiming: fixed` up if preemptions rise.
+12. **Unverified vendor facts (§9.2).** Re-check before 2a ships: OpenAI `prompt_cache_options` on
+    Chat Completions and the 24h tier's refresh and price; Qwen4 `prompt_cache_options` on the
+    DashScope native endpoint; DeepSeek's minimum length; Ark's prices and Context API TTL.
 
 ## AGENTS.md rules touched
 
@@ -653,8 +809,9 @@ Container (`container-tests.json`, only what one replica cannot show):
   preemption uses the existing cross-replica abort channel (§4.1, §5.1, §5.2).
 - **Runtime and replay:** idle compaction writes an ordinary `compaction_summary`; no new
   model-visible input, no `DriftReason`; `run_started.compactOrigin` and `run_aborted.reason:
-  "superseded"` are not model-visible; phase 2's `compaction_summary.method` and
-  `usage.cacheTtlSeconds` likewise (§8.3, §9.3).
+  "superseded"` are not model-visible; phase 2's `compaction_summary.method` and the recorded
+  `model_call.request.cacheTtl` likewise; the in-context summary is a side request that never
+  changes the history's bytes (§8.3, §9.3, §9.5).
 - **Migrations:** one additive column `runs.compact_origin` (§5.7).
 - **Config / settings:** three compaction fields (platform default, org override) and a personal
   preference; phase 2 one more (§6).
@@ -662,6 +819,8 @@ Container (`container-tests.json`, only what one replica cannot show):
   built from (§6.2).
 - **Web UI / language:** settings fields, an account preference, a divider variant, i18n zh / en
   with 智能体 / 平台 (§6.4).
-- **Model providers (phase 2):** model-provider@2 gains `ModelInfo.promptCache` and
-  `ModelUsage.cacheTtlSeconds`; public SDK API: `gen:sdk-api` plus a changeset (§9.2).
+- **Model providers (phase 2):** model-provider@2 replaces `capabilities.caching` with a per-model
+  `cache` declaration and gains `ModelRequest.cacheTtl` and `ModelUsage.cacheWriteByTtl`; no
+  expiry field (no vendor reports one, the kernel derives it from the log); public SDK API:
+  `gen:sdk-api` plus a changeset (§9.3, §9.4).
 - **Tests:** new unit and container tests join their checked-in lists in the same change (§11).
