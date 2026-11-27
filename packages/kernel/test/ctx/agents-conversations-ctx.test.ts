@@ -230,6 +230,91 @@ describe("ctx.agents.usableBy", () => {
   });
 });
 
+describe("avatars are the design AvatarValue", () => {
+  it("maps an agent's preset, upload, external image, theme preset and none", async () => {
+    const owner = await account("Avatar Owner");
+    await db
+      .insertInto("memberships")
+      .values({ org_id: orgId, account_id: owner, role: "member" })
+      .execute();
+    const mk = async (avatar: unknown) => {
+      const id = await agent(owner, "private", "Av");
+      await db
+        .updateTable("agents")
+        .set({ profile_avatar: JSON.stringify(avatar) as never })
+        .where("id", "=", id)
+        .execute();
+      return id;
+    };
+    const preset = await mk({ kind: "preset", id: "panda" });
+    const upload = await mk({ kind: "upload", uploadId: "u1" });
+    const external = await mk({ kind: "external", url: "https://example.com/a.png" });
+    const theme = await mk({
+      kind: "theme",
+      themeId: "t1",
+      version: "1.0.0",
+      preset: "mascot",
+      file: "avatars/mascot.png",
+    });
+    const none = await mk(null);
+    const ctx = ctxFor();
+    const rows = await ctx.agents.usableBy({ orgId, accountId: owner });
+    const av = (id: string) => rows.find((r) => r.id === id)?.avatar;
+    expect(av(preset)).toEqual({ kind: "preset", id: "panda" });
+    for (const id of [upload, external]) {
+      const a = av(id);
+      expect(a).toMatchObject({ kind: "image" });
+      expect((a as { src: string }).src).toMatch(
+        new RegExp(`^/api/v1/orgs/${orgId}/agents/${id}/avatar\\?v=`),
+      );
+    }
+    const t = av(theme) as { kind: string; src: string };
+    expect(t.kind).toBe("image");
+    expect(t.src).toMatch(/^\/api\/v1\/themes\/t1\/1\.0\.0\/assets\//);
+    expect(av(none)).toBeNull();
+    await ctx.close();
+  });
+
+  it("maps a person's upload and SSO avatar to an image, none to null", async () => {
+    const up = await account("Avatar Up");
+    const sso = await account("Avatar Sso");
+    const plain = await account("Avatar Plain");
+    for (const a of [up, sso, plain])
+      await db
+        .insertInto("memberships")
+        .values({ org_id: orgId, account_id: a, role: "member" })
+        .execute();
+    await db
+      .updateTable("accounts")
+      .set({ avatar: JSON.stringify({ kind: "upload", uploadId: "u1" }) as never })
+      .where("id", "=", up)
+      .execute();
+    await db
+      .insertInto("identities")
+      .values({
+        source: "lark:t1",
+        external_id: "ext1",
+        account_id: sso,
+        email: null,
+        profile: JSON.stringify({ avatarUrl: "https://cdn.example.com/p.png" }) as never,
+      })
+      .execute();
+    const ctx = ctxFor();
+    const rows = await ctx.people.get({ orgId, accountIds: [up, sso, plain] });
+    const av = (id: string) => rows.find((r) => r.id === id)?.avatar;
+    for (const id of [up, sso]) {
+      expect(av(id)).toMatchObject({ kind: "image" });
+      expect((av(id) as { src: string }).src).toMatch(
+        new RegExp(`^/api/v1/accounts/${id}/avatar\\?v=`),
+      );
+    }
+    expect(av(plain)).toBeNull();
+    const found = await ctx.people.search({ orgId, query: "Avatar Up" });
+    expect(found[0]?.avatar).toMatchObject({ kind: "image" });
+    await ctx.close();
+  });
+});
+
 describe("ctx.conversations.bySubject", () => {
   const subject = (source = PLUGIN, id = "CAP-1") => ({
     source,

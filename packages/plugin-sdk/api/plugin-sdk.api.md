@@ -184,9 +184,13 @@ export interface AuthInjection {
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 
 // @public
-export interface AvatarValue {
-    url: string;
-}
+export type AvatarValue = {
+    kind: "preset";
+    id: BuiltinAvatarPresetId;
+} | {
+    kind: "image";
+    src: string;
+} | null;
 
 // @public
 export const BOOTSTRAP_EXTRA_MANIFEST_SCHEMA_VERSION = 1;
@@ -3510,7 +3514,7 @@ export type PermissionProfile = "request-approval" | "approve-for-me" | "full-ac
 // @public
 export interface PersonView {
     active: boolean;
-    avatar: AvatarValue | null;
+    avatar: AvatarValue;
     id: string;
     name: string;
 }
@@ -5641,7 +5645,7 @@ export interface UiView {
 
 // @public
 export interface UsableAgent {
-    avatar: unknown | null;
+    avatar: AvatarValue;
     id: string;
     name: string;
 }

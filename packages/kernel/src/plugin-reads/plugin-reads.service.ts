@@ -12,6 +12,7 @@ import {
 import { Inject, Injectable, Module } from "@nestjs/common";
 import { sql } from "kysely";
 import { AgentLookup, AgentLookupModule } from "../agents/agent-lookup.js";
+import type { AgentAvatarView } from "../agents/profile.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import { avatarColumns, personAvatarUrl } from "../identity/account-avatar.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -56,7 +57,7 @@ export class PluginReadsService {
     return views.map((v) => ({
       id: v.id,
       name: v.definition.name,
-      avatar: v.profile.avatar ?? null,
+      avatar: agentAvatar(orgId, v),
     }));
   }
 
@@ -187,7 +188,27 @@ export class PluginReadsService {
   }
 }
 
-const avatarValue = (url: string | null): AvatarValue | null => (url === null ? null : { url });
+const avatarValue = (src: string | null): AvatarValue =>
+  src === null ? null : { kind: "image", src };
+
+/**
+ * An agent's avatar for a page, the same mapping as the web's `avatarValue`: a preset stays one, a
+ * theme preset is its immutable asset URL, an upload or migrated external image goes through the
+ * agent avatar route (`v` busts caches when the profile changes).
+ */
+function agentAvatar(
+  orgId: string,
+  v: { id: string; profile: { avatar: AgentAvatarView; updatedAt: string } },
+): AvatarValue {
+  const a = v.profile.avatar;
+  if (a === null) return null;
+  if (a.kind === "preset") return { kind: "preset", id: a.id };
+  if (a.kind === "theme") return { kind: "image", src: a.url };
+  return {
+    kind: "image",
+    src: `/api/v1/orgs/${encodeURIComponent(orgId)}/agents/${encodeURIComponent(v.id)}/avatar?v=${encodeURIComponent(v.profile.updatedAt)}`,
+  };
+}
 
 /** `PluginReadsService`, found by the extension host through {@link PLUGIN_READS_BACKEND}. */
 @Module({

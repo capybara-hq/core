@@ -6,10 +6,18 @@
  * org and runs in its scope, and the extension must be enabled there.
  */
 
-/** An avatar a page can draw: an image URL (a path on the app origin or an `https:` URL). */
-export interface AvatarValue {
-  url: string;
-}
+import type { BuiltinAvatarPresetId } from "./avatar-presets.js";
+
+/**
+ * An avatar a page can draw, structurally the same as the design system's `AvatarValue` (what
+ * `Avatar` and `PrincipalPicker` take; the type is copied because the SDK imports no design
+ * package): a built-in preset, an image (`src` is a path the web app serves, such as
+ * `/api/v1/accounts/<id>/avatar?v=…`, or an absolute URL), or none (the initial is drawn).
+ */
+export type AvatarValue =
+  | { kind: "preset"; id: BuiltinAvatarPresetId }
+  | { kind: "image"; src: string }
+  | null;
 
 /** The most account ids one {@link PeopleCtx.get} call takes. */
 export const PEOPLE_GET_MAX = 200;
@@ -24,8 +32,8 @@ export const CONVERSATIONS_BY_SUBJECT_MAX = 200;
 export interface UsableAgent {
   id: string;
   name: string;
-  /** The agent's avatar as the agent API returns it, or null. */
-  avatar: unknown | null;
+  /** A preset stays a preset; an upload, an external image or a theme preset is an image. */
+  avatar: AvatarValue;
 }
 
 /**
@@ -72,7 +80,7 @@ export interface ConversationsCtx {
 export interface PersonView {
   id: string;
   name: string;
-  avatar: AvatarValue | null;
+  avatar: AvatarValue;
   /** False once the account is disabled (it is still a member until removed). */
   active: boolean;
 }
@@ -84,8 +92,9 @@ export interface PeopleCtx {
   /** The given accounts that are members of the org (others are dropped), at most {@link PEOPLE_GET_MAX} ids. */
   get(args: { orgId: string; accountIds: string[] }): Promise<PersonView[]>;
   /**
-   * Active members whose display name contains `query` (case-insensitive), by name; `limit`
-   * defaults to 20 and is clamped to {@link PEOPLE_SEARCH_MAX}.
+   * Active members whose display name contains `query` (case-insensitive), by name; an empty
+   * `query` returns active members up to the limit. `limit` defaults to 20 and is clamped to
+   * {@link PEOPLE_SEARCH_MAX}.
    */
   search(args: {
     orgId: string;
