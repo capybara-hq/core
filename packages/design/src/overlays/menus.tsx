@@ -109,9 +109,18 @@ export function Menu({
   onOpenChange,
   label,
   modal,
+  head,
+  foot,
 }: {
   trigger: ReactElement<Record<string, unknown>>;
   items: MenuItem[];
+  /**
+   * A line above the first item (the account menu's system status): `small`, `muted`, not a
+   * menu item and not focusable; a separator follows it.
+   */
+  head?: ReactNode;
+  /** A line below the last item (the account menu's version · time zone), like `head`. */
+  foot?: ReactNode;
   /** Called before focus returns to the trigger; `preventDefault()` keeps focus where an item put it. */
   onCloseAutoFocus?: (e: Event) => void;
   /** Where the menu opens (default below the trigger); `right` for a flyout beside a sidebar row. */
@@ -175,7 +184,23 @@ export function Menu({
           {...(label ? { "aria-label": label } : {})}
           {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}
         >
+          {head !== undefined && head !== null ? (
+            <>
+              <div className="cb-menu-note" data-part="menu-head">
+                {head}
+              </div>
+              <RM.Separator className="cb-menu-sep" />
+            </>
+          ) : null}
           <MenuItems items={items} />
+          {foot !== undefined && foot !== null ? (
+            <>
+              <RM.Separator className="cb-menu-sep" />
+              <div className="cb-menu-note" data-part="menu-foot">
+                {foot}
+              </div>
+            </>
+          ) : null}
         </RM.Content>
       </RM.Portal>
     </RM.Root>

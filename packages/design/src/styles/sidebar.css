@@ -53,7 +53,8 @@
   color: var(--cb-ink);
 }
 
-/* The org switcher and the admin context block: 40 high on bg, the 24 initial on ink. */
+/* The org switcher and the admin context block: 40 high, the 24 initial on ink; no frame and no
+   ground of their own (layered shell spec §4: nothing framed on the ground), hover shows hover. */
 .cb-sidebar-org {
   display: flex;
   flex: none;
@@ -63,21 +64,21 @@
   width: 100%;
   height: 40px;
   padding: 0 var(--cb-pad-dense-x);
-  border: 1px solid var(--cb-line);
+  border: 0;
   border-radius: var(--cb-radius-md);
-  background: var(--cb-bg);
+  background: transparent;
   color: var(--cb-ink);
   font: inherit;
   font-size: var(--cb-type-body-size);
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--cb-motion-hover);
+  transition: background-color var(--cb-motion-hover);
 }
 .cb-sidebar-org[data-static="true"] {
   cursor: default;
 }
 .cb-sidebar-org:not([data-static="true"]):hover {
-  border-color: var(--cb-line-strong);
+  background: var(--cb-hover);
 }
 .cb-sidebar-org > .cb-icon {
   flex: none;
@@ -108,19 +109,33 @@
   min-width: 0;
   line-height: var(--cb-type-small-line);
 }
-.cb-sidebar-org-name,
-.cb-sidebar-org-meta {
+.cb-sidebar-org-name {
   overflow: hidden;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cb-sidebar-org-name {
-  font-weight: 600;
-}
-.cb-sidebar-org-meta {
+/* The admin block's way back to the workspace, a dense link at the block's end (full sidebar). */
+.cb-sidebar-admin-back {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-1);
+  height: var(--cb-control-dense);
+  margin-right: calc(-1 * var(--cb-space-1));
+  padding: 0 var(--cb-pad-dense-x);
+  border-radius: var(--cb-radius-sm);
   color: var(--cb-muted);
-  font-family: var(--cb-font);
-  font-size: var(--cb-type-micro-size);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-decoration: none;
+  transition:
+    background-color var(--cb-motion-hover),
+    color var(--cb-motion-hover);
+}
+.cb-sidebar-admin-back:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
 }
 .cb-sidebar-context {
   display: flex;
@@ -425,6 +440,10 @@
 .cb-sidebar-dot[data-activity="waiting"] {
   background: var(--cb-warn);
 }
+/* The system status on the account row and at the top of its menu (only when not ok). */
+.cb-sidebar-dot[data-tone="fail"] {
+  background: var(--cb-fail);
+}
 .cb-sidebar-conv {
   flex: 1;
   height: 100%;
@@ -566,14 +585,13 @@
   margin-left: calc(-1 * var(--cb-pad-dense-x));
 }
 
-/* Account row, pinned at the bottom: 8 above its divider (the gap), 8 below. */
+/* Account row, pinned at the bottom with no line above it (layered shell spec §4). */
 .cb-sidebar-foot {
   display: flex;
   flex: none;
   align-items: center;
   gap: var(--cb-space-2);
   padding: var(--cb-space-2) var(--cb-space-1) 0;
-  border-top: 1px solid var(--cb-line-soft);
 }
 .cb-sidebar-account {
   display: flex;
@@ -751,10 +769,18 @@
   flex: 1;
 }
 .cb-sidebar[data-mode="rail"] .cb-sidebar-account {
+  position: relative;
   flex: none;
   justify-content: center;
   width: var(--cb-row-default);
   padding: 0;
+}
+/* The rail has no name beside the avatar: the status dot sits at the avatar's top-right corner. */
+.cb-sidebar[data-mode="rail"] .cb-sidebar-account > .cb-sidebar-dot {
+  position: absolute;
+  top: var(--cb-space-1);
+  right: var(--cb-space-1);
+  box-shadow: 0 0 0 2px var(--cb-sidebar);
 }
 
 /* The rail's Conversations sheet layer: over the content, from the rail's edge. */
@@ -809,6 +835,15 @@
 }
 .cb-sidebar[data-variant="drawer"] {
   border-right-color: var(--cb-line-strong);
+}
+/* From 600 up the sidebar sits on the shell's ground (layered shell spec §2, painted on
+   .cb-shell): no ground and no end line of its own. The medium drawer and the rail's sheet float
+   over the content and keep theirs. */
+@media (min-width: 600px) {
+  .cb-sidebar:not([data-variant]) {
+    border-right: 0;
+    background: transparent;
+  }
 }
 .cb-sidebar[data-variant="sheet"] .cb-sidebar-sheet-title {
   margin: 0;
