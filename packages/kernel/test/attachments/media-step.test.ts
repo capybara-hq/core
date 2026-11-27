@@ -29,6 +29,7 @@ import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
+import { stepSettingsStub } from "../runtime/context/fixtures.js";
 
 /**
  * 运行一步模型调用时的附件解析（M5 T3 fix round 1）：存储暂时故障不变成占位（Ruling M4）、
@@ -132,10 +133,7 @@ beforeAll(async () => {
         attachments: { ...config.attachments, requestMediaBytes: budget },
       }),
     },
-    compactionSettings: {
-      resolve: async () => COMPACTION_SETTINGS.parse({}),
-      resolvePromptCache: async () => ({ longTtl: false }),
-    },
+    compactionSettings: stepSettingsStub(() => COMPACTION_SETTINGS.parse({})),
     log: silent,
     media: {
       info: async (_o, _c, ids) =>

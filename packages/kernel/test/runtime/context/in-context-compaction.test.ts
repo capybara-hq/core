@@ -437,9 +437,9 @@ describe("buildInContextCompactionRequest", () => {
     expect("request" in build(r, { calibration, reserveTokens: edge })).toBe(true);
     expect(build(r, { calibration, reserveTokens: edge + 1 })).toEqual({ skip: "too_large" });
     // the raw edge would admit a request the calibrated estimate does not fit
-    expect(build(r, { calibration, reserveTokens: MODEL.contextWindow - raw - SUMMARY_CAP })).toEqual(
-      { skip: "too_large" },
-    );
+    expect(
+      build(r, { calibration, reserveTokens: MODEL.contextWindow - raw - SUMMARY_CAP }),
+    ).toEqual({ skip: "too_large" });
   });
 
   it("retry adds the retry note after the instruction and nothing else", () => {
@@ -713,7 +713,14 @@ describe("unansweredAfterReply (ruling R9: the in-context path runs only at a se
 
 describe("unansweredOpeners (idle compaction spec §9.4: only unanswered openers are re-rendered)", () => {
   const ev = (seq: number, type: string): ConversationEvent =>
-    ({ seq, type, payload: {}, runId: RUN, conversationId: CONV, createdAt: new Date(AT) }) as never;
+    ({
+      seq,
+      type,
+      payload: {},
+      runId: RUN,
+      conversationId: CONV,
+      createdAt: new Date(AT),
+    }) as never;
 
   it("a turn-start compaction keeps the opener after the reference reply", () => {
     const events = [ev(1, "user_message"), ev(2, "model_call"), ev(3, "assistant_message")];

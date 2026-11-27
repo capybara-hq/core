@@ -51,6 +51,7 @@ import {
   pipelineFor,
   questionsFor,
 } from "../helpers/tools.js";
+import { stepSettingsStub } from "./context/fixtures.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -152,10 +153,7 @@ beforeAll(async () => {
     ),
     tools: noTools,
     config: { get: config },
-    compactionSettings: {
-      resolve: async () => COMPACTION_SETTINGS.parse({}),
-      resolvePromptCache: async () => ({ longTtl: false }),
-    },
+    compactionSettings: stepSettingsStub(() => COMPACTION_SETTINGS.parse({})),
     log: silent,
     toolPipeline: pipelineFor({
       db,

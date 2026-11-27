@@ -31,14 +31,26 @@ export async function resolveCompactionSettings(
   return effectiveCompactionSettings(platform.compaction, org.compaction);
 }
 
-/** The effective prompt cache settings for `orgId` (org override > platform setting). */
-export async function resolvePromptCacheSettings(
+/** The settings a model step reads: compaction and the prompt cache, from one read of each source. */
+export interface StepSettings {
+  compaction: CompactionSettings;
+  promptCache: PromptCacheSettings;
+}
+
+/**
+ * The effective compaction and prompt cache settings for `orgId` (org override > platform setting
+ * > built-in default), with one read of the platform settings and one of the org row.
+ */
+export async function resolveStepSettings(
   settings: Pick<SettingsService, "get">,
   db: KernelSchemaDb,
   orgId: string,
-): Promise<PromptCacheSettings> {
+): Promise<StepSettings> {
   const [platform, org] = await Promise.all([settings.get(), readOrgSettings(db, orgId)]);
-  return effectivePromptCacheSettings(platform.promptCache, org.promptCache);
+  return {
+    compaction: effectiveCompactionSettings(platform.compaction, org.compaction),
+    promptCache: effectivePromptCacheSettings(platform.promptCache, org.promptCache),
+  };
 }
 
 /**
@@ -59,8 +71,8 @@ export class CompactionSettingsService {
     return resolveCompactionSettings(this.settings, this.db.db, orgId);
   }
 
-  /** The effective prompt cache settings for `orgId`. */
-  resolvePromptCache(orgId: string): Promise<PromptCacheSettings> {
-    return resolvePromptCacheSettings(this.settings, this.db.db, orgId);
+  /** What a model step reads for `orgId`: the compaction and prompt cache settings, one read each. */
+  resolveStep(orgId: string): Promise<StepSettings> {
+    return resolveStepSettings(this.settings, this.db.db, orgId);
   }
 }

@@ -239,9 +239,11 @@ export interface ModelStepDeps {
   config: Pick<KernelConfigService, "get">;
   /**
    * The compaction settings in effect for the run's organization (context compaction spec §4.8)
-   * and its prompt cache settings (idle compaction spec §9.2): each resolved once per model step.
+   * and its prompt cache settings (idle compaction spec §9.2): both resolved once per model step
+   * (`resolveStep`, one org settings read); `resolve` is the compaction settings alone, which
+   * step replays read.
    */
-  compactionSettings: Pick<CompactionSettingsService, "resolve" | "resolvePromptCache">;
+  compactionSettings: Pick<CompactionSettingsService, "resolve" | "resolveStep">;
   /**
    * Ephemeral compaction progress (context compaction spec §4.6): display-only, never in the log.
    * Absent in eval replays and single-step replays, which have no live conversation to show it on.
@@ -795,10 +797,7 @@ async function runStep(
     const beforeCompaction = events.length;
     // the org's effective compaction and prompt cache settings, once for this step (org >
     // platform > built-in)
-    const [compaction, promptCache] = await Promise.all([
-      deps.compactionSettings.resolve(input.orgId),
-      deps.compactionSettings.resolvePromptCache(input.orgId),
-    ]);
+    const { compaction, promptCache } = await deps.compactionSettings.resolveStep(input.orgId);
     events = await maybeCompact(deps, input, events, runtime, compaction, tools);
     // a sub-agent checks its budget again after a compaction call, so the step's own request is
     // not a second call over the cap (review M5; the loop checks before each step); the budget

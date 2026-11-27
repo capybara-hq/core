@@ -52,6 +52,7 @@ import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
+import { stepSettingsStub } from "./context/fixtures.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -180,10 +181,10 @@ beforeAll(async () => {
     },
     // a zero reserve: the small-window test models cannot hold the default 8000 alongside their
     // output cap, and a test that needs the reserve sets its own below
-    compactionSettings: {
-      resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 }),
-      resolvePromptCache: async () => ({ longTtl }),
-    },
+    compactionSettings: stepSettingsStub(
+      () => ({ ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 }),
+      () => ({ longTtl }),
+    ),
     tools: k.app.get(ToolRegistry),
     log: silent,
   };
@@ -920,10 +921,10 @@ describe("runModelStep", () => {
       fn: () => Promise<void>,
     ): Promise<void> => {
       const real = deps.compactionSettings;
-      deps.compactionSettings = {
-        resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), ...over }),
-        resolvePromptCache: real.resolvePromptCache,
-      };
+      deps.compactionSettings = stepSettingsStub(
+        () => ({ ...COMPACTION_SETTINGS.parse({}), ...over }),
+        () => ({ longTtl }),
+      );
       try {
         await fn();
       } finally {
@@ -1397,14 +1398,10 @@ describe("runModelStep", () => {
       const agent = agentWith({ model: { provider: "stub", model: "tight" } });
       const original = deps.compactionSettings;
       // a zero reserve: a 6000-token window cannot hold the output cap plus the default 8000
-      deps.compactionSettings = {
-        resolvePromptCache: original.resolvePromptCache,
-        resolve: async () => ({
-          ...COMPACTION_SETTINGS.parse({}),
-          enabled: false,
-          reserveTokens: 0,
-        }),
-      };
+      deps.compactionSettings = stepSettingsStub(
+        () => ({ ...COMPACTION_SETTINGS.parse({}), enabled: false, reserveTokens: 0 }),
+        () => ({ longTtl }),
+      );
       try {
         // 15 turns ≈ 3000 tokens, below the hard line (6000 - 1000): proactive compaction is off
         for (let i = 0; i < 15; i++) {
