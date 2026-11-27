@@ -113,7 +113,7 @@ export class WorkerModule {
         ChannelsModule,
         // the scheduled task scanner (`@LockedCron`) and the fire job's body
         ScheduledTaskFireModule,
-        // the share snapshots the daily share sweep frees
+        // the legacy share snapshot deletions the maintenance processor still runs
         ShareObjectsModule,
         // the owed conversation notices the sweep delivers
         ConversationNoticesModule,

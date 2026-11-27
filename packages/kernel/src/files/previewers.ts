@@ -27,7 +27,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { type ResolvedSkillFile, SkillFiles } from "../skills/skill-files.js";
 import { StorageService } from "../storage/storage.service.js";
 import { callExtension } from "../ui/call-extension.js";
-import { BlobsService } from "./blobs.service.js";
+import { type BlobRef, BlobsService } from "./blobs.service.js";
 
 /** Time limit of a previewer's render (UI refresh spec §5.3: 10 s on the conversation page). */
 export const FILE_PREVIEW_TIMEOUT_MS = 10_000;
@@ -123,8 +123,8 @@ const streamOf = (bytes: Uint8Array): ReadableStream<Uint8Array> =>
 export interface ShareSnapshot extends PreviewFile {
   id: string;
   orgId: string;
-  /** Relative to the org's kernel prefix. */
-  objectKey: string;
+  /** The share's blob, read through `BlobsService` (size and etag checked). */
+  blob: BlobRef;
 }
 
 const item = (l: Loaded): PreviewerItem => ({
@@ -419,7 +419,6 @@ export class PreviewerRegistry {
     locale: "zh" | "en";
   }): Promise<UiView> {
     const l = await this.viewPreviewer(t.orgId, t.file, t.plugin, t.id);
-    const store = this.d.storage.kernel(t.orgId);
     return this.renderWith(
       l,
       t,
@@ -435,7 +434,8 @@ export class PreviewerRegistry {
         },
       },
       async (signal) => {
-        const got = await store.get(t.file.objectKey, { signal });
+        // the share's blob, still the recorded bytes
+        const got = await this.d.blobs.open(t.orgId, t.file.blob, { signal });
         if (!got) throw new Error("the file is no longer available");
         return got.body;
       },

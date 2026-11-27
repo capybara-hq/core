@@ -1,18 +1,16 @@
 import { Inject, Injectable, Module } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
-import { Transactional } from "../infra/database/transactional.decorator.js";
-import type { OutboxService } from "../infra/outbox/outbox.service.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { StorageService } from "../storage/storage.service.js";
 
 /**
- * Share snapshots in object storage (file sharing spec §1, §2): generation `n` of share `id` is the
- * object `shares/<id>/<n>` under the org's kernel prefix (`kernel/<orgId>/`). A snapshot is written
- * before the row that names it; deleting one is owed through the outbox
- * ({@link SHARE_OBJECT_DELETE_JOB}) by the transaction that stops using it (a refresh, a revoke).
+ * Share snapshots of before the file library (file sharing spec §1, §2): generation `n` of share
+ * `id` was the object `shares/<id>/<n>` under the org's kernel prefix (`kernel/<orgId>/`), and
+ * deleting one was owed through the outbox ({@link SHARE_OBJECT_DELETE_JOB}). Shares now point at
+ * blobs (file library spec §1; 0188 made every snapshot a blob keeping its key) and nothing owes this
+ * job any more; its handler stays for the rows owed before the deploy and for old replicas during
+ * a rolling deploy, and never deletes a key a blob uses.
  */
 
 /** The object key of a share's generation, relative to the org's kernel prefix. */
@@ -20,8 +18,8 @@ export const shareObjectKey = (shareId: string, generation: number): string =>
   `shares/${shareId}/${generation}`;
 
 /**
- * The lock (`LockService`) a refresh of one share holds while it copies and commits its next
- * generation; the daily sweep takes it before deleting a non-current generation of an existing share.
+ * The lock (`LockService`) a refresh of one share holds while it picks and commits its next
+ * generation, so two refreshes of one share never race for the same generation.
  */
 export const shareRefreshLockKey = (shareId: string): string => `share-refresh-${shareId}`;
 
@@ -40,42 +38,19 @@ export interface ShareObjectDeleteData {
   objectKey: string;
 }
 
-/** Owes the deletion of one share generation's snapshot, in the caller's transaction. */
-export async function oweShareObjectDelete(
-  outbox: Pick<OutboxService, "add">,
-  orgId: string,
-  shareId: string,
-  generation: number,
-): Promise<void> {
-  const data: ShareObjectDeleteData = {
-    orgId,
-    shareId,
-    generation,
-    objectKey: shareObjectKey(shareId, generation),
-  };
-  await outbox.add({
-    queue: MAINTENANCE_QUEUE_NAME,
-    name: SHARE_OBJECT_DELETE_JOB,
-    jobId: shareObjectDeleteJobId(shareId, generation),
-    data,
-    orgId,
-  });
-}
-
 /**
- * Runs a {@link SHARE_OBJECT_DELETE_JOB} (the maintenance processor dispatches it here). Delivered
- * twice, it is harmless: deleting a missing object is a no-op. A snapshot a share may still serve
- * (the row is neither revoked nor expired and names the key) is never deleted, whatever the job
- * says; a revoked or expired row whose snapshot is gone gets its `object_key` cleared (the row stays
- * for the audit trail and the lists' recent section). Expiry is final (no route moves
- * `expires_at`), so an expired row never serves again. The daily sweep (`ShareSweepJob`) calls
- * {@link deleteObject} directly for expired shares and orphan snapshots.
+ * Runs a {@link SHARE_OBJECT_DELETE_JOB} (the maintenance processor dispatches it here) for the rows
+ * owed before the file library (or by an old replica during the rolling deploy). Delivered twice, it
+ * is harmless: deleting a missing object is a no-op. A key any blob of the org uses (0188 made every
+ * snapshot a blob keeping its key) is never deleted: the blob sweep owns it. A snapshot an old
+ * replica's share may still serve (the row is neither revoked nor expired and names the key) is never
+ * deleted either. `object_key` is never cleared (file library amendment K7: the contract migration
+ * drops the column).
  */
 @Injectable()
 export class ShareObjects {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
   ) {}
 
@@ -85,6 +60,13 @@ export class ShareObjects {
       // never delete anything outside the share's own key, whatever the job data says
       throw new Error(`share-object-delete: unexpected object key for share ${data.shareId}`);
     }
+    const blob = await this.db
+      .selectFrom("blobs")
+      .select("id")
+      .where("org_id", "=", data.orgId)
+      .where("object_key", "=", data.objectKey)
+      .executeTakeFirst();
+    if (blob) return;
     const row = await this.db
       .selectFrom("file_shares")
       .select([
@@ -98,25 +80,6 @@ export class ShareObjects {
     if (row && row.revoked_at === null && !row.expired && row.object_key === data.objectKey) return;
     const store = this.storage.kernel(data.orgId);
     if (await store.head(data.objectKey)) await store.delete(data.objectKey);
-    await this.cleared(data);
-  }
-
-  /** Clears a revoked or expired row's `object_key` once its snapshot is gone. */
-  @Transactional()
-  async cleared(data: ShareObjectDeleteData): Promise<void> {
-    await this.db
-      .updateTable("file_shares")
-      .set({ object_key: null })
-      .where("id", "=", data.shareId)
-      .where("org_id", "=", data.orgId)
-      .where("object_key", "=", data.objectKey)
-      .where((eb) =>
-        eb.or([
-          eb("revoked_at", "is not", null),
-          eb.and([eb("expires_at", "is not", null), eb("expires_at", "<=", sql<Date>`now()`)]),
-        ]),
-      )
-      .execute();
   }
 }
 

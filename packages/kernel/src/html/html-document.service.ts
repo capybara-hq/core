@@ -11,7 +11,6 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { ShareLiveness } from "../shares/liveness.js";
 import { readHtmlCdnAllowlist } from "../shares/settings.js";
-import { StorageService } from "../storage/storage.service.js";
 import { htmlDocumentCsp } from "./csp.js";
 import { HTML_TOKEN_TTL_SECONDS, type HtmlClaims, HtmlTokens } from "./html-token.js";
 import { htmlContentType, isHtmlType } from "./html-type.js";
@@ -23,12 +22,14 @@ export interface HtmlTokenResponse {
 }
 
 /**
- * What a document is served from, after its live checks: a conversation file's blob (read through
- * `BlobsService`, size and etag checked) or a share's snapshot object.
+ * What a document is served from, after its live checks: a conversation file's or a share's blob
+ * (read through `BlobsService`, size and etag checked).
  */
-type DocumentSource =
-  | { orgId: string; contentType: string; blob: BlobRef }
-  | { orgId: string; contentType: string; objectKey: string };
+interface DocumentSource {
+  orgId: string;
+  contentType: string;
+  blob: BlobRef;
+}
 
 /** Every refusal of the document route: one answer, no reason (a token is not an oracle). */
 export const htmlNotFound = () => new ApiError("not_found", "Not found");
@@ -52,8 +53,7 @@ export class HtmlDocumentService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ConversationFiles) private readonly files: Pick<ConversationFiles, "file">,
     @Inject(ShareLiveness) private readonly liveness: Pick<ShareLiveness, "byId">,
-    @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
-    /** A conversation file's bytes, through its blob. */
+    /** A conversation file's or a share's bytes, through its blob. */
     @Inject(BlobsService) private readonly blobs: Pick<BlobsService, "open">,
     @Inject(HtmlTokens) private readonly tokens: HtmlTokens,
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: KernelLogger,
@@ -98,10 +98,7 @@ export class HtmlDocumentService {
     if (source === null) throw htmlNotFound();
     // read before the object is opened, so no stream is held across this query
     const allowlist = await readHtmlCdnAllowlist(this.db.db, this.log);
-    const got =
-      "blob" in source
-        ? await this.blobs.open(source.orgId, source.blob)
-        : await this.storage.kernel(source.orgId).get(source.objectKey);
+    const got = await this.blobs.open(source.orgId, source.blob);
     if (!got) throw htmlNotFound();
     if (got.head.size > FILE_PREVIEW_MAX_BYTES) {
       await got.body.cancel().catch(() => {});
@@ -125,7 +122,7 @@ export class HtmlDocumentService {
       if (s === null || !isHtmlType(s.name, s.contentType) || s.size > FILE_PREVIEW_MAX_BYTES) {
         return null;
       }
-      return { orgId: s.orgId, objectKey: s.objectKey, contentType: s.contentType };
+      return { orgId: s.orgId, contentType: s.contentType, blob: s.blob };
     }
     let f: Awaited<ReturnType<ConversationFiles["file"]>>;
     try {

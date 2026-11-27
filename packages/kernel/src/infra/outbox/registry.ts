@@ -43,8 +43,9 @@ const SCOPE_JOB_OPTS = {
  * name without one does not type-check as an `OutboxJobName` (`add` does not check it at runtime).
  */
 export const OUTBOX_JOBS = {
-  // `shares/share-objects.ts` SHARE_OBJECT_DELETE_JOB: owed by a share's refresh (the previous
-  // generation) and revoke (the current one), under `shareObjectDeleteJobId` (file sharing spec §2)
+  // `shares/share-objects.ts` SHARE_OBJECT_DELETE_JOB: owed before the file library by a share's
+  // refresh and revoke (`shareObjectDeleteJobId`); no longer owed, handled for rows owed before the
+  // deploy (a key a blob uses is never deleted)
   "share-object-delete": {
     queue: "cap-kernel-maintenance",
     idempotent: "Deletes one object key; deleting a missing object is a no-op",

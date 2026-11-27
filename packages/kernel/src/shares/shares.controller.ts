@@ -11,6 +11,7 @@ import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import {
   CreateShareBody,
+  LibraryShareParams,
   ListSharesQuery,
   ShareFileParams,
   ShareIdParams,
@@ -18,15 +19,18 @@ import {
 import { type SharePolicy, SharesService, type ShareView } from "./shares.service.js";
 
 class ShareFileParamsDto extends createZodDto(ShareFileParams, "ShareFileParams") {}
+class LibraryShareParamsDto extends createZodDto(LibraryShareParams, "LibraryShareParams") {}
 class CreateShareBodyDto extends createZodDto(CreateShareBody, "CreateShareBody") {}
 class ShareIdParamsDto extends createZodDto(ShareIdParams, "ShareIdParams") {}
 class ListSharesQueryDto extends createZodDto(ListSharesQuery, "ListSharesQuery") {}
 
 /**
- * Shares of conversation files (file sharing spec §2): `agents.use`, a person only (a service
- * token is refused by `requireUser`). Creating and listing a file's shares need the conversation's
- * owner (`ConversationAccess.isAccessible`, else `conversation.not_found`); refreshing needs the
- * creator, revoking the creator or an org admin (else `share.not_found`).
+ * Shares of files (file sharing spec §2, file library spec §6): `agents.use`, a person only (a
+ * service token is refused by `requireUser`). Creating and listing a conversation file's shares
+ * need the conversation's owner (`ConversationAccess.isAccessible`, else `conversation.not_found`);
+ * a library file's, the file's owner (else `file.not_found`); the anonymous guest creates none
+ * (`member.anonymous_guest`). Refreshing needs the creator, revoking the creator or an org admin
+ * (else `share.not_found`).
  */
 @Controller("api/v1/orgs/:orgId")
 export class SharesController {
@@ -60,6 +64,36 @@ export class SharesController {
   ): Promise<{ shares: ShareView[]; policy: SharePolicy }> {
     const p = requireUser(principal);
     return this.shares.forFile(org.orgId, p.account.id, params.id, params.fileId);
+  }
+
+  /** Shares one of the caller's library files (no conversation): 201 `{ share }`. */
+  @Post("files/:fileId/shares")
+  @OrgAction("agents.use")
+  async createForFile(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(LibraryShareParamsDto) params: z.infer<typeof LibraryShareParams>,
+    @ZBody(CreateShareBodyDto) body: z.infer<typeof CreateShareBody>,
+  ): Promise<{ share: ShareView }> {
+    const p = requireUser(principal);
+    return {
+      share: await this.shares.createForFile(org.orgId, p.account.id, params.fileId, body, {
+        tokenId: patTokenId(p),
+      }),
+    };
+  }
+
+  /** The live and recent shares the caller made of one library file (any version of it). */
+  @Get("files/:fileId/shares")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async forLibraryFile(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(LibraryShareParamsDto) params: z.infer<typeof LibraryShareParams>,
+  ): Promise<{ shares: ShareView[]; policy: SharePolicy }> {
+    const p = requireUser(principal);
+    return this.shares.forLibraryFile(org.orgId, p.account.id, params.fileId);
   }
 
   /** "Update to latest": the newest available version as the next generation (creator only). */

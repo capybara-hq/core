@@ -393,6 +393,17 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "internal",
     reason: "The right panel's per-file view; conversations.list-shares lists the same shares",
   },
+  // shares of library files (file library spec §6)
+  {
+    route: "POST /api/v1/orgs/:orgId/files/:fileId/shares",
+    category: "human-only",
+    reason: "Publishing a file outside the library is a person's act",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/files/:fileId/shares",
+    category: "internal",
+    reason: "The Files page's share dialog; conversations.list-shares lists the same shares",
+  },
   // the HTML document (file sharing spec §4, §10)
   {
     route: "POST /api/v1/orgs/:orgId/conversations/:id/files/:fileId/html-token",

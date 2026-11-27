@@ -411,6 +411,9 @@ describe("content, text, inline", () => {
     const storage = k.app.get(StorageService);
     const real = storage.kernel.bind(storage);
     const size = 300 * MiB;
+    // the share's blob records that size, so the stored head the mock answers matches it
+    await sql`UPDATE capybara.blobs SET size = ${size}
+      WHERE id = (SELECT blob_id FROM capybara.file_shares WHERE id = ${s.id})`.execute(raw);
     vi.spyOn(storage, "kernel").mockImplementation((org: string) => {
       const inner = real(org);
       return {
