@@ -184,6 +184,12 @@ export interface ServiceLauncher {
   networkKey?(network: SandboxLimits["network"] | undefined): Promise<string>;
   /** The owner ceiling revision a launch would be built under now (absent: never changes). */
   ceilingRevision?(): Promise<string>;
+  /**
+   * What this launcher tells a service that may change what it installs (the macOS launcher's
+   * Mach allowances decide which Chromium build the browser installs): part of the install
+   * cache's scope, so a launch told something else never reuses an install made for another.
+   */
+  installVariant?(): string;
 }
 
 /** A service's request or stream connection could not be served. */
@@ -819,7 +825,12 @@ export class ServiceSupervisor {
     let install: { dir: string; sealed: boolean };
     let installRoot: string;
     if (this.o.installCache && validInstallKey(installKey)) {
-      lease = await this.o.installCache.acquire(spec.name, installKey, signal);
+      lease = await this.o.installCache.acquire(
+        spec.name,
+        installKey,
+        signal,
+        this.o.launcher()?.installVariant?.() ?? "",
+      );
       install = { dir: lease.dir, sealed: lease.sealed };
       installRoot = this.o.installCache.root;
       // the device's own copy from before the cache is not used any more

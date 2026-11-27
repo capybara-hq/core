@@ -167,16 +167,22 @@ export const DEVICE_SERVICE_INSTALL_ENV = "CAPYBARA_SERVICE_INSTALL";
 export const DEVICE_SERVICE_INSTALL_SEAL = ".sealed";
 /**
  * A service file naming what its install directory holds ({@link DEVICE_SERVICE_INSTALL_ENV}): one
- * line matching {@link DEVICE_SERVICE_INSTALL_KEY_RE}, such as the browser revision. A provider
- * that keeps installs in a shared cache (device-local, capybara-hq/plugins#311) keys the install
- * by it instead of by the service's files, so a plugin upgrade that keeps the key reuses the sealed
- * install, and so do the other devices of the same deployment and OS user. The provider still
- * hands an unsealed install out empty and private to one start, verifies a sealed one before every
- * reuse, and adds the platform itself. Absent (or malformed): the install is keyed by the files.
+ * line matching {@link DEVICE_SERVICE_INSTALL_KEY_RE}, such as the browser revision. capybara-device
+ * (the device-local provider's machine program, capybara-hq/plugins#311) keeps such installs in a
+ * machine-wide cache of the OS user and keys them by it instead of by the service's files, so a
+ * plugin upgrade that keeps the key reuses the sealed install, and so do the other devices of the
+ * same deployment (its URL's origin and path) on that machine. Services of other deployments,
+ * platforms or launch environments never see it. The provider still hands an unsealed install out
+ * empty and private to one start, publishes it only once the service exits sealed (every link
+ * inside it, no hard link, no special file) and verifies it before every reuse. It assumes the
+ * unsealed install is the service's own code running no untrusted input, as the seal does: a
+ * child that left its process group could still write through an open file after the digest
+ * (the next reuse's verification catches it). Absent (or malformed): the install is keyed by the
+ * files.
  */
 export const DEVICE_SERVICE_INSTALL_KEY_FILE = "capybara-install-key";
-/** What {@link DEVICE_SERVICE_INSTALL_KEY_FILE} holds. */
-export const DEVICE_SERVICE_INSTALL_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+/** What {@link DEVICE_SERVICE_INSTALL_KEY_FILE} holds: lower case, so it is one name on every file system. */
+export const DEVICE_SERVICE_INSTALL_KEY_RE = /^[a-z0-9][a-z0-9._+-]{0,127}$/;
 /**
  * Names the Mach service allowances the provider's sandbox gives the service (macOS: device-local
  * sets it, a spec cannot). Its value {@link DEVICE_SERVICE_MACH_CHROMIUM} means the full Chromium

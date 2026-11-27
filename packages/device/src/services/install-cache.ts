@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, readFileSync } from "node:fs";
 import {
+  chmod,
   lstat,
   mkdir,
   open,
@@ -19,43 +21,67 @@ import {
 import { realDirectory } from "./supervisor.js";
 
 // The machine-wide cache of device service installs (capybara-hq/plugins#311): what a service
-// installs once and then only runs (a browser of about 400 MB) is kept per OS user, deployment,
-// platform, service and install key (DEVICE_SERVICE_INSTALL_KEY_FILE, the browser revision), not
-// per device and plugin version. Layout under the root (0700, this user's):
+// installs once and then only runs (a browser of about 400 MB) is kept per OS user and scope (the
+// deployment, the platform, the architecture and the launcher's install variant), service and
+// install key (DEVICE_SERVICE_INSTALL_KEY_FILE, the browser revision), not per device and plugin
+// version. Layout under the root (0700, this user's):
 //
-//   <scope>-<platform>-<arch>/<service>/
-//     .lock                       cross-process lock (pid inside) for publish, drop and sweep
-//     entries/<key>/              a published install, sealed, never written again
-//     manifests/<key>             "v1:<sha256>" of the entry's tree, written by this program only
-//     leases/<key>.<pid>.<rand>   a service of this program runs on the entry
-//     staging/<key>.<pid>.<rand>/ an install in progress, private to one start
+//   staging/<pid>-<start>-<digits>/  an install in progress, private to one start: short and
+//                                    digits only, because the macOS sandbox spells a write root
+//                                    out in every write rule (case folded) and caps the rule length
+//   <sha256 of the scope>/<service>/
+//     locks/<n>                       the lock: generation files ({@link InstallCache.locked})
+//     entries/<key>@<rand>/           a published install, sealed, never written again
+//     manifests/<key>                 "v1:<sha256> <entry>": the entry a key names and its digest
+//     leases/<entry>~<pid>-<start>~<rand>   a service of that process runs on the entry
+//     trash/                          what the sweep took out, deleted outside the lock
 //
 // A start with a published entry gets it read only once its tree matches the manifest (verified
-// at every reuse: a corrupted or partial entry is dropped and installed again, never used). A
-// start without one gets a fresh staging directory, writable; when that service exits sealed,
-// its tree is checked (no link out of it, no special file), digested and renamed into place
-// under the lock, so a reader only ever sees a complete entry. Concurrent first installs on
+// at every reuse: a mismatching entry is dropped and installed again, never used). A start
+// without one gets a fresh staging directory, writable; when that service exits sealed, its tree
+// is checked ({@link treeDigest}: every link resolved inside it, no hard link, no special file),
+// digested and renamed into place under a fresh name under the lock, so a reader only ever sees a
+// complete entry and no entry in use is ever replaced in place. Concurrent first installs on
 // several devices each stage their own; the first to publish wins and the others are discarded.
-// The scope (a deployment) keeps one deployment's service from planting what another runs.
+//
+// Processes are named by pid and start time, so a reused pid never keeps a dead holder's lock,
+// lease or staging directory alive. Removals are best effort and happen outside the lock: an
+// entry nobody can delete (mode 000, user immutable flags) never blocks a start.
+//
+// Assumption (the SDK's DEVICE_SERVICE_INSTALL_KEY_FILE): the unsealed install is the service's
+// own trusted code running no untrusted input; a child it detached from its process group could
+// still write through an open descriptor after the digest, which the next reuse's verification
+// catches.
 
-/** The manifest format: a version and the sha256 of the tree listing. */
-const MANIFEST_RE = /^v1:[0-9a-f]{64}$/;
+/** A manifest: the format, the tree digest and the entry it names. */
+const MANIFEST_RE = /^(v1:[0-9a-f]{64}) ([a-z0-9][a-z0-9._+-]{0,127}@[0-9a-f]{12})$/;
 
-/** How many unused entries a service keeps per scope (the newest by last use), besides the leased. */
+/** How many unused keys a service keeps per scope (the newest by last use), besides the leased. */
 export const INSTALL_CACHE_KEEP = 2;
 
-/** How long a start waits for the lock another process holds before it fails. */
+/** How long a start waits for the lock a live process holds before it fails. */
 export const INSTALL_CACHE_LOCK_WAIT_MS = 60_000;
+
+/** How many links one link target may pass through while it is resolved inside the tree. */
+const MAX_LINK_HOPS = 40;
+
+/** A process as the cache names it: its pid and start time (seconds since the epoch). */
+export interface ProcessToken {
+  pid: number;
+  start: number;
+}
 
 export interface InstallCacheOptions {
   /** The machine-wide root (`~/capybara-device/.install-cache`): made 0700 when missing. */
   root: string;
-  /** The deployment the device belongs to (its origin): installs are shared only within it. */
+  /** The deployment the device belongs to ({@link installCacheScope}): shared only within it. */
   scope: string;
   platform?: NodeJS.Platform;
   arch?: string;
-  /** Whether a process with this id runs (default: signal 0; EPERM means it runs). */
-  alive?: (pid: number) => boolean;
+  /** This process (default: its pid and start time). */
+  self?: ProcessToken;
+  /** Whether that process still runs (default: the pid runs and started at that time). */
+  isLive?: (p: ProcessToken) => boolean;
   /** A test seam: runs after a staged tree was digested, before it is published under the lock. */
   beforePublish?: () => Promise<void>;
 }
@@ -71,6 +97,14 @@ export interface InstallLease {
   release(): Promise<void>;
 }
 
+/** A tree that must never be published or used (a link out of it, a hard link, a special file). */
+export class InstallTreeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InstallTreeError";
+  }
+}
+
 /**
  * The machine-wide cache root of an OS user: beside the default device directories
  * (`~/capybara-device/<device id>`), outside this program's state root (which a service's
@@ -81,10 +115,15 @@ export function defaultInstallCacheRoot(home: string): string {
   return join(home, "capybara-device", ".install-cache");
 }
 
-/** The scope of a deployment's installs: its origin (the URL as given when it has none). */
+/**
+ * The scope of a deployment's installs: its origin and path (`https://host/a` and `https://host/b`
+ * are two deployments), the URL as given when it does not parse. One deployment reached by two
+ * URLs (an address and a name) keeps two copies.
+ */
 export function installCacheScope(url: string): string {
   try {
-    return new URL(url).origin;
+    const u = new URL(url);
+    return `${u.origin}${u.pathname.replace(/\/+$/, "")}`;
   } catch {
     return url;
   }
@@ -95,78 +134,133 @@ export function validInstallKey(key: string | undefined): key is string {
   return key !== undefined && DEVICE_SERVICE_INSTALL_KEY_RE.test(key);
 }
 
-function defaultAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
+/** When a process started, in seconds since the epoch (undefined when it cannot be read). */
+export function processStartTime(pid: number): number | undefined {
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  if (process.platform === "linux") {
+    try {
+      // field 22 (starttime, in clock ticks since boot) after the parenthesised command name
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const ticks = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
+      const btime = Number(/^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))?.[1]);
+      return Number.isFinite(ticks) && Number.isFinite(btime)
+        ? btime + Math.floor(ticks / 100)
+        : undefined;
+    } catch {
+      return undefined;
+    }
   }
+  const ps = spawnSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+    timeout: 5_000,
+  });
+  if (ps.status !== 0) return undefined;
+  const ms = Date.parse(`${ps.stdout.trim()} GMT`);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined;
+}
+
+/** Whether `p` runs: its pid answers (EPERM counts) and it started at `p.start`. */
+function defaultIsLive(p: ProcessToken): boolean {
+  try {
+    process.kill(p.pid, 0);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EPERM") return false;
+  }
+  const start = processStartTime(p.pid);
+  // a start time that cannot be read is no proof of a reused pid: counted as running
+  return start === undefined || Math.abs(start - p.start) <= 1;
+}
+
+const tokenText = (p: ProcessToken) => `${p.pid}-${p.start}`;
+function parseToken(text: string): ProcessToken | undefined {
+  const m = /^(\d+)-(\d+)$/.exec(text);
+  return m ? { pid: Number(m[1]), start: Number(m[2]) } : undefined;
 }
 
 export class InstallCache {
   readonly root: string;
-  private readonly scopeDir: string;
-  private readonly alive: (pid: number) => boolean;
+  private readonly isLive: (p: ProcessToken) => boolean;
+  private selfToken: ProcessToken | undefined;
 
   constructor(private readonly o: InstallCacheOptions) {
     if (!isAbsolute(o.root)) throw new Error(`The install cache root ${o.root} is not absolute`);
     this.root = normalize(o.root);
-    const scope = createHash("sha256").update(o.scope).digest("hex").slice(0, 16);
-    this.scopeDir = `${scope}-${o.platform ?? process.platform}-${o.arch ?? process.arch}`;
-    this.alive = o.alive ?? defaultAlive;
+    this.isLive = o.isLive ?? defaultIsLive;
+    this.selfToken = o.self;
+  }
+
+  private get self(): ProcessToken {
+    this.selfToken ??= {
+      pid: process.pid,
+      start: processStartTime(process.pid) ?? Math.floor(Date.now() / 1000 - process.uptime()),
+    };
+    return this.selfToken;
   }
 
   /**
-   * The install directory of one start of `service` under `key`: the published entry, read only,
-   * when it verifies; else a new staging directory, writable and empty.
+   * The install directory of one start of `service` under `key` (and the launcher's install
+   * `variant`, the environment it gives the service that decides what it installs): the
+   * published entry, read only, when it verifies; else a new staging directory, writable, empty.
    */
-  async acquire(service: string, key: string, signal: AbortSignal): Promise<InstallLease> {
+  async acquire(
+    service: string,
+    key: string,
+    signal: AbortSignal,
+    variant = "",
+  ): Promise<InstallLease> {
     if (!validInstallKey(key)) throw new Error(`Invalid install key ${JSON.stringify(key)}`);
-    const dir = await this.serviceDir(service);
-    const entry = join(dir, "entries", key);
+    const dir = await this.serviceDir(service, variant);
     const manifest = join(dir, "manifests", key);
     // a lease taken under the lock: a sweep never removes an entry a start is about to verify
     const found = await this.locked(dir, signal, async () => {
       await this.sweep(dir, key);
-      const recorded = await readSmallFile(manifest);
-      if (recorded === undefined || !MANIFEST_RE.test(recorded)) return undefined;
+      const recorded = await readManifest(manifest);
+      if (recorded === undefined) return undefined;
+      const entry = join(dir, "entries", recorded.entry);
       if (!(await isRealDirectory(entry))) return undefined;
-      const lease = join(dir, "leases", `${key}.${process.pid}.${token()}`);
+      const lease = join(dir, "leases", `${recorded.entry}~${tokenText(this.self)}~${token()}`);
       await writeNew(lease, "");
       // the last use, which the sweep keeps the newest of
       const now = new Date();
       await utimes(manifest, now, now).catch(() => {});
-      return { recorded, lease };
+      return { recorded, entry, lease };
     });
+    await this.emptyTrash(dir);
     if (found !== undefined) {
-      let actual: string | undefined;
+      let verdict: "ok" | "drop" | "skip";
       try {
-        actual = (await isRegularFile(join(entry, DEVICE_SERVICE_INSTALL_SEAL)))
-          ? await treeDigest(entry)
-          : undefined;
-      } catch {
-        actual = undefined;
+        verdict =
+          (await isRegularFile(join(found.entry, DEVICE_SERVICE_INSTALL_SEAL))) &&
+          (await treeDigest(found.entry)) === found.recorded.digest
+            ? "ok"
+            : "drop";
+      } catch (e) {
+        // a tree that breaks the rules is dropped; an I/O error (a transient one) only makes this
+        // start install its own copy, which replaces the entry when it is published
+        verdict = e instanceof InstallTreeError || isGone(e) ? "drop" : "skip";
       }
-      if (actual === found.recorded)
+      if (verdict === "ok")
         return {
-          dir: entry,
+          dir: found.entry,
           sealed: true,
           release: once(async () => {
             await rm(found.lease, { force: true }).catch(() => {});
           }),
         };
-      // corrupted or partial: dropped (unless another start republished it meanwhile), then
-      // installed again like a missing one
       await rm(found.lease, { force: true }).catch(() => {});
-      await this.locked(dir, signal, async () => {
-        if ((await readSmallFile(manifest)) !== found.recorded) return;
-        await rm(manifest, { force: true });
-        await rm(entry, { recursive: true, force: true });
-      });
+      // the key no longer names the entry (unless it was republished meanwhile); the entry itself
+      // goes with the sweep once no running service holds it
+      if (verdict === "drop")
+        await this.locked(dir, signal, async () => {
+          const now = await readManifest(manifest);
+          if (now?.entry === found.recorded.entry) await rm(manifest, { force: true });
+        });
     }
     signal.throwIfAborted();
-    const staging = join(dir, "staging", `${key}.${process.pid}.${token()}`);
+    const stagingRoot = await realDirectory(this.root, ["staging"]);
+    const digits = String(randomBytes(6).readUIntBE(0, 6)).padStart(15, "0");
+    const staging = join(stagingRoot, `${tokenText(this.self)}-${digits}`);
     await mkdir(staging, { mode: 0o700 });
     return {
       dir: staging,
@@ -177,37 +271,39 @@ export class InstallCache {
 
   /**
    * Publishes a staging directory its service sealed: digested outside the lock (it is private),
-   * renamed into place under it unless an entry was published meanwhile; removed otherwise.
+   * renamed into place under a fresh name under it unless the key names a published entry
+   * already; the staging directory is removed in every case.
    */
   private async publish(dir: string, key: string, staging: string): Promise<void> {
-    let digest: string | undefined;
     try {
-      digest = (await isRegularFile(join(staging, DEVICE_SERVICE_INSTALL_SEAL)))
-        ? await treeDigest(staging)
-        : undefined;
-    } catch {
-      digest = undefined;
-    }
-    if (digest !== undefined) {
+      let digest: string | undefined;
+      try {
+        digest = (await isRegularFile(join(staging, DEVICE_SERVICE_INSTALL_SEAL)))
+          ? await treeDigest(staging)
+          : undefined;
+      } catch {
+        digest = undefined;
+      }
+      if (digest === undefined) return;
       await this.o.beforePublish?.();
-      const entry = join(dir, "entries", key);
       const manifest = join(dir, "manifests", key);
       await this.locked(dir, AbortSignal.timeout(INSTALL_CACHE_LOCK_WAIT_MS), async () => {
-        const recorded = await readSmallFile(manifest);
-        if (recorded !== undefined && MANIFEST_RE.test(recorded) && (await isRealDirectory(entry)))
+        const recorded = await readManifest(manifest);
+        if (recorded !== undefined && (await isRealDirectory(join(dir, "entries", recorded.entry))))
           return; // another start published first: this copy goes
-        await rm(manifest, { force: true });
-        await rm(entry, { recursive: true, force: true });
-        await rename(staging, entry);
-        await writeAtomic(manifest, `${digest}\n`);
+        const entry = `${key}@${token()}`;
+        await rename(staging, join(dir, "entries", entry));
+        await writeAtomic(manifest, `${digest} ${entry}\n`);
         await this.sweep(dir, key);
       });
+    } finally {
+      await forceRemove(staging);
+      await this.emptyTrash(dir);
     }
-    await rm(staging, { recursive: true, force: true });
   }
 
   /** `<root>/<scope>/<service>` with its parts, made link-free; the root checked private. */
-  private async serviceDir(service: string): Promise<string> {
+  private async serviceDir(service: string, variant: string): Promise<string> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const st = await lstat(this.root);
     if (
@@ -218,91 +314,137 @@ export class InstallCache {
       throw new Error(
         `The install cache ${this.root} is not a private directory of this user (0700, not a link); remove it and retry`,
       );
-    const dir = await realDirectory(this.root, [this.scopeDir, service]);
-    for (const part of ["entries", "manifests", "leases", "staging"])
+    // the full digest: a deployment chooses its own URL, so its scope must not collide with another
+    const scope = createHash("sha256")
+      .update(
+        JSON.stringify([
+          this.o.scope,
+          this.o.platform ?? process.platform,
+          this.o.arch ?? process.arch,
+          variant,
+        ]),
+      )
+      .digest("hex");
+    const dir = await realDirectory(this.root, [scope, service]);
+    for (const part of ["locks", "entries", "manifests", "leases", "trash"])
       await realDirectory(dir, [part]);
     return dir;
   }
 
   /**
-   * Removes, under the lock: leases and staging directories of processes that are gone, and every
-   * entry (with its manifest) that no live lease holds and that is neither `keep` nor among the
-   * {@link INSTALL_CACHE_KEEP} most recently used. Deleted devices cannot be enumerated, so a live
-   * lease and recency stand in for "referenced by an install".
+   * Under the lock, best effort (a failure skips that item, never the start): drops the leases of
+   * processes that are gone, and takes out every key
+   * (its manifest) that is not `keep`, not among the {@link INSTALL_CACHE_KEEP} most recently
+   * used and whose entry no live lease holds; then takes out every entry no manifest names and no
+   * live lease holds. Deleted devices cannot be enumerated, so a live lease and recency stand in
+   * for "referenced by an install". What is taken out is renamed into `trash/` (deleted after
+   * the lock, {@link emptyTrash}).
    */
   private async sweep(dir: string, keep: string): Promise<void> {
-    const liveLeases = new Set<string>();
-    for (const name of await readdir(join(dir, "leases"))) {
-      const m = /^(.+)\.(\d+)\.[0-9a-f]+$/.exec(name);
-      if (m && this.alive(Number(m[2]))) liveLeases.add(m[1] as string);
-      else await rm(join(dir, "leases", name), { force: true });
+    const leased = new Set<string>();
+    for (const name of await readdir(join(dir, "leases")).catch(() => [] as string[])) {
+      const [entry, owner] = name.split("~");
+      const p = owner === undefined ? undefined : parseToken(owner);
+      if (entry !== undefined && p !== undefined && this.isLive(p)) leased.add(entry);
+      else await rm(join(dir, "leases", name), { force: true }).catch(() => {});
     }
-    for (const name of await readdir(join(dir, "staging"))) {
-      const m = /^.+\.(\d+)\.[0-9a-f]+$/.exec(name);
-      if (!m || !this.alive(Number(m[1])))
-        await rm(join(dir, "staging", name), { recursive: true, force: true });
-    }
-    const keys = new Set([
-      ...(await readdir(join(dir, "entries"))),
-      ...(await readdir(join(dir, "manifests"))),
-    ]);
-    const used: { key: string; at: number }[] = [];
-    for (const key of keys) {
-      const at = await lstat(join(dir, "manifests", key)).then(
-        (s) => (s.isFile() ? s.mtimeMs : -1),
-        () => -1,
+    const keys: { key: string; at: number; entry: string | undefined }[] = [];
+    for (const name of await readdir(join(dir, "manifests")).catch(() => [] as string[])) {
+      const path = join(dir, "manifests", name);
+      if (!validInstallKey(name)) {
+        // a temporary file of a writer that is gone (writes happen under the lock)
+        await rm(path, { force: true }).catch(() => {});
+        continue;
+      }
+      const at = await lstat(path).then(
+        (s) => s.mtimeMs,
+        () => 0,
       );
-      used.push({ key, at });
+      keys.push({ key: name, at, entry: (await readManifest(path))?.entry });
     }
-    used.sort((a, b) => b.at - a.at);
-    const recent = new Set(
-      used
-        .filter((u) => u.at >= 0)
-        .slice(0, INSTALL_CACHE_KEEP)
-        .map((u) => u.key),
+    keys.sort((a, b) => b.at - a.at);
+    const recent = new Set(keys.slice(0, INSTALL_CACHE_KEEP).map((k) => k.key));
+    const named = new Set<string>();
+    for (const k of keys) {
+      if (k.entry !== undefined && (k.key === keep || recent.has(k.key) || leased.has(k.entry))) {
+        named.add(k.entry);
+        continue;
+      }
+      await rm(join(dir, "manifests", k.key), { force: true }).catch(() => {});
+    }
+    for (const name of await readdir(join(dir, "entries")).catch(() => [] as string[]))
+      if (!named.has(name) && !leased.has(name)) await this.toTrash(dir, join("entries", name));
+  }
+
+  /** Renames `<dir>/<rel>` into `trash/` (fast, under the lock); best effort. */
+  private async toTrash(dir: string, rel: string): Promise<void> {
+    await rename(join(dir, rel), join(dir, "trash", `${token()}~${rel.replace("/", "-")}`)).catch(
+      () => {},
     );
-    for (const { key } of used) {
-      if (key === keep || liveLeases.has(key) || recent.has(key)) continue;
-      await rm(join(dir, "manifests", key), { force: true });
-      await rm(join(dir, "entries", key), { recursive: true, force: true });
+  }
+
+  /**
+   * Outside the lock and best effort ({@link forceRemove}): deletes what is in `trash/` and the
+   * staging directories of processes that are gone (their owner can never publish them).
+   */
+  private async emptyTrash(dir: string): Promise<void> {
+    for (const name of await readdir(join(dir, "trash")).catch(() => [] as string[]))
+      await forceRemove(join(dir, "trash", name));
+    const stagingRoot = join(this.root, "staging");
+    for (const name of await readdir(stagingRoot).catch(() => [] as string[])) {
+      const m = /^(\d+-\d+)-\d+$/.exec(name);
+      const p = m ? parseToken(m[1] as string) : undefined;
+      if (p === undefined || !this.isLive(p)) await forceRemove(join(stagingRoot, name));
     }
   }
 
   /**
-   * Runs `fn` holding `<dir>/.lock` (a file created exclusively, naming this process): a lock
-   * whose process is gone is taken over; one held by a live process is waited for, with growing
-   * pauses, until `signal` aborts or {@link INSTALL_CACHE_LOCK_WAIT_MS} passed.
+   * Runs `fn` holding the service directory's lock. The lock is a sequence of generation files
+   * `locks/<n>`, each created exclusively and never removed while it is the highest: the holder is
+   * the process named in the highest one, until it writes `released` there (or its process is
+   * gone). A taker creates the next generation exclusively, so of several takers exactly one
+   * wins, whatever they read before; no file is ever taken over in place. The holder removes the
+   * lower generations. A live holder is waited for, with growing pauses, until `signal` aborts or
+   * {@link INSTALL_CACHE_LOCK_WAIT_MS} passed.
    */
   private async locked<T>(dir: string, signal: AbortSignal, fn: () => Promise<T>): Promise<T> {
-    const lock = join(dir, ".lock");
+    const locks = join(dir, "locks");
     const deadline = Date.now() + INSTALL_CACHE_LOCK_WAIT_MS;
     let pauseMs = 5;
+    let mine = 0;
     for (;;) {
       signal.throwIfAborted();
-      try {
-        await writeNew(lock, `${process.pid}\n`);
-        break;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      }
-      const holder = Number(await readSmallFile(lock));
-      if (!Number.isInteger(holder) || holder <= 0 || !this.alive(holder)) {
-        // its process is gone (or the file is not a lock): taken over; a racing taker fails the
-        // exclusive create above and reads the new holder
-        await unlink(lock).catch(() => {});
-        continue;
+      const top = Math.max(
+        0,
+        ...(await readdir(locks)).filter((n) => /^[1-9]\d{0,15}$/.test(n)).map(Number),
+      );
+      const holder = top === 0 ? undefined : await readSmallFile(join(locks, String(top)));
+      const p = holder?.startsWith("holder ") ? parseToken(holder.slice(7)) : undefined;
+      if (p === undefined || !this.isLive(p)) {
+        try {
+          await writeNew(join(locks, String(top + 1)), `holder ${tokenText(this.self)}\n`);
+          mine = top + 1;
+          break;
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+          continue; // another taker created it first: read again
+        }
       }
       if (Date.now() >= deadline)
         throw new Error(
-          `The install cache lock ${lock} stays held by process ${holder}; retry, or remove the file if that process is not capybara-device`,
+          `The install cache lock ${join(locks, String(top))} stays held by process ${p.pid}; retry once it is done`,
         );
       await new Promise((r) => setTimeout(r, pauseMs));
       pauseMs = Math.min(pauseMs * 2, 200);
     }
     try {
+      // the lower generations and temporary files are no one's any more
+      for (const name of await readdir(locks).catch(() => [] as string[]))
+        if (name !== String(mine) && !(/^\d+$/.test(name) && Number(name) > mine))
+          await rm(join(locks, name), { force: true }).catch(() => {});
       return await fn();
     } finally {
-      await unlink(lock).catch(() => {});
+      await writeAtomic(join(locks, String(mine)), "released\n").catch(() => {});
     }
   }
 }
@@ -318,11 +460,58 @@ function once(fn: () => Promise<void>): () => Promise<void> {
   };
 }
 
+function isGone(e: unknown): boolean {
+  const code = (e as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+/**
+ * Where a link at `rel` (inside the tree) with `target` leads, resolved component by component
+ * against the real tree: a link met on the way is followed (at most {@link MAX_LINK_HOPS}), so a
+ * chain of in-tree links that climbs out (`b -> ..`, then `e -> d/b/../x`) is caught. Throws
+ * {@link InstallTreeError} for an absolute target or one that leaves the tree; a missing
+ * component ends the real resolution (the rest is lexical: nothing missing can be a link).
+ */
+async function checkLink(root: string, rel: string, target: string): Promise<void> {
+  const out = () => new InstallTreeError(`${join(root, rel)} links out of the install`);
+  if (isAbsolute(target) || target.includes("\0")) throw out();
+  const stack: string[] = [];
+  let queue = [...posix.dirname(rel).split("/"), ...target.split("/")];
+  let hops = 0;
+  let real = true;
+  while (queue.length > 0) {
+    const part = queue.shift() as string;
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (stack.length === 0) throw out();
+      stack.pop();
+      continue;
+    }
+    stack.push(part);
+    if (!real) continue;
+    let st: Awaited<ReturnType<typeof lstat>>;
+    try {
+      st = await lstat(join(root, ...stack));
+    } catch (e) {
+      if (!isGone(e)) throw e;
+      real = false;
+      continue;
+    }
+    if (!st.isSymbolicLink()) continue;
+    if (++hops > MAX_LINK_HOPS) throw out();
+    const next = await readlink(join(root, ...stack));
+    if (isAbsolute(next) || next.includes("\0")) throw out();
+    stack.pop();
+    queue = [...next.split("/"), ...queue];
+  }
+}
+
 /**
  * The digest of a tree (`v1:<sha256>`), read without following a link: per entry in path order,
- * its kind, path and permission bits, and a file's size and sha256 or a link's target. A link
- * that is absolute or leaves the tree, or anything but a file, directory or link, throws: such a
- * tree is never published or used.
+ * its kind, path and permission bits, and a file's size and sha256 or a link's target. Throws
+ * {@link InstallTreeError} for a link that is absolute or resolves out of the tree
+ * ({@link checkLink}), a file with more than one hard link (another name could change it) and
+ * anything but a file, directory or link: such a tree is never published or used.
  */
 export async function treeDigest(root: string): Promise<string> {
   const lines: string[] = [];
@@ -335,22 +524,16 @@ export async function treeDigest(root: string): Promise<string> {
       const mode = (st.mode & 0o777).toString(8);
       if (st.isSymbolicLink()) {
         const target = await readlink(abs);
-        const resolved = posix.normalize(posix.join(posix.dirname(path), target));
-        if (
-          isAbsolute(target) ||
-          target.includes("\0") ||
-          resolved === ".." ||
-          resolved.startsWith("../")
-        )
-          throw new Error(`${abs} links out of the install`);
+        await checkLink(root, path, target);
         lines.push(`l ${JSON.stringify(path)} ${JSON.stringify(target)}`);
       } else if (st.isDirectory()) {
         lines.push(`d ${JSON.stringify(path)} ${mode}`);
         await walk(path);
       } else if (st.isFile()) {
+        if (st.nlink > 1) throw new InstallTreeError(`${abs} has another hard link`);
         lines.push(`f ${JSON.stringify(path)} ${mode} ${st.size} ${await fileDigest(abs)}`);
       } else {
-        throw new Error(`${abs} is not a file, directory or link`);
+        throw new InstallTreeError(`${abs} is not a file, directory or link`);
       }
     }
   };
@@ -362,7 +545,9 @@ export async function treeDigest(root: string): Promise<string> {
 async function fileDigest(path: string): Promise<string> {
   const fh = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    if (!(await fh.stat()).isFile()) throw new Error(`${path} is not a regular file`);
+    const st = await fh.stat();
+    if (!st.isFile()) throw new InstallTreeError(`${path} is not a regular file`);
+    if (st.nlink > 1) throw new InstallTreeError(`${path} has another hard link`);
     const hash = createHash("sha256");
     for await (const chunk of fh.createReadStream({ autoClose: false, highWaterMark: 1 << 20 }))
       hash.update(chunk as Buffer);
@@ -370,6 +555,42 @@ async function fileDigest(path: string): Promise<string> {
   } finally {
     await fh.close();
   }
+}
+
+/**
+ * Deletes `path`, best effort: when a plain removal fails, every directory below it (never
+ * through a link) is made accessible to this user and, on macOS, the user immutable flags are
+ * cleared, then it is removed again; a failure after that is left for the next sweep.
+ */
+export async function forceRemove(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+    return;
+  } catch {
+    // made removable below
+  }
+  const open = async (p: string): Promise<void> => {
+    let st: Awaited<ReturnType<typeof lstat>>;
+    try {
+      st = await lstat(p);
+    } catch {
+      return;
+    }
+    if (!st.isDirectory()) return;
+    await chmod(p, 0o700).catch(() => {});
+    for (const name of await readdir(p).catch(() => [] as string[])) await open(join(p, name));
+  };
+  if (process.platform === "darwin")
+    // -R without -L or -H follows no link
+    spawnSync("/usr/bin/chflags", ["-R", "nouchg", path], { stdio: "ignore", timeout: 30_000 });
+  await open(path);
+  await rm(path, { recursive: true, force: true }).catch(() => {});
+}
+
+/** A manifest record (never through a link), or undefined when there is none or it is malformed. */
+async function readManifest(path: string): Promise<{ digest: string; entry: string } | undefined> {
+  const m = MANIFEST_RE.exec((await readSmallFile(path)) ?? "");
+  return m ? { digest: m[1] as string, entry: m[2] as string } : undefined;
 }
 
 /** A small record (at most 256 bytes, a regular file, never through a link), trimmed. */
@@ -405,9 +626,12 @@ async function writeNew(path: string, text: string): Promise<void> {
   }
 }
 
-/** Writes `path` through a new temporary file renamed over it. */
+/**
+ * Writes `path` through a new temporary file renamed over it; the temporary name (`~<rand>.tmp`)
+ * is never a key or a lock generation, so a sweep removes one a crash left behind.
+ */
 async function writeAtomic(path: string, text: string): Promise<void> {
-  const tmp = `${path}.${process.pid}.${token()}.tmp`;
+  const tmp = `${path}~${token()}.tmp`;
   try {
     await writeNew(tmp, text);
     await rename(tmp, path);

@@ -1144,7 +1144,7 @@ it("a service naming its install key gets the machine-wide cache, shared across 
     ok: true,
   });
   const entry = echo.calls[1]?.env[DEVICE_SERVICE_INSTALL_ENV] as string;
-  expect(entry).toMatch(/\/entries\/chromium-1255$/);
+  expect(entry).toMatch(/\/entries\/chromium-1255@[0-9a-f]{12}$/);
   expect(echo.calls[1]?.readRoots).toContain(entry);
   expect(echo.calls[1]?.writeRoots).not.toContain(entry);
   expect(await readFile(join(entry, "chrome"), "utf8")).toBe("chromium");
