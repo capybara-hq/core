@@ -11,7 +11,6 @@ import {
   Stack,
   StatusMark,
   Text,
-  useStatusBar,
   useTimeZone,
   useToast,
   versionLabel,
@@ -97,10 +96,6 @@ function AdminInbox({
   // is in the URL hash, so the system back closes it and `#item=<id>` deep-links.
   const hashItem = useHashItem();
   const active = rows.find((i) => i.id === (hashItem.id ?? activeId)) ?? rows[0];
-  // Nothing while the inbox loads (not "0 pending")
-  // The total, not the shown rows: the list stops at 100
-  useStatusBar(inbox === null ? null : `· ${t("pendingCount", { n: inbox.total })}`);
-
   const timeZone = useTimeZone();
   // Dismissing a platform notice changes the inbox, its count and the overview's total
   const dismiss = useAppMutation({

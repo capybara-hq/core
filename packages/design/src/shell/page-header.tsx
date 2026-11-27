@@ -401,7 +401,12 @@ export function PageHeader(p: PageHeaderProps) {
   // No path row on compact (design spec §4.2): the floating row's back and the h1 name the page.
   // Before hydration the path is drawn and the compact stylesheet hides it; after, compact drops
   // it (one element, no ClassForms wrapper: the path keeps its place as the head's first row).
-  const pathNode = form === "compact" ? null : navNode;
+  // A first-level page (scope / page: two segments or fewer) draws none at any width: the
+  // sidebar already names the place. The path stays a prop (the compact back walks it). An
+  // object page passes its two-segment parent path while its name loads (`loading.title`): it
+  // counts as deep already, so the path row does not appear under a loaded head and shift it.
+  const firstLevel = segments.length <= 1 || (segments.length === 2 && loading?.title !== true);
+  const pathNode = form === "compact" || firstLevel ? null : navNode;
   const actionsNode =
     actions.length > 0 ? (
       <div className="cb-pageheader-actions" data-part="page-header-actions">
@@ -437,7 +442,8 @@ export function PageHeader(p: PageHeaderProps) {
         // the path and the actions share one row and the name stays an h1 for assistive tech.
         <div className="cb-pageheader-titleless" data-part="page-header-titleless">
           <h1 className="cb-sr-only">{p.title}</h1>
-          {pathNode}
+          {/* Without a path row the filler stands before the actions (the head's drag area). */}
+          {pathNode ?? (form === "compact" ? null : <DragFill />)}
           {actionsNode}
         </div>
       ) : (
@@ -481,6 +487,9 @@ export function PageHeader(p: PageHeaderProps) {
                 </p>
               ) : null}
             </div>
+            {/* The title row's drag area in a desktop shell (spec §5): the room before the
+                actions, so a page without a path row still drags the window. */}
+            <DragFill />
             {actionsNode}
           </div>
         </>

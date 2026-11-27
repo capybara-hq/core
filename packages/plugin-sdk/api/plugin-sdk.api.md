@@ -3127,6 +3127,7 @@ export const OPEN_PUBLIC_DENIED_CLASSES: readonly AddressClass[];
 // @public
 export interface OpenExternalCapabilityV1 {
     open(url: string): Promise<void>;
+    readonly returnScheme?: string;
 }
 
 // @public
@@ -4573,7 +4574,7 @@ export const THEME_TOKENS: {
     readonly color: {
         readonly bg: {
             readonly dark: "#0A0A0A";
-            readonly light: "#FAF9F6";
+            readonly light: "#FDFDFC";
         };
         readonly panel: {
             readonly dark: "#111110";
@@ -4584,11 +4585,11 @@ export const THEME_TOKENS: {
             readonly light: "#FCFBF9";
         };
         readonly sidebar: {
-            readonly dark: "#111110";
-            readonly light: "#F3F2EE";
+            readonly dark: "#171716";
+            readonly light: "#EDECE7";
         };
         readonly "sidebar-active": {
-            readonly dark: "#1A1A18";
+            readonly dark: "rgba(255,255,255,0.07)";
             readonly light: "rgba(26,26,24,0.09)";
         };
         readonly raised: {
@@ -4596,12 +4597,12 @@ export const THEME_TOKENS: {
             readonly light: "#FFFFFF";
         };
         readonly selected: {
-            readonly dark: "#1F1F1D";
+            readonly dark: "#21211F";
             readonly light: "rgba(26,26,24,0.07)";
         };
         readonly hover: {
-            readonly dark: "#171716";
-            readonly light: "rgba(26,26,24,0.04)";
+            readonly dark: "rgba(255,255,255,0.04)";
+            readonly light: "rgba(26,26,24,0.045)";
         };
         readonly "line-soft": {
             readonly dark: "#1C1C1A";
@@ -5112,7 +5113,7 @@ export const UI_LIMITS: {
 };
 
 // @public
-export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.user.bubble", "message.assistant", "tool-row", "composer", "composer.box", "composer.options", "composer.send", "properties-panel", "section", "right-panel", "status-bar", "button", "button.primary", "card", "input", "dialog", "code-block", "menu", "segmented", "stat-card", "switch", "switch.knob", "org-avatar", "agent-chip", "image-placeholder"];
+export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.user.bubble", "message.assistant", "tool-row", "composer", "composer.box", "composer.options", "composer.send", "properties-panel", "section", "right-panel", "button", "button.primary", "card", "input", "dialog", "code-block", "menu", "segmented", "stat-card", "switch", "switch.knob", "org-avatar", "agent-chip", "image-placeholder"];
 
 // @public
 export const UI_PARTS: readonly UiPartSpec[];

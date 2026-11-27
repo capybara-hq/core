@@ -19,6 +19,7 @@ import { type CommandGroup, CommandPalette } from "../overlays/index";
 import type { MenuItem } from "../overlays/menus";
 import { useDesignT } from "../provider";
 import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
+import { DragFill } from "./drag-fill";
 import { backTarget, FloatingBar, type FloatingLead, routeCommitted } from "./floating-bar";
 import { INSET_SETTLE_MS, KEYBOARD_INSET_SETTLED_EVENT } from "./keyboard-settled";
 import { useNativeStrip } from "./native-strip";
@@ -29,7 +30,6 @@ import { useShellEnvironment } from "./shell-environment";
 import { type ShellPage, ShellPageContext } from "./shell-page";
 import { COLLAPSE_SHORTCUT, Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { useShortWindow, useSizeClass } from "./size-class";
-import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
 import { useTouch } from "./touch";
 import { useHydrated } from "./use-media-query";
 
@@ -85,14 +85,8 @@ export type AppShellProps = {
    * there is no palette and no search (the setup frame, T13).
    */
   commands?: CommandGroup[];
-  status: Pick<StatusBarProps, "context" | "version" | "timeZone" | "system">;
   /** Draw the shell as the rail of the medium class whatever the window width (reference set only). */
   reference?: { rail: true };
-  /**
-   * The page draws its own status bar (the conversation page: under its middle column only, so a
-   * full-height right panel sits beside it); the shell then draws none.
-   */
-  ownStatusBar?: boolean;
   /**
    * The route is a management page that is desktop-only on touch (mobile touch plan Task 29): the
    * shell draws the notice beside the page, the touch query shows one of them, and after hydration
@@ -110,7 +104,7 @@ export type AppShellProps = {
   /**
    * A shell-wide notice row (safe mode's `SafeModeBanner`): the shell's first row, across the
    * sidebar and the content column, which share the rest of the window. The shell keeps its
-   * window height, so the status bar and the page's bottom stay visible.
+   * window height, so the page's bottom stays visible.
    */
   banner?: ReactNode;
   /**
@@ -123,9 +117,10 @@ export type AppShellProps = {
 
 /**
  * The App Shell (spec §4): Sidebar | content column. The content column holds the page (a
- * template, with its ActionRow at its bottom) and the StatusBar; on compact the floating row
- * (menu or back, §4.6) lies over the page's top and the drawer opens from the menu button. ⌘K
- * opens the command palette.
+ * template, with its ActionRow at its bottom). From 600 up the sidebar and the gutters are the
+ * ground and the page is the paper lying on it; on compact the floating row (menu or back, §4.6)
+ * lies over the page's top and the drawer opens from the menu button. ⌘K opens the command
+ * palette.
  */
 export function AppShell({
   sidebar,
@@ -138,9 +133,7 @@ export function AppShell({
   collapsed: collapsedProp,
   onCollapsedChange,
   commands,
-  status,
   reference,
-  ownStatusBar,
   capState,
   banner,
   singleScheme,
@@ -152,7 +145,6 @@ export function AppShell({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const railRef = reference !== undefined && "rail" in reference;
-  const [pageStatus, setPageStatus] = useState<ReactNode>(null);
   const hydrated = useHydrated();
   const touch = useTouch();
   const sizeClass = useSizeClass();
@@ -387,7 +379,7 @@ export function AppShell({
 
   // iOS (Safari and the WebKit Chrome) scrolls the document to show a focused text field even though
   // the shell never lets it scroll, and does not always scroll back when the keyboard closes: the
-  // head then sits under the status bar and cannot be tapped. Once the keyboard is closed (the visual
+  // head then sits off screen and cannot be tapped. Once the keyboard is closed (the visual
   // viewport is the full window again; without visualViewport: no text field focused), put the
   // document back at the top.
   // iOS also keeps the layout viewport when the keyboard opens, so a composer pinned at the bottom
@@ -497,150 +489,146 @@ export function AppShell({
 
   return (
     <ShellPageContext.Provider value={registerPage}>
-      <StatusBarSetterContext.Provider value={setPageStatus}>
-        <div
-          ref={shellRef}
-          className="cb-shell"
-          data-cap-part="shell"
-          data-cap-state={stateTokens}
-          data-banner={banner ? "true" : undefined}
-          data-short={short ? "true" : undefined}
-          data-native-nav={nativeNav ? "" : undefined}
-          data-surface={surface ? "chat" : "pushed"}
-        >
-          {/* The native shell's top band (spec mobile layout §9.3): a window drag region on the
+      <div
+        ref={shellRef}
+        className="cb-shell"
+        data-cap-part="shell"
+        data-cap-state={stateTokens}
+        data-banner={banner ? "true" : undefined}
+        data-short={short ? "true" : undefined}
+        data-native-nav={nativeNav ? "" : undefined}
+        data-surface={surface ? "chat" : "pushed"}
+      >
+        {/* The native shell's top band (spec mobile layout §9.3): a window drag region on the
               desktop, drawn only under `<html data-shell>` by CSS. */}
-          <div className="cb-shell-band" aria-hidden="true" />
-          {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
-          <a className="cb-skip-link" href={`#${mainId}`}>
-            {t("shell.skipToContent")}
-          </a>
-          {topRowToggle ? (
-            <div className="cb-shell-rail-toggle">
-              <Tooltip content={`${t("sidebar.expand")} ${COLLAPSE_SHORTCUT}`}>
-                <IconButton
-                  label={t("sidebar.expand")}
-                  icon={<Icon name="panel-left" />}
-                  part="top-row-expand-toggle"
-                  onClick={() => setCollapsed(false)}
-                />
-              </Tooltip>
-            </div>
-          ) : topRowDrawerToggle ? (
-            <div className="cb-shell-rail-toggle">
-              <Tooltip content={`${t("sidebar.show")} ${COLLAPSE_SHORTCUT}`}>
-                <IconButton
-                  label={t("sidebar.show")}
-                  icon={<Icon name="panel-left" />}
-                  part="top-row-drawer-toggle"
-                  aria-expanded={sidebarDrawerOpen}
-                  aria-haspopup="dialog"
-                  onClick={() => setSidebarDrawerOpen((open) => !open)}
-                />
-              </Tooltip>
-            </div>
-          ) : null}
-          {banner ? (
-            <div className="cb-shell-banner" data-part="shell-banner">
-              {banner}
-            </div>
-          ) : null}
-          <Sidebar
-            {...sidebar}
-            {...(nativeNav ? { nativeNav: true } : {})}
-            collapsed={collapsed}
-            onCollapsedChange={setCollapsed}
-            drawerOpen={sidebarDrawerOpen}
-            onDrawerOpenChange={setSidebarDrawerOpen}
-            onOpenCommands={() => setPaletteOpen(true)}
-            {...(railRef ? { mode: "rail" as const } : {})}
-          />
-          <div
-            className="cb-shell-column"
-            data-part="shell-content"
-            data-title-away={titleAway ? "true" : undefined}
-          >
-            {/* Drawn always, shown below 600 by CSS: the server render is right at every width. */}
-            <div className="cb-shell-float" data-part="floating-bar-slot">
-              <FloatingBar
-                lead={lead}
-                title={titleAway ? page.title : undefined}
-                trailing={
-                  overflow.length > 0 ? (
-                    <ConvMenu
-                      label={t("shell.moreActions")}
-                      align="end"
-                      size="touch"
-                      sideOffset={2}
-                      entries={overflow}
-                      trigger={
-                        <IconButton
-                          part="more"
-                          label={t("shell.moreActions")}
-                          icon={<Icon name="more-horizontal" />}
-                        />
-                      }
-                    />
-                  ) : null
-                }
+        <div className="cb-shell-band" aria-hidden="true" />
+        {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
+        <a className="cb-skip-link" href={`#${mainId}`}>
+          {t("shell.skipToContent")}
+        </a>
+        {topRowToggle ? (
+          <div className="cb-shell-rail-toggle">
+            <Tooltip content={`${t("sidebar.expand")} ${COLLAPSE_SHORTCUT}`}>
+              <IconButton
+                label={t("sidebar.expand")}
+                icon={<Icon name="panel-left" />}
+                part="top-row-expand-toggle"
+                onClick={() => setCollapsed(false)}
               />
-            </div>
-            <main
-              className="cb-shell-main"
-              id={mainId}
-              tabIndex={-1}
-              // The slide of the last push or pop (compact only, none under reduced motion).
-              data-nav={slide ? `${slide.direction}-${slide.n}` : undefined}
-            >
-              {setup !== null ? (
-                <>
-                  <div className="cb-setup-body" data-steps-open={stepsOpen ? "true" : "false"}>
-                    {children}
-                  </div>
-                  {stepsOpen ? (
-                    <div className="cb-setup-steps-page" data-open="true">
-                      <SetupSteps
-                        home={setup.home}
-                        steps={setup.steps}
-                        current={sidebar.activeNav}
-                      />
-                    </div>
-                  ) : null}
-                </>
-              ) : desktopOnly ? (
-                // The server and the hydrating render draw both (CSS shows one under the touch
-                // query); once the pointer is known only the one that applies is mounted.
-                <>
-                  {touch === false ? null : (
-                    <div className="cb-desktop-only-notice" data-part="desktop-only-gate">
-                      <DesktopOnlyNotice {...desktopOnly} />
-                    </div>
-                  )}
-                  {touch === true ? null : <div className="cb-desktop-only-page">{children}</div>}
-                </>
-              ) : (
-                children
-              )}
-            </main>
-            {ownStatusBar ? null : <StatusBar {...status} pageStatus={pageStatus} />}
+            </Tooltip>
           </div>
+        ) : topRowDrawerToggle ? (
+          <div className="cb-shell-rail-toggle">
+            <Tooltip content={`${t("sidebar.show")} ${COLLAPSE_SHORTCUT}`}>
+              <IconButton
+                label={t("sidebar.show")}
+                icon={<Icon name="panel-left" />}
+                part="top-row-drawer-toggle"
+                aria-expanded={sidebarDrawerOpen}
+                aria-haspopup="dialog"
+                onClick={() => setSidebarDrawerOpen((open) => !open)}
+              />
+            </Tooltip>
+          </div>
+        ) : null}
+        {banner ? (
+          <div className="cb-shell-banner" data-part="shell-banner">
+            {banner}
+          </div>
+        ) : null}
+        <Sidebar
+          {...sidebar}
+          {...(nativeNav ? { nativeNav: true } : {})}
+          collapsed={collapsed}
+          onCollapsedChange={setCollapsed}
+          drawerOpen={sidebarDrawerOpen}
+          onDrawerOpenChange={setSidebarDrawerOpen}
+          onOpenCommands={() => setPaletteOpen(true)}
+          {...(railRef ? { mode: "rail" as const } : {})}
+        />
+        <div
+          className="cb-shell-column"
+          data-part="shell-content"
+          data-title-away={titleAway ? "true" : undefined}
+        >
+          {/* The ground above the paper (from 600 up): a window drag region in a desktop
+                shell, an empty filler across the column (shell.css, shell-environment.css). */}
+          <DragFill className="cb-shell-gutter" />
+          {/* Drawn always, shown below 600 by CSS: the server render is right at every width. */}
+          <div className="cb-shell-float" data-part="floating-bar-slot">
+            <FloatingBar
+              lead={lead}
+              title={titleAway ? page.title : undefined}
+              trailing={
+                overflow.length > 0 ? (
+                  <ConvMenu
+                    label={t("shell.moreActions")}
+                    align="end"
+                    size="touch"
+                    sideOffset={2}
+                    entries={overflow}
+                    trigger={
+                      <IconButton
+                        part="more"
+                        label={t("shell.moreActions")}
+                        icon={<Icon name="more-horizontal" />}
+                      />
+                    }
+                  />
+                ) : null
+              }
+            />
+          </div>
+          <main
+            className="cb-shell-main"
+            id={mainId}
+            tabIndex={-1}
+            // The slide of the last push or pop (compact only, none under reduced motion).
+            data-nav={slide ? `${slide.direction}-${slide.n}` : undefined}
+          >
+            {setup !== null ? (
+              <>
+                <div className="cb-setup-body" data-steps-open={stepsOpen ? "true" : "false"}>
+                  {children}
+                </div>
+                {stepsOpen ? (
+                  <div className="cb-setup-steps-page" data-open="true">
+                    <SetupSteps home={setup.home} steps={setup.steps} current={sidebar.activeNav} />
+                  </div>
+                ) : null}
+              </>
+            ) : desktopOnly ? (
+              // The server and the hydrating render draw both (CSS shows one under the touch
+              // query); once the pointer is known only the one that applies is mounted.
+              <>
+                {touch === false ? null : (
+                  <div className="cb-desktop-only-notice" data-part="desktop-only-gate">
+                    <DesktopOnlyNotice {...desktopOnly} />
+                  </div>
+                )}
+                {touch === true ? null : <div className="cb-desktop-only-page">{children}</div>}
+              </>
+            ) : (
+              children
+            )}
+          </main>
         </div>
-        {drawer ? (
-          <NavDrawer
-            open={drawerOpen}
-            onOpenChange={setDrawerOpen}
-            pathname={pathname}
-            onNavigate={onNavigate}
-            // The shell's own palette when it has one; the drawer closes first.
-            data={searchable ? { ...drawer, onSearch: () => setPaletteOpen(true) } : drawer}
-          />
-        ) : null}
-        {/* The strip's account avatar opens the account sheet on its own (no drawer on the Duo). */}
-        {stripAccountSheet}
-        {commands ? (
-          <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />
-        ) : null}
-      </StatusBarSetterContext.Provider>
+      </div>
+      {drawer ? (
+        <NavDrawer
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          pathname={pathname}
+          onNavigate={onNavigate}
+          // The shell's own palette when it has one; the drawer closes first.
+          data={searchable ? { ...drawer, onSearch: () => setPaletteOpen(true) } : drawer}
+        />
+      ) : null}
+      {/* The strip's account avatar opens the account sheet on its own (no drawer on the Duo). */}
+      {stripAccountSheet}
+      {commands ? (
+        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />
+      ) : null}
     </ShellPageContext.Provider>
   );
 }

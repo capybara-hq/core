@@ -541,6 +541,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "A person's own sign-in with a password: completes a pending link and signs in",
   },
   {
+    route: "POST /api/v1/auth/handoffs/redeem",
+    category: "human-only",
+    reason:
+      "Redeems a shell's browser handoff in the person's own signed-in browser; it starts an OAuth or SSO flow there",
+  },
+  {
     route: "GET /api/v1/bind/:token",
     category: "human-only",
     reason: "Shows a one-time identity binding link",

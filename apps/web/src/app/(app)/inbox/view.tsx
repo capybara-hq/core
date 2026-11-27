@@ -19,7 +19,6 @@ import {
   Text,
   Textarea,
   TextLink,
-  useStatusBar,
   useTimeZone,
   useToast,
   versionLabel,
@@ -190,9 +189,6 @@ function Inbox({
     ...approvalQ,
     enabled: false,
   }).data;
-  // Nothing while the inbox loads (not "0 pending").
-  useStatusBar(inbox === null ? null : `· ${t("pendingCount", { n: rows.length })}`);
-
   // 换一项时审批范围回到「仅本次」
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在选中项变化时重置
   useEffect(() => {

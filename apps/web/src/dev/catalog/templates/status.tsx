@@ -4,7 +4,7 @@ import { FixtureShell } from "../frame";
 /** T11 系统状态：404。 */
 export function StatusTemplate() {
   return (
-    <FixtureShell nav="" context="agents/unknown">
+    <FixtureShell nav="">
       <StatusPage
         header={{ path: [{ label: "~" }], title: "页面不存在" }}
         kind="404"

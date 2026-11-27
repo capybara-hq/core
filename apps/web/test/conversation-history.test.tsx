@@ -95,6 +95,8 @@ const routes = (events: (c: Call) => Response) => ({
 describe("the conversation page reads its history in pages", () => {
   it("paints the last page, then reads the page before it from the thread's top edge", async () => {
     const calls = stubApi({ [`GET ${BASE}/events`]: eventsRoute() });
+    // the rounds line is in the properties panel's Context section
+    window.history.replaceState(null, "", "/chat/c1#properties");
     const { calls: server } = await renderChatRoute({ routes: routes(eventsRoute()) });
     expect(server.map((c) => c.url)).toContain(`${BASE}/events?before=end&limit=200`);
     // a window that may hide a dispatch or a background launch reads the server's lists
@@ -109,7 +111,7 @@ describe("the conversation page reads its history in pages", () => {
     expect(screen.getByText("late")).toBeTruthy();
     expect(screen.queryByText("early")).toBeNull();
     // runs above the window count: r1 above, r2 here
-    expect(screen.getByText(/^Turn 2 · /)).toBeTruthy();
+    expect(await screen.findByText(/^Turn 2 · /)).toBeTruthy();
     const edge = document.querySelector('[data-part="thread-history"]');
     expect(edge?.getAttribute("data-state")).toBe("more");
     await act(async () =>
@@ -119,6 +121,7 @@ describe("the conversation page reads its history in pages", () => {
     expect(calls.map((c) => c.url)).toContain(`${BASE}/events?before=4&limit=200`);
     expect(screen.getByText("Beginning of conversation")).toBeTruthy();
     expect(screen.getByText(/^Turn 2 · /)).toBeTruthy();
+    window.history.replaceState(null, "", "/");
     // the stream still resumes at the end
     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${BASE}/stream?after=6`]);
   });

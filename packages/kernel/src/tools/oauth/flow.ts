@@ -3,6 +3,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ApiError } from "../../errors.js";
+import { type HandoffRecord, handoffDonePath } from "../../handoff/handoff-paths.js";
 import { audit } from "../../identity/audit.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
@@ -107,14 +108,18 @@ export class OAuthFlow {
       .executeTakeFirst();
   }
 
-  /** 生成授权 URL。`binding` 为本浏览器的绑定值（由 controller 写入 Cookie）。 */
-  async start(
-    orgId: string,
-    connectorId: string,
-    accountId: string,
-    returnTo: string | undefined,
-    binding: string,
-  ): Promise<{ authorizationUrl: string }> {
+  /**
+   * Every check {@link start} makes before it writes the state: `http.publicUrl` is set, the
+   * connector exists, is an active `oauth_code` connector and has a client with an authorization
+   * endpoint (a dcr connector created without a client registers it now, once across replicas,
+   * R16). A browser handoff start runs it so a connector that cannot be connected fails in the app,
+   * not after the person signed in in the browser.
+   */
+  async check(orgId: string, connectorId: string, accountId: string): Promise<void> {
+    await this.prepare(orgId, connectorId, accountId);
+  }
+
+  private async prepare(orgId: string, connectorId: string, accountId: string) {
     const publicUrl = this.config.get().http.publicUrl;
     if (!publicUrl) throw publicUrlRequired();
     const app = await this.app(orgId, connectorId);
@@ -140,6 +145,27 @@ export class OAuthFlow {
         "This connector needs to be configured by an organization admin before members can connect it.",
       );
     }
+    return { publicUrl, app, client, authorizationEndpoint: client.authorizationEndpoint };
+  }
+
+  /**
+   * Builds the authorization URL. `binding` is this browser's binding value (the controller writes
+   * the cookie). With `handoff` (a browser handoff redeemed in this browser), the state's return
+   * page is the handoff done page built from the ticket's record, and `returnTo` is ignored.
+   */
+  async start(
+    orgId: string,
+    connectorId: string,
+    accountId: string,
+    returnTo: string | undefined,
+    binding: string,
+    handoff?: HandoffRecord,
+  ): Promise<{ authorizationUrl: string }> {
+    const { publicUrl, app, client, authorizationEndpoint } = await this.prepare(
+      orgId,
+      connectorId,
+      accountId,
+    );
     const state = b64url();
     const verifier = b64url();
     const redirectUri = callbackUrl(publicUrl);
@@ -149,12 +175,13 @@ export class OAuthFlow {
       accountId,
       verifier,
       redirectUri,
-      returnTo: returnTo ?? DEFAULT_RETURN_PATH,
+      returnTo:
+        handoff !== undefined ? handoffDonePath(handoff) : (returnTo ?? DEFAULT_RETURN_PATH),
       binding: sha256(binding),
       ...(client.issuer !== undefined && { issuer: client.issuer }),
     };
     await this.redis.set(stateKey(state), JSON.stringify(rec), "EX", OAUTH_STATE_TTL_SECONDS);
-    const url = new URL(client.authorizationEndpoint);
+    const url = new URL(authorizationEndpoint);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", client.clientId);
     url.searchParams.set("redirect_uri", redirectUri);

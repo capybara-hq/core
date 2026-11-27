@@ -4,6 +4,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
+import { type HandoffRecord, handoffDonePath } from "../handoff/handoff-paths.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { isSafeReturnPath } from "../tools/oauth/flow-paths.js";
@@ -158,6 +159,15 @@ export class SsoFlow {
     return (await this.entry(plugin))?.source;
   }
 
+  /**
+   * Whether a link intent of `plugin` can start now: its login source is on offer and
+   * `http.publicUrl` is set (otherwise {@link start} answers `sso.unavailable`).
+   */
+  async linkAvailable(plugin: string): Promise<boolean> {
+    if (!this.config.get().http.publicUrl) return false;
+    return (await this.provider(plugin)) !== undefined;
+  }
+
   private redirectUri(plugin: string): string {
     const base = (this.config.get().http.publicUrl ?? "").replace(/\/+$/, "");
     return `${base}${ssoCallbackPath(plugin)}`;
@@ -186,7 +196,9 @@ export class SsoFlow {
    * the sign-in page; a link intent's back to its page with `?error=<code>`. A link intent needs
    * the web session's account and must come from a CSRF-protected request (the controller's
    * `POST …/start`; a cross-site top-level GET carries the Lax session cookie, so a GET start never
-   * links). `binding` is this browser's binding value (the controller writes the cookie).
+   * links). `binding` is this browser's binding value (the controller writes the cookie). With
+   * `handoff` (a browser handoff redeemed in this browser), the return page is the handoff done
+   * page the kernel builds from the ticket's record, and `returnTo` is ignored.
    */
   async start(
     plugin: string,
@@ -194,8 +206,9 @@ export class SsoFlow {
     binding: string,
     sessionAccountId?: string,
     intent: SsoIntent = "signin",
+    handoff?: HandoffRecord,
   ): Promise<string> {
-    const back = safeReturnTo(returnTo);
+    const back = handoff !== undefined ? handoffDonePath(handoff) : safeReturnTo(returnTo);
     const fail = (code: SsoLoginError) =>
       intent === "link" ? this.webUrl(withError(back, code)) : this.loginError(code);
     if (intent === "link" && sessionAccountId === undefined) {

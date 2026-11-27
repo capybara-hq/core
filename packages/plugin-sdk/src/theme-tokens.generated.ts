@@ -4,14 +4,14 @@
 /** The built-in token values a theme overrides (design spec §2). */
 export const THEME_TOKENS = {
   color: {
-    "bg": { dark: "#0A0A0A", light: "#FAF9F6" },
+    "bg": { dark: "#0A0A0A", light: "#FDFDFC" },
     "panel": { dark: "#111110", light: "#FFFFFF" },
     "panel-2": { dark: "#0E0E0D", light: "#FCFBF9" },
-    "sidebar": { dark: "#111110", light: "#F3F2EE" },
-    "sidebar-active": { dark: "#1A1A18", light: "rgba(26,26,24,0.09)" },
+    "sidebar": { dark: "#171716", light: "#EDECE7" },
+    "sidebar-active": { dark: "rgba(255,255,255,0.07)", light: "rgba(26,26,24,0.09)" },
     "raised": { dark: "#141413", light: "#FFFFFF" },
-    "selected": { dark: "#1F1F1D", light: "rgba(26,26,24,0.07)" },
-    "hover": { dark: "#171716", light: "rgba(26,26,24,0.04)" },
+    "selected": { dark: "#21211F", light: "rgba(26,26,24,0.07)" },
+    "hover": { dark: "rgba(255,255,255,0.04)", light: "rgba(26,26,24,0.045)" },
     "line-soft": { dark: "#1C1C1A", light: "#E8E7E2" },
     "line": { dark: "#2A2A28", light: "#D9D8D2" },
     "line-strong": { dark: "#3A3A37", light: "#B5B5AE" },

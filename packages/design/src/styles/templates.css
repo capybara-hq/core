@@ -1740,8 +1740,9 @@ a.cb-object-name:hover {
    the first takes the rest; the hinge is the gap between them. `--cb-segment-trail` is a frame's
    inline-end inset and `--cb-segment-trail-block` its bottom inset (the vertical form); both
    default to 0, which is exact only where the region reaches the viewport's trailing edge. The
-   inbox frame sets the inline one to its content padding: its content is capped at 1120 and
-   centred, so that is exact up to about 1440 wide; every other ListDetail consumer uses 0. Both
+   inbox frame sets the inline one to its content padding (plus the paper's end inset from 600 up,
+   and the block one to the paper's bottom inset) and drops its content cap on two segments, so
+   that is exact; every other ListDetail consumer uses 0. Both
    panes are drawn in the two-pane form, overriding the stack at any width. */
 @media (horizontal-viewport-segments: 2) {
   .cb-listdetail[data-fit] {
@@ -1981,8 +1982,6 @@ li:first-child > .cb-ld-row {
    frame, and reserves the head's scrollbar gutter, so its left edge is the head's. */
 .cb-inbox-frame {
   --cb-segment-trail: var(--cb-content-pad);
-  /* the shell's status bar under the page */
-  --cb-segment-trail-block: var(--cb-layout-status-bar);
   display: flex;
   flex: 1;
   box-sizing: border-box;
@@ -1992,11 +1991,23 @@ li:first-child > .cb-ld-row {
   overflow: hidden;
   scrollbar-gutter: stable;
 }
+/* From 600 up the page is a paper inset by space.2 at its end and bottom (shell.css): the frame's
+   trailing edge in the viewport is the content padding plus that inset. */
+@media (min-width: 600px) {
+  .cb-inbox-frame {
+    --cb-segment-trail: calc(var(--cb-content-pad) + var(--cb-space-2));
+    --cb-segment-trail-block: var(--cb-space-2);
+  }
+}
 /* On two segments the trailing edge must be known: no reserved scrollbar gutter (its width is the
-   platform's), only the content padding, which `--cb-segment-trail` carries. */
+   platform's), only the content padding, which `--cb-segment-trail` carries; and the content is
+   not capped and centred (a centring margin would move the frame's end off the segment's). */
 @media (horizontal-viewport-segments: 2) {
   .cb-inbox-frame {
     scrollbar-gutter: auto;
+  }
+  .cb-inbox-frame > .cb-inbox-content {
+    max-width: none;
   }
 }
 .cb-inbox-content {

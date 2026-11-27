@@ -157,7 +157,6 @@ const page = (over: Partial<ConversationPageProps> = {}): ConversationPageProps 
   titleBar: titleBar(),
   thread: <p>消息</p>,
   composer: <div data-testid="composer" />,
-  status: { context: "c", version: "v" },
   right: "none",
   onCloseRight: noop,
   layout: "inline",

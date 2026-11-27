@@ -38,6 +38,19 @@ export const ERROR_CODES = {
   "app_auth.code_invalid": 400,
   /** Native-app sign-in needs `http.publicUrl` (the issuer the app checks). */
   "app_auth.unavailable": 503,
+  /**
+   * A browser handoff start names a return scheme whose `<scheme>://auth/callback` is not in
+   * `auth.appRedirectUris` (exact match), or `http.publicUrl` is not set.
+   */
+  "handoff.scheme_not_allowed": 400,
+  /** The browser handoff ticket is unknown, expired or already used; start again in the app. */
+  "handoff.invalid": 410,
+  /**
+   * The browser is signed in as another account than the one that started the handoff (the
+   * ticket is spent); details `[{ login, displayName, email }]` of the ticket's account (`login`
+   * its local login, null without one; `email` null when unset).
+   */
+  "handoff.account_mismatch": 403,
   "token.not_found": 404,
   "org.not_found": 404,
   "org.creation_disabled": 403,

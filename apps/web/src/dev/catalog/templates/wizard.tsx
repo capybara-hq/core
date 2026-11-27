@@ -58,7 +58,7 @@ function WizardBody() {
 /** T9 向导：首次接入模型。 */
 export function WizardTemplate() {
   return (
-    <FixtureShell nav="settings" context="settings/models/new">
+    <FixtureShell nav="settings">
       <WizardBody />
     </FixtureShell>
   );

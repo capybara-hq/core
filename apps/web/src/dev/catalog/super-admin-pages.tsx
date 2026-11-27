@@ -18,7 +18,7 @@ import type { Me } from "../../lib/session";
 import { COMMANDS } from "./fixtures";
 import { ME, ORG, RECENT, seeded, T } from "./member-pages";
 import type { SuperAdminPage } from "./routes";
-import { sidebarProps, statusFixture } from "./shell-fixture";
+import { sidebarProps } from "./shell-fixture";
 
 /**
  * `/dev/ui/pages/platform-<page>`: three super admin pages (a list of agent templates with the
@@ -151,12 +151,6 @@ function Page({ page }: { page: SuperAdminPage }) {
   }
 }
 
-const PATHS: Record<SuperAdminPage, string> = {
-  "agent-templates": "/admin/agents/templates",
-  "agent-template": `/admin/agents/templates/${TEMPLATE_ID}`,
-  settings: "/admin/settings",
-};
-
 /** A super admin page in the admin console's shell. */
 export function SuperAdminPageCatalog({ page }: { page: SuperAdminPage }) {
   const [client] = useState(seededSuper);
@@ -167,7 +161,7 @@ export function SuperAdminPageCatalog({ page }: { page: SuperAdminPage }) {
   return (
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={SESSION}>
-        <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture(PATHS[page])}>
+        <AppShell sidebar={sidebar} commands={COMMANDS}>
           <Page page={page} />
         </AppShell>
       </SessionContext.Provider>

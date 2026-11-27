@@ -27,7 +27,7 @@ function optional(b: ButtonSpec) {
 }
 
 /**
- * The action row (spec §4.4): above the StatusBar when a page has actions to submit. Left: an
+ * The action row (spec §4.4): at the page's bottom when a page has actions to submit. Left: an
  * accent dot + unsaved count · error count (`fail` text, no icon: the signed reference), or "No
  * unsaved changes";
  * right: cancel · secondary · primary (rightmost), all `default` density. Inside a template its

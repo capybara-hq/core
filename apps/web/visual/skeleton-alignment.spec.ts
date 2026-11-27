@@ -103,8 +103,8 @@ for (const theme of THEMES) {
           );
           expect(paired.length, `${where}: no part pairs`).toBeGreaterThan(0);
           // The exempt parts above a part, in the same scrolling region, move it by their height
-          // difference: it is corrected for. Parts outside (the action row, the status bar, the
-          // composer) are anchored to the window and compared as they are.
+          // difference: it is corrected for. Parts outside (the action row, the composer) are
+          // anchored to the window and compared as they are.
           const exempt = paired.filter((k) => nameOf(k) in VARIABLE_HEIGHT);
           const shift = (k: string) => {
             const a = loaded[k] as Box;

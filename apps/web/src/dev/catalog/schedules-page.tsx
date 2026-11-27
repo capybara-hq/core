@@ -18,7 +18,7 @@ import type {
 } from "../../lib/schedules";
 import type { Me } from "../../lib/session";
 import { COMMANDS } from "./fixtures";
-import { sidebarProps, statusFixture } from "./shell-fixture";
+import { sidebarProps } from "./shell-fixture";
 
 /**
  * `/dev/ui/pages/schedules-calendar[-month|-admin]`: the real `/schedules` calendar view drawn
@@ -260,7 +260,7 @@ export function SchedulesPageCatalog({ variant }: { variant: SchedulesPageVarian
   const { onOpenCommands: _, ...sidebar } = sidebarProps({ active: "schedules" }, () => "#");
   return (
     <QueryClientProvider client={client}>
-      <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture("/schedules")}>
+      <AppShell sidebar={sidebar} commands={COMMANDS}>
         <SchedulesView
           initial={{
             view: "calendar",

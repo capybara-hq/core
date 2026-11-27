@@ -72,7 +72,7 @@ function SettingsBody() {
 /** T5 设置：组织设置。 */
 export function SettingsTemplate() {
   return (
-    <FixtureShell nav="settings" context="settings/org">
+    <FixtureShell nav="settings">
       <SettingsBody />
     </FixtureShell>
   );

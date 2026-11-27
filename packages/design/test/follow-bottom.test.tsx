@@ -67,7 +67,6 @@ describe("the thread's scroller is anchored at the bottom by CSS", () => {
           titleBar={titleBar}
           thread={[<p key="a">first</p>, <p key="b">second</p>]}
           composer={<div>c</div>}
-          status={{ context: "", version: "" }}
           right="none"
           onCloseRight={() => {}}
         />
@@ -262,7 +261,6 @@ describe("useFollowBottom attaches again when the scroller is replaced", () => {
           {...(fresh ? { newConversation: { agentName: "a" } } : {})}
           thread={<p>hi</p>}
           composer={<div>c</div>}
-          status={{ context: "", version: "" }}
           right="none"
           onCloseRight={() => {}}
         />
@@ -579,7 +577,6 @@ describe("ConversationPage latest button", () => {
         titleBar={titleBar}
         thread={thread}
         composer={<div>c</div>}
-        status={{ context: "", version: "" }}
         right="none"
         onCloseRight={() => {}}
       />

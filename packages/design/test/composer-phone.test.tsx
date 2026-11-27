@@ -463,7 +463,6 @@ describe("the new conversation on a phone (§5.4)", () => {
       properties: { pressed: false, onToggle: () => {} },
       panels: [],
     },
-    status: { context: "c", version: "v" },
     right: "none" as const,
     onCloseRight: () => {},
   };

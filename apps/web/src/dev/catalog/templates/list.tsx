@@ -10,7 +10,6 @@ import {
   Stack,
   StatusMark,
   Text,
-  useStatusBar,
 } from "@capybara-hq/design";
 import { useState } from "react";
 import { AGENT_MENU, AGENTS, type AgentRow, LIST_FACETS, LIST_KPIS, rateTone } from "../fixtures";
@@ -97,7 +96,6 @@ const SOURCES = [
 
 function ListBody() {
   const [source, setSource] = useState("all");
-  useStatusBar("已筛选 18 / 24");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(12);
@@ -168,7 +166,7 @@ function ListBody() {
 /** T2 列表：智能体（e-list）。 */
 export function ListTemplate() {
   return (
-    <FixtureShell nav="agents" context="agents">
+    <FixtureShell nav="agents">
       <ListBody />
     </FixtureShell>
   );

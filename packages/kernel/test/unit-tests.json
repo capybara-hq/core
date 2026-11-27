@@ -68,6 +68,7 @@
   "extensions/tracked-calls.test.ts",
   "files/previewers.grant.test.ts",
   "git/gateway-pkt-line.test.ts",
+  "handoff/app-schemes.unit.test.ts",
   "html/csp.test.ts",
   "html/html-token.test.ts",
   "http/error-filter.test.ts",

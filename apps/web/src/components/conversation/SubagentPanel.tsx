@@ -5,7 +5,6 @@ import {
   formatDuration,
   RightPanel,
   Spinner,
-  StatusBar,
   SubagentTask,
   subagentWaitingLabel,
   ThreadHistory,
@@ -90,7 +89,7 @@ export function SubagentPanel(p: SubagentPanelProps) {
 /**
  * The child's record: header (back, task name, spinner and time, Stop while it runs), the task and
  * the "agent · subagent · model · tools" line, its own thread through the same events, stream and
- * timeline as any conversation, no composer, and a status bar saying it is read-only.
+ * timeline as any conversation, no composer (that says it is read-only) and no footer.
  */
 function ChildRecord({
   orgId,
@@ -111,7 +110,7 @@ function ChildRecord({
   const keys = useMemo(() => toolKeysOf(child.events), [child.events]);
   const info = useToolInfo(orgId, subagentId, keys);
   const whoWaits = useWhoWaits(child.people);
-  // the latest run's working time (waits for a person left out, as the status bar counts it)
+  // the latest run's working time (waits for a person left out, as the rounds line counts it)
   const stats = useMemo(() => runStats(child.events), [child.events]);
   // a run's process as one block (process blocks spec §1), as the conversation draws it
   const entries = useMemo(
@@ -140,6 +139,8 @@ function ChildRecord({
     : undefined;
   const pct =
     usage && window_ && window_ > 0 ? Math.round((usedTokens(usage) / window_) * 100) : null;
+  // the context used joins the head's meta (no footer: layered shell spec §6)
+  const contextText = pct === null ? null : tc("contextPct", { n: pct });
   const title = description || started?.agentType || t("title");
   // an org agent (not a template): its name links to the agent's page
   const orgAgentId = started?.template.source === "agent" ? started.template.id : undefined;
@@ -148,13 +149,16 @@ function ChildRecord({
       title={title}
       onBack={onBack}
       meta={
-        ms === undefined ? undefined : waitingFor !== null ? (
+        ms === undefined ? (
+          (contextText ?? undefined)
+        ) : waitingFor !== null ? (
           // waiting for a person: the waiting word instead of the spinner, the time stopped
-          `${subagentWaitingLabel(waitingFor, locale)} · ${duration}`
+          `${subagentWaitingLabel(waitingFor, locale)} · ${duration}${contextText === null ? "" : ` · ${contextText}`}`
         ) : (
           <>
             {child.running ? <Spinner /> : null}
             {duration}
+            {contextText === null ? null : ` · ${contextText}`}
           </>
         )
       }
@@ -168,14 +172,6 @@ function ChildRecord({
       onClose={onClose}
       onFullscreen={onFullscreen}
       body="subagent"
-      footer={
-        <StatusBar
-          // no read-only copy (AC1): the missing composer says it
-          context=""
-          version=""
-          system={pct === null ? [] : [tc("contextPct", { n: pct })]}
-        />
-      }
     >
       {child.history ? (
         <ThreadHistory state={child.history.state} onLoadEarlier={child.history.loadEarlier} />

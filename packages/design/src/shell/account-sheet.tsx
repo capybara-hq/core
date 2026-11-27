@@ -32,7 +32,7 @@ export interface AccountSheetData {
   personalSettingsHref: string;
   /** The theme switch; null when the UI theme defines one scheme only. */
   theme: AccountSheetTheme | null;
-  /** The system status line (what the StatusBar shows on wider windows): the footnote. */
+  /** The system status line (the account menu's status on wider windows): the footnote. */
   status: ReactNode;
   /** The PWA install hint, while the app is not installed. */
   installHint?: ReactNode;

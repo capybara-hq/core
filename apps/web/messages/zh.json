@@ -629,6 +629,11 @@
     "sso": {
       "link_expired": "绑定链接已过期，请重新用第三方账号登录。",
       "session_mismatch": "登录状态已变化，请重新登录后再试。"
+    },
+    "handoff": {
+      "scheme_not_allowed": "这个平台还没有允许该应用打开浏览器授权，请联系平台管理员。",
+      "invalid": "这个授权链接已经失效或用过了。回到应用里重新点「连接」。",
+      "account_mismatch": "这个链接属于 {login}。请用该账号登录，或回到应用重新发起。"
     }
   },
   "agents": {
@@ -2223,7 +2228,6 @@
     "empty": "没有待处理的事项。",
     "emptyHint": "需要你批准的工具调用，以及你拥有的智能体的技能变更，会出现在这里。",
     "pick": "在左侧选择一项。",
-    "pendingCount": "{n} 项待处理",
     "inspectorTitle": "详情",
     "conversation": "会话",
     "requested": "发起时间",
@@ -3328,7 +3332,8 @@
     "unlink": "解绑",
     "unlinkTitle": "解绑 {name}？",
     "unlinkHint": "解绑后，这个账号发来的 IM 消息不再以你的身份处理，也不能再用它登录。",
-    "unlinked": "已解绑「{name}」。"
+    "unlinked": "已解绑「{name}」。",
+    "linked": "已绑定 {platform}。"
   },
   "loginSources": {
     "section": {
@@ -4269,7 +4274,6 @@
       "empty": "没有需要处理的事项。",
       "emptyHint": "组织提交给平台的申请、等待确认权限的插件和失败的同步会显示在这里。",
       "pick": "在左侧选择一项。",
-      "pendingCount": "{n} 项待处理",
       "inspectorTitle": "详情",
       "truncated": "只显示最新的事项。处理一些后可以看到其余的。",
       "filtered": "只显示：{type}",
@@ -7235,6 +7239,35 @@
       "text": "开启通知，有事项等你处理时提醒你",
       "enable": "开启",
       "later": "以后再说"
+    }
+  },
+  "externalAuth": {
+    "title": "在浏览器中完成授权",
+    "body": "已在系统浏览器中打开授权页。在那里登录并完成授权后回到这里，结果会自动显示。浏览器没有打开，或想换一个浏览器，可以复制链接（只能用一次，10 分钟内有效）。",
+    "copy": "复制链接",
+    "copied": "链接已复制。",
+    "copyFailed": "无法复制链接，请重试。",
+    "done": "完成了",
+    "cancel": "取消"
+  },
+  "handoff": {
+    "title": "继续授权",
+    "opening": "正在打开授权页…",
+    "invalidTitle": "授权链接已失效",
+    "mismatchTitle": "不是发起授权的账号",
+    "failedTitle": "无法继续授权",
+    "startAgain": "回到应用里重新发起授权。",
+    "switchAccount": "换个账号登录",
+    "done": {
+      "connected": "已连接 {name}",
+      "connectedGeneric": "连接器已连接",
+      "linked": "已绑定 {name}",
+      "linkedGeneric": "登录方式已绑定",
+      "failed": "授权没有完成",
+      "unknownTitle": "无法显示授权结果",
+      "back": "回到 {product}",
+      "closeTabHint": "现在可以关闭这个标签页。",
+      "backToApp": "回到应用里继续。"
     }
   }
 }

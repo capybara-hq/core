@@ -10,7 +10,6 @@ import {
   Stack,
   StatusMark,
   Text,
-  useStatusBar,
 } from "@capybara-hq/design";
 import { LIST_DETAIL_FIXTURE as F } from "@capybara-hq/design/fixtures";
 import { type ReactNode, useState } from "react";
@@ -30,7 +29,6 @@ const QUEUE: Approval[] = [
 ];
 
 function InboxBody() {
-  useStatusBar("7 项待审批");
   const [active, setActive] = useState("run_8f2j9p");
   const item = QUEUE.find((a) => a.id === active) ?? QUEUE[0];
   return (
@@ -81,7 +79,7 @@ function InboxBody() {
 /** T6 收件箱：人工审批。 */
 export function InboxTemplate() {
   return (
-    <FixtureShell nav="approvals" context="approvals">
+    <FixtureShell nav="approvals">
       <InboxBody />
     </FixtureShell>
   );

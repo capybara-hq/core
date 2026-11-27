@@ -20,6 +20,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "../../i18n/navigation";
 import { avatarValue } from "../../lib/agents";
+import { COMPACTION_DEFAULTS } from "../../lib/compaction";
 import { compactConversation, type ModelRef, type ProjectState } from "../../lib/conversations";
 import { canEditAgent } from "../../lib/org-settings";
 import { groupProcess } from "../../lib/process";
@@ -69,7 +70,6 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { useClientEventFeed } from "../client-ext/events";
 import { usePublishRunState } from "../client-ext/run-state";
 import { FormError } from "../form-error";
-import { statusPrompt } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
 import { useDeviceName } from "../use-device-name";
@@ -90,20 +90,8 @@ import { useRootPermissionSubscription } from "./useRootPermissionSubscription";
 import { lockedDevicePicker, useSelection } from "./useSelection";
 
 /**
- * The conversation status bar's prompt and time zone, signed like every page's
- * (`<login>@<slug>:~/chat/<id>`, spec §4.4): `path` is the page's path.
- */
-export function useStatusSignature(path: string): { context: string; timeZone?: string } {
-  const { me, timeZone } = useSession();
-  const slug = me.memberships.find((m) => m.orgId === me.currentOrgId)?.slug ?? null;
-  return {
-    context: statusPrompt(me.account.displayName, slug, path),
-    ...(timeZone !== undefined ? { timeZone } : {}),
-  };
-}
-
-/**
- * "第 N 轮 · 已用 <elapsed>" in the status bar: the run's working time. It ticks each second on its
+ * "Turn N · <elapsed> elapsed" in the properties panel's Context section (layered shell spec §6):
+ * the run's working time. It ticks each second on its
  * own only while the run works, so the page does not re-render each second (I3); while the run
  * waits for a person it stops at the wait's start and reads the log alone (the status says
  * 等待处理), and it counts on from there once the run continues.
@@ -178,7 +166,7 @@ export type RightAreaSlot = {
 /**
  * The conversation page (`/chat/<id>`, spec §5) as `ConversationPage` props: the title bar (title,
  * rename, properties, panels), the thread built by `lib/timeline.ts`, the leftover queued messages
- * (pending bubbles), the composer (pickers; ↵ interjects while a run goes) and the status bar;
+ * (pending bubbles), the composer (pickers; ↵ interjects while a run goes) and the run state;
  * `dialogs` go next to the page. Use it in a component keyed by the conversation id: everything
  * here (drafts, picks, the right area) belongs to one
  * conversation and never shows under another. Everything comes from the query cache (the
@@ -197,7 +185,6 @@ export function useConversationPage(
   const toast = useToast();
   const shareCap = useShareCapability();
   const errorMessage = useErrorMessage();
-  const signature = useStatusSignature(`/chat/${conversationId.slice(0, 8)}`);
   const conv = useConversation(orgId, conversationId);
   const agentsQ = agentsQuery(orgId);
   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data
@@ -335,7 +322,7 @@ export function useConversationPage(
   const [renameBusy, setRenameBusy] = useState(false);
   const qc = useQueryClient();
   const sentHere = sentHereOf(qc, orgId, conversationId);
-  // One source for the composer's mode, the status bar and the working line (review fix L1, L2):
+  // One source for the composer's mode, the run state and the working line (review fix L1, L2):
   // a pending send of this view, a message this tab sent that waits for its run, or a run per the
   // log. While any holds, a message is an interjection (run input spec D1).
   // (not memoized: the set changes with this view's sends, each of which re-renders it)
@@ -539,6 +526,7 @@ export function useConversationPage(
     model: usageModel,
     contextPct,
     lastRun,
+    ...(stats.turns > 0 ? { rounds: <RunStatsText stats={stats} /> } : {}),
     subagents: subagents.views,
     // read also for a window that may hide a dispatch: shown once there is a sub-agent
     total:
@@ -638,6 +626,16 @@ export function useConversationPage(
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}
           placeholder={t("placeholder")}
+          // the context window used; `fail` from the default compaction threshold (members cannot
+          // read the org's own setting)
+          {...(contextPct !== null
+            ? {
+                context: {
+                  pct: contextPct,
+                  over: contextPct >= COMPACTION_DEFAULTS.threshold * 100,
+                },
+              }
+            : {})}
           control={composer}
           {...(canCompact ? { onCompact: compact } : {})}
           // a prompt suggestion: a root conversation's composer only, hidden while a send is
@@ -674,17 +672,9 @@ export function useConversationPage(
         />
       </Stack>
     ),
-    status: {
-      ...signature,
-      ...(stats.turns > 0
-        ? {
-            stats: <RunStatsText stats={stats} />,
-          }
-        : {}),
-      right: [statusText, ...(contextPct !== null ? [t("contextPct", { n: contextPct })] : [])],
-      ...(statusFailed ? { tone: "fail" as const } : {}),
-      version: session.version ?? "",
-    },
+    // the run state for screen readers (the composer's meter shows the context, the properties
+    // panel the rounds)
+    announce: statusText,
     ...(conv.history !== undefined
       ? { history: { state: conv.history.state, onLoadEarlier: conv.history.loadEarlier } }
       : {}),

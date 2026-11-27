@@ -110,7 +110,6 @@ const shell = ({ pathname = "/", chatSurface = true, drawer, link, children }: S
   <DesignProvider locale="zh" {...(link ? { link } : {})}>
     <AppShell
       sidebar={sidebar}
-      status={status}
       commands={[]}
       pathname={pathname}
       chatSurface={chatSurface}
@@ -267,6 +266,13 @@ describe("back (Decision 19): history, else the last linked path segment, else /
     render(page("/agents/new"));
     expect(back().tagName).toBe("A");
     expect(back().getAttribute("href")).toBe("/agents");
+  });
+
+  it("a first-level page (two segments, no path row drawn) still walks its path from the props", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    render(page("/skills", [{ label: "demo", href: "/home" }, { label: "skills" }]));
+    expect(document.querySelector('[data-part="path"]')).toBeNull();
+    expect(back().getAttribute("href")).toBe("/home");
   });
 
   it("with no linked segment: the home", () => {
@@ -491,7 +497,6 @@ describe("drawer search opens the palette (T27 review)", () => {
       <DesignProvider locale="zh">
         <AppShell
           sidebar={sidebar}
-          status={status}
           commands={[{ label: "跳转", items: [{ id: "a", label: "智能体", onSelect: () => {} }] }]}
           pathname="/"
           chatSurface
@@ -595,7 +600,6 @@ describe("head actions and the scrolled title in the compact top row (responsive
     <DesignProvider locale="zh">
       <AppShell
         sidebar={sidebar}
-        status={status}
         commands={[]}
         pathname="/agents/a1"
         chatSurface={false}

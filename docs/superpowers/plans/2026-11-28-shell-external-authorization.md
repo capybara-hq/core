@@ -15,7 +15,7 @@
 - Ticket: `cap_ho_` + 32 random bytes base64url (regex `^cap_ho_[A-Za-z0-9_-]{43}$`); Redis key `capk:handoff:<sha256(ticket) base64url>`; TTL 600 s; taken with `GETDEL`; single use. Redis holds only the hash.
 - `handoffUrl` = `<http.publicUrl without trailing />/handoff/<ticket>`.
 - `returnScheme` is accepted only when `<returnScheme>://auth/callback` is in `auth.appRedirectUris` (exact string match) and `http.publicUrl` is set (the same condition as `features.appSignIn`); else `handoff.scheme_not_allowed`.
-- Error codes (registered in `packages/kernel/src/errors.ts`): `handoff.scheme_not_allowed` 400, `handoff.invalid` 410, `handoff.account_mismatch` 403 (details `[{ displayName, email }]` of the ticket's account).
+- Error codes (registered in `packages/kernel/src/errors.ts`): `handoff.scheme_not_allowed` 400, `handoff.invalid` 410, `handoff.account_mismatch` 403 (details `[{ login, displayName, email }]` of the ticket's account; `login` null without a local login).
 - zh copy (verbatim from spec §6): 这个平台还没有允许该应用打开浏览器授权，请联系平台管理员。 / 这个授权链接已经失效或用过了。回到应用里重新点「连接」。 / 这个链接属于 {login}。请用该账号登录，或回到应用重新发起。 Dialog title 「在浏览器中完成授权」, buttons 「复制链接」 「完成了」 「取消」; handoff status 「正在打开授权页…」; done page 「回到 Capybara」, 「换个账号登录」. zh says 平台 / 超级管理员 / 智能体, never 企业 or the Latin `agent`.
 - Callback routes, OAuth state lifetime, token exchange, `connector@1` and `identity-source@1` do not change.
 - Shell features detected only through `window.capybaraShell` (`apps/web/src/lib/shell.ts`); capability functions called only from event-driven code.
@@ -109,7 +109,7 @@ Clients: `apps/desktop/src/main/security.ts`, `apps/desktop/src/main/capabilitie
 
 Behavior of `redeem`:
 1. `take` → null → `handoff.invalid`.
-2. `rec.accountId !== accountId` → load the ticket's account, throw `handoff.account_mismatch` with details `[{ displayName, email }]` (ticket already gone).
+2. `rec.accountId !== accountId` → load the ticket's account, throw `handoff.account_mismatch` with details `[{ login, displayName, email }]` (ticket already gone).
 3. `connector`: `withOrgScope(rec.orgId, …)`: `orgLock.precheck(orgId, accountId, "connectors.use")` then `oauthFlow.start(orgId, connectorId, accountId, rec.returnTo, binding, rec)` → `{ location: authorizationUrl }`, cookie `cap_oauth`.
 4. `identity-link`: `ssoFlow.start(rec.plugin, rec.returnTo, binding, accountId, "link", rec)` → `{ location }`, cookie `cap_sso`.
 Exclusion: `{ route: "POST /api/v1/auth/handoffs/redeem", category: "human-only", reason: "Redeems a shell's browser handoff in the person's own signed-in browser; it starts an OAuth or SSO flow there" }`.
@@ -174,7 +174,7 @@ Behavior: in `useStartConnect.start` and the identities 「绑定」 mutation, w
 
 Behavior:
 - `[ticket]/layout.tsx`: signed out (the `maybeMeQuery` through `settledQuery(serverQueryClient(), …)`, as the bind layout reads its query) → `redirect(loginPathFor("/handoff/<ticket>"))` (the login page's parameter is `returnTo`, not the spec's `next`). `page.tsx` exports `metadata = { referrer: "no-referrer" }`.
-- `[ticket]/view.tsx` (design `AuthPage`): on mount, once per ticket (a module-level `Set` of redeemed tickets guards the StrictMode double effect), `useAppMutation(redeemHandoff)`; status 「正在打开授权页…」; success → `navigateBrowser(location)` (http(s) or same-site path only); `handoff.invalid` → its message; `handoff.account_mismatch` → the message with `{login}` = email ?? displayName, and 「换个账号登录」 (sign out, then `/login?returnTo=/handoff/<ticket>` — the ticket is spent, so this only helps the next attempt; the copy also says to go back to the app); other errors → `useErrorMessage`.
+- `[ticket]/view.tsx` (design `AuthPage`): on mount, once per ticket (a module-level `Set` of redeemed tickets guards the StrictMode double effect), `useAppMutation(redeemHandoff)`; status 「正在打开授权页…」; success → `navigateBrowser(location)` (http(s) or same-site path only); `handoff.invalid` → its message; `handoff.account_mismatch` → the message with `{login}` = login ?? email ?? displayName, and 「换个账号登录」 (sign out, then `/login?returnTo=/handoff/<ticket>` — the ticket is spent, so this only helps the next attempt; the copy also says to go back to the app); other errors → `useErrorMessage`.
 - `done/view.tsx` (design `AuthPage`): the result in words with the name (connector: its name from the connector detail query when the session can read it, else generic; link: the source's display name from the auth sources query, else the plugin key); error codes through the existing `connect.result.error.*` / identities link error translations; 「回到 Capybara」 as a link to `appDeepLink(...)` when non-null, tried once automatically on mount (`navigateBrowser`); the note that the tab can be closed; without a link: "go back to the app" text only.
 
 - [ ] **Step 1: Write failing tests** `handoff-pages.test.tsx`:

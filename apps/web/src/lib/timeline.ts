@@ -343,7 +343,7 @@ export type RunData = {
   compact?: boolean;
   /**
    * The run's working time: from `run_started` to the terminal event without its waits for a
-   * person (an approval or a question, until answered), the same derivation as the status bar's
+   * person (an approval or a question, until answered), the same derivation as the Turns row's
    * elapsed time ({@link runStats}), so the two agree; null without a start.
    */
   durationMs: number | null;
@@ -1227,7 +1227,7 @@ export function buildEventTimeline(
     e: ConversationEvent,
   ): Pick<RunData, "runId" | "model" | "compact" | "durationMs" | "tokens" | "at"> => {
     const r = e.runId === null ? undefined : runs.get(e.runId);
-    // the run's working time, as the status bar counts it (waits for a person left out)
+    // the run's working time, as the Turns row counts it (waits for a person left out)
     r?.clock?.end(Date.parse(e.createdAt));
     return {
       runId: e.runId,
@@ -2387,7 +2387,7 @@ export function buildEventTimeline(
   return { entries: withExtras, modelOf, info, locale };
 }
 
-/** Turns, elapsed time and the running state for the status bar. */
+/** Turns, elapsed time and the running state for the properties panel's Turns row. */
 export interface RunStats {
   /** `run_started` count. */
   turns: number;
@@ -2413,13 +2413,13 @@ export interface RunStats {
   waitingFor: "approval" | "input" | null;
 }
 
-/** The running time the status bar shows: worked time, plus the open working stretch. */
+/** The running time the Turns row shows: worked time, plus the open working stretch. */
 export const workedMsAt = (s: RunStats, now: number): number | null =>
   s.startedAt === null ? null : s.workedMs + (s.resumedAt === null ? 0 : now - s.resumedAt);
 
 /**
  * One run's working time: from its start to its end without its waits for a person (an approval,
- * a question; {@link PersonWaits}). The status bar's elapsed time and the run row's duration both
+ * a question; {@link PersonWaits}). The Turns row's elapsed time and the run row's duration both
  * read it, so the two agree.
  */
 class RunClock {

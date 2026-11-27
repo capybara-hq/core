@@ -54,7 +54,6 @@ import {
   type RightPanelSwitcher,
   SkeletonBars,
   Spinner,
-  StatusBar,
   SubagentGroup,
   type SubagentRowData,
   SubagentTask,
@@ -629,6 +628,11 @@ function composerBlocks(): ReactNode {
           <ComposerBox {...composerProps(s)} />
         </Block>
       ))}
+      {([43, 86] as const).map((pct) => (
+        <Block key={pct} id={pct >= 80 ? "composer-context-meter-over" : "composer-context-meter"}>
+          <ComposerBox {...composerProps("idle")} context={{ pct, over: pct >= 80 }} />
+        </Block>
+      ))}
       {/* the prompt suggestion as the placeholder, with the touch button drawn (spec §6.16.2) */}
       <Block id="composer-suggestion">
         <ComposerBox
@@ -1054,6 +1058,7 @@ function contextSection() {
       device={P.context.device}
       connectors={P.context.connectors}
       lastRun={P.context.lastRun}
+      rounds="第 3 轮 · 已用 2 分 14 秒"
     />
   );
 }
@@ -1347,7 +1352,6 @@ function SubagentPanel() {
       onFullscreen={noop}
       onClose={noop}
       body="subagent"
-      footer={<StatusBar context={SP.footer} version="" system={[`上下文 ${SP.context}`]} />}
     >
       <SubagentTask text={SP.task} agent="研究助手" model="opus 5.5" tools="只读工具" />
       <ToolGroup rows={T.expanded.slice(0, 3).map((t) => toRow(t))} />
@@ -1561,8 +1565,6 @@ function TemplateBlock({
     <AppShell
       sidebar={sidebar}
       commands={COMMANDS}
-      status={{ context: "", version: X.version }}
-      ownStatusBar
       {...(state === "sheet" || state === "properties-sheet"
         ? { reference: { rail: true } as const }
         : {})}
@@ -1612,19 +1614,7 @@ function TemplateBlock({
             />
           );
         }}
-        status={
-          isNew
-            ? { context: "grant@示例组织:~", version: X.version }
-            : {
-                context: C.path,
-                stats: `第 ${X.turns} 轮 · 已用 ${X.elapsed}`,
-                right: [
-                  running || state === "subagent-panel" ? X.status : "空闲",
-                  `上下文 ${X.context}`,
-                ],
-                version: X.version,
-              }
-        }
+        {...(isNew ? {} : { announce: running || state === "subagent-panel" ? X.status : "空闲" })}
         properties={propertiesPanel()}
         panel={panelNode}
         right={right}

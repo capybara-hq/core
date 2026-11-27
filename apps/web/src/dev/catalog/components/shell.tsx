@@ -6,20 +6,18 @@ import {
   ReplaceableFrame,
   SafeModeBanner,
   StatCards,
-  StatusBar,
   StatusMark,
   Text,
 } from "@capybara-hq/design";
 import { DETAIL_KPIS } from "../fixtures";
 import { Row, Section } from "../frame";
-import { statusFixture } from "../shell-fixture";
 
 const noop = () => {};
 
 /** Spec §4: the App Shell layers on their own (the template routes show them together). */
 export function ShellSection() {
   return (
-    <Section title="系统布局 App Shell" note="侧栏 | 内容区：页头、内容、操作行、状态栏">
+    <Section title="系统布局 App Shell" note="侧栏 | 内容区：页头、内容、操作行">
       <Grid columns={1} gap={16}>
         <PageHeader
           path={[
@@ -62,11 +60,6 @@ export function ShellSection() {
       <Row label="ActionRow · 无改动">
         <Grid columns={1}>
           <ActionRow unsaved={0} primary={{ label: "保存", disabled: true, onSelect: noop }} />
-        </Grid>
-      </Row>
-      <Row label="StatusBar">
-        <Grid columns={1}>
-          <StatusBar {...statusFixture("/agents/support-triage")} pageStatus="已筛选 18 / 24" />
         </Grid>
       </Row>
       <Row label="SafeModeBanner">

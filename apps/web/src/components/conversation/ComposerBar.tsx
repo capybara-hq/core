@@ -319,6 +319,7 @@ export function ComposerBar({
   pickers,
   quickActions,
   agents,
+  context,
   placeholder,
   sendDisabled,
   initialDraft,
@@ -362,6 +363,8 @@ export function ComposerBar({
   quickActions?: ReactNode;
   /** The agent map's entry (`AgentsChip`, AC3), after the quick actions; a conversation's only. */
   agents?: ReactNode;
+  /** The context meter before send / stop: `pct` of the window used, `over` from the threshold. */
+  context?: { pct: number; over: boolean } | undefined;
   placeholder: string;
   /** Nothing can be sent yet (a new conversation whose agent, or a thread, is still loading). */
   sendDisabled?: boolean;
@@ -1334,6 +1337,7 @@ export function ComposerBar({
         : {})}
       {...(quickActions !== undefined ? { quickActions } : {})}
       {...(agents !== undefined ? { agents } : {})}
+      {...(context !== undefined ? { context } : {})}
       send={
         running && stop
           ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }

@@ -409,12 +409,24 @@ export const setGitPushPolicy = (orgId: string, connectorId: string, policy: Too
     body: JSON.stringify({ policy }),
   });
 
-/** 发起 OAuth 连接：返回授权服务器的授权地址（随后整页跳转过去）；`returnTo` 为授权结束后回到的站内路径。 */
-export const connectConnector = (orgId: string, connectorId: string, returnTo: string) =>
-  apiFetch<{ authorizationUrl: string }>(`${one(orgId, connectorId)}/connect`, {
-    method: "POST",
-    body: JSON.stringify({ returnTo }),
-  });
+/**
+ * Starts OAuth for a connector: the authorization server's address to navigate to; `returnTo` is
+ * the site path to come back to. With `handoff` (a shell's browser handoff), the kernel answers a
+ * single-use `handoffUrl` for the system browser instead.
+ */
+export const connectConnector = (
+  orgId: string,
+  connectorId: string,
+  returnTo: string,
+  handoff?: { returnScheme?: string },
+) =>
+  apiFetch<{ authorizationUrl: string } | { handoffUrl: string }>(
+    `${one(orgId, connectorId)}/connect`,
+    {
+      method: "POST",
+      body: JSON.stringify(handoff === undefined ? { returnTo } : { returnTo, handoff }),
+    },
+  );
 
 export const clearMyCredential = (orgId: string, connectorId: string) =>
   apiFetch<void>(`${one(orgId, connectorId)}/credentials/me`, { method: "DELETE" });
