@@ -127,7 +127,7 @@ describe("ToolRow streaming (§6.16.9)", () => {
         ],
         "zh",
       ),
-    ).toContain("正在修改文件");
+    ).toContain("正在修改 1 个文件");
   });
 
   it("pulses only when motion is allowed (reduced motion draws the mark still)", () => {
@@ -250,5 +250,41 @@ describe("ToolRow live diff after the input (§6.16.10 Live)", () => {
     expect(keyArgPreview(huge)).toBe(`${"x".repeat(80)}…`);
     expect(keyArgPreview(`ls -la\n${huge}`)).toBe("ls -la…");
     expect(keyArgPreview("ls")).toBe("ls");
+  });
+});
+
+describe("ToolRow exit code (§6.16.9)", () => {
+  const cmd = (exitCode: number): ToolRowData => ({
+    id: "c",
+    kind: "command",
+    name: "Bash",
+    description: "运行单元测试",
+    keyArg: "pnpm test",
+    status: "done",
+    exitCode,
+    durationMs: 1_000,
+    detail: { command: "pnpm test", output: "ok" },
+  });
+
+  it("a zero exit is not on the row; the detail names it with the command", () => {
+    const { container } = wrap(<ToolRow row={cmd(0)} />);
+    expect(container.querySelector('[data-part="exit-code"]')).toBeNull();
+    expect(container.querySelector('[data-part="tool-row"]')?.textContent).toBe(
+      "Bash 运行单元测试",
+    );
+    fireEvent.click(screen.getByRole("button"));
+    expect(container.querySelector('[data-part="tool-exit"]')?.textContent).toBe("退出码 0");
+    expect(container.querySelector('[data-part="tool-command"]')?.textContent).toContain(
+      "pnpm test",
+    );
+  });
+
+  it("a non-zero exit is named on the row in fail", () => {
+    const { container } = wrap(<ToolRow row={cmd(2)} />);
+    const exit = container.querySelector('[data-part="exit-code"]') as HTMLElement;
+    expect(exit.textContent).toBe(" · 退出码 2");
+    expect(exit.className).toContain("cb-fail-word");
+    // the row is done, not failed: no error dot
+    expect(container.querySelector('[data-part="error-dot"]')).toBeNull();
   });
 });

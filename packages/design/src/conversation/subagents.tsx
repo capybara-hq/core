@@ -38,6 +38,7 @@ export type SubagentFinishStatus =
   | "max_steps"
   | "max_duration"
   | "budget"
+  | "max_output"
   | "aborted"
   | "timed_out"
   | "failed";
@@ -108,7 +109,9 @@ export type SubagentProgress = Record<
  */
 export function subagentStatusOfFinish(s: SubagentFinishStatus): SubagentStatus {
   if (s === "completed" || s === "aborted") return s;
-  if (s === "budget" || s === "max_steps" || s === "max_duration") return "limit";
+  if (s === "budget" || s === "max_steps" || s === "max_duration" || s === "max_output") {
+    return "limit";
+  }
   return "failed";
 }
 

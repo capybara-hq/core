@@ -1,19 +1,54 @@
-import { type JSX, useId, useState } from "react";
+import { type JSX, useId, useLayoutEffect, useRef, useState } from "react";
+import { Markdown } from "../display/markdown";
 import { Icon } from "../icons/icon";
 import { useDesignLocale, useDesignT } from "../provider";
-import { Cursor, Spinner } from "./prose";
+import { Cursor } from "./prose";
 
 export type ThinkingRowProps = {
   /** Thinking time in seconds (rounded for display); null when unknown. */
   seconds: number | null;
+  /** The thinking text, Markdown. */
   text: string;
-  /** The model is thinking now: spinner, elapsed seconds, the body streams and cannot collapse. */
+  /**
+   * The model is thinking now: "Thinking · N s" and the text's last lines streaming under it; no
+   * spinner (a single live step says its state in words, §6.16.5) and no toggle until it ends.
+   */
   live?: boolean;
   /** Starts expanded (finished rows only). */
   defaultOpen?: boolean;
   /** Drawn inside a process rail: no left rule on the body, prose-small text. */
   inRail?: boolean;
 };
+
+/**
+ * A live thinking text's tail (§6.16.5): the rendered Markdown in the secondary text style, held
+ * to its last three lines; once it is cut, its top line fades out.
+ */
+function ThinkingTail({ text }: { text: string }): JSX.Element {
+  const box = useRef<HTMLDivElement>(null);
+  const inner = useRef<HTMLDivElement>(null);
+  const [clipped, setClipped] = useState(false);
+  // measured after each render: the text grows with every delta
+  useLayoutEffect(() => {
+    const b = box.current;
+    const i = inner.current;
+    if (b === null || i === null) return;
+    const cut = i.offsetHeight > b.clientHeight + 1;
+    setClipped((was) => (was === cut ? was : cut));
+  });
+  return (
+    <div
+      ref={box}
+      className="cb-thinking-tail"
+      data-part="thinking-tail"
+      data-clipped={clipped ? "true" : undefined}
+    >
+      <div ref={inner}>
+        <Markdown text={text} tail={<Cursor />} />
+      </div>
+    </div>
+  );
+}
 
 /** A thinking row (§6.16.5): a tool line "Thought for N seconds" that opens the thinking text. */
 export function ThinkingRow({
@@ -30,20 +65,19 @@ export function ThinkingRow({
   const n = seconds === null ? null : Math.max(0, Math.round(seconds));
   if (live) {
     return (
-      <div className="cb-thinking-row" data-in-rail={inRail ? "true" : undefined}>
+      <div className="cb-thinking-row" data-live="true" data-in-rail={inRail ? "true" : undefined}>
         <div className="cb-tool-line" data-part="tool-line">
-          <Spinner size={16} />
           <span className="cb-tool-label">
             {t("conv.thinking")}
             {n === null ? null : (
-              <span className="cb-faint">{` · ${t("conv.seconds").replace("{n}", String(n))}`}</span>
+              // a ticking count: hidden from assistive technology so the thread does not chatter
+              <span className="cb-faint" aria-hidden="true">
+                {` · ${t("conv.seconds").replace("{n}", String(n))}`}
+              </span>
             )}
           </span>
         </div>
-        <div className="cb-thinking-body" data-part="thinking-body">
-          {text}
-          <Cursor />
-        </div>
+        {text === "" ? null : <ThinkingTail text={text} />}
       </div>
     );
   }
@@ -77,7 +111,7 @@ export function ThinkingRow({
       </button>
       {open ? (
         <div id={id} className="cb-thinking-body" data-part="thinking-body">
-          {text}
+          <Markdown text={text} />
         </div>
       ) : null}
     </div>

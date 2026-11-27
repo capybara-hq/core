@@ -58,6 +58,11 @@ export type ToolRowData = {
   waitingFor?: string;
   startedAt?: number;
   durationMs?: number;
+  /**
+   * A finished command's exit code: the row names it only when it is not zero (in `fail`, after
+   * the label); the expanded detail always shows it, under the command (§6.16.9).
+   */
+  exitCode?: number;
   /** Lines added / removed by an edit ("+a −b"). */
   added?: number;
   removed?: number;
@@ -253,13 +258,20 @@ export const isStreaming = (row: ToolRowData): boolean => row.status === "stream
 export function ToolMeta({ row }: { row: ToolRowData }): JSX.Element | null {
   const t = useDesignT();
   const ended = row.status === "done" || row.status === "failed";
+  const exit = ended && row.exitCode !== undefined && row.exitCode !== 0 ? row.exitCode : null;
   const any =
+    exit !== null ||
     (row.status === "done" && (row.guard || row.notice)) ||
     (ended && (row.outsideSandbox || row.autoGranted || row.approvedBy)) ||
     row.status === "cancelled";
   if (!any) return null;
   return (
     <span className="cb-tool-meta" data-part="tool-meta">
+      {exit !== null ? (
+        <span className="cb-fail-word" data-part="exit-code">
+          {` · ${fillCopy(t("tool.exitCode"), { code: exit })}`}
+        </span>
+      ) : null}
       {row.status === "done" && row.guard ? (
         <span className="cb-muted" data-part="guard-word">
           {` · ${t(`tool.guard.${row.guard}`)}`}
@@ -426,6 +438,14 @@ export function ToolDetail({
   const shownBytes = d.outputShownBytes ?? (d.output === undefined ? 0 : utf8(d.output));
   const large = d.outputBytes !== undefined && d.outputBytes > shownBytes;
   const foot: ReactNode[] = [];
+  // a command's exit code, zero too: the row names only a non-zero one (§6.16.9)
+  if (row.exitCode !== undefined) {
+    foot.push(
+      <span key="exit" data-part="tool-exit">
+        {fillCopy(t("tool.exitCode"), { code: row.exitCode })}
+      </span>,
+    );
+  }
   if (large) {
     foot.push(
       <span key="size">

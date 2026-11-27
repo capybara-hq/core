@@ -288,9 +288,26 @@ export interface RunTokens {
   total: number;
 }
 
+/** A limit a finished run stopped at (`run_finished.reason` other than `completed`). */
+export type RunLimit = "max_steps" | "max_duration" | "budget" | "max_output";
+
+const RUN_LIMITS: ReadonlySet<string> = new Set<RunLimit>([
+  "max_steps",
+  "max_duration",
+  "budget",
+  "max_output",
+]);
+
 /** How a run ended (its run row, spec §6.16.23). */
 export type RunEnd =
-  | { status: "ok" }
+  | {
+      status: "ok";
+      /**
+       * The run ended at a limit, not because the agent was done (`run_finished.reason`): the
+       * step or time limit, the token budget, or the output token limit (issue #951).
+       */
+      limit?: RunLimit;
+    }
   | { status: "stopped"; byAccountId: string | null }
   | {
       status: "failed";
@@ -1476,11 +1493,15 @@ export function buildEventTimeline(
           const command = kind === "command" && typeof rec.command === "string";
           // Claude Code's look: "Bash", "CRM [search]"; before the info arrives, from the key
           const label = ti ? toolLabel(ti, locale) : toolLabelOfKey(b.name);
+          // a call counts from when it was logged until its `tool_call_started` says when it
+          // started: every live row shows its time, a queued sibling too (spec §1.3)
+          const logged = Date.parse(e.createdAt);
           const row: ToolRowData = {
             id: callKey(e.runId, b.id),
             kind,
             name: label.name,
             status: "pending",
+            ...(Number.isNaN(logged) ? {} : { startedAt: logged }),
             ...(label.tool !== undefined ? { tool: label.tool } : {}),
             ...(label.tooltip !== undefined ? { tooltip: label.tooltip } : {}),
             ...(keyArg !== undefined && keyArg !== "" ? { keyArg } : {}),
@@ -1585,6 +1606,8 @@ export function buildEventTimeline(
         const end = Date.parse(e.createdAt);
         if (c.started !== null && !Number.isNaN(end)) row.durationMs = Math.max(0, end - c.started);
         if (view?.kind === "command" && view.description) row.description = view.description;
+        // the exit code goes into the detail; the row names it only when it is not zero
+        if (view?.kind === "command" && view.exitCode !== null) row.exitCode = view.exitCode;
         if (view?.kind === "edit") {
           row.keyArg = view.path;
           // A Write over a binary or very large file has no diff: no "+0 −0", no empty diff block
@@ -1600,11 +1623,14 @@ export function buildEventTimeline(
           if (view.fromLine !== undefined && view.toLine !== undefined)
             c.tool.lines = { from: view.fromLine, to: view.toLine };
         }
-        // An extension's display summary (`ToolResult.display`) reads as the row's extra.
+        // An extension's display summary (`ToolResult.display`) reads as the row's extra; a
+        // command's (the exit code and the command line) does not: the row is "Bash <description>",
+        // the command and the exit code are in its detail
         const summary = p.display?.summary[locale];
         if (
           typeof summary === "string" &&
           summary !== "" &&
+          view?.kind !== "command" &&
           row.extra === undefined &&
           c.tool.lines === undefined
         )
@@ -2035,7 +2061,13 @@ export function buildEventTimeline(
         }
         break;
       case "run_finished":
-        out.push({ kind: "run", key, ...runData(e), status: "ok" });
+        out.push({
+          kind: "run",
+          key,
+          ...runData(e),
+          status: "ok",
+          ...(RUN_LIMITS.has(e.payload.reason) && { limit: e.payload.reason as RunLimit }),
+        });
         break;
       case "run_aborted":
         out.push({

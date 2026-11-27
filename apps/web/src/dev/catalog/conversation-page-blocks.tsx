@@ -1533,7 +1533,7 @@ const PROCESS_KINDS: ProcessBlockProps["kinds"] = [
 ];
 
 const processLine = (id: string, kind: ToolRowData["kind"], name: string, keyArg: string) => (
-  <ToolGroup rows={[{ id, kind, name, keyArg, status: "done" }]} />
+  <ToolGroup inRail rows={[{ id, kind, name, keyArg, status: "done" }]} />
 );
 
 function ProcessRail({ withWaiting }: { withWaiting?: boolean | undefined }) {
@@ -1552,7 +1552,22 @@ function ProcessRail({ withWaiting }: { withWaiting?: boolean | undefined }) {
         {processLine("r2", "command", "Bash", "pnpm test")}
       </RailStep>
       {withWaiting ? (
-        <RailStep icon="hand">{processLine("r3", "command", "Bash", "rm -rf out")}</RailStep>
+        // a step waiting for a person keeps its kind icon; the row says it waits (§6.16.8a)
+        <RailStep icon={{ name: "terminal" }}>
+          <ToolGroup
+            inRail
+            rows={[
+              {
+                id: "r3",
+                kind: "command",
+                name: "Bash",
+                keyArg: "rm -rf out",
+                status: "pending",
+                waiting: "approval",
+              },
+            ]}
+          />
+        </RailStep>
       ) : null}
       <RailStep icon={{ name: "square-pen" }}>
         {processLine("r4", "edit", "Edit", "summary.md")}
@@ -1564,7 +1579,7 @@ function ProcessRail({ withWaiting }: { withWaiting?: boolean | undefined }) {
 function ProcessBlockFrame(
   p: Partial<ProcessBlockProps> & { rail?: boolean; waitingStep?: boolean },
 ) {
-  const { rail, waitingStep, ...over } = p;
+  const { rail, waitingStep, children, ...over } = p;
   return (
     <ProcessBlock
       state="finished"
@@ -1575,8 +1590,68 @@ function ProcessBlockFrame(
       onToggle={noop}
       {...over}
     >
-      {rail ? <ProcessRail withWaiting={waitingStep} /> : null}
+      {rail ? <ProcessRail withWaiting={waitingStep} /> : children}
     </ProcessBlock>
+  );
+}
+
+/**
+ * A live block's last steps (§6.16.8a): every rail icon is the step's kind, never a spinner; the
+ * head spins, and so do the rows of a parallel command group (one per concurrent call).
+ */
+function LiveCommandsRail() {
+  return (
+    <>
+      <RailStep icon={{ name: "lightbulb" }}>
+        <ThinkingRow seconds={4} text="先看一下报表的结构，再决定怎么改。" inRail />
+      </RailStep>
+      <RailStep icon={{ name: "file-text" }}>
+        {processLine("l1", "read", "Read", "report.md")}
+      </RailStep>
+      <RailStep icon={{ name: "terminal" }}>
+        <ToolGroup
+          inRail
+          now={NOW}
+          rows={[
+            {
+              id: "l2",
+              kind: "command",
+              name: "Bash",
+              description: "检查依赖",
+              keyArg: "pnpm why xlsx",
+              status: "running",
+              startedAt: NOW - 4_000,
+            },
+            {
+              id: "l3",
+              kind: "command",
+              name: "Bash",
+              description: "运行单元测试",
+              keyArg: "pnpm test --filter report",
+              status: "pending",
+              startedAt: NOW - 2_000,
+            },
+          ]}
+        />
+      </RailStep>
+    </>
+  );
+}
+
+/**
+ * A live thinking step: "Thinking · 6s" and the text's last lines, the lightbulb in the gutter;
+ * `done`, the thought collapsed (the model plans on, the planning row after it).
+ */
+function LiveThinkingRail({ done }: { done?: boolean }) {
+  return (
+    <>
+      <RailStep icon={{ name: "file-text" }}>
+        {processLine("t1", "read", "Read", "report.md")}
+      </RailStep>
+      <RailStep icon={{ name: "lightbulb" }}>
+        <ThinkingRow seconds={6} text={PROSE_FIXTURE.thinkingLive} live={done !== true} inRail />
+      </RailStep>
+    </>
   );
 }
 
@@ -1639,6 +1714,28 @@ function processBlockBlocks(): ReactNode {
           hiddenBefore={3}
           onShowEarlier={noop}
         />
+      </Block>
+      <Block id="process-block-live-commands">
+        <ProcessBlockFrame
+          state="running"
+          open
+          elapsedMs={18_000}
+          current="检查依赖 等 2 个命令"
+          hiddenBefore={2}
+          onShowEarlier={noop}
+        >
+          <LiveCommandsRail />
+        </ProcessBlockFrame>
+      </Block>
+      <Block id="process-block-live-thinking">
+        <ProcessBlockFrame state="running" open elapsedMs={9_000} current="思考中">
+          <LiveThinkingRail />
+        </ProcessBlockFrame>
+      </Block>
+      <Block id="process-block-planning">
+        <ProcessBlockFrame state="running" open elapsedMs={21_000} planning planningStill>
+          <LiveThinkingRail done />
+        </ProcessBlockFrame>
       </Block>
       <Block id="process-block-waiting">
         <ProcessBlockFrame

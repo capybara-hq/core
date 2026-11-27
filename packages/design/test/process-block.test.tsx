@@ -13,6 +13,7 @@ import {
   type RailRow,
   RailSection,
   RailStep,
+  RailText,
   ToolGroup,
   type ToolRowData,
 } from "../src/index";
@@ -188,7 +189,7 @@ describe("ProcessBlock rail", () => {
     const Wrapper = () => (
       <>
         <RailStep icon="dot">b</RailStep>
-        <RailStep icon="spinner">c</RailStep>
+        <RailStep icon={{ name: "terminal" }}>c</RailStep>
       </>
     );
     const { container } = wrap(
@@ -205,10 +206,42 @@ describe("ProcessBlock rail", () => {
     // the edges come from CSS on the rail's own children; the fold row (a button) is not counted
     expect(rail.querySelector(":scope > .cb-rail-step:first-of-type")).toBe(steps[0]);
     expect(rail.querySelector(":scope > .cb-rail-step:last-of-type")).toBe(steps[2]);
-    const sels = parseCss(css("conversation.css")).map((r) => r.selector);
+    const sels = parseCss(css("conversation.css")).flatMap((r) => r.selector.split(/,\s*/));
     expect(sels).toContain(".cb-rail-step:first-of-type::before");
-    expect(sels).toContain(".cb-rail-step:last-of-type::before");
+    expect(sels).toContain(".cb-rail-step:last-of-type::after");
     expect(sels).toContain(".cb-rail-step:not(:last-of-type)");
+  });
+
+  it("the fold row's chevron stands in the rail's icon column, on its text's line", () => {
+    const rules = parseCss(css("conversation.css"));
+    const gutter = rules.find((x) => x.selector === ".cb-process-fold > .cb-rail-gutter");
+    // a step's gutter (20 wide, row.dense high), centred on the row instead of its top
+    expect(gutter?.decls["align-self"]).toBe("center");
+    expect(gutter?.decls.height).toBeUndefined();
+    const fold = rules.find((x) => x.selector === ".cb-process-fold");
+    expect(fold?.decls["grid-template-columns"]).toBe("20px minmax(0, 1fr)");
+    expect(fold?.decls["column-gap"]).toBe("var(--cb-space-2)");
+  });
+
+  it("the rule breaks around each mark: segments above and below it, 4px clear", () => {
+    const rules = parseCss(css("conversation.css"));
+    // every rule with exactly this selector, merged in order
+    const of = (sel: string): Record<string, string> =>
+      Object.assign({}, ...rules.filter((r) => r.selector === sel).map((r) => r.decls));
+    expect(of(".cb-rail-step::before").height).toBe(
+      "calc(var(--cb-row-dense) / 2 - var(--cb-rail-clear))",
+    );
+    expect(of(".cb-rail-step::after")?.top).toBe(
+      "calc(var(--cb-row-dense) / 2 + var(--cb-rail-clear))",
+    );
+    // half the mark plus 4px: a 14 icon, the 5 dot, the 20 high capybara
+    expect(of(".cb-rail-step")?.["--cb-rail-clear"]).toBe("calc(7px + 4px)");
+    expect(of(".cb-rail-step:has(> .cb-rail-gutter > .cb-rail-dot)")?.["--cb-rail-clear"]).toBe(
+      "calc(2.5px + 4px)",
+    );
+    expect(of(".cb-rail-step.cb-rail-planning")?.["--cb-rail-clear"]).toBe("calc(10px + 4px)");
+    // no ground behind a mark knocks the rule out
+    expect(of(".cb-rail-gutter > span:not(.cb-rail-dot)")?.background).toBeUndefined();
   });
 
   it("rail steps sit space.1 apart by padding", () => {
@@ -218,47 +251,139 @@ describe("ProcessBlock rail", () => {
     expect(r?.decls["padding-bottom"]).toBe("var(--cb-space-1)");
   });
 
-  it("a step draws its icon in the gutter: kind icon, image, dot, spinner, hand", () => {
+  it("a step draws its icon in the gutter: kind icon, image, dot; never a spinner", () => {
     const { container } = wrap(
       <ProcessBlock {...base({ open: true })}>
         <RailStep icon={{ name: "terminal" }}>a</RailStep>
         <RailStep icon={{ src: "https://x.test/i.png" }}>b</RailStep>
         <RailStep icon="dot">c</RailStep>
-        <RailStep icon="spinner">d</RailStep>
-        <RailStep icon="hand">e</RailStep>
       </ProcessBlock>,
     );
     const gutters = [...container.querySelectorAll('[data-part="rail-gutter"]')];
     expect(gutters[0]?.querySelector('[data-icon="terminal"]')).not.toBeNull();
     expect(gutters[1]?.querySelector("img")?.getAttribute("src")).toBe("https://x.test/i.png");
     expect(gutters[2]?.querySelector('[data-part="rail-dot"]')).not.toBeNull();
-    expect(gutters[3]?.querySelector('[data-part="spinner"]')).not.toBeNull();
-    expect(gutters[4]?.querySelector('[data-icon="hand"]')).not.toBeNull();
+    expect(container.querySelector('[data-part="rail-gutter"] [data-part="spinner"]')).toBeNull();
   });
 
-  it("every mark but the dot sits on a ground disc that hides the rule behind it", () => {
+  it("a live parallel command group: spinners only in the head and on each running row", () => {
+    const rows: ToolRowData[] = [
+      {
+        id: "a",
+        kind: "command",
+        name: "Bash",
+        description: "检查依赖",
+        status: "running",
+        startedAt: 0,
+      },
+      {
+        id: "b",
+        kind: "command",
+        name: "Bash",
+        description: "运行测试",
+        status: "pending",
+        startedAt: 1_000,
+      },
+    ];
     const { container } = wrap(
-      <ProcessBlock {...base({ open: true })}>
-        <RailStep icon={{ name: "terminal" }}>a</RailStep>
-        <RailStep icon={{ src: "https://x.test/i.png" }}>b</RailStep>
-        <RailStep icon="dot">c</RailStep>
-        <RailStep icon="spinner">d</RailStep>
-        <RailStep icon="hand">e</RailStep>
+      <ProcessBlock {...base({ state: "running", open: true, current: "检查依赖 等 2 个命令" })}>
+        <RailStep icon={{ name: "terminal" }}>
+          <ToolGroup inRail rows={rows} now={4_000} />
+        </RailStep>
       </ProcessBlock>,
     );
-    // the gutter's only child is a span (the disc), never a bare icon the rule shows through
-    const marks = [...container.querySelectorAll('[data-part="rail-gutter"]')].map(
-      (g) => g.firstElementChild,
+    const spinners = [...container.querySelectorAll('[data-part="spinner"]')];
+    // the head's, then one per running row; none in the gutter or the group header
+    expect(spinners).toHaveLength(3);
+    expect(head(container).querySelectorAll('[data-part="spinner"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-part="tool-row"] [data-part="spinner"]')).toHaveLength(
+      2,
     );
-    expect(marks.map((m) => m?.tagName)).toEqual(["SPAN", "SPAN", "SPAN", "SPAN", "SPAN"]);
-    expect(marks[0]?.getAttribute("data-part")).toBe("rail-mark");
-    expect(marks[1]?.getAttribute("data-part")).toBe("rail-mark");
-    const rules = parseCss(css("conversation.css"));
-    const disc = rules.find((x) => x.selector === ".cb-rail-gutter > span:not(.cb-rail-dot)");
-    expect(disc?.decls.width).toBe("20px");
-    expect(disc?.decls.background).toBe("var(--cb-bg)");
-    const gutter = rules.find((x) => x.selector === ".cb-rail-gutter");
-    expect(gutter?.decls["z-index"]).toBe("1");
+    const gutter = container.querySelector('[data-part="rail-gutter"]') as HTMLElement;
+    expect(gutter.querySelector('[data-icon="terminal"]')).not.toBeNull();
+    expect(container.textContent).toContain("正在运行 2 个命令 · 已完成 0 个");
+    // every running row shows its time from its start, a queued one too
+    const times = [...container.querySelectorAll('[data-part="tool-row"] .cb-tool-end')].map(
+      (e) => e.textContent,
+    );
+    expect(times).toEqual(["4 秒", "3 秒"]);
+  });
+
+  it("the planning row ends the rail, the head names no step, and it stands before any step", () => {
+    const { container } = wrap(
+      <ProcessBlock
+        {...base({
+          state: "running",
+          open: true,
+          current: "读取 a.md",
+          planning: true,
+          children: undefined,
+        })}
+      />,
+    );
+    const rail = container.querySelector('[data-part="process-rail"]') as HTMLElement;
+    expect(rail.querySelector('[data-part="rail-planning"]')).not.toBeNull();
+    expect(head(container).textContent).not.toContain("读取 a.md");
+    expect(head(container).textContent).toContain("正在运行");
+    // the capybara is the rail's only animated node: no spinner beside it
+    expect(rail.querySelector('[data-part="spinner"]')).toBeNull();
+    expect(rail.querySelector('[data-part="working-mark"]')).not.toBeNull();
+  });
+
+  it("the planning row is the last rail row and takes the last edge (windowed rows)", () => {
+    const rows: RailRow[] = ["a", "b"].map((k) => ({
+      key: k,
+      render: () => <RailStep icon={{ name: "terminal" }}>{k}</RailStep>,
+    }));
+    const { container, rerender } = wrap(
+      <ProcessBlock
+        {...base({ state: "running", open: true, rows, planning: true, children: undefined })}
+      />,
+    );
+    const list = () => [...container.querySelectorAll('[data-part="rail-list"] > [data-edge]')];
+    expect(list().map((e) => e.getAttribute("data-part"))).toEqual([
+      "rail-step",
+      "rail-step",
+      "rail-planning",
+    ]);
+    expect(list().at(-1)?.getAttribute("data-edge")).toBe("last");
+    // the next step starts: it stands where the planning row stood
+    const next = [
+      ...rows,
+      { key: "c", render: () => <RailStep icon={{ name: "lightbulb" }}>c</RailStep> },
+    ];
+    rerender(
+      <DesignProvider locale="zh">
+        <ProcessBlock
+          {...base({ state: "running", open: true, rows: next, children: undefined })}
+        />
+      </DesignProvider>,
+    );
+    expect(container.querySelector('[data-part="rail-planning"]')).toBeNull();
+    expect(list().at(-1)?.textContent).toBe("c");
+    expect(list().at(-1)?.getAttribute("data-edge")).toBe("last");
+  });
+
+  it("narration renders its Markdown compactly: code and bold, no raw marks", () => {
+    const { container } = wrap(
+      <ProcessBlock {...base({ open: true })}>
+        <RailStep icon="dot">
+          <RailText>{"core `29e091ba1`、plugins `7f2d874` 都**已发布**"}</RailText>
+        </RailStep>
+      </ProcessBlock>,
+    );
+    const say = container.querySelector('[data-part="rail-text"]') as HTMLElement;
+    expect([...say.querySelectorAll("code")].map((c) => c.textContent)).toEqual([
+      "29e091ba1",
+      "7f2d874",
+    ]);
+    expect(say.querySelector("strong")?.textContent).toBe("已发布");
+    expect(say.textContent).not.toMatch(/[`*]/);
+  });
+
+  it("a finished block draws no planning row", () => {
+    const { container } = wrap(<ProcessBlock {...base({ open: true, planning: true })} />);
+    expect(container.querySelector('[data-part="rail-planning"]')).toBeNull();
   });
 
   it("pinned content sits under the head, before the rail", () => {
@@ -463,14 +588,15 @@ describe("ProcessBlock rail list (#924, #925)", () => {
 
   it("the edge rules follow data-edge after the child-position rules", () => {
     const rules = parseCss(css("conversation.css"));
-    const at = (sel: string) => rules.findIndex((r) => r.selector === sel);
+    const at = (sel: string) => rules.findIndex((r) => r.selector.split(/,\s*/).includes(sel));
     expect(at('.cb-rail-step[data-edge="first"]::before')).toBeGreaterThan(
       at(".cb-rail-step:first-of-type::before"),
     );
-    expect(at('.cb-rail-step[data-edge="last"]::before')).toBeGreaterThan(
-      at(".cb-rail-step:last-of-type::before"),
+    expect(at('.cb-rail-step[data-edge="last"]::after')).toBeGreaterThan(
+      at(".cb-rail-step:last-of-type::after"),
     );
     expect(rules[at('.cb-rail-step[data-edge="only"]::before')]?.decls.display).toBe("none");
+    expect(rules[at('.cb-rail-step[data-edge="only"]::after')]?.decls.display).toBe("none");
     // a spacer carries the rule through the rows it stands for
     expect(rules.find((r) => r.selector === ".cb-rail-spacer::before")?.decls.width).toBe("1px");
   });

@@ -41,6 +41,13 @@ export type ToolGroupProps = {
   now?: number;
   /** Replaces the rows inside the box. */
   children?: ReactNode;
+  /**
+   * Drawn as a step of a process rail (§6.16.8a): the rail's gutter shows the step's kind icon and
+   * the block's head the spinner, so a single running line and a running group header draw no
+   * spinner of their own (they say it in words and the time); rows inside a group keep theirs,
+   * telling the concurrent calls apart.
+   */
+  inRail?: boolean;
 };
 
 /** Live and not waiting for a person: the calls that draw a spinner and a timer. */
@@ -58,6 +65,7 @@ export function ToolGroup({
   onImageError,
   now,
   children,
+  inRail,
 }: ToolGroupProps): JSX.Element {
   const locale = useDesignLocale();
   const [own, setOwn] = useState(false);
@@ -92,7 +100,7 @@ export function ToolGroup({
     const streaming = isStreaming(single);
     const label = (
       <>
-        {running ? <Spinner size={16} /> : streaming ? <StreamMark /> : null}
+        {running && !inRail ? <Spinner size={16} /> : streaming ? <StreamMark /> : null}
         <ToolLabel row={single} />
         <ToolMeta row={single} />
         {running && single.startedAt !== undefined ? (
@@ -162,7 +170,8 @@ export function ToolGroup({
     );
   }
 
-  // A group with a live call stays open; its header spins only while a call is not waiting.
+  // A group with a live call stays open; its header spins only while a call is not waiting, and
+  // never in a rail (the head spins there, and each running row inside).
   const live = rows.some(isLive);
   const running = rows.some(isRunning);
   const isOpen = live || (open ?? own);
@@ -213,7 +222,7 @@ export function ToolGroup({
     <div className="cb-tool-group">
       {live ? (
         <div className="cb-tool-line" data-part="tool-line">
-          {running ? <Spinner size={16} /> : null}
+          {running && !inRail ? <Spinner size={16} /> : null}
           <span className="cb-tool-label">{parts}</span>
         </div>
       ) : (

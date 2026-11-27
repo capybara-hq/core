@@ -234,6 +234,8 @@ export type FixtureTool = {
   keyArgGuess?: boolean;
   /** Extra info after the key arguments (faint). */
   extra?: string;
+  /** A finished command's exit code: named on the row only when not zero (§6.16.9). */
+  exitCode?: number;
   /** `streaming`: the model is still writing the input (§6.16.9). */
   status: "streaming" | "running" | "done" | "failed";
   /** A streaming call's progress: lines when counted, the size, and the generic wording. */
@@ -292,6 +294,7 @@ export const TOOL_FIXTURES: Record<
   | "hookDenied"
   | "waiting"
   | "autoGranted"
+  | "exitCode"
   | "autoApproved"
   | "reviewApproved"
   | "streaming"
@@ -437,6 +440,7 @@ export const TOOL_FIXTURES: Record<
       name: "Bash",
       description: "更新草稿里的 PDF 链接",
       status: "done",
+      exitCode: 0,
       durationMs: 2100,
       command: "python scripts/update_draft.py --channel 示例-支持 --pdf 示例流程交付说明.pdf",
       output:
@@ -556,9 +560,23 @@ export const TOOL_FIXTURES: Record<
       description:
         '抓取路由器管理页的状态码，确认内网服务在沙箱外可以访问：curl -sS -m 5 -o /dev/null -w "HTTP %{http_code}" http://192.168.3.1/',
       status: "done",
-      extra: "退出码 0",
+      exitCode: 0,
       outsideSandbox: true,
       autoGranted: "outside-sandbox",
+    },
+  ],
+  // A command that exited non-zero: the row names the code in fail, the detail has the command.
+  exitCode: [
+    {
+      id: "t_exit",
+      kind: "command",
+      name: "Bash",
+      description: "运行单元测试",
+      status: "done",
+      exitCode: 1,
+      durationMs: 8400,
+      command: "pnpm test --filter report",
+      output: "FAIL src/summary.test.ts\n  汇总金额 - 合并重复收款人\n[exit code: 1]",
     },
   ],
   // A platform call the Auto profile ran without asking: the neutral approved-automatically words.
@@ -707,6 +725,11 @@ export const PROSE_FIXTURE: {
   streaming: string;
   thinking: string;
   thinkingSeconds: number;
+  /**
+   * A live thinking text in Markdown, longer than the three lines its tail shows (§6.16.5): the
+   * row draws its last lines with the top one fading.
+   */
+  thinkingLive: string;
   /** Prose that mentions file paths: chips only for paths naming a file output. */
   withPaths: string;
 } = {
@@ -728,6 +751,13 @@ export const PROSE_FIXTURE: {
     "差异主要来自两笔内部换汇：HKD 少记 109.51，USD 少记 2,900.00。两笔都发生在 9 月 18 日",
   thinking: "两种说法都可能对。先看代码里遇到重复收款人时怎么取，再去映射表核对实际行……",
   thinkingSeconds: 12,
+  thinkingLive: [
+    "**当前状态**：报表已经读完，汇总表还缺两列。",
+    "",
+    "先核对映射表里重复的收款人，再决定是合并成一行还是保留两行；合并的话汇总公式也要一起改。",
+    "",
+    "最后跑一遍单元测试，确认两边的数字对得上。",
+  ].join("\n"),
   withPaths:
     "我改的是 `scripts/calc.py` 第 259 行，结果写在 reports/9月差异明细.xlsx，说明在 reports/对账报告.md。",
 };

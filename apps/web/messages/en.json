@@ -1472,6 +1472,7 @@
       "subagent": "Sub-agent",
       "subagentTools": "{n, plural, one {# tool} other {# tools}}",
       "openSubagent": "Open",
+      "moreCommands": "{first} and {more, plural, one {# more command} other {# more commands}}",
       "kind": {
         "thinking": "Thinking",
         "terminal": "Command",
@@ -1673,6 +1674,12 @@
     },
     "run": {
       "stopped": "Stopped · {who} {time}",
+      "limit": {
+        "max_steps": "Step limit reached",
+        "max_duration": "Time limit reached",
+        "budget": "Token budget used up",
+        "max_output": "Output limit reached"
+      },
       "failedRetried": "Failed · Retried",
       "tokens": "{n} tokens",
       "tokenSplit": "Input {input} · Output {output} · Cache read {cacheRead} · Cache write {cacheWrite}",

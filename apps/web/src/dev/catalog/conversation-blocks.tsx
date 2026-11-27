@@ -132,7 +132,7 @@ function thinkingRowBlocks(): ReactNode {
         <ThinkingRow seconds={P.thinkingSeconds} text={P.thinking} defaultOpen inRail />
       </Block>
       <Block id="thinking-row-live">
-        <ThinkingRow seconds={4} text={P.thinking.slice(0, 22)} live />
+        <ThinkingRow seconds={6} text={P.thinkingLive} live />
       </Block>
     </>
   );
@@ -466,6 +466,7 @@ export function toRow(
     ...(t.keyArg ? { keyArg: t.keyArg } : {}),
     ...(t.keyArgGuess ? { keyArgGuess: true } : {}),
     ...(t.extra ? { extra: t.extra } : {}),
+    ...(t.exitCode !== undefined ? { exitCode: t.exitCode } : {}),
     ...(t.status === "running" ? { startedAt: NOW - 12_000 } : {}),
     ...(t.durationMs !== undefined ? { durationMs: t.durationMs } : {}),
     ...(t.added !== undefined ? { added: t.added, removed: t.removed ?? 0 } : {}),
@@ -592,6 +593,7 @@ function toolRowBlocks(): ReactNode {
       />
       <RowBlock id="tool-row-waiting" row={toRow(pick(T.waiting, 0))} />
       <RowBlock id="tool-row-linked" row={BACKGROUND_ROW} />
+      <RowBlock id="tool-row-exit-code" row={toRow(pick(T.exitCode, 0))} />
       <RowBlock id="tool-row-auto-granted" row={toRow(pick(T.autoGranted, 0))} />
       <RowBlock id="tool-row-auto-approved" row={toRow(pick(T.autoApproved, 0))} />
       <RowBlock id="tool-row-review-approved" row={toRow(pick(T.reviewApproved, 0))} />
