@@ -1,8 +1,8 @@
 import { apiFetch } from "./api";
-import type { CreatedAttachment } from "./attachments";
-import { uploadToStorage } from "./attachments";
 import type { Owner } from "./components";
 import { isHtmlFile, isSvgFile, readTextPreview, TEXT_PREVIEW_BYTES } from "./files";
+import type { CreatedAttachment } from "./uploads";
+import { uploadToStorage } from "./uploads";
 
 /**
  * 内核技能 API 的类型（`packages/kernel/src/skills/*`；只声明界面用到的字段）。Web 层不 import 内核代码。

@@ -16,8 +16,8 @@ vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("../src/lib/avatar-crop", () => ({
   cropAvatar: vi.fn(async () => new Blob(["png"], { type: "image/png" })),
 }));
-vi.mock("../src/lib/attachments", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/lib/attachments")>()),
+vi.mock("../src/lib/uploads", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/uploads")>()),
   uploadToStorage: vi.fn(async () => {}),
 }));
 

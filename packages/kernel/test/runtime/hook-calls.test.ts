@@ -71,7 +71,7 @@ describe("hookRequestOf", () => {
           {
             role: "user",
             content: [
-              { type: "image", mediaType: "image/gif", source: { kind: "ref", attachmentId: id } },
+              { type: "image", mediaType: "image/gif", source: { kind: "ref", fileId: id } },
             ],
           },
         ],
@@ -83,6 +83,12 @@ describe("hookRequestOf", () => {
     ]);
     expect(JSON.stringify(out)).not.toContain(id);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves out cacheTtl: a transport option, not part of the hook payload (idle compaction spec §8.1)", () => {
+    const out = hookRequestOf({ ...request, cacheTtl: 3600 });
+    expect(out).not.toHaveProperty("cacheTtl");
+    expect(out.model).toBe("m");
   });
 });
 

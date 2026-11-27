@@ -17,12 +17,12 @@ import { MemoryObjectStore } from "../storage/memory-store.js";
 const files = { maxBytes: 100_000, imageMaxBytes: 10_000 };
 const features = { cards: true, edit: true, threads: true, files };
 const plan = (
-  artifact: { objectKey?: string; size: number; contentType: string },
+  artifact: { size: number; contentType: string },
   over: Partial<Parameters<typeof planFileDelivery>[0]> = {},
 ) =>
   planFileDelivery({
-    conversationId: "c1",
-    artifact: { objectKey: "artifacts/c1/a1", ...artifact },
+    referenced: true,
+    artifact,
     features,
     canSendFile: true,
     fileMaxBytes: 20_971_520,
@@ -63,9 +63,10 @@ describe("planFileDelivery", () => {
   it("link reasons", () => {
     const t = { contentType: "application/pdf" };
     expect(plan({ ...t, size: 0 })).toEqual({ mode: "link", reason: "empty" });
-    expect(plan({ ...t, size: 1, objectKey: "artifacts/other-conv/x" })).toEqual({
+    // a file the conversation does not reference is never read, whatever else holds
+    expect(plan({ ...t, size: 0 }, { referenced: false })).toEqual({
       mode: "link",
-      reason: "foreign_key",
+      reason: "unreferenced",
     });
     expect(
       plan({ ...t, size: 1 }, { features: { cards: true, edit: true, threads: true } }),
@@ -146,16 +147,19 @@ describe("fileLinkText / fileRootText", () => {
 
 describe("readArtifactCapped", () => {
   const signal = new AbortController().signal;
+  /** The bytes of `key` in `store`, as a blob read opens them. */
+  const from = (store: ObjectStore, key: string) => (s: AbortSignal) =>
+    store.get(key, { signal: s });
   it("ok, missing, too_large", async () => {
     const store = new MemoryObjectStore();
     store.objects.set("k", { data: new Uint8Array([1, 2, 3]), contentType: "x/y" });
     store.objects.set("big", { data: new Uint8Array(4), contentType: "x/y" });
-    expect(await readArtifactCapped(store, "k", 3, signal)).toEqual({
+    expect(await readArtifactCapped(from(store, "k"), 3, signal)).toEqual({
       kind: "ok",
       data: new Uint8Array([1, 2, 3]),
     });
-    expect(await readArtifactCapped(store, "nope", 3, signal)).toEqual({ kind: "missing" });
-    expect(await readArtifactCapped(store, "big", 3, signal)).toEqual({ kind: "too_large" });
+    expect(await readArtifactCapped(from(store, "nope"), 3, signal)).toEqual({ kind: "missing" });
+    expect(await readArtifactCapped(from(store, "big"), 3, signal)).toEqual({ kind: "too_large" });
   });
   it("a head larger than the cap cancels the body", async () => {
     let cancelled = false;
@@ -169,7 +173,7 @@ describe("readArtifactCapped", () => {
         return { head: { key: "k", size: 11, contentType: "x/y" }, body };
       },
     } as unknown as ObjectStore;
-    expect(await readArtifactCapped(store, "k", 10, signal)).toEqual({ kind: "too_large" });
+    expect(await readArtifactCapped(from(store, "k"), 10, signal)).toEqual({ kind: "too_large" });
     expect(cancelled).toBe(true);
   });
   it("a read that throws mid-stream cancels the reader and rethrows", async () => {
@@ -189,7 +193,7 @@ describe("readArtifactCapped", () => {
         return { head: { key: "k", size: 5, contentType: "x/y" }, body };
       },
     } as unknown as ObjectStore;
-    await expect(readArtifactCapped(store, "k", 10, signal)).rejects.toThrow("ECONNRESET");
+    await expect(readArtifactCapped(from(store, "k"), 10, signal)).rejects.toThrow("ECONNRESET");
     expect(cancelled).toBe(true);
   });
   it("a body longer than its head cancels the reader", async () => {
@@ -207,7 +211,7 @@ describe("readArtifactCapped", () => {
         return { head: { key: "k", size: 10, contentType: "x/y" }, body };
       },
     } as unknown as ObjectStore;
-    expect(await readArtifactCapped(store, "k", 10, signal)).toEqual({ kind: "too_large" });
+    expect(await readArtifactCapped(from(store, "k"), 10, signal)).toEqual({ kind: "too_large" });
     expect(cancelled).toBe(true);
   });
   it("unavailable maps; other errors rethrow", async () => {
@@ -217,15 +221,15 @@ describe("readArtifactCapped", () => {
           throw e;
         },
       }) as unknown as ObjectStore;
-    expect(await readArtifactCapped(mk(storageUnavailable()), "k", 5, signal)).toEqual({
+    expect(await readArtifactCapped(from(mk(storageUnavailable()), "k"), 5, signal)).toEqual({
       kind: "unavailable",
     });
     expect(
-      await readArtifactCapped(mk(new ExtensionPointUnavailableError("x")), "k", 5, signal),
+      await readArtifactCapped(from(mk(new ExtensionPointUnavailableError("x")), "k"), 5, signal),
     ).toEqual({ kind: "unavailable" });
-    await expect(readArtifactCapped(mk(new Error("ECONNRESET")), "k", 5, signal)).rejects.toThrow(
-      "ECONNRESET",
-    );
+    await expect(
+      readArtifactCapped(from(mk(new Error("ECONNRESET")), "k"), 5, signal),
+    ).rejects.toThrow("ECONNRESET");
   });
 });
 

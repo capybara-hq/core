@@ -19,6 +19,7 @@ import { CHANNEL_QUEUE_NAME, deliverJobId, idempotencyKey } from "../../src/chan
 import { EventLog } from "../../src/conversations/event-log.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { FileDeliveries } from "../../src/files/deliveries.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -284,44 +285,64 @@ interface Upload {
   deleted?: boolean;
 }
 
-/** Stores objects and logs one `artifact_created` each, in one append (as `Deliver` does). */
+/**
+ * Stores the bytes as blobs and logs one `artifact_created` each with its library file, in one
+ * append (as `Deliver` does).
+ */
 async function deliverArtifacts(
   conv: string,
   files: Upload[],
-): Promise<{ artifactId: string; seq: number }[]> {
-  const store = k.app.get(StorageService).kernel(orgId);
+): Promise<{ artifactId: string; seq: number; objectKey: string }[]> {
+  const deliveries = k.app.get(FileDeliveries);
   const made = [];
   for (const f of files) {
-    const artifactId = randomUUID();
-    const objectKey = `artifacts/${conv}/${artifactId}`;
-    await store.put(objectKey, f.bytes, {
+    const blob = await deliveries.ensureBlob(orgId, sha256(f.bytes), f.bytes, {
       contentType: f.type,
-      size: f.bytes.byteLength,
       signal: AbortSignal.timeout(10_000),
     });
-    if (f.deleted) await store.delete(objectKey);
-    made.push({ artifactId, objectKey, f });
+    if (f.deleted) await k.app.get(StorageService).kernel(orgId).delete(blob.objectKey);
+    made.push({ artifactId: randomUUID(), blob, f });
   }
-  const logged = await k.app.get(EventLog).append(
+  const logged = await deliveries.appendDelivered(
+    orgId,
     conv,
-    made.map(({ artifactId, objectKey, f }) => ({
+    made.map(({ artifactId, blob, f }) => ({
       type: "artifact_created" as const,
       payload: {
         artifactId,
+        fileId: artifactId,
         name: f.name,
         contentType: f.type,
         size: f.bytes.byteLength,
-        objectKey,
+        objectKey: blob.objectKey,
         sourcePath: `/workspace/${f.name}`,
         callId: `call-${f.name}`,
+        sha256: sha256(f.bytes),
       },
     })),
+    made.map(({ artifactId, blob, f }) => ({
+      id: artifactId,
+      blobId: blob.id,
+      name: f.name,
+      contentType: f.type,
+      size: f.bytes.byteLength,
+      origin: "delivered" as const,
+      sourcePath: `/workspace/${f.name}`,
+    })),
   );
-  return made.map((m, i) => ({ artifactId: m.artifactId, seq: logged[i]?.seq as number }));
+  return made.map((m, i) => ({
+    artifactId: m.artifactId,
+    seq: logged[i]?.seq as number,
+    objectKey: m.blob.objectKey,
+  }));
 }
 
 const deliverArtifact = async (conv: string, name: string, bytes: Buffer, type: string) =>
-  (await deliverArtifacts(conv, [{ name, bytes, type }]))[0] as { artifactId: string; seq: number };
+  (await deliverArtifacts(conv, [{ name, bytes, type }]))[0] as {
+    artifactId: string;
+    seq: number;
+    objectKey: string;
+  };
 
 describe("channel file delivery", () => {
   it("a GenerateImage image in a DM reaches the chat as an image before the final reply", async () => {
@@ -416,6 +437,57 @@ describe("channel file delivery", () => {
     expect(textsTo(chat).slice(before)[0]?.message.text).toBe(
       linkLine("lost.pdf", "2.0 KB", conv, a?.artifactId as string),
     );
+  });
+
+  it("a file the conversation does not reference becomes a link line and is never read", async () => {
+    const chat = "grp-unreferenced";
+    const conv = await groupConv(miniId, chat);
+    const other = await groupConv(miniId, "grp-unreferenced-other");
+    const bytes = Buffer.alloc(1024, 9);
+    // a file of another conversation of the same owner, its blob intact
+    const theirs = await deliverArtifact(other, "theirs.pdf", bytes, "application/pdf");
+    await caughtUp(other);
+    const before = textsTo(chat).length;
+    const sentBefore = im.sentFiles.length;
+    // an event naming that file in this conversation (no conversation_files row here)
+    const [logged] = await k.app.get(EventLog).append(conv, [
+      {
+        type: "artifact_created",
+        payload: {
+          artifactId: theirs.artifactId,
+          fileId: theirs.artifactId,
+          name: "theirs.pdf",
+          contentType: "application/pdf",
+          size: bytes.byteLength,
+          objectKey: theirs.objectKey,
+          sourcePath: "/workspace/theirs.pdf",
+          callId: "call-theirs",
+        },
+      },
+    ]);
+    await caughtUp(conv);
+    expect(filesTo(chat)).toHaveLength(0);
+    expect(im.sentFiles.slice(sentBefore).filter((f) => f.target.chatId === chat)).toEqual([]);
+    const after = textsTo(chat).slice(before);
+    expect(after.map((m) => m.message.text)).toEqual([
+      linkLine("theirs.pdf", "1.0 KB", conv, theirs.artifactId),
+    ]);
+    expect(after[0]?.idempotencyKey).toBe(idempotencyKey(`${conv}-${logged?.seq}-link`));
+  });
+
+  it("a delivery reuses the blob of identical bytes and is sent from it", async () => {
+    const chat = "grp-shared";
+    const conv = await groupConv(miniId, chat);
+    const bytes = Buffer.alloc(3000, 10);
+    const first = await deliverArtifact(conv, "one.pdf", bytes, "application/pdf");
+    const second = await deliverArtifact(conv, "two.pdf", bytes, "application/pdf");
+    expect(second.objectKey).toBe(first.objectKey);
+    await caughtUp(conv);
+    const files = filesTo(chat);
+    expect(files.map((f) => [f.name, f.sha256])).toEqual([
+      ["one.pdf", sha256(bytes)],
+      ["two.pdf", sha256(bytes)],
+    ]);
   });
 
   it("too_large, rejected and a failure without a reason become link lines; the last two record last_error", async () => {

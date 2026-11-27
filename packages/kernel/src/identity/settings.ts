@@ -259,6 +259,28 @@ export function effectiveCompactionSettings(
   };
 }
 
+/**
+ * Prompt cache settings (idle compaction spec): `longTtl` asks the model call for the longer
+ * cache tier, which costs more per write and keeps a conversation's prefix warm longer.
+ */
+export const PROMPT_CACHE_SETTINGS = z.object({ longTtl: z.boolean().default(false) });
+
+export type PromptCacheSettings = z.infer<typeof PROMPT_CACHE_SETTINGS>;
+
+/** The partial form the platform and org patches carry: only the given fields. */
+export const PROMPT_CACHE_SETTINGS_PARTIAL = z.object({ longTtl: z.boolean() }).partial();
+
+/** The strict request-body form: a misspelled field is a 400, not a silent no-op. */
+export const PROMPT_CACHE_SETTINGS_PATCH = PROMPT_CACHE_SETTINGS_PARTIAL.strict();
+
+/** The prompt cache settings in effect for an organization: its override over the platform. */
+export function effectivePromptCacheSettings(
+  platform: PromptCacheSettings,
+  org: z.infer<typeof PROMPT_CACHE_SETTINGS_PARTIAL> | undefined,
+): PromptCacheSettings {
+  return { longTtl: org?.longTtl ?? platform.longTtl };
+}
+
 export const DEPLOYMENT_SETTINGS = z.object({
   orgCreation: z.enum(["anyone", "super_admin"]).default("anyone"),
   /** 按组织覆盖运行并发上限（orgId → 上限）；未列出的组织用 `runtime.orgConcurrency`。 */
@@ -299,6 +321,8 @@ export const DEPLOYMENT_SETTINGS = z.object({
    * values; an organization may override any field in its own settings.
    */
   compaction: COMPACTION_SETTINGS.prefault({}),
+  /** Prompt cache tier (idle compaction spec): the platform default; an org may override it. */
+  promptCache: PROMPT_CACHE_SETTINGS.prefault({}),
   /**
    * The CDN origins a rendered HTML file may load scripts, styles, fonts and images from (file
    * sharing spec §4): `https://` origins only; applies to the next document load. No org level.
@@ -453,6 +477,8 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * one, fields left out keep their value.
      */
     compaction: COMPACTION_SETTINGS_PATCH.optional(),
+    /** Prompt cache settings: each given field replaces the stored one. */
+    promptCache: PROMPT_CACHE_SETTINGS_PATCH.optional(),
     /**
      * The platform's external sharing switch (file sharing spec §8): allow or deny; null clears it
      * (back to the default, deny). A value set in the startup config is read-only (409
@@ -536,6 +562,19 @@ export async function readPlatformCompactionSettings(
     .executeTakeFirst();
   const parsed = COMPACTION_SETTINGS.safeParse(row?.value ?? {});
   return parsed.success ? parsed.data : DEFAULTS.compaction;
+}
+
+/** The platform's prompt cache settings, read live from PG (what an org that follows gets). */
+export async function readPlatformPromptCacheSettings(
+  db: KernelSchemaDb,
+): Promise<PromptCacheSettings> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", "promptCache")
+    .executeTakeFirst();
+  const parsed = PROMPT_CACHE_SETTINGS.safeParse(row?.value ?? {});
+  return parsed.success ? parsed.data : DEFAULTS.promptCache;
 }
 
 /**
@@ -1067,6 +1106,7 @@ export class SettingsService {
       uiArrangement: arrangementPatch,
       clientExtensions: clientPatch,
       compaction: compactionPatch,
+      promptCache: promptCachePatch,
     } = patch;
     if (
       runPatch !== undefined ||
@@ -1074,7 +1114,8 @@ export class SettingsService {
       subagentPatch !== undefined ||
       arrangementPatch !== undefined ||
       clientPatch !== undefined ||
-      compactionPatch !== undefined
+      compactionPatch !== undefined ||
+      promptCachePatch !== undefined
     ) {
       const current = await this.get();
       if (clientPatch !== undefined) {
@@ -1094,6 +1135,9 @@ export class SettingsService {
           reserveTokens: compactionPatch.reserveTokens ?? current.compaction.reserveTokens,
           maxOutputTokens: compactionPatch.maxOutputTokens ?? current.compaction.maxOutputTokens,
         };
+      }
+      if (promptCachePatch !== undefined) {
+        next.promptCache = { longTtl: promptCachePatch.longTtl ?? current.promptCache.longTtl };
       }
       if (arrangementPatch !== undefined) {
         next.uiArrangement = mergeArrangement(current.uiArrangement, arrangementPatch);

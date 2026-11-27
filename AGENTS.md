@@ -234,6 +234,11 @@ Each line is the rule you must not miss; the skill has the rest.
   shared and rendered HTML is served only with the sandbox CSP and the CDN allowlist, never from a
   presigned URL on the app origin.
   [file-sharing](docs/superpowers/specs/2026-11-18-file-sharing-design.md)
+- **Files:** a file belongs to one account and reaches a conversation only by reference; bytes are
+  per-org blobs keyed by sha256, shared by files and shares, deleted only by the blob sweep when
+  nothing refers to them; a presigned upload only writes a staging key, and finalize copies the
+  verified bytes to a kernel-owned blob key.
+  [file library](docs/superpowers/specs/2026-11-27-file-library-design.md)
 - **Public API reports:** changing the SDK's public API means `pnpm gen:sdk-api` plus a changeset
   bumping `@capybara-hq/plugin-sdk` (`check:sdk-api`); changing the client package's public API means
   `pnpm gen:plugin-client` plus a changeset bumping `@capybara-hq/plugin-client`

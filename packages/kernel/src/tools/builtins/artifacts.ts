@@ -3,7 +3,9 @@ import { ToolError } from "@capybara-hq/plugin-sdk";
 import { findRepeat } from "../../conversations/delivery-scope.js";
 import type { AppendEvent, EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent } from "../../conversations/events.js";
-import { isStorageUnavailable, type StorageService } from "../../storage/storage.service.js";
+import type { BlobRow } from "../../files/blobs.service.js";
+import { DeliveryBlobGoneError, type FileDeliveries } from "../../files/deliveries.js";
+import { isStorageUnavailable } from "../../storage/storage.service.js";
 import type { BuiltinCallContext } from "../registry.js";
 
 /**
@@ -17,10 +19,16 @@ export const NO_STORAGE_REASON = NO_STORAGE.slice(0, -1);
 
 /** What {@link storeArtifacts} needs. */
 export interface ArtifactStoreDeps {
-  storage: Pick<StorageService, "kernel">;
-  eventLog: Pick<EventLog, "append" | "readDeliveryScope"> &
-    Partial<Pick<EventLog, "publishChanged">>;
+  eventLog: Pick<EventLog, "readDeliveryScope"> & Partial<Pick<EventLog, "publishChanged">>;
+  /**
+   * The blobs and the one transaction of a delivery (file library spec §4). Absent in test stubs
+   * without a store: nothing can be delivered then ({@link NO_STORAGE}).
+   */
+  deliveries?: Pick<FileDeliveries, "ensureBlob" | "appendDelivered"> | undefined;
 }
+
+/** How often a delivery whose blob was claimed by a deletion meanwhile is tried again. */
+const BLOB_ATTEMPTS = 3;
 
 /** One file to deliver as an artifact. */
 export interface ArtifactFile {
@@ -56,21 +64,25 @@ export const REPEAT_TEXT = (name: string, prior: { name: string; artifactId: str
   `${name} has the ${REPEAT_CLAUSE(prior)}`;
 
 /**
- * Stores `files` as artifacts of the call's conversation, all or none: every object is uploaded
- * under the kernel prefix (`artifacts/<conversationId>/<artifactId>`), then all their
- * `artifact_created` events (the call's run and `callId`, the bytes' sha256) go into the log in
- * one append. Any failure, an abort of the call before the append included, deletes every object
- * uploaded so far (best effort; one left behind is unreferenced and goes with the conversation's
- * purge) and rethrows; a store that is not there is the {@link NO_STORAGE} tool error. The
- * conversation's files are announced changed once, when something new was stored.
+ * Stores `files` as artifacts of the call's conversation, all or none (file library spec §4): the
+ * bytes of every file become a ready blob of the org ({@link FileDeliveries.ensureBlob}: an
+ * existing blob of the same sha256 is reused with no upload, else a new one is written intent
+ * first), then all their `artifact_created` events (the call's run and `callId`, the bytes'
+ * sha256, `fileId` = the artifact id, `objectKey` = the blob's key) and their files (owner the
+ * conversation's owner, origin `generated` for a `generated/` source path, else `delivered`) are
+ * written in one transaction. A blob a deletion claimed in between aborts that transaction, and
+ * the bytes are ensured again and the whole unit retried (a bounded number of times). Nothing is
+ * cleaned up on failure: a blob may serve other files, and an unreferenced one is the blob sweep's.
+ * A store that is not there is the {@link NO_STORAGE} tool error. The conversation's files are
+ * announced changed once, when something new was stored.
  *
  * With a run, the same bytes reach the user once per delivery scope (truthful delivery spec §2):
  * a file equal to an earlier file of the call, or a repeat by {@link findRepeat} of the scope's
- * artifacts, is not uploaded and comes back with `repeatOf`. Each event's idempotency key is
+ * artifacts, is not stored and comes back with `repeatOf`. Each event's idempotency key is
  * `artifact:<runId>:<boundary>:<sha256>:<lastOfSource>`, so two parallel calls that both saw no
  * repeat compute the same key: the append's row lock and the unique key give the second the
- * first's event, and the one cleanup rule deletes every object whose returned event is not the
- * one generated for it, making that file a repeat of the returned event. No process state.
+ * first's event (and record no file for it), making that file a repeat of the returned event.
+ * No process state.
  */
 export async function storeArtifacts(
   deps: ArtifactStoreDeps,
@@ -85,17 +97,23 @@ export async function storeArtifacts(
   }));
   /** Per input: the earlier input of the same call it repeats (with a run), else itself. */
   const firstOf = hashes.map((h, i) => (ctx.runId === undefined ? i : hashes.indexOf(h)));
-  const uploaded: string[] = [];
-  /** The inputs written as events, in the order of `events`, with their generated ids. */
-  const written: { index: number; artifactId: string; objectKey: string }[] = [];
-  const events: AppendEvent[] = [];
+  /** The inputs to write as events, in event order, with their generated ids and blobs. */
+  const written: { index: number; artifactId: string; idemKey?: string; blob: BlobRow }[] = [];
   let stored: ConversationEvent[] = [];
   try {
+    const deliveries = deps.deliveries;
+    if (deliveries === undefined) throw new ToolError(NO_STORAGE);
     const scope =
       ctx.runId === undefined
         ? null
         : await deps.eventLog.readDeliveryScope(ctx.conversationId, ctx.runId);
-    const store = deps.storage.kernel(ctx.orgId);
+    const ensure = (i: number) => {
+      const f = files[i] as ArtifactFile;
+      return deliveries.ensureBlob(ctx.orgId, hashes[i] as string, f.data, {
+        contentType: f.contentType,
+        signal: ctx.signal,
+      });
+    };
     for (const [i, f] of files.entries()) {
       if (firstOf[i] !== i) continue;
       const sha256 = hashes[i] as string;
@@ -109,43 +127,51 @@ export async function storeArtifacts(
         idemKey = `artifact:${ctx.runId}:${scope.boundary}:${sha256}:${lastOfSource}`;
       }
       const artifactId = randomUUID();
-      const objectKey = `artifacts/${ctx.conversationId}/${artifactId}`;
-      await store.put(objectKey, f.data, {
-        contentType: f.contentType,
-        size: f.data.byteLength,
-        signal: ctx.signal,
-      });
-      uploaded.push(objectKey);
-      written.push({ index: i, artifactId, objectKey });
-      events.push({
-        type: "artifact_created",
-        ...(ctx.runId !== undefined && { runId: ctx.runId }),
+      written.push({
+        index: i,
+        artifactId,
         ...(idemKey !== undefined && { idemKey }),
-        payload: {
-          artifactId,
-          name: f.name,
-          contentType: f.contentType,
-          size: f.data.byteLength,
-          objectKey,
-          sourcePath: f.sourcePath,
-          callId: ctx.callId,
-          sha256,
-        },
+        blob: await ensure(i),
       });
       out[i] = { artifactId, name: f.name, size: f.data.byteLength };
     }
-    // a call stopped while uploading writes no event: its objects are removed below
+    // a call stopped while storing writes no event (its blobs are shared or the sweep's)
     ctx.signal.throwIfAborted();
-    if (events.length > 0) stored = await deps.eventLog.append(ctx.conversationId, events);
+    for (let attempt = 1; written.length > 0; attempt++) {
+      try {
+        stored = await deliveries.appendDelivered(
+          ctx.orgId,
+          ctx.conversationId,
+          written.map((w) => artifactEvent(ctx, files[w.index] as ArtifactFile, w, hashes)),
+          written.map((w) => {
+            const f = files[w.index] as ArtifactFile;
+            return {
+              id: w.artifactId,
+              blobId: w.blob.id,
+              name: f.name,
+              contentType: f.contentType,
+              size: f.data.byteLength,
+              origin: f.sourcePath.startsWith("generated/") ? "generated" : "delivered",
+              sourcePath: f.sourcePath,
+            };
+          }),
+        );
+        break;
+      } catch (e) {
+        if (!(e instanceof DeliveryBlobGoneError) || attempt >= BLOB_ATTEMPTS) throw e;
+        // a deletion claimed the blob after it was ensured: ensure those bytes again
+        for (const w of written) {
+          if (w.blob.id === e.blobId) w.blob = await ensure(w.index);
+        }
+        ctx.signal.throwIfAborted();
+      }
+    }
   } catch (e) {
-    // no event references them: remove what was uploaded (best effort)
-    await removeObjects(deps, ctx, uploaded);
     if (isStorageUnavailable(e)) throw new ToolError(NO_STORAGE);
     throw e;
   }
-  // the one cleanup rule: an event that is not the one generated (a parallel call appended the
-  // same key first) leaves this upload unreferenced, and the file repeats that event
-  const unused: string[] = [];
+  // an event that is not the one generated (a parallel call appended the same key first): the
+  // file repeats that event
   let fresh = false;
   for (const [j, w] of written.entries()) {
     const ev = stored[j];
@@ -154,10 +180,8 @@ export async function storeArtifacts(
       fresh = true;
       continue;
     }
-    unused.push(w.objectKey);
     setRepeat(out, w.index, payload);
   }
-  await removeObjects(deps, ctx, unused);
   // a file equal to an earlier one of the call repeats whatever that one became
   for (const [i, first] of firstOf.entries()) {
     if (first === i) continue;
@@ -166,6 +190,31 @@ export async function storeArtifacts(
   }
   if (fresh) await deps.eventLog.publishChanged?.(ctx.conversationId, "files");
   return out;
+}
+
+/** The `artifact_created` event of one written file. */
+function artifactEvent(
+  ctx: BuiltinCallContext,
+  f: ArtifactFile,
+  w: { index: number; artifactId: string; idemKey?: string; blob: BlobRow },
+  hashes: readonly string[],
+): AppendEvent {
+  return {
+    type: "artifact_created",
+    ...(ctx.runId !== undefined && { runId: ctx.runId }),
+    ...(w.idemKey !== undefined && { idemKey: w.idemKey }),
+    payload: {
+      artifactId: w.artifactId,
+      fileId: w.artifactId,
+      name: f.name,
+      contentType: f.contentType,
+      size: f.data.byteLength,
+      objectKey: w.blob.objectKey,
+      sourcePath: f.sourcePath,
+      callId: ctx.callId,
+      sha256: hashes[w.index] as string,
+    },
+  };
 }
 
 function setRepeat(
@@ -180,19 +229,4 @@ function setRepeat(
     size: cur.size,
     repeatOf: { artifactId: prior.artifactId, name: prior.name },
   };
-}
-
-/** Deletes `keys` from the org's kernel store, best effort (a failure leaves an orphan object). */
-async function removeObjects(
-  deps: ArtifactStoreDeps,
-  ctx: BuiltinCallContext,
-  keys: readonly string[],
-): Promise<void> {
-  await Promise.all(
-    keys.map((key) =>
-      Promise.resolve()
-        .then(() => deps.storage.kernel(ctx.orgId).delete(key))
-        .catch(() => {}),
-    ),
-  );
 }

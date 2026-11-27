@@ -59,7 +59,8 @@ class UiEmbedTokenBodyDto extends createZodDto(EmbedTokenBody, "UiEmbedTokenBody
  * - `GET  /api/v1/orgs/:orgId/ui/stream`：组织级刷新 SSE（`event: ui`，`data: {"plugin","contribution"}`），
  *   member and above；
  * - `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token` (`{ conversationId?, agentId?, fileId? }`,
- *   or for a skill file's previewer `{ skillId, version?, path }`)
+ *   `{ fileId }` alone for a library file's previewer, or for a skill file's previewer
+ *   `{ skillId, version?, path }`)
  *   → `{ token, src: "/plugin-ui/<plugin>/<path without /ui/>", expiresAt, expiresIn }`: an embed
  *   token (300 seconds, `expiresIn` in seconds, see `embed-token.ts`; `agentId` goes into the
  *   claims, a skill file as `skillFile` with its resolved version). The token is only for the

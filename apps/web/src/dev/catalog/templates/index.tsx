@@ -4,6 +4,7 @@ import { AuthTemplate } from "./auth";
 import { DetailTemplate } from "./detail";
 import { FormTemplate } from "./form";
 import { InboxTemplate } from "./inbox";
+import { LibraryTemplate } from "./library";
 import { ListTemplate } from "./list";
 import { OnboardingTemplate } from "./onboarding";
 import { OverviewTemplate } from "./overview";
@@ -29,9 +30,10 @@ const TEMPLATES: Record<TemplateRoute, () => React.JSX.Element> = {
   "templates/onboarding": OnboardingTemplate,
   "templates/setup": SetupTemplate,
   "templates/shared-file": SharedFileTemplate,
+  "templates/library": LibraryTemplate,
 };
 
-/** `/dev/ui/templates/*`: the 14 page templates, all but the auth and shared file pages in a fake App Shell. */
+/** `/dev/ui/templates/*`: the 15 page templates, all but the auth and shared file pages in a fake App Shell. */
 export function TemplateCatalog({ route }: { route: TemplateRoute }) {
   const Template = TEMPLATES[route];
   return <Template />;

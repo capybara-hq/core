@@ -57,7 +57,7 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>>, i
     [`GET ${base}/tools`]: () => json(200, { tools: [] }),
     [`GET ${base}/files`]: () => json(200, { files: [], next: null }),
     "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
-    "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
+    "GET /api/v1/orgs/o1/files/limits": () => json(200, LIMITS),
     ...extra,
   });
 }
@@ -1565,7 +1565,7 @@ describe("switching conversations", () => {
 
 /** The reads of `/` (the new conversation) on the server. */
 const NEW_CHAT = {
-  "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
+  "GET /api/v1/orgs/o1/files/limits": () => json(200, LIMITS),
   "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
   "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
   "GET /api/v1/orgs/o1/devices": () => json(200, DEVICES),
@@ -1596,7 +1596,7 @@ describe("a new conversation (/)", () => {
         "/api/v1/orgs/o1/agents",
         "/api/v1/orgs/o1/models?kind=chat",
         "/api/v1/orgs/o1/conversations/groups",
-        "/api/v1/orgs/o1/attachments/limits",
+        "/api/v1/orgs/o1/files/limits",
       ]),
     );
     // Nothing is fetched in the browser, and nothing is created before the first send.

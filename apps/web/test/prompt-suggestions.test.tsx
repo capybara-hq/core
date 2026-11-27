@@ -55,7 +55,7 @@ function api(
     [`GET ${BASE}/tools`]: () => json(200, { tools: [] }),
     [`GET ${BASE}/subagents`]: () => json(200, { subagents: [] }),
     "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
-    "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
+    "GET /api/v1/orgs/o1/files/limits": () => json(200, LIMITS),
     ...extra,
   });
 }
@@ -170,8 +170,7 @@ describe("prompt suggestions in the composer", () => {
 
   it("a file dropped on the composer dismisses it", async () => {
     api(FINISHED, {
-      [`POST ${ORG}/attachments`]: () =>
-        json(500, { error: { code: "internal", message: "nope" } }),
+      [`POST ${ORG}/files`]: () => json(500, { error: { code: "internal", message: "nope" } }),
     });
     const { container } = await renderChatRoute();
     await screen.findByText("hi");

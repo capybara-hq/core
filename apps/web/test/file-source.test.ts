@@ -41,7 +41,7 @@ describe("sourceUrls", () => {
     });
   });
 
-  it("a delivered file reads the artifact routes, an upload the attachment route", () => {
+  it("a delivered file reads the artifact routes, an upload the library file route", () => {
     const file = { id: "f1", origin: "delivered" } as FileOutput;
     const s: FileSource = { kind: "conversation", orgId: "o1", conversationId: "c1", file };
     expect(sourceUrls(s)).toEqual({
@@ -50,7 +50,7 @@ describe("sourceUrls", () => {
       content: "/api/v1/orgs/o1/conversations/c1/artifacts/f1/download",
     });
     const up = { ...s, file: { id: "a1", origin: "uploaded" } as FileOutput };
-    expect(sourceUrls(up).download).toBe("/api/v1/orgs/o1/attachments/a1/download");
+    expect(sourceUrls(up).download).toBe("/api/v1/orgs/o1/files/a1/download");
     expect(sourceUrls(up).html).toBeUndefined();
   });
 

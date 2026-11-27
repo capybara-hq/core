@@ -100,6 +100,7 @@ describe("SettingsService", () => {
         reserveTokens: 8000,
         maxOutputTokens: 20_000,
       },
+      promptCache: { longTtl: false },
       htmlRenderCdnAllowlist: [...HTML_CDN_ALLOWLIST_DEFAULT],
     });
     expect(warns).toHaveLength(1);
@@ -296,6 +297,28 @@ describe("SettingsService", () => {
       } catch (e) {
         expect((e as ApiError).code, JSON.stringify(patch)).toBe("validation_failed");
       }
+    }
+  });
+
+  it("promptCache: defaults off, a patch sets longTtl, a misspelled field is refused", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const s = settingsFor(db);
+    const admin = await accountsFor(db).createLocal({
+      login: "prompt-cache-admin",
+      password: "correct horse battery",
+      displayName: "P",
+      superAdmin: true,
+    });
+    expect((await s.get()).promptCache).toEqual({ longTtl: false });
+    const r = await s.update({ promptCache: { longTtl: true } }, admin.id);
+    expect(r.promptCache).toEqual({ longTtl: true });
+    expect((await s.get()).promptCache).toEqual({ longTtl: true });
+    try {
+      // biome-ignore lint/suspicious/noExplicitAny: invalid on purpose
+      await s.update({ promptCache: { longTTL: true } } as any, admin.id);
+      expect.unreachable("a misspelled field is refused");
+    } catch (e) {
+      expect((e as ApiError).code).toBe("validation_failed");
     }
   });
 

@@ -27,8 +27,8 @@ vi.mock("next/navigation", () => ({
 vi.mock("../src/lib/avatar-crop", () => ({
   cropAvatar: vi.fn(async () => new Blob(["png"], { type: "image/png" })),
 }));
-vi.mock("../src/lib/attachments", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/lib/attachments")>()),
+vi.mock("../src/lib/uploads", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/uploads")>()),
   uploadToStorage: vi.fn(async () => {}),
 }));
 
@@ -757,7 +757,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     const saved = agent();
     const calls = stubApi(
       routes(saved, {
-        [`GET ${ORG}/attachments/limits`]: ok(limits(false)),
+        [`GET ${ORG}/files/limits`]: ok(limits(false)),
         [`PATCH ${ORG}/agents/ag1/profile`]: ok({
           profile: { ...saved.profile, avatar: { kind: "preset", id: "fox" }, updatedAt: P2 },
         }),

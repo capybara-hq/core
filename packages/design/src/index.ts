@@ -11,6 +11,7 @@ export {
   type ListDetailFact,
   ListDetailItem,
   ListDetailList,
+  type ListDetailListGroup,
   type ListDetailListItem,
   type ListDetailProps,
 } from "./layout/list-detail";

@@ -4,6 +4,7 @@ import { type ExpressionBuilder, sql } from "kysely";
 import { accessibleTo } from "../conversations/access.js";
 import type { KernelDatabase } from "../db/kernel-schema.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
+import type { BlobRef } from "../files/blobs.service.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -19,44 +20,102 @@ export interface LiveShare {
   orgId: string;
   code: string;
   audience: "internal" | "external";
-  conversationId: string;
+  conversationId: string | null;
   createdBy: string;
   createdByName: string;
   name: string;
   contentType: string;
   size: number;
-  /** The current generation's snapshot, relative to the org's kernel prefix. */
-  objectKey: string;
+  /** The blob of the current generation, read through `BlobsService` (size and etag checked). */
+  blob: BlobRef;
   generation: number;
   expiresAt: Date | null;
 }
 
 /**
- * Whether its creator could still open the conversation the share was taken from: the conversation
- * predicate of `ConversationAccess.isAccessible` with the share's `created_by` as the viewer, over
- * the conversation of the share's org (so a row can never reach another org's conversation).
+ * Whether its creator may still have the share open (file sharing spec §1, file library spec §6).
+ * A share taken from a conversation: the conversation predicate of `ConversationAccess.isAccessible`
+ * with the share's `created_by` as the viewer, over the conversation of the share's org (so a row can
+ * never reach another org's conversation). A share made from the library (no conversation): the
+ * creator's account is active and still a member of the share's org.
  */
 export const creatorStillHasAccess = (eb: ExpressionBuilder<KernelDatabase, "file_shares">) =>
-  eb.exists(
-    eb
-      .selectFrom("conversations")
-      .select(sql`1`.as("one"))
-      .whereRef("conversations.id", "=", "file_shares.conversation_id")
-      .whereRef("conversations.org_id", "=", "file_shares.org_id")
-      .where((c) =>
-        accessibleTo(sql.ref<string>("file_shares.created_by"))(
-          c as unknown as ExpressionBuilder<KernelDatabase, "conversations">,
-        ),
+  eb.or([
+    eb.and([
+      eb("file_shares.conversation_id", "is", null),
+      eb.exists(
+        eb
+          .selectFrom("accounts")
+          .select(sql`1`.as("one"))
+          .whereRef("accounts.id", "=", "file_shares.created_by")
+          .where("accounts.status", "=", "active"),
       ),
-  );
+      eb.exists(
+        eb
+          .selectFrom("memberships")
+          .select(sql`1`.as("one"))
+          .whereRef("memberships.account_id", "=", "file_shares.created_by")
+          .whereRef("memberships.org_id", "=", "file_shares.org_id"),
+      ),
+    ]),
+    eb.exists(
+      eb
+        .selectFrom("conversations")
+        .select(sql`1`.as("one"))
+        .whereRef("conversations.id", "=", "file_shares.conversation_id")
+        .whereRef("conversations.org_id", "=", "file_shares.org_id")
+        .where((c) =>
+          accessibleTo(sql.ref<string>("file_shares.created_by"))(
+            c as unknown as ExpressionBuilder<KernelDatabase, "conversations">,
+          ),
+        ),
+    ),
+  ]);
 
 /**
- * The live check of a share (file sharing spec §1), the one the open routes, the HTML document
- * token and share-scoped embed tokens use: not revoked, not expired, its snapshot not freed, the
- * org not deleted, its creator passes `ConversationAccess.isAccessible`'s predicates (active
- * account, still a member, the conversation and its tree root not deleted, the agent not deleted
- * and still visible to the creator), and for an external share the effective external sharing
- * switch allows it now. One query (plus the platform switch for an external share, read live), no
+ * Whether the share's bytes may still be served (file library spec §6): it points at a blob of its
+ * org that is `ready`, and the library file it was made from is not deleted and is still its
+ * creator's. Only a conversation's share may name no file (`source_file_id` is set null when the
+ * file row is purged; the conversation checks still hold it); a library share whose file row is
+ * gone never serves again, whether or not its revoke landed. `object_key` is never read: it stays only for old replicas
+ * during a rolling deploy.
+ */
+export const shareSourceOk = (eb: ExpressionBuilder<KernelDatabase, "file_shares">) =>
+  eb.and([
+    eb.exists(
+      eb
+        .selectFrom("blobs")
+        .select(sql`1`.as("one"))
+        .whereRef("blobs.id", "=", "file_shares.blob_id")
+        .whereRef("blobs.org_id", "=", "file_shares.org_id")
+        .where("blobs.status", "=", "ready"),
+    ),
+    eb.or([
+      eb.and([
+        eb("file_shares.source_file_id", "is", null),
+        eb("file_shares.conversation_id", "is not", null),
+      ]),
+      eb.exists(
+        eb
+          .selectFrom("files")
+          .select(sql`1`.as("one"))
+          .whereRef("files.id", "=", "file_shares.source_file_id")
+          .whereRef("files.org_id", "=", "file_shares.org_id")
+          .whereRef("files.account_id", "=", "file_shares.created_by")
+          .where("files.status", "<>", "deleted"),
+      ),
+    ]),
+  ]);
+
+/**
+ * The live check of a share (file sharing spec §1, file library spec §6), the one the open routes,
+ * the HTML document token and share-scoped embed tokens use: not revoked, not expired, its blob
+ * `ready` and its source file not deleted and still the creator's ({@link shareSourceOk}), the org
+ * not deleted, its creator passes {@link creatorStillHasAccess} (for a conversation's share
+ * `ConversationAccess.isAccessible`'s predicates: active account, still a member, the conversation
+ * and its tree root not deleted, the agent not deleted and still visible to the creator; for a
+ * library share: active account, still a member), and for an external share the effective external
+ * sharing switch allows it now. One query (plus the platform switch for an external share, read live), no
  * cache: a cause going away (the switch back on) makes a share not expired live again.
  */
 @Injectable()
@@ -109,6 +168,11 @@ export class ShareLiveness {
       .selectFrom("file_shares")
       .innerJoin("orgs", "orgs.id", "file_shares.org_id")
       .innerJoin("accounts as creator", "creator.id", "file_shares.created_by")
+      .innerJoin("blobs", (j) =>
+        j
+          .onRef("blobs.id", "=", "file_shares.blob_id")
+          .onRef("blobs.org_id", "=", "file_shares.org_id"),
+      )
       .select([
         "file_shares.id",
         "file_shares.org_id",
@@ -120,14 +184,16 @@ export class ShareLiveness {
         "file_shares.name",
         "file_shares.content_type",
         "file_shares.size",
-        "file_shares.object_key",
         "file_shares.generation",
         "file_shares.expires_at",
         "orgs.settings",
+        "blobs.id as blob_id",
+        "blobs.object_key as blob_object_key",
+        "blobs.size as blob_size",
+        "blobs.etag as blob_etag",
       ])
       .where("orgs.deleted_at", "is", null)
       .where("file_shares.revoked_at", "is", null)
-      .where("file_shares.object_key", "is not", null)
       .where((eb) =>
         eb.or([
           eb("file_shares.expires_at", "is", null),
@@ -136,6 +202,9 @@ export class ShareLiveness {
       )
       .where((eb) =>
         creatorStillHasAccess(eb as unknown as ExpressionBuilder<KernelDatabase, "file_shares">),
+      )
+      .where((eb) =>
+        shareSourceOk(eb as unknown as ExpressionBuilder<KernelDatabase, "file_shares">),
       );
     if (by.code !== undefined) q = q.where("file_shares.code", "=", by.code);
     if (by.id !== undefined) q = q.where("file_shares.id", "=", by.id);
@@ -153,7 +222,7 @@ export class ShareLiveness {
       );
     }
     const row = await q.executeTakeFirst();
-    if (!row || row.object_key === null) return null;
+    if (!row) return null;
     if (row.audience === "external") {
       const platform = await readExternalSharing(this.db.db, this.config, this.log);
       const org = parseOrgSettings(row.settings).externalSharing;
@@ -170,7 +239,12 @@ export class ShareLiveness {
       name: row.name,
       contentType: row.content_type,
       size: Number(row.size),
-      objectKey: row.object_key,
+      blob: {
+        id: row.blob_id,
+        objectKey: row.blob_object_key,
+        size: Number(row.blob_size),
+        etag: row.blob_etag,
+      },
       generation: row.generation,
       expiresAt: row.expires_at,
     };

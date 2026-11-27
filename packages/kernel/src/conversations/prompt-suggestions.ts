@@ -15,6 +15,8 @@ import { loadSnapshotMedia } from "../evals/reconstruct.js";
 import { type CaseSnapshot, takeSnapshot, toEvents } from "../evals/snapshot.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { ExtensionHost } from "../extensions/host.js";
+import { ConversationMedia } from "../files/conversation-media.js";
+import { LibraryReadModule } from "../files/library-read.module.js";
 import { audit } from "../identity/audit.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { SettingsService } from "../identity/settings.js";
@@ -38,8 +40,6 @@ import {
 import { consumeModelStream, deltaChars } from "../runtime/model-call.js";
 import { type BoundProvider, ProviderRegistry, ProvidersModule } from "../runtime/providers.js";
 import { UsageReportJobs, UsageReportJobsModule } from "../runtime/usage-report-jobs.js";
-import { AttachmentsModule } from "./attachments.module.js";
-import { AttachmentsService } from "./attachments.service.js";
 import { type AppendEvent, EventLog, EventLogModule } from "./event-log.js";
 import type { ConversationEvent, EventPayload } from "./events.js";
 import {
@@ -154,8 +154,8 @@ export class PromptSuggestionGenerator {
     /** The platform's compaction settings (the org's reserve for the fit guard). */
     @Inject(SettingsService) private readonly settings: Pick<SettingsService, "get">,
     /** The run's media, as the run's steps load it. */
-    @Inject(AttachmentsService)
-    private readonly attachments: Pick<AttachmentsService, "mediaInfo" | "fetchMedia">,
+    @Inject(ConversationMedia)
+    private readonly media: Pick<ConversationMedia, "mediaInfo" | "fetchMedia">,
     @Inject(PromptSuggestionStore)
     private readonly store: Pick<PromptSuggestionStore, "isFresh" | "put">,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
@@ -221,9 +221,8 @@ export class PromptSuggestionGenerator {
       let media: Awaited<ReturnType<typeof loadSnapshotMedia>>;
       try {
         media = await loadSnapshotMedia(snapshot, last.seq, info, {
-          info: (orgId, convId, ids) => this.attachments.mediaInfo(orgId, convId, ids),
-          fetch: (orgId, convId, ids, caps) =>
-            this.attachments.fetchMedia(orgId, convId, ids, caps),
+          info: (orgId, convId, ids) => this.media.mediaInfo(orgId, convId, ids),
+          fetch: (orgId, convId, ids, caps) => this.media.fetchMedia(orgId, convId, ids, caps),
         });
       } catch {
         return skip("media_unavailable");
@@ -267,6 +266,7 @@ export class PromptSuggestionGenerator {
           (ev) => {
             streamedChars += deltaChars(ev);
           },
+          this.log,
         );
       } catch (err) {
         if (shutdown.aborted) {
@@ -621,7 +621,8 @@ const PROMPT_SUGGESTION_QUEUE_MODULE = QueueModule.registerQueue(PROMPT_SUGGESTI
     UsageReportJobsModule,
     OrgSettingsModule,
     IdentityModule,
-    AttachmentsModule,
+    // the run's media: library files the conversation refers to, and `read` copies
+    LibraryReadModule,
     PROMPT_SUGGESTION_QUEUE_MODULE,
   ],
   providers: [PromptSuggestionStore, PromptSuggestionGenerator, PromptSuggestionQueue],

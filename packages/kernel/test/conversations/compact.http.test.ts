@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -38,6 +40,7 @@ import {
  * `usage`; a second request while it is queued returns it, an active ordinary run is
  * `conversation.busy`, and eval or other people's conversations are 404. A manual compaction ignores
  * `keepRecentTurns` (maintainer decision 2026-11-28): every turn before the latest is summarized.
+ * It always summarizes the transcript, on a model the in-context gate lists too (ruling R13).
  */
 
 /** What the provider received (step requests; compaction requests apart). */
@@ -93,6 +96,7 @@ beforeEach(async () => {
     "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings",
   );
   await redis.flushdb();
+  capture.reset();
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
@@ -123,6 +127,33 @@ const ev = <T extends ConversationEvent["type"]>(events: ConversationEvent[], ty
 
 const compact = (conv: string, orgId: string, req: Req = owner) =>
   req({ method: "POST", url: compactUrl(orgId, conv), payload: {} });
+
+/** Starts a compact run and waits until it completed; returns its id. */
+async function compacted(conv: string, orgId: string): Promise<string> {
+  const res = await compact(conv, orgId);
+  expect(res.statusCode, res.body).toBe(202);
+  const { runId } = res.json() as { runId: string };
+  await waitFor(
+    async () => {
+      const row = await db
+        .selectFrom("runs")
+        .select("status")
+        .where("id", "=", runId)
+        .executeTakeFirst();
+      return row?.status === "completed" ? row : null;
+    },
+    30_000,
+    "compact run completed",
+  );
+  return runId;
+}
+
+/** The ids of the tool calls in `req` that no tool result answers. */
+const unpairedCalls = (req: ModelRequest): string[] => {
+  const blocks = req.messages.flatMap((m) => (m.role === "system" ? [] : m.content));
+  const answered = new Set(blocks.flatMap((b) => (b.type === "tool_result" ? [b.callId] : [])));
+  return blocks.flatMap((b) => (b.type === "tool_call" && !answered.has(b.id) ? [b.id] : []));
+};
 
 describe("manual compaction", () => {
   it("compacts an idle conversation in a compact run: one summary and its usage, step 0, no model step", async () => {
@@ -155,6 +186,11 @@ describe("manual compaction", () => {
 
     const summaries = ev(events, "compaction_summary").filter((e) => e.runId === runId);
     expect(summaries).toHaveLength(1);
+    // ruling R13: model-fake passes the in-context gate, yet a manual compaction summarizes the
+    // transcript
+    expect(summaries[0]?.payload.method).toBe("transcript");
+    expect(capture.compactions).toHaveLength(1);
+    expect(capture.compactions[0]?.system).not.toEqual(capture.sent.at(-1)?.system);
     const usage = ev(events, "usage").filter(
       (e) => e.runId === runId && e.payload.purpose === "compaction",
     );
@@ -163,6 +199,40 @@ describe("manual compaction", () => {
     // no user message, no model step
     expect(ev(events, "model_call").filter((e) => e.runId === runId)).toEqual([]);
     expect(ev(events, "assistant_message").filter((e) => e.runId === runId)).toEqual([]);
+  });
+
+  it("after a finished run, keeps the #990 plan on a gated model: every turn before the latest summarized, the latest turn verbatim, then the new message", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const before = ev(await eventsOf(db, conv), "user_message");
+    const latest = before.at(-1);
+    const runId = await compacted(conv, orgId);
+    const events = await eventsOf(db, conv);
+    const summary = ev(events, "compaction_summary").find((e) => e.runId === runId);
+    // ruling R13: the transcript path with the manual plan, never the in-context one
+    expect(summary?.payload.method).toBe("transcript");
+    // the latest turn fits the manual tail budget whole: the summary ends right before it, and
+    // its opener is kept, not re-rendered
+    expect(summary?.payload.coversUpToSeq).toBe((latest?.seq ?? 0) - 1);
+    expect(summary?.payload.openingSeqs).toBeUndefined();
+
+    capture.reset();
+    await postMessage(owner, orgId, conv, "echo:after");
+    await waitForTerminal(db, conv, 8, 30_000);
+    const request = capture.sent[0];
+    const head = request?.messages[0];
+    const blocks = Array.isArray(head?.content) ? head.content : [];
+    const first = blocks[0]?.type === "text" ? blocks[0].text : "";
+    expect(first).toMatch(/^<conversation_summary>/);
+    const userTexts = (request?.messages ?? [])
+      .filter((m) => m.role === "user")
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .flatMap((b) => (b.type === "text" ? [b.text] : []));
+    expect(userTexts.slice(1).filter((t) => !t.startsWith("From "))).toEqual([
+      `echo:turn 5 ${"words ".repeat(40)}`,
+      "echo:after",
+    ]);
+    expect(request?.messages.some((m) => m.role === "assistant")).toBe(true);
   });
 
   it("records a compaction with nothing to summarize and still finishes the compact run", async () => {
@@ -242,6 +312,40 @@ describe("manual compaction", () => {
     expect(userTexts.filter((t) => t === "loop:1")).toHaveLength(1);
     expect(userTexts.at(-1)).toBe("after");
     expect(rest.filter((m) => m.role === "assistant").length).toBeGreaterThan(1);
+  });
+
+  it("right after an aborted run whose reply has an unanswered tool call: a transcript summary, every call paired", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 5);
+    // a step stopped mid-reply: the assistant message keeps its tool call, no result follows
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "assistant_message",
+        runId: randomUUID(),
+        payload: {
+          step: 1,
+          content: [
+            { type: "text", text: "Let me look." },
+            { type: "tool_call", id: "call-aborted", name: "ReadToolOutput", input: {} },
+          ],
+          stopReason: "aborted",
+        },
+      },
+    ]);
+    const runId = await compacted(conv, orgId);
+    const events = await eventsOf(db, conv);
+    const summaries = ev(events, "compaction_summary").filter((e) => e.runId === runId);
+    // ruling R13: the transcript path
+    expect(summaries.map((e) => e.payload.method)).toEqual(["transcript"]);
+    expect(ev(events, "compaction_failed")).toEqual([]);
+    expect(capture.compactions).toHaveLength(1);
+    expect(unpairedCalls(capture.compactions[0] as ModelRequest)).toEqual([]);
+    // the aborted reply is in the kept latest turn: the next request still pairs its call
+    capture.reset();
+    await postMessage(owner, orgId, conv, "echo:after");
+    await waitForTerminal(db, conv, 7, 30_000);
+    expect(capture.sent[0]).toBeDefined();
+    expect(unpairedCalls(capture.sent[0] as ModelRequest)).toEqual([]);
   });
 
   it("returns the compact run already queued instead of starting a second one", async () => {

@@ -1,6 +1,7 @@
 import {
   getShareMeta,
   listFileShares,
+  listLibraryFileShares,
   listOrgShares,
   renderSharePreview,
   shareText,
@@ -17,6 +18,14 @@ export const fileSharesQuery = (orgId: string, conversationId: string, fileId: s
   defineQuery({
     key: keys.org(orgId).conversation(conversationId).fileShares(fileId),
     fn: () => listFileShares(orgId, conversationId, fileId),
+    freshness: "live",
+  });
+
+/** A library file's shares (any version of it) and the org's share policy (file library §6). */
+export const libraryFileSharesQuery = (orgId: string, fileId: string) =>
+  defineQuery({
+    key: keys.org(orgId).libraryFileShares(fileId),
+    fn: () => listLibraryFileShares(orgId, fileId),
     freshness: "live",
   });
 

@@ -6,7 +6,7 @@ import {
   fileContentType,
   precheckFile,
   typeList,
-} from "../src/lib/attachments";
+} from "../src/lib/uploads";
 
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -136,12 +136,12 @@ describe("extension acceptance", () => {
     expect(precheckFile({ name: "page.html", type: "text/html", size: 3 }, limits)).toBeNull();
     expect(precheckFile({ name: "续约.DOCX", type: "", size: 3 }, limits)).toBeNull();
     expect(precheckFile({ name: "a.exe", type: "application/x-msdownload", size: 3 }, limits)).toBe(
-      "attachment.type_not_allowed",
+      "file.type_not_allowed",
     );
     // the size limit still applies to an extension-accepted file
     expect(
       precheckFile({ name: "big.zip", type: "application/zip", size: limits.maxBytes + 1 }, limits),
-    ).toBe("attachment.too_large");
+    ).toBe("file.too_large");
   });
 
   it("the accept attribute offers the types and the .ext entries", () => {

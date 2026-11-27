@@ -24,6 +24,7 @@ import type {
 } from "../../lib/conversations";
 import { deviceCeilingMark, deviceState } from "../../lib/devices";
 import type { FileOutput } from "../../lib/files";
+import { libraryHref } from "../../lib/library-href";
 import { myRole, roleAtLeast } from "../../lib/members";
 import { conversationAutomationsQuery } from "../../lib/query/automations";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -215,6 +216,8 @@ export function ContextSection({
  * "from <sub-agent>"); a row opens the file panel.
  */
 export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id: string): void }) {
+  const me = useContext(SessionContext)?.me;
+  const member = me !== undefined && roleAtLeast(myRole(me), "member");
   return (
     <FilesBlock
       files={files.map((f) => ({
@@ -222,6 +225,7 @@ export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id
         name: f.name,
         badge: typeBadge(f.name, f.contentType),
         size: formatBytes(f.size),
+        ...(member && f.status === "available" ? { href: libraryHref(f.id) } : {}),
         ...(f.from ? { from: f.from.name } : {}),
         ...(f.origin === "uploaded" ? { uploaded: true } : {}),
       }))}

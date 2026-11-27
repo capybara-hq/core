@@ -12,7 +12,8 @@ export const HTML_TOKEN_SKEW_SECONDS = 30;
 
 /**
  * What a document token names (file sharing spec §4): one version of a conversation file for its
- * owner (the right panel), or one generation of a share (the share page). Re-checked live on use.
+ * owner (the right panel), one of the account's library files (`library`, the Files page; file
+ * library spec §6), or one generation of a share (the share page). Re-checked live on use.
  */
 export type HtmlClaims =
   | {
@@ -23,17 +24,20 @@ export type HtmlClaims =
       accountId: string;
       exp: number;
     }
+  | { kind: "library"; orgId: string; fileId: string; accountId: string; exp: number }
   | { kind: "share"; shareId: string; generation: number; exp: number };
 
 /** Claims before issuing (the token's expiry is set by {@link HtmlTokens.issue}). */
 export type HtmlClaimsInput =
   | Omit<Extract<HtmlClaims, { kind: "file" }>, "exp">
+  | Omit<Extract<HtmlClaims, { kind: "library" }>, "exp">
   | Omit<Extract<HtmlClaims, { kind: "share" }>, "exp">;
 
 const TOKEN_MAX = 2048;
 const MAC_LEN = 32;
 const B64URL = /^[A-Za-z0-9_-]+$/;
 const FILE_KEYS = ["kind", "orgId", "conversationId", "fileId", "accountId", "exp"];
+const LIBRARY_KEYS = ["kind", "orgId", "fileId", "accountId", "exp"];
 const SHARE_KEYS = ["kind", "shareId", "generation", "exp"];
 
 const isId = (v: unknown): v is string => typeof v === "string" && v !== "" && v.length <= 100;
@@ -64,6 +68,17 @@ function parseClaims(v: unknown): HtmlClaims | null {
       kind: "file",
       orgId: c.orgId,
       conversationId: c.conversationId,
+      fileId: c.fileId,
+      accountId: c.accountId,
+      exp: c.exp,
+    };
+  }
+  if (c.kind === "library") {
+    if (!sameKeys(c, LIBRARY_KEYS)) return null;
+    if (!isId(c.orgId) || !isId(c.fileId) || !isId(c.accountId)) return null;
+    return {
+      kind: "library",
+      orgId: c.orgId,
       fileId: c.fileId,
       accountId: c.accountId,
       exp: c.exp,

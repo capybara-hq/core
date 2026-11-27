@@ -1,6 +1,6 @@
 import { apiFetch } from "./api";
-import { type CreatedAttachment, uploadToStorage } from "./attachments";
 import type { Account } from "./session";
+import { type CreatedAttachment, uploadToStorage } from "./uploads";
 
 /** What `POST /api/v1/me/avatar/uploads` answers (`uploadId` where an attachment has `id`). */
 type CreatedAvatarUpload = Omit<CreatedAttachment, "id"> & { uploadId: string };

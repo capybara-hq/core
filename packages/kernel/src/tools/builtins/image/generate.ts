@@ -14,6 +14,7 @@ import type { AppendEvent, EventLog } from "../../../conversations/event-log.js"
 import { isValidArtifactName } from "../../../conversations/events.js";
 import type { DeviceUnusableReason } from "../../../devices/conversation-devices.js";
 import { ApiError } from "../../../errors.js";
+import type { FileDeliveries } from "../../../files/deliveries.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import type { KernelDb } from "../../../infra/database/kernel-db.js";
 import {
@@ -48,7 +49,7 @@ import {
   type StoredArtifact,
   storeArtifacts,
 } from "../artifacts.js";
-import { findConversationFile } from "../conversation-files.js";
+import { type ConversationFileDeps, findConversationFile } from "../conversation-files.js";
 import {
   checkFilePathShape,
   checkToolWritable,
@@ -257,8 +258,10 @@ export interface GenerateImageDeps {
   purposes: Pick<ModelPurposesService, "resolve">;
   providers: Pick<ProviderRegistry, "resolve">;
   storage: Pick<StorageService, "kernel" | "available">;
-  eventLog: Pick<EventLog, "append" | "notify" | "readDeliveryScope"> &
+  eventLog: Pick<EventLog, "notify" | "readDeliveryScope"> &
     Partial<Pick<EventLog, "publishChanged">>;
+  /** The images' blobs and their delivery transaction ({@link storeArtifacts}). */
+  deliveries: Pick<FileDeliveries, "ensureBlob" | "appendDelivered">;
   stepLog: Pick<StepLog, "appendCounted" | "appendReported" | "appendAudited">;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "warn">;
@@ -267,6 +270,8 @@ export interface GenerateImageDeps {
   /** The artifact lookup of `reference_images`. */
   db: Pick<KernelDb, "selectFrom">;
   attachments: Pick<AttachmentsService, "openForConversation">;
+  /** The library files of `reference_images` (attached or delivered in the conversation set). */
+  files: ConversationFileDeps["files"];
   /** The device copy of `file_path` (the sandbox tools' own dependencies). */
   sandbox: SandboxToolDeps;
 }
@@ -440,7 +445,7 @@ async function resolveReferences(
   for (const [k, id] of ids.entries()) {
     try {
       const found = await findConversationFile(
-        { db: deps.db, attachments: deps.attachments, storage: deps.storage },
+        { db: deps.db, attachments: deps.attachments, files: deps.files },
         { orgId: ctx.orgId, conversationId: ctx.conversationId, rootConversationId: root, id },
       );
       if (found === null) throw new ToolError(unknownReferenceText(k));

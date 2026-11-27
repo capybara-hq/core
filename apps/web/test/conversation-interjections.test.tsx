@@ -46,7 +46,7 @@ function api(events: unknown[]) {
     [`GET ${BASE}/tools`]: () => json(200, { tools: [] }),
     [`GET ${BASE}/files`]: () => json(200, { files: [], next: null }),
     "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
-    "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
+    "GET /api/v1/orgs/o1/files/limits": () => json(200, LIMITS),
     [`GET ${BASE}/events`]: () => json(200, { events }),
   });
 }

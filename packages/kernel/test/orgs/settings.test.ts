@@ -554,6 +554,7 @@ describe("org deviceNetwork", () => {
       publicUrl: false,
       // the platform's compaction defaults the org page follows (context compaction spec §4.8)
       compaction: COMPACTION_SETTINGS.parse({}),
+      promptCache: { longTtl: false },
       externalSharing: { value: "deny", source: "default" },
       shareMaxExpiryDays: 30,
       promptSuggestions: "on",

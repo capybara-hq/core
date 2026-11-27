@@ -11,6 +11,7 @@ import {
   type MediaBytes,
   type MediaInfo,
   readImageWindow,
+  summaryText,
   TEXT_INLINE_MAX_CHARS,
 } from "../../../src/runtime/context/build.js";
 import { guardToolPairs } from "../../../src/runtime/context/pairing.js";
@@ -168,6 +169,50 @@ describe("buildModelRequest", () => {
     log.user("hello?");
     const { request } = build(log);
     expect(request.messages.map((m) => m.role)).toEqual(["user", "user"]);
+  });
+
+  describe("the framing of an in-context summary (idle compaction spec §9.4)", () => {
+    const IN_CONTEXT_TAIL =
+      "are the most recent ones in the conversation, kept verbatim. The summary covers what came before them; something it says is still pending may already have happened in them.";
+    /** The opening statement every summary's framing starts with (maintainer decision 2026-11-28). */
+    const COMPACTED =
+      "The earlier part of this conversation was compacted into the summary above and is no longer shown verbatim.";
+
+    it("summaryText: an in-context summary with a kept tail says the summary covers what came before it", () => {
+      expect(summaryText("S.", { openers: 0, keptTail: true, method: "in_context" })).toBe(
+        `<conversation_summary>\nS.\n</conversation_summary>\n\n${COMPACTED} The messages after this summary ${IN_CONTEXT_TAIL} Continue the work from where it left off.`,
+      );
+      expect(summaryText("S.", { openers: 1, keptTail: true, method: "in_context" })).toBe(
+        `<conversation_summary>\nS.\n</conversation_summary>\n\n${COMPACTED} The message that opened the current turn follows, shown again verbatim; the summary covers it. The messages after those ${IN_CONTEXT_TAIL} Continue the work from where it left off.`,
+      );
+    });
+
+    it("summaryText: a transcript summary (or one with no method) keeps the written-without-seeing sentence", () => {
+      const transcript = summaryText("S.", { openers: 0, keptTail: true, method: "transcript" });
+      expect(transcript).toContain("The summary was written without seeing them");
+      expect(summaryText("S.", { openers: 0, keptTail: true })).toBe(transcript);
+    });
+
+    it("summaryText: an in-context summary with no tail (boundary mode all) ends with the continue line only", () => {
+      expect(summaryText("S.", { openers: 0, keptTail: false, method: "in_context" })).toBe(
+        `<conversation_summary>\nS.\n</conversation_summary>\n\n${COMPACTED} Continue the work from where it left off.`,
+      );
+    });
+
+    it("a logged in_context summary with messages after it renders the new sentence", () => {
+      const log = new Log();
+      log.turn(1);
+      const covered = log.events.at(-1)?.seq ?? 0;
+      log.turn(2);
+      log.summary(covered, "They asked one question.", undefined, "in_context");
+      log.user("question 3");
+      const { request } = build(log);
+      const head = request.messages[0]?.content;
+      expect(Array.isArray(head) && head[0]).toEqual({
+        type: "text",
+        text: `<conversation_summary>\nThey asked one question.\n</conversation_summary>\n\n${COMPACTED} The messages after this summary ${IN_CONTEXT_TAIL} Continue the work from where it left off.`,
+      });
+    });
   });
 
   it("after compaction: starts with the summary and drops events it covers", () => {
@@ -407,7 +452,7 @@ describe("buildModelRequest", () => {
     const fileBlock = (name?: string): LogContentBlock => ({
       type: "file",
       mediaType: XLSX,
-      source: { kind: "ref", attachmentId: id },
+      source: { kind: "ref", fileId: id },
       ...(name !== undefined && { name }),
       size: 1_234_567,
     });
@@ -475,7 +520,7 @@ describe("buildModelRequest", () => {
       const block: LogContentBlock = {
         type: "document",
         mediaType: "text/markdown",
-        source: { kind: "ref", attachmentId: id },
+        source: { kind: "ref", fileId: id },
         name: "notes.md",
       };
       const textBuild = (text: string) =>
@@ -899,9 +944,7 @@ describe("images from Read (vision-read design §1.4)", () => {
       {
         type: "user_message",
         payload: {
-          content: [
-            { type: "image", mediaType: "image/png", source: { kind: "ref", attachmentId: id } },
-          ],
+          content: [{ type: "image", mediaType: "image/png", source: { kind: "ref", fileId: id } }],
           authorAccountId: "acc-1",
         },
       },
@@ -916,7 +959,7 @@ describe("images from Read (vision-read design §1.4)", () => {
             {
               type: "image",
               mediaType: "image/png",
-              source: { kind: "ref", attachmentId: id },
+              source: { kind: "ref", fileId: id },
               name: "cat.png",
             },
           ],

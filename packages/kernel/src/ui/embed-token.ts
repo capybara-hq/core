@@ -76,7 +76,8 @@ function decodeStrict(s: string): Buffer | null {
 /**
  * 逐字段核对声明：只认已知字段、类型正确，返回只含已知字段的新对象。The scope decides the shape:
  * `"platform"` exactly when `orgId` is absent and `role` is `"superAdmin"`, with no
- * `conversationId` / `agentId` / `fileId`; `"org"` needs an `orgId` and one of the org roles;
+ * `conversationId` / `agentId` / `fileId`; `"org"` needs an `orgId` and one of the org roles (a
+ * `fileId` names a file of `conversationId`, or without one a library file of the account's own);
  * `"share"` (file sharing spec §7) see {@link parseShareClaims}. `shareId` / `generation` only in
  * the share scope. `skillFile` (a skill file's previewer, skill file browser spec) only in the org
  * scope and never with `conversationId`, `agentId` or `fileId`.
@@ -114,10 +115,13 @@ function parseClaims(v: unknown): EmbedClaims | null {
   if (c.scope !== "org" || !isId(c.orgId) || !ROLES.has(c.role)) return null;
   if (c.conversationId !== undefined && !isId(c.conversationId)) return null;
   if (c.agentId !== undefined && (!isId(c.agentId) || c.conversationId !== undefined)) return null;
-  if (c.fileId !== undefined && (!isId(c.fileId) || c.conversationId === undefined)) return null;
+  // a file of the conversation, or without one a library file of the account's own
+  if (c.fileId !== undefined && (!isId(c.fileId) || c.agentId !== undefined)) return null;
   let skillFile: OrgEmbedClaims["skillFile"];
   if (c.skillFile !== undefined) {
-    if (c.conversationId !== undefined || c.agentId !== undefined) return null;
+    if (c.conversationId !== undefined || c.agentId !== undefined || c.fileId !== undefined) {
+      return null;
+    }
     skillFile = parseSkillFile(c.skillFile) ?? undefined;
     if (skillFile === undefined) return null;
   }

@@ -12,24 +12,30 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
+import { BlobSweepJob } from "../../src/files/blob-sweep.job.js";
 import { createLogger } from "../../src/log.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
-import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
 import { ShareLiveness } from "../../src/shares/liveness.js";
+import { revokeSharesIn } from "../../src/shares/revoke.js";
 import { SHARE_CODE_RE } from "../../src/shares/share-code.js";
-import { shareObjectDeleteJobId } from "../../src/shares/share-objects.js";
-import { ShareSweepJob } from "../../src/shares/sweep.job.js";
+import { ShareObjects } from "../../src/shares/share-objects.js";
+import { SharesService } from "../../src/shares/shares.service.js";
+import { RETAIN_DAYS, ShareSweepJob } from "../../src/shares/sweep.job.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import {
+  blobKeyOf,
+  markFileDeleted,
+  migrateLegacyFiles,
+  seedLibraryFile,
+} from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
   createConv,
@@ -40,13 +46,15 @@ import {
   session,
   startKernel,
   type TestKernel,
+  waitFor,
 } from "../helpers/runs.js";
 
 /**
- * File sharing spec §1, §2, §9, §10: creating, refreshing, revoking and listing shares of a
- * conversation file (a snapshot copied under `shares/<id>/<generation>`), and their lifecycle:
- * deleting the conversation or offboarding the creator revokes them in the same transaction; the
- * other causes stop them through the live check until the daily sweep revokes them.
+ * File sharing spec §1, §2, §9, §10 and file library spec §6: creating, refreshing, revoking and
+ * listing shares of a conversation file or a library file (the share points at the file's blob:
+ * nothing is copied), and their lifecycle: deleting the conversation or the file, or offboarding
+ * the creator, revokes them in the same transaction; the other causes stop them through the live
+ * check until the daily sweep revokes them; the sweep lets go of old shares' blobs.
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
@@ -57,8 +65,6 @@ let s3: TestS3;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
-/** While true, the outbox's adds to the maintenance queue fail (the owed row stays). */
-let failMaintenance = false;
 
 beforeAll(async () => {
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -84,15 +90,7 @@ beforeAll(async () => {
         },
       },
     ),
-    {
-      logger: createLogger("error", { write: () => {} }),
-      overrides: [
-        {
-          provide: OUTBOX_DISPATCH_FAILS,
-          useValue: (queue: string) => failMaintenance && queue === MAINTENANCE_QUEUE_NAME,
-        },
-      ],
-    },
+    { logger: createLogger("error", { write: () => {} }) },
   );
 });
 afterAll(async () => {
@@ -111,7 +109,6 @@ let agentId: string;
 let conv: string;
 
 beforeEach(async () => {
-  failMaintenance = false;
   await truncateTables(
     raw,
     "capybara.accounts, capybara.orgs, capybara.deployment_settings, capybara.audit_events, capybara.outbox",
@@ -164,6 +161,8 @@ async function deliver(name: string, text: string, sourcePath = `/workspace/${na
       },
     },
   ]);
+  // logged the way deliveries were before the file library, then migrated (0190)
+  await migrateLegacyFiles(db);
   return { artifactId, objectKey };
 }
 
@@ -190,6 +189,7 @@ async function attach(name: string, text: string): Promise<string> {
       etag,
     })
     .execute();
+  await migrateLegacyFiles(db);
   return id;
 }
 
@@ -210,7 +210,7 @@ interface ShareView {
   id: string;
   code: string;
   audience: "internal" | "external";
-  conversationId: string;
+  conversationId: string | null;
   fileId: string;
   sourcePath: string | null;
   name: string;
@@ -247,11 +247,23 @@ const shareRow = (id: string) =>
   db.selectFrom("file_shares").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
 const auditsOf = (action: string) =>
   db.selectFrom("audit_events").selectAll().where("action", "=", action).execute();
-const owedDeletes = (jobId: string) =>
-  db.selectFrom("outbox").selectAll().where("job_id", "=", jobId).execute();
+/** Every outbox row owed for a share snapshot (shares on blobs owe none). */
+const owedShareDeletes = () =>
+  db.selectFrom("outbox").selectAll().where("job_name", "=", "share-object-delete").execute();
+/** The object keys under `shares/` (no share writes there any more). */
+const shareKeys = async () => (await store().list("shares/")).items.map((o) => o.key);
+/** The blob a file points at. */
+const blobOf = async (fileId: string) =>
+  (
+    await db
+      .selectFrom("files")
+      .select("blob_id")
+      .where("id", "=", fileId)
+      .executeTakeFirstOrThrow()
+  ).blob_id;
 
 describe("creating a share", () => {
-  it("the owner shares a delivered file internally, never expiring: a snapshot, a row, an audit", async () => {
+  it("the owner shares a delivered file internally, never expiring: a row on its blob, an audit", async () => {
     const { artifactId } = await deliver("report.html", "<h1>v1</h1>");
     const s = await share(artifactId);
     expect(s.code).toMatch(SHARE_CODE_RE);
@@ -273,12 +285,16 @@ describe("creating a share", () => {
       revokeReason: null,
       newerVersion: false,
     });
-    expect(await readObject(`shares/${s.id}/1`)).toBe("<h1>v1</h1>");
+    // nothing is copied: the row points at the file's blob
+    expect(await shareKeys()).toEqual([]);
     const row = await shareRow(s.id);
     expect(row).toMatchObject({
       org_id: orgId,
       created_by: aliceId,
-      object_key: `shares/${s.id}/1`,
+      conversation_id: conv,
+      source_file_id: artifactId,
+      blob_id: await blobOf(artifactId),
+      object_key: null,
       generation: 1,
       size: "11",
     });
@@ -292,7 +308,8 @@ describe("creating a share", () => {
     const id = await attach("notes.txt", "hello");
     const s = await share(id);
     expect(s).toMatchObject({ fileId: id, sourcePath: null, name: "notes.txt", size: 5 });
-    expect(await readObject(`shares/${s.id}/1`)).toBe("hello");
+    expect((await shareRow(s.id)).blob_id).toBe(await blobOf(id));
+    expect(await shareKeys()).toEqual([]);
   });
 
   it("refuses a member who does not own the conversation, a guest of no session and bad input", async () => {
@@ -372,9 +389,11 @@ describe("creating a share", () => {
     expect(s.audience).toBe("external");
     const days = (Date.parse(s.expiresAt as string) - Date.parse(s.createdAt)) / 86_400_000;
     expect(days).toBeCloseTo(7, 3);
-    // nothing was copied for the refused attempts
-    const keys = (await store().list("shares/")).items.map((o) => o.key);
-    expect(keys).toEqual([`shares/${s.id}/1`]);
+    // one row for the accepted attempt, nothing copied
+    expect((await db.selectFrom("file_shares").select("id").execute()).map((x) => x.id)).toEqual([
+      s.id,
+    ]);
+    expect(await shareKeys()).toEqual([]);
   });
 
   it("a removed delivered file and an upload whose object changed are unavailable (410)", async () => {
@@ -426,7 +445,26 @@ describe("creating a share", () => {
 });
 
 describe("refreshing a share", () => {
-  it("a newer version is offered, then copied as generation 2 under the same code; the old snapshot is owed for deletion", async () => {
+  it("a newer version whose blob is not ready is not offered (refresh would refuse it)", async () => {
+    const v1 = await deliver("nr.html", "one");
+    const s = await share(v1.artifactId);
+    const v2 = await deliver("nr.html", "two!", "/workspace/nr.html");
+    const offered = async () => {
+      const listed = await alice({ method: "GET", url: sharesUrl(v2.artifactId) });
+      expect(listed.statusCode).toBe(200);
+      return (listed.json() as { shares: ShareView[] }).shares.map((x) => [x.id, x.newerVersion]);
+    };
+    const v2Blob = await blobOf(v2.artifactId);
+    await db.updateTable("blobs").set({ status: "gone" }).where("id", "=", v2Blob).execute();
+    try {
+      expect(await offered()).toEqual([[s.id, false]]);
+    } finally {
+      await db.updateTable("blobs").set({ status: "ready" }).where("id", "=", v2Blob).execute();
+    }
+    expect(await offered()).toEqual([[s.id, true]]);
+  });
+
+  it("a newer version is offered, then the share points at it as generation 2 under the same code; nothing is copied or owed", async () => {
     const v1 = await deliver("r.html", "one");
     const s = await share(v1.artifactId);
     const v2 = await deliver("r.html", "two!", "/workspace/r.html");
@@ -435,7 +473,6 @@ describe("refreshing a share", () => {
     const shares = (listed.json() as { shares: ShareView[] }).shares;
     expect(shares.map((x) => [x.id, x.newerVersion])).toEqual([[s.id, true]]);
 
-    failMaintenance = true;
     const r = await alice({ method: "POST", url: `/api/v1/orgs/${orgId}/shares/${s.id}/refresh` });
     expect(r.statusCode, r.body).toBe(200);
     const after = (r.json() as { share: ShareView }).share;
@@ -447,28 +484,18 @@ describe("refreshing a share", () => {
       size: 4,
       newerVersion: false,
     });
-    expect(await readObject(`shares/${s.id}/2`)).toBe("two!");
-    const owed = await owedDeletes(shareObjectDeleteJobId(s.id, 1));
-    expect(owed).toHaveLength(1);
-    expect(owed[0]).toMatchObject({
-      queue: MAINTENANCE_QUEUE_NAME,
-      job_name: "share-object-delete",
-      org_id: orgId,
+    expect(await shareRow(s.id)).toMatchObject({
+      generation: 2,
+      file_id: v2.artifactId,
+      source_file_id: v2.artifactId,
+      blob_id: await blobOf(v2.artifactId),
     });
-    expect(owed[0]?.data).toEqual({
-      orgId,
-      shareId: s.id,
-      generation: 1,
-      objectKey: `shares/${s.id}/1`,
-    });
+    expect(await shareKeys()).toEqual([]);
+    expect(await owedShareDeletes()).toEqual([]);
+    // the previous version's bytes are its file's, untouched
+    expect(await readObject(v1.objectKey)).toBe("one");
     const audits = await auditsOf("share.refreshed");
     expect(audits.map((a) => a.detail)).toEqual([{ shareId: s.id, generation: 2 }]);
-
-    failMaintenance = false;
-    await sql`UPDATE capybara.outbox SET next_attempt_at = now()`.execute(raw);
-    await drainOutbox(k.app, { jobId: shareObjectDeleteJobId(s.id, 1) });
-    await expect.poll(() => readObject(`shares/${s.id}/1`), { timeout: 20_000 }).toBeNull();
-    expect(await readObject(`shares/${s.id}/2`)).toBe("two!");
   });
 
   it("skips a newest version whose object is gone; with nothing newer it is 410", async () => {
@@ -483,7 +510,7 @@ describe("refreshing a share", () => {
       fileId: v2.artifactId,
       generation: 2,
     });
-    expect(await readObject(`shares/${s.id}/2`)).toBe("two");
+    expect((await shareRow(s.id)).blob_id).toBe(await blobOf(v2.artifactId));
     r = await alice({ method: "POST", url: `/api/v1/orgs/${orgId}/shares/${s.id}/refresh` });
     expect(r.statusCode).toBe(410);
     expect(errCode(r)).toBe("share.file_unavailable");
@@ -510,17 +537,16 @@ describe("refreshing a share", () => {
 });
 
 describe("revoking a share", () => {
-  it("an org admin revokes a member's share: 204, reason admin, the snapshot owed for deletion; twice is one audit", async () => {
+  it("an org admin revokes a member's share: 204, reason admin, nothing owed; twice is one audit", async () => {
     const v1 = await deliver("r.html", "one");
     const s = await share(v1.artifactId);
-    failMaintenance = true;
     const del = () => owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/shares/${s.id}` });
     let r = await del();
     expect(r.statusCode, r.body).toBe(204);
     const row = await shareRow(s.id);
     expect(row).toMatchObject({ revoke_reason: "admin", revoked_by: ownerId });
     expect(row.revoked_at).not.toBeNull();
-    expect(await owedDeletes(shareObjectDeleteJobId(s.id, 1))).toHaveLength(1);
+    expect(await owedShareDeletes()).toEqual([]);
     r = await del();
     expect(r.statusCode).toBe(204);
     const audits = await auditsOf("share.revoked");
@@ -532,15 +558,9 @@ describe("revoking a share", () => {
     ]);
     r = await alice({ method: "POST", url: `/api/v1/orgs/${orgId}/shares/${s.id}/refresh` });
     expect(errCode(r)).toBe("share.not_found");
-
-    failMaintenance = false;
-    await sql`UPDATE capybara.outbox SET next_attempt_at = now()`.execute(raw);
-    await drainOutbox(k.app, { jobId: shareObjectDeleteJobId(s.id, 1) });
-    await expect.poll(() => readObject(`shares/${s.id}/1`), { timeout: 20_000 }).toBeNull();
-    // the freed snapshot's key is cleared on the kept row
-    await expect
-      .poll(async () => (await shareRow(s.id)).object_key, { timeout: 20_000 })
-      .toBeNull();
+    // the bytes are the file's: still there, and the row keeps its blob until the sweep frees it
+    expect(await readObject(v1.objectKey)).toBe("one");
+    expect((await shareRow(s.id)).blob_id).toBe(await blobOf(v1.artifactId));
   });
 
   it("the creator revokes with reason creator; another member gets 404", async () => {
@@ -626,10 +646,10 @@ describe("liveness (one query for the open routes)", () => {
       name: "r.html",
       contentType: "text/html",
       size: 3,
-      objectKey: `shares/${s.id}/1`,
       generation: 1,
       expiresAt: null,
     });
+    expect(got?.blob.id).toBe((await shareRow(s.id)).blob_id);
     expect(await live.byId(s.id)).toMatchObject({ code: s.code });
     expect(await live.byId(s.id, 1)).not.toBeNull();
     expect(await live.byId(s.id, 2)).toBeNull();
@@ -773,19 +793,8 @@ async function shareAs(
 /** Whether the share opens now (the check every open route makes). */
 const opens = async (code: string) => (await k.app.get(ShareLiveness).byCode(code)) !== null;
 
-/** Delivers the owed snapshot deletions and waits for the share's snapshot to be gone. */
-async function freed(s: ShareView): Promise<void> {
-  failMaintenance = false;
-  await sql`UPDATE capybara.outbox SET next_attempt_at = now()`.execute(raw);
-  await drainOutbox(k.app, { jobId: shareObjectDeleteJobId(s.id, s.generation) });
-  await expect
-    .poll(() => readObject(`shares/${s.id}/${s.generation}`), { timeout: 20_000 })
-    .toBeNull();
-  await expect.poll(async () => (await shareRow(s.id)).object_key, { timeout: 20_000 }).toBeNull();
-}
-
 describe("revokes that come with a lifecycle event", () => {
-  it("deleting the conversation revokes its shares in the same transaction and owes their snapshots", async () => {
+  it("deleting the conversation revokes its shares in the same transaction, owing nothing", async () => {
     const s = await shareAs(alice, (await deliver("a.html", "one")).artifactId);
     expect(await opens(s.code)).toBe(true);
 
@@ -812,15 +821,13 @@ describe("revokes that come with a lifecycle event", () => {
     expect(kept.deleted_at).toBeNull();
     expect(await opens(s.code)).toBe(true);
 
-    failMaintenance = true;
     const r = await alice({ method: "DELETE", url: `/api/v1/orgs/${orgId}/conversations/${conv}` });
     expect(r.statusCode, r.body).toBe(204);
     expect(await opens(s.code)).toBe(false);
     const row = await shareRow(s.id);
     expect(row).toMatchObject({ revoke_reason: "conversation_deleted", revoked_by: null });
     expect(row.revoked_at).not.toBeNull();
-    expect(await owedDeletes(shareObjectDeleteJobId(s.id, 1))).toHaveLength(1);
-    await freed(s);
+    expect(await owedShareDeletes()).toEqual([]);
   });
 
   it("removing a member revokes their shares, not another member's", async () => {
@@ -833,12 +840,11 @@ describe("revokes that come with a lifecycle event", () => {
         conv: bobConv,
       },
     );
-    failMaintenance = true;
     const r = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/members/${aliceId}` });
     expect(r.statusCode, r.body).toBe(204);
     expect(await opens(mine.code)).toBe(false);
     expect(await shareRow(mine.id)).toMatchObject({ revoke_reason: "member_offboarded" });
-    expect(await owedDeletes(shareObjectDeleteJobId(mine.id, 1))).toHaveLength(1);
+    expect(await owedShareDeletes()).toEqual([]);
     const offboarded = await db
       .selectFrom("audit_events")
       .select("detail")
@@ -848,9 +854,6 @@ describe("revokes that come with a lifecycle event", () => {
     // bob's share is untouched
     expect(await opens(theirs.code)).toBe(true);
     expect(await shareRow(theirs.id)).toMatchObject({ revoked_at: null, revoke_reason: null });
-    expect(await owedDeletes(shareObjectDeleteJobId(theirs.id, 1))).toEqual([]);
-    await freed(mine);
-    expect(await readObject(`shares/${theirs.id}/1`)).toBe("two");
   });
 });
 
@@ -882,7 +885,7 @@ describe("causes the live check covers", () => {
 });
 
 describe("the daily sweep", () => {
-  it("revokes a share whose agent was deleted (creator_lost_access) and owes its snapshot; live shares stay", async () => {
+  it("revokes a share whose agent was deleted (creator_lost_access); live shares stay", async () => {
     const lost = await shareAs(alice, (await deliver("a.html", "one")).artifactId);
     const otherAgent = await createAgent(owner, orgId);
     const bobConv = await createConv(bob, orgId, otherAgent);
@@ -899,19 +902,349 @@ describe("the daily sweep", () => {
     expect(await opens(lost.code)).toBe(false);
     expect((await shareRow(lost.id)).revoked_at).toBeNull();
 
-    failMaintenance = true;
     const swept = await k.app.get(ShareSweepJob).runOnce();
     expect(swept.revoked).toBe(1);
     expect(await shareRow(lost.id)).toMatchObject({
       revoke_reason: "creator_lost_access",
       revoked_by: null,
     });
-    expect(await owedDeletes(shareObjectDeleteJobId(lost.id, 1))).toHaveLength(1);
+    expect(await owedShareDeletes()).toEqual([]);
     expect(await opens(live.code)).toBe(true);
     expect((await shareRow(live.id)).revoked_at).toBeNull();
-    await freed(lost);
-    expect(await readObject(`shares/${live.id}/1`)).toBe("two");
     // a second run finds nothing to do
     expect((await k.app.get(ShareSweepJob).runOnce()).revoked).toBe(0);
+  });
+});
+
+const fileSharesUrl = (fileId: string) => `/api/v1/orgs/${orgId}/files/${fileId}/shares`;
+
+/** A ready library file of alice's (an upload made on the Files page). */
+const libraryFile = (name: string, text: string, accountId = aliceId) =>
+  seedLibraryFile(
+    k.app,
+    orgId,
+    accountId,
+    { name, contentType: "text/plain", bytes: Buffer.from(text) },
+    { status: "ready" },
+  );
+
+/** Shares a library file as alice (internal, never expiring). */
+async function shareFile(fileId: string, as: Req = alice): Promise<ShareView> {
+  const r = await as({
+    method: "POST",
+    url: fileSharesUrl(fileId),
+    payload: { audience: "internal", expiresInDays: null },
+  });
+  expect(r.statusCode, r.body).toBe(201);
+  return (r.json() as { share: ShareView }).share;
+}
+
+/** The public content route of a share, as a signed-in member (internal shares need one). */
+const openContent = (code: string, as: Req = alice) =>
+  as({ method: "GET", url: `/api/v1/s/${code}/content` });
+
+describe("shares of library files", () => {
+  it("a library file is shared without a conversation: the row points at its blob, nothing is copied", async () => {
+    const id = await libraryFile("lib.txt", "library bytes");
+    const s = await shareFile(id);
+    expect(s).toMatchObject({
+      conversationId: null,
+      fileId: id,
+      sourcePath: null,
+      name: "lib.txt",
+      size: 13,
+      generation: 1,
+      state: "live",
+    });
+    expect(await shareRow(s.id)).toMatchObject({
+      conversation_id: null,
+      source_file_id: id,
+      blob_id: await blobOf(id),
+      object_key: null,
+    });
+    expect(await shareKeys()).toEqual([]);
+    const opened = await openContent(s.code, bob);
+    expect(opened.statusCode, opened.body).toBe(200);
+    expect(opened.body).toBe("library bytes");
+
+    const listed = await alice({ method: "GET", url: fileSharesUrl(id) });
+    expect(listed.statusCode, listed.body).toBe(200);
+    expect((listed.json() as { shares: ShareView[] }).shares.map((x) => x.id)).toEqual([s.id]);
+    // the personal list shows it too
+    const mine = await alice({ method: "GET", url: `/api/v1/orgs/${orgId}/shares` });
+    expect((mine.json() as { shares: ShareView[] }).shares.map((x) => x.id)).toEqual([s.id]);
+    // bytes replaced under the blob's key are not the snapshot: never served
+    await store().put(await blobKeyOf(db, id), Buffer.from("other bytes!!!"), {
+      contentType: "text/plain",
+      size: 14,
+    });
+    const replaced = await openContent(s.code, bob);
+    expect(replaced.statusCode).toBe(404);
+    expect(errCode(replaced)).toBe("share.not_found");
+  });
+
+  it("only the file's owner shares or lists it, and only while it is ready with its bytes stored", async () => {
+    const id = await libraryFile("lib.txt", "x");
+    for (const r of [
+      await bob({
+        method: "POST",
+        url: fileSharesUrl(id),
+        payload: { audience: "internal", expiresInDays: null },
+      }),
+      await bob({ method: "GET", url: fileSharesUrl(id) }),
+      await alice({ method: "GET", url: fileSharesUrl(randomUUID()) }),
+    ]) {
+      expect(r.statusCode).toBe(404);
+      expect(errCode(r)).toBe("file.not_found");
+    }
+    const draft = await seedLibraryFile(k.app, orgId, aliceId, {
+      name: "d.txt",
+      contentType: "text/plain",
+      bytes: Buffer.from("d"),
+    });
+    let r = await alice({
+      method: "POST",
+      url: fileSharesUrl(draft),
+      payload: { audience: "internal", expiresInDays: null },
+    });
+    expect(errCode(r)).toBe("file.not_found");
+    const gone = await libraryFile("gone.txt", "g");
+    await store().delete(await blobKeyOf(db, gone));
+    r = await alice({
+      method: "POST",
+      url: fileSharesUrl(gone),
+      payload: { audience: "internal", expiresInDays: null },
+    });
+    expect(r.statusCode).toBe(410);
+    expect(errCode(r)).toBe("share.file_unavailable");
+    expect(await db.selectFrom("file_shares").select("id").execute()).toEqual([]);
+  });
+
+  it("deleting the file stops its shares at once and revokes them (file_deleted), from the library or a conversation", async () => {
+    const lib = await libraryFile("lib.txt", "x");
+    const libShare = await shareFile(lib);
+    const { artifactId } = await deliver("a.html", "one");
+    const convShare = await share(artifactId);
+    const otherShare = await share((await deliver("b.html", "two")).artifactId);
+    expect(await opens(libShare.code)).toBe(true);
+    expect(await opens(convShare.code)).toBe(true);
+
+    // the file deleted: the live check refuses its shares even before the revoke lands
+    await markFileDeleted(db, lib);
+    expect(await opens(libShare.code)).toBe(false);
+    await markFileDeleted(db, artifactId);
+    expect(await opens(convShare.code)).toBe(false);
+
+    // what deleting a file does in its transaction (the Files page's DELETE)
+    const n = await db
+      .transaction()
+      .execute((trx) => revokeSharesIn(trx, { orgId, fileIds: [lib, artifactId] }, "file_deleted"));
+    expect(n).toBe(2);
+    for (const s of [libShare, convShare]) {
+      expect(await shareRow(s.id)).toMatchObject({
+        revoke_reason: "file_deleted",
+        revoked_by: null,
+      });
+      const r = await openContent(s.code);
+      expect(r.statusCode).toBe(404);
+      expect(errCode(r)).toBe("share.not_found");
+    }
+    expect(await owedShareDeletes()).toEqual([]);
+    // another file's share is untouched
+    expect(await opens(otherShare.code)).toBe(true);
+    expect((await shareRow(otherShare.id)).revoked_at).toBeNull();
+  });
+
+  it("a library share whose deleted file row is purged stays dead, revoked or not; the blob sweep revokes it", async () => {
+    // the row purged without a revoke: source_file_id goes null, the link must not come back
+    const lost = await libraryFile("lost.txt", "lost");
+    const lostShare = await shareFile(lost);
+    await markFileDeleted(db, lost);
+    await db.deleteFrom("files").where("id", "=", lost).execute();
+    expect(await shareRow(lostShare.id)).toMatchObject({ source_file_id: null, revoked_at: null });
+    expect(await opens(lostShare.code)).toBe(false);
+    expect((await openContent(lostShare.code)).statusCode).toBe(404);
+    const mine = await alice({ method: "GET", url: `/api/v1/orgs/${orgId}/shares` });
+    expect(
+      (mine.json() as { shares: ShareView[] }).shares.find((x) => x.id === lostShare.id),
+    ).toMatchObject({ state: "suspended", newerVersion: false });
+
+    // the blob sweep's purge revokes the shares of the rows it deletes, in the same transaction
+    const old = await libraryFile("old.txt", "old");
+    const oldShare = await shareFile(old);
+    await sql`UPDATE capybara.files SET status = 'deleted', deleted_at = now() - interval '400 days'
+      WHERE id = ${old}`.execute(raw);
+    await k.app.get(BlobSweepJob).runOnce();
+    expect(await db.selectFrom("files").select("id").where("id", "=", old).execute()).toEqual([]);
+    expect(await shareRow(oldShare.id)).toMatchObject({
+      source_file_id: null,
+      revoke_reason: "file_deleted",
+    });
+    expect(await opens(oldShare.code)).toBe(false);
+  });
+
+  it("a create racing the file's deletion leaves no live share: it waits for the delete, then refuses", async () => {
+    const id = await libraryFile("race.txt", "race");
+    let settled = false;
+    let pending: ReturnType<Req> | undefined;
+    await db.transaction().execute(async (trx) => {
+      await trx
+        .updateTable("files")
+        .set({ status: "deleted", deleted_at: sql<Date>`now()` })
+        .where("id", "=", id)
+        .execute();
+      pending = alice({
+        method: "POST",
+        url: fileSharesUrl(id),
+        payload: { audience: "internal", expiresInDays: null },
+      });
+      void pending.then(() => {
+        settled = true;
+      });
+      // the create blocks on the file row the delete holds
+      await waitFor(
+        async () => {
+          if (settled) throw new Error("the create did not wait for the file row");
+          const r = await sql<{ n: number }>`select count(*)::int as n from pg_stat_activity
+            where wait_event_type = 'Lock' and query ilike '%files%for share%'`.execute(raw);
+          return (r.rows[0]?.n ?? 0) > 0;
+        },
+        10_000,
+        "the create waiting for the file row",
+      );
+      await revokeSharesIn(trx, { orgId, fileIds: [id] }, "file_deleted");
+    });
+    const r = await (pending as ReturnType<Req>);
+    expect(r.statusCode, r.body).toBe(410);
+    expect(errCode(r)).toBe("share.file_unavailable");
+    expect(await db.selectFrom("file_shares").select("id").execute()).toEqual([]);
+  });
+
+  it("update to latest repoints a library share of a delivered file at the newer version", async () => {
+    const v1 = await deliver("r.html", "one");
+    const s = await shareFile(v1.artifactId);
+    expect(s).toMatchObject({ conversationId: null, sourcePath: "/workspace/r.html" });
+    const v2 = await deliver("r.html", "two!");
+    const listed = await alice({ method: "GET", url: fileSharesUrl(v1.artifactId) });
+    expect((listed.json() as { shares: ShareView[] }).shares).toMatchObject([
+      { id: s.id, newerVersion: true },
+    ]);
+    const r = await alice({ method: "POST", url: `/api/v1/orgs/${orgId}/shares/${s.id}/refresh` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((r.json() as { share: ShareView }).share).toMatchObject({
+      generation: 2,
+      fileId: v2.artifactId,
+      size: 4,
+      newerVersion: false,
+    });
+    expect(await shareRow(s.id)).toMatchObject({
+      source_file_id: v2.artifactId,
+      blob_id: await blobOf(v2.artifactId),
+    });
+    expect((await openContent(s.code)).body).toBe("two!");
+    expect(await shareKeys()).toEqual([]);
+
+    // an upload has no versions
+    const up = await shareFile(await libraryFile("u.txt", "u"));
+    const refused = await alice({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/shares/${up.id}/refresh`,
+    });
+    expect(refused.statusCode).toBe(400);
+    expect(errCode(refused)).toBe("validation_failed");
+  });
+
+  it("the anonymous guest cannot share, from the library or a conversation", async () => {
+    const guestId = (
+      await accountsFor(db).createLocal({ login: "guest", password: PW, displayName: "Guest" })
+    ).id;
+    await testMembers(db).add(orgId, guestId, "member", ownerId);
+    await db
+      .insertInto("org_anonymous_accounts")
+      .values({ org_id: orgId, account_id: guestId })
+      .execute();
+    const guest = await session(k, "guest");
+    const id = await libraryFile("g.txt", "g", guestId);
+    const body = { audience: "internal", expiresInDays: null };
+    for (const url of [fileSharesUrl(id), sharesUrl(randomUUID())]) {
+      const r = await guest({ method: "POST", url, payload: body });
+      expect(r.statusCode, r.body).toBe(409);
+      expect(errCode(r)).toBe("member.anonymous_guest");
+    }
+    await expect(
+      k.app
+        .get(SharesService)
+        .createForFile(orgId, guestId, id, { audience: "internal", expiresInDays: null }),
+    ).rejects.toMatchObject({ code: "member.anonymous_guest" });
+    expect(await db.selectFrom("file_shares").select("id").execute()).toEqual([]);
+  });
+
+  it("a share migrated from a snapshot (object_key and blob_id both set) serves through its blob", async () => {
+    const { artifactId } = await deliver("m.html", "migrated");
+    // a share written the old way: its own copy under shares/<id>/1, named by object_key
+    const id = randomUUID();
+    const code = "Mig1rated0";
+    const key = `shares/${id}/1`;
+    await store().put(key, Buffer.from("snapshot"), { contentType: "text/html", size: 8 });
+    await db
+      .insertInto("file_shares")
+      .values({
+        id,
+        org_id: orgId,
+        code,
+        conversation_id: conv,
+        file_id: artifactId,
+        source_path: "/workspace/m.html",
+        created_by: aliceId,
+        audience: "internal",
+        name: "m.html",
+        content_type: "text/html",
+        size: 8,
+        object_key: key,
+      })
+      .execute();
+    await migrateLegacyFiles(db);
+    const row = await shareRow(id);
+    expect(row.blob_id).not.toBeNull();
+    expect(row.object_key).toBe(key);
+    const r = await openContent(code);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.body).toBe("snapshot");
+
+    // revoked, then a deletion owed before the deploy arrives: the key is a blob's, so it stays
+    const del = await alice({ method: "DELETE", url: `/api/v1/orgs/${orgId}/shares/${id}` });
+    expect(del.statusCode).toBe(204);
+    await k.app
+      .get(ShareObjects)
+      .deleteObject({ orgId, shareId: id, generation: 1, objectKey: key });
+    expect(await readObject(key)).toBe("snapshot");
+    expect((await shareRow(id)).object_key).toBe(key);
+  });
+});
+
+describe("the daily sweep frees old shares' blobs", () => {
+  it("a share revoked or expired more than the retention ago lets go of its blob; recent ones keep it", async () => {
+    const oldRevoked = await shareFile(await libraryFile("a.txt", "a"));
+    const oldExpired = await shareFile(await libraryFile("b.txt", "b"));
+    const recent = await shareFile(await libraryFile("c.txt", "c"));
+    const live = await shareFile(await libraryFile("d.txt", "d"));
+    const ago = `${RETAIN_DAYS + 1} days`;
+    await sql`UPDATE capybara.file_shares SET revoked_at = now() - ${ago}::interval,
+      revoke_reason = 'creator' WHERE id = ${oldRevoked.id}`.execute(raw);
+    await sql`UPDATE capybara.file_shares SET expires_at = now() - ${ago}::interval
+      WHERE id = ${oldExpired.id}`.execute(raw);
+    await sql`UPDATE capybara.file_shares SET revoked_at = now() - interval '1 day',
+      revoke_reason = 'creator' WHERE id = ${recent.id}`.execute(raw);
+
+    const swept = await k.app.get(ShareSweepJob).runOnce();
+    expect(swept).toEqual({ revoked: 0, freed: 2 });
+    expect((await shareRow(oldRevoked.id)).blob_id).toBeNull();
+    expect((await shareRow(oldExpired.id)).blob_id).toBeNull();
+    expect((await shareRow(recent.id)).blob_id).not.toBeNull();
+    expect((await shareRow(live.id)).blob_id).not.toBeNull();
+    expect(await opens(live.code)).toBe(true);
+    // the bytes are the files': the share sweep deletes nothing
+    expect(await readObject(await blobKeyOf(db, oldRevoked.fileId))).toBe("a");
+    expect((await k.app.get(ShareSweepJob).runOnce()).freed).toBe(0);
   });
 });

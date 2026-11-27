@@ -1,7 +1,8 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { builtinPreview } from "../src/lib/files";
+import { FilesSection } from "../src/components/conversation/PropertiesSections";
+import { builtinPreview, type FileOutput } from "../src/lib/files";
 import { type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -13,6 +14,7 @@ import {
   userMsg,
 } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
+import { ME, pageElement } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
@@ -173,6 +175,14 @@ describe("the file panel", () => {
     expect(within(panel).getAllByRole("button", { name: /Download/ }).length).toBeGreaterThan(0);
   });
 
+  it("the header links the file to its place in the library", async () => {
+    api();
+    await openAt("#file=f1");
+    const panel = await screen.findByRole("complementary", { name: "report.docx" });
+    const link = within(panel).getByRole("link", { name: "View in Files" });
+    expect(link.getAttribute("href")).toBe("/files#item=f1");
+  });
+
   it("a .csv renders a table; the header switches between the conversation's files", async () => {
     api();
     await openAt("#file=f2");
@@ -260,7 +270,7 @@ describe("the file panel", () => {
     const user = userEvent.setup();
     await user.click(within(panel).getAllByRole("button", { name: "Download" })[0] as HTMLElement);
     await vi.waitFor(() =>
-      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/attachments/a1/download$`)),
+      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/files/a1/download$`)),
     );
     await user.click(within(panel).getByRole("button", { name: /brief\.docx/ }));
     const menu = await screen.findByRole("menu");
@@ -272,7 +282,7 @@ describe("the file panel", () => {
     ]);
     await user.click(within(menu).getByText("photo.png"));
     const img = await screen.findByRole("img", { name: "photo.png" });
-    expect(img.getAttribute("src")).toBe(`${ORG}/attachments/a2/download`);
+    expect(img.getAttribute("src")).toBe(`${ORG}/files/a2/download`);
   });
 
   it("a click on the panel's image opens the viewer; new tab opens the inline URL", async () => {
@@ -352,7 +362,7 @@ describe("the file panel", () => {
     // not listed (yet): the click downloads it, never doing nothing
     await user.click(within(log).getByRole("button", { name: /fresh\.pdf/ }));
     await vi.waitFor(() =>
-      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/attachments/a9/download$`)),
+      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/files/a9/download$`)),
     );
     expect(window.location.hash).toBe("#file=a1");
   });
@@ -446,6 +456,35 @@ describe("the file panel: HTML and Share", () => {
     await openAt("#file=f4");
     panel = await screen.findByRole("complementary", { name: "old.txt" });
     expect(within(panel).queryByRole("button", { name: /^Share/ })).toBeNull();
+    expect(within(panel).queryByRole("link", { name: "View in Files" })).toBeNull();
+  });
+});
+
+describe("the properties Files section", () => {
+  const as = (role: "guest" | "member") => ({
+    ...ME,
+    account: { ...ME.account, isSuperAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
+  });
+  const show = (files: unknown[], role: "guest" | "member") =>
+    render(
+      pageElement(<FilesSection files={files as FileOutput[]} onOpen={() => {}} />, {
+        me: as(role),
+      }),
+    );
+
+  it("each available row links to its place in the library", () => {
+    show([DOCX, CSV], "member");
+    const links = screen.getAllByRole("link", { name: "View in Files" });
+    expect(links.map((l) => l.getAttribute("href"))).toEqual(["/files#item=f1", "/files#item=f2"]);
+  });
+
+  it("a removed file has no link, and a guest sees none", () => {
+    show([DOCX, GONE], "member");
+    expect(screen.getAllByRole("link", { name: "View in Files" })).toHaveLength(1);
+    cleanup();
+    show([DOCX], "guest");
+    expect(screen.queryByRole("link", { name: "View in Files" })).toBeNull();
   });
 });
 

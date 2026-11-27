@@ -36,9 +36,9 @@ export class MeController {
   setPreferences() {}
 }
 
-@Controller("api/v1/orgs/:orgId/attachments")
+@Controller("api/v1/orgs/:orgId/files")
 @OrgAction("skills.read")
-export class AttachmentsController {
+export class LibraryFilesController {
   @Get("limits")
   limits() {}
 
@@ -47,4 +47,7 @@ export class AttachmentsController {
 
   @Post(":id/finalize")
   finalize() {}
+
+  @Delete(":id/draft")
+  discard() {}
 }

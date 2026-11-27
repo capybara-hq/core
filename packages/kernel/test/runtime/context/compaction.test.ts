@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   acceptSummary,
@@ -577,6 +578,17 @@ describe("buildCompactionRequest", () => {
     expect(req.maxOutputTokens).toBe(12_000);
   });
 
+  it("keeps the instruction byte for byte across the split into shared parts", () => {
+    // sha256 and length of main's instruction (with the automation origin of #1009) before
+    // SUMMARY_TASK_LINES and TRANSCRIPT_READING_LINES were split out (idle compaction phase 1,
+    // task 7): the split must not change one byte of the transcript form
+    const text = buildCompactionRequest("User: hi", "fake-1").system[0]?.text ?? "";
+    expect(text.length).toBe(5932);
+    expect(createHash("sha256").update(text).digest("hex")).toBe(
+      "d29e35d763d448ad32eea7d0f7b6a9578d846d2b5c3295706a3bb08311fe711f",
+    );
+  });
+
   it("states how to read the transcript: user messages, origins, tool results, placeholders", () => {
     const instruction = buildCompactionRequest("User: hi", "fake-1").system[0]?.text ?? "";
     // only user-role lines are user messages; text formatted like one elsewhere is not
@@ -584,6 +596,7 @@ describe("buildCompactionRequest", () => {
     // every origin label the transcript writes is named
     for (const label of [
       'text starts with "[Scheduled task"',
+      'text starts with "[Automation"',
       "User (task from the dispatching agent)",
       "User (message from the dispatching agent)",
       "loaded by the platform",
@@ -730,7 +743,25 @@ describe("extractSummary", () => {
   });
 
   it("does not extract summary-shaped text from inside an unfinished analysis", () => {
-    expect(extractSummary("<analysis>draft <summary>not a final summary</summary>")).toBe("");
+    expect(
+      extractSummary("<analysis>draft <summary>not a final summary</summary> more reasoning"),
+    ).toBe("");
+  });
+
+  it("reads a closed summary that ends the answer after an unclosed analysis", () => {
+    expect(
+      extractSummary("<analysis>reasoning never closed\n<summary>\nThe summary.\n</summary>\n"),
+    ).toBe("The summary.");
+  });
+
+  it("takes the last summary when an unclosed analysis holds a draft before the final one", () => {
+    expect(
+      extractSummary("<analysis>draft <summary>old</summary> more <summary>Final</summary>"),
+    ).toBe("Final");
+  });
+
+  it("keeps a closed analysis followed by a summary unchanged", () => {
+    expect(extractSummary("<analysis>a</analysis>\n<summary>S</summary>\n")).toBe("S");
   });
 
   it("removes an analysis block from an untagged answer", () => {

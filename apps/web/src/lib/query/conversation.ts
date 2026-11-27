@@ -3,7 +3,6 @@ import { listModels } from "../agents";
 import { ApiClientError } from "../api";
 import { getApproval } from "../approvals";
 import { getConversationDevice } from "../artifacts";
-import { getAttachmentLimits } from "../attachments";
 import {
   getConnector,
   getMyToolPolicies,
@@ -41,6 +40,7 @@ import { getQuestion } from "../questions";
 import { listInvocableSkills } from "../skills";
 import { toolKeysOf } from "../tool-keys";
 import { listUiContributions, type UiLocale } from "../ui";
+import { getUploadLimits } from "../uploads";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 import { membersQuery } from "./members";
@@ -302,7 +302,7 @@ export const connectorKindsQuery = (orgId: string) =>
 export const attachmentLimitsQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).attachmentLimits(),
-    fn: () => getAttachmentLimits(orgId),
+    fn: () => getUploadLimits(orgId),
     freshness: "orgConfig",
   });
 

@@ -88,6 +88,7 @@ import { SHARE_BLOCKS } from "./share-blocks";
 import { type SidebarFixture, sidebarProps } from "./shell-fixture";
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
 import { listDetailBlocks } from "./templates/inbox";
+import { libraryBlocks } from "./templates/library";
 import { THEME_SWATCH_BLOCKS } from "./theme-swatch-blocks";
 import { TOUCH_BLOCKS } from "./touch-blocks";
 import { TREND_CHART_BLOCKS } from "./trend-chart-blocks";
@@ -1432,4 +1433,5 @@ export const REFERENCE_BLOCKS = {
   ...SHEET_BLOCKS,
   ...SHARE_BLOCKS,
   "list-detail": listDetailBlocks,
+  "template-library": libraryBlocks,
 } as const;

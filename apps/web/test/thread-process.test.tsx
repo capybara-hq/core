@@ -63,7 +63,7 @@ function api(
     [`GET ${ORG}/agents`]: () => json(200, AGENTS),
     [`GET ${ORG}/models`]: () => json(200, MODELS),
     [`GET ${ORG}/ui/contributions`]: () => json(200, { items: [] }),
-    [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+    [`GET ${ORG}/files/limits`]: () => json(200, LIMITS),
     ...extra,
   });
 }

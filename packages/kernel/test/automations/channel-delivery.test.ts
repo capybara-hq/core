@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   FAKE_PNG_BASE64,
@@ -19,11 +19,10 @@ import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
 import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
 import type { Automation, TaskRun } from "../../src/automations/types.js";
 import { idempotencyKey } from "../../src/channels/outbound.js";
-import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { StorageService } from "../../src/storage/storage.service.js";
+import { FileDeliveries } from "../../src/files/deliveries.js";
 import { openBarrier, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -413,32 +412,48 @@ describe("automation channel delivery (spec §8)", () => {
       20_000,
       "the run's conversation",
     );
-    // the run waits at the barrier: the artifact is its first logged output
+    // the run waits at the barrier: the artifact is its first logged output, written as
+    // `Deliver` writes it (the blob first, then the event and its library file in one transaction,
+    // so the delivery always finds the file)
     const artifactId = randomUUID();
-    const objectKey = `artifacts/${conv}/${artifactId}`;
     const png = Buffer.from(FAKE_PNG_BASE64, "base64");
-    await k.app
-      .get(StorageService)
-      .kernel(orgId)
-      .put(objectKey, png, {
-        contentType: "image/png",
-        size: png.byteLength,
-        signal: AbortSignal.timeout(10_000),
-      });
-    const [ev] = await k.app.get(EventLog).append(conv, [
-      {
-        type: "artifact_created",
-        payload: {
-          artifactId,
+    const deliveries = k.app.get(FileDeliveries);
+    const blob = await deliveries.ensureBlob(
+      orgId,
+      createHash("sha256").update(png).digest("hex"),
+      png,
+      { contentType: "image/png", signal: AbortSignal.timeout(10_000) },
+    );
+    const [ev] = await deliveries.appendDelivered(
+      orgId,
+      conv,
+      [
+        {
+          type: "artifact_created",
+          payload: {
+            artifactId,
+            fileId: artifactId,
+            name: "chart.png",
+            contentType: "image/png",
+            size: png.byteLength,
+            objectKey: blob.objectKey,
+            sourcePath: "/workspace/chart.png",
+            callId: "call-chart",
+          },
+        },
+      ],
+      [
+        {
+          id: artifactId,
+          blobId: blob.id,
           name: "chart.png",
           contentType: "image/png",
           size: png.byteLength,
-          objectKey,
+          origin: "delivered",
           sourcePath: "/workspace/chart.png",
-          callId: "call-chart",
         },
-      },
-    ]);
+      ],
+    );
     const seq = (ev as { seq: number }).seq;
     const file = await waitFor(
       async () => im.sentFiles.slice(filesBefore).find((f) => f.target.chatId === "grp-files"),

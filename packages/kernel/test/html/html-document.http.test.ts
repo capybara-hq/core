@@ -20,6 +20,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import { migrateLegacyFiles } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -121,7 +122,10 @@ beforeEach(async () => {
 
 const store = () => k.app.get(StorageService).kernel(orgId);
 
-/** Stores an object and logs its `artifact_created` (as `Deliver` would). */
+/**
+ * Stores an object and logs its `artifact_created` the way `Deliver` did before the file library,
+ * then runs the 0190 copy (a delivery migrated with its id and key).
+ */
 async function deliver(
   name: string,
   bytes: Buffer,
@@ -145,10 +149,14 @@ async function deliver(
       },
     },
   ]);
+  await migrateLegacyFiles(db);
   return artifactId;
 }
 
-/** Stores an object and writes a ready chat attachment row bound to the conversation. */
+/**
+ * Stores an object and writes a ready chat attachment row bound to the conversation, as before the
+ * file library, then runs the 0190 copy (a file the conversation refers to, same id and key).
+ */
 async function attach(name: string, bytes: Buffer): Promise<{ id: string; objectKey: string }> {
   const id = randomUUID();
   const objectKey = `attachments/${id}`;
@@ -170,6 +178,7 @@ async function attach(name: string, bytes: Buffer): Promise<{ id: string; object
       etag,
     })
     .execute();
+  await migrateLegacyFiles(db);
   return { id, objectKey };
 }
 
@@ -280,7 +289,13 @@ describe("the document token and route", () => {
   });
 
   it("HTML over 20 MiB is never rendered: 400 too large", async () => {
-    const id = await deliver("big.html", Buffer.from("<p>x</p>"), { size: 21 * MiB });
+    const id = await deliver("big.html", Buffer.from("<p>x</p>"));
+    // the file says 21 MiB (no bytes are read to refuse it)
+    await db
+      .updateTable("files")
+      .set({ size: 21 * MiB })
+      .where("id", "=", id)
+      .execute();
     const r = await alice({ method: "POST", url: tokenUrl(id) });
     expect(r.statusCode).toBe(400);
     expect(errCode(r)).toBe("conversation.artifact_not_previewable");
@@ -290,7 +305,9 @@ describe("the document token and route", () => {
   });
 
   it("a stored object over 20 MiB behind a small recorded size is not served", async () => {
-    const id = await deliver("big.html", Buffer.alloc(20 * MiB + 1, 0x20), { size: 10 });
+    const id = await deliver("big.html", Buffer.alloc(20 * MiB + 1, 0x20));
+    // the file says 10 bytes; its blob holds more than 20 MiB
+    await db.updateTable("files").set({ size: 10 }).where("id", "=", id).execute();
     expectNotFound(await load(await mint(id)));
   });
 

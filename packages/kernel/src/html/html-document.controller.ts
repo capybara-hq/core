@@ -18,11 +18,19 @@ export const HtmlTokenParams = z.object({
   fileId: z.string().min(1).max(100),
 });
 
+/** `POST …/files/:id/html-token` (a library file). */
+export const LibraryHtmlTokenParams = z.object({ id: z.string().min(1).max(100) });
+
 class HtmlTokenParamsDto extends createZodDto(HtmlTokenParams, "HtmlTokenParams") {}
+class LibraryHtmlTokenParamsDto extends createZodDto(
+  LibraryHtmlTokenParams,
+  "LibraryHtmlTokenParams",
+) {}
 
 /**
  * The HTML document (file sharing spec §4): the right panel mints a document token for one
- * version of the caller's HTML file (`agents.use`, the conversation's owner), then frames
+ * version of the caller's HTML file (`agents.use`, the conversation's owner; the Files page the
+ * same for one of the caller's library files, `POST …/files/:id/html-token`), then frames
  * `/api/v1/html/<token>`. The document route is public: the token is the authority, checked and
  * then re-checked live by {@link HtmlDocumentService.serve}.
  */
@@ -44,6 +52,19 @@ export class HtmlDocumentController {
   ): Promise<HtmlTokenResponse> {
     const p = requireUser(principal);
     return this.documents.mint(org.orgId, params.id, p.account.id, params.fileId);
+  }
+
+  /** A document token for a library file: 200 `{ path, expiresIn }`. */
+  @Post("orgs/:orgId/files/:id/html-token")
+  @HttpCode(200)
+  @OrgAction("agents.use")
+  async mintLibrary(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(LibraryHtmlTokenParamsDto) params: z.infer<typeof LibraryHtmlTokenParams>,
+  ): Promise<HtmlTokenResponse> {
+    const p = requireUser(principal);
+    return this.documents.mintLibrary(org.orgId, p.account.id, params.id);
   }
 
   /**

@@ -402,7 +402,6 @@ export class Offboarding {
     // after the conversations above (the share rows come last, as in every other share write)
     const sharesRevoked = await revokeSharesIn(
       this.db.db,
-      this.outbox,
       { orgId, createdBy: accountId },
       "member_offboarded",
     );

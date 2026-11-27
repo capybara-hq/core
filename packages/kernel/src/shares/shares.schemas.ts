@@ -7,6 +7,9 @@ export const ShareFileParams = z.object({
   fileId: z.string().min(1).max(100),
 });
 
+/** `POST …/files/:fileId/shares` (a library file) and its per-file list. */
+export const LibraryShareParams = z.object({ fileId: z.string().min(1).max(100) });
+
 /**
  * A new share: who may open it and when it expires (days; null = never, internal only). An
  * external share needs a non-null expiry within the platform maximum (`share.expiry_too_long`).

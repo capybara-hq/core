@@ -1,4 +1,4 @@
-/** The page template components of spec §5 (T1–T14; ConversationPage is T7, it replaced PlaygroundPage). */
+/** The page template components of spec §5 (T1–T15; ConversationPage is T7, it replaced PlaygroundPage). */
 export const PAGE_TEMPLATES = [
   "OverviewPage",
   "ListPage",
@@ -14,6 +14,7 @@ export const PAGE_TEMPLATES = [
   "OnboardingPage",
   "SetupPage",
   "SharedFilePage",
+  "LibraryPage",
 ] as const;
 
 export type PageTemplateName = (typeof PAGE_TEMPLATES)[number];

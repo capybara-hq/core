@@ -144,7 +144,7 @@ export function conversationsFor(
     d.runs ?? noRuns,
     { resolve: refuse("providers") },
     { resolveAttachments: d.resolveAttachments ?? refuse("resolveAttachments") },
-    { bindForMessage: d.bindFiles ?? refuse("bindFiles") },
+    { attachForMessage: d.bindFiles ?? refuse("bindFiles") },
     { prepare: invoker ? (a) => invoker.prepare(a) : refuse("invoker") },
     { stopTree: async () => {} },
     // no sandbox provider here: new conversations stay unbound

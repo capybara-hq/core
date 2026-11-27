@@ -146,6 +146,7 @@ describe("the compact drawer", () => {
     expect(d.more.map((m) => m.href)).toEqual([
       "/skills",
       "/connectors",
+      "/files",
       "/devices",
       "/p/acme/plain",
     ]);

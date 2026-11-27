@@ -286,11 +286,12 @@ for n in 1 2 3 4; do
 done
 echo "    4 turns finished with the echoed reply"
 
-echo "==> object storage on the web origin: attachment upload, finalize, download through web"
+echo "==> object storage on the web origin: file upload, finalize, download through web"
 CONTENT="compose smoke object $$"
-out="$(api POST "$BASE/attachments" "{\"name\":\"smoke.txt\",\"contentType\":\"text/plain\",\"size\":${#CONTENT}}")"
-[ "${out%% *}" = "201" ] || [ "${out%% *}" = "200" ] || fail "create attachment: $out"
-ATT="$(json_get id)"
+SHA="$(node -e 'console.log(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex"))' "$CONTENT")"
+out="$(api POST "$BASE/files" "{\"name\":\"smoke.txt\",\"contentType\":\"text/plain\",\"size\":${#CONTENT},\"sha256\":\"$SHA\",\"purpose\":\"library\"}")"
+[ "${out%% *}" = "201" ] || [ "${out%% *}" = "200" ] || fail "create file: $out"
+ATT="$(json_get file.id)"
 # As a browser: the presigned URL is on the public origin (http://localhost:<port>/capybara/...).
 # Send it to 127.0.0.1 instead, as if a front proxy rewrote the Host: web signs nothing, it only
 # forwards with the public host, so the signature still verifies.
@@ -313,12 +314,12 @@ fetch(url, init).then(async (r) => {
   if (!r.ok) { console.error(r.status, await r.text()); process.exit(1); }
 }, (e) => { console.error(String(e)); process.exit(1); });' "$TMP/body" "$WEB" "http://localhost:$WEB_PORT" "$CONTENT" \
   || fail "presigned upload through web failed"
-out="$(api POST "$BASE/attachments/$ATT/finalize" '{}')"
-[ "${out%% *}" = "200" ] || fail "finalize attachment: $out"
-LOCATION="$(curl -sS -o /dev/null -w '%{redirect_url}' -b "$JAR" "$WEB$BASE/attachments/$ATT/download")"
+out="$(api POST "$BASE/files/$ATT/finalize" '{}')"
+[ "${out%% *}" = "200" ] || fail "finalize file: $out"
+LOCATION="$(curl -sS -o /dev/null -w '%{redirect_url}' -b "$JAR" "$WEB$BASE/files/$ATT/download")"
 case "$LOCATION" in
   "http://localhost:$WEB_PORT/capybara/"*) ;;
-  *) fail "attachment download redirects to $LOCATION, not the web origin's /capybara/" ;;
+  *) fail "file download redirects to $LOCATION, not the web origin's /capybara/" ;;
 esac
 GOT="$(curl -sS -D "$TMP/dl-headers" --fail "$WEB${LOCATION#http://localhost:$WEB_PORT}")" \
   || fail "presigned download through web failed"

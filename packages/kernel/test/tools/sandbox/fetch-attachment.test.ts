@@ -132,6 +132,28 @@ describe("FetchAttachment", () => {
     }
   });
 
+  it("accepts the reference of a file's blob, whose last segment is not the file id", async () => {
+    const uri = "s3://capybara/kernel/o/blobs/7d0e1f2a-1111-4222-8333-444455556666";
+    const r = rig({
+      attachments: [{ id: ATT, name: "a.csv", uri } as { id: string; name: string }],
+    });
+    const out = r.text(await r.tool.run({ file: uri }, callCtx()));
+    expect(out).toContain(`Copied a.csv to ${DIR}/a.csv.`);
+  });
+
+  it("a file deleted later keeps its name taken and is not copied", async () => {
+    const gone = "2a2b3c4d-1111-4222-8333-444455556666";
+    const r = rig({
+      attachments: [
+        { id: gone, name: "report.csv", available: false },
+        { id: ATT, name: "report.csv" },
+      ] as { id: string; name: string }[],
+    });
+    const out = r.text(await r.tool.run({ file: "report.csv" }, callCtx()));
+    expect(out).toContain(`Copied report-2.csv to ${DIR}/report-2.csv.`);
+    await expect(r.tool.run({ file: gone }, callCtx())).rejects.toThrow(/No attachment named/);
+  });
+
   it("matches the name exactly, case-sensitively", async () => {
     const r = rig({
       attachments: [

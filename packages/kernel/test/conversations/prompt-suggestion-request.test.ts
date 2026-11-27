@@ -133,6 +133,8 @@ class Recorder {
       params?: Record<string, ParamValue>;
       /** The cap as the hard fit guard clamped it (recorded instead of the computed one). */
       clampedCap?: number;
+      /** The prompt cache tier the call asked for. */
+      cacheTtl?: number;
     } = {},
   ): number {
     const events = toEvents(this.snapshot());
@@ -151,6 +153,7 @@ class Recorder {
       tools: this.tools,
       toolSearch: this.setup.toolSearch ?? false,
       ...(opts.toolChoice !== undefined && { toolChoice: opts.toolChoice }),
+      ...(opts.cacheTtl !== undefined && { cacheTtl: opts.cacheTtl }),
       defaultMaxOutputTokens: opts.maxOutputTokens ?? DEFAULT_CAP,
     });
     return this.add("model_call", {
@@ -298,9 +301,18 @@ describe("buildSuggestionRequest", () => {
     expect(out.estimate).toBeGreaterThan(0);
   });
 
-  it("carries the recorded params, catalog, loaded tool and clamped cap, and the reply's opaque blocks", () => {
+  it("carries the recorded params, catalog, loaded tool, clamped cap and cache tier, and the reply's opaque blocks", () => {
     const model: ModelInfo = {
       ...MODEL,
+      cache: {
+        mechanism: "explicit",
+        ttlOptions: [300, 3600],
+        defaultTtl: 300,
+        ttlIsMinimum: false,
+        refreshOnHit: true,
+        ttlClock: "request_start",
+        guaranteed: true,
+      },
       parameters: [
         {
           key: "effort",
@@ -326,7 +338,7 @@ describe("buildSuggestionRequest", () => {
     const r = new Recorder(RUN, [TOOL_SEARCH, LOOKUP, LEDGER], { model, agent, toolSearch: true });
     r.user("What is my cash balance?");
     r.started();
-    r.call(1, { params: recorded, clampedCap: 1500 });
+    r.call(1, { params: recorded, clampedCap: 1500, cacheTtl: 3600 });
     r.assistant(
       1,
       [{ type: "tool_call", id: "call-1", name: "ToolSearch", input: { query: "balance" } }],
@@ -341,11 +353,11 @@ describe("buildSuggestionRequest", () => {
       isError: false,
       loadedTools: ["Lookup"],
     });
-    r.call(2, { params: recorded, clampedCap: 1500 });
+    r.call(2, { params: recorded, clampedCap: 1500, cacheTtl: 3600 });
     r.toolCall(2, "call-2");
     r.usage(2);
     r.toolResult(2, "call-2", "120 EUR");
-    r.call(3, { params: recorded, clampedCap: 1500 });
+    r.call(3, { params: recorded, clampedCap: 1500, cacheTtl: 3600 });
     const opaque = {
       provider: "model-fake",
       model: "fake-1",
@@ -368,6 +380,8 @@ describe("buildSuggestionRequest", () => {
     expect(out.request.params).toEqual(recorded);
     expect(out.request.tools.map((t) => t.name)).toEqual(["ToolSearch", "Lookup"]);
     expect(out.request.maxOutputTokens).toBe(1500);
+    // the recorded tier, so the side request reads the same cache entry (spec §9.4)
+    expect(out.request.cacheTtl).toBe(3600);
     expect(out.request.messages[ref.messages.length]).toEqual({
       role: "assistant",
       content: finalBlocks,

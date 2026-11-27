@@ -12,11 +12,11 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { AutomationFirer } from "../../src/automations/fire.js";
 import { AutomationStore } from "../../src/automations/store.js";
-import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { projectFileText } from "../../src/conversations/conversations.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
@@ -34,16 +34,22 @@ import {
 } from "../../src/evals/reconstruct.js";
 import {
   type CaseSnapshot,
+  liveSnapshot,
   replayableCalls,
   takeSnapshot,
   toEvents,
 } from "../../src/evals/snapshot.js";
 import { buildTrajectory } from "../../src/evals/trajectory.js";
+import { ConversationMedia } from "../../src/files/conversation-media.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
-import { type MediaInfo, TEXT_INLINE_MAX_CHARS } from "../../src/runtime/context/build.js";
+import {
+  type MediaInfo,
+  summaryText,
+  TEXT_INLINE_MAX_CHARS,
+} from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { devicePathsText } from "../../src/runtime/context/device-paths.js";
 import {
@@ -72,6 +78,12 @@ import { TOOL_WATCH_TIMINGS } from "../../src/tools/tool-watch-queue.js";
 import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import {
+  blobKeyOf,
+  markFileDeleted,
+  migrateLegacyFiles,
+  seedLibraryFile,
+} from "../helpers/library-files.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -418,38 +430,9 @@ async function catalogItem(name: string): Promise<string> {
   return id;
 }
 
-/** 建、传、finalize 一个附件，返回 id。 */
+/** A composer upload of the owner, not sent yet (a draft library file); returns its id. */
 async function attach(name: string, bytes: Buffer, contentType = "image/png"): Promise<string> {
-  const created = await owner({
-    method: "POST",
-    url: `/api/v1/orgs/${orgId}/attachments`,
-    payload: { name, contentType, size: bytes.length },
-  });
-  expect(created.statusCode, created.body).toBe(201);
-  const c = created.json() as {
-    id: string;
-    upload: { method: string; url: string; headers: Record<string, string> };
-  } & { upload: { fields?: Record<string, string> } };
-  let up: Response;
-  if (c.upload.method === "PUT") {
-    up = await fetch(c.upload.url, {
-      method: "PUT",
-      headers: c.upload.headers,
-      body: Buffer.from(bytes),
-    });
-  } else {
-    const form = new FormData();
-    for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, v);
-    form.append("file", new Blob([Buffer.from(bytes)], { type: contentType }));
-    up = await fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
-  }
-  expect(up.status).toBeLessThan(300);
-  const f = await owner({
-    method: "POST",
-    url: `/api/v1/orgs/${orgId}/attachments/${c.id}/finalize`,
-  });
-  expect(f.statusCode, f.body).toBe(200);
-  return c.id;
+  return seedLibraryFile(k.app, orgId, ownerId, { name, contentType, bytes });
 }
 
 async function postWithFiles(convId: string, text: string, files: string[]): Promise<void> {
@@ -480,10 +463,8 @@ async function modelInfo(provider: string, model: string): Promise<ModelInfo> {
 async function mediaFor(convId: string, snap: CaseSnapshot, seq: number, info: ModelInfo) {
   const ids = snapshotMediaRefs(snap, seq, info);
   if (ids.length === 0) return {};
-  const mediaInfo = await k.app.get(AttachmentsService).mediaInfo(orgId, convId, ids);
-  const media = await k.app
-    .get(AttachmentsService)
-    .fetchMedia(orgId, convId, [...mediaInfo.keys()]);
+  const mediaInfo = await k.app.get(ConversationMedia).mediaInfo(orgId, convId, ids);
+  const media = await k.app.get(ConversationMedia).fetchMedia(orgId, convId, [...mediaInfo.keys()]);
   return { mediaInfo, media };
 }
 
@@ -1083,6 +1064,105 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
+  it("a step compacted in context (idle compaction spec §9.4), then a message run: zero drift, in-context framing", async () => {
+    reset();
+    // a proactive trigger at half of fake-1's window: the summary request (the last request plus
+    // the 4096-token summary cap) still fits, so the compaction summarizes in context
+    await db
+      .updateTable("deployment_settings")
+      .set({ value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0, threshold: 0.5 }) })
+      .where("key", "=", "compaction")
+      .execute();
+    try {
+      const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+      const conv = await createConv(owner, orgId, agentId);
+      let n = 0;
+      const turn = async (text: string) => {
+        await postMessage(owner, orgId, conv, text);
+        await waitForTerminal(db, conv, ++n, 30_000);
+      };
+      // long turns until one run's step compacts (each adds about 7k estimated tokens)
+      const compacted = async () =>
+        (await eventsOf(db, conv)).some((e) => e.type === "compaction_summary");
+      for (let i = 0; i < 6 && !(await compacted()); i++) await turn("long:3000");
+      expect(n).toBeGreaterThan(1);
+      await turn("echo:one more run");
+
+      const events = await eventsOf(db, conv);
+      const summaries = events.filter(
+        (e): e is Extract<ConversationEvent, { type: "compaction_summary" }> =>
+          e.type === "compaction_summary",
+      );
+      expect(summaries.map((e) => e.payload.method)).toEqual(["in_context"]);
+      const summary = summaries[0] as Extract<ConversationEvent, { type: "compaction_summary" }>;
+      // boundary mode all at a settled point inside the run (after step 1's reply): the summary
+      // covers the run's opening message, which that reply answered, so it is not re-rendered
+      expect(summary.payload.openingSeqs).toBeUndefined();
+      const compaction = compactions[0] as ModelRequest;
+      expect(compactions).toHaveLength(1);
+      const calls = modelCalls(events);
+      const before = calls.filter((c) => c.seq < summary.seq).length;
+      expect(compaction.system).toEqual(sent[before - 1]?.system);
+      const usage = events.find(
+        (e) => e.type === "usage" && e.payload.purpose === "compaction",
+      ) as Extract<ConversationEvent, { type: "usage" }>;
+      expect(usage.payload.cacheReadTokens).toBeGreaterThan(0);
+      // the framing after an in-context summary with no kept tail and no opener: only the close
+      const after = calls.filter((c) => c.seq > summary.seq);
+      expect(after.length).toBeGreaterThanOrEqual(2);
+      for (const c of after) expect(c.payload.request.summarySeq).toBe(summary.seq);
+      const head = sent[calls.indexOf(after[0] as ModelCallEvent)]?.messages[0];
+      const blocks = Array.isArray(head?.content) ? head.content : [];
+      expect(blocks[0]).toEqual({
+        type: "text",
+        text: summaryText(summary.payload.text, {
+          openers: 0,
+          keptTail: false,
+          method: "in_context",
+        }),
+      });
+      await expectZeroDrift(conv, await snapshotOf(conv));
+    } finally {
+      await db
+        .updateTable("deployment_settings")
+        .set({ value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0 }) })
+        .where("key", "=", "compaction")
+        .execute();
+    }
+  });
+
+  it("a transcript compaction, then a message run: zero drift, the transcript framing unchanged", async () => {
+    reset();
+    // fake-small's window cannot hold the summary request with its 4096-token cap: transcript
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-small" });
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    for (let i = 0; i < 4; i++) {
+      await postMessage(owner, orgId, conv, `long:${300 + i}`);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    }
+    await postMessage(owner, orgId, conv, "echo:a message run");
+    await waitForTerminal(db, conv, ++n, 30_000);
+    const events = await eventsOf(db, conv);
+    const methods = events.flatMap((e) =>
+      e.type === "compaction_summary" ? [e.payload.method] : [],
+    );
+    expect(methods.length).toBeGreaterThan(0);
+    expect(methods.every((m) => m === "transcript")).toBe(true);
+    const heads = sent.flatMap((r) => {
+      const c = r.messages[0]?.content;
+      const first = Array.isArray(c) ? c[0] : undefined;
+      return first?.type === "text" && first.text.startsWith("<conversation_summary>")
+        ? [first.text]
+        : [];
+    });
+    expect(heads.length).toBeGreaterThan(0);
+    for (const text of heads) {
+      expect(text).not.toContain("The summary covers what came before them");
+    }
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
   it("a summary inside the current turn (context compaction spec §4.2, revision 2026-11-15): the turn's message follows the summary, zero drift", async () => {
     reset();
     // a skill body large enough that the turn's message and its tool pair are over the tail budget
@@ -1142,7 +1222,7 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
-  it("a manual compaction inside the latest turn (spec §4.7, maintainer decision 2026-11-28): earlier turns and the turn's message summarized, the latest pair kept, zero drift", async () => {
+  it("a manual compaction inside the latest turn (spec §4.7, maintainer decision 2026-11-28; ruling R13: on the transcript path, a gated model too): earlier turns and the turn's message summarized, the latest pair kept, zero drift", async () => {
     reset();
     // fake-1 (W 32000): the manual tail budget is a fifth of the window (6400). The tool call's
     // input (≈7.5k tokens) puts the latest pair over it, below the automatic trigger; the call is
@@ -1175,6 +1255,9 @@ describe("reconstructRequest：基线零漂移", () => {
     );
     expect(summary?.type).toBe("compaction_summary");
     if (summary?.type !== "compaction_summary") return;
+    // ruling R13: model-fake passes the in-context gate, yet a manual compaction keeps the #990
+    // plan on the transcript path
+    expect(summary.payload.method).toBe("transcript");
     // the boundary sits inside the latest turn, right before its tool pair; the opener is recorded
     expect(summary.payload.coversUpToSeq).toBeGreaterThanOrEqual(message?.seq ?? 0);
     expect(summary.payload.coversUpToSeq).toBeLessThan(call?.seq ?? 0);
@@ -1569,7 +1652,10 @@ describe("reconstructRequest：基线零漂移", () => {
     await waitForTerminal(db, conv, 3, 30_000);
     // 发送前对象就不在了：记录的就是「不再可用」
     const gone = await attach("gone.png", PNG);
-    await k.app.get(StorageService).kernel(orgId).delete(`attachments/${gone}`);
+    await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .delete(await blobKeyOf(db, gone));
     await postWithFiles(conv, "media: again", [gone]);
     await waitForTerminal(db, conv, 4, 30_000);
 
@@ -1613,7 +1699,10 @@ describe("reconstructRequest：基线零漂移", () => {
     );
 
     // 附件对象被删：带过字节的请求还原时只能给占位，记 media_missing
-    await k.app.get(StorageService).kernel(orgId).delete(`attachments/${keep}`);
+    await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .delete(await blobKeyOf(db, keep));
     const first = modelCalls(toEvents(snap))[0] as ModelCallEvent;
     expect(first.payload.request.media?.map((m) => m.outcome)).toEqual(["bytes"]);
     const out = reconstructRequest(snap, first.seq, {
@@ -1693,7 +1782,7 @@ describe("reconstructRequest：基线零漂移", () => {
       ]);
       expect(message.payload.content[3]).toMatchObject({
         type: "document",
-        source: { attachmentId: id },
+        source: { kind: "ref", fileId: id },
       });
       // the request carries the logged blocks as they are
       expect(JSON.stringify(sent[0]?.messages)).toContain(
@@ -1727,6 +1816,244 @@ describe("reconstructRequest：基线零漂移", () => {
     const call = modelCalls(toEvents(snap))[0] as ModelCallEvent;
     expect(call.payload.request.media?.map((m) => m.outcome)).toEqual(["placeholder_unsupported"]);
     expect(snapshotMediaRefs(snap, call.seq, await modelInfo("model-fake", "fake-1"))).toEqual([]);
+    await expectZeroDrift(conv, snap);
+  });
+
+  it("a log whose refs name attachmentId (logged before the file library) rebuilds with zero drift", async () => {
+    /** The snapshot as a log written before the rename: every ref's `fileId` stored as `attachmentId`. */
+    const asOldLog = (live: CaseSnapshot): CaseSnapshot => {
+      const old = structuredClone(live);
+      let renamed = 0;
+      for (const e of old.events) {
+        if (e.type !== "user_message") continue;
+        for (const b of (e.payload as { content: { source?: Record<string, unknown> }[] })
+          .content) {
+          if (b.source?.kind !== "ref") continue;
+          const { fileId, ...rest } = b.source;
+          b.source = { ...rest, attachmentId: fileId };
+          renamed++;
+        }
+      }
+      expect(renamed).toBeGreaterThan(0);
+      expect(JSON.stringify(old.events)).not.toContain('"fileId"');
+      return old;
+    };
+
+    // a vision model: an image sent as bytes and a text file over the inline cap as a reference
+    reset();
+    const vision = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const conv = await createConv(owner, orgId, vision);
+    const img = await attach("old.png", PNG);
+    const big = Buffer.from("a".repeat(TEXT_INLINE_MAX_CHARS + 1), "utf8");
+    const txt = await attach("old.txt", big, "text/plain");
+    await postWithFiles(conv, "media: look", [img, txt]);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snap = asOldLog(await snapshotOf(conv));
+    const call = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    expect(call.payload.request.media?.map((m) => [m.attachmentId, m.outcome])).toEqual([
+      [img, "bytes"],
+      [txt, "reference"],
+    ]);
+    await expectZeroDrift(conv, snap);
+
+    // a model without vision: the placeholder names the same id
+    reset();
+    const blind = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv2 = await createConv(owner, orgId, blind);
+    const img2 = await attach("old2.png", PNG);
+    await postWithFiles(conv2, "echo:see this", [img2]);
+    await waitForTerminal(db, conv2, 1, 30_000);
+    const snap2 = asOldLog(await snapshotOf(conv2));
+    expect(JSON.stringify(sent[0])).toContain(`file_id ${img2}`);
+    await expectZeroDrift(conv2, snap2);
+  });
+
+  it("a file migrated the 0188 way (old key, same id) resolves with zero drift; deleting the file gives media_missing", async () => {
+    reset();
+    const info = await modelInfo("model-fake", "fake-v");
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const conv = await createConv(owner, orgId, agentId);
+    // an upload finalized before the file library: a ready, unsent chat attachment, then the copy
+    const id = randomUUID();
+    const head = await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .put(`attachments/${id}`, PNG, { contentType: "image/png", size: PNG.length });
+    await db
+      .insertInto("attachments")
+      .values({
+        id,
+        org_id: orgId,
+        account_id: ownerId,
+        name: "migrated.png",
+        content_type: "image/png",
+        size: PNG.length,
+        object_key: `attachments/${id}`,
+        status: "ready",
+        etag: head.etag ?? null,
+        expires_at: sql<Date>`now() + interval '24 hours'`,
+      })
+      .execute();
+    await migrateLegacyFiles(db);
+    expect(await blobKeyOf(db, id)).toBe(`attachments/${id}`);
+    await postWithFiles(conv, "media: look", [id]);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snap = await snapshotOf(conv);
+    const first = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    expect(first.payload.request.media).toEqual([
+      { attachmentId: id, outcome: "bytes", etag: head.etag },
+    ]);
+    await expectZeroDrift(conv, snap);
+
+    // the person deletes the file from the library: the bytes stay, the ref no longer resolves
+    await markFileDeleted(db, id);
+    const media = await mediaFor(conv, snap, first.seq, info);
+    expect(media.mediaInfo?.has(id) ?? false).toBe(false);
+    const out = reconstructRequest(snap, first.seq, { model: info, ...media });
+    expect(out.drift).toEqual(["media_missing"]);
+    expect(JSON.stringify(out.request)).toContain("is no longer available");
+  });
+
+  it("a file moved to another blob (a hashing merge) keeps its uri and etag: zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const conv = await createConv(owner, orgId, agentId);
+    const img = await attach("moved.png", PNG);
+    const big = Buffer.from("a".repeat(TEXT_INLINE_MAX_CHARS + 1), "utf8");
+    const txt = await attach("moved.txt", big, "text/plain");
+    await postWithFiles(conv, "media: look", [img, txt]);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
+    const info = await modelInfo("model-fake", "fake-v");
+    const first = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    const before = await mediaFor(conv, snap, first.seq, info);
+    expect(before.mediaInfo?.get(img)?.etag).toEqual(expect.any(String));
+
+    // each file now points at another blob with the same bytes, another key and no etag (a
+    // migrated blob the hashing job kept): request building must still show the first blob's
+    for (const [id, bytes, type] of [
+      [img, PNG, "image/png"],
+      [txt, big, "text/plain"],
+    ] as const) {
+      const blobId = randomUUID();
+      const key = `blobs/${blobId}`;
+      await k.app
+        .get(StorageService)
+        .kernel(orgId)
+        .put(key, bytes, { contentType: type, size: bytes.byteLength });
+      await db
+        .insertInto("blobs")
+        .values({
+          id: blobId,
+          org_id: orgId,
+          size: bytes.byteLength,
+          etag: null,
+          object_key: key,
+          status: "ready",
+        })
+        .execute();
+      await db.updateTable("files").set({ blob_id: blobId }).where("id", "=", id).execute();
+      expect(await blobKeyOf(db, id)).toBe(key);
+    }
+    const after = await mediaFor(conv, snap, first.seq, info);
+    for (const id of [img, txt]) {
+      expect(after.mediaInfo?.get(id)?.uri).toBe(before.mediaInfo?.get(id)?.uri);
+      expect(after.mediaInfo?.get(id)?.etag).toBe(before.mediaInfo?.get(id)?.etag);
+    }
+    await expectZeroDrift(conv, snap);
+  });
+
+  it("a message logged before the 0191 copy (attachmentId refs, a file block) runs after it with zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const conv = await createConv(owner, orgId, agentId);
+    const xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const xlsxBytes = Buffer.from("PK\u0003\u0004sheet");
+    // bound chat attachments and the user_message old code logged for them
+    const legacy: { id: string; name: string; type: string; bytes: Buffer }[] = [
+      { id: randomUUID(), name: "old.png", type: "image/png", bytes: PNG },
+      { id: randomUUID(), name: "old.xlsx", type: xlsx, bytes: xlsxBytes },
+    ];
+    for (const a of legacy) {
+      const head = await k.app
+        .get(StorageService)
+        .kernel(orgId)
+        .put(`attachments/${a.id}`, a.bytes, { contentType: a.type, size: a.bytes.length });
+      await db
+        .insertInto("attachments")
+        .values({
+          id: a.id,
+          org_id: orgId,
+          account_id: ownerId,
+          conversation_id: conv,
+          name: a.name,
+          content_type: a.type,
+          size: a.bytes.length,
+          object_key: `attachments/${a.id}`,
+          status: "ready",
+          etag: head.etag ?? null,
+        })
+        .execute();
+    }
+    const [img, sheet] = legacy as [(typeof legacy)[0], (typeof legacy)[0]];
+    const [logged] = await k.app.get(EventLog).append(conv, [
+      {
+        type: "user_message",
+        payload: {
+          content: [
+            { type: "text", text: "echo:before the deploy" },
+            {
+              type: "image",
+              mediaType: "image/png",
+              source: { kind: "ref", attachmentId: img.id },
+              name: img.name,
+              size: img.bytes.length,
+            },
+            {
+              type: "file",
+              mediaType: xlsx,
+              source: { kind: "ref", attachmentId: sheet.id },
+              name: sheet.name,
+              size: sheet.bytes.length,
+            },
+          ],
+          authorAccountId: ownerId,
+        },
+      } as never,
+    ]);
+    // the bytes old code stored: refs keyed `attachmentId` (append writes today's key)
+    await sql`UPDATE capybara.conversation_events
+      SET payload = replace(payload::text, '"fileId"', '"attachmentId"')::jsonb
+      WHERE conversation_id = ${conv} AND seq = ${logged?.seq}`.execute(db);
+    const stored = await db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", conv)
+      .where("seq", "=", String(logged?.seq))
+      .executeTakeFirstOrThrow();
+    expect(JSON.stringify(stored.payload)).not.toContain('"fileId"');
+    await migrateLegacyFiles(db);
+    const refs = await db
+      .selectFrom("conversation_files")
+      .select(["file_id", "first_seq"])
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(new Map(refs.map((r) => [r.file_id, r.first_seq]))).toEqual(
+      new Map([
+        [img.id, String(logged?.seq)],
+        [sheet.id, String(logged?.seq)],
+      ]),
+    );
+    // the run after the deploy sends that message from the migrated files
+    await postMessage(owner, orgId, conv, "media: after the deploy");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snap = await snapshotOf(conv);
+    const call = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    expect(call.payload.request.media?.map((m) => [m.attachmentId, m.outcome])).toEqual([
+      [img.id, "bytes"],
+      [sheet.id, "reference"],
+    ]);
     await expectZeroDrift(conv, snap);
   });
 
@@ -2667,6 +2994,69 @@ describe("reconstructRequest：基线零漂移", () => {
   });
 });
 
+describe("reconstructRequest: the prompt cache tier (idle compaction spec §9.2)", () => {
+  it("a run with promptCache.longTtl on records cacheTtl 3600 and replays it with zero drift; a candidate recomputes it, no drift reason", async () => {
+    reset();
+    await db
+      .insertInto("deployment_settings")
+      .values({ key: "promptCache", value: JSON.stringify({ longTtl: true }) })
+      .execute();
+    try {
+      const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+      const conv = await createConv(owner, orgId, agentId);
+      await postMessage(owner, orgId, conv, "echo:first");
+      await waitForTerminal(db, conv, 1, 30_000);
+      await postMessage(owner, orgId, conv, "echo:second");
+      await waitForTerminal(db, conv, 2, 30_000);
+      const calls = modelCalls(await eventsOf(db, conv));
+      expect(calls.map((c) => c.payload.request.cacheTtl)).toEqual([3600, 3600]);
+      expect(sent.map((r) => r.cacheTtl)).toEqual([3600, 3600]);
+      const snap = await snapshotOf(conv);
+      // the baseline sends the recorded tier: equal to what the provider received
+      await expectZeroDrift(conv, snap);
+
+      const info = await modelInfo("model-fake", "fake-1");
+      const seq = calls[1]?.seq as number;
+      // a candidate on the same model recomputes the same tier
+      const same = reconstructRequest(snap, seq, { model: info, params: {} });
+      expect(same.drift).toEqual([]);
+      expect(same.request.cacheTtl).toBe(3600);
+      // a candidate model with no option of at least 30 min: no cacheTtl, no drift reason
+      const short: ModelInfo = {
+        ...info,
+        cache: { ...(info.cache as NonNullable<ModelInfo["cache"]>), ttlOptions: [300] },
+      };
+      const cand = reconstructRequest(snap, seq, { model: short, params: {} });
+      expect(cand.drift).toEqual([]);
+      expect(cand.request).not.toHaveProperty("cacheTtl");
+      expect(cand.meta).not.toHaveProperty("cacheTtl");
+      // a baseline whose model no longer offers the recorded tier omits it (never an unknown value)
+      const gone = reconstructRequest(snap, seq, { model: short });
+      expect(gone.drift).toEqual([]);
+      expect(gone.request).not.toHaveProperty("cacheTtl");
+    } finally {
+      await db.deleteFrom("deployment_settings").where("key", "=", "promptCache").execute();
+    }
+  });
+
+  it("a run with promptCache.longTtl off records no cacheTtl; a candidate keeps it off", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "echo:only");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const calls = modelCalls(await eventsOf(db, conv));
+    expect(calls[0]?.payload.request).not.toHaveProperty("cacheTtl");
+    expect(sent[0]).not.toHaveProperty("cacheTtl");
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
+    const info = await modelInfo("model-fake", "fake-1");
+    const cand = reconstructRequest(snap, calls[0]?.seq as number, { model: info, params: {} });
+    expect(cand.drift).toEqual([]);
+    expect(cand.request).not.toHaveProperty("cacheTtl");
+  });
+});
+
 describe("reconstructRequest: replies cut off at the output limit (issue #951)", () => {
   it("each truncated reply is followed by the truncation note; the run ends with max_output; zero drift", async () => {
     reset();
@@ -3534,6 +3924,21 @@ describe("takeSnapshot", () => {
     // 别的组织拿不到
     const other = await takeSnapshot(db, randomUUID(), conv, runId, 4_194_304).catch((e) => e);
     expect((other as ApiError).code).toBe("conversation.not_found");
+
+    // liveSnapshot (idle compaction spec §9.4): the same snapshot from events the caller holds,
+    // through the same loader, with no terminal event or byte cap required
+    const ids = { orgId, conversationId: conv, runId, agentId };
+    expect(await liveSnapshot(db, { ...ids, events: toEvents(snap) })).toEqual(snap);
+    const unfinished = snap.events.slice(0, -1);
+    const live = await liveSnapshot(db, {
+      ...ids,
+      events: toEvents({ ...snap, events: unfinished }),
+    });
+    expect(live).toEqual({ ...snap, events: unfinished });
+    const wrongAgent = await liveSnapshot(db, { ...ids, agentId: randomUUID(), events: [] }).catch(
+      (e) => e,
+    );
+    expect((wrongAgent as ApiError).code).toBe("conversation.not_found");
   });
 });
 

@@ -15,7 +15,11 @@ import {
   COMPACTION_SETTINGS_PARTIAL,
   COMPACTION_SETTINGS_PATCH,
   type CompactionSettings,
+  PROMPT_CACHE_SETTINGS_PARTIAL,
+  PROMPT_CACHE_SETTINGS_PATCH,
+  type PromptCacheSettings,
   readPlatformCompactionSettings,
+  readPlatformPromptCacheSettings,
   readPromptSuggestions,
   readSandboxLimitOverride,
   type SandboxLimitOverride,
@@ -312,6 +316,8 @@ export const OrgSettingsSchema = z.object({
    * rest follow the platform; absent (or an invalid stored value) follows the platform entirely.
    */
   compaction: COMPACTION_SETTINGS_PARTIAL.optional().catch(undefined),
+  /** Prompt cache override (idle compaction spec): absent or invalid follows the platform. */
+  promptCache: PROMPT_CACHE_SETTINGS_PARTIAL.optional().catch(undefined),
   /**
    * The org's external sharing switch (file sharing spec §8); absent = off. An invalid stored
    * value reads as `off` (never wider). The platform's switch must allow it too.
@@ -395,6 +401,8 @@ export const OrgSettingsPatchSchema = z
      * (follow the platform again). Strict: a misspelled field is a 400, not a silent no-op.
      */
     compaction: COMPACTION_SETTINGS_PATCH.nullable().optional(),
+    /** Prompt cache override: a partial object merges; null clears it (follow the platform). */
+    promptCache: PROMPT_CACHE_SETTINGS_PATCH.nullable().optional(),
     /**
      * The org's external sharing switch; null clears it (off). `on` while the platform denies it
      * -> 400 `org.external_sharing_not_allowed`; through the Platform tool or an API token it may
@@ -469,6 +477,8 @@ export interface OrgSettingsDeployment {
   publicUrl: boolean;
   /** The platform's conversation compaction settings (what "follow the platform" means). */
   compaction: CompactionSettings;
+  /** The platform's prompt cache settings (what "follow the platform" means). */
+  promptCache: PromptCacheSettings;
   /** The platform's external sharing switch and its source (deny: the org cannot turn it on). */
   externalSharing: ExternalSharingView;
   /** The longest expiry a share may take, in days. */
@@ -733,6 +743,7 @@ export class OrgSettingsService {
       deviceSandbox,
       attribution,
       compaction,
+      promptCache,
       externalSharing,
       shareMaxExpiry,
       promptSuggestions,
@@ -740,6 +751,7 @@ export class OrgSettingsService {
       readDeviceSandboxSettingsView(this.db.db, this.config, this.log),
       readPlatformAttribution(this.db.db, this.config, this.log),
       readPlatformCompactionSettings(this.db.db),
+      readPlatformPromptCacheSettings(this.db.db),
       readExternalSharing(this.db.db, this.config, this.log),
       readShareMaxExpiry(this.db.db, this.config, this.log),
       readPromptSuggestions(this.db.db, this.log),
@@ -755,6 +767,7 @@ export class OrgSettingsService {
       attribution,
       publicUrl: this.config.get().http.publicUrl !== undefined,
       compaction,
+      promptCache,
       externalSharing,
       shareMaxExpiryDays: shareMaxExpiry.value,
       promptSuggestions,
@@ -1020,6 +1033,8 @@ export class OrgSettingsService {
     ) as Partial<OrgSettings>;
     const arrangementPatch = patch.uiArrangement;
     const compactionPatch = patch.compaction;
+    const promptCachePatch = patch.promptCache;
+    delete changes.promptCache;
     delete changes.uiArrangement;
     delete changes.automations;
     delete changes.compaction;
@@ -1034,6 +1049,10 @@ export class OrgSettingsService {
       // a partial object merges into the stored fields; null clears the whole override
       if (compactionPatch === null) delete after.compaction;
       else after.compaction = { ...before.compaction, ...compactionPatch };
+    }
+    if (promptCachePatch !== undefined) {
+      if (promptCachePatch === null) delete after.promptCache;
+      else after.promptCache = { ...before.promptCache, ...promptCachePatch };
     }
     if (arrangementPatch !== undefined) {
       after.uiArrangement = mergeArrangement(before.uiArrangement, arrangementPatch);
@@ -1058,6 +1077,10 @@ export class OrgSettingsService {
       delete after.compaction;
     }
     if (after.compaction === undefined) delete after.compaction;
+    if (after.promptCache !== undefined && Object.keys(after.promptCache).length === 0) {
+      delete after.promptCache;
+    }
+    if (after.promptCache === undefined) delete after.promptCache;
     if (after.externalSharing === undefined) delete after.externalSharing;
     if (after.promptSuggestions === undefined) delete after.promptSuggestions;
     // saving an unreadable security setting writes it even when it equals what it read as
@@ -1086,6 +1109,7 @@ export class OrgSettingsService {
       navigation: _oldNavigation,
       automations: _oldAutomations,
       compaction: _oldCompaction,
+      promptCache: _oldPromptCache,
       externalSharing: _oldExternalSharing,
       promptSuggestions: _oldPromptSuggestions,
       ...rest

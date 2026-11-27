@@ -464,6 +464,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
           reserveTokens: 8000,
           maxOutputTokens: 20000,
         },
+        promptCache: { longTtl: false },
         outsideSandbox: { permission: "allowed", source: "default" },
         deviceNetwork: {
           default: "open",

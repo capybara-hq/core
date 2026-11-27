@@ -216,12 +216,12 @@ export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
 export type DocumentMediaType = (typeof DOCUMENT_MEDIA_TYPES)[number];
 
 /**
- * The source of media content: `base64` is the bytes themselves, `ref` is a reference to a kernel
- * attachment.
+ * The source of media content: `base64` is the bytes themselves, `ref` names a kernel file by its
+ * id (a library file the conversation refers to, or a file the kernel stored for a tool result).
  * The event log stores only `ref` (bytes never enter the log); when building a request the kernel
  * resolves `ref` into `base64`, so plugins only ever receive `base64`.
  */
-export type MediaSource = { kind: "base64"; data: string } | { kind: "ref"; attachmentId: string };
+export type MediaSource = { kind: "base64"; data: string } | { kind: "ref"; fileId: string };
 
 /**
  * Upper bound on the decoded bytes of a single media block (the smaller value among mainstream
@@ -301,6 +301,10 @@ export function hasControlChars(s: string): boolean {
 export function isAttachmentId(s: unknown): s is string {
   return typeof s === "string" && UUID_RE.test(s);
 }
+/** Whether the file id (a media `ref`'s `fileId`) is a UUID (any version, case-insensitive). */
+export function isFileId(s: unknown): s is string {
+  return typeof s === "string" && UUID_RE.test(s);
+}
 /** Any non-empty `type/subtype` (a `file` block's `mediaType`). */
 const MEDIA_TYPE_RE = /^[^/\s]+\/[^/\s]+$/;
 const MEDIA: Record<string, { types: readonly string[]; limit: number; anyType?: boolean }> = {
@@ -315,7 +319,7 @@ const MEDIA: Record<string, { types: readonly string[]; limit: number; anyType?:
  * Validates an image / document / file block, returning a list of errors (empty means valid): the
  * media type is in the block kind's list (`file` accepts any non-empty `type/subtype`); `base64` is
  * standard, padded, whitespace-free base64 that decodes to at most {@link MEDIA_LIMITS}; a `ref`'s
- * `attachmentId` is a UUID; `name`, when present, is a string of at most
+ * `fileId` is a UUID; `name`, when present, is a string of at most
  * {@link MEDIA_NAME_MAX_CHARS} characters with no control characters; `size`, when present, is a
  * non-negative integer (display metadata, never sent by a plugin).
  */
@@ -358,8 +362,8 @@ export function validateMediaBlock(b: unknown): string[] {
   }
   const source = src as Record<string, unknown>;
   if (source.kind === "ref") {
-    if (!isAttachmentId(source.attachmentId)) {
-      errs.push(`${o.type} source.attachmentId must be a UUID`);
+    if (!isFileId(source.fileId)) {
+      errs.push(`${o.type} source.fileId must be a UUID file id`);
     }
   } else if (source.kind === "base64") {
     const data = source.data;

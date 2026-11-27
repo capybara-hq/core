@@ -62,7 +62,11 @@ export interface FilePreviewConversationArgs extends FilePreviewArgsBase {
   source: "conversation";
   orgId: string;
   accountId: string;
-  conversationId: string;
+  /**
+   * The conversation the file is previewed in; absent for a library file previewed outside a
+   * conversation (the Files page).
+   */
+  conversationId?: string;
 }
 
 /**

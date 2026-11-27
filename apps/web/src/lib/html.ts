@@ -23,3 +23,9 @@ export const requestHtmlToken = (orgId: string, conversationId: string, fileId: 
     `/api/v1/orgs/${enc(orgId)}/conversations/${enc(conversationId)}/files/${enc(fileId)}/html-token`,
     { method: "POST" },
   );
+
+/** Mints a document token for one of the caller's HTML library files (file library spec §6). */
+export const requestLibraryHtmlToken = (orgId: string, fileId: string) =>
+  apiFetch<HtmlToken>(`/api/v1/orgs/${enc(orgId)}/files/${enc(fileId)}/html-token`, {
+    method: "POST",
+  });
