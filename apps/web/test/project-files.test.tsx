@@ -431,7 +431,7 @@ describe("the project file picker", () => {
 
 describe("a new conversation in a project", () => {
   const newRoutes = () => ({
-    [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+    [`GET ${ORG}/files/limits`]: () => json(200, LIMITS),
     [`GET ${ORG}/agents`]: () => json(200, AGENTS),
     [`GET ${ORG}/models`]: () => json(200, MODELS),
     [`GET ${ORG}/devices`]: () => json(200, DEVICES),
@@ -494,7 +494,7 @@ describe("a new conversation in a project: refusals and project changes", () => 
       supported: true,
     });
   const routes = (extra: Record<string, (c: Call) => Response | Promise<Response>> = {}) => ({
-    [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+    [`GET ${ORG}/files/limits`]: () => json(200, LIMITS),
     [`GET ${ORG}/agents`]: () => json(200, AGENTS),
     [`GET ${ORG}/models`]: () => json(200, MODELS),
     [`GET ${ORG}/devices`]: () => json(200, DEVICES),
