@@ -33,16 +33,33 @@ import {
 } from "./knowledge.js";
 
 /**
- * The longest a run start waits for its project's knowledge (every device call of the read under
- * one bound): past it the run goes on without a new snapshot, as when the device is unreachable.
+ * The time limits of a run start's project read. The device's start (a resume, or a recreate when
+ * its instance is gone) and the read itself are bounded apart, so a slow start never eats the
+ * read's time: past either the run goes on without a new snapshot, as when the device is
+ * unreachable.
  */
-export const PROJECT_KNOWLEDGE_TIMEOUT_MS = 30_000;
+export interface ProjectKnowledgeTimeouts {
+  /** Entering the device: from the read's start until the device runs. */
+  startMs: number;
+  /** Every device call of the read once the device runs, under one bound. */
+  readMs: number;
+}
+
+/** The default {@link ProjectKnowledgeTimeouts}. */
+export const PROJECT_KNOWLEDGE_TIMEOUTS: ProjectKnowledgeTimeouts = {
+  startMs: 60_000,
+  readMs: 30_000,
+};
 
 /**
- * Test seam (`KernelSeams`): the read's time limit in ms, asked at every read; default
- * {@link PROJECT_KNOWLEDGE_TIMEOUT_MS}.
+ * Test seam (`KernelSeams`): the read's time limits, asked at every read; default
+ * {@link PROJECT_KNOWLEDGE_TIMEOUTS}.
  */
 export const PROJECT_KNOWLEDGE_TIMEOUT = Symbol("PROJECT_KNOWLEDGE_TIMEOUT");
+
+/** The abort reason of a passed time limit (as `AbortSignal.timeout` gives). */
+const timeoutReason = (what: string): DOMException =>
+  new DOMException(`The project read's ${what} time limit passed`, "TimeoutError");
 
 /** The run start has no current execution claim of its own run: nothing is admitted. */
 class KnowledgeClaimMissing extends Error {
@@ -124,7 +141,7 @@ export class ProjectKnowledgeService {
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Optional()
     @Inject(PROJECT_KNOWLEDGE_TIMEOUT)
-    private readonly timeoutMs: () => number = () => PROJECT_KNOWLEDGE_TIMEOUT_MS,
+    private readonly timeouts: () => ProjectKnowledgeTimeouts = () => PROJECT_KNOWLEDGE_TIMEOUTS,
   ) {}
 
   /**
@@ -189,7 +206,12 @@ export class ProjectKnowledgeService {
       runId: input.runId,
       project: bound.project,
     };
-    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(this.timeoutMs())]);
+    const limits = this.timeouts();
+    // the start's limit runs until the device runs; the read then has its own
+    const start = new AbortController();
+    const startTimer = setTimeout(() => start.abort(timeoutReason("start")), limits.startMs);
+    const signal = AbortSignal.any([input.signal, start.signal]);
+    let readSignal: AbortSignal | undefined;
     try {
       // the device a tool call of this conversation would enter, checked for its owner now
       const deviceId = await this.devices.forTool(input.orgId, input.conversationId);
@@ -228,7 +250,10 @@ export class ProjectKnowledgeService {
             runId: input.runId,
           },
         },
-        async (h, p, info, sig) => {
+        async (h, p, info, held) => {
+          clearTimeout(startTimer);
+          const sig = AbortSignal.any([held, AbortSignal.timeout(limits.readMs)]);
+          readSignal = sig;
           const target = { project: bound.project, root: bound.root, mode: scope.mode };
           // the kernel's own check first: a root above the owner's home is refused as the working
           // root's rule refuses it (`workingRootOf`, the same home: the reported one, else the
@@ -294,12 +319,19 @@ export class ProjectKnowledgeService {
         signal,
       );
     } catch (err) {
+      const stopped = input.signal.aborted;
+      const readTimedOut = !stopped && readSignal?.aborted === true;
+      const startTimedOut = !stopped && start.signal.aborted;
       this.log.warn("project knowledge not read: the device could not be asked; the run goes on", {
         ...where,
-        timedOut: signal.aborted && !input.signal.aborted,
+        timedOut: readTimedOut || startTimedOut,
+        ...(startTimedOut && { timedOutIn: "start" }),
+        ...(readTimedOut && { timedOutIn: "read" }),
         err,
       });
       return null;
+    } finally {
+      clearTimeout(startTimer);
     }
   }
 
