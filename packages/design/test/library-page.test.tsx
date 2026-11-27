@@ -17,7 +17,7 @@ import { renderAtClass } from "./width";
 // LibraryPage (spec §5.13): the Files page's template in its three size-class forms. Expanded and
 // medium draw two panes while the region fits a 320 list and a 360 preview, else the list alone
 // and the open file in a side Sheet; compact is a pushed page with the origin views as a
-// full-width Segmented, a search icon that expands, one 筛选 sheet and the open file on a screen
+// full-width Segmented, a search icon that expands, one Filter sheet and the open file on a screen
 // of its own.
 
 const real = window.matchMedia;
@@ -274,7 +274,7 @@ describe("LibraryPage medium (side sheet when two panes do not fit)", () => {
 });
 
 describe("LibraryPage compact", () => {
-  it("moves the views into a full-width Segmented and the filters behind one 筛选 sheet", () => {
+  it("moves the views into a full-width Segmented and the filters behind one Filter sheet", () => {
     renderAtClass(390, <LibraryPage {...props()} />);
     expect(part("page-header-tabs")).toBeNull();
     expect(part("library-filters")).toBeNull();

@@ -113,7 +113,7 @@ test("前端拦下不允许的类型：显示与内核错误码一致的文案�
     buffer: Buffer.from("MZ"),
   });
   const files = draftFiles(page);
-  // 文案由内核 GET /files/limits 返回的类型拼出（至多六个标签，再补数量）
+  // The text is built from the types GET /files/limits returns (at most six labels, then a count)
   await expect(files.getByRole("alert")).toHaveText(
     zh.chat.fileTypeNotAllowed.replace("{types}", "PNG / JPEG / GIF / WebP / PDF / TXT 等 13 种"),
   );

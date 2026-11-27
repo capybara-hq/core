@@ -54,7 +54,7 @@ export function libraryFilterOf(u: FilesUrl): LibraryFilter {
   };
 }
 
-/** How many of the field filters (agent, type) are set: the compact 筛选 button's count. */
+/** How many of the field filters (agent, type) are set: the compact Filter button's count. */
 export const fieldFilterCount = (u: FilesUrl): number =>
   (u.agent !== "" ? 1 : 0) + (u.type !== "" ? 1 : 0);
 

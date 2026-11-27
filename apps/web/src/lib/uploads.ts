@@ -6,7 +6,7 @@ import { sha256Hex } from "./sha256";
  * 与 `@` 资源引用（`DraftAttachment`，内核读取连接器资源）是两回事。
  */
 
-/** 附件上限（内核 `GET /files/limits`）。 */
+/** Upload limits (the kernel's `GET /files/limits`). */
 export interface UploadLimits {
   types: string[];
   /** Extensions accepted beside the types (lower case, no dot); the kernel's `allowedExtensions`. */

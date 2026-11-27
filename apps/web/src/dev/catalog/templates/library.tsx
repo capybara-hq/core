@@ -223,7 +223,7 @@ function LibraryBody() {
   );
 }
 
-/** T15 文件：个人文件库，列表与预览。 */
+/** T15 Files: the person's file library, list and preview. */
 export function LibraryTemplate() {
   return (
     <FixtureShell nav="files" title="文件">

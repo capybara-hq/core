@@ -31,7 +31,7 @@ export interface DraftFile {
   progress: number;
   /** 附件 id（`ready` 时有）。 */
   id?: string;
-  /** `error` 时的错误：内核错误码、`file.upload_failed` 或前端预检的错误码。 */
+  /** The error when `error`: a kernel error code, `file.upload_failed` or a precheck code. */
   error?: unknown;
   /** 原文件：失败后可用它重试（前端预检拦下的没有，不能重试）。 */
   file?: File;
@@ -45,7 +45,7 @@ const PRECHECK_CODES = new Set(["file.type_not_allowed", "file.too_large"]);
 
 const codeOf = (e: unknown) => (e instanceof ApiClientError ? e.code : undefined);
 
-/** 错误细节里带出的附件 id（内核 `file.not_found` / `not_ready` 的 `details[].fileId`）。 */
+/** The file ids an error names (`details[].fileId` of the kernel's `file.not_found` / `not_ready`). */
 function failedIds(e: unknown): Set<string> {
   if (!(e instanceof ApiClientError)) return new Set();
   return new Set(
@@ -57,8 +57,9 @@ function failedIds(e: unknown): Set<string> {
 }
 
 /**
- * 输入框的上传文件：上限取自内核 `GET /files/limits`（取到之前用默认值兜底），加文件时先预检、
- * 通过的立即上传；条数按同步更新的 ref 计算，并发加文件（同时拖入、粘贴）也不会超过上限。
+ * The composer's uploads: limits come from the kernel's `GET /files/limits` (defaults until they
+ * arrive); an added file is prechecked and uploads at once when it passes; the count is kept in a
+ * ref updated synchronously, so concurrent adds (a drop and a paste together) never pass the cap.
  */
 export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = []) {
   const t = useTranslations("chat");

@@ -78,7 +78,7 @@ const TABS: readonly (LibraryOrigin | "")[] = ["", "delivered", "generated", "up
 /** How long the search waits after typing stops before it reads (as the admin lists do). */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** The list's time groups (今天 / 本周 / 更早): yesterday and the days before it fall in 本周. */
+/** The list's time groups (today / this week / earlier): yesterday and the days before it fall in this week. */
 const GROUPS = ["today", "week", "older"] as const;
 type Group = (typeof GROUPS)[number];
 
@@ -90,9 +90,9 @@ function iconOf(f: LibraryFileView): IconName {
 }
 
 /**
- * `/files` (文件): the person's file library (file library spec §6, §8), LibraryPage: the head's
+ * `/files` (Files): the person's file library (file library spec §6, §8), LibraryPage: the head's
  * tabs pick the origin, the search and the agent and type filters narrow the list (all in the
- * address), the list is grouped by time (今天 / 本周 / 更早) with the usage under it, and the open
+ * address), the list is grouped by time (today / this week / earlier) with the usage under it, and the open
  * file (`#item=<id>`) shows its preview and details beside the list (a side sheet or its own
  * screen where two panes do not fit: the template decides). Upload, share, download and delete
  * (confirmed). Members up (guests have no library). From the query cache (the layout prefetched
@@ -461,7 +461,7 @@ function groupOf(iso: string, now: number, timeZone: string | undefined): Group 
   return b === "today" ? "today" : b === "older" ? "older" : "week";
 }
 
-/** A conversation as a link, or 已删除的会话 / 未命名会话 in words. */
+/** A conversation as a link, or "deleted conversation" / "untitled conversation" in words. */
 function ConversationRef({ c, t }: { c: LibraryConversation; t: FilesT }) {
   if (c.deleted) return <>{t("conversationDeleted")}</>;
   return <TextLink href={`/chat/${encodeURIComponent(c.id)}`}>{c.title || t("untitled")}</TextLink>;

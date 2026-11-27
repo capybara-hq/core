@@ -60,20 +60,20 @@ export type LibraryLoading = boolean | { rows?: number };
 
 export type LibraryPageProps = {
   /**
-   * The head: `path`, `title`, the origin views as `tabs` (全部 / 智能体交付 / 我上传的, each with
+   * The head: `path`, `title`, the origin views as `tabs` (all / delivered by agents / my uploads, each with
    * `onSelect`; `activeTab`) and the `search`. From 600 the head draws the tabs and the search in
    * its tab row; below 600 the tabs are a full-width Segmented and the search an icon that expands.
    */
   header: PageHeaderProps;
   /** The head's actions (the upload, `variant: "primary"`): added after `header.actions`. */
   actions?: HeaderAction[];
-  /** Field filters (the agent and type Selects): a row above the panes from 600, the 筛选 sheet below. */
+  /** Field filters (the agent and type Selects): a row above the panes from 600, the Filter sheet below. */
   filters?: ReactNode;
-  /** How many `filters` are active: the count on the compact 筛选 button. */
+  /** How many `filters` are active: the count on the compact Filter button. */
   filterCount?: number;
   /** One `small` `muted` line under the list (the storage used), already localized. */
   usage?: string;
-  /** The list: a `ListDetailList`, usually with `groups` (今天 / 本周 / 更早) and `current`. */
+  /** The list: a `ListDetailList`, usually with `groups` (today / this week / earlier) and `current`. */
   list: ReactNode;
   /**
    * The selected file's content (the preview frame and its details), or `null` with nothing
@@ -287,7 +287,7 @@ function CompactSearch({ search }: { search: NonNullable<PageHeaderProps["search
  *   footer), whose close calls `onBack` with the row still the current one.
  * - **compact** (below 600): a pushed page; the head drops its path, the upload is the floating
  *   action button, the origin views a full-width Segmented, the search an icon that expands and the
- *   filters one 筛选 bottom sheet; rows take the grouped look. An open file is its own screen: the
+ *   filters one Filter bottom sheet; rows take the grouped look. An open file is its own screen: the
  *   head and the bar give way, the shell's floating back calls `onBack` (registered by the
  *   ListDetail), and a top bar holds the file's name and its actions as icon buttons and a menu.
  */

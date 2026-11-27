@@ -166,7 +166,7 @@ export type ListDetailListItem = {
   icon?: IconName;
 };
 
-/** A titled run of rows (今天 / 本周 / 更早): its label heads its rows in the list. */
+/** A titled run of rows (today / this week / earlier): its label heads its rows in the list. */
 export type ListDetailListGroup = { id: string; label: string; items: ListDetailListItem[] };
 
 /**
