@@ -83,6 +83,8 @@ export type BottomSheetFrameProps = {
   closeLabel?: string | undefined;
   /** The page behind the sheet. */
   page?: ReactNode;
+  /** Drawn under the body, outside its scroll (a dialog's buttons). */
+  footer?: ReactNode;
   children?: ReactNode;
 };
 
@@ -98,6 +100,7 @@ export function BottomSheetFrame({
   handleLabel,
   closeLabel,
   page,
+  footer,
   children,
 }: BottomSheetFrameProps) {
   const t = useDesignT();
@@ -130,6 +133,7 @@ export function BottomSheetFrame({
             />
           }
           handleLabel={grab}
+          footer={footer}
         >
           {children}
         </BottomSheetInner>

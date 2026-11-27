@@ -8046,3 +8046,219 @@ span.r-scal-daynum {
   left: calc(var(--cb-space-4) + var(--cb-space-6) + var(--cb-space-3));
   border-top: 1px solid var(--cb-line-soft);
 }
+
+/* ── Project file picker (spec §6.16.31) ── */
+/* The 640 dialog (§6.7): the head, the body padded space.4, the footer over a line-soft rule. */
+.r-pfp-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 640px;
+  background: var(--cb-panel);
+  color: var(--cb-ink);
+  border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
+  box-shadow: var(--cb-shadow-2);
+}
+.r-pfp-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-2) var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-pfp-title {
+  flex: 1;
+  margin: 0;
+  font-size: var(--cb-type-h2-size);
+  line-height: var(--cb-type-h2-line);
+  font-weight: 500;
+}
+.r-pfp-body {
+  padding: var(--cb-space-4);
+}
+.r-pfp-dfoot {
+  display: flex;
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-pfp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.r-pfp-crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+  white-space: nowrap;
+}
+.r-pfp-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.r-pfp-sep {
+  color: var(--cb-faint);
+}
+.r-pfp-segment {
+  height: var(--cb-control-dense);
+  padding: 0 var(--cb-space-1);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-family: var(--cb-font-code);
+  line-height: var(--cb-control-dense);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-pfp-segment[aria-current="location"] {
+  color: var(--cb-ink);
+}
+.r-pfp-search {
+  width: auto;
+}
+.r-pfp-search[data-disabled] {
+  border-color: var(--cb-line-soft);
+  background: var(--cb-hover);
+}
+/* The rows: one height for every folder (nine rows); the scroll pulls out by pad.default.x so the
+   names line up with the path row. */
+.r-pfp-scroll {
+  display: flex;
+  flex-direction: column;
+  height: calc(var(--cb-row-default) * 9);
+  margin: 0 calc(-1 * var(--cb-pad-default-x));
+  overflow: hidden;
+}
+.r-pfp-scroll > .r-sb-empty {
+  margin: auto;
+}
+.r-pfp-list {
+  display: flex;
+  flex-direction: column;
+}
+.r-pfp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-row-default);
+  padding: 0 var(--cb-pad-default-x);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+}
+.r-pfp-row[aria-disabled="true"] {
+  color: var(--cb-disabled);
+}
+.r-pfp-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+}
+.r-pfp-check .r-tp-box {
+  margin-top: 0;
+}
+.r-pfp-lead {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-space-6);
+  color: var(--cb-muted);
+}
+.r-pfp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-pfp-size {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-pfp-trail {
+  display: inline-flex;
+  color: var(--cb-faint);
+}
+.r-pfp-loading,
+.r-pfp-truncated {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-2) var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-pfp-error {
+  min-height: calc(var(--cb-row-default) * 9);
+  padding: var(--cb-space-2) 0;
+}
+.r-pfp-foot {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.r-pfp-count {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-pfp-count[data-max] {
+  color: var(--cb-warn);
+}
+/* Compact: the Dialog's bottom sheet (§6.59); the count over the full-width buttons, 「引用」 first. */
+.r-pfp-sheet {
+  max-height: 85%;
+  border-top: 0;
+}
+.r-pfp-sheet-body {
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--cb-space-2) var(--cb-touch-sheet-inset);
+}
+.r-pfp-sheet .r-pfp-scroll {
+  height: auto;
+  min-height: calc(var(--cb-row-default) * 5);
+  margin: 0;
+}
+.r-pfp-sheet-foot {
+  padding: var(--cb-space-2) var(--cb-touch-sheet-inset) var(--cb-space-4);
+}
+.r-pfp-sheet-foot > .r-pfp-foot {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--cb-space-2);
+}
+.r-pfp-sheet-foot .r-btn {
+  width: 100%;
+}
+.r-pfp-sheet-foot .r-pfp-count {
+  order: -2;
+  text-align: center;
+}
+.r-pfp-sheet-foot .r-btn[data-variant="primary"] {
+  order: -1;
+}
+.r-pfp-sheet-foot .r-grow {
+  display: none;
+}

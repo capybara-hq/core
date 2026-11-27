@@ -659,7 +659,10 @@
 
   // The conversation-page renderers (conversation.js, UI refresh B) when the page loads them.
   if (window.__CB_EXTRA__) {
-    Object.assign(RENDER, window.__CB_EXTRA__({ F, esc, icon, state, stamp, sidebar, statusBar, table }));
+    Object.assign(
+      RENDER,
+      window.__CB_EXTRA__({ F, esc, icon, state, stamp, sidebar, statusBar, table, emptyPanel: sidebarEmpty }),
+    );
   }
 
   for (const t of document.querySelectorAll("template[data-fixture]")) {

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Project file picker · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Project file picker</h1>
+<p>The composer's 项目文件 (spec §6.16.31): a 640 dialog titled 引用项目文件 that lists one folder of the conversation's device project at a time. The path row starts at the project's name; every segment but the last goes back up. The filter narrows the listed folder's names. Rows: a file's checkbox, a folder icon or a file's type badge, the name, a folder's chevron or a file's size; folders open, files toggle; at the cap the other files are disabled. The count stands at the footer's start, 「引用」 is disabled with nothing chosen. Root: the project root. Folder: src/components, a listing stopped at its cap. Filtered: the root filtered by 「read」. Selected: two files chosen, one in another folder. Empty: an empty folder. Loading: the folder on its way. Unsupported: a device that cannot list files. Compact: the Dialog's bottom sheet, the count over the full-width buttons.</p>
+<div class="r-blocks">
+<section data-ref-block="project-file-picker-root" style="width:704px" data-pad>
+  <template data-fixture="project-file-picker" data-opts='{"state": "root"}'></template>
+</section>
+<section data-ref-block="project-file-picker-folder" style="width:704px" data-pad>
+  <template data-fixture="project-file-picker" data-opts='{"state": "folder"}'></template>
+</section>
+<section data-ref-block="project-file-picker-filtered" style="width:704px" data-pad>
+  <template data-fixture="project-file-picker" data-opts='{"state": "filtered"}'></template>
+</section>
+<section data-ref-block="project-file-picker-selected" style="width:704px" data-pad>
+  <template data-fixture="project-file-picker" data-opts='{"state": "selected"}'></template>
+</section>
+<section data-ref-block="project-file-picker-empty" style="width:704px" data-pad>
+  <template data-fixture="project-file-picker" data-opts='{"state": "empty"}'></template>
+</section>
+<section data-ref-block="project-file-picker-loading" style="width:704px" data-pad>
+  <template data-fixture="project-file-picker" data-opts='{"state": "loading"}'></template>
+</section>
+<section data-ref-block="project-file-picker-unsupported" style="width:704px" data-pad>
+  <template data-fixture="project-file-picker" data-opts='{"state": "unsupported"}'></template>
+</section>
+<section data-ref-block="project-file-picker-compact" style="width:390px;height:844px">
+  <template data-fixture="project-file-picker" data-opts='{"state": "compact"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

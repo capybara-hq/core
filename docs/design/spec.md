@@ -3151,6 +3151,56 @@ States: `plus`, `slash`, `at`, `empty`, `loading`, `compact`
 |---|---|---|---|
 | Menu | bottom sheet, search field on top, rows `touch.row`, no key hints | anchored above the composer, no key hints | anchored above the composer, key hints |
 
+#### 6.16.31 Project file picker
+
+The composer's 项目文件 (`ProjectFilePicker`; composer menus spec `docs/superpowers/specs/2026-11-28-composer-menus-design.md` §5): a person references files of the conversation's device project without uploading them. One directory at a time (the kernel lists one per call, with a name filter); the page owns the path, the filter and the selection and passes the listing in, so a choice survives moving between folders.
+
+- **Frame**: a 640 Dialog (§6.7) titled 「引用项目文件」 / "Reference project files"; below 600 the Dialog's bottom sheet (§6.59, one history entry, the system back closes it). Focus starts on the filter from 600 up, on the sheet's close below 600.
+- **Path row** (`project-file-path`, a `navigation` named 「位置」 / "Location"): the project's name, then one segment per folder down to the listed one, `/` in `faint` between them; segments (`project-file-segment`) are mono, `control.dense` high, padding 0 `space.1`, radius `sm`; every segment but the last is a button in `muted` (hover: the `hover` ground and `ink`) that goes to that folder; the last is `ink` text with `aria-current="location"`. Long names cut with an ellipsis, the full name in the tooltip.
+- **Filter** (`project-file-filter`): the Input (§6.2) with `search` 14, placeholder and name 「筛选此文件夹」 / "Filter this folder"; it filters the listed folder's names (the page asks the kernel with it). ↓ in it moves into the rows. Going to another folder clears it.
+- **Rows** (`project-file-row`, the options of a multi-select `listbox` named by the listed folder): `row.default` high, padding 0 `pad.default.x`, gap `space.2`, radius `sm`, `hover` ground on hover; the list scroll pulls out by `pad.default.x` so the names line up with the path row. A row holds a checkbox column (14 wide: a file's checkbox look, `aria-selected` on the option, empty for a folder), the **lead** (`project-file-lead`, `space.6` wide, `muted`: a folder's `folder` 16, a file's type badge §6.16.19), the name (`ink`, one line, ellipsis), and at the end a folder's `chevron-right` 12 in `faint` or a file's size (`project-file-size`, `small` `muted`, `formatBytes`). A folder row goes into the folder (its name reads 「文件夹 src」 / "Folder src"); a file row toggles its choice. At the cap (`max`, 10 per message) the file rows not chosen are `disabled` (skipped by ↑↓, a click does nothing); folders stay open. The list keeps one height from 600 up (nine rows), so the dialog does not jump between folders; a new folder starts at its top.
+- **Keys** (the listbox holds the focus, `aria-activedescendant` names the active row): ↑↓ move (wrapping, skipping disabled rows), Home / End, Space or ↵ act on the active row (a folder opens, a file toggles). With the keyboard the active row is the palette's current item (§6.7: `selected` ground, a 1px `line-strong` outline).
+- **Status** (an always-mounted live region under the rows, prose `small` `muted`, padding `space.2` `pad.default.x`): the loading row (`project-file-loading`, the spinner and 「正在加载」 / "Loading") in place of the rows while the folder loads; the cap's hint (`project-file-truncated`, 「未列出全部，用筛选缩小范围。」 / "Not everything is listed; filter to narrow it down.") when the listing stopped at its cap. An empty folder is the panel EmptyState (§6.18) 「这个文件夹是空的」 / "This folder is empty"; a filter with no match 「这里没有名称包含「<q>」的项」 / "Nothing here has "<q>" in its name". A failed listing (the page's ErrorDetail, §6.24: a device whose provider cannot list files, `device.list_unsupported`) takes the rows' place at their height, and the filter is disabled.
+- **Footer**: the count at the start (`project-file-count`, prose `small` `muted`, a `status`: 「选择要引用的文件」 / "Choose files to reference", 「已选 2 个」 / "2 selected", at the cap 「已选 10 个，最多 10 个」 / "10 selected, at most 10" in `warn`), then 取消 / Cancel (ghost) and 「引用」 / "Reference" (primary, disabled with nothing chosen), which hands the chosen paths to the page. Below 600 the count stands centred over the full-width buttons, 「引用」 first.
+
+<!-- states: project-file-picker -->
+States: `root`, `folder`, `filtered`, `selected`, `empty`, `loading`, `unsupported`, `compact`
+
+<!-- size-table: project-file-picker -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| project-file-picker | root | background-color | color.panel |
+| project-file-picker | root | border-top-color | color.line-strong |
+| project-file-picker | root | border-radius | radius.md |
+| project-file-segment | root | height | control.dense |
+| project-file-segment | root | color | color.ink |
+| project-file-row | root | height | row.default |
+| project-file-row | root | padding-left | pad.default.x |
+| project-file-row | root | border-radius | radius.sm |
+| project-file-lead | root | width | space.6 |
+| project-file-lead | root | color | color.muted |
+| project-file-size | root | font-size | type.small |
+| project-file-size | root | color | color.muted |
+| project-file-count | root | font-size | type.small |
+| project-file-count | root | color | color.muted |
+| project-file-segment | folder | height | control.dense |
+| project-file-segment | folder | color | color.muted |
+| project-file-segment[aria-current=location] | folder | color | color.ink |
+| project-file-truncated | folder | font-size | type.small |
+| project-file-truncated | folder | color | color.muted |
+| project-file-row | filtered | height | row.default |
+| project-file-row | selected | height | row.default |
+| project-file-count | selected | color | color.muted |
+| project-file-loading | loading | font-size | type.small |
+| project-file-loading | loading | color | color.muted |
+| error-detail-summary | unsupported | color | color.fail |
+| project-file-row | compact | height | row.default |
+| project-file-row | compact | padding-left | pad.default.x |
+
+| | compact | medium | expanded |
+|---|---|---|---|
+| Picker | the Dialog's bottom sheet, the count over full-width buttons | 640 dialog | 640 dialog |
+
 ---
 
 ### 6.17 ObjectList and ObjectRow

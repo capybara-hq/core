@@ -22,6 +22,7 @@
 @import "./conversation.css" layer(design);
 @import "./conversation-page.css" layer(design);
 @import "./composer-menu.css" layer(design);
+@import "./project-file-picker.css" layer(design);
 @import "./agent-map.css" layer(design);
 @import "./pull-refresh.css" layer(design);
 @import "./touch.css" layer(design);

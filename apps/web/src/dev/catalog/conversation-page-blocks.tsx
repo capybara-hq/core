@@ -26,6 +26,7 @@ import {
   ConversationPage,
   type ConversationPageProps,
   CsvPreview,
+  ErrorDetail,
   FileCard,
   FilesSection,
   Greeting,
@@ -38,6 +39,8 @@ import {
   type PickerProps,
   ProcessBlock,
   type ProcessBlockProps,
+  ProjectFilePicker,
+  type ProjectFilePickerProps,
   PropertiesPanel,
   PropertySection,
   Prose,
@@ -85,6 +88,7 @@ import {
   NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PERMISSION_FIXTURE,
+  PROJECT_FILES_FIXTURE,
   PROSE_FIXTURE,
   SKILL_FIXTURE,
   SUBAGENT_FIXTURE,
@@ -756,6 +760,64 @@ function composerMenuBlocks(): ReactNode {
       </Block>
       <RefBlock id="composer-menu-compact" width={390} height={844}>
         <ComposerMenuSheetBlock />
+      </RefBlock>
+    </>
+  );
+}
+
+// ── Project file picker (§6.16.31: 项目文件, referenced without an upload) ────────
+
+/** The picker drawn in place (`reference`) for one state, with fixed data. */
+function ProjectFilePickerBlock({
+  reference = "dialog",
+  ...over
+}: Partial<ProjectFilePickerProps> & { reference?: "dialog" | "sheet" }) {
+  const P = PROJECT_FILES_FIXTURE;
+  const props: ProjectFilePickerProps = {
+    open: true,
+    onOpenChange: noop,
+    project: P.project,
+    path: "",
+    onPathChange: noop,
+    entries: P.root,
+    filter: "",
+    onFilterChange: noop,
+    selected: [],
+    onSelectedChange: noop,
+    max: P.max,
+    onConfirm: noop,
+    ...over,
+  };
+  return <ProjectFilePicker {...props} reference={reference} />;
+}
+
+function projectFilePickerBlocks(): ReactNode {
+  const P = PROJECT_FILES_FIXTURE;
+  return (
+    <>
+      <RefBlock id="project-file-picker-root" width={704} pad>
+        <ProjectFilePickerBlock />
+      </RefBlock>
+      <RefBlock id="project-file-picker-folder" width={704} pad>
+        <ProjectFilePickerBlock path={P.folderPath} entries={P.folder} truncated />
+      </RefBlock>
+      <RefBlock id="project-file-picker-filtered" width={704} pad>
+        <ProjectFilePickerBlock filter={P.filter} entries={P.filtered} />
+      </RefBlock>
+      <RefBlock id="project-file-picker-selected" width={704} pad>
+        <ProjectFilePickerBlock path={P.folderPath} entries={P.folder} selected={P.selected} />
+      </RefBlock>
+      <RefBlock id="project-file-picker-empty" width={704} pad>
+        <ProjectFilePickerBlock path={P.emptyPath} entries={[]} />
+      </RefBlock>
+      <RefBlock id="project-file-picker-loading" width={704} pad>
+        <ProjectFilePickerBlock path={P.folderPath} entries={[]} loading />
+      </RefBlock>
+      <RefBlock id="project-file-picker-unsupported" width={704} pad>
+        <ProjectFilePickerBlock entries={[]} error={<ErrorDetail summary={P.unsupported} />} />
+      </RefBlock>
+      <RefBlock id="project-file-picker-compact" width={390} height={844}>
+        <ProjectFilePickerBlock reference="sheet" selected={["README.md"]} />
       </RefBlock>
     </>
   );
@@ -1883,6 +1945,7 @@ export const CONVERSATION_PAGE_BLOCKS = {
   "title-bar": titleBarBlocks,
   composer: composerBlocks,
   "composer-menu": composerMenuBlocks,
+  "project-file-picker": projectFilePickerBlocks,
   "command-palette": commandPaletteBlocks,
   "picker-menu": pickerMenuBlocks,
   "mode-menu": modeMenuBlocks,

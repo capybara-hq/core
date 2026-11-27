@@ -1753,3 +1753,58 @@ export const COMPOSER_MENU_FIXTURE: {
   emptyQuery: "预算表2019",
   empty: { slash: "没有匹配的技能或命令", at: "没有匹配的文件或资源" },
 };
+
+// ── Project file picker (§6.16.31) ──────────────────────────────────────────
+
+export type FixtureProjectFileEntry = {
+  name: string;
+  path: string;
+  kind: "file" | "dir";
+  size?: number;
+};
+
+/**
+ * The project file picker (§6.16.31): the project 「acme-web」's root, its `src/components`
+ * folder (a listing stopped at its cap), the root filtered by 「read」, two files chosen, and the
+ * error a device whose provider cannot list files shows.
+ */
+export const PROJECT_FILES_FIXTURE: {
+  project: string;
+  root: FixtureProjectFileEntry[];
+  folderPath: string;
+  folder: FixtureProjectFileEntry[];
+  filter: string;
+  filtered: FixtureProjectFileEntry[];
+  selected: string[];
+  emptyPath: string;
+  max: number;
+  unsupported: string;
+} = {
+  project: "acme-web",
+  root: [
+    { name: "docs", path: "docs", kind: "dir" },
+    { name: "scripts", path: "scripts", kind: "dir" },
+    { name: "src", path: "src", kind: "dir" },
+    { name: "package.json", path: "package.json", kind: "file", size: 1843 },
+    { name: "README.md", path: "README.md", kind: "file", size: 6420 },
+    { name: "tsconfig.json", path: "tsconfig.json", kind: "file", size: 512 },
+    { name: "vite.config.ts", path: "vite.config.ts", kind: "file", size: 968 },
+  ],
+  folderPath: "src/components",
+  folder: [
+    { name: "forms", path: "src/components/forms", kind: "dir" },
+    { name: "Button.tsx", path: "src/components/Button.tsx", kind: "file", size: 2210 },
+    { name: "Dialog.tsx", path: "src/components/Dialog.tsx", kind: "file", size: 5304 },
+    { name: "Header.tsx", path: "src/components/Header.tsx", kind: "file", size: 3172 },
+    { name: "Invoice.tsx", path: "src/components/Invoice.tsx", kind: "file", size: 8840 },
+    { name: "Sidebar.tsx", path: "src/components/Sidebar.tsx", kind: "file", size: 4096 },
+    { name: "Table.tsx", path: "src/components/Table.tsx", kind: "file", size: 7012 },
+    { name: "Toast.tsx", path: "src/components/Toast.tsx", kind: "file", size: 1536 },
+  ],
+  filter: "read",
+  filtered: [{ name: "README.md", path: "README.md", kind: "file", size: 6420 }],
+  selected: ["README.md", "src/components/Invoice.tsx"],
+  emptyPath: "scripts",
+  max: 10,
+  unsupported: "这台设备的连接方式不支持列出文件。",
+};

@@ -3,7 +3,7 @@
 // Not product code: it draws the target design from @capybara-hq/design/fixtures (conversation.ts).
 //
 // Copy is zh placeholder copy; every size is a token step (reference.css, "Conversation" part).
-window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
+window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
   const C = F.CONV_FIXTURE;
   const K = F.CONV_COPY;
   const T = F.TOOL_FIXTURES;
@@ -861,6 +861,106 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     return `<div class="r-sh-stage" data-part="sheet-stage" style="--r-drag:0"><div class="r-sh-scrim" data-part="scrim"></div><div class="r-sh r-cmm-sheet" role="dialog" aria-modal="true" aria-label="技能与命令" data-part="composer-menu-sheet">${head}${body}</div></div>`;
   }
 
+  // ── Project file picker (§6.16.31: 项目文件, one folder at a time, a multi-select) ─────
+
+  /** "6420" -> "6.3 KB" (formatBytes: 1024 steps, one decimal, none when whole). */
+  function pfpBytes(n) {
+    if (n < 1024) return `${n} B`;
+    const units = ["KB", "MB", "GB"];
+    let v = n / 1024;
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i++;
+    }
+    const r = Math.round(v * 10) / 10;
+    return `${Number.isInteger(r) ? r.toFixed(0) : r.toFixed(1)} ${units[i]}`;
+  }
+
+  /** One row: the checkbox column, the lead (folder or type badge), the name, the chevron or size. */
+  function pfpRow(e, o) {
+    const checked = e.kind === "file" && o.selected.includes(e.path);
+    const disabled = e.kind === "file" && !checked && o.selected.length >= o.max;
+    const check =
+      e.kind === "file"
+        ? `<span class="r-pfp-check" data-part="project-file-check"><span class="r-tp-box" data-state="${checked ? "checked" : "unchecked"}">${checked ? icon("check", 12) : ""}</span></span>`
+        : '<span class="r-pfp-check"></span>';
+    const lead =
+      e.kind === "dir" ? icon("folder", 16) : typeBadge((e.name.split(".").pop() || "FILE").toUpperCase());
+    const trail =
+      e.kind === "dir"
+        ? `<span class="r-pfp-trail">${icon("chevron-right", 12)}</span>`
+        : `<span class="r-pfp-size" data-part="project-file-size">${esc(pfpBytes(e.size))}</span>`;
+    const name = e.kind === "dir" ? `文件夹 ${e.name}` : e.name;
+    return `<div class="r-pfp-row" data-part="project-file-row" role="option" aria-selected="${checked}" aria-label="${esc(name)}"${disabled ? ' aria-disabled="true"' : ""}>${check}<span class="r-pfp-lead" data-part="project-file-lead">${lead}</span><span class="r-pfp-name">${esc(e.name)}</span>${trail}</div>`;
+  }
+
+  /** The body: the path row, the filter, then the rows or their status (no box of its own). */
+  function pfpBody(o) {
+    const P = F.PROJECT_FILES_FIXTURE;
+    const parts = o.path ? o.path.split("/") : [];
+    const crumbs = [P.project, ...parts]
+      .map((label, i, all) => {
+        const sep = i > 0 ? '<span class="r-pfp-sep">/</span>' : "";
+        const seg =
+          i === all.length - 1
+            ? `<span class="r-pfp-segment" data-part="project-file-segment" aria-current="location">${esc(label)}</span>`
+            : `<button class="r-pfp-segment" data-part="project-file-segment">${esc(label)}</button>`;
+        return `<li class="r-pfp-crumb">${sep}${seg}</li>`;
+      })
+      .join("");
+    const path = `<nav class="r-pfp-path" data-part="project-file-path" aria-label="位置"><ol class="r-pfp-crumbs">${crumbs}</ol></nav>`;
+    const filter = `<div class="r-pfp-filter" data-part="project-file-filter"><label class="r-search r-pfp-search"${o.error ? ' data-disabled="true"' : ""}>${icon("search", 14)}<input type="search" placeholder="筛选此文件夹" aria-label="筛选此文件夹" value="${esc(o.filter || "")}"${o.error ? " disabled" : ""}></label></div>`;
+    if (o.error) {
+      return `<div class="r-pfp">${path}${filter}<div class="r-pfp-error" data-part="project-file-error"><div class="r-error-detail" data-part="error-detail"><span class="r-error-detail-summary" data-part="error-detail-summary"><span class="r-error-detail-icon">${icon("circle-x", 14)}</span>${esc(o.error)}</span></div></div></div>`;
+    }
+    const rows = o.loading ? [] : o.entries;
+    const list = rows.length
+      ? `<div class="r-pfp-list" role="listbox" aria-multiselectable="true">${rows.map((e) => pfpRow(e, o)).join("")}</div>`
+      : "";
+    const empty =
+      !o.loading && rows.length === 0
+        ? emptyPanel(o.filter ? `这里没有名称包含「${o.filter}」的项` : "这个文件夹是空的", "")
+        : "";
+    const status = o.loading
+      ? `<div class="r-pfp-loading" data-part="project-file-loading">${spin()}<span>正在加载</span></div>`
+      : o.truncated
+        ? '<div class="r-pfp-truncated" data-part="project-file-truncated">未列出全部，用筛选缩小范围。</div>'
+        : "";
+    return `<div class="r-pfp">${path}${filter}<div class="r-pfp-scroll" data-part="project-file-scroll">${list}${empty}${status}</div></div>`;
+  }
+
+  /** The footer: the count at the start, Cancel and 「引用」 at the end. */
+  function pfpFoot(o) {
+    const n = o.selected.length;
+    const count = n === 0 ? "选择要引用的文件" : n >= o.max ? `已选 ${n} 个，最多 ${o.max} 个` : `已选 ${n} 个`;
+    return `<div class="r-pfp-foot" data-part="project-file-foot"><span class="r-pfp-count" data-part="project-file-count"${n >= o.max ? " data-max" : ""}>${esc(count)}</span><span class="r-grow"></span><button class="r-btn" data-variant="ghost">取消</button><button class="r-btn" data-variant="primary"${n === 0 ? " disabled" : ""}>引用</button></div>`;
+  }
+
+  /**
+   * The picker (§6.16.31): the 640 dialog from 600 up; compact: the Dialog's bottom sheet at rest,
+   * the count centred over the full-width buttons, 「引用」 first.
+   */
+  function projectFilePicker(o) {
+    const P = F.PROJECT_FILES_FIXTURE;
+    const s = {
+      root: { path: "", entries: P.root, selected: [] },
+      folder: { path: P.folderPath, entries: P.folder, selected: [], truncated: true },
+      filtered: { path: "", entries: P.filtered, selected: [], filter: P.filter },
+      selected: { path: P.folderPath, entries: P.folder, selected: P.selected },
+      empty: { path: P.emptyPath, entries: [], selected: [] },
+      loading: { path: P.folderPath, entries: [], selected: [], loading: true },
+      unsupported: { path: "", entries: [], selected: [], error: P.unsupported },
+      compact: { path: "", entries: P.root, selected: ["README.md"] },
+    }[o.state];
+    const v = { ...s, max: P.max };
+    if (o.state === "compact") {
+      const head = `<div class="r-sh-handle-zone" data-part="handle-zone"><span class="r-sh-handle" data-part="sheet-handle" aria-label="拖动以关闭"></span></div><div class="r-cmm-sheet-head" data-part="sheet-head"><h2 class="r-cmm-sheet-title">引用项目文件</h2><button class="r-cmm-sheet-close" data-part="sheet-close" aria-label="关闭">${icon("x", 14)}</button></div>`;
+      return `<div class="r-sh-stage" data-part="sheet-stage" style="--r-drag:0"><div class="r-sh-scrim" data-part="scrim"></div><div class="r-sh r-pfp-sheet" role="dialog" aria-modal="true" aria-label="引用项目文件" data-part="project-file-picker">${head}<div class="r-pfp-sheet-body">${pfpBody(v)}</div><div class="r-pfp-sheet-foot">${pfpFoot(v)}</div></div></div>`;
+    }
+    return `<div class="r-pfp-dialog" role="dialog" aria-label="引用项目文件" data-part="project-file-picker"><div class="r-pfp-head"><h2 class="r-pfp-title">引用项目文件</h2><button class="r-icon-btn" data-step="dense" aria-label="关闭">${icon("x", 14)}</button></div><div class="r-pfp-body">${pfpBody(v)}</div><div class="r-pfp-dfoot">${pfpFoot(v)}</div></div>`;
+  }
+
   // ── Command palette (phase D: the `/` menu's tagged, searchable items) ─────
 
   /** Mirrors `commandScore` (design spec §6.7): label prefix > search prefix > label > search > description. */
@@ -1330,6 +1430,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     "title-bar": (o) => `<div class="r-titlebar-stage">${titleBar(o)}</div>`,
     composer: (o) => col(composer(o)),
     "composer-menu": (o) => (o.state === "compact" ? composerMenu(o) : col(composerMenu(o))),
+    "project-file-picker": projectFilePicker,
     "picker-menu": (o) => col(pickerMenu({ menu: o.state })),
     "mode-menu": (o) => col(modeMenu(o)),
     "quick-actions": (o) => col(quickMenu({ open: o.state === "menu", state: o.state === "hover" ? "hover" : undefined })),

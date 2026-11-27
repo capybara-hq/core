@@ -25,6 +25,8 @@ const PAGES = [
   "composer",
   // the composer's +, / and @ menus, anchored above it (a bottom sheet on compact)
   "composer-menu",
+  // the composer's 项目文件 picker: one folder at a time, a multi-select (a bottom sheet on compact)
+  "project-file-picker",
   "picker-menu",
   // the composer's mode menu (approval profiles)
   "mode-menu",
