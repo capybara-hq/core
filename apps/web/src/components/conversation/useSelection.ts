@@ -254,7 +254,7 @@ const PROJECT_ITEM = "project:";
  * spec §6: the top strip reads device / project): 自由模式 (the default) and the chosen device's
  * projects its current mode can read. A device without projects, or one that does not support
  * them, offers no project picker (while its projects are read the picker stands disabled on
- * 自由模式); another device drops the pick.
+ * free mode, with a loading notice); another device drops the pick.
  *
  * With no device at all but a device provider on in the org ({@link canCreateDevice}), there is
  * nothing to pick: the button leads with the device icon and says "No device" (the first send goes
@@ -278,7 +278,7 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
     retryOnMount: retryOnMountOf(projectsQ.queryKey),
   });
   const projects = projectsRead.data;
-  // while the device's projects are read the project picker stands disabled on 自由模式, so it
+  // while the device's projects are read the project picker stands disabled on free mode, so it
   // does not pop in later; it is absent only once the read found none (or failed)
   const projectsLoading = id !== undefined && projectsRead.isPending;
   if (list === undefined || !deviceChoiceShown(list)) {
@@ -349,6 +349,7 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
             label: t("projectGroup"),
             value: t("freeMode"),
             disabled: true,
+            notice: t("projectsLoading"),
             groups: [],
             onPick: () => {},
           },

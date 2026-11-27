@@ -1624,6 +1624,7 @@
     "projectLocked": "A conversation keeps its project after the first message",
     "projectGroup": "Project",
     "freeMode": "Free mode",
+    "projectsLoading": "Reading projects…",
     "project": {
       "bound": "Project {name} · {path}",
       "loaded": "Project {name} · {path} · {file} loaded",

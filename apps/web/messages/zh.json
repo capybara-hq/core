@@ -1624,6 +1624,7 @@
     "projectLocked": "发送第一条消息后不能再换项目",
     "projectGroup": "项目",
     "freeMode": "自由模式",
+    "projectsLoading": "正在读取项目…",
     "project": {
       "bound": "项目 {name} · {path}",
       "loaded": "项目 {name} · {path} · 已读取 {file}",

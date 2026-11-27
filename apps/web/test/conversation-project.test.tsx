@@ -26,7 +26,7 @@ import { expectNoFirstPaintFetch } from "./support/server";
 /**
  * Project root spec §4.3, §4.6 (plan Task 12), composer menus spec §6: a new conversation is bound
  * to one of its device's projects from the project picker after the device picker in the composer's
- * top strip (自由模式 by default); an existing conversation shows its device and project read
+ * top strip (free mode by default); an existing conversation shows its device and project read
  * only; the conversation names its project and whether it loaded (or why it is unavailable) from
  * the view's `projectState` (the latest `project_root` event, wherever it lies in the log); the `/`
  * menu groups its entries by source, the project's skills under their own heading.
@@ -225,6 +225,13 @@ describe("binding a new conversation to a project (the top strip)", () => {
       return p;
     });
     expect((waiting as HTMLButtonElement).disabled).toBe(true);
+    // the compact sheet's project section says the read is on its way
+    await user.click(document.querySelector('[data-part="composer-place-chip"]') as HTMLElement);
+    const sheet = await screen.findByRole("dialog");
+    const notice = sheet.querySelector('[data-part="place-notice"]') as HTMLElement;
+    expect(notice.textContent).toBe(en.chat.projectsLoading);
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     answer(json(200, projectsOf({ projects: [{ name: "web", path: "/Users/o/src/web" }] })));
     await vi.waitFor(() => expect((projectPicker() as HTMLButtonElement).disabled).toBe(false));
     await user.click(projectPicker() as HTMLElement);
