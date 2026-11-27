@@ -84,6 +84,12 @@ describe("hookRequestOf", () => {
     expect(JSON.stringify(out)).not.toContain(id);
     expect(warn).toHaveBeenCalledTimes(1);
   });
+
+  it("leaves out cacheTtl: a transport option, not part of the hook payload (idle compaction spec §8.1)", () => {
+    const out = hookRequestOf({ ...request, cacheTtl: 3600 });
+    expect(out).not.toHaveProperty("cacheTtl");
+    expect(out.model).toBe("m");
+  });
 });
 
 /** Sub-agents spec §11: hooks fire for chat and sub-agent conversations, never for eval replays. */

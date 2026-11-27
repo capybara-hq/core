@@ -40,6 +40,7 @@ import {
   planMedia,
   type RequestTool,
 } from "./context/build.js";
+import { selectCacheTtl } from "./context/cache-ttl.js";
 import {
   acceptSummary,
   buildCompactionRequest,
@@ -223,10 +224,10 @@ export interface ModelStepDeps {
   tools: Pick<ToolRegistry, "forAgent">;
   config: Pick<KernelConfigService, "get">;
   /**
-   * The compaction settings in effect for the run's organization (context compaction spec §4.8):
-   * resolved once per model step.
+   * The compaction settings in effect for the run's organization (context compaction spec §4.8)
+   * and its prompt cache settings (idle compaction spec §9.2): each resolved once per model step.
    */
-  compactionSettings: Pick<CompactionSettingsService, "resolve">;
+  compactionSettings: Pick<CompactionSettingsService, "resolve" | "resolvePromptCache">;
   /**
    * Ephemeral compaction progress (context compaction spec §4.6): display-only, never in the log.
    * Absent in eval replays and single-step replays, which have no live conversation to show it on.
@@ -763,8 +764,12 @@ async function runStep(
     const resolved = await resolveAgentTools(deps, input, events);
     const tools: StepTools = stepToolsOf(resolved, input, deps);
     const beforeCompaction = events.length;
-    // the org's effective compaction settings, once for this step (org > platform > built-in)
-    const compaction = await deps.compactionSettings.resolve(input.orgId);
+    // the org's effective compaction and prompt cache settings, once for this step (org >
+    // platform > built-in)
+    const [compaction, promptCache] = await Promise.all([
+      deps.compactionSettings.resolve(input.orgId),
+      deps.compactionSettings.resolvePromptCache(input.orgId),
+    ]);
     events = await maybeCompact(deps, input, events, runtime, compaction, tools);
     // a sub-agent checks its budget again after a compaction call, so the step's own request is
     // not a second call over the cap (review M5; the loop checks before each step); the budget
@@ -820,6 +825,7 @@ async function runStep(
         events,
         runtime,
         compaction,
+        promptCache.longTtl,
         tools,
         wrapUpReason,
         streamed,
@@ -1102,6 +1108,8 @@ function buildRequest(
   runtime: Runtime,
   tools: StepTools,
   wrapUp: boolean,
+  /** The prompt cache lifetime to ask for ({@link selectCacheTtl}); absent asks for none. */
+  cacheTtl?: number,
 ): { request: ModelRequest; meta: ModelCallMeta; estimate: number } {
   const { request, meta, mediaTokens } = assembleModelRequest({
     events,
@@ -1114,6 +1122,7 @@ function buildRequest(
     tools: tools.list,
     toolSearch: tools.toolSearch,
     ...(wrapUp && { toolChoice: "none" as const }),
+    ...(cacheTtl !== undefined && { cacheTtl }),
     mediaInfo: tools.media.info,
     media: tools.media.bytes,
     mediaBudgetBytes: limits.budgetBytes,
@@ -1850,6 +1859,8 @@ async function ladder(
   events: ConversationEvent[],
   runtime: Runtime,
   compaction: CompactionSettings,
+  /** `promptCache.longTtl` for the run's organization: each rung picks its model's tier from it. */
+  longTtl: boolean,
   tools: StepTools,
   wrapUpReason: WrapUpReason | null,
   streamed: { text: string },
@@ -1983,6 +1994,8 @@ async function ladder(
             runtime,
             tools,
             wrapUp,
+            // the rung's own model decides the tier (a fallback may offer none)
+            selectCacheTtl(info.cache, longTtl),
           );
           const { request, estimate } = built;
           const fitInput = {

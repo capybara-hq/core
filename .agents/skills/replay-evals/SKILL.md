@@ -61,6 +61,11 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `assembleModelRequest`, never inferred from the reminder text, and is not model-visible. Rendered as a system message at its
   position, dropped once a summary covers it. In the log, so no `DriftReason` (the `tools_changed` DriftReason is a different
   thing: a baseline whose rebuilt tool sequence differs from the record).
+- **`cacheTtl`** (idle compaction spec §9.2): `model_call.request.cacheTtl` is a recorded transport option, not
+  model-visible, so no `DriftReason`. Each rung picks it for its own model from `promptCache.longTtl`
+  (`runtime/context/cache-ttl.ts`: off → absent; on → the smallest declared option ≥ 1800 s; an absent, invalid or `none`
+  declaration → absent). A baseline sends the recorded value while the model still offers it (else omits it); a candidate
+  recomputes it with `selectCacheTtl(model.cache, recorded !== undefined)`. Hook payloads never carry it (`hookRequestOf`).
 - **`device_paths`** (devices spec §13.1, ruling R22): the first sandbox tool call of every conversation
   (cloud included, default roots included) appends `device_paths { roots }` to the calling conversation, and a later
   call appends it again whenever the held instance's roots differ from the latest recorded ones (back to the defaults,

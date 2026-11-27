@@ -132,7 +132,10 @@ beforeAll(async () => {
         attachments: { ...config.attachments, requestMediaBytes: budget },
       }),
     },
-    compactionSettings: { resolve: async () => COMPACTION_SETTINGS.parse({}) },
+    compactionSettings: {
+      resolve: async () => COMPACTION_SETTINGS.parse({}),
+      resolvePromptCache: async () => ({ longTtl: false }),
+    },
     log: silent,
     media: {
       info: async (_o, _c, ids) =>

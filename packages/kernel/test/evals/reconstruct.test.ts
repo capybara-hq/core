@@ -2667,6 +2667,69 @@ describe("reconstructRequest：基线零漂移", () => {
   });
 });
 
+describe("reconstructRequest: the prompt cache tier (idle compaction spec §9.2)", () => {
+  it("a run with promptCache.longTtl on records cacheTtl 3600 and replays it with zero drift; a candidate recomputes it, no drift reason", async () => {
+    reset();
+    await db
+      .insertInto("deployment_settings")
+      .values({ key: "promptCache", value: JSON.stringify({ longTtl: true }) })
+      .execute();
+    try {
+      const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+      const conv = await createConv(owner, orgId, agentId);
+      await postMessage(owner, orgId, conv, "echo:first");
+      await waitForTerminal(db, conv, 1, 30_000);
+      await postMessage(owner, orgId, conv, "echo:second");
+      await waitForTerminal(db, conv, 2, 30_000);
+      const calls = modelCalls(await eventsOf(db, conv));
+      expect(calls.map((c) => c.payload.request.cacheTtl)).toEqual([3600, 3600]);
+      expect(sent.map((r) => r.cacheTtl)).toEqual([3600, 3600]);
+      const snap = await snapshotOf(conv);
+      // the baseline sends the recorded tier: equal to what the provider received
+      await expectZeroDrift(conv, snap);
+
+      const info = await modelInfo("model-fake", "fake-1");
+      const seq = calls[1]?.seq as number;
+      // a candidate on the same model recomputes the same tier
+      const same = reconstructRequest(snap, seq, { model: info, params: {} });
+      expect(same.drift).toEqual([]);
+      expect(same.request.cacheTtl).toBe(3600);
+      // a candidate model with no option of at least 30 min: no cacheTtl, no drift reason
+      const short: ModelInfo = {
+        ...info,
+        cache: { ...(info.cache as NonNullable<ModelInfo["cache"]>), ttlOptions: [300] },
+      };
+      const cand = reconstructRequest(snap, seq, { model: short, params: {} });
+      expect(cand.drift).toEqual([]);
+      expect(cand.request).not.toHaveProperty("cacheTtl");
+      expect(cand.meta).not.toHaveProperty("cacheTtl");
+      // a baseline whose model no longer offers the recorded tier omits it (never an unknown value)
+      const gone = reconstructRequest(snap, seq, { model: short });
+      expect(gone.drift).toEqual([]);
+      expect(gone.request).not.toHaveProperty("cacheTtl");
+    } finally {
+      await db.deleteFrom("deployment_settings").where("key", "=", "promptCache").execute();
+    }
+  });
+
+  it("a run with promptCache.longTtl off records no cacheTtl; a candidate keeps it off", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "echo:only");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const calls = modelCalls(await eventsOf(db, conv));
+    expect(calls[0]?.payload.request).not.toHaveProperty("cacheTtl");
+    expect(sent[0]).not.toHaveProperty("cacheTtl");
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
+    const info = await modelInfo("model-fake", "fake-1");
+    const cand = reconstructRequest(snap, calls[0]?.seq as number, { model: info, params: {} });
+    expect(cand.drift).toEqual([]);
+    expect(cand.request).not.toHaveProperty("cacheTtl");
+  });
+});
+
 describe("reconstructRequest: replies cut off at the output limit (issue #951)", () => {
   it("each truncated reply is followed by the truncation note; the run ends with max_output; zero drift", async () => {
     reset();

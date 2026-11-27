@@ -57,6 +57,8 @@ let eventLog: EventLog;
 let deps: ModelStepDeps;
 let baseConfig: KernelConfig;
 let runtimeOverrides: Partial<KernelConfig["runtime"]> = {};
+/** The org's `promptCache.longTtl` the step deps resolve (off unless a test turns it on). */
+let longTtl = false;
 
 const silent = createLogger("error", { write: () => {} });
 
@@ -141,6 +143,7 @@ beforeAll(async () => {
           { id: "fake-stall", streamIdleTimeoutMs: 200 },
           { id: "fake-think", streamIdleTimeoutMs: 5000 },
           { id: "fake-small", contextWindow: 2000 },
+          { id: "fake-nocache", cache: "none" },
         ],
       },
     },
@@ -172,6 +175,7 @@ beforeAll(async () => {
     // output cap, and a test that needs the reserve sets its own below
     compactionSettings: {
       resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 }),
+      resolvePromptCache: async () => ({ longTtl }),
     },
     tools: k.app.get(ToolRegistry),
     log: silent,
@@ -194,6 +198,7 @@ let orgId: string;
 beforeEach(async () => {
   await redis.flushdb();
   runtimeOverrides = {};
+  longTtl = false;
   stubImpl = stub([stubInfo("ok")], () => "ok");
   await truncateTables(raw, "capybara.accounts, capybara.orgs");
   accountId = randomUUID();
@@ -909,6 +914,7 @@ describe("runModelStep", () => {
       const real = deps.compactionSettings;
       deps.compactionSettings = {
         resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), ...over }),
+        resolvePromptCache: real.resolvePromptCache,
       };
       try {
         await fn();
@@ -1384,6 +1390,7 @@ describe("runModelStep", () => {
       const original = deps.compactionSettings;
       // a zero reserve: a 6000-token window cannot hold the output cap plus the default 8000
       deps.compactionSettings = {
+        resolvePromptCache: original.resolvePromptCache,
         resolve: async () => ({
           ...COMPACTION_SETTINGS.parse({}),
           enabled: false,
@@ -3312,5 +3319,100 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
     // the retry's read settled before its stream ended or after; either way a base is never
     // published before the reset
     expect(bases.every((b) => b.i > resetAt)).toBe(true);
+  });
+});
+
+describe("the prompt cache tier (idle compaction spec §9.2)", () => {
+  it("promptCache.longTtl on: the request asks model-fake for its 3600 s tier and records it", async () => {
+    longTtl = true;
+    await say("echo:hello");
+    await step();
+    const [call] = await ofType("model_call");
+    expect(call?.payload.request.cacheTtl).toBe(3600);
+    // model-fake reports the tier it was asked for: the request carried cacheTtl 3600
+    const [usage] = await ofType("usage");
+    expect(usage?.payload.cacheWriteTokens).toBeGreaterThan(0);
+    expect(usage?.payload.cacheWriteByTtl).toEqual([
+      { ttl: 3600, tokens: usage?.payload.cacheWriteTokens },
+    ]);
+  });
+
+  it("promptCache.longTtl off: no cacheTtl is recorded or sent (the model's default tier)", async () => {
+    await say("echo:hello");
+    await step();
+    const [call] = await ofType("model_call");
+    expect(call?.payload.request).not.toHaveProperty("cacheTtl");
+    const [usage] = await ofType("usage");
+    expect(usage?.payload.cacheWriteByTtl).toEqual([
+      { ttl: 300, tokens: usage?.payload.cacheWriteTokens },
+    ]);
+  });
+
+  it("a model without a cache gets no cacheTtl and reports no tiers", async () => {
+    longTtl = true;
+    await say("echo:hello");
+    await step({ agent: agentWith({ model: { provider: "model-fake", model: "fake-nocache" } }) });
+    const [call] = await ofType("model_call");
+    expect(call?.payload.request).not.toHaveProperty("cacheTtl");
+    const [usage] = await ofType("usage");
+    expect(usage?.payload.cacheWriteTokens).toBe(0);
+    expect(usage?.payload).not.toHaveProperty("cacheWriteByTtl");
+  });
+
+  it("each rung chooses for its own model: a fallback on a model without a cache records none", async () => {
+    longTtl = true;
+    const main = stub(
+      [
+        stubInfo("limited", {
+          cache: {
+            mechanism: "explicit",
+            ttlOptions: [300, 3600],
+            defaultTtl: 300,
+            ttlIsMinimum: false,
+            refreshOnHit: true,
+            ttlClock: "request_start",
+            guaranteed: true,
+          },
+        }),
+      ],
+      () => {
+        throw new ModelError("rate_limited", "slow down", { retryAfterMs: 600_000 });
+      },
+    );
+    stubImpl = main;
+    await say("echo:from fallback");
+    const r = await step({
+      agent: agentWith({
+        model: { provider: "stub", model: "limited" },
+        fallback: { provider: "model-fake", model: "fake-nocache" },
+      }),
+    });
+    expect(r.content).toEqual([{ type: "text", text: "from fallback" }]);
+    const calls = await ofType("model_call");
+    expect(calls.map((c) => [c.payload.model, c.payload.request.cacheTtl])).toEqual([
+      ["limited", 3600],
+      ["fake-nocache", undefined],
+    ]);
+    expect(calls[1]?.payload.request).not.toHaveProperty("cacheTtl");
+    expect(main.calls.map((c) => c.cacheTtl)).toEqual([3600]);
+  });
+
+  it("the wrap-up call chooses the tier too", async () => {
+    longTtl = true;
+    await say("echo:summary");
+    await runFinalWrapUp(deps, {
+      source: "web",
+      orgId,
+      conversationId,
+      runId,
+      step: 2,
+      agent: agentWith(),
+      agentVersion: 1,
+      absorbedUpToSeq: ALL_ABSORBED,
+      signal: new AbortController().signal,
+      sink: () => {},
+    });
+    const [call] = await ofType("model_call");
+    expect(call?.payload.request.cacheTtl).toBe(3600);
   });
 });

@@ -152,7 +152,10 @@ beforeAll(async () => {
     ),
     tools: noTools,
     config: { get: config },
-    compactionSettings: { resolve: async () => COMPACTION_SETTINGS.parse({}) },
+    compactionSettings: {
+      resolve: async () => COMPACTION_SETTINGS.parse({}),
+      resolvePromptCache: async () => ({ longTtl: false }),
+    },
     log: silent,
     toolPipeline: pipelineFor({
       db,

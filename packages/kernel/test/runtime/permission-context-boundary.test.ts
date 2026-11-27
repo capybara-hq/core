@@ -141,6 +141,7 @@ beforeAll(async () => {
     config: { get: () => baseConfig },
     compactionSettings: {
       resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 }),
+      resolvePromptCache: async () => ({ longTtl: false }),
     },
     tools: k.app.get(ToolRegistry),
     log: silent,
@@ -435,6 +436,7 @@ describe("permission context request boundary", () => {
       ...deps,
       permissionContext: port,
       compactionSettings: {
+        resolvePromptCache: async () => ({ longTtl: false }),
         resolve: async () => ({
           ...COMPACTION_SETTINGS.parse({}),
           enabled: false,

@@ -106,6 +106,11 @@ export interface ModelCallMeta {
   /** 请求的 `toolChoice`（收尾调用为 `"none"`）；未设置则没有该字段。 */
   toolChoice?: "auto" | "none";
   /**
+   * The request's prompt cache lifetime (`ModelRequest.cacheTtl`, seconds); absent when the
+   * request named none. A transport option, not model-visible.
+   */
+  cacheTtl?: number;
+  /**
    * 请求里每个附件的处理结果（按首次出现，同一附件一条）；发了字节的带 finalize 时的 etag。没有媒体则没有该字段。
    */
   media?: MediaOutcomeEntry[];
@@ -165,6 +170,12 @@ export interface BuildModelRequestInput {
   toolSearch?: boolean;
   /** 本次请求的 `ModelRequest.toolChoice`；只在有工具时生效（没有工具时请求与 meta 都不带）。 */
   toolChoice?: "auto" | "none";
+  /**
+   * The prompt cache lifetime to ask for (`ModelRequest.cacheTtl`, seconds), copied into the
+   * request and `meta`; absent sends none (the model's default). The runtime chooses it with
+   * `selectCacheTtl`, a reconstruction passes the recorded or recomputed value. Not model-visible.
+   */
+  cacheTtl?: number;
   /**
    * 日志里媒体引用（`source.kind === "ref"`）对应的附件行（声明大小、PDF 页数）：附件 id → 信息；
    * 缺省表示没有行（已删除）→「不再可用」占位。预算（{@link planMedia}）只按这里的声明大小计算，结果确定。
@@ -1447,6 +1458,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   };
   const toolChoice = tools.length > 0 ? input.toolChoice : undefined;
   if (toolChoice !== undefined) request.toolChoice = toolChoice;
+  if (input.cacheTtl !== undefined) request.cacheTtl = input.cacheTtl;
 
   const first = events[0];
   const last = events.at(-1);
@@ -1468,6 +1480,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       catalog: catalog.map((t) => ({ key: t.key, specHash: t.specHash })),
     }),
     ...(toolChoice !== undefined && { toolChoice }),
+    ...(input.cacheTtl !== undefined && { cacheTtl: input.cacheTtl }),
     ...(mediaOutcomes.size > 0 && { media: [...mediaOutcomes.values()] }),
     ...(mediaOutcomes.size > 0 &&
       input.mediaBudgetBytes !== undefined &&

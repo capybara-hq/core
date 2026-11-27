@@ -180,7 +180,10 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
       ),
       tools: registry,
       config: { get: () => config },
-      compactionSettings: { resolve: async () => COMPACTION_SETTINGS.parse({}) },
+      compactionSettings: {
+        resolve: async () => COMPACTION_SETTINGS.parse({}),
+        resolvePromptCache: async () => ({ longTtl: false }),
+      },
       log: silent,
       toolPipeline: pipelineFor({
         db,
