@@ -152,6 +152,27 @@ describe("syncPackage", () => {
     expect(await clearBrokenRoot(root, digest)).toBeUndefined();
   });
 
+  it("concurrent syncs of one sha never move the complete root aside while a peer reads it", async () => {
+    // Replicas on one volume sync the same package at once. Each reads its root right after its
+    // sync returns (the host lists migrations, then imports); the root a peer swapped in must
+    // stay in place for all of them, never vanish for a moment.
+    const own = await mkdtemp(join(tmpdir(), "plugin-sync-peers-"));
+    const root = join(own, "peer-demo", digest.slice(0, 16));
+    const inodes = new Set<number>();
+    const peer = async () => {
+      const url = await syncPackage(own, "peer-demo", digest, { get: async () => bytes });
+      for (let i = 0; i < 20; i++) {
+        inodes.add((await stat(root)).ino);
+        await readFile(fileURLToPath(url));
+        await new Promise<void>((r) => setImmediate(r));
+      }
+    };
+    await Promise.all(Array.from({ length: 8 }, peer));
+    expect(inodes.size).toBe(1);
+    expect(await readdir(join(own, "peer-demo"))).toEqual([digest.slice(0, 16)]);
+    await rm(own, { recursive: true, force: true });
+  });
+
   it("名字或 sha256 不合法时拒绝（不落盘）", async () => {
     await expect(syncPackage(dir, "../evil", digest, blobs)).rejects.toThrow(/plugin name/);
     await expect(syncPackage(dir, "sync-demo", "abc", blobs)).rejects.toThrow(/sha256/);
