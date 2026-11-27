@@ -64,7 +64,6 @@ describe("model-fake", () => {
       tools: true,
       vision: false,
       reasoning: false,
-      caching: true,
     });
   });
 

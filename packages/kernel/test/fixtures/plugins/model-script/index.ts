@@ -232,7 +232,6 @@ export default defineExtension({
             tools: true,
             vision: false,
             reasoning: false,
-            caching: false,
             midConversationSystem: true,
           },
           parameters: [],

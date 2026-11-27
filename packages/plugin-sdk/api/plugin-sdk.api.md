@@ -273,6 +273,12 @@ export const BUILTIN_TOOL_NAME_RE: RegExp;
 export type BuiltinAvatarPresetId = (typeof BUILTIN_AVATAR_PRESET_IDS)[number];
 
 // @public
+export interface CacheWriteByTtl {
+    tokens: number;
+    ttl: number;
+}
+
+// @public
 export function canonicalThemeValue(group: "color" | "shadow", value: unknown): string | undefined;
 
 // @public
@@ -2760,6 +2766,21 @@ export const MOBILE_SHELL_LIMITS: {
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
 
 // @public
+export interface ModelCacheInfo {
+    defaultTtl?: number;
+    guaranteed: boolean;
+    mechanism: ModelCacheMechanism;
+    minTokens?: number;
+    refreshOnHit: boolean;
+    ttlClock: "request_start" | "unknown";
+    ttlIsMinimum: boolean;
+    ttlOptions: number[];
+}
+
+// @public
+export type ModelCacheMechanism = "explicit" | "implicit" | "none";
+
+// @public
 export interface ModelCallOptions {
     config?: unknown;
     orgId?: string;
@@ -2811,11 +2832,11 @@ export interface ModelImageGenerationInfo {
 
 // @public
 export interface ModelInfo {
+    cache?: ModelCacheInfo;
     capabilities: {
         tools: boolean;
         vision: boolean;
         reasoning: boolean;
-        caching: boolean;
         midConversationSystem: boolean;
         documents?: boolean;
     };
@@ -2885,6 +2906,7 @@ export interface ModelProvider {
 
 // @public
 export interface ModelRequest {
+    cacheTtl?: number;
     maxOutputTokens: number;
     messages: ModelMessage[];
     model: string;
@@ -2941,6 +2963,7 @@ export type ModelStreamEvent = {
 // @public
 export interface ModelUsage {
     cacheReadTokens: number;
+    cacheWriteByTtl?: CacheWriteByTtl[];
     cacheWriteTokens: number;
     inputTokens: number;
     outputImages?: number;
@@ -5362,6 +5385,9 @@ export function validateAllowHost(h: string): string[];
 export function validateAnswer(form: InputForm, answer: FormAnswer): string[];
 
 // @public
+export function validateCacheWriteByTtl(usage: ModelUsage): string | null;
+
+// @public
 export function validateChannelCard(card: unknown): string[];
 
 // @public
@@ -5390,6 +5416,9 @@ export function validateInputForm(form: InputForm): string[];
 
 // @public
 export function validateMediaBlock(b: unknown): string[];
+
+// @public
+export function validateModelCache(cache: ModelCacheInfo | undefined): string | null;
 
 // @public
 export function validateParams(decl: ModelParameter[], params: Record<string, unknown>): {

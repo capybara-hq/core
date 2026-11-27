@@ -491,7 +491,6 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
           vision: m.vision ?? false,
           documents: m.documents ?? false,
           reasoning: false,
-          caching: true,
           midConversationSystem: true,
         },
         ...(m.streamIdleTimeoutMs !== undefined

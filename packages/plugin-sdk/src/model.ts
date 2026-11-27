@@ -55,6 +55,84 @@ export interface ModelImageGenerationInfo {
   outputMediaTypes: ImageMediaType[];
 }
 
+/**
+ * explicit: the plugin places breakpoints and the lifetime is known; implicit: the service caches
+ * on its own (best-effort unless it declares a lifetime floor); none: no caching.
+ */
+export type ModelCacheMechanism = "explicit" | "implicit" | "none";
+
+/** How a model's prompt cache behaves. Absent or `mechanism: "none"` = no caching. */
+export interface ModelCacheInfo {
+  /**
+   * explicit: the plugin places breakpoints and the lifetime is known; implicit: the service caches
+   * on its own (best-effort unless it declares a lifetime floor); none: no caching.
+   */
+  mechanism: ModelCacheMechanism;
+  /**
+   * Lifetimes a request can choose, in seconds ([300, 3600] Anthropic / Qwen4, [1800, 43200]
+   * OpenAI 5.6+, [300] Bailian); empty when the service decides alone. Ascending and unique.
+   */
+  ttlOptions: number[];
+  /** The lifetime a request that names none gets (OpenAI 5.6+: 1800). */
+  defaultTtl?: number;
+  /** OpenAI: the lifetime is a floor, entries may live longer; Anthropic / Bailian: exact. */
+  ttlIsMinimum: boolean;
+  /** A read restarts the lifetime (Anthropic, Bailian, OpenAI 30m; not OpenAI 12h). */
+  refreshOnHit: boolean;
+  /** When the lifetime starts counting; Anthropic: the request's start. */
+  ttlClock: "request_start" | "unknown";
+  /** Below this many prompt tokens nothing is cached. */
+  minTokens?: number;
+  /** A hit on an unchanged prefix within the lifetime is expected, not best-effort. */
+  guaranteed: boolean;
+}
+
+const isPositiveInt = (n: unknown): n is number =>
+  typeof n === "number" && Number.isInteger(n) && n > 0;
+
+/**
+ * Checks a model's cache declaration: positive integer TTLs, `ttlOptions` ascending and unique,
+ * `defaultTtl` among the options when options exist, `none` with no options and no guarantee, a
+ * guarantee only with a known lifetime, `minTokens` a positive integer. Returns the first problem
+ * (naming the field), or `null` when valid.
+ */
+export function validateModelCache(cache: ModelCacheInfo | undefined): string | null {
+  if (cache === undefined) return null;
+  if (!["explicit", "implicit", "none"].includes(cache.mechanism)) {
+    return `cache.mechanism must be "explicit", "implicit" or "none"`;
+  }
+  if (!Array.isArray(cache.ttlOptions)) return "cache.ttlOptions must be an array";
+  for (const [i, ttl] of cache.ttlOptions.entries()) {
+    if (!isPositiveInt(ttl)) return `cache.ttlOptions[${i}] must be a positive integer (seconds)`;
+    const prev = cache.ttlOptions[i - 1];
+    if (i > 0 && prev !== undefined && ttl <= prev) {
+      return "cache.ttlOptions must be ascending and unique";
+    }
+  }
+  if (cache.defaultTtl !== undefined) {
+    if (!isPositiveInt(cache.defaultTtl)) {
+      return "cache.defaultTtl must be a positive integer (seconds)";
+    }
+    if (cache.ttlOptions.length > 0 && !cache.ttlOptions.includes(cache.defaultTtl)) {
+      return "cache.defaultTtl must be one of cache.ttlOptions";
+    }
+  }
+  if (!["request_start", "unknown"].includes(cache.ttlClock)) {
+    return `cache.ttlClock must be "request_start" or "unknown"`;
+  }
+  if (cache.minTokens !== undefined && !isPositiveInt(cache.minTokens)) {
+    return "cache.minTokens must be a positive integer";
+  }
+  if (cache.mechanism === "none") {
+    if (cache.ttlOptions.length > 0) return 'cache.mechanism "none" takes no ttlOptions';
+    if (cache.guaranteed) return 'cache.guaranteed must be false with mechanism "none"';
+  }
+  if (cache.guaranteed && cache.ttlOptions.length === 0 && cache.defaultTtl === undefined) {
+    return "cache.guaranteed needs a known lifetime (ttlOptions or defaultTtl)";
+  }
+  return null;
+}
+
 export interface ModelInfo {
   id: string;
   displayName: string;
@@ -76,7 +154,6 @@ export interface ModelInfo {
     tools: boolean;
     vision: boolean;
     reasoning: boolean;
-    caching: boolean;
     midConversationSystem: boolean;
     /**
      * Whether `document` blocks are accepted (default false). Images are governed by `vision`. When
@@ -93,6 +170,8 @@ export interface ModelInfo {
    * uses the config default.
    */
   streamIdleTimeoutMs?: number;
+  /** The model's prompt cache (must pass `validateModelCache`). Absent = mechanism `none`. */
+  cache?: ModelCacheInfo;
   /**
    * The parameters this model supports (may be an empty array; must pass
    * `assertValidDeclarations`). Effort is the standard `effort` knob declared here.
@@ -335,6 +414,12 @@ export interface ModelRequest {
    * API.
    */
   purpose?: ModelCallPurpose;
+  /**
+   * The prompt cache lifetime to ask for: seconds, one of the model's `ttlOptions`; a plugin of a
+   * model without options ignores it; the plugin maps it to the vendor's field. Absent = the
+   * model's default.
+   */
+  cacheTtl?: number;
 }
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
@@ -360,6 +445,44 @@ export interface ModelUsage {
   cacheWriteTokens: number;
   /** Images produced (image generation calls). */
   outputImages?: number;
+  /**
+   * Cache writes per lifetime tier: optional; sums to `cacheWriteTokens`; from the vendor's
+   * per-tier write counts.
+   */
+  cacheWriteByTtl?: CacheWriteByTtl[];
+}
+
+/** Input tokens written to the prompt cache with one lifetime (`ttl`, seconds). */
+export interface CacheWriteByTtl {
+  ttl: number;
+  tokens: number;
+}
+
+/**
+ * Checks `usage.cacheWriteByTtl` when present: positive integer `ttl`s, each once; non-negative
+ * integer `tokens`; the tokens sum to `cacheWriteTokens`. Returns the first problem, or `null`.
+ */
+export function validateCacheWriteByTtl(usage: ModelUsage): string | null {
+  const tiers = usage.cacheWriteByTtl;
+  if (tiers === undefined) return null;
+  if (!Array.isArray(tiers)) return "cacheWriteByTtl must be an array";
+  const seen = new Set<number>();
+  let sum = 0;
+  for (const [i, tier] of tiers.entries()) {
+    if (!isPositiveInt(tier.ttl)) {
+      return `cacheWriteByTtl[${i}].ttl must be a positive integer (seconds)`;
+    }
+    if (seen.has(tier.ttl)) return `cacheWriteByTtl has ttl ${tier.ttl} twice`;
+    seen.add(tier.ttl);
+    if (typeof tier.tokens !== "number" || !Number.isInteger(tier.tokens) || tier.tokens < 0) {
+      return `cacheWriteByTtl[${i}].tokens must be a non-negative integer`;
+    }
+    sum += tier.tokens;
+  }
+  if (sum !== usage.cacheWriteTokens) {
+    return `cacheWriteByTtl sums to ${sum}, not cacheWriteTokens ${usage.cacheWriteTokens}`;
+  }
+  return null;
 }
 
 /**
