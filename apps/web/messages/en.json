@@ -599,7 +599,11 @@
       "invalid_once_time": "The date and time aren't valid.",
       "invalid_time_zone": "The time zone isn't valid.",
       "limit_reached": "The limit of automations is reached.",
-      "once_in_past": "That time has already passed."
+      "once_in_past": "That time has already passed.",
+      "event_source_unavailable": "That event source is not available in this organization.",
+      "event_type_unknown": "That event type is not declared by the source, or it is only for assignments.",
+      "filter_invalid": "The event filter refers to an unknown or unfilterable fact, or its value does not fit.",
+      "run_now_unsupported": "Event automations run when their events arrive; they cannot be run now or tried."
     },
     "deployment": {
       "setting_readonly": "This setting is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",

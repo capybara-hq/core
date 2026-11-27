@@ -599,7 +599,11 @@
       "invalid_once_time": "日期和时刻无效。",
       "invalid_time_zone": "时区无效。",
       "limit_reached": "自动化数量已达上限。",
-      "once_in_past": "这个时间已经过去了。"
+      "once_in_past": "这个时间已经过去了。",
+      "event_source_unavailable": "该事件来源在本组织不可用。",
+      "event_type_unknown": "事件来源没有声明这个事件类型，或该类型只用于指派。",
+      "filter_invalid": "事件过滤条件引用了不存在或不可过滤的字段，或取值不合规。",
+      "run_now_unsupported": "事件自动化在事件到达时运行，不能立即运行或试运行。"
     },
     "deployment": {
       "setting_readonly": "这项设置由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
