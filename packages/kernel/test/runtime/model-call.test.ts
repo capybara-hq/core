@@ -2296,10 +2296,11 @@ describe("runModelStep", () => {
       it("a compaction whose in-context request would not fit summarizes the transcript", async () => {
         const h = harness();
         await cachedStep(h);
-        // a ~21k-token opener: the step request still fits fake-1's 32k window, the in-context
-        // request with the 4096-token summary cap does not fit below the 8000-token reserve (a
-        // tool directive keeps the step's reply short)
-        await nextTurn(`tool:ReadToolOutput:${JSON.stringify({ id: "x".repeat(84_000) })}`);
+        // a ~28k-token opener: the in-context request's estimate, calibrated by the previous
+        // step's actual input (about 0.77 of its estimate here, as the trigger calibrates), plus
+        // the 4096-token summary cap does not fit fake-1's 32k window below the 8000-token reserve
+        // (a tool directive keeps the step's reply short)
+        await nextTurn(`tool:ReadToolOutput:${JSON.stringify({ id: "x".repeat(110_000) })}`);
         await withSettings(compactNext, async () => {
           await icStep(h.d, 1);
         });
