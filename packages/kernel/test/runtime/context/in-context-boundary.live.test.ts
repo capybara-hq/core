@@ -48,7 +48,8 @@ import {
  *
  * Vendors (each runs when its variables are set): Anthropic `CAPYBARA_TEST_ANTHROPIC_API_KEY`,
  * `CAPYBARA_TEST_ANTHROPIC_MODEL` (default `claude-haiku-5-5`); OpenAI `CAPYBARA_TEST_OPENAI_API_KEY`,
- * `CAPYBARA_TEST_OPENAI_MODEL`; an OpenAI-compatible endpoint `CAPYBARA_TEST_OAICOMPAT_BASE_URL`
+ * `CAPYBARA_TEST_OPENAI_MODEL` (Responses API as in production; `CAPYBARA_TEST_OPENAI_API=chat` uses
+ * Chat Completions, as Task 8b's gpt-5-nano row did); an OpenAI-compatible endpoint `CAPYBARA_TEST_OAICOMPAT_BASE_URL`
  * (with its `/v1`), `_API_KEY`, `_MODEL`, `_DIALECT` (DeepSeek); Qwen through DashScope's
  * OpenAI-compatible mode `CAPYBARA_TEST_BAILIAN_API_KEY`, `CAPYBARA_TEST_BAILIAN_REGION`,
  * `CAPYBARA_TEST_BAILIAN_MODEL` (default `qwen3.8-flash`). `CAPYBARA_TEST_ANTHROPIC_MODEL` may list
@@ -359,6 +360,83 @@ function chatVendor(opts: {
   };
 }
 
+/**
+ * OpenAI Responses API, the API the openai provider uses in production. GPT-6.2 refuses function
+ * tools with its default reasoning effort on Chat Completions, so models after GPT-5.6 need it.
+ */
+function responsesVendor(opts: { label: string; key: string; model: string }): Vendor {
+  return {
+    label: opts.label,
+    async send(req, signal) {
+      const input: Record<string, unknown>[] = [];
+      for (const m of req.messages) {
+        if (m.role === "system") {
+          input.push({ role: "developer", content: m.content });
+        } else if (m.role === "assistant") {
+          const text = textOf(m.content);
+          if (text !== "") input.push({ role: "assistant", content: text });
+          for (const b of m.content) {
+            if (b.type === "tool_call")
+              input.push({
+                type: "function_call",
+                call_id: b.id,
+                name: b.name,
+                arguments: JSON.stringify(b.input),
+              });
+          }
+        } else {
+          for (const b of m.content) {
+            if (b.type === "tool_result")
+              input.push({ type: "function_call_output", call_id: b.callId, output: b.content });
+          }
+          const text = textOf(m.content);
+          if (text !== "") input.push({ role: "user", content: text });
+        }
+      }
+      const body = await post(
+        "https://api.openai.com/v1/responses",
+        { authorization: `Bearer ${opts.key}` },
+        {
+          model: opts.model,
+          store: false,
+          instructions: req.system.map((s) => s.text).join("\n\n"),
+          input,
+          max_output_tokens: req.maxOutputTokens,
+          ...(req.tools.length > 0 && {
+            tools: req.tools.map((t) => ({
+              type: "function",
+              name: t.name,
+              description: t.description,
+              parameters: t.inputSchema,
+            })),
+            tool_choice: req.toolChoice ?? "auto",
+          }),
+        },
+        signal,
+      );
+      const output = (body.output ?? []) as {
+        type: string;
+        content?: { type: string; text?: string }[];
+      }[];
+      const text = output
+        .filter((o) => o.type === "message")
+        .flatMap((o) => o.content ?? [])
+        .filter((c) => c.type === "output_text")
+        .map((c) => c.text ?? "")
+        .join("");
+      const incomplete = (body.incomplete_details ?? {}) as { reason?: string };
+      const usage = (body.usage ?? {}) as Record<string, number>;
+      return {
+        text,
+        stop: body.status === "incomplete" ? String(incomplete.reason) : String(body.status),
+        toolCall: output.some((o) => o.type === "function_call"),
+        inputTokens: usage.input_tokens ?? 0,
+        outputTokens: usage.output_tokens ?? 0,
+      };
+    },
+  };
+}
+
 function vendors(): Vendor[] {
   const out: Vendor[] = [];
   const anthropicKey = env.CAPYBARA_TEST_ANTHROPIC_API_KEY;
@@ -367,14 +445,19 @@ function vendors(): Vendor[] {
       out.push(anthropicVendor(anthropicKey, model.trim()));
   }
   if (env.CAPYBARA_TEST_OPENAI_API_KEY && env.CAPYBARA_TEST_OPENAI_MODEL) {
+    const label = `openai ${env.CAPYBARA_TEST_OPENAI_MODEL}`;
+    const key = env.CAPYBARA_TEST_OPENAI_API_KEY;
+    const model = env.CAPYBARA_TEST_OPENAI_MODEL;
     out.push(
-      chatVendor({
-        label: `openai ${env.CAPYBARA_TEST_OPENAI_MODEL}`,
-        base: "https://api.openai.com/v1",
-        key: env.CAPYBARA_TEST_OPENAI_API_KEY,
-        model: env.CAPYBARA_TEST_OPENAI_MODEL,
-        maxField: "max_completion_tokens",
-      }),
+      env.CAPYBARA_TEST_OPENAI_API === "chat"
+        ? chatVendor({
+            label,
+            base: "https://api.openai.com/v1",
+            key,
+            model,
+            maxField: "max_completion_tokens",
+          })
+        : responsesVendor({ label, key, model }),
     );
   }
   const oai = {
