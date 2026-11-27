@@ -825,14 +825,23 @@ export class ServiceSupervisor {
     let install: { dir: string; sealed: boolean };
     let installRoot: string;
     if (this.o.installCache && validInstallKey(installKey)) {
-      lease = await this.o.installCache.acquire(
-        spec.name,
-        installKey,
-        signal,
-        this.o.launcher()?.installVariant?.() ?? "",
-      );
+      try {
+        lease = await this.o.installCache.acquire(
+          spec.name,
+          installKey,
+          signal,
+          this.o.launcher()?.installVariant?.() ?? "",
+        );
+      } catch {
+        // a cache this start cannot use (its lock held too long, this process's start time
+        // unreadable, the root not private) falls back to the device's own install directory
+        signal.throwIfAborted();
+        lease = undefined;
+      }
+    }
+    if (lease) {
       install = { dir: lease.dir, sealed: lease.sealed };
-      installRoot = this.o.installCache.root;
+      installRoot = (this.o.installCache as InstallCache).root;
       // the device's own copy from before the cache is not used any more
       await this.dropDeviceInstall(spec.name);
     } else {

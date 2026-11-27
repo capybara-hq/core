@@ -1,4 +1,5 @@
 import {
+  chmod,
   link,
   lstat,
   mkdir,
@@ -1157,6 +1158,32 @@ it("a service naming its install key gets the machine-wide cache, shared across 
   });
   expect(echo.calls[2]?.env[DEVICE_SERVICE_INSTALL_ENV]).toBe(entry);
   expect(echo.calls[2]?.readRoots).toContain(entry);
+});
+
+it("a cache this start cannot use falls back to the device's own install directory", async () => {
+  const { root, deviceDir, workspace, echo } = await fixture();
+  // a cache root another user could write: refused by the cache
+  await mkdir(join(root, "open-cache"), { mode: 0o777 });
+  await chmod(join(root, "open-cache"), 0o777);
+  const supervisor = new ServiceSupervisor({
+    deviceDir,
+    workspace,
+    launcher: () => echo.launcher,
+    socketAliasRoot: join(root, "a"),
+    installCache: new InstallCache({ root: join(root, "open-cache"), scope: "https://x" }),
+  });
+  cleanups.push(() => supervisor.stopAll(signal()));
+  const files = spec({ "main.js": "// v1", [DEVICE_SERVICE_INSTALL_KEY_FILE]: "chromium-1255\n" });
+  expect(
+    await serveServiceOp(
+      supervisor,
+      { op: "service.ensure", spec: files, filesDigest: "d1" },
+      signal(),
+    ),
+  ).toMatchObject({ ok: true });
+  expect(echo.calls[0]?.env[DEVICE_SERVICE_INSTALL_ENV]).toBe(
+    join(deviceDir, "svc-install", "browser.browser"),
+  );
 });
 
 it("only a regular seal file seals the install directory", async () => {

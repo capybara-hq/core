@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { constants, readFileSync } from "node:fs";
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   open,
@@ -26,9 +27,10 @@ import { realDirectory } from "./supervisor.js";
 // install key (DEVICE_SERVICE_INSTALL_KEY_FILE, the browser revision), not per device and plugin
 // version. Layout under the root (0700, this user's):
 //
-//   staging/<pid>-<start>-<digits>/  an install in progress, private to one start: short and
+//   s/<pid>-<start>-<digits>/        an install in progress, private to one start: short and
 //                                    digits only, because the macOS sandbox spells a write root
-//                                    out in every write rule (case folded) and caps the rule length
+//                                    out in every write rule (case folded) and caps the rule length,
+//                                    so it fits wherever the device's own workspace path fits
 //   <sha256 of the scope>/<service>/
 //     locks/<n>                       the lock: generation files ({@link InstallCache.locked})
 //     entries/<key>@<rand>/           a published install, sealed, never written again
@@ -61,6 +63,9 @@ export const INSTALL_CACHE_KEEP = 2;
 
 /** How long a start waits for the lock a live process holds before it fails. */
 export const INSTALL_CACHE_LOCK_WAIT_MS = 60_000;
+
+/** The staging directory under the root (`s/` in the layout above). */
+export const STAGING = "s";
 
 /** How many links one link target may pass through while it is resolved inside the tree. */
 const MAX_LINK_HOPS = 40;
@@ -182,6 +187,7 @@ export class InstallCache {
   readonly root: string;
   private readonly isLive: (p: ProcessToken) => boolean;
   private selfToken: ProcessToken | undefined;
+  private readonly background = new Set<Promise<void>>();
 
   constructor(private readonly o: InstallCacheOptions) {
     if (!isAbsolute(o.root)) throw new Error(`The install cache root ${o.root} is not absolute`);
@@ -190,12 +196,33 @@ export class InstallCache {
     this.selfToken = o.self;
   }
 
+  /**
+   * This process's token, read from the same source other processes read it from (a guess from
+   * the clock could differ from their reading and make this live holder look gone to them):
+   * when it cannot be read the cache is not used ({@link acquire} throws).
+   */
   private get self(): ProcessToken {
-    this.selfToken ??= {
-      pid: process.pid,
-      start: processStartTime(process.pid) ?? Math.floor(Date.now() / 1000 - process.uptime()),
-    };
+    if (this.selfToken === undefined) {
+      let start: number | undefined;
+      for (let i = 0; i < 3 && start === undefined; i++) start = processStartTime(process.pid);
+      if (start === undefined)
+        throw new Error("The install cache cannot read this process's start time");
+      this.selfToken = { pid: process.pid, start };
+    }
     return this.selfToken;
+  }
+
+  /** Resolves once the deletions started in the background (after publishing) are done. */
+  async idle(): Promise<void> {
+    while (this.background.size > 0) await Promise.all([...this.background]);
+  }
+
+  /** Runs `fn` in the background, best effort, tracked by {@link idle}. */
+  private detach(fn: () => Promise<void>): void {
+    const p: Promise<void> = fn()
+      .catch(() => {})
+      .finally(() => this.background.delete(p));
+    this.background.add(p);
   }
 
   /**
@@ -210,6 +237,7 @@ export class InstallCache {
     variant = "",
   ): Promise<InstallLease> {
     if (!validInstallKey(key)) throw new Error(`Invalid install key ${JSON.stringify(key)}`);
+    void this.self; // throws before anything is written when this process cannot be named
     const dir = await this.serviceDir(service, variant);
     const manifest = join(dir, "manifests", key);
     // a lease taken under the lock: a sweep never removes an entry a start is about to verify
@@ -226,7 +254,7 @@ export class InstallCache {
       await utimes(manifest, now, now).catch(() => {});
       return { recorded, entry, lease };
     });
-    await this.emptyTrash(dir);
+    this.detach(() => this.emptyTrash(dir));
     if (found !== undefined) {
       let verdict: "ok" | "drop" | "skip";
       try {
@@ -236,8 +264,10 @@ export class InstallCache {
             ? "ok"
             : "drop";
       } catch (e) {
-        // a tree that breaks the rules is dropped; an I/O error (a transient one) only makes this
-        // start install its own copy, which replaces the entry when it is published
+        // a tree that breaks the rules is dropped at once; any other read error (EACCES, EIO)
+        // keeps the entry for the others but makes this start install its own copy, and that copy
+        // replaces the entry when it is published (publish's `replaces`), so a persistent error
+        // costs one download, not one per start
         verdict = e instanceof InstallTreeError || isGone(e) ? "drop" : "skip";
       }
       if (verdict === "ok")
@@ -257,24 +287,34 @@ export class InstallCache {
           if (now?.entry === found.recorded.entry) await rm(manifest, { force: true });
         });
     }
+    const replaces = found?.recorded.entry;
     signal.throwIfAborted();
-    const stagingRoot = await realDirectory(this.root, ["staging"]);
+    const stagingRoot = await realDirectory(this.root, [STAGING]);
     const digits = String(randomBytes(6).readUIntBE(0, 6)).padStart(15, "0");
     const staging = join(stagingRoot, `${tokenText(this.self)}-${digits}`);
     await mkdir(staging, { mode: 0o700 });
     return {
       dir: staging,
       sealed: false,
-      release: once(() => this.publish(dir, key, staging).catch(() => {})),
+      release: once(() => this.publish(dir, key, staging, replaces).catch(() => {})),
     };
   }
 
   /**
    * Publishes a staging directory its service sealed: digested outside the lock (it is private),
-   * renamed into place under a fresh name under it unless the key names a published entry
-   * already; the staging directory is removed in every case.
+   * renamed into place under a fresh name under it unless the key names another published entry
+   * already (one other than `replaces`, the entry this start found but could not read). Returns
+   * once the manifest names the entry: the deletions (a discarded staging directory, the trash)
+   * run in the background, so the service's name is held only for the digest (linear in the
+   * install's size, about 1 s per 400 MB on an SSD) and the short critical section; the lock is
+   * never held for a deletion.
    */
-  private async publish(dir: string, key: string, staging: string): Promise<void> {
+  private async publish(
+    dir: string,
+    key: string,
+    staging: string,
+    replaces: string | undefined,
+  ): Promise<void> {
     try {
       let digest: string | undefined;
       try {
@@ -289,7 +329,11 @@ export class InstallCache {
       const manifest = join(dir, "manifests", key);
       await this.locked(dir, AbortSignal.timeout(INSTALL_CACHE_LOCK_WAIT_MS), async () => {
         const recorded = await readManifest(manifest);
-        if (recorded !== undefined && (await isRealDirectory(join(dir, "entries", recorded.entry))))
+        if (
+          recorded !== undefined &&
+          recorded.entry !== replaces &&
+          (await isRealDirectory(join(dir, "entries", recorded.entry)))
+        )
           return; // another start published first: this copy goes
         const entry = `${key}@${token()}`;
         await rename(staging, join(dir, "entries", entry));
@@ -297,8 +341,10 @@ export class InstallCache {
         await this.sweep(dir, key);
       });
     } finally {
-      await forceRemove(staging);
-      await this.emptyTrash(dir);
+      this.detach(async () => {
+        await forceRemove(staging);
+        await this.emptyTrash(dir);
+      });
     }
   }
 
@@ -390,7 +436,7 @@ export class InstallCache {
   private async emptyTrash(dir: string): Promise<void> {
     for (const name of await readdir(join(dir, "trash")).catch(() => [] as string[]))
       await forceRemove(join(dir, "trash", name));
-    const stagingRoot = join(this.root, "staging");
+    const stagingRoot = join(this.root, STAGING);
     for (const name of await readdir(stagingRoot).catch(() => [] as string[])) {
       const m = /^(\d+-\d+)-\d+$/.exec(name);
       const p = m ? parseToken(m[1] as string) : undefined;
@@ -400,35 +446,39 @@ export class InstallCache {
 
   /**
    * Runs `fn` holding the service directory's lock. The lock is a sequence of generation files
-   * `locks/<n>`, each created exclusively and never removed while it is the highest: the holder is
-   * the process named in the highest one, until it writes `released` there (or its process is
-   * gone). A taker creates the next generation exclusively, so of several takers exactly one
-   * wins, whatever they read before; no file is ever taken over in place. The holder removes the
-   * lower generations. A live holder is waited for, with growing pauses, until `signal` aborts or
-   * {@link INSTALL_CACHE_LOCK_WAIT_MS} passed.
+   * `locks/<n>`, each made whole and exclusively (a temporary file hard linked into place, so no
+   * reader ever sees it empty) and never removed while it is the highest: the holder is the
+   * process named in the highest one, until it writes `released` there (or its process is gone).
+   * A taker links the next generation; of several takers that read the same highest generation
+   * exactly one succeeds. A taker that stalled after its read can still link a generation that a
+   * later holder already deleted (lower generations are removed by each holder), so every taker
+   * reads the generations again after its link and backs off (writing `released` into its own)
+   * while any higher one exists: the highest generation is never deleted, and a missing lower one
+   * means a holder of a higher one deleted it. A live holder is waited for, with growing pauses,
+   * until `signal` aborts or {@link INSTALL_CACHE_LOCK_WAIT_MS} passed.
    */
   private async locked<T>(dir: string, signal: AbortSignal, fn: () => Promise<T>): Promise<T> {
     const locks = join(dir, "locks");
     const deadline = Date.now() + INSTALL_CACHE_LOCK_WAIT_MS;
+    const generations = async () =>
+      (await readdir(locks)).filter((n) => /^[1-9]\d{0,15}$/.test(n)).map(Number);
     let pauseMs = 5;
     let mine = 0;
     for (;;) {
       signal.throwIfAborted();
-      const top = Math.max(
-        0,
-        ...(await readdir(locks)).filter((n) => /^[1-9]\d{0,15}$/.test(n)).map(Number),
-      );
+      const top = Math.max(0, ...(await generations()));
       const holder = top === 0 ? undefined : await readSmallFile(join(locks, String(top)));
       const p = holder?.startsWith("holder ") ? parseToken(holder.slice(7)) : undefined;
       if (p === undefined || !this.isLive(p)) {
-        try {
-          await writeNew(join(locks, String(top + 1)), `holder ${tokenText(this.self)}\n`);
-          mine = top + 1;
-          break;
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-          continue; // another taker created it first: read again
+        if (!(await linkNew(join(locks, String(top + 1)), `holder ${tokenText(this.self)}\n`)))
+          continue; // another taker linked it first: read again
+        if ((await generations()).some((n) => n > top + 1)) {
+          // a stale read: a later holder is (or was) above this generation
+          await releaseGeneration(join(locks, String(top + 1)));
+          continue;
         }
+        mine = top + 1;
+        break;
       }
       if (Date.now() >= deadline)
         throw new Error(
@@ -444,8 +494,45 @@ export class InstallCache {
           await rm(join(locks, name), { force: true }).catch(() => {});
       return await fn();
     } finally {
-      await writeAtomic(join(locks, String(mine)), "released\n").catch(() => {});
+      await releaseGeneration(join(locks, String(mine)));
     }
+  }
+}
+
+/**
+ * Writes `released` into a generation file, retried; when that keeps failing the file is removed
+ * instead (safe with the takers' read-again rule: the next taker links this number anew), so a
+ * failed write never leaves the lock held until this process exits.
+ */
+async function releaseGeneration(path: string): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      await writeAtomic(path, "released\n");
+      return;
+    } catch {
+      // retried, then removed
+    }
+  }
+  await unlink(path).catch(() => {});
+}
+
+/**
+ * Creates `path` whole with `text`: a private temporary file hard linked into place (atomic and
+ * exclusive; the temporary name goes after). False when `path` exists.
+ */
+async function linkNew(path: string, text: string): Promise<boolean> {
+  const tmp = `${path}~${token()}.tmp`;
+  await writeNew(tmp, text);
+  try {
+    await link(tmp, path);
+    return true;
+  } catch (e) {
+    // ENOENT: a holder's cleanup removed the temporary file meanwhile; read again either way
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "EEXIST" || code === "ENOENT") return false;
+    throw e;
+  } finally {
+    await unlink(tmp).catch(() => {});
   }
 }
 

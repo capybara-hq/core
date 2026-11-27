@@ -202,7 +202,7 @@ it.runIf(darwin)(
       );
       const staged = await result();
       expect(staged.dir).toContain(`${cacheRoot}/`);
-      expect(staged.dir).toContain("/staging/");
+      expect(staged.dir).toMatch(/\/s\/\d+-\d+-\d{15}$/);
       expect(staged).toMatchObject({ write: "ok", seal: "ok", read: "chromium" });
       expect(staged.beside).not.toBe("ok");
       // it exits sealed: published

@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import {
   chmod,
   link,
@@ -16,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEVICE_SERVICE_INSTALL_SEAL } from "@capybara-hq/plugin-sdk";
 import { afterEach, expect, it } from "vitest";
+import { macWriteRegexRules } from "../src/exec/mac-write-policy.js";
 import {
   INSTALL_CACHE_KEEP,
   InstallCache,
@@ -24,6 +26,7 @@ import {
   installCacheScope,
   type ProcessToken,
   processStartTime,
+  STAGING,
   treeDigest,
 } from "../src/services/install-cache.js";
 
@@ -48,8 +51,18 @@ async function fixture() {
     await rm(root, { recursive: true, force: true });
   });
   const cacheRoot = join(root, "cache");
-  const cache = (o: Partial<InstallCacheOptions> = {}) =>
-    new InstallCache({ root: cacheRoot, scope: PROD, platform: "darwin", arch: "arm64", ...o });
+  created.length = 0;
+  const cache = (o: Partial<InstallCacheOptions> = {}) => {
+    const c = new InstallCache({
+      root: cacheRoot,
+      scope: PROD,
+      platform: "darwin",
+      arch: "arm64",
+      ...o,
+    });
+    created.push(c);
+    return c;
+  };
   return { root, cacheRoot, cache };
 }
 
@@ -95,7 +108,12 @@ async function publish(c: InstallCache, key = KEY, body = "chromium binary"): Pr
   return again.dir;
 }
 
-const missing = (path: string) => expect(lstat(path)).rejects.toThrow(/ENOENT/);
+/** The caches a test made: their background deletions are awaited before a path is checked. */
+const created: InstallCache[] = [];
+const missing = async (path: string) => {
+  for (const c of created) await c.idle();
+  await expect(lstat(path)).rejects.toThrow(/ENOENT/);
+};
 
 it("a sealed install is published once and reused by other devices and plugin versions", async () => {
   const { cacheRoot, cache } = await fixture();
@@ -104,7 +122,7 @@ it("a sealed install is published once and reused by other devices and plugin ve
   // staged privately, never at the entry's path while the service writes
   expect(first.dir.startsWith(`${cacheRoot}/`)).toBe(true);
   // a short, digits-only name: the macOS sandbox spells a write root out in its rules
-  expect(first.dir).toMatch(/\/staging\/\d+-\d+-\d{15}$/);
+  expect(first.dir).toMatch(/\/s\/\d+-\d+-\d{15}$/);
   await install(first.dir);
   await first.release();
   await missing(first.dir);
@@ -122,7 +140,7 @@ it("a sealed install is published once and reused by other devices and plugin ve
   expect((await lstat(cacheRoot)).mode & 0o777).toBe(0o700);
   expect((await readdir(cacheRoot)).sort()).toEqual([
     expect.stringMatching(/^[0-9a-f]{64}$/),
-    "staging",
+    STAGING,
   ]);
 });
 
@@ -204,6 +222,50 @@ it.skipIf(root0)(
     await back.release();
   },
 );
+
+it.skipIf(root0)(
+  "a start that cannot read the entry replaces it with its own install",
+  async () => {
+    const { cache } = await fixture();
+    const entry = await publish(cache());
+    // a persistent read error inside the entry (only this user, outside the sandbox, can cause it)
+    await chmod(chrome(entry), 0o000);
+    const own = await cache().acquire(SERVICE, KEY, signal());
+    expect(own.sealed).toBe(false);
+    await install(own.dir, "own copy");
+    await own.release();
+    // the next start reuses that copy: one download, not one per start
+    const next = await cache().acquire(SERVICE, KEY, signal());
+    expect(next.sealed).toBe(true);
+    expect(next.dir).not.toBe(entry);
+    expect(await readFile(chrome(next.dir), "utf8")).toBe("own copy");
+    await next.release();
+    // the unreadable entry was replaced and, held by no one, goes with the sweep
+    await missing(entry);
+  },
+);
+
+it("a staging directory fits the macOS write rules wherever the device's workspace does", () => {
+  const fits = (root: string) => {
+    try {
+      macWriteRegexRules(root);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // the longest names the cache writes: the largest pid, start time and random suffix
+  const staging = (home: string) =>
+    `${home}/capybara-device/.install-cache/${STAGING}/4194304-9999999999-281474976710655`;
+  const workspace = (home: string) =>
+    `${home}/capybara-device/0123abcd-4567-89ef-abcd-ef0123456789/workspace`;
+  for (let n = 1; n <= 120; n++) {
+    const home = `/Users/${"a".repeat(n)}`;
+    if (fits(workspace(home))) expect(fits(staging(home)), `home ${home}`).toBe(true);
+  }
+  // a long account name (64 characters) still fits
+  expect(fits(staging(`/Users/${"a".repeat(64)}`))).toBe(true);
+});
 
 it("a partial entry (a file gone, the seal gone) is never used", async () => {
   const { cache } = await fixture();
@@ -381,6 +443,102 @@ it("waits for a live holder, and a reused pid never keeps a dead holder's lock",
   await quick.release();
 });
 
+it("a taker that stalled after its read backs off when a later holder is above it (ABA)", async () => {
+  const { cacheRoot, cache } = await fixture();
+  const T: ProcessToken = { pid: 1000, start: 1 };
+  const W2: ProcessToken = { pid: 2000, start: 1 };
+  const dead: ProcessToken = { pid: 3000, start: 1 };
+  let locks = "";
+  let fired = false;
+  let w2Inside = true;
+  // isLive runs between T's read of the highest generation and its link of the next: there W1
+  // takes N+1 and releases it, W2 takes N+2 (removing the lower ones) and is still inside
+  const isLive = (p: ProcessToken) => {
+    if (p.pid === dead.pid && locks !== "" && !fired) {
+      fired = true;
+      const n = Math.max(
+        ...readdirSync(locks)
+          .filter((x) => /^\d+$/.test(x))
+          .map(Number),
+      );
+      writeFileSync(join(locks, String(n + 1)), "released\n");
+      unlinkSync(join(locks, String(n)));
+      writeFileSync(join(locks, String(n + 2)), `holder ${W2.pid}-${W2.start}\n`);
+      unlinkSync(join(locks, String(n + 1)));
+      return false;
+    }
+    if (p.pid === W2.pid) return w2Inside;
+    return p.pid === T.pid;
+  };
+  const c = cache({ self: T, isLive });
+  const warm = await c.acquire(SERVICE, KEY, signal());
+  await warm.release();
+  const dir = await svcDir(cacheRoot);
+  locks = join(dir, "locks");
+  const n = Math.max(
+    ...readdirSync(locks)
+      .filter((x) => /^\d+$/.test(x))
+      .map(Number),
+  );
+  writeFileSync(join(locks, String(n + 1)), `holder ${dead.pid}-${dead.start}\n`);
+  let entered = false;
+  const taking = lockOf(c)(dir, signal(), async () => {
+    entered = true;
+    // W2 has finished by the time T holds it
+    expect(w2Inside).toBe(false);
+  });
+  // T backed off (its generation released below W2's) and waits for W2
+  for (let i = 0; i < 50 && !entered; i++) await new Promise((r) => setImmediate(r));
+  expect(entered).toBe(false);
+  w2Inside = false;
+  await taking;
+  expect(entered).toBe(true);
+});
+
+it("two processes on one cache never hold its lock at once, past a stale lock", async () => {
+  const { root, cacheRoot, cache } = await fixture();
+  const warm = await cache().acquire(SERVICE, KEY, signal());
+  await warm.release();
+  const dir = await svcDir(cacheRoot);
+  // a crashed capybara-device left the highest generation held
+  writeFileSync(join(dir, "locks", "50"), "holder 999999-1\n");
+  const log = join(root, "lock.log");
+  const script = join(root, "taker.mts");
+  const src = join(import.meta.dirname, "../src/services/install-cache.ts");
+  writeFileSync(
+    script,
+    `import { appendFileSync } from "node:fs";
+import { InstallCache } from ${JSON.stringify(src)};
+const [, , cacheRoot, dir, log, who] = process.argv as string[];
+const c = new InstallCache({ root: cacheRoot as string, scope: "x" }) as any;
+for (let i = 0; i < 15; i++)
+  await c.locked(dir, AbortSignal.timeout(60_000), async () => {
+    appendFileSync(log as string, \`enter \${who}\\n\`);
+    for (let j = 0; j < 20; j++) await new Promise((r) => setImmediate(r));
+    appendFileSync(log as string, \`exit \${who}\\n\`);
+  });
+`,
+  );
+  const tsx = join(import.meta.dirname, "../../../node_modules/.bin/tsx");
+  const run = (who: string) =>
+    new Promise<number | null>((resolve) => {
+      // source condition: the workspace packages it imports (plugin-sdk) are not built in CI
+      const child = spawn(
+        tsx,
+        ["--conditions=@capybara-hq/source", script, cacheRoot, dir, log, who],
+        { stdio: "inherit" },
+      );
+      child.on("exit", (code) => resolve(code));
+    });
+  expect(await Promise.all([run("a"), run("b")])).toEqual([0, 0]);
+  const lines = (await readFile(log, "utf8")).trim().split("\n");
+  expect(lines).toHaveLength(60);
+  for (let i = 0; i < lines.length; i += 2) {
+    const who = lines[i]?.split(" ")[1];
+    expect([lines[i], lines[i + 1]]).toEqual([`enter ${who}`, `exit ${who}`]);
+  }
+});
+
 it("a revision change installs the new key; old keys go once no running service holds them", async () => {
   const { cache } = await fixture();
   const c = cache();
@@ -413,15 +571,15 @@ it("sweeps the staging directories and leases of processes that are gone (a reus
   const reused = `${process.pid}-${(processStartTime(process.pid) ?? 0) - 1000}`;
   const owners = ["999999-1", reused];
   for (const owner of owners) {
-    const orphan = join(cacheRoot, "staging", `${owner}-000000000000001`);
+    const orphan = join(cacheRoot, STAGING, `${owner}-000000000000001`);
     await mkdir(orphan);
     await writeFile(join(orphan, "half.zip"), "x");
     await writeFile(join(dir, "leases", `${KEY}@000000000000~${owner}~ab`), "");
   }
   await install(l.dir);
   await l.release();
-  for (const owner of owners) await missing(join(cacheRoot, "staging", `${owner}-000000000000001`));
-  expect(await readdir(join(cacheRoot, "staging"))).toEqual([]);
+  for (const owner of owners) await missing(join(cacheRoot, STAGING, `${owner}-000000000000001`));
+  expect(await readdir(join(cacheRoot, STAGING))).toEqual([]);
   expect(await readdir(join(dir, "leases"))).toEqual([]);
   expect(await readdir(join(dir, "trash"))).toEqual([]);
 });
@@ -434,7 +592,7 @@ it.skipIf(root0)(
     const l = await c.acquire(SERVICE, KEY, signal());
     const dir = await svcDir(cacheRoot);
     // an unsealed run of a gone process left a directory without access, and a locked file
-    const orphan = join(cacheRoot, "staging", "999999-1-000000000000001");
+    const orphan = join(cacheRoot, STAGING, "999999-1-000000000000001");
     await mkdir(join(orphan, "inner"), { recursive: true });
     await writeFile(join(orphan, "inner", "f"), "x");
     await chmod(join(orphan, "inner"), 0o000);
