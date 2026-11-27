@@ -53,7 +53,7 @@ import {
 } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
 import { AGENT_TOOL } from "../tools/builtin-names.js";
-import { canonicalJson } from "./recorded-tools.js";
+import { canonicalJson } from "./canonical-json.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
 
 /** `R` when the caller did not resolve the org's settings (the built-in platform default). */
