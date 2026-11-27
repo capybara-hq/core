@@ -51,10 +51,13 @@ import {
   compactionRequestOverhead,
   extractSummary,
   MIN_COMPACTION_CHUNK_TOKENS,
+  manualOpeningSeqs,
+  manualTailBudget,
   nextTranscriptChunk,
   openingSeqs,
   shouldCompact,
   summarySavedTokens,
+  turnsSinceSummary,
 } from "./context/compaction.js";
 import {
   applyFit,
@@ -589,6 +592,8 @@ const idem = {
     `compaction_summary:${runId}:${step}:${n}`,
   compactionFailed: (runId: string, step: number, n: number) =>
     `compaction_failed:${runId}:${step}:${n}`,
+  /** A manual compact run that found nothing to summarize: one per run (spec §4.7). */
+  compactionSkipped: (runId: string) => `compaction_skipped:${runId}`,
   mediaExcluded: (runId: string, step: number, attempt: number, part: number) =>
     `media_excluded:${runId}:${step}:${attempt}:${part}`,
 };
@@ -1255,6 +1260,15 @@ interface CompactOptions {
   ref?: ModelRef;
   /** Whether `ref` is the fallback rung (its saved params are `fallbackParams`). */
   fallback?: boolean;
+  /**
+   * A manual compact run (spec §4.7, with `force`): it plans with the manual rule (every turn before
+   * the latest summarized, at most {@link manualTailBudget} of the latest turn kept; maintainer
+   * decision 2026-11-28), which the reactive path (`force` alone) does not. An outcome the automatic
+   * paths keep silent is recorded, so the person sees what their action did: nothing to summarize
+   * writes `compaction_skipped`, a model or storage that cannot be reached right now writes
+   * `compaction_failed`.
+   */
+  manual?: boolean;
 }
 
 /** What one compaction execution wrote: the events, the summary's seq and whether it failed. */
@@ -1298,6 +1312,31 @@ export async function runCompaction(
     summarySeq: null,
     failed: false,
   });
+  /**
+   * A manual compact run's early end that the automatic paths keep silent: recorded as its
+   * outcome (`compaction_failed` with a fixed reason), else just skipped.
+   */
+  const unavailable = async (reason: string): Promise<CompactionOutcome> => {
+    if (opts.manual !== true) return skipped(events);
+    const written = await appendCounted(deps, input, [
+      {
+        type: "compaction_failed",
+        runId: input.runId,
+        idemKey: idem.compactionFailed(
+          input.runId,
+          input.step,
+          compactionOrdinal(events, input.runId, input.step),
+        ),
+        payload: {
+          attempt: consecutiveCompactionFailures(events) + 1,
+          step: input.step,
+          reason,
+        },
+      },
+    ]);
+    const merged = await mergeWritten(deps.eventLog, input.conversationId, events, written);
+    return { events: merged, summarySeq: null, failed: true };
+  };
   const modelRef = opts.ref ?? input.agent.model;
   let provider: BoundProvider;
   let info: ModelInfo;
@@ -1305,7 +1344,7 @@ export async function runCompaction(
     ({ provider, info } = await deps.registry.resolve(input.orgId, modelRef));
   } catch (err) {
     deps.log.warn("compaction skipped: model unavailable", { model: modelRef, err });
-    return skipped(events);
+    return unavailable("the model is unavailable");
   }
   const limits = mediaLimits(deps);
   try {
@@ -1318,7 +1357,7 @@ export async function runCompaction(
       conversationId: input.conversationId,
       err,
     });
-    return skipped(events);
+    return unavailable("attachment storage is unavailable");
   }
   const { request: built, estimate: raw } = buildRequest(
     limits,
@@ -1349,10 +1388,42 @@ export async function runCompaction(
   // the input room left for the kept tail: the planning target `W - O_p - R_p`, minus the system
   // prompt and tool definitions every request carries
   const tailBudget = bounds.target - estimateTokens([], built.system, built.tools);
-  const plan = compactionPlan(events, compaction, tailBudget);
-  if (!plan) return skipped(events);
+  // a manual compaction ignores keepRecentTurns and keeps at most about a fifth of the window of
+  // the latest turn (spec §4.7, maintainer decision 2026-11-28); the reactive path (`force`
+  // without `manual`) plans like the proactive one
+  const manual = opts.manual === true;
+  const plan = manual
+    ? compactionPlan(events, compaction, manualTailBudget(info.contextWindow, tailBudget), {
+        manual: true,
+      })
+    : compactionPlan(events, compaction, tailBudget);
+  if (!plan) {
+    if (!manual) return skipped(events);
+    // a manual compaction that finds nothing to summarize says so (display only, never
+    // model-visible): nothing precedes the kept tail
+    const written = await appendCounted(deps, input, [
+      {
+        type: "compaction_skipped",
+        runId: input.runId,
+        idemKey: idem.compactionSkipped(input.runId),
+        payload: {
+          reason: "nothing_to_summarize",
+          turns: turnsSinceSummary(events),
+          step: input.step,
+        },
+      },
+    ]);
+    return {
+      events: await mergeWritten(deps.eventLog, input.conversationId, events, written),
+      summarySeq: null,
+      failed: false,
+    };
+  }
   // decided now and recorded in the summary (spec §4.2): the request never depends on later events
-  const opening = openingSeqs(events, input.runId, plan.coversUpToSeq, input.absorbedUpToSeq);
+  // a manual compact run is started by no message: the turn it cuts into is the latest message run's
+  const opening = manual
+    ? manualOpeningSeqs(events, plan.coversUpToSeq, input.absorbedUpToSeq)
+    : openingSeqs(events, input.runId, plan.coversUpToSeq, input.absorbedUpToSeq);
 
   const { runId, step, signal, conversationId } = input;
   const ref = modelRef;

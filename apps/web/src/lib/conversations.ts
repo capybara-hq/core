@@ -577,6 +577,19 @@ type EventBody =
     }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | {
+      /**
+       * A manual compaction found nothing to summarize: nothing precedes the kept tail (maintainer
+       * decision 2026-11-28). `too_few_turns` is an earlier plan's reason. Display only.
+       */
+      type: "compaction_skipped";
+      payload: {
+        reason: "nothing_to_summarize" | "too_few_turns";
+        keepRecentTurns?: number;
+        turns: number;
+        step: number;
+      };
+    }
+  | {
       type: "media_excluded";
       payload: { attachmentIds: string[]; reason: "provider_rejected" };
     }
@@ -843,6 +856,8 @@ export interface SubagentView {
   usage: ConversationUsage;
   pendingApprovalIds: string[];
   pendingQuestionIds: string[];
+  /** The pending questions that are watched waits: a subset of `pendingQuestionIds`. */
+  watchedQuestionIds?: string[];
 }
 
 /** A background `Bash` task's status (kernel `BackgroundTaskStatus`). */

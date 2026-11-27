@@ -211,7 +211,6 @@ describe("model-provider@2", () => {
       tools: false,
       vision: false,
       reasoning: false,
-      caching: false,
       midConversationSystem: false,
     },
   });

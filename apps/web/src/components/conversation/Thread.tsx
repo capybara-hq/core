@@ -994,6 +994,8 @@ function DividerView({
   c: EntryContext;
 }): ReactNode {
   const t = useTranslations("chat");
+  /** An effort's label in the reader's language (an unknown value as it was logged). */
+  const effortName = (v: string) => (t.has(`effort.${v}`) ? t(`effort.${v}`) : v);
   switch (e.divider) {
     case "compacted": {
       const open = c.openSummaries.has(e.key);
@@ -1014,13 +1016,26 @@ function DividerView({
         </RunDivider>
       );
     }
+    // a manual compaction's other outcomes are quiet notices, never alarming (§6.16.7)
+    case "compact-skipped":
+      return <RunDivider kind="notice" text={t("divider.compactSkipped")} />;
     case "compact-failed":
-      // The raw reason (the kernel's English) stays the panel's detail, as a run row's does.
+      return <RunDivider kind="notice" text={t("divider.compactFailed", { reason: e.reason })} />;
+    case "compact-stopped":
+      return <RunDivider kind="notice" text={t("divider.compactStopped")} />;
+    case "switched": {
+      const model = e.model === null ? t("divider.agentModel") : e.model.model;
       return (
-        <RunDivider kind="failed" text={t("divider.compactFailed")}>
-          {e.reason}
-        </RunDivider>
+        <RunDivider
+          kind="notice"
+          text={
+            e.effort === null
+              ? t("divider.switched", { model })
+              : t("divider.switchedEffort", { model, effort: effortName(e.effort) })
+          }
+        />
       );
+    }
     case "fallback":
       return (
         <RunDivider

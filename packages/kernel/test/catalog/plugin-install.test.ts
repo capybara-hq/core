@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { type ConnectorTemplateSpec, connectorToolKey } from "@capybara-hq/plugin-sdk";
+import {
+  type ConnectorTemplateSpec,
+  connectorToolKey,
+  type ExtensionManifest,
+} from "@capybara-hq/plugin-sdk";
 import { startFakeMcpServer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { OrgCatalogService } from "../../src/catalog/org-catalog.service.js";
 import { InstallFailure, PluginInstaller, planActions } from "../../src/catalog/plugin-install.js";
 import { ApiError } from "../../src/errors.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
@@ -1282,6 +1287,25 @@ describe("org plugin install: one kind per component", () => {
       .where("id", "=", c?.id as string)
       .executeTakeFirstOrThrow();
     expect(row.slug).toBe("github_2");
+  });
+
+  it("a loaded extension named like the template's slug does not move it: connector and extension tools are separate key families", async () => {
+    // the Slack plugin case: its extension `slack` and its connector template's default slug
+    // `slack` are one name, while the tools are `mcp__slack__*` and `plugin__slack__*`
+    const registry = env.k.app.get(ExtensionRegistry);
+    const loaded = registry.manifests();
+    const github = { ...(loaded[0] as ExtensionManifest), name: "github" };
+    vi.spyOn(registry, "manifests").mockReturnValue([...loaded, github]);
+    const id = await seedPlugin(env, { name: "crm", skills: [] });
+    const r = await install(env.boss, env, id);
+    expect(r.statusCode, r.body).toBe(201);
+    const [c] = await templateConnectors(env, { itemId: id });
+    const row = await env.db
+      .selectFrom("connectors")
+      .select("slug")
+      .where("id", "=", c?.id as string)
+      .executeTakeFirstOrThrow();
+    expect(row.slug).toBe("github");
   });
 
   it("a template whose connector extension is not deployed: the org list says not_deployed, install refuses it", async () => {

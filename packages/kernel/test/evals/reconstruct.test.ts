@@ -1133,12 +1133,64 @@ describe("reconstructRequest：基线零漂移", () => {
     // the post-summary framing (spec §4.2.2), derived from the log: the re-rendered opening
     // message, then the kept pair the summary did not see
     expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(
-      /<\/conversation_summary>\n\nThe message that opened the current turn follows, shown again verbatim; the summary covers it\. The messages after those are the most recent ones in the conversation, kept verbatim\..*Continue the work from where it left off\.$/s,
+      /<\/conversation_summary>\n\nThe earlier part of this conversation was compacted into the summary above and is no longer shown verbatim\. The message that opened the current turn follows, shown again verbatim; the summary covers it\. The messages after those are the most recent ones in the conversation, kept verbatim\..*Continue the work from where it left off\.$/s,
     );
     expect(blocks.slice(1).some((b) => b.type === "text" && b.text === ask)).toBe(true);
     // after the system texts that follow a summary (run context, skills), the kept tool pair
     const rest = (request?.messages ?? []).slice(1).filter((m) => m.role !== "system");
     expect(rest.map((m) => m.role)).toEqual(["assistant", "user"]);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("a manual compaction inside the latest turn (spec §4.7, maintainer decision 2026-11-28): earlier turns and the turn's message summarized, the latest pair kept, zero drift", async () => {
+    reset();
+    // fake-1 (W 32000): the manual tail budget is a fifth of the window (6400). The tool call's
+    // input (≈7.5k tokens) puts the latest pair over it, below the automatic trigger; the call is
+    // to a tool the agent lacks, so its result and the reply stay short
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    await turn("echo:first");
+    const ask = `tool:noop:${JSON.stringify({ pad: "Tally each row. ".repeat(1900) })}`;
+    await turn(ask);
+    expect((await eventsOf(db, conv)).some((e) => e.type === "compaction_summary")).toBe(false);
+
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/compact`,
+      payload: {},
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, conv, ++n, 30_000);
+    const events = await eventsOf(db, conv);
+    const summary = events.findLast((e) => e.type === "compaction_summary");
+    const message = events.findLast((e) => e.type === "user_message");
+    const call = events.findLast(
+      (e) =>
+        e.type === "assistant_message" && e.payload.content.some((b) => b.type === "tool_call"),
+    );
+    expect(summary?.type).toBe("compaction_summary");
+    if (summary?.type !== "compaction_summary") return;
+    // the boundary sits inside the latest turn, right before its tool pair; the opener is recorded
+    expect(summary.payload.coversUpToSeq).toBeGreaterThanOrEqual(message?.seq ?? 0);
+    expect(summary.payload.coversUpToSeq).toBeLessThan(call?.seq ?? 0);
+    expect(summary.payload.openingSeqs).toEqual([message?.seq]);
+
+    await turn("echo:after");
+    const request = sent.at(-1);
+    const head = request?.messages[0];
+    const blocks = Array.isArray(head?.content) ? head.content : [];
+    expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(/^<conversation_summary>/);
+    expect(blocks[0]?.type === "text" && blocks[0].text).toContain(
+      "The message that opened the current turn follows, shown again verbatim; the summary covers it.",
+    );
+    expect(blocks.slice(1).some((b) => b.type === "text" && b.text === ask)).toBe(true);
+    // the earlier turn is only in the summary
+    expect(JSON.stringify(request?.messages.slice(1))).not.toContain("echo:first");
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
@@ -2645,6 +2697,36 @@ describe("reconstructRequest: replies cut off at the output limit (issue #951)",
   });
 });
 
+describe("reconstructRequest: run outcome notes (maintainer decision 2026-11-28)", () => {
+  it("a failed run is followed by its note in the next requests, at its position; zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "fail:invalid_request");
+    await waitForTerminal(db, conv, 1, 30_000);
+    await postMessage(owner, orgId, conv, "echo:after");
+    await waitForTerminal(db, conv, 2, 30_000);
+
+    const events = await eventsOf(db, conv);
+    const failed = events.find((e) => e.type === "run_failed");
+    expect(failed?.type === "run_failed" && failed.payload.error.code).toBe(
+      "model.invalid_request",
+    );
+    const note =
+      "The previous run ended before it finished: the model service rejected the request.";
+    const last = sent.at(-1) as ModelRequest;
+    const at = last.messages.findIndex((m) => m.role === "system" && m.content === note);
+    expect(at).toBeGreaterThan(0);
+    // after the failed turn, right before the next user turn; the provider's text never shows
+    expect(last.messages[at + 1]?.role).toBe("user");
+    expect(JSON.stringify(last)).not.toContain("Scripted invalid_request failure");
+    const calls = modelCalls(events);
+    expect(calls.at(-1)?.payload.request.runOutcomeSeqs).toEqual([failed?.seq]);
+    expect(calls[0]?.payload.request).not.toHaveProperty("runOutcomeSeqs");
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+});
+
 describe("reconstructRequest: UI refresh B model switches", () => {
   it("two mid-conversation switches (model, then back with an effort): zero drift, equal to what the provider received", async () => {
     reset();
@@ -3169,6 +3251,22 @@ describe("reconstructRequest：漂移原因", () => {
       "permission_profile_changed",
       "device_sandbox_changed",
     ]);
+  });
+
+  it("run_outcome_note: a request recorded without the notes its log now renders", () => {
+    const s = clone();
+    const call = modelCalls(toEvents(s)).at(-1) as ModelCallEvent;
+    // a failed earlier run inside the recorded range that the request (as one sent before the
+    // notes existed) did not render
+    const first = s.events.find((e) => e.seq === call.payload.request.fromSeq);
+    s.events.push({
+      seq: call.payload.request.fromSeq + 0.5,
+      type: "run_failed",
+      runId: "run-earlier",
+      payload: { error: { code: "model.timeout", message: "x" } },
+      createdAt: first?.createdAt ?? new Date(0).toISOString(),
+    } as (typeof s.events)[number]);
+    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual(["run_outcome_note"]);
   });
 
   it("快照里没有这个 model_call → eval.call_not_found", () => {

@@ -31,7 +31,6 @@ const caps = (over: Record<string, boolean> = {}) => ({
   tools: true,
   vision: false,
   reasoning: false,
-  caching: false,
   midConversationSystem: true,
   ...over,
 });

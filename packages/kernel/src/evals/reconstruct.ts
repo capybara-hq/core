@@ -97,7 +97,8 @@ function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolea
  *   图片数 / 页数上限、对象被替换后 etag 变了等）；
  * - `context_fit` (context compaction spec §4.9, never for a baseline): the candidate model's window
  *   makes the hard fit guard plan a different trim than the recorded `model_call.request.fit` (the
- *   recorded plan is replayed for a baseline; a candidate applies its recomputed plan).
+ *   recorded plan is replayed for a baseline; a candidate applies its recomputed plan);
+ * - `run_outcome_note`: the rebuilt run outcome notes differ from the recorded `runOutcomeSeqs`.
  */
 
 /** 还原结果与原请求不一致的原因。 */
@@ -130,6 +131,13 @@ export type DriftReason =
    * goes out against the candidate's window.
    */
   | "context_fit"
+  /**
+   * The rebuild renders another set of run outcome notes (`runtime/context/run-outcome.ts`) than
+   * the request recorded in `model_call.request.runOutcomeSeqs`: a request sent before the note
+   * existed (maintainer decision 2026-11-28). Judged for every reconstruction: the notes come from
+   * the log alone, so a candidate cannot change them.
+   */
+  | "run_outcome_note"
   /** 整轮回放（T5）：有工具调用没有匹配到记录（模型收到 REPLAY_NO_RECORDING）。 */
   | "tool_unmatched";
 
@@ -146,6 +154,7 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "media_missing",
   "media_changed",
   "context_fit",
+  "run_outcome_note",
   "tool_unmatched",
 ];
 
@@ -493,6 +502,13 @@ export function reconstructFromInputs(
     ) {
       drift.add("tools_changed");
     }
+  }
+
+  // run outcome notes: from the log alone, so only a request sent before they existed differs
+  const notes = meta.runOutcomeSeqs ?? [];
+  const recordedNotes = rec.runOutcomeSeqs ?? [];
+  if (notes.length !== recordedNotes.length || notes.some((x, i) => x !== recordedNotes[i])) {
+    drift.add("run_outcome_note");
   }
 
   // 媒体：按附件 id 与记录比较
