@@ -26,10 +26,10 @@ import { expectNoFirstPaintFetch } from "./support/server";
 /**
  * Project root spec §4.3, §4.6 (plan Task 12), composer menus spec §6: a new conversation is bound
  * to one of its device's projects from the project picker after the device picker in the composer's
- * top strip (自由模式 by default); an existing conversation shows its device and project read only; the conversation names its project and whether it loaded (or why it is
- * unavailable) from the view's `projectState` (the latest `project_root` event, wherever it lies in
- * the log); the `/` menu groups its entries by source,
- * the project's skills under their own heading.
+ * top strip (自由模式 by default); an existing conversation shows its device and project read
+ * only; the conversation names its project and whether it loaded (or why it is unavailable) from
+ * the view's `projectState` (the latest `project_root` event, wherever it lies in the log); the `/`
+ * menu groups its entries by source, the project's skills under their own heading.
  */
 
 const params = { conversationId: "c1" };
@@ -205,6 +205,32 @@ describe("binding a new conversation to a project (the top strip)", () => {
     expect(body).not.toHaveProperty("project");
   });
 
+  it("while another device's projects are read, the project picker stands disabled on 自由模式", async () => {
+    resetNavigation("/");
+    let answer: (r: Response) => void = () => {};
+    const late = new Promise<Response>((resolve) => {
+      answer = resolve;
+    });
+    stubApi({ [`GET ${ORG}/devices/e2/projects`]: () => late });
+    await renderRouteWithCache("/", newRoutes());
+    const user = userEvent.setup();
+    await user.click(await vi.waitFor(() => projectPicker() as HTMLElement));
+    await user.click(await screen.findByRole("menuitemradio", { name: "core" }));
+    await user.click(devicePicker());
+    await user.click(await screen.findByRole("menuitemradio", { name: /Build box/ }));
+    // it neither vanishes nor keeps the old device's pick while the read is on its way
+    const waiting = await vi.waitFor(() => {
+      const p = projectPicker() as HTMLElement;
+      expect(p.textContent).toBe(en.chat.freeMode);
+      return p;
+    });
+    expect((waiting as HTMLButtonElement).disabled).toBe(true);
+    answer(json(200, projectsOf({ projects: [{ name: "web", path: "/Users/o/src/web" }] })));
+    await vi.waitFor(() => expect((projectPicker() as HTMLButtonElement).disabled).toBe(false));
+    await user.click(projectPicker() as HTMLElement);
+    expect(await screen.findByRole("menuitemradio", { name: "web" })).toBeTruthy();
+  });
+
   it("a device that does not support projects offers no project choice", async () => {
     resetNavigation("/");
     await renderRouteWithCache(
@@ -213,7 +239,7 @@ describe("binding a new conversation to a project (the top strip)", () => {
     );
     const user = userEvent.setup();
     await vi.waitFor(() => expect(devicePicker()).toBeTruthy());
-    expect(projectPicker()).toBeNull();
+    await vi.waitFor(() => expect(projectPicker()).toBeNull());
     await user.click(devicePicker());
     const menu = await screen.findByRole("menu");
     expect(within(menu).queryByRole("menuitemradio", { name: en.chat.freeMode })).toBeNull();

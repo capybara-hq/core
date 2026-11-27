@@ -253,7 +253,8 @@ const PROJECT_ITEM = "project:";
  * A second picker after it binds the conversation to a project (project root §4.3, composer menus
  * spec §6: the top strip reads device / project): 自由模式 (the default) and the chosen device's
  * projects its current mode can read. A device without projects, or one that does not support
- * them, offers no project picker; another device drops the pick.
+ * them, offers no project picker (while its projects are read the picker stands disabled on
+ * 自由模式); another device drops the pick.
  *
  * With no device at all but a device provider on in the org ({@link canCreateDevice}), there is
  * nothing to pick: the button leads with the device icon and says "No device" (the first send goes
@@ -271,11 +272,15 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
   const id = list === undefined ? undefined : chosenDeviceId(list, picked);
   // prefetched with the page for the device it starts on (the route's `then`)
   const projectsQ = deviceProjectsQuery(orgId, id ?? "");
-  const projects = useQuery({
+  const projectsRead = useQuery({
     ...projectsQ,
     enabled: id !== undefined,
     retryOnMount: retryOnMountOf(projectsQ.queryKey),
-  }).data;
+  });
+  const projects = projectsRead.data;
+  // while the device's projects are read the project picker stands disabled on 自由模式, so it
+  // does not pop in later; it is absent only once the read found none (or failed)
+  const projectsLoading = id !== undefined && projectsRead.isPending;
   if (list === undefined || !deviceChoiceShown(list)) {
     return { deviceId: undefined, project: undefined, picker: undefined };
   }
@@ -338,30 +343,40 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
         setPicked(choice);
       },
     },
-    ...(id !== undefined && offered.length > 0
+    ...(projectsLoading
       ? {
           projectPicker: {
             label: t("projectGroup"),
-            value: project ?? t("freeMode"),
-            groups: [
-              {
-                items: [
-                  { id: PROJECT_ITEM, label: t("freeMode"), checked: project === undefined },
-                  ...offered.map((p) => ({
-                    id: `${PROJECT_ITEM}${p.name}`,
-                    label: p.name,
-                    checked: p.name === project,
-                  })),
-                ],
-              },
-            ],
-            onPick: (choice: string) => {
-              const name = choice.slice(PROJECT_ITEM.length);
-              setPickedProject(name === "" ? null : { device: id, name });
-            },
+            value: t("freeMode"),
+            disabled: true,
+            groups: [],
+            onPick: () => {},
           },
         }
-      : {}),
+      : id !== undefined && offered.length > 0
+        ? {
+            projectPicker: {
+              label: t("projectGroup"),
+              value: project ?? t("freeMode"),
+              groups: [
+                {
+                  items: [
+                    { id: PROJECT_ITEM, label: t("freeMode"), checked: project === undefined },
+                    ...offered.map((p) => ({
+                      id: `${PROJECT_ITEM}${p.name}`,
+                      label: p.name,
+                      checked: p.name === project,
+                    })),
+                  ],
+                },
+              ],
+              onPick: (choice: string) => {
+                const name = choice.slice(PROJECT_ITEM.length);
+                setPickedProject(name === "" ? null : { device: id, name });
+              },
+            },
+          }
+        : {}),
   };
 }
 
