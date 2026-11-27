@@ -140,6 +140,7 @@ export interface SubagentLive {
       startedAt?: string;
       pendingApprovalIds: string[];
       pendingQuestionIds: string[];
+      watchedQuestionIds?: string[];
     }
   >;
   /**
@@ -1140,9 +1141,9 @@ export function buildEventTimeline(
     else c.tool.row.waitingFor = who;
     if (id !== undefined) waitCalls.set(id, c);
   };
-  const waitEnded = (id: string, what: NonNullable<ToolRowData["waiting"]>) => {
+  const waitEnded = (id: string, ...what: NonNullable<ToolRowData["waiting"]>[]) => {
     const c = waitCalls.get(id);
-    if (c && c.tool.row.waiting === what) {
+    if (c && c.tool.row.waiting !== undefined && what.includes(c.tool.row.waiting)) {
       delete c.tool.row.waiting;
       delete c.tool.row.waitingFor;
     }
@@ -1924,8 +1925,10 @@ export function buildEventTimeline(
           reopen(s, e.payload.childRunId, Number.NaN);
         if (s && row && !s.finished && (deep || s.childRunId === e.payload.childRunId)) {
           row.status = "waiting";
-          row.waiting = e.payload.kind;
-          if (deep) deepWaits.set(top, { id: e.payload.subagentId, kind: e.payload.kind });
+          const waitKind: SubagentWaitKind =
+            e.payload.kind === "input" && e.payload.watch === true ? "watch" : e.payload.kind;
+          row.waiting = waitKind;
+          if (deep) deepWaits.set(top, { id: e.payload.subagentId, kind: waitKind });
           else deepWaits.delete(top);
         }
         const branch = row?.description || row?.agentType || e.payload.subagentId;
@@ -2023,7 +2026,10 @@ export function buildEventTimeline(
         break;
       }
       case "question_asked":
-        waitOn(e.runId, e.payload.callId, "input", e.payload.questionId, starterOf(e.runId));
+        // a watched wait asks nobody: its own word, no "waiting for X to answer"
+        if (e.payload.watch === true)
+          waitOn(e.runId, e.payload.callId, "watch", e.payload.questionId);
+        else waitOn(e.runId, e.payload.callId, "input", e.payload.questionId, starterOf(e.runId));
         questions.set(e.payload.questionId, out.length);
         out.push({
           kind: "question",
@@ -2040,7 +2046,7 @@ export function buildEventTimeline(
         });
         break;
       case "question_answered": {
-        waitEnded(e.payload.questionId, "input");
+        waitEnded(e.payload.questionId, "input", "watch");
         const i = questions.get(e.payload.questionId);
         const prev = i === undefined ? undefined : out[i];
         if (i !== undefined && prev?.kind === "question")

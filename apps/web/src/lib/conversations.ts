@@ -851,6 +851,8 @@ export interface SubagentView {
   usage: ConversationUsage;
   pendingApprovalIds: string[];
   pendingQuestionIds: string[];
+  /** The pending questions that are watched waits: a subset of `pendingQuestionIds`. */
+  watchedQuestionIds?: string[];
 }
 
 /** A background `Bash` task's status (kernel `BackgroundTaskStatus`). */

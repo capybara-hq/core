@@ -180,3 +180,33 @@ describe("a superseded approval (permission change, Task 10D)", () => {
     expect(openWaitReads(events.slice(0, 3)).approvals).toEqual(["ap1"]);
   });
 });
+
+describe("a watched wait", () => {
+  const question = (extra: Record<string, unknown>) =>
+    ev(4, "question_asked", {
+      step: 0,
+      callId: "a",
+      questionId: "q1",
+      form: { fields: [] },
+      expiresAt: "x",
+      ...extra,
+    });
+
+  it("has its own state word and names nobody, an ordinary question keeps asking the starter", () => {
+    const watched = build([start("acc_zhang"), call("a", "Wait"), question({ watch: true })]);
+    expect(row(watched)).toMatchObject({ waiting: "watch" });
+    expect(row(watched)?.waitingFor).toBeUndefined();
+    const asked = build([start("acc_zhang"), call("a", "Ask"), question({})]);
+    expect(row(asked)).toMatchObject({ waiting: "input", waitingFor: "张三" });
+  });
+
+  it("ends with its answer", () => {
+    const out = build([
+      start(ME),
+      call("a", "Wait"),
+      question({ watch: true }),
+      ev(5, "question_answered", { questionId: "q1", outcome: "woken" }),
+    ]);
+    expect(row(out)?.waiting).toBeUndefined();
+  });
+});
