@@ -75,11 +75,11 @@ describe("the sidebar on the ground (layered shell spec §4)", () => {
       expect(r.decls["border-top"]).toBeUndefined();
   });
 
-  it("from 600 up the sidebar has no ground and no end line (the shell paints the ground)", () => {
+  it("from 600 up the sidebar keeps the ground's colour and draws no end line", () => {
     const wide = declsOf(".cb-sidebar:not([data-variant])", WIDE);
-    expect(wide.background).toBe("transparent");
+    // its own ground is the shell's colour, so it reads as the ground in a shell and alone
+    expect(wide.background).toBeUndefined();
     expect(wide["border-right"]).toBe("0");
-    // the drawer and the sheet float over the content and keep their ground
     expect(declsOf(".cb-sidebar").background).toBe("var(--cb-sidebar)");
   });
 

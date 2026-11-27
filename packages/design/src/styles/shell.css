@@ -157,6 +157,11 @@
   .cb-pageheader-row > .cb-pageheader-text {
     flex: 1 1 auto;
   }
+  /* A loading title has no width of its own: the text block takes the room before the actions
+     again (the filler none), so its 30% bar measures as the reference draws it (spec §4.2). */
+  .cb-pageheader-row:has(> .cb-pageheader-text .cb-pageheader-title-bar) > .cb-drag-fill {
+    flex: 0 0 0;
+  }
 }
 .cb-title-bar > .cb-drag-fill {
   margin-left: calc(-1 * var(--cb-space-1));

@@ -69,7 +69,8 @@ intended (one paper colour). `preview-light` keeps `#FAF9F6` (an icon preview gr
 
 ### 2. The shell from 600 up (`styles/shell.css`, `styles/conversation-page.css`)
 
-- `.cb-shell` paints `sidebar`; the sidebar has no ground and no right line of its own.
+- `.cb-shell` paints `sidebar`; the sidebar keeps its own `sidebar` ground (the same colour, so it
+  reads as the ground in the shell and drawn alone) and has no right line.
 - `.cb-shell-main` is the paper: `bg`, margin `space.2` on top, end and bottom (start: the sidebar's
   edge), `radius.md`, clipped, no border, no shadow.
 - The conversation page: the main column and the inline right panel are two papers side by side,

@@ -135,8 +135,9 @@ export function Menu({
   /** Default true; false leaves the page usable while it is open (drawn open in the catalog). */
   modal?: boolean;
   /**
-   * Default true: the menu takes focus as it opens. False keeps the focus where it is (a menu drawn
-   * open in the catalog beside another one that a page's checks expect to hold the focus).
+   * Default true: the menu takes focus as it opens. False keeps the focus where it is and the menu
+   * open while the focus is elsewhere (a menu drawn open in the catalog beside another one that a
+   * page's checks expect to hold the focus).
    */
   autoFocus?: boolean;
 }) {
@@ -190,8 +191,13 @@ export function Menu({
           {...(label ? { "aria-label": label } : {})}
           {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}
           // (Radix's menu content takes `onOpenAutoFocus`; the dropdown's types leave it out)
+          // A menu that does not take the focus also stays open when the focus is elsewhere (the
+          // other menu drawn open on the same catalog page holds it).
           {...((autoFocus === false
-            ? { onOpenAutoFocus: (e: Event) => e.preventDefault() }
+            ? {
+                onOpenAutoFocus: (e: Event) => e.preventDefault(),
+                onFocusOutside: (e: Event) => e.preventDefault(),
+              }
             : {}) as Record<string, never>)}
         >
           {head !== undefined && head !== null ? (

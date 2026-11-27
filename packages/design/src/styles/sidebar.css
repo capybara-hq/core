@@ -836,13 +836,12 @@
 .cb-sidebar[data-variant="drawer"] {
   border-right-color: var(--cb-line-strong);
 }
-/* From 600 up the sidebar sits on the shell's ground (layered shell spec §2, painted on
-   .cb-shell): no ground and no end line of its own. The medium drawer and the rail's sheet float
-   over the content and keep theirs. */
+/* From 600 up the sidebar is part of the ground (layered shell spec §2): its own ground is the
+   shell's colour (`sidebar`), so it reads the same in a shell and drawn alone, and it draws no end
+   line. The medium drawer and the rail's sheet float over the content and keep their line. */
 @media (min-width: 600px) {
   .cb-sidebar:not([data-variant]) {
     border-right: 0;
-    background: transparent;
   }
 }
 .cb-sidebar[data-variant="sheet"] .cb-sidebar-sheet-title {

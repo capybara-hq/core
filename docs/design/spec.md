@@ -291,7 +291,7 @@ See §6.13 for the component.
 
 - **Expanded** (841 and up): the full sidebar, width `layout.sidebar`, with a **collapse toggle** at the end of its brand row (`panel-left`, "收起侧栏" / "Collapse sidebar"; ⌘\ / Ctrl+\). The person's choice, the full sidebar or the rail of `layout.sidebar-rail`, is remembered in the cookie `cb-sidebar=rail`, which the app layout reads like the theme cookie, so the first paint draws the chosen form and nothing jumps. The sidebar never turns into the rail by itself at any width.
 - **Medium** (600–840): the rail only, with no expand button (the full sidebar does not fit beside the content); instead a **sidebar toggle** (`panel-left`, "显示侧栏" / "Show sidebar") where the expand button sits opens the full sidebar as a **drawer** over the content (maintainer decision 2026-11-21, §6.13), and ⌘\ / Ctrl+\ opens and closes it (maintainer decision 2026-11-22; the remembered choice stays); and one more button, 会话, which opens the sidebar's conversation section as a side sheet over the content (§6.13); the account row's popover holds the org switcher and 更多 as the rail's does.
-- **Trims** (maintainer decision 2026-11-28): the sidebar has no ground of its own and no right line (the shell's ground shows through, §4); nothing in it is framed: the org switcher draws no box, and there is no line above the account row.
+- **Trims** (maintainer decision 2026-11-28): the sidebar has no right line and its own ground is the shell's `sidebar` colour, so it reads as the ground (§4); nothing in it is framed: the org switcher draws no box, and there is no line above the account row.
 - **Compact** (below 600): no sidebar. The drawer (§6.54), opened from the floating menu button on a chat surface, holds what the sidebar held, less the management pages.
 - **Two width rules** are the whole width layout beside the classes: the full sidebar from 841; the conversation's right area inline from 1280 (§5.4). With the full sidebar at 841 the content area is 585 wide, above `layout.chat-min` (480) and `layout.content-min` (552).
 
@@ -1270,7 +1270,7 @@ States: `set-16`, `set-14`, `set-12`
 
 The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Sidebar v3 (web-order spec `docs/superpowers/specs/2026-10-31-web-order-design.md` §2.1–§2.2, the approved canvas "侧边栏组件") has **three contexts** and changes as a whole between them: the **workspace** (one org at a time, `context.kind: "work"`), the **admin console** (the whole deployment, `kind: "admin"`) and the **setup** of an org that cannot run yet (`kind: "setup"`, drawn by `SetupPage`, §5.5).
 
-- **Frame**: width `layout.sidebar`, the full window height; no ground and no right line of its own from 600 up (it sits on the shell's `sidebar` ground, §4);  padding `space.3` / `space.2` / `space.2` (top / sides / bottom) and every block `space.2` apart (the 8 px rhythm).
+- **Frame**: width `layout.sidebar`, the full window height; ground `sidebar` (the shell's ground colour from 600 up, so it reads as part of the ground, §4) and no right line from 600 up;  padding `space.3` / `space.2` / `space.2` (top / sides / bottom) and every block `space.2` apart (the 8 px rhythm).
 - **Workspace context**, top to bottom:
   1. **Brand row** (`brand-row`, `row.default`): logo (pixel unit 2) + wordmark `CAPYBARA`, then at its right end three ghost icon buttons (`control.default`, 2 apart): **search** (`search`, accessible name and native tooltip "搜索 ⌘K", opens the command palette), the **inbox** (`inbox`, a link to `/inbox`, `sidebar-active` while current) and the **collapse toggle** (`panel-left`, "收起侧栏" / "Collapse sidebar", tooltip with ⌘\ / Ctrl+\; it collapses the sidebar to the rail and the choice is remembered, §4.1; the admin and setup contexts' brand rows hold only this button). The inbox carries a small count badge (`inbox-badge`, the **inset form**, unlike the rail's and the bottom navigation's nav badge below: `selected` ground, mono `micro`, inset 2px from the box's top right, min width 14, padding 0 3px) only while something is pending (`99+` above 99, `n+` when truncated); its accessible name includes the count ("收件箱，3 项待处理"), else "收件箱".
   2. **Org switcher** (`org-switcher`): a 40 high row with no box and no ground (hover paints `hover`): the org's initial in a 24 box (radius `sm`) on `ink` with `bg` text (mono, 600), the org's name (600) alone (the `~/<slug> · <role>` line is in the switch menu only), and a `chevrons-up-down` 14 icon. It opens the org menu (the user's orgs as `menuitemradio` items, then "创建组织…" when allowed); its accessible name is "当前组织：{org}，切换组织". This is the only place the current org is shown and switched. Without menu items it is static (not a button).
@@ -1310,6 +1310,7 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | Part | State | Property | Value |
 |---|---|---|---|
 | sidebar | default | width | layout.sidebar |
+| sidebar | default | background-color | color.sidebar |
 | sidebar | default | padding-top | space.3 |
 | sidebar | default | padding-left | space.2 |
 | org-switcher | default | height | 40 |
