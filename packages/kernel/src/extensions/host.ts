@@ -31,6 +31,7 @@ import {
   type InboxBackend,
   type KernelDeps,
   type KernelExtensionContext,
+  type PluginReadsBackend,
   pluginSchemaName,
   queryEnabledPlugins,
   type Route,
@@ -56,6 +57,7 @@ import { ModelEmbeddings } from "../models/embeddings.js";
 import { ModelImages } from "../models/images.js";
 import { OrgNetworkAllowances } from "../orgs/network-allowances.service.js";
 import { packagePath } from "../packages/tgz.js";
+import { PLUGIN_READS_BACKEND } from "../plugin-reads/token.js";
 import { DeviceReports } from "../sandbox/device-reports.js";
 import { ShareLiveness } from "../shares/liveness.js";
 import { EmbedTokens } from "../ui/embed-token.js";
@@ -710,7 +712,8 @@ export class ExtensionHost {
      * module cycle otherwise).
      * Absent (a hand-built host) or not found (the CLI): `ctx.deviceAccess` calls are refused.
      * `TriggerEventsService` (`ctx.triggers`, {@link TRIGGER_EVENTS_BACKEND}) and
-     * `InboxItemsService` (`ctx.inbox`, {@link INBOX_ITEMS_BACKEND}) likewise.
+     * `InboxItemsService` (`ctx.inbox`, {@link INBOX_ITEMS_BACKEND}) and `PluginReadsService`
+     * (`ctx.agents`, `ctx.conversations`, `ctx.people`, {@link PLUGIN_READS_BACKEND}) likewise.
      */
     @Optional()
     @Inject(ModuleRef)
@@ -718,6 +721,7 @@ export class ExtensionHost {
       get(token: typeof DEVICE_ACCESS_BACKEND, opts: { strict: false }): DeviceAccessBackend;
       get(token: typeof TRIGGER_EVENTS_BACKEND, opts: { strict: false }): TriggersBackend;
       get(token: typeof INBOX_ITEMS_BACKEND, opts: { strict: false }): InboxBackend;
+      get(token: typeof PLUGIN_READS_BACKEND, opts: { strict: false }): PluginReadsBackend;
     },
     /** Tests only: `ctx.net`'s DNS and dispatcher seams (`EXTENSION_NET_SEAMS`). */
     @Optional() @Inject(EXTENSION_NET_SEAMS) netSeams?: ExtensionNetSeams,
@@ -766,6 +770,13 @@ export class ExtensionHost {
       inbox: () => {
         try {
           return modules?.get(INBOX_ITEMS_BACKEND, { strict: false });
+        } catch {
+          return undefined;
+        }
+      },
+      pluginReads: () => {
+        try {
+          return modules?.get(PLUGIN_READS_BACKEND, { strict: false });
         } catch {
           return undefined;
         }

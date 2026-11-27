@@ -41,6 +41,7 @@ import { createConfiguredLogger } from "./log-config.js";
 import { KERNEL_OVERRIDE_TOKENS } from "./overrides.js";
 import { PlatformModule } from "./platform/platform.module.js";
 import { PlatformOpsModule } from "./platform/platform-ops.module.js";
+import { PluginReadsModule } from "./plugin-reads/plugin-reads.service.js";
 import { GatewayModule } from "./roles/gateway.module.js";
 import { WorkerModule } from "./roles/worker.module.js";
 import { UsageReportModule } from "./runtime/usage-report.js";
@@ -136,6 +137,8 @@ export class KernelModule {
         TriggerEventsModule,
         // ctx.inbox: personal inbox items extensions post (the host finds it at the time of use)
         InboxItemsModule,
+        // ctx.agents / ctx.conversations / ctx.people: read-only org facts (found at the time of use)
+        PluginReadsModule,
         // the Platform tool's operation registry and actor facts
         PlatformModule,
         // its operations (skills, agents, ...), registered at start on every role

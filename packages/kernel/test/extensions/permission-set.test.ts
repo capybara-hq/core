@@ -457,3 +457,41 @@ describe("permissions.inbox", () => {
     expect(isSensitivePermissionKey("permissions.inbox")).toBe(false);
   });
 });
+
+describe("permissions.agents / conversations / people", () => {
+  const set = (permissions: Record<string, unknown>) =>
+    buildPermissionSet({
+      provides: [],
+      config: { deployment: [] },
+      tables: [],
+      permissions: permissions as never,
+    });
+  const all = {
+    agents: { read: true },
+    conversations: { subjects: true },
+    people: { read: true },
+  };
+  const KEYS = ["permissions.agents", "permissions.conversations", "permissions.people"];
+
+  it("are one blocking, non-sensitive key each when declared", () => {
+    const s = set(all);
+    expect(permissionKeys(s)).toEqual(expect.arrayContaining(KEYS));
+    expect(blockingKeys(KEYS)).toEqual(KEYS);
+    for (const k of KEYS) expect(isSensitivePermissionKey(k)).toBe(false);
+    expect(permissionKeyItems(KEYS).map((i) => i.sensitive)).toEqual([false, false, false]);
+  });
+
+  it("a set without them, or with them switched off, stays as it was", () => {
+    for (const s of [set({}), set({ agents: { read: false }, people: {} })]) {
+      expect(s.permissions).not.toHaveProperty("agents");
+      expect(s.permissions).not.toHaveProperty("conversations");
+      expect(s.permissions).not.toHaveProperty("people");
+    }
+  });
+
+  it("an upgrade declaring them adds blocking keys (re-approval)", () => {
+    const d = diffPermissions(set({}), set(all));
+    expect([...d.added].sort()).toEqual([...KEYS].sort());
+    expect(blockingKeys(d.added).sort()).toEqual([...KEYS].sort());
+  });
+});

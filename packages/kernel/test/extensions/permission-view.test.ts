@@ -77,6 +77,22 @@ describe("permissionGroups", () => {
     });
   });
 
+  it("the read-only org facts form groups after the inbox, not sensitive", () => {
+    const groups = permissionGroups({
+      ...base,
+      permissions: {
+        ...base.permissions,
+        inbox: true,
+        agents: { read: true },
+        conversations: { subjects: true },
+        people: { read: true },
+      },
+    });
+    expect(groups.map((g) => g.category)).toEqual(["inbox", "agents", "conversations", "people"]);
+    expect(groups.slice(1).every((g) => !g.sensitive)).toBe(true);
+    expect(groups[3]?.items).toEqual(["members' names and avatars"]);
+  });
+
   it("a secret field is prefixed like the config group", () => {
     const groups = permissionGroups({
       ...base,

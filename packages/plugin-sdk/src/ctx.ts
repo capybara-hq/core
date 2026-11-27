@@ -1,4 +1,5 @@
 import type { Kysely } from "kysely";
+import type { AgentsCtx, ConversationsCtx, PeopleCtx } from "./agents-ctx.js";
 import type {
   DeviceServiceSpec,
   DeviceServiceStatus,
@@ -432,6 +433,15 @@ export interface ExtensionContext {
    * {@link InboxCtx}).
    */
   inbox: InboxCtx;
+  /** The agents a member may use (requires `permissions.agents`, see {@link AgentsCtx}). */
+  agents: AgentsCtx;
+  /**
+   * The conversations serving the extension's own subjects (requires `permissions.conversations`,
+   * see {@link ConversationsCtx}).
+   */
+  conversations: ConversationsCtx;
+  /** Names and avatars of an org's members (requires `permissions.people`, see {@link PeopleCtx}). */
+  people: PeopleCtx;
   provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
   /**
    * The lifecycle signal of this plugin instance: aborted when the instance is revoked (disabled,

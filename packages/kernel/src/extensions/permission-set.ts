@@ -80,6 +80,13 @@ export interface PermissionSet {
      * when not declared.
      */
     inbox?: true;
+    /**
+     * Read-only org facts (`permissions.agents`, `permissions.conversations`,
+     * `permissions.people`): one blocking key each. Absent when not declared.
+     */
+    agents?: { read: true };
+    conversations?: { subjects: true };
+    people?: { read: true };
   };
   /**
    * 安装记录包迁移警告的摘要（`warningsDigest`，Ruling P4）；没有警告或不是安装记录时省略。
@@ -233,6 +240,9 @@ export function buildPermissionSet(input: {
       ...(p.triggers ? { triggers: { emit: sortedUnique(p.triggers.emit) } } : {}),
       // only when declared, likewise
       ...(p.inbox === true ? { inbox: true as const } : {}),
+      ...(p.agents?.read === true ? { agents: { read: true as const } } : {}),
+      ...(p.conversations?.subjects === true ? { conversations: { subjects: true as const } } : {}),
+      ...(p.people?.read === true ? { people: { read: true as const } } : {}),
     },
     ...(input.warningsDigest ? { warningsDigest: input.warningsDigest } : {}),
   };
@@ -279,6 +289,9 @@ export function permissionKeys(set: PermissionSet): string[] {
   for (const svc of p.deviceAccess?.services ?? []) keys.push(`${DEVICE_ACCESS_KEY_PREFIX}${svc}`);
   for (const t of p.triggers?.emit ?? []) keys.push(`${TRIGGERS_KEY_PREFIX}${t}`);
   if (p.inbox === true) keys.push(INBOX_KEY);
+  if (p.agents?.read === true) keys.push(AGENTS_KEY);
+  if (p.conversations?.subjects === true) keys.push(CONVERSATIONS_KEY);
+  if (p.people?.read === true) keys.push(PEOPLE_KEY);
   if (s.warningsDigest) keys.push(`${WARNINGS_KEY_PREFIX}${s.warningsDigest}`);
   return sortedUnique(keys);
 }
@@ -322,6 +335,15 @@ export const TRIGGERS_KEY_PREFIX = "permissions.triggers:";
  * buttons call its UI actions as the person who clicks).
  */
 export const INBOX_KEY = "permissions.inbox";
+
+/**
+ * Permission keys of the read-only org facts: blocking, not sensitive (`ctx.agents` lists the
+ * agents a member may use, `ctx.conversations` the metadata of the extension's own subjects'
+ * conversations, `ctx.people` the members' names and avatars: no content, no email).
+ */
+export const AGENTS_KEY = "permissions.agents";
+export const CONVERSATIONS_KEY = "permissions.conversations";
+export const PEOPLE_KEY = "permissions.people";
 
 /** Key prefix of a client component (`ui.component:<id>`): sensitive and blocking. */
 export const UI_COMPONENT_KEY_PREFIX = "ui.component:";

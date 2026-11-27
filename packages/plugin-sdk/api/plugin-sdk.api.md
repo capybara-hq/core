@@ -60,6 +60,14 @@ export interface AgentDeletedPayload {
 }
 
 // @public
+export interface AgentsCtx {
+    usableBy(args: {
+        orgId: string;
+        accountId: string;
+    }): Promise<UsableAgent[]>;
+}
+
+// @public
 export interface AgentTemplate {
     connectors?: AgentTemplateConnector[];
     description: string;
@@ -174,6 +182,11 @@ export interface AuthInjection {
 
 // @public
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
+
+// @public
+export interface AvatarValue {
+    url: string;
+}
 
 // @public
 export const BOOTSTRAP_EXTRA_MANIFEST_SCHEMA_VERSION = 1;
@@ -939,7 +952,32 @@ export function contrastRatio(fg: string, bg: string): number;
 export const CONVERSATION_SOURCES: readonly ["web", "channel_dm", "channel_group", "subagent"];
 
 // @public
+export const CONVERSATIONS_BY_SUBJECT_MAX = 200;
+
+// @public
+export interface ConversationsCtx {
+    bySubject(args: {
+        orgId: string;
+        subject: {
+            kind: string;
+            id: string;
+        };
+    }): Promise<SubjectConversation[]>;
+}
+
+// @public
 export type ConversationSource = (typeof CONVERSATION_SOURCES)[number];
+
+// @public
+export class CtxReadError extends Error {
+    constructor(code: CtxReadErrorCode, message: string, opts?: {
+        cause?: unknown;
+    });
+    readonly code: CtxReadErrorCode;
+}
+
+// @public
+export type CtxReadErrorCode = "invalid_args" | "org_disabled";
 
 // @public
 export function decodeDialInStreamData(message: Uint8Array): {
@@ -1699,11 +1737,13 @@ export const EXTENSION_TOOL_NAME: RegExp;
 
 // @public
 export interface ExtensionContext {
+    agents: AgentsCtx;
     bus: {
         publish(topic: string, payload: unknown): Promise<void>;
         subscribe(topic: string, handler: (payload: unknown) => void): Promise<() => Promise<void>>;
     };
     readonly config: unknown;
+    conversations: ConversationsCtx;
     db: Kysely<any>;
     deviceAccess: DeviceAccessCtx;
     devices: DevicesCtx;
@@ -1749,6 +1789,7 @@ export interface ExtensionContext {
     log: Logger;
     models: ExtensionModels;
     net: ExtensionNet;
+    people: PeopleCtx;
     provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
     queue: {
         define<T>(name: string, handler: (data: T) => Promise<void>, opts?: {
@@ -1891,7 +1932,13 @@ export class ExtensionPermissionError extends Error {
 
 // @public
 export interface ExtensionPermissions {
+    agents?: {
+        read: true;
+    };
     client?: boolean;
+    conversations?: {
+        subjects: true;
+    };
     deviceAccess?: {
         services: string[];
     };
@@ -1910,6 +1957,9 @@ export interface ExtensionPermissions {
         };
     }[];
     network?: string[];
+    people?: {
+        read: true;
+    };
     policyHooks?: PolicyHook[];
     secrets?: boolean;
     setupChecks?: string[];
@@ -3436,7 +3486,34 @@ export function parseToolKey(key: string): ParsedToolKey | null;
 export function parseViewerContext(body: Uint8Array | string): DeviceServiceViewerContext | null;
 
 // @public
+export const PEOPLE_GET_MAX = 200;
+
+// @public
+export const PEOPLE_SEARCH_MAX = 50;
+
+// @public
+export interface PeopleCtx {
+    get(args: {
+        orgId: string;
+        accountIds: string[];
+    }): Promise<PersonView[]>;
+    search(args: {
+        orgId: string;
+        query: string;
+        limit?: number;
+    }): Promise<Pick<PersonView, "id" | "name" | "avatar">[]>;
+}
+
+// @public
 export type PermissionProfile = "request-approval" | "approve-for-me" | "full-access";
+
+// @public
+export interface PersonView {
+    active: boolean;
+    avatar: AvatarValue | null;
+    id: string;
+    name: string;
+}
 
 // @public
 export function pickImageSize(info: ModelImageGenerationInfo, opts: {
@@ -4615,6 +4692,18 @@ export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest;
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
 
 // @public
+export interface SubjectConversation {
+    agentId: string;
+    id: string;
+    lastActivityAt: string;
+    ownerAccountId: string;
+    state: SubjectConversationState;
+}
+
+// @public
+export type SubjectConversationState = "idle" | "running" | "waiting";
+
+// @public
 export interface SuggestedAppearance {
     replacements?: Record<string, string>;
     theme?: string;
@@ -5548,6 +5637,13 @@ export interface UiView {
     blocks: UiBlock[];
     data?: JsonValue;
     open?: UiOpen;
+}
+
+// @public
+export interface UsableAgent {
+    avatar: unknown | null;
+    id: string;
+    name: string;
 }
 
 // @public

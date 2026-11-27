@@ -3172,7 +3172,10 @@
       "dialIn": "机器接入（协议）",
       "deviceAccess": "设备服务",
       "triggers": "发出的事件",
-      "inbox": "个人收件箱事项"
+      "inbox": "个人收件箱事项",
+      "agents": "成员可用的智能体",
+      "conversations": "自有主题的对话",
+      "people": "成员的姓名与头像"
     },
     "configFirstHint": "需在下方填写本组织自己的配置副本，此扩展才能在本组织使用",
     "sync": "立即同步",

@@ -714,7 +714,7 @@ function rowOf(
 const KERNEL_ITEM_KINDS: ReadonlySet<string> = new Set(["automation_depth_stopped"]);
 
 /**
- * A personal item's source (the plugin's display name, or 平台 / Platform) and, for the platform's
+ * A personal item's source (the plugin's display name, or the platform's own label) and, for the platform's
  * own kinds, the label of its kind (null otherwise).
  */
 function personalItemTexts(

@@ -83,6 +83,15 @@ export interface ExtensionPermissions {
    * person who clicks.
    */
   inbox?: boolean;
+  /** `ctx.agents`: which agents a member of an org that enabled the extension may use. */
+  agents?: { read: true };
+  /**
+   * `ctx.conversations`: the conversations serving the extension's own subjects (metadata only,
+   * never content).
+   */
+  conversations?: { subjects: true };
+  /** `ctx.people`: names and avatars of an org's members (never email or other profile fields). */
+  people?: { read: true };
 }
 
 /** The most services `permissions.deviceAccess.services` may list. */
@@ -140,6 +149,9 @@ const KEYS = new Set([
   "deviceAccess",
   "triggers",
   "inbox",
+  "agents",
+  "conversations",
+  "people",
 ]);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
@@ -181,6 +193,18 @@ export function validatePermissions(
     if (p[k] !== undefined && typeof p[k] !== "boolean") {
       errs.push(`permissions.${k} must be a boolean`);
     }
+  }
+  for (const [k, flag] of [
+    ["agents", "read"],
+    ["conversations", "subjects"],
+    ["people", "read"],
+  ] as const) {
+    const v = p[k];
+    if (
+      v !== undefined &&
+      (!isObj(v) || Object.keys(v).some((x) => x !== flag) || v[flag] !== true)
+    )
+      errs.push(`permissions.${k} must be { ${flag}: true }`);
   }
   if (p.tools !== undefined) strList("permissions.tools", p.tools, errs);
   if (p.hooks !== undefined) {

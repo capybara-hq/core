@@ -3184,7 +3184,10 @@
       "dialIn": "Machine connections (protocol)",
       "deviceAccess": "Device services",
       "triggers": "Events it emits",
-      "inbox": "Personal inbox items"
+      "inbox": "Personal inbox items",
+      "agents": "Agents a member may use",
+      "conversations": "Conversations of its own subjects",
+      "people": "Members' names and avatars"
     },
     "configFirstHint": "This extension won't work in the organization until you fill in the organization's own copy of its configuration below",
     "sync": "Sync now",

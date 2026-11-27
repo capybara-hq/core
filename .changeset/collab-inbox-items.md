@@ -24,3 +24,13 @@ extension; table `trigger_cause_handles`, migration 0191) that a `ctx.queue` job
 check. The trigger event sweep no longer flushes a window the dispatcher just opened, backs off
 re-owing a lost window and gives up after a day, deletes expired handles, and deletes inbox items
 closed or past their expiry more than `inbox.retentionDays` (new platform config, default 30) ago.
+
+`ctx.agents.usableBy`, `ctx.conversations.bySubject` and `ctx.people.get / search` give pages
+read-only org facts, each behind its own permission (`permissions.agents: { read: true }`,
+`permissions.conversations: { subjects: true }`, `permissions.people: { read: true }`; blocking,
+not sensitive). `usableBy` lists the agents an active member may use; `bySubject` returns the
+metadata (state from the latest run, never content) of the live conversations of the extension's
+own subjects; `people` returns members' names and avatars (at most 200 ids per `get`, `search`
+limit 50), never email. A call needs the extension enabled in the org (`CtxReadError`
+`org_disabled`). `capybara-plugin check` reports `perm-agents`, `perm-conversations` and
+`perm-people`.
