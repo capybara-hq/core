@@ -640,7 +640,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       : "";
     // the context meter (§6.16.2): a ring right before send; fail past the compaction threshold
     const meter = o.meter
-      ? `<span class="r-context-meter" role="meter" data-part="composer-context-meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${o.meter}" aria-label="上下文已用 ${o.meter}%" title="上下文已用 ${o.meter}%"${o.meter >= 80 ? ' data-tone="fail"' : ""}><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle class="r-ring-track" cx="8" cy="8" r="6"/><circle class="r-ring-arc" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray="${o.meter} 100" transform="rotate(-90 8 8)"/></svg></span>`
+      ? `<span class="r-context-meter" role="meter" data-part="composer-context-meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${o.meter}" aria-label="上下文已用 ${o.meter}%" title="上下文已用 ${o.meter}%"${o.meter >= 80 ? ' data-tone="fail"' : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><circle class="r-ring-track" cx="12" cy="12" r="7"/><circle class="r-ring-arc" cx="12" cy="12" r="7" pathLength="100" stroke-dasharray="${o.meter} ${100 - o.meter}" transform="rotate(-90 12 12)"/></svg></span>`
       : "";
     // phase D: the skill chip sits before the text on its first line
     const line = skill
