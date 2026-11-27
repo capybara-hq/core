@@ -375,12 +375,19 @@ describe("scanning and firing", () => {
     const hourAgo = () => new Date(Date.now() - 3600_000);
     const fired = await pendingRun(other, { scheduledFor: new Date(Date.now() - 2 * FIVE_MIN) });
     await store.updateRun(db, fired.id, { status: "completed", firedAt: new Date() });
-    const n = await store.countFiredSince(db, orgId, hourAgo());
+    const n = await store.countFiredSince(db, orgId, ownerId, hourAgo());
     expect(n).toBeGreaterThanOrEqual(1);
     // a skipped row does not count
     const skipped = await pendingRun(other, { scheduledFor: new Date(Date.now() - 3 * FIVE_MIN) });
     await store.updateRun(db, skipped.id, { status: "skipped", skipReason: "overlap" });
-    expect(await store.countFiredSince(db, orgId, hourAgo())).toBe(n);
+    expect(await store.countFiredSince(db, orgId, ownerId, hourAgo())).toBe(n);
+    // the limit is per person: another member's automation is not held back by the owner's runs
+    const carolId = (
+      await accountsFor(db).createLocal({ login: "carol", password: PW, displayName: "Carol" })
+    ).id;
+    await testMembers(db).add(orgId, carolId, "member", ownerId);
+    const carols = await task({ accountId: carolId });
+    expect(await store.countFiredSince(db, orgId, carolId, hourAgo())).toBe(0);
     await setAutomations({ maxRunsPerHour: n });
     try {
       const r = await pendingRun(t);
@@ -391,6 +398,10 @@ describe("scanning and firing", () => {
         firedAt: null,
       });
       expect((await taskOf(t.id)).status).toBe("active");
+      const b = await pendingRun(carols);
+      await firer().fire(b.id);
+      expect((await runOf(b.id)).skipReason).toBeNull();
+      expect((await settled(b.id)).status).toBe("completed");
     } finally {
       await setAutomations({ maxRunsPerHour: 60 });
     }

@@ -79,8 +79,6 @@ export type TaskRunSkipReason =
   | "task_deleted"
   /** The task was paused after the scan recorded the tick (a "run now" still runs). */
   | "task_paused"
-  /** An event run: the event's subject is not visible to the automation's principal. */
-  | "not_visible"
   /** An event run: the subject's run rate limit was reached (collaboration spec §4.7). */
   | "subject_rate";
 
@@ -169,7 +167,8 @@ export interface ScheduleMarker {
 /**
  * The marker an event automation's message carries (`conversation_queue.automation_event`, then
  * `user_message.automationEvent`, collaboration spec §4.6): the automation and run, and the
- * events the message reports, in order (coalesced events share one message).
+ * events the message reports, in order (coalesced events share one message): at most the first 5
+ * and the latest 15 of the run's events, `omittedEvents` counting the ones left out between them.
  */
 export interface AutomationEventMarker {
   automationId: string;
@@ -183,6 +182,8 @@ export interface AutomationEventMarker {
     subject: { kind: string; id: string; title: string; url?: string | undefined };
     summary: string;
   }>;
+  /** How many of the run's events the marker leaves out (absent: none). */
+  omittedEvents?: number | undefined;
 }
 
 /** A remembered "always allow" of a task (same meaning as `conversation_tool_grants`). */

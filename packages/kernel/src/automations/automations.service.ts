@@ -54,8 +54,10 @@ import {
   eventTypeUnknown,
   filterInvalid,
   grantNotAllowed,
+  runNowUnsupported,
   targetInvalid,
 } from "./errors.js";
+import { TriggerSourceTimeout, withDeadline } from "./events/deadline.js";
 import { validateFilter } from "./events/guards.js";
 import {
   GIT_GRANT_SPEC_HASH,
@@ -181,8 +183,8 @@ export interface CreateTaskInput {
   effort?: string;
   deviceId?: string;
   /**
-   * When the task ends; it must lie in the future. Absent or null: for a cron task, now + the
-   * org's `defaultExpiryDays` when set; otherwise never.
+   * When the task ends; it must lie in the future. Absent or null: for a cron or event task, now +
+   * the org's `defaultExpiryDays` when set; otherwise never.
    */
   expiresAt?: Date | null;
   grants?: GrantInput[];
@@ -192,7 +194,7 @@ export interface CreateTaskInput {
 
 /**
  * Fields to change; `null` clears an optional one (`expiresAt: null` is the org's default expiry
- * for a cron task, as on create). Grants change through their own methods.
+ * for a cron or event task, as on create). Grants change through their own methods.
  */
 export interface UpdateTaskInput {
   agentId?: string;
@@ -844,18 +846,43 @@ export class AutomationsService {
    * The trigger sources that serve the org now (`trigger-source@1` providers enabled in it with a
    * valid config) and the org has not switched off (`eventSourcesOff`), each with its extension's
    * display name and event declarations: what the automation form builds its event picker and
-   * filter rows from.
+   * filter rows from. A source whose `events()` fails or does not answer within `tools.timeoutMs`
+   * is left out (logged), so one broken source does not take the others' list down.
    */
   async eventSources(orgId: string): Promise<EventSourceView[]> {
     const settings = await readAutomationSettings(this.db.db, this.config, orgId);
     const { providers } = await this.points.providersFor<TriggerSource>(orgId, "trigger-source");
     const on = providers.filter((p) => !settings.eventSourcesOff.includes(p.extension));
-    const names = await this.displayNames.many(on.map((p) => p.extension));
-    return on.map((p) => ({
+    const declared = await Promise.all(
+      on.map(async (p) => {
+        try {
+          return { p, events: await this.declaredEvents(p) };
+        } catch (err) {
+          this.log.warn("trigger source events() failed; left out of the event sources", {
+            orgId,
+            plugin: p.extension,
+            err,
+          });
+          return null;
+        }
+      }),
+    );
+    const ok = declared.filter((d) => d !== null);
+    const names = await this.displayNames.many(ok.map((d) => d.p.extension));
+    return ok.map(({ p, events }) => ({
       source: p.extension,
       name: names.get(p.extension) ?? { zh: p.extension, en: p.extension },
-      events: p.impl.events(),
+      events,
     }));
+  }
+
+  /** A trigger source's declarations, within `tools.timeoutMs` (as the dispatcher asks it). */
+  private async declaredEvents(p: {
+    extension: string;
+    impl: TriggerSource;
+  }): Promise<TriggerEventDeclaration[]> {
+    const ms = this.config.get().tools.timeoutMs;
+    return withDeadline(p.extension, "events()", ms, () => p.impl.events());
   }
 
   /**
@@ -879,7 +906,19 @@ export class AutomationsService {
         `${source} is not an event source of this organization (it must be an enabled extension that provides trigger events, and not switched off in the automation settings)`,
       );
     }
-    const declared = provider.impl.events();
+    let declared: TriggerEventDeclaration[];
+    try {
+      declared = await this.declaredEvents(provider);
+    } catch (err) {
+      this.log.warn("trigger source events() failed while checking an event trigger", {
+        orgId,
+        plugin: source,
+        err,
+      });
+      throw eventSourceUnavailable(
+        `${source} did not answer with its event types (${err instanceof TriggerSourceTimeout ? "it timed out" : "it failed"}); try again later, or use another source or a schedule`,
+      );
+    }
     const types = [...new Set(input.types.map((x) => x.trim()))];
     const decls: TriggerEventDeclaration[] = [];
     for (const type of types) {
@@ -1292,6 +1331,8 @@ export class AutomationsService {
    * fire job its transaction owes. `trial`: an attended trial run whose approvals become the task's
    * grants (§7). Counted in the rate limit like any run. An ended task cannot run; a paused one
    * can (only its creator gets here: the run is `manual`, which the fire's paused check lets by).
+   * An event automation has neither (`automation.run_now_unsupported`): its runs are made from its
+   * events (collaboration spec §4.1).
    */
   @Transactional()
   async runNow(
@@ -1304,6 +1345,7 @@ export class AutomationsService {
     const t = this.db.db;
     const task = await this.lockOwn(orgId, accountId, role, id);
     if (task.status === "ended") throw new ApiError("conflict", "This automation has ended");
+    if (task.trigger.kind === "event") throw runNowUnsupported();
     const settings = await readAutomationSettings(t, this.config, orgId);
     if (!settings.enabled) throw automationDisabled();
     const run = await this.store.insertRun(t, {
@@ -1759,8 +1801,9 @@ function fireAt(t: AutomationTrigger, now: Date, jitter: number): Date | null {
 
 /**
  * A task's expiry: an explicit one must lie in the future; null (not given) is now + the org's
- * `defaultExpiryDays` for a cron task when the org sets one, else never. The same on create and
- * update, so a creator cannot clear the org's expiry policy by sending null.
+ * `defaultExpiryDays` for a cron or event task when the org sets one (a `once` task ends at its
+ * run), else never. The same on create and update, so a creator cannot clear the org's expiry
+ * policy by sending null.
  */
 function expiryOf(
   v: Date | null,
@@ -1769,7 +1812,7 @@ function expiryOf(
   settings: EffectiveAutomationSettings,
 ): Date | null {
   if (v !== null) return checkExpiry(v, now);
-  return trigger.kind === "cron" && settings.defaultExpiryDays !== null
+  return trigger.kind !== "once" && settings.defaultExpiryDays !== null
     ? new Date(now.getTime() + settings.defaultExpiryDays * DAY_MS)
     : null;
 }

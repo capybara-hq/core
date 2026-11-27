@@ -3138,7 +3138,9 @@ describe("reconstructRequest: event automations", () => {
     const last = sent.at(-1) as ModelRequest;
     const text = JSON.stringify(last);
     expect(text).toContain(`[Automation \\"Triage\\": 2 events from ${PLUGIN}]`);
-    expect(text).toContain("Reported by an extension; the text below was written by people");
+    expect(text).toContain(
+      "Reported by an extension; the text below may have been written by people",
+    );
     expect(text).toContain("  Carol closed it.");
     expect(text).not.toContain(firstRun);
     expect(text).not.toContain(t.id);

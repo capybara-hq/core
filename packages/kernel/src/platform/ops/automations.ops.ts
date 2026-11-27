@@ -246,7 +246,7 @@ export class AutomationsOperations implements OnModuleInit {
       defineOperation({
         id: "automations.create",
         description:
-          "Create an automation: an agent runs the prompt as you, unattended, on a 5-field cron, once at a local date-time, or when events happen: trigger { kind: \"event\", source, types, filter? } with a source, types and filterable facts from automations.event-sources (filter is a list of { fact, op: eq | in | contains, value }; eq takes a scalar of the fact's type, in a list of strings for a string fact, contains a string for a string[] fact). A time trigger uses your time zone; timeZone is only the fallback when you have none set; an event trigger has none. mode: new (a conversation per run), conversation (post into one conversation), chat (an IM chat; time triggers only) or subject (one conversation per event subject; event triggers only). unattendedAsk (fail | wait) sets what a question in an unattended run does; null follows the org's default. model ({ provider, model } like an agent definition's) and effort are for modes new and subject, deviceId for mode new only; a conversation or chat task runs with that conversation's model. Without expiresAt a cron task ends after the org's default expiry, when the org sets one. grants pre-approve tools the unattended run may use.",
+          "Create an automation: an agent runs the prompt as you, unattended, on a 5-field cron, once at a local date-time, or when events happen: trigger { kind: \"event\", source, types, filter? } with a source, types and filterable facts from automations.event-sources (filter is a list of { fact, op: eq | in | contains, value }; eq takes a scalar of the fact's type, in a list of strings for a string fact, contains a string for a string[] fact). A time trigger uses your time zone; timeZone is only the fallback when you have none set; an event trigger has none. mode: new (a conversation per run), conversation (post into one conversation), chat (an IM chat; time triggers only) or subject (one conversation per event subject; event triggers only). unattendedAsk (fail | wait) sets what a question in an unattended run does; null follows the org's default. model ({ provider, model } like an agent definition's) and effort are for modes new and subject, deviceId for mode new only; a conversation or chat task runs with that conversation's model. Without expiresAt a cron or event automation ends after the org's default expiry, when the org sets one. grants pre-approve tools the unattended run may use.",
         input: CreateBody,
         example: {
           agentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20",
@@ -307,7 +307,7 @@ export class AutomationsOperations implements OnModuleInit {
       defineOperation({
         id: "automations.update",
         description:
-          "Change one of your own automations (name, prompt, trigger (a schedule or an event trigger, as automations.create takes it), time zone, target, mode, unattendedAsk, model, effort, device, expiry; null clears an optional field, and a null expiry on a cron task takes the org's default expiry when set). model and effort are for modes new and subject, deviceId for mode new only; switching to another mode clears them. Only the creator can; an org admin can pause it instead. Takes the id from automations.list.",
+          "Change one of your own automations (name, prompt, trigger (a schedule or an event trigger, as automations.create takes it), time zone, target, mode, unattendedAsk, model, effort, device, expiry; null clears an optional field, and a null expiry on a cron or event automation takes the org's default expiry when set). model and effort are for modes new and subject, deviceId for mode new only; switching to another mode clears them. Only the creator can; an org admin can pause it instead. Takes the id from automations.list.",
         input: UpdateBody.extend({ automationId: Id }).strict(),
         example: { automationId: EXAMPLE_ID, prompt: "Summarize the last two days." },
         authz: { orgAction: "automations.use" },
@@ -450,7 +450,7 @@ export class AutomationsOperations implements OnModuleInit {
       defineOperation({
         id: "automations.run",
         description:
-          "Run one of your own automations now, outside its schedule (the schedule does not move). trial=true is an attended trial: you approve its tool calls and they become the task's approved tools. Counts toward the hourly run limit. Takes the id from automations.list.",
+          "Run one of your own scheduled automations now, outside its schedule (the schedule does not move). trial=true is an attended trial: you approve its tool calls and they become the task's approved tools. Counts toward the hourly run limit. An event automation runs only on its events and cannot be run now. Takes the id from automations.list.",
         input: RunBody.extend({ automationId: Id }).strict(),
         example: { automationId: EXAMPLE_ID, trial: true },
         authz: { orgAction: "automations.use" },
@@ -469,6 +469,10 @@ export class AutomationsOperations implements OnModuleInit {
             next: "Only the creator can change a task: ask them, or an org admin can pause it.",
           },
           { code: "conflict", next: "The task has ended or is being run: wait, or edit it first." },
+          {
+            code: "automation.run_now_unsupported",
+            next: "An event automation runs only when its events arrive: tell the person to make an event of its source happen to test it, or change its trigger to a schedule with automations.update.",
+          },
         ],
         summary: async (i, ctx) => {
           const n = await this.label(ctx, i.automationId);

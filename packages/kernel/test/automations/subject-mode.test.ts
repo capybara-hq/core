@@ -108,8 +108,11 @@ afterAll(async () => {
 
 const firer = () => k.app.get(AutomationFirer);
 
-/** An active `subject`-mode event automation of the owner, stored directly. */
-async function automation(prompt = "handle it"): Promise<Automation> {
+/** An active event automation of the owner (`subject` mode by default), stored directly. */
+async function automation(
+  prompt = "handle it",
+  mode: Automation["mode"] = "subject",
+): Promise<Automation> {
   return store.insertTask(db, {
     id: randomUUID(),
     orgId,
@@ -118,7 +121,7 @@ async function automation(prompt = "handle it"): Promise<Automation> {
     name: "Triage",
     prompt,
     trigger: { kind: "event", source: PLUGIN, types: ["item.created"], filter: [] },
-    mode: "subject",
+    mode,
     conversationId: null,
     chat: null,
     model: null,
@@ -540,5 +543,58 @@ describe("subject mode", () => {
         .map((m) => m.payload.automationEvent?.automationRunId)
         .sort(),
     ).toEqual([first.run.id, second.run.id].sort());
+  });
+
+  it("new mode: a run of another subject while the first still runs is not skipped as overlap", async () => {
+    scriptRules([
+      {
+        when: { lastUserIncludes: "HOLD-new" },
+        reply: { text: "first done", barrier: { name: "new", count: 99, timeoutMs: 30_000 } },
+      },
+    ]);
+    const t = await automation("handle it", "new");
+    const first = await eventRun(t, subject("N-1"), ["HOLD-new"]);
+    await firer().fire(first.run.id);
+    const conv = await waitFor(
+      async () => (await runOf(first.run.id)).conversationId,
+      10_000,
+      "first conversation",
+    );
+    await waitFor(async () => (await runsOf(db, conv)).some((r) => r.status === "running"));
+    // the second subject's events are not lost to an overlap skip: a conversation of its own
+    const second = await eventRun(t, subject("N-2"), ["another item"]);
+    await firer().fire(second.run.id);
+    expect((await runOf(second.run.id)).skipReason).toBeNull();
+    expect((await settled(second.run.id)).status).toBe("completed");
+    expect((await runOf(second.run.id)).conversationId).not.toBe(conv);
+    openBarrier("new");
+    expect((await settled(first.run.id)).status).toBe("completed");
+    expect(await conversationsOf(t.id)).toHaveLength(2);
+    scriptRules([]);
+  });
+
+  it("a burst of 30 events: the message names the first 5 and the latest 15, the run serves all", async () => {
+    scriptRules([]);
+    const t = await automation();
+    const s = subject("H-1");
+    const summaries = Array.from({ length: 30 }, (_, i) => `change ${i + 1}`);
+    const { run, eventIds } = await eventRun(t, s, summaries);
+    await firer().fire(run.id);
+    expect((await settled(run.id)).status).toBe("completed");
+    const conv = (await mappingOf(t.id, s))?.conversation_id as string;
+    const [msg] = await userMessages(conv);
+    const marker = msg?.payload.automationEvent;
+    expect(marker?.events.map((e) => e.id)).toEqual([
+      ...eventIds.slice(0, 5),
+      ...eventIds.slice(15),
+    ]);
+    expect(marker?.omittedEvents).toBe(10);
+    const served = await db
+      .selectFrom("automation_event_deliveries")
+      .select("automation_run_id")
+      .where("automation_id", "=", t.id)
+      .execute();
+    expect(served).toHaveLength(30);
+    expect(served.every((d) => d.automation_run_id === run.id)).toBe(true);
   });
 });

@@ -295,6 +295,33 @@ export class AutomationStore {
   }
 
   /**
+   * Locks up to `limit` active live event automations past their `expires_at` (an event
+   * automation has no `next_run_at`, so {@link lockDue} never selects it), skipping rows another
+   * transaction holds. Call it inside a transaction: the scan ends each as it ends an expired time
+   * task.
+   */
+  // org-filter: the scan's deployment-wide expired event automation sweep (LockedCron), each task
+  // ended by its own id
+  async lockExpiredEvent(t: KernelSchemaDb, now: Date, limit: number): Promise<Automation[]> {
+    return asPlatform("deployment-wide expired event automation sweep", async () => {
+      const rows = await t
+        .selectFrom("automations")
+        .selectAll()
+        .where("status", "=", "active")
+        .where("deleted_at", "is", null)
+        .where(sql<boolean>`trigger->>'kind' = 'event'`)
+        .where("expires_at", "<=", now)
+        .orderBy("expires_at")
+        .orderBy("id")
+        .limit(limit)
+        .forUpdate()
+        .skipLocked()
+        .execute();
+      return rows.map(toTask);
+    });
+  }
+
+  /**
    * Inserts a task run; null when a non-trial run for the same trigger key (a time run's tick)
    * already exists (the exactly-once guard, `UNIQUE (automation_id, trigger_key) WHERE NOT trial`).
    */
@@ -383,16 +410,26 @@ export class AutomationStore {
   }
 
   /**
-   * Runs of the org fired at or after `since` (the `maxRunsPerHour` count; trial runs included,
-   * skipped runs not: a run whose queued message a person removed was never run).
+   * Runs of the org's automations owned by `accountId` fired at or after `since` (the
+   * `maxRunsPerHour` count, per person: collaboration spec §4.7; trial runs included, skipped runs
+   * not: a run whose queued message a person removed was never run). Deleted automations count:
+   * their runs were made.
    */
-  async countFiredSince(t: KernelSchemaDb, orgId: string, since: Date): Promise<number> {
+  async countFiredSince(
+    t: KernelSchemaDb,
+    orgId: string,
+    accountId: string,
+    since: Date,
+  ): Promise<number> {
     const row = await t
-      .selectFrom("automation_runs")
+      .selectFrom("automation_runs as r")
+      .innerJoin("automations as a", "a.id", "r.automation_id")
       .select((eb) => eb.fn.countAll<string>().as("n"))
-      .where("org_id", "=", orgId)
-      .where("fired_at", ">=", since)
-      .where("status", "!=", "skipped")
+      .where("r.org_id", "=", orgId)
+      .where("a.org_id", "=", orgId)
+      .where("a.account_id", "=", accountId)
+      .where("r.fired_at", ">=", since)
+      .where("r.status", "!=", "skipped")
       .executeTakeFirstOrThrow();
     return Number(row.n);
   }

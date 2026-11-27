@@ -6,6 +6,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
+import { conversationAncestors } from "../../conversations/tree.js";
 import type { TriggerEventsTable } from "../../db/kernel-schema.js";
 import { ExtensionsModule } from "../../extensions/extensions.module.js";
 import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
@@ -26,7 +27,17 @@ import {
 import { AutomationStoreModule } from "../store.module.js";
 import type { AutomationTrigger } from "../types.js";
 import { EventCoalescer } from "./coalesce.js";
-import { coalesceJobId, depthExceeded, isSelfTriggered, subjectKey } from "./guards.js";
+import { TriggerSourceTimeout, withDeadline } from "./deadline.js";
+import {
+  COALESCE_STALE_MS,
+  coalesceJobId,
+  depthExceeded,
+  isSelfTriggered,
+  subjectKey,
+} from "./guards.js";
+import { TriggerEventSweepJob } from "./sweep.job.js";
+
+export { TriggerSourceTimeout } from "./deadline.js";
 
 type EventRow = Selectable<TriggerEventsTable>;
 
@@ -36,43 +47,6 @@ interface Candidate {
   accountId: string;
   agentId: string;
   filter: EventFilter;
-}
-
-/**
- * A window whose first delivery waits this long past its coalescing window is taken as lost (its
- * job failed for good): the next event of the pair opens a new window with a job of its own.
- * TODO(collaboration): until that next event comes, a window whose coalesce job is lost for good
- * keeps its deliveries waiting (no sweep looks for them).
- */
-export const COALESCE_STALE_MS = 10 * 60_000;
-
-/** A trigger source's `events()` or `visible()` did not settle within its deadline. */
-export class TriggerSourceTimeout extends Error {
-  constructor(plugin: string, call: string, ms: number) {
-    super(`trigger source ${plugin}: ${call} did not answer within ${ms} ms`);
-    this.name = "TriggerSourceTimeout";
-  }
-}
-
-/**
- * `call()` raced against `ms`: a provider whose promise never settles must not hold a maintenance
- * slot (BullMQ renews the job's lock while the process lives).
- */
-async function withDeadline<T>(
-  plugin: string,
-  what: string,
-  ms: number,
-  call: () => T | Promise<T>,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new TriggerSourceTimeout(plugin, what, ms)), ms);
-  });
-  try {
-    return await Promise.race([Promise.resolve().then(call), deadline]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /** Whether the automation's trigger still selects the event (re-read under its row lock). */
@@ -108,10 +82,10 @@ function filterAllowed(filter: EventFilter, decl: TriggerEventDeclaration): bool
  *   extension disabled, unloaded, its config invalid) or no longer declares the type, leaves the
  *   event `undelivered`: no run, no retry. A provider whose status could not be read (a transient
  *   error) fails the job, so BullMQ retries it;
- * - the active event automations of the org on this source and type whose filter matches the
- *   facts, minus the ones the event's cause run made (the same owner and agent: self-trigger), are
- *   checked with the source's `visible()` once for all their owners; an owner it does not admit
- *   gets nothing;
+ * - the active, unexpired event automations of the org on this source and type whose filter
+ *   matches the facts, minus the ones the event's cause run made (the same owner and the agent of
+ *   the run's root conversation: self-trigger), are checked with the source's `visible()` once for
+ *   all their owners; an owner it does not admit gets nothing;
  * - each remaining automation gets a delivery, and the delivery that opens a window for its
  *   (automation, subject) pair owes the pair's `automation-coalesce` job, due `coalesceSeconds`
  *   on; later events of the window find its deliveries waiting and owe nothing, so the window ends
@@ -268,7 +242,8 @@ export class TriggerDispatcher {
     const key = subjectKey(ev.subject);
     const now = Date.now();
     for (const automationId of [...automationIds].sort()) {
-      // the automation row first, as the flush takes it: switched off or deleted since, skipped
+      // the automation row first, as the flush takes it: switched off, expired or deleted since,
+      // skipped
       const live = await db
         .selectFrom("automations")
         .select(["account_id", "agent_id", "trigger"])
@@ -276,6 +251,9 @@ export class TriggerDispatcher {
         .where("id", "=", automationId)
         .where("status", "=", "active")
         .where("deleted_at", "is", null)
+        .where((eb) =>
+          eb.or([eb("expires_at", "is", null), eb("expires_at", ">", sql<Date>`now()`)]),
+        )
         .forUpdate()
         .executeTakeFirst();
       if (live === undefined) continue;
@@ -322,7 +300,10 @@ export class TriggerDispatcher {
     await this.setState(orgId, ev.id, "dispatched");
   }
 
-  /** The active event automations of the org on `plugin` whose types include `type`. */
+  /**
+   * The active, unexpired event automations of the org on `plugin` whose types include `type` (one
+   * past its `expires_at` gets nothing; the scan ends it).
+   */
   private async candidates(orgId: string, plugin: string, type: string): Promise<Candidate[]> {
     const rows = await this.kdb.db
       .selectFrom("automations")
@@ -330,6 +311,7 @@ export class TriggerDispatcher {
       .where("org_id", "=", orgId)
       .where("status", "=", "active")
       .where("deleted_at", "is", null)
+      .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", sql<Date>`now()`)]))
       .where(sql<boolean>`trigger->>'kind' = 'event'`)
       .where(sql<boolean>`trigger->>'source' = ${plugin}`)
       .where(sql<boolean>`trigger->'types' @> ${JSON.stringify([type])}::jsonb`)
@@ -342,21 +324,36 @@ export class TriggerDispatcher {
     });
   }
 
-  /** The owner and agent of the run that caused the event (self-trigger), or null. */
+  /**
+   * The owner and agent of the run that caused the event (self-trigger), or null. The agent is
+   * the root conversation's: a sub-agent dispatched by an automation's run (its conversation a
+   * child of the run's) acts for that run, so its events count as the automation's own.
+   */
   private async causeOf(
     orgId: string,
     runId: string | null,
   ): Promise<{ runAccountId: string; runAgentId: string } | null> {
     if (runId === null) return null;
-    const run = await this.kdb.db
+    const db = this.kdb.db;
+    const run = await db
       .selectFrom("runs")
       .innerJoin("conversations", "conversations.id", "runs.conversation_id")
-      .select(["runs.trigger_account_id", "conversations.agent_id"])
+      .select(["runs.trigger_account_id", "conversations.id as conversation_id"])
       .where("runs.id", "=", runId)
       .where("conversations.org_id", "=", orgId)
       .executeTakeFirst();
-    if (run?.trigger_account_id == null || run.agent_id == null) return null;
-    return { runAccountId: run.trigger_account_id, runAgentId: run.agent_id };
+    if (run?.trigger_account_id == null) return null;
+    // nearest first: the last ancestor is the root (none: the run's conversation is the root)
+    const rootId =
+      (await conversationAncestors(db, run.conversation_id)).at(-1) ?? run.conversation_id;
+    const root = await db
+      .selectFrom("conversations")
+      .select("agent_id")
+      .where("id", "=", rootId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (root?.agent_id == null) return null;
+    return { runAccountId: run.trigger_account_id, runAgentId: root.agent_id };
   }
 
   private async setState(
@@ -374,10 +371,13 @@ export class TriggerDispatcher {
   }
 }
 
-/** The trigger event dispatcher and the coalescer, for the maintenance processor (worker only). */
+/**
+ * The trigger event dispatcher and the coalescer, for the maintenance processor, and the trigger
+ * event sweep (`@LockedCron`): worker only (imported by `MaintenanceModule` alone).
+ */
 @Module({
   imports: [ExtensionsModule, AutomationStoreModule],
-  providers: [TriggerDispatcher, EventCoalescer],
+  providers: [TriggerDispatcher, EventCoalescer, TriggerEventSweepJob],
   exports: [TriggerDispatcher, EventCoalescer],
 })
 export class TriggerDispatchModule {}

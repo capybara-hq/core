@@ -261,6 +261,24 @@ function AutomationForm({
   // undefined while the members are read; null for a creator who left ("Former member")
   const creator: PersonRef | null | undefined =
     names.kind === "ready" ? (names.refs[task.accountId] ?? null) : undefined;
+  const runActions = [
+    {
+      label: t("actions.runNow"),
+      variant: "default" as const,
+      disabled: busy || task.status === "ended",
+      loading: actions.run.isPending && actions.run.variables?.trial === false,
+      onSelect: () =>
+        void act(actions.run.mutateAsync({ id: task.id, trial: false }), t("actions.started")),
+    },
+    {
+      label: t("actions.trialRun"),
+      variant: "default" as const,
+      disabled: busy,
+      loading: actions.run.isPending && actions.run.variables?.trial === true,
+      onSelect: () =>
+        void act(actions.run.mutateAsync({ id: task.id, trial: true }), t("actions.trialStarted")),
+    },
+  ];
   return (
     <>
       <FormPage
@@ -268,32 +286,12 @@ function AutomationForm({
           path: [...scope, { label: "automations", href: "/automations" }, { label: task.name }],
           title: task.name,
           status: <AutomationStateMark task={task} />,
-          // An org admin on another member's task: pause or resume only (no run, no edit)
+          // An org admin on another member's task: pause or resume only (no run, no edit); an
+          // event automation runs only on its events (no run now, no trial run)
           actions: readOnly
             ? []
             : [
-                {
-                  label: t("actions.runNow"),
-                  variant: "default" as const,
-                  disabled: busy || task.status === "ended",
-                  loading: actions.run.isPending && actions.run.variables?.trial === false,
-                  onSelect: () =>
-                    void act(
-                      actions.run.mutateAsync({ id: task.id, trial: false }),
-                      t("actions.started"),
-                    ),
-                },
-                {
-                  label: t("actions.trialRun"),
-                  variant: "default" as const,
-                  disabled: busy,
-                  loading: actions.run.isPending && actions.run.variables?.trial === true,
-                  onSelect: () =>
-                    void act(
-                      actions.run.mutateAsync({ id: task.id, trial: true }),
-                      t("actions.trialStarted"),
-                    ),
-                },
+                ...(task.trigger.kind === "event" ? [] : runActions),
                 ...(task.status === "ended"
                   ? []
                   : [{ ...toggle, variant: "default" as const, disabled: busy }]),

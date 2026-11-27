@@ -6,6 +6,13 @@ import type {
   TriggerSubject,
 } from "@capybara-hq/plugin-sdk";
 
+/**
+ * A window whose first delivery waits this long past its coalescing window is taken as lost (its
+ * job failed for good): the next event of the pair opens a new window with a job of its own, and
+ * the trigger event sweep owes a job for a window no event comes to (`TriggerEventSweepJob`).
+ */
+export const COALESCE_STALE_MS = 10 * 60_000;
+
 /** A stable, BullMQ-safe key for a trigger subject: `${kind}-${sha1(id).slice(0, 16)}`. */
 export function subjectKey(s: TriggerSubject): string {
   const digest = createHash("sha1").update(s.id).digest("hex").slice(0, 16);
@@ -14,7 +21,12 @@ export function subjectKey(s: TriggerSubject): string {
 
 /** Deterministic job id for coalescing events of one subject into one automation run. */
 export function coalesceJobId(automationId: string, s: TriggerSubject): string {
-  return `automation-coalesce-${automationId.replaceAll(":", "-")}-${subjectKey(s)}`;
+  return coalesceJobIdOfKey(automationId, subjectKey(s));
+}
+
+/** {@link coalesceJobId} from the subject's stored key ({@link subjectKey}). */
+export function coalesceJobIdOfKey(automationId: string, key: string): string {
+  return `automation-coalesce-${automationId.replaceAll(":", "-")}-${key}`;
 }
 
 /** True when the event was caused by a run of this same automation account and agent. */

@@ -593,6 +593,8 @@ export const ERROR_CODES = {
   "automation.filter_invalid": 400,
   /** An org admin may pause, resume and delete another person's task, never edit it. */
   "automation.forbidden": 403,
+  /** "Run now" and trial runs: an event automation runs only on its events (no run now, no trial). */
+  "automation.run_now_unsupported": 409,
   "skill.not_found": 404,
   /** The skill's file routes: no such version of the skill, or no such path in that version. */
   "skill.file_not_found": 404,

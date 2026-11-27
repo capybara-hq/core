@@ -35,13 +35,30 @@ org's default) is a field of create and update. New route `GET …/automations/e
 Platform operation `automations.event-sources` list the sources that serve the org with their event
 declarations. Resuming a paused event automation no longer fails for lack of a next run time.
 
-Fire event automations: an event run's message carries the `automationEvent` marker (the
-automation, its run, the source and the coalesced events in order), rendered for the model as a
-block before the prompt that says the events are reported by an extension and written by other
-people (new drift reason `automation_event_block`, recorded as
+Fire event automations: an event run's message carries the `automationEvent` marker (the automation,
+its run, the source and the coalesced events in order), rendered for the model as a block before the
+prompt that says the events are reported by an extension and may have been written by other people
+(at most 20 events per message: the first 5 and the latest 15, with a line counting the ones left
+out, `omittedEvents` on the marker) (new drift reason `automation_event_block`, recorded as
 `model_call.request.automationEventSeqs`). Mode `subject` keeps one conversation per subject: the
 first run creates it with `conversations.subject` and maps it in `automation_conversations` (a
-deleted or missing mapped conversation is replaced), later runs queue into it, and subject runs skip the overlap check. The
-run records `runs.trigger_event_id` (the last event) beside `automation_run_id`, sub-agent and wake
-runs inherit both, `run_started.trigger` is `automation_event`, and an automation's own
-`unattended_ask` overrides the org's default. Conversation views list `subject`.
+deleted or missing mapped conversation is replaced), later runs queue into it. Event runs skip the
+overlap check in every mode (`new` gets a conversation per run, `conversation` and `subject` queue
+into theirs), so no event is lost to an overlap skip. The run records `runs.trigger_event_id` (the
+last event) beside `automation_run_id`, sub-agent and wake runs inherit both, `run_started.trigger`
+is `automation_event`, and an automation's own `unattended_ask` overrides the org's default.
+Conversation views list `subject`.
+
+Event automations have no "run now" and no trial run: both are refused with the new error
+`automation.run_now_unsupported` (409), and the web hides both actions on an event automation.
+Their `expires_at` is enforced: the org's `defaultExpiryDays` applies to them too, the dispatcher
+passes an expired one over and the scan ends it (`expired`). The skip reason `not_visible` is gone
+(a subject the owner cannot see gets no delivery). The org setting `maxRunsPerHour` now counts per
+person (the runs of the owner's automations), time automations included. A sub-agent of an
+automation's own run counts as that run for the self-trigger guard (the root conversation's
+agent). A trigger source whose `events()` fails or does not answer within `tools.timeoutMs` is
+left out of the event sources and refuses an event trigger on it
+(`automation.event_source_unavailable`). New platform config `automations.eventRetentionDays`
+(default 30) and the `trigger-event-sweep` job (every five minutes): settled trigger events older
+than the retention whose deliveries all have a run are deleted with their deliveries, and a
+coalescing window whose job was lost for good gets a new one.

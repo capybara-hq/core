@@ -165,6 +165,7 @@ export const AutomationsSettingsSchema = z.object({
   minIntervalMinutes: posInt(1_000_000, 60),
   maxTasksPerMember: posInt(1_000_000, 20),
   maxTasksPerOrg: posInt(1_000_000, 200),
+  // the runs one member's automations may start per hour (collaboration spec §4.7: per person)
   maxRunsPerHour: posInt(1_000_000, 60),
   defaultExpiryDays: z.number().int().min(1).max(36_500).nullable().default(null).catch(null),
   catchUpWindowMinutes: posInt(1_000_000, 60),

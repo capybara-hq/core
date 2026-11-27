@@ -121,8 +121,11 @@ describe("0189_event_automations", () => {
     await expect(
       sql`update capybara.automations set unattended_ask = 'maybe' where id = 't1'`.execute(db),
     ).rejects.toMatchObject({ code: "23514" });
-    await sql`update capybara.automation_runs set status = 'skipped', skip_reason = 'not_visible'
-      where id = 'er1'`.execute(db);
+    // visibility filters at dispatch and records no run: no such skip reason
+    await expect(
+      sql`update capybara.automation_runs set status = 'skipped', skip_reason = 'not_visible'
+        where id = 'er1'`.execute(db),
+    ).rejects.toMatchObject({ code: "23514" });
     await sql`update capybara.automation_runs set status = 'skipped', skip_reason = 'subject_rate'
       where id = 'er3'`.execute(db);
     await expect(

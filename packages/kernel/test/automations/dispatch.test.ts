@@ -12,6 +12,7 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { getQueueToken } from "@nestjs/bullmq";
+import { SchedulerRegistry } from "@nestjs/schedule";
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +21,14 @@ import {
   TriggerDispatcher,
   TriggerSourceTimeout,
 } from "../../src/automations/events/dispatcher.js";
-import { coalesceJobId, subjectKey } from "../../src/automations/events/guards.js";
+import {
+  COALESCE_STALE_MS,
+  coalesceJobId,
+  subjectKey,
+} from "../../src/automations/events/guards.js";
+import { TriggerEventSweepJob } from "../../src/automations/events/sweep.job.js";
+import { TRIGGER_EVENT_SWEEP_JOB } from "../../src/automations/job-ids.js";
+import { AutomationScanJob } from "../../src/automations/scan.job.js";
 import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
 import type { Automation } from "../../src/automations/types.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -111,6 +119,8 @@ beforeAll(async () => {
       ],
     },
   );
+  // the tests own the trigger event sweep: the worker's cron would race their sweepAt calls
+  k.app.get(SchedulerRegistry).getCronJob(TRIGGER_EVENT_SWEEP_JOB).stop();
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
 });
@@ -391,6 +401,40 @@ describe("trigger event dispatch", () => {
     expect((await deliveriesOf(other.id)).map((d) => d.event_id)).toEqual([eventId]);
   });
 
+  it("a sub-agent of the automation's own run counts as self: the root conversation's agent", async () => {
+    const self = await automation();
+    const reviewer = await newAgent("Reviewer");
+    const other = await automation({ agentId: reviewer });
+    // the watcher's conversation dispatched a sub-agent of another agent type, whose run emits
+    const root = await createConv(owner, orgId, agentId);
+    const child = randomUUID();
+    await sql`INSERT INTO capybara.conversations
+      (id, org_id, agent_id, account_id, kind, parent_conversation_id, subagent_depth)
+      VALUES (${child}, ${orgId}, ${reviewer}, ${ownerId}, 'subagent', ${root}, 1)`.execute(raw);
+    const runId = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: child,
+        execution_id: randomUUID(),
+        trigger_account_id: ownerId,
+        status: "completed",
+        agent_version: 1,
+        trigger_seq: 0,
+      })
+      .execute();
+    const e = await emit();
+    await db
+      .updateTable("trigger_events")
+      .set({ cause_run_id: runId, cause_account_id: ownerId, depth: 1 })
+      .where("id", "=", e)
+      .execute();
+    await dispatch(e);
+    expect(await deliveriesOf(self.id)).toEqual([]);
+    expect((await deliveriesOf(other.id)).map((d) => d.event_id)).toEqual([e]);
+  });
+
   it("stops at depth 8", async () => {
     const a = await automation();
     const ok = await emit();
@@ -545,8 +589,8 @@ describe("trigger event dispatch", () => {
 
   it("two events 1 s apart produce one run through the queue", async () => {
     failDispatch = false;
-    // the run's fire job then skips it (org_disabled) instead of starting it (the event fire path
-    // is not built yet)
+    // the run's fire job then skips it (org_disabled) instead of starting it: this test is about
+    // the window, the start is the end-to-end describe's
     await patchSettings({ enabled: false });
     const a = await automation();
     const queue = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
@@ -581,6 +625,129 @@ describe("trigger event dispatch", () => {
       20_000,
       "the fire job's claim",
     );
+  });
+});
+
+describe("expiry", () => {
+  it("an expired event automation gets no delivery, and the scan ends it", async () => {
+    const live = await automation();
+    const expired = await automation({ expiresAt: new Date(Date.now() - 60_000) });
+    const e = await emit();
+    await dispatch(e);
+    expect((await deliveriesOf(live.id)).map((d) => d.event_id)).toEqual([e]);
+    expect(await deliveriesOf(expired.id)).toEqual([]);
+    // the worker's once-a-minute scan may have ended it already: either way it ends the same
+    await k.app.get(AutomationScanJob).endExpiredEvents(new Date());
+    expect(await store.getTask(db, orgId, expired.id)).toMatchObject({
+      status: "ended",
+      pauseReason: "expired",
+      nextRunAt: null,
+    });
+    expect((await store.getTask(db, orgId, live.id))?.status).toBe("active");
+  });
+});
+
+describe("trigger event sweep", () => {
+  const sweeper = () => k.app.get(TriggerEventSweepJob);
+  const DAY = 86_400_000;
+  const exists = async (id: string) =>
+    (await db.selectFrom("trigger_events").select("id").where("id", "=", id).executeTakeFirst()) !==
+    undefined;
+  const age = (id: string, at: Date) =>
+    db.updateTable("trigger_events").set({ created_at: at }).where("id", "=", id).execute();
+
+  it("deletes settled events past the retention whose deliveries all have a run", async () => {
+    const a = await automation();
+    const now = new Date();
+    const old = new Date(now.getTime() - 31 * DAY);
+    // dispatched and served by a run: deleted with its delivery
+    const served = await emit();
+    await dispatch(served);
+    await flush(a.id);
+    // dispatched to nobody, undelivered, depth-stopped: deleted
+    const nobody = await emit({ type: "item.created", subject: OTHER });
+    await dispatch(nobody);
+    await db.deleteFrom("automation_event_deliveries").where("event_id", "=", nobody).execute();
+    const undelivered = await emit();
+    await db
+      .updateTable("trigger_events")
+      .set({ state: "undelivered" })
+      .where("id", "=", undelivered)
+      .execute();
+    const stopped = await emit();
+    await db
+      .updateTable("trigger_events")
+      .set({ state: "depth_stopped" })
+      .where("id", "=", stopped)
+      .execute();
+    // kept: a delivery still waiting, a pending (directed) event, a recent one
+    const waiting = await emit();
+    await dispatch(waiting);
+    const pending = await emit({
+      type: "item.assigned",
+      audience: { accountId: ownerId, agentId },
+    });
+    const recent = await emit();
+    await db
+      .updateTable("trigger_events")
+      .set({ state: "undelivered" })
+      .where("id", "=", recent)
+      .execute();
+    for (const id of [served, nobody, undelivered, stopped, waiting, pending]) await age(id, old);
+    await age(recent, new Date(now.getTime() - 29 * DAY));
+
+    const r = await sweeper().sweepAt(now);
+    expect(r.deleted).toBe(4);
+    for (const id of [served, nobody, undelivered, stopped]) expect(await exists(id)).toBe(false);
+    for (const id of [waiting, pending, recent]) expect(await exists(id)).toBe(true);
+    // the run stays (no foreign key on its trigger key); the served delivery went with its event
+    const [run] = await runsOf(a.id);
+    expect(run?.trigger_key).toBe(served);
+    expect((await deliveriesOf(a.id)).map((d) => d.event_id)).toEqual([waiting]);
+    // the next sweep finds nothing more to delete
+    expect((await sweeper().sweepAt(now)).deleted).toBe(0);
+  });
+
+  it("owes a coalesce job for a window whose own job was lost, once while it is pending", async () => {
+    const a = await automation();
+    const e = await emit();
+    await dispatch(e);
+    const [own] = await owed("automation-coalesce");
+    expect(own?.job_id).toBe(`${coalesceJobId(a.id, ITEM)}-${e}`);
+    const opened = (await deliveriesOf(a.id)).length;
+    expect(opened).toBe(1);
+    const first = (
+      await db
+        .selectFrom("automation_event_deliveries")
+        .select("created_at")
+        .where("event_id", "=", e)
+        .executeTakeFirstOrThrow()
+    ).created_at;
+    const due = new Date(new Date(first).getTime() + 30_000 + COALESCE_STALE_MS);
+    // inside the window plus the margin, and with the window's own job still owed: nothing
+    expect((await sweeper().sweepAt(new Date(due.getTime() - 1000))).owed).toBe(0);
+    expect((await sweeper().sweepAt(new Date(due.getTime() + 1000))).owed).toBe(0);
+    // the window's job died in the outbox: the sweep owes one of its own, once
+    await db
+      .updateTable("outbox")
+      .set({ dead_at: new Date() })
+      .where("id", "=", own?.id as string)
+      .execute();
+    const at = new Date(due.getTime() + 1000);
+    expect((await sweeper().sweepAt(at)).owed).toBe(1);
+    const jobs = (await owed("automation-coalesce")).filter((j) => j.dead_at === null);
+    expect(jobs.map((j) => j.job_id)).toEqual([
+      `${coalesceJobId(a.id, ITEM)}-${e}-sweep-${Math.floor(at.getTime() / 60_000)}`,
+    ]);
+    expect(jobs[0]).toMatchObject({
+      data: { orgId, automationId: a.id, subjectKey: subjectKey(ITEM) },
+      org_id: orgId,
+      run_at: null,
+    });
+    expect((await sweeper().sweepAt(new Date(at.getTime() + 5 * 60_000))).owed).toBe(0);
+    // the owed job's flush takes the window
+    await flush(a.id);
+    expect((await deliveriesOf(a.id))[0]?.automation_run_id).not.toBeNull();
   });
 });
 

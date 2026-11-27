@@ -8,7 +8,8 @@
 -- - `automations` gains `origin`, `principal` and `unattended_ask`, and the `subject` mode;
 -- - `automation_runs` is keyed by `trigger_key` (the tick as `Date.toISOString()` text for time
 --   runs, the event id for event runs) instead of `scheduled_for`, which event runs leave null;
---   two skip reasons for event runs;
+--   one skip reason for event runs (`subject_rate`; a subject the owner cannot see gets no
+--   delivery at dispatch, so no run);
 -- - `conversations.subject`, `runs.trigger_event_id` and `conversation_queue.automation_event`
 --   (the queued message's event marker, logged as `user_message.automationEvent`).
 -- Ids are text like every kernel id. The three new tables carry `org_id` and their `org_scope`
@@ -39,6 +40,10 @@ CREATE TABLE IF NOT EXISTS trigger_events (
 CREATE UNIQUE INDEX IF NOT EXISTS trigger_events_dedupe_uq
   ON trigger_events (org_id, plugin, dedupe_key);
 
+-- the retention sweep: settled events, oldest first
+CREATE INDEX IF NOT EXISTS trigger_events_settled_idx
+  ON trigger_events (created_at) WHERE state <> 'pending';
+
 DROP POLICY IF EXISTS org_scope ON trigger_events;
 CREATE POLICY org_scope ON trigger_events USING (rls_admits(org_id)) WITH CHECK (rls_admits(org_id));
 
@@ -57,6 +62,10 @@ CREATE TABLE IF NOT EXISTS automation_event_deliveries (
 -- the deliveries of a subject still waiting for a run
 CREATE INDEX IF NOT EXISTS automation_event_deliveries_pending_idx
   ON automation_event_deliveries (automation_id, subject_key) WHERE automation_run_id IS NULL;
+
+-- an event's deliveries (the retention sweep's check, and the cascade when it deletes the event)
+CREATE INDEX IF NOT EXISTS automation_event_deliveries_event_idx
+  ON automation_event_deliveries (event_id);
 
 -- the deliveries a run served (the subject rate counts a pair's runs through them)
 CREATE INDEX IF NOT EXISTS automation_event_deliveries_run_idx
@@ -112,13 +121,13 @@ DROP INDEX IF EXISTS automation_runs_tick_uq;
 CREATE UNIQUE INDEX IF NOT EXISTS automation_runs_trigger_uq
   ON automation_runs (automation_id, trigger_key) WHERE NOT trial;
 
--- The skip reason CHECK of 0128 (renamed in 0188) gains the event run reasons.
+-- The skip reason CHECK of 0128 (renamed in 0188) gains the event run reason.
 ALTER TABLE automation_runs DROP CONSTRAINT IF EXISTS automation_runs_skip_reason_check;
 ALTER TABLE automation_runs ADD CONSTRAINT automation_runs_skip_reason_check
   CHECK (skip_reason IN ('missed', 'overlap', 'rate_limited', 'queue_paused',
     'removed', 'device_offline', 'creator_inactive', 'agent_gone', 'target_gone',
     'conversation_gone', 'org_disabled', 'unsupported_target', 'task_deleted', 'task_paused',
-    'plugin_disabled', 'not_visible', 'subject_rate'));
+    'plugin_disabled', 'subject_rate'));
 
 -- A conversation's subject ({ source, kind, id, title }, §4.5); the event behind a run; the event
 -- marker of a queued automation message.

@@ -26,6 +26,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock, OrgLockModule } from "../orgs/org-lock.js";
 import { FORBIDDEN_TOOLS_UNREADABLE_ERROR } from "../orgs/settings.service.js";
+import { AUTOMATION_EVENT_HEAD, AUTOMATION_EVENT_TAIL } from "../runtime/context/run-context.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { DeviceProviders, servesDialIn } from "../sandbox/providers.js";
 import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
@@ -129,8 +130,9 @@ const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.
  * A time run's message carries the schedule marker and the task's zone; an event run's carries
  * the event marker (its events, from `automation_event_deliveries`; collaboration spec §4.6). The
  * kernel run its message triggers takes the task run (`linkStartedRunIn`), and the run tracker
- * follows it to its end. A `subject` run skips the overlap check: its conversation's queue
- * serializes the runs of one subject, and other subjects run side by side.
+ * follows it to its end. An event run skips the overlap check (its events would be lost): a `new`
+ * run gets its own conversation, and a `conversation` or `subject` run is queued into its
+ * conversation, whose queue serializes the runs. The rate limit counts the owner's runs.
  */
 @Injectable()
 // org-filter: the automation-fire / automation-settle job handler (worker only): the task run id is the
@@ -173,11 +175,9 @@ export class AutomationFirer {
       .where("r.id", "=", taskRunId)
       .executeTakeFirst();
     if (pre?.status !== "pending") return;
-    // a Redis read: outside the claim's transaction
+    // a Redis read: outside the claim's transaction; only a `new` task takes a device
     const offline =
-      pre.fired_at === null &&
-      pre.device_id !== null &&
-      (pre.mode === "new" || pre.mode === "subject")
+      pre.fired_at === null && pre.device_id !== null && pre.mode === "new"
         ? await this.deviceOffline(pre.org_id, pre.device_id)
         : false;
     const claimed = await this.claim(taskRunId, pre.org_id, offline);
@@ -390,8 +390,17 @@ export class AutomationFirer {
     if (event !== undefined) plan = { ...plan, event };
     if (resumed) return { plan };
 
-    if (plan.mode !== "subject" && (await this.overlaps(task.id, run.id))) return skip("overlap");
-    const fired = await this.store.countFiredSince(t, orgId, new Date(Date.now() - HOUR_MS));
+    // an event run never waits for another run of its automation (collaboration spec §4.7): its
+    // events would be lost; `new` gives each run its own conversation, and `conversation` and
+    // `subject` queue it into the conversation, whose queue serializes the runs
+    if (event === undefined && (await this.overlaps(task.id, run.id))) return skip("overlap");
+    // the owner's runs across their automations (collaboration spec §4.7: per person)
+    const fired = await this.store.countFiredSince(
+      t,
+      orgId,
+      task.accountId,
+      new Date(Date.now() - HOUR_MS),
+    );
     if (fired >= settings.maxRunsPerHour) return skip("rate_limited");
     if (deviceOffline) return skip("device_offline");
     if (queuePausedOn !== undefined) return skip("queue_paused");
@@ -648,7 +657,8 @@ export class AutomationFirer {
       task.orgId,
       task.accountId,
       task.agentId,
-      task.deviceId === null ? {} : { deviceId: task.deviceId },
+      // a subject task takes no device (new mode only): the default pick for new conversations
+      {},
       {
         source: "web",
         subject: {
@@ -735,7 +745,9 @@ export class AutomationFirer {
 
   /**
    * An event run's marker (collaboration spec §4.6): the events its deliveries name, in the order
-   * they were stored (the coalescer's order), each with its type, subject and summary; undefined
+   * they were stored (the coalescer's order), each with its type, subject and summary; past
+   * {@link AUTOMATION_EVENT_HEAD} + {@link AUTOMATION_EVENT_TAIL} events only the first and the
+   * latest, the rest counted (`omittedEvents`; every delivery stays bound to the run); undefined
    * when it has none.
    */
   private async eventMarkerOf(
@@ -754,12 +766,19 @@ export class AutomationFirer {
       .orderBy("e.id")
       .execute();
     if (rows.length === 0) return undefined;
+    const cap = AUTOMATION_EVENT_HEAD + AUTOMATION_EVENT_TAIL;
+    const omitted = Math.max(0, rows.length - cap);
+    const shown =
+      omitted === 0
+        ? rows
+        : [...rows.slice(0, AUTOMATION_EVENT_HEAD), ...rows.slice(-AUTOMATION_EVENT_TAIL)];
     return {
       automationId: task.id,
       automationRunId: runId,
       automationName: task.name,
       source,
-      events: rows.map((r) => ({
+      ...(omitted > 0 && { omittedEvents: omitted }),
+      events: shown.map((r) => ({
         id: r.id,
         type: r.type,
         subject: {

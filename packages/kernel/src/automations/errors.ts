@@ -28,6 +28,16 @@ export const eventSourceUnavailable = (message: string) =>
 export const eventTypeUnknown = (message: string) =>
   new ApiError("automation.event_type_unknown", message);
 
+/**
+ * "Run now" or a trial run of an event automation: its runs are made from its events (collaboration
+ * spec §4.1), so there is nothing to run outside them.
+ */
+export const runNowUnsupported = () =>
+  new ApiError(
+    "automation.run_now_unsupported",
+    "An event automation runs only when its events arrive, so it cannot be run now or as a trial; make an event of its source happen to test it, or switch it to a schedule",
+  );
+
 /** A filter clause on a missing, unfilterable or mistyped fact. */
 export const filterInvalid = (message: string) =>
   new ApiError("automation.filter_invalid", message);

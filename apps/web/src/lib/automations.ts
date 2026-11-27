@@ -76,7 +76,6 @@ export const SKIP_REASONS = [
   "unsupported_target",
   "task_deleted",
   "task_paused",
-  "not_visible",
   "subject_rate",
 ] as const;
 export type TaskRunSkipReason = (typeof SKIP_REASONS)[number];

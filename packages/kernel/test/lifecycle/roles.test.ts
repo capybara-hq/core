@@ -260,6 +260,7 @@ describe("role modules", () => {
       "ShareSweepJob",
       "StoragePurgeJob",
       "ToolJobs",
+      "TriggerEventSweepJob",
     ]);
     expect(processors).toHaveLength(KERNEL_QUEUES.length);
     for (const q of queues) expect(await q.getWorkersCount(), q.name).toBeGreaterThan(0);
@@ -268,7 +269,7 @@ describe("role modules", () => {
   it("all roles in one process: the same crons and consumers, once each", async () => {
     const a = await start(["api", "worker", "gateway"]);
     const { jobHosts, processors } = scan(a);
-    expect(jobHosts).toHaveLength(20);
+    expect(jobHosts).toHaveLength(21);
     // the same cron jobs and intervals as the worker-only process, each registered once
     expect(workerSchedules).toBeDefined();
     expect(schedulesOf(a)).toEqual(workerSchedules);

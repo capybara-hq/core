@@ -1,9 +1,12 @@
+import type { TriggerSource } from "@capybara-hq/plugin-sdk";
 import type { TestContainer } from "@capybara-hq/testing";
 import { fakeExtensionEntry, startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ExtensionPointDefaults } from "../../src/extensions/point-defaults.js";
+import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -45,6 +48,10 @@ beforeAll(async () => {
     ),
   );
 });
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -56,6 +63,7 @@ let owner: Req;
 let alice: Req;
 let guest: Req;
 let agentId: string;
+let ownerId: string;
 
 const base = () => `/api/v1/orgs/${orgId}/automations`;
 const codeOf = (res: { json(): unknown }) =>
@@ -66,7 +74,7 @@ beforeEach(async () => {
   const accounts = accountsFor(db);
   const mk = async (login: string) =>
     (await accounts.createLocal({ login, password: PW, displayName: login })).id;
-  const ownerId = await mk("owner");
+  ownerId = await mk("owner");
   const aliceId = await mk("alice");
   const guestId = await mk("guest");
   owner = await session(k, "owner");
@@ -114,6 +122,7 @@ type Task = {
   mode: string;
   status: string;
   nextRunAt: string | null;
+  expiresAt: string | null;
   unattendedAsk: string | null;
   trigger: {
     kind: string;
@@ -182,6 +191,23 @@ describe("GET event-sources", () => {
     expect(off.statusCode, off.body).toBe(200);
     res = await alice({ method: "GET", url: `${base()}/event-sources` });
     expect((res.json() as { items: unknown[] }).items).toEqual([]);
+  });
+
+  it("a source whose events() throws is left out of the list and refuses a trigger on it", async () => {
+    const { providers } = await k.app
+      .get(ExtensionPointDefaults)
+      .providersFor<TriggerSource>(orgId, "trigger-source");
+    const impl = providers.find((p) => p.extension === PLUGIN)?.impl;
+    if (!impl) throw new Error("fake-trigger-source does not serve the org");
+    vi.spyOn(impl, "events").mockImplementation(() => {
+      throw new Error("broken source");
+    });
+    const res = await alice({ method: "GET", url: `${base()}/event-sources` });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { items: unknown[] }).items).toEqual([]);
+    const created = await create();
+    expect(created.statusCode, created.body).toBe(400);
+    expect(codeOf(created)).toBe("automation.event_source_unavailable");
   });
 
   it("is for members: a guest gets 403", async () => {
@@ -426,5 +452,44 @@ describe("update an event automation", () => {
       status: "active",
       nextRunAt: null,
     });
+  });
+});
+
+describe("run now and trial runs", () => {
+  it("an event automation has neither: 409 automation.run_now_unsupported, no run recorded", async () => {
+    const t = await createOk();
+    for (const trial of [false, true]) {
+      const res = await alice({ method: "POST", url: `${base()}/${t.id}/run`, payload: { trial } });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(codeOf(res)).toBe("automation.run_now_unsupported");
+    }
+    const runs = await db
+      .selectFrom("automation_runs")
+      .select("id")
+      .where("automation_id", "=", t.id)
+      .execute();
+    expect(runs).toEqual([]);
+  });
+});
+
+describe("expiry", () => {
+  it("the org's defaultExpiryDays applies to an event automation, on create and on PATCH", async () => {
+    await k.app
+      .get(OrgSettingsService)
+      .update(orgId, { automations: { defaultExpiryDays: 7 } }, ownerId);
+    const before = Date.now();
+    const t = await createOk();
+    expect(t.expiresAt).not.toBeNull();
+    const days = (Date.parse(t.expiresAt as string) - before) / 86_400_000;
+    expect(days).toBeGreaterThan(6.99);
+    expect(days).toBeLessThan(7.01);
+    // a null expiry is the org's default again, never "never"
+    const res = await alice({
+      method: "PATCH",
+      url: `${base()}/${t.id}`,
+      payload: { expiresAt: null },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { task: Task }).task.expiresAt).not.toBeNull();
   });
 });

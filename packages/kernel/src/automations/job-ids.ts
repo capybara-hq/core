@@ -8,6 +8,12 @@ import type { OutboxService } from "../infra/outbox/outbox.service.js";
  */
 export const AUTOMATION_SCAN_JOB = "automation-scan";
 
+/**
+ * The `@LockedCron` that deletes old trigger events (`automations.eventRetentionDays`) and owes
+ * the coalesce job of a window whose own job was lost (collaboration spec §4.7).
+ */
+export const TRIGGER_EVENT_SWEEP_JOB = "trigger-event-sweep";
+
 /** The one-off job that checks and starts one task run, on `cap-kernel-maintenance`. */
 export const AUTOMATION_FIRE_JOB = "automation-fire";
 

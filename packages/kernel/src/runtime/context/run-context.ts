@@ -50,6 +50,15 @@ export const scheduleHeader = (m: { taskName: string; localTime: string }): stri
 const EVENT_TITLE_MAX = 200;
 
 /**
+ * How many events an event automation's marker names at most (collaboration spec §4.6): the first
+ * {@link AUTOMATION_EVENT_HEAD} and the latest {@link AUTOMATION_EVENT_TAIL} of the run's events,
+ * the rest counted in `omittedEvents`. The block places its "more events" line after the head, so
+ * the head is fixed: a change would render logged markers differently.
+ */
+export const AUTOMATION_EVENT_HEAD = 5;
+export const AUTOMATION_EVENT_TAIL = 15;
+
+/**
  * Another person's text as indented lines of an event automation block: split on every line
  * break (CRLF, CR, LF, U+2028, U+2029), each other C0 / C1 control character a space, so the text
  * can never leave its indentation.
@@ -69,12 +78,14 @@ function indentedLines(text: string): string[] {
  * ```
  * [Automation "<name>": <n> event(s) from <source>]
  * - <type> on "<subject title>" ("<url>")
- *   Reported by an extension; the text below was written by people other than the conversation owner:
+ *   Reported by an extension; the text below may have been written by people other than the conversation owner:
  *   <summary, each line indented, control characters as spaces>
  * ```
  *
  * One entry per event, in the marker's order (coalesced events share one message). Names and
- * titles and links are one line and JSON-quoted; the summary keeps its lines.
+ * titles and links are one line and JSON-quoted; the summary keeps its lines. A marker that left
+ * events out (`omittedEvents`, past the cap) gets `- … and <n> more events (not shown)` after its
+ * first {@link AUTOMATION_EVENT_HEAD} entries, and the header counts every event.
  */
 export function automationEventBlock(m: {
   automationName: string;
@@ -84,21 +95,26 @@ export function automationEventBlock(m: {
     subject: { title: string; url?: string | undefined };
     summary: string;
   }>;
+  omittedEvents?: number | undefined;
 }): string {
-  const n = m.events.length;
+  const omitted = m.omittedEvents ?? 0;
+  const n = m.events.length + omitted;
   const lines = [
     `[Automation ${JSON.stringify(oneLine(m.automationName, SCHEDULE_NAME_MAX, true))}: ${n} ${
       n === 1 ? "event" : "events"
     } from ${oneLine(m.source, 128, false)}]`,
   ];
-  for (const e of m.events) {
+  for (const [i, e] of m.events.entries()) {
+    if (omitted > 0 && i === AUTOMATION_EVENT_HEAD) {
+      lines.push(`- … and ${omitted} more ${omitted === 1 ? "event" : "events"} (not shown)`);
+    }
     const url =
       e.subject.url === undefined
         ? ""
         : ` (${JSON.stringify(oneLine(e.subject.url, 2048, false))})`;
     lines.push(
       `- ${oneLine(e.type, 128, false)} on ${JSON.stringify(oneLine(e.subject.title, EVENT_TITLE_MAX, true))}${url}`,
-      "  Reported by an extension; the text below was written by people other than the conversation owner:",
+      "  Reported by an extension; the text below may have been written by people other than the conversation owner:",
       ...indentedLines(e.summary),
     );
   }

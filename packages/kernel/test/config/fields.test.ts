@@ -49,6 +49,7 @@ describe("configFields", () => {
       "automations.maxEventDepthCap",
       "automations.coalesceSecondsCap",
       "automations.maxEventRunsPerSubjectPerHourCap",
+      "automations.eventRetentionDays",
       "sandbox.maxConcurrentCommands",
       "sandbox.review.timeoutMs",
       "sandbox.review.messageTokens",

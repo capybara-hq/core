@@ -460,6 +460,14 @@ describe("/automations/[id]: an event automation", () => {
     });
   });
 
+  it("offers no run now or trial run: an event automation runs only on its events", async () => {
+    stubApi(routes());
+    await renderRouteWithCache("/automations/e1", lastStubRoutes());
+    expect(await screen.findByRole("button", { name: E.actions.pause })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: E.actions.runNow })).toBeNull();
+    expect(screen.queryByRole("button", { name: E.actions.trialRun })).toBeNull();
+  });
+
   it("unattendedAsk is saved, and null clears it back to the org default", async () => {
     const calls = stubApi({
       ...routes(eventTask({ unattendedAsk: "fail" })),

@@ -77,10 +77,11 @@ export const AutomationGrantInput = z
 const Name = z.string().trim().min(1).max(AUTOMATION_NAME_MAX);
 const Prompt = z.string().trim().min(1).max(AUTOMATION_PROMPT_MAX);
 /**
- * `subject` (one conversation per event subject) needs an event trigger; `chat` needs a time one.
- * What an unattended run does with a question: `null` follows the org's default.
+ * Where a run posts. `subject` (one conversation per event subject) needs an event trigger and
+ * takes a model and effort but no device (only `new` does); `chat` needs a time trigger.
  */
 const Mode = z.enum(["new", "conversation", "chat", "subject"]);
+/** What an unattended run does with a question: `null` follows the org's default. */
 const UnattendedAsk = z.enum(["fail", "wait"]);
 
 export const AutomationCreateBody = z
@@ -120,7 +121,7 @@ export const AutomationUpdateBody = z
     model: AutomationModel.nullable().optional(),
     effort: AutomationEffort.nullable().optional(),
     deviceId: Id.nullable().optional(),
-    /** Null: the org's default expiry for a cron task (as on create), else never. */
+    /** Null: the org's default expiry for a cron or event task (as on create), else never. */
     expiresAt: ExpiresAt.nullable().optional(),
     /** Null: the org's default. */
     unattendedAsk: UnattendedAsk.nullable().optional(),

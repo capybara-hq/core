@@ -317,7 +317,7 @@ describe("run context in requests", () => {
 describe("automationEventBlock", () => {
   const SOURCE = "fake-trigger-source";
   const NOTE =
-    "  Reported by an extension; the text below was written by people other than the conversation owner:";
+    "  Reported by an extension; the text below may have been written by people other than the conversation owner:";
 
   it("renders the events in order before the prompt, one line per name, title and link", () => {
     expect(
@@ -352,6 +352,44 @@ describe("automationEventBlock", () => {
         events: [{ type: "item.created", subject: { title: "A" }, summary: "s" }],
       }).split("\n")[0],
     ).toBe(`[Automation "One": 1 event from ${SOURCE}]`);
+  });
+
+  it("a capped marker counts every event and says how many it leaves out, after the first five", () => {
+    const ev = (i: number) => ({
+      type: "item.updated",
+      subject: { title: `T${i}` },
+      summary: `s${i}`,
+    });
+    const shown = [1, 2, 3, 4, 5, ...Array.from({ length: 15 }, (_, i) => 16 + i)];
+    const lines = automationEventBlock({
+      automationName: "Burst",
+      source: SOURCE,
+      events: shown.map(ev),
+      omittedEvents: 10,
+    }).split("\n");
+    expect(lines[0]).toBe(`[Automation "Burst": 30 events from ${SOURCE}]`);
+    // the header, then 5 entries of 3 lines each, then the omission line
+    expect(lines.slice(13, 17)).toEqual([
+      `- item.updated on "T5"`,
+      NOTE,
+      "  s5",
+      "- … and 10 more events (not shown)",
+    ]);
+    expect(lines[17]).toBe(`- item.updated on "T16"`);
+    expect(lines.filter((l) => l.startsWith("- item.updated"))).toHaveLength(20);
+    expect(lines.at(-1)).toBe("  s30");
+    // one left out reads in the singular; no omission, no line
+    expect(
+      automationEventBlock({
+        automationName: "B",
+        source: SOURCE,
+        events: shown.map(ev),
+        omittedEvents: 1,
+      }),
+    ).toContain("- … and 1 more event (not shown)");
+    expect(
+      automationEventBlock({ automationName: "B", source: SOURCE, events: [ev(1)] }),
+    ).not.toContain("more event");
   });
 
   it("keeps others' text inside its indentation: every line break splits, controls become spaces", () => {

@@ -250,8 +250,9 @@ export class TriggerEventsService {
           .where("id", "=", run.trigger_event_id)
           .where("org_id", "=", e.orgId)
           .executeTakeFirst();
-        // the column has no foreign key: an event no longer stored (nothing deletes one today but
-        // its org's deletion, which takes the run too) cannot extend a chain, which restarts at 0
+        // the column has no foreign key: an event no longer stored (the trigger event sweep deletes
+        // settled events after `automations.eventRetentionDays`) cannot extend a chain, which
+        // restarts at 0
         depth = from === undefined ? 0 : from.depth + 1;
       }
       return { runId: run.id, accountId: run.trigger_account_id, depth };

@@ -840,7 +840,8 @@ export const ScheduleMarkerSchema = z.object({
 
 /**
  * `user_message.automationEvent` (collaboration spec §4.6): the `AutomationEventMarker` shape, the
- * events an event automation's message reports (at least one; coalesced events in order).
+ * events an event automation's message reports (at least one; coalesced events in order; at most
+ * the first 5 and the latest 15, `omittedEvents` counting the ones between, absent when none).
  */
 export const AutomationEventMarkerSchema = z.object({
   automationId: z.string(),
@@ -862,6 +863,7 @@ export const AutomationEventMarkerSchema = z.object({
       }),
     )
     .min(1),
+  omittedEvents: z.number().int().positive().optional(),
 });
 
 /** `run_context` (run context spec §3.1): every field optional, a later event holds changes only. */
