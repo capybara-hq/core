@@ -1,5 +1,27 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.84
+
+### Minor Changes
+
+- e11129c: Declare prompt caches per model (#974). `ModelInfo.cache` (`ModelCacheInfo`: `mechanism` explicit /
+  implicit / none, `ttlOptions` in seconds, `defaultTtl` (required when `ttlOptions` is non-empty),
+  `ttlIsMinimum`, `refreshOnHit`, `ttlClock`,
+  `minTokens`, `guaranteed`; absent = none; checked by `validateModelCache`) replaces
+  `capabilities.caching`, which is removed. `ModelRequest.cacheTtl` asks for one of the model's
+  `ttlOptions`; `ModelUsage.cacheWriteByTtl` (`CacheWriteByTtl[]`, summing to `cacheWriteTokens`;
+  `validateCacheWriteByTtl`) reports cache writes per lifetime tier. model-fake and the test fixtures
+  no longer declare `capabilities.caching`.
+
+### Patch Changes
+
+- b363b71: Removes the `status-bar` UI part: the shell no longer draws a status bar. The theme token values
+  follow the layered shell: a darker `sidebar` ground (light `#EDECE7`, dark `#171716`), a lighter
+  light `bg` paper (`#FDFDFC`), dark `hover` and `sidebar-active` as white overlays, light `hover`
+  at 0.045 and dark `selected` `#21211F`.
+- f2e3e9b: `openExternal@1` gains the optional read-only `returnScheme`: the shell's own URL scheme, used by
+  the browser handoff's done page to link back into the app.
+
 ## 0.1.0-rc.83
 
 ### Minor Changes
