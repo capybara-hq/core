@@ -2,8 +2,10 @@ import {
   type CompactForm,
   effectiveCompact,
   type FormAnswer,
+  type JsonValue,
   type Logger,
   UI_ARRANGEABLE_SLOTS,
+  UI_LIMITS,
   type UiActionResult,
   type UiBlock,
   type UiContribution,
@@ -43,11 +45,15 @@ import {
 } from "./arrangement.js";
 import { callExtension } from "./call-extension.js";
 import { canUseSlot, UUID_RE } from "./registry.js";
+import { jsonBytes } from "./ui.schemas.js";
 
 export { callExtension } from "./call-extension.js";
 
 /** 插件 render / action 的时限（spec §4.2：慢的插件只让那个标签失败）。 */
 export const UI_CALL_TIMEOUT_MS = 5_000;
+
+/** The time limit of a component query (plugin full pages spec §4.1). */
+export const UI_QUERY_TIMEOUT_MS = 10_000;
 
 /** 列出贡献接口的一项。 */
 export interface UiContributionItem {
@@ -337,12 +343,26 @@ const notFound = () => new ApiError("ui.not_found", "UI contribution not found")
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** At most this many query names in an action result's `invalidate`. */
+const INVALIDATE_MAX = 50;
+
 /**
- * 校验动作结果，返回问题列表（空 = 合法）。A new `view` may carry `data` only for a component
+ * Checks an action result and returns its problems (empty = valid). A new `view` may carry
+ * `data`, and `invalidate` (query names the host refetches) is read, only for a component
  * (`component`).
  */
 function actionResultProblems(r: unknown, component: boolean): string[] {
   if (!isObj(r)) return ["action result must be an object"];
+  if (component && r.invalidate !== undefined) {
+    const inv = r.invalidate;
+    if (
+      !Array.isArray(inv) ||
+      inv.length > INVALIDATE_MAX ||
+      !inv.every((q) => typeof q === "string" && q !== "" && q.length <= 200)
+    ) {
+      return [`invalidate must be at most ${INVALIDATE_MAX} query names of 1-200 characters`];
+    }
+  }
   if (r.view !== undefined) return validateUiView(r.view, { component }).map((p) => `view: ${p}`);
   if (r.toast === undefined) return [];
   if (!isObj(r.toast)) return ["toast must be an object with zh and en"];
@@ -658,6 +678,17 @@ export class UiViews {
     input: { actionId: string; payload?: unknown; answer?: FormAnswer },
   ): Promise<UiActionResult> {
     const { entry, args } = await this.resolve(t, "action");
+    // a component's action takes a form-sized payload; a view's button keeps the view limit
+    if (
+      entry.contribution.kind !== "component" &&
+      input.payload !== undefined &&
+      jsonBytes(input.payload) > UI_LIMITS.payloadBytes
+    ) {
+      throw new ApiError(
+        "validation_failed",
+        `payload must be at most ${UI_LIMITS.payloadBytes} bytes as JSON`,
+      );
+    }
     const action = entry.action as NonNullable<LoadedUiContribution["action"]>;
     const r = await this.call(t, "action", (signal) =>
       action({
@@ -668,10 +699,83 @@ export class UiViews {
         ...(input.answer !== undefined && { answer: input.answer }),
       }),
     );
-    this.check(t, "action", actionResultProblems(r, entry.contribution.kind === "component"));
-    const res = r as { view?: UiView; toast?: { zh: string; en: string } };
-    if (res.view !== undefined) return { view: dropForeignOpens(res.view, this.panels(t.plugin)) };
-    return res.toast !== undefined ? { toast: { zh: res.toast.zh, en: res.toast.en } } : {};
+    const component = entry.contribution.kind === "component";
+    this.check(t, "action", actionResultProblems(r, component));
+    const res = r as { view?: UiView; toast?: { zh: string; en: string }; invalidate?: string[] };
+    // the query names to refetch: a component's only (plugin full pages spec §4.1)
+    const inv =
+      component && res.invalidate !== undefined ? { invalidate: [...res.invalidate] } : {};
+    if (res.view !== undefined) {
+      return { view: dropForeignOpens(res.view, this.panels(t.plugin)), ...inv };
+    }
+    return res.toast !== undefined
+      ? { toast: { zh: res.toast.zh, en: res.toast.en }, ...inv }
+      : inv;
+  }
+
+  /**
+   * Runs a component's named query (`ctx.ui.query`, plugin full pages spec §4.1): the same gate
+   * and args as the component's view, plus `{ query, params, signal }`. Not offered (or no
+   * handler) is 404 `ui.query_not_found`; params over `UI_LIMITS.componentQueryParamsBytes` 413
+   * `ui.query_params_too_large`; 10 s 504 `ui.query_timeout`; a throw 502 `ui.query_failed`; a
+   * result that is not JSON or over `UI_LIMITS.componentQueryBytes` 502
+   * `ui.query_result_too_large`.
+   */
+  async query(
+    t: UiOrgTarget,
+    input: { query: string; params?: unknown },
+  ): Promise<{ data: JsonValue }> {
+    let resolved: Awaited<ReturnType<UiViews["resolve"]>>;
+    try {
+      resolved = await this.resolve(t, "query");
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "ui.not_found") {
+        throw new ApiError("ui.query_not_found", "UI component query not found");
+      }
+      throw e;
+    }
+    const params = (input.params ?? null) as JsonValue;
+    if (jsonBytes(params) > UI_LIMITS.componentQueryParamsBytes) {
+      throw new ApiError(
+        "ui.query_params_too_large",
+        `params must be at most ${UI_LIMITS.componentQueryParamsBytes} bytes as JSON`,
+      );
+    }
+    const handler = resolved.entry.query as NonNullable<LoadedUiContribution["query"]>;
+    // an org target always resolves to org args
+    const args = resolved.args as Extract<ResolvedArgs, { orgId: string }>;
+    const data = await callExtension({
+      log: this.d.log,
+      plugin: t.plugin,
+      what: "query",
+      fields: { plugin: t.plugin, contribution: t.id, query: input.query, orgId: t.orgId },
+      timeoutMs: UI_QUERY_TIMEOUT_MS,
+      failCode: "ui.query_failed",
+      timeoutCode: "ui.query_timeout",
+      failMessage: `Plugin ${t.plugin} failed to answer query ${input.query} of ${t.id}`,
+      fn: (signal) => handler({ ...args, query: input.query, params, signal }),
+    });
+    let json: string | undefined;
+    try {
+      json = JSON.stringify(data);
+    } catch {
+      json = undefined;
+    }
+    const bytes = json === undefined ? undefined : Buffer.byteLength(json, "utf8");
+    if (bytes === undefined || bytes > UI_LIMITS.componentQueryBytes) {
+      this.d.log.warn("plugin ui query returned a result that is not JSON or too large", {
+        plugin: t.plugin,
+        contribution: t.id,
+        query: input.query,
+        orgId: t.orgId,
+        ...(bytes !== undefined && { bytes }),
+      });
+      throw new ApiError(
+        "ui.query_result_too_large",
+        `Plugin ${t.plugin} returned a query result that is not JSON of at most ${UI_LIMITS.componentQueryBytes} bytes`,
+      );
+    }
+    return { data };
   }
 
   /** Ids of the extension's live `panel` contributions. */
@@ -697,7 +801,7 @@ export class UiViews {
    */
   private async resolve(
     t: UiTarget,
-    need: "render" | "action" | "embed",
+    need: "render" | "action" | "query" | "embed",
   ): Promise<{ entry: LoadedUiContribution; args: ResolvedArgs }> {
     const loaded = this.d.host.uiContributions();
     const entry = loaded.find(
@@ -706,7 +810,7 @@ export class UiViews {
         c.contribution.id === t.id &&
         (need === "embed"
           ? c.contribution.kind === "embed"
-          : // a view, or a component's server view (served like a view of its slot)
+          : // a view, or a component's server view or query (served like a view of its slot)
             (c.contribution.kind === "view" || c.contribution.kind === "component") &&
             c[need] !== undefined),
     );

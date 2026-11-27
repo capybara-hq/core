@@ -140,6 +140,55 @@ describe("ctx.ui 注册", () => {
     await ctx.close();
   });
 
+  it("ctx.ui.query takes only a declared component id; a view or undeclared id is refused", async () => {
+    const base = mf();
+    const m = defineExtension({
+      ...base,
+      ui: [
+        ...(base.ui ?? []),
+        { id: "deck", title: { zh: "页", en: "Deck" }, slot: "org.page", kind: "component" },
+      ],
+      permissions: {
+        ...base.permissions,
+        client: true,
+        ui: { ...base.permissions?.ui, components: ["deck"] },
+      },
+    });
+    const ctx = createExtensionContext(deps, m, {});
+    const answer = async () => ({ n: 1 });
+    ctx.ui.query("deck", answer);
+    expect(() => ctx.ui.query("deck", answer)).toThrow(/duplicate/);
+    // a view id (declared under views) and an unknown id both name permissions.ui.components
+    expect(() => ctx.ui.query("tasks", answer)).toThrow(ExtensionPermissionError);
+    expect(() => ctx.ui.query("tasks", answer)).toThrow(/permissions\.ui\.components tasks/);
+    expect(() => ctx.ui.query("nope", answer)).toThrow(/permissions\.ui\.components nope/);
+    expect([...ctx.uiQueries.keys()]).toEqual(["deck"]);
+    await ctx.close();
+  });
+
+  it("a query handler is in the ledger and closing the ctx removes it", async () => {
+    const base = mf();
+    const m = defineExtension({
+      ...base,
+      ui: [
+        ...(base.ui ?? []),
+        { id: "deck", title: { zh: "页", en: "Deck" }, slot: "org.page", kind: "component" },
+      ],
+      permissions: {
+        ...base.permissions,
+        client: true,
+        ui: { ...base.permissions?.ui, components: ["deck"] },
+      },
+    });
+    const ctx = createExtensionContext(deps, m, {});
+    ctx.ui.query("deck", async () => null);
+    ctx.sealTools();
+    expect(ctx.ledger.list().map((x) => `${x.kind}:${x.key}`)).toEqual(["ui.query:deck"]);
+    expect(() => ctx.ui.query("deck", async () => null)).toThrow(/only allowed during setup/);
+    await ctx.close();
+    expect(ctx.uiQueries.size).toBe(0);
+  });
+
   it("setup 结束后（sealTools）再注册抛错", async () => {
     const ctx = createExtensionContext(deps, mf(), {});
     ctx.sealTools();
@@ -150,7 +199,7 @@ describe("ctx.ui 注册", () => {
 });
 
 describe("ctx.ui.invalidate", () => {
-  it("带 conversationId → 内核主题 conv.<id>；不带 → org-ui.<orgId>；消息为 {kind:'ui', plugin, contribution}", async () => {
+  it("with conversationId → kernel topic conv.<id>; without → org-ui.<orgId>; message {kind:'ui', plugin, contribution, queries: true}", async () => {
     const c = await seed();
     const conv = await conversation(c);
     const kernelBus = createBus(redis, sub, "kernel", quiet);
@@ -166,8 +215,14 @@ describe("ctx.ui.invalidate", () => {
     await ctx.ui.invalidate({ orgId: c.orgId, contribution: "board" });
     await waitFor(async () => got.length === 2, 5000, "two ui messages");
     expect(got).toEqual([
-      { topic: "conv", m: { kind: "ui", plugin: "ui-test", contribution: "tasks" } },
-      { topic: "org", m: { kind: "ui", plugin: "ui-test", contribution: "board" } },
+      {
+        topic: "conv",
+        m: { kind: "ui", plugin: "ui-test", contribution: "tasks", queries: true },
+      },
+      {
+        topic: "org",
+        m: { kind: "ui", plugin: "ui-test", contribution: "board", queries: true },
+      },
     ]);
     expect(orgUiTopic("o-1")).toBe("org-ui.o-1");
     await un1();

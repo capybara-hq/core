@@ -70,6 +70,7 @@ import {
   PluginUiRegistration,
   type UiActionHandler,
   type UiBusMessage,
+  type UiQueryHandler,
   type UiRender,
 } from "../ui/registry.js";
 import { type BusSubscriber, createBus } from "./bus.js";
@@ -410,6 +411,8 @@ export type KernelExtensionContext = ExtensionContext & {
   uiViews: ReadonlyMap<string, UiRender>;
   /** 经 `ctx.ui.action` 注册的动作处理函数（按贡献 id）。 */
   uiActions: ReadonlyMap<string, UiActionHandler>;
+  /** Query handlers registered through `ctx.ui.query`, by component id. */
+  uiQueries: ReadonlyMap<string, UiQueryHandler>;
   /** Setup checks registered through `ctx.setup.check`, by id. */
   setupChecks: ReadonlyMap<string, RegisteredSetupCheck>;
   /**
@@ -1066,7 +1069,13 @@ export function createExtensionContext(
       // contribution takes no orgId and refreshes the platform stream (super admins only)
       async invalidate(target) {
         const t = uiReg.target(target, platformUi);
-        const msg: UiBusMessage = { kind: "ui", plugin: name, contribution: t.contribution };
+        // `queries`: the contribution's component queries are refetched too (full pages spec §4.1)
+        const msg: UiBusMessage = {
+          kind: "ui",
+          plugin: name,
+          contribution: t.contribution,
+          queries: true,
+        };
         if (t.scope === "platform") {
           await kernelBus.publish(PLATFORM_UI_TOPIC, msg);
           return;
@@ -1135,6 +1144,7 @@ export function createExtensionContext(
     uiResolution,
     uiViews: uiReg.views,
     uiActions: uiReg.actions,
+    uiQueries: uiReg.queries,
     setupChecks,
     ledger,
     async beginDispose(deadline) {

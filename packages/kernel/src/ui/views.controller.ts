@@ -1,4 +1,4 @@
-import type { UiActionResult, UiView } from "@capybara-hq/plugin-sdk";
+import type { JsonValue, UiActionResult, UiView } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
@@ -16,6 +16,7 @@ import {
   ContributionParams,
   ContributionsQuery,
   EmbedTokenBody,
+  QueryBody,
   ViewQuery,
 } from "./ui.schemas.js";
 import { OrgUiStreams } from "./ui-stream.js";
@@ -31,6 +32,7 @@ class UiContributionsQueryDto extends createZodDto(ContributionsQuery, "UiContri
 class UiContributionParamsDto extends createZodDto(ContributionParams, "UiContributionParams") {}
 class UiViewQueryDto extends createZodDto(ViewQuery, "UiViewQuery") {}
 class UiActionBodyDto extends createZodDto(ActionBody, "UiActionBody") {}
+class UiQueryBodyDto extends createZodDto(QueryBody, "UiQueryBody") {}
 class UiEmbedTokenBodyDto extends createZodDto(EmbedTokenBody, "UiEmbedTokenBody") {}
 
 /**
@@ -48,6 +50,12 @@ class UiEmbedTokenBodyDto extends createZodDto(EmbedTokenBody, "UiEmbedTokenBody
  *   → `{ view }`（`item`: the panel item to scroll to; `callId` / `key`: an inline card's tool call）；
  * - `POST /api/v1/orgs/:orgId/ui/actions/:plugin/:id`
  *   （`{ actionId, payload?, answer?, conversationId?, agentId?, locale? }`）→ `{ toast }` | `{ view }`；
+ *   `payload` ≤ `UI_LIMITS.componentActionPayloadBytes` for a component, `payloadBytes` for a view;
+ * - `POST /api/v1/orgs/:orgId/ui/query/:plugin/:id` (`{ query, params?, conversationId?, agentId?,
+ *   locale? }`) → `{ data }`: a component's named query (`ctx.ui.query`, plugin full pages spec
+ *   §4.1), gated like the component's view; 404 `ui.query_not_found`, 413
+ *   `ui.query_params_too_large`, 502 `ui.query_failed` / `ui.query_result_too_large`, 504
+ *   `ui.query_timeout` (10 s);
  * - `GET  /api/v1/orgs/:orgId/ui/stream`：组织级刷新 SSE（`event: ui`，`data: {"plugin","contribution"}`），
  *   member and above；
  * - `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token` (`{ conversationId?, agentId?, fileId? }`,
@@ -147,6 +155,31 @@ export class UiController {
         ...(body.payload !== undefined && { payload: body.payload }),
         ...(body.answer !== undefined && { answer: body.answer }),
       },
+    );
+  }
+
+  @Post("query/:plugin/:id")
+  @HttpCode(200)
+  @OrgAction("ui.use")
+  async query(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(UiContributionParamsDto) { plugin, id }: z.infer<typeof ContributionParams>,
+    @ZBody(UiQueryBodyDto) body: z.infer<typeof QueryBody>,
+  ): Promise<{ data: JsonValue }> {
+    const p = requireUser(principal);
+    return this.views.query(
+      {
+        orgId: org.orgId,
+        accountId: p.account.id,
+        role: org.role,
+        plugin,
+        id,
+        ...(body.conversationId !== undefined && { conversationId: body.conversationId }),
+        ...(body.agentId !== undefined && { agentId: body.agentId }),
+        locale: body.locale,
+      },
+      { query: body.query, ...(body.params !== undefined && { params: body.params }) },
     );
   }
 

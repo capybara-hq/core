@@ -24,9 +24,9 @@ export function canUseSlot(slot: UiSlotSpec, role: OrgRole): boolean {
 
 /** 插件视图的 render 函数（`ctx.ui.view` 注册）。 */
 export type UiRender = (args: UiRenderArgs) => Promise<UiView>;
-/** 插件视图的动作处理函数（`ctx.ui.action` 注册）。 */
-/** The handler of a `ctx.ui.query` registration. */
+/** The handler of a `ctx.ui.query` registration (a component's named queries, by `args.query`). */
 export type UiQueryHandler = (args: UiQueryArgs) => Promise<JsonValue>;
+/** The action handler of a plugin view (registered with `ctx.ui.action`). */
 export type UiActionHandler = (args: UiActionArgs) => Promise<UiActionResult>;
 
 /**
@@ -46,11 +46,16 @@ export type UiInvalidateTarget =
   | { scope: "org"; orgId: string; conversationId?: string; contribution: string }
   | { scope: "platform"; contribution: string };
 
-/** 界面刷新消息：`conv.<id>`、`org-ui.<orgId>` 与 `platform-ui` 上的 `{ kind: "ui", plugin, contribution }`。 */
+/**
+ * The UI refresh message on `conv.<id>`, `org-ui.<orgId>` and `platform-ui`:
+ * `{ kind: "ui", plugin, contribution, queries? }`. `queries: true` (every `ctx.ui.invalidate`)
+ * tells the web to refetch the contribution's component queries too (plugin full pages spec §4.1).
+ */
 export interface UiBusMessage {
   kind: "ui";
   plugin: string;
   contribution: string;
+  queries?: true;
 }
 
 /** 是否为界面刷新消息（bus 上的消息来自其他副本，按形状核对）。 */
@@ -60,9 +65,13 @@ export function isUiBusMessage(m: unknown): m is UiBusMessage {
   return x.kind === "ui" && typeof x.plugin === "string" && typeof x.contribution === "string";
 }
 
-/** SSE 帧 `event: ui`，数据 `{ plugin, contribution }`。 */
+/** The SSE frame `event: ui`, data `{ plugin, contribution, queries? }`. */
 export const uiFrame = (m: UiBusMessage): string =>
-  `event: ui\ndata: ${JSON.stringify({ plugin: m.plugin, contribution: m.contribution })}\n\n`;
+  `event: ui\ndata: ${JSON.stringify({
+    plugin: m.plugin,
+    contribution: m.contribution,
+    ...(m.queries === true && { queries: true }),
+  })}\n\n`;
 
 /**
  * 单个插件在 setup 期间注册的视图与动作：进程内的静态登记（同 `ctx.tools.register`），
@@ -74,9 +83,11 @@ export const uiFrame = (m: UiBusMessage): string =>
 export class PluginUiRegistration {
   readonly views = new Map<string, UiRender>();
   readonly actions = new Map<string, UiActionHandler>();
-  /** TODO(full-pages F2): registered by `ctx.ui.query`; nothing reads it yet. */
+  /** Query handlers registered by `ctx.ui.query`, by component id. */
   readonly queries = new Map<string, UiQueryHandler>();
   private readonly declaredViews: Set<string>;
+  /** `permissions.ui.components`: the only ids `ctx.ui.query` accepts. */
+  private readonly declaredComponents: Set<string>;
   private readonly contributions: Set<string>;
   /** The ids of the manifest's `component` contributions: their permission is `ui.components`. */
   private readonly components: Set<string>;
@@ -92,13 +103,14 @@ export class PluginUiRegistration {
   ) {
     const ui = manifest.permissions?.ui;
     this.declaredViews = new Set([...(ui?.views ?? []), ...(ui?.components ?? [])]);
+    this.declaredComponents = new Set(ui?.components ?? []);
     this.contributions = new Set((manifest.ui ?? []).map((c) => c.id));
     this.components = new Set(
       (manifest.ui ?? []).filter((c) => c.kind === "component").map((c) => c.id),
     );
   }
 
-  /** setup 结束后调用：此后 view / action 抛错。 */
+  /** Called when setup ends: view / action / query throw from then on. */
   seal(): void {
     this.sealed = true;
   }
@@ -111,9 +123,12 @@ export class PluginUiRegistration {
     this.register("action", this.actions, id, handler);
   }
 
-  /** TODO(full-pages F2): the kernel route that calls these handlers comes with F2. */
+  /**
+   * The named queries of a component (`usePluginQuery`, served by `POST …/ui/query/:plugin/:id`):
+   * only an id in `permissions.ui.components`.
+   */
   query(id: string, handler: UiQueryHandler): void {
-    this.register("query", this.queries, id, handler);
+    this.register("query", this.queries, id, handler, this.declaredComponents);
   }
 
   /**
@@ -158,16 +173,25 @@ export class PluginUiRegistration {
     };
   }
 
-  private register<F>(what: string, map: Map<string, F>, id: string, fn: F): void {
+  private register<F>(
+    what: string,
+    map: Map<string, F>,
+    id: string,
+    fn: F,
+    declared: ReadonlySet<string> = this.declaredViews,
+  ): void {
     const name = this.manifest.name;
     if (this.sealed) {
       throw new Error(
         `plugin ${name}: ui.${what} is only allowed during setup; setup has completed`,
       );
     }
-    if (typeof id !== "string" || !this.declaredViews.has(id)) {
+    if (typeof id !== "string" || !declared.has(id)) {
       // name the list the id belongs in: a component's server view is declared under components
-      const list = typeof id === "string" && this.components.has(id) ? "components" : "views";
+      const list =
+        declared === this.declaredComponents || (typeof id === "string" && this.components.has(id))
+          ? "components"
+          : "views";
       this.deny(`permissions.ui.${list} ${String(id)}`);
     }
     if (typeof fn !== "function") {

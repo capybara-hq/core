@@ -55,7 +55,7 @@ import { packagePath } from "../packages/tgz.js";
 import { DeviceReports } from "../sandbox/device-reports.js";
 import { ShareLiveness } from "../shares/liveness.js";
 import { EmbedTokens } from "../ui/embed-token.js";
-import type { UiActionHandler, UiRender } from "../ui/registry.js";
+import type { UiActionHandler, UiQueryHandler, UiRender } from "../ui/registry.js";
 import {
   type ApprovalDecision,
   ExtensionApprovals,
@@ -124,6 +124,8 @@ export interface LoadedUiContribution {
   after?: string;
   render?: UiRender;
   action?: UiActionHandler;
+  /** A component's `ctx.ui.query` handler. */
+  query?: UiQueryHandler;
 }
 
 export type { ExtensionPointEntry } from "./registry.js";
@@ -2573,6 +2575,7 @@ export class ExtensionHost {
         const served = c.kind === "view" || c.kind === "component";
         const render = served ? i.uiViews.get(c.id) : undefined;
         const action = served ? i.uiActions.get(c.id) : undefined;
+        const query = c.kind === "component" ? i.uiQueries.get(c.id) : undefined;
         return {
           plugin: i.name,
           contribution: c,
@@ -2580,6 +2583,7 @@ export class ExtensionHost {
           ...(after !== undefined && { after }),
           ...(render !== undefined && { render }),
           ...(action !== undefined && { action }),
+          ...(query !== undefined && { query }),
         };
       }),
     );
