@@ -21,6 +21,7 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { CaseSnapshot } from "../evals/snapshot.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { hasInvocation, skillLoadOffered } from "../skills/catalog.js";
@@ -71,6 +72,15 @@ import {
   planSqueezedFit,
   sentOutputCap,
 } from "./context/fit.js";
+import {
+  buildInContextCompactionRequest,
+  IN_CONTEXT_BOUNDARY_MODE,
+  type InContextBoundary,
+  type InContextSkip,
+  inContextCoversUpToSeq,
+  inContextSummaryAllowed,
+  latestModelCall,
+} from "./context/in-context-compaction.js";
 import { guardToolPairs } from "./context/pairing.js";
 import { hasProjectSkills, overlongProjectSkills } from "./context/project-root.js";
 import { TOOLS_UNSUPPORTED_REMINDER, turnLimitReminder } from "./context/reminders.js";
@@ -234,7 +244,8 @@ export interface ModelStepDeps {
    * Absent in eval replays and single-step replays, which have no live conversation to show it on.
    */
   compactionProgress?: CompactionProgressSink;
-  log: Logger;
+  /** The kernel logger (its `debug` level is optional here: SDK loggers have none). */
+  log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
   /**
    * 会话附件（构建请求时解析日志里的媒体引用；见 AttachmentsService）。未提供时媒体引用一律按「不再可用」处理。
    * 两个方法都只对「确定不存在」返回缺省 / null；暂时故障（存储不可用、网络错误）一律抛错（Ruling M4）。
@@ -262,6 +273,20 @@ export interface ModelStepDeps {
    * as `tool_base`. Only chat and sub-agent runs use it (never an eval replay); absent, no base.
    */
   writeBase?: WriteBaseReader;
+  /**
+   * The live snapshot of the conversation for the in-context summary (idle compaction spec §9.4,
+   * `evals/snapshot.ts` `liveSnapshot`): `events` with the definitions and tool specs they
+   * reference, for run `runId` (the run of the last model call) of agent `agentId`. Live runs and
+   * manual compact runs get it (`RunSteps`); absent (eval replays, most tests), every compaction
+   * summarizes the transcript.
+   */
+  liveSnapshot?: (
+    orgId: string,
+    conversationId: string,
+    runId: string,
+    agentId: string,
+    events: readonly ConversationEvent[],
+  ) => Promise<CaseSnapshot>;
   /**
    * How long an attempt waits for its aborted base reads (default `WRITE_BASE_SETTLE_MS`); tests
    * shorten it.
@@ -1279,6 +1304,11 @@ interface CompactOptions {
    * `compaction_failed`.
    */
   manual?: boolean;
+  /**
+   * Summarize the transcript, never the in-context request (idle compaction spec §9.4): the
+   * reactive path sets it, since its last request is the one that overflowed.
+   */
+  transcriptOnly?: boolean;
 }
 
 /** What one compaction execution wrote: the events, the summary's seq and whether it failed. */
@@ -1289,6 +1319,121 @@ export interface CompactionOutcome {
   summarySeq: number | null;
   /** Whether a `compaction_failed` was written (a failed call, a denial or a failed acceptance). */
   failed: boolean;
+}
+
+/**
+ * Why a compaction summarizes the transcript instead of the in-context request (idle compaction
+ * spec §9.4): the builder's skips, plus the runtime's own reasons. Logged as a `debug` line with
+ * `context=Compaction`.
+ */
+type InContextFallback =
+  | InContextSkip
+  /** `CompactOptions.transcriptOnly` (the reactive path: its last request overflowed). */
+  | "transcript_only"
+  /** The model is not in the quality-gate table ({@link inContextSummaryAllowed}). */
+  | "quality_gate"
+  /** No `ModelStepDeps.liveSnapshot` (eval replays). */
+  | "no_snapshot"
+  /** No agent id on the step input, or a last call without a run. */
+  | "no_agent"
+  | "snapshot_failed"
+  /** The builder threw (a bug: it never throws for a snapshot's content). */
+  | "build_failed"
+  /** Boundary mode `all` would cover less than the plan: a covered message is not absorbed. */
+  | "covers_unabsorbed";
+
+/** The in-context summary call of one compaction. */
+interface InContextSummary {
+  request: ModelRequest;
+  /** The same request with the retry note, sent after a reply cut off at the output limit. */
+  retryRequest: ModelRequest;
+  /** What the summary covers (boundary mode `all`: every event the request includes). */
+  coversUpToSeq: number;
+}
+
+/**
+ * The in-context summary request of a compaction (idle compaction spec §9.4), or why the
+ * compaction summarizes the transcript: the reactive path's `transcriptOnly`, a model the quality
+ * gate does not list, a compaction model other than the last call's, no live snapshot, or a skip of
+ * {@link buildInContextCompactionRequest}. Media come from the step's own media cache (what the
+ * next step would send). Never throws.
+ */
+async function inContextSummary(
+  deps: ModelStepDeps,
+  input: ModelStepInput,
+  events: ConversationEvent[],
+  ref: ModelRef,
+  info: ModelInfo,
+  tools: StepTools,
+  settings: { reserveTokens: number; summaryCap: number },
+  plan: { coversUpToSeq: number },
+  opts: CompactOptions,
+): Promise<InContextSummary | { skip: InContextFallback }> {
+  if (opts.transcriptOnly) return { skip: "transcript_only" };
+  if (!inContextSummaryAllowed(ref.provider, info.id)) return { skip: "quality_gate" };
+  if (deps.liveSnapshot === undefined) return { skip: "no_snapshot" };
+  const call = latestModelCall(events);
+  if (call === undefined) return { skip: "no_model_call" };
+  if (call.payload.provider !== ref.provider || call.payload.model !== ref.model) {
+    return { skip: "model_mismatch" };
+  }
+  if (input.agentId === undefined || call.runId === null) return { skip: "no_agent" };
+
+  let boundary: InContextBoundary;
+  let coversUpToSeq: number;
+  if (IN_CONTEXT_BOUNDARY_MODE === "all") {
+    boundary = { mode: "all" };
+    coversUpToSeq = inContextCoversUpToSeq(events, input.absorbedUpToSeq);
+    if (coversUpToSeq < plan.coversUpToSeq) return { skip: "covers_unabsorbed" };
+  } else {
+    const kept = events.find((e) => e.type === "user_message" && e.seq > plan.coversUpToSeq);
+    if (kept === undefined) return { skip: "boundary_ambiguous" };
+    boundary = { mode: "marked", firstKeptSeq: kept.seq };
+    coversUpToSeq = plan.coversUpToSeq;
+  }
+
+  let snapshot: CaseSnapshot;
+  try {
+    snapshot = await deps.liveSnapshot(
+      input.orgId,
+      input.conversationId,
+      call.runId,
+      input.agentId,
+      events,
+    );
+  } catch (err) {
+    deps.log.debug?.("in-context summary snapshot failed", {
+      context: "Compaction",
+      conversationId: input.conversationId,
+      err,
+    });
+    return { skip: "snapshot_failed" };
+  }
+  const common = {
+    snapshot,
+    events,
+    absorbedUpToSeq: input.absorbedUpToSeq,
+    model: info,
+    mediaInfo: tools.media.info,
+    media: tools.media.bytes,
+    reserveTokens: settings.reserveTokens,
+    summaryCap: settings.summaryCap,
+    boundary,
+  };
+  try {
+    const first = buildInContextCompactionRequest({ ...common, retry: false });
+    if ("skip" in first) return first;
+    const again = buildInContextCompactionRequest({ ...common, retry: true });
+    if ("skip" in again) return again;
+    return { request: first.request, retryRequest: again.request, coversUpToSeq };
+  } catch (err) {
+    deps.log.warn("in-context summary request failed to build", {
+      context: "Compaction",
+      conversationId: input.conversationId,
+      err,
+    });
+    return { skip: "build_failed" };
+  }
 }
 
 /**
@@ -1429,11 +1574,6 @@ export async function runCompaction(
       failed: false,
     };
   }
-  // decided now and recorded in the summary (spec §4.2): the request never depends on later events
-  // a manual compact run is started by no message: the turn it cuts into is the latest message run's
-  const opening = manual
-    ? manualOpeningSeqs(events, plan.coversUpToSeq, input.absorbedUpToSeq)
-    : openingSeqs(events, input.runId, plan.coversUpToSeq, input.absorbedUpToSeq);
 
   const { runId, step, signal, conversationId } = input;
   const ref = modelRef;
@@ -1452,6 +1592,33 @@ export async function runCompaction(
   // the summary call's output cap: the org's effective setting, never above the model's own cap
   // (context compaction spec §4.8)
   const summaryCap = Math.min(compaction.maxOutputTokens, info.maxOutputTokens);
+  // idle compaction spec §9.4: every compaction tries the summary from the conversation's last
+  // request first (its cached prefix); a skip summarizes the transcript exactly as before
+  const inContext = await inContextSummary(
+    deps,
+    input,
+    events,
+    modelRef,
+    info,
+    tools,
+    { reserveTokens: compaction.reserveTokens, summaryCap },
+    plan,
+    opts,
+  );
+  const ic = "skip" in inContext ? null : inContext;
+  if ("skip" in inContext) {
+    deps.log.debug?.("in-context summary skipped", {
+      context: "Compaction",
+      conversationId,
+      reason: inContext.skip,
+    });
+  }
+  const coversUpToSeq = ic?.coversUpToSeq ?? plan.coversUpToSeq;
+  // decided now and recorded in the summary (spec §4.2): the request never depends on later events;
+  // a manual compact run is started by no message: the turn it cuts into is the latest message run's
+  const opening = manual
+    ? manualOpeningSeqs(events, coversUpToSeq, input.absorbedUpToSeq)
+    : openingSeqs(events, input.runId, coversUpToSeq, input.absorbedUpToSeq);
   // the payload's attempt drives the backoff; the keys use the compaction's ordinal in the step
   const attemptNo = consecutiveCompactionFailures(events) + 1;
   const ordinal = compactionOrdinal(events, runId, step);
@@ -1477,9 +1644,12 @@ export async function runCompaction(
   const overhead = compactionRequestOverhead();
   const allowance = Math.ceil(summaryCap / 2);
   const baseChunkSize = compactionChunkSize(budget, summaryCap);
-  // the whole transcript is one call unless it is over a usable base chunk size
+  // the whole transcript is one call unless it is over a usable base chunk size; the in-context
+  // request is never chunked (spec §4.5): it is one request the model already accepted
   let remaining: string | null =
-    baseChunkSize >= MIN_COMPACTION_CHUNK_TOKENS && textTokens(plan.transcript) > baseChunkSize
+    ic === null &&
+    baseChunkSize >= MIN_COMPACTION_CHUNK_TOKENS &&
+    textTokens(plan.transcript) > baseChunkSize
       ? plan.transcript
       : null;
   /** Whether this compaction is chunked (real `i/N` progress only in this path). */
@@ -1548,7 +1718,12 @@ export async function runCompaction(
     // the compaction (spec §4.5, issue #959)
     let retry = false;
     for (;;) {
-      const request = buildCompactionRequest(callInput, info.id, summaryCap, { retry });
+      const request =
+        ic !== null
+          ? retry
+            ? ic.retryRequest
+            : ic.request
+          : buildCompactionRequest(callInput, info.id, summaryCap, { retry });
       if (hookBase && deps.hooks?.has("model.request")) {
         let verdict: Awaited<ReturnType<HookRunner["run"]>>;
         try {
@@ -1611,6 +1786,13 @@ export async function runCompaction(
             signal,
             deps.log,
           );
+        }
+        // the in-context request declares the conversation's tools under toolChoice "none": a
+        // reply that calls one anyway is no summary (idle compaction spec §9.4)
+        if (out.content.some((b) => b.type === "tool_call")) {
+          failure = "summary reply called a tool";
+          failedChunk = multiChunk ? chunkNo : null;
+          break;
         }
         if (out.stopReason === "max_tokens") {
           if (!retry) {
@@ -1756,13 +1938,14 @@ export async function runCompaction(
           // the manual compact run's run id is in it; a crash-retried attempt writes nothing twice
           idemKey: idem.compactionSummary(runId, step, ordinal),
           payload: {
-            coversUpToSeq: plan.coversUpToSeq,
+            coversUpToSeq,
             text: summary,
             // the run's opening messages the summary covers: request building re-renders them
             ...(opening.length > 0 && { openingSeqs: opening }),
             // what compaction saved: the estimated transcript input minus the stored summary
             // output (context compaction spec §4.9)
             savedTokens: summarySavedTokens(plan.transcript, summary),
+            method: ic !== null ? "in_context" : "transcript",
             step,
           },
         }
@@ -1952,6 +2135,7 @@ async function ladder(
             force: true,
             ref: rung.ref,
             fallback: rung.fallback,
+            transcriptOnly: true,
           });
           if (evs !== before && (await budgetUsedUpAfterCompaction(deps, input, wrapUpReason))) {
             throw new BudgetUsedUp();
@@ -2033,6 +2217,7 @@ async function ladder(
             force: true,
             ref: rung.ref,
             fallback: rung.fallback,
+            transcriptOnly: true,
           });
           if (evs !== before) {
             if (await budgetUsedUpAfterCompaction(deps, input, wrapUpReason)) {

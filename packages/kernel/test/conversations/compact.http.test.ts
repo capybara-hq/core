@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -93,6 +95,7 @@ beforeEach(async () => {
     "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings",
   );
   await redis.flushdb();
+  capture.reset();
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
@@ -123,6 +126,33 @@ const ev = <T extends ConversationEvent["type"]>(events: ConversationEvent[], ty
 
 const compact = (conv: string, orgId: string, req: Req = owner) =>
   req({ method: "POST", url: compactUrl(orgId, conv), payload: {} });
+
+/** Starts a compact run and waits until it completed; returns its id. */
+async function compacted(conv: string, orgId: string): Promise<string> {
+  const res = await compact(conv, orgId);
+  expect(res.statusCode, res.body).toBe(202);
+  const { runId } = res.json() as { runId: string };
+  await waitFor(
+    async () => {
+      const row = await db
+        .selectFrom("runs")
+        .select("status")
+        .where("id", "=", runId)
+        .executeTakeFirst();
+      return row?.status === "completed" ? row : null;
+    },
+    30_000,
+    "compact run completed",
+  );
+  return runId;
+}
+
+/** The ids of the tool calls in `req` that no tool result answers. */
+const unpairedCalls = (req: ModelRequest): string[] => {
+  const blocks = req.messages.flatMap((m) => (m.role === "system" ? [] : m.content));
+  const answered = new Set(blocks.flatMap((b) => (b.type === "tool_result" ? [b.callId] : [])));
+  return blocks.flatMap((b) => (b.type === "tool_call" && !answered.has(b.id) ? [b.id] : []));
+};
 
 describe("manual compaction", () => {
   it("compacts an idle conversation in a compact run: one summary and its usage, step 0, no model step", async () => {
@@ -155,6 +185,10 @@ describe("manual compaction", () => {
 
     const summaries = ev(events, "compaction_summary").filter((e) => e.runId === runId);
     expect(summaries).toHaveLength(1);
+    // idle compaction spec §9.4: summarized from the conversation's last request
+    expect(summaries[0]?.payload.method).toBe("in_context");
+    expect(capture.compactions).toHaveLength(1);
+    expect(capture.compactions[0]?.system).toEqual(capture.sent.at(-1)?.system);
     const usage = ev(events, "usage").filter(
       (e) => e.runId === runId && e.payload.purpose === "compaction",
     );
@@ -242,6 +276,34 @@ describe("manual compaction", () => {
     expect(userTexts.filter((t) => t === "loop:1")).toHaveLength(1);
     expect(userTexts.at(-1)).toBe("after");
     expect(rest.filter((m) => m.role === "assistant").length).toBeGreaterThan(1);
+  });
+
+  it("right after an aborted run whose reply has an unanswered tool call: a summary, every call paired", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 5);
+    // a step stopped mid-reply: the assistant message keeps its tool call, no result follows
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "assistant_message",
+        runId: randomUUID(),
+        payload: {
+          step: 1,
+          content: [
+            { type: "text", text: "Let me look." },
+            { type: "tool_call", id: "call-aborted", name: "ReadToolOutput", input: {} },
+          ],
+          stopReason: "aborted",
+        },
+      },
+    ]);
+    const runId = await compacted(conv, orgId);
+    const events = await eventsOf(db, conv);
+    const summaries = ev(events, "compaction_summary").filter((e) => e.runId === runId);
+    expect(summaries.map((e) => e.payload.method)).toEqual(["in_context"]);
+    expect(ev(events, "compaction_failed")).toEqual([]);
+    expect(capture.compactions).toHaveLength(1);
+    const request = capture.compactions[0] as ModelRequest;
+    expect(unpairedCalls(request)).toEqual([]);
   });
 
   it("returns the compact run already queued instead of starting a second one", async () => {

@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { ContentBlock, ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
-import type { ConversationEvent } from "../../conversations/events.js";
+import { type ConversationEvent, isAbsorbable } from "../../conversations/events.js";
 import { ApiError } from "../../errors.js";
 import { reconstructFromInputs, reconstructInputs } from "../../evals/reconstruct.js";
 import type { CaseSnapshot } from "../../evals/snapshot.js";
@@ -16,6 +16,69 @@ import { estimateTokens } from "./tokens.js";
  * its prompt cache. Pure; the caller gathers the snapshot, the media and the settings. It never
  * combines with a chunked compaction: it is one request the model already accepted.
  */
+
+/**
+ * Where an in-context summary stops (idle compaction spec §9.4, decision Q9, 2026-11-28): `"all"`
+ * summarizes everything up to the compaction point and keeps no verbatim tail, because no tested
+ * model kept the kept turns out of a summary told where to stop (tail leakage 9 to 18 of 20 on
+ * four vendors). `"marked"` would summarize before the plan's first kept user message; the builder
+ * still supports it, the compaction does not take it.
+ */
+export const IN_CONTEXT_BOUNDARY_MODE: "marked" | "all" = "all";
+
+/**
+ * The models whose in-context summaries may be used (idle compaction spec §9.4, the quality-gate
+ * table; ruling R8): a model family is listed only after its in-context summary passed the quality
+ * eval, with the evidence that says so. `provider` is the model provider extension's name (absent:
+ * any provider), `model` is tested against the model id (no `g` or `y` flag: `test` must not keep
+ * state). Every other model summarizes the transcript. Keep this table and the spec's in step.
+ */
+export interface InContextSummaryModel {
+  provider?: string;
+  model: RegExp;
+  evidence: string;
+}
+
+export const IN_CONTEXT_SUMMARY_MODELS: readonly InContextSummaryModel[] = [
+  {
+    provider: "model-fake",
+    model: /^/,
+    evidence: "scripted test model; summary quality not measured",
+  },
+];
+
+/**
+ * Whether the compaction model may write an in-context summary: some entry of `table` (default
+ * {@link IN_CONTEXT_SUMMARY_MODELS}) names its provider (or none) and matches its id. No match
+ * means the transcript path.
+ */
+export function inContextSummaryAllowed(
+  provider: string,
+  modelId: string,
+  table: readonly InContextSummaryModel[] = IN_CONTEXT_SUMMARY_MODELS,
+): boolean {
+  return table.some(
+    (e) => (e.provider === undefined || e.provider === provider) && e.model.test(modelId),
+  );
+}
+
+/**
+ * The `coversUpToSeq` of an in-context summary with boundary mode `"all"` (idle compaction spec
+ * §9.4): the last event the in-context request includes, which is every event before the first
+ * absorbable one (`isAbsorbable`) above `absorbedUpToSeq`: that message is not in the request, so
+ * the summary must not cover it. `-Infinity` when no event qualifies.
+ */
+export function inContextCoversUpToSeq(
+  events: readonly ConversationEvent[],
+  absorbedUpToSeq: number,
+): number {
+  let covered = Number.NEGATIVE_INFINITY;
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (isAbsorbable(e) && e.seq > absorbedUpToSeq) break;
+    covered = e.seq;
+  }
+  return covered;
+}
 
 /** Where the summary stops. */
 export type InContextBoundary =
@@ -85,7 +148,7 @@ type ModelCallEvent = Extract<ConversationEvent, { type: "model_call" }>;
 type UserMessageEvent = Extract<ConversationEvent, { type: "user_message" }>;
 
 /** The conversation's latest step `model_call` (a compact run's own calls are not `model_call`s). */
-function latestModelCall(events: readonly ConversationEvent[]): ModelCallEvent | undefined {
+export function latestModelCall(events: readonly ConversationEvent[]): ModelCallEvent | undefined {
   let last: ModelCallEvent | undefined;
   for (const e of events) {
     if (e.type === "model_call" && (last === undefined || e.seq > last.seq)) last = e;

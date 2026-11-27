@@ -2,6 +2,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import { AttachmentsService } from "../conversations/attachments.service.js";
 import { EventLog } from "../conversations/event-log.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { liveSnapshot } from "../evals/snapshot.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -100,6 +101,9 @@ export class RunSteps {
       ...livePermissionContext(permissionContext),
       // the display-only base of a streaming Write (streaming tool input spec §4.1)
       writeBase,
+      // the in-context summary's view of the conversation (idle compaction spec §9.4)
+      liveSnapshot: (orgId, conversationId, runId, agentId, events) =>
+        liveSnapshot(kdb.db, { orgId, conversationId, runId, agentId, events }),
     };
   }
 }

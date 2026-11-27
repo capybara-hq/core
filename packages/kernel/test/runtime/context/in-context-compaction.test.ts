@@ -13,8 +13,11 @@ import {
 } from "../../../src/runtime/context/compaction.js";
 import {
   buildInContextCompactionRequest,
+  IN_CONTEXT_SUMMARY_MODELS,
   type InContextBoundary,
+  inContextCoversUpToSeq,
   inContextInstruction,
+  inContextSummaryAllowed,
 } from "../../../src/runtime/context/in-context-compaction.js";
 import { UNKNOWN_RESULT_TEXT } from "../../../src/runtime/context/pairing.js";
 import { assembleModelRequest } from "../../../src/runtime/model-call.js";
@@ -544,5 +547,55 @@ describe("inContextInstruction", () => {
     for (const line of [...SUMMARY_TASK_LINES, ...TRANSCRIPT_READING_LINES]) {
       expect(text).toContain(line);
     }
+  });
+});
+
+describe("inContextSummaryAllowed (the quality gate, idle compaction spec §9.4)", () => {
+  it("allows a model the table lists for its provider", () => {
+    expect(inContextSummaryAllowed("model-fake", "fake-1")).toBe(true);
+    expect(inContextSummaryAllowed("model-fake", "fake-small")).toBe(true);
+  });
+
+  it("refuses the same model id under another provider", () => {
+    expect(inContextSummaryAllowed("model-fake-2", "fake-1")).toBe(false);
+    expect(inContextSummaryAllowed("stub", "fake-1")).toBe(false);
+  });
+
+  it("refuses a model no entry names (the default is the transcript)", () => {
+    expect(inContextSummaryAllowed("anthropic", "claude-unknown-9")).toBe(false);
+  });
+
+  it("an entry without a provider matches the model id under any provider", () => {
+    const table = [{ model: /^family-a-/, evidence: "test" }];
+    expect(inContextSummaryAllowed("one", "family-a-mini", table)).toBe(true);
+    expect(inContextSummaryAllowed("two", "family-a-max", table)).toBe(true);
+    expect(inContextSummaryAllowed("two", "family-b-max", table)).toBe(false);
+  });
+
+  it("every entry carries its evidence", () => {
+    for (const entry of IN_CONTEXT_SUMMARY_MODELS) expect(entry.evidence.length).toBeGreaterThan(0);
+  });
+});
+
+describe("inContextCoversUpToSeq (boundary mode all)", () => {
+  const ev = (seq: number, type: string, payload: unknown = {}): ConversationEvent =>
+    ({ seq, type, payload, runId: RUN, conversationId: CONV, createdAt: new Date(AT) }) as never;
+  const user = (seq: number) =>
+    ev(seq, "user_message", { content: [{ type: "text", text: "hi" }], authorAccountId: "a" });
+
+  it("covers every event when everything is absorbed", () => {
+    const events = [user(1), ev(2, "model_call"), ev(3, "assistant_message"), ev(4, "usage")];
+    expect(inContextCoversUpToSeq(events, 1)).toBe(4);
+  });
+
+  it("stops before the first message the next request does not absorb", () => {
+    const events = [user(1), ev(2, "model_call"), user(3), ev(4, "tool_result"), user(5)];
+    expect(inContextCoversUpToSeq(events, 1)).toBe(2);
+    expect(inContextCoversUpToSeq(events, 3)).toBe(4);
+    expect(inContextCoversUpToSeq(events, 5)).toBe(5);
+  });
+
+  it("reads the events in seq order", () => {
+    expect(inContextCoversUpToSeq([user(3), ev(1, "run_started"), ev(2, "model_call")], 2)).toBe(2);
   });
 });

@@ -875,11 +875,16 @@ export function summaryKeepsTail(
  * plain statement that the earlier conversation was compacted into it (maintainer decision
  * 2026-11-28), then what follows it. `openers` is the number of covered opening messages re-rendered right after this
  * text ({@link summaryOpeners}); `keptTail` says whether newer messages kept verbatim follow
- * ({@link summaryKeepsTail}). Model-facing English, derived from the log alone.
+ * ({@link summaryKeepsTail}); `method` is the summary's `compaction_summary.method` (idle
+ * compaction spec §9.4): an in-context summary was written from the whole conversation up to its
+ * boundary, so its tail sentence says only that it covers what came before the kept messages; a
+ * transcript one (or one without the field) says it was written without seeing them. With
+ * boundary mode `all` an in-context summary normally keeps no tail (only messages logged while it
+ * was written follow it). Model-facing English, derived from the log alone.
  */
 export function summaryText(
   summary: string,
-  framing: { openers: number; keptTail: boolean },
+  framing: { openers: number; keptTail: boolean; method?: "transcript" | "in_context" },
 ): string {
   const parts: string[] = [
     "The earlier part of this conversation was compacted into the summary above and is no longer shown verbatim.",
@@ -894,7 +899,9 @@ export function summaryText(
   if (framing.keptTail) {
     const anchor = framing.openers === 0 ? "this summary" : "those";
     parts.push(
-      `The messages after ${anchor} are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them.`,
+      framing.method === "in_context"
+        ? `The messages after ${anchor} are the most recent ones in the conversation, kept verbatim. The summary covers what came before them; something it says is still pending may already have happened in them.`
+        : `The messages after ${anchor} are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them.`,
     );
   }
   parts.push("Continue the work from where it left off.");
@@ -1197,6 +1204,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
           text: summaryText(summary.payload.text, {
             openers: openers.length,
             keptTail: summaryKeepsTail(events, summary),
+            ...(summary.payload.method !== undefined && { method: summary.payload.method }),
           }),
         },
         ...openers.flatMap((o) => userBlocks(o, false)),

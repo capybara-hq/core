@@ -834,6 +834,16 @@ of 20; Anthropic and OpenAI also miss recall and the constraint). Decision: **`"
 in-context summary covers everything up to the compaction point and keeps no verbatim tail. The
 transcript path keeps the plan's tail as before.
 
+Quality gate (ruling R8, 2026-11-28): the in-context path runs only for model families whose
+in-context summaries passed the quality eval; every other model takes the transcript path. The
+checked-in table is `IN_CONTEXT_SUMMARY_MODELS` in `runtime/context/in-context-compaction.ts`
+(provider extension name, optional, and a model id pattern, each with its evidence); a compaction
+model no entry matches skips with reason `quality_gate`. This table and that one stay in step:
+
+| provider | model | evidence |
+|---|---|---|
+| `model-fake` | any | scripted test model; summary quality not measured |
+
 ### 9.5 Plugin gaps (plugins repository)
 
 Already fixed by capybara-hq/plugins#304 (being merged):

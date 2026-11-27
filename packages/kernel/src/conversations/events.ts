@@ -2087,6 +2087,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       openingSeqs: z.array(seqNo).optional(),
       /**
+       * How the summary was written (idle compaction spec §9.4): `in_context` from the
+       * conversation's last request rebuilt with the summary instruction appended (its cached
+       * prefix), `transcript` from the plan's transcript. Not model-visible itself: only the
+       * framing sentence after the summary reads it (context compaction spec §4.2.2), derived from
+       * the log, so no `DriftReason`. Absent on summaries written before it (read as `transcript`).
+       */
+      method: z.enum(["transcript", "in_context"]).optional(),
+      /**
        * The step the compaction ran in (0 for a manual compact run), so a later compaction in the
        * same step takes the next idempotency key.
        */

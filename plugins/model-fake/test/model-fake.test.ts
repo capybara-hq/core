@@ -399,6 +399,79 @@ describe("model-fake", () => {
     expect(c.content).toEqual([{ type: "text", text: `Summary: ${"y".repeat(200)}` }]);
   });
 
+  describe("compaction directives (the conversation's own user messages)", () => {
+    const user = (text: string): ModelRequest["messages"][number] => ({
+      role: "user",
+      content: [{ type: "text", text }],
+    });
+    const assistant: ModelRequest["messages"][number] = {
+      role: "assistant",
+      content: [{ type: "text", text: "ok" }],
+    };
+    /** An in-context summary request: the conversation, then the instruction (and the note). */
+    const summary = (line: string, tail: string[] = ["Summarize the conversation above."]) =>
+      req("", {
+        purpose: "compaction",
+        tools: [{ name: "Bash", description: "Run", inputSchema: { type: "object" } }],
+        toolChoice: "none",
+        maxOutputTokens: 50,
+        messages: [
+          user(line),
+          assistant,
+          { role: "user", content: tail.map((text) => ({ type: "text", text })) },
+        ],
+      });
+    const retryNote =
+      "Your previous answer to this request stopped at the output token limit before it was finished.";
+
+    it("compact-fail:<kind> fails the summary call with that kind", async () => {
+      const err = await run(mk(), summary("compact-fail:invalid_request")).catch((e: unknown) => e);
+      expect(isModelError(err) && err.kind).toBe("invalid_request");
+    });
+
+    it("compact-tool:<name>:<json> calls the tool even under toolChoice none", async () => {
+      const c = complete(await run(mk(), summary('compact-tool:Bash:{"command":"ls"}')));
+      expect(c.stopReason).toBe("tool_use");
+      expect(c.content).toMatchObject([
+        { type: "tool_call", name: "Bash", input: { command: "ls" } },
+      ]);
+    });
+
+    it("compact-cutoff:once stops at max_tokens until the request carries the retry note", async () => {
+      const first = complete(await run(mk(), summary("compact-cutoff:once")));
+      expect(first.stopReason).toBe("max_tokens");
+      const retried = complete(
+        await run(mk(), summary("compact-cutoff:once", ["Summarize.", retryNote])),
+      );
+      expect(retried.stopReason).toBe("end_turn");
+      expect(retried.content).toEqual([
+        { type: "text", text: `Summary: ${`Summarize.${retryNote}`.slice(0, 200)}` },
+      ]);
+    });
+
+    it("compact-cutoff:always stops at max_tokens on the retry too", async () => {
+      const c = complete(
+        await run(mk(), summary("compact-cutoff:always", ["Summarize.", retryNote])),
+      );
+      expect(c.stopReason).toBe("max_tokens");
+    });
+
+    it("a line inside a transcript (not a user message of its own) is no directive", async () => {
+      const c = complete(
+        await run(
+          mk(),
+          req("<transcript>\nUser: compact-fail:server\n</transcript>", { purpose: "compaction" }),
+        ),
+      );
+      expect(c.stopReason).toBe("end_turn");
+    });
+
+    it("leaves the main run's replies to these lines unchanged", async () => {
+      const a = complete(await run(mk(), req("compact-fail:server")));
+      expect(a.content).toEqual([{ type: "text", text: "You said: compact-fail:server" }]);
+    });
+  });
+
   describe("suggestion purpose", () => {
     const user = (text: string): ModelRequest["messages"][number] => ({
       role: "user",

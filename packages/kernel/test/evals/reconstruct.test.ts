@@ -44,7 +44,11 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
-import { type MediaInfo, TEXT_INLINE_MAX_CHARS } from "../../src/runtime/context/build.js";
+import {
+  type MediaInfo,
+  summaryText,
+  TEXT_INLINE_MAX_CHARS,
+} from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { devicePathsText } from "../../src/runtime/context/device-paths.js";
 import {
@@ -1084,6 +1088,104 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
+  it("a step compacted in context (idle compaction spec §9.4), then a message run: zero drift, in-context framing", async () => {
+    reset();
+    // a proactive trigger at half of fake-1's window: the summary request (the last request plus
+    // the 4096-token summary cap) still fits, so the compaction summarizes in context
+    await db
+      .updateTable("deployment_settings")
+      .set({ value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0, threshold: 0.5 }) })
+      .where("key", "=", "compaction")
+      .execute();
+    try {
+      const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+      const conv = await createConv(owner, orgId, agentId);
+      let n = 0;
+      const turn = async (text: string) => {
+        await postMessage(owner, orgId, conv, text);
+        await waitForTerminal(db, conv, ++n, 30_000);
+      };
+      // long turns until one run's step compacts (each adds about 7k estimated tokens)
+      const compacted = async () =>
+        (await eventsOf(db, conv)).some((e) => e.type === "compaction_summary");
+      for (let i = 0; i < 6 && !(await compacted()); i++) await turn("long:3000");
+      expect(n).toBeGreaterThan(1);
+      await turn("echo:one more run");
+
+      const events = await eventsOf(db, conv);
+      const summaries = events.filter(
+        (e): e is Extract<ConversationEvent, { type: "compaction_summary" }> =>
+          e.type === "compaction_summary",
+      );
+      expect(summaries.map((e) => e.payload.method)).toEqual(["in_context"]);
+      const summary = summaries[0] as Extract<ConversationEvent, { type: "compaction_summary" }>;
+      // boundary mode all: the summary covers the run's opening message, re-rendered after it
+      expect(summary.payload.openingSeqs).toHaveLength(1);
+      const compaction = compactions[0] as ModelRequest;
+      expect(compactions).toHaveLength(1);
+      const calls = modelCalls(events);
+      const before = calls.filter((c) => c.seq < summary.seq).length;
+      expect(compaction.system).toEqual(sent[before - 1]?.system);
+      const usage = events.find(
+        (e) => e.type === "usage" && e.payload.purpose === "compaction",
+      ) as Extract<ConversationEvent, { type: "usage" }>;
+      expect(usage.payload.cacheReadTokens).toBeGreaterThan(0);
+      // the framing after an in-context summary with no kept tail: the opener line and the close
+      const after = calls.filter((c) => c.seq > summary.seq);
+      expect(after.length).toBeGreaterThanOrEqual(2);
+      for (const c of after) expect(c.payload.request.summarySeq).toBe(summary.seq);
+      const head = sent[calls.indexOf(after[0] as ModelCallEvent)]?.messages[0];
+      const blocks = Array.isArray(head?.content) ? head.content : [];
+      expect(blocks[0]).toEqual({
+        type: "text",
+        text: summaryText(summary.payload.text, {
+          openers: 1,
+          keptTail: false,
+          method: "in_context",
+        }),
+      });
+      await expectZeroDrift(conv, await snapshotOf(conv));
+    } finally {
+      await db
+        .updateTable("deployment_settings")
+        .set({ value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0 }) })
+        .where("key", "=", "compaction")
+        .execute();
+    }
+  });
+
+  it("a transcript compaction, then a message run: zero drift, the transcript framing unchanged", async () => {
+    reset();
+    // fake-small's window cannot hold the summary request with its 4096-token cap: transcript
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-small" });
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    for (let i = 0; i < 4; i++) {
+      await postMessage(owner, orgId, conv, `long:${300 + i}`);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    }
+    await postMessage(owner, orgId, conv, "echo:a message run");
+    await waitForTerminal(db, conv, ++n, 30_000);
+    const events = await eventsOf(db, conv);
+    const methods = events.flatMap((e) =>
+      e.type === "compaction_summary" ? [e.payload.method] : [],
+    );
+    expect(methods.length).toBeGreaterThan(0);
+    expect(methods.every((m) => m === "transcript")).toBe(true);
+    const heads = sent.flatMap((r) => {
+      const c = r.messages[0]?.content;
+      const first = Array.isArray(c) ? c[0] : undefined;
+      return first?.type === "text" && first.text.startsWith("<conversation_summary>")
+        ? [first.text]
+        : [];
+    });
+    expect(heads.length).toBeGreaterThan(0);
+    for (const text of heads) {
+      expect(text).not.toContain("The summary covers what came before them");
+    }
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
   it("a summary inside the current turn (context compaction spec §4.2, revision 2026-11-15): the turn's message follows the summary, zero drift", async () => {
     reset();
     // a skill body large enough that the turn's message and its tool pair are over the tail budget
@@ -1143,11 +1245,12 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
-  it("a manual compaction inside the latest turn (spec §4.7, maintainer decision 2026-11-28): earlier turns and the turn's message summarized, the latest pair kept, zero drift", async () => {
+  it("a manual compaction (spec §4.7, maintainer decision 2026-11-28) summarizes in context up to the compaction point, the latest turn's opener re-rendered, zero drift", async () => {
     reset();
     // fake-1 (W 32000): the manual tail budget is a fifth of the window (6400). The tool call's
     // input (≈7.5k tokens) puts the latest pair over it, below the automatic trigger; the call is
-    // to a tool the agent lacks, so its result and the reply stay short
+    // to a tool the agent lacks, so its result and the reply stay short. The manual transcript
+    // plan would cut before that pair; the in-context path below covers it too
     const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
     const conv = await createConv(owner, orgId, agentId);
     let n = 0;
@@ -1174,11 +1277,17 @@ describe("reconstructRequest：基线零漂移", () => {
       (e) =>
         e.type === "assistant_message" && e.payload.content.some((b) => b.type === "tool_call"),
     );
+    const reply = events.findLast((e) => e.type === "assistant_message");
     expect(summary?.type).toBe("compaction_summary");
     if (summary?.type !== "compaction_summary") return;
-    // the boundary sits inside the latest turn, right before its tool pair; the opener is recorded
-    expect(summary.payload.coversUpToSeq).toBeGreaterThanOrEqual(message?.seq ?? 0);
-    expect(summary.payload.coversUpToSeq).toBeLessThan(call?.seq ?? 0);
+    // model-fake passes the in-context quality gate, so the manual compaction summarizes the
+    // conversation's last request (idle compaction spec §9.4, boundary mode "all"): it covers
+    // everything up to the compaction point, the latest pair and reply included, instead of the
+    // manual transcript plan's cut before the pair; the opener the manual path computes (the
+    // latest message run's) is recorded and re-rendered
+    expect(summary.payload.method).toBe("in_context");
+    expect(summary.payload.coversUpToSeq).toBeGreaterThan(call?.seq ?? Number.POSITIVE_INFINITY);
+    expect(summary.payload.coversUpToSeq).toBeGreaterThanOrEqual(reply?.seq ?? 0);
     expect(summary.payload.openingSeqs).toEqual([message?.seq]);
 
     await turn("echo:after");
@@ -1190,8 +1299,13 @@ describe("reconstructRequest：基线零漂移", () => {
       "The message that opened the current turn follows, shown again verbatim; the summary covers it.",
     );
     expect(blocks.slice(1).some((b) => b.type === "text" && b.text === ask)).toBe(true);
-    // the earlier turn is only in the summary
+    // the earlier turn and the latest tool pair are only in the summary
     expect(JSON.stringify(request?.messages.slice(1))).not.toContain("echo:first");
+    expect(
+      request?.messages.some(
+        (m) => m.role === "assistant" && m.content.some((b) => b.type === "tool_call"),
+      ),
+    ).toBe(false);
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 

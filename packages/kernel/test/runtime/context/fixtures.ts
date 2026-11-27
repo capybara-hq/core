@@ -98,13 +98,19 @@ export class Log {
   }
 
   /** A summary; `openingSeqs` names the covered messages it re-renders (spec §4.2). */
-  summary(coversUpToSeq: number, text: string, openingSeqs?: number[]): ConversationEvent {
+  summary(
+    coversUpToSeq: number,
+    text: string,
+    openingSeqs?: number[],
+    method?: "transcript" | "in_context",
+  ): ConversationEvent {
     return this.add({
       type: "compaction_summary",
       payload: {
         coversUpToSeq,
         text,
         ...(openingSeqs !== undefined && { openingSeqs }),
+        ...(method !== undefined && { method }),
         savedTokens: 0,
         step: 0,
       },

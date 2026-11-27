@@ -467,6 +467,18 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   §4.2.1): the retry logs its own compaction `usage` (key suffix `:retry`, same `chunk`); the summary
   request itself is never replayed (requests rebuild from the logged `compaction_summary` text), so
   its retry note needs no `DriftReason`.
+- The in-context summary (idle compaction spec §9.4, `runtime/context/in-context-compaction.ts`):
+  every compaction first tries a side request that is the conversation's last request rebuilt
+  through the zero-drift path (`liveSnapshot` + `reconstructInputs` / `assembleModelRequest`),
+  extended with what the next step would add, plus the summary instruction (`toolChoice: "none"`,
+  the recorded `cacheTtl`, purpose `compaction`), so the vendor serves the prefix from its cache. It
+  runs only for a model in the quality-gate table (`IN_CONTEXT_SUMMARY_MODELS`), the same model as
+  the last call, and never on the reactive path (`transcriptOnly`) or in replays (no
+  `liveSnapshot`); any skip summarizes the transcript (a `debug` line, `context=Compaction`). With
+  boundary mode `all` it covers every event the request includes. `compaction_summary.method`
+  (`in_context` / `transcript`, absent = transcript) records the path; it is not model-visible
+  except through the summary's framing sentence (`summaryText`), derived from the log, so it needs
+  no `DriftReason`, and the side request itself is never replayed.
 - A conversation title call (UI refresh B, `conversations/titles.ts`, queue `cap-kernel-titles`,
   model purpose `title`) logs its own `usage` event with `purpose: "title"`, `step` 0 and no run
   (`runId` null). It is not model-visible to the agent (request building skips `usage`), needs no
