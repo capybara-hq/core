@@ -23,6 +23,11 @@ import { maybeMeQuery } from "../../../../lib/query/shell";
 /** The deep links this document already tried on its own: each at most once (a remount too). */
 const tried = new Set<string>();
 
+/** Forgets the deep links tried so far (tests start each case from a fresh page). */
+export function resetDoneTries(): void {
+  tried.clear();
+}
+
 const noSubscribe = () => () => {};
 
 /** This page's origin in the browser; null in the server render (and while hydrating). */

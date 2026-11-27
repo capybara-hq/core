@@ -147,7 +147,7 @@ export function handoffResultParams(done: HandoffDone): URLSearchParams {
 }
 
 /**
- * The link back into the native app: `<scheme>://open?url=<origin + returnTo + result params>`,
+ * The link back into the native app: `<scheme>://open?url=<returnTo on origin, result params set>`,
  * only for a scheme the platform lists (`appSchemes`, derived from `auth.appRedirectUris`), so a
  * crafted done address cannot point it anywhere else. Null otherwise.
  */
@@ -159,7 +159,13 @@ export function appDeepLink(
   resultParams: URLSearchParams,
 ): string | null {
   if (scheme === undefined || !appSchemes.includes(scheme)) return null;
-  const params = resultParams.toString();
-  const sep = params === "" ? "" : returnTo.includes("?") ? "&" : "?";
-  return `${scheme}://open?url=${encodeURIComponent(`${origin}${returnTo}${sep}${params}`)}`;
+  let target: URL;
+  try {
+    target = new URL(returnTo, origin);
+  } catch {
+    return null;
+  }
+  // each result parameter replaces one already there; a fragment stays after the query
+  for (const [k, v] of resultParams) target.searchParams.set(k, v);
+  return `${scheme}://open?url=${encodeURIComponent(target.toString())}`;
 }

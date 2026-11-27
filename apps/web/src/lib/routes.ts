@@ -7,8 +7,9 @@
 export const PUBLIC_PREFIXES = ["/login", "/setup", "/invite", "/bind", "/s", "/handoff"] as const;
 
 /**
- * Whether a page path (no query) is a browser handoff page `/handoff/<ticket>` (or its done page):
- * the ticket is in the address, so the page sends no referrer.
+ * Whether a page path (no query) is a browser handoff page: `/handoff/<ticket>` carries its
+ * single-use ticket in the address, `/handoff/done` the flow's result and return page. Neither
+ * sends a referrer.
  */
 export const isHandoffPath = (path: string): boolean => path.startsWith("/handoff/");
 

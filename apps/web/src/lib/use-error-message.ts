@@ -37,11 +37,18 @@ export function useErrorMessage(): (error: unknown) => string {
   );
 }
 
-/** The `{login}` of `handoff.account_mismatch`: the ticket's account (email, else its name). */
+/**
+ * The `{login}` of `handoff.account_mismatch`: the ticket's account, by its login, else its email
+ * (an account without a login), else its display name.
+ */
 function handoffOwner(e: ApiClientError): string {
-  const d = e.rawDetails[0] as { displayName?: unknown; email?: unknown } | undefined;
-  if (typeof d?.email === "string" && d.email !== "") return d.email;
-  return typeof d?.displayName === "string" ? d.displayName : "";
+  const d = e.rawDetails[0] as
+    | { login?: unknown; displayName?: unknown; email?: unknown }
+    | undefined;
+  for (const v of [d?.login, d?.email, d?.displayName]) {
+    if (typeof v === "string" && v !== "") return v;
+  }
+  return "";
 }
 
 /** The `reason` of an error's first detail, if any. */

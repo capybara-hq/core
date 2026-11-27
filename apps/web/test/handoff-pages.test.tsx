@@ -31,7 +31,14 @@ const navigateBrowser = vi.hoisted(() => vi.fn());
 vi.mock("../src/lib/browser", () => ({ navigateBrowser }));
 
 const { default: HandoffLayout } = await import("../src/app/(auth)/handoff/[ticket]/layout");
-const { default: HandoffView } = await import("../src/app/(auth)/handoff/[ticket]/view");
+const { default: HandoffView, resetHandoffRedeems } = await import(
+  "../src/app/(auth)/handoff/[ticket]/view"
+);
+const { default: HandoffDoneView, resetDoneTries } = await import(
+  "../src/app/(auth)/handoff/done/view"
+);
+const { platformMetaQuery } = await import("../src/lib/query/app-auth");
+const { maybeMeQuery } = await import("../src/lib/query/shell");
 const { metadata } = await import("../src/app/(auth)/handoff/[ticket]/page");
 const { appDeepLink, parseHandoffDone } = await import("../src/lib/handoff");
 
@@ -46,6 +53,9 @@ beforeEach(() => {
   resetNavigation(`/handoff/${TICKET}`);
   navigateBrowser.mockReset();
   req.headers = new Headers();
+  // each case is a fresh document: no redeem or deep link left over from the last one
+  resetHandoffRedeems();
+  resetDoneTries();
 });
 afterEach(() => {
   cleanup();
@@ -120,7 +130,9 @@ describe("the handoff page", () => {
     });
     renderPage(<HandoffView ticket={ticket} />);
     expect(await screen.findByText(en.errors.handoff.invalid)).toBeTruthy();
-    expect(screen.getByText(en.handoff.startAgain)).toBeTruthy();
+    // the error already says to go back to the app: no second line saying it again
+    expect(screen.queryByText(en.handoff.startAgain)).toBeNull();
+    expect(screen.queryByRole("button", { name: en.common.retry })).toBeNull();
     expect(navigateBrowser).not.toHaveBeenCalled();
   });
 
@@ -132,10 +144,32 @@ describe("the handoff page", () => {
           error: {
             code: "handoff.account_mismatch",
             message: "x",
-            details: [{ displayName: "Alice Wong", email: "alice@corp.example" }],
+            details: [{ login: "alice", displayName: "Alice Wong", email: "alice@corp.example" }],
           },
         }),
       "POST /api/v1/auth/logout": () => noContent(),
+    });
+    renderPage(<HandoffView ticket={ticket} />);
+    expect(
+      await screen.findByText(en.errors.handoff.account_mismatch.replace("{login}", "alice")),
+    ).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: en.handoff.switchAccount }));
+    // the ticket is spent: plain sign-in, then the person starts again from the app
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/login"));
+    expect(calls.filter((c) => c.url === "/api/v1/auth/logout")).toHaveLength(1);
+  });
+
+  it("account mismatch without a login names the email", async () => {
+    const ticket = `${TICKET.slice(0, -1)}G`;
+    stubApi({
+      [REDEEM]: () =>
+        json(403, {
+          error: {
+            code: "handoff.account_mismatch",
+            message: "x",
+            details: [{ login: null, displayName: "Alice Wong", email: "alice@corp.example" }],
+          },
+        }),
     });
     renderPage(<HandoffView ticket={ticket} />);
     expect(
@@ -143,13 +177,46 @@ describe("the handoff page", () => {
         en.errors.handoff.account_mismatch.replace("{login}", "alice@corp.example"),
       ),
     ).toBeTruthy();
-    await userEvent.setup().click(screen.getByRole("button", { name: en.handoff.switchAccount }));
+  });
+
+  it("a signed-out redeem goes to sign-in and back", async () => {
+    stubApi({
+      [REDEEM]: () => json(401, { error: { code: "auth.required", message: "signed out" } }),
+      "POST /api/v1/auth/refresh": () =>
+        json(401, { error: { code: "auth.refresh_invalid", message: "x" } }),
+    });
+    renderPage(<HandoffView ticket={TICKET} />);
     await vi.waitFor(() =>
       expect(navigateBrowser).toHaveBeenCalledWith(
-        `/login?returnTo=${encodeURIComponent(`/handoff/${ticket}`)}`,
+        `/login?returnTo=${encodeURIComponent(`/handoff/${TICKET}`)}`,
       ),
     );
-    expect(calls.filter((c) => c.url === "/api/v1/auth/logout")).toHaveLength(1);
+  });
+
+  it("a site-path location is followed", async () => {
+    stubApi({
+      [REDEEM]: () => json(200, { location: "/account/identities?error=sso.unavailable" }),
+    });
+    renderPage(<HandoffView ticket={TICKET} />);
+    await vi.waitFor(() =>
+      expect(navigateBrowser).toHaveBeenCalledWith("/account/identities?error=sso.unavailable"),
+    );
+  });
+
+  it("a transient failure offers a retry, which redeems again", async () => {
+    let n = 0;
+    const calls = stubApi({
+      [REDEEM]: () =>
+        ++n === 1
+          ? json(503, { error: { code: "upstream_unavailable", message: "x" } })
+          : json(200, { location: AUTHORIZE }),
+    });
+    renderPage(<HandoffView ticket={TICKET} />);
+    const retry = await screen.findByRole("button", { name: en.common.retry });
+    expect(screen.getByText(en.handoff.startAgain)).toBeTruthy();
+    await userEvent.setup().click(retry);
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith(AUTHORIZE));
+    expect(calls.filter((c) => c.url === "/api/v1/auth/handoffs/redeem").length).toBeGreaterThan(1);
   });
 
   it("account mismatch without an email names the display name", async () => {
@@ -198,6 +265,20 @@ describe("the done page", () => {
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith(expected));
     expect(navigateBrowser).toHaveBeenCalledTimes(1);
     expect(screen.getByText(en.handoff.done.closeTabHint)).toBeTruthy();
+  });
+
+  it("done page tries the deep link once under StrictMode", async () => {
+    const client = testQueryClient();
+    client.setQueryData(platformMetaQuery().queryKey, { ...META, appSchemes: ["capybara"] });
+    client.setQueryData(maybeMeQuery().queryKey, null);
+    const search = `kind=connector&org=o1&connector=c1&returnTo=${encodeURIComponent("/x")}&scheme=capybara&connected=c1`;
+    // StrictMode at the root: React runs the mount effects twice
+    render(<StrictMode>{pageElement(<HandoffDoneView search={search} />, { client })}</StrictMode>);
+    const expected = `capybara://open?url=${encodeURIComponent(`${window.location.origin}/x?connected=c1`)}`;
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith(expected));
+    await act(async () => {});
+    expect(navigateBrowser).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(en.handoff.done.connectedGeneric)).toBeTruthy();
   });
 
   it("done page refuses unlisted schemes and unsafe returnTo", async () => {
@@ -290,6 +371,20 @@ describe("handoff helpers", () => {
     ).not.toHaveProperty("returnTo");
     expect(parseHandoffDone("kind=other")).toBeNull();
     expect(parseHandoffDone("kind=connector&org=o1")).toBeNull();
+  });
+
+  it("appDeepLink keeps a fragment after the query and replaces an existing result", () => {
+    expect(
+      appDeepLink(
+        "capybara",
+        ["capybara"],
+        "https://h",
+        "/settings/connectors?connected=old&tab=a#tools",
+        new URLSearchParams({ connected: "c1" }),
+      ),
+    ).toBe(
+      `capybara://open?url=${encodeURIComponent("https://h/settings/connectors?connected=c1&tab=a#tools")}`,
+    );
   });
 
   it("appDeepLink only for a listed scheme, joining the result parameters", () => {
