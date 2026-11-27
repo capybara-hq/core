@@ -3397,6 +3397,36 @@ describe("the prompt cache tier (idle compaction spec §9.2)", () => {
     expect(main.calls.map((c) => c.cacheTtl)).toEqual([3600]);
   });
 
+  it("a malformed cacheWriteByTtl is dropped with a warn; the step completes with the rest of the usage", async () => {
+    stubImpl = stub(
+      [stubInfo("ok")],
+      () => "ok",
+      () => ({
+        inputTokens: 10,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 5,
+        // sums to 7, not cacheWriteTokens 5
+        cacheWriteByTtl: [{ ttl: 300, tokens: 7 }],
+      }),
+    );
+    const warn = vi.spyOn(deps.log, "warn");
+    try {
+      await say("hi");
+      const r = await step({ agent: agentWith({ model: { provider: "stub", model: "ok" } }) });
+      expect(r.content).toEqual([{ type: "text", text: "ok" }]);
+      const [usage] = await ofType("usage");
+      expect(usage?.payload).toMatchObject({ inputTokens: 10, cacheWriteTokens: 5 });
+      expect(usage?.payload).not.toHaveProperty("cacheWriteByTtl");
+      expect(warn).toHaveBeenCalledWith(
+        "invalid cacheWriteByTtl from the provider; dropped",
+        expect.objectContaining({ model: "ok" }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("the wrap-up call chooses the tier too", async () => {
     longTtl = true;
     await say("echo:summary");

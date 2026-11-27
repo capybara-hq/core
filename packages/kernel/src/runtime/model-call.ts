@@ -13,6 +13,7 @@ import {
   type ParamValue,
   type StopReason,
   sanitizeParams,
+  validateCacheWriteByTtl,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -1591,6 +1592,7 @@ export async function runCompaction(
               chars: partial.length,
             });
           },
+          deps.log,
         );
         usages.push({ chunk: multiChunk ? chunkNo : undefined, retry, usage: out.usage });
         if (hookBase && deps.hooks) {
@@ -2166,6 +2168,7 @@ async function ladder(
                 bases?.onInput(ev.id, ev.input);
               }
             },
+            deps.log,
           );
         } finally {
           // the attempt's base reads end with it: aborted, then waited for (the abort reaches
@@ -2508,9 +2511,29 @@ export function deltaChars(ev: Exclude<ModelStreamEvent, { type: "message_comple
 }
 
 /**
+ * The provider's usage as the kernel records it: a `cacheWriteByTtl` that fails
+ * `validateCacheWriteByTtl` is dropped with a warn (the rest of the usage stays), so the `usage`
+ * event's schema never rejects a call the model already answered.
+ */
+export function trustedUsage(
+  usage: ModelUsage,
+  model: string,
+  log?: Pick<Logger, "warn">,
+): ModelUsage {
+  if (usage.cacheWriteByTtl === undefined) return usage;
+  const problem = validateCacheWriteByTtl(usage);
+  if (problem === null) return usage;
+  log?.warn("invalid cacheWriteByTtl from the provider; dropped", { model, problem });
+  const { cacheWriteByTtl: _dropped, ...rest } = usage;
+  return rest;
+}
+
+/**
  * 消费一次模型流，带空闲看门狗：两次事件之间超过 `idleMs` → 本地中止并按 `ModelError("timeout")` 抛出。
  * 外部 `signal` 触发 → `StepAborted`。每次 `next()` 都与停止信号竞速，供应商不响应 signal 也不会卡住。
  * 运行时与评测单步回放（`evals/step-replay.ts`）、评委共用。
+ * The usage goes through {@link trustedUsage}, so a malformed `cacheWriteByTtl` never fails a call
+ * after the model replied.
  */
 export async function consumeModelStream(
   provider: BoundProvider,
@@ -2518,6 +2541,8 @@ export async function consumeModelStream(
   idleMs: number,
   signal: AbortSignal,
   onDelta: (ev: Exclude<ModelStreamEvent, { type: "message_complete" }>) => void,
+  /** Where a dropped `cacheWriteByTtl` is reported. */
+  log?: Pick<Logger, "warn">,
 ): Promise<StreamOutcome> {
   if (signal.aborted) throw new StepAborted();
   const local = new AbortController();
@@ -2554,7 +2579,11 @@ export async function consumeModelStream(
       arm();
       const ev = r.value;
       if (ev.type === "message_complete") {
-        return { content: ev.content, stopReason: ev.stopReason, usage: ev.usage };
+        return {
+          content: ev.content,
+          stopReason: ev.stopReason,
+          usage: trustedUsage(ev.usage, request.model, log),
+        };
       }
       onDelta(ev);
     }

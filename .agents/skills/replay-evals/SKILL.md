@@ -65,7 +65,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   model-visible, so no `DriftReason`. Each rung picks it for its own model from `promptCache.longTtl`
   (`runtime/context/cache-ttl.ts`: off → absent; on → the smallest declared option ≥ 1800 s; an absent, invalid or `none`
   declaration → absent). A baseline sends the recorded value while the model still offers it (else omits it); a candidate
-  recomputes it with `selectCacheTtl(model.cache, recorded !== undefined)`. Hook payloads never carry it (`hookRequestOf`).
+  recomputes it with `selectCacheTtl(model.cache, recorded !== undefined)`. A full-run replay recomputes it from the
+  org's current `promptCache.longTtl` (like the compaction settings). Hook payloads never carry it (`hookRequestOf`).
 - **`device_paths`** (devices spec §13.1, ruling R22): the first sandbox tool call of every conversation
   (cloud included, default roots included) appends `device_paths { roots }` to the calling conversation, and a later
   call appends it again whenever the held instance's roots differ from the latest recorded ones (back to the defaults,
