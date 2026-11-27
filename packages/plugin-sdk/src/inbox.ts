@@ -5,7 +5,8 @@ import { UI_LIMITS } from "./ui.js";
  * One button on an inbox item: clicking it calls `uiAction.actionId` of the extension's UI
  * contribution `uiAction.contribution` (registered with `ctx.ui.action`) as the person who
  * clicked, with `payload`, then resolves the item. The contribution must be one of an org-wide
- * slot (such as `org.page`): the call carries no conversation or agent.
+ * slot (such as `org.page`): the call carries no conversation or agent. The action must be
+ * idempotent: delivery is at least once (a click whose result was lost may be pressed again).
  */
 export interface InboxAction {
   /** Unique within the item ({@link INBOX_ID_RE}). */
@@ -176,12 +177,23 @@ function actionProblem(a: unknown): string | null {
 
 /**
  * Whether `link` is a path of the extension's own pages: `/p/<plugin>/` followed by at least one
- * character, with no `..` segment, backslash, control character or second leading slash.
+ * character, with no backslash or control character, no dot segment (`.`, `..`, also spelled with
+ * `%2e` in any case), and a path that still starts with `/p/<plugin>/` once a URL parser resolved
+ * it.
  */
 function ownPageLink(link: string, plugin: string): boolean {
   const prefix = `/p/${plugin}/`;
   if (!link.startsWith(prefix) || link.length === prefix.length) return false;
   if (/[\\\p{Cc}]/u.test(link)) return false;
   const path = link.split(/[?#]/, 1)[0] ?? "";
-  return !path.split("/").some((s) => s === ".." || s === ".");
+  const dot = (s: string) => {
+    const d = s.replace(/%2e/gi, ".");
+    return d === "." || d === "..";
+  };
+  if (path.split("/").some(dot)) return false;
+  try {
+    return new URL(link, "http://x").pathname.startsWith(prefix);
+  } catch {
+    return false;
+  }
 }

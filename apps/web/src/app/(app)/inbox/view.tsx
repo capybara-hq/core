@@ -6,6 +6,7 @@ import {
   Button,
   CodeBlock,
   clipCommand,
+  DangerConfirm,
   DateTime,
   Field,
   formatDateTime,
@@ -151,6 +152,11 @@ function Inbox({
     invalidates: () => inboxChangeKeys(orgId),
   });
   const ti = useTranslations("inbox.item");
+  // A `danger` button of a personal item waits for its confirmation here
+  const [dangerAction, setDangerAction] = useState<{
+    item: PersonalInboxItem;
+    action: PersonalInboxItem["actions"][number];
+  } | null>(null);
   // A personal item: pressing a button runs the plugin's action as me; dismissing closes it.
   // Either changes only the inbox (the plugin refreshes its own views).
   const itemActionMutation = useAppMutation({
@@ -341,6 +347,7 @@ function Inbox({
             item: active.item,
             pending: itemActionMutation.isPending || dismissItemMutation.isPending,
             onAction: (actionId) => void pressItemAction(active.item, actionId),
+            onDanger: (action) => setDangerAction({ item: active.item, action }),
             onDismiss: () => void dismissItem(active.item),
             onOpen: (link) => router.push(link),
             ti,
@@ -465,6 +472,32 @@ function Inbox({
   const setupAgent = configuring?.agent ?? null;
   return (
     <>
+      {dangerAction !== null && (
+        <DangerConfirm
+          open
+          onOpenChange={(o) => {
+            if (!o) setDangerAction(null);
+          }}
+          title={ti("confirmTitle", {
+            action: dangerAction.action.label[locale === "zh" ? "zh" : "en"],
+          })}
+          description={
+            <Text>
+              {ti("confirmHint", {
+                title: dangerAction.item.title,
+                action: dangerAction.action.label[locale === "zh" ? "zh" : "en"],
+              })}
+            </Text>
+          }
+          confirmName={dangerAction.action.label[locale === "zh" ? "zh" : "en"]}
+          confirmLabel={dangerAction.action.label[locale === "zh" ? "zh" : "en"]}
+          onConfirm={async () => {
+            const { item, action } = dangerAction;
+            setDangerAction(null);
+            await pressItemAction(item, action.id);
+          }}
+        />
+      )}
       {configuring !== null && setupAgent !== null && (
         <PendingConnectorDialog
           orgId={orgId}
@@ -703,14 +736,16 @@ function personalItemTexts(
 
 /**
  * One of my personal items (collaboration spec §4.9): its body (the platform's own kinds read with
- * their own copy), a link to open, and its buttons. The first two buttons stand in the action row
- * (dismiss as its cancel), a third in the content; without buttons, dismiss is the primary and
- * open the secondary.
+ * their own copy), a link to open, and its buttons. The first two buttons that are not `danger`
+ * stand in the action row (dismiss as its cancel), the others in the content; a `danger` button
+ * is a danger button there and asks for confirmation (`onDanger`) before it runs. Without a plain
+ * button, dismiss is the primary and open the secondary.
  */
 function personalItemDetail({
   item,
   pending,
   onAction,
+  onDanger,
   onDismiss,
   onOpen,
   ti,
@@ -719,6 +754,7 @@ function personalItemDetail({
   item: PersonalInboxItem;
   pending: boolean;
   onAction(actionId: string): void;
+  onDanger(action: PersonalInboxItem["actions"][number]): void;
   onDismiss(): void;
   onOpen(link: string): void;
   ti: Translate;
@@ -726,7 +762,9 @@ function personalItemDetail({
 }): Detail {
   const texts = personalItemTexts(item, ti, locale);
   const label = (a: PersonalInboxItem["actions"][number]) => a.label[locale === "zh" ? "zh" : "en"];
-  const [first, second, ...rest] = item.actions;
+  const plain = item.actions.filter((a) => a.style !== "danger");
+  const danger = item.actions.filter((a) => a.style === "danger");
+  const [first, second, ...rest] = plain;
   const button = (a: PersonalInboxItem["actions"][number]) => ({
     label: label(a),
     onSelect: () => onAction(a.id),
@@ -770,6 +808,17 @@ function personalItemDetail({
         {body !== "" && <Text variant="prose">{body}</Text>}
         {rest.map((a) => (
           <Button key={a.id} density="dense" disabled={pending} onClick={() => onAction(a.id)}>
+            {label(a)}
+          </Button>
+        ))}
+        {danger.map((a) => (
+          <Button
+            key={a.id}
+            variant="danger"
+            density="dense"
+            disabled={pending}
+            onClick={() => onDanger(a)}
+          >
             {label(a)}
           </Button>
         ))}

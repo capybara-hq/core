@@ -59,6 +59,11 @@ describe("validateInboxPost", () => {
       "//evil/p/tracker/x",
       "/p/tracker/../../admin",
       "/p/tracker/a\\b",
+      "/p/tracker/%2e%2e/%2E%2e/admin/platform",
+      "/p/tracker/%2E%2E/admin",
+      "/p/tracker/%2e/x",
+      "/p/tracker/.%2E/x",
+      "/p/tracker/x/%2e%2E",
     ]) {
       expect(check({ link }), link).toEqual(["link_invalid"]);
     }

@@ -2372,7 +2372,9 @@
           "label": "Automation chain stopped",
           "hint": "An event was not delivered: the chain of automations it came from reached your organization's limit on automations triggering each other. Check this automation so it does not keep triggering itself."
         }
-      }
+      },
+      "confirmTitle": "{action}?",
+      "confirmHint": "This runs “{action}” for “{title}” as you. Type the button’s name to confirm."
     }
   },
   "connectors": {

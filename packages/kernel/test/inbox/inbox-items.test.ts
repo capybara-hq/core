@@ -216,6 +216,15 @@ describe("ctx.inbox.post", () => {
     await expect(inbox().post(item())).rejects.toMatchObject({ code: "org_disabled" });
   });
 
+  it("refuses a deleted org", async () => {
+    await db
+      .updateTable("orgs")
+      .set({ deleted_at: sql<Date>`now()` })
+      .where("id", "=", orgId)
+      .execute();
+    await expect(inbox().post(item())).rejects.toMatchObject({ code: "invalid_item" });
+  });
+
   it("a dedupe key returns the open item instead of adding another", async () => {
     const a = await inbox().post(item({ dedupeKey: "assign-CAP-12" }));
     const b = await inbox().post(item({ dedupeKey: "assign-CAP-12", title: "Again" }));

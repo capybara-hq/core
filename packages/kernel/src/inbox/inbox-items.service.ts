@@ -111,6 +111,13 @@ export class InboxItemsService {
     }
     if (errs.length > 0) throw invalid(`invalid inbox item: ${errs.join(", ")}`);
     const db = this.kdb.db;
+    const org = await db
+      .selectFrom("orgs")
+      .select("id")
+      .where("id", "=", p.orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (org === undefined) throw invalid(`org ${p.orgId} does not exist or is deleted`);
     if (plugin !== null && !(await isExtensionEnabled(db, p.orgId, plugin)))
       throw new InboxError("org_disabled", `${plugin} is not enabled in org ${p.orgId}`);
     const member = await db
@@ -142,27 +149,34 @@ export class InboxItemsService {
     }));
     const seconds = p.expiresInSeconds ?? INBOX_LIMITS.defaultExpirySeconds;
     const id = randomUUID();
-    const inserted = await db
-      .insertInto("inbox_items")
-      .values({
-        id,
-        org_id: p.orgId,
-        account_id: p.accountId,
-        source: source.kind,
-        plugin,
-        kind: p.kind,
-        title: p.title,
-        body: p.body ?? "",
-        link: p.link ?? null,
-        actions: JSON.stringify(actions),
-        dedupe_key: dedupe,
-        expires_at: sql<Date>`now() + make_interval(secs => ${seconds})`,
-      })
-      // only the partial dedupe index can conflict (the id is new)
-      .onConflict((oc) => oc.doNothing())
-      .returning("id")
-      .executeTakeFirst();
-    if (inserted === undefined && dedupe !== null) {
+    const insert = () =>
+      db
+        .insertInto("inbox_items")
+        .values({
+          id,
+          org_id: p.orgId,
+          account_id: p.accountId,
+          source: source.kind,
+          plugin,
+          kind: p.kind,
+          title: p.title,
+          body: p.body ?? "",
+          link: p.link ?? null,
+          actions: JSON.stringify(actions),
+          dedupe_key: dedupe,
+          expires_at: sql<Date>`now() + make_interval(secs => ${seconds})`,
+        })
+        // only the partial dedupe index can conflict (the id is new)
+        .onConflict((oc) => oc.doNothing())
+        .returning("id")
+        .executeTakeFirst();
+    // the conflicting item may close between the insert and the read: then the insert runs again
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if ((await insert()) !== undefined) {
+        await this.push.oweInboxItem(id, p.orgId);
+        return { itemId: id };
+      }
+      if (dedupe === null) throw new Error("inbox item insert conflicted without a key");
       const existing = await db
         .selectFrom("inbox_items")
         .select("id")
@@ -172,12 +186,10 @@ export class InboxItemsService {
         .where(sql<boolean>`coalesce(plugin, '') = ${plugin ?? ""}`)
         .where("dedupe_key", "=", dedupe)
         .where("state", "=", "open")
-        .executeTakeFirstOrThrow();
-      return { itemId: existing.id };
+        .executeTakeFirst();
+      if (existing !== undefined) return { itemId: existing.id };
     }
-    if (inserted === undefined) throw new Error("inbox item insert conflicted without a key");
-    await this.push.oweInboxItem(id, p.orgId);
-    return { itemId: id };
+    throw new Error("inbox item insert kept conflicting with a closed item");
   }
 
   /** The open items of (org, account, source, plugin) with `dedupe`, closed as `expired`. */
@@ -199,6 +211,7 @@ export class InboxItemsService {
    * already resolved or expired is left as it is. Another plugin's item, a kernel item or an
    * unknown id throws `InboxError("not_found")`. The caller runs it in the org's scope.
    */
+  @Transactional()
   async resolveForPlugin(plugin: string, orgId: string, itemId: string): Promise<void> {
     if (typeof orgId !== "string" || typeof itemId !== "string" || !UUID_RE.test(itemId))
       throw new InboxError("not_found", "inbox item not found");
@@ -215,6 +228,7 @@ export class InboxItemsService {
   }
 
   /** Marks an open item resolved; whether it was open. */
+  @Transactional()
   async close(orgId: string, itemId: string): Promise<boolean> {
     const r = await this.kdb.db
       .updateTable("inbox_items")
@@ -252,6 +266,7 @@ export class InboxItemsService {
    * The person dismisses their own open item (`POST inbox/items/:id/dismiss`): resolved without
    * calling anything. Not theirs, not open or expired -> `inbox.item_not_found`.
    */
+  @Transactional()
   async dismiss(orgId: string, accountId: string, itemId: string): Promise<void> {
     await this.openOf(orgId, accountId, itemId);
     if (!(await this.close(orgId, itemId))) throw notFound();

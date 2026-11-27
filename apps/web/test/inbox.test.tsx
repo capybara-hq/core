@@ -1662,3 +1662,42 @@ describe("personal inbox items", () => {
     );
   });
 });
+
+describe("a danger button of a personal item", () => {
+  it("is a danger button and runs only after its confirmation", async () => {
+    const item = {
+      id: "i1",
+      source: "plugin",
+      plugin: "tracker",
+      pluginName: { zh: "项目", en: "Projects" },
+      kind: "item.assigned",
+      title: "CAP-12 was assigned to you",
+      body: "",
+      link: null,
+      actions: [
+        { id: "accept", label: { zh: "接受", en: "Accept" } },
+        { id: "stop", label: { zh: "停止", en: "Stop" }, style: "danger" },
+      ],
+      expiresAt: "2026-11-30T12:00:00.000Z",
+      createdAt: T,
+    };
+    const { calls } = await renderInbox({
+      [LIST]: () =>
+        json(200, { items: [{ type: "item", id: "i1", createdAt: T, item }], truncated: false }),
+      "POST /api/v1/orgs/o1/inbox/items/i1/actions/stop": () => json(200, {}),
+    });
+    const user = userEvent.setup();
+    const stop = await screen.findByRole("button", { name: "Stop" });
+    expect(stop.getAttribute("data-variant")).toBe("danger");
+    await user.click(stop);
+    const dialog = await screen.findByRole("dialog");
+    expect(calls.filter((c) => c.method === "POST")).toEqual([]);
+    await user.type(within(dialog).getByRole("textbox"), "Stop");
+    await user.click(within(dialog).getByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(calls.map((c) => `${c.method} ${c.url}`)).toContain(
+        "POST /api/v1/orgs/o1/inbox/items/i1/actions/stop",
+      ),
+    );
+  });
+});
