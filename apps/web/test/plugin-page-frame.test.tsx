@@ -409,8 +409,12 @@ describe("component queries", () => {
     renderBoard(Page as ComponentType<never>);
     await flush();
     await waitFor(() => {
-      expect(screen.getByTestId("q-boom").textContent).toContain(`boom:error:${en.errors.unknown}`);
-      expect(screen.getByTestId("q-slow").textContent).toContain(`slow:error:${en.errors.unknown}`);
+      expect(screen.getByTestId("q-boom").textContent).toContain(
+        `boom:error:${en.errors.ui.query_failed}`,
+      );
+      expect(screen.getByTestId("q-slow").textContent).toContain(
+        `slow:error:${en.errors.ui.query_timeout}`,
+      );
     });
     expect(screen.getByTestId("q-items").textContent).toContain("items:ready:Alpha");
     // not retried by the cache: the component's retry reads again

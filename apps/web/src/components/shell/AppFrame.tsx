@@ -404,6 +404,10 @@ function ShellFrame({
   );
   const extensions = sections?.extensions ?? [];
   const drawerNav = useDrawerNav(level, pending, extensions);
+  // the plugin pages an org admin put in the primary navigation, after the built-in entries
+  const primaryExtensions = extensions
+    .filter((x) => x.section === "primary")
+    .map((x) => ({ ...x, id: `ext:${x.id}`, icon: "extension" as const }));
   // Under /admin (super admins only) the 收件箱 item shows what waits on the platform and the 插件
   // item what waits in its 待确认 tab; the persistent sidebar refetches the stale counts on each
   // path change.
@@ -790,11 +794,10 @@ function ShellFrame({
         org: sidebarOrg(orgItems),
         primary,
         more,
-        moreExtensions: extensions.map((x) => ({
-          ...x,
-          id: `ext:${x.id}`,
-          icon: "extension" as const,
-        })),
+        ...(primaryExtensions.length > 0 ? { primaryExtensions } : {}),
+        moreExtensions: extensions
+          .filter((x) => x.section === "more")
+          .map((x) => ({ ...x, id: `ext:${x.id}`, icon: "extension" as const })),
         inbox,
         ...(adminHref === undefined ? {} : { adminHref }),
       };

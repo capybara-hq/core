@@ -8,3 +8,8 @@ Component queries for plugin pages: `POST /api/v1/orgs/:orgId/ui/query/:plugin/:
 component's `ctx.ui.query` handler (params ≤ 16 KB, result ≤ 1 MB, 10 s timeout); component
 actions take payloads up to 64 KB and may name queries to refetch; `ctx.ui.invalidate` carries
 `queries: true`. The `fake-client-page` test fixture; `perm-ui` checks `ctx.ui.query` ids.
+
+Plugin pages in the primary navigation: the org setting `navigation.pluginPages` (per contribution
+key the section `primary` or `more`; at most 3 primary, else 400 `org_settings.nav_primary_limit`)
+through `PATCH /orgs/:orgId/settings` and the Platform operation `org-settings.update`; the
+contributions list names an `org.page` component's `nav` suggestion.

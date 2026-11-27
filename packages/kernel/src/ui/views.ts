@@ -12,6 +12,7 @@ import {
   type UiIcon,
   type UiOpen,
   type UiPageFrame,
+  type UiPageNav,
   type UiSlotId,
   type UiSlotScope,
   type UiView,
@@ -74,6 +75,8 @@ export interface UiContributionItem {
   compact: CompactForm;
   /** `org.page` component only, when the manifest names it: who draws the page frame. */
   frame?: UiPageFrame;
+  /** `org.page` component only, when the manifest names it: the suggested navigation section. */
+  nav?: UiPageNav;
 }
 
 /** A list slot of an arrangement listing: where its entry comes from and its items in order. */
@@ -317,6 +320,7 @@ function listed(entries: LoadedUiContribution[]): UiContributionItem[] {
       icon: c.icon ?? "puzzle",
       compact: effectiveCompact(s.compact, c.compact),
       ...(c.frame !== undefined && { frame: c.frame }),
+      ...(c.nav !== undefined && { nav: c.nav }),
     }));
 }
 

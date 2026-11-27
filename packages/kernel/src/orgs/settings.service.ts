@@ -1,4 +1,4 @@
-import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
+import { type SandboxLimits, UI_CONTRIBUTION_KEY_RE } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
@@ -107,6 +107,8 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  *   absent (or an invalid stored value) = follow the platform, personal picks allowed.
  * - `uiArrangement`: per slot, the extension contributions the org hides and their order (UI slots
  *   spec §5); a slot with no entry follows the platform's; an invalid stored value reads as absent.
+ * - `navigation`: where the org's plugin pages sit in the navigation (`pluginPages`: per contribution
+ *   key the section an admin chose, at most 3 primary); absent follows each page's `nav` suggestion.
  * - `gitGateway`: the org's git gateway switch and host sources (sandbox git credentials spec §9);
  *   not in the PATCH yet; an invalid stored value reads as `{ enabled: false }` (fails closed).
  */
@@ -214,6 +216,37 @@ export const GIT_GATEWAY_INVALID = { enabled: false } as const;
 
 export type GitGatewaySetting = z.infer<typeof GitGatewaySettingSchema>;
 
+/** At most this many plugin pages in the primary navigation (plugin full pages spec §9). */
+export const NAV_PRIMARY_MAX = 3;
+
+/**
+ * The org's placement of plugin pages in the navigation (plugin full pages spec §9): per
+ * contribution key `<plugin>/<id>` the section an org admin chose. A page with no entry follows
+ * the contribution's `nav` suggestion (default `more`). Replaced whole by the PATCH; at most
+ * {@link NAV_PRIMARY_MAX} entries with section `primary`.
+ */
+export const NavigationSettingSchema = z
+  .object({
+    pluginPages: z
+      .array(
+        z
+          .object({
+            contribution: z
+              .string()
+              .regex(UI_CONTRIBUTION_KEY_RE, "must be a contribution key <plugin>/<id>"),
+            section: z.enum(["primary", "more"]),
+          })
+          .strict(),
+      )
+      .max(200)
+      .refine((l) => new Set(l.map((e) => e.contribution)).size === l.length, {
+        message: "a contribution is listed once",
+      }),
+  })
+  .strict();
+
+export type NavigationSetting = z.infer<typeof NavigationSettingSchema>;
+
 const ExternalSharingSetting = z.enum(["on", "off"]);
 const PromptSuggestionsSetting = z.enum(["on", "off"]);
 
@@ -245,6 +278,8 @@ export const OrgSettingsSchema = z.object({
   theme: OrgThemeSettingSchema.optional().catch(undefined),
   /** Hidden and ordered extension contributions per slot; absent = follow the platform. */
   uiArrangement: UiArrangementSchema.optional().catch(undefined),
+  /** Where the org's plugin pages sit in the navigation; absent = follow the suggestions. */
+  navigation: NavigationSettingSchema.optional().catch(undefined),
   /** The org's git gateway switch and host sources; absent = on, sources chosen by default. */
   gitGateway: GitGatewaySettingSchema.optional().catch({ ...GIT_GATEWAY_INVALID }),
   /** Scheduled tasks (spec §9); the platform bounds clamp it, see `effectiveScheduleSettings`. */
@@ -326,6 +361,11 @@ export const OrgSettingsPatchSchema = z
      * null removes a slot's entry (it follows the platform again). `platform.page` is refused.
      */
     uiArrangement: OrgUiArrangementPatchSchema.optional(),
+    /**
+     * Where the org's plugin pages sit in the navigation, replaced whole; null clears it (every
+     * page follows its suggestion). More than 3 primary -> 400 `org_settings.nav_primary_limit`.
+     */
+    navigation: NavigationSettingSchema.nullable().optional(),
     /** Fields to change in the scheduled-tasks group; the rest keep their value. */
     scheduledTasks: ScheduledTasksPatchSchema.optional(),
     /**
@@ -776,6 +816,14 @@ export class OrgSettingsService {
             );
       }
     }
+    const primary = patch.navigation?.pluginPages.filter((e) => e.section === "primary").length;
+    if (primary !== undefined && primary > NAV_PRIMARY_MAX) {
+      throw new ApiError(
+        "org_settings.nav_primary_limit",
+        `At most ${NAV_PRIMARY_MAX} plugin pages can be in the primary navigation`,
+        [{ path: "navigation.pluginPages" }],
+      );
+    }
     if (patch.externalSharing === "on") {
       const platform = await readExternalSharing(this.db.db, this.config, this.log);
       if (platform.value !== "allow") {
@@ -984,6 +1032,7 @@ export class OrgSettingsService {
     if (after.timeZone === undefined) delete after.timeZone;
     if (after.theme === undefined) delete after.theme;
     if (after.uiArrangement === undefined) delete after.uiArrangement;
+    if (after.navigation === undefined) delete after.navigation;
     if (after.gitGateway === undefined) delete after.gitGateway;
     // an empty compaction override is the same as none: follow the platform
     if (after.compaction !== undefined && Object.keys(after.compaction).length === 0) {
@@ -1015,6 +1064,7 @@ export class OrgSettingsService {
       timeZone: _oldZone,
       theme: _oldTheme,
       uiArrangement: _oldArrangement,
+      navigation: _oldNavigation,
       scheduledTasks: _oldScheduled,
       compaction: _oldCompaction,
       externalSharing: _oldExternalSharing,

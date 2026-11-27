@@ -317,12 +317,20 @@
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。",
       "unavailable": "暂时无法读取该扩展的状态，通讯录同步未开始。请稍后重试。"
     },
+    "org_settings": {
+      "nav_primary_limit": "主导航里最多放 3 个插件页面，请先把一个移到“更多”。"
+    },
     "ui": {
       "not_found": "这个面板不可用：扩展可能未启用，或你无权访问这个会话。",
       "render_failed": "扩展加载这个面板失败，请重试。",
       "action_failed": "扩展执行这个操作失败，请重试。",
       "invalid_view": "扩展返回的内容无法显示，请稍后重试。",
-      "timeout": "扩展没有及时响应，请重试。"
+      "timeout": "扩展没有及时响应，请重试。",
+      "query_not_found": "这个页面的数据不可用：扩展可能未启用，或你无权使用它。",
+      "query_failed": "扩展加载这个页面的数据失败，请重试。",
+      "query_timeout": "扩展没有及时返回这个页面的数据，请重试。",
+      "query_result_too_large": "扩展返回的数据超出了这个页面能显示的范围。",
+      "query_params_too_large": "这个请求太大，无法发给扩展。"
     },
     "channel": {
       "not_found": "渠道不存在或已删除。",
@@ -2672,7 +2680,8 @@
       "audit": "审计日志",
       "shares": "分享",
       "myShares": "我的分享",
-      "notifications": "通知"
+      "notifications": "通知",
+      "navigation": "导航"
     },
     "empty": "没有需要你个人凭据的连接器。",
     "emptyHint": "使用个人凭据的连接器会出现在这里。",
@@ -7026,6 +7035,20 @@
         "retry": "重试"
       }
     }
+  },
+  "navSettings": {
+    "title": "导航",
+    "description": "选择每个插件页面在侧边栏里的位置。",
+    "section": "插件页面",
+    "sectionHint": "主导航里的页面排在内置入口之后，最多 3 个，其余在“更多”里。在你选择之前，页面沿用插件建议的位置。",
+    "primary": "主导航",
+    "more": "更多",
+    "suggested": "插件建议：{section}",
+    "empty": "这个组织里还没有插件页面。",
+    "emptyHint": "启用的插件带来的页面会显示在这里。",
+    "limit": "主导航里最多放 3 个插件页面。",
+    "save": "保存",
+    "saved": "导航已保存。"
   },
   "scheduleSettings": {
     "title": "定时任务",

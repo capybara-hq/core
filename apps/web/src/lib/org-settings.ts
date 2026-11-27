@@ -109,7 +109,21 @@ export interface OrgSettings {
    * the platform). The org cannot turn on what the platform turned off.
    */
   promptSuggestions?: "on" | "off";
+  /** Where the org's plugin pages sit in the navigation; absent = follow the suggestions. */
+  navigation?: NavigationSetting;
 }
+
+/**
+ * Where the org's plugin pages sit in the navigation (plugin full pages spec §9): per contribution
+ * key `<plugin>/<id>` the section an org admin chose, at most 3 `primary`. A page with no entry
+ * follows its contribution's `nav` suggestion (default `more`).
+ */
+export interface NavigationSetting {
+  pluginPages: { contribution: string; section: "primary" | "more" }[];
+}
+
+/** The most plugin pages in the primary navigation. */
+export const NAV_PRIMARY_MAX = 3;
 
 /** The org level of the themes (`orgs.settings.theme`). */
 export interface OrgThemeSetting {
@@ -182,8 +196,11 @@ export type OrgSettingsPatch = Partial<
     | "scheduledTasks"
     | "compaction"
     | "promptSuggestions"
+    | "navigation"
   >
 > & {
+  /** Replaces the stored value whole; null clears it (every page follows its suggestion). */
+  navigation?: NavigationSetting | null;
   /** The scheduled-task fields to change; the rest keep their value. */
   /** `forbiddenToolsUnreadable` is in responses only. */
   scheduledTasks?: Partial<Omit<ScheduledTasksSettings, "forbiddenToolsUnreadable">>;

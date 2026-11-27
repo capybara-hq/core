@@ -11,9 +11,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useCallback } from "react";
 import { useRouter } from "../../i18n/navigation";
+import { NAV_PRIMARY_MAX, type NavigationSetting } from "../../lib/org-settings";
 import { adminInboxCountQuery } from "../../lib/query/admin";
 import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
+import { orgSettingsQuery } from "../../lib/query/settings";
 import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
 import { type UiCompactForm, type UiContributionItem, uiLocale } from "../../lib/ui";
 import { ADMIN_PAGES, type AdminExtensionPage, type AdminPageId } from "../admin-nav";
@@ -264,13 +266,36 @@ export function useAdminInboxCount(enabled: boolean): number | undefined {
 export const pluginPageHref = (plugin: string, id: string) =>
   `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
 
-/** An extension page of the Extensions group; `compact` `hidden`: not listed on the compact class. */
+/**
+ * An extension page of the navigation; `compact` `hidden`: not listed on the compact class;
+ * `section`: where it sits (the primary entries after the built-in ones, or 更多).
+ */
 export type ExtensionNavItem = {
   id: string;
   label: string;
   href: string;
   compact: UiCompactForm;
+  section: "primary" | "more";
 };
+
+/**
+ * The navigation section of each page, in order (plugin full pages spec §9): the org admin's saved
+ * choice, else the contribution's `nav` suggestion, else `more`; at most
+ * {@link NAV_PRIMARY_MAX} pages in primary, the later ones falling back to `more`.
+ */
+export function pageSections(
+  pages: readonly Pick<UiContributionItem, "plugin" | "id" | "nav">[],
+  saved: NavigationSetting | undefined,
+): ("primary" | "more")[] {
+  const chosen = new Map((saved?.pluginPages ?? []).map((e) => [e.contribution, e.section]));
+  let primary = 0;
+  return pages.map((p) => {
+    const want = chosen.get(`${p.plugin}/${p.id}`) ?? p.nav ?? "more";
+    if (want === "more" || primary >= NAV_PRIMARY_MAX) return "more";
+    primary += 1;
+    return "primary";
+  });
+}
 
 /**
  * The entries a compact list shows: the drawer is the compact class's navigation, so a page whose
@@ -290,16 +315,30 @@ export function useExtensions(orgId: string, locale: string): ExtensionNavItem[]
   const query = extensionPagesQuery(orgId);
   const pages =
     useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? NO_PAGES;
-  return extensionItems(useOfferedContributions(pages), locale);
+  // the org's placement choices (members read the settings), read only while the org has plugin
+  // pages (the first paint of every other org reads nothing more); while they load or fail every
+  // page follows its suggestion
+  const settingsQ = orgSettingsQuery(orgId);
+  const saved = useQuery({
+    ...settingsQ,
+    enabled: pages.length > 0,
+    retryOnMount: retryOnMountOf(settingsQ.queryKey),
+  }).data?.settings.navigation;
+  return extensionItems(useOfferedContributions(pages), locale, saved);
 }
 
 const NO_PAGES: UiContributionItem[] = [];
 
-/** The Extensions group's items for `pages`. */
-function extensionItems(pages: readonly UiContributionItem[], locale: string): ExtensionNavItem[] {
+/** The navigation items of the extension pages `pages`. */
+function extensionItems(
+  pages: readonly UiContributionItem[],
+  locale: string,
+  saved: NavigationSetting | undefined,
+): ExtensionNavItem[] {
   const lang = uiLocale(locale);
   const titles = pages.map((p) => p.title[lang]);
-  return pages.map((p) => {
+  const sections = pageSections(pages, saved);
+  return pages.map((p, i) => {
     const title = p.title[lang];
     const shared = titles.filter((x) => x === title).length > 1;
     return {
@@ -307,6 +346,7 @@ function extensionItems(pages: readonly UiContributionItem[], locale: string): E
       label: shared ? `${title} · ${p.plugin}` : title,
       href: pluginPageHref(p.plugin, p.id),
       compact: p.compact ?? "kept",
+      section: sections[i] ?? "more",
     };
   });
 }
@@ -465,7 +505,7 @@ export function useNav(
 /** What the compact drawer takes from the navigation (design spec §6.53). */
 export type DrawerNav = Pick<
   DrawerNavData,
-  "sections" | "more" | "moreLabel" | "allConversations" | "newConversation"
+  "sections" | "primaryExtensions" | "more" | "moreLabel" | "allConversations" | "newConversation"
 > & { menuBadge?: NavBadge };
 
 /**
@@ -503,17 +543,21 @@ export function useDrawerNav(
       .filter((n) => n.drawer === "section")
       .map((n) => ({ id: n.id as "agents" | "schedules", ...item(n) })),
   ];
+  const page = (x: ExtensionNavItem) => ({
+    id: `ext:${x.id}`,
+    label: x.label,
+    href: x.href,
+    icon: "extension" as const,
+  });
+  const shown = shownOnCompact(extensions);
   const more: DrawerNav["more"] = [
     ...visible.filter((n) => n.drawer === "more").map((n) => ({ id: n.id, ...item(n) })),
-    ...shownOnCompact(extensions).map((x) => ({
-      id: `ext:${x.id}`,
-      label: x.label,
-      href: x.href,
-      icon: "extension" as const,
-    })),
+    ...shown.filter((x) => x.section === "more").map(page),
   ];
+  const primaryExtensions = shown.filter((x) => x.section === "primary").map(page);
   return {
     sections,
+    ...(primaryExtensions.length > 0 ? { primaryExtensions } : {}),
     more,
     moreLabel: t("drawer.more"),
     allConversations: { label: t("drawer.allConversations"), href: "/conversations" },

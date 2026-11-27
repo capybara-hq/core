@@ -53,6 +53,8 @@ export interface UiContributionItem {
    * (plugin full pages spec §2), `host` (as when absent) is drawn inside the host's DetailPage.
    */
   frame?: "host" | "page";
+  /** `org.page` component only, when the manifest names it: the suggested navigation section. */
+  nav?: "primary" | "more";
 }
 
 /** What a contribution becomes on a compact screen: drawn, handed to the owner's sheet, or not drawn. */

@@ -1,0 +1,206 @@
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { NextIntlClientProvider } from "next-intl";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import zh from "../messages/zh.json";
+import { type NavLevel, pageSections, useDrawerNav } from "../src/components/shell/nav";
+import type { UiContributionItem } from "../src/lib/ui";
+import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
+import { resetNavigation } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
+import { renderFrame, shellOf } from "./support/shell";
+
+vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+
+/**
+ * Plugin pages in the primary navigation (plugin full pages spec §9): a contribution's `nav`
+ * suggestion applies until an org admin saves a choice; at most 3 in primary; the compact drawer
+ * shows the same split; only org admins edit it.
+ */
+
+const page = (id: string, title: string, nav?: "primary" | "more"): UiContributionItem => ({
+  plugin: "acme",
+  id,
+  title: { zh: title, en: title },
+  slot: "org.page",
+  kind: "view",
+  icon: "puzzle",
+  compact: "kept",
+  ...(nav !== undefined ? { nav } : {}),
+});
+
+const BOARD = page("board", "看板", "primary");
+const PLAIN = page("plain", "清单");
+
+const settingsBody = (navigation?: unknown) => ({
+  settings: {
+    toolSearch: "on",
+    locale: "zh",
+    platformTool: "on",
+    ...(navigation ? { navigation } : {}),
+  },
+  deployment: {},
+  effectiveNetwork: { mode: "open", hosts: [] },
+});
+
+beforeEach(() => {
+  resetNavigation("/");
+  localStorage.clear();
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+const mainNav = () => screen.getByRole("navigation", { name: "主导航" });
+
+describe("the sidebar's plugin pages", () => {
+  it("a suggested primary page appears in the primary navigation, not under 更多", async () => {
+    stubApi({ "GET /api/v1/orgs/o1/settings": () => json(200, settingsBody()) });
+    renderFrame(shellOf(ME, { extensions: [BOARD, PLAIN] }));
+    expect(within(mainNav()).getByRole("link", { name: "看板" }).getAttribute("href")).toBe(
+      "/p/acme/board",
+    );
+    await userEvent.setup().click(within(mainNav()).getByRole("button", { name: "更多" }));
+    const menu = await screen.findByRole("menu", { name: "更多" });
+    expect(within(menu).queryByRole("menuitem", { name: "看板" })).toBeNull();
+    expect(within(menu).getByRole("menuitem", { name: "清单" })).toBeTruthy();
+  });
+
+  it("an admin's choice wins: moved to more, and a page promoted to primary", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/settings": () =>
+        json(
+          200,
+          settingsBody({
+            pluginPages: [
+              { contribution: "acme/board", section: "more" },
+              { contribution: "acme/plain", section: "primary" },
+            ],
+          }),
+        ),
+    });
+    renderFrame(shellOf(ME, { extensions: [BOARD, PLAIN] }));
+    await waitFor(() => expect(within(mainNav()).getByRole("link", { name: "清单" })).toBeTruthy());
+    expect(within(mainNav()).queryByRole("link", { name: "看板" })).toBeNull();
+    await userEvent.setup().click(within(mainNav()).getByRole("button", { name: "更多" }));
+    const menu = await screen.findByRole("menu", { name: "更多" });
+    expect(within(menu).getByRole("menuitem", { name: "看板" })).toBeTruthy();
+  });
+
+  it("at most 3 pages are primary: later ones fall back to more", () => {
+    const pages = ["a", "b", "c", "d"].map((id) => page(id, id, "primary"));
+    expect(pageSections(pages, undefined)).toEqual(["primary", "primary", "primary", "more"]);
+    // a saved choice for the first moves the fourth up
+    expect(
+      pageSections(pages, { pluginPages: [{ contribution: "acme/a", section: "more" }] }),
+    ).toEqual(["more", "primary", "primary", "primary"]);
+  });
+});
+
+describe("the compact drawer", () => {
+  function drawer(level: NavLevel, extensions: Parameters<typeof useDrawerNav>[2]) {
+    function Probe() {
+      return (
+        <pre data-testid="drawer">{JSON.stringify(useDrawerNav(level, undefined, extensions))}</pre>
+      );
+    }
+    render(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <Probe />
+      </NextIntlClientProvider>,
+    );
+    const out = JSON.parse(screen.getByTestId("drawer").textContent ?? "{}");
+    cleanup();
+    return out as ReturnType<typeof useDrawerNav>;
+  }
+
+  it("shows the same split: primary pages on the first level, the rest under more", () => {
+    const item = (
+      id: string,
+      section: "primary" | "more",
+      compact: "kept" | "hidden" = "kept",
+    ) => ({
+      id: `acme/${id}`,
+      label: id,
+      href: `/p/acme/${id}`,
+      compact,
+      section,
+    });
+    const d = drawer("member", [
+      item("board", "primary"),
+      item("plain", "more"),
+      item("wide", "primary", "hidden"),
+    ]);
+    expect(d.primaryExtensions?.map((x) => x.href)).toEqual(["/p/acme/board"]);
+    expect(d.more.map((m) => m.href)).toEqual([
+      "/skills",
+      "/connectors",
+      "/devices",
+      "/p/acme/plain",
+    ]);
+  });
+});
+
+describe("/settings/navigation", () => {
+  const routes = (navigation?: unknown) => ({
+    "GET /api/v1/orgs/o1/settings": () => json(200, settingsBody(navigation)),
+    "GET /api/v1/orgs/o1/ui/contributions": () =>
+      json(200, {
+        items: [
+          page("a", "页面甲", "primary"),
+          page("b", "页面乙", "primary"),
+          page("c", "页面丙", "primary"),
+          page("d", "页面丁"),
+        ],
+      }),
+    "PATCH /api/v1/orgs/o1/settings": (c: Call) =>
+      json(200, settingsBody((bodyOf(c) as { navigation: unknown }).navigation)),
+  });
+
+  const choose = async (field: string, option: string) => {
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("combobox", { name: new RegExp(field) }));
+    await user.click(await screen.findByRole("option", { name: option }));
+  };
+
+  it("an admin moves a page to more and saves only the changed choice", async () => {
+    resetNavigation("/settings/navigation");
+    const calls = stubApi(routes());
+    await renderRouteWithCache("/settings/navigation", lastStubRoutes(), { locale: "zh" });
+    await choose("页面乙", "更多");
+    await userEvent.setup().click(await screen.findByRole("button", { name: "保存" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      navigation: { pluginPages: [{ contribution: "acme/b", section: "more" }] },
+    });
+  });
+
+  it("a fourth primary page is refused before saving", async () => {
+    resetNavigation("/settings/navigation");
+    const calls = stubApi(routes());
+    await renderRouteWithCache("/settings/navigation", lastStubRoutes(), { locale: "zh" });
+    await choose("页面丁", "主导航");
+    expect((await screen.findAllByText(zh.navSettings.limit)).length).toBeGreaterThan(0);
+    const save = (await screen.findByRole("button", { name: "保存" })) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("a member cannot edit navigation settings: no entry, no controls", async () => {
+    const member = {
+      ...ME,
+      account: { ...ME.account, isSuperAdmin: false },
+      memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" as const }],
+    };
+    resetNavigation("/settings/navigation");
+    stubApi(routes());
+    await renderRouteWithCache("/settings/navigation", lastStubRoutes(), {
+      locale: "zh",
+      me: member,
+    });
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
+  });
+});

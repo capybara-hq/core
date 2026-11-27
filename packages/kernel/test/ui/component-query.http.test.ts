@@ -100,6 +100,13 @@ describe("contributions list", () => {
     // a view names none
     expect(items.find((i) => i.id === "summary")).not.toHaveProperty("frame");
   });
+
+  it("names the navigation suggestion of a page that makes one", async () => {
+    const r = await owner({ method: "GET", url: `${ui}/contributions` });
+    const items = (r.json() as { items: { id: string; nav?: string }[] }).items;
+    expect(items.find((i) => i.id === "board")?.nav).toBe("primary");
+    expect(items.find((i) => i.id === "summary")).not.toHaveProperty("nav");
+  });
 });
 
 describe("component queries", () => {
