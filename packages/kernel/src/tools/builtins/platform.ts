@@ -515,7 +515,14 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     let file: ResolvedFile | null;
     let card: FileCardDetail | null = null;
     try {
-      file = await fileOf(op, params, deps, octx, ctx.signal);
+      file = await fileOf(
+        op,
+        params,
+        deps,
+        octx,
+        ctx.rootConversationId ?? ctx.conversationId,
+        ctx.signal,
+      );
       if (file !== null) card = await fileCardDetail(file);
     } catch (e) {
       if (e instanceof ToolError) return deny(e.message);
@@ -659,7 +666,7 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     let result: unknown;
     try {
       // the file is read again, and must be the bytes the person confirmed (Review Focus 5)
-      const file = await fileOf(op, params, deps, octx, ctx.signal);
+      const file = await fileOf(op, params, deps, octx, ctx.rootConversationId, ctx.signal);
       if (file !== null) {
         // fails closed: bytes run only under this call's approval whose card showed them or,
         // with no approval, the automatic decision that was bound to them (R7); a grant, an
@@ -795,6 +802,7 @@ async function fileOf(
   params: unknown,
   deps: PlatformToolDeps,
   ctx: OperationContext,
+  rootConversationId: string,
   signal: AbortSignal | undefined,
 ): Promise<ResolvedFile | null> {
   const wanted = op.fileRef?.(params) ?? null;
@@ -803,6 +811,7 @@ async function fileOf(
   return deps.files.resolve(wanted.ref, wanted.limits, {
     orgId: ctx.orgId,
     conversationId: ctx.conversationId,
+    rootConversationId,
     signal: signal ?? ctx.signal,
   });
 }

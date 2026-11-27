@@ -93,12 +93,6 @@ export interface BuiltinCallContext extends ToolCallContext {
    */
   runDeadline?: number;
   /**
-   * The conversation whose sandbox this call uses (sub-agents spec §10.1, agent map spec §6): the
-   * root conversation for a sub-agent's call at any depth, the conversation itself otherwise (the
-   * default when absent).
-   */
-  sandboxConversationId?: string;
-  /**
    * The working root the command review judged this call against (project root spec §4.3): a
    * sandbox tool runs there instead of reading the working root again, so it executes exactly what
    * was reviewed. Absent for a call the review does not cover.
@@ -237,6 +231,8 @@ export interface CallPolicyContext {
   accountId: string;
   agentId: string;
   conversationId: string;
+  /** The root of the conversation tree; absent outside the pipeline (then the conversation itself). */
+  rootConversationId?: string;
   /** Null outside a run (a builtin called directly). */
   runId: string | null;
   /** The tool call being decided (a call id is unique within its run). Absent outside the pipeline. */

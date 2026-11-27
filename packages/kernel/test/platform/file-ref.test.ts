@@ -317,6 +317,7 @@ describe("Platform file references", () => {
       accountId: ownerId,
       agentId,
       conversationId: conv,
+      rootConversationId: conv,
       callId: randomUUID(),
       signal: new AbortController().signal,
     } as unknown as BuiltinCallContext;
