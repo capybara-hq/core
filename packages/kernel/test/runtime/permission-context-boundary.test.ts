@@ -92,7 +92,7 @@ const stubImpl: ModelProvider = {
     return [
       stubInfo("main"),
       stubInfo("backup"),
-      stubInfo("small", { contextWindow: 2000, maxOutputTokens: 100 }),
+      stubInfo("small", { contextWindow: 2200, maxOutputTokens: 100 }),
     ];
   },
   async *stream(req): AsyncGenerator<ModelStreamEvent> {
@@ -398,7 +398,7 @@ describe("permission context request boundary", () => {
   });
 
   it("two builds in one attempt around a forced compaction record A then B, the rebuild passing the boundary", async () => {
-    // an earlier summary of ~3000 tokens: the agent's model holds it, the fallback's 2000-token
+    // an earlier summary of ~3000 tokens: the agent's model holds it, the fallback's 2200-token
     // window cannot and its fit plan never drops it, so the fallback rung compacts with its own
     // model inside the attempt and builds again
     await say("old");

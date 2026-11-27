@@ -1273,9 +1273,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         .enum(["compaction", "title", "web_fetch", "review", "image", "vision", "suggestion"])
         .optional(),
       /**
-       * The chunk a chunked compaction call summarised (1-based), with the number of calls the
+       * The chunk a chunked compaction call summarised (1-based), with the number of chunks the
        * compaction attempted (the full chunk count on a completed one; on a failed or hook-denied
-       * run only the calls that were made). Absent on a single-call compaction.
+       * run only the chunks that were sent). A chunk asked again after a summary cut off at the
+       * output token limit counts once; both its calls carry its index. Absent on a single-call
+       * compaction.
        */
       chunk: count.optional(),
       chunks: count.optional(),

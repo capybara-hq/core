@@ -78,15 +78,34 @@ const transcriptWrapper = (text: string): string => `<transcript>\n${text}\n</tr
 /** A margin for estimator drift in the fixed part of a summary request (tokens). */
 const COMPACTION_REQUEST_MARGIN = 64;
 
+/** The retry note's word target never goes above this (Claude Code's own target). */
+const RETRY_MAX_WORDS = 2000;
+
+/**
+ * The note the retry of a summary call cut off at the output token limit carries after the
+ * transcript (model-facing English; context compaction spec §4.2.1, issue #959). The word target is
+ * about three eighths of the cap (well under the cap at about 0.75 words per token, with the
+ * `<analysis>` block dropped), in steps of 50, between 50 and {@link RETRY_MAX_WORDS}.
+ */
+export function compactionRetryNote(maxOutputTokens: number): string {
+  const words = Math.min(
+    RETRY_MAX_WORDS,
+    Math.max(50, Math.floor((maxOutputTokens * 3) / 8 / 50) * 50),
+  );
+  return `Your previous answer to this request stopped at the output token limit before it was finished, so that summary is too long to complete. Give the whole summary again from the start: this time write only one <summary> block, without the <analysis> block, of at most about ${words} words.`;
+}
+
 /**
  * The input tokens every summary request carries regardless of its chunk: the instruction, the
- * transcript wrapper and a small margin. A chunked compaction subtracts it from the chunk size
- * (context compaction spec §4.5), so chunk + overhead stays inside the request budget.
+ * transcript wrapper, the retry note at its longest (a retried call resends its chunk with it) and a
+ * small margin. A chunked compaction subtracts it from the chunk size (context compaction spec
+ * §4.5), so chunk + overhead stays inside the request budget on a retry too.
  */
 export function compactionRequestOverhead(): number {
   return (
     textTokens(COMPACTION_INSTRUCTION) +
     textTokens(transcriptWrapper("")) +
+    textTokens(compactionRetryNote(Number.MAX_SAFE_INTEGER)) +
     COMPACTION_REQUEST_MARGIN
   );
 }
@@ -593,12 +612,15 @@ function splitLine(line: string, max: number): string[] {
  * The summary request: the English instruction (request `purpose: "compaction"`) as the system prompt and the transcript as
  * the only user message. `maxOutputTokens` is the effective `compaction.maxOutputTokens` setting,
  * which the caller narrows to the model's own cap (context compaction spec §4.8); omitted, it is
- * the built-in default.
+ * the built-in default. `retry` is the one retry after a call stopped at the output token limit:
+ * the same request with {@link compactionRetryNote} after the transcript (the cut-off answer is not
+ * sent back, so the request stays inside the same input budget).
  */
 export function buildCompactionRequest(
   transcript: string,
   model: string,
   maxOutputTokens: number = COMPACTION_MAX_OUTPUT_TOKENS,
+  opts: { retry?: boolean } = {},
 ): ModelRequest {
   return {
     model,
@@ -606,7 +628,12 @@ export function buildCompactionRequest(
     messages: [
       {
         role: "user",
-        content: [{ type: "text", text: transcriptWrapper(transcript) }],
+        content: [
+          { type: "text", text: transcriptWrapper(transcript) },
+          ...(opts.retry === true
+            ? [{ type: "text" as const, text: compactionRetryNote(maxOutputTokens) }]
+            : []),
+        ],
       },
     ],
     tools: [],

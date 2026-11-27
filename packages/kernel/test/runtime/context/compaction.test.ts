@@ -9,6 +9,7 @@ import {
   compactionInputBudget,
   compactionPlan,
   compactionRequestOverhead,
+  compactionRetryNote,
   extractSummary,
   shouldCompact,
   summarySavedTokens,
@@ -428,6 +429,39 @@ describe("buildCompactionRequest", () => {
     expect(COMPACTION_MAX_OUTPUT_TOKENS).toBe(20_000);
     expect(buildCompactionRequest("User: hi", "fake-1").maxOutputTokens).toBe(20_000);
   });
+
+  it("a first request carries no retry note", () => {
+    const req = buildCompactionRequest("User: hi", "fake-1", 12_000);
+    expect(req.messages[0]?.content).toHaveLength(1);
+    expect(JSON.stringify(req)).not.toContain("output token limit");
+  });
+
+  it("the retry after a truncated summary resends the same request with a shorter-summary note", () => {
+    const first = buildCompactionRequest("User: hi", "fake-1", 20_000);
+    const retry = buildCompactionRequest("User: hi", "fake-1", 20_000, { retry: true });
+    // same instruction, transcript and cap; only the note after the transcript is new
+    expect(retry.system).toEqual(first.system);
+    expect(retry.maxOutputTokens).toBe(20_000);
+    expect(retry.messages).toHaveLength(1);
+    expect(retry.messages[0]?.content[0]).toEqual(first.messages[0]?.content[0]);
+    expect(retry.messages[0]?.content[1]).toEqual({
+      type: "text",
+      text: compactionRetryNote(20_000),
+    });
+    expect(compactionRetryNote(20_000)).toContain("output token limit");
+    expect(compactionRetryNote(20_000)).toContain("from the start");
+    expect(compactionRetryNote(20_000)).toContain("about 2000 words");
+  });
+
+  it("the retry note's word target follows the summary cap, at most 2000 words", () => {
+    const words = (cap: number) => Number(/about (\d+) words/.exec(compactionRetryNote(cap))?.[1]);
+    expect(words(32_000)).toBe(2000);
+    expect(words(4096)).toBe(1500);
+    expect(words(1024)).toBe(350);
+    expect(words(200)).toBe(50);
+    // the target always fits well inside the cap (about 0.75 words per token)
+    for (const cap of [200, 1024, 4096, 20_000]) expect(words(cap) / 0.75).toBeLessThan(cap);
+  });
 });
 
 describe("compactionChunkSize", () => {
@@ -444,6 +478,17 @@ describe("compactionChunkSize", () => {
     expect(size + overhead + Math.ceil(cap / 2)).toBeLessThanOrEqual(budget);
     // and the real request: its input plus the output cap and the reserve fits the window
     expect(size + overhead + cap + reserve).toBeLessThanOrEqual(window);
+  });
+
+  it("the overhead covers the retry note, so a retried request fits the same budget", () => {
+    const transcript = "x".repeat(4000);
+    const first = buildCompactionRequest(transcript, "fake-1", 20_000);
+    const retry = buildCompactionRequest(transcript, "fake-1", 20_000, { retry: true });
+    const input = (r: typeof first) => estimateTokens(r.messages, r.system, r.tools);
+    expect(input(retry)).toBeLessThanOrEqual(
+      textTokensOf(transcript) + compactionRequestOverhead(),
+    );
+    expect(input(retry)).toBeGreaterThan(input(first));
   });
 });
 

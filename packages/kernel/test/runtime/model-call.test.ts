@@ -7,6 +7,7 @@ import {
   type ModelRequest,
   type ModelStreamEvent,
   type ModelUsage,
+  type StopReason,
   MODEL_PROVIDER_EXTENSION_POINT_V2 as V2,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -86,10 +87,12 @@ interface Stub extends ModelProvider {
 
 /** `respond` 返回文本即流式输出该文本（每 4 字符一个增量）；usage 的输入 token 与内核估算一致（校正比例为 1）。 */
 /** `respond` 抛错即该次调用失败；`usage` 可覆盖默认用量（默认整段输入都算未命中缓存）。 */
+/** `stopOf` sets the stop reason of a call (default `end_turn`), e.g. `max_tokens` for a cut-off summary. */
 function stub(
   models: ModelInfo[],
   respond: (req: ModelRequest) => string,
   usageOf?: (req: ModelRequest, estimate: number) => ModelUsage,
+  stopOf?: (req: ModelRequest) => StopReason,
 ): Stub {
   const calls: ModelRequest[] = [];
   return {
@@ -106,7 +109,7 @@ function stub(
       yield {
         type: "message_complete",
         content: [{ type: "text", text }],
-        stopReason: "end_turn",
+        stopReason: stopOf?.(req) ?? "end_turn",
         usage: usageOf?.(req, estimateTokens(req.messages, req.system)) ?? {
           inputTokens: estimateTokens(req.messages, req.system),
           outputTokens: Math.ceil(text.length / 4),
@@ -1212,6 +1215,119 @@ describe("runModelStep", () => {
       });
     });
 
+    describe("a summary cut off at the output token limit", () => {
+      const CAP = 200;
+      // one call's transcript (eight 3000-character turns ≈ 1505 tokens each) fits a single
+      // 11000-token chunk: the reserve is what the 15k window leaves below that chunk and the cap
+      const single = () => stubInfo("small", { contextWindow: 15_000, maxOutputTokens: 1000 });
+      const history = async () => {
+        for (let i = 0; i < 8; i++) {
+          await say(`turn ${i}`.padEnd(3000, "x"));
+          await answer(`answer ${i}`.padEnd(3000, "x"));
+        }
+        await say("go");
+      };
+      const reserve = () =>
+        15_000 - CAP - (11_000 + Math.ceil(CAP / 2) + compactionRequestOverhead());
+      /** The user message's blocks: a retry carries the note as a second text block. */
+      const blocksOf = (req: ModelRequest) => {
+        const c = req.messages[0]?.content;
+        return Array.isArray(c) ? c : [];
+      };
+      const isRetry = (req: ModelRequest) => blocksOf(req).length > 1;
+      const noteOf = (req: ModelRequest): string => {
+        const block = blocksOf(req)[1];
+        return block?.type === "text" ? block.text : "";
+      };
+
+      it("is asked again once for a shorter summary, and the retried summary is stored", async () => {
+        const s = stub(
+          [single()],
+          (req) =>
+            req.purpose !== "compaction"
+              ? "answer"
+              : isRetry(req)
+                ? `Short summary: ${"s".repeat(300)}`
+                : `<analysis>done</analysis><summary>Long summary: ${"l".repeat(300)}`,
+          undefined,
+          (req) => (req.purpose === "compaction" && !isRetry(req) ? "max_tokens" : "end_turn"),
+        );
+        stubImpl = s;
+        await history();
+        await withSettings({ reserveTokens: reserve(), maxOutputTokens: CAP }, async () => {
+          const r = await step({
+            agent: agentWith({ model: { provider: "stub", model: "small" } }),
+          });
+          expect(r.content).toEqual([{ type: "text", text: "answer" }]);
+          const calls = s.calls.filter((c) => c.purpose === "compaction");
+          expect(calls).toHaveLength(2);
+          // the retry is the same request with the shorter-summary note after the transcript
+          expect(calls[1]?.system).toEqual(calls[0]?.system);
+          expect(calls[1]?.messages[0]?.content[0]).toEqual(calls[0]?.messages[0]?.content[0]);
+          expect(calls[1]?.maxOutputTokens).toBe(CAP);
+          expect(noteOf(calls[1] as ModelRequest)).toContain("output token limit");
+          // the truncated text is never stored: only the retried one
+          const [summary] = await ofType("compaction_summary");
+          expect(summary?.payload.text).toBe(`Short summary: ${"s".repeat(300)}`);
+          expect(await ofType("compaction_failed")).toEqual([]);
+          // both calls are billed, each with its own usage event (its own idempotency key)
+          const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
+          expect(usage).toHaveLength(2);
+        });
+      });
+
+      it("fails the compaction through compaction_failed when the retry is cut off too", async () => {
+        const s = stub(
+          [single()],
+          (req) => (req.purpose === "compaction" ? `Summary: ${"s".repeat(300)}` : "answer"),
+          undefined,
+          (req) => (req.purpose === "compaction" ? "max_tokens" : "end_turn"),
+        );
+        stubImpl = s;
+        await history();
+        await withSettings({ reserveTokens: reserve(), maxOutputTokens: CAP }, async () => {
+          const agent = agentWith({ model: { provider: "stub", model: "small" } });
+          // the step continues with its raw context
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
+          expect(s.calls.filter((c) => c.purpose === "compaction")).toHaveLength(2);
+          expect(await ofType("compaction_summary")).toEqual([]);
+          const failed = await ofType("compaction_failed");
+          expect(failed.map((f) => f.payload.attempt)).toEqual([1]);
+          expect(failed[0]?.payload.reason).toBe(
+            `summary cut off at the output token limit (${CAP} tokens), also when asked again for a shorter one`,
+          );
+          const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
+          expect(usage).toHaveLength(2);
+          // the backoff applies as after any failed compaction: the next turn makes no call
+          await say("again");
+          runId = randomUUID();
+          await step({ agent });
+          expect(s.calls.filter((c) => c.purpose === "compaction")).toHaveLength(2);
+        });
+      });
+
+      it("model-fake: a scripted summary longer than the cap stops at max_tokens and fails the compaction", async () => {
+        // model-fake cuts a reply at maxOutputTokens * 4 characters and reports max_tokens; its
+        // compaction reply ("Summary: " + 200 characters) is over a 30-token cap both times
+        await withSettings({ reserveTokens: 0, maxOutputTokens: 30 }, async () => {
+          for (let i = 0; i < 8; i++) {
+            await say(filler(i));
+            await answer(filler(i));
+          }
+          await say("echo:after compaction");
+          const agent = agentWith({ model: { provider: "model-fake", model: "fake-small" } });
+          const r = await step({ agent });
+          expect(r.content).toEqual([{ type: "text", text: "after compaction" }]);
+          expect(await ofType("compaction_summary")).toEqual([]);
+          const failed = await ofType("compaction_failed");
+          expect(failed).toHaveLength(1);
+          expect(failed[0]?.payload.reason).toContain("output token limit (30 tokens)");
+          const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
+          expect(usage).toHaveLength(2);
+        });
+      });
+    });
+
     it("a too-short summary writes compaction_failed (attempt 1) and the step completes; the next turn is skipped by the backoff; after it lapses attempt 2 fails again", async () => {
       // a window above the output cap (O = 1000) keeps the proactive trigger below the hard line,
       // where the backoff still applies
@@ -1747,7 +1863,7 @@ describe("runModelStep", () => {
         });
       });
 
-      /** An earlier summary of ~3000 tokens: the agent's model holds it, a 2000-token window cannot. */
+      /** An earlier summary of ~3000 tokens: the agent's model holds it, a 2200-token window cannot. */
       const largeSummaryHistory = async () => {
         await say("old");
         await answer("old answer");
@@ -1771,11 +1887,11 @@ describe("runModelStep", () => {
         await say("go");
       };
 
-      /** The agent's model always fails; the fallback (W 2000) overflows on its first `overflows` calls. */
+      /** The agent's model always fails; the fallback (W 2200) overflows on its first `overflows` calls. */
       const fallbackStub = (overflows: number) => {
         let fbCalls = 0;
         return stub(
-          [stubInfo("main"), stubInfo("fb", { contextWindow: 2000, maxOutputTokens: 100 })],
+          [stubInfo("main"), stubInfo("fb", { contextWindow: 2200, maxOutputTokens: 100 })],
           (req) => {
             if (isCompactionCall(req)) return `Summary: ${"s".repeat(300)}`;
             if (req.model === "main") throw new ModelError("server", "down", { retryAfterMs: 1 });
@@ -1792,7 +1908,7 @@ describe("runModelStep", () => {
         });
 
       it("a fallback rung the guard cannot fit compacts once with its own model before sending", async () => {
-        // the fallback's 2000-token window cannot hold the earlier summary, which the fit plan never
+        // the fallback's 2200-token window cannot hold the earlier summary, which the fit plan never
         // drops: the guard compacts with the fallback's model, rebuilds and sends (spec §4.3 point 5)
         const s = fallbackStub(0);
         stubImpl = s;
@@ -1877,7 +1993,7 @@ describe("runModelStep", () => {
       it("run.context_too_large only after the forced compaction still cannot fit the rung", async () => {
         // the system prompt alone is over the fallback's window: compaction cannot help
         const s = stub(
-          [stubInfo("main"), stubInfo("fb", { contextWindow: 2000, maxOutputTokens: 100 })],
+          [stubInfo("main"), stubInfo("fb", { contextWindow: 2200, maxOutputTokens: 100 })],
           (req) => {
             if (isCompactionCall(req)) return `Summary: ${"s".repeat(300)}`;
             throw new ModelError("server", "down", { retryAfterMs: 1 });
@@ -2055,6 +2171,79 @@ describe("runModelStep", () => {
           // both calls that ran are billed
           const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
           expect(usage.map((u) => u.payload.chunk)).toEqual([1, 2]);
+        });
+      });
+
+      it("a middle chunk cut off at the output token limit is asked again, and the next chunk carries the retried summary", async () => {
+        let n = 0;
+        const s = stub(
+          [chunked()],
+          (req) => {
+            if (req.purpose !== "compaction") return "answer";
+            n++;
+            if (n === 2) return `Half summary: ${"h".repeat(300)}`;
+            if (n === 3) return `Retried summary: ${"r".repeat(300)}`;
+            return `Summary: ${"s".repeat(300)}`;
+          },
+          undefined,
+          // the second call (chunk 2's first attempt) stops at the limit
+          () => (n === 2 ? "max_tokens" : "end_turn"),
+        );
+        stubImpl = s;
+        const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
+        await withSettings(settings, async () => {
+          await history();
+          await say("go");
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
+          const calls = compactionCalls(s.calls);
+          expect(calls).toHaveLength(4);
+          // chunk 2 again with the note; the retried request still fits the window
+          expect(calls[2]?.messages[0]?.content[0]).toEqual(calls[1]?.messages[0]?.content[0]);
+          expect(calls[2]?.messages[0]?.content).toHaveLength(2);
+          for (const call of calls) {
+            const input = estimateTokens(call.messages, call.system, call.tools);
+            expect(input + (call.maxOutputTokens ?? 0)).toBeLessThanOrEqual(WINDOW);
+          }
+          // chunk 3 merges the retried summary, never the half one
+          expect(transcriptOf(calls[3] as ModelRequest)).toContain(
+            `[Earlier summary]\nRetried summary: ${"r".repeat(300)}`,
+          );
+          expect(JSON.stringify(calls[3])).not.toContain("Half summary");
+          expect(await ofType("compaction_failed")).toEqual([]);
+          expect(await ofType("compaction_summary")).toHaveLength(1);
+          // every call is billed; the retry carries its chunk's index
+          const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
+          expect(usage.map((u) => u.payload.chunk)).toEqual([1, 2, 2, 3]);
+        });
+      });
+
+      it("a middle chunk cut off twice fails the compaction naming the chunk, and the next chunk is never sent", async () => {
+        let n = 0;
+        const s = stub(
+          [chunked()],
+          (req) => {
+            if (req.purpose === "compaction") n++;
+            return req.purpose === "compaction" ? `Summary: ${"s".repeat(300)}` : "answer";
+          },
+          undefined,
+          (req) => (req.purpose === "compaction" && n >= 2 ? "max_tokens" : "end_turn"),
+        );
+        stubImpl = s;
+        const agent = agentWith({ model: { provider: "stub", model: "chunked" } });
+        await withSettings(settings, async () => {
+          await history();
+          await say("go");
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "answer" }]);
+          expect(compactionCalls(s.calls)).toHaveLength(3);
+          const failed = await ofType("compaction_failed");
+          expect(failed).toHaveLength(1);
+          expect(failed[0]?.payload.reason).toBe(
+            "summary cut off at the output token limit (200 tokens), also when asked again for a shorter one (chunk 2)",
+          );
+          expect(await ofType("compaction_summary")).toEqual([]);
+          const usage = (await ofType("usage")).filter((u) => u.payload.purpose === "compaction");
+          expect(usage.map((u) => u.payload.chunk)).toEqual([1, 2, 2]);
+          expect(usage.every((u) => u.payload.chunks === 2)).toBe(true);
         });
       });
 
