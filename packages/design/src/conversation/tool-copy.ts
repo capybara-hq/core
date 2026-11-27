@@ -153,7 +153,7 @@ export function summaryParts(rows: readonly SummaryRow[], locale: Locale): Summa
       ];
     }
     // the running verb counts the group's calls of the running call's kind, done or not:
-    // "正在运行 2 个命令 · 已完成 1 个" (§6.16.8)
+    // "Running 2 commands · 1 done" (§6.16.8)
     const g = verbGroup(running.kind);
     const n = rows.filter((r) => verbGroup(r.kind) === g).length;
     const key = (n === 1 ? `tool.running.${g}1` : `tool.running.${g}`) as DesignKey;

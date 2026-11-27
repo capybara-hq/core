@@ -112,7 +112,7 @@ function WorkingMark({ still }: { still: boolean }): JSX.Element {
   );
 }
 
-/** The rotating caption ("规划中…" first), hidden from assistive technology. */
+/** The rotating caption (the planning word first), hidden from assistive technology. */
 function WorkingCaption(): JSX.Element {
   const t = useDesignT();
   return (
