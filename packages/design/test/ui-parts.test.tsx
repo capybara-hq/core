@@ -59,7 +59,7 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
     );
     for (const token of parts()) expect(UI_PART_NAMES as readonly string[]).toContain(token);
     expect([...parts()]).toEqual(
-      expect.arrayContaining(["shell", "sidebar", "sidebar.brand", "sidebar.item", "status-bar"]),
+      expect.arrayContaining(["shell", "sidebar", "sidebar.brand", "sidebar.item"]),
     );
   });
 

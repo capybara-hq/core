@@ -19,7 +19,6 @@ export type UiPartName =
   | "properties-panel"
   | "section"
   | "right-panel"
-  | "status-bar"
   | "button"
   | "button.primary"
   | "card"
@@ -55,7 +54,6 @@ export const UI_PART_NAMES: readonly UiPartName[] = [
   "properties-panel",
   "section",
   "right-panel",
-  "status-bar",
   "button",
   "button.primary",
   "card",

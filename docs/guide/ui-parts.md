@@ -25,7 +25,6 @@ which may hold several names; select with `[data-cap-part~="<name>"]`.
 | `properties-panel` | 1 | none | The conversation properties panel. |
 | `section` | 1 | none | A property section or form section. |
 | `right-panel` | 1 | none | A full-height right pane. |
-| `status-bar` | 1 | none | The status bar. |
 | `button` | 1 | `disabled` | Every button. |
 | `button.primary` | 1 | `disabled` | A primary button (carried together with `button`). |
 | `card` | 1 | none | A card, inline card or object card. |
@@ -202,15 +201,6 @@ A full-height right pane.
 - States: none
 - Owner: `packages/design/src/conversation/panels.tsx`
 - Selector: `[data-cap-part~="right-panel"]`
-
-## `status-bar`
-
-The status bar.
-
-- Version: 1
-- States: none
-- Owner: `packages/design/src/shell/status-bar.tsx`
-- Selector: `[data-cap-part~="status-bar"]`
 
 ## `button`
 
