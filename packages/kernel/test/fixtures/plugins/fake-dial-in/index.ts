@@ -14,6 +14,7 @@ import {
   SandboxGoneError,
   type SandboxHandle,
   type SandboxPermissionSupport,
+  SandboxScopeDeniedError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 
@@ -115,6 +116,8 @@ function refusal(deviceId: string, answer: unknown): Error | null {
       return new DeviceOfflineError(deviceId);
     case "tool":
       return new ToolError(message);
+    case "scopeDenied":
+      return new SandboxScopeDeniedError(message);
     default:
       return new Error(message);
   }

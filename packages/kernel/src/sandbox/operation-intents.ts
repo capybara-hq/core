@@ -358,8 +358,9 @@ export class SandboxOperationIntents {
     method: "stat" | "list" | "scan",
     input: unknown,
     signal: AbortSignal,
+    narrow?: { readRoots: readonly string[] },
   ): Promise<OperationIntent> {
-    const scope = await this.authority.resolveBrowse(ctx, signal);
+    const scope = await this.authority.resolveBrowse(ctx, signal, narrow);
     const described = describeOperationPayload(input);
     const payload = payloadReference("input", described);
     const vector = await this.epochs.readLocked({ orgId: ctx.orgId, deviceId: ctx.deviceId });

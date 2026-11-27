@@ -1496,13 +1496,18 @@ export class SandboxService {
       sig,
     );
   }
-  /** Owner browse scopes never manufacture a conversation or Full consent. */
+  /**
+   * Owner browse scopes never manufacture a conversation or Full consent. `narrow.readRoots`
+   * roots every call's scope at those paths (a project's files: its root), each inside the owner's
+   * ceiling and never wider; none inside it is `device.project_outside_mode`.
+   */
   async withBrowse<T>(
     ctx: { orgId: string; deviceId: string; accountId: string },
     fn: (p: SandboxBrowse, signal: AbortSignal) => Promise<T>,
     signal: AbortSignal,
+    narrow?: { readRoots: readonly string[] },
   ): Promise<T> {
-    await this.authority.resolveBrowse(ctx, signal);
+    await this.authority.resolveBrowse(ctx, signal, narrow);
     const row = await this.readRow(ctx);
     if (!row) throw deviceNotRunning();
     const entry = await this.require(ctx.deviceId, ctx.orgId);
@@ -1532,6 +1537,7 @@ export class SandboxService {
             method,
             input,
             combined,
+            narrow,
           );
           const admitted = await this.operationIntents.claimBrowse(ctx, intent.operation_id);
           combined.throwIfAborted();

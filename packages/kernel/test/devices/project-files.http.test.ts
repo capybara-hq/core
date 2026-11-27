@@ -57,6 +57,9 @@ const ROOT = `${HOME}/app`;
 /** 250 files in `big`, more than one listing answers. */
 const BIG = Array.from({ length: 250 }, (_, i) => `f${String(i).padStart(3, "0")}.txt`);
 
+/** A project outside the owner's home (the browse ceiling): no scope rooted there exists. */
+const OUTSIDE = "/srv/elsewhere";
+
 /** The fake machine's directories: absolute path → entries (a name ending in `/` is a directory). */
 const TREE: Record<string, string[]> = {
   [ROOT]: ["src/", "README.md", "Area/", "zeta.ts", "alpha.ts", "docs/", "big/"],
@@ -64,6 +67,8 @@ const TREE: Record<string, string[]> = {
   [`${ROOT}/src/lib`]: ["util.ts"],
   [`${ROOT}/docs`]: [],
   [`${ROOT}/big`]: BIG,
+  // unsorted: folders listed after more than 200 files
+  [`${ROOT}/late`]: [...BIG, "zdir/", "Adir/"],
   // a device answering names the kernel must not pass on
   // (the protocol already refuses "", ".", ".." and "/" in a name)
   [`${ROOT}/odd`]: ["ok.ts", "c\\d", "nul\u0000", "line\nbreak"],
@@ -171,6 +176,11 @@ function answering(req: KernelReq): Answer {
     case "resume":
       return "resumed";
     case "browseList": {
+      if (p.endsWith("/denied"))
+        return { error: { kind: "scopeDenied", message: "machine says no" } };
+      if (p.endsWith("/flaky")) return { error: { kind: "error", message: "EIO on the machine" } };
+      if (p.endsWith("/malformed"))
+        return { entries: [{ name: 7, isDir: "yes" }], truncated: false };
       if (p.endsWith(".ts") || p.endsWith(".md")) {
         return { error: { kind: "error", message: "not a directory" } };
       }
@@ -183,6 +193,8 @@ function answering(req: KernelReq): Answer {
       return { entries: entries.slice(0, limit), truncated: entries.length > limit };
     }
     case "browseStat": {
+      if (p.endsWith("/denied.ts")) return { error: { kind: "scopeDenied", message: "no" } };
+      if (p.endsWith("/flaky")) return { error: { kind: "error", message: "EIO on the machine" } };
       if (TREE[p] !== undefined) return { size: 0, isDir: true };
       const slash = p.lastIndexOf("/");
       const parent = TREE[p.slice(0, slash)];
@@ -247,21 +259,27 @@ describe("device project files", () => {
         { name: "big", path: "big", kind: "dir" },
         { name: "docs", path: "docs", kind: "dir" },
         { name: "src", path: "src", kind: "dir" },
-        { name: "README.md", path: "README.md", kind: "file" },
         { name: "alpha.ts", path: "alpha.ts", kind: "file" },
+        { name: "README.md", path: "README.md", kind: "file" },
         { name: "zeta.ts", path: "zeta.ts", kind: "file" },
       ],
       truncated: false,
     });
-    // started for its owner, then browsed as its owner, at the project root itself
+    // started for its owner, then browsed as its owner, in a scope rooted at the project root
     const who = { orgId, deviceId: d.deviceId, accountId: d.accountId };
     expect(starts).toHaveBeenCalledWith(who, expect.anything());
-    expect(browses).toHaveBeenCalledWith(who, expect.any(Function), expect.anything());
+    expect(browses).toHaveBeenCalledWith(who, expect.any(Function), expect.anything(), {
+      readRoots: [ROOT],
+    });
     expect(reqsOf(machine, "list").map((r) => r.args)).toEqual([
       {
         path: ROOT,
-        limit: MAX_PROJECT_FILE_ENTRIES,
-        scope: expect.objectContaining({ deviceId: d.deviceId, accountId: d.accountId }),
+        limit: MAX_DEVICE_LIST_ENTRIES,
+        scope: expect.objectContaining({
+          deviceId: d.deviceId,
+          accountId: d.accountId,
+          readRoots: [ROOT],
+        }),
       },
     ]);
   });
@@ -301,6 +319,15 @@ describe("device project files", () => {
     });
     const empty = await d.req({ method: "GET", url: filesUrl(d.deviceId, "app", "?path=docs") });
     expect(empty.json()).toEqual({ entries: [], truncated: false });
+    // an empty path, "." and "./" are the project root
+    for (const path of ["", ".", "./"]) {
+      const res = await d.req({
+        method: "GET",
+        url: filesUrl(d.deviceId, "app", `?path=${encodeURIComponent(path)}`),
+      });
+      expect(res.statusCode, `${path}: ${res.body}`).toBe(200);
+      expect(reqsOf(machine, "list").at(-1)?.args).toMatchObject({ path: ROOT });
+    }
   });
 
   it("answers at most 200 entries and says when more exist", async () => {
@@ -314,6 +341,15 @@ describe("device project files", () => {
       expect(l.entries).toHaveLength(MAX_PROJECT_FILE_ENTRIES);
       expect(l.entries[0]).toEqual({ name: "f000.txt", path: "big/f000.txt", kind: "file" });
     }
+    // folders the device lists after the first 200 files still come first
+    const late = await d.req({ method: "GET", url: filesUrl(d.deviceId, "app", "?path=late") });
+    const lateList = late.json() as Listing;
+    expect(lateList.truncated).toBe(true);
+    expect(lateList.entries.slice(0, 3)).toEqual([
+      { name: "Adir", path: "late/Adir", kind: "dir" },
+      { name: "zdir", path: "late/zdir", kind: "dir" },
+      { name: "f000.txt", path: "late/f000.txt", kind: "file" },
+    ]);
     const narrow = await d.req({
       method: "GET",
       url: filesUrl(d.deviceId, "app", "?path=big&q=f24"),
@@ -453,6 +489,61 @@ describe("device project files", () => {
     expect(errCode(res)).toBe("device.list_unsupported");
   });
 
+  it("a scope refusal, a failing device and a malformed answer are readable refusals", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    const denied = await d.req({ method: "GET", url: filesUrl(d.deviceId, "app", "?path=denied") });
+    expect(denied.statusCode, denied.body).toBe(422);
+    expect(errCode(denied)).toBe("device.project_outside_mode");
+    // the message names the relative path, never the absolute one or the machine's text
+    expect(denied.body).toContain("denied");
+    expect(denied.body).not.toContain(ROOT);
+    expect(denied.body).not.toContain("machine says no");
+    const flaky = await d.req({ method: "GET", url: filesUrl(d.deviceId, "app", "?path=flaky") });
+    expect(flaky.statusCode, flaky.body).toBe(503);
+    expect(errCode(flaky)).toBe("device.projects_unavailable");
+    expect(flaky.body).not.toContain("EIO");
+    const bad = await d.req({ method: "GET", url: filesUrl(d.deviceId, "app", "?path=malformed") });
+    expect(bad.statusCode, bad.body).toBe(503);
+    expect(errCode(bad)).toBe("device.projects_unavailable");
+    const missing = await d.req({ method: "GET", url: filesUrl(d.deviceId, "app", "?path=nope") });
+    expect((missing.json() as { error: { message: string } }).error.message).not.toContain(ROOT);
+    expect(reqsOf(machine, "list").length).toBeGreaterThan(0);
+  });
+
+  it("a project outside the owner's browse ceiling is refused, the device never asked", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    await db
+      .insertInto("device_projects")
+      .values({ device_id: d.deviceId, name: "far", path: OUTSIDE, created_by: d.accountId })
+      .execute();
+    const res = await d.req({ method: "GET", url: filesUrl(d.deviceId, "far") });
+    expect(res.statusCode, res.body).toBe(422);
+    expect(errCode(res)).toBe("device.project_outside_mode");
+    expect(reqsOf(machine, "list")).toEqual([]);
+  });
+
+  it("a personal API token of the owner lists them; the owner's other org does not", async () => {
+    const d = await owned();
+    await connect(d);
+    const { token } = await apiTokensFor(db).createPersonal(d.accountId, { name: "cli" });
+    const pat = await k.http.inject({
+      method: "GET",
+      url: filesUrl(d.deviceId, "app", "?path=src"),
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(pat.statusCode, pat.body).toBe(200);
+    expect((pat.json() as Listing).entries.map((e) => e.path)).toContain("src/main.ts");
+    const otherOrg = await createOrg(d.req, `Other ${randomUUID().slice(0, 6)}`);
+    const res = await d.req({
+      method: "GET",
+      url: `/api/v1/orgs/${otherOrg}/devices/${d.deviceId}/projects/app/files`,
+    });
+    expect(res.statusCode, res.body).toBe(404);
+    expect(errCode(res)).toBe("device.not_found");
+  });
+
   it("statAll: files that exist pass; a missing path or a directory is missing; an escape is refused", async () => {
     const d = await owned();
     const machine = await connect(d);
@@ -473,6 +564,23 @@ describe("device project files", () => {
     });
     expect(reqsOf(machine, "stat")).toHaveLength(before);
     expect(await files.statAll(who, ROOT, [])).toEqual({ missing: [] });
+    // a path the browse scope refuses is missing; a failing device is a 503 without its text
+    expect(await files.statAll(who, ROOT, ["denied.ts", "alpha.ts"])).toEqual({
+      missing: ["denied.ts"],
+    });
+    const failed = await files.statAll(who, ROOT, ["flaky"]).catch((e: unknown) => e);
+    expect(failed).toMatchObject({ code: "device.projects_unavailable" });
+    expect((failed as Error).message).not.toContain("EIO");
+    // every stat ran in a scope rooted at the project
+    expect(
+      new Set(
+        reqsOf(machine, "stat").map((r) =>
+          JSON.stringify((r.args as { scope: { readRoots: string[] } }).scope.readRoots),
+        ),
+      ),
+    ).toEqual(new Set([JSON.stringify([ROOT])]));
+    // the project path is the kernel's own: one not normalized is an internal error
+    await expect(files.statAll(who, `${ROOT}/`, ["alpha.ts"])).rejects.not.toHaveProperty("code");
     // another person never stats someone else's device
     const other = await owned();
     await expect(

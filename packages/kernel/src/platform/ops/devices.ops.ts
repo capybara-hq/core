@@ -549,6 +549,30 @@ export class DevicesOperations implements OnModuleInit {
             next: "This device's provider cannot list files: ask the person for the path instead.",
           },
           {
+            code: "device.project_path_unreadable",
+            next: "The path is a file or a folder the device cannot read: list its parent folder instead.",
+          },
+          {
+            code: "device.project_outside_mode",
+            next: "The device does not let its owner browse there: pick another path in the project, or ask the person to remove the project and add it again from a directory under the device's base.",
+          },
+          {
+            code: "device.project_refused",
+            next: "The device refused that directory and said why: tell the person its reason, then list another path.",
+          },
+          {
+            code: "device.project_path_too_broad",
+            next: "The project lies above the owner's home now: ask the person to re-add the project's own directory.",
+          },
+          {
+            code: "device.not_running",
+            next: "The device stopped before it could be read: call again, it is started first.",
+          },
+          {
+            code: "device.projects_unavailable",
+            next: "The device could not be asked now: try again shortly.",
+          },
+          {
             code: "device.offline",
             next: "The machine serving it is offline: ask the person to connect that machine again, then call again.",
           },

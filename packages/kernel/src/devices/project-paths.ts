@@ -45,12 +45,23 @@ export function projectRelativePath(rel: string): string {
 
 /**
  * The absolute device path of `rel` (normalized through {@link projectRelativePath}, so refused
- * the same way) inside the project rooted at `projectPath`.
+ * the same way) inside the project rooted at `projectPath`, which must itself be absolute and
+ * normalized (no `.` / `..` segments, no doubled or trailing `/`): an internal error otherwise.
  */
 export function joinProjectPath(projectPath: string, rel: string): string {
+  // the project path is the kernel's own (a stored project): one that is not absolute and
+  // normalized is a kernel bug, never the person's path
+  if (
+    !posix.isAbsolute(projectPath) ||
+    posix.normalize(projectPath) !== projectPath ||
+    (projectPath !== "/" && projectPath.endsWith("/"))
+  ) {
+    throw new Error(
+      `joinProjectPath: the project path ${JSON.stringify(clipped(projectPath))} is not absolute and normalized`,
+    );
+  }
   const r = projectRelativePath(rel);
-  const root =
-    projectPath.length > 1 && projectPath.endsWith("/") ? projectPath.slice(0, -1) : projectPath;
+  const root = projectPath;
   if (r === "") return root;
   return root === "/" ? `/${r}` : `${root}/${r}`;
 }

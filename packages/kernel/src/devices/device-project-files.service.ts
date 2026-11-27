@@ -62,10 +62,47 @@ const plainName = (name: string): boolean =>
   !name.includes("\\") &&
   !CONTROL.test(name);
 
+/** Folders first, then files; each by name ignoring case, ties by code unit. */
 const byKindThenName = (a: ProjectFileEntry, b: ProjectFileEntry): number => {
   if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
+  const ci = a.name.localeCompare(b.name, "en", { sensitivity: "base" });
+  if (ci !== 0) return ci;
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 };
+
+/** The device answered in a shape the kernel does not accept (503, never a 500). */
+const malformed = (): ApiError =>
+  new ApiError(
+    "device.projects_unavailable",
+    "The device answered in a form this kernel does not accept; update its device program or plugin",
+  );
+
+type RawListing = { entries: { name: string; isDir: boolean }[]; truncated: boolean } | null;
+
+/** A provider's `list` answer checked before the kernel reads it (the device is not trusted). */
+function checkedListing(raw: unknown): RawListing {
+  if (raw === null) return null;
+  if (typeof raw !== "object" || raw === undefined) throw malformed();
+  const r = raw as { entries?: unknown; truncated?: unknown };
+  if (!Array.isArray(r.entries) || typeof r.truncated !== "boolean") throw malformed();
+  if (r.entries.length > MAX_DEVICE_LIST_ENTRIES) throw malformed();
+  const entries = r.entries.map((e: unknown) => {
+    if (typeof e !== "object" || e === null) throw malformed();
+    const { name, isDir } = e as { name?: unknown; isDir?: unknown };
+    if (typeof name !== "string" || typeof isDir !== "boolean") throw malformed();
+    return { name, isDir };
+  });
+  return { entries, truncated: r.truncated };
+}
+
+/** A provider's `stat` answer checked before the kernel reads it. */
+function checkedStat(raw: unknown): { size: number; isDir: boolean } | null {
+  if (raw === null) return null;
+  if (typeof raw !== "object" || raw === undefined) throw malformed();
+  const { size, isDir } = raw as { size?: unknown; isDir?: unknown };
+  if (typeof size !== "number" || typeof isDir !== "boolean") throw malformed();
+  return { size, isDir };
+}
 
 /**
  * The files of a device's project (composer menus §5): one directory per call, read through the
@@ -88,8 +125,10 @@ export class DeviceProjectFilesService {
 
   /**
    * Lists the directory `opts.path` (relative to the project `projectName`, the root when absent)
-   * of the owner's device: directories first, then files, each group by name; `opts.q` keeps the
-   * names that contain it (case-insensitive). At most {@link MAX_PROJECT_FILE_ENTRIES} entries.
+   * of the owner's device: directories first, then files, each group by name (ignoring case);
+   * `opts.q` keeps the names that contain it (case-insensitive). The device is asked for as many
+   * entries as the protocol allows, sorted here, then cut to {@link MAX_PROJECT_FILE_ENTRIES}. The
+   * browse scope is rooted at the project path (narrowed from the owner's ceiling).
    * Refused with `device.path_outside_project` (before anything is read), `device.not_found`,
    * `device.project_not_found`, `device.list_unsupported`, the device codes of the projects
    * routes (`device.offline`, `device.not_running`, `device.projects_unavailable`) and the
@@ -108,25 +147,41 @@ export class DeviceProjectFilesService {
     const q = (opts.q ?? "").trim().toLowerCase();
     const project = await this.project(orgId, accountId, deviceId, projectName);
     const abs = joinProjectPath(project.path, rel);
-    // a filter reads as much of the directory as the device answers, the plain listing one page
-    const limit = q === "" ? MAX_PROJECT_FILE_ENTRIES : MAX_DEVICE_LIST_ENTRIES;
-    const answer = await this.onDevice(orgId, accountId, deviceId, signal, async (b, sig) => {
-      try {
-        return await b.list(abs, { limit, signal: sig });
-      } catch (e) {
-        throw await listFailure(e, browseReader(b, project.path), abs, sig, (err, statErr) =>
-          this.log.warn("device project files: the device could not list", {
-            deviceId,
-            err,
-            statErr,
-          }),
-        );
-      }
-    });
+    const label = rel === "" ? "The project root" : rel;
+    // the whole directory as far as the device answers: sorted here before the cut, so a folder
+    // listed late by the device is not lost behind the first page of files
+    const answer = await this.onDevice(
+      orgId,
+      accountId,
+      deviceId,
+      project.path,
+      signal,
+      async (b, sig) => {
+        let raw: unknown;
+        try {
+          raw = await b.list(abs, { limit: MAX_DEVICE_LIST_ENTRIES, signal: sig });
+        } catch (e) {
+          throw await listFailure(
+            e,
+            browseReader(b, project.path),
+            abs,
+            sig,
+            (err, statErr) =>
+              this.log.warn("device project files: the device could not list", {
+                deviceId,
+                err,
+                statErr,
+              }),
+            label,
+          );
+        }
+        return checkedListing(raw);
+      },
+    );
     if (answer === null) {
       throw new ApiError(
         "device.project_path_missing",
-        `${clipped(rel === "" ? "The project root" : rel)} does not exist on the device`,
+        `${clipped(label)} does not exist on the device`,
       );
     }
     const matched = answer.entries
@@ -151,7 +206,8 @@ export class DeviceProjectFilesService {
    * missing path, a directory or one the browse scope refuses counts as missing. Each path is
    * normalized first ({@link projectRelativePath}; one that leaves the project is refused with
    * `device.path_outside_project` before the device is asked); `missing` holds the normalized
-   * paths. The device codes of {@link list} pass on as they are.
+   * paths. The browse scope is rooted at `projectPath`, which must be absolute and normalized
+   * (an internal error otherwise). The device codes of {@link list} pass on as they are.
    */
   async statAll(
     ctx: { orgId: string; accountId: string; deviceId: string },
@@ -159,32 +215,42 @@ export class DeviceProjectFilesService {
     paths: string[],
     signal: AbortSignal = new AbortController().signal,
   ): Promise<{ missing: string[] }> {
+    // refuses a project path that is not absolute and normalized (a kernel bug, never the person's)
+    joinProjectPath(projectPath, "");
     const rels = paths.map((p) => projectRelativePath(p));
     if (rels.length === 0) return { missing: [] };
-    return this.onDevice(ctx.orgId, ctx.accountId, ctx.deviceId, signal, async (b, sig) => {
-      const missing: string[] = [];
-      for (const rel of rels) {
-        let st: { size: number; isDir: boolean } | null;
-        try {
-          st = await b.stat(joinProjectPath(projectPath, rel), sig);
-        } catch (e) {
-          // the owner browse scope refusing the path: not a file this person can reference
-          if (isSandboxScopeDeniedError(e)) {
-            missing.push(rel);
-            continue;
+    return this.onDevice(
+      ctx.orgId,
+      ctx.accountId,
+      ctx.deviceId,
+      projectPath,
+      signal,
+      async (b, sig) => {
+        const missing: string[] = [];
+        for (const rel of rels) {
+          let st: { size: number; isDir: boolean } | null;
+          try {
+            st = checkedStat(await b.stat(joinProjectPath(projectPath, rel), sig));
+          } catch (e) {
+            // the owner browse scope refusing the path: not a file this person can reference
+            if (isSandboxScopeDeniedError(e)) {
+              missing.push(rel);
+              continue;
+            }
+            if (e instanceof ApiError) throw e;
+            const passed = passThrough(e);
+            if (passed !== undefined) throw passed;
+            this.log.warn("device project files: the device could not stat", {
+              deviceId: ctx.deviceId,
+              err: e,
+            });
+            throw unavailable(e);
           }
-          const passed = passThrough(e);
-          if (passed !== undefined) throw passed;
-          this.log.warn("device project files: the device could not stat", {
-            deviceId: ctx.deviceId,
-            err: e,
-          });
-          throw unavailable(e);
+          if (st === null || st.isDir) missing.push(rel);
         }
-        if (st === null || st.isDir) missing.push(rel);
-      }
-      return { missing };
-    });
+        return { missing };
+      },
+    );
   }
 
   /** The owner's project (`resolveForBinding`); a device that offers no listing → `list_unsupported`. */
@@ -205,7 +271,9 @@ export class DeviceProjectFilesService {
 
   /**
    * Runs `fn` in the owner browse of the device (`ensureRunningForOwner` first, so a stopped device
-   * is started for its owner), mapped like the projects routes: kernel refusals stay, a provider
+   * is started for its owner), its scope rooted at `root` (the project path; narrowed from the
+   * owner's ceiling, never wider, `device.project_outside_mode` when they do not meet), mapped
+   * like the projects routes: kernel refusals stay, a provider
    * without owner browsing is `device.list_unsupported`, an offline machine `device.offline`, an
    * unreachable provider and anything else `device.projects_unavailable`, never a 500.
    */
@@ -213,13 +281,19 @@ export class DeviceProjectFilesService {
     orgId: string,
     accountId: string,
     deviceId: string,
+    root: string,
     signal: AbortSignal,
     fn: (b: SandboxBrowse, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     try {
       await this.sandbox.ensureRunningForOwner({ orgId, deviceId, accountId }, signal);
-      return await this.sandbox.withBrowse({ orgId, deviceId, accountId }, fn, signal);
+      return await this.sandbox.withBrowse({ orgId, deviceId, accountId }, fn, signal, {
+        readRoots: [root],
+      });
     } catch (e) {
+      // the owner and org ceilings permitting no browsing: this device offers no listing here
+      if (e instanceof ApiError && e.code === "device.projects_unsupported")
+        throw listUnsupported();
       if (e instanceof ApiError) throw e;
       if (isSandboxPermissionUnsupportedError(e)) throw listUnsupported();
       if (isDeviceOfflineError(e)) throw deviceOffline();

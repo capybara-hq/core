@@ -48,7 +48,7 @@ describe("joinProjectPath", () => {
   it.each([
     ["/home/me/app", "", "/home/me/app"],
     ["/home/me/app", "src", "/home/me/app/src"],
-    ["/home/me/app/", "src/a.ts", "/home/me/app/src/a.ts"],
+    ["/home/me/app", "src/a.ts", "/home/me/app/src/a.ts"],
     ["/", "etc", "/etc"],
     ["/", "", "/"],
   ])("joins %j and %j", (root, rel, want) => {
@@ -59,4 +59,18 @@ describe("joinProjectPath", () => {
     expect(joinProjectPath("/home/me/app", "./src/../lib/")).toBe("/home/me/app/lib");
     expect(() => joinProjectPath("/home/me/app", "../other")).toThrow(ApiError);
   });
+
+  it.each(["app", "", "/home/me/app/", "/home/me/./app", "/home/me/x/../app", "/home//me"])(
+    "refuses the project path %j as an internal error",
+    (root) => {
+      let err: unknown;
+      try {
+        joinProjectPath(root, "src");
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(ApiError);
+    },
+  );
 });

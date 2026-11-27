@@ -600,6 +600,8 @@ export async function listFailure(
   path: string,
   signal: AbortSignal,
   logUnavailable: (err: unknown, statErr: unknown) => void,
+  /** How the messages name the path (default: the path itself). */
+  label: string = path,
 ): Promise<unknown> {
   const passed = passThrough(e);
   if (passed !== undefined) return passed;
@@ -612,7 +614,7 @@ export async function listFailure(
   if (isSandboxScopeDeniedError(e)) {
     return new ApiError(
       "device.project_outside_mode",
-      `The device refused ${clipped(path)}: it is outside what the device lets a project reach`,
+      `The device refused ${clipped(label)}: it is outside what the device lets a project reach`,
     );
   }
   let st: { size: number; isDir: boolean } | null;
@@ -624,12 +626,12 @@ export async function listFailure(
     logUnavailable(e, e2);
     return unavailable(e);
   }
-  if (st === null) return pathMissing(path);
+  if (st === null) return pathMissing(label);
   return new ApiError(
     "device.project_path_unreadable",
     st.isDir
-      ? `${clipped(path)} is a directory the device cannot read`
-      : `${clipped(path)} is a file, not a directory`,
+      ? `${clipped(label)} is a directory the device cannot read`
+      : `${clipped(label)} is a file, not a directory`,
   );
 }
 
