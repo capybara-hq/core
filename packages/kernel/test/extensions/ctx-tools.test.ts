@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
+import { fakeExtensionEntry, startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createBusSubscriber } from "../../src/ctx/bus.js";
@@ -58,6 +58,15 @@ afterAll(async () => {
 });
 
 describe("ctx.tools.register", () => {
+  it("keeps a tool's watcher (browser long waits spec §5.1); a tool without one has none", async () => {
+    const h = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
+    hosts.push(h);
+    await h.load([fakeExtensionEntry("fake-watch")]);
+    const byName = new Map(h.tools().map((t) => [t.spec.name, t]));
+    expect(typeof byName.get("wait")?.watch).toBe("function");
+    expect(byName.get("nowatch")?.watch).toBeUndefined();
+  });
+
   it("收集规则：非法名 / 空描述 / 重复抛错，合法的按序收集；host.tools() 列出", async () => {
     const h = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
     hosts.push(h);

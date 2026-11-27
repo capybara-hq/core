@@ -862,7 +862,7 @@ export interface QuestionsTable {
   run_id: string;
   call_id: string;
   spec: Json<unknown>;
-  status: Generated<"pending" | "answered" | "skipped" | "expired" | "cancelled">;
+  status: Generated<"pending" | "answered" | "skipped" | "expired" | "cancelled" | "woken">;
   answer: ColumnType<unknown, string | null | undefined, string | null>;
   answered_by: string | null;
   answered_at: TsNullable;

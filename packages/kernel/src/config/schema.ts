@@ -1121,6 +1121,28 @@ export const KernelConfigSchema = z.strictObject({
               "Hours a pending approval or question waits before it expires (treated as denied)",
           }),
         ),
+      watchConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(50)
+        .meta(
+          meta({
+            description:
+              "Watched-wait polls (an extension tool's watcher, e.g. a long browser wait) each worker runs at once",
+          }),
+        ),
+      maxWatchedWaitsPerAccount: z
+        .number()
+        .int()
+        .positive()
+        .default(10)
+        .meta(
+          meta({
+            description:
+              "Pending watched waits (parked tool calls whose watcher may settle them) one account may have per org",
+          }),
+        ),
       searchThresholdTools: z
         .number()
         .int()
@@ -1248,6 +1270,8 @@ export const KernelConfigSchema = z.strictObject({
       outputPreviewChars: 2000,
       outputRetentionDays: 30,
       approvalTimeoutHours: 24,
+      watchConcurrency: 50,
+      maxWatchedWaitsPerAccount: 10,
       searchThresholdTools: 30,
       searchThresholdTokens: 8000,
       driftIntervalHours: 24,

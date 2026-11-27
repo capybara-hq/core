@@ -26,12 +26,13 @@ import {
 import { RunWorker } from "../runtime/run-worker.js";
 import { UsageReporter } from "../runtime/usage-report.js";
 import { ConnectorToolsProcessor } from "../tools/connector-tools.processor.js";
+import { ToolWatchProcessor } from "../tools/tool-watch.processor.js";
 
 /**
  * The worker role's parts, driven by `KernelLifecycle` at fixed points of its start order and stop
  * phases (so they stay ordered after the extension load and before the extension host closes): the
  * queue consumers (runs, sub-agent runs, evals, maintenance, the plugin scope sync, lifecycle
- * hook deliveries, push deliveries, connector tool listings, template connector ensures, channel deliveries, `usage.report`, titles, prompt suggestions) and the schedulers of the `@LockedCron` / `@LockedInterval` jobs. Provided only by
+ * hook deliveries, push deliveries, connector tool listings, watched-wait polls, template connector ensures, channel deliveries, `usage.report`, titles, prompt suggestions) and the schedulers of the `@LockedCron` / `@LockedInterval` jobs. Provided only by
  * `WorkerModule`, so a process without the worker role has none of them.
  */
 @Injectable()
@@ -70,6 +71,7 @@ export class WorkerRole {
     private readonly connectorToolsProcessor: ConnectorToolsProcessor,
     @Inject(TemplateConnectorsProcessor)
     private readonly templateConnectorsProcessor: TemplateConnectorsProcessor,
+    @Inject(ToolWatchProcessor) private readonly toolWatchProcessor: ToolWatchProcessor,
   ) {
     this.config = config.get();
   }
@@ -92,6 +94,8 @@ export class WorkerRole {
     this.lifecycleProcessor.start();
     this.pushProcessor.start();
     this.connectorToolsProcessor.start();
+    // watched-wait polls (`cap-kernel-tool-watch`), after the extensions loaded their watchers
+    this.toolWatchProcessor.start();
     this.templateConnectorsProcessor.start();
     this.channelOutbound.startWorker(this.channelsProcessor.worker);
     this.usageReport.startWorker(this.usageProcessor.worker);
@@ -139,6 +143,7 @@ export class WorkerRole {
       this.lifecycleProcessor.close(),
       this.pushProcessor.close(),
       this.connectorToolsProcessor.close(),
+      this.toolWatchProcessor.close(),
       this.templateConnectorsProcessor.close(),
     ]);
   }

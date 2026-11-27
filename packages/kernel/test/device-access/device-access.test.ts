@@ -24,6 +24,7 @@ import {
 } from "../../src/device-access/device-access.service.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../../src/sandbox/unreachable.js";
 import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
 import { SANDBOX_UNREACHABLE_TEXT } from "../../src/tools/builtins/sandbox/common.js";
@@ -1097,6 +1098,88 @@ describe("ctx.deviceAccess", () => {
  * a sub-agent's tool call raised lives in the sub-agent's conversation, named by
  * `handoffConversationId`; only the scope conversation and its descendants are answerable.
  */
+describe("ctx.deviceAccess in a watcher's scope and ifRunning (browser long waits spec §5.3)", () => {
+  /** A watcher's call context: the call scope marked `watch`. */
+  const watchCallOf = (): ToolCallContext => {
+    const call = callOf();
+    attachCallScope(
+      call,
+      {
+        runId: randomUUID(),
+        step: 0,
+        rootConversationId: s.conversationId,
+        unattended: false,
+        agentVersion: 1,
+      },
+      { watch: true },
+    );
+    return call;
+  };
+  const ask = (call: ToolCallContext, ifRunning?: boolean) =>
+    access.request(CALLER, call, {
+      service: "echo",
+      body: new TextEncoder().encode("ping"),
+      timeoutMs: 10_000,
+      ...(ifRunning !== undefined && { ifRunning }),
+    });
+  const instance = () =>
+    db
+      .selectFrom("device_instances")
+      .select(["status", "last_used_at"])
+      .where("device_id", "=", s.deviceId)
+      .executeTakeFirst();
+
+  it("a request on a device without an instance rejects not_running and creates nothing", async () => {
+    expect((await refusal(ask(watchCallOf()))).code).toBe("not_running");
+    expect((await refusal(ask(callOf(), true))).code).toBe("not_running");
+    expect(await instance()).toBeUndefined();
+  });
+
+  it("a request on a suspended device rejects not_running and resumes nothing", async () => {
+    allowReview();
+    await access.ensureService(CALLER, callOf(), echoServiceSpec());
+    // past every idle and running limit: the sweep suspends it
+    await k.app.get(SandboxService).suspendIdle(new Date(Date.now() + 30 * 24 * 3_600_000));
+    expect((await instance())?.status).toBe("suspended");
+    expect((await refusal(ask(watchCallOf()))).code).toBe("not_running");
+    // a handler's own ifRunning request behaves the same
+    expect((await refusal(ask(callOf(), true))).code).toBe("not_running");
+    expect((await instance())?.status).toBe("suspended");
+  });
+
+  it("a request on a running device answers and counts as its use", async () => {
+    allowReview();
+    await access.ensureService(CALLER, callOf(), echoServiceSpec());
+    const before = (await instance())?.last_used_at as Date;
+    const answer = await ask(watchCallOf());
+    expect(new TextDecoder().decode(answer)).toBe("ping");
+    const after = (await instance())?.last_used_at as Date;
+    expect(after.getTime()).toBeGreaterThanOrEqual(before.getTime());
+  });
+
+  it("a stopped service on a running instance rejects not_running and starts nothing", async () => {
+    allowReview();
+    await access.ensureService(CALLER, callOf(), echoServiceSpec());
+    await k.app.get(DeviceServices).stop(use(), ID, AbortSignal.timeout(30_000));
+    expect((await refusal(ask(watchCallOf()))).code).toBe("not_running");
+    expect((await status())?.state).not.toBe("running");
+  });
+
+  it("ensureService is refused in a watcher's scope", async () => {
+    const review = allowReview();
+    await expect(access.ensureService(CALLER, watchCallOf(), echoServiceSpec())).rejects.toThrow(
+      /not allowed in a tool watcher/,
+    );
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  it("refused hosts reported in a watcher's scope are dropped", () => {
+    const call = watchCallOf();
+    access.reportBlockedHosts(call, [{ host: "x.dev", layer: "device" }]);
+    expect(callScopeOf(call)?.blocked).toBeNull();
+  });
+});
+
 describe("ctx.deviceAccess.answerHandoff across a conversation tree", () => {
   const HANDOFF_PROMPT = `tool:${HANDOFF_TOOL}:{}`;
 

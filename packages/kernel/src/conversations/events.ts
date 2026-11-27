@@ -1634,12 +1634,18 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           item: z.string().optional(),
         })
         .optional(),
+      /**
+       * A watched wait (`InputRequired.watch`): the tool's watcher may settle it; the page draws
+       * a wait card. Display only.
+       */
+      watch: z.literal(true).optional(),
     }),
   ),
   /**
    * An input request ended: answered, skipped (the run's starter sent a message instead; `answer`
    * null, `byAccountId` the message's author, `skippedBySeq` that `user_message`'s seq, written in
-   * the same transaction), expired or cancelled (`answer` and `byAccountId` null). Not model-visible.
+   * the same transaction), expired, cancelled or woken (a watched wait's watcher settled it;
+   * `answer` and `byAccountId` null). Not model-visible.
    */
   ev(
     "question_answered",
@@ -1648,7 +1654,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       callId: z.string(),
       answer: FormAnswerSchema.nullable(),
       byAccountId: z.string().nullable(),
-      outcome: z.enum(["answered", "skipped", "expired", "cancelled"]),
+      outcome: z.enum(["answered", "skipped", "expired", "cancelled", "woken"]),
       skippedBySeq: seqNo.optional(),
     }),
   ),
@@ -1882,6 +1888,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       /** An approval's approver (`kind: "approval"` only), as in `approval_requested`. */
       requestedFor: ApproverFields.requestedFor.optional(),
       approverRole: ApproverFields.approverRole.optional(),
+      /** The child's input request is a watched wait (`kind: "input"`): a wait card in the root. */
+      watch: z.literal(true).optional(),
     }),
   ),
   /** Parent log: a sub-agent's run ended. Not model-visible (its reply is the call's tool_result). */

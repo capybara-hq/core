@@ -2134,6 +2134,7 @@
     }
   },
   "question": {
+    "waitUntil": "Waiting until {time}",
     "openPanel": "Open {name}",
     "title": "Input required",
     "waiting": "Waiting",

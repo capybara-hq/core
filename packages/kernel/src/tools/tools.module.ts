@@ -47,6 +47,8 @@ import { ToolPipeline } from "./pipeline.js";
 import { QuestionsService } from "./questions.service.js";
 import { ToolRegistry } from "./registry.js";
 import { ToolAskReview } from "./tool-review.js";
+import { ToolWatchQueueModule } from "./tool-watch-queue.module.js";
+import { WatchedWaitsLock } from "./watched-waits-lock.js";
 
 /**
  * Tools and connectors: credentials, output archives, the builtin tools and the registry,
@@ -97,6 +99,7 @@ import { ToolAskReview } from "./tool-review.js";
     // the connector tool listings owed after a create or a setup (consumer: the worker role's
     // ConnectorToolsProcessor)
     ConnectorToolsQueueModule,
+    ToolWatchQueueModule,
     // a trial run's approvals become its scheduled task's grants (scheduled tasks spec §7)
     ScheduledTaskStoreModule,
     // connector credentials (also the git gateway's, without importing this module)
@@ -116,6 +119,7 @@ import { ToolAskReview } from "./tool-review.js";
     ToolRegistry,
     ApprovalsService,
     QuestionsService,
+    WatchedWaitsLock,
     ToolDrift,
     Breaker,
     ConnectorContent,

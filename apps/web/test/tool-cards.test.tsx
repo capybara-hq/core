@@ -734,6 +734,60 @@ describe("QuestionCard (design QuestionBlock)", () => {
     expect(gone.container.textContent).not.toContain("a3");
   });
 
+  describe("a watched wait (browser long waits spec §5.5)", () => {
+    const WAIT_FORM: InputForm = {
+      title: {
+        zh: "智能体正在等待：页面出现“支付成功”",
+        en: "The agent is waiting until the page says Paid",
+      },
+      fields: [
+        {
+          key: "end",
+          label: { zh: "结束等待", en: "End the wait" },
+          schema: { type: "string", enum: ["end"] },
+          required: true,
+          choices: [{ value: "end", label: { zh: "结束等待", en: "End wait" } }],
+        },
+      ],
+    };
+    const wait = (answered: QuestionItem["answered"] = null): QuestionItem => ({
+      questionId: "q1",
+      callId: "call_1",
+      form: WAIT_FORM,
+      expiresAt: EXPIRES,
+      watch: true,
+      answered,
+    });
+    const ended = (outcome: "woken" | "expired"): QuestionItem["answered"] => ({
+      questionId: "q1",
+      callId: "call_1",
+      answer: null,
+      byAccountId: null,
+      outcome,
+    });
+
+    it("shows the title, the deadline and one end button that answers", async () => {
+      const calls = stubApi({
+        "POST /api/v1/orgs/o1/questions/q1/answer": () =>
+          json(200, { question: { id: "q1", status: "answered" } }),
+      });
+      renderPage(<QuestionCard orgId="o1" item={wait()} />, { locale: "en" });
+      expect(screen.getByText("The agent is waiting until the page says Paid")).toBeTruthy();
+      expect(screen.getByText(/Waiting until/)).toBeTruthy();
+      expect(screen.queryByRole("radio")).toBeNull();
+      await userEvent.setup().click(screen.getByRole("button", { name: "End wait" }));
+      expect(bodyOf(calls[0])).toEqual({ answer: { end: "end" } });
+    });
+
+    it("woken reads Wait ended; expired reads Wait timed out", () => {
+      renderPage(<QuestionCard orgId="o1" item={wait(ended("woken"))} />, { locale: "zh" });
+      expect(screen.getByText("等待已结束")).toBeTruthy();
+      cleanup();
+      renderPage(<QuestionCard orgId="o1" item={wait(ended("expired"))} />, { locale: "en" });
+      expect(screen.getByText("Wait timed out")).toBeTruthy();
+    });
+  });
+
   it("answered from the log collapses to question and answer; expired says so", () => {
     renderPage(
       <QuestionCard

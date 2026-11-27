@@ -42,8 +42,11 @@ export interface KernelEventMap {
     orgId: string;
     conversationId: string;
     runId: string;
-    /** `skipped`: the run's starter sent a message instead (reply-while-question spec §6.3). */
-    outcome: "answered" | "skipped";
+    /**
+     * `skipped`: the run's starter sent a message instead (reply-while-question spec §6.3);
+     * `woken`: a watched wait's watcher settled it (browser long waits spec §5.3).
+     */
+    outcome: "answered" | "skipped" | "woken";
   };
   /**
    * A run started executing on this replica (its first start, a resume, or a takeover after a

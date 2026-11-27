@@ -203,6 +203,11 @@ export class DeviceAccessService {
   ): Promise<DeviceServiceStatus> {
     assertDeclared(caller, spec.name);
     assertCallOwner(call);
+    // a watcher only looks: it never starts or resumes anything (browser long waits spec §5.3)
+    if (callScopeOf(call)?.watch === true)
+      throw new Error(
+        `plugin ${caller.extension}: ctx.deviceAccess.ensureService is not allowed in a tool watcher; a watcher's requests only reach a running service`,
+      );
     const name = spec.name;
     // the provider gets the service by its id: the extension's name, namespaced
     const providerSpec: DeviceServiceSpec = {
@@ -459,15 +464,20 @@ export class DeviceAccessService {
     return null;
   }
 
-  /** One request to the service's socket in the call's device. */
+  /**
+   * One request to the service's socket in the call's device. `ifRunning` (forced in a watcher's
+   * call scope): only a running instance with the service running answers, else
+   * `DeviceAccessError("not_running")`; nothing is resumed or started.
+   */
   async request(
     caller: DeviceAccessCaller,
     call: ToolCallContext,
-    req: { service: string; body: Uint8Array; timeoutMs: number },
+    req: { service: string; body: Uint8Array; timeoutMs: number; ifRunning?: boolean },
   ): Promise<Uint8Array> {
     assertDeclared(caller, req.service);
     assertCallOwner(call);
     const scope = callScopeOf(call) ?? attachCallScope(call);
+    const ifRunning = req.ifRunning === true || scope.watch === true;
     const root = scope.facts?.rootConversationId ?? (await this.rootOf(call.conversationId));
     const use = await this.callUse(call, root, scope);
     // from here the service may act: a timeout of this call never says nothing was sent
@@ -479,6 +489,7 @@ export class DeviceAccessService {
         req.body,
         req.timeoutMs,
         call.signal,
+        { ifRunning },
       );
     } catch (e) {
       throw refusal(e, this.log);
@@ -498,6 +509,8 @@ export class DeviceAccessService {
   ): void {
     assertCallOwner(call);
     const scope = callScopeOf(call) ?? attachCallScope(call);
+    // a watcher's reports reach no call result: the resumed handler reports what it sees
+    if (scope.watch === true) return;
     const valid = (Array.isArray(hosts) ? hosts : []).filter(
       (h): h is ServiceBlockedHost =>
         typeof h === "object" &&

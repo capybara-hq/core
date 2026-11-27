@@ -487,6 +487,8 @@ type EventBody =
          * opens when the question arrives (display only).
          */
         open?: { plugin: string; contribution: string; item?: string };
+        /** A watched wait (the agent waits for a condition): drawn as a wait card. */
+        watch?: true;
       };
     }
   | {
@@ -496,8 +498,11 @@ type EventBody =
         callId: string;
         answer: FormAnswer | null;
         byAccountId: string | null;
-        /** `skipped`: the run's starter sent a message instead of answering. */
-        outcome: "answered" | "skipped" | "expired" | "cancelled";
+        /**
+         * `skipped`: the run's starter sent a message instead of answering; `woken`: a watched
+         * wait its watcher ended.
+         */
+        outcome: "answered" | "skipped" | "expired" | "cancelled" | "woken";
         /** `skipped` only: the seq of the `user_message` that skipped it (lower than this event's). */
         skippedBySeq?: number;
       };
@@ -643,6 +648,8 @@ type EventBody =
         questionId?: string;
         toolKey: string;
         expiresAt?: string;
+        /** The child's question is a watched wait. */
+        watch?: true;
       } & Approver;
     }
   /**

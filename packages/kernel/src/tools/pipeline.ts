@@ -10,6 +10,7 @@ import {
   type Logger,
   type NetworkBlockedHost,
   type ServiceBlockedHost,
+  type ToolCallContext,
   type ToolDisplay,
   ToolError,
   validateInputForm,
@@ -156,6 +157,7 @@ import {
   type QuestionCarried,
   type QuestionRecord,
   QuestionsService,
+  TooManyWatchedWaitsError,
 } from "./questions.service.js";
 import { redactDeep, redactorFor } from "./redact.js";
 import {
@@ -246,6 +248,18 @@ export const QUESTION_SKIPPED_TEXT =
 /** The result of any other tool's input request (extension `input_required`, MCP elicitation) skipped by a message. */
 export const INPUT_SKIPPED_TEXT =
   "The user did not provide the requested input and sent a message instead; read it below and continue. Call the tool again only if it is still needed.";
+/**
+ * The result of a watched wait (`InputRequired.watch`) ended by the person's message (browser long
+ * waits spec §5.2): ending a wait by writing is not a tool failure.
+ */
+export const WAIT_SKIPPED_TEXT =
+  "The user sent a message while this wait was running, which ended it; read the message below and continue. Call the tool again only if the wait is still needed.";
+/** A watched ask over `tools.maxWatchedWaitsPerAccount` (spec §5.2). */
+export const TOO_MANY_WATCHED_WAITS_TEXT =
+  "Too many waits are running for this user; end one, or finish and let a scheduled task check later.";
+/** A tool asked for a watched wait without a registered watcher (spec §5.2). */
+export const watchWithoutWatcherText = (key: string): string =>
+  `Tool ${key} asked for a watched wait but registers no watcher.`;
 /** 同一调用连续请求输入超过上限。 */
 export const TOO_MANY_INPUT_REQUESTS_TEXT = "Tool requested user input too many times.";
 /** run 已被中止 / 到达截止时间，调用尚未开始执行。 */
@@ -292,25 +306,32 @@ export const RUN_STOPPED_DURING_TEXT =
 /** The fixed result of a call whose input request was skipped by a message (spec §7.1). */
 const skippedResult = (
   toolKey: string,
+  watch = false,
 ): { content: string; isError: boolean; display: ToolDisplay } =>
-  toolKey === "AskUserQuestion"
+  watch
     ? {
-        content: QUESTION_SKIPPED_TEXT,
+        content: WAIT_SKIPPED_TEXT,
         isError: false,
-        display: {
-          summary: {
-            zh: "用户没有回答，直接发了消息",
-            en: "User sent a message instead of answering",
-          },
-        },
+        display: { summary: { zh: "等待因新消息结束", en: "Wait ended by your message" } },
       }
-    : {
-        content: INPUT_SKIPPED_TEXT,
-        isError: true,
-        display: {
-          summary: { zh: "用户没有提供输入，直接发了消息", en: "User sent a message instead" },
-        },
-      };
+    : toolKey === "AskUserQuestion"
+      ? {
+          content: QUESTION_SKIPPED_TEXT,
+          isError: false,
+          display: {
+            summary: {
+              zh: "用户没有回答，直接发了消息",
+              en: "User sent a message instead of answering",
+            },
+          },
+        }
+      : {
+          content: INPUT_SKIPPED_TEXT,
+          isError: true,
+          display: {
+            summary: { zh: "用户没有提供输入，直接发了消息", en: "User sent a message instead" },
+          },
+        };
 
 const timeoutText = (key: string, ms: number) =>
   `Tool ${key} timed out after ${ms / 1000}s. The operation may or may not have completed; verify before retrying.`;
@@ -492,7 +513,7 @@ interface PipelineDeps {
   /** The kernel-schema handle of the current context (its transaction, else the pool). */
   readonly db: KernelSchemaDb;
   readonly eventLog: EventLog;
-  readonly registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">;
+  readonly registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler" | "watcher">;
   readonly credentials: Pick<Credentials, "injection" | "onUnauthorized">;
   readonly breaker: Pick<Breaker, "check" | "failure" | "success">;
   readonly outputs: Pick<ToolOutputs, "save" | "load">;
@@ -622,8 +643,15 @@ export interface ToolStepContext {
 /** tools 节点一步的结果：全部调用都有了结果，或某个调用需要等人处理（之后的调用留到续跑）。 */
 export type ToolStepOutcome = { kind: "done" } | { kind: "suspended"; waitingFor: WaitingFor };
 
-/** 续跑时带给处理函数的上一轮输入请求结果（`ctx.resume`）。 */
-export type ToolResume = { state: unknown; answer: FormAnswer | null };
+/**
+ * The previous input round's result given to the handler on a resume (`ctx.resume`), with how the
+ * round ended (`answered`, `woken` by a watcher, `expired`).
+ */
+export type ToolResume = {
+  state: unknown;
+  answer: FormAnswer | null;
+  outcome: "answered" | "woken" | "expired";
+};
 
 /** 执行阶段的结果。 */
 /**
@@ -652,6 +680,8 @@ export type ExecOutcome =
       state: unknown;
       /** A plugin tool's `InputRequired.open`, unchecked (`openOf` checks it before asking). */
       open?: unknown;
+      /** A plugin tool's `InputRequired.watch`, unchecked (`askInput` checks it). */
+      watch?: unknown;
       blocked?: ServiceBlocked;
       review?: ReviewRecord;
     }
@@ -899,6 +929,87 @@ const idem = {
  * `ToolCallContext.idempotencyKey`: one logical call's key (a call id is unique only within its
  * run), the same for every `InputRequired` round of the call.
  */
+/**
+ * The SDK context fields of an extension tool's call (memory plugin spec §6.2: `accountId` stays
+ * the trigger account), shared by the pipeline's handler call and a watched wait's watcher call
+ * (browser long waits spec §5.3), so a watcher sees the call exactly as its handler did.
+ */
+export function extensionCallContext(f: {
+  orgId: string;
+  accountId: string;
+  agentId: string;
+  conversationId: string;
+  rootConversationId: string;
+  runId: string;
+  callId: string;
+  source: ConversationSource;
+  ownerAccountId: string;
+  role: OrgRole;
+}): Omit<ToolCallContext, "signal" | "resume" | "config"> & {
+  idempotencyKey: string;
+  source: ConversationSource;
+  ownerAccountId: string;
+  role: OrgRole;
+} {
+  return {
+    orgId: f.orgId,
+    accountId: f.accountId,
+    agentId: f.agentId,
+    conversationId: f.conversationId,
+    rootConversationId: f.rootConversationId,
+    callId: f.callId,
+    idempotencyKey: toolIdempotencyKey(f.conversationId, f.runId, f.callId),
+    source: f.source,
+    ownerAccountId: f.ownerAccountId,
+    role: f.role,
+  };
+}
+
+/** What {@link extensionCallGate} decided. */
+export type ExtensionCallGate =
+  | { ok: true; config: unknown }
+  /**
+   * Refused: `message` is the model's text; `transient` when the extension is only not loaded on
+   * this replica (a rolling upgrade, reconcile lag), not refused in the org.
+   */
+  | { ok: false; message: string; transient: boolean };
+
+/**
+ * The pre-call gate of an extension tool's call, one function for the pipeline's handler call and
+ * a watched wait's watcher call (browser long waits spec §5.3, R17): the org's single-tool switch
+ * not off, the extension loaded on this replica and its effective config for the org valid
+ * (`needsConfig` otherwise), and with `checkEnabled` the extension enabled in the org (the
+ * pipeline's step already resolved its tools with the org's enablement).
+ */
+export async function extensionCallGate(
+  deps: {
+    switches: Pick<OrgToolSwitches, "isToolOff">;
+    effective: Pick<EffectiveConfigs, "get">;
+  },
+  orgId: string,
+  toolKey: string,
+  source: { plugin: string; name: string },
+  opts: { checkEnabled?: (orgId: string, plugin: string) => Promise<boolean> } = {},
+): Promise<ExtensionCallGate> {
+  if (opts.checkEnabled !== undefined && !(await opts.checkEnabled(orgId, source.plugin)))
+    return { ok: false, message: PLUGIN_UNLOADED_TOOL_ERROR, transient: false };
+  // turned off in the org since the step resolved its tools (spec A §7)
+  if (await deps.switches.isToolOff(orgId, source.plugin, source.name))
+    return { ok: false, message: `${toolTurnedOffReason(toolKey)}.`, transient: false };
+  const effective = await deps.effective.get(orgId, source.plugin);
+  if (!effective.ok) {
+    // unloaded or disabled since the step resolved its tools: the documented unloaded error
+    if (effective.notRunning)
+      return { ok: false, message: PLUGIN_UNLOADED_TOOL_ERROR, transient: true };
+    return {
+      ok: false,
+      message: unavailableText(toolKey, NEEDS_CONFIG_REASON),
+      transient: false,
+    };
+  }
+  return { ok: true, config: effective.config };
+}
+
 export const toolIdempotencyKey = (conversationId: string, runId: string, callId: string): string =>
   sha256Hex(`capybara:tool-call:${conversationId}:${runId}:${callId}`);
 
@@ -1163,7 +1274,10 @@ export class ToolPipeline {
     @Inject(SubagentsService) subagents: Pick<SubagentsService, "dispatch"> | undefined,
     /** The message tools between agents; absent (tests): their calls are refused. */
     @Inject(SubagentMessages) messages: Pick<SubagentMessages, "toChild" | "toParent"> | undefined,
-    @Inject(ToolRegistry) registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">,
+    @Inject(ToolRegistry) registry: Pick<
+      ToolRegistry,
+      "forAgent" | "findConnector" | "handler" | "watcher"
+    >,
     @Inject(Credentials) credentials: Pick<Credentials, "injection" | "onUnauthorized">,
     @Inject(Breaker) breaker: Pick<Breaker, "check" | "failure" | "success">,
     @Inject(ToolOutputs) outputs: Pick<ToolOutputs, "save" | "load">,
@@ -1385,7 +1499,26 @@ export class ToolPipeline {
     // skipped by the starter's message: the kernel writes the result, the tool is not called again
     // (spec D6: an extension would only see `answer: null`, an MCP call would be re-sent)
     if (last?.status === "skipped") {
-      await this.writeResult(ctx, call.id, last.toolKey, skippedResult(last.toolKey));
+      await this.writeResult(
+        ctx,
+        call.id,
+        last.toolKey,
+        skippedResult(last.toolKey, last.watch === true),
+      );
+      return undefined;
+    }
+    // a cancelled round is cancelled only by its run's stop, which writes the stopped result
+    // itself: it never resumes (browser long waits spec §5.1, R24)
+    if (last?.status === "cancelled") {
+      this.deps.log.error("a cancelled input round reached a resume; writing the stopped result", {
+        runId: ctx.runId,
+        callId: call.id,
+        questionId: last.id,
+      });
+      await this.writeResult(ctx, call.id, last.toolKey, {
+        content: INPUT_CANCELLED_TEXT,
+        isError: true,
+      });
       return undefined;
     }
     let attempt = rounds.length + 1;
@@ -1396,7 +1529,12 @@ export class ToolPipeline {
       if (asked !== null && attempt > asked) attempt += 1;
     }
     const resume: ToolResume | undefined = last
-      ? { state: last.state, answer: last.status === "answered" ? last.answer : null }
+      ? {
+          state: last.state,
+          answer: last.status === "answered" ? last.answer : null,
+          outcome:
+            last.status === "answered" ? "answered" : last.status === "woken" ? "woken" : "expired",
+        }
       : undefined;
     let started = await this.deps.eventLog.findByIdem(
       ctx.conversationId,
@@ -1967,7 +2105,8 @@ export class ToolPipeline {
 
     // scheduled tasks spec §7, `fail` mode: no one answers an input request or connects an app
     if (unattendedFails(ctx.unattended) && ctx.unattended != null) {
-      if (outcome.kind === "input_required") {
+      // a watched wait needs nobody: it stays allowed (browser long waits spec §5.2, R8)
+      if (outcome.kind === "input_required" && outcome.watch === undefined) {
         outcome = {
           kind: "error",
           message: UNATTENDED_QUESTION_ERROR,
@@ -1992,6 +2131,7 @@ export class ToolPipeline {
       const asked = await this.askInput(ctx, call.id, tool.key, attempt, {
         ...asking,
         ...(open !== undefined && { open }),
+        source: tool.source,
       });
       if (typeof asked !== "string") return asked;
       outcome = {
@@ -3431,11 +3571,25 @@ export class ToolPipeline {
       blocked?: ServiceBlocked;
       review?: ReviewRecord;
       open?: { plugin: string; contribution: string; item?: string };
+      /** A plugin tool's `InputRequired.watch`, unchecked. */
+      watch?: unknown;
+      /** The asking tool's source (a watched wait needs its registered watcher). */
+      source?: ResolvedTool["source"];
     },
   ): Promise<WaitingFor | string> {
     if (attempt > MAX_INPUT_ROUNDS) return TOO_MANY_INPUT_REQUESTS_TEXT;
     const problems = validateInputForm(req.form);
     if (problems.length > 0) return invalidFormText(toolKey, problems);
+    let watch: { deadlineMs: number; accountId: string } | undefined;
+    if (req.watch !== undefined) {
+      const source = req.source;
+      if (source === undefined || this.deps.registry.watcher(source) === undefined)
+        return watchWithoutWatcherText(toolKey);
+      const deadlineMs = (req.watch as { deadlineMs?: unknown } | null)?.deadlineMs;
+      if (typeof deadlineMs !== "number" || !Number.isFinite(deadlineMs) || deadlineMs <= 0)
+        return invalidFormText(toolKey, ["watch.deadlineMs must be a positive finite number"]);
+      watch = { deadlineMs, accountId: ctx.accountId };
+    }
     let stateJson: string | undefined;
     try {
       stateJson = JSON.stringify(req.state ?? null);
@@ -3446,25 +3600,32 @@ export class ToolPipeline {
     if (Buffer.byteLength(stateJson, "utf8") > MAX_INPUT_STATE_BYTES) {
       return stateTooLargeText(toolKey);
     }
-    const q = await this.deps.questions.ask({
-      orgId: ctx.orgId,
-      conversationId: ctx.conversationId,
-      runId: ctx.runId,
-      step: ctx.step,
-      callId,
-      attempt,
-      toolKey,
-      form: req.form,
-      state: JSON.parse(stateJson) as unknown,
-      ...(req.open !== undefined && { open: req.open }),
-      // kept for the call's result, which a later round writes
-      ...((req.review !== undefined || req.blocked !== undefined) && {
-        carried: {
-          ...(req.review !== undefined && { review: req.review }),
-          ...(req.blocked !== undefined && { blocked: req.blocked }),
-        },
-      }),
-    });
+    let q: QuestionRecord;
+    try {
+      q = await this.deps.questions.ask({
+        orgId: ctx.orgId,
+        conversationId: ctx.conversationId,
+        runId: ctx.runId,
+        step: ctx.step,
+        callId,
+        attempt,
+        toolKey,
+        form: req.form,
+        state: JSON.parse(stateJson) as unknown,
+        ...(req.open !== undefined && { open: req.open }),
+        // kept for the call's result, which a later round writes
+        ...((req.review !== undefined || req.blocked !== undefined) && {
+          carried: {
+            ...(req.review !== undefined && { review: req.review }),
+            ...(req.blocked !== undefined && { blocked: req.blocked }),
+          },
+        }),
+        ...(watch !== undefined && { watch }),
+      });
+    } catch (e) {
+      if (e instanceof TooManyWatchedWaitsError) return TOO_MANY_WATCHED_WAITS_TEXT;
+      throw e;
+    }
     return inputWait(q);
   }
 
@@ -3504,18 +3665,19 @@ export class ToolPipeline {
     // the tree root the person looks at; every sub-agent run carries it from its start
     const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
     const base: Omit<BuiltinCallContext, "signal"> = {
-      orgId: ctx.orgId,
-      accountId: ctx.accountId,
-      agentId: ctx.agentId,
-      conversationId: ctx.conversationId,
-      rootConversationId,
-      callId,
-      idempotencyKey: toolIdempotencyKey(ctx.conversationId, ctx.runId, callId),
+      ...extensionCallContext({
+        orgId: ctx.orgId,
+        accountId: ctx.accountId,
+        agentId: ctx.agentId,
+        conversationId: ctx.conversationId,
+        rootConversationId,
+        runId: ctx.runId,
+        callId,
+        source: ctx.source,
+        ownerAccountId: ctx.ownerAccountId,
+        role: ctx.role,
+      }),
       ...(resume !== undefined && { resume }),
-      // who and where (memory plugin spec §6.2): `accountId` stays the trigger account
-      source: ctx.source,
-      ownerAccountId: ctx.ownerAccountId,
-      role: ctx.role,
       ...(tool.source.kind === "builtin" && stepTools !== undefined && { tools: stepTools }),
       ...(tool.source.kind === "builtin" && {
         runId: ctx.runId,
@@ -3572,17 +3734,10 @@ export class ToolPipeline {
       // (layering spec A §6): one read per call, cached by EffectiveConfigs
       let config: { config?: unknown } = {};
       if (tool.source.kind === "plugin") {
-        // turned off in the org since the step resolved its tools (spec A §7)
-        if (await this.deps.switches.isToolOff(ctx.orgId, tool.source.plugin, tool.source.name)) {
-          return { kind: "error", message: `${toolTurnedOffReason(tool.key)}.` };
-        }
-        const effective = await this.deps.effective.get(ctx.orgId, tool.source.plugin);
-        if (!effective.ok) {
-          // unloaded or disabled since the step resolved its tools: the documented unloaded error
-          if (effective.notRunning) return { kind: "error", message: PLUGIN_UNLOADED_TOOL_ERROR };
-          return { kind: "error", message: unavailableText(tool.key, NEEDS_CONFIG_REASON) };
-        }
-        config = { config: effective.config };
+        // the step resolved its tools with the org's enablement; the rest is checked per call
+        const gate = await extensionCallGate(this.deps, ctx.orgId, tool.key, tool.source);
+        if (!gate.ok) return { kind: "error", message: gate.message };
+        config = { config: gate.config };
       }
       const r = await this.bounded(
         ctx.signal,
@@ -3636,6 +3791,8 @@ export class ToolPipeline {
             form: r.value.form,
             state: r.value.state ?? null,
             ...(r.value.open !== undefined && { open: r.value.open }),
+            ...(tool.source.kind === "plugin" &&
+              r.value.watch !== undefined && { watch: r.value.watch }),
           },
           scope,
         );

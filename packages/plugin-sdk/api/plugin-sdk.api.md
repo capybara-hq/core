@@ -376,7 +376,7 @@ export type ChannelCard = {
     kind: "question";
     id: string;
     form: InputForm;
-    state: "pending" | "answered" | "skipped" | "expired" | "cancelled";
+    state: "pending" | "answered" | "skipped" | "expired" | "cancelled" | "woken";
     answerSummary?: string;
     webUrl: string;
     textReply?: "plain" | "mention";
@@ -1030,6 +1030,7 @@ export interface DeviceAccessCtx {
         service: string;
         body: Uint8Array;
         timeoutMs: number;
+        ifRunning?: boolean;
     }): Promise<Uint8Array>;
     streamTicket(scope: DeviceAccessScope & {
         service: string;
@@ -1048,7 +1049,9 @@ export class DeviceAccessError extends Error {
 }
 
 // @public
-export type DeviceAccessErrorCode = "no_device" | "provider_unavailable" | "capability_missing" | "not_owner" | "service_not_declared";
+export type DeviceAccessErrorCode = "no_device" | "provider_unavailable" | "capability_missing" | "not_owner" | "service_not_declared"
+/** An `ifRunning` request found the device's instance or the service not running. */
+| "not_running";
 
 // @public
 export type DeviceAccessScope = {
@@ -1728,7 +1731,9 @@ export interface ExtensionContext {
     signal: AbortSignal;
     storage: ExtensionStorage;
     tools: {
-        register(spec: ToolSpec, handler: ToolHandler): void;
+        register(spec: ToolSpec, handler: ToolHandler, opts?: {
+            watch?: ToolWatcher;
+        }): void;
     };
     ui: {
         view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
@@ -2397,6 +2402,9 @@ export interface InputRequired {
     kind: "input_required";
     open?: UiOpen;
     state?: unknown;
+    watch?: {
+        deadlineMs: number;
+    };
 }
 
 // @public
@@ -4910,6 +4918,7 @@ export interface ToolCallContext {
     resume?: {
         state: unknown;
         answer: FormAnswer | null;
+        outcome: ToolResumeOutcome;
     };
     role?: "owner" | "admin" | "member" | "guest";
     rootConversationId: string;
@@ -5010,6 +5019,9 @@ export interface ToolResult {
 }
 
 // @public
+export type ToolResumeOutcome = "answered" | "woken" | "expired";
+
+// @public
 export interface ToolSpec {
     annotations?: ToolAnnotations;
     connectorData?: Record<string, unknown>;
@@ -5023,6 +5035,14 @@ export interface ToolSpec {
     timeoutMs?: number;
     title?: string;
 }
+
+// @public
+export interface ToolWatchContext extends Omit<ToolCallContext, "resume"> {
+    state: unknown;
+}
+
+// @public
+export type ToolWatcher = (ctx: ToolWatchContext) => Promise<"settle" | "pending">;
 
 // @public
 export function ui<T extends z.ZodTypeAny>(schema: T, hints: ConfigUiHints): T;

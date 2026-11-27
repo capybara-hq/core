@@ -282,8 +282,12 @@ export function QuestionCard({
   // A single choice field draws no label of its own (design QuestionBlock): its label (AskUserQuestion's
   // question) is the block's title then, so the question always shows.
   const only = fields.length === 1 ? fields[0] : undefined;
+  // a watched wait's title is the form's (what the agent waits for); its field is the end button
   const title =
-    only && (only.kind === "enum" || only.kind === "multi") && only.label !== ""
+    item.watch !== true &&
+    only &&
+    (only.kind === "enum" || only.kind === "multi") &&
+    only.label !== ""
       ? only.label
       : formText(item.form.title, locale) || t("title");
   const pairs = (answer: Record<string, unknown>): [string, string][] =>
@@ -324,7 +328,11 @@ export function QuestionCard({
         state = { kind: "skipped", ...(w ? { who: w } : {}) };
         break;
       case "expired":
-        state = { kind: "expired" };
+        state = item.watch === true ? { kind: "expired", wait: true } : { kind: "expired" };
+        break;
+      // a watched wait its watcher ended
+      case "woken":
+        state = { kind: "woken" };
         break;
       default:
         state = { kind: "cancelled" };
@@ -348,10 +356,25 @@ export function QuestionCard({
   }
 
   const link = safeLink(item.form.url);
-  const body = formText(item.form.body, locale);
+  const formBody = formText(item.form.body, locale);
+  // a watched wait says until when it waits (the form's own control ends it: one button)
+  const until =
+    item.watch === true && done === null
+      ? t("waitUntil", {
+          time: new Date(item.expiresAt).toLocaleString(locale, {
+            dateStyle: "short",
+            timeStyle: "short",
+          }),
+        })
+      : "";
+  const body = [formBody, until].filter((x) => x !== "").join("\n");
   const action = item.open !== undefined ? (panel?.(item.open) ?? null) : null;
   return (
-    <div data-role="question" data-question-id={item.questionId}>
+    <div
+      data-role="question"
+      data-question-id={item.questionId}
+      {...(item.watch === true ? { "data-wait": "" } : {})}
+    >
       <QuestionBlock
         title={title}
         {...(link !== undefined ? { url: link } : {})}

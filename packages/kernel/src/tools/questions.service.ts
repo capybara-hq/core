@@ -5,7 +5,7 @@ import {
   type ServiceBlockedHost,
   validateAnswer,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
 import type { ReviewRecord } from "../conversations/events.js";
@@ -17,9 +17,20 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { RunResume } from "../runtime/run-jobs.js";
+import {
+  TOOL_WATCH_JOB,
+  TOOL_WATCH_QUEUE,
+  TOOL_WATCH_TIMINGS,
+  type ToolWatchJobData,
+  type ToolWatchTimings,
+  toolWatchJobId,
+  toolWatchTimings,
+} from "./tool-watch-queue.js";
+import { WatchedWaitsLock } from "./watched-waits-lock.js";
 
-export type QuestionStatus = "pending" | "answered" | "skipped" | "expired" | "cancelled";
+export type QuestionStatus = "pending" | "answered" | "skipped" | "expired" | "cancelled" | "woken";
 
 /**
  * `questions.spec` 的内容：表单、插件 state（续跑时原样带回 `ctx.resume.state`），
@@ -31,6 +42,8 @@ interface QuestionSpec {
   toolKey: string;
   step: number;
   carried?: QuestionCarried;
+  /** A watched wait (`InputRequired.watch`): the tool's watcher may settle it as `woken`. */
+  watch?: true;
 }
 
 /**
@@ -59,6 +72,8 @@ export interface QuestionRecord {
   state: unknown;
   /** {@link QuestionCarried}, when the round that asked collected any. */
   carried?: QuestionCarried;
+  /** A watched wait (`InputRequired.watch`): the tool's watcher may settle it as `woken`. */
+  watch?: true;
   status: QuestionStatus;
   answer: FormAnswer | null;
   answeredBy: string | null;
@@ -81,6 +96,20 @@ export interface QuestionAskInput {
   carried?: QuestionCarried;
   /** A checked `InputRequired.open` of a plugin tool: written to `question_asked` only. */
   open?: { plugin: string; contribution: string; item?: string };
+  /**
+   * A watched wait (`InputRequired.watch`, checked by the pipeline): expires after `deadlineMs`
+   * bounded by `tools.approvalTimeoutHours`, and owes the first `tool-watch` poll. Counted
+   * against `tools.maxWatchedWaitsPerAccount` for the run's trigger account (`accountId`).
+   */
+  watch?: { deadlineMs: number; accountId: string };
+}
+
+/** A watched ask over `tools.maxWatchedWaitsPerAccount` (the pipeline turns it into model text). */
+export class TooManyWatchedWaitsError extends Error {
+  constructor() {
+    super("too many watched waits for this account");
+    this.name = "TooManyWatchedWaitsError";
+  }
 }
 
 const notFound = () => new ApiError("question.not_found", "Question not found");
@@ -111,6 +140,7 @@ function toRecord(r: Selectable<QuestionsTable>): QuestionRecord {
     form: spec.form,
     state: spec.state ?? null,
     ...(spec.carried !== undefined && { carried: spec.carried }),
+    ...(spec.watch === true && { watch: true as const }),
     status: r.status,
     answer: (r.answer ?? null) as FormAnswer | null,
     answeredBy: r.answered_by,
@@ -144,6 +174,14 @@ export class QuestionsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** An answer resumes its waiting run in the answer's transaction. */
     @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
+    /** Owes a watched question's first `tool-watch` poll with its ask. */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    /** Serializes watched asks per (org, account) for the cap check. */
+    @Inject(WatchedWaitsLock) private readonly watchLock: Pick<WatchedWaitsLock, "lock">,
+    /** Shorter poll timings (a kernel test seam): the first poll's delay. */
+    @Optional()
+    @Inject(TOOL_WATCH_TIMINGS)
+    private readonly watchTimings?: Partial<ToolWatchTimings>,
   ) {}
 
   /**
@@ -158,15 +196,46 @@ export class QuestionsService {
 
   @Transactional()
   private async askIn(input: QuestionAskInput): Promise<{ record: QuestionRecord; toSeq: number }> {
-    const hours = this.config.get().tools.approvalTimeoutHours;
+    const tools = this.config.get().tools;
+    const hours = tools.approvalTimeoutHours;
+    const watch = input.watch;
     const spec: QuestionSpec = {
       form: input.form,
       state: input.state ?? null,
       toolKey: input.toolKey,
       step: input.step,
       ...(input.carried !== undefined && { carried: input.carried }),
+      ...(watch !== undefined && { watch: true as const }),
     };
     const t = this.db.db;
+    // the kernel's deadline: the tool's, bounded by the input timeout
+    const deadlineMs =
+      watch === undefined ? hours * 3_600_000 : Math.min(watch.deadlineMs, hours * 3_600_000);
+    if (watch !== undefined) {
+      const existing = await t
+        .selectFrom("questions")
+        .select("id")
+        .where("org_id", "=", input.orgId)
+        .where("run_id", "=", input.runId)
+        .where("call_id", "=", input.callId)
+        .where("attempt", "=", input.attempt)
+        .executeTakeFirst();
+      // a retried ask finds its own row and is not counted again
+      if (existing === undefined) {
+        await this.watchLock.lock(input.orgId, watch.accountId);
+        const pending = await t
+          .selectFrom("questions as q")
+          .innerJoin("runs as r", "r.id", "q.run_id")
+          .select(sql<number>`count(*)::int`.as("n"))
+          .where("q.org_id", "=", input.orgId)
+          .where("q.status", "=", "pending")
+          .where(sql<boolean>`(q.spec->>'watch')::boolean IS TRUE`)
+          .where("r.trigger_account_id", "=", watch.accountId)
+          .executeTakeFirstOrThrow();
+        if (Number(pending.n) >= tools.maxWatchedWaitsPerAccount)
+          throw new TooManyWatchedWaitsError();
+      }
+    }
     await t
       .insertInto("questions")
       .values({
@@ -179,7 +248,7 @@ export class QuestionsService {
         spec: JSON.stringify(spec),
         answer: null,
         answered_by: null,
-        expires_at: sql<Date>`now() + ${hours}::integer * interval '1 hour'`,
+        expires_at: sql<Date>`now() + ${deadlineMs}::bigint * interval '1 millisecond'`,
       })
       .onConflict((oc) => oc.columns(["run_id", "call_id", "attempt"]).doNothing())
       .execute();
@@ -204,9 +273,21 @@ export class QuestionsService {
           form: rec.form,
           expiresAt: rec.expiresAt,
           ...(input.open !== undefined && { open: input.open }),
+          ...(rec.watch === true && { watch: true as const }),
         },
       },
     ]);
+    // the first poll of a watched wait, owed with its ask (later polls re-delay the same job)
+    if (rec.watch === true && rec.status === "pending") {
+      await this.outbox.add<ToolWatchJobData>({
+        queue: TOOL_WATCH_QUEUE,
+        name: TOOL_WATCH_JOB,
+        jobId: toolWatchJobId(rec.id),
+        data: { orgId: rec.orgId, questionId: rec.id, failures: 0 },
+        runAt: new Date(Date.now() + toolWatchTimings(this.watchTimings).intervalMs),
+        orgId: rec.orgId,
+      });
+    }
     return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
   }
 
@@ -361,6 +442,55 @@ export class QuestionsService {
       .returningAll()
       .executeTakeFirstOrThrow();
     const toSeq = await this.answeredEvent(before, answer as FormAnswer, accountId, "answered");
+    // the run last; a still-running run is resumed by its suspend's re-check
+    await this.resumes.resumeIn(before.runId, questionId);
+    return { record: toRecord(updated), toSeq };
+  }
+
+  /**
+   * Wakes a watched wait (the `tool-watch` job: its watcher said `settle`, or the watch can no
+   * longer be polled): still pending and not yet due → `woken`, `question_answered { outcome:
+   * "woken" }`, and its waiting run resumed in the same transaction (a still-running run is
+   * resumed by its suspend's re-check). Anything else (answered, skipped, expired, cancelled, due,
+   * gone) is a no-op: `settled`. Emits `question.answered` after the commit.
+   */
+  async wake(questionId: string): Promise<{ outcome: "woken" | "settled" }> {
+    const r = await this.wakeIn(questionId);
+    if (r.record === undefined || r.toSeq === undefined) return { outcome: "settled" };
+    await this.eventLog.notify(r.record.conversationId, r.toSeq);
+    await this.events.emit("question.answered", {
+      id: r.record.id,
+      orgId: r.record.orgId,
+      conversationId: r.record.conversationId,
+      runId: r.record.runId,
+      outcome: "woken",
+    });
+    return { outcome: "woken" };
+  }
+
+  // org-filter: questionId comes from the kernel-written tool-watch job payload, not caller input
+  @Transactional({ propagation: "requires_new" })
+  private async wakeIn(questionId: string): Promise<{ record?: QuestionRecord; toSeq?: number }> {
+    const t = this.db.db;
+    if (!(await this.lockConversationOf(questionId))) return {};
+    const locked = await t
+      .selectFrom("questions")
+      .selectAll()
+      .select(sql<boolean>`expires_at <= now()`.as("expired"))
+      .where("id", "=", questionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!locked) return {};
+    const before = toRecord(locked);
+    // the timeout job owns a due question
+    if (before.status !== "pending" || locked.expired) return {};
+    const updated = await t
+      .updateTable("questions")
+      .set({ status: "woken", answered_at: sql<Date>`now()` })
+      .where("id", "=", questionId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    const toSeq = await this.answeredEvent(before, null, null, "woken");
     // the run last; a still-running run is resumed by its suspend's re-check
     await this.resumes.resumeIn(before.runId, questionId);
     return { record: toRecord(updated), toSeq };
@@ -564,7 +694,7 @@ export class QuestionsService {
     q: QuestionRecord,
     answer: FormAnswer | null,
     byAccountId: string | null,
-    outcome: "answered" | "skipped" | "expired" | "cancelled",
+    outcome: "answered" | "skipped" | "expired" | "cancelled" | "woken",
     skippedBySeq?: number,
   ): Promise<number> {
     const written = await this.eventLog.appendIn(q.conversationId, [

@@ -223,7 +223,9 @@ export class Waits implements OnApplicationShutdown {
     try {
       const target = await rootSurfaceOf(this.db, conversationId, runId);
       if (!target) return;
-      const row: { tool_key: string; expires_at: string | Date; approver?: Approver } | undefined =
+      const row:
+        | { tool_key: string; expires_at: string | Date; approver?: Approver; watch?: boolean }
+        | undefined =
         waitingFor.kind === "approval"
           ? await this.db
               .selectFrom("approvals")
@@ -243,7 +245,11 @@ export class Waits implements OnApplicationShutdown {
               )
           : await this.db
               .selectFrom("questions")
-              .select([sql<string>`spec->>'toolKey'`.as("tool_key"), "expires_at"])
+              .select([
+                sql<string>`spec->>'toolKey'`.as("tool_key"),
+                "expires_at",
+                sql<boolean>`coalesce((spec->>'watch')::boolean, false)`.as("watch"),
+              ])
               .where("id", "=", waitingFor.id)
               .executeTakeFirst();
       if (!row) return;
@@ -262,7 +268,11 @@ export class Waits implements OnApplicationShutdown {
                   approvalId: waitingFor.id,
                   ...row.approver,
                 }
-              : { questionId: waitingFor.id }),
+              : {
+                  questionId: waitingFor.id,
+                  // a watched wait: the root draws the same wait card
+                  ...(row.watch === true && { watch: true as const }),
+                }),
             toolKey: row.tool_key,
             expiresAt: new Date(row.expires_at).toISOString(),
           },

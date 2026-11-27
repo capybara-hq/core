@@ -153,7 +153,11 @@ describe("AskUserQuestion（单元）", () => {
     };
     const r = (await tool().run(
       input,
-      ctx({ state: { hours: 24 }, answer: { q0: "SQLite, please", q1: ["Postgres", "Mongo"] } }),
+      ctx({
+        state: { hours: 24 },
+        answer: { q0: "SQLite, please", q1: ["Postgres", "Mongo"] },
+        outcome: "answered",
+      }),
     )) as ToolResult;
     expect(r).toEqual({
       content: [
@@ -170,13 +174,16 @@ describe("AskUserQuestion（单元）", () => {
     const input = { questions: [question()] };
     const timedOut = (await tool().run(
       input,
-      ctx({ state: { hours: 6 }, answer: null }),
+      ctx({ state: { hours: 6 }, answer: null, outcome: "expired" }),
     )) as ToolResult;
     expect(timedOut.content).toEqual([
       { type: "text", text: "The user did not answer within 6h." },
     ]);
     expect(timedOut.isError ?? false).toBe(false);
-    const dismissed = (await tool().run(input, ctx({ state: null, answer: null }))) as ToolResult;
+    const dismissed = (await tool().run(
+      input,
+      ctx({ state: null, answer: null, outcome: "expired" }),
+    )) as ToolResult;
     expect(dismissed.content).toEqual([{ type: "text", text: "The user dismissed the question." }]);
   });
 });

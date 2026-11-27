@@ -43,8 +43,12 @@ export type ChannelCard =
       kind: "question";
       id: string;
       form: InputForm;
-      /** `skipped`: the person sent a message instead of answering (the run went on with it). */
-      state: "pending" | "answered" | "skipped" | "expired" | "cancelled";
+      /**
+       * `skipped`: the person sent a message instead of answering (the run went on with it).
+       * `woken`: a watched wait the tool's watcher ended (the condition it waited for held, or the
+       * wait could no longer be watched); nobody answered.
+       */
+      state: "pending" | "answered" | "skipped" | "expired" | "cancelled" | "woken";
       answerSummary?: string;
       webUrl: string;
       /**
@@ -184,7 +188,14 @@ const APPROVAL_STATES = [
   "skipped",
 ] as const;
 const MAX_SCOPE_LABEL = 40;
-const QUESTION_STATES = ["pending", "answered", "skipped", "expired", "cancelled"] as const;
+const QUESTION_STATES = [
+  "pending",
+  "answered",
+  "skipped",
+  "expired",
+  "cancelled",
+  "woken",
+] as const;
 const TEXT_REPLY = ["plain", "mention"] as const;
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
 
@@ -374,6 +385,7 @@ const TEXT = {
       skipped: "Skipped (replied instead)",
       expired: "Expired",
       cancelled: "Cancelled",
+      woken: "Wait ended",
     },
     textReply: {
       plain: "You can also just reply with text",
@@ -412,6 +424,7 @@ const TEXT = {
       skipped: "已跳过（已直接回复）",
       expired: "已过期",
       cancelled: "已取消",
+      woken: "等待已结束",
     },
     textReply: {
       plain: "也可以直接回复文字",

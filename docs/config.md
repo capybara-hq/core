@@ -74,6 +74,8 @@ The defaults of secret fields do not appear in this document.
 | `tools.outputPreviewChars` | `CAPYBARA_TOOLS__OUTPUT_PREVIEW_CHARS` | `number` | `2000` | no | no | Characters of an archived tool result kept in the conversation as a preview |
 | `tools.outputRetentionDays` | `CAPYBARA_TOOLS__OUTPUT_RETENTION_DAYS` | `number` | `30` | no | no | Days archived tool outputs are kept before cleanup |
 | `tools.approvalTimeoutHours` | `CAPYBARA_TOOLS__APPROVAL_TIMEOUT_HOURS` | `number` | `24` | no | no | Hours a pending approval or question waits before it expires (treated as denied) |
+| `tools.watchConcurrency` | `CAPYBARA_TOOLS__WATCH_CONCURRENCY` | `number` | `50` | no | no | Watched-wait polls (an extension tool's watcher, e.g. a long browser wait) each worker runs at once |
+| `tools.maxWatchedWaitsPerAccount` | `CAPYBARA_TOOLS__MAX_WATCHED_WAITS_PER_ACCOUNT` | `number` | `10` | no | no | Pending watched waits (parked tool calls whose watcher may settle them) one account may have per org |
 | `tools.searchThresholdTools` | `CAPYBARA_TOOLS__SEARCH_THRESHOLD_TOOLS` | `number` | `30` | no | no | Switch to on-demand tool search when an agent has more than this many tools |
 | `tools.searchThresholdTokens` | `CAPYBARA_TOOLS__SEARCH_THRESHOLD_TOKENS` | `number` | `8000` | no | no | Switch to on-demand tool search when tool definitions exceed this many estimated tokens |
 | `tools.driftIntervalHours` | `CAPYBARA_TOOLS__DRIFT_INTERVAL_HOURS` | `number` | `24` | no | no | Hours between checks of connectors for changed tool definitions |

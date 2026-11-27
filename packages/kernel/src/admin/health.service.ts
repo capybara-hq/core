@@ -20,6 +20,7 @@ import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../runtime/run-jobs.js"
 import { USAGE_REPORT_QUEUE } from "../runtime/usage-report-jobs.js";
 import { DeviceProviders, servesDialIn } from "../sandbox/providers.js";
 import { CONNECTOR_TOOLS_QUEUE } from "../tools/connector-tools-jobs.js";
+import { TOOL_WATCH_QUEUE } from "../tools/tool-watch-queue.js";
 import { KERNEL_VERSION } from "../version.js";
 
 /** The kernel's own queues, in the order the overview lists them (extension queues are not read). */
@@ -28,6 +29,7 @@ export const KERNEL_QUEUE_NAMES = [
   SUBAGENT_RUN_QUEUE_NAME,
   CHANNEL_QUEUE_NAME,
   MAINTENANCE_QUEUE_NAME,
+  TOOL_WATCH_QUEUE,
   PLUGIN_SCOPE_QUEUE,
   TITLE_QUEUE,
   PROMPT_SUGGESTION_QUEUE,
@@ -161,6 +163,7 @@ export class AdminHealthService {
     @Inject(getQueueToken(SUBAGENT_RUN_QUEUE_NAME)) subagentRuns: Queue,
     @Inject(getQueueToken(CHANNEL_QUEUE_NAME)) channels: Queue,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) maintenance: Queue,
+    @Inject(getQueueToken(TOOL_WATCH_QUEUE)) toolWatch: Queue,
     @Inject(getQueueToken(PLUGIN_SCOPE_QUEUE)) pluginScope: Queue,
     @Inject(getQueueToken(TITLE_QUEUE)) titles: Queue,
     @Inject(getQueueToken(PROMPT_SUGGESTION_QUEUE)) suggestions: Queue,
@@ -177,6 +180,7 @@ export class AdminHealthService {
       subagentRuns,
       channels,
       maintenance,
+      toolWatch,
       pluginScope,
       titles,
       suggestions,

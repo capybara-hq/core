@@ -9,6 +9,7 @@ export const KERNEL_QUEUES = [
   "cap-kernel-subagent-runs",
   "cap-kernel-channels",
   "cap-kernel-maintenance",
+  "cap-kernel-tool-watch",
   "cap-kernel-plugin-scope",
   "cap-kernel-titles",
   "cap-kernel-suggestions",

@@ -9,6 +9,7 @@ import type {
   ToolCallContext,
   ToolResult,
   ToolSpec,
+  ToolWatcher,
 } from "@capybara-hq/plugin-sdk";
 import { connectorToolKey, extensionToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -515,6 +516,21 @@ export class ToolRegistry {
         t.inflight.run(ctx.signal, (signal) => t.handler(input, { ...ctx, signal }));
     }
     return undefined;
+  }
+
+  /**
+   * The watcher an extension tool registered for watched waits (`InputRequired.watch`), called
+   * through the instance's in-flight tracker like its handler; undefined for builtin and
+   * connector tools, a tool registered without one, or an extension not loaded on this replica.
+   */
+  watcher(source: ResolvedTool["source"]): ToolWatcher | undefined {
+    if (source.kind !== "plugin") return undefined;
+    const t = this.host
+      .tools()
+      .find((x) => x.plugin === source.plugin && x.spec.name === source.name);
+    const watch = t?.watch;
+    if (t === undefined || watch === undefined) return undefined;
+    return (ctx) => t.inflight.run(ctx.signal, (signal) => watch({ ...ctx, signal }));
   }
 
   /** The registered builtin tools' specs (display metadata for `tools/info.ts`). */

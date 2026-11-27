@@ -32,6 +32,7 @@ import {
   type SetupGuidePlace,
   type ToolHandler,
   type ToolSpec,
+  type ToolWatcher,
   type UiSlotSpec,
   validateFilePreviewProvider,
   validateToolSpec,
@@ -177,7 +178,7 @@ export type Route = {
 };
 
 /** 插件经 `ctx.tools.register` 注册的工具。 */
-export type RegisteredTool = { spec: ToolSpec; handler: ToolHandler };
+export type RegisteredTool = { spec: ToolSpec; handler: ToolHandler; watch?: ToolWatcher };
 
 /**
  * A setup check registered through `ctx.setup.check`: `place` and `run` read once from the
@@ -918,7 +919,7 @@ export function createExtensionContext(
       },
     },
     tools: {
-      register(spec, handler) {
+      register(spec, handler, opts) {
         if (toolsSealed) {
           throw new Error(
             `plugin ${name}: tools.register is only allowed during setup; setup has completed`,
@@ -932,10 +933,14 @@ export function createExtensionContext(
         if (typeof handler !== "function") {
           throw new Error(`plugin ${name}: tool "${spec.name}" handler must be a function`);
         }
+        const watch = opts?.watch;
+        if (watch !== undefined && typeof watch !== "function") {
+          throw new Error(`plugin ${name}: tool "${spec.name}" watch must be a function`);
+        }
         if (registeredTools.some((t) => t.spec.name === spec.name)) {
           throw new Error(`plugin ${name}: duplicate tool "${spec.name}"`);
         }
-        const tool: RegisteredTool = { spec, handler };
+        const tool: RegisteredTool = { spec, handler, ...(watch !== undefined && { watch }) };
         registeredTools.push(tool);
         ledger.add({
           kind: "tool",
