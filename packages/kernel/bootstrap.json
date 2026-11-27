@@ -3,15 +3,15 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "ff7f84534f29d9e65a0a1cdca80337d618cfee54"
+    "commit": "87ca221485218c947d592a6642e441620f1f27cc"
   },
   "plugins": [
     {
       "name": "openai-compatible",
       "source": "npm",
       "npm": "@capybara-hq/plugin-openai-compatible",
-      "version": "0.1.0-rc.13",
-      "integrity": "sha512-IXdGfR9nhUXFWcF+3Bpmemn6M2e/EgC7x1jhKg84H23vKANviVcGvyTugyAjyd7K3vd0DD8aYAW1CMnTksUpJg==",
+      "version": "0.1.0-rc.14",
+      "integrity": "sha512-BbB4lSBy4kEZA2kLOBDz00oOOjmQ4IaPPthmho00M15ZGcvDRMTuilw+244lbYPALZ3Kxzo1zNPWFI8STqUyDw==",
       "required": false
     },
     {
@@ -34,8 +34,8 @@
       "name": "openai",
       "source": "npm",
       "npm": "@capybara-hq/plugin-openai",
-      "version": "0.1.0-rc.13",
-      "integrity": "sha512-96cLlSSDPNlAjeFjHYYVfupqUDYYmePMThmB1nhwDoNO15F3OXEUECRGUR8PbUSjjthZTQ7gmb+HfCx9CqBweg==",
+      "version": "0.1.0-rc.14",
+      "integrity": "sha512-Ybde3qfkz0PruixbxzgxrlVYTahz2eplRj4ioeTP20yFQcoPTLbm5hoBuj64nZTKlvTtmYQ+gvK6ofYUWY2NTw==",
       "required": false
     },
     {
@@ -50,16 +50,16 @@
       "name": "bailian",
       "source": "npm",
       "npm": "@capybara-hq/plugin-bailian",
-      "version": "0.1.0-rc.12",
-      "integrity": "sha512-bEO6UTSlFJq5F+4ht/FQtgM2pOhRzaVY2+URWegR7lZ7utd9AhkTEoRAFnECUq3e7kI7/pJMoNyNX6KTMd9Xpw==",
+      "version": "0.1.0-rc.13",
+      "integrity": "sha512-TglGdOPeJTUVSxm+KQOdWDrxRnjhFVEatvfQFVkSwOElxocNyEFBm7K3GSQmmuY2ISgxJQceA7Yvjlb0JNpKiA==",
       "required": false
     },
     {
       "name": "ark",
       "source": "npm",
       "npm": "@capybara-hq/plugin-ark",
-      "version": "0.1.0-rc.13",
-      "integrity": "sha512-dmS7jJcPGTsWBzRC8rIe5T/GUrqfNNzlQeS5iIfoZdXGNPJqNrylHLp12eRZspaTPkZzpGgowV0MOhiQvwDzMA==",
+      "version": "0.1.0-rc.14",
+      "integrity": "sha512-sMyvv8eTeOHnR5WzxRxdYCXMnIn3uiS1kQokSFvojWy8Jk70t/kqMshUgisL+Tl8g3C0SFGwJYqvonWK+NI2jQ==",
       "required": false
     },
     {
@@ -90,8 +90,8 @@
       "name": "device-docker",
       "source": "npm",
       "npm": "@capybara-hq/plugin-device-docker",
-      "version": "0.1.0-rc.34",
-      "integrity": "sha512-FOYFio9VPBzGic0RqpFDN6qMmyuWEA2PHl2ZsIknHfvHYqMQsv6NCoESbWo2SAVGzmt6c3YRC1u8C02m3SDAEg==",
+      "version": "0.1.0-rc.35",
+      "integrity": "sha512-9Aegf1i/JFzEURfO6L7DbPkVlYgrmQ3TkHSx4OS8fHr9C53MM5kSRHOyv1UfDTNbXlyKn6NOHn/oy1kiwQSkDQ==",
       "required": false
     },
     {
