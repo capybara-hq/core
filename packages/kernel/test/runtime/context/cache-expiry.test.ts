@@ -35,7 +35,7 @@ let seq = 0;
 function call(
   step: number,
   at: number,
-  opts: { cacheTtl?: number; runId?: string } = {},
+  opts: { cacheTtl?: number; runId?: string; model?: string } = {},
 ): ConversationEvent {
   seq += 1;
   return {
@@ -48,7 +48,7 @@ function call(
       step,
       attempt: 1,
       provider: "p",
-      model: "m",
+      model: opts.model ?? "m",
       fallback: false,
       request: { cacheTtl: opts.cacheTtl },
     },
@@ -60,6 +60,7 @@ function usage(
   tokens: { read?: number; write?: number },
   purpose?: string,
   runId = "r1",
+  model = "m",
 ): ConversationEvent {
   seq += 1;
   return {
@@ -71,7 +72,7 @@ function usage(
     payload: {
       step,
       provider: "p",
-      model: "m",
+      model,
       cacheReadTokens: tokens.read ?? 0,
       cacheWriteTokens: tokens.write ?? 0,
       purpose,
@@ -172,5 +173,17 @@ describe("deriveCacheExpiry", () => {
     const r = deriveCacheExpiry(events, cacheOf(anthropic));
     expect(r?.t0).toBe(T);
     expect(r?.callSeq).toBe(events[0]?.seq);
+  });
+
+  it("chooses the latest qualifying call even when the models differ", () => {
+    const events = [
+      call(1, T),
+      usage(1, T + 1000, { write: 50 }),
+      call(2, T + 60_000, { model: "other" }),
+      usage(2, T + 61_000, { read: 50 }, undefined, "r1", "other"),
+    ];
+    const other: ModelCacheInfo = { ...anthropic, ttlOptions: [900], defaultTtl: 900 };
+    const r = deriveCacheExpiry(events, (_p, m) => (m === "other" ? other : anthropic));
+    expect(r).toMatchObject({ t0: T + 60_000, ttl: 900 });
   });
 });

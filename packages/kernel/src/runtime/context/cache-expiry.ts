@@ -60,7 +60,11 @@ export function deriveCacheExpiry(
       : cacheWriteTokens > 0;
     if (!counts) continue;
     const ttl = call.payload.request.cacheTtl ?? cache.defaultTtl;
-    if (ttl === undefined) continue;
+    if (ttl === undefined) {
+      // the latest qualifying call has no known lifetime: nothing earlier stands in for it
+      best = null;
+      continue;
+    }
 
     const t0 = (cache.ttlClock === "request_start" ? call.createdAt : e.createdAt).getTime();
     const expiresAt = t0 + ttl * 1000;
