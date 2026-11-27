@@ -1522,6 +1522,9 @@
       "agent": "Agent skills",
       "project": "Project skills"
     },
+    "skillSourceTag": {
+      "project": "project"
+    },
     "skillTag": {
       "manual": "manual",
       "fork": "sub-agent"

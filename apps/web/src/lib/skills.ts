@@ -431,22 +431,35 @@ export const parseSlashCommand = (text: string): { name: string; args: string } 
   return { name: m[1] as string, args: text.slice(m[0].length).trim() };
 };
 
+/** The prefix of a project skill's callable name (kernel `PROJECT_SKILL_PREFIX`). */
+const PROJECT_PREFIX = "project:";
+
 /**
  * The chip of an invocation by `name`, as the thread's bubble draws it: `/<name>` without a
- * plugin's qualifier; a project skill keeps its `project:` prefix (it is its name).
+ * plugin's or the project's qualifier (the menu tags where a skill comes from instead).
  */
-export const skillChipLabel = (name: string): string =>
-  `/${name.startsWith("project:") ? name : name.slice(name.indexOf(":") + 1)}`;
+export const skillChipLabel = (name: string): string => `/${name.slice(name.indexOf(":") + 1)}`;
 
-/** The listed skill `name` names: its name, or `<plugin>:<name>` for a plugin's skill. */
+/** The name the menu and the chip show: a project skill's without its `project:` prefix. */
+export const skillShownName = (s: Pick<InvocableSkill, "name" | "source">): string =>
+  s.source === "project" && s.name.startsWith(PROJECT_PREFIX)
+    ? s.name.slice(PROJECT_PREFIX.length)
+    : s.name;
+
+/**
+ * The listed skill `name` names: its name, `<plugin>:<name>` for a plugin's skill, or a project
+ * skill's bare name when no other skill is called that.
+ */
 export function findInvocable(
   skills: readonly InvocableSkill[],
   name: string,
 ): InvocableSkill | undefined {
-  // exactly (a project skill's name is `project:<name>`), else `<plugin>:<name>`
+  // exactly (a project skill's name is `project:<name>`), else `<plugin>:<name>`; a bare name
+  // no other skill has is the project's `project:<name>`
   const exact = skills.find((s) => s.name === name);
   const i = name.indexOf(":");
-  if (exact !== undefined || i < 0) return exact;
+  if (exact !== undefined) return exact;
+  if (i < 0) return skills.find((s) => s.source === "project" && s.name === PROJECT_PREFIX + name);
   const plugin = name.slice(0, i);
   const bare = name.slice(i + 1);
   return skills.find((s) => s.plugin === plugin && s.name === bare);
