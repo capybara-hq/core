@@ -395,6 +395,9 @@ export class LibraryFilesService {
         org_id: orgId,
         account_id: accountId,
         blob_id: blob.id,
+        // the reference the model may see stays this blob's after a later merge
+        ref_key: blob.objectKey,
+        ref_etag: blob.etag,
         name: input.name,
         content_type: input.contentType,
         size: input.size,
@@ -635,6 +638,8 @@ export class LibraryFilesService {
       .updateTable("files")
       .set({
         blob_id: blob.id,
+        ref_key: blob.objectKey,
+        ref_etag: blob.etag,
         status: draft ? "draft" : "ready",
         sha256: read.sha256,
         pages: read.pages,

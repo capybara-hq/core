@@ -1832,6 +1832,12 @@ export interface FilesTable {
     "composer" | "library" | null | undefined,
     "composer" | "library" | null
   >;
+  /**
+   * The key and etag of the blob the file was first stored on: the model-visible reference stays
+   * the same after the file moves to another blob. With `ref_key` set, `ref_etag` is as recorded.
+   */
+  ref_key: NullableText;
+  ref_etag: NullableText;
   expires_at: NullableTs;
   created_at: Ts;
   deleted_at: NullableTs;

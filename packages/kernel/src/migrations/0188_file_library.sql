@@ -53,6 +53,10 @@ CREATE INDEX IF NOT EXISTS blobs_status_idx ON blobs (status, created_at) WHERE 
 -- be deleted, the library keeps the id as a label. `expires_at` applies to `uploading` / `draft`.
 -- `sha256`: an upload's declared hash at create, the verified one from finalize on (null for
 -- deliveries and migrated rows); `upload_purpose`: where an upload was started (null otherwise).
+-- `ref_key` / `ref_etag`: the object key and etag of the blob the file was first stored on, kept
+-- when the file later moves to another blob (a hashing merge) so the unsigned reference and etag
+-- the model saw stay the same in later requests and replays. With `ref_key` set, `ref_etag` is
+-- taken as recorded (null: none); with no `ref_key`, the blob's own key and etag.
 CREATE TABLE IF NOT EXISTS files (
   id text PRIMARY KEY,
   org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
@@ -70,6 +74,8 @@ CREATE TABLE IF NOT EXISTS files (
   staging_key text,
   sha256 text CHECK (sha256 ~ '^[0-9a-f]{64}$'),
   upload_purpose text CHECK (upload_purpose IN ('composer', 'library')),
+  ref_key text,
+  ref_etag text,
   expires_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   deleted_at timestamptz,
@@ -146,13 +152,14 @@ BEGIN
   -- `uploading` without a blob, its old key kept as `staging_key`
   INSERT INTO files (id, org_id, account_id, blob_id, name, content_type, size, pages, origin,
                      status, agent_id, source_conversation_id, source_path, staging_key,
-                     expires_at, created_at)
+                     ref_key, ref_etag, expires_at, created_at)
   SELECT a.id, a.org_id, a.account_id, b.id, a.name, a.content_type, a.size, a.pages, 'upload',
          CASE WHEN a.status = 'pending' THEN 'uploading'
               WHEN a.conversation_id IS NULL THEN 'draft'
               ELSE 'ready' END,
          NULL, a.conversation_id, NULL,
          CASE WHEN a.status = 'pending' THEN a.object_key END,
+         b.object_key, b.etag,
          CASE WHEN a.status = 'pending' OR a.conversation_id IS NULL THEN a.expires_at END,
          a.created_at
   FROM attachments a
@@ -163,6 +170,8 @@ BEGIN
   -- catch-up: an `uploading` file whose attachment old code finalized
   UPDATE files f
   SET blob_id = b.id,
+      ref_key = b.object_key,
+      ref_etag = b.etag,
       status = CASE WHEN a.conversation_id IS NULL THEN 'draft' ELSE 'ready' END,
       size = a.size,
       pages = a.pages,
@@ -237,10 +246,10 @@ BEGIN
   ),
   new_files AS (
     INSERT INTO files (id, org_id, account_id, blob_id, name, content_type, size, origin, status,
-                       agent_id, source_conversation_id, source_path, created_at)
+                       agent_id, source_conversation_id, source_path, ref_key, created_at)
     SELECT x.id, x.org_id, x.account_id, ab.id, x.name, x.content_type, x.size,
            CASE WHEN x.source_path LIKE 'generated/%' THEN 'generated' ELSE 'delivered' END,
-           'ready', x.agent_id, x.conversation_id, x.source_path, x.created_at
+           'ready', x.agent_id, x.conversation_id, x.source_path, ab.object_key, x.created_at
     FROM x JOIN all_blobs ab ON ab.org_id = x.org_id AND ab.object_key = x.object_key
     ON CONFLICT DO NOTHING
     RETURNING id

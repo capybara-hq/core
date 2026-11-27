@@ -1,5 +1,6 @@
 import type { ObjectHead } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import type { FileOrigin, FileStatus } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -21,6 +22,13 @@ export interface LibraryFile {
   agentId: string | null;
   sourceConversationId: string | null;
   sourcePath: string | null;
+  /**
+   * The key and etag of the blob the file was first stored on (`files.ref_key` / `ref_etag`): the
+   * model-visible reference ({@link ReferencedFiles.modelRef}) stays the same when the file moves
+   * to another blob. Null key: the blob's own.
+   */
+  refKey: string | null;
+  refEtag: string | null;
   createdAt: Date;
   deletedAt: Date | null;
 }
@@ -44,10 +52,12 @@ export interface FileReference extends LibraryFile {
 /** A {@link FileReference} whose file is `ready` and whose blob is `ready`. */
 export type ReferencedFile = FileReference & { blob: BlobRow };
 
-/** A file of the conversation the device may copy (`FetchAttachment`'s list). */
+/** A file sent into the conversation (`FetchAttachment`'s list). */
 export interface AttachedFile {
   id: string;
   name: string;
+  /** Whether it can be copied now (not deleted, its blob ready); names are assigned over all. */
+  available: boolean;
   /** The unsigned reference the model saw in a reference line ({@link ReferencedFiles.uri}). */
   uri: string;
 }
@@ -66,6 +76,11 @@ export const isLive = (f: FileReference): f is ReferencedFile =>
 
 const notFound = () => new ApiError("file.not_found", "File not found");
 
+/** How many sub-agent levels {@link ReferencedFiles.referencedBelow} walks (the tree reads' bound). */
+const TREE_LEVELS = 16;
+/** The most referring sub-agent conversations {@link ReferencedFiles.referencedBelow} reads. */
+const BELOW_LIMIT = 32;
+
 type Row = {
   id: string;
   org_id: string;
@@ -80,6 +95,8 @@ type Row = {
   agent_id: string | null;
   source_conversation_id: string | null;
   source_path: string | null;
+  ref_key: string | null;
+  ref_etag: string | null;
   created_at: Date;
   deleted_at: Date | null;
   b_id: string | null;
@@ -104,6 +121,8 @@ const toFile = (r: Row): LibraryFile & { blob: BlobRow | null } => ({
   agentId: r.agent_id,
   sourceConversationId: r.source_conversation_id,
   sourcePath: r.source_path,
+  refKey: r.ref_key,
+  refEtag: r.ref_etag,
   createdAt: r.created_at,
   deletedAt: r.deleted_at,
   blob:
@@ -155,6 +174,8 @@ export class ReferencedFiles {
         "f.agent_id",
         "f.source_conversation_id",
         "f.source_path",
+        "f.ref_key",
+        "f.ref_etag",
         "f.created_at",
         "f.deleted_at",
         "b.id as b_id",
@@ -209,20 +230,10 @@ export class ReferencedFiles {
     return refs.filter(isLive);
   }
 
-  /** The conversations of the org that refer to the file (any role). */
-  async referencingConversations(orgId: string, fileId: string): Promise<string[]> {
-    const rows = await this.db
-      .selectFrom("conversation_files")
-      .select("conversation_id")
-      .where("org_id", "=", orgId)
-      .where("file_id", "=", fileId)
-      .execute();
-    return rows.map((r) => r.conversation_id);
-  }
-
   /**
-   * One of the account's files (any status but `uploading`), with its blob; another account's, an
-   * unknown id or an upload not finalized → `file.not_found`.
+   * One of the account's files that the account may use (file library spec §2): `ready`, or a
+   * `draft` (the composer's own upload, not sent yet), with its blob; another account's, an unknown
+   * id, an upload not finalized or a deleted file → `file.not_found`.
    */
   async owned(
     orgId: string,
@@ -232,19 +243,62 @@ export class ReferencedFiles {
     const row = await this.fileQuery(orgId)
       .where("f.id", "=", fileId)
       .where("f.account_id", "=", accountId)
-      .where("f.status", "<>", "uploading")
+      .where("f.status", "in", ["ready", "draft"])
       .executeTakeFirst();
     if (!row) throw notFound();
     return toFile(row);
   }
 
   /**
-   * The unsigned reference of a file's bytes the model sees in a reference line: the store's
-   * `uri` of the blob's key, else `capybara://attachments/<fileId>` (the form logs already hold,
-   * kept so reconstructed requests stay byte for byte).
+   * What the model sees of a file's bytes, pinned to the blob the file was first stored on so a
+   * later move to another blob (a hashing merge) changes no model-visible text and no replay etag:
+   * `uri`, the store's unsigned reference of that key (else `capybara://attachments/<fileId>`, the
+   * form logs already hold), and `etag` (with `refKey` set, `refEtag` as recorded; else the
+   * blob's). Byte reads still check the current blob's own size and etag.
    */
-  uri(orgId: string, f: { id: string; blob: Pick<BlobRow, "objectKey"> }): string {
-    return this.storage.kernel(orgId).uri?.(f.blob.objectKey) ?? `capybara://attachments/${f.id}`;
+  modelRef(
+    orgId: string,
+    f: Pick<LibraryFile, "id" | "refKey" | "refEtag"> & {
+      blob: Pick<BlobRow, "objectKey" | "etag">;
+    },
+  ): { uri: string; etag: string | null } {
+    const key = f.refKey ?? f.blob.objectKey;
+    return {
+      uri: this.storage.kernel(orgId).uri?.(key) ?? `capybara://attachments/${f.id}`,
+      etag: f.refKey !== null ? f.refEtag : f.blob.etag,
+    };
+  }
+
+  /**
+   * The live files of id `fileId` that sub-agent conversations below `ancestorId` refer to (its
+   * children, grandchildren …, at most {@link TREE_LEVELS} levels and {@link BELOW_LIMIT}
+   * referring conversations): one query over the parent index joined to the references.
+   */
+  async referencedBelow(
+    orgId: string,
+    ancestorId: string,
+    fileId: string,
+  ): Promise<ReferencedFile[]> {
+    const below = await sql<{ conversation_id: string }>`
+      WITH RECURSIVE tree(id, level) AS (
+        SELECT c.id, 1 FROM capybara.conversations c
+        WHERE c.parent_conversation_id = ${ancestorId} AND c.org_id = ${orgId}
+          AND c.kind = 'subagent'
+        UNION ALL
+        SELECT c.id, t.level + 1
+        FROM capybara.conversations c JOIN tree t ON c.parent_conversation_id = t.id
+        WHERE c.org_id = ${orgId} AND c.kind = 'subagent' AND t.level < ${TREE_LEVELS}
+      )
+      SELECT cf.conversation_id FROM capybara.conversation_files cf
+      JOIN tree t ON t.id = cf.conversation_id
+      WHERE cf.org_id = ${orgId} AND cf.file_id = ${fileId}
+      LIMIT ${BELOW_LIMIT}`.execute(this.db.db);
+    if (below.rows.length === 0) return [];
+    return this.referenced(
+      orgId,
+      below.rows.map((r) => r.conversation_id),
+      [fileId],
+    );
   }
 
   /** A live file's bytes ({@link BlobsService.open}): null when the blob is certainly gone. */
@@ -262,13 +316,21 @@ export class ReferencedFiles {
   }
 
   /**
-   * The files sent into the conversation that a device may copy (`FetchAttachment`): its live
-   * `attached` references, oldest reference first, then the id (a later attachment never moves an
-   * earlier one, so the names the copy assigns stay put).
+   * The files sent into the conversation (`FetchAttachment`): its `attached` references, oldest
+   * reference first, then the id (a later attachment never moves an earlier one), each marked
+   * `available` when it can be copied now. The copy assigns names over the whole list, so a file
+   * deleted later never renames another.
    */
   async listForConversation(orgId: string, conversationId: string): Promise<AttachedFile[]> {
     const refs = await this.references(orgId, [conversationId], { role: "attached" });
-    return refs.filter(isLive).map((f) => ({ id: f.id, name: f.name, uri: this.uri(orgId, f) }));
+    return refs.map((f) => ({
+      id: f.id,
+      name: f.name,
+      available: isLive(f),
+      uri: f.blob
+        ? this.modelRef(orgId, { ...f, blob: f.blob }).uri
+        : `capybara://attachments/${f.id}`,
+    }));
   }
 
   /**

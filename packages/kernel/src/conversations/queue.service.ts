@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -186,8 +187,11 @@ export class ConversationQueue {
       .select("last_seq")
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
+      // deleted after the caller's check: no files are attached to it
+      .where("deleted_at", "is", null)
       .forUpdate()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+    if (!conv) throw new ApiError("conversation.not_found", "Conversation not found");
     const existing = await t
       .selectFrom("conversation_queue")
       .select(COLUMNS)

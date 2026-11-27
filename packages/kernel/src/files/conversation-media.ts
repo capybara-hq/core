@@ -29,7 +29,7 @@ async function readAll(body: ReadableStream<Uint8Array>): Promise<Uint8Array> {
 export class ConversationMedia {
   constructor(
     @Inject(ReferencedFiles)
-    private readonly files: Pick<ReferencedFiles, "referenced" | "open" | "head" | "uri">,
+    private readonly files: Pick<ReferencedFiles, "referenced" | "open" | "head" | "modelRef">,
     @Inject(AttachmentsService)
     private readonly attachments: Pick<AttachmentsService, "mediaInfo" | "fetchMedia">,
     /** where the model-sized copies of images are kept between steps ({@link fetchMedia}) */
@@ -48,7 +48,8 @@ export class ConversationMedia {
 
   /**
    * The recorded facts request building needs about the refs (size, PDF page count, etag and the
-   * unsigned `uri` of the bytes): the blob's size and etag for a file, the row's for a `read` copy.
+   * unsigned `uri` of the bytes): for a file, the blob's size and the pinned reference
+   * (`ReferencedFiles.modelRef`); for a `read` copy, the row's.
    * An id that is neither is left out; a failed query throws.
    */
   async mediaInfo(
@@ -60,12 +61,9 @@ export class ConversationMedia {
     const files = await this.filesOf(orgId, conversationId, ids);
     const out = new Map<string, MediaInfo>();
     for (const f of files.values()) {
-      out.set(f.id, {
-        size: f.blob.size,
-        pages: f.pages,
-        etag: f.blob.etag,
-        uri: this.files.uri(orgId, f),
-      });
+      // the uri and etag the model saw stay those of the blob the file was first stored on
+      const ref = this.files.modelRef(orgId, f);
+      out.set(f.id, { size: f.blob.size, pages: f.pages, etag: ref.etag, uri: ref.uri });
     }
     const rest = ids.filter((id) => !files.has(id));
     for (const [id, info] of await this.attachments.mediaInfo(orgId, conversationId, rest)) {

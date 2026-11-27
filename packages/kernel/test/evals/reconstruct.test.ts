@@ -1688,6 +1688,149 @@ describe("reconstructRequest：基线零漂移", () => {
     expect(JSON.stringify(out.request)).toContain("is no longer available");
   });
 
+  it("a file moved to another blob (a hashing merge) keeps its uri and etag: zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const conv = await createConv(owner, orgId, agentId);
+    const img = await attach("moved.png", PNG);
+    const big = Buffer.from("a".repeat(TEXT_INLINE_MAX_CHARS + 1), "utf8");
+    const txt = await attach("moved.txt", big, "text/plain");
+    await postWithFiles(conv, "media: look", [img, txt]);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
+    const info = await modelInfo("model-fake", "fake-v");
+    const first = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    const before = await mediaFor(conv, snap, first.seq, info);
+    expect(before.mediaInfo?.get(img)?.etag).toEqual(expect.any(String));
+
+    // each file now points at another blob with the same bytes, another key and no etag (a
+    // migrated blob the hashing job kept): request building must still show the first blob's
+    for (const [id, bytes, type] of [
+      [img, PNG, "image/png"],
+      [txt, big, "text/plain"],
+    ] as const) {
+      const blobId = randomUUID();
+      const key = `blobs/${blobId}`;
+      await k.app
+        .get(StorageService)
+        .kernel(orgId)
+        .put(key, bytes, { contentType: type, size: bytes.byteLength });
+      await db
+        .insertInto("blobs")
+        .values({
+          id: blobId,
+          org_id: orgId,
+          size: bytes.byteLength,
+          etag: null,
+          object_key: key,
+          status: "ready",
+        })
+        .execute();
+      await db.updateTable("files").set({ blob_id: blobId }).where("id", "=", id).execute();
+      expect(await blobKeyOf(db, id)).toBe(key);
+    }
+    const after = await mediaFor(conv, snap, first.seq, info);
+    for (const id of [img, txt]) {
+      expect(after.mediaInfo?.get(id)?.uri).toBe(before.mediaInfo?.get(id)?.uri);
+      expect(after.mediaInfo?.get(id)?.etag).toBe(before.mediaInfo?.get(id)?.etag);
+    }
+    await expectZeroDrift(conv, snap);
+  });
+
+  it("a message logged before the 0188 copy (attachmentId refs, a file block) runs after it with zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const conv = await createConv(owner, orgId, agentId);
+    const xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const xlsxBytes = Buffer.from("PK\u0003\u0004sheet");
+    // bound chat attachments and the user_message old code logged for them
+    const legacy: { id: string; name: string; type: string; bytes: Buffer }[] = [
+      { id: randomUUID(), name: "old.png", type: "image/png", bytes: PNG },
+      { id: randomUUID(), name: "old.xlsx", type: xlsx, bytes: xlsxBytes },
+    ];
+    for (const a of legacy) {
+      const head = await k.app
+        .get(StorageService)
+        .kernel(orgId)
+        .put(`attachments/${a.id}`, a.bytes, { contentType: a.type, size: a.bytes.length });
+      await db
+        .insertInto("attachments")
+        .values({
+          id: a.id,
+          org_id: orgId,
+          account_id: ownerId,
+          conversation_id: conv,
+          name: a.name,
+          content_type: a.type,
+          size: a.bytes.length,
+          object_key: `attachments/${a.id}`,
+          status: "ready",
+          etag: head.etag ?? null,
+        })
+        .execute();
+    }
+    const [img, sheet] = legacy as [(typeof legacy)[0], (typeof legacy)[0]];
+    const [logged] = await k.app.get(EventLog).append(conv, [
+      {
+        type: "user_message",
+        payload: {
+          content: [
+            { type: "text", text: "echo:before the deploy" },
+            {
+              type: "image",
+              mediaType: "image/png",
+              source: { kind: "ref", attachmentId: img.id },
+              name: img.name,
+              size: img.bytes.length,
+            },
+            {
+              type: "file",
+              mediaType: xlsx,
+              source: { kind: "ref", attachmentId: sheet.id },
+              name: sheet.name,
+              size: sheet.bytes.length,
+            },
+          ],
+          authorAccountId: ownerId,
+        },
+      } as never,
+    ]);
+    // the bytes old code stored: refs keyed `attachmentId` (append writes today's key)
+    await sql`UPDATE capybara.conversation_events
+      SET payload = replace(payload::text, '"fileId"', '"attachmentId"')::jsonb
+      WHERE conversation_id = ${conv} AND seq = ${logged?.seq}`.execute(db);
+    const stored = await db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", conv)
+      .where("seq", "=", String(logged?.seq))
+      .executeTakeFirstOrThrow();
+    expect(JSON.stringify(stored.payload)).not.toContain('"fileId"');
+    await migrateLegacyFiles(db);
+    const refs = await db
+      .selectFrom("conversation_files")
+      .select(["file_id", "first_seq"])
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(new Map(refs.map((r) => [r.file_id, r.first_seq]))).toEqual(
+      new Map([
+        [img.id, String(logged?.seq)],
+        [sheet.id, String(logged?.seq)],
+      ]),
+    );
+    // the run after the deploy sends that message from the migrated files
+    await postMessage(owner, orgId, conv, "media: after the deploy");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snap = await snapshotOf(conv);
+    const call = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    expect(call.payload.request.media?.map((m) => [m.attachmentId, m.outcome])).toEqual([
+      [img.id, "bytes"],
+      [sheet.id, "reference"],
+    ]);
+    await expectZeroDrift(conv, snap);
+  });
+
   it("a Read image on a vision model: the image follows the tool results, zero drift; a deleted object gives media_missing", async () => {
     reset();
     const agentId = await createAgent(

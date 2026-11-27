@@ -67,6 +67,9 @@ export async function seedLibraryFile(
       pages: file.pages ?? null,
       origin: "upload",
       status,
+      // pinned at creation, as finalize pins it: the reference the model sees
+      ref_key: key,
+      ref_etag: head.etag ?? null,
       upload_purpose: status === "draft" ? "composer" : "library",
       expires_at: status === "draft" ? sql<Date>`now() + interval '24 hours'` : null,
     })

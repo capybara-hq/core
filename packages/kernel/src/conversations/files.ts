@@ -86,8 +86,12 @@ type Entry =
 const before = (a: Entry, b: Entry): boolean =>
   a.at.getTime() !== b.at.getTime() ? a.at.getTime() > b.at.getTime() : a.id > b.id;
 
-/** Whether a file is listed as an upload (one version) rather than a delivery's version. */
-const isUpload = (f: FileReference): boolean => f.origin === "upload" || f.sourcePath === null;
+/**
+ * Whether a file is listed as an upload in this conversation (one version) rather than a version of
+ * one of its deliveries: everything the conversation got by a message (an upload, or a file another
+ * conversation delivered that the person sent here), and anything without a version group.
+ */
+const isUpload = (f: FileReference): boolean => f.role === "attached" || f.sourcePath === null;
 
 /** Log order of two deliveries of one conversation: the event that referred to each, then time. */
 const deliveryOrder = (a: FileReference, b: FileReference): number => {

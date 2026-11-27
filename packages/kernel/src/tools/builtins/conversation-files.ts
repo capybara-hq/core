@@ -1,5 +1,5 @@
 import type { AttachmentsService } from "../../conversations/attachments.service.js";
-import type { ReferencedFiles } from "../../files/referenced-files.js";
+import type { ReferencedFile, ReferencedFiles } from "../../files/referenced-files.js";
 import type { KernelDb } from "../../infra/database/kernel-db.js";
 
 /**
@@ -32,7 +32,7 @@ export interface ConversationFileDeps {
   /** The `read` copies. */
   attachments: Pick<AttachmentsService, "openForConversation">;
   /** The library files the conversations refer to, and their bytes. */
-  files: Pick<ReferencedFiles, "referenced" | "referencingConversations" | "open">;
+  files: Pick<ReferencedFiles, "referenced" | "referencedBelow" | "open" | "head">;
 }
 
 /** Lower-case or upper-case UUIDs: file and `read` copy ids. */
@@ -95,18 +95,13 @@ async function isBelow(
   return false;
 }
 
-/**
- * The conversations of `orgId` an id belongs to: the conversations that refer to a library file of
- * that id, else the conversation a ready `read` copy of that id is bound to.
- */
-async function ownersOf(
-  deps: ConversationFileDeps,
+/** The conversation a ready `read` copy of this id is bound to, in `orgId`; null when none. */
+async function readCopyOwner(
+  db: ConversationFileDeps["db"],
   orgId: string,
   id: string,
-): Promise<{ conversationIds: string[]; readCopy: boolean }> {
-  const referring = await deps.files.referencingConversations(orgId, id);
-  if (referring.length > 0) return { conversationIds: referring, readCopy: false };
-  const att = await deps.db
+): Promise<string | null> {
+  const att = await db
     .selectFrom("attachments")
     .select("conversation_id")
     .where("id", "=", id)
@@ -114,9 +109,7 @@ async function ownersOf(
     .where("status", "=", "ready")
     .where("purpose", "=", "read")
     .executeTakeFirst();
-  return att?.conversation_id
-    ? { conversationIds: [att.conversation_id], readCopy: true }
-    : { conversationIds: [], readCopy: false };
+  return att?.conversation_id ?? null;
 }
 
 /**
@@ -126,7 +119,9 @@ async function ownersOf(
  * tool result images design §5), else a `read` copy bound to one of them (this lookup is the
  * model's, vision-read design §1.1). Anything else (a library file the person never attached, a
  * sibling's or another tree's, another org's, a deleted file, bytes gone or replaced, an id that is
- * not a UUID) is `null`. Storage errors are thrown as they are. `signal` aborts the storage reads.
+ * not a UUID) is `null`. A library file's size and type come from its rows and its bytes are
+ * checked by a HEAD; they are opened only when {@link ConversationFile.open} is called. Storage
+ * errors are thrown as they are. `signal` aborts the storage reads.
  */
 export async function findConversationFile(
   deps: ConversationFileDeps,
@@ -143,56 +138,59 @@ export async function findConversationFile(
   if (!UUID.test(q.id)) return null;
   const id = q.id.toLowerCase();
   const conversations = [...new Set([q.conversationId, q.rootConversationId])];
-  // a file of a sub-agent below the calling conversation joins the lookup
-  const owners = await ownersOf(deps, q.orgId, id);
-  for (const owner of owners.conversationIds) {
-    if (
-      !conversations.includes(owner) &&
-      (await isBelow(deps.db, q.orgId, owner, q.conversationId))
-    ) {
-      conversations.push(owner);
-    }
-  }
-
   const files = deps.files;
-  const [file] = await files.referenced(q.orgId, conversations, [id]);
+  // the conversation and its root first; only on a miss the sub-agents below the conversation
+  let refs = (await files.referenced(q.orgId, conversations, [id])).sort(attachedFirst);
+  if (refs.length === 0) refs = await files.referencedBelow(q.orgId, q.conversationId, id);
+  const file = refs[0];
   if (file !== undefined) {
-    const max = q.maxBytes;
-    // only a larger object is ranged (a range on an empty object is unsatisfiable)
-    const got = await files.open(q.orgId, file, {
-      ...(q.signal !== undefined && { signal: q.signal }),
-      ...(max !== undefined && file.blob.size > max && { range: { start: 0, end: max - 1 } }),
-    });
-    if (got === null) return null;
+    if ((await files.head(q.orgId, file)) === null) return null;
     return {
-      kind: file.origin === "upload" ? "attachment" : "artifact",
+      // an upload, or a delivered file sent into this conversation set, is an attachment here
+      kind: file.role === "attached" || file.sourcePath === null ? "attachment" : "artifact",
       id,
       name: file.name,
       contentType: file.contentType,
       size: file.blob.size,
-      // the one storage read of the lookup: its stream is read by open() or cancelled by discard()
-      open: (opts) => bytesOf(got.body, opts?.maxBytes),
-      discard: () => got.body.cancel().catch(() => {}),
+      async open(opts) {
+        const max = opts?.maxBytes ?? q.maxBytes;
+        // only a larger object is ranged (a range on an empty object is unsatisfiable)
+        const got = await files.open(q.orgId, file, {
+          ...(q.signal !== undefined && { signal: q.signal }),
+          ...(max !== undefined && file.blob.size > max && { range: { start: 0, end: max - 1 } }),
+        });
+        if (got === null) throw new Error(`file ${id} is no longer available`);
+        return bytesOf(got.body, max);
+      },
+      discard: async () => {},
     };
   }
-  if (!owners.readCopy) return null;
 
-  for (const conversationId of conversations) {
-    const opened = await deps.attachments.openForConversation(q.orgId, conversationId, id, {
-      ...(q.maxBytes !== undefined && { maxBytes: q.maxBytes }),
-      ...(q.signal !== undefined && { signal: q.signal }),
-    });
-    if (opened === null) continue;
-    return {
-      kind: "attachment",
-      id,
-      readCopyOf: conversationId,
-      name: opened.name,
-      contentType: opened.contentType,
-      size: opened.size,
-      open: (opts) => bytesOf(opened.body, opts?.maxBytes),
-      discard: () => opened.body.cancel().catch(() => {}),
-    };
+  const owner = await readCopyOwner(deps.db, q.orgId, id);
+  if (owner === null) return null;
+  if (
+    !conversations.includes(owner) &&
+    !(await isBelow(deps.db, q.orgId, owner, q.conversationId))
+  ) {
+    return null;
   }
-  return null;
+  const opened = await deps.attachments.openForConversation(q.orgId, owner, id, {
+    ...(q.maxBytes !== undefined && { maxBytes: q.maxBytes }),
+    ...(q.signal !== undefined && { signal: q.signal }),
+  });
+  if (opened === null) return null;
+  return {
+    kind: "attachment",
+    id,
+    readCopyOf: owner,
+    name: opened.name,
+    contentType: opened.contentType,
+    size: opened.size,
+    open: (opts) => bytesOf(opened.body, opts?.maxBytes),
+    discard: () => opened.body.cancel().catch(() => {}),
+  };
 }
+
+/** References of one file across a conversation set: an `attached` one first. */
+const attachedFirst = (a: ReferencedFile, b: ReferencedFile): number =>
+  (a.role === "attached" ? 0 : 1) - (b.role === "attached" ? 0 : 1);

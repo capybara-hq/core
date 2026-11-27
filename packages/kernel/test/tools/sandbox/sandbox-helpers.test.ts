@@ -496,8 +496,7 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
             db: noRowsDb(),
             // the files by id are library files the conversation refers to
             files: {
-              referencingConversations: async (_org: string, id: string) =>
-                opts.byId?.has(id) ? ["c"] : [],
+              referencedBelow: async () => [],
               referenced: async (_org: string, _convs: string[], ids: string[]) =>
                 ids.flatMap((id) => {
                   const f = opts.byId?.get(id);
@@ -508,11 +507,16 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
                       name: f.name,
                       contentType: f.contentType,
                       origin: "delivered",
+                      role: "delivered",
+                      sourcePath: `out/${f.name}`,
                       blob: { size: f.data.byteLength },
                       data: f.data,
                     },
                   ];
                 }),
+              head: async (_org: string, file: { data: Uint8Array }) => ({
+                size: file.data.byteLength,
+              }),
               open: async (_org: string, file: { data: Uint8Array }) => ({
                 body: new Blob([new Uint8Array(file.data)]).stream(),
               }),

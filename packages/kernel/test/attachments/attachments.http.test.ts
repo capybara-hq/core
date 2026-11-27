@@ -568,7 +568,9 @@ describe("the device's copy of a sent file (ReferencedFiles.openForConversation)
     const got = await files.openForConversation(orgId, convId, id);
     expect(got).toMatchObject({ name: "notes.txt", contentType: "text/plain", size: TEXT.length });
     expect(Buffer.from(await new Response(got?.body).arrayBuffer()).equals(TEXT)).toBe(true);
-    expect((await files.listForConversation(orgId, convId)).map((f) => f.id)).toEqual([id]);
+    expect(
+      (await files.listForConversation(orgId, convId)).map((f) => [f.id, f.available]),
+    ).toEqual([[id, true]]);
     // another conversation, another org, an unknown id → null
     const conv2 = await conversationWith("see-1");
     expect(await files.openForConversation(orgId, conv2, id)).toBeNull();
@@ -585,9 +587,12 @@ describe("the device's copy of a sent file (ReferencedFiles.openForConversation)
         contentType: "text/plain",
       });
     expect(await files.openForConversation(orgId, convId, id)).toBeNull();
-    // a deleted file is out of the list
+    // a deleted file stays in the list (its name stays taken) but is no longer available
     await markFileDeleted(db, id);
-    expect(await files.listForConversation(orgId, convId)).toEqual([]);
+    expect(
+      (await files.listForConversation(orgId, convId)).map((f) => [f.id, f.available]),
+    ).toEqual([[id, false]]);
+    expect(await files.openForConversation(orgId, convId, id)).toBeNull();
   });
 });
 

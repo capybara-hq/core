@@ -119,10 +119,11 @@ export class FileDeliveries {
     rows: readonly DeliveredFileRow[],
   ): Promise<void> {
     if (rows.length === 0) return;
+    const locked = new Map<string, BlobRow>();
     for (const blobId of new Set(rows.map((r) => r.blobId))) {
-      if ((await this.blobs.lockReady(orgId, blobId)) === null) {
-        throw new DeliveryBlobGoneError(blobId);
-      }
+      const blob = await this.blobs.lockReady(orgId, blobId);
+      if (blob === null) throw new DeliveryBlobGoneError(blobId);
+      locked.set(blobId, blob);
     }
     const trx = this.db.db;
     const conv = await trx
@@ -148,6 +149,9 @@ export class FileDeliveries {
           agent_id: conv.agent_id,
           source_conversation_id: conversationId,
           source_path: r.sourcePath,
+          // the reference the model may see stays this blob's after a later merge
+          ref_key: locked.get(r.blobId)?.objectKey ?? null,
+          ref_etag: locked.get(r.blobId)?.etag ?? null,
         })),
       )
       .onConflict((oc) => oc.column("id").doNothing())

@@ -42,7 +42,7 @@ import { ConversationAccess, parentReachable } from "./access.js";
 import { type AgentTreeNode, readAgentTree } from "./agent-tree.js";
 import { type AppendEvent, EventLog } from "./event-log.js";
 import { peopleOfEvents } from "./event-people.js";
-import type { ConversationEvent, LogContentBlock } from "./events.js";
+import { type ConversationEvent, type LogContentBlock, refFileId } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
 import {
   type ImSenderContext,
@@ -1776,6 +1776,23 @@ export class ConversationsService {
     // the run this message starts is owed with it: the direct ensureRun after the commit may never
     // happen (the process died) or fail (transactional outbox spec §6)
     if (fresh.at(-1) === true) await this.runs.oweEnsureRun(conversationId, message.seq, orgId);
+    // the files this message attached were first referred to by it (a queued message's files keep
+    // a null `first_seq`: they were attached when queued, before the message had a seq)
+    const fileIds = blocks.flatMap((b) =>
+      (b.type === "image" || b.type === "document" || b.type === "file") && b.source.kind === "ref"
+        ? [refFileId(b.source)]
+        : [],
+    );
+    if (fileIds.length > 0) {
+      await this.db.db
+        .updateTable("conversation_files")
+        .set({ first_seq: message.seq })
+        .where("org_id", "=", orgId)
+        .where("conversation_id", "=", conversationId)
+        .where("file_id", "in", fileIds)
+        .where("first_seq", "is", null)
+        .execute();
+    }
     const skips =
       fresh.at(-1) === true
         ? await this.skipWaitsIn(conversationId, accountId, message.seq)

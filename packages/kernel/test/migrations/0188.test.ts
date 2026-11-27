@@ -231,6 +231,9 @@ describe("0188_file_library + 0189_file_library_copy", () => {
       source_conversation_id: "c1",
       source_path: null,
       staging_key: null,
+      // the model-visible reference stays this blob's even after a later merge
+      ref_key: `attachments/${BOUND}`,
+      ref_etag: `etag-${BOUND}`,
       expires_at: null,
       object_key: `attachments/${BOUND}`,
       blob_size: "42",
@@ -264,6 +267,8 @@ describe("0188_file_library + 0189_file_library_copy", () => {
       status: "uploading",
       blob_id: null,
       staging_key: `attachments/${PENDING}`,
+      ref_key: null,
+      ref_etag: null,
       expires_at: new Date("2026-11-29T00:00:00Z"),
     });
     expect(await file(READ_ATT)).toBeUndefined();
@@ -299,6 +304,8 @@ describe("0188_file_library + 0189_file_library_copy", () => {
         content_type: "text/markdown",
         source_conversation_id: "c2",
         object_key: `artifacts/c2/${id}`,
+        ref_key: `artifacts/c2/${id}`,
+        ref_etag: null,
         blob_size: size,
         etag: null,
         sha256: null,
@@ -438,6 +445,8 @@ describe("0188_file_library + 0189_file_library_copy", () => {
       status: "draft",
       staging_key: null,
       size: "50",
+      ref_key: `attachments/${PENDING}`,
+      ref_etag: "e2",
       object_key: `attachments/${PENDING}`,
       etag: "e2",
       blob_status: "ready",

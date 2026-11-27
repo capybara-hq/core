@@ -458,8 +458,9 @@ function imageToolOf(deps: SandboxToolDeps): BuiltinTool {
     attachments: { openForConversation: async () => null },
     files: {
       referenced: async () => [],
-      referencingConversations: async () => [],
+      referencedBelow: async () => [],
       open: async () => null,
+      head: async () => null,
     },
     sandbox: deps,
   });
