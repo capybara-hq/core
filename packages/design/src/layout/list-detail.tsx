@@ -2,6 +2,7 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef } fr
 import { IconButton } from "../controls/index";
 import { KeyValue } from "../display/key-value";
 import { Icon } from "../icons/icon";
+import type { IconName } from "../icons/paths";
 import { useDesignT } from "../provider";
 import { useViewportSegments } from "../shell/segments";
 import { useRegisterShellPage } from "../shell/shell-page";
@@ -156,29 +157,43 @@ export type ListDetailListItem = {
   at?: string;
   /** Waits for the person: the 6 px `warn` dot at the row's start. */
   waiting?: boolean;
+  /**
+   * What kind of thing the row is (a file's type): a 16 px `muted` icon in the row's lead slot
+   * instead of the dot slot. A waiting row keeps its dot.
+   */
+  icon?: IconName;
 };
+
+/** A titled run of rows (今天 / 本周 / 更早): its label heads its rows in the list. */
+export type ListDetailListGroup = { id: string; label: string; items: ListDetailListItem[] };
 
 /**
  * The list of a list-detail region (spec §6.47): 64 px rows split by `line-soft`, each a 6 px state
- * dot slot (filled only for what waits for the person), the title (`body`, `ink`) over the meta
- * (`small`, `muted`), both one line with an ellipsis, and the time at the end. The current row
- * (two panes) is the selected row of §2.3. A row is a button that opens its item.
+ * dot slot (filled only for what waits for the person; a row with an `icon` draws the icon there
+ * instead), the title (`body`, `ink`) over the meta (`small`, `muted`), both one line with an
+ * ellipsis, and the time at the end. The current row (two panes) is the selected row of §2.3. A
+ * row is a button that opens its item. `groups` instead of `items` heads each run of rows with its
+ * label (a `micro` `muted` line, the rows of each group a list named by it); an empty group is
+ * left out.
  */
 export function ListDetailList({
   label,
   items,
+  groups,
   current,
   onOpen,
 }: {
   label: string;
-  items: ListDetailListItem[];
   current?: string | undefined;
   onOpen(id: string): void;
-}) {
+} & (
+  | { items: ListDetailListItem[]; groups?: undefined }
+  | { groups: ListDetailListGroup[]; items?: undefined }
+)) {
   const t = useDesignT();
-  return (
-    <ul className="cb-ld-list" data-part="list" aria-label={label}>
-      {items.map((it) => (
+  const rows = (list: ListDetailListItem[], name: string, part: string) => (
+    <ul className="cb-ld-list" data-part={part} aria-label={name}>
+      {list.map((it) => (
         <li key={it.id}>
           <button
             type="button"
@@ -195,6 +210,10 @@ export function ListDetailList({
                 role="img"
                 aria-label={t("listDetail.waiting")}
               />
+            ) : it.icon ? (
+              <span className="cb-ld-icon" data-part="list-icon" aria-hidden="true">
+                <Icon name={it.icon} size={16} />
+              </span>
             ) : (
               <span className="cb-ld-dot" data-part="list-dot" aria-hidden="true" />
             )}
@@ -224,6 +243,22 @@ export function ListDetailList({
         </li>
       ))}
     </ul>
+  );
+  if (groups === undefined) return rows(items, label, "list");
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: a named group of lists, not a form's fieldset
+    <div className="cb-ld-groups" data-part="list" role="group" aria-label={label}>
+      {groups
+        .filter((g) => g.items.length > 0)
+        .map((g) => (
+          <section key={g.id} className="cb-ld-group" data-part="list-group">
+            <h3 className="cb-ld-group-label" data-part="list-group-label">
+              {g.label}
+            </h3>
+            {rows(g.items, g.label, "list-group-rows")}
+          </section>
+        ))}
+    </div>
   );
 }
 

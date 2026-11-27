@@ -17,6 +17,7 @@ export const TEMPLATE_ROUTES = [
   "templates/onboarding",
   "templates/setup",
   "templates/shared-file",
+  "templates/library",
 ] as const;
 
 export const OVERLAY_ROUTES = [
@@ -118,6 +119,8 @@ export const REFERENCE_COMPONENTS = [
   "template-detail",
   "template-overview",
   "template-inbox",
+  // the Files page's template (file library spec §6; design spec §5.13)
+  "template-library",
   "template-trace",
   "template-settings",
   "template-wizard",

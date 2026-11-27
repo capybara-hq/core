@@ -31,6 +31,9 @@ export const ACCEPTED: string[] = [
   "template-detail",
   "template-overview",
   "template-inbox",
+  // the Files page's template (spec §5.13): blocks and size table in place; the reference PNGs
+  // and the side-by-side review wait for the reference-update and visual-update workflows
+  "template-library",
   // the trace template's loading state (spec §5.11), accepted with the other template loading states
   "template-trace",
   "template-settings",
