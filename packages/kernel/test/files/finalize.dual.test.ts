@@ -232,7 +232,7 @@ describe("concurrent finalizes on two replicas", () => {
     await expectOneExtraCopy(before, hashed[0]?.id as string);
   });
 
-  it("the draft cleanup on both replicas at once expires each file once", async () => {
+  it("the draft cleanup on both replicas at once expires each file once and owes one release each", async () => {
     const ids: string[] = [];
     for (let i = 0; i < 6; i++) ids.push(await staged(aliceA, Buffer.from(`expiring ${i}\n`)));
     await sql`UPDATE capybara.files SET expires_at = now() - interval '1 minute',
@@ -242,9 +242,18 @@ describe("concurrent finalizes on two replicas", () => {
       b.app.get(FileDraftCleanupJob).runOnce(),
     ]);
     expect(n1 + n2).toBe(ids.length);
-    const { files, owed } = await outcome(ids, Buffer.from(""));
+    const { files } = await outcome(ids, Buffer.from(""));
     expect(files.every((f) => f.status === "deleted")).toBe(true);
-    expect(owed).toHaveLength(ids.length);
+    const releases = await db
+      .selectFrom("outbox")
+      .select("job_id")
+      .where(
+        "job_id",
+        "in",
+        ids.map((id) => `file-release-${id}`),
+      )
+      .execute();
+    expect(releases).toHaveLength(ids.length);
   });
 
   it("a discard racing the same account's instant upload never leaves a file on a deleting blob", async () => {
@@ -287,7 +296,7 @@ describe("concurrent finalizes on two replicas", () => {
     expect(created.upload === null).toBe(reused.blob_id !== null);
   });
 
-  it("a blob deletion delivered on both replicas at once is harmless", async () => {
+  it("a release and a blob deletion each delivered on both replicas at once are harmless", async () => {
     const bytes = Buffer.from("deleted twice\n");
     const id = await staged(aliceA, bytes);
     expect((await finalize(aliceA, id)).statusCode).toBe(200);
@@ -298,6 +307,17 @@ describe("concurrent finalizes on two replicas", () => {
       raw,
     );
     expect((await discard(aliceA, id)).statusCode).toBe(204);
+    // the deferred release, delivered on both replicas at once, releases the blob once
+    await Promise.all([
+      a.app.get(BlobObjects).releaseFile({ orgId, fileId: id }),
+      b.app.get(BlobObjects).releaseFile({ orgId, fileId: id }),
+    ]);
+    const owedDelete = await db
+      .selectFrom("outbox")
+      .select("job_id")
+      .where("job_id", "=", `blob-delete-${blobId}`)
+      .execute();
+    expect(owedDelete).toHaveLength(1);
     const data = { orgId, blobId };
     await Promise.all([
       a.app.get(BlobObjects).deleteBlob(data),

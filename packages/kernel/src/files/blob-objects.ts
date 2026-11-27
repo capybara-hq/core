@@ -3,7 +3,7 @@ import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import type { OutboxService } from "../infra/outbox/outbox.service.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
@@ -49,6 +49,28 @@ export const BLOB_DELETE_JOB = "blob-delete";
 /** The maintenance job that deletes one upload's staging object no blob adopted. */
 export const FILE_STAGING_DELETE_JOB = "file-staging-delete";
 
+/**
+ * The maintenance job that releases what a dropped upload held (a discard, the draft cleanup): its
+ * staging object, or its blob when nothing else points at it. Deferred and owed for every dropped
+ * upload alike, so the request that drops it does the same work whatever the org holds.
+ */
+export const FILE_RELEASE_JOB = "file-release";
+
+/** Deterministic outbox / BullMQ id of a dropped upload's release (no `:`). */
+export const fileReleaseJobId = (fileId: string): string => `file-release-${fileId}`;
+
+/**
+ * How long after now a deferred job owed by a request runs: never due within the request, so no
+ * outbox fast path runs while the caller waits (its timing would depend on what the job found).
+ */
+export const DEFERRED_JOB_DELAY_MS = 60_000;
+
+/** The run time of a job a request owes: {@link DEFERRED_JOB_DELAY_MS} from now at the earliest. */
+export function deferred(at?: Date): Date {
+  const min = Date.now() + DEFERRED_JOB_DELAY_MS;
+  return at !== undefined && at.getTime() > min ? at : new Date(min);
+}
+
 /** Deterministic outbox / BullMQ id of a blob's deletion (no `:`). */
 export const blobDeleteJobId = (blobId: string): string => `blob-delete-${blobId}`;
 /** Deterministic outbox / BullMQ id of a staging object's deletion (no `:`). */
@@ -58,6 +80,12 @@ export const fileStagingDeleteJobId = (fileId: string): string => `file-staging-
 export interface BlobDeleteData {
   orgId: string;
   blobId: string;
+}
+
+/** The data of a {@link FILE_RELEASE_JOB}. */
+export interface FileReleaseData {
+  orgId: string;
+  fileId: string;
 }
 
 /** The data of a {@link FILE_STAGING_DELETE_JOB}. */
@@ -82,6 +110,24 @@ export async function oweBlobDelete(
     data,
     orgId,
     ...(runAt !== undefined && { runAt }),
+  });
+}
+
+/** Owes the deferred release of a dropped upload, in the caller's transaction. */
+export async function oweFileRelease(
+  outbox: Pick<OutboxService, "add">,
+  orgId: string,
+  fileId: string,
+  runAt: Date,
+): Promise<void> {
+  const data: FileReleaseData = { orgId, fileId };
+  await outbox.add({
+    queue: MAINTENANCE_QUEUE_NAME,
+    name: FILE_RELEASE_JOB,
+    jobId: fileReleaseJobId(fileId),
+    data,
+    orgId,
+    runAt,
   });
 }
 
@@ -125,8 +171,79 @@ export class BlobObjects {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
+
+  /**
+   * Releases what a dropped (`deleted`) upload held: without a blob, its staging object (as
+   * {@link deleteStaging} does); with one, the blob when no other file or share points at it,
+   * checked under `FOR UPDATE` on the blob (a new reference passes `BlobsService.lockReady`, so it
+   * either committed first and is seen, or finds the blob `deleting`): the file lets go of it, the
+   * blob becomes `deleting` and its deletion is owed. A file not `deleted` is left alone.
+   */
+  async releaseFile(data: FileReleaseData): Promise<void> {
+    const staging = await this.releaseBlob(data);
+    if (staging !== null) {
+      await this.deleteStaging({ orgId: data.orgId, fileId: data.fileId, objectKey: staging });
+    }
+  }
+
+  /**
+   * The transaction of {@link releaseFile}: the staging key to delete when the file has no blob,
+   * else null (the blob released, or kept because something else points at it).
+   */
+  @Transactional()
+  async releaseBlob(data: FileReleaseData): Promise<string | null> {
+    const trx = this.db.db;
+    const file = await trx
+      .selectFrom("files")
+      .select(["status", "blob_id", "staging_key"])
+      .where("id", "=", data.fileId)
+      .where("org_id", "=", data.orgId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (file?.status !== "deleted") return null;
+    if (file.blob_id === null) return file.staging_key ?? stagingObjectKey(data.fileId);
+    const blob = await trx
+      .selectFrom("blobs")
+      .select(["id", "status"])
+      .where("id", "=", file.blob_id)
+      .where("org_id", "=", data.orgId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (blob?.status !== "ready") return null;
+    const otherFile = await trx
+      .selectFrom("files")
+      .select("id")
+      .where("org_id", "=", data.orgId)
+      .where("blob_id", "=", blob.id)
+      .where("id", "<>", data.fileId)
+      .limit(1)
+      .executeTakeFirst();
+    const share = await trx
+      .selectFrom("file_shares")
+      .select("id")
+      .where("org_id", "=", data.orgId)
+      .where("blob_id", "=", blob.id)
+      .limit(1)
+      .executeTakeFirst();
+    if (otherFile || share) return null;
+    await trx
+      .updateTable("files")
+      .set({ blob_id: null })
+      .where("id", "=", data.fileId)
+      .where("org_id", "=", data.orgId)
+      .execute();
+    await trx
+      .updateTable("blobs")
+      .set({ status: "deleting" })
+      .where("id", "=", blob.id)
+      .where("org_id", "=", data.orgId)
+      .execute();
+    await oweBlobDelete(this.outbox, data.orgId, blob.id);
+    return null;
+  }
 
   /** Deletes one staging object; see the class comment. */
   async deleteStaging(data: FileStagingDeleteData): Promise<void> {
@@ -149,6 +266,8 @@ export class BlobObjects {
     }
     // an upload still in progress may yet be finalized
     if (file?.status === "uploading" && !file.expired) return;
+    // a backstop, not a path: finalize never adopts a staging object, and migrated blobs keep keys
+    // no staging row names; still, a key some blob uses is never deleted from here
     const adopted = await this.db
       .selectFrom("blobs")
       .select("id")

@@ -60,6 +60,15 @@ export const OUTBOX_JOBS = {
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
     opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
   },
+  // `files/blob-objects.ts` FILE_RELEASE_JOB: owed, deferred, by every discard and draft cleanup
+  // of an upload, under `fileReleaseJobId`
+  "file-release": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Re-reads the deleted file under its row lock and releases its blob only while nothing else points at it, or deletes its own staging key; a second run finds nothing to do",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
   // `files/blob-objects.ts` FILE_STAGING_DELETE_JOB: owed by a finalize that reused another blob, a
   // discard and the draft cleanup, under `fileStagingDeleteJobId`
   "file-staging-delete": {

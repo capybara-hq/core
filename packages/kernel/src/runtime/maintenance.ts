@@ -20,7 +20,9 @@ import {
   type BlobDeleteData,
   BlobObjects,
   BlobObjectsModule,
+  FILE_RELEASE_JOB,
   FILE_STAGING_DELETE_JOB,
+  type FileReleaseData,
   type FileStagingDeleteData,
 } from "../files/blob-objects.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
@@ -101,7 +103,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link DirectorySync}, `run-stop` → {@link Offboarding.stopRun}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
- * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}, `share-object-delete` → {@link ShareObjects}, `blob-delete` and `file-staging-delete` →
+ * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}, `share-object-delete` → {@link ShareObjects}, `blob-delete`, `file-staging-delete` and `file-release` →
  * {@link BlobObjects}, `platform-icon-delete` →
  * {@link PlatformIconObjects}, `device-conversation-notice` → {@link ConversationNoticeDelivery}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
@@ -138,7 +140,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     private readonly operations: Pick<SandboxOperationReconcileJob, "reconcile" | "revoke">,
     @Inject(ShareObjects) private readonly shareObjects: Pick<ShareObjects, "deleteObject">,
     @Inject(BlobObjects)
-    private readonly blobObjects: Pick<BlobObjects, "deleteBlob" | "deleteStaging">,
+    private readonly blobObjects: Pick<BlobObjects, "deleteBlob" | "deleteStaging" | "releaseFile">,
     @Inject(PlatformIconObjects)
     private readonly platformIcons: Pick<PlatformIconObjects, "deleteObject">,
     @Inject(ConversationNoticeDelivery)
@@ -255,6 +257,9 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         return;
       case FILE_STAGING_DELETE_JOB:
         await this.blobObjects.deleteStaging(job.data as FileStagingDeleteData);
+        return;
+      case FILE_RELEASE_JOB:
+        await this.blobObjects.releaseFile(job.data as FileReleaseData);
         return;
       // a platform icon object no row names any more, or an upload's orphan check (§10.2.1)
       case PLATFORM_ICON_DELETE_JOB:

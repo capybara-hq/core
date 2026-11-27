@@ -214,6 +214,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       {
         deleteBlob: async (d) => void calls.push(["blob-delete", d]),
         deleteStaging: async (d) => void calls.push(["file-staging-delete", d]),
+        releaseFile: async (d) => void calls.push(["file-release", d]),
       },
       { deleteObject: async (d) => void calls.push(["platform-icon-delete", d]) },
       {
@@ -245,6 +246,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     await processor.process(job("blob-delete", { orgId: "o", blobId: "b1" }));
     const staging = { orgId: "o", fileId: "f1", objectKey: "uploads/f1" };
     await processor.process(job("file-staging-delete", staging));
+    await processor.process(job("file-release", { orgId: "o", fileId: "f2" }));
     const iconObject = { purpose: "app", objectKey: `platform-icons/app-${"a".repeat(64)}.png` };
     await processor.process(job("platform-icon-delete", iconObject));
     await processor.process(job("device-conversation-notice", { orgId: "o", noticeId: "n1" }));
@@ -272,6 +274,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["share-object-delete", shareObject],
       ["blob-delete", { orgId: "o", blobId: "b1" }],
       ["file-staging-delete", staging],
+      ["file-release", { orgId: "o", fileId: "f2" }],
       ["platform-icon-delete", iconObject],
       // the prompt attempt runs on a short device budget
       ["conversation-notice", "o", "n1", 5_000],

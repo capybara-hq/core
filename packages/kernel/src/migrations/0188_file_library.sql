@@ -22,10 +22,11 @@
 -- plus `position(lower($q) in lower(name)) > 0` over one account's ready rows, bounded by the
 -- library index.
 
--- The bytes. `object_key` is relative to `kernel/<org>/`: new blobs `blobs/<sha256>` (kernel
--- writes) or an adopted upload's staging key; migrated blobs keep their old key. `sha256` is null
--- only for a migrated blob the hashing job has not reached yet. `dedup_after`: from when another
--- account's upload may resolve to this blob. `gone`: the hashing job found the object missing.
+-- The bytes. `object_key` is relative to `kernel/<org>/`: new blobs `blobs/<blobId>` (every one
+-- written by the kernel: a delivery, or a finalized upload's verified copy); migrated blobs keep
+-- their old key. `sha256` is null while `pending` and for a migrated blob the hashing job has not
+-- reached yet. `dedup_after`: from when another account's upload may resolve to this blob (now()
+-- for kernel-written blobs). `gone`: the hashing job found the object missing.
 CREATE TABLE IF NOT EXISTS blobs (
   id text PRIMARY KEY,
   org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,

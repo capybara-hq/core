@@ -65,6 +65,8 @@ const LOGIN_MSG = "Too many failed login attempts; try again later";
  * and `device-token-ip` with `@Throttled` (every request counts; neither checks a guessable
  * credential: the device code is 32 random bytes). `POST /api/v1/app-auth/token` opts in to
  * `app-auth-token-ip` the same way (the one-time code is 32 random bytes).
+ * `POST /api/v1/orgs/:orgId/files/:id/finalize` opts in to `file-finalize` (60 per minute per
+ * account: each finalize reads a whole upload and copies it).
  * `POST …/guides/:guideId/checks/:checkId/run` opts in to `setup-check` (setup guides v2 §10.3: each run may call a third party).
  *
  * `device-stream-ip` is not a Nest route limit either: the gateway's raw viewer route
@@ -264,6 +266,18 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
     code: "rate_limited",
     message: "Too many share link requests; try again later",
     getTracker: ip,
+  },
+  // file upload finalizes per signed-in person (file library spec §3): 60 a minute, every request
+  // counts (@Throttled); each one reads a whole upload into memory and copies it
+  {
+    name: "file-finalize",
+    group: "file-finalize",
+    onSuccess: "clear",
+    limit: 60,
+    ttl: 60_000,
+    message: "Too many file uploads finished at once; try again in a minute",
+    code: "rate_limited",
+    getTracker: (req) => sha256(principalAccountId(req)),
   },
 ];
 

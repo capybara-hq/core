@@ -1,6 +1,7 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import type { z } from "zod";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
+import { Throttled } from "../infra/throttler/throttler.guard.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
@@ -23,8 +24,8 @@ class FileCreateBodyDto extends createZodDto(FileCreateBody, "FileCreateBody") {
  * 2. the browser sends the bytes to the store;
  * 3. `POST /:id/finalize` → `{ id, name, contentType, size, status }`;
  * 4. a message names the id in `files`.
- * `DELETE /:id/draft` (204) drops a composer upload before it is sent; `GET /limits` answers the
- * types, sizes, files per message, the media budget per request and whether storage is available
+ * Finalize is limited to 60 a minute per person (429 `rate_limited`). `DELETE /:id/draft` (204)
+ * drops a composer upload before it is sent; `GET /limits` answers the types, sizes, files per message, the media budget per request and whether storage is available
  * (no object store needed). Without an object store the upload routes answer 503
  * `storage.unavailable`.
  */
@@ -53,6 +54,7 @@ export class LibraryFilesController {
   @Post(":id/finalize")
   @HttpCode(200)
   @OrgAction("agents.use")
+  @Throttled("file-finalize")
   async finalize(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,

@@ -10,7 +10,7 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { StorageService } from "../storage/storage.service.js";
-import { blobObjectKey, oweBlobDelete } from "./blob-objects.js";
+import { blobObjectKey, deferred, oweBlobDelete } from "./blob-objects.js";
 
 export { blobObjectKey, stagingObjectKey } from "./blob-objects.js";
 
@@ -30,6 +30,12 @@ export interface BlobRow {
 
 /** What a read of a blob needs (the recorded facts it is checked against). */
 export type BlobRef = Pick<BlobRow, "id" | "objectKey" | "size" | "etag">;
+
+/**
+ * The longest a kernel put of blob bytes may take (ms): well under the hour after which the blob
+ * sweep treats a `pending` blob with no file as abandoned.
+ */
+const PUT_TIMEOUT_MS = 10 * 60_000;
 
 type BlobDbRow = {
   id: string;
@@ -114,7 +120,9 @@ export class BlobsService {
    * Bytes the kernel holds (a delivery): a `ready` blob of this hash in the org is returned as it
    * is (every ready blob was written or checked by the kernel); else the bytes are written to a new
    * blob ({@link writeIntent}, the put) and {@link settle}d in a transaction of their own. The
-   * caller that then references the blob still calls {@link lockReady} in its transaction.
+   * returned blob is not locked: a caller that then references it must call {@link lockReady} in
+   * the transaction that inserts the reference and, on null (claimed by a deletion meanwhile), call
+   * this again.
    */
   async ensureFromBytes(
     orgId: string,
@@ -134,8 +142,8 @@ export class BlobsService {
     return this.settleAlone(orgId, own.id, sha256);
   }
 
-  /** {@link settle} in a transaction of its own. */
-  @Transactional()
+  /** {@link settle} in a transaction of its own, never the caller's. */
+  @Transactional({ propagation: "requires_new" })
   private async settleAlone(orgId: string, blobId: string, sha256: string): Promise<BlobRow> {
     return this.settle(orgId, blobId, sha256);
   }
@@ -152,10 +160,11 @@ export class BlobsService {
     opts: { contentType: string; signal?: AbortSignal },
   ): Promise<BlobRow> {
     const intent = await this.writeIntent(orgId, bytes.byteLength);
+    const timeout = AbortSignal.timeout(PUT_TIMEOUT_MS);
     const head = await this.storage.kernel(orgId).put(intent.objectKey, bytes, {
       contentType: opts.contentType || "application/octet-stream",
       size: bytes.byteLength,
-      ...(opts.signal !== undefined && { signal: opts.signal }),
+      signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
     });
     return this.recordStored(orgId, intent.id, head.size, head.etag ?? null);
   }
@@ -228,7 +237,8 @@ export class BlobsService {
         .where("org_id", "=", orgId)
         .where("status", "=", "pending")
         .execute();
-      await oweBlobDelete(this.outbox, orgId, blobId);
+      // deferred: never due within the caller's request (no fast path runs while it waits)
+      await oweBlobDelete(this.outbox, orgId, blobId, deferred());
       return existing;
     }
     await trx

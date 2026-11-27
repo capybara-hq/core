@@ -121,7 +121,7 @@ Paths relative to `packages/kernel/src`.
 | `org_id` | `REFERENCES orgs(id) ON DELETE CASCADE` |
 | `sha256` | hex; null only for a migrated blob not yet hashed (§9); unique `(org_id, sha256)` where not null |
 | `size`, `etag` | as stored; reads check them like `attachmentContentMatches` does today |
-| `object_key` | relative to `kernel/<org>/`; new blobs `blobs/<sha256>` (kernel writes) or the upload's staging key (adopted, §3); migrated blobs keep their old key |
+| `object_key` | relative to `kernel/<org>/`; new blobs `blobs/<blobId>` (always kernel writes: deliveries and finalized uploads' verified copies, §3); migrated blobs keep their old key |
 | `status` | `pending` (intent written, bytes not confirmed) \| `ready` \| `deleting` |
 | `dedup_after` | the time from which another account's upload may resolve to this blob (§3) |
 | `created_at` | |
@@ -183,7 +183,7 @@ Every table carries `org_id` and ships its `org_scope` policy (`rls_admits(org_i
    `{ file, upload: null }`. Nothing new is learned: the caller already holds those bytes.
 3. **Otherwise** (including when another account in the org has the bytes): the kernel inserts a
    `files` row (`uploading`, `expires_at` +24 h) and presigns a POST to a staging key
-   `uploads/<fileId>` (never to `blobs/<sha256>`: a presigned form must not be able to overwrite a
+   `uploads/<fileId>` (never to a `blobs/` key: a presigned form must not be able to overwrite a
    blob other files use). The web uploads and calls `POST …/files/:id/finalize`.
 4. **Finalize** (uploader only) does today's checks (HEAD size and type, signature sniff, PDF pages) and
    **reads the object to compute sha256**; a mismatch with the declared hash deletes the staging
@@ -203,10 +203,13 @@ reading the file afterwards tells whether the file was deduplicated onto another
 (it still reads) or adopted its own object (it reads as gone), and a rewritten adopted object can
 poison a hash for later uploads. The implementation therefore never adopts a staging object:
 finalize, having read and hashed the bytes, always writes them to a fresh kernel-owned key
-`blobs/<blobId>` (intent row first), then in one transaction either points the file at an existing
-ready blob of that hash (owing the extra object's deletion) or marks its own blob ready with the
-hash (`ON CONFLICT (org_id, sha256)`, the loser points at the winner); the staging object's
-deletion is always owed. Every branch does the same work, no form can write a key a blob uses, and
+`blobs/<blobId>` (intent row first), then in one transaction, under a per-hash advisory lock
+(`BlobHashLock`), either points the file at an existing ready blob of that hash (the extra copy
+becomes `deleting`, its deletion owed and deferred) or marks its own blob ready with the hash (a
+blob of that hash that is no longer ready gives the hash up first; the `(org_id, sha256)` unique
+index is the backstop); the staging object's deletion is always owed. Jobs a request owes are never
+due within it (no outbox fast path runs while the caller waits), and dropping an upload (discard,
+draft expiry) always owes one deferred `file-release` job that decides what to free. Every branch does the same work, no form can write a key a blob uses, and
 `dedup_after` is set to the creation time (kept for migrated rows). The declared hash and the upload
 purpose are stored on the `files` row at create (`sha256`, `upload_purpose`).
 
@@ -227,7 +230,7 @@ after 24 h (`file-draft-cleanup`, the renamed `attachment-cleanup`, hourly `@Loc
 - **Delivering.** `storeArtifacts` already has the sha256 in memory:
   - a `ready` blob with that sha256 exists in the org (any `dedup_after`: the kernel wrote or verified
     those bytes itself) → no `put`;
-  - else → insert a `pending` blob (intent, own transaction), `put` `blobs/<sha256>`, mark it `ready`.
+  - else → insert a `pending` blob (intent, own transaction), `put` `blobs/<blobId>`, settle it as §3 does.
     A `pending` blob older than one hour with no file is deleted by the sweep (§7).
   Then, with the `artifact_created` events, insert one `files` row per delivered file (`delivered` or
   `generated`, `agent_id`, `source_conversation_id`, `source_path`, owner = the conversation's owner)

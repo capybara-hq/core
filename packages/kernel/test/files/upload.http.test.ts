@@ -14,7 +14,9 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import {
   blobDeleteJobId,
+  FILE_RELEASE_JOB,
   FILE_STAGING_DELETE_JOB,
+  fileReleaseJobId,
   fileStagingDeleteJobId,
 } from "../../src/files/blob-objects.js";
 import { BlobsService } from "../../src/files/blobs.service.js";
@@ -518,41 +520,85 @@ describe("upload and finalize", () => {
 });
 
 describe("discard and the draft cleanup", () => {
-  it("discarding a draft releases its blob; the owed deletion removes the object and the row", async () => {
-    const id = await ready(owner, "cat.png", "image/png", PNG);
-    const blobId = (await fileRow(id)).blob_id as string;
-    const res = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/files/${id}/draft` });
-    expect(res.statusCode, res.body).toBe(204);
-    expect(await fileRow(id)).toMatchObject({ status: "deleted", blob_id: null });
-    expect((await blobRow(blobId))?.status).toBe("deleting");
-    expect(await owed(blobDeleteJobId(blobId))).toHaveLength(1);
+  /** What one discard owed: the outbox rows written for the file, normalized across files. */
+  const owedFor = async (fileId: string) =>
+    (
+      await db
+        .selectFrom("outbox")
+        .select([
+          "queue",
+          "job_name",
+          "job_id",
+          "data",
+          sql<boolean>`run_at > now() + interval '30 seconds'`.as("deferred"),
+        ])
+        .where("job_id", "like", `%${fileId}%`)
+        .orderBy("job_name")
+        .execute()
+    ).map((r) => ({
+      ...r,
+      job_id: r.job_id.replace(fileId, "<file>"),
+      data: JSON.parse(JSON.stringify(r.data).replaceAll(fileId, "<file>")),
+    }));
+
+  it("a discard does the same work whether or not something else points at the blob", async () => {
+    const lone = await ready(owner, "lone.png", "image/png", PNG);
+    const loneBlob = (await fileRow(lone)).blob_id as string;
+    const shared = await ready(owner, "shared.txt", "text/plain", TEXT);
+    const sharedBlob = (await fileRow(shared)).blob_id as string;
+    const copy = await create(owner, "copy.txt", "text/plain", TEXT, "library");
+    expect(copy.upload).toBeNull();
+    await sql`DELETE FROM capybara.outbox`.execute(raw);
+    const r1 = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/files/${lone}/draft` });
+    const r2 = await owner({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/files/${shared}/draft`,
+    });
+    expect([r1.statusCode, r1.body]).toEqual([r2.statusCode, r2.body]);
+    expect(r1.statusCode).toBe(204);
+    // the same rows owed, none due within the request; both blobs untouched until the job runs
+    expect(await owedFor(lone)).toEqual(await owedFor(shared));
+    expect(await owedFor(lone)).toEqual([
+      {
+        queue: MAINTENANCE_QUEUE_NAME,
+        job_name: FILE_RELEASE_JOB,
+        job_id: "file-release-<file>",
+        data: { orgId, fileId: "<file>" },
+        deferred: true,
+      },
+    ]);
+    expect(await fileRow(lone)).toMatchObject({ status: "deleted", blob_id: loneBlob });
+    expect((await blobRow(loneBlob))?.status).toBe("ready");
+    expect((await blobRow(sharedBlob))?.status).toBe("ready");
     // a second discard finds nothing
-    const again = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/files/${id}/draft` });
+    const again = await owner({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/files/${lone}/draft`,
+    });
     expect(again.statusCode).toBe(404);
-    await deliverOwed(blobDeleteJobId(blobId));
-    await expect.poll(() => blobRow(blobId), { timeout: 20_000 }).toBeUndefined();
-    expect(await store().head(`blobs/${blobId}`)).toBeNull();
+
+    // the deferred release frees the lone blob and keeps the shared one
+    await deliverOwed(fileReleaseJobId(lone));
+    await deliverOwed(fileReleaseJobId(shared));
+    await expect.poll(async () => (await blobRow(loneBlob))?.status ?? "gone").not.toBe("ready");
+    expect(await fileRow(lone)).toMatchObject({ blob_id: null });
+    expect((await blobRow(sharedBlob))?.status).toBe("ready");
+    expect(await fileRow(shared)).toMatchObject({ blob_id: sharedBlob });
+    await deliverOwed(blobDeleteJobId(loneBlob));
+    await expect.poll(() => blobRow(loneBlob), { timeout: 20_000 }).toBeUndefined();
+    expect(await store().head(`blobs/${loneBlob}`)).toBeNull();
   });
 
-  it("a draft sharing its blob with another file leaves the blob; another account cannot discard", async () => {
-    const first = await ready(owner, "cat.png", "image/png", PNG);
-    const blobId = (await fileRow(first)).blob_id as string;
+  it("another account cannot discard a draft", async () => {
     const copy = await create(owner, "copy.png", "image/png", PNG);
     const theirs = await other({
       method: "DELETE",
       url: `/api/v1/orgs/${orgId}/files/${copy.file.id}/draft`,
     });
     expect(theirs.statusCode).toBe(404);
-    const res = await owner({
-      method: "DELETE",
-      url: `/api/v1/orgs/${orgId}/files/${first}/draft`,
-    });
-    expect(res.statusCode).toBe(204);
-    expect((await blobRow(blobId))?.status).toBe("ready");
-    expect(await owed(blobDeleteJobId(blobId))).toEqual([]);
   });
 
-  it("the cleanup deletes expired uploads and drafts and owes what they held", async () => {
+  it("the cleanup deletes expired uploads and drafts and owes their deferred release", async () => {
     const pending = await create(owner, "p.txt", "text/plain", TEXT);
     expect((await upload(pending, TEXT, "text/plain")).status).toBeLessThan(300);
     const draft = await ready(owner, "d.png", "image/png", PNG);
@@ -566,13 +612,15 @@ describe("discard and the draft cleanup", () => {
     expect((await fileRow(pending.file.id)).status).toBe("deleted");
     expect((await fileRow(draft)).status).toBe("deleted");
     expect((await fileRow(kept)).status).toBe("draft");
-    expect(await owed(fileStagingDeleteJobId(pending.file.id))).toHaveLength(1);
-    expect(await owed(blobDeleteJobId(draftBlob))).toHaveLength(1);
-    await deliverOwed(fileStagingDeleteJobId(pending.file.id));
-    await deliverOwed(blobDeleteJobId(draftBlob));
+    expect(await owed(fileReleaseJobId(pending.file.id))).toHaveLength(1);
+    expect(await owed(fileReleaseJobId(draft))).toHaveLength(1);
+    await deliverOwed(fileReleaseJobId(pending.file.id));
+    await deliverOwed(fileReleaseJobId(draft));
     await expect
       .poll(() => store().head(`uploads/${pending.file.id}`), { timeout: 20_000 })
       .toBeNull();
+    await expect.poll(async () => (await blobRow(draftBlob))?.status ?? "gone").not.toBe("ready");
+    await deliverOwed(blobDeleteJobId(draftBlob));
     await expect.poll(() => blobRow(draftBlob), { timeout: 20_000 }).toBeUndefined();
     const keptBlob = (await fileRow(kept)).blob_id as string;
     expect(await store().head(`blobs/${keptBlob}`)).not.toBeNull();

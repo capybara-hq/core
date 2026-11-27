@@ -19,8 +19,10 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { StorageService } from "../storage/storage.service.js";
 import {
   afterUploadForm,
+  deferred,
   FILE_UPLOAD_TTL_SECONDS,
   oweBlobDelete,
+  oweFileRelease,
   oweStagingDelete,
   stagingObjectKey,
 } from "./blob-objects.js";
@@ -164,6 +166,34 @@ interface ReadUpload {
 
 /** How long finalize waits for the staging object's bytes before giving up (ms). */
 const READ_TIMEOUT_MS = 60_000;
+/** Finalizes one replica reads and copies at once (each holds up to one upload in memory). */
+const FINALIZE_SLOTS = 4;
+
+/**
+ * A process-local counting semaphore. It bounds this replica's memory and bandwidth only: it is a
+ * resource limit, not shared state (no answer depends on it, and each replica has its own), so it
+ * does not break the rule that cross-request state lives in PG or Redis.
+ */
+class LocalSlots {
+  private free: number;
+  private readonly waiting: (() => void)[] = [];
+
+  constructor(size: number) {
+    this.free = size;
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.free > 0) this.free--;
+    else await new Promise<void>((resolve) => this.waiting.push(resolve));
+    try {
+      return await fn();
+    } finally {
+      const next = this.waiting.shift();
+      if (next) next();
+      else this.free++;
+    }
+  }
+}
 
 /**
  * The files of the file library (file library spec §2–§4 with the builder amendment of §3):
@@ -194,6 +224,9 @@ export class LibraryFilesService {
     private readonly blobs: Pick<BlobsService, "writeVerified" | "settle" | "lockReady">,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
+
+  /** This replica's bound on finalizes reading and copying at once ({@link LocalSlots}). */
+  private readonly finalizeSlots = new LocalSlots(FINALIZE_SLOTS);
 
   /** The upload limits under the current config (needs no object store). */
   limits(): FileLimits {
@@ -434,6 +467,21 @@ export class LibraryFilesService {
       await this.reject(orgId, accountId, row);
       throw new ApiError("file.type_not_allowed", "Uploaded file type does not match");
     }
+    return this.finalizeSlots.run(() => this.verifyAndCopy(orgId, accountId, row, key, size));
+  }
+
+  /**
+   * The bounded part of {@link finalize}: reads the staging object, checks its signature and hash,
+   * copies the verified bytes to a new blob and commits.
+   */
+  private async verifyAndCopy(
+    orgId: string,
+    accountId: string,
+    row: UploadRow,
+    key: string,
+    size: number,
+  ): Promise<FileView> {
+    const store = this.storage.kernel(orgId);
     const read = await this.readUpload(store, key, row.content_type, size);
     if (!read) {
       throw new ApiError(
@@ -497,7 +545,7 @@ export class LibraryFilesService {
       chunks.push(value);
     }
     if (total !== size) return null;
-    const bytes = new Uint8Array(Buffer.concat(chunks));
+    const bytes = Buffer.concat(chunks, total);
     return {
       bytes,
       sha256: hash.digest("hex"),
@@ -532,7 +580,13 @@ export class LibraryFilesService {
       .where("id", "=", row.id)
       .where("org_id", "=", orgId)
       .execute();
-    await oweStagingDelete(this.outbox, orgId, row.id, row.staging_key ?? stagingObjectKey(row.id));
+    await oweStagingDelete(
+      this.outbox,
+      orgId,
+      row.id,
+      row.staging_key ?? stagingObjectKey(row.id),
+      deferred(afterUploadForm(row.created_at)),
+    );
   }
 
   /**
@@ -569,7 +623,7 @@ export class LibraryFilesService {
         .where("org_id", "=", orgId)
         .where("status", "=", "pending")
         .execute();
-      await oweBlobDelete(this.outbox, orgId, blobId);
+      await oweBlobDelete(this.outbox, orgId, blobId, deferred());
       return locked && locked.status !== "uploading" && locked.status !== "deleted"
         ? viewOf(locked)
         : null;
@@ -594,15 +648,16 @@ export class LibraryFilesService {
       orgId,
       row.id,
       locked.staging_key ?? stagingObjectKey(row.id),
-      afterUploadForm(locked.created_at),
+      deferred(afterUploadForm(locked.created_at)),
     );
     return viewOf({ ...locked, status: draft ? "draft" : "ready" });
   }
 
   /**
    * A composer upload removed before it was sent (the uploader only; an `uploading` or `draft`
-   * file no conversation refers to, else `file.not_found`): `deleted`, and what it held released
-   * ({@link releaseUpload}).
+   * file no conversation refers to, else `file.not_found`): `deleted`, with the deferred release of
+   * what it held owed (`file-release`, run by `BlobObjects.releaseFile`): the request does the same
+   * work whatever else points at its blob.
    */
   @Transactional()
   async discard(orgId: string, accountId: string, fileId: string): Promise<void> {
@@ -631,13 +686,13 @@ export class LibraryFilesService {
       .where("id", "=", fileId)
       .where("org_id", "=", orgId)
       .execute();
-    await this.releaseUpload(orgId, row);
+    await oweFileRelease(this.outbox, orgId, fileId, deferred(afterUploadForm(row.created_at)));
   }
 
   /**
    * Expires one batch of the org's `uploading` / `draft` files past `expires_at` (`FOR UPDATE SKIP
-   * LOCKED`, so concurrent runs never share a row): each becomes `deleted` and what it held is
-   * released ({@link releaseUpload}). Returns how many it took.
+   * LOCKED`, so concurrent runs never share a row): each becomes `deleted` with the deferred release
+   * of what it held owed (`file-release`). Returns how many it took.
    */
   @Transactional()
   async expireBatch(orgId: string): Promise<number> {
@@ -664,76 +719,10 @@ export class LibraryFilesService {
         rows.map((r) => r.id),
       )
       .execute();
-    for (const r of rows) await this.releaseUpload(orgId, r);
-    return rows.length;
-  }
-
-  /**
-   * What an upload leaves behind when its file is dropped before use, in the caller's transaction
-   * (which holds the file row):
-   *
-   * - still uploading → the staging object's deletion is owed (once its form expired);
-   * - a draft whose `ready` blob no other file or share points at → the file lets go of it, the
-   *   blob becomes `deleting` and its deletion is owed;
-   * - a blob something else points at stays (the blob sweep looks at it later).
-   *
-   * The blob is locked `FOR UPDATE` before the "no other reference" check, so a concurrent new
-   * reference ({@link BlobsService.lockReady}) either commits first and is seen, or finds the blob
-   * `deleting`.
-   */
-  @Transactional({ propagation: "mandatory" })
-  private async releaseUpload(
-    orgId: string,
-    row: Pick<UploadRow, "id" | "status" | "blob_id" | "staging_key" | "created_at">,
-  ): Promise<void> {
-    const trx = this.db.db;
-    if (row.status === "uploading" || row.blob_id === null) {
-      await oweStagingDelete(
-        this.outbox,
-        orgId,
-        row.id,
-        row.staging_key ?? stagingObjectKey(row.id),
-        afterUploadForm(row.created_at),
-      );
-      return;
+    for (const r of rows) {
+      await oweFileRelease(this.outbox, orgId, r.id, deferred(afterUploadForm(r.created_at)));
     }
-    const blob = await trx
-      .selectFrom("blobs")
-      .select(["id", "status"])
-      .where("id", "=", row.blob_id)
-      .where("org_id", "=", orgId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (blob?.status !== "ready") return;
-    const otherFile = await trx
-      .selectFrom("files")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("blob_id", "=", blob.id)
-      .where("id", "<>", row.id)
-      .limit(1)
-      .executeTakeFirst();
-    const share = await trx
-      .selectFrom("file_shares")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("blob_id", "=", blob.id)
-      .limit(1)
-      .executeTakeFirst();
-    if (otherFile || share) return;
-    await trx
-      .updateTable("files")
-      .set({ blob_id: null })
-      .where("id", "=", row.id)
-      .where("org_id", "=", orgId)
-      .execute();
-    await trx
-      .updateTable("blobs")
-      .set({ status: "deleting" })
-      .where("id", "=", blob.id)
-      .where("org_id", "=", orgId)
-      .execute();
-    await oweBlobDelete(this.outbox, orgId, blob.id);
+    return rows.length;
   }
 
   /**
