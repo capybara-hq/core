@@ -42,11 +42,15 @@ test("agent map: open a child from its call block, its transcript, back to the t
   await expect(call(page, HANDBACK)).toBeVisible();
   await expect(call(page, SLOW)).toHaveAttribute("data-status", "running");
   await expect(call(page, SLOW)).toContainText(designZh("agentMap.call.runningIdle"));
-  // the report reaches the parent as a notice line
+  // the report reaches the parent as a notice line: its own, or merged with the finish when the
+  // child ends right after handing back (design spec §6.16.7, maintainer decision 2026-11-28)
+  const reported = new RegExp(
+    [zh.chat.delivery.report, zh.chat.delivery["report-finished"]]
+      .map((t) => t.replace("{name}", HANDBACK).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|"),
+  );
   await expect(
-    page
-      .locator('[data-entry="delivery"]')
-      .filter({ hasText: zh.chat.delivery.report.replace("{name}", HANDBACK) }),
+    page.locator('[data-entry="delivery"]').filter({ hasText: reported }).first(),
   ).toBeVisible();
 
   // 1. the call block's action opens the child's summary (level 2)
