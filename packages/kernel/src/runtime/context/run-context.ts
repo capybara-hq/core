@@ -50,19 +50,31 @@ export const scheduleHeader = (m: { taskName: string; localTime: string }): stri
 const EVENT_TITLE_MAX = 200;
 
 /**
+ * Another person's text as indented lines of an event automation block: split on every line
+ * break (CRLF, CR, LF, U+2028, U+2029), each other C0 / C1 control character a space, so the text
+ * can never leave its indentation.
+ */
+function indentedLines(text: string): string[] {
+  return text.split(/\r\n|[\r\n\u2028\u2029]/).map(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
+    (l) => `  ${l.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}`,
+  );
+}
+
+/**
  * The English block before an event automation's prompt (collaboration spec §4.6), from the
  * marker fixed in the log, so a later rename of the automation or the subject never changes a
  * rebuilt request:
  *
  * ```
  * [Automation "<name>": <n> event(s) from <source>]
- * - <type> on "<subject title>" (<url>)
+ * - <type> on "<subject title>" ("<url>")
  *   Reported by an extension; the text below was written by people other than the conversation owner:
- *   <summary, each line indented>
+ *   <summary, each line indented, control characters as spaces>
  * ```
  *
  * One entry per event, in the marker's order (coalesced events share one message). Names and
- * titles are one line and JSON-quoted; the summary keeps its lines.
+ * titles and links are one line and JSON-quoted; the summary keeps its lines.
  */
 export function automationEventBlock(m: {
   automationName: string;
@@ -80,11 +92,14 @@ export function automationEventBlock(m: {
     } from ${oneLine(m.source, 128, false)}]`,
   ];
   for (const e of m.events) {
-    const url = e.subject.url === undefined ? "" : ` (${oneLine(e.subject.url, 2048, false)})`;
+    const url =
+      e.subject.url === undefined
+        ? ""
+        : ` (${JSON.stringify(oneLine(e.subject.url, 2048, false))})`;
     lines.push(
       `- ${oneLine(e.type, 128, false)} on ${JSON.stringify(oneLine(e.subject.title, EVENT_TITLE_MAX, true))}${url}`,
       "  Reported by an extension; the text below was written by people other than the conversation owner:",
-      ...e.summary.split(/\r?\n/).map((l) => `  ${l}`),
+      ...indentedLines(e.summary),
     );
   }
   return lines.join("\n");

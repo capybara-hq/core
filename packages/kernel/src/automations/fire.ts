@@ -429,8 +429,9 @@ export class AutomationFirer {
     const internal = this.markerOf(plan);
     try {
       if (plan.mode === "new") {
-        // model and effort are a new-conversation task's only (spec §4): a conversation or chat
-        // task runs with that conversation's selection, never switching it for a person
+        // model and effort are a new-conversation or subject task's only (spec §4, collaboration
+        // §4.5): a conversation or chat task runs with that conversation's selection, never
+        // switching it for a person
         const pick = {
           ...(task.model !== null && { model: task.model }),
           ...(task.effort !== null && { effort: task.effort }),
@@ -449,7 +450,7 @@ export class AutomationFirer {
         return;
       }
       let conversationId: string;
-      // a subject conversation the start just created takes the task's model and effort with its
+      // a subject conversation with no message yet takes the task's model and effort with its
       // first message, as a new-conversation task's does; a later run switches nothing
       let pick: { model?: NonNullable<Automation["model"]>; effort?: string } = {};
       if (plan.mode === "chat" || plan.mode === "group") {
@@ -460,7 +461,7 @@ export class AutomationFirer {
         const bound = await this.bindSubject(plan);
         if (bound === null) return;
         conversationId = bound.conversationId;
-        if (bound.created) {
+        if (bound.fresh) {
           pick = {
             ...(task.model !== null && { model: task.model }),
             ...(task.effort !== null && { effort: task.effort }),
@@ -608,12 +609,14 @@ export class AutomationFirer {
    * `conversations.subject` set, whose mapping replaces the stale one (the mapping has no foreign
    * key: a deleted conversation leaves it behind). Null when the run is no longer pending or the
    * mapped conversation's queue is paused (the run is skipped, `queue_paused`). A retried start
-   * reuses the conversation the run already recorded.
+   * reuses the conversation the run already recorded. `fresh`: the conversation has no message
+   * yet, logged or queued by another run (just created, or created by a start that stopped
+   * before its message), so this run's message carries the task's model and effort.
    */
   @Transactional()
   private async bindSubject(
     plan: Extract<StartPlan, { mode: "subject" }>,
-  ): Promise<{ conversationId: string; created: boolean } | null> {
+  ): Promise<{ conversationId: string; fresh: boolean } | null> {
     const { task, run, subject } = plan;
     const t = this.db;
     // the one lock order: task row, then the task run
@@ -626,7 +629,8 @@ export class AutomationFirer {
       .executeTakeFirst();
     if (locked?.status !== "pending") return null;
     if (locked.conversation_id !== null) {
-      return { conversationId: locked.conversation_id, created: false };
+      const id = locked.conversation_id;
+      return { conversationId: id, fresh: await this.noMessageYet(id, run.id) };
     }
     const mapped = await this.subjectConversation(task, subject);
     if (mapped !== undefined) {
@@ -635,7 +639,7 @@ export class AutomationFirer {
         return null;
       }
       await this.store.updateRun(t, run.id, { conversationId: mapped.id });
-      return { conversationId: mapped.id, created: false };
+      return { conversationId: mapped.id, fresh: await this.noMessageYet(mapped.id, run.id) };
     }
     const trigger = task.trigger;
     if (trigger.kind !== "event")
@@ -677,7 +681,28 @@ export class AutomationFirer {
       )
       .execute();
     await this.store.updateRun(t, run.id, { conversationId: conv.id });
-    return { conversationId: conv.id, created: true };
+    return { conversationId: conv.id, fresh: true };
+  }
+
+  /**
+   * Conversation `conversationId` has no event yet (`last_seq` 0) and no queued message other
+   * than task run `runId`'s own (see {@link bindSubject}).
+   */
+  private async noMessageYet(conversationId: string, runId: string): Promise<boolean> {
+    const conv = await this.db
+      .selectFrom("conversations")
+      .select("last_seq")
+      .where("id", "=", conversationId)
+      .executeTakeFirst();
+    if (conv === undefined || Number(conv.last_seq) !== 0) return false;
+    const queued = await this.db
+      .selectFrom("conversation_queue")
+      .select("id")
+      .where("conversation_id", "=", conversationId)
+      .where("client_message_id", "!=", automationClientMessageId(runId))
+      .limit(1)
+      .executeTakeFirst();
+    return queued === undefined;
   }
 
   /**

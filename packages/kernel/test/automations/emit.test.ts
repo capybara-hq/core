@@ -240,6 +240,15 @@ describe("ctx.triggers.emit", () => {
     ["a missing subject title", { subject: { kind: "item", id: "1", title: "" } }],
     ["a summary over 4 KB", { summary: "x".repeat(4097) }],
     ["a cause with neither shape", { cause: {} as never }],
+    [
+      "a javascript: subject url",
+      { subject: { kind: "item", id: "1", title: "t", url: "javascript:alert(1)" } },
+    ],
+    ["a relative subject url", { subject: { kind: "item", id: "1", title: "t", url: "/items/1" } }],
+    [
+      "an ftp subject url",
+      { subject: { kind: "item", id: "1", title: "t", url: "ftp://e.example/1" } },
+    ],
   ])("emit refuses %s as invalid_event", async (_what, over) => {
     await expect(emit(over)).rejects.toMatchObject({ code: "invalid_event" });
   });
@@ -250,7 +259,12 @@ describe("ctx.triggers.emit", () => {
     ["subject.kind", 256, (s: string) => ({ subject: { ...subject, kind: s } })],
     ["subject.id", 256, (s: string) => ({ subject: { ...subject, id: s } })],
     ["subject.title", 1024, (s: string) => ({ subject: { ...subject, title: s } })],
-    ["subject.url", 2048, (s: string) => ({ subject: { ...subject, url: s } })],
+    // an https URL of exactly the length asked for
+    [
+      "subject.url",
+      2048,
+      (s: string) => ({ subject: { ...subject, url: `https://e.example/${s.slice(18)}` } }),
+    ],
     ["dedupeKey", 256, (s: string) => ({ dedupeKey: s })],
     ["a fact name", 256, (s: string) => ({ facts: { [s]: "x" } })],
   ] as [string, number, (s: string) => Partial<TriggerEvent>][])(

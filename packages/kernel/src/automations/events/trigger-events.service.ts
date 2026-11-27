@@ -64,6 +64,16 @@ const invalid = (message: string): TriggerError => new TriggerError("invalid_eve
  * strings (at most {@link TRIGGER_FACT_LIST_MAX_ITEMS}); `subject.url` is a string when given;
  * `audience` names an account and an agent; `cause` is one of its two shapes.
  */
+/** An absolute `http:` or `https:` URL. */
+function isWebUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function checkShape(e: TriggerEvent): void {
   const capped: [string, string, number][] = [
     ["subject.kind", e.subject.kind, TRIGGER_KEY_MAX_BYTES],
@@ -96,6 +106,9 @@ function checkShape(e: TriggerEvent): void {
     throw invalid("subject.url must be a string");
   if (e.subject.url !== undefined && bytes(e.subject.url) > TRIGGER_URL_MAX_BYTES)
     throw invalid(`subject.url is at most ${TRIGGER_URL_MAX_BYTES} bytes`);
+  // model-visible and shown as a link: only a web address
+  if (e.subject.url !== undefined && !isWebUrl(e.subject.url))
+    throw invalid("subject.url must be an http or https URL");
   if (e.audience !== undefined) {
     if (
       !isPlainObject(e.audience) ||

@@ -12,12 +12,12 @@ import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
 import { AutomationStore } from "../../src/automations/store.js";
 import type { Automation, TaskRun } from "../../src/automations/types.js";
 import { taskGrantsRunOf, unattendedRunOf } from "../../src/automations/unattended.js";
+import { ConversationsService } from "../../src/conversations/conversations.service.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
-import { automationEventBlock } from "../../src/runtime/context/run-context.js";
 import { openBarrier, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -229,43 +229,6 @@ const subject = (id: string, title = `Item ${id}`): TriggerSubject => ({
   id,
   title,
   url: `https://items.example/${id}`,
-});
-
-describe("automationEventBlock", () => {
-  it("renders the events in order before the prompt, one line per name and title", () => {
-    expect(
-      automationEventBlock({
-        automationName: "Triage\nnew items",
-        source: PLUGIN,
-        events: [
-          {
-            type: "item.created",
-            subject: { title: "Fix login", url: "https://items.example/1" },
-            summary: "Alice opened it.\nSteps: open the page",
-          },
-          { type: "item.updated", subject: { title: 'Say "hi"' }, summary: "Bob edited it." },
-        ],
-      }),
-    ).toBe(
-      [
-        `[Automation "Triage new items": 2 events from ${PLUGIN}]`,
-        `- item.created on "Fix login" (https://items.example/1)`,
-        "  Reported by an extension; the text below was written by people other than the conversation owner:",
-        "  Alice opened it.",
-        "  Steps: open the page",
-        `- item.updated on "Say \\"hi\\""`,
-        "  Reported by an extension; the text below was written by people other than the conversation owner:",
-        "  Bob edited it.",
-      ].join("\n"),
-    );
-    expect(
-      automationEventBlock({
-        automationName: "One",
-        source: PLUGIN,
-        events: [{ type: "item.created", subject: { title: "A" }, summary: "s" }],
-      }).split("\n")[0],
-    ).toBe(`[Automation "One": 1 event from ${PLUGIN}]`);
-  });
 });
 
 describe("subject mode", () => {
@@ -491,5 +454,91 @@ describe("subject mode", () => {
     ).toHaveLength(1);
     const live = (await conversationsOf(t.id)).filter((c) => c.deleted_at === null);
     expect(live.map((c) => c.id).sort()).toEqual([fresh, newest].sort());
+  });
+  it("a recorded or mapped conversation with no message yet still takes the task's model and effort", async () => {
+    scriptRules([]);
+    const t = await automation();
+    await db
+      .updateTable("automations")
+      .set({ model: JSON.stringify({ provider: "model-fake", model: "fake-1" }), effort: "high" })
+      .where("id", "=", t.id)
+      .execute();
+    const empty = () =>
+      k.app.get(ConversationsService).create(orgId, ownerId, agentId, {}, { source: "web" });
+
+    // mapped: a start that created and mapped the conversation stopped before its message
+    const mappedConv = await empty();
+    const ms = subject("F-1");
+    await db
+      .insertInto("automation_conversations")
+      .values({
+        org_id: orgId,
+        automation_id: t.id,
+        subject_kind: ms.kind,
+        subject_id: ms.id,
+        conversation_id: mappedConv.id,
+      })
+      .execute();
+    const a = await eventRun(t, ms, ["mapped"]);
+    // recorded: the run already names its conversation (a retried start)
+    const recordedConv = await empty();
+    const b = await eventRun(t, subject("F-2"), ["recorded"]);
+    await db
+      .updateTable("automation_runs")
+      .set({ conversation_id: recordedConv.id })
+      .where("id", "=", b.run.id)
+      .execute();
+
+    for (const [run, conv] of [
+      [a.run, mappedConv.id],
+      [b.run, recordedConv.id],
+    ] as const) {
+      await firer().fire(run.id);
+      await settled(run.id);
+      expect((await runOf(run.id)).conversationId).toBe(conv);
+      const events = await eventsOf(db, conv);
+      const switched = events.find((e) => e.type === "model_switched");
+      const message = events.find((e) => e.type === "user_message");
+      expect(switched?.payload).toMatchObject({
+        model: { provider: "model-fake", model: "fake-1" },
+        effort: "high",
+      });
+      expect((switched?.seq ?? 0) < (message?.seq ?? 0)).toBe(true);
+      const call = events.find((e) => e.type === "model_call");
+      expect(call?.type === "model_call" && call.payload.model).toBe("fake-1");
+    }
+
+    // a later run of the subject switches nothing
+    const later = await eventRun(t, ms, ["later"]);
+    await firer().fire(later.run.id);
+    await settled(later.run.id);
+    expect(
+      (await eventsOf(db, mappedConv.id)).filter((e) => e.type === "model_switched"),
+    ).toHaveLength(1);
+  });
+
+  it("two runs of one new subject fired at once make one conversation and one mapping", async () => {
+    scriptRules([]);
+    const t = await automation();
+    const s = subject("G-1");
+    const first = await eventRun(t, s, ["first"]);
+    const second = await eventRun(t, s, ["second"]);
+    await Promise.all([firer().fire(first.run.id), firer().fire(second.run.id)]);
+    await Promise.all([settled(first.run.id), settled(second.run.id)]);
+    const convs = await conversationsOf(t.id);
+    expect(convs).toHaveLength(1);
+    const mappings = await db
+      .selectFrom("automation_conversations")
+      .select("conversation_id")
+      .where("automation_id", "=", t.id)
+      .execute();
+    expect(mappings).toEqual([{ conversation_id: convs[0]?.id }]);
+    expect((await runOf(first.run.id)).status).toBe("completed");
+    expect((await runOf(second.run.id)).status).toBe("completed");
+    expect(
+      (await userMessages(convs[0]?.id as string))
+        .map((m) => m.payload.automationEvent?.automationRunId)
+        .sort(),
+    ).toEqual([first.run.id, second.run.id].sort());
   });
 });

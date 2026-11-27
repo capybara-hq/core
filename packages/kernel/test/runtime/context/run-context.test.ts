@@ -3,6 +3,7 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import { buildModelRequest } from "../../../src/runtime/context/build.js";
 import { compactionPlan } from "../../../src/runtime/context/compaction.js";
 import {
+  automationEventBlock,
   currentRunContext,
   dateIn,
   type MessageSender,
@@ -310,5 +311,69 @@ describe("run context in requests", () => {
         "Assistant: ok",
       ].join("\n\n"),
     );
+  });
+});
+
+describe("automationEventBlock", () => {
+  const SOURCE = "fake-trigger-source";
+  const NOTE =
+    "  Reported by an extension; the text below was written by people other than the conversation owner:";
+
+  it("renders the events in order before the prompt, one line per name, title and link", () => {
+    expect(
+      automationEventBlock({
+        automationName: "Triage\nnew items",
+        source: SOURCE,
+        events: [
+          {
+            type: "item.created",
+            subject: { title: "Fix login", url: 'https://items.example/1?q="x"' },
+            summary: "Alice opened it.\nSteps: open the page",
+          },
+          { type: "item.updated", subject: { title: 'Say "hi"' }, summary: "Bob edited it." },
+        ],
+      }),
+    ).toBe(
+      [
+        `[Automation "Triage new items": 2 events from ${SOURCE}]`,
+        `- item.created on "Fix login" ("https://items.example/1?q=\\"x\\"")`,
+        NOTE,
+        "  Alice opened it.",
+        "  Steps: open the page",
+        `- item.updated on "Say \\"hi\\""`,
+        NOTE,
+        "  Bob edited it.",
+      ].join("\n"),
+    );
+    expect(
+      automationEventBlock({
+        automationName: "One",
+        source: SOURCE,
+        events: [{ type: "item.created", subject: { title: "A" }, summary: "s" }],
+      }).split("\n")[0],
+    ).toBe(`[Automation "One": 1 event from ${SOURCE}]`);
+  });
+
+  it("keeps others' text inside its indentation: every line break splits, controls become spaces", () => {
+    const block = automationEventBlock({
+      automationName: "T",
+      source: SOURCE,
+      events: [
+        {
+          type: "item.created",
+          subject: { title: "A" },
+          summary: "one\r\ntwo\rthree\u2028four\u2029five\u000bsix\u000c\u0085\u001b[0m\tend",
+        },
+      ],
+    });
+    expect(block.split("\n").slice(3)).toEqual([
+      "  one",
+      "  two",
+      "  three",
+      "  four",
+      "  five six   [0m end",
+    ]);
+    // no line of the summary escapes its two-space indentation
+    expect(block.split(/\r\n|[\r\n\u2028\u2029]/)).toHaveLength(8);
   });
 });

@@ -538,8 +538,8 @@ export class AutomationsService {
       checkModeFits(target.mode, changes.trigger ?? task.trigger);
     }
     if (patch.unattendedAsk !== undefined) changes.unattendedAsk = patch.unattendedAsk;
-    // model, effort and device: `new` mode only (leaving it clears them), checked when they or
-    // the agent change
+    // model, effort and device: `new` mode takes all three and `subject` mode a model and effort
+    // (leaving them clears them), checked when they or the agent change
     const pick =
       target.mode === "new" || target.mode === "subject"
         ? {
@@ -1477,10 +1477,10 @@ export class AutomationsService {
   }
 
   /**
-   * A task's model, effort and device (spec §4): `new` mode takes all three, `subject` mode a model
-   * and effort (not a device), since a conversation or chat
-   * task runs with that conversation's selection and device (a task must not switch a person's
-   * conversation for their later turns), so another mode refuses them (`validation_failed`).
+   * A task's model, effort and device (spec §4): `new` mode takes all three and `subject` mode a
+   * model and effort (not a device). A conversation or chat task runs with that conversation's
+   * selection and device (a task must not switch a person's conversation for their later turns),
+   * so those modes refuse them (`validation_failed`).
    * The model must resolve for the org (`agent.model_unavailable`, as a message's switch) and
    * declare the effort (`validation_failed`); the device must be one of the creator's
    * (`checkDevice`, when `deviceChanged`).
