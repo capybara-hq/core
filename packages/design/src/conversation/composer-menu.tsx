@@ -609,11 +609,17 @@ function ComposerMenuSheet({
 export function ComposerMenu({
   controller,
   referenceSheet,
+  referenceAnchored,
   ...p
 }: ComposerMenuProps & {
   controller: ComposerMenuController;
   /** The reference set and the catalog only: the compact sheet drawn in place over `page`. */
   referenceSheet?: { page?: ReactNode };
+  /**
+   * The reference set and the catalog only: the anchored form whatever the size class, so a wide
+   * state's block opened in a phone window draws in its cell instead of a portaled sheet.
+   */
+  referenceAnchored?: boolean;
 }): JSX.Element {
   const t = useDesignT();
   const compact = useSizeClass() === "compact";
@@ -625,7 +631,8 @@ export function ComposerMenu({
       </BottomSheetFrame>
     );
   }
-  if (compact) return <ComposerMenuSheet p={p} controller={controller} title={title} />;
+  if (compact && !referenceAnchored)
+    return <ComposerMenuSheet p={p} controller={controller} title={title} />;
   return <AnchoredMenu p={p} controller={controller} title={title} />;
 }
 

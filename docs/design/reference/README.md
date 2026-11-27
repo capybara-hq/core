@@ -35,6 +35,10 @@ branch), which gives the same output as the workflow. Later changes use the work
 Pseudo-states (hover, focus) are drawn with `data-state`, never with real hover, so the images are
 deterministic.
 
+The set renders in a 1440 window, where the mobile sizes (design spec §2.5, `MOBILE_SIZE_QUERY`)
+never match. A compact block that the product draws under them carries `data-mobile-sizes`, which
+puts the `touch.size` overrides of `tokens.json` on the block (`reference.css`).
+
 ## UI refresh B (conversation page)
 
 The B pages (`template-conversation`, `title-bar`, `composer`, … `file-preview`; the list is in

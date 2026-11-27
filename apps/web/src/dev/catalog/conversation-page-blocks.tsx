@@ -687,7 +687,8 @@ function ComposerMenuComposer({
       send={{ mode: "send", disabled: value === "", onClick: noop }}
       {...(menu.kind === "plus" ? { attachOpen: true } : {})}
       menu={{
-        node: <ComposerMenu {...props} controller={controller} />,
+        // a wide state: in a phone window too it stays in its cell (the compact block is the sheet)
+        node: <ComposerMenu {...props} controller={controller} referenceAnchored />,
         combobox: controller.combobox,
         onKeyDown: controller.onKeyDown,
       }}

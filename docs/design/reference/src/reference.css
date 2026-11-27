@@ -60,6 +60,46 @@ body {
 [data-ref-block][data-pad] {
   padding: var(--cb-space-4);
 }
+/* A compact block under the mobile sizes (spec §2.5, tokens.json touch.size): the set renders in a
+   1440 window, where MOBILE_SIZE_QUERY never matches, so the block takes the overrides itself.
+   The fonts stay (their override is the touch pointer's, not the width's). */
+[data-ref-block][data-mobile-sizes] {
+  --cb-type-body-size: 17px;
+  --cb-type-body-line: 24px;
+  --cb-type-small-size: 15px;
+  --cb-type-small-line: 20px;
+  --cb-type-micro-size: 13px;
+  --cb-type-micro-line: 18px;
+  --cb-type-h2-size: 22px;
+  --cb-type-h2-line: 28px;
+  --cb-type-h1-size: 28px;
+  --cb-type-h1-line: 34px;
+  --cb-type-prose-size: 17px;
+  --cb-type-prose-line: 26px;
+  --cb-type-prose-small-size: 15px;
+  --cb-type-prose-small-line: 22px;
+  --cb-type-metric-size: 22px;
+  --cb-type-metric-line: 28px;
+  --cb-control-dense: 44px;
+  --cb-control-default: 44px;
+  --cb-control-prominent: 52px;
+  --cb-row-dense: 44px;
+  --cb-row-default: 44px;
+  --cb-row-roomy: 56px;
+  --cb-radius-sm: 12px;
+  --cb-radius-md: 20px;
+  --cb-radius-bubble: 20px;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+/* Text fields pad their text space.3 from the border there (spec §2.5 "Mobile sizes"). */
+[data-mobile-sizes] .r-search {
+  gap: var(--cb-space-3);
+  padding: 0 var(--cb-space-3);
+}
+[data-mobile-sizes] .r-search input {
+  padding: 0;
+}
 .r-row {
   display: flex;
   flex-wrap: wrap;
@@ -5862,7 +5902,8 @@ textarea {
   height: 14px;
   margin-top: 3px;
   border: 1px solid var(--cb-line-strong);
-  border-radius: var(--cb-radius-sm);
+  /* the base radius.sm under the mobile sizes too: 12 would round the box into a radio */
+  border-radius: 4px;
   color: var(--cb-on-accent);
   font-size: var(--cb-type-small-size);
   line-height: 1;
@@ -8162,6 +8203,8 @@ span.r-scal-daynum {
   display: inline-flex;
   flex: none;
   width: 14px;
+  /* space.1 more after the box, so a wide type badge (JSON) never touches it */
+  margin-right: var(--cb-space-1);
 }
 .r-pfp-check .r-tp-box {
   margin-top: 0;

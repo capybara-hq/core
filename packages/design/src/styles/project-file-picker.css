@@ -126,6 +126,8 @@ button.cb-pfp-segment:hover {
   display: inline-flex;
   flex: none;
   width: 14px;
+  /* space.1 more after the box, so a wide type badge (JSON) never touches it */
+  margin-right: var(--cb-space-1);
 }
 .cb-pfp-check .cb-box {
   margin-top: 0;

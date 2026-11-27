@@ -631,6 +631,30 @@ describe("ComposerMenu (compact)", () => {
     fireEvent.click(screen.getAllByRole("option")[1] as HTMLElement);
     expect(picks["fix-issue"]).toHaveBeenCalledTimes(1);
   });
+
+  it("referenceAnchored keeps the anchored form in a phone window (no portaled sheet)", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    function Anchored() {
+      const props: ComposerMenuProps = {
+        kind: "slash",
+        groups: slashGroups(),
+        query: "",
+        empty: "没有匹配",
+        onClose: () => {},
+      };
+      const menu = useComposerMenu(props);
+      return (
+        <div data-testid="cell">
+          <ComposerMenu {...props} controller={menu} referenceAnchored />
+        </div>
+      );
+    }
+    wrap(<Anchored />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const menu = screen.getByTestId("cell").querySelector('[data-part="composer-menu"]');
+    expect(menu?.getAttribute("data-form")).toBeNull();
+    expect(menu?.querySelector('[data-part="composer-menu-foot"]')).not.toBeNull();
+  });
 });
 
 describe("ComposerMenu keyboard edges", () => {
