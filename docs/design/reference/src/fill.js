@@ -188,7 +188,7 @@
     if (o.mode === "rail") {
       return `<div class="r-sb-context"><div class="r-sb-org" data-static="true" data-rail="true"><span class="r-sb-org-initial" data-tone="accent">${icon("admin", 14)}</span></div><a class="r-sb-back r-rail-item" href="#" aria-label="${esc(C.back)} ~/${esc(slug)}">${icon("arrow-left", 14)}</a></div>`;
     }
-    return `<div class="r-sb-context"><div class="r-sb-org" data-static="true"><span class="r-sb-org-initial" data-tone="accent">${icon("admin", 14)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(F.ADMIN_LABEL)}</span><span class="r-sb-org-meta">${esc(C.adminScope)}</span></span></div><a class="r-sb-back" href="#">${icon("arrow-left", 14)}<span class="r-ellipsis">${esc(C.back)} ~/${esc(slug)}</span></a></div>`;
+    return `<div class="r-sb-context"><div class="r-sb-org" data-static="true"><span class="r-sb-org-initial" data-tone="accent">${icon("admin", 14)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(F.ADMIN_LABEL)}</span></span><a class="r-sb-back" href="#" aria-label="${esc(C.back)} ~/${esc(slug)}" title="${esc(C.back)} ~/${esc(slug)}">${icon("arrow-left", 12)}<span class="r-ellipsis">${esc(C.back)}</span></a></div></div>`;
   }
 
   // The setup context (web-SSR spec §4): the setup home, the steps with their state marks, the
@@ -314,17 +314,14 @@
     return `<aside class="r-sidebar" data-mode="${o.mode || "full"}">${top}${context}${navBlock}${middle}${adminEntry}${foot}</aside>`;
   }
 
-  // ── Page header, stat cards, status bar, action row ──────────────────────
+  // ── Page header, stat cards, action row ──────────────────────
 
   function pageHeader(o) {
     const L = F.LIST_PAGE_FIXTURE;
     const title = o.title || L.title;
     // Loading (spec §4.2): a title-size bar, two action blocks and two tab bars; nothing known yet.
     if (o.loading) {
-      const loadSegs = F.FORM_PAGE_FIXTURE.path.slice(0, 1);
-      const loadCrumb = `<nav class="r-ph-crumb" aria-label="路径">${loadSegs
-        .map((c) => `<span class="r-ink">${esc(c.label)}</span>`)
-        .join("")}</nav>`;
+      const loadCrumb = "";
       // `o.loading` is true (two actions, two tabs) or { actions, tabs } counts.
       const nActions = typeof o.loading === "object" ? (o.loading.actions ?? 0) : 2;
       const nTabs = typeof o.loading === "object" ? (o.loading.tabs ?? 0) : 2;
@@ -347,7 +344,8 @@
       return `<header class="r-ph"${o.narrow ? " data-narrow" : ""} aria-busy="true">${o.narrow ? "" : loadCrumb}<div class="r-ph-row"><div class="r-ph-text"><div class="r-skel-text" data-part="skeleton-text" data-size="title" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div>${loadActions}</div>${loadTabs}</header>`;
     }
     const segs = o.path ? F.FORM_PAGE_FIXTURE.path : F.FORM_PAGE_FIXTURE.path.slice(0, 1);
-    const crumb = `<nav class="r-ph-crumb" aria-label="路径">${segs
+    // A first-level page draws no path row (spec §3); deeper pages keep it.
+    const crumb = segs.length <= 2 ? "" : `<nav class="r-ph-crumb" aria-label="路径">${segs
       .map((c, i) =>
         c.href && i < segs.length - 1
           ? `<a href="#">${esc(c.label)}</a>`
@@ -374,7 +372,7 @@
     // A title-less head (spec §4.2): the page draws its own name band as the first block; the path
     // and the actions share one row and the name stays an h1 for assistive tech.
     if (o.titleHidden) {
-      return `<header class="r-ph"><div class="r-ph-titleless"><h1 class="r-sr">${esc(title)}</h1>${crumb}${actions}</div></header>`;
+      return `<header class="r-ph"><div class="r-ph-titleless"><h1 class="r-sr">${esc(title)}</h1>${crumb || '<span class="r-grow"></span>'}${actions}</div></header>`;
     }
     // Compact (spec §4.2 "Compact head"): no path row; the large title with its count (the first
     // tab's) beside it in muted mono; the secondary actions are the head's ⋯ (outside a shell).
@@ -390,14 +388,6 @@
           `<div class="r-stat"${o.linkState && i === 0 ? ` data-state="${o.linkState}"` : ""}><div class="r-stat-label">${esc(m.label)}</div><div class="r-stat-value"${m.tone ? ` data-tone="${m.tone}"` : ""}>${esc(m.value)}</div></div>`,
       )
       .join("")}</div>`;
-  }
-
-  function statusBar(o) {
-    const S = F.STATUS_FIXTURE;
-    const context = o.context || S.context;
-    const page = o.noPageStatus ? "" : o.pageStatus || S.pageStatus;
-    const pageSpan = page ? `<span class="r-ellipsis">${esc(page)}</span>` : "";
-    return `<footer class="r-status" role="status"><div class="r-status-left"><span class="r-ellipsis r-status-context">${esc(context)}</span>${pageSpan}</div><div class="r-status-right"><span>${esc(S.system)}</span><span>${esc(S.version)}</span><span>${esc(S.timeZone)}</span></div></footer>`;
   }
 
   function actionRow(o) {
@@ -543,7 +533,7 @@
   // ── Templates ────────────────────────────────────────────────────────────
 
   function listPage() {
-    return `<div class="r-app">${sidebar({ active: "connectors", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${pageHeader({ description: true, actions: true })}${stats({})}${toolbar()}${table({})}${pagination()}</div></div>${statusBar({})}</main></div>`;
+    return `<div class="r-app">${sidebar({ active: "connectors", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${pageHeader({ description: true, actions: true })}${stats({})}${toolbar()}${table({})}${pagination()}</div></div></main></div>`;
   }
 
   function formPage(o = {}) {
@@ -551,7 +541,7 @@
     const head = o.loading
       ? pageHeader({ loading: { actions: 0, tabs: 0 } })
       : pageHeader({ path: true, title: P.title });
-    return `<div class="r-app">${sidebar({ active: "agents", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${head}${formSections(o)}</div></div>${actionRow(o)}${statusBar({ context: P.status.context, pageStatus: P.status.pageStatus })}</main></div>`;
+    return `<div class="r-app">${sidebar({ active: "agents", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${head}${formSections(o)}</div></div>${actionRow(o)}</main></div>`;
   }
 
   // ── List and trace loading states (spec §5.1, §5.11) ──────────────────────
@@ -643,7 +633,6 @@
     rail,
     "page-header": pageHeader,
     stats,
-    "status-bar": statusBar,
     "action-row": actionRow,
     table,
     toolbar,
@@ -659,7 +648,7 @@
 
   // The conversation-page renderers (conversation.js, UI refresh B) when the page loads them.
   if (window.__CB_EXTRA__) {
-    Object.assign(RENDER, window.__CB_EXTRA__({ F, esc, icon, state, stamp, sidebar, statusBar, table }));
+    Object.assign(RENDER, window.__CB_EXTRA__({ F, esc, icon, state, stamp, sidebar, table }));
   }
 
   for (const t of document.querySelectorAll("template[data-fixture]")) {

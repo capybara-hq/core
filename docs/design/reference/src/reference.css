@@ -487,8 +487,6 @@ textarea {
   flex-direction: column;
   gap: var(--cb-space-2);
   padding: var(--cb-space-3) var(--cb-space-2) var(--cb-space-2);
-  background: var(--cb-sidebar);
-  border-right: 1px solid var(--cb-line-soft);
   color: var(--cb-ink);
 }
 .r-sb-top {
@@ -517,9 +515,9 @@ textarea {
   width: 100%;
   height: 40px;
   padding: 0 var(--cb-pad-dense-x);
-  border: 1px solid var(--cb-line);
+  border: 0;
   border-radius: var(--cb-radius-md);
-  background: var(--cb-bg);
+  background: transparent;
   color: var(--cb-ink);
   text-align: left;
 }
@@ -554,14 +552,20 @@ textarea {
   font-weight: 600;
 }
 .r-sb-org-meta {
-  color: var(--cb-muted);
-  font-size: var(--cb-type-micro-size);
+  display: none;
 }
 .r-sb-context {
   flex: none;
   display: flex;
   flex-direction: column;
   gap: var(--cb-space-1);
+}
+.r-sb-org > .r-sb-back {
+  flex: none;
+  height: var(--cb-control-dense);
+  margin-right: calc(-1 * var(--cb-space-1));
+  gap: var(--cb-space-1);
+  border-radius: var(--cb-radius-sm);
 }
 .r-sb-back {
   display: flex;
@@ -927,7 +931,6 @@ textarea {
   align-items: center;
   gap: var(--cb-space-2);
   padding: var(--cb-space-2) var(--cb-space-1) 0;
-  border-top: 1px solid var(--cb-line-soft);
   color: var(--cb-ink);
 }
 .r-sb-foot > .r-ellipsis {
@@ -1167,35 +1170,8 @@ textarea {
   color: var(--cb-fail);
 }
 
-/* ── Status bar and action row ───────────────────────────────────────────── */
+/* ── Action row ───────────────────────────────────────────── */
 
-.r-status {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--cb-space-3);
-  height: var(--cb-layout-status-bar);
-  padding: 0 var(--cb-layout-gutter);
-  border-top: 1px solid var(--cb-line-soft);
-  color: var(--cb-muted);
-  font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
-  white-space: nowrap;
-}
-.r-status-left {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  gap: var(--cb-space-3);
-}
-.r-status-context {
-  flex: 0 1 auto;
-}
-.r-status-right {
-  flex: none;
-  display: flex;
-  gap: var(--cb-space-3);
-}
 .r-actionrow {
   flex: none;
   display: flex;
@@ -1394,23 +1370,33 @@ textarea {
   border-top: 1px solid var(--cb-line-soft);
 }
 
-/* ── Templates: sidebar + content (header / body / action row / status bar) ─ */
+/* ── Templates: sidebar + content (header / body / action row) ─ */
 
 .r-app {
   display: flex;
   height: 100%;
+  background: var(--cb-sidebar);
+}
+/* The layered shell (spec 2026-11-28): the sidebar and the gutters are the ground, the main
+   column is the paper, inset space.2 from the top, end and bottom, no border or shadow. */
+[data-ref-block]:has(> .r-sidebar) {
+  background: var(--cb-sidebar);
 }
 .r-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  margin: var(--cb-space-2) var(--cb-space-2) var(--cb-space-2) 0;
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-bg);
+  overflow: clip;
 }
 .r-main-scroll {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  padding: var(--cb-space-6) var(--cb-layout-gutter);
+  padding: var(--cb-space-6);
 }
 .r-content {
   display: flex;
@@ -2931,6 +2917,29 @@ textarea {
   height: var(--cb-control-default);
   color: var(--cb-muted);
 }
+/* The context meter (§6.16.2): a ring control.dense square right before send, muted; fail past the threshold. */
+.r-context-meter {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: var(--cb-control-dense);
+  height: var(--cb-control-dense);
+  color: var(--cb-muted);
+}
+.r-context-meter[data-tone="fail"] {
+  color: var(--cb-fail);
+}
+.r-context-meter circle {
+  fill: none;
+  stroke-width: 2;
+}
+.r-context-meter .r-ring-track {
+  stroke: var(--cb-line);
+}
+.r-context-meter .r-ring-arc {
+  stroke: currentColor;
+  stroke-linecap: round;
+}
 .r-send {
   background: var(--cb-accent);
   color: var(--cb-on-accent);
@@ -3696,14 +3705,20 @@ textarea {
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
 }
-.r-panel-status {
-  padding: 0 var(--cb-space-4);
-}
 
 /* ── Conversation template ── */
 
 .r-conv-app {
   position: relative;
+}
+/* Two papers space.2 apart: the main column and the inline panel (the main's end margin is the gap). */
+.r-conv-app > .r-rpanel:not(.r-sheet) {
+  height: auto;
+  margin: var(--cb-space-2) var(--cb-space-2) var(--cb-space-2) 0;
+  border-left: 0;
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-bg);
+  overflow: clip;
 }
 .r-conv-main {
   min-width: var(--cb-layout-chat-min);
