@@ -1,0 +1,182 @@
+/*
+ * Board (spec §6.69): columns as lanes on the hover ground (no border: the cards are the boxes),
+ * each card the one box; the held card lifted, its place a dashed placeholder; the compact form's
+ * columns snapped side by side with the next one peeking in.
+ */
+
+.cb-board-root {
+  min-width: 0;
+}
+.cb-board {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cb-layout-board-gap);
+  min-width: 0;
+  overflow-x: auto;
+}
+.cb-board[data-dragging="pointer"] {
+  cursor: grabbing;
+}
+.cb-board-column {
+  flex: none;
+  box-sizing: border-box;
+  width: var(--cb-layout-board-column);
+  padding: 0 var(--cb-layout-board-gap) var(--cb-layout-board-gap);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-hover);
+  transition: background-color var(--cb-motion-hover);
+}
+.cb-board-column[data-over="true"] {
+  background: var(--cb-selected);
+}
+.cb-board-column[data-over="refused"] {
+  cursor: not-allowed;
+}
+.cb-board-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-default);
+  min-width: 0;
+}
+.cb-board-title {
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-board-count {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-code);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-board-lock {
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--cb-muted);
+}
+.cb-board-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-board-item {
+  min-width: 0;
+}
+
+/* ── The card: the one box ── */
+.cb-board-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  box-sizing: border-box;
+  padding: var(--cb-space-3);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  color: var(--cb-ink);
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  transition: background-color var(--cb-motion-hover);
+}
+.cb-board-card[data-drag-handle="true"] {
+  cursor: grab;
+}
+.cb-board-card:hover {
+  background: linear-gradient(var(--cb-hover), var(--cb-hover)), var(--cb-panel);
+}
+.cb-board-card:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-board-card[data-held="true"],
+.cb-board-card[data-held="true"]:hover {
+  border-color: var(--cb-line-strong);
+  background: var(--cb-raised);
+  box-shadow: var(--cb-shadow-float);
+}
+.cb-board-card[data-overlay="true"] {
+  cursor: grabbing;
+}
+.cb-board-card[data-placeholder="true"],
+.cb-board-card[data-placeholder="true"]:hover {
+  border: 1px dashed var(--cb-line);
+  background: none;
+}
+.cb-board-card[data-placeholder="true"] > * {
+  visibility: hidden;
+}
+.cb-board-card-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-board-card-hint .cb-icon {
+  margin-top: 1px;
+}
+.cb-board-empty {
+  display: block;
+  box-sizing: border-box;
+  height: 64px;
+  border: 1px dashed var(--cb-line);
+  border-radius: var(--cb-radius-md);
+}
+
+/* ── Compact: snapped columns, the Move to… button on each card ── */
+.cb-board[data-form="compact"] {
+  scroll-snap-type: x mandatory;
+}
+.cb-board[data-form="compact"] .cb-board-column {
+  width: calc(100% - var(--cb-space-8));
+  scroll-snap-align: start;
+}
+.cb-board-card[data-form="compact"] {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+  padding-right: var(--cb-space-1);
+  cursor: default;
+}
+.cb-board-card[data-form="compact"]:hover {
+  background: var(--cb-panel);
+}
+.cb-board-card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  border-radius: var(--cb-radius-sm);
+}
+.cb-board-card-body[role="button"] {
+  cursor: pointer;
+}
+.cb-board-card-body:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-board-card[data-form="compact"] > .cb-icon-btn {
+  flex: none;
+  margin-top: calc(var(--cb-space-3) * -1 + var(--cb-space-1));
+}
+
+@media (forced-colors: active) {
+  .cb-board-card,
+  .cb-board-card[data-placeholder="true"],
+  .cb-board-empty {
+    border-color: CanvasText;
+  }
+  .cb-board-column[data-over="true"] {
+    outline: 2px solid Highlight;
+  }
+}

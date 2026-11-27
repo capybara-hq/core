@@ -214,6 +214,8 @@ export const REFERENCE_COMPONENTS = [
   "trend-chart",
   // the scheduled tasks calendar: week, month and the phone agenda (scheduled tasks calendar design §6)
   "schedule-calendar",
+  // the kanban board: columns, a held card, a locked column, the phone form (spec §6.69)
+  "board",
   // tools with their policy next to them (the agent page's 工具 section, 2026-11-08)
   "tool-policy-list",
   // skills to choose, grouped with a select-all per group (maintainer acceptance 2026-11-12)

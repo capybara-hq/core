@@ -69,6 +69,7 @@ import {
   THEME_AVATAR_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import { createContext, type ReactNode, useContext } from "react";
+import { BOARD_BLOCKS } from "./board-blocks";
 import { BOX_BLOCKS } from "./box-blocks";
 import { BRAND_REFERENCE_BLOCKS } from "./brand-blocks";
 import { CARD_GRID_BLOCKS } from "./card-grid-blocks";
@@ -1422,6 +1423,7 @@ export const REFERENCE_BLOCKS = {
   ...OVERVIEW_SECTION_BLOCKS,
   ...TREND_CHART_BLOCKS,
   ...SCHEDULE_CALENDAR_BLOCKS,
+  ...BOARD_BLOCKS,
   ...THEME_SWATCH_BLOCKS,
   ...DEVICE_BLOCKS,
   ...TOUCH_BLOCKS,

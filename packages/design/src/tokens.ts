@@ -128,6 +128,8 @@ export const SIZES = {
     "bottom-nav": 56,
     "top-bar": 44,
     drawer: 320,
+    "board-column": 280,
+    "board-gap": 12,
   },
   touch: {
     hit: 44,

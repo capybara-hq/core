@@ -92,6 +92,8 @@
   --cb-layout-bottom-nav: 56px;
   --cb-layout-top-bar: 44px;
   --cb-layout-drawer: 320px;
+  --cb-layout-board-column: 280px;
+  --cb-layout-board-gap: 12px;
   --cb-touch-hit: 44px;
   --cb-touch-float: 48px;
   --cb-touch-primary: 48px;
