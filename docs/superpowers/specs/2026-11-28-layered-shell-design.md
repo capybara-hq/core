@@ -183,8 +183,10 @@ the safe area on compact. §4.4 keeps the ActionRow and loses the StatusBar.
 - **Mobile and shells.** Layout still follows the size classes in the shell and templates; compact is
   unchanged; desktop drag regions stay dedicated empty fillers (`web-shell-access`, the drag-region
   test); dangerous shell capabilities untouched.
-- **Public API reports.** Not touched: the design package has no API report and
-  `@capybara-hq/plugin-client` exports neither `StatusBar` nor `useStatusBar` (checked).
+- **Public API reports.** The design package has no API report and `@capybara-hq/plugin-client`
+  exports neither `StatusBar` nor `useStatusBar`, but removing the `status-bar` UI part and the new
+  theme token values change `@capybara-hq/plugin-sdk`'s report (`UI_PART_NAMES`, `THEME_TOKENS`):
+  `pnpm gen:sdk-api` plus a changeset bumping the SDK (found while building).
 - **Language / i18n.** New copy (context meter tooltip, account menu status line) in zh and en; zh uses
   平台 / 超级管理员 / 智能体.
 - **When a rule can be checked automatically, the check is the authority.** `check:tokens`,
