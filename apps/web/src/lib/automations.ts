@@ -238,7 +238,7 @@ export interface AutomationsSettings {
   maxEventDepth: number;
   /** Event automations: the window, in seconds, that coalesces one subject's events. */
   coalesceSeconds: number;
-  /** Event automations: the runs one automation may make for one subject per hour. */
+  /** Event automations: up to this many runs of one automation for one subject per hour. */
   maxEventRunsPerSubjectPerHour: number;
   /** The trigger sources (extension names) whose events fire no automation of the org. */
   eventSourcesOff: string[];

@@ -92,6 +92,7 @@ describe("0189_event_automations", () => {
   it("keys runs by (automation_id, trigger_key) outside trials", async () => {
     expect(await indexExists("automation_runs_tick_uq")).toBe(false);
     expect(await indexExists("automation_runs_trigger_uq")).toBe(true);
+    expect(await indexExists("automation_event_deliveries_run_idx")).toBe(true);
     await sql`insert into capybara.automation_runs (id, automation_id, org_id, trigger_key)
       values ('er1', 't1', 'o1', 'ev1')`.execute(db);
     await expect(

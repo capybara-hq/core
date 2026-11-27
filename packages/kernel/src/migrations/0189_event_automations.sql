@@ -58,6 +58,10 @@ CREATE TABLE IF NOT EXISTS automation_event_deliveries (
 CREATE INDEX IF NOT EXISTS automation_event_deliveries_pending_idx
   ON automation_event_deliveries (automation_id, subject_key) WHERE automation_run_id IS NULL;
 
+-- the deliveries a run served (the subject rate counts a pair's runs through them)
+CREATE INDEX IF NOT EXISTS automation_event_deliveries_run_idx
+  ON automation_event_deliveries (automation_run_id);
+
 DROP POLICY IF EXISTS org_scope ON automation_event_deliveries;
 CREATE POLICY org_scope ON automation_event_deliveries USING (rls_admits(org_id)) WITH CHECK (rls_admits(org_id));
 

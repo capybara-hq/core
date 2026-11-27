@@ -41,8 +41,51 @@ interface Candidate {
 /**
  * A window whose first delivery waits this long past its coalescing window is taken as lost (its
  * job failed for good): the next event of the pair opens a new window with a job of its own.
+ * TODO(collaboration): until that next event comes, a window whose coalesce job is lost for good
+ * keeps its deliveries waiting (no sweep looks for them).
  */
 export const COALESCE_STALE_MS = 10 * 60_000;
+
+/** A trigger source's `events()` or `visible()` did not settle within its deadline. */
+export class TriggerSourceTimeout extends Error {
+  constructor(plugin: string, call: string, ms: number) {
+    super(`trigger source ${plugin}: ${call} did not answer within ${ms} ms`);
+    this.name = "TriggerSourceTimeout";
+  }
+}
+
+/**
+ * `call()` raced against `ms`: a provider whose promise never settles must not hold a maintenance
+ * slot (BullMQ renews the job's lock while the process lives).
+ */
+async function withDeadline<T>(
+  plugin: string,
+  what: string,
+  ms: number,
+  call: () => T | Promise<T>,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new TriggerSourceTimeout(plugin, what, ms)), ms);
+  });
+  try {
+    return await Promise.race([Promise.resolve().then(call), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Whether the automation's trigger still selects the event (re-read under its row lock). */
+function triggerSelects(
+  trigger: AutomationTrigger,
+  ev: EventRow,
+  decl: TriggerEventDeclaration,
+): trigger is Extract<AutomationTrigger, { kind: "event" }> {
+  if (trigger.kind !== "event" || trigger.source !== ev.plugin) return false;
+  if (!trigger.types.includes(ev.type)) return false;
+  const filter = trigger.filter ?? [];
+  return filterAllowed(filter, decl) && matchesFilter(filter, ev.facts);
+}
 
 /**
  * A filter on a fact the source does not declare filterable never matches: an automation cannot
@@ -90,8 +133,16 @@ export class TriggerDispatcher {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
   ) {}
 
-  /** Dispatches event `eventId` of org `orgId` (see the class). */
-  async dispatch(data: TriggerDispatchJobData): Promise<void> {
+  /**
+   * Dispatches event `eventId` of org `orgId` (see the class). The source's `events()` and
+   * `visible()` each have `tools.timeoutMs`: past it the job fails with
+   * {@link TriggerSourceTimeout} (BullMQ retries it), and on its last attempt (`finalAttempt`) the
+   * event is `undelivered` instead.
+   */
+  async dispatch(
+    data: TriggerDispatchJobData,
+    opts: { finalAttempt?: boolean } = {},
+  ): Promise<void> {
     const { orgId, eventId } = data;
     const db = this.kdb.db;
     const ev = await db
@@ -137,7 +188,23 @@ export class TriggerDispatcher {
       await this.setState(orgId, eventId, "undelivered");
       return;
     }
-    const decl = source.impl.events().find((d) => d.type === ev.type);
+    const ms = this.config.get().tools.timeoutMs;
+    const ask = async <T>(what: string, call: () => T | Promise<T>): Promise<T | undefined> => {
+      try {
+        return await withDeadline(ev.plugin, what, ms, call);
+      } catch (err) {
+        if (!(err instanceof TriggerSourceTimeout) || opts.finalAttempt !== true) throw err;
+        this.log.warn("trigger source did not answer on the dispatch's last attempt; undelivered", {
+          ...ctx,
+          err,
+        });
+        await this.setState(orgId, eventId, "undelivered");
+        return undefined;
+      }
+    };
+    const declared = await ask("events()", () => source.impl.events());
+    if (declared === undefined) return;
+    const decl = declared.find((d) => d.type === ev.type);
     if (decl === undefined) {
       this.log.info("trigger event of a type its source no longer declares; undelivered", ctx);
       await this.setState(orgId, eventId, "undelivered");
@@ -153,31 +220,41 @@ export class TriggerDispatcher {
     let admitted = new Set<string>();
     const owners = [...new Set(matching.map((a) => a.accountId))].sort();
     if (owners.length > 0) {
-      const seen = await source.impl.visible({
-        orgId,
-        accountIds: owners,
-        subject: ev.subject,
-        config: source.config,
-      });
+      const seen = await ask("visible()", () =>
+        source.impl.visible({
+          orgId,
+          accountIds: owners,
+          subject: ev.subject,
+          config: source.config,
+        }),
+      );
+      if (seen === undefined) return;
       admitted = new Set(seen.filter((a) => owners.includes(a)));
     }
     await this.record(
       ev,
       matching.filter((a) => admitted.has(a.accountId)).map((a) => a.id),
-      settings.coalesceSeconds,
+      { decl, cause, coalesceSeconds: settings.coalesceSeconds },
     );
   }
 
   /**
    * Delivers `ev` to `automationIds` and owes each opened window's coalesce job (see the class),
-   * then marks the event `dispatched`; nothing when another dispatch of it got there first.
+   * then marks the event `dispatched`; nothing when another dispatch of it got there first. Each
+   * automation's trigger and agent are read again under its row lock: one edited since the match
+   * (another type, source or filter; the cause run's agent now) gets no delivery.
    */
   @Transactional()
   private async record(
     ev: EventRow,
     automationIds: readonly string[],
-    coalesceSeconds: number,
+    match: {
+      decl: TriggerEventDeclaration;
+      cause: { runAccountId: string; runAgentId: string } | null;
+      coalesceSeconds: number;
+    },
   ): Promise<void> {
+    const { decl, cause, coalesceSeconds } = match;
     const db = this.kdb.db;
     const orgId = ev.org_id;
     const held = await db
@@ -194,7 +271,7 @@ export class TriggerDispatcher {
       // the automation row first, as the flush takes it: switched off or deleted since, skipped
       const live = await db
         .selectFrom("automations")
-        .select("id")
+        .select(["account_id", "agent_id", "trigger"])
         .where("org_id", "=", orgId)
         .where("id", "=", automationId)
         .where("status", "=", "active")
@@ -202,6 +279,8 @@ export class TriggerDispatcher {
         .forUpdate()
         .executeTakeFirst();
       if (live === undefined) continue;
+      if (!triggerSelects(live.trigger as AutomationTrigger, ev, decl)) continue;
+      if (isSelfTriggered({ accountId: live.account_id, agentId: live.agent_id }, cause)) continue;
       const waiting = await db
         .selectFrom("automation_event_deliveries")
         .select((eb) => eb.fn.min("created_at").as("first"))

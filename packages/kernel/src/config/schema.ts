@@ -1049,7 +1049,12 @@ export const KernelConfigSchema = z.strictObject({
         .int()
         .positive()
         .default(60000)
-        .meta(meta({ description: "Timeout of one tool call in milliseconds" })),
+        .meta(
+          meta({
+            description:
+              "Timeout of one tool call in milliseconds; also the deadline of a trigger source's events() and visible() calls when an event is dispatched",
+          }),
+        ),
       maxTimeoutMs: z
         .number()
         .int()
@@ -1865,7 +1870,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Largest number of runs per hour one event automation may make for one subject that an organization may allow; a higher org value is clamped down to it",
+              "Largest value an organization may set for maxEventRunsPerSubjectPerHour: one event automation makes up to that many runs per subject per hour, and a window past it is recorded as a run skipped with subject_rate; a higher org value is clamped down to it",
           }),
         ),
     })

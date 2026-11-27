@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { EventFilter, TriggerEvent, TriggerSubject } from "@capybara-hq/plugin-sdk";
+import type {
+  EventFilter,
+  TriggerEvent,
+  TriggerSource,
+  TriggerSubject,
+} from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -8,16 +13,22 @@ import {
 } from "@capybara-hq/testing";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { sql } from "kysely";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventCoalescer } from "../../src/automations/events/coalesce.js";
-import { TriggerDispatcher } from "../../src/automations/events/dispatcher.js";
+import {
+  TriggerDispatcher,
+  TriggerSourceTimeout,
+} from "../../src/automations/events/dispatcher.js";
 import { coalesceJobId, subjectKey } from "../../src/automations/events/guards.js";
 import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
 import type { Automation } from "../../src/automations/types.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ExtensionPointDefaults } from "../../src/extensions/point-defaults.js";
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { truncateTables } from "../helpers/db.js";
@@ -82,7 +93,12 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
-      { roles: ["api", "worker"], extensions: [MODEL_FAKE, fakeExtensionEntry(PLUGIN)] },
+      {
+        roles: ["api", "worker"],
+        extensions: [MODEL_FAKE, fakeExtensionEntry(PLUGIN)],
+        // the trigger source's deadline (a source that never answers fails the dispatch)
+        tools: { timeoutMs: 1500 },
+      },
     ),
     {
       overrides: [
@@ -122,7 +138,7 @@ async function newAgent(name: string): Promise<string> {
 
 beforeEach(async () => {
   failDispatch = true;
-  probe().visible = undefined;
+  delete probe().visible;
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.outbox");
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
@@ -180,9 +196,30 @@ async function emit(over: Partial<TriggerEvent> = {}): Promise<string> {
   return r.eventId;
 }
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 /** The dispatch job's body, in the job's org scope. */
-const dispatch = (eventId: string) =>
-  withOrgScope(orgId, () => k.app.get(TriggerDispatcher).dispatch({ orgId, eventId }));
+const dispatch = (eventId: string, opts: { finalAttempt?: boolean } = {}) =>
+  withOrgScope(orgId, () => k.app.get(TriggerDispatcher).dispatch({ orgId, eventId }, opts));
+
+/** The fake source's provider object, as the dispatcher gets it. */
+async function sourceImpl(): Promise<TriggerSource> {
+  const { providers } = await k.app
+    .get(ExtensionPointDefaults)
+    .providersFor<TriggerSource>(orgId, "trigger-source");
+  const impl = providers.find((p) => p.extension === PLUGIN)?.impl;
+  if (!impl) throw new Error("fake-trigger-source does not serve the org");
+  return impl;
+}
+
+/** Whether a query of another connection waits on a row lock. */
+const lockWaiter = async () =>
+  (
+    await sql<{ n: number }>`select count(*)::int as n from pg_stat_activity
+      where wait_event_type = 'Lock' and query ilike '%automations%'`.execute(raw)
+  ).rows[0]?.n === 1;
 
 /** The coalesce job's body for the pair, in the job's org scope. */
 const flush = (automationId: string, subject: TriggerSubject = ITEM) =>
@@ -433,6 +470,74 @@ describe("trigger event dispatch", () => {
     const a = await automation({ filter: [{ fact: "secret", op: "eq", value: "x" }] });
     const e = await emit({ facts: { status: "open", secret: "x" } });
     await dispatch(e);
+    expect(await deliveriesOf(a.id)).toEqual([]);
+  });
+
+  it("a source whose visible() never answers fails the job at its deadline; the last attempt leaves the event undelivered", async () => {
+    const a = await automation();
+    const impl = await sourceImpl();
+    vi.spyOn(impl, "visible").mockImplementation(() => new Promise<string[]>(() => {}));
+    const e = await emit();
+    await expect(dispatch(e)).rejects.toBeInstanceOf(TriggerSourceTimeout);
+    expect(await stateOf(e)).toBe("pending");
+    await expect(dispatch(e, { finalAttempt: true })).resolves.toBeUndefined();
+    expect(await stateOf(e)).toBe("undelivered");
+    expect(await deliveriesOf(a.id)).toEqual([]);
+    expect(await owed("automation-coalesce")).toEqual([]);
+  });
+
+  it("two concurrent dispatches of one pair owe one coalesce job", async () => {
+    const a = await automation();
+    const [e1, e2] = [await emit(), await emit()];
+    await Promise.all([dispatch(e1), dispatch(e2)]);
+    expect((await deliveriesOf(a.id)).map((d) => d.event_id).sort()).toEqual([e1, e2].sort());
+    expect(await owed("automation-coalesce")).toHaveLength(1);
+  });
+
+  it("a dispatch that commits after a flush took the row opens a new window", async () => {
+    const a = await automation();
+    const e1 = await emit();
+    await dispatch(e1);
+    const e2 = await emit();
+    let late: Promise<void> | undefined;
+    const host = k.app.get(TransactionHost);
+    // the flush's transaction stays open until the dispatch waits on the automation row
+    await host.run(async () => {
+      await flush(a.id);
+      late = host.run(() => dispatch(e2), { propagation: "requires_new" });
+      await waitFor(lockWaiter, 20_000, "the dispatch waits on the automation row");
+    });
+    await late;
+    const [run] = await runsOf(a.id);
+    expect((await deliveriesOf(a.id)).map((d) => [d.event_id, d.automation_run_id])).toEqual([
+      [e1, run?.id],
+      [e2, null],
+    ]);
+    expect((await owed("automation-coalesce")).map((j) => j.job_id)).toEqual([
+      `${coalesceJobId(a.id, ITEM)}-${e1}`,
+      `${coalesceJobId(a.id, ITEM)}-${e2}`,
+    ]);
+  });
+
+  it("an automation edited between the match and the delivery gets nothing", async () => {
+    const a = await automation();
+    const impl = await sourceImpl();
+    const visible = impl.visible.bind(impl);
+    // the owner narrows the filter while the source is asked
+    vi.spyOn(impl, "visible").mockImplementation(async (args) => {
+      await store.updateTask(db, a.id, {
+        trigger: {
+          kind: "event",
+          source: PLUGIN,
+          types: ["item.updated"],
+          filter: [{ fact: "status", op: "eq", value: "closed" }],
+        },
+      });
+      return visible(args);
+    });
+    const e = await emit();
+    await dispatch(e);
+    expect(await stateOf(e)).toBe("dispatched");
     expect(await deliveriesOf(a.id)).toEqual([]);
   });
 

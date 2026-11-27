@@ -244,7 +244,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         return;
       // one stored trigger event's routing to the automations it fires (collaboration spec §4.2)
       case TRIGGER_DISPATCH_JOB:
-        await this.triggers.dispatch(job.data as TriggerDispatchJobData);
+        await this.triggers.dispatch(job.data as TriggerDispatchJobData, {
+          // a source that never answers leaves the event undelivered on the last attempt
+          finalAttempt: job.attemptsMade + 1 >= (job.opts?.attempts ?? 1),
+        });
         return;
       // one coalescing window of an event automation's events for one subject (spec §4.7)
       case AUTOMATION_COALESCE_JOB:

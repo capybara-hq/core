@@ -171,8 +171,8 @@ export const AutomationsSettingsSchema = z.object({
   unattendedAsk: z.enum(["fail", "wait"]).default("fail").catch("fail"),
   pauseAfterFailures: posInt(1000, 5),
   // event automations (collaboration spec §4.7): the chain depth past which an event is stored
-  // but not dispatched, the window that coalesces one subject's events into one run, and the runs
-  // one automation may make for one subject per hour
+  // but not dispatched, the window that coalesces one subject's events into one run, and how many
+  // runs (up to this many, not skipped) one automation may make for one subject per hour
   maxEventDepth: posInt(1000, 8),
   coalesceSeconds: posInt(86_400, 30),
   maxEventRunsPerSubjectPerHour: posInt(1_000_000, 12),
