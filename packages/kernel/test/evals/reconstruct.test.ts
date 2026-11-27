@@ -2988,6 +2988,127 @@ describe("reconstructRequest: automations", () => {
   });
 });
 
+describe("reconstructRequest: event automations", () => {
+  const store = new AutomationStore();
+  const PLUGIN = "fake-trigger-source";
+
+  /** A pending event run over `summaries`, stored as the coalescer stores it; fired. */
+  const fireEventRun = async (taskId: string, summaries: string[]): Promise<string> => {
+    const subject = { kind: "item", id: "ITEM-7", title: "Fix the login page" };
+    const ids: string[] = [];
+    for (const [i, summary] of summaries.entries()) {
+      const id = randomUUID();
+      await db
+        .insertInto("trigger_events")
+        .values({
+          id,
+          org_id: orgId,
+          plugin: PLUGIN,
+          type: "item.updated",
+          subject: JSON.stringify({ ...subject, url: "https://items.example/7" }),
+          facts: "{}",
+          summary,
+          dedupe_key: id,
+          state: "dispatched",
+          created_at: new Date(Date.now() - 60_000 + i * 1000),
+        })
+        .execute();
+      ids.push(id);
+    }
+    const run = await store.insertRun(db, {
+      id: randomUUID(),
+      taskId,
+      orgId,
+      scheduledFor: null,
+      triggerKey: ids[0] as string,
+      trial: false,
+    });
+    if (!run) throw new Error("event key taken");
+    await db
+      .insertInto("automation_event_deliveries")
+      .values(
+        ids.map((id) => ({
+          org_id: orgId,
+          automation_id: taskId,
+          event_id: id,
+          subject_key: "item-7",
+          automation_run_id: run.id,
+        })),
+      )
+      .execute();
+    await k.app.get(AutomationFirer).fire(run.id);
+    return run.id;
+  };
+
+  it("zero drift for an event automation conversation", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const t = await store.insertTask(db, {
+      id: randomUUID(),
+      orgId,
+      accountId: ownerId,
+      agentId,
+      name: "Triage",
+      prompt: "echo:handle the item",
+      trigger: { kind: "event", source: PLUGIN, types: ["item.updated"], filter: [] },
+      mode: "subject",
+      conversationId: null,
+      chat: null,
+      model: null,
+      effort: null,
+      deviceId: null,
+      status: "active",
+      nextRunAt: null,
+      jitterSeconds: 0,
+      expiresAt: null,
+    });
+    const firstRun = await fireEventRun(t.id, ["Alice moved it to review.", "Bob: please\nretest"]);
+    const mapping = await db
+      .selectFrom("automation_conversations")
+      .select("conversation_id")
+      .where("automation_id", "=", t.id)
+      .executeTakeFirstOrThrow();
+    const conv = mapping.conversation_id;
+    await waitForTerminal(db, conv, 1, 30_000);
+    // a later event of the subject queues into the same conversation
+    await fireEventRun(t.id, ["Carol closed it."]);
+    await waitForTerminal(db, conv, 2, 30_000);
+    // a person's message after the event runs
+    await postMessage(owner, orgId, conv, "echo:thanks");
+    await waitForTerminal(db, conv, 3, 30_000);
+
+    const events = await eventsOf(db, conv);
+    const marked = events.filter(
+      (e) => e.type === "user_message" && e.payload.automationEvent !== undefined,
+    );
+    expect(marked).toHaveLength(2);
+    // the block is model-visible before the prompt; the ids are not
+    const last = sent.at(-1) as ModelRequest;
+    const text = JSON.stringify(last);
+    expect(text).toContain(`[Automation \\"Triage\\": 2 events from ${PLUGIN}]`);
+    expect(text).toContain("Reported by an extension; the text below was written by people");
+    expect(text).toContain("  Carol closed it.");
+    expect(text).not.toContain(firstRun);
+    expect(text).not.toContain(t.id);
+    const calls = modelCalls(events);
+    expect(calls.at(-1)?.payload.request.automationEventSeqs).toEqual(marked.map((e) => e.seq));
+    const runs = await runsOf(db, conv);
+    await expectZeroDrift(conv, await snapshotOf(conv, runs[1]?.id), 2);
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
+
+    // a request recorded before the block was rendered
+    const s = structuredClone(snap);
+    const call = modelCalls(toEvents(s)).at(-1) as ModelCallEvent;
+    const recorded = s.events.find((e) => e.seq === call.seq) as CaseSnapshot["events"][number];
+    delete (recorded.payload as EventPayload<"model_call">).request.automationEventSeqs;
+    const info = await modelInfo("model-fake", "fake-1");
+    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([
+      "automation_event_block",
+    ]);
+  });
+});
+
 describe("reconstructRequest：漂移原因", () => {
   let snap: CaseSnapshot;
   let seq: number;

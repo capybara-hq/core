@@ -1,12 +1,16 @@
-import type { ChannelTarget } from "@capybara-hq/plugin-sdk";
+import type { ChannelTarget, TriggerSubject } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module } from "@nestjs/common";
+import { sql } from "kysely";
 import { AgentLookup, AgentLookupModule } from "../agents/agent-lookup.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ChannelConnections } from "../channels/connections.service.js";
 import { findOrBindThread, findThread, type ThreadKey } from "../channels/threads.js";
 import { ConversationAccess, ConversationAccessModule } from "../conversations/access.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
-import { ConversationsService } from "../conversations/conversations.service.js";
+import {
+  ConversationsService,
+  type InternalMessageOptions,
+} from "../conversations/conversations.service.js";
 import { ConversationQueue } from "../conversations/queue.service.js";
 import { channelSource } from "../conversations/source.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -41,6 +45,7 @@ import { AutomationStore } from "./store.js";
 import { AutomationStoreModule } from "./store.module.js";
 import type {
   Automation,
+  AutomationEventMarker,
   AutomationPauseReason,
   ScheduleMarker,
   TaskRun,
@@ -63,12 +68,18 @@ const LASTING: ReadonlySet<TaskRunSkipReason> = new Set<TaskRunSkipReason>([
   "target_gone",
 ]);
 
-/** What starting a claimed task run does, by the task's mode. */
-type StartPlan =
-  | { mode: "new"; task: Automation; run: TaskRun }
-  | { mode: "conversation"; task: Automation; run: TaskRun; conversationId: string }
-  | { mode: "chat"; task: Automation; run: TaskRun; thread: ThreadKey; target: ChannelTarget }
-  | { mode: "group"; task: Automation; run: TaskRun; connectionId: string; chatId: string };
+/**
+ * What starting a claimed task run does, by the task's mode. `event`: an event run's marker
+ * (collaboration spec §4.6), read from its deliveries at the claim; absent for a time run.
+ */
+type StartPlan = { task: Automation; run: TaskRun; event?: AutomationEventMarker } & (
+  | { mode: "new" }
+  | { mode: "conversation"; conversationId: string }
+  | { mode: "chat"; thread: ThreadKey; target: ChannelTarget }
+  | { mode: "group"; connectionId: string; chatId: string }
+  /** One conversation per subject (collaboration spec §4.5): the subject of the run's events. */
+  | { mode: "subject"; subject: Pick<TriggerSubject, "kind" | "id" | "title"> }
+);
 
 /** Why a claim refused the run (a skip), or the plan to start it. */
 type ClaimResult = { skip: TaskRunSkipReason } | { plan: StartPlan } | null;
@@ -111,10 +122,15 @@ const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.
  *    conversation's queue (never absorbed into a run in progress); `chat` finds the DM's live
  *    thread or creates and binds a conversation (one transaction), then queues the prompt there;
  *    a group chat gets a new conversation per run whose thread outbound binds at the run's first
- *    post (`openGroup`). A start that finds the target gone takes `fired_at` back and skips the run.
+ *    post (`openGroup`); `subject` finds the subject's conversation (`automation_conversations`)
+ *    or creates and maps one (one transaction, `bindSubject`), then queues the prompt there. A
+ *    start that finds the target gone takes `fired_at` back and skips the run.
  *
- * Every message carries the schedule marker and the task's zone; the kernel run its message
- * triggers takes the task run (`linkStartedRunIn`), and the run tracker follows it to its end.
+ * A time run's message carries the schedule marker and the task's zone; an event run's carries
+ * the event marker (its events, from `automation_event_deliveries`; collaboration spec §4.6). The
+ * kernel run its message triggers takes the task run (`linkStartedRunIn`), and the run tracker
+ * follows it to its end. A `subject` run skips the overlap check: its conversation's queue
+ * serializes the runs of one subject, and other subjects run side by side.
  */
 @Injectable()
 // org-filter: the automation-fire / automation-settle job handler (worker only): the task run id is the
@@ -159,7 +175,9 @@ export class AutomationFirer {
     if (pre?.status !== "pending") return;
     // a Redis read: outside the claim's transaction
     const offline =
-      pre.fired_at === null && pre.device_id !== null && pre.mode === "new"
+      pre.fired_at === null &&
+      pre.device_id !== null &&
+      (pre.mode === "new" || pre.mode === "subject")
         ? await this.deviceOffline(pre.org_id, pre.device_id)
         : false;
     const claimed = await this.claim(taskRunId, pre.org_id, offline);
@@ -305,9 +323,25 @@ export class AutomationFirer {
       }
     }
 
+    let event: AutomationEventMarker | undefined;
+    if (task.trigger.kind === "event") {
+      event = await this.eventMarkerOf(task, run.id, task.trigger.source);
+      if (event === undefined) {
+        // the coalescer links a run's deliveries in the transaction that inserts it
+        this.log.warn("event automation run has no events", { taskId: task.id, taskRunId: run.id });
+        await this.tracker.failStartIn(run.id, "The run's events are gone");
+        return null;
+      }
+    }
     let plan: StartPlan;
     let queuePausedOn: string | undefined;
-    if (task.mode === "conversation") {
+    if (task.mode === "subject") {
+      const first = event?.events[0];
+      if (first === undefined) return skip("unsupported_target");
+      plan = { mode: "subject", task, run, subject: first.subject };
+      const mapped = await this.subjectConversation(task, first.subject);
+      if (mapped?.queuePaused) queuePausedOn = mapped.id;
+    } else if (task.mode === "conversation") {
       const conv = await this.targetConversation(task);
       if (conv === undefined) return skip("conversation_gone");
       plan = { mode: "conversation", task, run, conversationId: conv.id };
@@ -353,9 +387,10 @@ export class AutomationFirer {
     } else {
       plan = { mode: "new", task, run };
     }
+    if (event !== undefined) plan = { ...plan, event };
     if (resumed) return { plan };
 
-    if (await this.overlaps(task.id, run.id)) return skip("overlap");
+    if (plan.mode !== "subject" && (await this.overlaps(task.id, run.id))) return skip("overlap");
     const fired = await this.store.countFiredSince(t, orgId, new Date(Date.now() - HOUR_MS));
     if (fired >= settings.maxRunsPerHour) return skip("rate_limited");
     if (deviceOffline) return skip("device_offline");
@@ -369,13 +404,13 @@ export class AutomationFirer {
     return { plan: { ...plan, run: claimed ?? run } };
   }
 
-  /** Step 2 (see the class). */
-  private async start(plan: StartPlan): Promise<void> {
+  /** The marker a run's message carries: the event marker, or the schedule marker and zone. */
+  private markerOf(plan: StartPlan): InternalMessageOptions {
     const { task, run } = plan;
+    if (plan.event !== undefined) return { automationEvent: plan.event };
     const trigger = task.trigger;
     if (trigger.kind === "event" || run.scheduledFor === null) {
-      // the event fire path posts its own marker (collaboration spec §4.6); not built here yet
-      throw new Error(`automation run ${run.id}: event runs are not started by the time path`);
+      throw new Error(`automation run ${run.id}: a time run without a tick`);
     }
     const marker: ScheduleMarker = {
       taskId: task.id,
@@ -385,7 +420,13 @@ export class AutomationFirer {
       taskName: task.name,
       localTime: localTimeOf(run.scheduledFor, trigger.timeZone),
     };
-    const internal = { schedule: marker, timeZoneOverride: trigger.timeZone };
+    return { schedule: marker, timeZoneOverride: trigger.timeZone };
+  }
+
+  /** Step 2 (see the class). */
+  private async start(plan: StartPlan): Promise<void> {
+    const { task, run } = plan;
+    const internal = this.markerOf(plan);
     try {
       if (plan.mode === "new") {
         // model and effort are a new-conversation task's only (spec §4): a conversation or chat
@@ -408,10 +449,23 @@ export class AutomationFirer {
         return;
       }
       let conversationId: string;
+      // a subject conversation the start just created takes the task's model and effort with its
+      // first message, as a new-conversation task's does; a later run switches nothing
+      let pick: { model?: NonNullable<Automation["model"]>; effort?: string } = {};
       if (plan.mode === "chat" || plan.mode === "group") {
         const bound = plan.mode === "chat" ? await this.bindChat(plan) : await this.openGroup(plan);
         if (bound === null) return;
         conversationId = bound;
+      } else if (plan.mode === "subject") {
+        const bound = await this.bindSubject(plan);
+        if (bound === null) return;
+        conversationId = bound.conversationId;
+        if (bound.created) {
+          pick = {
+            ...(task.model !== null && { model: task.model }),
+            ...(task.effort !== null && { effort: task.effort }),
+          };
+        }
       } else {
         conversationId = plan.conversationId;
       }
@@ -419,7 +473,7 @@ export class AutomationFirer {
         task.orgId,
         conversationId,
         task.accountId,
-        { text: task.prompt, clientMessageId: automationClientMessageId(run.id) },
+        { text: task.prompt, clientMessageId: automationClientMessageId(run.id), ...pick },
         internal,
       );
     } catch (e) {
@@ -428,7 +482,7 @@ export class AutomationFirer {
         e.code === "agent.not_found"
           ? "agent_gone"
           : e.code === "conversation.not_found"
-            ? plan.mode === "chat" || plan.mode === "group"
+            ? plan.mode === "chat" || plan.mode === "group" || plan.mode === "subject"
               ? "target_gone"
               : "conversation_gone"
             : DEVICE_GONE.has(e.code)
@@ -544,6 +598,154 @@ export class AutomationFirer {
       .execute();
     await this.store.updateRun(t, run.id, { conversationId: conv.id });
     return conv.id;
+  }
+
+  /**
+   * A subject run's conversation (collaboration spec §4.5), in one transaction under the task row
+   * lock (so two runs of one subject never create two): the conversation `automation_conversations`
+   * maps the subject to, when it is still live, the owner's chat with the task's agent and
+   * accessible; else a new one, the task's (`conversations.automation_id`) with
+   * `conversations.subject` set, whose mapping replaces the stale one (the mapping has no foreign
+   * key: a deleted conversation leaves it behind). Null when the run is no longer pending or the
+   * mapped conversation's queue is paused (the run is skipped, `queue_paused`). A retried start
+   * reuses the conversation the run already recorded.
+   */
+  @Transactional()
+  private async bindSubject(
+    plan: Extract<StartPlan, { mode: "subject" }>,
+  ): Promise<{ conversationId: string; created: boolean } | null> {
+    const { task, run, subject } = plan;
+    const t = this.db;
+    // the one lock order: task row, then the task run
+    await lockTaskRow(t, task.id);
+    const locked = await t
+      .selectFrom("automation_runs")
+      .select(["status", "conversation_id"])
+      .where("id", "=", run.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (locked?.status !== "pending") return null;
+    if (locked.conversation_id !== null) {
+      return { conversationId: locked.conversation_id, created: false };
+    }
+    const mapped = await this.subjectConversation(task, subject);
+    if (mapped !== undefined) {
+      if (mapped.queuePaused) {
+        await this.skipIn(t, run.id, task.id, "queue_paused");
+        return null;
+      }
+      await this.store.updateRun(t, run.id, { conversationId: mapped.id });
+      return { conversationId: mapped.id, created: false };
+    }
+    const trigger = task.trigger;
+    if (trigger.kind !== "event")
+      throw new Error(`automation ${task.id}: subject mode without events`);
+    const conv = await this.conversations.create(
+      task.orgId,
+      task.accountId,
+      task.agentId,
+      task.deviceId === null ? {} : { deviceId: task.deviceId },
+      {
+        source: "web",
+        subject: {
+          source: trigger.source,
+          kind: subject.kind,
+          id: subject.id,
+          title: subject.title,
+        },
+      },
+    );
+    await t
+      .updateTable("conversations")
+      .set({ automation_id: task.id })
+      .where("id", "=", conv.id)
+      .where("org_id", "=", task.orgId)
+      .execute();
+    await t
+      .insertInto("automation_conversations")
+      .values({
+        org_id: task.orgId,
+        automation_id: task.id,
+        subject_kind: subject.kind,
+        subject_id: subject.id,
+        conversation_id: conv.id,
+      })
+      .onConflict((oc) =>
+        oc
+          .columns(["automation_id", "subject_kind", "subject_id"])
+          .doUpdateSet({ conversation_id: conv.id, created_at: sql`now()` }),
+      )
+      .execute();
+    await this.store.updateRun(t, run.id, { conversationId: conv.id });
+    return { conversationId: conv.id, created: true };
+  }
+
+  /**
+   * The live conversation `automation_conversations` maps a subject of the task to (see
+   * {@link bindSubject}), or undefined: no mapping, or its conversation is gone, deleted, no
+   * longer the owner's chat with the task's agent, or not accessible.
+   */
+  private async subjectConversation(
+    task: Automation,
+    subject: Pick<TriggerSubject, "kind" | "id">,
+  ): Promise<{ id: string; queuePaused: boolean } | undefined> {
+    const conv = await this.db
+      .selectFrom("automation_conversations as m")
+      .innerJoin("conversations as c", "c.id", "m.conversation_id")
+      .select(["c.id", "c.queue_paused"])
+      .where("m.org_id", "=", task.orgId)
+      .where("m.automation_id", "=", task.id)
+      .where("m.subject_kind", "=", subject.kind)
+      .where("m.subject_id", "=", subject.id)
+      .where("c.org_id", "=", task.orgId)
+      .where("c.account_id", "=", task.accountId)
+      .where("c.agent_id", "=", task.agentId)
+      .where("c.kind", "=", "chat")
+      .where("c.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!conv) return undefined;
+    if (!(await this.access.isAccessible(task.orgId, conv.id, task.accountId))) return undefined;
+    return { id: conv.id, queuePaused: conv.queue_paused };
+  }
+
+  /**
+   * An event run's marker (collaboration spec §4.6): the events its deliveries name, in the order
+   * they were stored (the coalescer's order), each with its type, subject and summary; undefined
+   * when it has none.
+   */
+  private async eventMarkerOf(
+    task: Automation,
+    runId: string,
+    source: string,
+  ): Promise<AutomationEventMarker | undefined> {
+    const rows = await this.db
+      .selectFrom("automation_event_deliveries as d")
+      .innerJoin("trigger_events as e", "e.id", "d.event_id")
+      .select(["e.id", "e.type", "e.subject", "e.summary"])
+      .where("d.org_id", "=", task.orgId)
+      .where("d.automation_id", "=", task.id)
+      .where("d.automation_run_id", "=", runId)
+      .orderBy("e.created_at")
+      .orderBy("e.id")
+      .execute();
+    if (rows.length === 0) return undefined;
+    return {
+      automationId: task.id,
+      automationRunId: runId,
+      automationName: task.name,
+      source,
+      events: rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        subject: {
+          kind: r.subject.kind,
+          id: r.subject.id,
+          title: r.subject.title,
+          ...(r.subject.url !== undefined && { url: r.subject.url }),
+        },
+        summary: r.summary,
+      })),
+    };
   }
 
   /** The start found the target gone: `fired_at` back to null, skipped with `reason`. */

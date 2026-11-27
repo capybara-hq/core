@@ -175,6 +175,8 @@ export interface AutomationEventMarker {
   automationId: string;
   automationRunId: string;
   automationName: string;
+  /** The extension that emitted the events (the automation's trigger source). */
+  source: string;
   events: Array<{
     id: string;
     type: string;

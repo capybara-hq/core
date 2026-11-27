@@ -46,6 +46,50 @@ export const scheduleHeader = (m: { taskName: string; localTime: string }): stri
     false,
   )}]`;
 
+/** The longest subject title an event automation block shows, in code points. */
+const EVENT_TITLE_MAX = 200;
+
+/**
+ * The English block before an event automation's prompt (collaboration spec §4.6), from the
+ * marker fixed in the log, so a later rename of the automation or the subject never changes a
+ * rebuilt request:
+ *
+ * ```
+ * [Automation "<name>": <n> event(s) from <source>]
+ * - <type> on "<subject title>" (<url>)
+ *   Reported by an extension; the text below was written by people other than the conversation owner:
+ *   <summary, each line indented>
+ * ```
+ *
+ * One entry per event, in the marker's order (coalesced events share one message). Names and
+ * titles are one line and JSON-quoted; the summary keeps its lines.
+ */
+export function automationEventBlock(m: {
+  automationName: string;
+  source: string;
+  events: ReadonlyArray<{
+    type: string;
+    subject: { title: string; url?: string | undefined };
+    summary: string;
+  }>;
+}): string {
+  const n = m.events.length;
+  const lines = [
+    `[Automation ${JSON.stringify(oneLine(m.automationName, SCHEDULE_NAME_MAX, true))}: ${n} ${
+      n === 1 ? "event" : "events"
+    } from ${oneLine(m.source, 128, false)}]`,
+  ];
+  for (const e of m.events) {
+    const url = e.subject.url === undefined ? "" : ` (${oneLine(e.subject.url, 2048, false)})`;
+    lines.push(
+      `- ${oneLine(e.type, 128, false)} on ${JSON.stringify(oneLine(e.subject.title, EVENT_TITLE_MAX, true))}${url}`,
+      "  Reported by an extension; the text below was written by people other than the conversation owner:",
+      ...e.summary.split(/\r?\n/).map((l) => `  ${l}`),
+    );
+  }
+  return lines.join("\n");
+}
+
 /** An agent's description as a snapshot carries it; empty → undefined. */
 export function snapshotDescription(description: string | undefined): string | undefined {
   if (description === undefined) return undefined;

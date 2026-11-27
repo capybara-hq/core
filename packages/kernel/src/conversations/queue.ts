@@ -1,6 +1,6 @@
 import { sql } from "kysely";
 import { type ModelRef, normalizeStoredDefinition } from "../agents/definition.js";
-import type { ScheduleMarker } from "../automations/types.js";
+import type { AutomationEventMarker, ScheduleMarker } from "../automations/types.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import {
@@ -109,6 +109,8 @@ export interface QueueRow {
   effort: string | null;
   skill: unknown;
   schedule: unknown;
+  /** An event automation's marker (collaboration spec §4.6); null for any other message. */
+  automation_event: unknown;
   created_at: Date;
 }
 
@@ -126,6 +128,7 @@ export const COLUMNS = [
   "effort",
   "skill",
   "schedule",
+  "automation_event",
   "created_at",
 ] as const;
 
@@ -187,12 +190,14 @@ export function storedSkill(
 
 /**
  * The `user_message` a queued item becomes, as `postUserMessage` would have written it; a scheduled
- * task's item carries its marker (without the stored zone, which is in `context`).
+ * task's item carries its marker (without the stored zone, which is in `context`), an event
+ * automation's item its event marker.
  */
 export function queuedUserMessage(r: QueueRow, context: MessageContext = {}): AppendEvent {
   const attachments = r.attachments as ResolvedExtra["attachments"];
   const skill = r.skill as QueuedSkill | null;
   const marker = queuedMarker(r);
+  const event = r.automation_event as AutomationEventMarker | null;
   return {
     type: "user_message",
     idemKey: userMessageIdemKey(r.client_message_id),
@@ -208,6 +213,7 @@ export function queuedUserMessage(r: QueueRow, context: MessageContext = {}): Ap
       clientMessageId: r.client_message_id,
       ...(skill !== null && { skill: skill.record }),
       ...(marker !== undefined && { schedule: marker }),
+      ...(event !== null && event !== undefined && { automationEvent: event }),
     },
   };
 }

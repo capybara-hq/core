@@ -3896,7 +3896,8 @@
       "permission_profile_changed": "记录的权限上下文无法从快照还原",
       "device_sandbox_changed": "设备沙箱在两次运行之间发生了变化",
       "model_switched": "候选模型替换了会话中切换的模型",
-      "run_outcome_note": "记录的请求缺少日志现在会给出的运行结束说明"
+      "run_outcome_note": "记录的请求缺少日志现在会给出的运行结束说明",
+      "automation_event_block": "记录的请求缺少日志现在会给出的事件自动化说明块"
     },
     "tabs": {
       "sets": "评测集",

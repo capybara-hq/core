@@ -824,6 +824,11 @@ export interface Conversation {
   /** The automation that started it (a `new`-mode task); null otherwise. */
   automationId?: string | null;
   /**
+   * The event subject it serves (a `subject`-mode automation's conversation): the emitting
+   * extension and the subject; null for any other conversation.
+   */
+  subject?: { source: string; kind: string; id: string; title: string } | null;
+  /**
    * The device project it is bound to (project root §4.3: chosen at creation, never changed);
    * null in free mode.
    */

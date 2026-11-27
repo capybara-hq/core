@@ -846,6 +846,7 @@ export const AutomationEventMarkerSchema = z.object({
   automationId: z.string(),
   automationRunId: z.string(),
   automationName: z.string(),
+  source: z.string(),
   events: z
     .array(
       z.object({
@@ -1066,7 +1067,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       schedule: ScheduleMarkerSchema.optional(),
       /**
        * An event automation's message (collaboration spec §4.6): which automation and run posted
-       * it and the events it reports. Additive: request building does not render it yet.
+       * it and the events it reports. Request building renders it, from these fields fixed at
+       * write time, as a block before the automation's prompt (`automationEventBlock`); the ids
+       * are not model-visible. The run this message triggers is unattended
+       * (`runs.automation_run_id`) and records its last event (`runs.trigger_event_id`).
        */
       automationEvent: AutomationEventMarkerSchema.optional(),
       /**
@@ -1165,6 +1169,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
            * renders another set (a request sent before the note existed).
            */
           runOutcomeSeqs: z.array(seqNo).optional(),
+          /**
+           * The `user_message` events whose event automation block (`automationEventBlock`) the
+           * request rendered, in seq order; absent when it rendered none. Reconstruction reports
+           * `automation_event_block` when the rebuild renders another set.
+           */
+          automationEventSeqs: z.array(seqNo).optional(),
           /**
            * The request's output cap: `min(model cap, maxOutputTokens knob ??
            * runtime.maxOutputTokens)`, clamped by the hard fit guard.

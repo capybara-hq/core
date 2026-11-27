@@ -34,3 +34,14 @@ event trigger and `chat` a time one (on PATCH too). `unattendedAsk` (`fail`, `wa
 org's default) is a field of create and update. New route `GET …/automations/event-sources` and
 Platform operation `automations.event-sources` list the sources that serve the org with their event
 declarations. Resuming a paused event automation no longer fails for lack of a next run time.
+
+Fire event automations: an event run's message carries the `automationEvent` marker (the
+automation, its run, the source and the coalesced events in order), rendered for the model as a
+block before the prompt that says the events are reported by an extension and written by other
+people (new drift reason `automation_event_block`, recorded as
+`model_call.request.automationEventSeqs`). Mode `subject` keeps one conversation per subject: the
+first run creates it with `conversations.subject` and maps it in `automation_conversations` (a
+deleted or missing mapped conversation is replaced), later runs queue into it, and subject runs skip the overlap check. The
+run records `runs.trigger_event_id` (the last event) beside `automation_run_id`, sub-agent and wake
+runs inherit both, `run_started.trigger` is `automation_event`, and an automation's own
+`unattended_ask` overrides the org's default. Conversation views list `subject`.

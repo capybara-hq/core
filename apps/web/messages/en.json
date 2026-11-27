@@ -3908,7 +3908,8 @@
       "permission_profile_changed": "The recorded permission context cannot be reproduced from the snapshot",
       "device_sandbox_changed": "The device sandbox changed between runs",
       "model_switched": "The candidate model replaces a model switch made in the conversation",
-      "run_outcome_note": "The recorded request lacks run outcome notes its log now gives"
+      "run_outcome_note": "The recorded request lacks run outcome notes its log now gives",
+      "automation_event_block": "The recorded request lacks event automation blocks its log now gives"
     },
     "tabs": {
       "sets": "Eval sets",
