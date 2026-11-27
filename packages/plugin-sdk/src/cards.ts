@@ -1,4 +1,9 @@
-import { type FormAnswer, type InputForm, validateInputForm } from "./tool.js";
+import {
+  type FormAnswer,
+  type InputForm,
+  type LocalizedText,
+  validateInputForm,
+} from "./tool.js";
 import { isHttpUrl } from "./url.js";
 
 /**
@@ -126,10 +131,50 @@ const MAX_INLINE_MULTI = 10;
 export function questionRenderableInline(form: InputForm, opts?: { textReply?: boolean }): boolean {
   if (form.fields.length !== 1) return false;
   const f = form.fields[0];
+  if (f?.choices !== undefined && f.choices.length > 0) return true;
   if (!f || (f.allowOther && opts?.textReply !== true)) return false;
   if (f.schema.type !== "string" || !("enum" in f.schema)) return false;
   const n = f.schema.enum.length;
   return f.multiSelect ? n <= MAX_INLINE_MULTI : n <= MAX_INLINE_SINGLE;
+}
+
+const pickText = (t: LocalizedText, locale: Locale): string =>
+  typeof t === "string" ? t : (t[locale] ?? t.en);
+
+/** One button of a question's `choices`, as {@link questionChoiceButtons} resolves it. */
+export interface QuestionChoiceButton {
+  /** The answer the button submits for the form's single field. */
+  value: string | boolean;
+  /** The label in the locale. */
+  label: string;
+  /** True for the first choice only. */
+  primary: boolean;
+}
+
+/**
+ * The buttons of a form with `choices` (core#867): one per choice in order, the first primary; a
+ * click answers the form's single field `key` with the button's `value` at once. Undefined when
+ * the form has no choices (use {@link questionRenderableInline} for the enum controls).
+ */
+export function questionChoiceButtons(
+  form: InputForm,
+  locale: Locale,
+): { key: string; buttons: QuestionChoiceButton[] } | undefined {
+  const f = form.fields[0];
+  if (form.fields.length !== 1 || !f?.choices || f.choices.length === 0) return undefined;
+  return {
+    key: f.key,
+    buttons: f.choices.map((c, i) => ({
+      value: c.value,
+      label: pickText(c.label, locale),
+      primary: i === 0,
+    })),
+  };
+}
+
+/** The form's body text in the locale (the explanation under its title); undefined without one. */
+export function questionBody(form: InputForm, locale: Locale): string | undefined {
+  return form.body === undefined ? undefined : pickText(form.body, locale);
 }
 
 const KINDS = ["approval", "question", "connect", "bind", "progress"] as const;
@@ -432,6 +477,11 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
         withCode(t.question, asCode(title)),
         line(t.status, questionStateLabel(card.state, locale)),
       ];
+      const body = questionBody(card.form, locale);
+      if (body !== undefined) lines.push(withCode("", asCode(body)));
+      const choices = card.state === "pending" ? questionChoiceButtons(card.form, locale) : undefined;
+      if (choices)
+        lines.push(line(t.options, choices.buttons.map((b) => asCode(b.label)).join(" / ")));
       if (card.answerSummary) lines.push(line(t.answer, asCode(card.answerSummary)));
       lines.push(line(card.state === "pending" ? t.answerOnWeb : t.details, card.webUrl));
       if (card.state === "pending" && card.textReply !== undefined)
