@@ -128,7 +128,16 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
         file,
         signal: ctrl.signal,
         onProgress: (p) => patch(key, { progress: p }),
-        onCreated: (id) => created.current.set(key, id),
+        onCreated: (id) => {
+          // Removed between the registration and its answer: nobody will ever send this draft.
+          if (ctrl.signal.aborted) {
+            void discard(id);
+            return;
+          }
+          const previous = created.current.get(key);
+          if (previous !== undefined && previous !== id) void discard(previous);
+          created.current.set(key, id);
+        },
       })
         .then(
           (view) => {
@@ -142,7 +151,7 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
           if (uploads.current.get(key) === ctrl) uploads.current.delete(key);
         });
     },
-    [upload, patch],
+    [upload, patch, discard],
   );
 
   /**

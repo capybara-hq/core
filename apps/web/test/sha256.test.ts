@@ -37,4 +37,22 @@ describe("sha256Fallback", () => {
       if (saved) Object.defineProperty(globalThis, "crypto", saved);
     }
   });
+
+  it("stops hashing when the signal aborts, between slices and before the result", async () => {
+    const ctrl = new AbortController();
+    const bytes = new Uint8Array(3 * 1_048_576);
+    const blob = blobOf(bytes);
+    const slice = blob.slice.bind(blob);
+    let slices = 0;
+    blob.slice = (...a: Parameters<Blob["slice"]>) => {
+      slices += 1;
+      if (slices === 2) ctrl.abort();
+      return slice(...a);
+    };
+    await expect(sha256Fallback(blob, ctrl.signal)).rejects.toThrow();
+    expect(slices).toBe(2);
+    const done = new AbortController();
+    done.abort();
+    await expect(sha256Hex(blobOf(bytes), done.signal)).rejects.toThrow();
+  });
 });

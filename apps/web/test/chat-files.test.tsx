@@ -283,6 +283,36 @@ describe("输入框：上传文件", () => {
     );
   });
 
+  it("登记请求的答复在移除之后才到：草稿立即被丢弃", async () => {
+    let release: (r: Response) => void = () => {};
+    const calls = stubApi({
+      [`POST ${ATT}`]: () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+      [`DELETE ${ATT}/${ID1}/draft`]: () => new Response(null, { status: 204 }),
+    });
+    const { container } = await renderChat("en");
+    const user = userEvent.setup();
+    await user.upload(fileInput(container), png());
+    await vi.waitFor(() => expect(posted(calls, ATT)).toHaveLength(1));
+    const group = screen.getByRole("group", { name: en.chat.files });
+    await user.click(within(group).getByRole("button", { name: "Remove chart.png" }));
+    release(
+      json(201, {
+        file: { id: ID1, name: "chart.png", contentType: "image/png", size: 4 },
+        upload: { method: "POST", url: S3_URL, headers: {}, fields: { key: "k" } },
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "DELETE" && c.url === `${ATT}/${ID1}/draft`),
+      ).toHaveLength(1),
+    );
+    expect(FakeXhr.instances).toHaveLength(0);
+  });
+
   it("上传中（已登记）移除：也丢弃内核上的草稿", async () => {
     const calls = stubApi({
       [`DELETE ${ATT}/${ID1}/draft`]: () => new Response(null, { status: 204 }),
@@ -549,7 +579,15 @@ describe("输入框：上传文件（修正轮 1）", () => {
   });
 
   it("发送时内核说附件不存在：对应条目标为出错（可重试），其余保持就绪", async () => {
+    // Hashing is async, so the two registrations may arrive in either order: ids follow the names.
+    const idOf = (c: Call) => (String(JSON.parse(String(c.body)).name) === "one.png" ? ID1 : ID2);
     stubApi({
+      [`POST ${ATT}`]: (c) =>
+        json(201, {
+          file: { id: idOf(c), name: "f", contentType: "image/png", size: 4 },
+          upload: { method: "POST", url: S3_URL, headers: {}, fields: { key: "k" } },
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        }),
       [`POST ${BASE}/messages`]: () =>
         json(404, {
           error: {

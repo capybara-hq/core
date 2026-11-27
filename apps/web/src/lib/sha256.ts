@@ -102,18 +102,24 @@ class Sha256 {
 }
 
 /** Pure-JS SHA-256 over `blob`, read in slices (exported for the test that forces it). */
-export async function sha256Fallback(blob: Blob): Promise<string> {
+export async function sha256Fallback(blob: Blob, signal?: AbortSignal): Promise<string> {
   const hash = new Sha256();
   for (let at = 0; at < blob.size; at += CHUNK) {
+    signal?.throwIfAborted();
     hash.update(new Uint8Array(await blob.slice(at, at + CHUNK).arrayBuffer()));
   }
+  signal?.throwIfAborted();
   return hash.digest();
 }
 
 /** Lower-case hex SHA-256 of the blob's bytes. */
-export async function sha256Hex(blob: Blob): Promise<string> {
+export async function sha256Hex(blob: Blob, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const subtle = globalThis.crypto?.subtle;
-  if (subtle === undefined) return sha256Fallback(blob);
-  const digest = await subtle.digest("SHA-256", await blob.arrayBuffer());
+  if (subtle === undefined) return sha256Fallback(blob, signal);
+  const bytes = await blob.arrayBuffer();
+  signal?.throwIfAborted();
+  const digest = await subtle.digest("SHA-256", bytes);
+  signal?.throwIfAborted();
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }

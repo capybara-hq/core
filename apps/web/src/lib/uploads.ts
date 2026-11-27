@@ -234,7 +234,7 @@ export async function uploadFile(
     purpose?: UploadPurpose;
   } = {},
 ): Promise<UploadedFile> {
-  const sha256 = await sha256Hex(file);
+  const sha256 = await sha256Hex(file, opts.signal);
   opts.signal?.throwIfAborted();
   const created = await createFile(
     orgId,
