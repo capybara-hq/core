@@ -225,3 +225,11 @@ Rebase on main, then: composer top strip and control row per spec §6 / §7 (des
   duplicate worktree feat-composer-menus-design is removed.
 - Next: commit the Task 1 fix, re-review it alone on the most capable model, then wave 2 (Tasks 2, 4
   and 5 in parallel), wave 3 (Task 6), then Task 7.
+- Wave 1 fixes committed: 02025ec4a (Task 1: browse read roots = project path, project root outside
+  the ceiling refused, sort, truncation, malformed output -> 503, op errors, tests), 98dc79465 and
+  49a0b007b (Task 3). Duplicate worktrees fix-composer-menu-review and feat-composer-menus-design removed.
+- Wave 2 partly done: 6f9d0cfe3 (Task 4 ProjectFilePicker), 8b254587e (Task 5 web menus); batch review
+  findings fixed in 87058dc20 (design: outside close, picker focus) and 5c88f0558 (web: IME via
+  composition events, stale @ picks filtered locally, skill plugin in description, English comments).
+- Next: Opus re-review of the Task 1 trust boundary (in parallel with Task 2 kernel send), review
+  Task 2, wave 3 (Task 6), Task 7.
