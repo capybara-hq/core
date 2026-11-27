@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/capybara": patch
+"@capybara-hq/kernel": patch
 ---
 
 Compaction summaries reuse the prompt cache: every compaction first summarizes from the
