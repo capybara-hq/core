@@ -1,6 +1,6 @@
 # Authorizations from a native shell finish in the system browser
 
-Status: draft for maintainer review (2026-11-28).
+Status: approved by the maintainer (2026-11-28), with the recommendations below.
 
 ## Intent
 
@@ -215,7 +215,11 @@ before 0.1.0.
 - **Config**: no new key; `appSchemes` in the public meta is derived from `auth.appRedirectUris`.
 - **Language**: comments and model-facing text in English.
 
-## Open questions
+## Resolved decisions
 
-1. Ticket lifetime: 10 minutes (same as the OAuth state and app sign-in attempt). Recommended.
-2. Whether the dialog in the app offers 「复制链接」: recommended, as app sign-in does (§6.1 page 3).
+1. Ticket lifetime: 10 minutes, the same as the OAuth state and the app sign-in attempt
+   (maintainer, 2026-11-28).
+2. The app's dialog offers 「复制链接」, as app sign-in does (desktop spec §6.1 page 3)
+   (maintainer, 2026-11-28).
+3. `openExternal@1` gains the optional `returnScheme` field instead of a new capability
+   (maintainer, 2026-11-28).
