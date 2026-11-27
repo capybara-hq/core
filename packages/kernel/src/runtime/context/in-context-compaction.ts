@@ -7,7 +7,7 @@ import type { CaseSnapshot } from "../../evals/snapshot.js";
 import { assembleModelRequest } from "../model-call.js";
 import type { MediaBytes, MediaInfo } from "./build.js";
 import { compactionRetryNote, SUMMARY_TASK_LINES } from "./compaction.js";
-import { estimateTokens } from "./tokens.js";
+import { calibrate, estimateTokens } from "./tokens.js";
 
 /**
  * The in-context summary request (idle compaction spec §9.4): the conversation's last request
@@ -312,7 +312,9 @@ function markedAnchor(
  *    reference's, never the current setting.
  * 5. A marked boundary names the first kept user message by its start (`boundary_ambiguous` when
  *    it cannot, see {@link markedAnchor}).
- * 6. The estimate plus `summaryCap` fits `model.contextWindow - reserveTokens` (`too_large`).
+ * 6. The estimate, calibrated by `calibration` (the last step's estimate and actual input, as the
+ *    compaction trigger calibrates its own), plus `summaryCap` fits `model.contextWindow -
+ *    reserveTokens` (`too_large`). The returned `estimate` is the calibrated one.
  *
  * Never throws for a snapshot's content.
  */
@@ -327,6 +329,8 @@ export function buildInContextCompactionRequest(input: {
   summaryCap: number;
   boundary: InContextBoundary;
   retry: boolean;
+  /** The last step's estimate and actual input ({@link calibrate}); absent or null: none. */
+  calibration?: { estimate: number; inputTokens: number } | null;
 }): { request: ModelRequest; lastCallSeq: number; estimate: number } | { skip: InContextSkip } {
   const { snapshot, model } = input;
   const call = latestModelCall(input.events);
@@ -401,7 +405,10 @@ export function buildInContextCompactionRequest(input: {
   request.purpose = "compaction";
   if (input.retry) request = withInContextRetryNote(request, input.summaryCap);
 
-  const estimate = estimateTokens(request.messages, request.system, request.tools, mediaTokens);
+  const estimate = calibrate(
+    estimateTokens(request.messages, request.system, request.tools, mediaTokens),
+    input.calibration ?? null,
+  );
   if (estimate + input.summaryCap > model.contextWindow - input.reserveTokens) {
     return { skip: "too_large" };
   }

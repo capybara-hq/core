@@ -1459,6 +1459,8 @@ async function inContextSummary(
       summaryCap: settings.summaryCap,
       boundary,
       retry: false,
+      // the fit check calibrates like the trigger does
+      calibration: lastActual(events),
     });
     if ("skip" in built) return built;
     return {

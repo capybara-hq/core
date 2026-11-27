@@ -23,6 +23,7 @@ import {
   withInContextRetryNote,
 } from "../../../src/runtime/context/in-context-compaction.js";
 import { UNKNOWN_RESULT_TEXT } from "../../../src/runtime/context/pairing.js";
+import { calibrate } from "../../../src/runtime/context/tokens.js";
 import { assembleModelRequest } from "../../../src/runtime/model-call.js";
 
 /**
@@ -422,6 +423,23 @@ describe("buildInContextCompactionRequest", () => {
     const edge = MODEL.contextWindow - estimate - SUMMARY_CAP;
     expect("request" in build(r, { reserveTokens: edge })).toBe(true);
     expect(build(r, { reserveTokens: edge + 1 })).toEqual({ skip: "too_large" });
+  });
+
+  it("the fit check uses the estimate calibrated by the last step's actual usage, as the trigger does", () => {
+    const r = finishedRun();
+    const { estimate: raw } = built(r);
+    // the last step's request used twice its estimate: the calibrated estimate doubles
+    const calibration = { estimate: 1000, inputTokens: 2000 };
+    const { estimate } = built(r, { calibration });
+    expect(estimate).toBe(calibrate(raw, calibration));
+    expect(estimate).toBe(raw * 2);
+    const edge = MODEL.contextWindow - estimate - SUMMARY_CAP;
+    expect("request" in build(r, { calibration, reserveTokens: edge })).toBe(true);
+    expect(build(r, { calibration, reserveTokens: edge + 1 })).toEqual({ skip: "too_large" });
+    // the raw edge would admit a request the calibrated estimate does not fit
+    expect(build(r, { calibration, reserveTokens: MODEL.contextWindow - raw - SUMMARY_CAP })).toEqual(
+      { skip: "too_large" },
+    );
   });
 
   it("retry adds the retry note after the instruction and nothing else", () => {
