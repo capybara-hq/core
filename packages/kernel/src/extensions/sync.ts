@@ -15,9 +15,12 @@ import { type ExtensionPackageLimits, extractExtensionPackage } from "./package.
  * 把内容寻址的插件包同步到本副本的本地目录（C13）：`<dir>/<name>/<sha256 前 16 位>/`。
  *
  * - 目录里有校验文件 {@link MARKER} 且其中每个文件的 sha256 都对得上 → 直接复用（同一 sha 重启不再下载）；
- * - 否则取包（`blobs.get` 按记录的存放位置读取并校验 sha256），先解到同级的临时目录、写好宿主包链接与校验文件，
- *   再改名换入；目标位置的残缺目录先原子地改名移开再删（不原地删除，见 {@link clearBrokenRoot}）。并发的同机进程
- *   各自解到自己的临时目录，改名失败时以已就位且完整的为准。
+ * - Otherwise fetch the package (`blobs.get` reads it from the recorded location and checks the
+ *   sha256), unpack it into a sibling temporary directory, write the host package links and the
+ *   marker, then rename it in. Concurrent processes on the same machine each unpack into their own
+ *   temporary directory; when the rename finds a root in place, a complete one is used as is and
+ *   never moved (a peer may be reading it), and only an incomplete one is moved aside atomically
+ *   and deleted (never removed in place, see {@link clearBrokenRoot}) before one more rename.
  * - `node_modules/` 下为 {@link HOST_PROVIDED_PACKAGES} 建指向宿主副本的符号链接：插件 import 的 SDK 与 zod
  *   就是内核用的那一份（同一模块实例）。插件目录不在宿主 `node_modules` 的上游，别的包一概解析不到。
  */
@@ -154,20 +157,22 @@ export async function syncPackage(
     }
     const marker: Marker = { sha256: sha, entry, files };
     await writeFile(join(tmp, MARKER), JSON.stringify(marker), { flag: "wx", mode: 0o644 });
-    // 换入：解包期间同机另一个进程可能已换入完整的目录——以它为准，不删；否则先移走残缺目录
-    const done = await intact(root, sha);
-    if (done) return urlOf(done);
-    const restored = await clearBrokenRoot(root, sha);
-    if (restored) return urlOf(restored);
-    try {
-      await rename(tmp, root);
-    } catch (e) {
-      // 同机另一个进程刚换入：以它为准（必须完整），否则抛原错误
-      const other = await intact(root, sha);
-      if (!other) throw e;
-      return urlOf(other);
+    // Swap in: rename first. A root already in place (another process on this volume swapped in
+    // the same sha, maybe while we unpacked) is used as is when complete and never leaves its
+    // place: that process may be reading it right now (listing migrations, importing). Only a
+    // root found incomplete is moved aside, then the rename is tried once more.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await rename(tmp, root);
+        return urlOf(marker);
+      } catch (e) {
+        const other = await intact(root, sha);
+        if (other) return urlOf(other);
+        if (attempt > 0) throw e;
+        const restored = await clearBrokenRoot(root, sha);
+        if (restored) return urlOf(restored);
+      }
     }
-    return urlOf(marker);
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
@@ -203,8 +208,9 @@ async function extensionEntryOf(root: string, name: string): Promise<string> {
 }
 
 /**
- * Gets a broken package root out of the way before the rename. Never `rm` in place: another process
- * on the same volume may have renamed its complete directory in after our `intact` check. The root is
+ * Gets a broken package root out of the way before the rename; called only on a root just found
+ * incomplete. Never `rm` in place: another process on the same volume may have renamed its complete
+ * directory in after our `intact` check. The root is
  * renamed aside atomically and checked again there: if it turns out complete, it is put back (or,
  * when yet another process filled the root meanwhile, that one is used) and returned; otherwise the
  * moved-aside copy is deleted. Exported for tests.
