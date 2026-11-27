@@ -312,9 +312,9 @@ function extensionItems(pages: readonly UiContributionItem[], locale: string): E
 }
 
 /**
- * The status bar prompt (web order §2.3, spec §4.4): `<login>@<org-slug>:<path>`, the path `~` +
- * the pathname in the workspace and the pathname as-is under `/admin`; without a current org there
- * is no `@<slug>`. The login is the account's name in lowercase, spaces joined by hyphens (`/me`
+ * The prompt of the compact account sheet's status line (spec §6.55): `<login>@<org-slug>:<path>`,
+ * the path `~` + the pathname in the workspace and the pathname as-is under `/admin`; without a
+ * current org there is no `@<slug>`. The login is the account's name in lowercase, spaces joined by hyphens (`/me`
  * carries no login name, and an SSO account may have none).
  */
 export function statusPrompt(login: string, slug: string | null, pathname: string): string {

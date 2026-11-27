@@ -45,7 +45,6 @@ import {
   SkeletonText,
   Stack,
   StatCards,
-  StatusBar,
   StatusPage,
   SwitchField,
   SwitchList,
@@ -53,7 +52,6 @@ import {
   Textarea,
   TitleBar,
   useDesignLocale,
-  useStatusBar,
 } from "@capybara-hq/design";
 import {
   CONNECTOR_STATUS_LABEL,
@@ -66,7 +64,6 @@ import {
   PERSON_AVATAR_FIXTURE,
   SELECT_FIXTURE,
   SELECT_PERSON_FIXTURE,
-  STATUS_FIXTURE,
   TABLE_HOVER_ROW,
   TABLE_SELECTED_ROW,
   THEME_AVATAR_FIXTURES,
@@ -86,7 +83,7 @@ import { OVERVIEW_SECTION_BLOCKS } from "./overview-section-blocks";
 import { RefBlock } from "./ref-block";
 import { SCHEDULE_CALENDAR_BLOCKS } from "./schedule-calendar-blocks";
 import { SHARE_BLOCKS } from "./share-blocks";
-import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
+import { type SidebarFixture, sidebarProps } from "./shell-fixture";
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
 import { listDetailBlocks } from "./templates/inbox";
 import { THEME_SWATCH_BLOCKS } from "./theme-swatch-blocks";
@@ -620,6 +617,8 @@ function sidebarBlocks(): ReactNode {
       />
       <SidebarBlock id="sidebar-many-groups" active="agents" groups="many" />
       <SidebarBlock id="sidebar-guest" {...base} level="guest" />
+      <SidebarBlock id="sidebar-account-status" {...base} accountStatus />
+      <SidebarBlock id="sidebar-account-menu" {...base} accountMenu />
       <SidebarBlock id="sidebar-admin" context="admin" active="accounts" />
       {/* The rail of the medium class: no expand button, Conversations opens a sheet */}
       <RefBlock id="sidebar-rail-medium" width={200} height={SIDEBAR_H}>
@@ -662,7 +661,7 @@ function sidebarBlocks(): ReactNode {
   );
 }
 
-// ── Page header, stat cards, status bar, action row ──────────────────────
+// ── Page header, stat cards, action row ──────────────────────────────────
 
 const L = LIST_PAGE_FIXTURE;
 const F = FORM_PAGE_FIXTURE;
@@ -810,32 +809,6 @@ function statCardsBlocks(): ReactNode {
   );
 }
 
-function statusBarBlocks(): ReactNode {
-  const S = STATUS_FIXTURE;
-  return (
-    <>
-      <RefBlock id="status-bar-default" width={LIST}>
-        <StatusBar
-          context={S.context}
-          pageStatus={S.pageStatus}
-          system={S.system}
-          version={S.version}
-          timeZone={S.timeZone}
-        />
-      </RefBlock>
-      <RefBlock id="status-bar-truncated" width={480}>
-        <StatusBar
-          context="grant@示例组织:/agents/跨部门季度经营分析与年度预算编制及执行情况跟踪复盘总结小助手/edit"
-          pageStatus="当前版本 v12"
-          system={S.system}
-          version={S.version}
-          timeZone={S.timeZone}
-        />
-      </RefBlock>
-    </>
-  );
-}
-
 function FormActionRow({ clean }: { clean?: boolean }) {
   return clean ? (
     <ActionRow unsaved={0} primary={{ label: F.actionRow.save, disabled: true, onSelect: noop }} />
@@ -885,14 +858,13 @@ function ShellFixture({
 }) {
   const { onOpenCommands: _, ...sidebar } = sidebarProps({ active }, stay(`/dev/ui/${route}`));
   return (
-    <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture(route)}>
+    <AppShell sidebar={sidebar} commands={COMMANDS}>
       {children}
     </AppShell>
   );
 }
 
 function ListTemplateBody() {
-  useStatusBar(STATUS_FIXTURE.pageStatus);
   return (
     <ListPage
       header={{
@@ -1021,11 +993,11 @@ function loadingShapes(fields: FixtureFormField[], paired: boolean): FieldShape[
 }
 
 function FormTemplateBody({ loading }: { loading?: boolean }) {
-  useStatusBar(F.status.pageStatus);
   return (
     <FormPage
-      // Loading (spec §5.3): the page knows its path's first segment, not the object or its title.
-      header={loading ? { path: F.path.slice(0, 1), title: "" } : { path: F.path, title: F.title }}
+      // Loading (spec §5.3): the page knows its parent path, not the object or its title; a head
+      // loading its title over a two-segment parent path draws the path row as the loaded one does.
+      header={loading ? { path: F.path.slice(0, 2), title: "" } : { path: F.path, title: F.title }}
       {...(loading ? { loading: true } : {})}
       actionRow={{
         unsaved: 2,
@@ -1428,7 +1400,6 @@ export const REFERENCE_BLOCKS = {
   "head-rhythm": headRhythmBlocks,
   skeleton: skeletonBlocks,
   "stat-cards": statCardsBlocks,
-  "status-bar": statusBarBlocks,
   "action-row": actionRowBlocks,
   "template-list": templateListBlocks,
   "template-form": templateFormBlocks,

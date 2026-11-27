@@ -3,7 +3,6 @@ import {
   ADMIN_NAV_FIXTURE,
   ARCHIVED_COUNT_FIXTURE,
   EXTENSION_PAGES_FIXTURE,
-  FIXTURE_ORG,
   FIXTURE_USER,
   type FixtureGroup,
   type FixtureNavItem,
@@ -14,10 +13,9 @@ import {
   NAV_FIXTURE,
   ORG_SWITCHER_FIXTURE,
   SETUP_STEPS_FIXTURE,
-  STATUS_FIXTURE,
 } from "@capybara-hq/design/fixtures";
 
-// The sidebar and status bar of the catalog: shared by the reference blocks and FixtureShell.
+// The sidebar of the catalog: shared by the reference blocks and FixtureShell.
 
 const noop = () => {};
 const done = async () => {};
@@ -46,6 +44,10 @@ export type SidebarFixture = {
   context?: "admin" | "setup";
   /** The setup context's steps: the super admin's (default) or a member's. */
   setup?: "admin" | "member";
+  /** The account row shows a system status (a fail dot) and the menu's foot line. */
+  accountStatus?: boolean;
+  /** Draw the account menu open (status head line and foot line included). */
+  accountMenu?: boolean;
   /** Draw the 更多 flyout open. */
   moreOpen?: boolean;
   /** Draw the conversation filter open with this query and state. */
@@ -137,7 +139,20 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
       onArchive: done,
       onDelete: done,
     },
-    account: { name: FIXTURE_USER.name, menu: [] },
+    account: {
+      name: FIXTURE_USER.name,
+      menu:
+        o.accountStatus || o.accountMenu
+          ? [
+              { label: "个人设置", onSelect: noop },
+              { label: "退出登录", onSelect: noop },
+            ]
+          : [],
+      ...(o.accountStatus || o.accountMenu
+        ? { status: { text: "连接已断开", tone: "fail" as const }, footnote: "v0.1.0 · UTC+8" }
+        : {}),
+      ...(o.accountMenu ? { menuOpen: true } : {}),
+    },
     ...(o.moreOpen ? { moreOpen: true } : {}),
     onOpenCommands: noop,
   };
@@ -168,14 +183,4 @@ export function setupStepsFixture(
   return SETUP_STEPS_FIXTURE[who].map((s) =>
     s.state === "waiting" ? { ...s } : { ...s, href: href(s.id) },
   );
-}
-
-/** The status bar of a catalog page at `route` (`/connectors`, …). */
-export function statusFixture(route: string) {
-  return {
-    context: `${FIXTURE_USER.name}@${FIXTURE_ORG}:${route}`,
-    version: STATUS_FIXTURE.version,
-    timeZone: STATUS_FIXTURE.timeZone,
-    system: STATUS_FIXTURE.system,
-  };
 }

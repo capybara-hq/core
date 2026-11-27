@@ -165,7 +165,7 @@ const drawer: DrawerNavData = {
 function tree() {
   return (
     <DesignProvider locale="zh">
-      <AppShell sidebar={sidebar} status={status}>
+      <AppShell sidebar={sidebar}>
         <TitleBar
           title="T"
           untitled="U"
@@ -175,8 +175,27 @@ function tree() {
         />
         <NewTitleBar />
         <PageHeader
-          path={[{ label: "acme", href: "/" }, { label: "agents" }]}
-          title="Agents"
+          path={[
+            { label: "acme", href: "/" },
+            { label: "agents", href: "/agents" },
+            { label: "研究助手" },
+          ]}
+          title="研究助手"
+          actions={[{ label: "新建", variant: "primary", onSelect: noop }]}
+        />
+        <PageHeader
+          path={[
+            { label: "acme", href: "/" },
+            { label: "devices", href: "/devices" },
+            { label: "mac" },
+          ]}
+          title="Device"
+          titleHidden
+          actions={[{ label: "重启", variant: "default", onSelect: noop }]}
+        />
+        <PageHeader
+          path={[{ label: "acme", href: "/" }, { label: "skills" }]}
+          title="Skills"
           actions={[{ label: "新建", variant: "primary", onSelect: noop }]}
         />
         <PageHeader
@@ -203,12 +222,21 @@ describe("the fillers the templates draw", () => {
       ".cb-title-bar[data-new]",
       ".cb-pageheader > .cb-pageheader-path",
       ".cb-pageheader-titleless > .cb-pageheader-path",
+      ".cb-pageheader-titleless:not(:has(> .cb-pageheader-path))",
       ".cb-shared-bar",
+      "[data-part='shell-content']",
     ]) {
       const el = container.querySelector(row);
       expect(el, row).not.toBeNull();
       expect(el?.querySelector(":scope > .cb-drag-fill"), row).not.toBeNull();
     }
+    // every title row has exactly one, with or without a path row above it
+    const rows = [...container.querySelectorAll(".cb-pageheader-row")];
+    expect(rows.length).toBe(2);
+    for (const r of rows) expect(r.querySelectorAll(":scope > .cb-drag-fill")).toHaveLength(1);
+    // the paper's top gutter is the column's first child
+    const column = container.querySelector("[data-part='shell-content']");
+    expect(column?.firstElementChild?.matches(".cb-drag-fill.cb-shell-gutter")).toBe(true);
     const fillers = [...container.querySelectorAll(".cb-drag-fill, .cb-shell-band")];
     expect(fillers.length).toBeGreaterThan(6);
     for (const f of fillers) {
@@ -224,7 +252,7 @@ describe("the narrow window's row and the side panel's strip", () => {
     vi.stubGlobal("matchMedia", matchMediaFor(480).matchMedia);
     const { container } = render(
       <DesignProvider locale="zh">
-        <AppShell sidebar={sidebar} status={status}>
+        <AppShell sidebar={sidebar}>
           <p>page</p>
         </AppShell>
       </DesignProvider>,
@@ -275,7 +303,7 @@ describe("the narrow window's row and the side panel's strip", () => {
     vi.stubGlobal("matchMedia", matchMediaFor(480).matchMedia);
     const { container } = render(
       <DesignProvider locale="zh">
-        <AppShell sidebar={sidebar} status={status} chatSurface drawer={drawer}>
+        <AppShell sidebar={sidebar} chatSurface drawer={drawer}>
           <NewTitleBar />
         </AppShell>
       </DesignProvider>,
@@ -304,7 +332,6 @@ describe("the narrow window's row and the side panel's strip", () => {
           }}
           thread={<p>t</p>}
           composer={<div />}
-          status={{ context: "c", version: "v" }}
           right="panel"
           panel={<div>panel</div>}
           onCloseRight={noop}
@@ -323,7 +350,13 @@ describe("a filler adds no gap", () => {
     const rules = STYLES.flatMap((f) => parseCss(css(f)));
     const gapOf = (row: string) =>
       rules.find((r) => r.at === null && r.selector === row && r.decls.gap)?.decls.gap;
-    for (const row of [".cb-sidebar-top", ".cb-title-bar", ".cb-pageheader-path"]) {
+    for (const row of [
+      ".cb-sidebar-top",
+      ".cb-title-bar",
+      ".cb-pageheader-path",
+      ".cb-pageheader-row",
+      ".cb-pageheader-titleless",
+    ]) {
       const gap = gapOf(row);
       expect(gap, row).toBeDefined();
       const cancel = rules.find((r) => selectors(r.selector).includes(`${row} > .cb-drag-fill`))
@@ -359,7 +392,7 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     vi.stubGlobal("matchMedia", matchMediaFor(width).matchMedia);
     return render(
       <DesignProvider locale="zh">
-        <AppShell sidebar={sidebar} status={status} collapsed={collapsed} onCollapsedChange={noop}>
+        <AppShell sidebar={sidebar} collapsed={collapsed} onCollapsedChange={noop}>
           <p>page</p>
         </AppShell>
       </DesignProvider>,
@@ -400,20 +433,11 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     ).toEqual([]);
   });
 
-  it("a hairline under the band closes it where the rail drops, and nowhere else", () => {
-    const line =
-      ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"]):has(> .cb-sidebar[data-mode="rail"])::after';
-    expect(decl(line, "top", BAND_QUERY)).toBe(
-      "calc(var(--cb-shell-band) + var(--cb-shell-rail-drop) - 1px)",
+  it("no hairline closes the band where the rail drops: band, rail and gutters are one ground", () => {
+    const pseudo = parseCss(css("shell-environment.css")).filter(
+      (r) => /::(after|before)/.test(r.selector) && /\.cb-shell\b/.test(r.selector),
     );
-    expect(decl(line, "left", BAND_QUERY)).toBe("0");
-    expect(decl(line, "right", BAND_QUERY)).toBe("0");
-    expect(decl(line, "height", BAND_QUERY)).toBe("1px");
-    // the sidebar's own divider colour, so the rail's divider meets it in a T
-    expect(decl(line, "background", BAND_QUERY)).toBe("var(--cb-line-soft)");
-    expect(decl(line, "pointer-events", BAND_QUERY)).toBe("none");
-    // drawn only inside the style query: no rail drop (browser, full sidebar, banner), no line
-    expect(decl(line, "content")).toBeUndefined();
+    expect(pseudo.filter((r) => r.decls.content !== undefined)).toEqual([]);
   });
 
   it("the expand button sits in the band right after the controls, and leaves the rail", () => {
@@ -538,7 +562,6 @@ describe("the medium rail's drawer (design spec §6.13, maintainer decision 2026
       <DesignProvider locale="zh">
         <AppShell
           sidebar={{ ...withPage, activeNav: nav }}
-          status={status}
           collapsed={false}
           onCollapsedChange={onCollapsedChange}
         >
@@ -658,7 +681,7 @@ describe("the medium rail's drawer (design spec §6.13, maintainer decision 2026
     vi.stubGlobal("matchMedia", mm.matchMedia);
     render(
       <DesignProvider locale="zh">
-        <AppShell sidebar={withPage} status={status} collapsed={false} onCollapsedChange={noop}>
+        <AppShell sidebar={withPage} collapsed={false} onCollapsedChange={noop}>
           <p>page</p>
         </AppShell>
       </DesignProvider>,
@@ -840,7 +863,7 @@ describe("the compact flat title bar inside the desktop shell (maintainer decisi
     vi.stubGlobal("matchMedia", matchMediaFor(480).matchMedia);
     const { container } = render(
       <DesignProvider locale="zh">
-        <AppShell sidebar={sidebar} status={status} chatSurface drawer={drawer}>
+        <AppShell sidebar={sidebar} chatSurface drawer={drawer}>
           <TitleBar
             title="沙箱内 pnpm 安装失败"
             untitled="U"
@@ -935,5 +958,40 @@ describe("the side panel's header", () => {
       expect(b.closest(".cb-drag-fill"), b.outerHTML).toBeNull();
     }
     expect(head.querySelectorAll("button").length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("the paper's top gutter in the desktop shell (layered shell spec §5)", () => {
+  const rules = parseCss(css("shell-environment.css"));
+  const wide = rules.filter((r) => r.at === "(min-width: 600px)");
+
+  it("starts after the start reserve, so the band's sidebar toggle is never under it", () => {
+    expect(
+      wide.find((r) => r.selector === ':root[data-shell="desktop"] .cb-shell-gutter')?.decls.left,
+    ).toBe("var(--cb-shell-column-reserve, 0px)");
+    // and the toggle is a no-drag root as well (a later no-drag region cuts it out of a filler)
+    const roots = rules.filter(
+      (r) =>
+        !r.selector.includes(":has(") &&
+        r.decls["-webkit-app-region"] === "no-drag" &&
+        r.decls["app-region"] === "no-drag",
+    );
+    expect(roots.flatMap((r) => selectors(r.selector).flatMap(subjects))).toContain(
+      ".cb-shell-rail-toggle",
+    );
+  });
+
+  it("over a head without a path row it is as high as the top row, which the head starts below", () => {
+    const tall = wide.find(
+      (r) => r.selector.includes("> .cb-shell-gutter") && r.selector.includes(":has("),
+    );
+    expect(tall?.decls.height).toBe("max(var(--cb-space-2), var(--cb-shell-row))");
+    expect(
+      wide.find(
+        (r) =>
+          r.selector ===
+          ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))',
+      )?.decls["padding-top"],
+    ).toBe("max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)))");
   });
 });

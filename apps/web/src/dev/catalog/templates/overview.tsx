@@ -9,7 +9,6 @@ import {
   Stack,
   StatusMark,
   Text,
-  useStatusBar,
 } from "@capybara-hq/design";
 import { LIST_KPIS, RECENT_RUNS, type RecentRun, RUN_TREND, TREND_AXIS } from "../fixtures";
 import { FixtureShell } from "../frame";
@@ -23,7 +22,6 @@ const COLUMNS: Column<RecentRun>[] = [
 ];
 
 function OverviewBody() {
-  useStatusBar("自动刷新 15s");
   return (
     <OverviewPage header={{ path: [{ label: "~" }], title: "概览" }}>
       <Stack gap={16}>
@@ -75,7 +73,7 @@ function OverviewBody() {
  */
 export function OverviewTemplate() {
   return (
-    <FixtureShell nav="agents" context="overview">
+    <FixtureShell nav="agents">
       <OverviewBody />
     </FixtureShell>
   );

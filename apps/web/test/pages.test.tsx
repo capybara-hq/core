@@ -206,13 +206,18 @@ describe("(app) 页面模板", () => {
   });
 
   it("the error page keeps the page's path in the head; under /admin it starts with /admin", () => {
-    resetNavigation("/trajectories");
+    // (a path of three segments: one or two draw no path row, layered shell spec §3)
+    resetNavigation("/trajectories/c1");
     const { unmount } = renderPage(<ErrorFrame reset={() => {}} />, { locale: "zh" });
-    expect(screen.getByRole("navigation", { name: "路径" }).textContent).toBe("acme/trajectories");
+    expect(screen.getByRole("navigation", { name: "路径" }).textContent).toBe(
+      "acme/trajectories/c1",
+    );
     unmount();
-    resetNavigation("/admin/accounts");
+    resetNavigation("/admin/plugins/market");
     renderPage(<ErrorFrame reset={() => {}} />, { locale: "zh" });
-    expect(screen.getByRole("navigation", { name: "路径" }).textContent).toBe("/admin/accounts");
+    expect(screen.getByRole("navigation", { name: "路径" }).textContent).toBe(
+      "/admin/plugins/market",
+    );
   });
 });
 
@@ -283,7 +288,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
   });
   const notSuperAdmin: Me = { ...ME, account: { ...ME.account, isSuperAdmin: false } };
 
-  it("the sidebar lists existing routes only; the status bar reads account@org:route and the version", async () => {
+  it("the sidebar lists existing routes only; no status bar", async () => {
     resetNavigation("/agents/new");
     renderFrame(shellOf(ME));
     expect(screen.getByText("page body")).toBeTruthy();
@@ -318,10 +323,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),
     ).toBe("page");
-    const status = screen.getByRole("contentinfo");
-    expect(within(status).getByText("grant@acme:~/agents/new")).toBeTruthy();
-    expect(within(status).getByText("v9.9.9")).toBeTruthy();
-    expect(status.textContent).not.toContain(">");
+    // no status bar: the version is in the account menu's foot
+    expect(screen.queryByRole("contentinfo")).toBeNull();
   });
 
   it("普通成员的顶栏不显示管理员才能用的「渠道」", async () => {
@@ -543,7 +546,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
   it("服务端渲染不含时区（避免与浏览器时区不同导致的水合不一致）", () => {
     resetNavigation("/admin");
     const html = renderToString(frameElement(shellOf(ME)));
-    expect(html).toContain("v9.9.9");
+    expect(html).toContain('data-cap-part="shell"');
     expect(html).not.toContain("UTC");
   });
 

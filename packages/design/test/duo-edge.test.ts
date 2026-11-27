@@ -74,7 +74,6 @@ describe("Duo edge to edge", () => {
       ".cb-conv-scroll",
       ".cb-conv-pushed-body",
       ".cb-conv-pushed-bar",
-      ".cb-statusbar",
       ".cb-title-bar",
       ".cb-rpanel",
       ".cb-template-head",

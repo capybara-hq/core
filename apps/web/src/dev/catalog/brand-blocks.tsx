@@ -51,7 +51,7 @@ export function BrandFixtureCatalog() {
             </Button>
           </Stack>
         </AuthPage>
-        <FixtureShell nav="" context="agents/unknown">
+        <FixtureShell nav="">
           <StatusPage
             header={{ path: [{ label: "~" }], title: "页面不存在" }}
             kind="404"

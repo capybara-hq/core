@@ -36,7 +36,9 @@ async function newChat(page: Page, agentId: string) {
 // exact: a stopped run's row is named "… 已停止 …" too
 const stopButton = (page: Page) =>
   page.getByRole("button", { name: designZh("composer.stop"), exact: true });
-const statusBar = (page: Page) => page.locator('[data-part="conv-main"] .cb-statusbar');
+// the page's run state live region (visually hidden, polite)
+const runStatus = (page: Page) =>
+  page.locator('[data-part="conv-main"] [role="status"][data-part="run-announce"]');
 
 test("a new conversation is created on the first send only; the title is generated; rename", async ({
   page,
@@ -126,7 +128,7 @@ test("↵ and ⌘↵ / Ctrl+↵ while running send interjections (no queue), pla
   await stopButton(page).click();
   await expect(page.locator('[data-run-status="stopped"]')).toHaveCount(1);
   await expect(stopButton(page)).toHaveCount(0);
-  await expect(statusBar(page)).toContainText(zh.chat.status.stopped);
+  await expect(runStatus(page)).toContainText(zh.chat.status.stopped);
 });
 
 test("approvals: once / this conversation / always; deny with a reason; stop while waiting", async ({
@@ -148,7 +150,7 @@ test("approvals: once / this conversation / always; deny with a reason; stop whi
   await expect(approval).toHaveCount(1);
   await expect(approval.locator('[data-part="tool-key"]')).toHaveText("mcp__capfix__delete_item");
   await expect(approval.getByText("x1")).toBeVisible();
-  await expect(statusBar(page)).toContainText(zh.chat.status.waiting);
+  await expect(runStatus(page)).toContainText(zh.chat.status.waiting);
   for (const s of ["hitl.approve", "hitl.approveSession", "hitl.approveAlways"]) {
     await expect(approval.getByRole("button", { name: designZh(s), exact: true })).toBeVisible();
   }

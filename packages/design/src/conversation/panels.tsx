@@ -311,6 +311,7 @@ export function ContextSection({
   deviceBadge,
   deviceBadgeTone = "warn",
   connectors,
+  rounds,
   lastRun,
   total,
 }: {
@@ -324,6 +325,8 @@ export function ContextSection({
   /** The mark's tone: `fail` for a danger mark, `default` for a quiet one; default `warn`. */
   deviceBadgeTone?: "default" | "warn" | "fail";
   connectors: string[];
+  /** The conversation's turns ("Turn 3 · 2m 14s elapsed"), worded by the page; no row when absent. */
+  rounds?: ReactNode;
   /**
    * The last run's parts (duration, tokens; the model only when it differs from `model`), worded
    * by the page and joined with " · "; no row when empty.
@@ -363,6 +366,11 @@ export function ContextSection({
         {connectors.length > 0 ? (
           <ContextRow label={t("props.connectors")}>
             {connectors.join(t("props.listJoin"))}
+          </ContextRow>
+        ) : null}
+        {rounds ? (
+          <ContextRow label={t("props.rounds")} part="context-rounds">
+            {rounds}
           </ContextRow>
         ) : null}
         {lastRun && lastRun.length > 0 ? (

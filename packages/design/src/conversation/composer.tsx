@@ -22,6 +22,7 @@ import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
 import { isTouchPointer } from "../shell/pointer";
 import { ComposerOptions } from "./composer-options";
+import { ContextMeter } from "./context-meter";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
 import { ModeMenu, type ModeMenuProps, nextMode } from "./mode-menu";
 import { arrangePickerGroups, LONG_PICKER_THRESHOLD } from "./picker-groups";
@@ -309,6 +310,11 @@ export type ComposerBoxProps = {
    * quick actions, given once the conversation has a sub-agent.
    */
   agents?: ReactNode;
+  /**
+   * The context meter: a ring right before send / stop, `pct` of the context window used (0-100),
+   * `over` once past the compaction threshold. Absent: no ring.
+   */
+  context?: { pct: number; over: boolean };
   send: { mode: "send" | "stop"; disabled?: boolean; busy?: boolean; onClick(): void };
   /**
    * Sends the draft as ↵ does, for the token warning's 「仍然发送」 (setup guides v2 spec §12.1)
@@ -412,6 +418,7 @@ export function ComposerBox({
   mode,
   quickActions,
   agents,
+  context,
   send,
   onSend,
   textareaRef,
@@ -640,6 +647,7 @@ export function ComposerBox({
             onAttach();
           }}
         />
+        {context ? <ContextMeter pct={context.pct} over={context.over} /> : null}
         {send.mode === "stop" ? (
           <IconButton
             className="cb-stop"

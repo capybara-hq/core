@@ -62,9 +62,7 @@
   --cb-layout-sidebar: 256px;
   --cb-layout-sidebar-rail: 48px;
   --cb-layout-content: 1120px;
-  --cb-layout-content-pad: 32px;
   --cb-layout-chat: 720px;
-  --cb-layout-status-bar: 24px;
   --cb-layout-action-row: 40px;
   --cb-layout-gutter: 20px;
   --cb-layout-title-bar: 48px;
@@ -111,7 +109,7 @@
   --cb-builtin-dark-panel: #111110;
   --cb-builtin-dark-ink: #E6E6E3;
   --cb-builtin-dark-accent: #FF6A13;
-  --cb-builtin-light-bg: #FAF9F6;
+  --cb-builtin-light-bg: #FDFDFC;
   --cb-builtin-light-panel: #FFFFFF;
   --cb-builtin-light-ink: #1A1A18;
   --cb-builtin-light-accent: #CC4609;
@@ -121,11 +119,11 @@
   --cb-bg: #0A0A0A;
   --cb-panel: #111110;
   --cb-panel-2: #0E0E0D;
-  --cb-sidebar: #111110;
-  --cb-sidebar-active: #1A1A18;
+  --cb-sidebar: #171716;
+  --cb-sidebar-active: rgba(255,255,255,0.07);
   --cb-raised: #141413;
-  --cb-selected: #1F1F1D;
-  --cb-hover: #171716;
+  --cb-selected: #21211F;
+  --cb-hover: rgba(255,255,255,0.04);
   --cb-line-soft: #1C1C1A;
   --cb-line: #2A2A28;
   --cb-line-strong: #3A3A37;
@@ -190,14 +188,14 @@
 }
 
 :root[data-theme="light"] {
-  --cb-bg: #FAF9F6;
+  --cb-bg: #FDFDFC;
   --cb-panel: #FFFFFF;
   --cb-panel-2: #FCFBF9;
-  --cb-sidebar: #F3F2EE;
+  --cb-sidebar: #EDECE7;
   --cb-sidebar-active: rgba(26,26,24,0.09);
   --cb-raised: #FFFFFF;
   --cb-selected: rgba(26,26,24,0.07);
-  --cb-hover: rgba(26,26,24,0.04);
+  --cb-hover: rgba(26,26,24,0.045);
   --cb-line-soft: #E8E7E2;
   --cb-line: #D9D8D2;
   --cb-line-strong: #B5B5AE;

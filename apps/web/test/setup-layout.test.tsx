@@ -63,10 +63,9 @@ describe("setup layout scope", () => {
     expect(screen.queryByText("page body")).toBeNull();
     const org = setupSidebar()?.querySelector('[data-part="org-switcher"]') as HTMLElement;
     expect(org.textContent).toContain("Acme");
-    expect(org.textContent).toContain("~/acme");
-    // the path line `<slug> / 开始之前`, the description, the checklist
-    const path = screen.getByRole("navigation", { name: "路径" });
-    expect(path.textContent).toContain("acme");
+    // the path `<slug> / <setup title>` has two segments: no path row (layered shell spec §3); the
+    // description, the checklist
+    expect(screen.queryByRole("navigation", { name: "路径" })).toBeNull();
     expect(screen.getByText(s.description)).toBeTruthy();
     expect(step(sl.steps.model).getAttribute("data-state")).toBe("todo");
     // the count is over the required steps (no "organization created" item); the checklist card
@@ -80,8 +79,8 @@ describe("setup layout scope", () => {
     // the account menu holds sign-out
     await userEvent.setup().click(screen.getByRole("button", { name: "账户: Grant" }));
     expect(await screen.findByRole("menuitem", { name: zh.common.logout })).toBeTruthy();
-    // the status bar prompt
-    expect(screen.getByText("grant@acme:~/setup")).toBeTruthy();
+    // no status bar: the menu's foot reads the version
+    expect(document.querySelector('[data-part="menu-foot"]')?.textContent).toMatch(/^v9\.9\.9/);
   });
 
   it("a provider the org can switch on (org_fixable): the model step stays to do", () => {

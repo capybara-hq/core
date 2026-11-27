@@ -196,7 +196,7 @@ export function routeSegments(pathname: string): { admin: boolean; rest: PathSeg
  * The page path of the current route (spec §2.4), for pages that have no head of their own (the
  * error and not-found pages): `<slug> / trajectories / <id>` in the workspace, `/admin / accounts`
  * in the admin console. Every segment but the last links to its route when that route is a page;
- * UUIDs read as their first 8 characters, as the conversation's status bar shows them.
+ * UUIDs read as their first 8 characters.
  */
 export function useRoutePath(): PathSegment[] {
   const { admin, rest } = routeSegments(usePathname());

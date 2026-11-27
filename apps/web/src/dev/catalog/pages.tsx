@@ -26,7 +26,7 @@ import { meQuery } from "../../lib/query/shell";
 import type { Me } from "../../lib/session";
 import { COMMANDS } from "./fixtures";
 import type { PageRoute } from "./routes";
-import { sidebarProps, statusFixture } from "./shell-fixture";
+import { sidebarProps } from "./shell-fixture";
 
 // Real app pages drawn from a seeded query cache (no kernel), for the screenshot tests of pages
 // whose sections each read for themselves (apps/web/visual/admin-overview.spec.ts).
@@ -273,7 +273,7 @@ function AdminOverviewCatalog() {
   );
   return (
     <QueryClientProvider client={client}>
-      <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture("/admin")}>
+      <AppShell sidebar={sidebar} commands={COMMANDS}>
         {/* no polling: a query's own refetchInterval beats the client's defaults, and with no
             kernel behind the catalog a poll would only fail and turn the health stale */}
         <AdminOverviewView pollHealth={false} />

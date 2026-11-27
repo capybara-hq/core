@@ -15,9 +15,8 @@ import {
   PageHeader,
   type PageHeaderProps,
   SafeModeBanner,
+  SetupPage,
   StatCards,
-  StatusBar,
-  useStatusBar,
 } from "../src/index";
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
 import { css, parseCss } from "./css-rules";
@@ -74,40 +73,23 @@ const sidebar = {
 const commands = [{ label: "跳转", items: [{ id: "go", label: "前往概览", onSelect: () => {} }] }];
 const status = { context: "grant@acme:/agents", version: "0.1.0", timeZone: "UTC+8" };
 
-function Page() {
-  const [on, setOn] = useState(true);
-  return (
-    <>
-      {on ? <Status /> : null}
-      <button type="button" onClick={() => setOn(false)}>
-        卸载
-      </button>
-    </>
-  );
-}
-function Status() {
-  useStatusBar("已筛选 18 / 24");
-  return <div>内容区</div>;
-}
-
 const shell = (children: React.ReactNode = <div>内容区</div>) => (
-  <AppShell sidebar={sidebar} commands={commands} status={status}>
+  <AppShell sidebar={sidebar} commands={commands}>
     {children}
   </AppShell>
 );
 
 describe("AppShell", () => {
-  it("sidebar | content column; the status bar sits inside the content column", () => {
+  it("sidebar | content column; no status bar", () => {
     zh(shell());
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const content = screen.getByText("内容区");
-    const footer = screen.getByRole("contentinfo");
     const column = document.querySelector('[data-part="shell-content"]') as HTMLElement;
     expect(column).toBeTruthy();
-    expect(footer.parentElement).toBe(column);
     expect(column.contains(content)).toBe(true);
     expect(column.contains(nav)).toBe(false);
-    expect(content.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("contentinfo")).toBeNull();
+    expect(document.querySelector('[data-part="status-bar"]')).toBeNull();
     expect(screen.getByRole("link", { name: "Agents" }).getAttribute("aria-current")).toBe("page");
   });
 
@@ -124,25 +106,19 @@ describe("AppShell", () => {
 
   it("a banner (safe mode) is a row of the shell: the regions share the rest of the window", () => {
     zh(
-      <AppShell
-        sidebar={sidebar}
-        commands={commands}
-        status={status}
-        banner={<SafeModeBanner onExit={() => {}} />}
-      >
+      <AppShell sidebar={sidebar} commands={commands} banner={<SafeModeBanner onExit={() => {}} />}>
         <div>内容区</div>
       </AppShell>,
     );
     const shellEl = document.querySelector('[data-cap-part="shell"]') as HTMLElement;
     const banner = document.querySelector('[data-part="safe-mode-banner"]') as HTMLElement;
     const row = document.querySelector('[data-part="shell-banner"]') as HTMLElement;
-    // inside the 100dvh shell, never a sibling above it (that clipped the status bar)
+    // inside the 100dvh shell, never a sibling above it (that clipped the page's bottom)
     expect(shellEl.getAttribute("data-banner")).toBe("true");
     expect(row.parentElement).toBe(shellEl);
     expect(row.contains(banner)).toBe(true);
     const column = shellEl.querySelector('[data-part="shell-content"]') as HTMLElement;
     expect(row.compareDocumentPosition(column) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(column.contains(screen.getByRole("contentinfo"))).toBe(true);
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     // the geometry: a grid whose first row is the banner, across both columns; the sidebar and
     // the content column share the second row (minmax(0, 1fr): the shell keeps the window height)
@@ -174,21 +150,32 @@ describe("AppShell", () => {
     expect(document.querySelector('[data-part="shell-banner"]')).toBeNull();
   });
 
-  it("status bar: context left, version and time zone right, no `> ` prefix", () => {
+  it("the column's first child is the paper's top gutter, an empty filler", () => {
     zh(shell());
-    const footer = screen.getByRole("contentinfo");
-    expect(within(footer).getByText("grant@acme:/agents")).toBeTruthy();
-    const right = footer.querySelector('[data-part="status-bar-right"]') as HTMLElement;
-    expect(Array.from(right.children, (c) => c.textContent)).toEqual(["0.1.0", "UTC+8"]);
-    expect(footer.textContent).not.toContain(">");
+    const column = document.querySelector('[data-part="shell-content"]') as HTMLElement;
+    const gutter = column.firstElementChild as HTMLElement;
+    expect(gutter.classList.contains("cb-drag-fill")).toBe(true);
+    expect(gutter.classList.contains("cb-shell-gutter")).toBe(true);
+    expect(gutter.childNodes.length).toBe(0);
+    expect(gutter.getAttribute("aria-hidden")).toBe("true");
   });
 
-  it("useStatusBar writes the page status and clears it on unmount", async () => {
-    zh(shell(<Page />));
-    const footer = screen.getByRole("contentinfo");
-    expect(within(footer).getByText("已筛选 18 / 24")).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "卸载" }));
-    expect(within(footer).queryByText("已筛选 18 / 24")).toBeNull();
+  it("SetupPage draws no status bar", () => {
+    zh(
+      <SetupPage
+        sidebar={{
+          org: null,
+          home: { href: "/setup" },
+          steps: [],
+          activeNav: "home",
+          account: { name: "grant", menu: [] },
+        }}
+      >
+        <div>内容区</div>
+      </SetupPage>,
+    );
+    expect(document.querySelector('[data-part="status-bar"]')).toBeNull();
+    expect(screen.queryByRole("contentinfo")).toBeNull();
   });
 
   it("⌘K opens the command palette", async () => {
@@ -301,7 +288,10 @@ describe("PageHeader", () => {
   it("the path is labelled Path in English", () => {
     render(
       <DesignProvider locale="en">
-        <PageHeader path={[{ label: "~" }]} title="Home" />
+        <PageHeader
+          path={[{ label: "~" }, { label: "agents", href: "/agents" }, { label: "Home" }]}
+          title="Home"
+        />
       </DesignProvider>,
     );
     expect(screen.getByRole("navigation", { name: "Path" })).toBeTruthy();
@@ -339,7 +329,11 @@ describe("PageHeader", () => {
   it("a title-less head draws the path and the actions in one row, the name as a hidden h1", () => {
     zh(
       <PageHeader
-        path={[{ label: "devices", href: "/devices" }, { label: "Laptop" }]}
+        path={[
+          { label: "~", href: "/" },
+          { label: "devices", href: "/devices" },
+          { label: "Laptop" },
+        ]}
         title="Laptop"
         titleHidden
         actions={[{ label: "重命名", variant: "default", onSelect: () => {} }]}
@@ -803,7 +797,7 @@ describe("useMediaQuery", () => {
     const subscribed = add.mock.calls.length;
     r.rerender(
       <DesignProvider locale="zh">
-        <AppShell sidebar={{ ...sidebar }} commands={commands} status={{ ...status }}>
+        <AppShell sidebar={{ ...sidebar }} commands={commands}>
           <div />
         </AppShell>
       </DesignProvider>,
@@ -848,24 +842,6 @@ describe("Body 折叠与关闭、数值 0", () => {
 
   it("PageHeader count=0 渲染 0", () => {
     zh(<PageHeader path={[{ label: "~" }]} title="Agents" count={0} />);
-    expect(screen.getByText("0")).toBeTruthy();
-  });
-
-  it("StatusBar with an empty context renders no context (before the session loads)", () => {
-    zh(<StatusBar context="" version="v1" />);
-    expect(document.querySelector('[data-part="status-bar-context"]')).toBeNull();
-    expect(screen.getByText("v1")).toBeTruthy();
-  });
-
-  it("StatusBar right part: system, version, time zone, separated by spacing only (reference)", () => {
-    zh(<StatusBar context="a" version="v1" timeZone="UTC+8" system="系统正常" />);
-    const right = document.querySelector('[data-part="status-bar-right"]') as HTMLElement;
-    expect(Array.from(right.children, (c) => c.textContent)).toEqual(["系统正常", "v1", "UTC+8"]);
-    expect(right.textContent).not.toContain("·");
-  });
-
-  it("StatusBar pageStatus=0 渲染 0", () => {
-    zh(<StatusBar context="a" version="v1" pageStatus={0} />);
     expect(screen.getByText("0")).toBeTruthy();
   });
 });
@@ -924,5 +900,152 @@ describe("AppShell on iOS: the document scrolled by the keyboard goes back to th
     expect(scrollTo).not.toHaveBeenCalled();
     scrollTo.mockRestore();
     raf.mockRestore();
+  });
+});
+
+describe("the layered shell (layered shell spec §2, §3)", () => {
+  const wide = parseCss(css("shell.css")).filter((r) => r.at === "(min-width: 600px)");
+  const decls = (sel: string) => wide.find((r) => r.selector === sel)?.decls ?? {};
+
+  it("from 600 up the shell paints the ground and the main is the paper", () => {
+    expect(decls(".cb-shell").background).toBe("var(--cb-sidebar)");
+    const main = decls(".cb-shell-main");
+    expect(main.background).toBe("var(--cb-bg)");
+    expect(main.margin).toBe("var(--cb-space-2) var(--cb-space-2) var(--cb-space-2) 0");
+    expect(main["border-radius"]).toBe("var(--cb-radius-md)");
+    expect(main.overflow).toBe("clip");
+    expect(main["box-shadow"]).toBeUndefined();
+    expect(main.border).toBeUndefined();
+  });
+
+  it("the top gutter is a band of space.2 across the column from 600 up, none below", () => {
+    const g = decls(".cb-shell-gutter");
+    expect(g.position).toBe("absolute");
+    expect(g["inset-inline"]).toBe("0");
+    expect(g.top).toBe("0");
+    expect(g.height).toBe("var(--cb-space-2)");
+    expect(decls(".cb-shell-column").position).toBe("relative");
+    const base = parseCss(css("shell.css")).find(
+      (r) => r.at === null && r.selector === ".cb-shell-gutter",
+    );
+    expect(base?.decls.display).toBe("none");
+  });
+
+  it("a template pads by space.6, 16 below 600", () => {
+    const rules = parseCss(css("shell.css"));
+    expect(
+      rules.find((r) => r.at === null && r.selector === ".cb-template")?.decls["--cb-content-pad"],
+    ).toBe("var(--cb-space-6)");
+    expect(
+      rules.find((r) => r.at === "not all and (min-width: 600px)" && r.selector === ".cb-template")
+        ?.decls["--cb-content-pad"],
+    ).toBe("16px");
+  });
+});
+
+describe("PageHeader path row and title-row filler (layered shell spec §3)", () => {
+  const two = [{ label: "acme", href: "/" }, { label: "agents" }];
+  const three = [
+    { label: "acme", href: "/" },
+    { label: "agents", href: "/agents" },
+    { label: "研究助手" },
+  ];
+
+  it("1 and 2 segments render no path row (server and expanded)", () => {
+    for (const path of [[{ label: "acme" }], two]) {
+      expect(
+        renderToString(
+          <DesignProvider locale="zh">
+            <PageHeader path={path} title="Agents" />
+          </DesignProvider>,
+        ),
+      ).not.toContain('data-part="path"');
+      stubWidth(1280);
+      zh(<PageHeader path={path} title="Agents" />);
+      expect(document.querySelector('[data-part="path"]')).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("an object page loading its name (two-segment parent path, loading.title) keeps the path row", () => {
+    stubWidth(1280);
+    zh(<PageHeader path={two} title="" loading={{ title: true }} />);
+    expect(document.querySelector('[data-part="path"]')).toBeTruthy();
+    cleanup();
+    // loaded with a two-segment path it is a first-level page: no path row
+    zh(<PageHeader path={two} title="Agents" />);
+    expect(document.querySelector('[data-part="path"]')).toBeNull();
+    cleanup();
+    // a one-segment path stays first level while its title loads
+    zh(<PageHeader path={[{ label: "acme" }]} title="" loading={{ title: true }} />);
+    expect(document.querySelector('[data-part="path"]')).toBeNull();
+  });
+
+  it("3 segments render the path", () => {
+    stubWidth(1280);
+    zh(<PageHeader path={three} title="研究助手" />);
+    const nav = document.querySelector('[data-part="path"]') as HTMLElement;
+    expect(nav).toBeTruthy();
+    expect(nav.textContent).toContain("研究助手");
+  });
+
+  it("the title row holds exactly one filler, between the text and the actions", () => {
+    stubWidth(1280);
+    zh(
+      <PageHeader
+        path={two}
+        title="Agents"
+        actions={[{ label: "新建", variant: "primary", onSelect: () => {} }]}
+      />,
+    );
+    const row = document.querySelector('[data-part="page-header-row"]') as HTMLElement;
+    const fills = row.querySelectorAll(":scope > .cb-drag-fill");
+    expect(fills).toHaveLength(1);
+    const fill = fills[0] as HTMLElement;
+    expect(fill.previousElementSibling?.classList.contains("cb-pageheader-text")).toBe(true);
+    expect(fill.nextElementSibling?.getAttribute("data-part")).toBe("page-header-actions");
+  });
+
+  it("the titleless head without a path holds a filler before its actions", () => {
+    stubWidth(1280);
+    zh(
+      <PageHeader
+        path={two}
+        title="Device"
+        titleHidden
+        actions={[{ label: "重启", variant: "default", onSelect: () => {} }]}
+      />,
+    );
+    const row = document.querySelector('[data-part="page-header-titleless"]') as HTMLElement;
+    expect(row.querySelector('[data-part="path"]')).toBeNull();
+    const fill = row.querySelector(":scope > .cb-drag-fill") as HTMLElement;
+    expect(fill).toBeTruthy();
+    expect(fill.nextElementSibling?.getAttribute("data-part")).toBe("page-header-actions");
+  });
+});
+
+describe("the head's fillers on compact (layered shell spec §3, compact unchanged)", () => {
+  it("below 600 they take no room, so the title keeps the row's width", () => {
+    const rule = parseCss(css("shell.css")).find(
+      (r) =>
+        r.at === "not all and (min-width: 600px)" &&
+        r.selector.includes(".cb-pageheader-row > .cb-drag-fill"),
+    );
+    expect(rule?.selector).toContain(".cb-pageheader-titleless > .cb-drag-fill");
+    expect(rule?.decls.flex).toBe("0 0 0");
+  });
+
+  it("a hydrated compact titleless head without a path draws no filler", () => {
+    stubWidth(390);
+    zh(
+      <PageHeader
+        path={[{ label: "acme", href: "/" }, { label: "device" }]}
+        title="Device"
+        titleHidden
+        actions={[{ label: "重启", variant: "default", onSelect: () => {} }]}
+      />,
+    );
+    const row = document.querySelector('[data-part="page-header-titleless"]') as HTMLElement;
+    expect(row.querySelector(":scope > .cb-drag-fill")).toBeNull();
   });
 });

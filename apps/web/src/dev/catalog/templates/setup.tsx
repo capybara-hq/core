@@ -10,7 +10,7 @@ import {
   StepList,
   Text,
 } from "@capybara-hq/design";
-import { FIXTURE_USER, ORG_SWITCHER_FIXTURE, STATUS_FIXTURE } from "@capybara-hq/design/fixtures";
+import { FIXTURE_USER, ORG_SWITCHER_FIXTURE } from "@capybara-hq/design/fixtures";
 import { setupStepsFixture } from "../shell-fixture";
 
 const noop = () => {};
@@ -89,11 +89,6 @@ export function setupFrameProps(
       activeNav,
       account: { name: FIXTURE_USER.name, menu: [{ label: "退出登录", onSelect: noop }] },
       ...(who === "admin" ? { adminHref: href("admin") } : {}),
-    },
-    status: {
-      context: `${FIXTURE_USER.name}@${ORG_SWITCHER_FIXTURE.slug}:~/setup`,
-      version: STATUS_FIXTURE.version,
-      timeZone: STATUS_FIXTURE.timeZone,
     },
   };
 }

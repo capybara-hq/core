@@ -23,7 +23,6 @@ export const ACCEPTED: string[] = [
   // the templates' own pages)
   "head-rhythm",
   "stat-cards",
-  "status-bar",
   "action-row",
   "template-list",
   "template-form",
