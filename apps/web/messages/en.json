@@ -1809,6 +1809,18 @@
     "composerMenu": {
       "add": "Add",
       "upload": "Upload files",
+      "library": "File library",
+      "recentFiles": "Recent files",
+      "matchingFiles": "Matching files",
+      "fileOrigin": {
+        "upload": "Uploaded {date}",
+        "delivered": "Delivered {date}",
+        "generated": "Generated {date}"
+      },
+      "fileByAgent": "{agent} · {how}",
+      "noFiles": "No matching files",
+      "noFilesOrResources": "No matching files or resources",
+      "libraryFailed": "The file library could not be read: {reason}",
       "resources": "Connector resources",
       "projectFiles": "Project files",
       "projectFilesHint": "Reference files of the project {project} without uploading them",

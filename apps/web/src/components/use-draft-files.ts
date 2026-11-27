@@ -35,6 +35,13 @@ export interface DraftFile {
   error?: unknown;
   /** 原文件：失败后可用它重试（前端预检拦下的没有，不能重试）。 */
   file?: File;
+  /**
+   * A file picked from the person's file library (`@` or 文件库): ready at once, no upload, and
+   * never discarded on the kernel (it stays in the library when it leaves the draft).
+   */
+  library?: true;
+  /** The library file's content type (its type mark; an upload's comes from `file`). */
+  contentType?: string;
 }
 
 /** 计入每条消息条数上限的条目：前端预检拦下的（没有原文件）不算。 */
@@ -188,6 +195,15 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
     }
     if (overflow) toast.error(t("filesLimit", { max: limits.maxPerMessage }));
     if (added.length === 0) return;
+    append(added);
+    for (const [key, file] of toStart) start(key, file);
+  };
+
+  /**
+   * Appends files to the draft; the first time their total passes the request's media budget a
+   * toast says so (the earlier files are left out once sent).
+   */
+  const append = (added: DraftFile[]) => {
     const total = (list: DraftFile[]) =>
       list.reduce((n, f) => n + (f.status === "error" ? 0 : f.size), 0);
     const before = total(filesRef.current);
@@ -196,14 +212,44 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
     if (before <= limits.requestMediaBytes && after > limits.requestMediaBytes) {
       toast.error(t("filesOverBudget", { max: formatBytes(limits.requestMediaBytes) }));
     }
-    for (const [key, file] of toStart) start(key, file);
+  };
+
+  /**
+   * Adds a file of the person's library (composer menus §4): ready at once with its id, no upload.
+   * One already in the draft is not added twice; the per-message count applies as for uploads.
+   */
+  const addLibrary = (file: { id: string; name: string; size: number; contentType?: string }) => {
+    if (filesRef.current.some((f) => f.id === file.id)) return;
+    if (!limits.available) {
+      toast.error(t("filesUnavailable"));
+      return;
+    }
+    if (filesRef.current.filter(counts).length >= limits.maxPerMessage) {
+      toast.error(t("filesLimit", { max: limits.maxPerMessage }));
+      return;
+    }
+    seq.current += 1;
+    append([
+      {
+        key: `f${seq.current}`,
+        name: file.name,
+        size: file.size,
+        status: "ready",
+        progress: 1,
+        id: file.id,
+        library: true,
+        ...(file.contentType !== undefined ? { contentType: file.contentType } : {}),
+      },
+    ]);
   };
 
   const remove = (key: string) => {
     uploads.current.get(key)?.abort();
     uploads.current.delete(key);
-    // A draft the kernel registered (finished or in flight) is dropped there too (best effort).
-    const id = filesRef.current.find((f) => f.key === key)?.id ?? created.current.get(key);
+    // A draft the kernel registered (finished or in flight) is dropped there too (best effort);
+    // a library file is the person's own and stays.
+    const f = filesRef.current.find((x) => x.key === key);
+    const id = f?.library ? undefined : (f?.id ?? created.current.get(key));
     created.current.delete(key);
     if (id !== undefined) void discard(id);
     update((list) => list.filter((f) => f.key !== key));
@@ -287,6 +333,7 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
     /** 上传中或有出错的文件时不能发送（出错的要先移除或重试，免得悄悄丢掉）。 */
     blocking: files.some((f) => f.status !== "ready"),
     add,
+    addLibrary,
     remove,
     retry,
     canRetry,

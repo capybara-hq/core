@@ -1797,6 +1797,18 @@
     "composerMenu": {
       "add": "添加",
       "upload": "上传文件",
+      "library": "文件库",
+      "recentFiles": "最近文件",
+      "matchingFiles": "匹配的文件",
+      "fileOrigin": {
+        "upload": "{date} 上传",
+        "delivered": "{date} 交付",
+        "generated": "{date} 生成"
+      },
+      "fileByAgent": "{agent} {how}",
+      "noFiles": "没有匹配的文件",
+      "noFilesOrResources": "没有匹配的文件或资源",
+      "libraryFailed": "文件库读取失败：{reason}",
       "resources": "连接器资源",
       "projectFiles": "项目文件",
       "projectFilesHint": "引用项目 {project} 中的文件，不上传",
