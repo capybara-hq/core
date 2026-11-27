@@ -226,6 +226,35 @@ describe("/automations/new: an event trigger", () => {
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/automations/e9"));
   });
 
+  it("subject mode shows the model and effort and sends them; a chat-less event form never shows a device", async () => {
+    const calls = stubApi({
+      ...common,
+      [`POST ${BASE}`]: () => json(201, { task: eventTask({ id: "e9" }) }),
+      [`GET ${BASE}`]: ok({ items: [] }),
+    });
+    const user = userEvent.setup();
+    await newEventForm(user);
+    await pickOption(screen.getByRole("combobox", { name: E.form.eventSource }), "Tracker", user);
+    await user.click(screen.getByRole("checkbox", { name: /Item created/ }));
+    await user.click(screen.getByRole("radio", { name: new RegExp(`^${E.form.mode.subject}`) }));
+    const labels = await optionLabels(
+      screen.getByRole("combobox", { name: E.form.modelLabel }),
+      user,
+    );
+    await pickOption(
+      screen.getByRole("combobox", { name: E.form.modelLabel }),
+      labels.find((l) => l.includes("Fake 1")) ?? "",
+      user,
+    );
+    await user.click(screen.getByRole("button", { name: E.form.create }));
+    const body = bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({ mode: "subject" });
+    expect(body.model).toEqual({ provider: "model-fake", model: "fake-1" });
+  });
+
   it("each fact type has its operators and value; a list fact writes contains", async () => {
     const calls = stubApi({
       ...common,

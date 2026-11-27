@@ -55,7 +55,7 @@ export const AutomationChatInput = z
 
 /**
  * A model pick: the same `{ provider, model }` an agent's definition uses, its strings bounded on
- * the fields (so the JSON schema shows the bounds). `new` mode only.
+ * the fields (so the JSON schema shows the bounds). `new` and `subject` modes.
  */
 export const AutomationModel = z
   .object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200) })
@@ -94,7 +94,7 @@ export const AutomationCreateBody = z
     mode: Mode,
     conversationId: Id.optional(),
     chat: AutomationChatInput.optional(),
-    /** `new` mode only, as `effort` and `deviceId` (a conversation or chat task uses its own). */
+    /** `new` and `subject` modes, as `effort` (`deviceId`: `new` only); a conversation or chat task uses its own. */
     model: AutomationModel.optional(),
     effort: AutomationEffort.optional(),
     deviceId: Id.optional(),
@@ -116,7 +116,7 @@ export const AutomationUpdateBody = z
     mode: Mode.optional(),
     conversationId: Id.nullable().optional(),
     chat: AutomationChatInput.nullable().optional(),
-    /** `new` mode only; switching to another mode clears them. */
+    /** `new` and `subject` modes (`deviceId`: `new` only); switching to another mode clears them. */
     model: AutomationModel.nullable().optional(),
     effort: AutomationEffort.nullable().optional(),
     deviceId: Id.nullable().optional(),

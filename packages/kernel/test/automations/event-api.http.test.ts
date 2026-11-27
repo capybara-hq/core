@@ -296,6 +296,40 @@ describe("create an event automation", () => {
   });
 });
 
+describe("model, effort and device by mode", () => {
+  const pick = { model: { provider: "model-fake", model: "fake-1" } };
+
+  it("a subject automation keeps a model and effort; a device is refused", async () => {
+    const t = await createOk({ mode: "subject", ...pick });
+    expect(t).toMatchObject({ mode: "subject", model: pick.model });
+    const dev = await create({ mode: "subject", deviceId: "d1" });
+    expect(dev.statusCode).toBe(400);
+    expect(codeOf(dev)).toBe("validation_failed");
+    const badEffort = await create({ mode: "subject", ...pick, effort: "nope" });
+    expect(badEffort.statusCode).toBe(400);
+  });
+
+  it("PATCH keeps and changes a subject automation's model; a device is refused", async () => {
+    const t = await createOk({ mode: "subject", ...pick });
+    let res = await alice({
+      method: "PATCH",
+      url: `${base()}/${t.id}`,
+      payload: { name: "Renamed" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { task: { model: unknown } }).task.model).toEqual(pick.model);
+    res = await alice({ method: "PATCH", url: `${base()}/${t.id}`, payload: { model: null } });
+    expect((res.json() as { task: { model: unknown } }).task.model).toBeNull();
+    res = await alice({ method: "PATCH", url: `${base()}/${t.id}`, payload: { deviceId: "d1" } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("a conversation automation still takes none", async () => {
+    const res = await create({ mode: "conversation", conversationId: "c1", ...pick });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe("update an event automation", () => {
   const patch = (id: string, payload: Record<string, unknown>) =>
     alice({ method: "PATCH", url: `${base()}/${id}`, payload });

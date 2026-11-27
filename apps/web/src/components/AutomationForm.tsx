@@ -105,6 +105,9 @@ export interface AutomationDraft {
   expires: string;
 }
 
+/** The modes whose runs start their own conversations: they take a model and effort. */
+const withPick = (mode: AutomationMode): boolean => mode === "new" || mode === "subject";
+
 export const emptyDraft = (agentId: string): AutomationDraft => ({
   name: "",
   agentId,
@@ -174,8 +177,8 @@ export function createBodyOf(
     ...(d.mode === "conversation" ? { conversationId: d.conversationId } : {}),
     ...(d.mode === "chat" && d.chat !== null ? { chat: d.chat } : {}),
     // model and effort: a new-conversation task's only (another runs with its conversation's)
-    ...(d.mode === "new" && model !== null ? { model } : {}),
-    ...(d.mode === "new" && d.effort !== "" ? { effort: d.effort as AutomationEffort } : {}),
+    ...(withPick(d.mode) && model !== null ? { model } : {}),
+    ...(withPick(d.mode) && d.effort !== "" ? { effort: d.effort as AutomationEffort } : {}),
     // an end date is a recurring task's (a one-off one has none, nor does an event one here)
     ...(d.expires !== "" && !event && d.preset.kind !== "once"
       ? { expiresAt: endOfDayIn(d.expires, displayZone) }
@@ -226,8 +229,8 @@ export function patchOf(
   // Leaving a mode clears its target
   if (d.mode !== saved.mode && saved.mode === "conversation") p.conversationId = null;
   if (d.mode !== saved.mode && saved.mode === "chat") p.chat = null;
-  // model and effort: `new` mode only (leaving it, the kernel clears them)
-  if (d.mode === "new") {
+  // model and effort: `new` and `subject` modes (leaving them, the kernel clears them)
+  if (withPick(d.mode)) {
     if (d.model !== saved.model) p.model = d.model === "" ? null : decodeModel(d.model);
     if (d.effort !== saved.effort) {
       p.effort = d.effort === "" ? null : (d.effort as AutomationEffort);
@@ -565,7 +568,7 @@ export function AutomationFormSections({
           )}
         </Stack>
       </FormSection>
-      {draft.mode === "new" && (
+      {withPick(draft.mode) && (
         <FormSection id="model" title={t("model")} description={t("modelHint")}>
           <Stack gap={12}>
             <Field label={t("modelLabel")}>

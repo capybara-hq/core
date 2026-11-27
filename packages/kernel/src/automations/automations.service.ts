@@ -541,11 +541,16 @@ export class AutomationsService {
     // model, effort and device: `new` mode only (leaving it clears them), checked when they or
     // the agent change
     const pick =
-      target.mode === "new"
+      target.mode === "new" || target.mode === "subject"
         ? {
             model: patch.model !== undefined ? patch.model : task.model,
             effort: patch.effort !== undefined ? patch.effort : task.effort,
-            deviceId: patch.deviceId !== undefined ? patch.deviceId : task.deviceId,
+            deviceId:
+              target.mode === "subject"
+                ? (patch.deviceId ?? null)
+                : patch.deviceId !== undefined
+                  ? patch.deviceId
+                  : task.deviceId,
           }
         : {
             model: patch.model ?? null,
@@ -836,11 +841,6 @@ export class AutomationsService {
   }
 
   /**
-   * The chats the caller can point a `chat` task at (spec §8): per active connection of the org
-   * whose extension is enabled in it, their DM threads (archived included) and, on a channel with
-   * threads, the groups they have a thread in. Members up (`automations.use`, the route's).
-   */
-  /**
    * The trigger sources that serve the org now (`trigger-source@1` providers enabled in it with a
    * valid config) and the org has not switched off (`eventSourcesOff`), each with its extension's
    * display name and event declarations: what the automation form builds its event picker and
@@ -863,7 +863,8 @@ export class AutomationsService {
    * (`automation.event_source_unavailable`), every type must be declared by it and not directed
    * (`automation.event_type_unknown`: a directed event wakes one agent through acceptance, never
    * through an automation), and the filter must fit the selected types' facts
-   * (`automation.filter_invalid`).
+   * (`automation.filter_invalid`). Whether an owner may see a subject is not checked here: dispatch
+   * enforces it through the source's `visible()` for the automation's owner.
    */
   private async checkEventTrigger(
     orgId: string,
@@ -901,6 +902,11 @@ export class AutomationsService {
     return { kind: "event", source, types, filter };
   }
 
+  /**
+   * The chats the caller can point a `chat` task at (spec §8): per active connection of the org
+   * whose extension is enabled in it, their DM threads (archived included) and, on a channel with
+   * threads, the groups they have a thread in. Members up (`automations.use`, the route's).
+   */
   async chatTargets(orgId: string, accountId: string): Promise<ChatTarget[]> {
     await this.liveRole(orgId, accountId);
     const rows = await this.db.db
@@ -1471,7 +1477,8 @@ export class AutomationsService {
   }
 
   /**
-   * A task's model, effort and device (spec §4): `new` mode only, since a conversation or chat
+   * A task's model, effort and device (spec §4): `new` mode takes all three, `subject` mode a model
+   * and effort (not a device), since a conversation or chat
    * task runs with that conversation's selection and device (a task must not switch a person's
    * conversation for their later turns), so another mode refuses them (`validation_failed`).
    * The model must resolve for the org (`agent.model_unavailable`, as a message's switch) and
@@ -1486,7 +1493,7 @@ export class AutomationsService {
     pick: { model: ModelRef | null; effort: string | null; deviceId: string | null },
     deviceChanged = true,
   ): Promise<void> {
-    if (mode !== "new") {
+    if (mode === "conversation" || mode === "chat") {
       if (pick.model !== null || pick.effort !== null || pick.deviceId !== null) {
         throw new ApiError(
           "validation_failed",
@@ -1494,6 +1501,12 @@ export class AutomationsService {
         );
       }
       return;
+    }
+    if (mode === "subject" && pick.deviceId !== null) {
+      throw new ApiError(
+        "validation_failed",
+        "A task with one conversation per subject takes a model and effort but no device; only a task that starts new conversations takes a device",
+      );
     }
     if (pick.model !== null || pick.effort !== null) {
       const { info } = await this.providers.resolve(orgId, pick.model ?? agent.definition.model);
