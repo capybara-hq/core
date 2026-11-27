@@ -2005,7 +2005,7 @@ textarea {
 }
 .r-tout {
   margin: 0;
-  max-height: var(--cb-layout-tool-output);
+  max-height: var(--cb-layout-tool-detail);
   overflow: auto;
   padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
   border-radius: var(--cb-radius-sm);
@@ -2026,7 +2026,10 @@ textarea {
 
 /* ── Diff ── */
 
+/* The tool detail viewport (§6.16.9): finished and live diffs alike. */
 .r-diff {
+  max-height: var(--cb-layout-tool-detail);
+  overflow-y: auto;
   padding: var(--cb-space-1) 0;
 }
 .r-dl {
@@ -2058,11 +2061,8 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The live block (§6.16.10 Live): a viewport following the tail, caret, collapsed lines, footer. */
-.r-diff[data-live] {
-  max-height: var(--cb-layout-tool-live);
-  overflow-y: auto;
-}
+/* The live block (§6.16.10 Live): the same viewport following the tail, caret, collapsed lines,
+   footer. */
 .r-dcaret {
   display: inline-block;
   flex: none;

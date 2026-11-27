@@ -20,16 +20,20 @@ import {
   ToolMeta,
   ToolRow,
   type ToolRowData,
+  useRowOpen,
   WaitingWord,
 } from "./tool-row";
 
 export type ToolGroupProps = {
   /** Consecutive calls (one call renders as a single tool line). */
   rows: ToolRowData[];
-  /** Controlled open state; a running group is always open. */
+  /**
+   * Controlled open state; a running group is always open. Uncontrolled, a single call's line is
+   * open while its detail is live until the person toggles it (§6.16.9 "Opens by itself").
+   */
   open?: boolean;
   onToggle?(): void;
-  /** Rows open at first (uncontrolled). */
+  /** Rows open at first (uncontrolled; the other rows open while their detail is live). */
   defaultOpenRows?: string[];
   onViewAll?(rowId: string): void;
   onCopy?(rowId: string): void;
@@ -70,11 +74,16 @@ export function ToolGroup({
   const locale = useDesignLocale();
   const [own, setOwn] = useState(false);
   const [animate, setAnimate] = useState(false);
-  const [openRows, setOpenRows] = useState<ReadonlySet<string>>(() => new Set(defaultOpenRows));
   const id = useId();
+  const single = rows.length === 1 ? rows[0] : undefined;
+  // a single call's line: open while its detail is live until the person toggles it
+  const line = useRowOpen(single);
   const toggle = () => {
     setAnimate(true);
-    if (open === undefined) setOwn((o) => !o);
+    if (open === undefined) {
+      if (single) line.toggle();
+      else setOwn((o) => !o);
+    }
     onToggle?.();
   };
   const rowCallbacks = (rowId: string) => ({
@@ -84,7 +93,6 @@ export function ToolGroup({
     ...(onImageError ? { onImageError } : {}),
   });
 
-  const single = rows.length === 1 ? rows[0] : undefined;
   const clock = useClock(
     // a streaming call shows no time: it never ticks
     single !== undefined &&
@@ -94,7 +102,7 @@ export function ToolGroup({
     now,
   );
   if (single) {
-    const isOpen = open ?? own;
+    const isOpen = open ?? line.open;
     const expandable = hasDetail(single);
     const running = isRunning(single) && !isStreaming(single);
     const streaming = isStreaming(single);
@@ -204,14 +212,7 @@ export function ToolGroup({
           <ToolRow
             key={r.id}
             row={r}
-            open={openRows.has(r.id)}
-            onToggle={() =>
-              setOpenRows((s) => {
-                const next = new Set(s);
-                if (!next.delete(r.id)) next.add(r.id);
-                return next;
-              })
-            }
+            defaultOpen={defaultOpenRows?.includes(r.id) === true}
             {...rowCallbacks(r.id)}
             {...(now === undefined ? {} : { now })}
           />

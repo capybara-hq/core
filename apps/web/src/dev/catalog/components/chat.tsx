@@ -21,13 +21,53 @@ import {
   ThinkingRow,
   Timeline,
   TimelineItem,
+  ToolBox,
   ToolCallRow,
+  ToolGroup,
+  ToolRow,
+  type ToolRowData,
   useNow,
 } from "@capybara-hq/design";
 import { useState } from "react";
 import { Row, Section } from "../frame";
 
 const noop = () => {};
+
+/** A finished `Write` of 40 lines: its diff overflows the tool detail viewport (§6.16.9). */
+const LONG_WRITE: ToolRowData = {
+  id: "t_long_write",
+  kind: "edit",
+  name: "Write",
+  keyArg: "docs/report.md",
+  status: "done",
+  durationMs: 40,
+  added: 40,
+  removed: 0,
+  detail: {
+    diff: {
+      hunks: [
+        {
+          oldStart: 1,
+          newStart: 1,
+          lines: Array.from({ length: 40 }, (_, i) => ({
+            kind: "add" as const,
+            text: `第 ${i + 1} 行：对账结果与差异说明`,
+          })),
+        },
+      ],
+      truncated: false,
+    },
+  },
+};
+
+/** A `Write` still streaming: its live diff opens by itself (§6.16.9 "Opens by itself"). */
+const STREAMING_WRITE: ToolRowData = {
+  ...LONG_WRITE,
+  id: "t_streaming_write",
+  status: "streaming",
+  progress: { lines: 40, bytes: 1_240 },
+  detail: { ...LONG_WRITE.detail, live: { preview: true } },
+};
 
 const SEARCH_INPUT = JSON.stringify(
   { channel: "#feedback", since: "2026-10-14", limit: 50 },
@@ -196,11 +236,22 @@ export function ChatSection() {
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">
-          IN / OUT 块 · 短 / 自定义折叠行数
+          IN / OUT 块 · 短 / 长（溢出时右上角的展开控件）
         </Text>
         <Grid columns={1} gap={8}>
           <IoBlock label="IN" text='{"q":"feedback"}' />
-          <IoBlock label="OUT" text={SEARCH_OUTPUT} collapsedLines={3} />
+          <IoBlock label="OUT" text={SEARCH_OUTPUT} />
+        </Grid>
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          工具详情视口 · 溢出时展开 / 生成中自动展开并跟随末尾
+        </Text>
+        <Grid columns={1} gap={8}>
+          <ToolBox>
+            <ToolRow row={LONG_WRITE} open />
+          </ToolBox>
+          <ToolGroup rows={[STREAMING_WRITE]} />
         </Grid>
       </Grid>
       <Row label="Inspector 标签 · 徽标 / 提醒">
