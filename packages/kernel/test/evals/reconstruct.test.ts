@@ -34,6 +34,7 @@ import {
 } from "../../src/evals/reconstruct.js";
 import {
   type CaseSnapshot,
+  liveSnapshot,
   replayableCalls,
   takeSnapshot,
   toEvents,
@@ -3597,6 +3598,21 @@ describe("takeSnapshot", () => {
     // 别的组织拿不到
     const other = await takeSnapshot(db, randomUUID(), conv, runId, 4_194_304).catch((e) => e);
     expect((other as ApiError).code).toBe("conversation.not_found");
+
+    // liveSnapshot (idle compaction spec §9.4): the same snapshot from events the caller holds,
+    // through the same loader, with no terminal event or byte cap required
+    const ids = { orgId, conversationId: conv, runId, agentId };
+    expect(await liveSnapshot(db, { ...ids, events: toEvents(snap) })).toEqual(snap);
+    const unfinished = snap.events.slice(0, -1);
+    const live = await liveSnapshot(db, {
+      ...ids,
+      events: toEvents({ ...snap, events: unfinished }),
+    });
+    expect(live).toEqual({ ...snap, events: unfinished });
+    const wrongAgent = await liveSnapshot(db, { ...ids, agentId: randomUUID(), events: [] }).catch(
+      (e) => e,
+    );
+    expect((wrongAgent as ApiError).code).toBe("conversation.not_found");
   });
 });
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   acceptSummary,
@@ -575,6 +576,17 @@ describe("buildCompactionRequest", () => {
       "If the transcript starts with an earlier summary, merge it into your summary",
     );
     expect(req.maxOutputTokens).toBe(12_000);
+  });
+
+  it("keeps the instruction byte for byte across the split into shared parts", () => {
+    // sha256 and length of the instruction as it was before SUMMARY_TASK_LINES and
+    // TRANSCRIPT_READING_LINES were split out (idle compaction phase 1, task 7): the split must
+    // not change one byte of the transcript form
+    const text = buildCompactionRequest("User: hi", "fake-1").system[0]?.text ?? "";
+    expect(text.length).toBe(5777);
+    expect(createHash("sha256").update(text).digest("hex")).toBe(
+      "cd8752eec4cf1677b8fb7f8720862aadb77b1c8ce187b2d5456400e77ac34379",
+    );
   });
 
   it("states how to read the transcript: user messages, origins, tool results, placeholders", () => {

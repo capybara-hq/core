@@ -118,6 +118,7 @@
   "runtime/context/compaction.test.ts",
   "runtime/context/current-turn-compaction.test.ts",
   "runtime/context/fit.test.ts",
+  "runtime/context/in-context-compaction.test.ts",
   "runtime/context/pairing.test.ts",
   "runtime/context/plugin-context.test.ts",
   "runtime/context/project-root.test.ts",
