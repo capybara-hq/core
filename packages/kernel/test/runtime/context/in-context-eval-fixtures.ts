@@ -607,8 +607,12 @@ export function evalFixture(seed: number): EvalFixture {
 /**
  * The plan's boundary for a fixture (`compactionPlan` with `keepRecentTurns: 4` and the tail
  * budget model-call.ts gives it: `W - O_p - R_p` minus the system prompt and tool definitions).
+ * `keepRecentTurns: 0` gives the plan of the "all" boundary: every event, no kept tail.
  */
-export function evalPlan(f: EvalFixture): { coversUpToSeq: number; transcript: string } | null {
+export function evalPlan(
+  f: EvalFixture,
+  keepRecentTurns: number = EVAL_SETTINGS.keepRecentTurns,
+): { coversUpToSeq: number; transcript: string } | null {
   const built = assembleModelRequest({
     events: f.events,
     agent: AGENT,
@@ -627,5 +631,5 @@ export function evalPlan(f: EvalFixture): { coversUpToSeq: number; transcript: s
     EVAL_SETTINGS.reserveTokens,
   );
   const budget = bounds.target - estimateTokens([], built.system, built.tools);
-  return compactionPlan(f.events, EVAL_SETTINGS, budget);
+  return compactionPlan(f.events, { ...EVAL_SETTINGS, keepRecentTurns }, budget);
 }

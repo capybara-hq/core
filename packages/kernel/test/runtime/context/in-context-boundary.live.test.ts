@@ -28,6 +28,17 @@ import {
  * "never touch `secrets/`" verbatim, case-insensitive). The test prints only the metric table and
  * codeword ids, never a summary or a key.
  *
+ * `CAPYBARA_TEST_COMPACTION_EVAL_MODE=all` runs the quality gate of the "all" boundary instead
+ * (Task 8b): the in-context request with `boundary: { mode: "all" }` against the transcript request
+ * over the same span (the plan with `keepRecentTurns: 0`: every event, no kept tail). Every planted
+ * fact is then covered, so recall counts all twelve codewords. Per model it prints whether the
+ * in-context form qualifies: recall ≥ transcript recall − 0.05 and the constraint kept in ≥ 19/20.
+ *
+ * Both modes retry an answer cut off at the summary cap once with the retry note
+ * (`compactionRetryNote`), as production does (issue #959); a second cut-off fails the compaction
+ * and scores as an empty summary. Cut-offs and answers without a closed `<summary>` block are
+ * counted before and after the retry.
+ *
  * The fixture block always runs. The live block is skipped unless `CAPYBARA_TEST_COMPACTION_EVAL=1`;
  * keys stay in `~/.capybara-test.env` and are loaded only in the test command:
  *
@@ -40,7 +51,8 @@ import {
  * `CAPYBARA_TEST_OPENAI_MODEL`; an OpenAI-compatible endpoint `CAPYBARA_TEST_OAICOMPAT_BASE_URL`
  * (with its `/v1`), `_API_KEY`, `_MODEL`, `_DIALECT` (DeepSeek); Qwen through DashScope's
  * OpenAI-compatible mode `CAPYBARA_TEST_BAILIAN_API_KEY`, `CAPYBARA_TEST_BAILIAN_REGION`,
- * `CAPYBARA_TEST_BAILIAN_MODEL` (default `qwen3.8-flash`). `CAPYBARA_TEST_COMPACTION_EVAL_DUMP=<dir>`
+ * `CAPYBARA_TEST_BAILIAN_MODEL` (default `qwen3.8-flash`). `CAPYBARA_TEST_ANTHROPIC_MODEL` may list
+ * several models separated by commas. `CAPYBARA_TEST_COMPACTION_EVAL_DUMP=<dir>`
  * writes the summaries to that local directory for inspection. A transient network error is rerun
  * once (per case) before it is a bug.
  */
@@ -48,6 +60,7 @@ import {
 const env = process.env;
 const LIVE = env.CAPYBARA_TEST_COMPACTION_EVAL === "1";
 const SUMMARY_CAP = COMPACTION_MAX_OUTPUT_TOKENS;
+const MODE: "marked" | "all" = env.CAPYBARA_TEST_COMPACTION_EVAL_MODE === "all" ? "all" : "marked";
 /** `CAPYBARA_TEST_COMPACTION_EVAL_SEEDS=1,2` limits a smoke run; the rule decides only on all 20. */
 const LIVE_SEEDS: readonly number[] =
   env.CAPYBARA_TEST_COMPACTION_EVAL_SEEDS?.split(",").map(Number) ?? EVAL_SEEDS;
@@ -62,38 +75,41 @@ function fixture(seed: number): EvalFixture {
   return f;
 }
 
-/** The two request forms of a fixture: the in-context (marked) one and the transcript baseline. */
-function requests(f: EvalFixture): { inContext: ModelRequest; transcript: ModelRequest } {
-  const plan = evalPlan(f);
-  if (plan === null) throw new Error(`seed ${f.seed}: no plan`);
-  const out = buildInContextCompactionRequest({
+function inContextOut(f: EvalFixture, mode: "marked" | "all", retry: boolean) {
+  return buildInContextCompactionRequest({
     snapshot: f.snapshot,
     events: f.events,
     absorbedUpToSeq: f.absorbedUpToSeq,
     model: EVAL_MODEL,
     reserveTokens: EVAL_SETTINGS.reserveTokens,
     summaryCap: SUMMARY_CAP,
-    boundary: { mode: "marked", firstKeptSeq: f.firstKeptSeq },
-    retry: false,
+    boundary: mode === "all" ? { mode: "all" } : { mode: "marked", firstKeptSeq: f.firstKeptSeq },
+    retry,
   });
+}
+
+/**
+ * The two request forms of a fixture over the same span: the in-context one (marked boundary, or
+ * "all") and the transcript baseline (the plan's transcript; with no kept tail in "all" mode).
+ * `retry` adds the retry note to both, as the one retry after a cut-off answer.
+ */
+function requests(
+  f: EvalFixture,
+  mode: "marked" | "all",
+  retry: boolean,
+): { inContext: ModelRequest; transcript: ModelRequest } {
+  const plan = evalPlan(f, mode === "all" ? 0 : EVAL_SETTINGS.keepRecentTurns);
+  if (plan === null) throw new Error(`seed ${f.seed}: no plan`);
+  const out = inContextOut(f, mode, retry);
   if ("skip" in out) throw new Error(`seed ${f.seed}: in-context request skipped: ${out.skip}`);
   return {
     inContext: out.request,
-    transcript: buildCompactionRequest(plan.transcript, EVAL_MODEL.id, SUMMARY_CAP),
+    transcript: buildCompactionRequest(plan.transcript, EVAL_MODEL.id, SUMMARY_CAP, { retry }),
   };
 }
 
 function estimateOf(f: EvalFixture): number {
-  const out = buildInContextCompactionRequest({
-    snapshot: f.snapshot,
-    events: f.events,
-    absorbedUpToSeq: f.absorbedUpToSeq,
-    model: EVAL_MODEL,
-    reserveTokens: EVAL_SETTINGS.reserveTokens,
-    summaryCap: SUMMARY_CAP,
-    boundary: { mode: "marked", firstKeptSeq: f.firstKeptSeq },
-    retry: false,
-  });
+  const out = inContextOut(f, MODE, false);
   return "skip" in out ? 0 : out.estimate;
 }
 
@@ -112,16 +128,7 @@ describe("in-context boundary eval fixtures", () => {
       for (const code of f.headCodes) expect(plan?.transcript).toContain(code);
       for (const code of f.tailCodes) expect(plan?.transcript).not.toContain(code);
 
-      const out = buildInContextCompactionRequest({
-        snapshot: f.snapshot,
-        events: f.events,
-        absorbedUpToSeq: f.absorbedUpToSeq,
-        model: EVAL_MODEL,
-        reserveTokens: EVAL_SETTINGS.reserveTokens,
-        summaryCap: SUMMARY_CAP,
-        boundary: { mode: "marked", firstKeptSeq: f.firstKeptSeq },
-        retry: false,
-      });
+      const out = inContextOut(f, "marked", false);
       if ("skip" in out) throw new Error(`seed ${seed}: skipped: ${out.skip}`);
       expect(out.estimate, `seed ${seed}: size`).toBeGreaterThanOrEqual(60_000);
       expect(out.estimate, `seed ${seed}: size`).toBeLessThanOrEqual(150_000);
@@ -129,6 +136,27 @@ describe("in-context boundary eval fixtures", () => {
       const last = out.request.messages.at(-1);
       const instruction = last?.role === "user" ? last.content.at(-1) : undefined;
       expect(instruction?.type === "text" && /ZQ-/.test(instruction.text)).toBe(false);
+    }
+  });
+
+  it('gives both "all" forms the same span: every event, every codeword, no kept tail', () => {
+    for (const seed of EVAL_SEEDS) {
+      const f = fixture(seed);
+      const all = evalPlan(f, 0);
+      const lastSeq = Math.max(...f.events.map((e) => e.seq));
+      expect(all?.coversUpToSeq, `seed ${seed}`).toBe(lastSeq);
+      for (const code of [...f.headCodes, ...f.tailCodes]) expect(all?.transcript).toContain(code);
+      for (const retry of [false, true]) {
+        const req = requests(f, "all", retry);
+        const text = JSON.stringify(req.inContext.messages);
+        for (const code of [...f.headCodes, ...f.tailCodes]) expect(text).toContain(code);
+        const noted = (m: ModelRequest["messages"][number] | undefined) => {
+          const b = m?.role === "user" ? m.content.at(-1) : undefined;
+          return b?.type === "text" && b.text.includes("output token limit");
+        };
+        expect(noted(req.inContext.messages.at(-1))).toBe(retry);
+        expect(noted(req.transcript.messages[0])).toBe(retry);
+      }
     }
   });
 });
@@ -333,13 +361,10 @@ function chatVendor(opts: {
 
 function vendors(): Vendor[] {
   const out: Vendor[] = [];
-  if (env.CAPYBARA_TEST_ANTHROPIC_API_KEY) {
-    out.push(
-      anthropicVendor(
-        env.CAPYBARA_TEST_ANTHROPIC_API_KEY,
-        env.CAPYBARA_TEST_ANTHROPIC_MODEL ?? "claude-haiku-5-5",
-      ),
-    );
+  const anthropicKey = env.CAPYBARA_TEST_ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    for (const model of (env.CAPYBARA_TEST_ANTHROPIC_MODEL ?? "claude-haiku-5-5").split(","))
+      out.push(anthropicVendor(anthropicKey, model.trim()));
   }
   if (env.CAPYBARA_TEST_OPENAI_API_KEY && env.CAPYBARA_TEST_OPENAI_MODEL) {
     out.push(
@@ -404,10 +429,21 @@ interface CaseResult {
   seed: number;
   form: "in_context" | "transcript";
   summary: string;
+  /** The final answer's raw text: written to the local dump only, never printed. */
+  answer: string;
+  /** The final answer's stop reason (the retry's when there was one). */
   stop: string;
   toolCall: boolean;
+  /** The first answer stopped at the summary cap (and was retried). */
+  cutFirst: boolean;
+  /** The retry stopped at the cap too: the compaction fails, scored as an empty summary. */
+  cutFinal: boolean;
+  /** The first / final answer has no closed `<summary>` block. */
+  noSummaryFirst: boolean;
+  noSummaryFinal: boolean;
   tailLeaked: string[];
-  headMissing: string[];
+  /** Missing codewords the summary should hold: head ones (marked), all twelve ("all"). */
+  missing: string[];
   constraintKept: boolean;
   constraintLoose: boolean;
   inputTokens: number;
@@ -417,21 +453,42 @@ interface CaseResult {
 
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
 const loose = (s: string) => norm(s).replace(/[`'"*_]/g, "");
+const cutOff = (a: Answer) => /max_tokens|length/.test(a.stop);
+const closedSummary = (a: Answer) =>
+  /<summary>[\s\S]*?<\/summary>/i.test(
+    a.text.replace(/<analysis>[\s\S]*?(?:<\/analysis>|$)/gi, ""),
+  );
 
-function score(f: EvalFixture, form: CaseResult["form"], a: Answer): CaseResult {
-  const summary = a.toolCall ? "" : extractSummary(a.text);
+/** Codewords a summary must keep: the head ones (marked) or every one ("all"). */
+const expected = (f: EvalFixture) =>
+  MODE === "all" ? [...f.headCodes, ...f.tailCodes] : f.headCodes;
+
+function score(
+  f: EvalFixture,
+  form: CaseResult["form"],
+  first: Answer,
+  retried: Answer | undefined,
+): CaseResult {
+  const a = retried ?? first;
+  const failed = retried !== undefined && cutOff(retried);
+  const summary = a.toolCall || failed ? "" : extractSummary(a.text);
   return {
     seed: f.seed,
     form,
     summary,
+    answer: a.text,
     stop: a.stop,
     toolCall: a.toolCall,
-    tailLeaked: f.tailCodes.filter((c) => summary.includes(c)),
-    headMissing: f.headCodes.filter((c) => !summary.includes(c)),
+    cutFirst: cutOff(first),
+    cutFinal: failed,
+    noSummaryFirst: !closedSummary(first),
+    noSummaryFinal: !closedSummary(a),
+    tailLeaked: MODE === "all" ? [] : f.tailCodes.filter((c) => summary.includes(c)),
+    missing: expected(f).filter((c) => !summary.includes(c)),
     constraintKept: norm(summary).includes(norm(CONSTRAINT_TEXT)),
     constraintLoose: loose(summary).includes(loose(CONSTRAINT_TEXT)),
-    inputTokens: a.inputTokens,
-    outputTokens: a.outputTokens,
+    inputTokens: first.inputTokens + (retried?.inputTokens ?? 0),
+    outputTokens: first.outputTokens + (retried?.outputTokens ?? 0),
   };
 }
 
@@ -449,10 +506,16 @@ const results = new Map<string, CaseResult[]>();
 const pct = (n: number, d: number) => (d === 0 ? "n/a" : `${((100 * n) / d).toFixed(1)}%`);
 
 function table(): string[] {
-  const lines = [
-    "| model | tail leakage (in-ctx) | head recall in-ctx | head recall transcript | constraint in-ctx | constraint transcript | errors / max_tokens / tool calls | in/out tokens |",
-    "|---|---|---|---|---|---|---|---|",
-  ];
+  const lines =
+    MODE === "all"
+      ? [
+          "| model | recall in-ctx | recall transcript | constraint in-ctx | constraint transcript | cut-offs in-ctx first/after retry | cut-offs transcript first/after retry | no <summary> in-ctx first/final | no <summary> transcript first/final | errors / tool calls | in/out tokens | qualifies |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        ]
+      : [
+          "| model | tail leakage (in-ctx) | head recall in-ctx | head recall transcript | constraint in-ctx | constraint transcript | errors / cut-offs first,after retry / tool calls | in/out tokens |",
+          "|---|---|---|---|---|---|---|---|",
+        ];
   const verdicts: boolean[] = [];
   const detail: string[] = [];
   for (const [label, rs] of results) {
@@ -460,50 +523,65 @@ function table(): string[] {
     const tr = rs.filter((r) => r.form === "transcript" && r.error === undefined);
     const errors = rs.filter((r) => r.error !== undefined).length;
     const leaked = ic.filter((r) => r.tailLeaked.length > 0).length;
-    const heads = (xs: CaseResult[]) => xs.reduce((a, r) => a + 8 - r.headMissing.length, 0);
-    const icRecall = ic.length === 0 ? 0 : heads(ic) / (8 * ic.length);
-    const trRecall = tr.length === 0 ? 0 : heads(tr) / (8 * tr.length);
+    const n = MODE === "all" ? 12 : 8;
+    const hits = (xs: CaseResult[]) => xs.reduce((a, r) => a + n - r.missing.length, 0);
+    const icRecall = ic.length === 0 ? 0 : hits(ic) / (n * ic.length);
+    const trRecall = tr.length === 0 ? 0 : hits(tr) / (n * tr.length);
     const icKept = ic.filter((r) => r.constraintKept).length;
     const trKept = tr.filter((r) => r.constraintKept).length;
     const icLoose = ic.filter((r) => r.constraintLoose).length;
     const trLoose = tr.filter((r) => r.constraintLoose).length;
-    const maxTok = rs.filter((r) => /max_tokens|length/.test(r.stop)).length;
+    const count = (xs: CaseResult[], k: keyof CaseResult) => xs.filter((r) => r[k] === true).length;
     const tools = rs.filter((r) => r.toolCall).length;
     const tokIn = rs.reduce((a, r) => a + r.inputTokens, 0);
     const tokOut = rs.reduce((a, r) => a + r.outputTokens, 0);
-    lines.push(
-      `| ${label} | ${leaked}/${ic.length} | ${pct(heads(ic), 8 * ic.length)} | ${pct(heads(tr), 8 * tr.length)} | ${icKept}/${ic.length} (loose ${icLoose}) | ${trKept}/${tr.length} (loose ${trLoose}) | ${errors} / ${maxTok} / ${tools} | ${tokIn} / ${tokOut} |`,
-    );
-    verdicts.push(
-      errors === 0 &&
-        ic.length === 20 &&
-        leaked <= 1 &&
-        icRecall >= trRecall - 0.05 &&
-        icKept >= 19,
-    );
+    if (MODE === "all") {
+      const ok = errors === 0 && ic.length === 20 && icRecall >= trRecall - 0.05 && icKept >= 19;
+      verdicts.push(ok);
+      lines.push(
+        `| ${label} | ${pct(hits(ic), n * ic.length)} | ${pct(hits(tr), n * tr.length)} | ${icKept}/${ic.length} (loose ${icLoose}) | ${trKept}/${tr.length} (loose ${trLoose}) | ${count(ic, "cutFirst")} / ${count(ic, "cutFinal")} | ${count(tr, "cutFirst")} / ${count(tr, "cutFinal")} | ${count(ic, "noSummaryFirst")} / ${count(ic, "noSummaryFinal")} | ${count(tr, "noSummaryFirst")} / ${count(tr, "noSummaryFinal")} | ${errors} / ${tools} | ${tokIn} / ${tokOut} | ${ok ? "yes" : "no"} (${icRecall.toFixed(3)} vs ${(trRecall - 0.05).toFixed(3)}, ${icKept}/20) |`,
+      );
+    } else {
+      const cuts = `${count(rs, "cutFirst")},${count(rs, "cutFinal")}`;
+      lines.push(
+        `| ${label} | ${leaked}/${ic.length} | ${pct(hits(ic), n * ic.length)} | ${pct(hits(tr), n * tr.length)} | ${icKept}/${ic.length} (loose ${icLoose}) | ${trKept}/${tr.length} (loose ${trLoose}) | ${errors} / ${cuts} / ${tools} | ${tokIn} / ${tokOut} |`,
+      );
+      verdicts.push(
+        errors === 0 &&
+          ic.length === 20 &&
+          leaked <= 1 &&
+          icRecall >= trRecall - 0.05 &&
+          icKept >= 19,
+      );
+    }
     for (const r of rs) {
       if (r.error !== undefined) detail.push(`${label} seed ${r.seed} ${r.form}: error ${r.error}`);
-      else if (r.tailLeaked.length > 0 || r.headMissing.length > 0 || !r.constraintKept)
+      else if (r.tailLeaked.length > 0 || r.missing.length > 0 || !r.constraintKept || r.cutFirst)
         detail.push(
-          `${label} seed ${r.seed} ${r.form}: leaked [${r.tailLeaked.join(",")}] missing [${r.headMissing.join(",")}] constraint ${r.constraintKept ? "kept" : r.constraintLoose ? "loose" : "lost"} stop ${r.stop}`,
+          `${label} seed ${r.seed} ${r.form}: leaked [${r.tailLeaked.join(",")}] missing [${r.missing.join(",")}] constraint ${r.constraintKept ? "kept" : r.constraintLoose ? "loose" : "lost"} stop ${r.stop}${r.cutFirst ? ` retried${r.cutFinal ? " (cut off again)" : ""}` : ""}`,
         );
     }
   }
   const tested = results.size;
+  const partial = LIVE_SEEDS.length !== EVAL_SEEDS.length;
   const rule =
-    LIVE_SEEDS.length !== EVAL_SEEDS.length
-      ? "partial run: the rule cannot decide"
-      : tested < 2
-        ? "fewer than two vendors tested: the rule cannot decide"
-        : verdicts.every(Boolean)
-          ? '"marked"'
-          : '"all"';
+    MODE === "all"
+      ? partial
+        ? "partial run: the gate cannot decide"
+        : "per model: in-context only where recall >= transcript recall - 0.05 and constraint >= 19/20"
+      : partial
+        ? "partial run: the rule cannot decide"
+        : tested < 2
+          ? "fewer than two vendors tested: the rule cannot decide"
+          : verdicts.every(Boolean)
+            ? '"marked"'
+            : '"all"';
   const sizes = EVAL_SEEDS.map((seed) => estimateOf(fixture(seed))).sort((a, b) => a - b);
-  const sizeLine = `fixture sizes (estimated tokens of the in-context request): min ${sizes[0]}, median ${sizes[10]}, max ${sizes.at(-1)}`;
+  const sizeLine = `fixture sizes (estimated tokens of the ${MODE} in-context request): min ${sizes[0]}, median ${sizes[10]}, max ${sizes.at(-1)}`;
   return [
     ...lines,
     "",
-    `vendors tested: ${tested}; decision rule: ${rule}`,
+    `mode ${MODE}; vendors tested: ${tested}; decision rule: ${rule}`,
     sizeLine,
     "",
     ...detail,
@@ -517,7 +595,7 @@ describe.skipIf(!LIVE)("live: the in-context summary boundary", { timeout: 3_600
     if (dump !== undefined && results.size > 0) {
       mkdirSync(dump, { recursive: true });
       writeFileSync(
-        join(dump, "in-context-boundary.json"),
+        join(dump, `in-context-boundary-${MODE}.json`),
         JSON.stringify(Object.fromEntries(results), null, 2),
       );
     }
@@ -531,20 +609,29 @@ describe.skipIf(!LIVE)("live: the in-context summary boundary", { timeout: 3_600
     );
     await pool(cases, 4, async ({ seed, form }) => {
       const f = fixture(seed);
-      const req = requests(f);
+      const pick = (retry: boolean) => {
+        const req = requests(f, MODE, retry);
+        return form === "in_context" ? req.inContext : req.transcript;
+      };
       try {
-        rs.push(
-          score(f, form, await call(v, form === "in_context" ? req.inContext : req.transcript)),
-        );
+        const first = await call(v, pick(false));
+        // the one retry of a cut-off answer, with the retry note (production, issue #959)
+        const retried = cutOff(first) && !first.toolCall ? await call(v, pick(true)) : undefined;
+        rs.push(score(f, form, first, retried));
       } catch (err) {
         rs.push({
           seed,
           form,
           summary: "",
+          answer: "",
           stop: "error",
           toolCall: false,
+          cutFirst: false,
+          cutFinal: false,
+          noSummaryFirst: true,
+          noSummaryFinal: true,
           tailLeaked: [],
-          headMissing: f.headCodes,
+          missing: expected(f),
           constraintKept: false,
           constraintLoose: false,
           inputTokens: 0,
