@@ -29,11 +29,10 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * File library spec §3 on two replicas: identical uploads finalized at the same moment on
- * different replicas resolve through the `(org_id, sha256)` unique index. Two accounts: one blob
- * holds the hash and the other upload keeps its staging object as a blob of its own (no account's
- * file points at bytes another account's form may still overwrite), nothing deleted. One account:
- * both files point at one blob and exactly one staging deletion is owed.
+ * File library spec §3 (with its builder amendment) on two replicas: identical uploads finalized
+ * at the same moment on different replicas each copy their bytes to a kernel-owned blob, and the
+ * hash's lock settles which copy holds the hash; the outcome is the same for one account or two.
+ * Also: the draft cleanup, a discard racing a reuse, and a blob deletion delivered twice.
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
@@ -121,12 +120,8 @@ async function staged(req: Req, bytes: Buffer): Promise<string> {
   return c.file.id;
 }
 
-const finalize = (req: Req, id: string, bytes: Buffer) =>
-  req({
-    method: "POST",
-    url: `/api/v1/orgs/${orgId}/files/${id}/finalize`,
-    payload: { sha256: sha(bytes) },
-  });
+const finalize = (req: Req, id: string) =>
+  req({ method: "POST", url: `/api/v1/orgs/${orgId}/files/${id}/finalize` });
 
 const discard = (req: Req, id: string) =>
   req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/files/${id}/draft` });
@@ -157,63 +152,84 @@ async function outcome(ids: string[], bytes: Buffer) {
   return { files, hashed, owed };
 }
 
+/**
+ * Two files finalized with the same bytes: one ready blob holds the hash at a kernel-owned key and
+ * both files point at it; the other copy is `deleting` with its deletion owed; both staging
+ * objects' deletions are owed.
+ */
+async function sameAfterFinalize(ids: string[], bytes: Buffer, before: string[]): Promise<void> {
+  const { files, hashed, owed } = await outcome(ids, bytes);
+  expect(files.map((f) => f.status)).toEqual(["draft", "draft"]);
+  expect(hashed).toHaveLength(1);
+  expect(hashed[0]?.object_key).toBe(`blobs/${hashed[0]?.id}`);
+  expect(files.map((f) => f.blob_id)).toEqual([hashed[0]?.id, hashed[0]?.id]);
+  expect(owed).toHaveLength(2);
+  await expectOneExtraCopy(before, hashed[0]?.id as string);
+}
+
+/** Every blob id of the org. */
+const blobIds = async () =>
+  (await db.selectFrom("blobs").select("id").where("org_id", "=", orgId).execute()).map(
+    (r) => r.id,
+  );
+
+/** Of the blobs made since `before`: the holder and one other copy, `deleting` and owed. */
+async function expectOneExtraCopy(before: string[], holder: string): Promise<void> {
+  const made = (await blobIds()).filter((id) => !before.includes(id));
+  expect(made).toHaveLength(2);
+  expect(made).toContain(holder);
+  const extra = made.find((id) => id !== holder) as string;
+  const row = await db
+    .selectFrom("blobs")
+    .select("status")
+    .where("id", "=", extra)
+    .executeTakeFirstOrThrow();
+  expect(row.status).toBe("deleting");
+  const owedDelete = await db
+    .selectFrom("outbox")
+    .select("job_id")
+    .where("job_id", "=", `blob-delete-${extra}`)
+    .execute();
+  expect(owedDelete).toHaveLength(1);
+}
+
 describe("concurrent finalizes on two replicas", () => {
-  it("two accounts: one blob holds the hash, the other upload keeps its own; nothing deleted", async () => {
+  it("two accounts: one ready blob holds the hash, both files point at it, the extra copy is owed", async () => {
     const bytes = Buffer.from("quarterly numbers, two accounts\n");
     const [one, two] = await Promise.all([staged(aliceA, bytes), staged(bobB, bytes)]);
-    const [r1, r2] = await Promise.all([finalize(aliceA, one, bytes), finalize(bobB, two, bytes)]);
+    const before = await blobIds();
+    const [r1, r2] = await Promise.all([finalize(aliceA, one), finalize(bobB, two)]);
     expect(r1.statusCode, r1.body).toBe(200);
     expect(r2.statusCode, r2.body).toBe(200);
-    // the same answer whichever won
     expect(r1.json()).toMatchObject({ status: "draft" });
     expect(r2.json()).toMatchObject({ status: "draft" });
-
-    const { files, hashed, owed } = await outcome([one, two], bytes);
-    expect(files.map((f) => f.status)).toEqual(["draft", "draft"]);
-    expect(hashed).toHaveLength(1);
-    const winner = files.find((f) => f.blob_id === hashed[0]?.id);
-    const loser = files.find((f) => f.blob_id !== hashed[0]?.id);
-    expect(winner).toBeDefined();
-    expect(loser?.blob_id).toBeTruthy();
-    expect(hashed[0]?.object_key).toBe(`uploads/${winner?.id}`);
-    const own = await db
-      .selectFrom("blobs")
-      .select(["sha256", "object_key", "status"])
-      .where("id", "=", loser?.blob_id as string)
-      .executeTakeFirstOrThrow();
-    expect(own).toEqual({ sha256: null, object_key: `uploads/${loser?.id}`, status: "ready" });
-    expect(owed).toEqual([]);
+    await sameAfterFinalize([one, two], bytes, before);
   });
 
-  it("one account: both files point at one blob and exactly one staging deletion is owed", async () => {
+  it("one account: the same outcome as two", async () => {
     const bytes = Buffer.from("quarterly numbers, one account\n");
     const [one, two] = await Promise.all([staged(aliceA, bytes), staged(aliceB, bytes)]);
-    const [r1, r2] = await Promise.all([
-      finalize(aliceA, one, bytes),
-      finalize(aliceB, two, bytes),
-    ]);
+    const before = await blobIds();
+    const [r1, r2] = await Promise.all([finalize(aliceA, one), finalize(aliceB, two)]);
     expect(r1.statusCode, r1.body).toBe(200);
     expect(r2.statusCode, r2.body).toBe(200);
-    const { files, hashed, owed } = await outcome([one, two], bytes);
-    expect(hashed).toHaveLength(1);
-    expect(files.map((f) => f.blob_id)).toEqual([hashed[0]?.id, hashed[0]?.id]);
-    expect(owed).toHaveLength(1);
-    // the deletion is owed for the upload whose staging object the blob did not adopt
-    const adopted = hashed[0]?.object_key.replace("uploads/", "");
-    expect(owed[0]?.job_id).toBe(`file-staging-delete-${adopted === one ? two : one}`);
+    await sameAfterFinalize([one, two], bytes, before);
   });
 
-  it("the same upload finalized on both replicas at once: one blob, the same answer, nothing owed", async () => {
+  it("the same upload finalized on both replicas at once: one blob holds it, the same answer", async () => {
     const bytes = Buffer.from("finalized twice\n");
     const id = await staged(aliceA, bytes);
-    const [r1, r2] = await Promise.all([finalize(aliceA, id, bytes), finalize(aliceB, id, bytes)]);
+    const before = await blobIds();
+    const [r1, r2] = await Promise.all([finalize(aliceA, id), finalize(aliceB, id)]);
     expect(r1.statusCode, r1.body).toBe(200);
     expect(r2.statusCode, r2.body).toBe(200);
     expect(r2.json()).toEqual(r1.json());
     const { files, hashed, owed } = await outcome([id], bytes);
     expect(hashed).toHaveLength(1);
     expect(files).toEqual([{ id, status: "draft", blob_id: hashed[0]?.id }]);
-    expect(owed).toEqual([]);
+    // the staging object once; the losing finalize's copy is released
+    expect(owed).toHaveLength(1);
+    await expectOneExtraCopy(before, hashed[0]?.id as string);
   });
 
   it("the draft cleanup on both replicas at once expires each file once", async () => {
@@ -234,7 +250,7 @@ describe("concurrent finalizes on two replicas", () => {
   it("a discard racing the same account's instant upload never leaves a file on a deleting blob", async () => {
     const bytes = Buffer.from("discard versus reuse\n");
     const id = await staged(aliceA, bytes);
-    expect((await finalize(aliceA, id, bytes)).statusCode).toBe(200);
+    expect((await finalize(aliceA, id)).statusCode).toBe(200);
     await sql`UPDATE capybara.files SET created_at = now() - interval '1 hour' WHERE id = ${id}`.execute(
       raw,
     );
@@ -274,7 +290,7 @@ describe("concurrent finalizes on two replicas", () => {
   it("a blob deletion delivered on both replicas at once is harmless", async () => {
     const bytes = Buffer.from("deleted twice\n");
     const id = await staged(aliceA, bytes);
-    expect((await finalize(aliceA, id, bytes)).statusCode).toBe(200);
+    expect((await finalize(aliceA, id)).statusCode).toBe(200);
     const blobId = (
       await db.selectFrom("files").select("blob_id").where("id", "=", id).executeTakeFirstOrThrow()
     ).blob_id as string;

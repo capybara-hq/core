@@ -41,15 +41,20 @@ export class FileDraftCleanupJob {
   /** One cleanup without the tick lock (the cron body; tests call it directly). */
   async runOnce(signal?: AbortSignal): Promise<number> {
     let expired = 0;
-    for (const orgId of await this.orgsWithExpired()) {
-      for (;;) {
-        if (signal?.aborted) return expired;
-        const n = await withOrgScope(orgId, () => this.files.expireBatch(orgId));
-        expired += n;
-        if (n === 0) break;
+    // pass after pass until a lookup finds nothing more to do (rows another run holds are skipped)
+    for (;;) {
+      let pass = 0;
+      for (const orgId of await this.orgsWithExpired()) {
+        for (;;) {
+          if (signal?.aborted) return expired + pass;
+          const n = await withOrgScope(orgId, () => this.files.expireBatch(orgId));
+          pass += n;
+          if (n === 0) break;
+        }
       }
+      expired += pass;
+      if (pass === 0 || signal?.aborted) return expired;
     }
-    return expired;
   }
 
   /** The orgs that have expired uploads or drafts. */

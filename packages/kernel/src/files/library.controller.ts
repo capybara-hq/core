@@ -4,7 +4,7 @@ import { CurrentPrincipal, type Principal, requireUser } from "../identity/princ
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { FileCreateBody, FileFinalizeBody } from "./library.schemas.js";
+import { FileCreateBody } from "./library.schemas.js";
 import {
   type CreatedFile,
   type FileLimits,
@@ -13,7 +13,6 @@ import {
 } from "./library-files.service.js";
 
 class FileCreateBodyDto extends createZodDto(FileCreateBody, "FileCreateBody") {}
-class FileFinalizeBodyDto extends createZodDto(FileFinalizeBody, "FileFinalizeBody") {}
 
 /**
  * The person's files (`/api/v1/orgs/:orgId/files`, `agents.use`, people only; file library spec
@@ -22,7 +21,7 @@ class FileFinalizeBodyDto extends createZodDto(FileFinalizeBody, "FileFinalizeBo
  *    expiresAt }`: `upload` is a presigned form (`method` `POST`: the `fields` first, the `file`
  *    last), or null when the caller already holds these bytes (the file exists at once);
  * 2. the browser sends the bytes to the store;
- * 3. `POST /:id/finalize` with `{ sha256, purpose }` → `{ id, name, contentType, size, status }`;
+ * 3. `POST /:id/finalize` → `{ id, name, contentType, size, status }`;
  * 4. a message names the id in `files`.
  * `DELETE /:id/draft` (204) drops a composer upload before it is sent; `GET /limits` answers the
  * types, sizes, files per message, the media budget per request and whether storage is available
@@ -58,10 +57,9 @@ export class LibraryFilesController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @ZBody(FileFinalizeBodyDto) body: z.infer<typeof FileFinalizeBody>,
   ): Promise<FileView> {
     const p = requireUser(principal);
-    return this.files.finalize(org.orgId, p.account.id, id, body);
+    return this.files.finalize(org.orgId, p.account.id, id);
   }
 
   @Delete(":id/draft")

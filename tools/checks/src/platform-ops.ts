@@ -40,8 +40,8 @@ import {
  * - platform-op-upload: an exclusion whose reason or category mentions `upload`, `multipart` or
  *   `raw bytes` (platform web parity spec §7.1, §9): "it is an upload" is no reason, since files
  *   reach an operation as file references (also `presigned`, `binary`, `file body`, `file content`,
- *   and a `transport` exclusion of an `/upload(s)` route). Only the four file upload routes (`/files`,
- *   its finalize, limits and draft discard) are exempt, and they must be `internal` with a reason
+ *   and a `transport` exclusion of an `/upload(s)` route). Only the three file upload routes (`/files`,
+ *   its finalize and limits) are exempt, and they must be `internal` with a reason
  *   naming "a person's file into a conversation";
  * - platform-op-handoff: an operation whose description sends a person to the web to confirm,
  *   review, approve or decide (a sentence with such a word, by stem, and a web place: the web, a
@@ -69,7 +69,6 @@ const FILE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
   "POST /api/v1/orgs/:orgId/files",
   "POST /api/v1/orgs/:orgId/files/:id/finalize",
   "GET /api/v1/orgs/:orgId/files/limits",
-  "DELETE /api/v1/orgs/:orgId/files/:id/draft",
 ]);
 const ATTACHMENT_REASON = "a person's file into a conversation";
 const UPLOAD_WORDS = /upload|multipart|raw bytes|presigned|binary|file body|file content/i;

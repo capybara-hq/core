@@ -1824,6 +1824,14 @@ export interface FilesTable {
   source_conversation_id: NullableText;
   source_path: NullableText;
   staging_key: NullableText;
+  /** An upload's declared sha256 at create, the verified one from finalize on; null otherwise. */
+  sha256: NullableText;
+  /** Where an upload was started; null for deliveries and migrated rows. */
+  upload_purpose: ColumnType<
+    "composer" | "library" | null,
+    "composer" | "library" | null | undefined,
+    "composer" | "library" | null
+  >;
   expires_at: NullableTs;
   created_at: Ts;
   deleted_at: NullableTs;

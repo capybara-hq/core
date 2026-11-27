@@ -1,21 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { ObjectHead } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { sql } from "kysely";
 import type { BlobStatus } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { XactLock } from "../infra/database/xact-lock.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { StorageService } from "../storage/storage.service.js";
-import {
-  afterUploadForm,
-  blobObjectKey,
-  FILE_UPLOAD_TTL_SECONDS,
-  oweStagingDelete,
-} from "./blob-objects.js";
+import { blobObjectKey, oweBlobDelete } from "./blob-objects.js";
 
 export { blobObjectKey, stagingObjectKey } from "./blob-objects.js";
 
@@ -23,10 +18,10 @@ export { blobObjectKey, stagingObjectKey } from "./blob-objects.js";
 export interface BlobRow {
   id: string;
   orgId: string;
-  /** Hex sha256; null only for a blob not hashed yet (migrated, or adopted while contested). */
+  /** Hex sha256; null while `pending`, and for a migrated blob not hashed yet. */
   sha256: string | null;
   size: number;
-  /** The etag recorded when the bytes were checked (null: none recorded, size only). */
+  /** The etag the store reported for the kernel's own write (null: none; size only). */
   etag: string | null;
   /** Relative to the org's kernel prefix. */
   objectKey: string;
@@ -35,19 +30,6 @@ export interface BlobRow {
 
 /** What a read of a blob needs (the recorded facts it is checked against). */
 export type BlobRef = Pick<BlobRow, "id" | "objectKey" | "size" | "etag">;
-
-/** What {@link BlobsService.resolveUpload} learned from the staging object at finalize. */
-export interface VerifiedUpload {
-  /** The sha256 finalize computed over the whole staging object. */
-  sha256: string;
-  size: number;
-  /** The etag of the staging object finalize read (null: the store reported none). */
-  etag: string | null;
-  /** The staging object's key (`uploads/<fileId>`, or a migrated upload's `staging_key`). */
-  stagingKey: string;
-  /** The file row's `created_at` (when its upload form was made). */
-  createdAt: Date;
-}
 
 type BlobDbRow = {
   id: string;
@@ -83,18 +65,39 @@ export function blobContentMatches(
 }
 
 /**
- * The bytes of the file library (file library spec §1, §3, §4): per-org blobs keyed by sha256.
+ * The lock of one hash in one org (decision R9: one provider per transaction-scoped lock):
+ * serializes the step that decides which blob holds a sha256 ({@link BlobsService.settle}), so two
+ * writes of the same bytes never race on the `(org_id, sha256)` unique index. Joins the caller's
+ * transaction, which holds it until it ends.
+ */
+@Injectable()
+export class BlobHashLock {
+  constructor(
+    @Inject(XactLock) private readonly xactLock: XactLock,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  @Transactional({ propagation: "mandatory" })
+  async lock(orgId: string, sha256: string): Promise<void> {
+    await this.xactLock.lock(`capybara.blob-hash:${orgId}:${sha256}`);
+  }
+}
+
+/**
+ * The bytes of the file library (file library spec §1, §3 with its builder amendment, §4): per-org
+ * blobs keyed by sha256, every one written by the kernel itself to `blobs/<blobId>`.
  *
- * - Kernel-written bytes ({@link ensureFromBytes}) reuse any `ready` blob of the same hash (the
- *   kernel wrote or verified those bytes itself), else write `blobs/<sha256>` intent first.
- * - A finalized upload ({@link resolveUpload}) points at an existing blob only when that cannot
- *   tell its uploader anything about other accounts and cannot hand them bytes an upload form may
- *   still overwrite: the blob is `ready` and either its `dedup_after` has passed or the uploader's
- *   own file adopted it. Otherwise the upload's staging object becomes a blob of its own.
+ * - {@link writeIntent} commits a `pending` blob (no hash yet) before the kernel puts verified
+ *   bytes at its key, so a crash leaves a row the sweep finds.
+ * - {@link settle}, in the caller's transaction under the hash's lock, decides which blob holds
+ *   the hash: an existing `ready` one (the new copy becomes `deleting`, its deletion owed) or the
+ *   new one (`ready`, with the hash). An upload and a delivery do the same work either way.
+ * - {@link lockReady} is the one gate for a new reference: every transaction that inserts or moves
+ *   a reference to a blob (a file row, a share, a repoint) calls it first, so a blob a deletion
+ *   claims is never pointed at again (`BlobObjects.deleteBlob`).
  * - Reads ({@link open}, {@link head}) check size and etag against the row.
  *
- * Only `ready` blobs are ever reused, and a reuse locks the row `FOR SHARE`, so a blob a deletion
- * claims (`FOR UPDATE`, then `deleting`) is never pointed at again. No process state.
+ * No upload form can write a blob's key, so no read depends on who uploaded what. No process state.
  */
 @Injectable()
 export class BlobsService {
@@ -103,16 +106,15 @@ export class BlobsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    @Inject(BlobHashLock) private readonly hashLock: Pick<BlobHashLock, "lock">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
   /**
    * Bytes the kernel holds (a delivery): a `ready` blob of this hash in the org is returned as it
-   * is (any `dedup_after`); else a `pending` row is committed on its own (the intent), the bytes
-   * are put at `blobs/<sha256>`, and the row becomes `ready` with the stored size and etag. A
-   * concurrent writer of the same hash writes the same bytes to the same key, so a `pending` row of
-   * another writer is completed the same way. A blob of this hash being deleted makes the call
-   * fail (retryable: the deletion removes the row shortly).
+   * is (every ready blob was written or checked by the kernel); else the bytes are written to a new
+   * blob ({@link writeIntent}, the put) and {@link settle}d in a transaction of their own. The
+   * caller that then references the blob still calls {@link lockReady} in its transaction.
    */
   async ensureFromBytes(
     orgId: string,
@@ -120,202 +122,151 @@ export class BlobsService {
     bytes: Uint8Array,
     opts: { contentType: string; signal?: AbortSignal },
   ): Promise<BlobRow> {
-    const existing = await this.bySha(orgId, sha256);
-    if (existing?.status === "ready") return existing;
-    if (existing && existing.status !== "pending") {
-      throw new Error(`blob ${existing.id} of this content is being deleted; try again`);
-    }
-    const intent = existing ?? (await this.insertIntent(orgId, sha256, bytes.byteLength));
-    if (intent.status === "ready") return intent;
-    if (intent.status !== "pending") {
-      throw new Error(`blob ${intent.id} of this content is being deleted; try again`);
-    }
+    const existing = await this.db
+      .selectFrom("blobs")
+      .select(BLOB_COLUMNS)
+      .where("org_id", "=", orgId)
+      .where("sha256", "=", sha256)
+      .where("status", "=", "ready")
+      .executeTakeFirst();
+    if (existing) return toBlob(existing);
+    const own = await this.writeVerified(orgId, bytes, opts);
+    return this.settleAlone(orgId, own.id, sha256);
+  }
+
+  /** {@link settle} in a transaction of its own. */
+  @Transactional()
+  private async settleAlone(orgId: string, blobId: string, sha256: string): Promise<BlobRow> {
+    return this.settle(orgId, blobId, sha256);
+  }
+
+  /**
+   * Writes bytes the kernel verified to a new blob: the `pending` row first, committed on its own
+   * (the intent), then the put at `blobs/<blobId>`; the row records the stored size and the etag
+   * the store reported. Returns the still `pending` blob for {@link settle}. A failed put throws
+   * and leaves the row for the sweep (`pending` with no file).
+   */
+  async writeVerified(
+    orgId: string,
+    bytes: Uint8Array,
+    opts: { contentType: string; signal?: AbortSignal },
+  ): Promise<BlobRow> {
+    const intent = await this.writeIntent(orgId, bytes.byteLength);
     const head = await this.storage.kernel(orgId).put(intent.objectKey, bytes, {
       contentType: opts.contentType || "application/octet-stream",
       size: bytes.byteLength,
       ...(opts.signal !== undefined && { signal: opts.signal }),
     });
-    return this.markReady(orgId, intent.id, head.size, head.etag ?? null);
+    return this.recordStored(orgId, intent.id, head.size, head.etag ?? null);
   }
 
-  /** The `pending` intent of {@link ensureFromBytes}, committed before the put. */
+  /** The `pending` intent of {@link writeVerified}, committed before the put. */
   @Transactional({ propagation: "requires_new" })
-  private async insertIntent(orgId: string, sha256: string, size: number): Promise<BlobRow> {
-    await this.db.db
-      .insertInto("blobs")
-      .values({
-        id: randomUUID(),
-        org_id: orgId,
-        sha256,
-        size,
-        etag: null,
-        object_key: blobObjectKey(sha256),
-        status: "pending",
-      })
-      .onConflict((oc) =>
-        oc.columns(["org_id", "sha256"]).where("sha256", "is not", null).doNothing(),
-      )
-      .execute();
-    const row = await this.bySha(orgId, sha256);
-    if (!row) throw new Error(`blob intent for ${sha256} not found after insert`);
-    return row;
-  }
-
-  /** The last step of {@link ensureFromBytes}: `ready` with the stored size and etag. */
-  @Transactional()
-  private async markReady(
-    orgId: string,
-    id: string,
-    size: number,
-    etag: string | null,
-  ): Promise<BlobRow> {
-    await this.db.db
-      .updateTable("blobs")
-      .set({ status: "ready", size, etag })
-      .where("id", "=", id)
-      .where("org_id", "=", orgId)
-      .where("status", "=", "pending")
-      .execute();
-    const row = await this.db.db
-      .selectFrom("blobs")
-      .select(BLOB_COLUMNS)
-      .where("id", "=", id)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    if (row?.status !== "ready") throw new Error(`blob ${id} did not become ready`);
-    return toBlob(row);
-  }
-
-  /**
-   * Finalize's blob for a verified upload of `accountId`'s file `fileId`, in the caller's
-   * transaction (which holds the file row):
-   *
-   * 1. a `ready` blob of this hash whose `dedup_after` has passed, or that one of the uploader's
-   *    own files adopted, is reused; the staging object's deletion is owed (after its form
-   *    expired);
-   * 2. else a new blob adopts the staging object (`dedup_after` = now + the form's lifetime),
-   *    inserted `ON CONFLICT (org_id, sha256) DO NOTHING`; a concurrent winner is reused under the
-   *    rule of step 1;
-   * 3. else (a contested hash: a winner another account's form may still overwrite, or one not
-   *    `ready`) the staging object becomes a blob of its own with `sha256` null, for the hashing
-   *    job to merge once the winner may be shared.
-   *
-   * The caller's answer is the same in every branch.
-   */
-  @Transactional({ propagation: "mandatory" })
-  async resolveUpload(
-    orgId: string,
-    accountId: string,
-    fileId: string,
-    v: VerifiedUpload,
-  ): Promise<{ blob: BlobRow; adopted: boolean }> {
-    const reused = await this.reusable(orgId, accountId, v.sha256);
-    if (reused) {
-      await oweStagingDelete(
-        this.outbox,
-        orgId,
-        fileId,
-        v.stagingKey,
-        afterUploadForm(v.createdAt),
-      );
-      return { blob: reused, adopted: false };
-    }
+  async writeIntent(orgId: string, size: number): Promise<BlobRow> {
     const id = randomUUID();
-    const dedupAfter = sql<Date>`now() + make_interval(secs => ${FILE_UPLOAD_TTL_SECONDS})`;
-    const inserted = await this.db.db
-      .insertInto("blobs")
-      .values({
-        id,
-        org_id: orgId,
-        sha256: v.sha256,
-        size: v.size,
-        etag: v.etag,
-        object_key: v.stagingKey,
-        status: "ready",
-        dedup_after: dedupAfter,
-      })
-      .onConflict((oc) =>
-        oc.columns(["org_id", "sha256"]).where("sha256", "is not", null).doNothing(),
-      )
-      .returning(BLOB_COLUMNS)
-      .executeTakeFirst();
-    if (inserted) return { blob: toBlob(inserted), adopted: true };
-    // a concurrent finalize of the same bytes won the hash
-    const winner = await this.reusable(orgId, accountId, v.sha256);
-    if (winner) {
-      await oweStagingDelete(
-        this.outbox,
-        orgId,
-        fileId,
-        v.stagingKey,
-        afterUploadForm(v.createdAt),
-      );
-      return { blob: winner, adopted: false };
-    }
-    const own = await this.db.db
+    const row = await this.db.db
       .insertInto("blobs")
       .values({
         id,
         org_id: orgId,
         sha256: null,
-        size: v.size,
-        etag: v.etag,
-        object_key: v.stagingKey,
-        status: "ready",
-        dedup_after: dedupAfter,
+        size,
+        etag: null,
+        object_key: blobObjectKey(id),
+        status: "pending",
       })
       .returning(BLOB_COLUMNS)
       .executeTakeFirstOrThrow();
-    return { blob: toBlob(own), adopted: true };
+    return toBlob(row);
+  }
+
+  /** The stored size and etag of a `pending` blob after its put. */
+  @Transactional()
+  private async recordStored(
+    orgId: string,
+    id: string,
+    size: number,
+    etag: string | null,
+  ): Promise<BlobRow> {
+    const row = await this.db.db
+      .updateTable("blobs")
+      .set({ size, etag })
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("status", "=", "pending")
+      .returning(BLOB_COLUMNS)
+      .executeTakeFirst();
+    if (!row) throw new Error(`blob ${id} is no longer pending`);
+    return toBlob(row);
   }
 
   /**
-   * The `ready` blob of this hash an upload of `accountId` may point at (step 1 of
-   * {@link resolveUpload}), locked `FOR SHARE` so no deletion claims it before the caller commits.
+   * Decides, in the caller's transaction and under the hash's lock, which blob holds `sha256` for
+   * the `pending` blob `blobId` the kernel just wrote: an existing `ready` blob of that hash is
+   * locked ({@link lockReady}) and returned, and the new blob becomes `deleting` with its deletion
+   * owed; otherwise the new blob becomes `ready` with the hash. A blob of that hash that is no longer
+   * `ready` (being deleted, gone) gives the hash up first. The caller points its reference at the
+   * returned blob in the same transaction.
    */
-  private async reusable(
-    orgId: string,
-    accountId: string,
-    sha256: string,
-  ): Promise<BlobRow | undefined> {
-    const row = await this.db.db
+  @Transactional({ propagation: "mandatory" })
+  async settle(orgId: string, blobId: string, sha256: string): Promise<BlobRow> {
+    const trx = this.db.db;
+    await this.hashLock.lock(orgId, sha256);
+    const holder = await trx
       .selectFrom("blobs")
-      .select(BLOB_COLUMNS)
-      .select(sql<boolean>`dedup_after <= now()`.as("shareable"))
+      .select("id")
       .where("org_id", "=", orgId)
       .where("sha256", "=", sha256)
       .where("status", "=", "ready")
-      .forShare()
       .executeTakeFirst();
-    if (!row) return undefined;
-    if (row.shareable) return toBlob(row);
-    // within its form's lifetime only the account whose upload it adopted may share it
-    const own = await this.db.db
-      .selectFrom("files")
-      .select("id")
+    const existing = holder ? await this.lockReady(orgId, holder.id) : null;
+    if (existing) {
+      await trx
+        .updateTable("blobs")
+        .set({ status: "deleting" })
+        .where("id", "=", blobId)
+        .where("org_id", "=", orgId)
+        .where("status", "=", "pending")
+        .execute();
+      await oweBlobDelete(this.outbox, orgId, blobId);
+      return existing;
+    }
+    await trx
+      .updateTable("blobs")
+      .set({ sha256: null })
       .where("org_id", "=", orgId)
-      .where("blob_id", "=", row.id)
-      .where("account_id", "=", accountId)
-      .where((eb) =>
-        eb.or([
-          eb("staging_key", "=", row.object_key),
-          eb(sql<string>`'uploads/' || id`, "=", row.object_key),
-        ]),
-      )
-      .limit(1)
+      .where("sha256", "=", sha256)
+      .where("status", "<>", "ready")
+      .execute();
+    const own = await trx
+      .updateTable("blobs")
+      .set({ status: "ready", sha256 })
+      .where("id", "=", blobId)
+      .where("org_id", "=", orgId)
+      .where("status", "=", "pending")
+      .returning(BLOB_COLUMNS)
       .executeTakeFirst();
-    return own ? toBlob(row) : undefined;
+    if (!own) throw new Error(`blob ${blobId} is no longer pending`);
+    return toBlob(own);
   }
 
-  /** The blob of this hash in the org, if any (any status). */
-  private async bySha(orgId: string, sha256: string): Promise<BlobRow | undefined> {
+  /**
+   * The gate of every new reference to a blob, in the caller's transaction: locks the blob row
+   * `FOR SHARE` and returns it only while it is `ready` (else null: being deleted, gone, pending or
+   * not in the org). A deletion claims the row `FOR UPDATE`, so it either waits for the caller's
+   * reference (and then sees it) or has already made the blob `deleting` (and this refuses it).
+   */
+  @Transactional({ propagation: "mandatory" })
+  async lockReady(orgId: string, blobId: string): Promise<BlobRow | null> {
     const row = await this.db.db
       .selectFrom("blobs")
       .select(BLOB_COLUMNS)
+      .where("id", "=", blobId)
       .where("org_id", "=", orgId)
-      .where("sha256", "=", sha256)
+      .where("status", "=", "ready")
+      .forShare()
       .executeTakeFirst();
-    return row ? toBlob(row) : undefined;
+    return row ? toBlob(row) : null;
   }
 
   /**

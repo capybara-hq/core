@@ -125,6 +125,8 @@ type UploadRow = {
   status: FileStatus;
   blob_id: string | null;
   staging_key: string | null;
+  sha256: string | null;
+  upload_purpose: UploadPurpose | null;
   created_at: Date;
 };
 
@@ -136,6 +138,8 @@ const UPLOAD_COLUMNS = [
   "status",
   "blob_id",
   "staging_key",
+  "sha256",
+  "upload_purpose",
   "created_at",
 ] as const;
 
@@ -152,21 +156,28 @@ const viewOf = (r: Pick<UploadRow, "id" | "name" | "content_type" | "size" | "st
 
 /** What finalize read from the staging object. */
 interface ReadUpload {
+  bytes: Uint8Array;
   sha256: string;
-  etag: string | null;
   pages: number | null;
   sniffed: boolean;
 }
 
+/** How long finalize waits for the staging object's bytes before giving up (ms). */
+const READ_TIMEOUT_MS = 60_000;
+
 /**
- * The files of the file library (file library spec §2–§4): account-owned rows over blobs.
+ * The files of the file library (file library spec §2–§4 with the builder amendment of §3):
+ * account-owned rows over blobs.
  *
  * Uploading: `create` admits the upload and, unless the caller already holds the same bytes in a
- * file of their own, inserts an `uploading` row before presigning `uploads/<fileId>`. `finalize`
- * checks the staging object (size, type, signature, PDF pages), reads it whole to compute its
- * sha256, and resolves its blob in one transaction ({@link BlobsService.resolveUpload}); the work
- * and the answer do not depend on whether another account stored the same bytes. `discard` drops
- * a composer upload before it is sent; expired uploads and drafts go with {@link expireBatch}.
+ * file of their own, inserts an `uploading` row (with the declared sha256 and the purpose) before
+ * presigning `uploads/<fileId>`. `finalize` checks the staging object (size, type, signature, PDF
+ * pages), reads it whole, compares its sha256 with the declared one, copies the verified bytes to a
+ * kernel-owned blob (`blobs/<blobId>`, intent first) and settles that blob in one transaction
+ * ({@link BlobsService.settle}); the staging object's deletion is always owed. No form can write a
+ * blob's key, and every branch does the same work, so nothing the caller can observe depends on
+ * whether another account stored the same bytes. `discard` drops a composer upload before it is
+ * sent; expired uploads and drafts go with {@link expireBatch}.
  *
  * Sending: {@link attachForMessage} turns the sender's drafts into `ready` files and records the
  * conversation's reference, in the message's transaction. No process state.
@@ -179,7 +190,8 @@ export class LibraryFilesService {
     @Inject(StorageService)
     private readonly storage: Pick<StorageService, "available" | "assertAvailable" | "kernel">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(BlobsService) private readonly blobs: Pick<BlobsService, "resolveUpload">,
+    @Inject(BlobsService)
+    private readonly blobs: Pick<BlobsService, "writeVerified" | "settle" | "lockReady">,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
@@ -211,12 +223,12 @@ export class LibraryFilesService {
    * unfinished files (`uploading` + `draft`) of the account in the org → `file.too_many_pending`
    * (a soft cap); no object store → `storage.unavailable`.
    *
-   * When one of the caller's own `ready` or unexpired `draft` files of the same type has a `ready`
-   * blob with this sha256 and size, the new file is created on that blob at once (`upload: null`):
+   * When one of the caller's own `ready` or unexpired `draft` files of the same type and size has
+   * this sha256 and a `ready` blob, the new file is created on that blob at once (`upload: null`):
    * the caller already holds those bytes, so nothing is learned. In every other case (another
-   * account's bytes included) an `uploading` row is inserted (expiring after
-   * `attachments.unboundTtlHours`) before a form for `uploads/<fileId>` is presigned, the store
-   * enforcing the declared size and type.
+   * account's bytes included) an `uploading` row is inserted with the declared sha256 and purpose
+   * (expiring after `attachments.unboundTtlHours`) before a form for `uploads/<fileId>` is
+   * presigned, the store enforcing the declared size and type.
    */
   async create(
     orgId: string,
@@ -247,6 +259,8 @@ export class LibraryFilesService {
         size: input.size,
         origin: "upload",
         status: "uploading",
+        sha256: input.sha256,
+        upload_purpose: input.purpose,
         expires_at: sql<Date>`now() + make_interval(hours => ${ttlHours})`,
       })
       .execute();
@@ -299,9 +313,9 @@ export class LibraryFilesService {
   }
 
   /**
-   * The instant path of {@link create}: a new file on the blob of one of the caller's own files,
-   * or undefined. The blob is locked `FOR SHARE` and must still be `ready`, so a deletion claiming
-   * it concurrently either waits for this file or makes the caller upload.
+   * The instant path of {@link create}: a new file on the blob of one of the caller's own files
+   * with this sha256, or undefined. The blob passes {@link BlobsService.lockReady}, so a deletion
+   * claiming it concurrently either waits for this file or makes the caller upload.
    */
   @Transactional()
   private async createOnOwnBlob(
@@ -322,7 +336,9 @@ export class LibraryFilesService {
       .select(["files.blob_id", "files.pages"])
       .where("files.org_id", "=", orgId)
       .where("files.account_id", "=", accountId)
+      .where("files.sha256", "=", input.sha256)
       .where("files.content_type", "=", input.contentType)
+      .where("files.size", "=", String(input.size))
       .where((eb) =>
         eb.or([
           eb("files.status", "=", "ready"),
@@ -330,20 +346,11 @@ export class LibraryFilesService {
         ]),
       )
       .where("blobs.org_id", "=", orgId)
-      .where("blobs.sha256", "=", input.sha256)
-      .where("blobs.size", "=", String(input.size))
       .where("blobs.status", "=", "ready")
       .limit(1)
       .executeTakeFirst();
     if (!mine?.blob_id) return undefined;
-    const blob = await trx
-      .selectFrom("blobs")
-      .select("id")
-      .where("id", "=", mine.blob_id)
-      .where("org_id", "=", orgId)
-      .where("status", "=", "ready")
-      .forShare()
-      .executeTakeFirst();
+    const blob = await this.blobs.lockReady(orgId, mine.blob_id);
     if (!blob) return undefined;
     const id = randomUUID();
     const draft = input.purpose === "composer";
@@ -361,6 +368,8 @@ export class LibraryFilesService {
         pages: mine.pages,
         origin: "upload",
         status: draft ? "draft" : "ready",
+        sha256: input.sha256,
+        upload_purpose: input.purpose,
         expires_at: draft ? sql<Date>`now() + make_interval(hours => ${ttlHours})` : null,
       })
       .execute();
@@ -375,19 +384,22 @@ export class LibraryFilesService {
 
   /**
    * Finishes an upload (the uploader only; a file already `draft` or `ready` is answered as it
-   * is): the staging object missing → `file.not_ready`; a size other than declared → the object
-   * is deleted, larger `file.too_large`, smaller `file.not_ready` (upload again); a stored type or
-   * a signature that does not match → deleted, `file.type_not_allowed`. The whole object is read
-   * to compute its sha256; a hash other than `sha256` → the object is deleted, the upload expires,
-   * `file.hash_mismatch`. Then one transaction resolves the blob and makes the file `draft`
-   * (composer, expiring after `attachments.unboundTtlHours`) or `ready` (library).
+   * is; an expired upload is `file.not_found`):
+   *
+   * - the staging object missing, or smaller than declared → `file.not_ready` (upload again);
+   * - larger than declared, a stored type or a signature that does not match →
+   *   `file.type_not_allowed` / `file.too_large`, and the upload is rejected;
+   * - the whole object is read; a sha256 other than the declared one → `file.hash_mismatch`, and
+   *   the upload is rejected.
+   *
+   * A rejected upload expires at once and owes its staging object's deletion (no direct delete:
+   * the outbox handler re-reads the row). Otherwise the verified bytes are copied to a new
+   * kernel-owned blob (intent first) and one transaction, holding the file row, settles that blob
+   * and makes the file `draft` (composer, expiring after `attachments.unboundTtlHours`) or `ready`
+   * (library), owing the staging object's deletion. The same work runs whether or not the org held
+   * these bytes already.
    */
-  async finalize(
-    orgId: string,
-    accountId: string,
-    fileId: string,
-    input: { sha256: string; purpose: UploadPurpose },
-  ): Promise<FileView> {
+  async finalize(orgId: string, accountId: string, fileId: string): Promise<FileView> {
     this.storage.assertAvailable();
     const row = await this.db
       .selectFrom("files")
@@ -406,58 +418,56 @@ export class LibraryFilesService {
     const key = row.staging_key ?? stagingObjectKey(row.id);
     const store = this.storage.kernel(orgId);
     const head = await store.head(key);
-    if (!head) throw new ApiError("file.not_ready", "The file has not been uploaded yet");
-    const reject = async (err: ApiError): Promise<never> => {
-      await store.delete(key);
-      throw err;
-    };
-    if (head.size !== size) {
-      await reject(
-        head.size > size
-          ? new ApiError("file.too_large", "Uploaded file is larger than declared")
-          : new ApiError(
-              "file.not_ready",
-              `Uploaded file is ${head.size} bytes, but ${size} bytes were declared; upload it again`,
-            ),
+    if (!head || head.size < size) {
+      throw new ApiError(
+        "file.not_ready",
+        head
+          ? `Uploaded file is ${head.size} bytes, but ${size} bytes were declared; upload it again`
+          : "The file has not been uploaded yet",
       );
     }
+    if (head.size > size) {
+      await this.reject(orgId, accountId, row);
+      throw new ApiError("file.too_large", "Uploaded file is larger than declared");
+    }
     if (normalizeContentType(head.contentType) !== row.content_type) {
-      await reject(new ApiError("file.type_not_allowed", "Uploaded file type does not match"));
+      await this.reject(orgId, accountId, row);
+      throw new ApiError("file.type_not_allowed", "Uploaded file type does not match");
     }
     const read = await this.readUpload(store, key, row.content_type, size);
     if (!read) {
-      await store.delete(key);
       throw new ApiError(
         "file.not_ready",
         "The uploaded file changed while it was checked; upload it again",
       );
     }
     if (!read.sniffed) {
-      await reject(
-        new ApiError("file.type_not_allowed", `Uploaded file content is not ${row.content_type}`),
+      await this.reject(orgId, accountId, row);
+      throw new ApiError(
+        "file.type_not_allowed",
+        `Uploaded file content is not ${row.content_type}`,
       );
     }
-    if (read.sha256 !== input.sha256) {
-      await store.delete(key);
-      await this.expireUpload(orgId, fileId);
+    // a migrated upload declared no hash: the computed one stands
+    if (row.sha256 !== null && read.sha256 !== row.sha256) {
+      await this.reject(orgId, accountId, row);
       throw new ApiError(
         "file.hash_mismatch",
         "The uploaded bytes do not match the declared sha256; upload the file again",
       );
     }
-    return this.commitFinalize(orgId, accountId, fileId, input.purpose, {
-      sha256: read.sha256,
-      size,
-      etag: read.etag ?? head.etag ?? null,
-      stagingKey: key,
-      createdAt: row.created_at,
-      pages: read.pages,
+    const own = await this.blobs.writeVerified(orgId, read.bytes, {
+      contentType: row.content_type,
     });
+    const done = await this.commitFinalize(orgId, accountId, row, own.id, read);
+    if (done === null) throw notFound();
+    return done;
   }
 
   /**
-   * Streams the whole staging object once: its sha256, its leading bytes' signature check and,
-   * for a PDF, its page count. Null when the object vanished or no longer has the declared size.
+   * Streams the whole staging object once (bounded by the declared size and a timeout): its bytes,
+   * sha256, leading bytes' signature check and, for a PDF, its page count. Null when the object
+   * vanished or is not the declared size.
    */
   private async readUpload(
     store: ObjectStore,
@@ -465,96 +475,134 @@ export class LibraryFilesService {
     contentType: string,
     size: number,
   ): Promise<ReadUpload | null> {
-    const got = await store.get(key);
+    const got = await store.get(key, { signal: AbortSignal.timeout(READ_TIMEOUT_MS) });
     if (!got) return null;
     if (got.head.size !== size) {
       await got.body.cancel().catch(() => {});
       return null;
     }
     const hash = createHash("sha256");
-    const pdf = contentType === "application/pdf";
-    const kept: Uint8Array[] = [];
-    let keptBytes = 0;
+    const chunks: Uint8Array[] = [];
     let total = 0;
-    for await (const chunk of got.body as unknown as AsyncIterable<Uint8Array>) {
-      hash.update(chunk);
-      total += chunk.byteLength;
-      if (pdf || keptBytes < SNIFF_BYTES) {
-        kept.push(chunk);
-        keptBytes += chunk.byteLength;
+    const reader = got.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > size) {
+        await reader.cancel().catch(() => {});
+        return null;
       }
+      hash.update(value);
+      chunks.push(value);
     }
     if (total !== size) return null;
-    const bytes = Buffer.concat(kept);
+    const bytes = new Uint8Array(Buffer.concat(chunks));
     return {
+      bytes,
       sha256: hash.digest("hex"),
-      etag: got.head.etag ?? null,
-      pages: pdf ? countPdfPages(bytes) || null : null,
+      pages: contentType === "application/pdf" ? countPdfPages(bytes) || null : null,
       sniffed: sniffMatches(contentType, bytes.subarray(0, SNIFF_BYTES)),
     };
   }
 
-  /** A mismatched upload expires now (the cleanup job drops it). */
+  /**
+   * A rejected upload: under the file row's lock, an upload still in progress expires now and its
+   * staging object's deletion is owed (the cleanup job then drops the row).
+   */
   @Transactional()
-  private async expireUpload(orgId: string, fileId: string): Promise<void> {
-    await this.db.db
-      .updateTable("files")
-      .set({ expires_at: sql<Date>`now()` })
-      .where("id", "=", fileId)
-      .where("org_id", "=", orgId)
-      .where("status", "=", "uploading")
-      .execute();
-  }
-
-  /** The transaction of {@link finalize}: the file row locked, its blob resolved, the file set. */
-  @Transactional()
-  private async commitFinalize(
+  private async reject(
     orgId: string,
     accountId: string,
-    fileId: string,
-    purpose: UploadPurpose,
-    v: {
-      sha256: string;
-      size: number;
-      etag: string | null;
-      stagingKey: string;
-      createdAt: Date;
-      pages: number | null;
-    },
-  ): Promise<FileView> {
+    row: Pick<UploadRow, "id" | "staging_key" | "created_at">,
+  ): Promise<void> {
     const trx = this.db.db;
     const locked = await trx
       .selectFrom("files")
-      .select(UPLOAD_COLUMNS)
-      .where("id", "=", fileId)
+      .select("status")
+      .where("id", "=", row.id)
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .forUpdate()
       .executeTakeFirst();
-    if (!locked) throw notFound();
-    // a concurrent finalize, a discard or the cleanup got here first
-    if (locked.status !== "uploading") return viewOf(locked);
-    const { blob } = await this.blobs.resolveUpload(orgId, accountId, fileId, v);
-    const draft = purpose === "composer";
+    if (locked?.status !== "uploading") return;
+    await trx
+      .updateTable("files")
+      .set({ expires_at: sql<Date>`now()` })
+      .where("id", "=", row.id)
+      .where("org_id", "=", orgId)
+      .execute();
+    await oweStagingDelete(this.outbox, orgId, row.id, row.staging_key ?? stagingObjectKey(row.id));
+  }
+
+  /**
+   * The transaction of {@link finalize}: the file row locked and still an unexpired upload, the new
+   * blob settled ({@link BlobsService.settle}), the file pointed at the result and set `draft` /
+   * `ready` with the verified hash, the staging object's deletion owed. When the file is no longer
+   * an upload in progress (a concurrent finalize, a discard, the cleanup) the new blob is released
+   * instead (`deleting`, its deletion owed); the answer is then the file as it is, or null when it
+   * expired or is gone.
+   */
+  @Transactional()
+  private async commitFinalize(
+    orgId: string,
+    accountId: string,
+    row: Pick<UploadRow, "id" | "staging_key" | "upload_purpose" | "created_at">,
+    blobId: string,
+    read: Pick<ReadUpload, "sha256" | "pages">,
+  ): Promise<FileView | null> {
+    const trx = this.db.db;
+    const locked = await trx
+      .selectFrom("files")
+      .select(UPLOAD_COLUMNS)
+      .select(sql<boolean>`expires_at IS NOT NULL AND expires_at <= now()`.as("expired"))
+      .where("id", "=", row.id)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!locked || locked.status !== "uploading" || locked.expired) {
+      await trx
+        .updateTable("blobs")
+        .set({ status: "deleting" })
+        .where("id", "=", blobId)
+        .where("org_id", "=", orgId)
+        .where("status", "=", "pending")
+        .execute();
+      await oweBlobDelete(this.outbox, orgId, blobId);
+      return locked && locked.status !== "uploading" && locked.status !== "deleted"
+        ? viewOf(locked)
+        : null;
+    }
+    const blob = await this.blobs.settle(orgId, blobId, read.sha256);
+    const draft = (locked.upload_purpose ?? "composer") === "composer";
     const ttlHours = this.config.get().attachments.unboundTtlHours;
     await trx
       .updateTable("files")
       .set({
         blob_id: blob.id,
         status: draft ? "draft" : "ready",
-        pages: v.pages,
+        sha256: read.sha256,
+        pages: read.pages,
         expires_at: draft ? sql<Date>`now() + make_interval(hours => ${ttlHours})` : null,
       })
-      .where("id", "=", fileId)
+      .where("id", "=", row.id)
       .where("org_id", "=", orgId)
       .execute();
+    await oweStagingDelete(
+      this.outbox,
+      orgId,
+      row.id,
+      locked.staging_key ?? stagingObjectKey(row.id),
+      afterUploadForm(locked.created_at),
+    );
     return viewOf({ ...locked, status: draft ? "draft" : "ready" });
   }
 
   /**
    * A composer upload removed before it was sent (the uploader only; an `uploading` or `draft`
-   * file no conversation refers to, else `file.not_found`): `deleted`, and its staging object or
-   * own adopted blob released ({@link releaseUpload}).
+   * file no conversation refers to, else `file.not_found`): `deleted`, and what it held released
+   * ({@link releaseUpload}).
    */
   @Transactional()
   async discard(orgId: string, accountId: string, fileId: string): Promise<void> {
@@ -588,8 +636,8 @@ export class LibraryFilesService {
 
   /**
    * Expires one batch of the org's `uploading` / `draft` files past `expires_at` (`FOR UPDATE SKIP
-   * LOCKED`, so concurrent runs never share a row): each becomes `deleted` and its staging object
-   * or own adopted blob is released ({@link releaseUpload}). Returns how many it took.
+   * LOCKED`, so concurrent runs never share a row): each becomes `deleted` and what it held is
+   * released ({@link releaseUpload}). Returns how many it took.
    */
   @Transactional()
   async expireBatch(orgId: string): Promise<number> {
@@ -621,38 +669,42 @@ export class LibraryFilesService {
   }
 
   /**
-   * The bytes an upload leaves behind when its file is dropped before use, in the caller's
-   * transaction (which holds the file row):
+   * What an upload leaves behind when its file is dropped before use, in the caller's transaction
+   * (which holds the file row):
    *
-   * - no blob yet → the staging object's deletion is owed;
-   * - a `ready` blob that adopted this file's own staging object and that no other file or share
-   *   points at → the file lets go of it, the blob becomes `deleting` and its deletion is owed;
-   * - any other blob is shared (or not this upload's) and is left to the blob sweep.
+   * - still uploading → the staging object's deletion is owed (once its form expired);
+   * - a draft whose `ready` blob no other file or share points at → the file lets go of it, the
+   *   blob becomes `deleting` and its deletion is owed;
+   * - a blob something else points at stays (the blob sweep looks at it later).
    *
-   * The blob is locked `FOR UPDATE` before the "no other reference" check, so a concurrent reuse
-   * (which locks it `FOR SHARE` and must find it `ready`) either commits first and is seen, or
-   * finds it `deleting`. Deletions run once the upload form expired.
+   * The blob is locked `FOR UPDATE` before the "no other reference" check, so a concurrent new
+   * reference ({@link BlobsService.lockReady}) either commits first and is seen, or finds the blob
+   * `deleting`.
    */
   @Transactional({ propagation: "mandatory" })
   private async releaseUpload(
     orgId: string,
-    row: Pick<UploadRow, "id" | "blob_id" | "staging_key" | "created_at">,
+    row: Pick<UploadRow, "id" | "status" | "blob_id" | "staging_key" | "created_at">,
   ): Promise<void> {
     const trx = this.db.db;
-    const key = row.staging_key ?? stagingObjectKey(row.id);
-    const runAt = afterUploadForm(row.created_at);
-    if (row.blob_id === null) {
-      await oweStagingDelete(this.outbox, orgId, row.id, key, runAt);
+    if (row.status === "uploading" || row.blob_id === null) {
+      await oweStagingDelete(
+        this.outbox,
+        orgId,
+        row.id,
+        row.staging_key ?? stagingObjectKey(row.id),
+        afterUploadForm(row.created_at),
+      );
       return;
     }
     const blob = await trx
       .selectFrom("blobs")
-      .select(["id", "object_key", "status"])
+      .select(["id", "status"])
       .where("id", "=", row.blob_id)
       .where("org_id", "=", orgId)
       .forUpdate()
       .executeTakeFirst();
-    if (blob?.status !== "ready" || blob.object_key !== key) return;
+    if (blob?.status !== "ready") return;
     const otherFile = await trx
       .selectFrom("files")
       .select("id")
@@ -681,12 +733,14 @@ export class LibraryFilesService {
       .where("id", "=", blob.id)
       .where("org_id", "=", orgId)
       .execute();
-    await oweBlobDelete(this.outbox, orgId, blob.id, runAt);
+    await oweBlobDelete(this.outbox, orgId, blob.id);
   }
 
   /**
    * Attaches the sender's files to a message, in the message's transaction (rows `FOR UPDATE`, in
-   * id order), and returns the content blocks the `user_message` carries (`ref`, in `ids` order):
+   * id order). The caller has already checked that the sender may write to the conversation (this
+   * checks only the files' ownership). Returns the content blocks the `user_message` carries
+   * (`ref`, in `ids` order):
    *
    * - more than `attachments.maxPerMessage`, or an id twice → `validation_failed` (path `files`);
    * - not found, another account's, deleted, or an expired draft → `file.not_found`;

@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 import { StorageModule } from "../storage/storage.module.js";
 import { BlobObjectsModule } from "./blob-objects.js";
-import { BlobsService } from "./blobs.service.js";
+import { BlobHashLock, BlobsService } from "./blobs.service.js";
 import { LibraryFilesService } from "./library-files.service.js";
 
 /**
@@ -13,7 +13,7 @@ import { LibraryFilesService } from "./library-files.service.js";
  */
 @Module({
   imports: [StorageModule, BlobObjectsModule],
-  providers: [BlobsService, LibraryFilesService],
+  providers: [BlobHashLock, BlobsService, LibraryFilesService],
   exports: [BlobsService, LibraryFilesService],
 })
 export class LibraryFilesModule {}

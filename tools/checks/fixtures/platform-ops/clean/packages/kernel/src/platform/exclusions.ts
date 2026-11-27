@@ -27,6 +27,6 @@ export const PLATFORM_EXCLUSIONS = [
   {
     route: "DELETE /api/v1/orgs/:orgId/files/:id/draft",
     category: "internal",
-    reason: "Drops a person's file into a conversation before it is sent.",
+    reason: "Composer housekeeping: drops a draft the person removed before sending.",
   },
 ];

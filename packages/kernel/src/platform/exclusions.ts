@@ -232,7 +232,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "DELETE /api/v1/orgs/:orgId/files/:id/draft",
     category: "internal",
     reason:
-      "Drops a person's file into a conversation that the composer removed before sending; an agent never holds a draft",
+      "Composer housekeeping: drops a draft the person removed before sending; an agent never holds a draft",
   },
   // attachments
   {

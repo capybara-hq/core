@@ -50,6 +50,8 @@ CREATE INDEX IF NOT EXISTS blobs_status_idx ON blobs (status, created_at) WHERE 
 -- `staging_key` is the staging object of a migrated `uploading` row (its old `attachments/<id>`
 -- key; null for new rows, which stage at `uploads/<id>`). `agent_id` has no foreign key: agents can
 -- be deleted, the library keeps the id as a label. `expires_at` applies to `uploading` / `draft`.
+-- `sha256`: an upload's declared hash at create, the verified one from finalize on (null for
+-- deliveries and migrated rows); `upload_purpose`: where an upload was started (null otherwise).
 CREATE TABLE IF NOT EXISTS files (
   id text PRIMARY KEY,
   org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
@@ -65,6 +67,8 @@ CREATE TABLE IF NOT EXISTS files (
   source_conversation_id text REFERENCES conversations(id) ON DELETE SET NULL,
   source_path text,
   staging_key text,
+  sha256 text CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  upload_purpose text CHECK (upload_purpose IN ('composer', 'library')),
   expires_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   deleted_at timestamptz,
@@ -73,6 +77,9 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS files_library_idx ON files (org_id, account_id, created_at DESC, id DESC)
   WHERE status = 'ready';
 CREATE INDEX IF NOT EXISTS files_blob_idx ON files (blob_id);
+-- the instant path of an upload: the caller's own files with these bytes
+CREATE INDEX IF NOT EXISTS files_account_sha256_idx ON files (org_id, account_id, sha256)
+  WHERE sha256 IS NOT NULL;
 CREATE INDEX IF NOT EXISTS files_expiry_idx ON files (expires_at)
   WHERE status IN ('uploading', 'draft');
 CREATE INDEX IF NOT EXISTS files_deleted_idx ON files (deleted_at) WHERE status = 'deleted';

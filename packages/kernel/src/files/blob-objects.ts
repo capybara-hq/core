@@ -11,23 +11,24 @@ import { StorageModule } from "../storage/storage.module.js";
 import { StorageService } from "../storage/storage.service.js";
 
 /**
- * Blob and staging objects of the file library (file library spec §1, §3), all relative to the
- * org's kernel prefix (`kernel/<orgId>/`): a blob the kernel wrote is `blobs/<sha256>`, an upload
- * stages at `uploads/<fileId>` (a migrated upload kept its old key in `files.staging_key`), and a
- * finalized upload's blob may adopt its staging object as it is. Deleting either kind is owed
- * through the outbox by the transaction that stops using it; the handlers re-read the rows first.
+ * Blob and staging objects of the file library (file library spec §1, §3 and its builder
+ * amendment), all relative to the org's kernel prefix (`kernel/<orgId>/`): every blob the kernel
+ * writes is `blobs/<blobId>` (a key no upload form can write; a delivery's bytes and a finalized
+ * upload's verified copy alike), and an upload stages at `uploads/<fileId>` (a migrated upload kept
+ * its old key in `files.staging_key`). A staging object is never a blob. Deleting either kind is
+ * owed through the outbox by the transaction that stops using it; the handlers re-read the rows.
  */
 
-/** The object key of a blob the kernel writes itself (deliveries), relative to the org prefix. */
-export const blobObjectKey = (sha256: string): string => `blobs/${sha256}`;
+/** The object key of a blob the kernel writes, relative to the org prefix. */
+export const blobObjectKey = (blobId: string): string => `blobs/${blobId}`;
 
 /** The staging key a new upload is presigned to, relative to the org prefix. */
 export const stagingObjectKey = (fileId: string): string => `uploads/${fileId}`;
 
 /**
- * How long a presigned upload form stays valid (seconds). Short: within it the uploader can write
- * the staging object again, so a blob adopting it is offered to other accounts only once it has
- * passed (`blobs.dedup_after`), and reads check size and etag.
+ * How long a presigned upload form stays valid (seconds). Within it the uploader can write the
+ * staging object again; finalize copies the verified bytes to a kernel-owned key, so that only
+ * ever changes the uploader's own staging object.
  */
 export const FILE_UPLOAD_TTL_SECONDS = 300;
 
@@ -110,8 +111,12 @@ export async function oweStagingDelete(
  *
  * - A staging object is deleted only when the key is the file's own staging key, the file is no
  *   longer an upload in progress, and no blob of the org names that key (a blob adopted it).
- * - A blob is deleted only while its row is `deleting` and no file or share points at it; then its
- *   object goes, then its row. A blob still referenced is left alone and logged: nothing turns a
+ * - A blob is deleted only while its row is `deleting` and no file or share points at it, checked
+ *   under `FOR UPDATE` on the blob row; then its object goes, then its row. The invariant that
+ *   makes the check final: every transaction that inserts or moves a reference to a blob (a file
+ *   row, a share, a repoint) first calls `BlobsService.lockReady`, which locks the blob `FOR SHARE`
+ *   and requires `ready`, so once a `deleting` blob is seen unreferenced under the lock, nothing can
+ *   point at it again. A blob still referenced is left alone and logged: nothing turns a
  *   referenced blob into `deleting`, so that is a bug to look at, never bytes to drop.
  */
 @Injectable()
@@ -156,39 +161,46 @@ export class BlobObjects {
 
   /** Deletes one `deleting` blob, its object first; see the class comment. */
   async deleteBlob(data: BlobDeleteData): Promise<void> {
-    const blob = await this.db
+    const key = await this.claimUnreferenced(data);
+    if (key === null) return;
+    await this.storage.kernel(data.orgId).delete(key);
+    await this.dropRow(data);
+  }
+
+  /**
+   * Under `FOR UPDATE` on the blob: its object key when it is `deleting` and nothing points at it,
+   * else null (logged when it is still referenced).
+   */
+  @Transactional()
+  async claimUnreferenced(data: BlobDeleteData): Promise<string | null> {
+    const trx = this.db.db;
+    const blob = await trx
       .selectFrom("blobs")
       .select(["status", "object_key"])
       .where("id", "=", data.blobId)
       .where("org_id", "=", data.orgId)
+      .forUpdate()
       .executeTakeFirst();
-    if (blob?.status !== "deleting") return;
-    if (await this.referenced(data)) {
-      this.log.warn("a blob marked for deletion is still referenced; keeping it", { ...data });
-      return;
-    }
-    await this.storage.kernel(data.orgId).delete(blob.object_key);
-    await this.dropRow(data);
-  }
-
-  /** Whether any file or share row points at the blob. */
-  private async referenced(data: BlobDeleteData): Promise<boolean> {
-    const file = await this.db
+    if (blob?.status !== "deleting") return null;
+    const file = await trx
       .selectFrom("files")
       .select("id")
       .where("org_id", "=", data.orgId)
       .where("blob_id", "=", data.blobId)
       .limit(1)
       .executeTakeFirst();
-    if (file) return true;
-    const share = await this.db
+    const share = await trx
       .selectFrom("file_shares")
       .select("id")
       .where("org_id", "=", data.orgId)
       .where("blob_id", "=", data.blobId)
       .limit(1)
       .executeTakeFirst();
-    return share !== undefined;
+    if (file || share) {
+      this.log.warn("a blob marked for deletion is still referenced; keeping it", { ...data });
+      return null;
+    }
+    return blob.object_key;
   }
 
   /** The last step of {@link deleteBlob}: the row, while it is still `deleting`. */

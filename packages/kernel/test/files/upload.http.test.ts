@@ -180,12 +180,8 @@ async function upload(c: Created, bytes: Uint8Array, contentType: string): Promi
   return fetch(u.url, { method: "POST", headers: u.headers, body: form });
 }
 
-const finalize = (req: Req, id: string, sha256: string, purpose: Purpose = "composer") =>
-  req({
-    method: "POST",
-    url: `/api/v1/orgs/${orgId}/files/${id}/finalize`,
-    payload: { sha256, purpose },
-  });
+const finalize = (req: Req, id: string) =>
+  req({ method: "POST", url: `/api/v1/orgs/${orgId}/files/${id}/finalize` });
 
 /** Creates, uploads and finalizes a file; returns its id. */
 async function ready(
@@ -199,7 +195,7 @@ async function ready(
   expect(c.upload).not.toBeNull();
   const up = await upload(c, bytes, contentType);
   expect(up.status, await up.clone().text()).toBeLessThan(300);
-  const f = await finalize(req, c.file.id, sha(bytes), purpose);
+  const f = await finalize(req, c.file.id);
   expect(f.statusCode, f.body).toBe(200);
   expect(f.json()).toEqual({
     id: c.file.id,
@@ -235,12 +231,6 @@ async function deliverOwed(jobId: string): Promise<void> {
   await sql`UPDATE capybara.outbox SET next_attempt_at = now(), run_at = NULL`.execute(raw);
   await drainOutbox(k.app, { jobId });
 }
-
-/** Moves a file's upload form far into the past (its owed deletions run at once). */
-const ageForm = (id: string) =>
-  sql`UPDATE capybara.files SET created_at = now() - interval '1 hour' WHERE id = ${id}`.execute(
-    raw,
-  );
 
 describe("limits and admission", () => {
   it("GET /files/limits for members; a stranger's org is 404", async () => {
@@ -323,7 +313,7 @@ describe("limits and admission", () => {
 });
 
 describe("upload and finalize", () => {
-  it("a composer upload becomes a draft on a blob adopting its staging object; finalize is idempotent and the uploader's only", async () => {
+  it("a composer upload becomes a draft on a kernel-owned copy; finalize is idempotent and the uploader's only", async () => {
     const c = await create(owner, "cat.png", "image/png", PNG);
     expect(c.file).toEqual({
       id: c.file.id,
@@ -333,73 +323,130 @@ describe("upload and finalize", () => {
       status: "uploading",
     });
     expect(Date.parse(c.expiresAt ?? "") - Date.now()).toBeLessThanOrEqual(300_000);
-    expect((await fileRow(c.file.id)).status).toBe("uploading");
+    expect(await fileRow(c.file.id)).toMatchObject({
+      status: "uploading",
+      sha256: sha(PNG),
+      upload_purpose: "composer",
+    });
     expect((await upload(c, PNG, "image/png")).status).toBeLessThan(300);
     // someone else cannot finalize it
-    const theirs = await finalize(other, c.file.id, sha(PNG));
+    const theirs = await finalize(other, c.file.id);
     expect(theirs.statusCode).toBe(404);
     expect(theirs.json().error.code).toBe("file.not_found");
-    expect((await finalize(owner, c.file.id, sha(PNG))).statusCode).toBe(200);
+    expect((await finalize(owner, c.file.id)).statusCode).toBe(200);
     const f = await fileRow(c.file.id);
-    expect(f).toMatchObject({ status: "draft", expired: false });
+    expect(f).toMatchObject({ status: "draft", expired: false, sha256: sha(PNG) });
     expect(f.expires_at).not.toBeNull();
     const b = await blobRow(f.blob_id as string);
     expect(b).toMatchObject({
       sha256: sha(PNG),
       size: String(PNG.length),
-      object_key: `uploads/${c.file.id}`,
+      object_key: `blobs/${f.blob_id}`,
       status: "ready",
-      shareable: false,
+      shareable: true,
     });
     expect(b?.etag).not.toBeNull();
+    const copy = await store().get(`blobs/${f.blob_id}`);
+    expect(Buffer.from(await new Response(copy?.body).arrayBuffer()).equals(PNG)).toBe(true);
+    // the staging object's deletion is owed, once its form expired
+    const staging = await owed(fileStagingDeleteJobId(c.file.id));
+    expect(staging).toHaveLength(1);
+    expect(staging[0]).toMatchObject({ job_name: FILE_STAGING_DELETE_JOB, org_id: orgId });
+    expect(staging[0]?.run_at).not.toBeNull();
+    await deliverOwed(fileStagingDeleteJobId(c.file.id));
+    await expect.poll(() => store().head(`uploads/${c.file.id}`), { timeout: 20_000 }).toBeNull();
     // finalizing again answers the same file
-    const again = await finalize(owner, c.file.id, sha(PNG));
+    const again = await finalize(owner, c.file.id);
     expect(again.statusCode).toBe(200);
     expect(again.json()).toMatchObject({ id: c.file.id, status: "draft" });
-    expect(await owed(fileStagingDeleteJobId(c.file.id))).toEqual([]);
   });
 
   it("a library upload is ready at once", async () => {
     const id = await ready(owner, "notes.txt", "text/plain", TEXT, "library");
-    expect(await fileRow(id)).toMatchObject({ status: "ready", expires_at: null });
+    expect(await fileRow(id)).toMatchObject({
+      status: "ready",
+      expires_at: null,
+      upload_purpose: "library",
+    });
   });
 
-  it("finalize: not uploaded → 409; a smaller object → 409; a non-PNG → 415", async () => {
+  it("finalize: not uploaded or smaller → 409 and the upload stays open; a non-PNG → 415 and the upload is rejected", async () => {
     const c = await create(owner, "a.png", "image/png", PNG);
-    const early = await finalize(owner, c.file.id, sha(PNG));
+    const early = await finalize(owner, c.file.id);
     expect(early.statusCode).toBe(409);
     expect(early.json().error.code).toBe("file.not_ready");
     expect((await upload(c, PNG.subarray(0, PNG.length - 4), "image/png")).status).toBeLessThan(
       300,
     );
-    const small = await finalize(owner, c.file.id, sha(PNG));
+    const small = await finalize(owner, c.file.id);
     expect(small.statusCode).toBe(409);
     expect(small.json().error.code).toBe("file.not_ready");
-    expect(await store().head(`uploads/${c.file.id}`)).toBeNull();
+    // the same form takes the right bytes and finalize then succeeds
+    expect((await upload(c, PNG, "image/png")).status).toBeLessThan(300);
+    expect((await finalize(owner, c.file.id)).statusCode).toBe(200);
 
     const fake = Buffer.from("definitely not a png");
     const c3 = await create(owner, "c.png", "image/png", fake);
     expect((await upload(c3, fake, "image/png")).status).toBeLessThan(300);
-    const sniff = await finalize(owner, c3.file.id, sha(fake));
+    const sniff = await finalize(owner, c3.file.id);
     expect(sniff.statusCode).toBe(415);
     expect(sniff.json().error.code).toBe("file.type_not_allowed");
+    expect(await fileRow(c3.file.id)).toMatchObject({ status: "uploading", expired: true });
+    expect(await owed(fileStagingDeleteJobId(c3.file.id))).toHaveLength(1);
   });
 
-  it("a hash other than declared deletes the staging object and expires the upload", async () => {
+  it("a hash other than declared rejects the upload and owes its staging object's deletion", async () => {
     const c = await create(owner, "notes.txt", "text/plain", TEXT);
     const swapped = Buffer.from(TEXT);
     swapped[0] = "N".charCodeAt(0);
     expect((await upload(c, swapped, "text/plain")).status).toBeLessThan(300);
-    const res = await finalize(owner, c.file.id, sha(TEXT));
+    const res = await finalize(owner, c.file.id);
     expect(res.statusCode, res.body).toBe(422);
     expect(res.json().error.code).toBe("file.hash_mismatch");
-    expect(await store().head(`uploads/${c.file.id}`)).toBeNull();
     expect(await fileRow(c.file.id)).toMatchObject({
       status: "uploading",
       blob_id: null,
       expired: true,
     });
     expect(await db.selectFrom("blobs").select("id").execute()).toEqual([]);
+    await deliverOwed(fileStagingDeleteJobId(c.file.id));
+    await expect.poll(() => store().head(`uploads/${c.file.id}`), { timeout: 20_000 }).toBeNull();
+    // the upload is over: finalizing again finds nothing
+    expect((await finalize(owner, c.file.id)).statusCode).toBe(404);
+  });
+
+  it("an expired upload cannot be finalized", async () => {
+    const c = await create(owner, "late.txt", "text/plain", TEXT);
+    expect((await upload(c, TEXT, "text/plain")).status).toBeLessThan(300);
+    await sql`UPDATE capybara.files SET expires_at = now() - interval '1 second' WHERE id = ${c.file.id}`.execute(
+      raw,
+    );
+    const res = await finalize(owner, c.file.id);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe("file.not_found");
+    expect(await db.selectFrom("blobs").select("id").execute()).toEqual([]);
+  });
+
+  it("a wrong-bytes finalize racing a correct one never puts the wrong bytes behind the hash", async () => {
+    const good = await create(owner, "r.txt", "text/plain", TEXT);
+    const evil = await create(other, "r.txt", "text/plain", TEXT);
+    const wrong = Buffer.from(TEXT);
+    wrong[1] = "X".charCodeAt(0);
+    expect((await upload(good, TEXT, "text/plain")).status).toBeLessThan(300);
+    expect((await upload(evil, wrong, "text/plain")).status).toBeLessThan(300);
+    const [g, e] = await Promise.all([
+      finalize(owner, good.file.id),
+      finalize(other, evil.file.id),
+    ]);
+    expect(g.statusCode, g.body).toBe(200);
+    expect(e.statusCode, e.body).toBe(422);
+    const holder = await db
+      .selectFrom("blobs")
+      .selectAll()
+      .where("sha256", "=", sha(TEXT))
+      .executeTakeFirstOrThrow();
+    const got = await store().get(holder.object_key);
+    expect(Buffer.from(await new Response(got?.body).arrayBuffer()).equals(TEXT)).toBe(true);
   });
 
   it("the same account's bytes are not uploaded again: the new file is created on that blob", async () => {
@@ -424,99 +471,67 @@ describe("upload and finalize", () => {
     expect((typed.json() as Created).upload).not.toBeNull();
   });
 
-  it("another account's bytes: the caller always uploads, sees the same keys, and gets a blob of its own while the first form may still be used", async () => {
-    const mine = await ready(owner, "cat.png", "image/png", PNG);
-    const winner = (await fileRow(mine)).blob_id as string;
-    const c = await create(other, "cat.png", "image/png", PNG);
-    expect(c.upload).not.toBeNull();
-    expect(Object.keys(c).sort()).toEqual(["expiresAt", "file", "upload"]);
-    expect(Object.keys(c.file).sort()).toEqual(["contentType", "id", "name", "size", "status"]);
-    expect((await upload(c, PNG, "image/png")).status).toBeLessThan(300);
-    const res = await finalize(other, c.file.id, sha(PNG));
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      id: c.file.id,
-      name: "cat.png",
-      contentType: "image/png",
-      size: PNG.length,
-      status: "draft",
-    });
-    const theirs = await fileRow(c.file.id);
-    expect(theirs.blob_id).not.toBe(winner);
-    // the contested hash: its own staging object, unhashed until the hashing job merges it
-    expect(await blobRow(theirs.blob_id as string)).toMatchObject({
-      sha256: null,
-      object_key: `uploads/${c.file.id}`,
-      status: "ready",
-    });
-    expect(await owed(fileStagingDeleteJobId(c.file.id))).toEqual([]);
-
-    // once the winner's form has expired, another account's upload resolves to it
-    await sql`UPDATE capybara.blobs SET dedup_after = now() - interval '1 second' WHERE id = ${winner}`.execute(
-      raw,
-    );
-    const c3 = await create(third, "cat.png", "image/png", PNG);
-    expect(c3.upload).not.toBeNull();
-    expect((await upload(c3, PNG, "image/png")).status).toBeLessThan(300);
-    expect((await finalize(third, c3.file.id, sha(PNG))).statusCode).toBe(200);
-    expect((await fileRow(c3.file.id)).blob_id).toBe(winner);
-    const rows = await owed(fileStagingDeleteJobId(c3.file.id));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      queue: MAINTENANCE_QUEUE_NAME,
-      job_name: FILE_STAGING_DELETE_JOB,
-      org_id: orgId,
-    });
-    expect(rows[0]?.data).toEqual({
-      orgId,
-      fileId: c3.file.id,
-      objectKey: `uploads/${c3.file.id}`,
-    });
-    await deliverOwed(fileStagingDeleteJobId(c3.file.id));
-    await expect.poll(() => store().head(`uploads/${c3.file.id}`), { timeout: 20_000 }).toBeNull();
-    // the adopted staging objects stay
-    expect(await store().head(`uploads/${mine}`)).not.toBeNull();
-    expect(await store().head(`uploads/${c.file.id}`)).not.toBeNull();
-  });
-
-  it("bytes written again through the same form after finalize read as gone", async () => {
-    const c = await create(owner, "re.png", "image/png", PNG);
-    expect((await upload(c, PNG, "image/png")).status).toBeLessThan(300);
-    expect((await finalize(owner, c.file.id, sha(PNG))).statusCode).toBe(200);
-    const blobId = (await fileRow(c.file.id)).blob_id as string;
-    const b = await blobRow(blobId);
-    const ref = {
-      id: blobId,
-      objectKey: b?.object_key as string,
-      size: Number(b?.size),
-      etag: b?.etag ?? null,
+  it("whether another account holds the bytes changes nothing the uploader can observe", async () => {
+    /**
+     * One uploader's whole experience of `bytes`: create, upload, finalize, write other bytes of
+     * the same size through the same form, read the file, create the same bytes again.
+     */
+    const observe = async (req: Req, bytes: Buffer) => {
+      const c = await create(req, "same.txt", "text/plain", bytes);
+      const created = {
+        keys: Object.keys(c).sort(),
+        fileKeys: Object.keys(c.file).sort(),
+        status: c.file.status,
+        hasForm: c.upload !== null,
+      };
+      expect((await upload(c, bytes, "text/plain")).status).toBeLessThan(300);
+      const fin = await finalize(req, c.file.id);
+      const finalized = { status: fin.statusCode, body: { ...fin.json(), id: "<id>" } };
+      const rewrite = Buffer.alloc(bytes.length, "z");
+      const rewritten = (await upload(c, rewrite, "text/plain")).status < 300;
+      const f = await fileRow(c.file.id);
+      const b = await blobRow(f.blob_id as string);
+      const readable = await k.app.get(BlobsService).head(orgId, {
+        id: b?.id as string,
+        objectKey: b?.object_key as string,
+        size: Number(b?.size),
+        etag: b?.etag ?? null,
+      });
+      const second = await create(req, "same again.txt", "text/plain", bytes);
+      return {
+        created,
+        finalized,
+        rewritten,
+        readable: readable !== null,
+        secondHasForm: second.upload !== null,
+      };
     };
-    const blobs = k.app.get(BlobsService);
-    expect(await blobs.head(orgId, ref)).not.toBeNull();
-    const evil = Buffer.from(PNG);
-    evil[evil.length - 1] = (evil[evil.length - 1] as number) ^ 0xff;
-    expect((await upload(c, evil, "image/png")).status).toBeLessThan(300);
-    expect(await blobs.head(orgId, ref)).toBeNull();
-    expect(await blobs.open(orgId, ref)).toBeNull();
+    const alone = Buffer.from("bytes nobody else has\n");
+    const shared = Buffer.from("bytes the owner has..\n");
+    expect(alone.length).toBe(shared.length);
+    await ready(owner, "owner.txt", "text/plain", shared, "library");
+    const without = await observe(third, alone);
+    const withOther = await observe(other, shared);
+    expect(withOther).toEqual(without);
+    expect(without).toMatchObject({ readable: true, secondHasForm: false });
   });
 });
 
 describe("discard and the draft cleanup", () => {
-  it("discarding a draft releases its own blob; the owed deletion removes the object and the row", async () => {
+  it("discarding a draft releases its blob; the owed deletion removes the object and the row", async () => {
     const id = await ready(owner, "cat.png", "image/png", PNG);
     const blobId = (await fileRow(id)).blob_id as string;
-    await ageForm(id);
     const res = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/files/${id}/draft` });
     expect(res.statusCode, res.body).toBe(204);
     expect(await fileRow(id)).toMatchObject({ status: "deleted", blob_id: null });
     expect((await blobRow(blobId))?.status).toBe("deleting");
     expect(await owed(blobDeleteJobId(blobId))).toHaveLength(1);
-    // a second discard, or someone else's, finds nothing
+    // a second discard finds nothing
     const again = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/files/${id}/draft` });
     expect(again.statusCode).toBe(404);
     await deliverOwed(blobDeleteJobId(blobId));
     await expect.poll(() => blobRow(blobId), { timeout: 20_000 }).toBeUndefined();
-    expect(await store().head(`uploads/${id}`)).toBeNull();
+    expect(await store().head(`blobs/${blobId}`)).toBeNull();
   });
 
   it("a draft sharing its blob with another file leaves the blob; another account cannot discard", async () => {
@@ -528,7 +543,6 @@ describe("discard and the draft cleanup", () => {
       url: `/api/v1/orgs/${orgId}/files/${copy.file.id}/draft`,
     });
     expect(theirs.statusCode).toBe(404);
-    await ageForm(first);
     const res = await owner({
       method: "DELETE",
       url: `/api/v1/orgs/${orgId}/files/${first}/draft`,
@@ -538,7 +552,7 @@ describe("discard and the draft cleanup", () => {
     expect(await owed(blobDeleteJobId(blobId))).toEqual([]);
   });
 
-  it("the cleanup deletes expired uploads and drafts and owes their staging objects' deletion", async () => {
+  it("the cleanup deletes expired uploads and drafts and owes what they held", async () => {
     const pending = await create(owner, "p.txt", "text/plain", TEXT);
     expect((await upload(pending, TEXT, "text/plain")).status).toBeLessThan(300);
     const draft = await ready(owner, "d.png", "image/png", PNG);
@@ -560,7 +574,8 @@ describe("discard and the draft cleanup", () => {
       .poll(() => store().head(`uploads/${pending.file.id}`), { timeout: 20_000 })
       .toBeNull();
     await expect.poll(() => blobRow(draftBlob), { timeout: 20_000 }).toBeUndefined();
-    expect(await store().head(`uploads/${kept}`)).not.toBeNull();
+    const keptBlob = (await fileRow(kept)).blob_id as string;
+    expect(await store().head(`blobs/${keptBlob}`)).not.toBeNull();
     // nothing left to do
     expect(await k.app.get(FileDraftCleanupJob).runOnce()).toBe(0);
   });
