@@ -265,8 +265,11 @@ test("questions with options and Other; URL elicitation; a connect card", async 
   await question.getByRole("radio", { name: designZh("hitl.other") }).click();
   await question.getByRole("textbox").fill("qa");
   await question.getByRole("button", { name: designZh("hitl.answer") }).click();
-  await expect(question.getByText("qa")).toBeVisible();
   await expect(replies(page).last()).toHaveText(/qa/);
+  // the answered card is a rail step of the (finished, closed) process block: it shows only
+  // between the answer and the run's end, which model-fake reaches within milliseconds
+  await openProcessBlocks(page);
+  await expect(question.getByText("qa")).toBeVisible();
 
   // URL elicitation: the full address, opened in a new window, then "I'm done".
   await send(page, "tool:mcp__capver__verify:{}");
