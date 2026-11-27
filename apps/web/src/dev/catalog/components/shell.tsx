@@ -6,13 +6,11 @@ import {
   ReplaceableFrame,
   SafeModeBanner,
   StatCards,
-  StatusBar,
   StatusMark,
   Text,
 } from "@capybara-hq/design";
 import { DETAIL_KPIS } from "../fixtures";
 import { Row, Section } from "../frame";
-import { statusFixture } from "../shell-fixture";
 
 const noop = () => {};
 
@@ -62,11 +60,6 @@ export function ShellSection() {
       <Row label="ActionRow · 无改动">
         <Grid columns={1}>
           <ActionRow unsaved={0} primary={{ label: "保存", disabled: true, onSelect: noop }} />
-        </Grid>
-      </Row>
-      <Row label="StatusBar">
-        <Grid columns={1}>
-          <StatusBar {...statusFixture("/agents/support-triage")} pageStatus="已筛选 18 / 24" />
         </Grid>
       </Row>
       <Row label="SafeModeBanner">

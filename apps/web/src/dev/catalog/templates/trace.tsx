@@ -8,14 +8,12 @@ import {
   StatusMark,
   Text,
   TracePage,
-  useStatusBar,
 } from "@capybara-hq/design";
 import { useState } from "react";
 import { TRACE_SPANS } from "../fixtures";
 import { FixtureShell } from "../frame";
 
 function TraceBody() {
-  useStatusBar("已加载 1 次运行");
   const [active, setActive] = useState<string | null>("t1");
   return (
     <TracePage
@@ -76,7 +74,7 @@ function TraceBody() {
 /** T8 链路查看器：上方 Span 瀑布，下方选中 span 的详情。 */
 export function TraceTemplate() {
   return (
-    <FixtureShell nav="runs" context="runs/run_8f2k1x">
+    <FixtureShell nav="runs">
       <TraceBody />
     </FixtureShell>
   );

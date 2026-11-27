@@ -1,7 +1,7 @@
 import { AppShell, ContentSection, Grid, Stack, Text } from "@capybara-hq/design";
 import type { ReactNode } from "react";
 import { COMMANDS } from "./fixtures";
-import { sidebarProps, statusFixture } from "./shell-fixture";
+import { sidebarProps } from "./shell-fixture";
 
 /**
  * The catalog page's frame: a title over its sections on the page ground (only the design
@@ -75,27 +75,20 @@ const catalogHref = (id: string) => `/dev/ui/templates/${TEMPLATE_OF[id] ?? "det
 
 /**
  * The App Shell of the template routes (not the auth page): the fixture sidebar with `nav` current,
- * the compact top bar titled `title`, and the status bar at `/<context>`.
+ * the compact top bar titled `title`.
  */
 export function FixtureShell({
   nav,
-  context,
   title,
   children,
 }: {
   nav: string;
-  context: string;
   title?: string;
   children?: ReactNode;
 }) {
   const { onOpenCommands: _, ...sidebar } = sidebarProps({ active: nav }, catalogHref);
   return (
-    <AppShell
-      sidebar={sidebar}
-      commands={COMMANDS}
-      status={statusFixture(`/${context}`)}
-      {...(title ? { title } : {})}
-    >
+    <AppShell sidebar={sidebar} commands={COMMANDS} {...(title ? { title } : {})}>
       {children}
     </AppShell>
   );

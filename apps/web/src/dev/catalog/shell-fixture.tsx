@@ -3,7 +3,6 @@ import {
   ADMIN_NAV_FIXTURE,
   ARCHIVED_COUNT_FIXTURE,
   EXTENSION_PAGES_FIXTURE,
-  FIXTURE_ORG,
   FIXTURE_USER,
   type FixtureGroup,
   type FixtureNavItem,
@@ -14,10 +13,9 @@ import {
   NAV_FIXTURE,
   ORG_SWITCHER_FIXTURE,
   SETUP_STEPS_FIXTURE,
-  STATUS_FIXTURE,
 } from "@capybara-hq/design/fixtures";
 
-// The sidebar and status bar of the catalog: shared by the reference blocks and FixtureShell.
+// The sidebar of the catalog: shared by the reference blocks and FixtureShell.
 
 const noop = () => {};
 const done = async () => {};
@@ -52,6 +50,8 @@ export type SidebarFixture = {
   filter?: { q: string; state: "all" | "running" | "waiting" };
   /** Draw the archived list in place of the conversations. */
   archived?: boolean;
+  /** Draw the account's system status (fail) and the version footnote (the account menu's head and foot). */
+  accountStatus?: boolean;
 };
 
 /**
@@ -137,7 +137,13 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
       onArchive: done,
       onDelete: done,
     },
-    account: { name: FIXTURE_USER.name, menu: [] },
+    account: {
+      name: FIXTURE_USER.name,
+      menu: [],
+      ...(o.accountStatus
+        ? { status: { text: "连接已断开", tone: "fail" as const }, footnote: "v0.1.0 · UTC+8" }
+        : {}),
+    },
     ...(o.moreOpen ? { moreOpen: true } : {}),
     onOpenCommands: noop,
   };
@@ -168,14 +174,4 @@ export function setupStepsFixture(
   return SETUP_STEPS_FIXTURE[who].map((s) =>
     s.state === "waiting" ? { ...s } : { ...s, href: href(s.id) },
   );
-}
-
-/** The status bar of a catalog page at `route` (`/connectors`, …). */
-export function statusFixture(route: string) {
-  return {
-    context: `${FIXTURE_USER.name}@${FIXTURE_ORG}:${route}`,
-    version: STATUS_FIXTURE.version,
-    timeZone: STATUS_FIXTURE.timeZone,
-    system: STATUS_FIXTURE.system,
-  };
 }

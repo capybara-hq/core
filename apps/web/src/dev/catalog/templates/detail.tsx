@@ -11,7 +11,6 @@ import {
   Stack,
   StatusMark,
   Text,
-  useStatusBar,
 } from "@capybara-hq/design";
 import { useState } from "react";
 import {
@@ -75,7 +74,6 @@ export function DetailInspector() {
 }
 
 function DetailBody() {
-  useStatusBar("v12 由 张琳 发布于 2 小时前");
   const [tab, setTab] = useState("summary");
   const [range, setRange] = useState("24h");
   return (
@@ -153,7 +151,7 @@ function DetailBody() {
 /** T3 详情：support-triage（e-detail）。 */
 export function DetailTemplate() {
   return (
-    <FixtureShell nav="agents" context="agents/support-triage">
+    <FixtureShell nav="agents">
       <DetailBody />
     </FixtureShell>
   );
