@@ -210,7 +210,7 @@ export class ConversationQueue {
       (b.type === "image" || b.type === "document" || b.type === "file") && b.source.kind === "ref"
         ? [
             {
-              attachmentId: b.source.attachmentId,
+              attachmentId: b.source.fileId,
               name: b.name ?? "",
               mediaType: b.mediaType,
               ...(b.size !== undefined && { size: b.size }),

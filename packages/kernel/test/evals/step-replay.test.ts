@@ -273,7 +273,7 @@ describe("replayStep", () => {
     (user.payload as { content: unknown[] }).content.push({
       type: "image",
       mediaType: "image/png",
-      source: { kind: "ref", attachmentId },
+      source: { kind: "ref", fileId: attachmentId },
     });
     // the current format records the request's media outcomes and budget with the call
     const call = withImage.events.find((e) => e.seq === firstCall().seq);

@@ -9,6 +9,7 @@ import {
   hasControlChars,
   IMAGE_MEDIA_TYPES,
   isAttachmentId,
+  isFileId,
   isSkillName,
   MEDIA_NAME_MAX_CHARS,
   type MediaSource,
@@ -386,16 +387,40 @@ const ProviderOpaqueSchema = z.object({
   data: z.unknown(),
 });
 
-/**
- * 日志里的媒体来源：只有附件引用。字节（`base64`）绝不进事件日志——日志是事实源、字节不是；
- * 构建模型请求时内核按 `attachmentId` 取字节换成 `base64`（见 {@link LogContentBlock}）。
- */
 const AttachmentIdSchema = z.string().refine(isAttachmentId, "attachmentId must be a UUID");
 
-const RefMediaSourceSchema = z.object({
-  kind: z.literal("ref"),
-  attachmentId: AttachmentIdSchema,
-});
+/**
+ * A media source in the log is only a file reference. Bytes (`base64`) never enter the event log:
+ * the log is the source of truth, bytes are not; request building fetches the bytes by `fileId`
+ * and swaps in `base64` (see {@link LogContentBlock}).
+ *
+ * Blocks logged before the file library name the same id `attachmentId`: parsing accepts that key
+ * as an alias of `fileId` (the stored JSON is never rewritten, so readers of stored payloads go
+ * through {@link refFileId}).
+ */
+const RefMediaSourceSchema = z.preprocess(
+  (v) => {
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return v;
+    const o = v as Record<string, unknown>;
+    if (o.fileId !== undefined || !Object.hasOwn(o, "attachmentId")) return v;
+    const { attachmentId, ...rest } = o;
+    return { ...rest, fileId: attachmentId };
+  },
+  z.object({
+    kind: z.literal("ref"),
+    fileId: z.string().refine(isFileId, "fileId must be a UUID"),
+  }),
+);
+
+/**
+ * The file id a logged media ref names. Events are validated on write but read back as stored, so
+ * a block logged before the rename still carries the same id as `attachmentId`; every reader of a
+ * stored ref takes the id through here.
+ */
+export function refFileId(source: Extract<MediaSource, { kind: "ref" }>): string {
+  const s = source as { fileId?: string; attachmentId?: string };
+  return (s.fileId ?? s.attachmentId) as string;
+}
 
 /**
  * Who may decide an approval, as the approval row says (display only): the assigned account

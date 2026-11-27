@@ -792,7 +792,7 @@ export class AttachmentsService {
         ]);
       }
       if (r.conversation_id === null) toBind.push(id);
-      const source = { kind: "ref" as const, attachmentId: id };
+      const source = { kind: "ref" as const, fileId: id };
       const size = Number(r.size);
       // The model reads images, PDFs and text files itself; every other accepted type becomes a
       // `file` block the model only gets a reference to (the bytes stay in the object store).

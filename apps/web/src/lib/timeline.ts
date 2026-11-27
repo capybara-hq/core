@@ -25,6 +25,7 @@ import type {
   ToolInfo,
   ToolResultImage,
 } from "./conversations";
+import { refId } from "./conversations";
 import type { OrgRole } from "./members";
 import { parsePartialJson } from "./partial-json";
 import type { PersonRef } from "./people";
@@ -646,10 +647,10 @@ export function messageFiles(content: ContentBlock[]): MessageFile[] {
     (b.type === "image" || b.type === "document" || b.type === "file") && b.source.kind === "ref"
       ? [
           {
-            attachmentId: b.source.attachmentId,
+            attachmentId: refId(b.source),
             kind: b.type,
             mediaType: b.mediaType,
-            name: b.name ?? b.source.attachmentId,
+            name: b.name ?? refId(b.source),
             ...(b.size !== undefined ? { size: b.size } : {}),
           },
         ]

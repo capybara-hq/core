@@ -18,6 +18,7 @@ import {
   type EventPayload,
   isAbsorbable,
   type PermissionContextMetaV1,
+  refFileId,
 } from "../../conversations/events.js";
 import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../tools/registry.js";
@@ -313,7 +314,7 @@ function readBlock(m: ReadMedia): LogMedia {
   return {
     type: "image",
     mediaType: m.mediaType,
-    source: { kind: "ref", attachmentId: m.attachmentId },
+    source: { kind: "ref", fileId: m.attachmentId },
     name: m.name,
   } as LogMedia;
 }
@@ -387,7 +388,7 @@ export function mediaRefs(
   return [
     ...new Set(
       mediaBlocks(events, model, readWindow)
-        .map((b) => b.source.attachmentId)
+        .map((b) => refFileId(b.source))
         .filter((id) => !excluded.has(id)),
     ),
   ];
@@ -466,7 +467,7 @@ export function planMedia(
   const blocks = mediaBlocks(events, model, readWindow);
   const last = new Map<string, LogMedia>();
   for (const b of blocks) {
-    const id = b.source.attachmentId;
+    const id = refFileId(b.source);
     last.delete(id);
     last.set(id, b);
   }
@@ -595,7 +596,7 @@ export const attachmentReferenceText = (input: {
 
 function placeholder(b: LogMedia, name: string): string {
   if (b.type === "image") {
-    return `[Attached image ${quoted(name)} — this model cannot view images. If Read is available to you, Read with file_id ${b.source.attachmentId} sends it to the organization's vision model, if one is set.]`;
+    return `[Attached image ${quoted(name)} — this model cannot view images. If Read is available to you, Read with file_id ${refFileId(b.source)} sends it to the organization's vision model, if one is set.]`;
   }
   return `[Attached document ${quoted(name)} — this model cannot read ${
     b.mediaType === "application/pdf" ? "PDF documents" : "documents"
@@ -682,7 +683,7 @@ export function resolveMedia(
       continue;
     }
     const name = b.name ?? "attachment";
-    const id = b.source.attachmentId;
+    const id = refFileId(b.source);
     const text = (t: string, outcome: MediaOutcome) => {
       out.push({ type: "text", text: t });
       outcomes.push({ attachmentId: id, outcome });

@@ -1611,6 +1611,55 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, snap);
   });
 
+  it("a log whose refs name attachmentId (logged before the file library) rebuilds with zero drift", async () => {
+    /** The snapshot as a log written before the rename: every ref's `fileId` stored as `attachmentId`. */
+    const asOldLog = (live: CaseSnapshot): CaseSnapshot => {
+      const old = structuredClone(live);
+      let renamed = 0;
+      for (const e of old.events) {
+        if (e.type !== "user_message") continue;
+        for (const b of (e.payload as { content: { source?: Record<string, unknown> }[] })
+          .content) {
+          if (b.source?.kind !== "ref") continue;
+          const { fileId, ...rest } = b.source;
+          b.source = { ...rest, attachmentId: fileId };
+          renamed++;
+        }
+      }
+      expect(renamed).toBeGreaterThan(0);
+      expect(JSON.stringify(old.events)).not.toContain('"fileId"');
+      return old;
+    };
+
+    // a vision model: an image sent as bytes and a text file over the inline cap as a reference
+    reset();
+    const vision = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const conv = await createConv(owner, orgId, vision);
+    const img = await attach("old.png", PNG);
+    const big = Buffer.from("a".repeat(TEXT_INLINE_MAX_CHARS + 1), "utf8");
+    const txt = await attach("old.txt", big, "text/plain");
+    await postWithFiles(conv, "media: look", [img, txt]);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snap = asOldLog(await snapshotOf(conv));
+    const call = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    expect(call.payload.request.media?.map((m) => [m.attachmentId, m.outcome])).toEqual([
+      [img, "bytes"],
+      [txt, "reference"],
+    ]);
+    await expectZeroDrift(conv, snap);
+
+    // a model without vision: the placeholder names the same id
+    reset();
+    const blind = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv2 = await createConv(owner, orgId, blind);
+    const img2 = await attach("old2.png", PNG);
+    await postWithFiles(conv2, "echo:see this", [img2]);
+    await waitForTerminal(db, conv2, 1, 30_000);
+    const snap2 = asOldLog(await snapshotOf(conv2));
+    expect(JSON.stringify(sent[0])).toContain(`file_id ${img2}`);
+    await expectZeroDrift(conv2, snap2);
+  });
+
   it("a Read image on a vision model: the image follows the tool results, zero drift; a deleted object gives media_missing", async () => {
     reset();
     const agentId = await createAgent(

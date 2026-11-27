@@ -222,7 +222,7 @@ async function say(text: string, ids: string[]): Promise<void> {
       (id, i): LogContentBlock => ({
         type: "image",
         mediaType: "image/png",
-        source: { kind: "ref", attachmentId: id },
+        source: { kind: "ref", fileId: id },
         name: `img-${text}-${i}.png`,
       }),
     ),
@@ -364,7 +364,7 @@ describe("大文本附件（§5.2：引用，不截断）", () => {
             {
               type: "document",
               mediaType: "text/csv",
-              source: { kind: "ref", attachmentId: id },
+              source: { kind: "ref", fileId: id },
               name: "big.csv",
             },
           ],

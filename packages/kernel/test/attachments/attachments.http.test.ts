@@ -245,8 +245,8 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     expect(user?.payload).toMatchObject({
       content: [
         { type: "text", text: "look" },
-        { type: "image", source: { kind: "ref", attachmentId: img }, name: "cat.png" },
-        { type: "document", source: { kind: "ref", attachmentId: pdf }, name: "spec.pdf" },
+        { type: "image", source: { kind: "ref", fileId: img }, name: "cat.png" },
+        { type: "document", source: { kind: "ref", fileId: pdf }, name: "spec.pdf" },
       ],
     });
     const log = JSON.stringify(events);
@@ -269,7 +269,7 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     expect(user?.payload.content[1]).toEqual({
       type: "file",
       mediaType: XLSX,
-      source: { kind: "ref", attachmentId: id },
+      source: { kind: "ref", fileId: id },
       name: "电商工行.xlsx",
       size: XLSX_BYTES.length,
     });
@@ -618,7 +618,7 @@ describe("只有附件的消息", () => {
       {
         type: "image",
         mediaType: "image/png",
-        source: { kind: "ref", attachmentId: img },
+        source: { kind: "ref", fileId: img },
         name: "cat.png",
         size: PNG.length,
       },

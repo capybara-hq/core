@@ -23,8 +23,15 @@ export type ContentBlock =
   /** An attachment the model only gets a reference to (an xlsx, say), same rules as the others. */
   | { type: "file"; mediaType: string; source: MediaSource; name?: string; size?: number };
 
-/** A media block's source: only `ref` in the log (bytes never enter it). */
-export type MediaSource = { kind: "ref"; attachmentId: string };
+/**
+ * A media block's source: only `ref` in the log (bytes never enter it). The events API serves the
+ * stored payloads, so a block logged before the file library names its file `attachmentId` (the
+ * same id): read the id with {@link refId}.
+ */
+export type MediaSource = { kind: "ref"; fileId?: string; attachmentId?: string };
+
+/** The file id a media ref names, whichever key it was logged under. */
+export const refId = (source: MediaSource): string => source.fileId ?? source.attachmentId ?? "";
 
 type FormText = string | { zh: string; en: string };
 
