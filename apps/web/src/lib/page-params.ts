@@ -17,17 +17,25 @@ const utf8 = new TextEncoder();
 export const HOST_PARAMS: ReadonlySet<string> = new Set(["safe-ui", "org"]);
 
 /**
- * Params within {@link PAGE_PARAMS_BYTES} and without the host's names ({@link HOST_PARAMS},
- * dropped silently): kept in order while they fit, the rest dropped with a console warning (spec
- * §5: longer is dropped). Both the page's params and every `navigate({ params })` pass through it.
+ * Params within {@link PAGE_PARAMS_BYTES} and without the host's names ({@link HOST_PARAMS}):
+ * kept in order while they fit, the rest dropped with a console warning (spec §5: longer is
+ * dropped). Both the page's params and every `navigate` target pass through it. A host name is
+ * dropped silently from the page's own address, and with a warning naming it when `navigated`
+ * (a plugin asked for it).
  */
-export function capPageParams(params: Record<string, string>): Record<string, string> {
+export function capPageParams(
+  params: Record<string, string>,
+  { navigated = false }: { navigated?: boolean } = {},
+): Record<string, string> {
   const out: Record<string, string> = {};
   const dropped: string[] = [];
+  const reserved: string[] = [];
   let bytes = 0;
   for (const [k, v] of Object.entries(params)) {
-    // the host's own, silently: an address carries them for the host, not the plugin
-    if (HOST_PARAMS.has(k)) continue;
+    if (HOST_PARAMS.has(k)) {
+      reserved.push(k);
+      continue;
+    }
     const size = utf8.encode(k).length + utf8.encode(v).length;
     if (bytes + size > PAGE_PARAMS_BYTES) {
       dropped.push(k);
@@ -35,6 +43,11 @@ export function capPageParams(params: Record<string, string>): Record<string, st
     }
     bytes += size;
     out[k] = v;
+  }
+  if (navigated && reserved.length > 0) {
+    console.warn(
+      `plugin page params: dropped the host's ${reserved.map((k) => JSON.stringify(k)).join(", ")} (reserved query names)`,
+    );
   }
   if (dropped.length > 0) {
     console.warn(

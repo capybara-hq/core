@@ -464,8 +464,9 @@ function emptyLinks<T>(empty: T, where: string): T {
 
 /**
  * A forwarded page template: the design template with the host's crumbs before the plugin's path,
- * the host's notice in its head (`header.notice`), its links checked, counted by the page frame's template guard (plugin full pages spec §2). A
- * missing `header` is a host error naming the template, not a TypeError inside it.
+ * the host's notice in its head (`header.notice`), its links checked, counted by the page frame's
+ * template guard (plugin full pages spec §2). A missing `header` is a host error naming the
+ * template, not a TypeError inside it.
  */
 function hostTemplate(Template: ComponentType<never>, name: string): ComponentType<TemplateProps> {
   const Hosted = (props: TemplateProps) => {

@@ -417,8 +417,11 @@ describe("page params and navigation", () => {
   });
 
   it("the host's own query names never reach the plugin's params", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(pageParamsOf(new URLSearchParams("safe-ui=0&col=todo&org=o2"))).toEqual({ col: "todo" });
     expect(pageParamsOf({ "safe-ui": "1", org: "o2", q: "x" })).toEqual({ q: "x" });
+    // the page's own address carries them for the host: silently
+    expect(warn).not.toHaveBeenCalled();
     // nor can a plugin navigate to them
     function Sneaky() {
       const navigate = pc.useNavigate() as (to: unknown) => void;
@@ -437,6 +440,10 @@ describe("page params and navigation", () => {
     await flush();
     act(() => screen.getByRole("button", { name: "sneak" }).click());
     expect(router.push).toHaveBeenLastCalledWith(`/p/${PLUGIN}/board?col=x`, { scroll: false });
+    // a plugin that asks for them hears it once, by name
+    const named = warn.mock.calls.filter((c) => String(c[0]).includes("reserved query names"));
+    expect(named).toHaveLength(1);
+    expect(String(named[0]?.[0])).toContain('"safe-ui", "org"');
   });
 });
 

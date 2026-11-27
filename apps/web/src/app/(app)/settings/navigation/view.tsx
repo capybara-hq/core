@@ -117,9 +117,13 @@ function NavigationSettings({ orgId }: { orgId: string }) {
   const baseline = new Map(
     pageSections(pages, savedSetting).map((s, i) => [keyOf(pages[i] as UiContributionItem), s]),
   );
-  // the explicit choices once saved: the saved ones, the drafts replacing or joining them
+  // the explicit choices once saved: the saved ones, the drafts replacing or joining them; a
+  // draft back at the value the page showed is no change (it neither freezes the page's
+  // suggestion nor counts toward the limit)
   const explicit = new Map(saved);
-  for (const [k, v] of Object.entries(draft)) if (listed.has(k)) explicit.set(k, v);
+  for (const [k, v] of Object.entries(draft)) {
+    if (listed.has(k) && v !== (saved.get(k) ?? baseline.get(k))) explicit.set(k, v);
+  }
   // a page without an explicit choice follows its suggestion while a primary slot is free, as the
   // sidebar will after the save
   const projected = pageSections(pages, {

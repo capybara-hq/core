@@ -258,6 +258,26 @@ describe("/settings/navigation", () => {
     });
   });
 
+  it("a select moved back to the value it showed is no change", async () => {
+    resetNavigation("/settings/navigation");
+    stubApi(routes());
+    await renderRouteWithCache("/settings/navigation", lastStubRoutes(), { locale: "zh" });
+    const values = async () =>
+      (await screen.findAllByRole("combobox")).map((b) => (b as HTMLSelectElement).value);
+    await choose("页面丁", "主导航");
+    expect(await values()).toEqual(["primary", "primary", "more", "primary"]);
+    await choose("页面丁", "更多");
+    // the suggestion takes its slot again, nothing to save, no limit counted
+    expect(await values()).toEqual(["primary", "primary", "primary", "more"]);
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
+    // a suggested primary moved away and back stays a suggestion, not a saved choice
+    await choose("页面甲", "更多");
+    await choose("页面甲", "主导航");
+    expect(await values()).toEqual(["primary", "primary", "primary", "more"]);
+    expect(screen.queryByText(zh.navSettings.limit)).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
+  });
+
   it("an org without plugin pages shows the empty state with its hint", async () => {
     resetNavigation("/settings/navigation");
     stubApi({

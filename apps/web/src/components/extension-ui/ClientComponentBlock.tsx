@@ -453,13 +453,15 @@ export function ComponentHost({
   const navigate = useCallback(
     (to: NavigateTarget) => {
       const page = (pid: string, params: Record<string, string>) =>
-        `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(pid)}${searchOf(capPageParams(params))}`;
+        `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(pid)}${searchOf(capPageParams(params, { navigated: true }))}`;
       if (orgId === null) throw new Error("navigate() is not available on a platform page");
       if ("params" in to) {
         if (slot !== "org.page") {
           throw new Error("navigate({ params }) works only on a plugin page (slot org.page)");
         }
-        const next = capPageParams(applyParamChanges(paramsRef.current, to.params));
+        const next = capPageParams(applyParamChanges(paramsRef.current, to.params), {
+          navigated: true,
+        });
         paramsRef.current = next;
         const url = page(id, next);
         if (to.replace) router.replace(url, { scroll: false });

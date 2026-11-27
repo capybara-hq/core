@@ -138,6 +138,9 @@ view block payloads keep 2 000.
   one is mounted (a host-framed component: unless none is); the host's query names `safe-ui` and
   `org` never reach a plugin's params. `SelectProps.density` is now the design's
   `"dense" | "default" | "prominent"` (the old `comfortable | compact` never worked).
+  The org UI stream's first open refetches only queries answered before the stream was created
+  (a page load does not read twice): in a small window a change made during the first read is
+  picked up only with the next frame.
 - Inbox items (collaboration spec §4.9) a plugin posts may only link to `/p/<that plugin>/…`;
   the kernel refuses other links. *As built:* not enforced yet, pending kernel task C1.
 
