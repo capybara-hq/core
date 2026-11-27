@@ -361,6 +361,15 @@
       "too_many_pending": "未完成的上传太多，请先等它们完成或移除后再添加。",
       "upload_failed": "上传失败，请检查网络后移除并重新添加。"
     },
+    "file": {
+      "not_found": "文件不存在或已被删除。",
+      "not_ready": "文件还没有上传完成，请稍候再试。",
+      "hash_mismatch": "文件在上传时发生变化，请重新上传。",
+      "deleted": "文件已被删除。",
+      "too_large": "文件太大，超过了大小上限。",
+      "type_not_allowed": "不支持这种文件类型。",
+      "too_many_pending": "未完成的上传太多，请先等它们完成或移除后再添加。"
+    },
     "storage": {
       "unavailable": "文件存储暂不可用，请稍后重试或联系管理员。"
     },
