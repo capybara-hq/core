@@ -61,6 +61,11 @@ export {
   shortDeviceLabel,
   shortModelLabel,
 } from "./composer-options";
+export {
+  type ComposerPlace,
+  ComposerPlaceChip,
+  ComposerPlaceStrip,
+} from "./composer-place";
 export { ContextMeter } from "./context-meter";
 export {
   cutDiffLine,

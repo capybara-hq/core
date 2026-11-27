@@ -104,6 +104,19 @@ export const DEVICE_FIXTURE = {
 } as const;
 
 /**
+ * The composer's project picker (spec §6.16.2 "Top strip"): the device's projects after 自由模式
+ * (no project), one name long enough to give way in a short strip.
+ */
+export const PROJECT_FIXTURE = {
+  selected: "capybara-core",
+  items: [
+    { id: "free", label: "自由模式" },
+    { id: "capybara-core", label: "capybara-core" },
+    { id: "billing-reconciliation-service", label: "billing-reconciliation-service" },
+  ],
+} as const;
+
+/**
  * The composer's permission picker (spec §6.16.3 state `permission`): three described rows with an
  * icon each, in the same neutral colors, all choosable (the Auto profile needs no device, its tag is the transient check); the
  * review note and an org admin's settings action.
@@ -166,6 +179,9 @@ export const CONV_COPY = {
   agentLocked: "发送第一条消息后不能再换智能体",
   device: "切换设备",
   deviceLocked: "发送第一条消息后不能再换设备",
+  project: "切换项目",
+  projectLocked: "发送第一条消息后不能再换项目",
+  place: "运行位置",
   modelHint: "从下一条消息起生效",
   properties: "属性面板",
   files: "文件",

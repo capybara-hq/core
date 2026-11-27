@@ -7938,6 +7938,7 @@ span.r-scal-daynum {
   flex: none;
   width: 16px;
   height: 16px;
+}
 /* ── Composer menus (§6.16.30): ＋, / and @ anchored above the composer ── */
 
 /* Room above the composer for the menu (the catalog's offsetTop). */
@@ -8401,4 +8402,155 @@ span.r-scal-daynum {
 }
 .r-pfp-sheet-foot .r-grow {
   display: none;
+}
+
+/* ── Composer top strip (spec §6.16.2 "Top strip") ── */
+/* Device / project above the text, pulled left by space.2 like the control row; the project gives
+   way first. */
+.r-composer-place {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0 0 var(--cb-space-1) calc(-1 * var(--cb-space-2));
+}
+.r-composer-place > .r-picker {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.r-place-sep + .r-picker {
+  flex-shrink: 100;
+}
+.r-place-sep {
+  flex: none;
+  padding: 0 var(--cb-space-1);
+  color: var(--cb-muted);
+}
+/* Compact (touch form): the row above the pill (the place chip, the mode icon button, the settings
+   chip), then the pill with ＋, the text and send. No frame box. */
+.r-cpose {
+  display: flex;
+  flex-direction: column;
+}
+.r-cpose-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  margin-bottom: var(--cb-space-2);
+}
+.r-cpose-row > .r-composer-place {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+.r-place-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--cb-touch-hit);
+  padding: 0 var(--cb-space-3);
+  border: 1px solid var(--cb-float-line);
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-float-ground);
+  color: var(--cb-muted);
+  font: inherit;
+  white-space: nowrap;
+}
+.r-place-chip > svg {
+  flex: none;
+}
+.r-options-chip {
+  flex: none;
+  max-width: 50%;
+}
+.r-place-value {
+  flex: none;
+  max-width: 8em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.r-place-value[data-project] {
+  flex: 0 1 auto;
+  max-width: none;
+}
+.r-place-chip .r-place-sep {
+  padding: 0;
+  color: var(--cb-faint);
+}
+.r-touch-icon {
+  flex: none;
+  width: var(--cb-touch-hit);
+  height: var(--cb-touch-hit);
+}
+.r-cpill {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: end;
+  column-gap: var(--cb-space-1);
+  min-height: var(--cb-touch-composer);
+  border: 1px solid var(--cb-float-line);
+  border-radius: calc(var(--cb-touch-composer) / 2);
+  background: var(--cb-float-ground);
+  box-shadow: var(--cb-shadow-float-touch);
+}
+.r-cpill > .r-touch-icon {
+  margin: 0 0 calc((var(--cb-touch-composer) - var(--cb-touch-hit)) / 2 - 1px) calc(var(--cb-space-2) - 1px);
+}
+.r-cpill > .r-composer-input {
+  align-self: center;
+  margin: 0;
+  padding-block: calc(var(--cb-space-3) - 1px);
+}
+.r-cpill > .r-pill-send {
+  width: var(--cb-touch-float);
+  height: var(--cb-touch-float);
+  margin: 0 calc(var(--cb-space-2) - 1px) calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2 - 1px) 0;
+  border-radius: var(--cb-radius-pill);
+}
+/* The place sheet (§6.59): a heading over each group, the options 40 high on the group's ground. */
+.r-place-group + .r-place-group {
+  margin-top: var(--cb-touch-sheet-inset);
+}
+.r-sheet-heading {
+  margin: 0;
+  padding: 0 var(--cb-space-4) var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  font-weight: 500;
+}
+.r-sheet-group {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-hover);
+  overflow: hidden;
+}
+.r-sheet-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: 40px;
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+}
+.r-sheet-option[aria-checked="true"] {
+  background: var(--cb-selected);
+}
+.r-sheet-option[data-disabled] {
+  color: var(--cb-disabled);
+}
+.r-sheet-option > .r-ellipsis {
+  flex: 1;
+}
+.r-sheet-option-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
 }

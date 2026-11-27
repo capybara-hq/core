@@ -596,7 +596,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
 
   function picker(label, o = {}) {
     if (o.locked)
-      return `<span class="r-picker" data-locked title="${esc(o.locked === true ? K.agentLocked : o.locked)}">${esc(label)}</span>`;
+      return `<span class="r-picker" data-locked title="${esc(o.locked === true ? K.agentLocked : o.locked)}">${o.value ? `<span class="r-ellipsis">${esc(label)}</span>` : esc(label)}</span>`;
     // An open picker is the anchor its menu hangs from (the menu is aligned with its trigger).
     return `<button class="r-btn r-picker" data-variant="ghost"${o.open ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}>${esc(label)}${icon("chevron-down", 12)}</button>`;
   }
@@ -608,7 +608,62 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
     return o.device === "locked" ? picker(label, { locked: K.deviceLocked }) : picker(label);
   }
 
+  /**
+   * The composer's top strip (§6.16.2 "Top strip"): `place` "open" (the new conversation: device
+   * and project pickers) or "locked" (a conversation: static text); `form` "medium" draws the mode
+   * as its icon and chevron, "compact" the touch form (the place chip, the mode icon button and the
+   * settings chip on the row above the pill).
+   */
+  function placeComposer(o) {
+    const E = F.DEVICE_FIXTURE;
+    const PR = F.PROJECT_FIXTURE;
+    const M = F.MODE_MENU_FIXTURE;
+    const P = F.PERMISSION_FIXTURE.items.find((i) => i.id === M.selected);
+    const device = E.items.find((i) => i.id === E.selected).label;
+    const project = PR.items.find((i) => i.id === PR.selected).label;
+    const locked = o.place === "locked";
+    const model = modelLabel(C.selected.provider, C.selected.model);
+    const effort = C.effortLabels[C.selected.effort];
+    const placeholder = locked ? K.placeholder : K.newPlaceholder.replace("研究助手", C.agent.name);
+    const textarea = `<textarea class="r-composer-input" id="msg" rows="1" placeholder="${esc(placeholder)}"></textarea>`;
+    const send = `<button class="r-icon-btn r-send" aria-label="${esc(K.send)}" disabled>${icon("arrow-up", 16)}</button>`;
+    const modeTitle = `${P.label}: ${P.description}`;
+    if (o.form === "compact") {
+      // the touch form: the row above the pill, then the pill (＋, the text, send)
+      const chip = locked
+        ? `<span class="r-place-chip" data-part="composer-place-chip" data-locked title="${esc(`${device} / ${project}: ${K.deviceLocked}`)}"><span class="r-place-value">${esc(device)}</span><span class="r-place-sep" aria-hidden="true">/</span><span class="r-place-value" data-project>${esc(project)}</span></span>`
+        : `<button class="r-place-chip" data-part="composer-place-chip" aria-label="${esc(`${K.place}: ${device} / ${project}`)}"><span class="r-place-value">${esc(device)}</span><span class="r-place-sep" aria-hidden="true">/</span><span class="r-place-value" data-project>${esc(project)}</span>${icon("chevron-down", 12)}</button>`;
+      const mode = `<button class="r-icon-btn r-touch-icon" data-part="mode-button" title="${esc(modeTitle)}" aria-label="${esc(`${M.label}: ${P.label}: ${M.effortLabel} ${effort}`)}">${icon(P.icon, 14)}</button>`;
+      const options = `<button class="r-place-chip r-options-chip" data-part="composer-options" aria-label="${esc(`会话选项: ${model} · ${effort}`)}"><span class="r-place-value">${esc(model)}</span>${icon("chevron-down", 12)}</button>`;
+      const pillSend = `<button class="r-icon-btn r-send r-pill-send" aria-label="${esc(K.send)}" disabled>${icon("arrow-up", 16)}</button>`;
+      return `<div class="r-cpose"><div class="r-cpose-row"><div class="r-composer-place" data-part="composer-place" role="group" aria-label="${esc(K.place)}">${chip}</div><span class="r-grow"></span>${mode}${options}</div><div class="r-cpill" data-part="composer-box"><button class="r-icon-btn r-touch-icon r-muted" aria-label="${esc(K.attach)}">${icon("plus", 16)}</button><label class="r-sr" for="msg">消息</label>${textarea}${pillSend}</div></div>`;
+    }
+    const strip = locked
+      ? `${picker(device, { locked: `${device}: ${K.deviceLocked}`, value: true })}<span class="r-place-sep" data-part="composer-place-sep" aria-hidden="true">/</span>${picker(project, { locked: `${project}: ${K.projectLocked}`, value: true })}`
+      : `${picker(device)}<span class="r-place-sep" data-part="composer-place-sep" aria-hidden="true">/</span>${picker(project)}`;
+    const label = o.form === "medium" ? "" : esc(P.label);
+    const mode = `<button class="r-btn r-picker" data-variant="ghost" data-part="mode-button" title="${esc(modeTitle)}">${icon(P.icon, 14)}${label}${icon("chevron-down", 12)}</button>`;
+    return `<div class="r-composer"><div class="r-composer-place" data-part="composer-place" role="group" aria-label="${esc(K.place)}">${strip}</div><label class="r-sr" for="msg">消息</label>${textarea}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${mode}<span class="r-grow"></span>${picker(`${model} · ${effort}`)}${send}</div></div>`;
+  }
+
+  /**
+   * The place sheet (§6.16.2 compact, §6.59): the device group, then that device's projects, at
+   * rest over an empty page at the phone size.
+   */
+  function placeSheet() {
+    const E = F.DEVICE_FIXTURE;
+    const PR = F.PROJECT_FIXTURE;
+    const opt = (it, checked) =>
+      `<div class="r-sheet-option" data-part="option" role="radio" aria-checked="${checked}"${it.disabled ? ' aria-disabled="true" data-disabled' : ""}><span class="r-sheet-option-check">${checked ? icon("check", 14) : ""}</span><span class="r-ellipsis">${esc(it.label)}</span>${it.tag ? `<span class="r-tag" data-part="option-tag">${esc(it.tag)}</span>` : ""}</div>`;
+    const group = (heading, items, selected) =>
+      `<h3 class="r-sheet-heading" data-part="sheet-group-heading">${esc(heading)}</h3><div class="r-sheet-group" data-part="sheet-group" role="radiogroup" aria-label="${esc(heading)}">${items.map((it) => opt(it, it.id === selected)).join("")}</div>`;
+    const head = `<div class="r-sh-handle-zone" data-part="handle-zone"><span class="r-sh-handle" data-part="sheet-handle" aria-label="拖动以关闭"></span></div><div class="r-cmm-sheet-head" data-part="sheet-head"><h2 class="r-cmm-sheet-title">${esc(K.place)}</h2><button class="r-cmm-sheet-close" data-part="sheet-close" aria-label="关闭">${icon("x", 14)}</button></div>`;
+    const body = `<div class="r-cmm-sheet-body"><section class="r-place-group">${group("设备", E.items, E.selected)}</section><section class="r-place-group">${group("项目", PR.items, PR.selected)}</section></div>`;
+    return `<div class="r-sh-stage" data-part="sheet-stage" style="--r-drag:0"><div class="r-sh-scrim" data-part="scrim"></div><div class="r-sh r-cmm-sheet" role="dialog" aria-modal="true" aria-label="${esc(K.place)}" data-part="composer-place-sheet">${head}${body}</div></div>`;
+  }
+
   function composer(o = {}) {
+    if (o.place) return placeComposer(o);
     const isNew = o.state === "new";
     const running = o.state === "running";
     const model = o.state === "no-effort" ? C.noEffortModel : C.selected;
@@ -1424,7 +1479,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
   return {
     "conv-template": template,
     "title-bar": (o) => `<div class="r-titlebar-stage">${titleBar(o)}</div>`,
-    composer: (o) => col(composer(o)),
+    composer: (o) => (o.sheet ? placeSheet() : col(composer(o))),
     "composer-menu": (o) => (o.state === "compact" ? composerMenu(o) : col(composerMenu(o))),
     "project-file-picker": projectFilePicker,
     "picker-menu": (o) => col(pickerMenu({ menu: o.state })),
