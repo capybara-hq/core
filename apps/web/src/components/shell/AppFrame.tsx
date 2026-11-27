@@ -90,7 +90,7 @@ import {
   useSetupSteps,
 } from "./setup";
 
-/** The local time zone, e.g. `UTC+8`, `UTC-3:30` (the status bar's right side, spec §4.4). */
+/** The local time zone, e.g. `UTC+8`, `UTC-3:30` (the account menu's foot, layered shell §6). */
 function timeZoneLabel(): string {
   const offset = -new Date().getTimezoneOffset();
   const sign = offset < 0 ? "-" : "+";
@@ -205,7 +205,7 @@ const under = (pathname: string, prefix: string) =>
  * 1. the org chooser, without a current org (outside `/admin`);
  * 2. the setup frame, while the org is not ready on a setup route (web-SSR spec §4);
  * 3. otherwise the App Shell: the sidebar in its work or admin context (web order §2.1–§2.2), the
- *    account menu and the status bar (`<login>@<slug>:<path>` · version · time zone).
+ *    account menu, its foot the version and the time zone.
  *
  * It provides the session to pages ({@link SessionContext}). An org change is a full navigation
  * home, the new conversation (ruling R4), so the current page stays until the new document
@@ -639,15 +639,13 @@ function ShellFrame({
           menu,
         }
       : null;
-  const status = {
-    context: statusPrompt(me.account.displayName, currentOrg?.slug ?? null, pathname),
-    version,
-    ...(timeZone === "" ? {} : { timeZone }),
-  };
+  // The account menu's footer line (layered shell spec §6): the version and the time zone. The
+  // product has no system status of its own, so the menu gets none.
+  const accountFootnote = [version, timeZone].filter((v) => v !== "").join(" · ");
 
   // The compact drawer (design spec §6.53): the navigation's sections and level, the sidebar's
-  // conversations, and the account sheet (§6.54) from the same account, org and status data as
-  // the sidebar and the status bar.
+  // conversations, and the account sheet (§6.54) from the same account and org data as the
+  // sidebar; its footnote keeps the prompt before the version and time zone.
   const multiOrg = me.memberships.length > 1 || me.canCreateOrg;
   const drawer: DrawerNavData = {
     ...drawerNav,
@@ -668,7 +666,13 @@ function ShellFrame({
       },
       personalSettingsHref: ACCOUNT_HOME,
       theme: preferences.theme ?? null,
-      status: [status.context, version, timeZone].filter((v) => v !== "").join(" · "),
+      status: [
+        statusPrompt(me.account.displayName, currentOrg?.slug ?? null, pathname),
+        version,
+        timeZone,
+      ]
+        .filter((v) => v !== "")
+        .join(" · "),
       ...(switchProfile ? { onSwitchProfile: switchProfile } : {}),
       onSignOut: () => void onLogout(),
     },
@@ -716,17 +720,10 @@ function ShellFrame({
                 name: me.account.displayName,
                 avatarUrl: me.account.avatarUrl,
                 menu: personalMenu,
+                ...(accountFootnote === "" ? {} : { footnote: accountFootnote }),
               },
               ...schemeToggle,
               ...(me.account.isSuperAdmin ? { adminHref: "/admin" } : {}),
-            }}
-            status={{
-              ...status,
-              context: statusPrompt(
-                me.account.displayName,
-                currentOrg?.slug ?? null,
-                home ? "/setup" : pathname,
-              ),
             }}
             {...(banner === null ? {} : { banner })}
             singleScheme={singleScheme}
@@ -798,7 +795,6 @@ function ShellFrame({
         ...(adminHref === undefined ? {} : { adminHref }),
       };
   return (
-    // The conversation page draws its own status bar under its middle column (spec §5.2).
     <AppShell
       collapsed={sidebarChoice.collapsed}
       onCollapsedChange={sidebarChoice.choose}
@@ -812,6 +808,7 @@ function ShellFrame({
           name: me.account.displayName,
           avatarUrl: me.account.avatarUrl,
           menu: personalMenu,
+          ...(accountFootnote === "" ? {} : { footnote: accountFootnote }),
         },
         ...schemeToggle,
         ...(brand === undefined ? {} : { brand }),
@@ -822,8 +819,6 @@ function ShellFrame({
       onNavigate={navigate}
       {...(nativeNav ? { nativeNav } : {})}
       pathname={pathname}
-      status={status}
-      ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}
       capState={capState}
       {...(banner === null ? {} : { banner })}
       singleScheme={singleScheme}

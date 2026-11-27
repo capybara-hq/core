@@ -14,12 +14,6 @@ import type { renderPage } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-// What the page writes into the status bar (the shell's bar is not rendered here).
-const statusBar = vi.hoisted(() => vi.fn());
-vi.mock("@capybara-hq/design", async (original) => ({
-  ...(await original<typeof import("@capybara-hq/design")>()),
-  useStatusBar: statusBar,
-}));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT ${to}`);
@@ -121,7 +115,6 @@ const skillChange = (id: string, over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   resetNavigation("/inbox");
-  statusBar.mockClear();
 });
 afterEach(() => {
   cleanup();
@@ -931,13 +924,14 @@ describe("the inbox from the cache", () => {
     expect(document.querySelectorAll('[data-part="action-row"]')).toHaveLength(1);
     const approve = screen.getByRole("button", { name: en.approval.approve }) as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
-    // the status bar draws nothing while the inbox loads (not "0 pending")
-    expect(statusBar.mock.calls.length).toBeGreaterThan(0);
-    expect(statusBar.mock.calls.every(([v]) => v === null)).toBe(true);
+    // the head shows no pending count while the inbox loads (not "0")
+    const count = () => document.querySelector('[data-part="page-header"] .cb-pageheader-count');
+    expect(count()?.textContent ?? "").not.toBe("0");
     await act(async () => release());
     expect(await screen.findAllByText("Fixture [tool_a]")).not.toHaveLength(0);
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
-    expect(statusBar).toHaveBeenLastCalledWith("· 1 pending");
+    // the head's count is the pending number
+    expect(count()?.textContent).toBe("1");
   });
 });
 

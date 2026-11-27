@@ -85,9 +85,9 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   await expect(approval).toHaveCount(1);
   await expect(approval.getByText(/Fixture/).first()).toBeVisible();
   await expect(approval.locator('[data-part="tool-key"]')).toHaveText("mcp__fixture__delete_item");
-  await expect(page.locator('[data-part="conv-main"] [data-part="status-bar"]')).toContainText(
-    zh.chat.status.waiting,
-  );
+  await expect(
+    page.locator('[data-part="conv-main"] [role="status"][data-part="run-status"]'),
+  ).toContainText(zh.chat.status.waiting);
   await expectToolStatus(page, "mcp__fixture__delete_item", "pending");
 
   // 4. 批准（仅本次）→ 一行「你 批准了 …」；工具执行完成；回复包含工具结果

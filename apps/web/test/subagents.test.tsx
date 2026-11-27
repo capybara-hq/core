@@ -24,7 +24,7 @@ import { hydrateRouteWithCache, renderRouteEmptyCache } from "./support/query";
 /**
  * UI refresh B Task 21: sub-agents on the conversation page, wired to phase C's events and routes.
  * The parent's `agent` calls are one sub-agent group; a row opens the child read-only in the right
- * panel (`#subagent=`), with its task, its own thread, stop and its status bar; a child's approval
+ * panel (`#subagent=`), with its task, its own thread, stop and its head's meta; a child's approval
  * or question shows in the parent with the sub-agent's name; the properties panel lists background
  * tasks and the Context total with sub-agents. Ports phase C's interim tests (`?subagent=`
  * validation, stop, `subagent_waiting` lines, the Context total via `/usage`, progress seeds).
@@ -607,6 +607,57 @@ describe("sub-agents on the conversation page", () => {
     // it does not tick while the child waits
     await act(() => new Promise((r) => setTimeout(r, 1100)));
     expect(meta().textContent).toBe("Waiting for approval · 6s");
+  });
+
+  it("the context used joins the panel head's meta; the panel has no footer", async () => {
+    const at = (e: ConversationEvent, s: number) => ({
+      ...e,
+      createdAt: new Date(Date.UTC(2026, 9, 26, 6, 0, 0) + s * 1000).toISOString(),
+    });
+    const usage = ev(
+      5,
+      "usage",
+      {
+        step: 1,
+        provider: "model-fake",
+        model: "fake-1",
+        inputTokens: 400,
+        outputTokens: 100,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      "run-ch2",
+      "ch2",
+    );
+    const approval = ev(
+      6,
+      "approval_requested",
+      {
+        step: 1,
+        callId: "x1",
+        approvalId: "ap1",
+        toolKey: "Bash",
+        expiresAt: "2026-10-27T00:00:00.000Z",
+      },
+      "run-ch2",
+      "ch2",
+    );
+    const child = [
+      ...childEvents(true)
+        .slice(0, 4)
+        .map((e) => at(e, e.type === "run_started" ? 10 : e.seq)),
+      at(usage, 15),
+      at(approval, 16),
+    ];
+    api({}, { child });
+    window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
+    await renderChat();
+    const panel = () => screen.getByRole("complementary", { name: "Check tests" });
+    const meta = () => panel().querySelector('[data-part="panel-meta"]') as HTMLElement;
+    await childPanelWith(() =>
+      expect(meta().textContent).toBe("Waiting for approval · 6s · Context 50%"),
+    );
+    expect(panel().querySelector('[data-part="status-bar"]')).toBeNull();
   });
 
   it("an org agent's name in the task line links to the agent", async () => {
