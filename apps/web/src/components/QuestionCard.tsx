@@ -3,6 +3,7 @@
 import {
   Checkbox,
   Field,
+  formatDateTime,
   type IconName,
   Input,
   type PersonLike,
@@ -13,6 +14,7 @@ import {
   Slider,
   Stack,
   Switch,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
@@ -270,6 +272,7 @@ export function QuestionCard({
   const lookup = usePersonLookup();
   const viewer = useViewerPerson();
   const tp = useTranslations("people");
+  const timeZone = useTimeZone();
   const [pending, setPending] = useState(false);
   // The answer reaches the log as `question_answered` (and the question's cache entry here).
   const { mutateAsync: postAnswer } = useAppMutation({
@@ -360,12 +363,7 @@ export function QuestionCard({
   // a watched wait says until when it waits (the form's own control ends it: one button)
   const until =
     item.watch === true && done === null
-      ? t("waitUntil", {
-          time: new Date(item.expiresAt).toLocaleString(locale, {
-            dateStyle: "short",
-            timeStyle: "short",
-          }),
-        })
+      ? t("waitUntil", { time: formatDateTime(item.expiresAt, "compact", timeZone) })
       : "";
   const body = [formBody, until].filter((x) => x !== "").join("\n");
   const action = item.open !== undefined ? (panel?.(item.open) ?? null) : null;

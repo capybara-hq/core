@@ -23,6 +23,7 @@ import {
   TOOL_WATCH_JOB,
   TOOL_WATCH_QUEUE,
   TOOL_WATCH_TIMINGS,
+  type ToolWatchFacts,
   type ToolWatchJobData,
   type ToolWatchTimings,
   toolWatchJobId,
@@ -101,7 +102,7 @@ export interface QuestionAskInput {
    * bounded by `tools.approvalTimeoutHours`, and owes the first `tool-watch` poll. Counted
    * against `tools.maxWatchedWaitsPerAccount` for the run's trigger account (`accountId`).
    */
-  watch?: { deadlineMs: number; accountId: string };
+  watch?: { deadlineMs: number; accountId: string; facts: ToolWatchFacts };
 }
 
 /** A watched ask over `tools.maxWatchedWaitsPerAccount` (the pipeline turns it into model text). */
@@ -283,7 +284,12 @@ export class QuestionsService {
         queue: TOOL_WATCH_QUEUE,
         name: TOOL_WATCH_JOB,
         jobId: toolWatchJobId(rec.id),
-        data: { orgId: rec.orgId, questionId: rec.id, failures: 0 },
+        data: {
+          orgId: rec.orgId,
+          questionId: rec.id,
+          failures: 0,
+          facts: (input.watch as NonNullable<QuestionAskInput["watch"]>).facts,
+        },
         runAt: new Date(Date.now() + toolWatchTimings(this.watchTimings).intervalMs),
         orgId: rec.orgId,
       });

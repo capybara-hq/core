@@ -4,12 +4,8 @@ import { DelayedError, type Job } from "bullmq";
 import { sql } from "kysely";
 import { EffectiveConfigs } from "../extensions/effective-config.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
-import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { OrgRole } from "../orgs/roles.js";
-import { rootConversationOf } from "../runtime/subagents/child.js";
-import { unattendedRunOf } from "../schedules/unattended.js";
 import { attachCallScope } from "./call-scope.js";
 import { OrgToolSwitches } from "./org-tool-switches.js";
 import { extensionCallContext, extensionCallGate } from "./pipeline.js";
@@ -43,7 +39,6 @@ export type ToolWatchDecision = "wake" | "pending" | "failure" | "done";
 export class ToolWatchService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, "watcher">,
     @Inject(OrgToolSwitches) private readonly switches: Pick<OrgToolSwitches, "isToolOff">,
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
@@ -61,18 +56,29 @@ export class ToolWatchService {
     return this.kdb.db;
   }
 
-  /** One job run: decide, then wake, re-delay, count a failure, or end. */
+  /**
+   * One job run: decide, then wake, re-delay, count a watcher failure, or end. A kernel-side
+   * error (PG or the wake's transaction, briefly unavailable) is not the watcher's: the poll is
+   * re-delayed with its failure count unchanged and tried again next interval, so a blip never
+   * ends a wait and never uses up the job's attempts (only a failing re-delay itself, Redis
+   * gone, falls back to the queue's retries; the question's deadline still ends the wait).
+   */
   async process(job: Job<ToolWatchJobData>, token: string | undefined): Promise<void> {
-    const decision = await this.decide(job.data);
-    if (decision === "done") return;
-    if (decision === "wake") {
-      await this.questions.wake(job.data.questionId);
-      return;
-    }
-    const failures = decision === "failure" ? job.data.failures + 1 : 0;
-    if (failures >= TOOL_WATCH_MAX_FAILURES) {
-      await this.questions.wake(job.data.questionId);
-      return;
+    let failures = job.data.failures;
+    try {
+      const decision = await this.decide(job.data);
+      if (decision === "done") return;
+      failures = decision === "failure" ? job.data.failures + 1 : 0;
+      if (decision === "wake" || failures >= TOOL_WATCH_MAX_FAILURES) {
+        await this.questions.wake(job.data.questionId);
+        return;
+      }
+    } catch (err) {
+      this.log.warn("a tool watch poll failed in the kernel; polling again", {
+        questionId: job.data.questionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      failures = job.data.failures;
     }
     if (failures !== job.data.failures) await job.updateData({ ...job.data, failures });
     await job.moveToDelayed(Date.now() + this.timings.intervalMs, token);
@@ -123,20 +129,8 @@ export class ToolWatchService {
     const watcher = this.registry.watcher(source);
     if (watcher === undefined) return "wake";
 
-    const role = ((
-      await this.db
-        .selectFrom("memberships")
-        .select("role")
-        .where("org_id", "=", row.org_id)
-        .where("account_id", "=", row.trigger_account_id)
-        .executeTakeFirst()
-    )?.role ?? "guest") as OrgRole;
-    const rootConversationId =
-      row.kind === "subagent"
-        ? await rootConversationOf(this.db, row.conversation_id)
-        : row.conversation_id;
-    const unattended =
-      (await unattendedRunOf(this.db, this.config, row.org_id, row.run_id)) !== null;
+    // fixed for the wait: read once at the ask (the role as it was then)
+    const { role, rootConversationId, unattended } = data.facts;
     // the watcher's bound (it counts as a failure); the race ends a watcher that ignores it
     const signal = AbortSignal.timeout(this.timings.timeoutMs);
     const ctx: ToolWatchContext = {

@@ -750,7 +750,7 @@ export class DeviceAccessService {
   ): Promise<SandboxUseContext> {
     const conv = await this.db
       .selectFrom("conversations")
-      .select("account_id")
+      .select(["account_id", "device_id"])
       .where("id", "=", rootConversationId)
       .where("org_id", "=", call.orgId)
       .where("deleted_at", "is", null)
@@ -760,6 +760,13 @@ export class DeviceAccessService {
     // the trigger account must own the conversation itself, not only by the call's word
     if (conv.account_id !== call.accountId)
       throw new DeviceAccessError("not_owner", DEVICE_ACCESS_NOT_OWNER_TEXT);
+    // a watcher binds nothing: an unbound conversation has nothing running (browser long waits
+    // spec §5.3)
+    if (scope.watch === true && conv.device_id === null)
+      throw new DeviceAccessError(
+        "not_running",
+        "The conversation has no device; nothing was bound, resumed or started.",
+      );
     let deviceId: string;
     try {
       deviceId = await this.devices.forTool(call.orgId, rootConversationId);

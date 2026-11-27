@@ -158,6 +158,7 @@ import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, ToolOutputs } from "./outputs.js";
 import { createDecidePolicy, type GrantKind } from "./policy.js";
 import {
+  type QuestionAskInput,
   type QuestionCarried,
   type QuestionRecord,
   QuestionsService,
@@ -3621,15 +3622,26 @@ export class ToolPipeline {
     if (attempt > MAX_INPUT_ROUNDS) return TOO_MANY_INPUT_REQUESTS_TEXT;
     const problems = validateInputForm(req.form);
     if (problems.length > 0) return invalidFormText(toolKey, problems);
-    let watch: { deadlineMs: number; accountId: string } | undefined;
+    let watch: QuestionAskInput["watch"];
     if (req.watch !== undefined) {
       const source = req.source;
       if (source === undefined || this.deps.registry.watcher(source) === undefined)
         return watchWithoutWatcherText(toolKey);
       const deadlineMs = (req.watch as { deadlineMs?: unknown } | null)?.deadlineMs;
-      if (typeof deadlineMs !== "number" || !Number.isFinite(deadlineMs) || deadlineMs <= 0)
-        return invalidFormText(toolKey, ["watch.deadlineMs must be a positive finite number"]);
-      watch = { deadlineMs, accountId: ctx.accountId };
+      if (typeof deadlineMs !== "number" || !Number.isSafeInteger(deadlineMs) || deadlineMs <= 0)
+        return invalidFormText(toolKey, [
+          "watch.deadlineMs must be a positive integer number of milliseconds",
+        ]);
+      watch = {
+        deadlineMs,
+        accountId: ctx.accountId,
+        // fixed for the wait: each poll builds the watcher's context with them
+        facts: {
+          role: ctx.role,
+          rootConversationId: ctx.parent?.rootConversationId ?? ctx.conversationId,
+          unattended: ctx.unattended != null,
+        },
+      };
     }
     let stateJson: string | undefined;
     try {
@@ -3702,7 +3714,8 @@ export class ToolPipeline {
     }
     const handler = this.deps.registry.handler(tool.source);
     if (!handler) return { kind: "error", message: `Tool ${tool.key} is no longer available.` };
-    // 插件处理函数只拿到 SDK 的 ToolCallContext；内置工具另外拿到本步解析出的工具（ToolSearch 用）
+    // an extension handler gets only the SDK ToolCallContext; a builtin also gets the step's resolved
+    // tools (ToolSearch)
     // the tree root the person looks at; every sub-agent run carries it from its start
     const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
     const base: Omit<BuiltinCallContext, "signal"> = {

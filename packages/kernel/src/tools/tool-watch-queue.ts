@@ -11,11 +11,23 @@ export const TOOL_WATCH_JOB = "tool-watch";
 /** One job per watched question: `tool-watch-<questionId>`. */
 export const toolWatchJobId = (questionId: string): string => `tool-watch-${questionId}`;
 
-/** A `tool-watch` job's data: the org scope (`runJob`), the question, the failures in a row. */
+/**
+ * A `tool-watch` job's data: the org scope (`runJob`), the question, the watcher failures in a
+ * row, and the call's facts fixed for the wait (read once at the ask, not on every poll): the
+ * trigger account's role, the tree's root conversation, an unattended run.
+ */
 export interface ToolWatchJobData {
   orgId: string;
   questionId: string;
   failures: number;
+  facts: ToolWatchFacts;
+}
+
+/** The call facts a poll builds the watcher's context with ({@link ToolWatchJobData.facts}). */
+export interface ToolWatchFacts {
+  role: "owner" | "admin" | "member" | "guest";
+  rootConversationId: string;
+  unattended: boolean;
 }
 
 /** How often a pending watched wait's watcher is polled. */

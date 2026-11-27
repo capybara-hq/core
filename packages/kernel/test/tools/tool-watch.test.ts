@@ -8,7 +8,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { createKv } from "../../src/ctx/kv.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -19,6 +19,7 @@ import {
   watchWithoutWatcherText,
 } from "../../src/tools/pipeline.js";
 import { QuestionsService } from "../../src/tools/questions.service.js";
+import { ToolWatchService } from "../../src/tools/tool-watch.service.js";
 import {
   TOOL_WATCH_QUEUE,
   TOOL_WATCH_TIMINGS,
@@ -270,6 +271,77 @@ describe("watched input waits", () => {
     expect(
       ofType(await eventsOf(db, conv), "tool_result").filter((e) => e.payload.toolKey === WAIT),
     ).toHaveLength(1);
+  });
+
+  it("kernel errors during polls never end the wait or count as watcher failures", async () => {
+    const svc = k.app.get(ToolWatchService, { strict: false });
+    const real = svc.decide.bind(svc);
+    let calls = 0;
+    const spy = vi.spyOn(svc, "decide").mockImplementation(async (data) => {
+      calls++;
+      // a PG blip over many polls, far more than the watcher failure cap
+      if (calls <= 6) throw new Error("connection terminated unexpectedly");
+      return real(data);
+    });
+    try {
+      const { conv, q } = await parked("blip1");
+      await waitFor(async () => calls > 6, 15_000, "polls past the blip");
+      expect(await statusOf(q.id)).toBe("pending");
+      await kv.set("fake-watch:blip1", "go", { ttlSeconds: 60 });
+      const r = await resultOf(conv);
+      expect(JSON.parse(r.content)).toMatchObject({ outcome: "woken", signal: "go" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a fractional deadline is an invalid-form result, not a failed step", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:${WAIT}:${JSON.stringify({ key: "frac1", deadlineMs: 1500.5 })}`,
+    );
+    const r = await resultOf(conv);
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain(
+      "watch.deadlineMs must be a positive integer number of milliseconds",
+    );
+  });
+
+  it("a sub-agent's watched wait: surfaced in the root as a watched wait and woken in the child", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:Agent:${JSON.stringify({
+        description: "Wait",
+        prompt: `tool:${WAIT}:${JSON.stringify({ key: "sub1" })}`,
+        subagent_type: "general-purpose",
+      })}`,
+    );
+    const waiting = await waitFor(
+      async () =>
+        ofType(await eventsOf(db, conv), "subagent_waiting").find(
+          (e) => e.payload.kind === "input",
+        ),
+      30_000,
+      "subagent_waiting in the root",
+    );
+    expect(waiting.payload.watch).toBe(true);
+    const q = await db
+      .selectFrom("questions")
+      .selectAll()
+      .where("id", "=", waiting.payload.questionId as string)
+      .executeTakeFirstOrThrow();
+    expect(q.conversation_id).not.toBe(conv);
+    await waitFor(async () => (await polls("sub1")) >= 1, 10_000, "a poll of the child's wait");
+    const watched = JSON.parse((await kv.get("fake-watch:sub1:ctx")) as string);
+    expect(watched).toMatchObject({ conversationId: q.conversation_id, rootConversationId: conv });
+    await kv.set("fake-watch:sub1", "go", { ttlSeconds: 60 });
+    await waitFor(async () => (await statusOf(q.id)) === "woken", 20_000, "the child's wait woken");
   });
 
   it("the person ends the wait with the form: outcome answered", async () => {

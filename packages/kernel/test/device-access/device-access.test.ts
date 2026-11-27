@@ -1165,6 +1165,21 @@ describe("ctx.deviceAccess in a watcher's scope and ifRunning (browser long wait
     expect((await status())?.state).not.toBe("running");
   });
 
+  it("a watcher's request binds no device to an unbound conversation", async () => {
+    await db
+      .updateTable("conversations")
+      .set({ device_id: null })
+      .where("id", "=", s.conversationId)
+      .execute();
+    expect((await refusal(ask(watchCallOf()))).code).toBe("not_running");
+    const conv = await db
+      .selectFrom("conversations")
+      .select("device_id")
+      .where("id", "=", s.conversationId)
+      .executeTakeFirstOrThrow();
+    expect(conv.device_id).toBeNull();
+  });
+
   it("ensureService is refused in a watcher's scope", async () => {
     const review = allowReview();
     await expect(access.ensureService(CALLER, watchCallOf(), echoServiceSpec())).rejects.toThrow(

@@ -51,13 +51,20 @@ export class ToolWatchProcessor extends WorkerHost<Worker<ToolWatchJobData>> {
   @OnWorkerEvent("failed")
   failed(job: Job<ToolWatchJobData> | undefined, err: Error): void {
     if (!job) return;
-    // the question stays pending: its deadline (the wait-timeout job) still ends it
-    this.log.error("tool watch poll failed; the wait now ends at its deadline", {
+    const fields = {
       jobId: job.id,
       orgId: job.data.orgId,
       questionId: job.data.questionId,
+      attempt: job.attemptsMade,
       error: err.message,
-    });
+    };
+    // the question stays pending: its deadline (the wait-timeout job) still ends it
+    if (job.attemptsMade >= (job.opts.attempts ?? 1))
+      this.log.error(
+        "tool watch poll failed on its last attempt; the wait ends at its deadline",
+        fields,
+      );
+    else this.log.warn("tool watch poll failed; retrying", fields);
   }
 
   @OnWorkerEvent("error")
@@ -84,6 +91,8 @@ export class ToolWatchWorkersModule {
           // the worker name is recorded on the job (BullMQ processedBy): which replica ran it
           name: `${hostname()}-${process.pid}`,
           concurrency: config.tools.watchConcurrency,
+          // a crash during a poll is a stall: the poll runs again, however often over a long wait
+          maxStalledCount: 1_000,
         }),
       ],
       exports: [ToolWatchProcessor],
