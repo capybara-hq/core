@@ -22,6 +22,7 @@ import { ExtensionSlot } from "../../../../components/extension-ui/ExtensionSlot
 import { NoAccess } from "../../../../components/NoAccess";
 import { OrgNetworkSection } from "../../../../components/OrgNetworkAllowances";
 import { CompactionSection } from "../../../../components/settings/CompactionSection";
+import { PromptCacheSection } from "../../../../components/settings/PromptCacheSection";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
@@ -73,13 +74,18 @@ export default function OrganizationSettingsView() {
 type OrgDraft = Pick<
   Partial<OrgSettings>,
   "toolSearch" | "locale" | "platformTool" | "timeZone" | "externalSharing" | "promptSuggestions"
-> & { compaction?: CompactionSettingsPatch | null };
+> & {
+  compaction?: CompactionSettingsPatch | null;
+  /** null: follow the platform again; `{}`: follow turned off, nothing chosen yet. */
+  promptCache?: { longTtl?: boolean } | null;
+};
 
 function OrganizationSettings({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("orgSettings");
   const tc = useTranslations("common");
   const tcp = useTranslations("compaction");
+  const tpc = useTranslations("promptCache");
   const tps = useTranslations("promptSuggestions");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -173,6 +179,17 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
             ],
           }}
         />
+        <FormSection
+          id="prompt-cache"
+          title={tpc("title")}
+          description={tpc("description")}
+          loading={{
+            fields: [
+              { control: "radios", options: 1 },
+              { control: "switch", help: true },
+            ],
+          }}
+        />
         {myRole(me) === "owner" ? <DeleteOrg orgId={orgId} /> : null}
       </SettingsPage>
     );
@@ -212,6 +229,21 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
     (compactionDraft !== null && Object.keys(compactionDraft).length === 0)
       ? undefined
       : compactionDraft;
+  // The prompt cache override, the same way: absent follows the platform; an empty draft is no change.
+  const platformLongTtl = read.data.deployment?.promptCache?.longTtl ?? false;
+  const cacheDraft = draft.promptCache;
+  const cacheOverride =
+    cacheDraft === undefined
+      ? saved.promptCache
+      : cacheDraft === null
+        ? undefined
+        : { ...saved.promptCache, ...cacheDraft };
+  const cacheFollowing = cacheOverride === undefined;
+  const longTtl = cacheOverride?.longTtl ?? platformLongTtl;
+  const promptCachePatch =
+    cacheDraft === undefined || (cacheDraft !== null && cacheDraft.longTtl === undefined)
+      ? undefined
+      : cacheDraft;
   // 只提交改过的项
   const patch: OrgSettingsPatch = {
     ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),
@@ -227,6 +259,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
       ? { promptSuggestions: promptSuggestions === "on" ? null : "off" }
       : {}),
     ...(compactionPatch !== undefined ? { compaction: compactionPatch } : {}),
+    ...(promptCachePatch !== undefined ? { promptCache: promptCachePatch } : {}),
   };
   const unsaved = Object.keys(patch).length;
   const dirty = unsaved > 0;
@@ -393,6 +426,27 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           // override), and a later platform change reaches the org
           setDraft((d) => ({ ...d, compaction: { ...(d.compaction ?? {}), ...p } }))
         }
+      />
+      <PromptCacheSection
+        longTtl={longTtl}
+        disabled={!manage || cacheFollowing}
+        follow={{
+          checked: cacheFollowing,
+          disabled: !manage,
+          onChange: (next) =>
+            setDraft((d) => {
+              const { promptCache: current, ...rest } = d;
+              // following: clear a stored override (nothing to do when there is none); not
+              // following: keep the stored override (no change) or start an empty draft
+              const promptCache = next
+                ? saved.promptCache === undefined
+                  ? undefined
+                  : null
+                : (current ?? (saved.promptCache === undefined ? {} : undefined));
+              return promptCache === undefined ? rest : { ...rest, promptCache };
+            }),
+        }}
+        onChange={(next) => setDraft((d) => ({ ...d, promptCache: { longTtl: next } }))}
       />
       {manage ? <OrgNetworkSection orgId={orgId} /> : null}
       {manage ? <ExtensionSlot slot="org.settings.section" args={{ orgId }} /> : null}

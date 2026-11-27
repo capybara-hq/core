@@ -99,6 +99,8 @@ export interface OrgSettings {
    * follows the platform.
    */
   compaction?: CompactionSettingsPatch;
+  /** The org's prompt cache override (idle compaction spec §6.4); absent follows the platform. */
+  promptCache?: { longTtl?: boolean };
   /**
    * Whether members may share conversation files with anyone who has the link (file sharing spec
    * §8); absent = off. Turning it on needs the platform to allow it.
@@ -144,6 +146,8 @@ export interface OrgSettingsDeployment {
   publicUrl: boolean;
   /** The platform's conversation compaction settings. */
   compaction: CompactionSettings;
+  /** The platform's prompt cache settings. */
+  promptCache?: { longTtl: boolean };
   /** The platform's external sharing switch (`deny`: the org cannot turn it on) and its source. */
   externalSharing?: {
     value: "allow" | "deny";
@@ -181,6 +185,7 @@ export type OrgSettingsPatch = Partial<
     | "theme"
     | "automations"
     | "compaction"
+    | "promptCache"
     | "promptSuggestions"
   >
 > & {
@@ -201,6 +206,8 @@ export type OrgSettingsPatch = Partial<
   uiArrangement?: Record<string, UiArrangementEntry | null>;
   /** The fields to override; null clears the whole override (follow the platform again). */
   compaction?: CompactionSettingsPatch | null;
+  /** The field to override; null clears the override (follow the platform again). */
+  promptCache?: { longTtl?: boolean } | null;
   /** null clears it (on again, following the platform). */
   promptSuggestions?: "on" | "off" | null;
 };
