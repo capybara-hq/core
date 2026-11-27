@@ -18,9 +18,14 @@ import { type JSX, type ReactNode, useEffect, useState } from "react";
 import { ApiClientError, toError } from "../../lib/api";
 import { type FileSource, sourceFile, sourceUrls } from "../../lib/file-source";
 import { builtinPreview } from "../../lib/files";
-import { HTML_RENDER_MAX_BYTES, requestHtmlToken } from "../../lib/html";
+import { HTML_RENDER_MAX_BYTES, requestHtmlToken, requestLibraryHtmlToken } from "../../lib/html";
 import type { FilePreviewerItem } from "../../lib/previewers";
 import { filePreviewersQuery, filePreviewQuery, fileTextQuery } from "../../lib/query/conversation";
+import {
+  libraryFileTextQuery,
+  libraryPreviewersQuery,
+  libraryPreviewQuery,
+} from "../../lib/query/library";
 import { useAppMutation } from "../../lib/query/mutation";
 import { shareTextQuery, shareViewQuery } from "../../lib/query/shares";
 import {
@@ -72,8 +77,8 @@ type Option = { id: string; title: string; p: FilePreviewerItem | null };
 type Load<T> = { kind: "loading" } | { kind: "ready"; data: T } | { kind: "error"; e: unknown };
 
 /**
- * One file's body (file sharing design §5, §6), the same for the right panel and the share page:
- * only `source` differs. HTML files render as a whole document (the built-in wins over extension
+ * One file's body (file sharing design §5, §6), the same for the right panel, the Files page and
+ * the share page: only `source` differs. HTML files render as a whole document (the built-in wins over extension
  * previewers), with the source as text as the second option; otherwise extension previewers
  * come first, in the org's order, then the built-in (bitmaps, text and code, Markdown, CSV / TSV);
  * a file nothing takes shows the file card with Download. A failing previewer shows Retry with
@@ -107,6 +112,7 @@ export function FilePreviewBody({
   const file = sourceFile(source);
   const urls = sourceUrls(source);
   const conv = source.kind === "conversation" ? source : null;
+  const lib = source.kind === "library" ? source : null;
   const share = source.kind === "share" ? source : null;
   const skill = source.kind === "skill" ? source : null;
   // A skill's HTML or SVG file: its source as text, the one option (skill file browser design)
@@ -121,9 +127,11 @@ export function FilePreviewBody({
         contentType: file.contentType,
         previewable: conv
           ? conv.file.previewable
-          : skill
-            ? skill.file.previewable
-            : (share?.meta.previewable ?? null),
+          : lib
+            ? lib.file.previewable
+            : skill
+              ? skill.file.previewable
+              : (share?.meta.previewable ?? null),
       });
   const builtin = sourceOnly
     ? "text"
@@ -133,9 +141,11 @@ export function FilePreviewBody({
         ? "text"
         : null;
   const html = builtin === "html";
-  const fileId = conv?.file.id ?? "";
-  const orgId = conv?.orgId ?? skill?.orgId ?? "";
+  const fileId = conv?.file.id ?? lib?.file.id ?? "";
+  const orgId = conv?.orgId ?? lib?.orgId ?? skill?.orgId ?? "";
   const conversationId = conv?.conversationId ?? "";
+  // What a document token is minted for: a conversation's file, or (null) a library file
+  const tokenConversation = conv?.conversationId ?? null;
   const skillId = skill?.skillId ?? "";
   const skillVersion = skill?.version ?? 0;
   const skillPath = skill?.file.path ?? "";
@@ -147,8 +157,10 @@ export function FilePreviewBody({
   const previewersQ = useQuery({
     ...(skill
       ? skillFilePreviewersQuery(orgId, skillId, skillVersion, skillPath)
-      : filePreviewersQuery(orgId, conversationId, fileId)),
-    enabled: (conv !== null || (skill !== null && !sourceOnly)) && !html,
+      : lib
+        ? libraryPreviewersQuery(orgId, fileId)
+        : filePreviewersQuery(orgId, conversationId, fileId)),
+    enabled: (conv !== null || lib !== null || (skill !== null && !sourceOnly)) && !html,
     retry: false,
   });
   const extensions: FilePreviewerItem[] | null =
@@ -206,7 +218,9 @@ export function FilePreviewBody({
           viewP ?? { plugin: "", id: "" },
           locale,
         )
-      : filePreviewQuery(orgId, conversationId, fileId, viewP ?? { plugin: "", id: "" }, locale);
+      : lib
+        ? libraryPreviewQuery(orgId, fileId, viewP ?? { plugin: "", id: "" }, locale)
+        : filePreviewQuery(orgId, conversationId, fileId, viewP ?? { plugin: "", id: "" }, locale);
   const viewQ = useQuery({
     ...viewOpts,
     enabled: extensions !== null && viewP !== null,
@@ -230,28 +244,35 @@ export function FilePreviewBody({
     ? shareTextQuery(share.code)
     : skill
       ? skillFileTextQuery(orgId, skillId, skillVersion, skillPath)
-      : fileTextQuery(orgId, conversationId, fileId);
+      : lib
+        ? libraryFileTextQuery(orgId, fileId)
+        : fileTextQuery(orgId, conversationId, fileId);
   const textQ = useQuery({ ...textOpts, enabled: extensions !== null && readsText, retry: false });
 
-  // A conversation's HTML document loads through a token minted each time the rendered view
-  // shows (the token only loads the document): nothing cached changes.
+  // A conversation's or a library file's HTML document loads through a token minted each time the
+  // rendered view shows (the token only loads the document): nothing cached changes.
   const wantsToken =
-    conv !== null && html && current?.id === HTML_RENDERED && file.size <= HTML_RENDER_MAX_BYTES;
+    (conv !== null || lib !== null) &&
+    html &&
+    current?.id === HTML_RENDERED &&
+    file.size <= HTML_RENDER_MAX_BYTES;
   const token = useAppMutation({
-    fn: (v: { orgId: string; conversationId: string; fileId: string }) =>
-      requestHtmlToken(v.orgId, v.conversationId, v.fileId),
+    fn: (v: { orgId: string; conversationId: string | null; fileId: string }) =>
+      v.conversationId === null
+        ? requestLibraryHtmlToken(v.orgId, v.fileId)
+        : requestHtmlToken(v.orgId, v.conversationId, v.fileId),
     invalidates: () => [],
   });
   const { mutate: mint, reset: dropToken } = token;
   useEffect(() => {
-    if (wantsToken) mint({ orgId, conversationId, fileId });
+    if (wantsToken) mint({ orgId, conversationId: tokenConversation, fileId });
     else dropToken();
-  }, [wantsToken, orgId, conversationId, fileId, mint, dropToken]);
-  const remint = () => mint({ orgId, conversationId, fileId });
+  }, [wantsToken, orgId, tokenConversation, fileId, mint, dropToken]);
+  const remint = () => mint({ orgId, conversationId: tokenConversation, fileId });
   // Only this file's token counts: after a switch the previous answer never frames the new file.
   const tokenIsOurs =
     token.variables?.orgId === orgId &&
-    token.variables.conversationId === conversationId &&
+    token.variables.conversationId === tokenConversation &&
     token.variables.fileId === fileId;
   const tokenPath = tokenIsOurs ? token.data?.path : undefined;
   const tokenError = tokenIsOurs ? token.error : null;
@@ -369,7 +390,7 @@ export function FilePreviewBody({
   } else if (p?.kind === "view" && data.view) {
     content = <UiViewRenderer view={data.view} onAction={async () => {}} />;
   } else if (builtin === "image") {
-    // a share link needs no session (it opens as is); a conversation's or a skill's file does
+    // a share link needs no session (it opens as is); a conversation's, library or skill file does
     const open = (url: string) => openDownload(url, share ? { public: true } : {});
     content = (
       <PanelImage

@@ -143,15 +143,22 @@ export interface UploadedFile {
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/files`;
 
-/** Registers a composer upload: the kernel checks type and size and returns the presigned form. */
+/**
+ * Where an upload is made: `composer` (a draft until a message sends it) or `library` (the Files
+ * page: ready at once).
+ */
+export type UploadPurpose = "composer" | "library";
+
+/** Registers an upload: the kernel checks type and size and returns the presigned form. */
 export const createFile = (
   orgId: string,
   input: { name: string; contentType: string; size: number; sha256: string },
   signal?: AbortSignal,
+  purpose: UploadPurpose = "composer",
 ) =>
   apiFetch<CreatedFile>(base(orgId), {
     method: "POST",
-    body: JSON.stringify({ ...input, purpose: "composer" as const }),
+    body: JSON.stringify({ ...input, purpose }),
     ...(signal && { signal }),
   });
 
@@ -223,6 +230,8 @@ export async function uploadFile(
     signal?: AbortSignal;
     /** Called with the file id once the kernel registered it (a removal in flight can discard it). */
     onCreated?: (id: string) => void;
+    /** `composer` (default) or `library`. */
+    purpose?: UploadPurpose;
   } = {},
 ): Promise<UploadedFile> {
   const sha256 = await sha256Hex(file);
@@ -231,11 +240,13 @@ export async function uploadFile(
     orgId,
     { name: file.name, contentType: fileContentType(file), size: file.size, sha256 },
     opts.signal,
+    opts.purpose ?? "composer",
   );
   opts.onCreated?.(created.file.id);
   opts.signal?.throwIfAborted();
-  // The kernel already holds these bytes: the file is a draft at once, nothing to store or finalize.
-  if (created.upload === null && created.file.status === "draft") return created.file;
+  // The kernel already holds these bytes: the file exists at once (a composer draft, or ready in
+  // the library), nothing to store or finalize.
+  if (created.upload === null && created.file.status !== "uploading") return created.file;
   if (created.upload !== null) {
     await uploadToStorage(created.upload, file, opts);
     opts.signal?.throwIfAborted();

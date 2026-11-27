@@ -1,17 +1,20 @@
 import { artifactDownloadUrl } from "./artifacts";
 import type { FileOutput } from "./files";
+import { type LibraryFileView, libraryDownloadUrl } from "./library-files";
 import type { FilePreviewerItem } from "./previewers";
 import { skillFileContentUrl } from "./skills";
 import { fileDownloadUrl } from "./uploads";
 
 /**
  * Where a previewed file comes from (file sharing design §6): a conversation's file in the right
- * panel, a share's snapshot on the public share page, or a file of a skill version on the skill's
- * Files tab (skill file browser design). The file body renders them the same way; only the URLs and
- * the reads differ, so formats never drift between them.
+ * panel, one of the person's library files on the Files page (file library spec §6), a share's
+ * snapshot on the public share page, or a file of a skill version on the skill's Files tab (skill
+ * file browser design). The file body renders them the same way; only the URLs and the reads
+ * differ, so formats never drift between them.
  */
 export type FileSource =
   | { kind: "conversation"; orgId: string; conversationId: string; file: FileOutput }
+  | { kind: "library"; orgId: string; file: LibraryFileView }
   | { kind: "share"; code: string; meta: ShareMeta }
   | { kind: "skill"; orgId: string; skillId: string; version: number; file: SkillSourceFile };
 
@@ -49,8 +52,8 @@ export const shareBase = (code: string) => `/api/v1/s/${enc(code)}`;
 /**
  * The URLs of a source's bytes: `download` (an attachment download), `inline` (a bitmap shown in
  * place), `content` (the bytes an embed previewer reads) and, for a share, `html` (redirects to the
- * HTML document; the panel mints its document token instead). A skill file has no `html`: it is
- * never rendered as a document.
+ * HTML document; the panel and the Files page mint a document token instead). A skill file has no
+ * `html`: it is never rendered as a document.
  */
 export function sourceUrls(s: FileSource): {
   download: string;
@@ -73,6 +76,14 @@ export function sourceUrls(s: FileSource): {
       download: content,
       inline: skillFileContentUrl(s.orgId, s.skillId, s.version, s.file.path, { inline: true }),
       content,
+    };
+  }
+  if (s.kind === "library") {
+    const download = libraryDownloadUrl(s.orgId, s.file.id);
+    return {
+      download,
+      inline: libraryDownloadUrl(s.orgId, s.file.id, { inline: true }),
+      content: download,
     };
   }
   const { orgId, conversationId, file } = s;

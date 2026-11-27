@@ -103,8 +103,7 @@ export function FilePanel({
       />
       <ShareDialog
         orgId={orgId}
-        conversationId={conversationId}
-        file={file}
+        target={{ kind: "conversation", conversationId, file }}
         open={sharing}
         onOpenChange={setSharing}
       />

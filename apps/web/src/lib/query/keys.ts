@@ -466,8 +466,55 @@ export const keys = {
         contribution: string,
         rest: string,
       ): readonly unknown[] => [...all, "uiView", scope, plugin, contribution, rest],
-      /** Every share list of the org (an invalidation prefix). */
+      /**
+       * The person's file library (file library spec §6): one list per filter set (the filter's
+       * fields in a fixed order, absent ones left out).
+       */
+      files: (filter: {
+        origin?: string;
+        agentId?: string;
+        type?: string;
+        q?: string;
+        limit?: number;
+        cursor?: string;
+      }): readonly unknown[] => [
+        ...all,
+        "files",
+        {
+          origin: filter.origin ?? null,
+          agentId: filter.agentId ?? null,
+          type: filter.type ?? null,
+          q: filter.q ?? null,
+          limit: filter.limit ?? null,
+          cursor: filter.cursor ?? null,
+        },
+      ],
+      /** Every library list (an invalidation prefix). */
+      filesAll: (): readonly unknown[] => [...all, "files"],
+      /** One library file's details (also the prefix of its previews). */
+      file: (fileId: string): readonly unknown[] => [...all, "file", fileId],
+      /** The person's library usage. */
+      fileUsage: (): readonly unknown[] => [...all, "fileUsage"],
+      /** A library file's extension previewers. */
+      libraryPreviewers: (fileId: string): readonly unknown[] => [
+        ...all,
+        "file",
+        fileId,
+        "previewers",
+      ],
+      /** A library file's preview by one previewer (`builtin` or `plugin/id`) and locale. */
+      libraryPreview: (fileId: string, previewer: string, locale: string): readonly unknown[] => [
+        ...all,
+        "file",
+        fileId,
+        "preview",
+        previewer,
+        locale,
+      ],
+      /** Every share list of the org (an invalidation prefix; a library file's shares too). */
       sharesAll: (): readonly unknown[] => [...all, "shares"],
+      /** A library file's shares (any version of it) and the share policy. */
+      libraryFileShares: (fileId: string): readonly unknown[] => [...all, "shares", "file", fileId],
       /** The org's shares: the person's own (`mine`) or every one (`all`, org admins). */
       shares: (scope: "mine" | "all"): readonly unknown[] => [...all, "shares", scope],
       /** Every conversation's pieces of the org (a prefix: e.g. the owner views naming a root). */
@@ -788,3 +835,15 @@ export const keys = {
     };
   },
 };
+
+/**
+ * Whether a key is one conversation's file list (`keys.org(orgId).conversation(id).files()`) in the
+ * org: a library write (a delete, a share) changes what every conversation's file panel shows, and
+ * those lists have no common prefix that leaves the conversations' other reads alone.
+ */
+export const isConversationFilesKey = (orgId: string, key: readonly unknown[]): boolean =>
+  key.length === 5 &&
+  key[0] === "org" &&
+  key[1] === orgId &&
+  key[2] === "conversation" &&
+  key[4] === "files";

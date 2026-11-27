@@ -3,8 +3,8 @@ import type { UiLocale, UiView } from "./ui";
 
 /**
  * `file-preview@1` (kernel `files/previewers.controller.ts`): the extension previewers that take a
- * file of a conversation or of a skill version, a view previewer's render, and the org's previewer
- * order (admins).
+ * file of a conversation, of the person's library or of a skill version, a view previewer's
+ * render, and the org's previewer order (admins).
  * Built-in previewers (image, text, Markdown, CSV / TSV) live in the web (UI refresh B Task 16).
  */
 
@@ -43,6 +43,25 @@ export const renderFilePreview = (
 ) =>
   apiFetch<{ view: UiView }>(
     `${fileBase(orgId, conversationId, fileId)}/previews/${enc(p.plugin)}/${enc(p.id)}?locale=${locale}`,
+  );
+
+/** A library file's routes (file library spec §6: the conversation routes' file-scoped twins). */
+const libraryFile = (orgId: string, fileId: string) =>
+  `/api/v1/orgs/${enc(orgId)}/files/${enc(fileId)}`;
+
+/** The extension previewers that take one of the caller's library files. */
+export const listLibraryFilePreviewers = (orgId: string, fileId: string) =>
+  apiFetch<{ previewers: FilePreviewerItem[] }>(`${libraryFile(orgId, fileId)}/previewers`);
+
+/** A view previewer's render of a library file. */
+export const renderLibraryFilePreview = (
+  orgId: string,
+  fileId: string,
+  p: { plugin: string; id: string },
+  locale: UiLocale,
+) =>
+  apiFetch<{ view: UiView }>(
+    `${libraryFile(orgId, fileId)}/previews/${enc(p.plugin)}/${enc(p.id)}?locale=${locale}`,
   );
 
 /** A file of a skill version (`?version=&path=` of the skill file routes). */
