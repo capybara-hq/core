@@ -179,7 +179,7 @@ export type DeviceAccessBackend = Pick<
 >;
 
 /** What `ctx.triggers` calls through (`TriggerEventsService`). */
-export type TriggersBackend = Pick<TriggerEventsService, "emit">;
+export type TriggersBackend = Pick<TriggerEventsService, "emit" | "causeOf">;
 
 /** What `ctx.inbox` calls through (`InboxItemsService`). */
 export type InboxBackend = Pick<InboxItemsService, "post" | "resolveForPlugin">;
@@ -513,7 +513,8 @@ type GatedKey =
  *   an extension that provides `device-provider@1`, `reportChanged` only for a live device bound to
  *   this extension (through `deps.devices`; another device throws `ExtensionPermissionError`);
  *   `triggers` only with `permissions.triggers`, each emit only of a declared event type, stored
- *   in the event's org scope (through `deps.triggers`); `inbox` only with `permissions.inbox`,
+ *   in the event's org scope, and `causeOf` handles bound to this extension (through
+ *   `deps.triggers`); `inbox` only with `permissions.inbox`,
  *   posting and resolving only as this extension, in the item's org scope (through `deps.inbox`);
  *   `http.route`
  *   only the method + path declared in `permissions.http` (the record carries the declared access and
@@ -770,6 +771,20 @@ export function createExtensionContext(
             if (typeof snap.orgId !== "string" || snap.orgId === "")
               throw new TriggerError("invalid_event", "invalid event: missing_org_id");
             return withOrgScope(snap.orgId, () => b.emit(name, declared, snap));
+          },
+          // a handle bound to this extension and the call's run, in the call's org (the service
+          // checks the context is the pipeline's and its run is of that org)
+          causeOf: async (call) => {
+            const b = deps.triggers?.();
+            if (!b) throw new Error("Trigger events are not available in this process.");
+            const orgId: unknown =
+              typeof call === "object" && call !== null ? (call as { orgId?: unknown }).orgId : "";
+            if (typeof orgId !== "string" || orgId === "")
+              throw new TriggerError(
+                "invalid_event",
+                "causeOf takes the tool call context the kernel passed to the handler",
+              );
+            return withOrgScope(orgId, () => b.causeOf(name, call));
           },
         } satisfies TriggersCtx;
       })()

@@ -1,6 +1,7 @@
 import {
   defineExtension,
   type InboxCtx,
+  type ToolCallContext,
   type ToolSpec,
   TriggerError,
   type TriggerEvent,
@@ -20,7 +21,8 @@ import {
  *   account when that is unset.
  * - Its setup puts `emit` (the extension's own `ctx.triggers.emit`) on the probe
  *   ({@link fakeTriggerSourceProbe}; in-process kernels only), so a test can emit as the extension
- *   outside a tool call; likewise `inbox` (its `ctx.inbox`, `permissions.inbox`).
+ *   outside a tool call; likewise `causeOf` (its `ctx.triggers.causeOf`) and `inbox` (its
+ *   `ctx.inbox`, `permissions.inbox`).
  * - The `org.page` view `requests` has a UI action that records every call on the probe's
  *   `actions` (`{ actionId, accountId, role, payload }`) and answers a toast; an action id `fail`
  *   throws instead (nothing recorded).
@@ -35,6 +37,8 @@ export interface FakeTriggerSourceProbe {
   visible?: string[];
   /** The extension's `ctx.triggers.emit`, set by its setup. */
   emit?: (event: TriggerEvent) => Promise<{ eventId: string; duplicate: boolean }>;
+  /** The extension's `ctx.triggers.causeOf`, set by its setup. */
+  causeOf?: (call: ToolCallContext) => Promise<string>;
   /** The extension's `ctx.inbox`, set by its setup. */
   inbox?: InboxCtx;
   /** The calls of the `requests` view's UI action, in order. */
@@ -114,6 +118,7 @@ export default defineExtension({
     ctx.provide("trigger-source@1", source);
     const probe = fakeTriggerSourceProbe();
     probe.emit = (event) => ctx.triggers.emit(event);
+    probe.causeOf = (call) => ctx.triggers.causeOf(call);
     probe.inbox = ctx.inbox;
     ctx.ui.view("requests", async () => ({
       blocks: [{ type: "actions", buttons: [{ actionId: "accept", label: "Accept" }] }],

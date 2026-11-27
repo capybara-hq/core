@@ -135,7 +135,7 @@ interface TriggerEvent {
   facts: Record<string, string | number | boolean | string[]>; // filterable, declared per type
   summary: string;              // English, what happened, at most 4 KB; model-visible
   dedupeKey: string;            // idempotency per plugin
-  cause?: { call: ToolCallContext } | { accountId: string };
+  cause?: { call: ToolCallContext } | { handle: string } | { accountId: string };
   audience?: { accountId: string; agentId: string }; // a directed event (§4.4)
 }
 ```
@@ -150,6 +150,13 @@ interface TriggerEvent {
   the pipeline's call facts (`callScopeOf`, refusing a context the pipeline did not make), checks
   the run is in the org and derives the chain depth (§4.7). `cause.accountId` is the person behind
   a UI action or route.
+- `cause.handle` carries a call's cause into a `ctx.queue` job (*decided* 2026-11-28): in the tool
+  call the plugin asks `ctx.triggers.causeOf(call)` (verified as `cause.call`), the kernel stores a
+  `trigger_cause_handles` row bound to the org, the plugin and the run for 24 hours and returns its
+  id; the job's payload carries the id, and `emit` accepts it only unexpired, for an event of that
+  org from that plugin, deriving the run and depth as for `cause.call`. An expired handle, a
+  handle of another org or plugin, and an unknown id are `invalid_event`. The trigger event sweep
+  deletes expired handles.
 
 ### 4.3 Declaring sources: `trigger-source@1`
 
@@ -232,7 +239,12 @@ zero-drift fixtures run before and after.
   find its deliveries waiting and owe nothing. The job reads every waiting delivery for the pair.
   A window whose job was lost for good is taken over by the next event of the pair, or by the
   trigger event sweep, which also deletes settled events after `automations.eventRetentionDays`
-  (platform config, default 30).
+  (platform config, default 30). The sweep takes a window as lost only when its newest waiting
+  delivery is past the window and no outbox row of the pair is pending (a window the dispatcher
+  just opened is never flushed early); it owes a lost window's job again with a back-off by the
+  window's age and gives up, logging, after 24 hours. It also deletes expired cause handles (§4.2)
+  and inbox items closed or past their expiry more than `inbox.retentionDays` ago (platform
+  config, default 30; §4.9).
 - **Rate:** `maxRunsPerHour` applies per person (the runs of the owner's automations in the last
   hour, time and event runs together); add `maxEventRunsPerSubjectPerHour` (default 12).
 - **Overlap:** an event run never waits for its automation's previous run (its events would be

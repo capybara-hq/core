@@ -1910,6 +1910,20 @@ export interface TriggerEventsTable {
 
 export type TriggerEventState = "pending" | "dispatched" | "undelivered" | "depth_stopped";
 
+/**
+ * 0191: a serializable trigger cause (`ctx.triggers.causeOf`, collaboration spec §4.2): an opaque
+ * id bound to the org, the extension that asked for it and the run of the tool call it was made
+ * from, accepted by `emit` (`cause: { handle }`) until `expires_at`.
+ */
+export interface TriggerCauseHandlesTable {
+  id: string;
+  org_id: string;
+  plugin: string;
+  run_id: string;
+  created_at: Ts;
+  expires_at: Ts;
+}
+
 /** One button of an inbox item as stored (`InboxAction` of the SDK). */
 export interface StoredInboxAction {
   id: string;
@@ -2157,6 +2171,7 @@ export interface KernelDatabase {
   automation_runs: AutomationRunsTable;
   automation_grants: AutomationGrantsTable;
   trigger_events: TriggerEventsTable;
+  trigger_cause_handles: TriggerCauseHandlesTable;
   inbox_items: InboxItemsTable;
   automation_event_deliveries: AutomationEventDeliveriesTable;
   automation_conversations: AutomationConversationsTable;

@@ -17,3 +17,10 @@ category `inbox`. A trigger event stopped at the chain depth now posts a kernel 
 of the chain's last automation. The review shows `permissions.inbox` (blocking, not sensitive),
 `capybara-plugin check` reports `perm-inbox`, and the `fake-trigger-source` fixture gains
 `ctx.inbox` and an `org.page` view with a recording UI action.
+
+`ctx.triggers.causeOf(call)` returns a handle (24 hours, bound to the call's org and run and to the
+extension; table `trigger_cause_handles`, migration 0191) that a `ctx.queue` job passes as
+`emit({ cause: { handle } })`, so a queued event keeps the call's chain depth and self-trigger
+check. The trigger event sweep no longer flushes a window the dispatcher just opened, backs off
+re-owing a lost window and gives up after a day, deletes expired handles, and deletes inbox items
+closed or past their expiry more than `inbox.retentionDays` (new platform config, default 30) ago.

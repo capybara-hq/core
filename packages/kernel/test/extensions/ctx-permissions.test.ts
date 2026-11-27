@@ -233,6 +233,7 @@ describe("ctx.triggers (permissions.triggers)", () => {
         seen.push({ plugin, declared, scope: currentScope() });
         return { eventId: "e1", duplicate: false };
       },
+      causeOf: async () => "h1",
     });
     const emit = ["item.created"];
     const ctx = createExtensionContext(
@@ -260,6 +261,7 @@ describe("ctx.triggers (permissions.triggers)", () => {
         got.push(e);
         return { eventId: "e1", duplicate: false };
       },
+      causeOf: async () => "h1",
     });
     const ctx = createExtensionContext(
       { ...deps, triggers },
@@ -284,6 +286,33 @@ describe("ctx.triggers (permissions.triggers)", () => {
       ctx.triggers.emit({ ...event, facts: { f: (() => 1) as never } }),
     ).rejects.toMatchObject({ code: "invalid_event" });
     expect(got).toHaveLength(1);
+    await ctx.close();
+  });
+
+  it("causeOf asks the backend as this extension, in the call's org scope", async () => {
+    const seen: { plugin: string; call: unknown; scope: unknown }[] = [];
+    const triggers = () => ({
+      emit: async () => ({ eventId: "e1", duplicate: false }),
+      causeOf: async (plugin: string, call: unknown) => {
+        seen.push({ plugin, call, scope: currentScope() });
+        return "h1";
+      },
+    });
+    const ctx = createExtensionContext(
+      { ...deps, triggers },
+      mf({ permissions: { triggers: { emit: ["item.created"] } } }),
+      {},
+    );
+    const call = { orgId: "o1" } as never;
+    expect(await ctx.triggers.causeOf(call)).toBe("h1");
+    expect(seen).toEqual([{ plugin: "perm-test", call, scope: { kind: "org", orgId: "o1" } }]);
+    // the call is passed by reference: the pipeline's call scope is a symbol-keyed field
+    expect(seen[0]?.call).toBe(call);
+    for (const bad of [{ orgId: "" }, null, "o1"])
+      await expect(ctx.triggers.causeOf(bad as never)).rejects.toMatchObject({
+        code: "invalid_event",
+      });
+    expect(seen).toHaveLength(1);
     await ctx.close();
   });
 

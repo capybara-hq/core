@@ -5198,6 +5198,8 @@ export const TRIGGER_TYPE_RE: RegExp;
 export type TriggerCause = {
     call: ToolCallContext;
 } | {
+    handle: string;
+} | {
     accountId: string;
 };
 
@@ -5247,6 +5249,7 @@ export type TriggerFactValue = string | number | boolean | string[];
 
 // @public
 export interface TriggersCtx {
+    causeOf(call: ToolCallContext): Promise<string>;
     emit(event: TriggerEvent): Promise<{
         eventId: string;
         duplicate: boolean;

@@ -809,6 +809,130 @@ describe("trigger event sweep", () => {
     await flush(a.id);
     expect((await deliveriesOf(a.id))[0]?.automation_run_id).not.toBeNull();
   });
+
+  /** Marks every owed coalesce row dead (its job lost for good). */
+  const loseOwed = () =>
+    db
+      .updateTable("outbox")
+      .set({ dead_at: new Date() })
+      .where("job_name", "=", "automation-coalesce")
+      .where("dead_at", "is", null)
+      .execute();
+  const ageDelivery = (eventId: string, at: Date) =>
+    db
+      .updateTable("automation_event_deliveries")
+      .set({ created_at: at })
+      .where("event_id", "=", eventId)
+      .execute();
+
+  it("leaves a window the dispatcher opened after a lost one to its own job", async () => {
+    const a = await automation();
+    const e1 = await emit();
+    await dispatch(e1);
+    await loseOwed();
+    // the first window is stale: the next event opens a new one with a job of its own
+    await ageDelivery(e1, new Date(Date.now() - 20 * 60_000));
+    const e2 = await emit();
+    await dispatch(e2);
+    const prefix = `${coalesceJobId(a.id, ITEM)}-`;
+    const pending = (await owed("automation-coalesce")).filter((j) => j.dead_at === null);
+    expect(pending.map((j) => j.job_id)).toEqual([`${prefix}${e2}`]);
+    const now = new Date();
+    expect((await sweeper().sweepAt(now)).owed).toBe(0);
+    // its row delivered (the job now delayed in the queue): the newest delivery is still due
+    await db
+      .deleteFrom("outbox")
+      .where("id", "=", pending[0]?.id as string)
+      .execute();
+    expect((await sweeper().sweepAt(now)).owed).toBe(0);
+    // once the newest window is past due too, the pair lost its jobs: the sweep owes one
+    const later = new Date(now.getTime() + 30_000 + COALESCE_STALE_MS + 1000);
+    expect((await sweeper().sweepAt(later)).owed).toBe(1);
+    expect(
+      (await owed("automation-coalesce")).filter((j) => j.dead_at === null).map((j) => j.job_id),
+    ).toEqual([`${prefix}${e1}-sweep-${Math.floor(later.getTime() / 60_000)}`]);
+  });
+
+  it("owes a lost window again with a back-off by its age and gives up after a day", async () => {
+    await automation();
+    const e = await emit();
+    await dispatch(e);
+    const MIN = 60_000;
+    const HOUR = 60 * MIN;
+    /** One sweep at `now` of the window `age` old, its earlier jobs lost; how many it owed. */
+    const sweepAged = async (now: number, age: number) => {
+      await loseOwed();
+      await ageDelivery(e, new Date(now - age));
+      return (await sweeper().sweepAt(new Date(now))).owed;
+    };
+    // a sweep just past a boundary of 20 minutes (and of 10, 40, 80, 160)
+    const base = Math.floor(Date.now() / (160 * MIN)) * 160 * MIN + 1000;
+    // under an hour old: every sweep
+    expect(await sweepAged(base + 5 * MIN, 30 * MIN)).toBe(1);
+    expect(await sweepAged(base + 10 * MIN, 30 * MIN)).toBe(1);
+    // 2.5 hours old: every 20 minutes
+    expect(await sweepAged(base, 2.5 * HOUR)).toBe(1);
+    expect(await sweepAged(base + 5 * MIN, 2.5 * HOUR)).toBe(0);
+    expect(await sweepAged(base + 10 * MIN, 2.5 * HOUR)).toBe(0);
+    expect(await sweepAged(base + 20 * MIN, 2.5 * HOUR)).toBe(1);
+    // 20 hours old: every 160 minutes
+    expect(await sweepAged(base + 80 * MIN, 20 * HOUR)).toBe(0);
+    expect(await sweepAged(base + 160 * MIN, 20 * HOUR)).toBe(1);
+    // past a day: never again, with one warning at the first sweep past it
+    const warn = vi.spyOn(sweeper().log, "warn");
+    expect(await sweepAged(base, 24 * HOUR + 2 * MIN)).toBe(0);
+    expect(await sweepAged(base + 5 * MIN, 24 * HOUR + 7 * MIN)).toBe(0);
+    expect(await sweepAged(base + 160 * MIN, 30 * HOUR)).toBe(0);
+    expect(warn.mock.calls.map((c) => c[0])).toEqual([
+      "coalescing window lost its job for a day; the sweep stops owing one",
+    ]);
+  });
+
+  it("deletes expired cause handles and inbox items closed past the retention", async () => {
+    const now = new Date();
+    const ago = (days: number) => new Date(now.getTime() - days * DAY);
+    await db
+      .insertInto("trigger_cause_handles")
+      .values([
+        { id: "h-expired", org_id: orgId, plugin: PLUGIN, run_id: "r1", expires_at: ago(0.01) },
+        { id: "h-live", org_id: orgId, plugin: PLUGIN, run_id: "r1", expires_at: ago(-1) },
+      ])
+      .execute();
+    const item = (
+      id: string,
+      over: { state?: "open" | "resolved" | "expired"; resolved?: Date; expires: Date },
+    ) => ({
+      id,
+      org_id: orgId,
+      account_id: ownerId,
+      source: "kernel" as const,
+      kind: "test",
+      title: id,
+      state: over.state ?? "open",
+      resolved_at: over.resolved ?? null,
+      expires_at: over.expires,
+    });
+    await db
+      .insertInto("inbox_items")
+      .values([
+        item("resolved-old", { state: "resolved", resolved: ago(31), expires: ago(-30) }),
+        item("resolved-recent", { state: "resolved", resolved: ago(29), expires: ago(-30) }),
+        item("expired-old", { state: "expired", expires: ago(31) }),
+        item("open-past-expiry-old", { expires: ago(31) }),
+        item("open-past-expiry-recent", { expires: ago(1) }),
+        item("open", { expires: ago(-7) }),
+      ])
+      .execute();
+    const r = await sweeper().sweepAt(now);
+    expect(r).toMatchObject({ handles: 1, inboxItems: 3 });
+    expect(
+      (await db.selectFrom("trigger_cause_handles").select("id").execute()).map((h) => h.id),
+    ).toEqual(["h-live"]);
+    expect(
+      (await db.selectFrom("inbox_items").select("id").orderBy("id").execute()).map((i) => i.id),
+    ).toEqual(["open", "open-past-expiry-recent", "resolved-recent"]);
+    expect(await sweeper().sweepAt(now)).toMatchObject({ handles: 0, inboxItems: 0 });
+  });
 });
 
 /** The reporter agent's tool call emits an item event; resolves to the stored event's id. */

@@ -29,6 +29,7 @@ describe("configFields", () => {
       "sharing.external",
       "sharing.maxExpiryDays",
       "push.previews",
+      "inbox.retentionDays",
       "subagents.maxDepth",
       "subagents.maxConcurrentPerConversation",
       "subagents.maxDispatchesPerRun",

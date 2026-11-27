@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type ToolCallContext,
   TriggerError,
   type TriggerEvent,
   type TriggerFactValue,
@@ -7,6 +8,7 @@ import {
   validateTriggerEvent,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import { isExtensionEnabled } from "../../extensions/enabled.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { TransactionHost } from "../../infra/database/transaction-host.js";
@@ -38,6 +40,9 @@ export const TRIGGER_URL_MAX_BYTES = 2048;
 /** Most items of one `string[]` fact. */
 export const TRIGGER_FACT_LIST_MAX_ITEMS = 64;
 
+/** How long a cause handle (`ctx.triggers.causeOf`) is accepted. */
+export const TRIGGER_CAUSE_HANDLE_TTL_MS = 24 * 3_600_000;
+
 /** Who caused an event, as the kernel verified it. */
 interface VerifiedCause {
   runId: string | null;
@@ -62,7 +67,7 @@ const invalid = (message: string): TriggerError => new TriggerError("invalid_eve
  * of at most {@link TRIGGER_MAX_FACTS} values, each a string (at most
  * {@link TRIGGER_FACT_STRING_MAX_BYTES} bytes), a finite number, a boolean or a list of such
  * strings (at most {@link TRIGGER_FACT_LIST_MAX_ITEMS}); `subject.url` is a string when given;
- * `audience` names an account and an agent; `cause` is one of its two shapes.
+ * `audience` names an account and an agent; `cause` is one of its three shapes.
  */
 /** An absolute `http:` or `https:` URL. */
 function isWebUrl(url: string): boolean {
@@ -119,10 +124,13 @@ function checkShape(e: TriggerEvent): void {
   }
   if (e.cause !== undefined) {
     const c = e.cause as unknown;
-    const call = isPlainObject(c) && "call" in c;
-    const account = isPlainObject(c) && "accountId" in c;
-    if (call === account)
-      throw invalid("cause must be { call } (a tool call context) or { accountId }");
+    const shapes = isPlainObject(c)
+      ? ["call", "handle", "accountId"].filter((k) => Object.hasOwn(c, k)).length
+      : 0;
+    if (shapes !== 1)
+      throw invalid(
+        "cause must be { call } (a tool call context), { handle } (from ctx.triggers.causeOf) or { accountId }",
+      );
   }
 }
 
@@ -131,6 +139,9 @@ function checkShape(e: TriggerEvent): void {
  * dispatch. The emitting extension, the event types it may emit (its approved manifest's
  * `permissions.triggers.emit`) and the cause's run and depth are the kernel's: an extension cannot
  * name another plugin, an undeclared type, a run of another org or a chain depth of its choosing.
+ * A cause outlives its tool call as a handle (`causeOf`): a `trigger_cause_handles` row the kernel
+ * binds to the org, the plugin and the run, so an event emitted later from a queue job keeps the
+ * call's depth; the extension holds only the row's id.
  */
 @Injectable()
 export class TriggerEventsService {
@@ -145,7 +156,9 @@ export class TriggerEventsService {
    * enabled in the event's org and verifies the cause: a tool call context must be one the tool
    * pipeline made (its run read from the call scope, never from the context's own fields) for a
    * run of the event's org, and the event's depth is that run's trigger event's depth + 1 (0 when
-   * the run started from no event); an account must be an active member of the org (depth 0).
+   * the run started from no event); a handle ({@link causeOf}) must be an unexpired one this plugin
+   * made in the event's org, and stands for its run as a call context would; an account must be an
+   * active member of the org (depth 0).
    * Then inserts the `trigger_events` row and owes its `trigger-dispatch` job in the same
    * transaction. An event already stored for (org, plugin, dedupe key) is a duplicate: its id comes
    * back with `duplicate: true` and nothing is owed. The caller runs it in the event's org scope.
@@ -171,7 +184,7 @@ export class TriggerEventsService {
     const db = this.kdb.db;
     if (!(await isExtensionEnabled(db, e.orgId, plugin)))
       throw new TriggerError("org_disabled", `${plugin} is not enabled in org ${e.orgId}`);
-    const cause = await this.verifyCause(e);
+    const cause = await this.verifyCause(plugin, e);
     const subject: TriggerSubject = {
       kind: e.subject.kind,
       id: e.subject.id,
@@ -224,38 +237,67 @@ export class TriggerEventsService {
     return { eventId: id, duplicate: false };
   }
 
+  /**
+   * A handle for the cause `call` (`ctx.triggers.causeOf`, collaboration spec §4.2) that `plugin`
+   * may pass later as `cause: { handle }`: `call` is verified as `emit` verifies `cause.call` (a
+   * context the pipeline made, for a run of `call.orgId`), then a `trigger_cause_handles` row binds
+   * the org, the plugin and the run for {@link TRIGGER_CAUSE_HANDLE_TTL_MS}. The caller runs it in
+   * `call.orgId`'s scope. Throws `TriggerError("invalid_event")` for any other context.
+   */
+  @Transactional()
+  async causeOf(plugin: string, call: ToolCallContext): Promise<string> {
+    if (!isPlainObject(call) || !nonEmpty(call.orgId))
+      throw invalid("causeOf takes the tool call context the kernel passed to the handler");
+    // the run must be one of the call's org (as for cause.call)
+    const { runId } = await this.causeOfRun(call.orgId, this.runIdOfCall(call));
+    const id = randomUUID();
+    await this.kdb.db
+      .insertInto("trigger_cause_handles")
+      .values({
+        id,
+        org_id: call.orgId,
+        plugin,
+        run_id: runId,
+        expires_at: new Date(Date.now() + TRIGGER_CAUSE_HANDLE_TTL_MS),
+      })
+      .execute();
+    return id;
+  }
+
+  /**
+   * The run id of `call` when it is a context the pipeline made (read from the call scope, never
+   * from the context's own fields); `invalid_event` otherwise. Its org is checked by
+   * {@link causeOfRun}.
+   */
+  private runIdOfCall(call: ToolCallContext): string {
+    // only the pipeline attaches run facts: a context built by the extension has none
+    const facts = isPlainObject(call) ? callScopeOf(call)?.facts : undefined;
+    if (facts === undefined)
+      throw invalid("cause.call must be the tool call context the kernel passed to the handler");
+    return facts.runId;
+  }
+
   /** The verified cause of `e` (see {@link emit}); no cause is depth 0 with nobody behind it. */
-  private async verifyCause(e: TriggerEvent): Promise<VerifiedCause> {
+  private async verifyCause(plugin: string, e: TriggerEvent): Promise<VerifiedCause> {
     const cause = e.cause;
     if (cause === undefined) return { runId: null, accountId: null, depth: 0 };
     const db = this.kdb.db;
-    if ("call" in cause) {
-      // only the pipeline attaches run facts: a context built by the extension has none
-      const facts = isPlainObject(cause.call) ? callScopeOf(cause.call)?.facts : undefined;
-      if (facts === undefined)
-        throw invalid("cause.call must be the tool call context the kernel passed to the handler");
-      const run = await db
-        .selectFrom("runs")
-        .innerJoin("conversations", "conversations.id", "runs.conversation_id")
-        .select(["runs.id", "runs.trigger_account_id", "runs.trigger_event_id"])
-        .where("runs.id", "=", facts.runId)
-        .where("conversations.org_id", "=", e.orgId)
-        .executeTakeFirst();
-      if (run === undefined) throw invalid("cause.call is a run of another org");
-      let depth = 0;
-      if (run.trigger_event_id !== null) {
-        const from = await db
-          .selectFrom("trigger_events")
-          .select("depth")
-          .where("id", "=", run.trigger_event_id)
-          .where("org_id", "=", e.orgId)
-          .executeTakeFirst();
-        // the column has no foreign key: an event no longer stored (the trigger event sweep deletes
-        // settled events after `automations.eventRetentionDays`) cannot extend a chain, which
-        // restarts at 0
-        depth = from === undefined ? 0 : from.depth + 1;
-      }
-      return { runId: run.id, accountId: run.trigger_account_id, depth };
+    if ("call" in cause) return this.causeOfRun(e.orgId, this.runIdOfCall(cause.call));
+    if ("handle" in cause) {
+      // the kernel's row, not the extension's word: this org, this plugin, still valid
+      const row = nonEmpty(cause.handle)
+        ? await db
+            .selectFrom("trigger_cause_handles")
+            .select("run_id")
+            .where("id", "=", cause.handle)
+            .where("org_id", "=", e.orgId)
+            .where("plugin", "=", plugin)
+            .where("expires_at", ">", sql<Date>`now()`)
+            .executeTakeFirst()
+        : undefined;
+      if (row === undefined)
+        throw invalid("cause.handle is unknown, expired, or of another org or extension");
+      return this.causeOfRun(e.orgId, row.run_id);
     }
     if (!nonEmpty(cause.accountId)) throw invalid("cause.accountId must be an account id");
     const member = await db
@@ -271,5 +313,39 @@ export class TriggerEventsService {
     if (member === undefined)
       throw invalid("cause.accountId is not an active member of the event's org");
     return { runId: null, accountId: cause.accountId, depth: 0 };
+  }
+
+  /**
+   * The cause of an event emitted for run `runId` of `orgId`: the run, its trigger account, and
+   * its trigger event's depth + 1 (0 when it started from no event, or from one no longer stored).
+   * A run gone from the org (a handle outliving its conversation) is `invalid_event`.
+   */
+  private async causeOfRun(
+    orgId: string,
+    runId: string,
+  ): Promise<VerifiedCause & { runId: string }> {
+    const db = this.kdb.db;
+    const run = await db
+      .selectFrom("runs")
+      .innerJoin("conversations", "conversations.id", "runs.conversation_id")
+      .select(["runs.id", "runs.trigger_account_id", "runs.trigger_event_id"])
+      .where("runs.id", "=", runId)
+      .where("conversations.org_id", "=", orgId)
+      .executeTakeFirst();
+    if (run === undefined) throw invalid("the cause's run is not one of the event's org");
+    let depth = 0;
+    if (run.trigger_event_id !== null) {
+      const from = await db
+        .selectFrom("trigger_events")
+        .select("depth")
+        .where("id", "=", run.trigger_event_id)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      // the column has no foreign key: an event no longer stored (the trigger event sweep deletes
+      // settled events after `automations.eventRetentionDays`) cannot extend a chain, which
+      // restarts at 0
+      depth = from === undefined ? 0 : from.depth + 1;
+    }
+    return { runId: run.id, accountId: run.trigger_account_id, depth };
   }
 }
