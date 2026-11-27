@@ -101,7 +101,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("提示缓存 settings", () => {
+describe("prompt cache settings", () => {
   it("platform: off by default, with the hint and no mention of idle compaction", async () => {
     resetNavigation("/admin/settings");
     adminRoutes();

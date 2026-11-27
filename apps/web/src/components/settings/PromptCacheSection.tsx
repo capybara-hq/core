@@ -11,7 +11,7 @@ export interface PromptCacheFollow {
 }
 
 /**
- * 提示缓存 (idle compaction spec §6.4): the section the platform settings page (the deployment
+ * Prompt cache (idle compaction spec §6.4): the section the platform settings page (the deployment
  * default) and the organization settings page (the org's override) share. On the org page the
  * `follow` checkbox clears the override; while it is checked the switch shows the platform's value
  * and cannot be edited.

@@ -232,19 +232,17 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   // The prompt cache override, the same way: absent follows the platform; an empty draft is no change.
   const platformLongTtl = read.data.deployment?.promptCache?.longTtl ?? false;
   const cacheDraft = draft.promptCache;
-  const cacheOverride =
-    cacheDraft === undefined
-      ? saved.promptCache
-      : cacheDraft === null
-        ? undefined
-        : { ...saved.promptCache, ...cacheDraft };
+  let cacheOverride = saved.promptCache; // no draft: the stored override
+  if (cacheDraft === null)
+    cacheOverride = undefined; // follow chosen: no override
+  else if (cacheDraft !== undefined) cacheOverride = { ...saved.promptCache, ...cacheDraft };
   const cacheFollowing = cacheOverride === undefined;
   const longTtl = cacheOverride?.longTtl ?? platformLongTtl;
   const promptCachePatch =
     cacheDraft === undefined || (cacheDraft !== null && cacheDraft.longTtl === undefined)
       ? undefined
       : cacheDraft;
-  // 只提交改过的项
+  // Submit only the fields that changed
   const patch: OrgSettingsPatch = {
     ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),
     ...(locale !== (saved.locale ?? "en") ? { locale } : {}),
@@ -438,11 +436,10 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
               const { promptCache: current, ...rest } = d;
               // following: clear a stored override (nothing to do when there is none); not
               // following: keep the stored override (no change) or start an empty draft
-              const promptCache = next
-                ? saved.promptCache === undefined
-                  ? undefined
-                  : null
-                : (current ?? (saved.promptCache === undefined ? {} : undefined));
+              const hasStored = saved.promptCache !== undefined;
+              let promptCache: OrgDraft["promptCache"];
+              if (next) promptCache = hasStored ? null : undefined;
+              else promptCache = current ?? (hasStored ? undefined : {});
               return promptCache === undefined ? rest : { ...rest, promptCache };
             }),
         }}
