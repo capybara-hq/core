@@ -230,6 +230,8 @@ export type FixtureTool = {
   description?: string;
   /** Key arguments, shown in body color. */
   keyArg?: string;
+  /** The key argument is a guess not confirmed yet (the muted `tool.keyArgGuess` prefix, §6.16.9). */
+  keyArgGuess?: boolean;
   /** Extra info after the key arguments (faint). */
   extra?: string;
   /** A finished command's exit code: named on the row only when not zero (§6.16.9). */
@@ -602,7 +604,8 @@ export const TOOL_FIXTURES: Record<
     },
   ],
   // Calls whose input the model is still writing (§6.16.9): a Write against its base (+a −b of
-  // the aligned part) and a connector tool (the generic form).
+  // the aligned part), a connector tool (the generic form) and a Write whose content came before
+  // its path, drawn against a guessed base (the guessed path, no +a −b).
   streaming: [
     {
       id: "t_stream_write",
@@ -628,6 +631,17 @@ export const TOOL_FIXTURES: Record<
         ["title", "对账差异：示例表第 118 行"],
         ["body", "收款人与科目重复"],
       ],
+    },
+    {
+      id: "t_stream_guess",
+      kind: "edit",
+      name: "Write",
+      keyArg: "reports/对账报告.md",
+      keyArgGuess: true,
+      status: "streaming",
+      progress: { lines: 24, bytes: 812 },
+      live: { pending: 104 },
+      diff: [{ kind: "ctx", old: 1, new: 1, text: "# 9 月对账报告" }],
     },
   ],
   // The live diff block's forms (§6.16.10 Live), in state order: against a base, the writing

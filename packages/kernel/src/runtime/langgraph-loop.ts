@@ -2,6 +2,7 @@ import type { StopReason } from "@capybara-hq/plugin-sdk";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import type { ToolPipeline } from "../tools/pipeline.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
+import { MAX_TRUNCATED_STEPS } from "./context/output-truncated.js";
 import type { AgentLoop, LoopContext, LoopOutcome, WaitingFor } from "./loop.js";
 import { MediaCache } from "./media-cache.js";
 import {
@@ -65,6 +66,7 @@ const LoopState = Annotation.Root({
   lastStopReason: Annotation<StopReason | "aborted" | null>(),
   outcome: Annotation<EndKind | null>(),
   budgetWrapUp: Annotation<boolean | null>(),
+  truncatedSteps: Annotation<number | null>(),
 });
 
 type State = typeof LoopState.State;
@@ -75,6 +77,7 @@ const INITIAL: State = {
   lastStopReason: null,
   outcome: null,
   budgetWrapUp: null,
+  truncatedSteps: null,
 };
 
 /**
@@ -252,8 +255,19 @@ export class LangGraphLoop implements AgentLoop {
       if (r.aborted) {
         return { lastStopReason: "aborted", outcome: timedOut() ? "max_duration" : "aborted" };
       }
+      // cut off at the output token limit (issue #951): request building tells the model, and it
+      // gets another step, up to MAX_TRUNCATED_STEPS in a row
+      if (r.stopReason === "max_tokens") {
+        const truncatedSteps = (s.truncatedSteps ?? 0) + 1;
+        return {
+          lastStopReason: r.stopReason,
+          truncatedSteps,
+          outcome: truncatedSteps >= MAX_TRUNCATED_STEPS ? "max_output" : null,
+        };
+      }
       return {
         lastStopReason: r.stopReason,
+        truncatedSteps: null,
         outcome: r.stopReason === "tool_use" ? null : "completed",
       };
     };
@@ -332,8 +346,13 @@ export class LangGraphLoop implements AgentLoop {
       )
       .addConditionalEdges(
         "model",
-        (s: State) => (s.budgetWrapUp === true ? "wrapUp" : s.outcome === null ? "tools" : END),
-        ["tools", "wrapUp", END],
+        (s: State) => {
+          if (s.budgetWrapUp === true) return "wrapUp";
+          if (s.outcome !== null) return END;
+          // a truncated step has no tool calls to run (providers drop a cut-off one)
+          return s.lastStopReason === "max_tokens" ? "prepare" : "tools";
+        },
+        ["tools", "prepare", "wrapUp", END],
       )
       .addEdge("tools", "prepare")
       .addEdge("wrapUp", END)

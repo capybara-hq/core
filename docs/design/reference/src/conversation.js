@@ -111,7 +111,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const shown = t.kind === "question" ? "已提问" : t.tool ? `${t.name} [${t.tool}]` : t.name;
     const name = `<b class="r-em">${esc(shown)}</b>`;
     const preview = t.kind === "command" && t.description ? t.description : t.keyArg;
-    const key = preview ? ` ${esc(preview)}` : "";
+    // a guessed key argument (a Write whose content came before its path) carries the muted prefix
+    const guess = t.keyArgGuess && t.keyArg ? `<span class="r-muted">推测：</span>` : "";
+    const key = preview ? ` ${guess}${esc(preview)}` : "";
     const extra =
       t.kind === "edit" && t.added !== undefined
         ? ` <span class="r-faint">· +${t.added} −${t.removed}</span>`
@@ -1285,7 +1287,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return col(toolGroup(rows, { open: o.state === "expanded", openRows: o.state === "expanded" ? ["t_exp_conn", "t_exp_cmd"] : [] }));
     },
     "tool-row": (o) => {
-      const STREAMING = { streaming: T.streaming[0], "streaming-input": T.streaming[1] };
+      const STREAMING = { streaming: T.streaming[0], "streaming-input": T.streaming[1], "streaming-guess": T.streaming[2] };
       if (STREAMING[o.state]) return col(`<div class="r-tbox">${toolRow(STREAMING[o.state])}</div>`);
       const pick = {
         default: [T.expanded[1], {}],

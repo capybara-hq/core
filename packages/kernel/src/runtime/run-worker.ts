@@ -1170,7 +1170,7 @@ export class RunWorker {
   private completed(
     conversationId: string,
     runId: string,
-    kind: "completed" | "max_steps" | "max_duration" | "budget",
+    kind: "completed" | "max_steps" | "max_duration" | "budget" | "max_output",
   ): void {
     // a completed run enqueues the conversation's title job and, for completed / max_steps, its
     // prompt suggestion job; both are hints after the commit and never throw

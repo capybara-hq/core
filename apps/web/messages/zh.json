@@ -1674,6 +1674,12 @@
     },
     "run": {
       "stopped": "已停止 · {who} {time}",
+      "limit": {
+        "max_steps": "达到步数上限",
+        "max_duration": "达到时长上限",
+        "budget": "token 预算用完",
+        "max_output": "输出达到上限被截断"
+      },
       "failedRetried": "失败 · 已重试",
       "tokens": "{n} token",
       "tokenSplit": "输入 {input} · 输出 {output} · 缓存读 {cacheRead} · 缓存写 {cacheWrite}",

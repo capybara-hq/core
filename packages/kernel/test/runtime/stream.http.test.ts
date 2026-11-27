@@ -48,6 +48,7 @@ import {
   armHold,
   baseSeen,
   clearHold,
+  contentFirstInput,
   type DraftFrame,
   type DraftTool,
   draftFrames,
@@ -57,6 +58,7 @@ import {
   NEW_CONTENT,
   ofType,
   openToolSse,
+  pastContent,
   type Sse,
   sha,
   streamedWrite,
@@ -1571,6 +1573,71 @@ describe("streaming tool input, end to end (spec 2026-11-26)", () => {
       const lastReadEnd = Math.max(...reads.map((r) => r.updated_at.getTime()));
       expect((writes[0] as { created_at: Date }).created_at.getTime()).toBeGreaterThanOrEqual(
         lastReadEnd,
+      );
+    });
+  });
+
+  describe("a content-first Write (spec 2026-11-27)", () => {
+    /** Most of NEW_CONTENT's lines and an old tail: an overwrite the guess should find. */
+    const NEAR = `${NEW_CONTENT.split("\n").slice(0, 10).join("\n")}\nold tail\n`;
+
+    it("guesses the file it overwrites while the content streams, then confirms it", async () => {
+      const path = await onDevice("guess.py", NEAR);
+      const conv = await conversationThatRead(path);
+      const input = contentFirstInput(path);
+      const { sse, events } = await runStreamed(conv, input, {
+        at: pastContent(input),
+        whileHeld: async (s) => {
+          await s.until(baseSeen, "the guessed tool_base");
+          // held before the path closed: no verdict yet
+          expect(toolDeltas(s.messages).some((d) => d.delta === "tool_base_verdict")).toBe(false);
+        },
+      });
+      sse.close();
+      const deltas = toolDeltas(sse.messages);
+      const bases = deltas.filter((d) => d.delta === "tool_base");
+      expect(bases).toHaveLength(1);
+      expect(bases[0]).toMatchObject({ text: NEAR, sha256: sha(NEAR), guess: { path } });
+      const verdicts = deltas.filter((d) => d.delta === "tool_base_verdict");
+      expect(verdicts).toEqual([
+        expect.objectContaining({ callId: bases[0]?.callId, confirmed: true }),
+      ]);
+      expect(deltas.indexOf(bases[0] as ToolDelta)).toBeLessThan(
+        deltas.indexOf(verdicts[0] as ToolDelta),
+      );
+      // the call runs as ever
+      expect(ofType(events, "tool_result").at(-1)?.payload.isError).toBe(false);
+      expect(await readFile(join(await workspaceDir(), "guess.py"), "utf8")).toBe(NEW_CONTENT);
+    });
+
+    it("withdraws the guess when the path names another file", async () => {
+      const path = await onDevice("near.py", NEAR);
+      const conv = await conversationThatRead(path);
+      const input = contentFirstInput("/workspace/elsewhere.py");
+      const { sse } = await runStreamed(conv, input, {
+        at: pastContent(input),
+        whileHeld: (s) => s.until(baseSeen, "the guessed tool_base"),
+      });
+      sse.close();
+      const deltas = toolDeltas(sse.messages);
+      expect(deltas.filter((d) => d.delta === "tool_base")).toEqual([
+        expect.objectContaining({ guess: { path } }),
+      ]);
+      expect(deltas.filter((d) => d.delta === "tool_base_verdict")).toEqual([
+        expect.objectContaining({ confirmed: false }),
+      ]);
+      expect(await readFile(join(await workspaceDir(), "elsewhere.py"), "utf8")).toBe(NEW_CONTENT);
+    });
+
+    it("guesses nothing for content unlike every file the conversation read", async () => {
+      const path = await onDevice("unlike.py", "nothing\nalike\nhere\n");
+      const conv = await conversationThatRead(path);
+      const input = contentFirstInput("/workspace/fresh-guess.py");
+      const { sse } = await runStreamed(conv, input, heldAtEnd(input));
+      sse.close();
+      const deltas = toolDeltas(sse.messages);
+      expect(deltas.some((d) => d.delta === "tool_base" || d.delta === "tool_base_verdict")).toBe(
+        false,
       );
     });
   });

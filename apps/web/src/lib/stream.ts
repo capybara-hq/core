@@ -2,8 +2,11 @@ import { type ConversationEvent, streamUrl } from "./conversations";
 import { LiveDrafts } from "./live-drafts";
 import { PersonWaits } from "./person-waits";
 import {
+  applyBaseVerdict,
+  baseOfDelta,
   type DraftTool,
   fetchRunDrafts,
+  mergeBase,
   parseDraftTools,
   type RunDraftSnapshot,
 } from "./run-drafts";
@@ -21,7 +24,9 @@ import { parseUiRefresh, type UiRefresh } from "./ui";
  * - `tool_start` / `tool_input` / `tool_base`: a streamed tool call (`callId`; streaming tool input
  *   spec §4): `tool_start` names it, `tool_input` appends `text` to its input (`offset` is the
  *   characters of that call's input before it, counted per call), `tool_base` sets the file a
- *   streaming `Write` replaces (`text`, `sha256`; kept once).
+ *   streaming `Write` replaces (`text`, `sha256`, and `guess` when the kernel guessed it before
+ *   the call's path arrived; merged by `mergeBase`), `tool_base_verdict` confirms or rejects a
+ *   guessed base once the path closed (`confirmed`; Write content-first spec §4.4).
  * - `step_reset`: the step starts over (its draft is dropped).
  * - `draft`: a step's draft so far, for each channel given (`text`, `thinking`; one left out is
  *   kept). With `replace` it sets those channels (a channel starting over at offset 0); with
@@ -33,11 +38,23 @@ import { parseUiRefresh, type UiRefresh } from "./ui";
 export interface StreamDelta {
   runId: string;
   step: number;
-  delta: "text" | "thinking" | "tool_start" | "tool_input" | "tool_base" | "step_reset" | "draft";
+  delta:
+    | "text"
+    | "thinking"
+    | "tool_start"
+    | "tool_input"
+    | "tool_base"
+    | "tool_base_verdict"
+    | "step_reset"
+    | "draft";
   /** The tool call a `tool_*` delta belongs to. */
   callId?: string;
   name?: string;
   sha256?: string;
+  /** `tool_base` only: the base is a guess of the file at this path (no path parsed yet). */
+  guess?: { path: string };
+  /** `tool_base_verdict` only: the closed path confirmed the guessed base (else rejected it). */
+  confirmed?: boolean;
   text?: string;
   /** `draft` only: the step's thinking so far. */
   thinking?: string;
@@ -523,7 +540,8 @@ function mergeTools(
         ? prev.input
         : t.input;
     const merged: DraftTool = { ...prev, input, name: prev.name === "" ? t.name : prev.name };
-    if (prev.base === undefined && t.base !== undefined) merged.base = t.base;
+    const base = mergeBase(prev.base, t.base);
+    if (base !== undefined) merged.base = base;
     if (t.inputTruncated === true) merged.inputTruncated = true;
     if (
       merged.input === prev.input &&
@@ -537,7 +555,17 @@ function mergeTools(
   return out;
 }
 
-/** The tools after one `tool_start` / `tool_input` / `tool_base` delta (same array: no change). */
+const TOOL_DELTAS = new Set<StreamDelta["delta"]>([
+  "tool_start",
+  "tool_input",
+  "tool_base",
+  "tool_base_verdict",
+]);
+
+/**
+ * The tools after one `tool_start` / `tool_input` / `tool_base` / `tool_base_verdict` delta (same
+ * array: no change).
+ */
 function applyToolDelta(have: DraftTool[], d: StreamDelta): DraftTool[] {
   if (d.callId === undefined) return have;
   const at = have.findIndex((x) => x.id === d.callId);
@@ -549,11 +577,15 @@ function applyToolDelta(have: DraftTool[], d: StreamDelta): DraftTool[] {
       next = { ...prev, name: d.name };
     } else next = { id: d.callId, name: d.name ?? "", input: "" };
   } else if (d.delta === "tool_base") {
-    if (prev?.base !== undefined || d.text === undefined || d.sha256 === undefined) return have;
-    next = {
-      ...(prev ?? { id: d.callId, name: d.name ?? "", input: "" }),
-      base: { text: d.text, sha256: d.sha256 },
-    };
+    const base = mergeBase(prev?.base, baseOfDelta(d));
+    if (base === undefined || base === prev?.base) return have;
+    next = { ...(prev ?? { id: d.callId, name: d.name ?? "", input: "" }), base };
+  } else if (d.delta === "tool_base_verdict") {
+    // a verdict without a base is dropped (a draft carries both to a viewer that missed the base)
+    if (prev?.base === undefined || typeof d.confirmed !== "boolean") return have;
+    const base = applyBaseVerdict(prev.base, d.confirmed);
+    if (base === prev.base || base === undefined) return have;
+    next = { ...prev, base };
   } else {
     const text = d.text ?? "";
     if (text === "") return have;
@@ -572,7 +604,7 @@ function applyDelta(state: ChatState, d: StreamDelta): ChatState {
     i < 0 ? state : { ...state, drafts: state.drafts.filter((_, j) => j !== i) };
   if (d.delta === "step_reset") return without();
   let next: Draft;
-  if (d.delta === "tool_start" || d.delta === "tool_input" || d.delta === "tool_base") {
+  if (TOOL_DELTAS.has(d.delta)) {
     const prev = i >= 0 ? (state.drafts[i] as Draft) : undefined;
     const tools = applyToolDelta(prev?.tools ?? [], d);
     if (prev !== undefined && tools === prev.tools) return state;

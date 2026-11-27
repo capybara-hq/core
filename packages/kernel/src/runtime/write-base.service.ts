@@ -41,7 +41,7 @@ export interface WriteBaseReadDeps {
   claim(): Readonly<ExecutionClaim> | undefined;
   /** The run's device and actor, or null when the run may not read one now (never binds). */
   runFacts(claim: Readonly<ExecutionClaim>): Promise<WriteBaseRunFacts | null>;
-  eventLog: Pick<EventLog, "latestFileState">;
+  eventLog: Pick<EventLog, "latestFileState" | "recentFilePaths">;
   sandbox: Pick<SandboxService, "withKernelRead">;
   log: Pick<KernelLogger, "warn" | "debug">;
 }
@@ -67,10 +67,8 @@ export async function readWriteBase(
 ): Promise<WriteBase | null> {
   const { conversationId, signal } = input;
   try {
-    if (!input.path.startsWith("/")) return null;
-    checkFilePathShape(input.path);
-    const path = normalizeSandboxPath(checkToolPath(input.path, "file_path"));
-    if (path === "/") return null;
+    const path = normalizeWriteBasePath(input.path);
+    if (path === null) return null;
     const claim = deps.claim();
     if (!claim || claim.conversationId !== conversationId) return null;
     const seen: FileState | null = await lastFileState(deps.eventLog, conversationId, path);
@@ -117,6 +115,27 @@ export async function readWriteBase(
     // an outcome the person simply gets no base for: debug; anything else: warn
     const level = expectedNoBase(err) ? "debug" : "warn";
     deps.log[level]("write base not read; the row streams without it", { conversationId, err });
+    return null;
+  }
+}
+
+/**
+ * A model's `Write` path as a base read takes it: absolute, shaped and allowed as `Write` checks it
+ * (`checkFilePathShape`, `checkToolPath`), normalized; null for a relative path or the root.
+ * Throws the `ToolError` `Write` would refuse it with.
+ */
+function normalizeWriteBasePath(raw: string): string | null {
+  if (!raw.startsWith("/")) return null;
+  checkFilePathShape(raw);
+  const path = normalizeSandboxPath(checkToolPath(raw, "file_path"));
+  return path === "/" ? null : path;
+}
+
+/** {@link normalizeWriteBasePath} that gives null instead of throwing (a guess's verdict). */
+export function normalizeWritePath(raw: string): string | null {
+  try {
+    return normalizeWriteBasePath(raw);
+  } catch {
     return null;
   }
 }
@@ -204,5 +223,22 @@ export class WriteBaseService implements WriteBaseReader {
 
   read(input: { conversationId: string; path: string; signal: AbortSignal }) {
     return readWriteBase(this.deps, input);
+  }
+
+  /** The conversation's newest recorded file paths (spec 2026-11-27 §4.2); none on a failure. */
+  async recentPaths(input: { conversationId: string; limit: number }): Promise<string[]> {
+    try {
+      return await this.deps.eventLog.recentFilePaths(input.conversationId, input.limit);
+    } catch (err) {
+      this.deps.log.warn("write base candidates not listed", {
+        conversationId: input.conversationId,
+        err,
+      });
+      return [];
+    }
+  }
+
+  normalize(rawPath: string): string | null {
+    return normalizeWritePath(rawPath);
   }
 }

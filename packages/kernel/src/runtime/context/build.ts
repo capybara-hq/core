@@ -23,6 +23,7 @@ import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js
 import type { ResolvedTool } from "../../tools/registry.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { devicePathsAt, devicePathsText } from "./device-paths.js";
+import { OUTPUT_TRUNCATED_TEXT } from "./output-truncated.js";
 import { permissionContextHistory } from "./permission-profile.js";
 import { pluginContextsAfterSummary, pluginContextText } from "./plugin-context.js";
 import { latestProjectRoot, projectRootText } from "./project-root.js";
@@ -855,6 +856,8 @@ export function summaryText(summary: string): string {
  *   （同一步的多个结果合并，按该 assistant 消息里 tool_call 的顺序；找不到对应调用的结果不进请求）。
  *   其他事件不进请求。提供 `absorbedUpToSeq` 时，
  *   尚未被吸收的可吸收事件不进请求，运行中途到达的放在吸收它的调用处（见 BuildModelRequestInput）。
+ * An `assistant_message` with `stopReason: "max_tokens"` is followed by a `role: "system"`
+ * {@link OUTPUT_TRUNCATED_TEXT} (issue #951).
  * 只追加：新事件只会在 messages 末尾追加；唯一的前缀变化来自新的压缩摘要。
  * `step` 与 `agentVersion` 不进请求内容（保证缓存前缀稳定），由调用方写入 `model_call` 事件。
  */
@@ -1190,6 +1193,11 @@ export function buildModelRequest(input: BuildModelRequestInput): {
             }
           }
           if (blocks.length > 0) messages.push({ role: "user", content: [...blocks, ...images] });
+        }
+        // cut off at the output token limit (issue #951): said right after it, from the logged
+        // stop reason alone (also when nothing of the reply was kept)
+        if (e.payload.stopReason === "max_tokens") {
+          messages.push({ role: "system", content: OUTPUT_TRUNCATED_TEXT });
         }
         break;
       case "reminder":

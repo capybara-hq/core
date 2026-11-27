@@ -14,7 +14,7 @@ import {
 import type { ToolInfo } from "./conversations";
 import { liveEditDiff, liveWriteDiff, MAX_LINES, writingLines } from "./live-diff";
 import type { PartialJson } from "./partial-json";
-import type { DraftTool } from "./run-drafts";
+import { type DraftBase, type DraftTool, usableBase } from "./run-drafts";
 
 /** The most lines a live block or streaming text keeps (the last ones; the kernel's diff cap). */
 export const LIVE_MAX_LINES = MAX_LINES;
@@ -32,8 +32,14 @@ type InputView = NonNullable<ToolInfo["inputView"]>;
 /** The parts of a streaming row that depend on its input view. */
 export interface StreamingView {
   progress: ToolStreamProgress;
-  /** Set by a `command` view (the command as it grows), else the row's key argument stands. */
+  /**
+   * Set by a `command` view (the command as it grows) and by a `file_write` drawn against a
+   * guessed base (the guessed path, until the real one closed), else the row's key argument
+   * stands.
+   */
   keyArg?: string;
+  /** `keyArg` is the guessed path of a base without a verdict yet (the row marks it a guess). */
+  keyArgGuess?: boolean;
   /** A `command` view's description, only once its string is complete. */
   description?: string;
   added?: number;
@@ -157,15 +163,27 @@ export function streamingView(
         progress: { bytes, ...(content !== undefined ? { lines: lineCount(content) } : {}) },
       };
       if (content === undefined) return out;
-      // the base is the kernel's (only for the builtin Write, only when the log vouches for it)
-      if (tool.base !== undefined) {
-        const live = liveWriteDiff(tool.base.text, content, {
+      // the base is the kernel's (only for the builtin Write, only when the log vouches for it);
+      // a rejected guess is never drawn (Write content-first spec §4.5)
+      const base = usableBase(tool.base);
+      if (base !== undefined) {
+        const live = liveWriteDiff(base.text, content, {
           callId: tool.id,
-          baseSha256: tool.base.sha256,
+          baseSha256: base.sha256,
         });
-        out.added = live.added;
-        out.removed = live.removed;
         out.detail = { diff: live.diff, live: { pending: live.pending } };
+        if (base.guess !== undefined && base.verdict === undefined) {
+          // a guess: no +a −b before the path confirms it, and the guessed path as the key
+          // argument until the real path is a closed string
+          const path = str(rec, view.path);
+          if (path === undefined || parsed.open === view.path) {
+            out.keyArg = base.guess.path;
+            out.keyArgGuess = true;
+          }
+        } else {
+          out.added = live.added;
+          out.removed = live.removed;
+        }
       } else {
         out.detail = { diff: liveDiffTail(writingLines(content)), live: { preview: true } };
       }
@@ -237,7 +255,7 @@ export const loggedLiveStats = { runs: 0 };
 export function loggedLiveView(
   input: Record<string, unknown>,
   view: InputView | null,
-  base?: { text: string; sha256: string },
+  base?: DraftBase,
   callId = "",
 ): Pick<StreamingView, "detail" | "added" | "removed"> | undefined {
   if (view?.kind !== "file_write" && view?.kind !== "file_edit") return undefined;

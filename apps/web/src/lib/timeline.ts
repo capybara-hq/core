@@ -29,7 +29,7 @@ import type { OrgRole } from "./members";
 import { parsePartialJson } from "./partial-json";
 import type { PersonRef } from "./people";
 import { PersonWaits } from "./person-waits";
-import type { DraftTool } from "./run-drafts";
+import { type DraftBase, type DraftTool, isSettledBase } from "./run-drafts";
 import { inputValue, loggedLiveView, streamingView } from "./streaming-tool-view";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 
@@ -288,9 +288,26 @@ export interface RunTokens {
   total: number;
 }
 
+/** A limit a finished run stopped at (`run_finished.reason` other than `completed`). */
+export type RunLimit = "max_steps" | "max_duration" | "budget" | "max_output";
+
+const RUN_LIMITS: ReadonlySet<string> = new Set<RunLimit>([
+  "max_steps",
+  "max_duration",
+  "budget",
+  "max_output",
+]);
+
 /** How a run ended (its run row, spec §6.16.23). */
 export type RunEnd =
-  | { status: "ok" }
+  | {
+      status: "ok";
+      /**
+       * The run ended at a limit, not because the agent was done (`run_finished.reason`): the
+       * step or time limit, the token budget, or the output token limit (issue #951).
+       */
+      limit?: RunLimit;
+    }
   | { status: "stopped"; byAccountId: string | null }
   | {
       status: "failed";
@@ -751,10 +768,11 @@ const streamingRows = new WeakMap<DraftTool, StreamingRowMemo>();
  * its complete input against it until the result (spec D8, ruling R13) once the draft (which held
  * the base) is gone. Bounded (oldest first out); client state of this page only.
  */
-const lastBases = new Map<string, { text: string; sha256: string }>();
+const lastBases = new Map<string, DraftBase>();
 const LAST_BASES_MAX = 64;
 
-function rememberBase(key: string, base: { text: string; sha256: string }): void {
+/** Keeps a streaming `Write`'s base for its logged row: only an exact or a confirmed one. */
+function rememberBase(key: string, base: DraftBase): void {
   if (lastBases.get(key) === base) return;
   lastBases.delete(key);
   lastBases.set(key, base);
@@ -798,6 +816,8 @@ function streamingTool(
     ...(label.tool !== undefined ? { tool: label.tool } : {}),
     ...(label.tooltip !== undefined ? { tooltip: label.tooltip } : {}),
     ...(keyArg !== undefined && keyArg !== "" ? { keyArg } : {}),
+    // the key argument is the view's guessed path (a guessed base without a verdict yet)
+    ...(view.keyArgGuess === true && keyArg === view.keyArg ? { keyArgGuess: true } : {}),
     ...(view.description !== undefined ? { description: view.description } : {}),
     ...(view.added !== undefined ? { added: view.added } : {}),
     ...(view.removed !== undefined ? { removed: view.removed } : {}),
@@ -813,7 +833,7 @@ function streamingTool(
     step: at,
   };
   streamingRows.set(t, { at, info: ti, locale, tool });
-  if (t.base !== undefined) rememberBase(row.id, t.base);
+  if (isSettledBase(t.base)) rememberBase(row.id, t.base);
   return tool;
 }
 
@@ -2041,7 +2061,13 @@ export function buildEventTimeline(
         }
         break;
       case "run_finished":
-        out.push({ kind: "run", key, ...runData(e), status: "ok" });
+        out.push({
+          kind: "run",
+          key,
+          ...runData(e),
+          status: "ok",
+          ...(RUN_LIMITS.has(e.payload.reason) && { limit: e.payload.reason as RunLimit }),
+        });
         break;
       case "run_aborted":
         out.push({

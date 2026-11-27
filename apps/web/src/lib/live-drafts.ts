@@ -1,5 +1,12 @@
 import type { ConversationEvent } from "./conversations";
-import type { DraftTool, RunDraftSnapshot } from "./run-drafts";
+import {
+  applyBaseVerdict,
+  baseOfDelta,
+  type DraftBase,
+  type DraftTool,
+  mergeBase,
+  type RunDraftSnapshot,
+} from "./run-drafts";
 import type { StreamDelta } from "./stream";
 
 /**
@@ -28,7 +35,7 @@ interface ToolDraft {
   name: string;
   input: ChannelDraft;
   inputTruncated: boolean;
-  base?: { text: string; sha256: string };
+  base?: DraftBase;
 }
 
 /** What one connection knows of a step's draft. */
@@ -97,7 +104,8 @@ const holdsGap = (s: StepDraft): boolean =>
  * both channels (`resync`: a channel that is a prefix of what the page shows keeps the longer,
  * since the store lags the screen by up to its coalescing window; any other replaces it); a
  * streamed tool call's input is one more channel per call id with the same rules (its deltas carry
- * the characters of that call's input before them), and its base is kept once; a
+ * the characters of that call's input before them), and its base merges by `mergeBase` (a
+ * guessed base's verdict applies once); a
  * channel's delta at offset 0 while this connection holds nothing of it replaces that channel
  * alone (it starts over: whatever an earlier connection left is stale).
  * Client state of one browser connection only (nothing shared across requests).
@@ -172,7 +180,9 @@ export class LiveDrafts {
       if (tool === undefined) s.tools.set(id, t);
       else {
         tool.input.held = t.input.held;
-        if (tool.base === undefined && t.base !== undefined) tool.base = t.base;
+        // the frame's base can lag what this connection saw (a verdict, the exact base after it)
+        const base = mergeBase(tool.base, t.base);
+        if (base !== undefined) tool.base = base;
       }
     }
     for (const t of s.tools.values()) {
@@ -200,7 +210,7 @@ export class LiveDrafts {
       return;
     }
     if (d.delta === "draft") return;
-    if (d.delta === "tool_start" || d.delta === "tool_base") {
+    if (d.delta === "tool_start" || d.delta === "tool_base" || d.delta === "tool_base_verdict") {
       this.toolEvent(key, d);
       return;
     }
@@ -254,9 +264,21 @@ export class LiveDrafts {
     }
   }
 
-  /** `tool_start` (the call exists) and `tool_base` (kept once) pass through, recorded here. */
+  /**
+   * `tool_start` (the call exists), `tool_base` (merged by `mergeBase`) and `tool_base_verdict`
+   * pass through, recorded here. A verdict for a call this connection holds no base of is still
+   * handed on (the reducer drops it when it holds none either) but creates nothing here.
+   */
   private toolEvent(key: string, d: StreamDelta): void {
     if (d.callId === undefined) return;
+    if (d.delta === "tool_base_verdict") {
+      const tool = this.steps.get(key)?.tools.get(d.callId);
+      const base =
+        typeof d.confirmed === "boolean" ? applyBaseVerdict(tool?.base, d.confirmed) : undefined;
+      if (tool !== undefined && base !== undefined) tool.base = base;
+      this.emit(d);
+      return;
+    }
     const s = this.steps.get(key) ?? this.create(key);
     let tool = s.tools.get(d.callId);
     if (tool === undefined) {
@@ -266,8 +288,9 @@ export class LiveDrafts {
       tool.name = d.name;
     }
     if (d.delta === "tool_base") {
-      if (tool.base !== undefined || d.text === undefined || d.sha256 === undefined) return;
-      tool.base = { text: d.text, sha256: d.sha256 };
+      const base = mergeBase(tool.base, baseOfDelta(d));
+      if (base === undefined || base === tool.base) return;
+      tool.base = base;
     }
     this.emit(d);
   }
@@ -341,8 +364,9 @@ export class LiveDrafts {
             tool.input.held = [];
             changed = true;
           }
-          if (tool.base === undefined && st.base !== undefined) {
-            tool.base = st.base;
+          const base = mergeBase(tool.base, st.base);
+          if (base !== undefined && base !== tool.base) {
+            tool.base = base;
             changed = true;
           }
         }

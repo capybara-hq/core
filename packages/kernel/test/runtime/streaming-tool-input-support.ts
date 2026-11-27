@@ -177,12 +177,14 @@ export async function openToolSse(url: string, cookie: string): Promise<Sse> {
 export interface ToolDelta {
   runId: string;
   step: number;
-  delta: "tool_start" | "tool_input" | "tool_base";
+  delta: "tool_start" | "tool_input" | "tool_base" | "tool_base_verdict";
   callId: string;
   name?: string;
   text?: string;
   offset?: number;
   sha256?: string;
+  guess?: { path: string };
+  confirmed?: boolean;
 }
 export interface DraftTool {
   id: string;
@@ -201,7 +203,13 @@ export const toolDeltas = (msgs: SseMessage[]): ToolDelta[] =>
   msgs
     .filter((m) => m.event === "delta")
     .map((m) => JSON.parse(m.data as string) as ToolDelta)
-    .filter((d) => d.delta === "tool_start" || d.delta === "tool_input" || d.delta === "tool_base");
+    .filter(
+      (d) =>
+        d.delta === "tool_start" ||
+        d.delta === "tool_input" ||
+        d.delta === "tool_base" ||
+        d.delta === "tool_base_verdict",
+    );
 export const draftFrames = (msgs: SseMessage[]): DraftFrame[] =>
   msgs.filter((m) => m.event === "draft").map((m) => JSON.parse(m.data as string) as DraftFrame);
 
@@ -214,6 +222,14 @@ export const ofType = <T extends ConversationEvent["type"]>(events: Conversation
 export const NEW_CONTENT = Array.from({ length: 12 }, (_, i) => `print("line ${i}")`).join("\n");
 /** `file_path` first: the base read starts as soon as it closes, early in the stream. */
 export const writeInput = (path: string) => ({ file_path: path, content: NEW_CONTENT });
+/** `content` first (spec 2026-11-27): the path closes only at the end of the input. */
+export const contentFirstInput = (path: string) => ({ content: NEW_CONTENT, file_path: path });
+/**
+ * The hold point of a content-first input: the fragment (4 characters each) after the content's
+ * closing quote went out, before the path closes.
+ */
+export const pastContent = (input: unknown): number =>
+  Math.floor(JSON.stringify(input).indexOf(',"file_path"') / 4) + 2;
 export const streamedWrite = (input: unknown, ms = FRAGMENT_MS) =>
   `streamtool:${ms}:Write:${JSON.stringify(input)}`;
 

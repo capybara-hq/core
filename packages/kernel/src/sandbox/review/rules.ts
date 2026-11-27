@@ -4486,6 +4486,9 @@ function linkClass(path: string, ctx: RuleContext): "sensitive" | "outside" | nu
   return "outside";
 }
 
+/** Why a read is allowed: the shell's `allow.read` and a file-tool `Read` under a profile. */
+const READ_REASON = "Reads files; reading is allowed.";
+
 const RULES: readonly Rule[] = [
   {
     id: "allow.read",
@@ -4547,9 +4550,7 @@ const RULES: readonly Rule[] = [
           ).length === 0
         );
       });
-      return matched.length > 0
-        ? { reason: "Reads files; reading is allowed.", commands: matched }
-        : null;
+      return matched.length > 0 ? { reason: READ_REASON, commands: matched } : null;
     },
   },
   {
@@ -5626,4 +5627,67 @@ export function reviewWrite(path: string, facts: ReviewFacts): ReviewResult {
       },
     ],
   };
+}
+
+/** What a file-tool read of a credential asks with: the read rules keep the class, never a write's text. */
+const CREDENTIAL_READ_REASONS: Record<"ask.ssh" | "ask.secret-file", string> = {
+  "ask.ssh": "Reads SSH keys or configuration; this needs approval.",
+  "ask.secret-file": "Reads a credential file; this needs approval each time.",
+};
+
+/**
+ * The table for a file-tool `Read` under a permission profile, labelled as a read: the device's
+ * own files are denied as for a write; SSH and credential files ask wherever they lie (the
+ * workspace's own `.env` reads freely, as it writes); other workspace and tmp reads are
+ * `allow.read`. The write-only classes (a git hook, a shell rc file, a write outside the
+ * workspace) are no finding for a read: a read anywhere else carries no hit and the enforced
+ * operation scope decides.
+ */
+export function reviewRead(path: string, facts: ReviewFacts): ReviewResult {
+  const resolved = resolveFacts(facts);
+  const absolute = expandPath(path, resolved);
+  if (absolute === null) {
+    return {
+      outcome: "unsure",
+      hits: [
+        {
+          id: "unsure.uncovered",
+          outcome: "unsure",
+          reason: "The path cannot be resolved statically; it needs review.",
+        },
+      ],
+    };
+  }
+  if (isDevicePath(absolute, resolved)) {
+    return {
+      outcome: "deny",
+      hits: [
+        {
+          id: "deny.tooling-edit",
+          outcome: "deny",
+          reason: "Reads Capybara's own device files or the device directory's marker.",
+        },
+      ],
+    };
+  }
+  const credentialAsk = (): ReviewResult | null => {
+    const id = configClassOf(absolute, resolved);
+    if (id !== "ask.ssh" && id !== "ask.secret-file") return null;
+    return { outcome: "ask", hits: [{ id, outcome: "ask", reason: CREDENTIAL_READ_REASONS[id] }] };
+  };
+  if (isHomeLevelSensitive(absolute, resolved)) {
+    const ask = credentialAsk();
+    if (ask) return ask;
+  }
+  if (inside(absolute, resolved.workspace) || tmpRootOf(absolute)) {
+    return {
+      outcome: "allow",
+      hits: [{ id: "allow.read", outcome: "allow", reason: READ_REASON }],
+    };
+  }
+  if (isSecretPath(absolute, resolved)) {
+    const ask = credentialAsk();
+    if (ask) return ask;
+  }
+  return { outcome: "allow", hits: [] };
 }

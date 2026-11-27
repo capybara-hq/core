@@ -43,7 +43,10 @@ const SPEC: ToolSpec = {
       file_path: {
         type: "string",
         minLength: 1,
-        description: "Absolute path of the file, e.g. report.md in the workspace directory.",
+        description:
+          "Absolute path of the file, e.g. report.md in the workspace directory. Give it before " +
+          "`content`: the user sees the write as a live diff against the current file once the " +
+          "path is known.",
       },
       content: { type: "string", description: "The complete new content of the file." },
     },
