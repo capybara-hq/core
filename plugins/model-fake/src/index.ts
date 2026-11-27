@@ -69,6 +69,22 @@ const DeploymentConfig = z.object({
           .min(0)
           .optional()
           .meta(label("最大参考图数", "Max reference images")),
+        cache: z
+          .union([
+            z.literal("none"),
+            z.object({
+              mechanism: z.enum(["explicit", "implicit", "none"]),
+              ttlOptions: z.array(z.number().int().positive()),
+              defaultTtl: z.number().int().positive().optional(),
+              ttlIsMinimum: z.boolean(),
+              refreshOnHit: z.boolean(),
+              ttlClock: z.enum(["request_start", "unknown"]),
+              minTokens: z.number().int().positive().optional(),
+              guaranteed: z.boolean(),
+            }),
+          ])
+          .optional()
+          .meta(label("提示缓存", "Prompt cache")),
         imageSizes: z
           .array(
             z.object({
@@ -94,7 +110,7 @@ const DeploymentConfig = z.object({
  * a URL); otherwise n distinct 1×1 PNGs.
  * Provides model-provider@2: declares three effort levels and `model-fake.style` (`shout` upper-
  * cases the reply).
- * No in-process state: cache hit records live in ctx.kv (TTL 300 seconds).
+ * No in-process state: cache hit records live in ctx.kv (TTL `cacheTtl` or the declared default, 300 seconds).
  */
 export default defineExtension({
   name: "model-fake",

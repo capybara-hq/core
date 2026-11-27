@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import plugin from "../src/index.js";
 import {
   createFakeProvider,
+  FAKE_CACHE,
   FAKE_PNG_BASE64 as FAKE_PNG_BASE64_LOCAL,
   type Kv,
   type Sleep,
@@ -274,6 +275,50 @@ describe("model-fake", () => {
     expect(u2.cacheReadTokens).toBe(10);
     expect(u2.cacheWriteTokens).toBe(0);
     expect(kv.ttls).toEqual([300]);
+  });
+
+  it("declares FAKE_CACHE by default and no cache for a model scripted with none", async () => {
+    const [m] = await mk().listModels();
+    expect(m?.cache).toEqual(FAKE_CACHE);
+    const p = createFakeProvider({
+      kv: memKv(),
+      sleep: noSleep,
+      models: [{ id: "fake-1", cache: "none" }],
+    });
+    const [n] = await p.listModels();
+    expect(n).not.toHaveProperty("cache");
+  });
+
+  it("honors cacheTtl: write by ttl, kv TTL, then a read on the repeat", async () => {
+    const kv = memKv();
+    const p = createFakeProvider({ kv, sleep: noSleep });
+    const r = req("echo:a", { system: [{ text: "x".repeat(40), cache: true }], cacheTtl: 3600 });
+    const u1 = complete(await run(p, r)).usage;
+    expect(u1.cacheWriteTokens).toBeGreaterThan(0);
+    expect(u1.cacheWriteByTtl).toEqual([{ ttl: 3600, tokens: u1.cacheWriteTokens }]);
+    expect(kv.ttls).toEqual([3600]);
+    const u2 = complete(await run(p, r)).usage;
+    expect(u2.cacheReadTokens).toBeGreaterThan(0);
+    expect(u2.cacheWriteTokens).toBe(0);
+    const u3 = complete(
+      await run(createFakeProvider({ kv: memKv(), sleep: noSleep }), req("echo:a")),
+    ).usage;
+    expect(u3.cacheWriteByTtl).toEqual([{ ttl: 300, tokens: u3.cacheWriteTokens }]);
+  });
+
+  it("a cache: none model reports no cache tokens", async () => {
+    const p = createFakeProvider({
+      kv: memKv(),
+      sleep: noSleep,
+      models: [{ id: "fake-1", cache: "none" }],
+    });
+    const r = req("echo:a", { system: [{ text: "x".repeat(40), cache: true }] });
+    for (let i = 0; i < 2; i++) {
+      const u = complete(await run(p, r)).usage;
+      expect(u.cacheReadTokens).toBe(0);
+      expect(u.cacheWriteTokens).toBe(0);
+      expect(u.inputTokens).toBeGreaterThanOrEqual(10);
+    }
   });
 
   it("supports mid-conversation system messages", async () => {
