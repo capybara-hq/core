@@ -238,6 +238,7 @@ export {
 } from "./media-samples.js";
 export {
   type ConformanceTarget,
+  checkCacheDeclaration,
   checkDeclaredParameters,
   checkToolStream,
   describeModelProviderConformance,

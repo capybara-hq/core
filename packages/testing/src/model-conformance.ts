@@ -12,8 +12,10 @@ import {
   type ModelStreamEvent,
   type ParamValue,
   sanitizeParams,
+  validateCacheWriteByTtl,
   validateEmbedResult,
   validateImageGenerateResult,
+  validateModelCache,
   validateParams,
 } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -41,6 +43,15 @@ interface TargetCommon {
 export type ConformanceTarget = TargetCommon & { plugin: string; provider: ModelProvider };
 
 type Complete = Extract<ModelStreamEvent, { type: "message_complete" }>;
+
+/**
+ * Checks a model's cache declaration with the SDK's `validateModelCache` (null when valid or
+ * absent). `info` is undefined when the provider does not list the model.
+ */
+export function checkCacheDeclaration(info: ModelInfo | undefined): string | null {
+  if (info === undefined) return "model is not listed";
+  return validateModelCache(info.cache);
+}
 
 /** The suite's request: `params` defaults to `{}`. */
 type SuiteRequest = Omit<ModelRequest, "params"> & { params?: ModelRequest["params"] };
@@ -280,19 +291,40 @@ export function describeModelProviderConformance(
       expect(second.done.stopReason).toBe("end_turn");
     });
 
-    it("caching", async (ctx) => {
-      if (!t.expect.caching) return ctx.skip();
-      const req = base({
+    /** The caching cases' request: a long stable system prefix marked for caching. */
+    const cachingRequest = (over: Partial<SuiteRequest> = {}): SuiteRequest =>
+      base({
         system: [
           {
             text: `Stable prefix. ${"Reference material. ".repeat(Math.ceil((t.cachePrefixTokens ?? 5000) / 4))}`,
             cache: true,
           },
         ],
+        ...over,
       });
+
+    it("declares a valid cache", async () => {
+      const info = (await t.provider.listModels()).find((m) => m.id === t.model);
+      expect(checkCacheDeclaration(info)).toBeNull();
+    });
+
+    it("caching", async (ctx) => {
+      if (!t.expect.caching) return ctx.skip();
+      const req = cachingRequest();
       await collect(t, req);
       const second = await collect(t, req);
       expect(second.done.usage.cacheReadTokens).toBeGreaterThan(0);
+    });
+
+    it("cache ttl options", async (ctx) => {
+      const info = (await t.provider.listModels()).find((m) => m.id === t.model);
+      const options = info?.cache?.ttlOptions ?? [];
+      if (options.length === 0) return ctx.skip();
+      for (const cacheTtl of options) {
+        const { done } = await collect(t, cachingRequest({ cacheTtl }));
+        expect(done.stopReason).toBe("end_turn");
+        expect(validateCacheWriteByTtl(done.usage)).toBeNull();
+      }
     });
 
     it("usage", async () => {
@@ -301,6 +333,7 @@ export function describeModelProviderConformance(
       const u = done.usage;
       expect(u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens).toBeGreaterThan(0);
       expect(u.outputTokens).toBeGreaterThan(0);
+      expect(validateCacheWriteByTtl(u)).toBeNull();
     });
 
     it("mid-conversation system", async () => {

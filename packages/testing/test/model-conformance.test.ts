@@ -7,10 +7,12 @@ import {
   type ModelProvider,
   type ModelRequest,
   type ModelStreamEvent,
+  validateCacheWriteByTtl,
   validateMediaBlock,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
+  checkCacheDeclaration,
   checkDeclaredParameters,
   checkToolStream,
   describeModelProviderConformance,
@@ -164,7 +166,7 @@ function makeMediaProvider(): ModelProvider {
   const base = makeProvider();
   return {
     async listModels() {
-      const [m] = await base.listModels();
+      const m = (await base.listModels()).find((x) => x.id === "m");
       if (m === undefined) throw new Error("no model");
       return [
         {
@@ -389,5 +391,105 @@ describe("checkToolStream", () => {
 
   it("accepts a stream with no tool events", () => {
     expect(checkToolStream([], done({}))).toEqual([]);
+  });
+});
+
+const CACHE = {
+  mechanism: "explicit" as const,
+  ttlOptions: [300, 3600],
+  defaultTtl: 300,
+  ttlIsMinimum: false,
+  refreshOnHit: true,
+  ttlClock: "request_start" as const,
+  guaranteed: true,
+};
+
+/** Wraps the in-memory provider: `cache` on the model, every stream request recorded. */
+function makeCachingProvider(
+  cache: ModelInfo["cache"],
+  seen: ModelRequest[],
+  cacheWriteByTtl?: (req: ModelRequest) => { ttl: number; tokens: number }[],
+): ModelProvider {
+  const inner = makeProvider();
+  return {
+    ...inner,
+    async listModels() {
+      return (await inner.listModels()).map((m) => (m.id === "m" && cache ? { ...m, cache } : m));
+    },
+    async *stream(req, opts) {
+      seen.push(req);
+      for await (const ev of inner.stream(req, opts)) {
+        if (ev.type === "message_complete" && cacheWriteByTtl !== undefined) {
+          const tiers = cacheWriteByTtl(req);
+          const total = tiers.reduce((n, t) => n + t.tokens, 0);
+          yield {
+            ...ev,
+            usage: { ...ev.usage, cacheWriteTokens: total + 1, cacheWriteByTtl: tiers },
+          };
+        } else yield ev;
+      }
+    },
+  };
+}
+
+const ttlRequests: ModelRequest[] = [];
+describeModelProviderConformance("in-memory with a cache declaration", async () => ({
+  plugin: "in-memory",
+  provider: makeCachingProvider(CACHE, ttlRequests),
+  model: "m",
+  expect: { thinking: true, caching: true },
+  async teardown() {},
+}));
+
+describe("cache ttl options case", () => {
+  it("sends one request per declared ttl option, each ending end_turn", () => {
+    const ttls = ttlRequests.map((r) => r.cacheTtl).filter((t) => t !== undefined);
+    expect(ttls).toEqual([300, 3600]);
+  });
+});
+
+describe("checkCacheDeclaration", () => {
+  const info = (cache: ModelInfo["cache"]): ModelInfo => ({
+    id: "m",
+    displayName: "m",
+    contextWindow: 1,
+    maxOutputTokens: 1,
+    capabilities: { tools: false, vision: false, reasoning: false, midConversationSystem: false },
+    parameters: [],
+    ...(cache ? { cache } : {}),
+  });
+  it("accepts a valid or absent cache", () => {
+    expect(checkCacheDeclaration(info(CACHE))).toBeNull();
+    expect(checkCacheDeclaration(info(undefined))).toBeNull();
+  });
+  it("reports the validator's message for a default ttl outside the options", () => {
+    const bad = { ...CACHE, defaultTtl: 600 };
+    const message = checkCacheDeclaration(info(bad));
+    expect(message).not.toBeNull();
+    expect(message).toContain("defaultTtl");
+  });
+  it("reports an unlisted model", () => {
+    expect(checkCacheDeclaration(undefined)).toMatch(/not listed/);
+  });
+});
+
+describe("usage cache write tiers", () => {
+  it("a tier sum of cacheWriteTokens - 1 fails validateCacheWriteByTtl (the usage case's check)", async () => {
+    const seen: ModelRequest[] = [];
+    const provider = makeCachingProvider(CACHE, seen, () => [{ ttl: 300, tokens: 4 }]);
+    const req: ModelRequest = {
+      model: "m",
+      system: [],
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      tools: [],
+      params: {},
+      maxOutputTokens: 100,
+    };
+    let usageSeen: Extract<ModelStreamEvent, { type: "message_complete" }>["usage"] | undefined;
+    for await (const ev of provider.stream(req, { signal: new AbortController().signal })) {
+      if (ev.type === "message_complete") usageSeen = ev.usage;
+    }
+    expect(usageSeen).toBeDefined();
+    if (usageSeen) expect(validateCacheWriteByTtl(usageSeen)).toMatch(/cacheWriteTokens/);
   });
 });
