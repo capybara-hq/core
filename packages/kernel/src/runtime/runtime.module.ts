@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import type { Redis } from "ioredis";
+import { AutomationTrackerModule } from "../automations/run-tracker.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { BackgroundWake } from "../background/wake.js";
 import { ConversationAccessModule } from "../conversations/access.js";
@@ -19,7 +20,6 @@ import { OrgSettingsModule } from "../orgs/settings.service.js";
 import { OperationAuthorityModule } from "../sandbox/operation-authority.module.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
-import { ScheduledTaskTrackerModule } from "../schedules/run-tracker.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { RunAbort } from "./abort.js";
@@ -86,8 +86,8 @@ import { WriteBaseService } from "./write-base.service.js";
     OrgSettingsModule,
     StepLogModule,
     BackgroundModule,
-    // a scheduled task's run follows its kernel run's end (`RunFinish`)
-    ScheduledTaskTrackerModule,
+    // an automation's run follows its kernel run's end (`RunFinish`)
+    AutomationTrackerModule,
     // the maintenance queue's handle: the outbox delivers the `wait-timeout` jobs the waits owe
     // (`MaintenanceProcessor` consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),

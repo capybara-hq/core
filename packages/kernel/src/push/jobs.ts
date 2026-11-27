@@ -19,8 +19,8 @@ export const PUSH_DELIVER_JOB = "push-deliver";
 export const conversationEventId = (conversationId: string, seq: number): string =>
   `conv-${conversationId}-${seq}`;
 
-/** The event id of a scheduled task run's settle (`sched-<taskRunId>`). */
-export const scheduleRunEventId = (taskRunId: string): string => `sched-${taskRunId}`;
+/** The event id of an automation run's settle (`automation-<taskRunId>`). */
+export const automationRunEventId = (taskRunId: string): string => `automation-${taskRunId}`;
 
 /** One fanout per event: `push-fanout-<eventId>`. */
 export const pushFanoutJobId = (eventId: string): string => `push-fanout-${eventId}`;
@@ -34,7 +34,7 @@ export type PushFanoutData = {
   eventId: string;
   source:
     | { kind: "conversation"; conversationId: string; seq: number }
-    | { kind: "schedule"; taskRunId: string };
+    | { kind: "automation"; taskRunId: string };
 };
 
 /**

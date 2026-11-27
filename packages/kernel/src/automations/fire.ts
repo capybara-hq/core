@@ -25,30 +25,30 @@ import { FORBIDDEN_TOOLS_UNREADABLE_ERROR } from "../orgs/settings.service.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { DeviceProviders, servesDialIn } from "../sandbox/providers.js";
 import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
-import { readScheduleSettings } from "./effective-settings.js";
+import { readAutomationSettings } from "./effective-settings.js";
 import {
-  oweSchedSettle,
-  SCHED_LATE_FIRE_SLACK_MS,
-  SCHED_SETTLE_AFTER_MS,
-  SCHED_SETTLE_LONG_CHECKS,
-  SCHED_SETTLE_RECHECK_MS,
-  type SchedSettleJobData,
+  AUTOMATION_LATE_FIRE_SLACK_MS,
+  AUTOMATION_SETTLE_AFTER_MS,
+  AUTOMATION_SETTLE_LONG_CHECKS,
+  AUTOMATION_SETTLE_RECHECK_MS,
+  type AutomationSettleJobData,
+  oweAutomationSettle,
 } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
-import { lockTaskRow, ScheduledTaskRunTracker, ScheduledTaskTrackerModule } from "./run-tracker.js";
-import { ScheduledTaskScanJob } from "./scan.job.js";
-import { ScheduledTaskStore } from "./store.js";
-import { ScheduledTaskStoreModule } from "./store.module.js";
+import { AutomationRunTracker, AutomationTrackerModule, lockTaskRow } from "./run-tracker.js";
+import { AutomationScanJob } from "./scan.job.js";
+import { AutomationStore } from "./store.js";
+import { AutomationStoreModule } from "./store.module.js";
 import type {
-  ScheduledTask,
+  Automation,
+  AutomationPauseReason,
   ScheduleMarker,
-  SchedulePauseReason,
   TaskRun,
   TaskRunSkipReason,
 } from "./types.js";
 
 /** A task run's message client id in a conversation's queue (never read back as "the task's"). */
-export const scheduledClientMessageId = (taskRunId: string): string => `sched-${taskRunId}`;
+export const automationClientMessageId = (taskRunId: string): string => `automation-${taskRunId}`;
 
 const HOUR_MS = 3_600_000;
 /** How many stale previous runs the overlap check releases before it gives up. */
@@ -65,10 +65,10 @@ const LASTING: ReadonlySet<TaskRunSkipReason> = new Set<TaskRunSkipReason>([
 
 /** What starting a claimed task run does, by the task's mode. */
 type StartPlan =
-  | { mode: "new"; task: ScheduledTask; run: TaskRun }
-  | { mode: "conversation"; task: ScheduledTask; run: TaskRun; conversationId: string }
-  | { mode: "chat"; task: ScheduledTask; run: TaskRun; thread: ThreadKey; target: ChannelTarget }
-  | { mode: "group"; task: ScheduledTask; run: TaskRun; connectionId: string; chatId: string };
+  | { mode: "new"; task: Automation; run: TaskRun }
+  | { mode: "conversation"; task: Automation; run: TaskRun; conversationId: string }
+  | { mode: "chat"; task: Automation; run: TaskRun; thread: ThreadKey; target: ChannelTarget }
+  | { mode: "group"; task: Automation; run: TaskRun; connectionId: string; chatId: string };
 
 /** Why a claim refused the run (a skip), or the plan to start it. */
 type ClaimResult = { skip: TaskRunSkipReason } | { plan: StartPlan } | null;
@@ -94,7 +94,7 @@ export function localTimeOf(at: Date, timeZone: string): string {
 const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.unavailable"]);
 
 /**
- * Checks and starts one task run (scheduled tasks spec §6), the body of the `sched-fire-<id>` job.
+ * Checks and starts one task run (scheduled tasks spec §6), the body of the `automation-fire-<id>` job.
  * Idempotent on the task run: only a `pending` one is fired. Two steps:
  *
  * 1. The claim, one transaction under the org row lock (which serializes the org's rate limit
@@ -104,7 +104,7 @@ const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.
  *    gone or not visible, conversation gone, connection inactive or its extension disabled in the
  *    org, overlap, rate limit, device offline, queue paused), each a `skipped` run with its reason,
  *    the lasting ones also pausing the task; then `fired_at` is written, after the rate limit count,
- *    with the run's delayed settle check owed (`sched-settle`, {@link settle}).
+ *    with the run's delayed settle check owed (`automation-settle`, {@link settle}).
  *    A run whose claim committed before (a retried job) goes straight to the start.
  * 2. The start, idempotent: `new` creates the conversation with its first message keyed by the
  *    task run id (`create_request_id`); `conversation` queues the prompt in the target
@@ -117,16 +117,16 @@ const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.
  * triggers takes the task run (`linkStartedRunIn`), and the run tracker follows it to its end.
  */
 @Injectable()
-// org-filter: the sched-fire / sched-settle job handler (worker only): the task run id is the
+// org-filter: the automation-fire / automation-settle job handler (worker only): the task run id is the
 // kernel-written job payload, and every other id is read from that run's own task row
-export class ScheduledTaskFirer {
+export class AutomationFirer {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(ScheduledTaskStore) private readonly store: ScheduledTaskStore,
-    @Inject(ScheduledTaskRunTracker)
-    private readonly tracker: Pick<ScheduledTaskRunTracker, "inFlightIn" | "failStartIn">,
+    @Inject(AutomationStore) private readonly store: AutomationStore,
+    @Inject(AutomationRunTracker)
+    private readonly tracker: Pick<AutomationRunTracker, "inFlightIn" | "failStartIn">,
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "tryLock">,
     @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "get">,
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
@@ -151,8 +151,8 @@ export class ScheduledTaskFirer {
   /** Fires task run `taskRunId` (see the class); a run not `pending` is left as it is. */
   async fire(taskRunId: string): Promise<void> {
     const pre = await this.db
-      .selectFrom("scheduled_task_runs as r")
-      .innerJoin("scheduled_tasks as t", "t.id", "r.task_id")
+      .selectFrom("automation_runs as r")
+      .innerJoin("automations as t", "t.id", "r.automation_id")
       .select(["r.status", "r.org_id", "r.fired_at", "t.device_id", "t.mode"])
       .where("r.id", "=", taskRunId)
       .executeTakeFirst();
@@ -168,7 +168,7 @@ export class ScheduledTaskFirer {
   }
 
   /**
-   * The `sched-settle` job (ruling R26; `job-ids.ts`). The claimed check: a task run claimed
+   * The `automation-settle` job (ruling R26; `job-ids.ts`). The claimed check: a task run claimed
    * (`fired_at`) and still `pending` goes through the run tracker's check, which links it to its
    * run, settles it, or releases a run that left no trace (`skipped`, `removed`), so a `once`
    * task's last run never stays pending; one still in flight (its item queued, its message posted)
@@ -178,7 +178,7 @@ export class ScheduledTaskFirer {
    * since is left as it is (the claimed check follows a claimed run).
    */
   @Transactional()
-  async settle(data: SchedSettleJobData): Promise<void> {
+  async settle(data: AutomationSettleJobData): Promise<void> {
     const { taskRunId } = data;
     if ("unfired" in data) {
       await this.settleUnfired(taskRunId);
@@ -191,33 +191,39 @@ export class ScheduledTaskFirer {
     const now = await this.store.updateRun(this.db, taskRunId, {});
     if (now?.status !== "pending" || now.firedAt === null) return;
     const next = data.check + 1;
-    if (next === SCHED_SETTLE_LONG_CHECKS) {
-      this.log.warn("scheduled task run still in flight a week after its claim", {
+    if (next === AUTOMATION_SETTLE_LONG_CHECKS) {
+      this.log.warn("automation run still in flight a week after its claim", {
         taskId: run.taskId,
         taskRunId,
       });
     }
-    await oweSchedSettle(this.outbox, taskRunId, run.orgId, next, SCHED_SETTLE_RECHECK_MS);
+    await oweAutomationSettle(
+      this.outbox,
+      taskRunId,
+      run.orgId,
+      next,
+      AUTOMATION_SETTLE_RECHECK_MS,
+    );
   }
 
   /** The unfired check (see {@link settle}), task row first (the one lock order). */
   private async settleUnfired(taskRunId: string): Promise<void> {
     const t = this.db;
     const owner = await t
-      .selectFrom("scheduled_task_runs")
-      .select("task_id")
+      .selectFrom("automation_runs")
+      .select("automation_id")
       .where("id", "=", taskRunId)
       .executeTakeFirst();
     if (!owner) return;
-    await lockTaskRow(t, owner.task_id);
+    await lockTaskRow(t, owner.automation_id);
     const run = await t
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .select(["status", "fired_at", "manual"])
       .where("id", "=", taskRunId)
       .forUpdate()
       .executeTakeFirst();
     if (run?.status !== "pending" || run.fired_at !== null) return;
-    await this.skipIn(t, taskRunId, owner.task_id, run.manual ? "removed" : "missed");
+    await this.skipIn(t, taskRunId, owner.automation_id, run.manual ? "removed" : "missed");
   }
 
   /** Step 1 (see the class): a skip, the plan, or null when there is nothing to fire. */
@@ -228,18 +234,18 @@ export class ScheduledTaskFirer {
     deviceOffline: boolean,
   ): Promise<ClaimResult> {
     const t = this.db;
-    // the org row first, as every task write does (ScheduledTasksService): no lock cycle
+    // the org row first, as every task write does (AutomationsService): no lock cycle
     if ((await this.orgLock.tryLock(orgId)) === undefined) return null;
     const owner = await t
-      .selectFrom("scheduled_task_runs")
-      .select("task_id")
+      .selectFrom("automation_runs")
+      .select("automation_id")
       .where("id", "=", taskRunId)
       .executeTakeFirst();
     if (!owner) return null;
     // lock order org → task row → task runs, as the run tracker and the service take them
-    await lockTaskRow(t, owner.task_id);
+    await lockTaskRow(t, owner.automation_id);
     const row = await t
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .select("id")
       .where("id", "=", taskRunId)
       .forUpdate()
@@ -263,17 +269,17 @@ export class ScheduledTaskFirer {
 
     // paused after the scan recorded the tick: only a person's "run now" still runs
     if (!resumed && !run.manual && task.status === "paused") return skip("task_paused");
-    const settings = await readScheduleSettings(t, this.config, orgId);
+    const settings = await readAutomationSettings(t, this.config, orgId);
     // a tick whose fire comes this late (workers down for long) is missed, as the scan records a
     // tick it finds outside the window; a person's "run now" still runs
-    const lateAfter = settings.catchUpWindowMinutes * 60_000 + SCHED_LATE_FIRE_SLACK_MS;
+    const lateAfter = settings.catchUpWindowMinutes * 60_000 + AUTOMATION_LATE_FIRE_SLACK_MS;
     if (!resumed && !run.manual && Date.now() - run.scheduledFor.getTime() > lateAfter) {
       return skip("missed");
     }
     if (!resumed && !settings.enabled) return skip("org_disabled");
     // an unattended run must not run with nothing forbidden (a trial run is attended)
     if (!resumed && !run.trial && settings.forbiddenToolsUnreadable) {
-      this.log.warn("scheduled task run failed: the org's forbidden tool list is unreadable", {
+      this.log.warn("automation run failed: the org's forbidden tool list is unreadable", {
         orgId,
         taskId: task.id,
         taskRunId: run.id,
@@ -353,7 +359,7 @@ export class ScheduledTaskFirer {
       ...(plan.mode === "conversation" && { conversationId: plan.conversationId }),
     });
     // a start that fails for good leaves the run claimed: its settle check releases or ends it
-    await oweSchedSettle(this.outbox, run.id, orgId, 0, SCHED_SETTLE_AFTER_MS);
+    await oweAutomationSettle(this.outbox, run.id, orgId, 0, AUTOMATION_SETTLE_AFTER_MS);
     return { plan: { ...plan, run: claimed ?? run } };
   }
 
@@ -402,7 +408,7 @@ export class ScheduledTaskFirer {
         task.orgId,
         conversationId,
         task.accountId,
-        { text: task.prompt, clientMessageId: scheduledClientMessageId(run.id) },
+        { text: task.prompt, clientMessageId: automationClientMessageId(run.id) },
         internal,
       );
     } catch (e) {
@@ -421,7 +427,7 @@ export class ScheduledTaskFirer {
         await this.unstart(run.id, task.id, reason);
         return;
       }
-      this.log.warn("scheduled task run could not start", {
+      this.log.warn("automation run could not start", {
         taskId: task.id,
         taskRunId: run.id,
         code: e.code,
@@ -432,7 +438,7 @@ export class ScheduledTaskFirer {
 
   /**
    * The DM's live conversation, or a new one bound to it (`findOrBindThread`), in one transaction:
-   * a conversation it creates is the task's (`conversations.scheduled_task_id`). Null when the
+   * a conversation it creates is the task's (`conversations.automation_id`). Null when the
    * live conversation's queue is paused (the run is skipped, `queue_paused`).
    */
   @Transactional()
@@ -442,7 +448,7 @@ export class ScheduledTaskFirer {
     // the one lock order: task row, then the task run
     await lockTaskRow(t, task.id);
     const locked = await t
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .select("status")
       .where("id", "=", run.id)
       .forUpdate()
@@ -463,7 +469,7 @@ export class ScheduledTaskFirer {
         );
         await t
           .updateTable("conversations")
-          .set({ scheduled_task_id: task.id })
+          .set({ automation_id: task.id })
           .where("id", "=", conv.id)
           .where("org_id", "=", task.orgId)
           .execute();
@@ -480,7 +486,7 @@ export class ScheduledTaskFirer {
 
   /**
    * A group run's conversation (spec §8): a new one per run, the task's
-   * (`conversations.scheduled_task_id`), whose delivery goes to the group with its thread still to
+   * (`conversations.automation_id`), whose delivery goes to the group with its thread still to
    * bind (`channel_deliveries.pending_thread_account_id` = the creator): outbound binds it at the
    * run's first post, thread key = that message's id, so replies in that thread continue the
    * conversation. One transaction; a retried start reuses the conversation it made before.
@@ -492,7 +498,7 @@ export class ScheduledTaskFirer {
     // the one lock order: task row, then the task run
     await lockTaskRow(t, task.id);
     const locked = await t
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .select(["status", "conversation_id"])
       .where("id", "=", run.id)
       .forUpdate()
@@ -511,7 +517,7 @@ export class ScheduledTaskFirer {
     );
     await t
       .updateTable("conversations")
-      .set({ scheduled_task_id: task.id })
+      .set({ automation_id: task.id })
       .where("id", "=", conv.id)
       .where("org_id", "=", task.orgId)
       .execute();
@@ -551,7 +557,7 @@ export class ScheduledTaskFirer {
   @Transactional()
   private async setConversation(runId: string, conversationId: string): Promise<void> {
     await this.db
-      .updateTable("scheduled_task_runs")
+      .updateTable("automation_runs")
       .set({ conversation_id: conversationId })
       .where("id", "=", runId)
       .where("conversation_id", "is", null)
@@ -566,14 +572,14 @@ export class ScheduledTaskFirer {
     reason: TaskRunSkipReason,
   ): Promise<void> {
     const r = await t
-      .updateTable("scheduled_task_runs")
+      .updateTable("automation_runs")
       .set({ status: "skipped", skip_reason: reason, fired_at: null })
       .where("id", "=", runId)
       .where("status", "=", "pending")
       .executeTakeFirst();
     if (Number(r.numUpdatedRows) === 0) return;
-    if (LASTING.has(reason)) await pauseTaskIn(t, taskId, reason as SchedulePauseReason, null);
-    this.log.info("scheduled task run skipped", { taskId, taskRunId: runId, reason });
+    if (LASTING.has(reason)) await pauseTaskIn(t, taskId, reason as AutomationPauseReason, null);
+    this.log.info("automation run skipped", { taskId, taskRunId: runId, reason });
   }
 
   /** Another run of the task is still in flight (stale ones are settled on the way). */
@@ -600,7 +606,7 @@ export class ScheduledTaskFirer {
 
   /** The target conversation, live, the creator's chat with the task's agent and accessible. */
   private async targetConversation(
-    task: ScheduledTask,
+    task: Automation,
   ): Promise<{ id: string; queuePaused: boolean } | undefined> {
     if (task.conversationId === null) return undefined;
     const conv = await this.db
@@ -705,7 +711,7 @@ export class ScheduledTaskFirer {
 
 /**
  * The fire job and the scanner, worker only: imported by `MaintenanceModule` (which dispatches
- * `sched-fire`) and `WorkerModule` (the scan's `@LockedCron`), never by another role.
+ * `automation-fire`) and `WorkerModule` (the scan's `@LockedCron`), never by another role.
  */
 @Module({
   imports: [
@@ -715,12 +721,12 @@ export class ScheduledTaskFirer {
     AgentLookupModule,
     ConversationAccessModule,
     OrgLockModule,
-    ScheduledTaskStoreModule,
-    ScheduledTaskTrackerModule,
+    AutomationStoreModule,
+    AutomationTrackerModule,
     DialInRelayModule,
     SandboxProviderRegistryModule,
   ],
-  providers: [ScheduledTaskFirer, ScheduledTaskScanJob],
-  exports: [ScheduledTaskFirer],
+  providers: [AutomationFirer, AutomationScanJob],
+  exports: [AutomationFirer],
 })
-export class ScheduledTaskFireModule {}
+export class AutomationFireModule {}

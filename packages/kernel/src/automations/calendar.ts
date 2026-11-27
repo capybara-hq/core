@@ -1,19 +1,19 @@
 import { type ScanStep, scanStep, type Ticker, tickerOf, ticksIn } from "./schedule-math.js";
 import type {
-  ScheduledTask,
-  ScheduleMode,
-  SchedulePauseReason,
-  ScheduleStatus,
-  ScheduleTrigger,
+  Automation,
+  AutomationMode,
+  AutomationPauseReason,
+  AutomationStatus,
+  AutomationTrigger,
   TaskRun,
   TaskRunSkipReason,
   TaskRunStatus,
 } from "./types.js";
 
 /**
- * The scheduled task calendar (spec 2026-11-12-scheduled-tasks-calendar-design.md §5): recorded
+ * The automation calendar (spec 2026-11-12-scheduled-tasks-calendar-design.md §5): recorded
  * runs and planned occurrences between two instants, dense task-days collapsed, cut at a whole
- * day when a limit is reached. The assembly here is pure; `ScheduledTasksService.calendar` reads
+ * day when a limit is reached. The assembly here is pure; `AutomationsService.calendar` reads
  * the rows and decides who sees what.
  */
 
@@ -80,10 +80,10 @@ export interface CalendarTask {
   name: string;
   agentId: string;
   accountId: string;
-  status: ScheduleStatus;
-  pauseReason: SchedulePauseReason | null;
-  trigger: ScheduleTrigger;
-  mode: ScheduleMode;
+  status: AutomationStatus;
+  pauseReason: AutomationPauseReason | null;
+  trigger: AutomationTrigger;
+  mode: AutomationMode;
   jitterSeconds: number;
   nextRunAt: string | null;
 }
@@ -142,7 +142,7 @@ export interface CalendarAnswer {
 
 export interface CalendarInput {
   /** The live tasks the viewer may see in this request. */
-  tasks: readonly ScheduledTask[];
+  tasks: readonly Automation[];
   /**
    * Their runs with `scheduledFor` in `[from, to)`, trial included, ordered by `scheduledFor`, at
    * most {@link calendarRunReadLimit} (rows past it are not read; the range is cut before them).
@@ -155,7 +155,7 @@ export interface CalendarInput {
   /** The viewer's zone: local days for the collapse and the cut. */
   timeZone: string;
   now: Date;
-  /** False when the org turned scheduled tasks off: nothing would fire, so nothing is planned. */
+  /** False when the org turned automations off: nothing would fire, so nothing is planned. */
   plan: boolean;
   /** The org's catch-up window, as the scanner reads it. */
   catchUpWindowMinutes: number;
@@ -301,7 +301,7 @@ export function assembleCalendar(
 
 /** One active task's ticks, pulled one at a time (`after`: the last tick pulled). */
 interface TickStream {
-  task: ScheduledTask;
+  task: Automation;
   /** The task's ticker, built once. */
   ticker: Ticker;
   /** The last tick to plan (inclusive): `min(to, horizon, expires_at)`. */
@@ -513,7 +513,7 @@ function summarize(
   return c;
 }
 
-function calendarTask(t: ScheduledTask): CalendarTask {
+function calendarTask(t: Automation): CalendarTask {
   return {
     id: t.id,
     name: t.name,

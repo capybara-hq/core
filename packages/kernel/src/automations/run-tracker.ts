@@ -6,7 +6,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { PushOwed, PushOwedModule } from "../push/push-owed.js";
-import { readScheduleSettings } from "./effective-settings.js";
+import { readAutomationSettings } from "./effective-settings.js";
 import { pauseTaskIn } from "./pause.js";
 import type { TaskRun } from "./types.js";
 
@@ -26,7 +26,7 @@ export const START_GRACE_MS = 5 * 60_000;
 /** The columns of a task run the tracker settles. */
 interface TaskRunRow {
   id: string;
-  task_id: string;
+  automation_id: string;
   org_id: string;
   trial: boolean;
 }
@@ -42,14 +42,14 @@ interface TaskRunRow {
  */
 @Injectable()
 // org-filter: kernel-internal (run finish, fire job, settle job): task run ids come from a kernel
-// run's scheduled_task_run_id or from a task run row the caller already holds, never from input
-export class ScheduledTaskRunTracker {
+// run's automation_run_id or from a task run row the caller already holds, never from input
+export class AutomationRunTracker {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    /** Owes the task owner's push (`schedules`) with every settle. */
-    @Inject(PushOwed) private readonly push: Pick<PushOwed, "oweScheduleRun">,
+    /** Owes the task owner's push (`automations`) with every settle. */
+    @Inject(PushOwed) private readonly push: Pick<PushOwed, "oweAutomationRun">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -58,29 +58,29 @@ export class ScheduledTaskRunTracker {
 
   /**
    * The kernel run `runId` ended with `outcome`: the task run it was started for (the run its
-   * message triggered, `scheduled_task_runs.run_id`) takes the outcome. A sub-agent or wake run
+   * message triggered, `automation_runs.run_id`) takes the outcome. A sub-agent or wake run
    * that inherited the marker is not the task run's own and changes nothing.
    */
   @Transactional()
   async onRunFinished(runId: string, outcome: RunOutcome, error?: string): Promise<void> {
     const run = await this.db
       .selectFrom("runs")
-      .select("scheduled_task_run_id")
+      .select("automation_run_id")
       .where("id", "=", runId)
       .executeTakeFirst();
-    const taskRunId = run?.scheduled_task_run_id;
+    const taskRunId = run?.automation_run_id;
     if (taskRunId == null) return;
     const owner = await this.db
-      .selectFrom("scheduled_task_runs")
-      .select("task_id")
+      .selectFrom("automation_runs")
+      .select("automation_id")
       .where("id", "=", taskRunId)
       .executeTakeFirst();
     if (!owner) return;
     // lock order task row → task run, as the fire job's claim takes them (no lock cycle)
-    await lockTaskRow(this.db, owner.task_id);
+    await lockTaskRow(this.db, owner.automation_id);
     const tr = await this.db
-      .selectFrom("scheduled_task_runs")
-      .select(["id", "task_id", "org_id", "trial", "status", "run_id"])
+      .selectFrom("automation_runs")
+      .select(["id", "automation_id", "org_id", "trial", "status", "run_id"])
       .where("id", "=", taskRunId)
       .forUpdate()
       .executeTakeFirst();
@@ -102,7 +102,7 @@ export class ScheduledTaskRunTracker {
     const t = this.db;
     await lockTaskRow(t, prev.taskId);
     const tr = await t
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .selectAll()
       .where("id", "=", prev.id)
       .forUpdate()
@@ -146,7 +146,7 @@ export class ScheduledTaskRunTracker {
           .selectFrom("conversations")
           .select("id")
           .where("org_id", "=", tr.org_id)
-          .where("scheduled_task_id", "=", tr.task_id)
+          .where("automation_id", "=", tr.automation_id)
           .where("create_request_id", "=", tr.id)
           .executeTakeFirst()
       )?.id;
@@ -155,13 +155,13 @@ export class ScheduledTaskRunTracker {
         .selectFrom("runs")
         .select(["id", "status"])
         .where("conversation_id", "=", conv)
-        .where("scheduled_task_run_id", "=", tr.id)
+        .where("automation_run_id", "=", tr.id)
         .orderBy("created_at")
         .limit(1)
         .executeTakeFirst();
       if (run) {
         await t
-          .updateTable("scheduled_task_runs")
+          .updateTable("automation_runs")
           .set({ status: "running", run_id: run.id, conversation_id: conv })
           .where("id", "=", tr.id)
           .where("org_id", "=", tr.org_id)
@@ -196,7 +196,7 @@ export class ScheduledTaskRunTracker {
     const firedAt = tr.fired_at instanceof Date ? tr.fired_at : new Date(tr.fired_at);
     if (now.getTime() - firedAt.getTime() < START_GRACE_MS) return true;
     await t
-      .updateTable("scheduled_task_runs")
+      .updateTable("automation_runs")
       .set({ status: "skipped", skip_reason: "removed", fired_at: null })
       .where("id", "=", tr.id)
       .where("org_id", "=", tr.org_id)
@@ -214,8 +214,8 @@ export class ScheduledTaskRunTracker {
   @Transactional({ propagation: "mandatory" })
   async failStartIn(taskRunId: string, error: string): Promise<void> {
     const tr = await this.db
-      .selectFrom("scheduled_task_runs")
-      .select(["id", "task_id", "org_id", "trial", "status"])
+      .selectFrom("automation_runs")
+      .select(["id", "automation_id", "org_id", "trial", "status"])
       .where("id", "=", taskRunId)
       .forUpdate()
       .executeTakeFirst();
@@ -231,7 +231,7 @@ export class ScheduledTaskRunTracker {
     const t = this.db;
     const failed = outcome === "failed";
     await t
-      .updateTable("scheduled_task_runs")
+      .updateTable("automation_runs")
       .set({
         status: failed ? "failed" : "completed",
         ...(failed && { error: error ?? "The run failed" }),
@@ -239,30 +239,30 @@ export class ScheduledTaskRunTracker {
       .where("id", "=", tr.id)
       .where("org_id", "=", tr.org_id)
       .execute();
-    await this.push.oweScheduleRun(tr.id, tr.org_id);
+    await this.push.oweAutomationRun(tr.id, tr.org_id);
     if (tr.trial) return;
     if (!failed) {
       await t
-        .updateTable("scheduled_tasks")
+        .updateTable("automations")
         .set({ consecutive_failures: 0 })
-        .where("id", "=", tr.task_id)
+        .where("id", "=", tr.automation_id)
         .where("org_id", "=", tr.org_id)
         .where("consecutive_failures", "!=", 0)
         .execute();
       return;
     }
     const row = await t
-      .updateTable("scheduled_tasks")
+      .updateTable("automations")
       .set({ consecutive_failures: sql<number>`consecutive_failures + 1` })
-      .where("id", "=", tr.task_id)
+      .where("id", "=", tr.automation_id)
       .where("org_id", "=", tr.org_id)
       .where("deleted_at", "is", null)
       .returning("consecutive_failures")
       .executeTakeFirst();
     if (!row) return;
-    const settings = await readScheduleSettings(t, this.config, tr.org_id);
+    const settings = await readAutomationSettings(t, this.config, tr.org_id);
     if (row.consecutive_failures >= settings.pauseAfterFailures) {
-      await pauseTaskIn(t, tr.task_id, "failures", null);
+      await pauseTaskIn(t, tr.automation_id, "failures", null);
     }
   }
 }
@@ -274,7 +274,7 @@ export class ScheduledTaskRunTracker {
  * sub-agent or wake run inheriting the marker) is left alone.
  */
 // org-filter: the task run id is the kernel-written schedule marker of the run's trigger message
-// (scheduledTaskRunAt), set only through the kernel-internal schedule option, never by a person
+// (automationRunAt), set only through the kernel-internal schedule option, never by a person
 export async function linkStartedRunIn(
   t: KernelSchemaDb,
   taskRunId: string,
@@ -282,7 +282,7 @@ export async function linkStartedRunIn(
   conversationId: string,
 ): Promise<void> {
   await t
-    .updateTable("scheduled_task_runs")
+    .updateTable("automation_runs")
     .set({
       status: "running",
       run_id: runId,
@@ -305,7 +305,7 @@ export async function releaseQueuedTaskRunIn(t: KernelSchemaDb, schedule: unknow
   const taskRunId = (schedule as { taskRunId?: unknown } | null)?.taskRunId;
   if (typeof taskRunId !== "string") return;
   await t
-    .updateTable("scheduled_task_runs")
+    .updateTable("automation_runs")
     .set({ status: "skipped", skip_reason: "removed", fired_at: null })
     .where("id", "=", taskRunId)
     .where("status", "=", "pending")
@@ -321,17 +321,17 @@ export async function releaseQueuedTaskRunIn(t: KernelSchemaDb, schedule: unknow
 // org-filter: a row lock by the task id of a task or task run row the kernel caller already holds
 export async function lockTaskRow(t: KernelSchemaDb, taskId: string): Promise<void> {
   await t
-    .selectFrom("scheduled_tasks")
+    .selectFrom("automations")
     .select("id")
     .where("id", "=", taskId)
     .forUpdate()
     .executeTakeFirst();
 }
 
-/** The run tracker alone: the runtime (`RunFinish`) imports it without the schedules service. */
+/** The run tracker alone: the runtime (`RunFinish`) imports it without the automations service. */
 @Module({
   imports: [PushOwedModule],
-  providers: [ScheduledTaskRunTracker],
-  exports: [ScheduledTaskRunTracker],
+  providers: [AutomationRunTracker],
+  exports: [AutomationRunTracker],
 })
-export class ScheduledTaskTrackerModule {}
+export class AutomationTrackerModule {}

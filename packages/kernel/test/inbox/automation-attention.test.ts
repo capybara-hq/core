@@ -6,10 +6,10 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { AutomationsService } from "../../src/automations/automations.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { InboxService } from "../../src/inbox/inbox.service.js";
-import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { truncateTables } from "../helpers/db.js";
@@ -31,7 +31,7 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
-let svc: ScheduledTasksService;
+let svc: AutomationsService;
 let inbox: InboxService;
 
 beforeAll(async () => {
@@ -53,7 +53,7 @@ beforeAll(async () => {
       },
     ),
   );
-  svc = k.app.get(ScheduledTasksService);
+  svc = k.app.get(AutomationsService);
   inbox = k.app.get(InboxService);
 });
 afterAll(async () => {
@@ -108,14 +108,14 @@ const mkTask = () =>
   });
 
 const attention = async (accountId: string) =>
-  (await inbox.list(orgId, accountId)).items.filter((i) => i.type === "schedule_attention");
+  (await inbox.list(orgId, accountId)).items.filter((i) => i.type === "automation_attention");
 
 async function seedRun(taskId: string, missing: string[], scheduledFor = new Date()) {
   await db
-    .insertInto("scheduled_task_runs")
+    .insertInto("automation_runs")
     .values({
       id: randomUUID(),
-      task_id: taskId,
+      automation_id: taskId,
       org_id: orgId,
       scheduled_for: scheduledFor,
       status: "completed",
@@ -124,7 +124,7 @@ async function seedRun(taskId: string, missing: string[], scheduledFor = new Dat
     .execute();
 }
 
-describe("schedule_attention inbox items", () => {
+describe("automation_attention inbox items", () => {
   it("a paused task shows in its creator's inbox with the reason", async () => {
     const task = await mkTask();
     expect(await attention(aliceId)).toEqual([]);
@@ -164,7 +164,7 @@ describe("schedule_attention inbox items", () => {
     const task = await mkTask();
     await svc.pause(orgId, { accountId: adminId }, task.id);
     await db
-      .updateTable("scheduled_tasks")
+      .updateTable("automations")
       .set({ paused_by: "gone-account" })
       .where("id", "=", task.id)
       .execute();
@@ -196,9 +196,9 @@ describe("schedule_attention inbox items", () => {
     expect(await attention(aliceId)).toEqual([]);
     // the tool's definition changed since: the grant no longer covers it
     await db
-      .updateTable("scheduled_task_grants")
+      .updateTable("automation_grants")
       .set({ spec_hash: "an-older-definition" })
-      .where("task_id", "=", task.id)
+      .where("automation_id", "=", task.id)
       .execute();
     const [item] = await attention(aliceId);
     expect(item).toMatchObject({

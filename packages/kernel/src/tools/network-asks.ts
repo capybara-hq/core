@@ -1,14 +1,14 @@
 import { type NetworkBlockedHost, validateAllowHost } from "@capybara-hq/plugin-sdk";
-import { NETWORK_ASK_MAX_HOSTS, NETWORK_HOST_MAX_CHARS } from "../conversations/events.js";
-import { coversHost } from "../sandbox/modes.js";
-import type { NetworkRunState } from "../sandbox/network-grants.js";
-import { ESCALATION_UNATTENDED_WHY } from "../sandbox/review/permission-candidate.js";
 import {
   networkGrantKey,
   type UnattendedRun,
   unattendedFails,
   unattendedRules,
-} from "../schedules/unattended.js";
+} from "../automations/unattended.js";
+import { NETWORK_ASK_MAX_HOSTS, NETWORK_HOST_MAX_CHARS } from "../conversations/events.js";
+import { coversHost } from "../sandbox/modes.js";
+import type { NetworkRunState } from "../sandbox/network-grants.js";
+import { ESCALATION_UNATTENDED_WHY } from "../sandbox/review/permission-candidate.js";
 import {
   type ApprovalRecord,
   NETWORK_ASK_CANCELLED_NOTE,
@@ -296,7 +296,7 @@ export const unavailableHostNote = (host: string, why: string) =>
  * owner adds the host to the device's network list on its page.
  */
 export const taskGrantIgnoredNote = (hosts: readonly string[]) =>
-  `${blockedLead(hosts)} The scheduled task approves ${pron(hosts)}, but this device did not apply the task's network grant. The device owner can add ${pron(hosts)} to the device's network list on its page. Continue without ${pron(hosts)}.`;
+  `${blockedLead(hosts)} The automation approves ${pron(hosts)}, but this device did not apply the task's network grant. The device owner can add ${pron(hosts)} to the device's network list on its page. Continue without ${pron(hosts)}.`;
 
 /** An unattended run in `fail` mode (spec §8.3): no ask, the creator can add a task grant. */
 export const unattendedNetworkNote = (hosts: readonly string[]) =>
@@ -310,7 +310,7 @@ export interface NetworkPlanContext {
    * is never asked about.
    */
   offer?: (hosts: string[]) => NetworkAskOffer | null;
-  /** The scheduled task run the run serves (null / undefined: attended). */
+  /** The automation run the run serves (null / undefined: attended). */
   unattended: UnattendedRun | null | undefined;
   /**
    * Whether a host is beyond the platform's ceiling (`sandbox.limits.orgHosts: within`, org egress
@@ -426,7 +426,7 @@ export function blockedEventHosts(blocked: readonly NetworkBlockedHost[]): Netwo
  *   carried that list (`ctx.deviceBlocks`): a note saying so, never asked;
  * - a `device` host the device's settings already allow (`ctx.onList`: not yet applied to the
  *   instance): a note saying when it applies, never asked again;
- * - approved by the scheduled task the run serves (`run.taskGranted`) yet refused: a note that
+ * - approved by the automation the run serves (`run.taskGranted`) yet refused: a note that
  *   the device ignores the task's grants (never asked, never a missing grant);
  * - refused earlier in the run tree: the denied note; an unattended run in `fail` mode: its note
  *   and a missing grant;

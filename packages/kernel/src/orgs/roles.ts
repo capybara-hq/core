@@ -37,8 +37,8 @@ export type OrgAction =
   | "catalog.request"
   | "catalog.decide"
   | "catalog.upload"
-  | "schedules.use"
-  | "schedules.manage";
+  | "automations.use"
+  | "automations.manage";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -85,10 +85,10 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "catalog.decide": "admin",
   // An org admin uploads a plugin package the org owns (spec §14.1 item 1, ruling P3-7)
   "catalog.upload": "admin",
-  // Scheduled tasks (spec 2026-11-11 §10): create, edit, pause, resume, run and delete one's own
-  "schedules.use": "member",
+  // Automations (spec 2026-11-11 §10): create, edit, pause, resume, run and delete one's own
+  "automations.use": "member",
   // list every task of the org, pause, resume and delete any (never edit another person's)
-  "schedules.manage": "admin",
+  "automations.manage": "admin",
 };
 
 /** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */

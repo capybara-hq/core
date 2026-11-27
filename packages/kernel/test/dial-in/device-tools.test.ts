@@ -9,6 +9,9 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { AutomationFirer } from "../../src/automations/fire.js";
+import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
+import { AutomationStore } from "../../src/automations/store.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -23,9 +26,6 @@ import { RunExecution } from "../../src/runtime/run-execution.js";
 import { ManagedDeviceContextRecorder } from "../../src/sandbox/managed-device-context.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
-import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { DEVICE_OFFLINE_TEXT } from "../../src/tools/builtins/sandbox/common.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
@@ -49,7 +49,7 @@ import { startRun } from "../runtime/permission-context-fixture.js";
 
 /**
  * A dial-in device handled through its provider like any other (device provider spec §5, §6.1;
- * phase 2 Task 13): the devices API, the sandbox tools and scheduled tasks never branch on a
+ * phase 2 Task 13): the devices API, the sandbox tools and automations never branch on a
  * device's location. Driven with the `fake-dial-in` fixture provider (the generic channel) and
  * `FakeDialInMachine`, never with the kernel's interim `@local`.
  */
@@ -84,8 +84,8 @@ beforeAll(async () => {
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
-  // the tests own the scheduled task runs: the worker's scan would add its own
-  k.app.get(SchedulerRegistry).getCronJob(SCHED_SCAN_JOB).stop();
+  // the tests own the automation runs: the worker's scan would add its own
+  k.app.get(SchedulerRegistry).getCronJob(AUTOMATION_SCAN_JOB).stop();
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
@@ -334,11 +334,11 @@ describe("a dial-in device through the sandbox tools", () => {
   });
 });
 
-describe("a dial-in device in scheduled tasks", () => {
+describe("a dial-in device in automations", () => {
   it("a schedule on an offline dial-in device does not fire and records device offline", async () => {
     const m = await member();
     const agentId = await createAgent(owner, orgId);
-    const store = new ScheduledTaskStore();
+    const store = new AutomationStore();
     const task = await store.insertTask(db, {
       id: randomUUID(),
       orgId,
@@ -367,7 +367,7 @@ describe("a dial-in device in scheduled tasks", () => {
         trial: false,
       });
       if (!r) throw new Error("tick taken");
-      await k.app.get(ScheduledTaskFirer).fire(r.id);
+      await k.app.get(AutomationFirer).fire(r.id);
       return (await store.updateRun(db, r.id, {})) ?? Promise.reject(new Error("no task run"));
     };
     // its machine is not connected: no conversation, the run says why
@@ -375,7 +375,7 @@ describe("a dial-in device in scheduled tasks", () => {
     const started = await db
       .selectFrom("conversations")
       .select("id")
-      .where("scheduled_task_id", "=", task.id)
+      .where("automation_id", "=", task.id)
       .execute();
     expect(started).toEqual([]);
   });

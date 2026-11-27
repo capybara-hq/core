@@ -5,23 +5,23 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AutomationsService } from "../../src/automations/automations.service.js";
+import { AutomationFirer } from "../../src/automations/fire.js";
+import {
+  AUTOMATION_SCAN_JOB,
+  AUTOMATION_SETTLE_AFTER_MS,
+  AUTOMATION_SETTLE_RECHECK_MS,
+  automationFireJobId,
+  automationSettleJobId,
+  automationSettleUnfiredJobId,
+} from "../../src/automations/job-ids.js";
+import { AutomationScanJob } from "../../src/automations/scan.job.js";
+import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
+import type { Automation, TaskRun } from "../../src/automations/types.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
-import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
-import {
-  SCHED_SCAN_JOB,
-  SCHED_SETTLE_AFTER_MS,
-  SCHED_SETTLE_RECHECK_MS,
-  schedFireJobId,
-  schedSettleJobId,
-  schedSettleUnfiredJobId,
-} from "../../src/schedules/job-ids.js";
-import { ScheduledTaskScanJob } from "../../src/schedules/scan.job.js";
-import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
-import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { ScheduledTask, TaskRun } from "../../src/schedules/types.js";
 import { accountsFor } from "../helpers/identity.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import {
@@ -37,7 +37,7 @@ import {
 
 /**
  * Transactional outbox spec §8.1, §8.2: the transaction that writes a pending task run (the scan's
- * tick, a person's "run now") owes its `sched-fire-<taskRunId>` job on the maintenance queue. The
+ * tick, a person's "run now") owes its `automation-fire-<taskRunId>` job on the maintenance queue. The
  * kernel's adds to the maintenance queue fail while `failing` is set (`OUTBOX_DISPATCH_FAILS`): the
  * fast path delivers nothing, so a run that fires got there through the owed row an explicit relay
  * pass (`OutboxDispatcher.dispatchDue`) delivered. The cron scan is stopped: the scans are the
@@ -56,7 +56,7 @@ let orgId: string;
 let agentId: string;
 /** While true, the kernel's outbox adds to the maintenance queue fail. */
 let failing = true;
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 const FIVE_MIN = 5 * 60_000;
 
 beforeAll(async () => {
@@ -69,7 +69,7 @@ beforeAll(async () => {
       },
     ],
   });
-  k.app.get(SchedulerRegistry).getCronJob(SCHED_SCAN_JOB).stop();
+  k.app.get(SchedulerRegistry).getCronJob(AUTOMATION_SCAN_JOB).stop();
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
@@ -93,10 +93,10 @@ beforeEach(() => {
   failing = true;
 });
 
-const scanner = () => k.app.get(ScheduledTaskScanJob);
+const scanner = () => k.app.get(AutomationScanJob);
 
 /** A task every 5 minutes in UTC, due at the latest tick. */
-async function dueTask(over: Partial<ScheduledTaskInsert> = {}): Promise<ScheduledTask> {
+async function dueTask(over: Partial<AutomationInsert> = {}): Promise<Automation> {
   return store.insertTask(db, {
     id: randomUUID(),
     orgId,
@@ -124,12 +124,12 @@ const owedFires = (taskRunIds: readonly string[]) =>
   db
     .selectFrom("outbox")
     .select(["queue", "job_name", "job_id", "data", "org_id"])
-    .where("job_name", "=", "sched-fire")
+    .where("job_name", "=", "automation-fire")
     .where("dead_at", "is", null)
     .where(
       "job_id",
       "in",
-      taskRunIds.map((id) => schedFireJobId(id)),
+      taskRunIds.map((id) => automationFireJobId(id)),
     )
     .execute();
 
@@ -142,9 +142,9 @@ async function relay(): Promise<void> {
   await db
     .updateTable("outbox")
     .set({ next_attempt_at: sql<Date>`now()` as unknown as Date })
-    .where("job_name", "=", "sched-fire")
+    .where("job_name", "=", "automation-fire")
     .execute();
-  await drainOutbox(k.app, { jobName: "sched-fire" });
+  await drainOutbox(k.app, { jobName: "automation-fire" });
 }
 
 async function runOf(id: string): Promise<TaskRun> {
@@ -164,15 +164,15 @@ const settled = (id: string) =>
   );
 
 const conversationsOf = (taskId: string) =>
-  db.selectFrom("conversations").select("id").where("scheduled_task_id", "=", taskId).execute();
+  db.selectFrom("conversations").select("id").where("automation_id", "=", taskId).execute();
 
 /** The task run's row is owed exactly once, on the maintenance queue, and nothing fired yet. */
 async function expectOwedOnly(run: TaskRun): Promise<void> {
   expect(await owedFires([run.id])).toEqual([
     {
       queue: MAINTENANCE_QUEUE_NAME,
-      job_name: "sched-fire",
-      job_id: schedFireJobId(run.id),
+      job_name: "automation-fire",
+      job_id: automationFireJobId(run.id),
       data: { taskRunId: run.id },
       org_id: orgId,
     },
@@ -196,7 +196,7 @@ describe("scheduled fires through the outbox", () => {
 
   it("run-now fires with the fast path disabled", async () => {
     const t = await dueTask({ nextRunAt: new Date(Date.now() + 86_400_000) });
-    const run = await k.app.get(ScheduledTasksService).runNow(orgId, ownerId, t.id, {
+    const run = await k.app.get(AutomationsService).runNow(orgId, ownerId, t.id, {
       trial: false,
     });
     await expectOwedOnly(run);
@@ -230,7 +230,7 @@ describe("scheduled fires through the outbox", () => {
     if (!run) throw new Error("the scan wrote no task run");
     // the fire is delivered long after its tick (the default window is 60 minutes, plus slack)
     await db
-      .updateTable("scheduled_task_runs")
+      .updateTable("automation_runs")
       .set({ scheduled_for: new Date(Date.now() - 2 * 3_600_000) })
       .where("id", "=", run.id)
       .execute();
@@ -247,11 +247,11 @@ describe("scheduled fires through the outbox", () => {
 
   it("a person's late run-now still runs", async () => {
     const t = await dueTask({ nextRunAt: new Date(Date.now() + 86_400_000) });
-    const run = await k.app.get(ScheduledTasksService).runNow(orgId, ownerId, t.id, {
+    const run = await k.app.get(AutomationsService).runNow(orgId, ownerId, t.id, {
       trial: false,
     });
     await db
-      .updateTable("scheduled_task_runs")
+      .updateTable("automation_runs")
       .set({ scheduled_for: new Date(Date.now() - 2 * 3_600_000) })
       .where("id", "=", run.id)
       .execute();
@@ -272,7 +272,7 @@ describe("scheduled fires through the outbox", () => {
         await sql<{ job_id: string; data: unknown; org_id: string; run_at: Date }>`
           SELECT job_id, data, org_id, run_at
           FROM capybara.outbox
-          WHERE job_name = 'sched-settle' AND dead_at IS NULL
+          WHERE job_name = 'automation-settle' AND dead_at IS NULL
             AND data ->> 'taskRunId' = ${taskRunId}
             AND (data ? 'unfired') = ${unfired}
           ORDER BY id`.execute(raw)
@@ -290,7 +290,7 @@ describe("scheduled fires through the outbox", () => {
       taskRunId: string,
       check: number,
     ): Promise<{ data: unknown; dueAt: number }> {
-      const jobId = schedSettleJobId(taskRunId, check);
+      const jobId = automationSettleJobId(taskRunId, check);
       const owed = await owedSettles(taskRunId);
       expect(owed.filter((r) => r.job_id !== jobId)).toEqual([]);
       const row = owed.find((r) => r.job_id === jobId);
@@ -335,16 +335,16 @@ describe("scheduled fires through the outbox", () => {
       await sql
         .raw(`CREATE OR REPLACE FUNCTION capybara.${fn}() RETURNS trigger AS $$
           BEGIN
-            IF NEW.task_id = '${taskId}' AND OLD.fired_at IS NULL AND NEW.fired_at IS NOT NULL
+            IF NEW.automation_id = '${taskId}' AND OLD.fired_at IS NULL AND NEW.fired_at IS NOT NULL
               THEN RAISE EXCEPTION 'simulated claim failure'; END IF;
             RETURN NEW;
           END $$ LANGUAGE plpgsql;
-          CREATE TRIGGER ${fn} BEFORE UPDATE ON capybara.scheduled_task_runs
+          CREATE TRIGGER ${fn} BEFORE UPDATE ON capybara.automation_runs
             FOR EACH ROW EXECUTE FUNCTION capybara.${fn}();`)
         .execute(raw);
       return async () => {
         await sql
-          .raw(`DROP TRIGGER IF EXISTS ${fn} ON capybara.scheduled_task_runs;
+          .raw(`DROP TRIGGER IF EXISTS ${fn} ON capybara.automation_runs;
             DROP FUNCTION IF EXISTS capybara.${fn}();`)
           .execute(raw);
       };
@@ -356,14 +356,14 @@ describe("scheduled fires through the outbox", () => {
      * the seam off) and that fire races the test.
      */
     const firedByHand = (taskRunId: string) =>
-      db.deleteFrom("outbox").where("job_id", "=", schedFireJobId(taskRunId)).execute();
+      db.deleteFrom("outbox").where("job_id", "=", automationFireJobId(taskRunId)).execute();
 
     /** The fire job of `taskRunId` fails all three attempts before its claim and is gone. */
     async function fireFailsForGood(taskId: string, taskRunId: string): Promise<void> {
       const restore = await failClaims(taskId);
       try {
         for (let i = 0; i < 3; i++) {
-          await expect(k.app.get(ScheduledTaskFirer).fire(taskRunId)).rejects.toThrow(
+          await expect(k.app.get(AutomationFirer).fire(taskRunId)).rejects.toThrow(
             /simulated claim failure/,
           );
         }
@@ -377,9 +377,9 @@ describe("scheduled fires through the outbox", () => {
 
     /** Ten minutes pass: the run's claim moves back and its claimed check `check` runs now. */
     async function settleNow(taskRunId: string, check = 0): Promise<void> {
-      await sql`UPDATE capybara.scheduled_task_runs
+      await sql`UPDATE capybara.automation_runs
         SET fired_at = fired_at - interval '11 minutes' WHERE id = ${taskRunId}`.execute(raw);
-      await deliverNow(schedSettleJobId(taskRunId, check));
+      await deliverNow(automationSettleJobId(taskRunId, check));
     }
 
     /** Every start of `taskId`'s new conversations fails (a database error, retried for nothing). */
@@ -388,7 +388,7 @@ describe("scheduled fires through the outbox", () => {
       await sql
         .raw(`CREATE OR REPLACE FUNCTION capybara.${fn}() RETURNS trigger AS $$
           BEGIN
-            IF NEW.scheduled_task_id = '${taskId}' THEN RAISE EXCEPTION 'simulated start failure'; END IF;
+            IF NEW.automation_id = '${taskId}' THEN RAISE EXCEPTION 'simulated start failure'; END IF;
             RETURN NEW;
           END $$ LANGUAGE plpgsql;
           CREATE TRIGGER ${fn} BEFORE INSERT ON capybara.conversations
@@ -412,7 +412,7 @@ describe("scheduled fires through the outbox", () => {
       try {
         // every attempt of the fire job fails at the start; the claim committed before it
         for (let i = 0; i < 3; i++) {
-          await expect(k.app.get(ScheduledTaskFirer).fire(run.id)).rejects.toThrow(
+          await expect(k.app.get(AutomationFirer).fire(run.id)).rejects.toThrow(
             /simulated start failure/,
           );
         }
@@ -426,12 +426,12 @@ describe("scheduled fires through the outbox", () => {
       const [owed, ...more] = await owedSettles(run.id);
       expect(more).toEqual([]);
       expect(owed).toMatchObject({
-        job_id: schedSettleJobId(run.id, 0),
+        job_id: automationSettleJobId(run.id, 0),
         data: { taskRunId: run.id, check: 0 },
         org_id: orgId,
       });
-      expect(owed?.run_at).toBeGreaterThanOrEqual(before + SCHED_SETTLE_AFTER_MS);
-      expect(owed?.run_at).toBeLessThanOrEqual(after + SCHED_SETTLE_AFTER_MS);
+      expect(owed?.run_at).toBeGreaterThanOrEqual(before + AUTOMATION_SETTLE_AFTER_MS);
+      expect(owed?.run_at).toBeLessThanOrEqual(after + AUTOMATION_SETTLE_AFTER_MS);
 
       await settleNow(run.id);
       expect(await runOf(run.id)).toMatchObject({
@@ -447,7 +447,7 @@ describe("scheduled fires through the outbox", () => {
       await scanner().scanAt(new Date());
       const [run] = await store.listRuns(db, t.id, 10);
       if (!run) throw new Error("the scan wrote no task run");
-      await k.app.get(ScheduledTaskFirer).fire(run.id);
+      await k.app.get(AutomationFirer).fire(run.id);
       await firedByHand(run.id);
       const done = await settled(run.id);
       expect(done.status).toBe("completed");
@@ -457,7 +457,7 @@ describe("scheduled fires through the outbox", () => {
       expect({ ...(await runOf(run.id)), firedAt: null }).toEqual({ ...done, firedAt: null });
       expect(await owedSettles(run.id)).toEqual([]);
       // its unfired check finds it claimed: nothing changes either
-      await deliverNow(schedSettleUnfiredJobId(run.id));
+      await deliverNow(automationSettleUnfiredJobId(run.id));
       expect({ ...(await runOf(run.id)), firedAt: null }).toEqual({ ...done, firedAt: null });
     });
 
@@ -472,7 +472,7 @@ describe("scheduled fires through the outbox", () => {
       const [unfired, ...more] = await owedSettles(run.id, true);
       expect(more).toEqual([]);
       expect(unfired).toMatchObject({
-        job_id: schedSettleUnfiredJobId(run.id),
+        job_id: automationSettleUnfiredJobId(run.id),
         data: { taskRunId: run.id, unfired: true },
         org_id: orgId,
       });
@@ -480,7 +480,7 @@ describe("scheduled fires through the outbox", () => {
       expect(unfired?.run_at).toBe(tick.getTime() + 70 * 60_000);
 
       await fireFailsForGood(t.id, run.id);
-      await deliverNow(schedSettleUnfiredJobId(run.id));
+      await deliverNow(automationSettleUnfiredJobId(run.id));
       expect(await runOf(run.id)).toMatchObject({
         status: "skipped",
         skipReason: "missed",
@@ -500,17 +500,17 @@ describe("scheduled fires through the outbox", () => {
     it("a run-now whose fire job fails for good before its claim is removed", async () => {
       const t = await dueTask({ nextRunAt: new Date(Date.now() + 86_400_000) });
       const before = Date.now();
-      const run = await k.app.get(ScheduledTasksService).runNow(orgId, ownerId, t.id, {
+      const run = await k.app.get(AutomationsService).runNow(orgId, ownerId, t.id, {
         trial: false,
       });
       const after = Date.now();
       const [unfired] = await owedSettles(run.id, true);
-      expect(unfired?.job_id).toBe(schedSettleUnfiredJobId(run.id));
-      expect(unfired?.run_at).toBeGreaterThanOrEqual(before + SCHED_SETTLE_AFTER_MS);
-      expect(unfired?.run_at).toBeLessThanOrEqual(after + SCHED_SETTLE_AFTER_MS);
+      expect(unfired?.job_id).toBe(automationSettleUnfiredJobId(run.id));
+      expect(unfired?.run_at).toBeGreaterThanOrEqual(before + AUTOMATION_SETTLE_AFTER_MS);
+      expect(unfired?.run_at).toBeLessThanOrEqual(after + AUTOMATION_SETTLE_AFTER_MS);
 
       await fireFailsForGood(t.id, run.id);
-      await deliverNow(schedSettleUnfiredJobId(run.id));
+      await deliverNow(automationSettleUnfiredJobId(run.id));
       expect(await runOf(run.id)).toMatchObject({
         status: "skipped",
         skipReason: "removed",
@@ -530,7 +530,7 @@ describe("scheduled fires through the outbox", () => {
       if (!run) throw new Error("the scan wrote no task run");
       const restore = await failStarts(t.id);
       try {
-        await expect(k.app.get(ScheduledTaskFirer).fire(run.id)).rejects.toThrow(
+        await expect(k.app.get(AutomationFirer).fire(run.id)).rejects.toThrow(
           /simulated start failure/,
         );
       } finally {
@@ -559,14 +559,14 @@ describe("scheduled fires through the outbox", () => {
       // claimed, its message posted and not yet taken by a run (as `inFlightIn` sees it)
       const restore = await failStarts(t.id);
       try {
-        await expect(k.app.get(ScheduledTaskFirer).fire(run.id)).rejects.toThrow();
+        await expect(k.app.get(AutomationFirer).fire(run.id)).rejects.toThrow();
       } finally {
         await restore();
       }
       await firedByHand(run.id);
       const conv = randomUUID();
       await sql`INSERT INTO capybara.conversations
-          (id, org_id, account_id, agent_id, scheduled_task_id, create_request_id, consumed_seq)
+          (id, org_id, account_id, agent_id, automation_id, create_request_id, consumed_seq)
         VALUES (${conv}, ${orgId}, ${ownerId}, ${agentId}, ${t.id}, ${run.id}, 0)`.execute(raw);
       await sql`INSERT INTO capybara.conversation_events (conversation_id, seq, type, payload)
         VALUES (${conv}, 1, 'user_message',
@@ -579,8 +579,8 @@ describe("scheduled fires through the outbox", () => {
       // after the read: a job the relay added has its add time before it
       const after = Date.now();
       expect(next).toMatchObject({ data: { taskRunId: run.id, check: 1 } });
-      expect(next.dueAt).toBeGreaterThanOrEqual(before + SCHED_SETTLE_RECHECK_MS);
-      expect(next.dueAt).toBeLessThanOrEqual(after + SCHED_SETTLE_RECHECK_MS);
+      expect(next.dueAt).toBeGreaterThanOrEqual(before + AUTOMATION_SETTLE_RECHECK_MS);
+      expect(next.dueAt).toBeLessThanOrEqual(after + AUTOMATION_SETTLE_RECHECK_MS);
       // the conversation goes, so the run is released by the next check
       await db.deleteFrom("conversation_events").where("conversation_id", "=", conv).execute();
       await db.deleteFrom("conversations").where("id", "=", conv).execute();

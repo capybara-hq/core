@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AutomationStore } from "../../src/automations/store.js";
+import type { ScheduleMarker } from "../../src/automations/types.js";
+import { unattendedTaskRunOf } from "../../src/automations/unattended.js";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
 import { newTaskId, taskOutputPath } from "../../src/background/launch.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
@@ -18,9 +21,6 @@ import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { ScheduleMarker } from "../../src/schedules/types.js";
-import { unattendedTaskRunOf } from "../../src/schedules/unattended.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -45,8 +45,8 @@ import { childRunsOf } from "../helpers/subagents.js";
 import { AGENT, Log, MODEL } from "../runtime/context/fixtures.js";
 
 /**
- * Scheduled tasks spec §4, §6, §12 (Task 4): the schedule marker a task's message carries, through
- * the queue, the run lineage (`runs.scheduled_task_run_id`), the zone override and the request
+ * Automations spec §4, §6, §12 (Task 4): the schedule marker a task's message carries, through
+ * the queue, the run lineage (`runs.automation_run_id`), the zone override and the request
  * header rendered from the log.
  */
 
@@ -69,7 +69,7 @@ const RULES: ScriptRule[] = [
 ];
 
 const capture = captureProviderRequests();
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -185,11 +185,11 @@ async function fireNew(m: ScheduleMarker, text: string, timeZoneOverride = "Asia
     );
 }
 
-type RunRow = { id: string; trigger_seq: string; scheduled_task_run_id: string | null };
+type RunRow = { id: string; trigger_seq: string; automation_run_id: string | null };
 const runRows = (conversationId: string): Promise<RunRow[]> =>
   db
     .selectFrom("runs")
-    .select(["id", "trigger_seq", "scheduled_task_run_id"])
+    .select(["id", "trigger_seq", "automation_run_id"])
     .where("conversation_id", "=", conversationId)
     .orderBy("created_at")
     .execute();
@@ -231,13 +231,13 @@ async function finishTaskOf(conv: string, runId: string): Promise<void> {
 }
 
 describe("the schedule marker", () => {
-  it("a marked first message sets runs.scheduled_task_run_id", async () => {
+  it("a marked first message sets runs.automation_run_id", async () => {
     const m = await marker(true);
     const { conversation, event } = await fireNew(m, "digest please");
     expect((event.payload as EventPayload<"user_message">).schedule).toEqual(m);
     await waitForTerminal(db, conversation.id, 1, 30_000);
     const [run] = await runRows(conversation.id);
-    expect(run?.scheduled_task_run_id).toBe(m.taskRunId);
+    expect(run?.automation_run_id).toBe(m.taskRunId);
     expect(await unattendedTaskRunOf(db, run?.id as string)).toEqual({
       taskRunId: m.taskRunId,
       taskId: m.taskId,
@@ -246,10 +246,10 @@ describe("the schedule marker", () => {
     expect((await runStarted(conversation.id, run?.id as string)).payload.trigger).toBe("schedule");
     const conv = await db
       .selectFrom("conversations")
-      .select("scheduled_task_id")
+      .select("automation_id")
       .where("id", "=", conversation.id)
       .executeTakeFirstOrThrow();
-    expect(conv.scheduled_task_id).toBe(m.taskId);
+    expect(conv.automation_id).toBe(m.taskId);
   });
 
   it("a person's message in the same conversation starts a run without it", async () => {
@@ -259,7 +259,7 @@ describe("the schedule marker", () => {
     await postMessage(owner, orgId, conversation.id, "and now me");
     await waitForTerminal(db, conversation.id, 2, 30_000);
     const [, second] = await runRows(conversation.id);
-    expect(second?.scheduled_task_run_id).toBeNull();
+    expect(second?.automation_run_id).toBeNull();
     expect(await unattendedTaskRunOf(db, second?.id as string)).toBeNull();
     expect((await runStarted(conversation.id, second?.id as string)).payload.trigger).toBe(
       undefined,
@@ -276,10 +276,10 @@ describe("the schedule marker", () => {
     );
     const row = await db
       .selectFrom("runs")
-      .select("scheduled_task_run_id")
+      .select("automation_run_id")
       .where("id", "=", child.runId)
       .executeTakeFirstOrThrow();
-    expect(row.scheduled_task_run_id).toBe(m.taskRunId);
+    expect(row.automation_run_id).toBe(m.taskRunId);
     // the child's delivery wakes the parent: that wake run descends from the unattended run too
     const runs = await waitFor(
       async () => {
@@ -289,7 +289,7 @@ describe("the schedule marker", () => {
       30_000,
       "parent woken by the delivery",
     );
-    expect(runs[1]?.scheduled_task_run_id).toBe(m.taskRunId);
+    expect(runs[1]?.automation_run_id).toBe(m.taskRunId);
     await waitForTerminal(db, conversation.id, 2, 30_000);
   });
 
@@ -301,7 +301,7 @@ describe("the schedule marker", () => {
     await finishTaskOf(conversation.id, first?.id as string);
     await waitForTerminal(db, conversation.id, 2, 30_000);
     const [, wake] = await runRows(conversation.id);
-    expect(wake?.scheduled_task_run_id).toBe(m.taskRunId);
+    expect(wake?.automation_run_id).toBe(m.taskRunId);
     expect((await runStarted(conversation.id, wake?.id as string)).payload.trigger).toBe(
       "background_task",
     );
@@ -317,7 +317,7 @@ describe("the schedule marker", () => {
     await finishTaskOf(conversation.id, attended?.id as string);
     await waitForTerminal(db, conversation.id, 3, 30_000);
     const [, , wake] = await runRows(conversation.id);
-    expect(wake?.scheduled_task_run_id).toBeNull();
+    expect(wake?.automation_run_id).toBeNull();
   });
 
   it("timeZoneOverride beats the account setting and lands in run_context", async () => {
@@ -356,7 +356,7 @@ describe("the schedule marker", () => {
         orgId,
         conv,
         ownerId,
-        { text: "queued digest", clientMessageId: `sched-${m.taskRunId}` },
+        { text: "queued digest", clientMessageId: `automation-${m.taskRunId}` },
         { schedule: m, timeZoneOverride: "Asia/Tokyo" },
       );
     expect(out.created).toBe(true);
@@ -366,7 +366,7 @@ describe("the schedule marker", () => {
     // the zone does not leak into the logged marker
     expect((msg?.payload as EventPayload<"user_message"> | undefined)?.schedule).toEqual(m);
     const [run] = await runRows(conv);
-    expect(run?.scheduled_task_run_id).toBe(m.taskRunId);
+    expect(run?.automation_run_id).toBe(m.taskRunId);
     const left = await db
       .selectFrom("conversation_queue")
       .select("id")
@@ -390,7 +390,7 @@ describe("the schedule marker", () => {
         orgId,
         conv,
         ownerId,
-        { text: "queued digest", clientMessageId: `sched-${m.taskRunId}` },
+        { text: "queued digest", clientMessageId: `automation-${m.taskRunId}` },
         { schedule: m, timeZoneOverride: "Asia/Tokyo" },
       );
     expect(out.item).not.toBeNull();
@@ -411,7 +411,7 @@ describe("the schedule marker", () => {
     const msg = (await eventsOf(db, conv)).find((e) => e.type === "user_message");
     expect(msg?.payload).not.toHaveProperty("schedule");
     const [run] = await runRows(conv);
-    expect(run?.scheduled_task_run_id).toBeNull();
+    expect(run?.automation_run_id).toBeNull();
   });
 
   it("sending a queued scheduled item now makes it the person's message", async () => {
@@ -420,7 +420,7 @@ describe("the schedule marker", () => {
     expect(event.payload).not.toHaveProperty("schedule");
     await waitForTerminal(db, conv, 1, 30_000);
     const [run] = await runRows(conv);
-    expect(run?.scheduled_task_run_id).toBeNull();
+    expect(run?.automation_run_id).toBeNull();
   });
 
   it("the header renders from the log only", async () => {

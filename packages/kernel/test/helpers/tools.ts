@@ -2,6 +2,7 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
+import { AutomationStore } from "../../src/automations/store.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import { ConversationLeakCheck } from "../../src/conversations/leak-check.js";
@@ -15,7 +16,6 @@ import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import type { NetworkRunState } from "../../src/sandbox/network-grants.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
 import { Credentials } from "../../src/tools/credentials.js";
@@ -102,7 +102,7 @@ export function approvalsFor(
     eventLog,
     events,
     h.txHost,
-    new ScheduledTaskStore(),
+    new AutomationStore(),
     registry,
     undefined as never,
     // no sandbox config here: an org's egress is open (a trial's network grants are kept)

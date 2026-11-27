@@ -9,10 +9,10 @@ import {
   scanStep,
   ticksIn,
   validateTrigger,
-} from "../../src/schedules/schedule-math.js";
-import type { ScheduleTrigger } from "../../src/schedules/types.js";
+} from "../../src/automations/schedule-math.js";
+import type { AutomationTrigger } from "../../src/automations/types.js";
 
-const cron = (expr: string, timeZone = "UTC"): ScheduleTrigger => ({
+const cron = (expr: string, timeZone = "UTC"): AutomationTrigger => ({
   kind: "cron",
   expr,
   timeZone,
@@ -23,11 +23,11 @@ describe("schedule math", () => {
   it("rejects a 6-field expression", () => {
     expect(validateTrigger(cron("0 0 9 * * *"), now)).toEqual({
       ok: false,
-      code: "schedule.invalid_cron",
+      code: "automation.invalid_cron",
     });
     expect(validateTrigger(cron("nonsense"), now)).toEqual({
       ok: false,
-      code: "schedule.invalid_cron",
+      code: "automation.invalid_cron",
     });
     expect(validateTrigger(cron("0 9 * * *"), now)).toEqual({ ok: true });
   });
@@ -35,15 +35,19 @@ describe("schedule math", () => {
   it("rejects an unknown zone", () => {
     expect(validateTrigger(cron("0 9 * * *", "Mars/Base"), now)).toEqual({
       ok: false,
-      code: "schedule.invalid_time_zone",
+      code: "automation.invalid_time_zone",
     });
   });
 
   it("rejects a once task in the past and accepts a future one", () => {
-    const once = (at: string): ScheduleTrigger => ({ kind: "once", at, timeZone: "Asia/Shanghai" });
+    const once = (at: string): AutomationTrigger => ({
+      kind: "once",
+      at,
+      timeZone: "Asia/Shanghai",
+    });
     expect(validateTrigger(once("2026-05-31T09:00:00"), now)).toEqual({
       ok: false,
-      code: "schedule.once_in_past",
+      code: "automation.once_in_past",
     });
     expect(validateTrigger(once("2026-06-02T09:00:00"), now)).toEqual({ ok: true });
     expect(nextTick(once("2026-06-02T09:00:00"), now)?.toISOString()).toBe(
@@ -160,7 +164,7 @@ describe("schedule math", () => {
   it("dueTicks: no tick due, and a once task due inside and outside the window", () => {
     const r = dueTicks(cron("0 9 * * *"), new Date("2026-06-01T09:00:00Z"), now, 60);
     expect(r).toEqual({ fire: null, firstMissed: null });
-    const once: ScheduleTrigger = { kind: "once", at: "2026-06-01T08:30:00", timeZone: "UTC" };
+    const once: AutomationTrigger = { kind: "once", at: "2026-06-01T08:30:00", timeZone: "UTC" };
     const lastTick = new Date("2026-06-01T08:29:59Z");
     expect(dueTicks(once, lastTick, new Date("2026-06-01T09:00:00Z"), 60)).toEqual({
       fire: new Date("2026-06-01T08:30:00Z"),
@@ -173,7 +177,7 @@ describe("schedule math", () => {
   });
 
   it("a once time inside a DST gap fires at the first instant after the gap", () => {
-    const once: ScheduleTrigger = {
+    const once: AutomationTrigger = {
       kind: "once",
       at: "2026-03-08T02:30:00",
       timeZone: "America/New_York",
@@ -193,7 +197,7 @@ describe("schedule math", () => {
     ]) {
       expect(validateTrigger({ kind: "once", at, timeZone: "UTC" }, now)).toEqual({
         ok: false,
-        code: "schedule.invalid_once_time",
+        code: "automation.invalid_once_time",
       });
     }
   });
@@ -203,7 +207,7 @@ const MIN = 60_000;
 const HOUR = 3_600_000;
 
 /** Every tick in (after, until] by repeated nextTick. */
-function byNextTick(t: ScheduleTrigger, after: Date, until: Date): Date[] {
+function byNextTick(t: AutomationTrigger, after: Date, until: Date): Date[] {
   const out: Date[] = [];
   for (let tick = nextTick(t, after); tick && tick <= until; tick = nextTick(t, tick)) {
     out.push(tick);
@@ -250,7 +254,7 @@ describe("ticksIn", () => {
   });
 
   it("a once trigger yields its tick only inside the window", () => {
-    const once: ScheduleTrigger = { kind: "once", at: "2026-06-02T09:00:00", timeZone: "UTC" };
+    const once: AutomationTrigger = { kind: "once", at: "2026-06-02T09:00:00", timeZone: "UTC" };
     expect(iso(ticksIn(once, now, new Date("2026-06-03T00:00:00Z"), 10).ticks)).toEqual([
       "2026-06-02T09:00:00.000Z",
     ]);
@@ -262,7 +266,7 @@ describe("ticksIn", () => {
 });
 
 interface SimTask {
-  trigger: ScheduleTrigger;
+  trigger: AutomationTrigger;
   jitterSeconds: number;
   expiresAt?: Date;
 }

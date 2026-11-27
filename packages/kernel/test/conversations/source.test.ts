@@ -12,13 +12,13 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AutomationFirer } from "../../src/automations/fire.js";
+import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
+import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
+import type { Automation, TaskRun } from "../../src/automations/types.js";
 import { conversationSourceOf } from "../../src/conversations/source.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
-import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
-import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { ScheduledTask, TaskRun } from "../../src/schedules/types.js";
 import { openBarrier, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -62,7 +62,7 @@ let ownerId: string;
 let orgId: string;
 let agentId: string;
 let miniId: string;
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -80,7 +80,7 @@ beforeAll(async () => {
     ),
   );
   // the tests fire task runs themselves
-  k.app.get(SchedulerRegistry).getCronJob(SCHED_SCAN_JOB).stop();
+  k.app.get(SchedulerRegistry).getCronJob(AUTOMATION_SCAN_JOB).stop();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   ownerId = (
@@ -169,7 +169,7 @@ const threadConversation = (chatId: string, threadKey: string) =>
     `thread ${threadKey}`,
   );
 
-async function task(over: Partial<ScheduledTaskInsert>): Promise<ScheduledTask> {
+async function task(over: Partial<AutomationInsert>): Promise<Automation> {
   return store.insertTask(db, {
     id: randomUUID(),
     orgId,
@@ -193,7 +193,7 @@ async function task(over: Partial<ScheduledTaskInsert>): Promise<ScheduledTask> 
 }
 
 /** Fires one run of `t` now and returns it as stored after the fire. */
-async function fireNow(t: ScheduledTask): Promise<TaskRun> {
+async function fireNow(t: Automation): Promise<TaskRun> {
   const r = await store.insertRun(db, {
     id: randomUUID(),
     taskId: t.id,
@@ -202,7 +202,7 @@ async function fireNow(t: ScheduledTask): Promise<TaskRun> {
     trial: false,
   });
   if (!r) throw new Error("tick taken");
-  await k.app.get(ScheduledTaskFirer).fire(r.id);
+  await k.app.get(AutomationFirer).fire(r.id);
   return (await store.updateRun(db, r.id, {})) ?? Promise.reject(new Error("no task run"));
 }
 
@@ -267,10 +267,10 @@ describe("conversations.source (memory plugin spec §6.2)", () => {
     expect(run.conversationId).toBe(conv);
     const row = await db
       .selectFrom("conversations")
-      .select("scheduled_task_id")
+      .select("automation_id")
       .where("id", "=", conv)
       .executeTakeFirstOrThrow();
-    expect(row.scheduled_task_id).toBe(t.id);
+    expect(row.automation_id).toBe(t.id);
     expect(await sourceOf(conv)).toBe("channel_dm");
   });
 

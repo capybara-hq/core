@@ -441,8 +441,8 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     thresholds = { searchThresholdTools: 30, searchThresholdTokens: 8000 };
   });
 
-  /** The scheduled-task group the settings read always carries (defaults, spec §9). */
-  const SCHEDULED_TASK_DEFAULTS = parseOrgSettings({}).scheduledTasks;
+  /** The automation group the settings read always carries (defaults, spec §9). */
+  const AUTOMATION_DEFAULTS = parseOrgSettings({}).automations;
 
   it("GET 默认 toolSearch=on；PATCH 需 org.update，非法值 400，改动写审计", async () => {
     const got = await req({ method: "GET", url: settingsUrl() });
@@ -453,7 +453,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
         locale: "en",
         sandboxToolPolicy: "allow",
         platformTool: "on",
-        scheduledTasks: SCHEDULED_TASK_DEFAULTS,
+        automations: AUTOMATION_DEFAULTS,
       },
       deployment: {
         // the platform's compaction defaults (context compaction spec §4.8)
@@ -522,14 +522,14 @@ describe("组织设置与 ToolSearch 启用条件", () => {
         locale: "en",
         sandboxToolPolicy: "allow",
         platformTool: "on",
-        scheduledTasks: SCHEDULED_TASK_DEFAULTS,
+        automations: AUTOMATION_DEFAULTS,
       },
       after: {
         toolSearch: "off",
         locale: "en",
         sandboxToolPolicy: "allow",
         platformTool: "on",
-        scheduledTasks: SCHEDULED_TASK_DEFAULTS,
+        automations: AUTOMATION_DEFAULTS,
       },
     });
 
@@ -541,7 +541,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       locale: "en",
       sandboxToolPolicy: "allow",
       platformTool: "on",
-      scheduledTasks: SCHEDULED_TASK_DEFAULTS,
+      automations: AUTOMATION_DEFAULTS,
     });
     await req({ method: "PATCH", url: settingsUrl(), payload: { toolSearch: "off" } });
     const row = await db
@@ -554,7 +554,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       locale: "en",
       sandboxToolPolicy: "allow",
       platformTool: "on",
-      scheduledTasks: SCHEDULED_TASK_DEFAULTS,
+      automations: AUTOMATION_DEFAULTS,
       future: 1,
     });
 

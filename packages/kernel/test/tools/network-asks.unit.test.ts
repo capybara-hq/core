@@ -1,12 +1,12 @@
 import type { NetworkBlockedHost } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
+import { networkGrantRefusal } from "../../src/automations/grant-rules.js";
+import type { UnattendedRun } from "../../src/automations/unattended.js";
 import type { NetworkRunState } from "../../src/sandbox/network-grants.js";
 import {
   ESCALATION_UNATTENDED_WHY,
   escalationDeviceOffWhy,
 } from "../../src/sandbox/review/permission-candidate.js";
-import { networkGrantRefusal } from "../../src/schedules/grant-rules.js";
-import type { UnattendedRun } from "../../src/schedules/unattended.js";
 import {
   type ApprovalRecord,
   NETWORK_ASK_CANCELLED_NOTE,
@@ -403,7 +403,7 @@ describe("planNetworkAsk", () => {
     ]);
   });
 
-  it("a scheduled task's grant of a host beyond the ceiling names the super admin", () => {
+  it("an automation's grant of a host beyond the ceiling names the super admin", () => {
     const limits = { network: { kind: "allowlist" as const, hosts: [] } };
     expect(
       networkGrantRefusal("api.foo.com", { limits, outsideCeiling: () => true })?.message,

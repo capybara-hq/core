@@ -27,9 +27,9 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * The scheduled-task reads the web needs (spec §8, §10; Task 12 fix round): chat targets, the
+ * The automation reads the web needs (spec §8, §10; Task 12 fix round): chat targets, the
  * grantable tools, stale grants, each task's last run, the tasks posting into a conversation and
- * the conversation's `scheduledTaskId`.
+ * the conversation's `automationId`.
  */
 
 const fixture = (name: string) =>
@@ -52,7 +52,7 @@ let agentId: string;
 let miniId: string;
 let plainId: string;
 
-const base = () => `/api/v1/orgs/${orgId}/schedules`;
+const base = () => `/api/v1/orgs/${orgId}/automations`;
 
 async function connection(plugin: string, appId: string): Promise<string> {
   let res = await owner({
@@ -136,7 +136,7 @@ beforeAll(async () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        disabledTools: builtinsOff("AskUserQuestion", "ScheduleCreate", "CurrentTime"),
+        disabledTools: builtinsOff("AskUserQuestion", "AutomationCreate", "CurrentTime"),
       },
       visibility: "org",
     },
@@ -164,7 +164,7 @@ type Target = {
   label: string;
 };
 
-describe("schedule reads for the web", () => {
+describe("automation reads for the web", () => {
   it("chat targets: my DMs (archived too) and, on a channel with threads, my groups", async () => {
     await thread(miniId, "dm-alice", "dm:u-alice", aliceId, true);
     await thread(miniId, "g-1", "m-root-1", aliceId);
@@ -215,7 +215,7 @@ describe("schedule reads for the web", () => {
     let res = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { scheduledTasks: { forbiddenTools: ["CurrentTime"] } },
+      payload: { automations: { forbiddenTools: ["CurrentTime"] } },
     });
     expect(res.statusCode, res.body).toBe(200);
     res = await alice({ method: "GET", url: `${base()}/grantable-tools?agentId=${agentId}` });
@@ -225,7 +225,7 @@ describe("schedule reads for the web", () => {
     ).items;
     const of = (key: string) => items.find((t) => t.key === key);
     expect(of("AskUserQuestion")).toMatchObject({ grantable: true, reason: null });
-    expect(of("ScheduleCreate")).toMatchObject({ grantable: false, reason: "fixed_ask" });
+    expect(of("AutomationCreate")).toMatchObject({ grantable: false, reason: "fixed_ask" });
     expect(of("CurrentTime")).toMatchObject({ grantable: false, reason: "forbidden" });
     res = await alice({ method: "GET", url: `${base()}/grantable-tools?agentId=nope` });
     expect(res.statusCode).toBe(404);
@@ -251,9 +251,9 @@ describe("schedule reads for the web", () => {
       expect.objectContaining({ toolKey: "AskUserQuestion", stale: false }),
     ]);
     await db
-      .updateTable("scheduled_task_grants")
+      .updateTable("automation_grants")
       .set({ spec_hash: "0000000000000000" })
-      .where("task_id", "=", taskId)
+      .where("automation_id", "=", taskId)
       .execute();
     res = await alice({ method: "GET", url: `${base()}/${taskId}/grants` });
     expect((res.json() as { items: { stale: boolean }[] }).items[0]?.stale).toBe(true);
@@ -261,10 +261,10 @@ describe("schedule reads for the web", () => {
     const runAt = (h: number) => new Date(Date.UTC(2026, 10, 10, h));
     const insertRun = (h: number, over: Record<string, unknown>) =>
       db
-        .insertInto("scheduled_task_runs")
+        .insertInto("automation_runs")
         .values({
           id: randomUUID(),
-          task_id: taskId,
+          automation_id: taskId,
           org_id: orgId,
           scheduled_for: runAt(h),
           fired_at: runAt(h),
@@ -330,30 +330,28 @@ describe("schedule reads for the web", () => {
 
     res = await alice({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations/${conv}` });
     expect(
-      (res.json() as { conversation: { scheduledTaskId: string | null } }).conversation
-        .scheduledTaskId,
+      (res.json() as { conversation: { automationId: string | null } }).conversation.automationId,
     ).toBeNull();
     await db
       .updateTable("conversations")
-      .set({ scheduled_task_id: convTask })
+      .set({ automation_id: convTask })
       .where("id", "=", conv)
       .execute();
     res = await alice({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations/${conv}` });
     expect(
-      (res.json() as { conversation: { scheduledTaskId: string | null } }).conversation
-        .scheduledTaskId,
+      (res.json() as { conversation: { automationId: string | null } }).conversation.automationId,
     ).toBe(convTask);
   });
 
   it("the new reads are read operations of the Platform tool", () => {
     const ops = k.app.get(PlatformOperations);
-    for (const id of ["schedules.chat-targets", "schedules.grantable-tools"]) {
+    for (const id of ["automations.chat-targets", "automations.grantable-tools"]) {
       expect(ops.get(id), id).toMatchObject({ confirm: "read" });
     }
-    expect(ops.get("schedules.calendar")).toMatchObject({
+    expect(ops.get("automations.calendar")).toMatchObject({
       confirm: "read",
       authz: { orgAction: "org.read" },
-      mirrors: ["GET /api/v1/orgs/:orgId/schedules/calendar"],
+      mirrors: ["GET /api/v1/orgs/:orgId/automations/calendar"],
     });
   });
 

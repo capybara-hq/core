@@ -382,7 +382,7 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
   },
   {
     rule: "kc-enqueue-via-outbox",
-    path: "packages/kernel/src/schedules/fire.ts",
+    path: "packages/kernel/src/automations/fire.ts",
     within: "start",
     reason:
       "not a BullMQ job: ConversationQueue.add writes a queued message to PG, and that write " +

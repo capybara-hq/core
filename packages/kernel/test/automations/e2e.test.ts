@@ -10,13 +10,13 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
+import { AutomationScanJob } from "../../src/automations/scan.job.js";
+import { AutomationStore } from "../../src/automations/store.js";
+import type { TaskRun } from "../../src/automations/types.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
-import { ScheduledTaskScanJob } from "../../src/schedules/scan.job.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { TaskRun } from "../../src/schedules/types.js";
 import { scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -36,7 +36,7 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Scheduled tasks end to end (spec §6–§8, Task 13): tasks made over HTTP, fired by the scanner at
+ * Automations end to end (spec §6–§8, Task 13): tasks made over HTTP, fired by the scanner at
  * their tick (the cron scan itself is stopped so ticks are the test's), run on `model-script`. A
  * daily task posting into a Telegram DM (the `chan-tg` fixture on `startFakeTelegram`) and a reply
  * there continuing its conversation; a trial run whose approval becomes a task grant, used by the
@@ -65,7 +65,7 @@ let ownerId: string;
 let orgId: string;
 let agentId: string;
 let tgId: string;
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -85,7 +85,7 @@ beforeAll(async () => {
     ),
   );
   // the tests scan at the ticks they pick: the worker's once-a-minute scan would race them
-  k.app.get(SchedulerRegistry).getCronJob(SCHED_SCAN_JOB).stop();
+  k.app.get(SchedulerRegistry).getCronJob(AUTOMATION_SCAN_JOB).stop();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   ownerId = (
@@ -153,7 +153,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-const scanner = () => k.app.get(ScheduledTaskScanJob);
+const scanner = () => k.app.get(AutomationScanJob);
 
 interface TaskView {
   id: string;
@@ -164,7 +164,7 @@ interface TaskView {
 async function createTask(payload: Record<string, unknown>): Promise<TaskView> {
   const res = await owner({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/schedules`,
+    url: `/api/v1/orgs/${orgId}/automations`,
     payload: {
       agentId,
       trigger: { kind: "cron", expr: "0 9 * * *" },
@@ -219,7 +219,7 @@ const approvalsOf = (conversationId: string) =>
     .where("conversation_id", "=", conversationId)
     .execute();
 
-describe("scheduled tasks end to end", () => {
+describe("automations end to end", () => {
   it("a daily task to a Telegram DM posts its answer and a reply continues the same conversation", async () => {
     // the owner messages the bot once (a task can only target their own DM with it)
     tg.push(telegramPrivateMessage({ id: 777, first_name: "Owner" }, "hi bot"));
@@ -306,7 +306,7 @@ describe("scheduled tasks end to end", () => {
     // the trial run asks the creator, who approves: the approval becomes the task's grant
     const trial = await owner({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/schedules/${task.id}/run`,
+      url: `/api/v1/orgs/${orgId}/automations/${task.id}/run`,
       payload: { trial: true },
     });
     expect(trial.statusCode, trial.body).toBe(202);
@@ -332,7 +332,7 @@ describe("scheduled tasks end to end", () => {
     expect(toolsCountState().ask).toBe(asked + 1);
     const grants = await owner({
       method: "GET",
-      url: `/api/v1/orgs/${orgId}/schedules/${task.id}/grants`,
+      url: `/api/v1/orgs/${orgId}/automations/${task.id}/grants`,
     });
     expect(grants.statusCode, grants.body).toBe(200);
     expect((grants.json() as { items: { toolKey: string; stale: boolean }[] }).items).toEqual([

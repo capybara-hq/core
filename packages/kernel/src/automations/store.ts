@@ -1,23 +1,19 @@
 import { Injectable } from "@nestjs/common";
 import type { Selectable, Updateable } from "kysely";
 import { sql } from "kysely";
-import type {
-  KernelSchemaDb,
-  ScheduledTaskRunsTable,
-  ScheduledTasksTable,
-} from "../db/kernel-schema.js";
+import type { AutomationRunsTable, AutomationsTable, KernelSchemaDb } from "../db/kernel-schema.js";
 import { asPlatform } from "../infra/database/org-scope.js";
-import type { ScheduledTask, ScheduledTaskGrant, TaskRun, TaskRunStatus } from "./types.js";
+import type { Automation, AutomationGrant, TaskRun, TaskRunStatus } from "./types.js";
 
 /** What a caller supplies to create a task; the counters, pause fields and timestamps default. */
-export type ScheduledTaskInsert = Omit<
-  ScheduledTask,
+export type AutomationInsert = Omit<
+  Automation,
   "pauseReason" | "pausedBy" | "consecutiveFailures" | "createdAt" | "updatedAt"
 >;
 
 /** The fields a task update may change (`updated_at` is always refreshed). */
-export type ScheduledTaskPatch = Partial<
-  Omit<ScheduledTask, "id" | "orgId" | "accountId" | "createdAt" | "updatedAt">
+export type AutomationPatch = Partial<
+  Omit<Automation, "id" | "orgId" | "accountId" | "createdAt" | "updatedAt">
 >;
 
 /** What a caller supplies to create a task run; it starts `pending`. */
@@ -42,7 +38,7 @@ const NON_TERMINAL: TaskRunStatus[] = ["pending", "running"];
 const date = (v: Date | string) => (v instanceof Date ? v : new Date(v));
 const dateOrNull = (v: Date | string | null) => (v === null ? null : date(v));
 
-const toTask = (r: Selectable<ScheduledTasksTable>): ScheduledTask => ({
+const toTask = (r: Selectable<AutomationsTable>): Automation => ({
   id: r.id,
   orgId: r.org_id,
   accountId: r.account_id,
@@ -67,9 +63,9 @@ const toTask = (r: Selectable<ScheduledTasksTable>): ScheduledTask => ({
   updatedAt: date(r.updated_at),
 });
 
-const toRun = (r: Selectable<ScheduledTaskRunsTable>): TaskRun => ({
+const toRun = (r: Selectable<AutomationRunsTable>): TaskRun => ({
   id: r.id,
-  taskId: r.task_id,
+  taskId: r.automation_id,
   orgId: r.org_id,
   scheduledFor: date(r.scheduled_for),
   firedAt: dateOrNull(r.fired_at),
@@ -86,8 +82,8 @@ const toRun = (r: Selectable<ScheduledTaskRunsTable>): TaskRun => ({
 const json = (v: unknown) => (v === null ? null : JSON.stringify(v));
 
 /** Maps a task patch to its columns; fields left undefined are not written. */
-function taskColumns(p: ScheduledTaskPatch): Updateable<ScheduledTasksTable> {
-  const c: Updateable<ScheduledTasksTable> = {};
+function taskColumns(p: AutomationPatch): Updateable<AutomationsTable> {
+  const c: Updateable<AutomationsTable> = {};
   if (p.agentId !== undefined) c.agent_id = p.agentId;
   if (p.name !== undefined) c.name = p.name;
   if (p.prompt !== undefined) c.prompt = p.prompt;
@@ -109,15 +105,15 @@ function taskColumns(p: ScheduledTaskPatch): Updateable<ScheduledTasksTable> {
 }
 
 /**
- * Scheduled tasks, their runs and grants (spec §4): reads and writes rows only. Every method takes
+ * Automations, their runs and grants (spec §4): reads and writes rows only. Every method takes
  * the database handle first so the caller decides the transaction (the scanner's `lockDue` and
  * `insertRun` run in one, under the rows' locks).
  */
 @Injectable()
-export class ScheduledTaskStore {
-  async insertTask(t: KernelSchemaDb, task: ScheduledTaskInsert): Promise<ScheduledTask> {
+export class AutomationStore {
+  async insertTask(t: KernelSchemaDb, task: AutomationInsert): Promise<Automation> {
     const row = await t
-      .insertInto("scheduled_tasks")
+      .insertInto("automations")
       .values({
         id: task.id,
         org_id: task.orgId,
@@ -143,9 +139,9 @@ export class ScheduledTaskStore {
   }
 
   /** A live (not deleted) task of the org; null when missing, deleted or in another org. */
-  async getTask(t: KernelSchemaDb, orgId: string, id: string): Promise<ScheduledTask | null> {
+  async getTask(t: KernelSchemaDb, orgId: string, id: string): Promise<Automation | null> {
     const row = await t
-      .selectFrom("scheduled_tasks")
+      .selectFrom("automations")
       .selectAll()
       .where("org_id", "=", orgId)
       .where("id", "=", id)
@@ -158,9 +154,9 @@ export class ScheduledTaskStore {
    * {@link getTask} under `FOR UPDATE` (call it inside a transaction): a person's write holds the
    * row, so the scanner's `lockDue` skips it until the write commits.
    */
-  async lockTask(t: KernelSchemaDb, orgId: string, id: string): Promise<ScheduledTask | null> {
+  async lockTask(t: KernelSchemaDb, orgId: string, id: string): Promise<Automation | null> {
     const row = await t
-      .selectFrom("scheduled_tasks")
+      .selectFrom("automations")
       .selectAll()
       .where("org_id", "=", orgId)
       .where("id", "=", id)
@@ -176,10 +172,10 @@ export class ScheduledTaskStore {
   async updateTask(
     t: KernelSchemaDb,
     id: string,
-    patch: ScheduledTaskPatch,
-  ): Promise<ScheduledTask | null> {
+    patch: AutomationPatch,
+  ): Promise<Automation | null> {
     const row = await t
-      .updateTable("scheduled_tasks")
+      .updateTable("automations")
       .set({ ...taskColumns(patch), updated_at: sql`now()` })
       .where("id", "=", id)
       .where("deleted_at", "is", null)
@@ -192,7 +188,7 @@ export class ScheduledTaskStore {
   // org-filter: by the id of a task its caller locked under an org filter (lockManaged)
   async softDelete(t: KernelSchemaDb, id: string): Promise<boolean> {
     const r = await t
-      .updateTable("scheduled_tasks")
+      .updateTable("automations")
       .set({ deleted_at: sql`now()`, updated_at: sql`now()`, next_run_at: null })
       .where("id", "=", id)
       .where("deleted_at", "is", null)
@@ -201,13 +197,9 @@ export class ScheduledTaskStore {
   }
 
   /** A creator's live tasks, newest first. */
-  async listForAccount(
-    t: KernelSchemaDb,
-    orgId: string,
-    accountId: string,
-  ): Promise<ScheduledTask[]> {
+  async listForAccount(t: KernelSchemaDb, orgId: string, accountId: string): Promise<Automation[]> {
     const rows = await t
-      .selectFrom("scheduled_tasks")
+      .selectFrom("automations")
       .selectAll()
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
@@ -219,9 +211,9 @@ export class ScheduledTaskStore {
   }
 
   /** Every live task of the org, newest first. */
-  async listForOrg(t: KernelSchemaDb, orgId: string): Promise<ScheduledTask[]> {
+  async listForOrg(t: KernelSchemaDb, orgId: string): Promise<Automation[]> {
     const rows = await t
-      .selectFrom("scheduled_tasks")
+      .selectFrom("automations")
       .selectAll()
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
@@ -234,7 +226,7 @@ export class ScheduledTaskStore {
   /** Live tasks that count against the caps (`active` and `paused`), of the org or one creator. */
   async countActive(t: KernelSchemaDb, orgId: string, accountId?: string): Promise<number> {
     let q = t
-      .selectFrom("scheduled_tasks")
+      .selectFrom("automations")
       .select((eb) => eb.fn.countAll<string>().as("n"))
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
@@ -250,10 +242,10 @@ export class ScheduledTaskStore {
    * locks last until it ends.
    */
   // org-filter: the scan's deployment-wide due-task sweep (LockedCron), each task fired in its own org
-  async lockDue(t: KernelSchemaDb, now: Date, limit: number): Promise<ScheduledTask[]> {
+  async lockDue(t: KernelSchemaDb, now: Date, limit: number): Promise<Automation[]> {
     return asPlatform("deployment-wide due-task sweep", async () => {
       const rows = await t
-        .selectFrom("scheduled_tasks")
+        .selectFrom("automations")
         .selectAll()
         .where("status", "=", "active")
         .where("deleted_at", "is", null)
@@ -270,14 +262,14 @@ export class ScheduledTaskStore {
 
   /**
    * Inserts a task run; null when a non-trial run for the same tick already exists (the
-   * exactly-once guard, `UNIQUE (task_id, scheduled_for) WHERE NOT trial`).
+   * exactly-once guard, `UNIQUE (automation_id, scheduled_for) WHERE NOT trial`).
    */
   async insertRun(t: KernelSchemaDb, run: TaskRunInsert): Promise<TaskRun | null> {
     const row = await t
-      .insertInto("scheduled_task_runs")
+      .insertInto("automation_runs")
       .values({
         id: run.id,
-        task_id: run.taskId,
+        automation_id: run.taskId,
         org_id: run.orgId,
         scheduled_for: run.scheduledFor,
         trial: run.trial,
@@ -288,7 +280,7 @@ export class ScheduledTaskStore {
         conversation_id: run.conversationId ?? null,
       })
       .onConflict((oc) =>
-        oc.columns(["task_id", "scheduled_for"]).where("trial", "=", false).doNothing(),
+        oc.columns(["automation_id", "scheduled_for"]).where("trial", "=", false).doNothing(),
       )
       .returningAll()
       .executeTakeFirst();
@@ -299,7 +291,7 @@ export class ScheduledTaskStore {
   // org-filter: by task run id for the fire / settle jobs only; the id is the kernel-written job
   // payload or a run row the job already holds, never caller input
   async updateRun(t: KernelSchemaDb, id: string, patch: TaskRunPatch): Promise<TaskRun | null> {
-    const c: Updateable<ScheduledTaskRunsTable> = {};
+    const c: Updateable<AutomationRunsTable> = {};
     if (patch.scheduledFor !== undefined) c.scheduled_for = patch.scheduledFor;
     if (patch.firedAt !== undefined) c.fired_at = patch.firedAt;
     if (patch.conversationId !== undefined) c.conversation_id = patch.conversationId;
@@ -310,14 +302,14 @@ export class ScheduledTaskStore {
     if (patch.missingGrants !== undefined) c.missing_grants = JSON.stringify(patch.missingGrants);
     if (Object.keys(c).length === 0) {
       const row = await t
-        .selectFrom("scheduled_task_runs")
+        .selectFrom("automation_runs")
         .selectAll()
         .where("id", "=", id)
         .executeTakeFirst();
       return row ? toRun(row) : null;
     }
     const row = await t
-      .updateTable("scheduled_task_runs")
+      .updateTable("automation_runs")
       .set(c)
       .where("id", "=", id)
       .returningAll()
@@ -336,9 +328,9 @@ export class ScheduledTaskStore {
     exceptId?: string,
   ): Promise<TaskRun | null> {
     let q = t
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .selectAll()
-      .where("task_id", "=", taskId)
+      .where("automation_id", "=", taskId)
       .where("status", "in", NON_TERMINAL);
     if (exceptId !== undefined) q = q.where("id", "!=", exceptId);
     const row = await q
@@ -355,7 +347,7 @@ export class ScheduledTaskStore {
    */
   async countFiredSince(t: KernelSchemaDb, orgId: string, since: Date): Promise<number> {
     const row = await t
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .select((eb) => eb.fn.countAll<string>().as("n"))
       .where("org_id", "=", orgId)
       .where("fired_at", ">=", since)
@@ -365,12 +357,12 @@ export class ScheduledTaskStore {
   }
 
   /** A task's runs, latest tick first. */
-  // org-filter: by the id of a task its caller read under an org filter (ScheduledTasksService.get)
+  // org-filter: by the id of a task its caller read under an org filter (AutomationsService.get)
   async listRuns(t: KernelSchemaDb, taskId: string, limit: number): Promise<TaskRun[]> {
     const rows = await t
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .selectAll()
-      .where("task_id", "=", taskId)
+      .where("automation_id", "=", taskId)
       .orderBy("scheduled_for", "desc")
       .orderBy("id", "desc")
       .limit(limit)
@@ -380,7 +372,7 @@ export class ScheduledTaskStore {
 
   /**
    * The runs of these tasks of the org with `scheduled_for` in `[from, to)`, trial included, by tick, at most
-   * `limit` (the calendar; `scheduled_task_runs_task_idx` per task).
+   * `limit` (the calendar; `automation_runs_automation_idx` per task).
    */
   async listRunsBetween(
     t: KernelSchemaDb,
@@ -392,10 +384,10 @@ export class ScheduledTaskStore {
   ): Promise<TaskRun[]> {
     if (taskIds.length === 0) return [];
     const rows = await t
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .selectAll()
       .where("org_id", "=", orgId)
-      .where("task_id", "in", [...taskIds])
+      .where("automation_id", "in", [...taskIds])
       .where("scheduled_for", ">=", from)
       .where("scheduled_for", "<", to)
       .orderBy("scheduled_for")
@@ -405,11 +397,11 @@ export class ScheduledTaskStore {
     return rows.map(toRun);
   }
 
-  async listGrants(t: KernelSchemaDb, taskId: string): Promise<ScheduledTaskGrant[]> {
+  async listGrants(t: KernelSchemaDb, taskId: string): Promise<AutomationGrant[]> {
     const rows = await t
-      .selectFrom("scheduled_task_grants")
+      .selectFrom("automation_grants")
       .select(["tool_key", "spec_hash", "connector_id"])
-      .where("task_id", "=", taskId)
+      .where("automation_id", "=", taskId)
       .orderBy("tool_key")
       .execute();
     return rows.map((r) => ({
@@ -420,17 +412,17 @@ export class ScheduledTaskStore {
   }
 
   /** Adds a grant, replacing the task's grant of the same tool key. */
-  async addGrant(t: KernelSchemaDb, taskId: string, grant: ScheduledTaskGrant): Promise<void> {
+  async addGrant(t: KernelSchemaDb, taskId: string, grant: AutomationGrant): Promise<void> {
     await t
-      .insertInto("scheduled_task_grants")
+      .insertInto("automation_grants")
       .values({
-        task_id: taskId,
+        automation_id: taskId,
         tool_key: grant.toolKey,
         spec_hash: grant.specHash,
         connector_id: grant.connectorId,
       })
       .onConflict((oc) =>
-        oc.columns(["task_id", "tool_key"]).doUpdateSet({
+        oc.columns(["automation_id", "tool_key"]).doUpdateSet({
           spec_hash: grant.specHash,
           connector_id: grant.connectorId,
           created_at: sql`now()`,
@@ -441,8 +433,8 @@ export class ScheduledTaskStore {
 
   async removeGrant(t: KernelSchemaDb, taskId: string, toolKey: string): Promise<boolean> {
     const r = await t
-      .deleteFrom("scheduled_task_grants")
-      .where("task_id", "=", taskId)
+      .deleteFrom("automation_grants")
+      .where("automation_id", "=", taskId)
       .where("tool_key", "=", toolKey)
       .executeTakeFirst();
     return Number(r.numDeletedRows) > 0;
@@ -462,9 +454,9 @@ export async function findTaskGrant(
   connectorId: string | null,
 ): Promise<boolean> {
   const row = await t
-    .selectFrom("scheduled_task_grants")
+    .selectFrom("automation_grants")
     .select("tool_key")
-    .where("task_id", "=", taskId)
+    .where("automation_id", "=", taskId)
     .where("tool_key", "=", toolKey)
     .where("spec_hash", "=", specHash)
     .where(sql<boolean>`connector_id IS NOT DISTINCT FROM ${connectorId}`)

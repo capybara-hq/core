@@ -811,7 +811,7 @@ export class OrgsOperations implements OnModuleInit {
       defineOperation({
         id: "orgs.audit",
         description:
-          "The audit log of this conversation's org (org admins), newest first: members and invitations, settings, agents, connectors, skills, plugins and extensions in the org, channels, schedules. Each event has its id, time, actor (id, name, email; null for the kernel itself), viaToken (done with a personal access token), viaAgent (done through the Platform tool), action and target; never the event's details. action filters by an action name or its prefix (e.g. org.member.). limit is 1 to 100 (default 20); pages by keyset: pass the returned next as params.after (null: no more).",
+          "The audit log of this conversation's org (org admins), newest first: members and invitations, settings, agents, connectors, skills, plugins and extensions in the org, channels, automations. Each event has its id, time, actor (id, name, email; null for the kernel itself), viaToken (done with a personal access token), viaAgent (done through the Platform tool), action and target; never the event's details. action filters by an action name or its prefix (e.g. org.member.). limit is 1 to 100 (default 20); pages by keyset: pass the returned next as params.after (null: no more).",
         input: OrgAuditListQuery.strict(),
         example: { limit: 20 },
         authz: { orgAction: "org.update" },

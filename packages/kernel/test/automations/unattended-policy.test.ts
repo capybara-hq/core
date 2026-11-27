@@ -14,6 +14,14 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { AgentDefinition } from "../../src/agents/definition.js";
+import { grantRefusalOf } from "../../src/automations/grant-rules.js";
+import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
+import {
+  UNATTENDED_ASK_ERROR,
+  UNATTENDED_CONNECTION_ERROR,
+  UNATTENDED_FIXED_ASK_ERROR,
+  UNATTENDED_QUESTION_ERROR,
+} from "../../src/automations/unattended.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -24,14 +32,6 @@ import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { FORBIDDEN_TOOLS_UNREADABLE_ERROR } from "../../src/orgs/settings.service.js";
 import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call.js";
-import { grantRefusalOf } from "../../src/schedules/grant-rules.js";
-import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
-import {
-  UNATTENDED_ASK_ERROR,
-  UNATTENDED_CONNECTION_ERROR,
-  UNATTENDED_FIXED_ASK_ERROR,
-  UNATTENDED_QUESTION_ERROR,
-} from "../../src/schedules/unattended.js";
 import type { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { type ConnectorAuth, CredentialMissing } from "../../src/tools/credentials.js";
 import type { ToolPipeline, ToolStepContext } from "../../src/tools/pipeline.js";
@@ -52,7 +52,7 @@ import {
 } from "../helpers/tools.js";
 
 /**
- * Scheduled tasks spec §7 (Task 7): the policy of unattended runs (task grants, `unattendedAsk`,
+ * Automations spec §7 (Task 7): the policy of unattended runs (task grants, `unattendedAsk`,
  * `forbiddenTools`, skill changes through the Platform tool, the other waits for a person) and trial runs, whose approvals
  * become task grants. Runs the real pipeline with the default policy (`createDecidePolicy`).
  */
@@ -65,7 +65,7 @@ let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let eventLog: EventLog;
 const silent = createLogger("error", { write: () => {} });
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 
 const base = KernelConfigSchema.parse({
   db: { url: "postgres://x/y" },
@@ -312,7 +312,7 @@ let runId: string;
 let taskId: string;
 let taskRunId: string;
 
-const taskRow = (): ScheduledTaskInsert => ({
+const taskRow = (): AutomationInsert => ({
   id: taskId,
   orgId: seed.orgId,
   accountId: seed.accountId,
@@ -348,7 +348,7 @@ async function insertRun(
       agent_version: 1,
       trigger_account_id: seed.accountId,
       trigger_seq: 1,
-      scheduled_task_run_id: servedTaskRun,
+      automation_run_id: servedTaskRun,
     })
     .execute();
 }
@@ -388,8 +388,8 @@ async function seedTaskRun(trial: boolean): Promise<void> {
   await insertRun(runId, seed.conversationId, taskRunId);
 }
 
-async function setScheduleSettings(s: Record<string, unknown>): Promise<void> {
-  await sql`UPDATE capybara.orgs SET settings = jsonb_set(settings, '{scheduledTasks}', ${JSON.stringify(s)}::jsonb)
+async function setAutomationSettings(s: Record<string, unknown>): Promise<void> {
+  await sql`UPDATE capybara.orgs SET settings = jsonb_set(settings, '{automations}', ${JSON.stringify(s)}::jsonb)
     WHERE id = ${seed.orgId}`.execute(raw);
 }
 
@@ -529,7 +529,7 @@ describe("unattended runs (spec §7)", () => {
   });
 
   it("wait mode creates an approval for the creator", async () => {
-    await setScheduleSettings({ unattendedAsk: "wait" });
+    await setAutomationSettings({ unattendedAsk: "wait" });
     const { outcome } = await runCalls([{ id: "c1", name: GATED.key, input: {} }]);
     expect(outcome).toMatchObject({ kind: "suspended", waitingFor: { kind: "approval" } });
     const rows = await approvalRows();
@@ -540,7 +540,7 @@ describe("unattended runs (spec §7)", () => {
   });
 
   it("forbidden tool is denied even with a grant", async () => {
-    await setScheduleSettings({ forbiddenTools: [GATED.key] });
+    await setAutomationSettings({ forbiddenTools: [GATED.key] });
     await grant(GATED);
     const { evs } = await runCalls([{ id: "c1", name: GATED.key, input: {} }]);
     expect(calls).toEqual([]);
@@ -553,7 +553,7 @@ describe("unattended runs (spec §7)", () => {
   });
 
   it("an unreadable forbidden tool list refuses every call (fails closed)", async () => {
-    await setScheduleSettings({ forbiddenTools: "not a list" });
+    await setAutomationSettings({ forbiddenTools: "not a list" });
     await grant(GATED);
     const { evs } = await runCalls([
       { id: "c1", name: GATED.key, input: {} },
@@ -702,7 +702,7 @@ describe("unattended runs (spec §7)", () => {
   });
 
   it("AskUserQuestion waits as today in wait mode", async () => {
-    await setScheduleSettings({ unattendedAsk: "wait" });
+    await setAutomationSettings({ unattendedAsk: "wait" });
     const { outcome } = await runCalls([{ id: "c1", name: "AskUserQuestion", input: {} }]);
     expect(outcome).toMatchObject({ kind: "suspended", waitingFor: { kind: "input" } });
   });
@@ -853,7 +853,7 @@ describe("trial runs (spec §7)", () => {
   });
 
   it("a forbidden tool approved in a trial is not kept", async () => {
-    await setScheduleSettings({ forbiddenTools: [GATED.key] });
+    await setAutomationSettings({ forbiddenTools: [GATED.key] });
     await askAndDecide(GATED, seed.accountId, "once");
     expect(await store.listGrants(db, taskId)).toEqual([]);
   });
@@ -869,7 +869,7 @@ describe("trial runs (spec §7)", () => {
   });
 
   it("a tool whose base key the org forbids is not kept through its per-call key", async () => {
-    await setScheduleSettings({ forbiddenTools: [GATED.key] });
+    await setAutomationSettings({ forbiddenTools: [GATED.key] });
     expect(
       grantRefusalOf(`${GATED.key}:op`, GATED, {
         role: "member",

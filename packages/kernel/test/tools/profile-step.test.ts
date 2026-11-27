@@ -173,7 +173,7 @@ beforeEach(async () => {
     "capybara.audit_events, capybara.subagent_dispatches, capybara.approvals, " +
       "capybara.conversation_tool_grants, capybara.tool_grants, capybara.tool_outputs, " +
       "capybara.conversation_events, capybara.runs, capybara.conversations, " +
-      "capybara.scheduled_task_runs, capybara.scheduled_tasks, capybara.agent_versions, " +
+      "capybara.automation_runs, capybara.automations, capybara.agent_versions, " +
       "capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, " +
       "capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts, " +
       "capybara.model_purpose_mappings",
@@ -307,16 +307,16 @@ const decide = (approvalId: string, body: Record<string, unknown>, req: Req = ow
     payload: body,
   });
 
-async function setScheduleSettings(s: Record<string, unknown>): Promise<void> {
-  await sql`UPDATE capybara.orgs SET settings = jsonb_set(settings, '{scheduledTasks}', ${JSON.stringify(s)}::jsonb)
+async function setAutomationSettings(s: Record<string, unknown>): Promise<void> {
+  await sql`UPDATE capybara.orgs SET settings = jsonb_set(settings, '{automations}', ${JSON.stringify(s)}::jsonb)
     WHERE id = ${orgId}`.execute(db);
 }
 
-/** Runs a scheduled task of `agentId` whose prompt is `token` once; returns its conversation. */
+/** Runs an automation of `agentId` whose prompt is `token` once; returns its conversation. */
 async function runTask(agentId: string, token: string): Promise<string> {
   const task = await owner({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/schedules`,
+    url: `/api/v1/orgs/${orgId}/automations`,
     payload: {
       agentId,
       name: "Probe",
@@ -330,7 +330,7 @@ async function runTask(agentId: string, token: string): Promise<string> {
   const taskId = (task.json() as { task: { id: string } }).task.id;
   const run = await owner({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/schedules/${taskId}/run`,
+    url: `/api/v1/orgs/${orgId}/automations/${taskId}/run`,
     payload: {},
   });
   expect(run.statusCode, run.body).toBe(202);
@@ -339,7 +339,7 @@ async function runTask(agentId: string, token: string): Promise<string> {
     async () =>
       (
         await db
-          .selectFrom("scheduled_task_runs")
+          .selectFrom("automation_runs")
           .select("conversation_id")
           .where("id", "=", taskRunId)
           .executeTakeFirst()
@@ -574,7 +574,7 @@ describe("what the profile never decides", () => {
     expect(await decisionsOf(failed)).toEqual([]);
 
     // the org's forbidden tools: denied
-    await setScheduleSettings({ forbiddenTools: [ASK] });
+    await setAutomationSettings({ forbiddenTools: [ASK] });
     const forbidden = await runTask(agentId, "p-task forbidden");
     await settled(forbidden);
     expect((await resultsOf(forbidden))[0]?.payload).toMatchObject({
@@ -584,7 +584,7 @@ describe("what the profile never decides", () => {
     expect(await decisionsOf(forbidden)).toEqual([]);
 
     // wait mode: the creator's approval
-    await setScheduleSettings({ unattendedAsk: "wait" });
+    await setAutomationSettings({ unattendedAsk: "wait" });
     const waiting = await runTask(agentId, "p-task wait");
     const ask = await pendingApproval(waiting);
     expect(ask).toMatchObject({ requested_for: ownerId, approver_role: null });

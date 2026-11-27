@@ -2,15 +2,15 @@ import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import type { DeviceExecGrants } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { taskGrantsRunOf } from "../automations/unattended.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
-import { taskGrantsRunOf } from "../schedules/unattended.js";
 import { coversHost } from "./modes.js";
 
 /** The most hosts one exec's grants carry (the device protocol's limit). */
 export const MAX_GRANT_HOSTS = 100;
 
-/** The key prefix of a scheduled task's network grant (`schedules/grant-rules.ts`). */
+/** The key prefix of an automation's network grant (`automations/grant-rules.ts`). */
 const NETWORK_KEY_PREFIX = "network:";
 
 /** The statuses of a run that has not ended: its run grants still apply. */
@@ -30,7 +30,7 @@ export interface NetworkRunState {
   /** A network ask of the run tree is still pending (at most one at a time). */
   pending: boolean;
   /**
-   * Hosts the scheduled task the run serves approves on this device (spec §8.1; unattended runs
+   * Hosts the automation the run serves approves on this device (spec §8.1; unattended runs
    * only, read only with a `deviceId`): never asked about nor recorded as missing. Absent: none.
    */
   taskGranted?: Set<string>;
@@ -72,7 +72,7 @@ function askedOf(detail: unknown): string[] {
  * tree is the runs of one budget window (`runs.budget_run_id` lineage): a sub-agent's run sees the
  * root's grants, another run tree never does. The hosts a decision allowed are its
  * `detail.grantedHosts`; a decision without them grants nothing. In an unattended run of a
- * scheduled task, the task's `network:<host>` grants (spec §8.1) join them.
+ * automation, the task's `network:<host>` grants (spec §8.1) join them.
  */
 @Injectable()
 export class NetworkGrants {
@@ -82,7 +82,7 @@ export class NetworkGrants {
    * Hosts allowed for this exec on `deviceId`: the run tree's once-approved network asks in
    * `orgId` about that device, while the tree's root run has not ended (a grant ends with its run;
    * a later run of the same budget window does not inherit it), with the root run as their source
-   * and the latest decider as its account; and in an unattended run of a scheduled task, the
+   * and the latest decider as its account; and in an unattended run of an automation, the
    * task's network grants (spec §8.1) when the device is its creator's, with the task as their
    * source and the creator as its account. Both together are one grant: the hosts of both, the
    * task as the source. Undefined when none. The device applies them only when its owner allows
@@ -179,7 +179,7 @@ export class NetworkGrants {
   }
 
   /**
-   * A scheduled task's network grants for an unattended run (spec §8.1): the task's
+   * An automation's network grants for an unattended run (spec §8.1): the task's
    * `network:<host>` grants when the run serves a task run that is no trial run and no person
    * joined (`taskGrantsRunOf`, inherited by its sub-agents), the task is of `orgId` (when given)
    * and `deviceId` is a live device of the task's org owned by the task's creator (a creator
@@ -204,9 +204,9 @@ export class NetworkGrants {
       .executeTakeFirst();
     if (device === undefined) return undefined;
     const rows = await this.db
-      .selectFrom("scheduled_task_grants")
+      .selectFrom("automation_grants")
       .select("tool_key")
-      .where("task_id", "=", task.taskId)
+      .where("automation_id", "=", task.taskId)
       .where("tool_key", "like", `${NETWORK_KEY_PREFIX}%`)
       .orderBy("tool_key")
       .execute();

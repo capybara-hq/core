@@ -7,7 +7,7 @@ import type { ResolvedTool } from "../tools/registry.js";
 import { changesAgentSkills } from "./unattended.js";
 
 /**
- * The one rule for what can be a scheduled task's grant (spec §7): the task form and
+ * The one rule for what can be an automation's grant (spec §7): the task form and
  * `addGrants`, a trial run's kept approvals and the unattended policy's `missing_grants` all ask
  * it. A plain module (no provider): the tool policy imports it.
  */
@@ -64,7 +64,7 @@ export function grantRefusalOf(
   if (changesAgentSkills(toolKey)) {
     return {
       code: "not_grantable",
-      message: `${toolKey} cannot be approved for a scheduled task: an unattended run never changes the agent's skills`,
+      message: `${toolKey} cannot be approved for an automation: an unattended run never changes the agent's skills`,
     };
   }
   if (!tool) {
@@ -73,7 +73,7 @@ export function grantRefusalOf(
   if (toolKey !== tool.key) {
     return {
       code: "not_grantable",
-      message: `${toolKey} is decided per call and cannot be approved in advance for a scheduled task`,
+      message: `${toolKey} is decided per call and cannot be approved in advance for an automation`,
     };
   }
   if (tool.requiredRole !== undefined && !roleAtLeast(ctx.role, tool.requiredRole)) {
@@ -136,7 +136,7 @@ export function networkGrantRefusal(
   if (host.startsWith("*.") || validateAllowHost(host).length > 0) {
     return {
       code: "not_grantable",
-      message: `${host} cannot be approved for a scheduled task: give one exact domain name (no wildcard, no IP address or local name)`,
+      message: `${host} cannot be approved for an automation: give one exact domain name (no wildcard, no IP address or local name)`,
     };
   }
   if (!orgAllows(host, ctx.limits)) {
@@ -210,7 +210,7 @@ export function gitGrantRefusal(
   if (normalizeGitRepo(repo) !== repo) {
     return {
       code: "not_grantable",
-      message: `${key} cannot be approved for a scheduled task: name one repository as git:push:<owner>/<repo>`,
+      message: `${key} cannot be approved for an automation: name one repository as git:push:<owner>/<repo>`,
     };
   }
   return null;
@@ -234,7 +234,7 @@ export function tierGrantRefusal(key: string): { code: GrantRefusalCode; message
   if (!isTierGrantKey(key)) return null;
   return {
     code: "not_grantable",
-    message: `${key} cannot be approved for a scheduled task: sandbox levels are no longer task grants`,
+    message: `${key} cannot be approved for an automation: sandbox levels are no longer task grants`,
   };
 }
 

@@ -18,7 +18,7 @@ import {
   type TestKernel,
 } from "../helpers/runs.js";
 
-/** The scheduled-tasks API (spec 2026-11-11-scheduled-tasks §10) on one kernel. */
+/** The automations API (spec 2026-11-11-scheduled-tasks §10) on one kernel. */
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -48,7 +48,7 @@ let admin: Req;
 let outsider: Req;
 let agentId: string;
 
-const base = (org = orgId) => `/api/v1/orgs/${org}/schedules`;
+const base = (org = orgId) => `/api/v1/orgs/${org}/automations`;
 const codeOf = (res: { json(): unknown }) =>
   (res.json() as { error?: { code?: string } }).error?.code;
 
@@ -115,7 +115,7 @@ async function create(req: Req, over: Record<string, unknown> = {}): Promise<Tas
   return (res.json() as { task: Task }).task;
 }
 
-describe("schedules API", () => {
+describe("automations API", () => {
   it("create, get, list, update, pause, resume, delete", async () => {
     const t = await create(alice, { timeZone: "Asia/Shanghai" });
     expect(t).toMatchObject({ name: "Daily digest", status: "active", accountId: aliceId });
@@ -145,7 +145,7 @@ describe("schedules API", () => {
     expect(res.statusCode, res.body).toBe(204);
     res = await alice({ method: "GET", url: `${base()}/${t.id}` });
     expect(res.statusCode).toBe(404);
-    expect(codeOf(res)).toBe("schedule.not_found");
+    expect(codeOf(res)).toBe("automation.not_found");
   });
 
   it("run now, runs and grants", async () => {
@@ -202,7 +202,7 @@ describe("schedules API", () => {
     for (const bad of ["git:push:acme", "git:push:acme/app/x", "git:push:../x"]) {
       res = await add(bad);
       expect(res.statusCode, bad).toBe(400);
-      expect(codeOf(res)).toBe("schedule.grant_not_allowed");
+      expect(codeOf(res)).toBe("automation.grant_not_allowed");
       expect(res.body).toContain("git:push:<owner>/<repo>");
     }
     // a push is approved by a person on the task page, never with a token
@@ -240,7 +240,7 @@ describe("schedules API", () => {
     expect(res.statusCode, res.body).toBe(200);
     res = await admin({ method: "PATCH", url: `${base()}/${t.id}`, payload: { name: "x" } });
     expect(res.statusCode).toBe(403);
-    expect(codeOf(res)).toBe("schedule.forbidden");
+    expect(codeOf(res)).toBe("automation.forbidden");
   });
 
   it("a guest gets 403 except list, pause and delete of a task it created before being demoted", async () => {
@@ -286,7 +286,7 @@ describe("schedules API", () => {
     expect(res.statusCode).toBe(404);
     res = await outsider({ method: "GET", url: `${base(otherOrgId)}/${t.id}` });
     expect(res.statusCode).toBe(404);
-    expect(codeOf(res)).toBe("schedule.not_found");
+    expect(codeOf(res)).toBe("automation.not_found");
     res = await outsider({ method: "DELETE", url: `${base(otherOrgId)}/${t.id}` });
     expect(res.statusCode).toBe(404);
   });
@@ -331,25 +331,25 @@ describe("schedules API", () => {
   it("operations that create or change a task or its grants are never remembered", () => {
     const ops = k.app.get(PlatformOperations);
     for (const id of [
-      "schedules.create",
-      "schedules.update",
-      "schedules.delete",
-      "schedules.run",
-      "schedules.resume",
-      "schedules.grants-add",
-      "schedules.grants-remove",
+      "automations.create",
+      "automations.update",
+      "automations.delete",
+      "automations.run",
+      "automations.resume",
+      "automations.grants-add",
+      "automations.grants-remove",
     ]) {
       expect(ops.get(id), id).toMatchObject({ confirm: "personal", rememberable: false });
     }
     for (const id of [
-      "schedules.list",
-      "schedules.get",
-      "schedules.runs",
-      "schedules.grants-list",
+      "automations.list",
+      "automations.get",
+      "automations.runs",
+      "automations.grants-list",
     ]) {
       expect(ops.get(id), id).toMatchObject({ confirm: "read" });
     }
-    expect(ops.get("schedules.pause")?.authz).toEqual({ orgAction: "org.read" });
-    expect(ops.get("schedules.list")?.authz).toEqual({ orgAction: "org.read" });
+    expect(ops.get("automations.pause")?.authz).toEqual({ orgAction: "org.read" });
+    expect(ops.get("automations.list")?.authz).toEqual({ orgAction: "org.read" });
   });
 });

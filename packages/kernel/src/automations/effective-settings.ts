@@ -1,14 +1,14 @@
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import {
+  type AutomationsSettings,
   invalidStoredForbiddenTools,
   parseOrgSettings,
   readStoredOrgSettings,
-  type ScheduledTasksSettings,
 } from "../orgs/settings.service.js";
 
-/** The platform's bounds for the org settings (kernel config `schedules.*`). */
-export interface ScheduleBounds {
+/** The platform's bounds for the org settings (kernel config `automations.*`). */
+export interface AutomationBounds {
   minIntervalFloorMinutes: number;
   maxTasksPerMemberCap: number;
   maxTasksPerOrgCap: number;
@@ -16,20 +16,20 @@ export interface ScheduleBounds {
 }
 
 /**
- * The org's scheduled-task settings after clamping to the platform bounds. `forbiddenToolsUnreadable`:
+ * The org's automation settings after clamping to the platform bounds. `forbiddenToolsUnreadable`:
  * the stored list cannot be read (`invalidStoredForbiddenTools`); `forbiddenTools` is then `[]`
  * and unattended runs of the org must fail instead of running with nothing forbidden.
  */
-export type EffectiveScheduleSettings = ScheduledTasksSettings & {
+export type EffectiveAutomationSettings = AutomationsSettings & {
   forbiddenToolsUnreadable: boolean;
 };
 
 /** An org value outside the platform bounds is clamped: the interval up, the counts down. */
-export function effectiveScheduleSettings(
-  org: ScheduledTasksSettings,
-  bounds: ScheduleBounds,
+export function effectiveAutomationSettings(
+  org: AutomationsSettings,
+  bounds: AutomationBounds,
   forbiddenToolsUnreadable = false,
-): EffectiveScheduleSettings {
+): EffectiveAutomationSettings {
   return {
     ...org,
     forbiddenTools: [...org.forbiddenTools],
@@ -42,15 +42,15 @@ export function effectiveScheduleSettings(
 }
 
 /** Read the org's effective settings live (PG and the current kernel config). */
-export async function readScheduleSettings(
+export async function readAutomationSettings(
   db: KernelSchemaDb,
   config: Pick<KernelConfigService, "get">,
   orgId: string,
-): Promise<EffectiveScheduleSettings> {
+): Promise<EffectiveAutomationSettings> {
   const raw = await readStoredOrgSettings(db, orgId);
-  return effectiveScheduleSettings(
-    parseOrgSettings(raw).scheduledTasks,
-    config.get().schedules,
+  return effectiveAutomationSettings(
+    parseOrgSettings(raw).automations,
+    config.get().automations,
     invalidStoredForbiddenTools(raw),
   );
 }

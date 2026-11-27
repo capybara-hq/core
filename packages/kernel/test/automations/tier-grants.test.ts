@@ -3,7 +3,7 @@ import {
   isPolicyGrantKey,
   isTierGrantKey,
   tierGrantRefusal,
-} from "../../src/schedules/grant-rules.js";
+} from "../../src/automations/grant-rules.js";
 
 /**
  * Sandbox-level task grants are gone (auto mode spec §4.4): a stale `tier:<...>` key is still

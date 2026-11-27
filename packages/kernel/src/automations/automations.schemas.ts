@@ -3,11 +3,11 @@ import type { ModelRef } from "../agents/definition.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 import { IanaTimeZone } from "../time-zone.js";
-import type { CreateTaskInput, GrantInput, UpdateTaskInput } from "./scheduled-tasks.service.js";
+import type { CreateTaskInput, GrantInput, UpdateTaskInput } from "./automations.service.js";
 
 /** Longest task name and prompt, in characters (the same bounds as the service). */
-export const SCHEDULE_NAME_MAX = 200;
-export const SCHEDULE_PROMPT_MAX = 20_000;
+export const AUTOMATION_NAME_MAX = 200;
+export const AUTOMATION_PROMPT_MAX = 20_000;
 
 const Id = z.string().min(1).max(100);
 
@@ -15,13 +15,13 @@ const Id = z.string().min(1).max(100);
  * When a task fires, before the zone is fixed: a 5-field cron, or a local date-time
  * (`2026-12-01T09:00`, no offset) for a one-off run.
  */
-export const ScheduleTriggerInput = z.discriminatedUnion("kind", [
+export const AutomationTriggerInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("cron"), expr: z.string().trim().min(1).max(200) }).strict(),
   z.object({ kind: z.literal("once"), at: z.string().trim().min(1).max(40) }).strict(),
 ]);
 
 /** The IM chat a `chat`-mode task posts into. */
-export const ScheduleChatInput = z
+export const AutomationChatInput = z
   .object({
     connectionId: Id,
     chatId: z.string().min(1).max(500),
@@ -33,11 +33,11 @@ export const ScheduleChatInput = z
  * A model pick: the same `{ provider, model }` an agent's definition uses, its strings bounded on
  * the fields (so the JSON schema shows the bounds). `new` mode only.
  */
-export const ScheduleModel = z
+export const AutomationModel = z
   .object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200) })
   .strict() satisfies z.ZodType<ModelRef>;
 
-export const ScheduleEffort = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export const AutomationEffort = z.enum(["low", "medium", "high", "xhigh", "max"]);
 
 /** An end time as an ISO 8601 timestamp with an offset (`2026-12-31T00:00:00Z`). */
 const ExpiresAt = z.string().datetime({ offset: true });
@@ -46,55 +46,55 @@ const ExpiresAt = z.string().datetime({ offset: true });
  * A tool the creator pre-approves for the task, or a domain as `network:<host>` (network
  * ask-to-allow spec §8.1: one exact host; a host name is at most 253 characters).
  */
-export const ScheduleGrantInput = z
+export const AutomationGrantInput = z
   .object({ toolKey: z.string().trim().min(1).max(270), connectorId: Id.optional() })
   .strict();
 
-const Name = z.string().trim().min(1).max(SCHEDULE_NAME_MAX);
-const Prompt = z.string().trim().min(1).max(SCHEDULE_PROMPT_MAX);
+const Name = z.string().trim().min(1).max(AUTOMATION_NAME_MAX);
+const Prompt = z.string().trim().min(1).max(AUTOMATION_PROMPT_MAX);
 const Mode = z.enum(["new", "conversation", "chat"]);
 
-export const ScheduleCreateBody = z
+export const AutomationCreateBody = z
   .object({
     agentId: Id,
     name: Name,
     prompt: Prompt,
-    trigger: ScheduleTriggerInput,
+    trigger: AutomationTriggerInput,
     /** The browser's zone: used only when the account has no zone of its own. */
     timeZone: IanaTimeZone.optional(),
     mode: Mode,
     conversationId: Id.optional(),
-    chat: ScheduleChatInput.optional(),
+    chat: AutomationChatInput.optional(),
     /** `new` mode only, as `effort` and `deviceId` (a conversation or chat task uses its own). */
-    model: ScheduleModel.optional(),
-    effort: ScheduleEffort.optional(),
+    model: AutomationModel.optional(),
+    effort: AutomationEffort.optional(),
     deviceId: Id.optional(),
     expiresAt: ExpiresAt.nullable().optional(),
-    grants: z.array(ScheduleGrantInput).max(50).optional(),
+    grants: z.array(AutomationGrantInput).max(50).optional(),
   })
   .strict();
 
-export const ScheduleUpdateBody = z
+export const AutomationUpdateBody = z
   .object({
     agentId: Id.optional(),
     name: Name.optional(),
     prompt: Prompt.optional(),
-    trigger: ScheduleTriggerInput.optional(),
+    trigger: AutomationTriggerInput.optional(),
     /** The task's own zone (an explicit change). */
     timeZone: IanaTimeZone.optional(),
     mode: Mode.optional(),
     conversationId: Id.nullable().optional(),
-    chat: ScheduleChatInput.nullable().optional(),
+    chat: AutomationChatInput.nullable().optional(),
     /** `new` mode only; switching to another mode clears them. */
-    model: ScheduleModel.nullable().optional(),
-    effort: ScheduleEffort.nullable().optional(),
+    model: AutomationModel.nullable().optional(),
+    effort: AutomationEffort.nullable().optional(),
     deviceId: Id.nullable().optional(),
     /** Null: the org's default expiry for a cron task (as on create), else never. */
     expiresAt: ExpiresAt.nullable().optional(),
   })
   .strict();
 
-export const ScheduleListQuery = z
+export const AutomationListQuery = z
   .object({
     all: z.enum(["true", "false"]).optional(),
     /** Only the tasks that post into this conversation (the conversation's side panel). */
@@ -109,7 +109,7 @@ const Instant = z.string().datetime({ offset: true });
  * the viewer's zone (local days for the collapse and the cut), `all` (org admins) and `taskId`
  * (one task, never collapsed).
  */
-export const ScheduleCalendarQuery = z
+export const AutomationCalendarQuery = z
   .object({
     from: Instant,
     to: Instant,
@@ -118,77 +118,92 @@ export const ScheduleCalendarQuery = z
     taskId: Id.optional(),
   })
   .strict();
-export const ScheduleChatTargetsQuery = z.object({}).strict();
-export const ScheduleGrantableQuery = z.object({ agentId: Id }).strict();
-export const ScheduleParams = z.object({ id: Id });
-export const ScheduleRunBody = z.object({ trial: z.boolean().optional() }).strict();
-export const ScheduleRunsQuery = z
+export const AutomationChatTargetsQuery = z.object({}).strict();
+export const AutomationGrantableQuery = z.object({ agentId: Id }).strict();
+export const AutomationParams = z.object({ id: Id });
+export const AutomationRunBody = z.object({ trial: z.boolean().optional() }).strict();
+export const AutomationRunsQuery = z
   .object({ limit: z.coerce.number().int().min(1).max(200).optional() })
   .strict();
-export const ScheduleGrantsBody = z
-  .object({ grants: z.array(ScheduleGrantInput).min(1).max(50) })
+export const AutomationGrantsBody = z
+  .object({ grants: z.array(AutomationGrantInput).min(1).max(50) })
   .strict();
-export const ScheduleGrantParams = z.object({ id: Id, toolKey: z.string().min(1).max(270) });
+export const AutomationGrantParams = z.object({ id: Id, toolKey: z.string().min(1).max(270) });
 
-export class ScheduleCreateBodyDto extends createZodDto(ScheduleCreateBody, "ScheduleCreateBody") {}
-export class ScheduleUpdateBodyDto extends createZodDto(ScheduleUpdateBody, "ScheduleUpdateBody") {}
-export class ScheduleListQueryDto extends createZodDto(ScheduleListQuery, "ScheduleListQuery") {}
-export class ScheduleCalendarQueryDto extends createZodDto(
-  ScheduleCalendarQuery,
-  "ScheduleCalendarQuery",
+export class AutomationCreateBodyDto extends createZodDto(
+  AutomationCreateBody,
+  "AutomationCreateBody",
 ) {}
-export class ScheduleChatTargetsQueryDto extends createZodDto(
-  ScheduleChatTargetsQuery,
-  "ScheduleChatTargetsQuery",
+export class AutomationUpdateBodyDto extends createZodDto(
+  AutomationUpdateBody,
+  "AutomationUpdateBody",
 ) {}
-export class ScheduleGrantableQueryDto extends createZodDto(
-  ScheduleGrantableQuery,
-  "ScheduleGrantableQuery",
+export class AutomationListQueryDto extends createZodDto(
+  AutomationListQuery,
+  "AutomationListQuery",
 ) {}
-export class ScheduleParamsDto extends createZodDto(ScheduleParams, "ScheduleParams") {}
-export class ScheduleRunBodyDto extends createZodDto(ScheduleRunBody, "ScheduleRunBody") {}
-export class ScheduleRunsQueryDto extends createZodDto(ScheduleRunsQuery, "ScheduleRunsQuery") {}
-export class ScheduleGrantsBodyDto extends createZodDto(ScheduleGrantsBody, "ScheduleGrantsBody") {}
-export class ScheduleGrantParamsDto extends createZodDto(
-  ScheduleGrantParams,
-  "ScheduleGrantParams",
+export class AutomationCalendarQueryDto extends createZodDto(
+  AutomationCalendarQuery,
+  "AutomationCalendarQuery",
+) {}
+export class AutomationChatTargetsQueryDto extends createZodDto(
+  AutomationChatTargetsQuery,
+  "AutomationChatTargetsQuery",
+) {}
+export class AutomationGrantableQueryDto extends createZodDto(
+  AutomationGrantableQuery,
+  "AutomationGrantableQuery",
+) {}
+export class AutomationParamsDto extends createZodDto(AutomationParams, "AutomationParams") {}
+export class AutomationRunBodyDto extends createZodDto(AutomationRunBody, "AutomationRunBody") {}
+export class AutomationRunsQueryDto extends createZodDto(
+  AutomationRunsQuery,
+  "AutomationRunsQuery",
+) {}
+export class AutomationGrantsBodyDto extends createZodDto(
+  AutomationGrantsBody,
+  "AutomationGrantsBody",
+) {}
+export class AutomationGrantParamsDto extends createZodDto(
+  AutomationGrantParams,
+  "AutomationGrantParams",
 ) {}
 
-/** The schedule routes the Platform operations mirror (`check:platform-ops` keys). */
-export const SCHEDULE_ROUTES: readonly RouteSchemas[] = [
-  { route: "GET /api/v1/orgs/:orgId/schedules", query: ScheduleListQuery },
-  { route: "GET /api/v1/orgs/:orgId/schedules/calendar", query: ScheduleCalendarQuery },
-  { route: "GET /api/v1/orgs/:orgId/schedules/chat-targets", query: ScheduleChatTargetsQuery },
-  { route: "GET /api/v1/orgs/:orgId/schedules/grantable-tools", query: ScheduleGrantableQuery },
-  { route: "POST /api/v1/orgs/:orgId/schedules", body: ScheduleCreateBody },
-  { route: "GET /api/v1/orgs/:orgId/schedules/:id", params: ScheduleParams },
+/** The automation routes the Platform operations mirror (`check:platform-ops` keys). */
+export const AUTOMATION_ROUTES: readonly RouteSchemas[] = [
+  { route: "GET /api/v1/orgs/:orgId/automations", query: AutomationListQuery },
+  { route: "GET /api/v1/orgs/:orgId/automations/calendar", query: AutomationCalendarQuery },
+  { route: "GET /api/v1/orgs/:orgId/automations/chat-targets", query: AutomationChatTargetsQuery },
+  { route: "GET /api/v1/orgs/:orgId/automations/grantable-tools", query: AutomationGrantableQuery },
+  { route: "POST /api/v1/orgs/:orgId/automations", body: AutomationCreateBody },
+  { route: "GET /api/v1/orgs/:orgId/automations/:id", params: AutomationParams },
   {
-    route: "PATCH /api/v1/orgs/:orgId/schedules/:id",
-    params: ScheduleParams,
-    body: ScheduleUpdateBody,
+    route: "PATCH /api/v1/orgs/:orgId/automations/:id",
+    params: AutomationParams,
+    body: AutomationUpdateBody,
   },
-  { route: "DELETE /api/v1/orgs/:orgId/schedules/:id", params: ScheduleParams },
-  { route: "POST /api/v1/orgs/:orgId/schedules/:id/pause", params: ScheduleParams },
-  { route: "POST /api/v1/orgs/:orgId/schedules/:id/resume", params: ScheduleParams },
+  { route: "DELETE /api/v1/orgs/:orgId/automations/:id", params: AutomationParams },
+  { route: "POST /api/v1/orgs/:orgId/automations/:id/pause", params: AutomationParams },
+  { route: "POST /api/v1/orgs/:orgId/automations/:id/resume", params: AutomationParams },
   {
-    route: "POST /api/v1/orgs/:orgId/schedules/:id/run",
-    params: ScheduleParams,
-    body: ScheduleRunBody,
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/schedules/:id/runs",
-    params: ScheduleParams,
-    query: ScheduleRunsQuery,
-  },
-  { route: "GET /api/v1/orgs/:orgId/schedules/:id/grants", params: ScheduleParams },
-  {
-    route: "POST /api/v1/orgs/:orgId/schedules/:id/grants",
-    params: ScheduleParams,
-    body: ScheduleGrantsBody,
+    route: "POST /api/v1/orgs/:orgId/automations/:id/run",
+    params: AutomationParams,
+    body: AutomationRunBody,
   },
   {
-    route: "DELETE /api/v1/orgs/:orgId/schedules/:id/grants/:toolKey",
-    params: ScheduleGrantParams,
+    route: "GET /api/v1/orgs/:orgId/automations/:id/runs",
+    params: AutomationParams,
+    query: AutomationRunsQuery,
+  },
+  { route: "GET /api/v1/orgs/:orgId/automations/:id/grants", params: AutomationParams },
+  {
+    route: "POST /api/v1/orgs/:orgId/automations/:id/grants",
+    params: AutomationParams,
+    body: AutomationGrantsBody,
+  },
+  {
+    route: "DELETE /api/v1/orgs/:orgId/automations/:id/grants/:toolKey",
+    params: AutomationGrantParams,
   },
 ];
 
@@ -200,14 +215,14 @@ export function defined<T extends object>(o: T): { [K in keyof T]: Exclude<T[K],
 }
 
 /** A grant list as the service's input. */
-export const grantsOf = (grants: z.infer<typeof ScheduleGrantsBody>["grants"]): GrantInput[] =>
+export const grantsOf = (grants: z.infer<typeof AutomationGrantsBody>["grants"]): GrantInput[] =>
   grants.map((g) => defined(g) as GrantInput);
 
 /**
  * A create body as the service's input. `timeZone` is the browser zone and is not part of it: the
  * service uses it only when the account has no zone (spec §5), so it is returned separately.
  */
-export function createInputOf(body: z.infer<typeof ScheduleCreateBody>): {
+export function createInputOf(body: z.infer<typeof AutomationCreateBody>): {
   input: CreateTaskInput;
   browserTimeZone: string | undefined;
 } {
@@ -225,7 +240,7 @@ export function createInputOf(body: z.infer<typeof ScheduleCreateBody>): {
 }
 
 /** A patch body as the service's input (an explicit `timeZone` changes the task's zone). */
-export function updateInputOf(body: z.infer<typeof ScheduleUpdateBody>): UpdateTaskInput {
+export function updateInputOf(body: z.infer<typeof AutomationUpdateBody>): UpdateTaskInput {
   const { expiresAt, ...rest } = body;
   return {
     ...defined(rest),
@@ -234,7 +249,7 @@ export function updateInputOf(body: z.infer<typeof ScheduleUpdateBody>): UpdateT
 }
 
 /** A calendar query as the service's input. */
-export const calendarInputOf = (q: z.infer<typeof ScheduleCalendarQuery>) => ({
+export const calendarInputOf = (q: z.infer<typeof AutomationCalendarQuery>) => ({
   from: new Date(q.from),
   to: new Date(q.to),
   timeZone: q.timeZone,

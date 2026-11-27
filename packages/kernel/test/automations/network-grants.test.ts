@@ -5,6 +5,10 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
+import { AutomationsService } from "../../src/automations/automations.service.js";
+import { networkGrantRefusal } from "../../src/automations/grant-rules.js";
+import { AutomationStore } from "../../src/automations/store.js";
+import type { UnattendedRun } from "../../src/automations/unattended.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
@@ -18,10 +22,6 @@ import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import { NetworkGrants, type NetworkRunState } from "../../src/sandbox/network-grants.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
-import { networkGrantRefusal } from "../../src/schedules/grant-rules.js";
-import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { UnattendedRun } from "../../src/schedules/unattended.js";
 import {
   planNetworkAsk,
   taskGrantIgnoredNote,
@@ -50,7 +50,7 @@ import {
 import { webCaller } from "../helpers/step-context.js";
 
 /**
- * Scheduled task network grants (network ask-to-allow spec §8.1, §8.3; plan P2.4, P-D7): the
+ * Automation network grants (network ask-to-allow spec §8.1, §8.3; plan P2.4, P-D7): the
  * rule for a `network:<host>` grant, adding grants on the route, the task's grants reaching an
  * unattended run's exec (source `task`, no ask), the missing domains and the inbox item, and a
  * trial run's 「这次允许」 kept as a task grant.
@@ -288,7 +288,7 @@ async function setup(): Promise<Setup> {
   return { accountId, req, deviceId: device.deviceId, agentId, conversationId, dev, machine };
 }
 
-const base = () => `/api/v1/orgs/${orgId}/schedules`;
+const base = () => `/api/v1/orgs/${orgId}/automations`;
 const codeOf = (res: { json(): unknown }) =>
   (res.json() as { error?: { code?: string } }).error?.code;
 
@@ -315,7 +315,7 @@ async function createTask(s: Setup, grants: string[] = []): Promise<string> {
 async function taskRun(s: Setup, taskId: string, trial: boolean) {
   const taskRunId = randomUUID();
   const runId = randomUUID();
-  await new ScheduledTaskStore().insertRun(db, {
+  await new AutomationStore().insertRun(db, {
     id: taskRunId,
     taskId,
     orgId,
@@ -324,7 +324,7 @@ async function taskRun(s: Setup, taskId: string, trial: boolean) {
     status: "running",
   });
   await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version,
-      trigger_account_id, trigger_seq, scheduled_task_run_id)
+      trigger_account_id, trigger_seq, automation_run_id)
     VALUES (${runId}, ${s.conversationId}, 'running', 1, ${s.accountId}, 0, ${taskRunId})`.execute(
     raw,
   );
@@ -444,7 +444,7 @@ describe("adding network grants", () => {
         payload: { grants: [{ toolKey: key }] },
       });
       expect(res.statusCode, key).toBe(400);
-      expect(codeOf(res)).toBe("schedule.grant_not_allowed");
+      expect(codeOf(res)).toBe("automation.grant_not_allowed");
       expect(res.body).toContain(text);
     }
 
@@ -478,7 +478,7 @@ describe("who may approve domains", () => {
       grants: [{ toolKey: "network:files.example.com" }],
     });
     expect(res.statusCode, res.body).toBe(400);
-    expect(codeOf(res)).toBe("schedule.grant_not_allowed");
+    expect(codeOf(res)).toBe("automation.grant_not_allowed");
     expect(res.body).toContain(refusal);
     res = await viaPat(base(), {
       agentId: s.agentId,
@@ -512,13 +512,13 @@ describe("who may approve domains", () => {
       return o.run(o.input.parse(input), ctx);
     };
     await expect(
-      call("schedules.grants-add", {
-        scheduleId: taskId,
+      call("automations.grants-add", {
+        automationId: taskId,
         grants: [{ toolKey: "network:files.example.com" }],
       }),
     ).rejects.toThrow(refusal);
     await expect(
-      call("schedules.create", {
+      call("automations.create", {
         agentId: s.agentId,
         name: "Nightly",
         prompt: "Fetch.",
@@ -546,7 +546,7 @@ describe("unattended runs", () => {
     expect(r?.content).toContain("fetched");
     expect(await networkAsks(s.conversationId)).toEqual([]);
     const row = await db
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .select("missing_grants")
       .where("id", "=", run.taskRunId)
       .executeTakeFirstOrThrow();
@@ -564,9 +564,9 @@ describe("unattended runs", () => {
     expect(exec).toBeDefined();
     expect(grantedHosts(exec?.args as ExecBody)).not.toContain("files.example.com");
     expect(await networkAsks(s.conversationId)).toEqual([]);
-    await sql`UPDATE capybara.scheduled_task_runs SET status = 'completed', fired_at = now()
+    await sql`UPDATE capybara.automation_runs SET status = 'completed', fired_at = now()
       WHERE id = ${run.taskRunId}`.execute(raw);
-    const svc = k.app.get(ScheduledTasksService);
+    const svc = k.app.get(AutomationsService);
     const [item] = await svc.attentionFor(orgId, s.accountId);
     expect(item).toMatchObject({
       taskId,

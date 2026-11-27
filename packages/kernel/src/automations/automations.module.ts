@@ -7,21 +7,21 @@ import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { NetworkGrantsModule } from "../sandbox/network-grants.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
-import { ScheduleToolsPort } from "../tools/builtins/schedules.js";
+import { AutomationToolsPort } from "../tools/builtins/automations.js";
 import { ToolsModule } from "../tools/tools.module.js";
-import { ScheduledTasksService } from "./scheduled-tasks.service.js";
-import { ScheduledTaskStoreModule } from "./store.module.js";
+import { AutomationsService } from "./automations.service.js";
+import { AutomationStoreModule } from "./store.module.js";
 
 /**
- * Scheduled tasks for people (spec 2026-11-11): the service the HTTP API, the Platform operations
- * and the schedule tools share. ToolsModule: grants resolve the agent's tools (`ToolRegistry`);
+ * Automations for people (spec 2026-11-11): the service the HTTP API, the Platform operations
+ * and the automation tools share. ToolsModule: grants resolve the agent's tools (`ToolRegistry`);
  * ExtensionRegistryModule: a group chat target needs its channel's `features.threads`. At start
- * it binds the service into the schedule tools' port (`ScheduleToolsPort`): the tools cannot
+ * it binds the service into the automation tools' port (`AutomationToolsPort`): the tools cannot
  * inject it, since this module imports theirs.
  */
 @Module({
   imports: [
-    ScheduledTaskStoreModule,
+    AutomationStoreModule,
     OrgLockModule,
     AgentLookupModule,
     ConversationAccessModule,
@@ -34,13 +34,13 @@ import { ScheduledTaskStoreModule } from "./store.module.js";
     NetworkGrantsModule,
     DialInModule,
   ],
-  providers: [ScheduledTasksService],
-  exports: [ScheduledTasksService, ScheduledTaskStoreModule],
+  providers: [AutomationsService],
+  exports: [AutomationsService, AutomationStoreModule],
 })
-export class SchedulesModule implements OnModuleInit {
+export class AutomationsModule implements OnModuleInit {
   constructor(
-    @Inject(ScheduleToolsPort) private readonly port: ScheduleToolsPort,
-    @Inject(ScheduledTasksService) private readonly service: ScheduledTasksService,
+    @Inject(AutomationToolsPort) private readonly port: AutomationToolsPort,
+    @Inject(AutomationsService) private readonly service: AutomationsService,
   ) {}
 
   onModuleInit(): void {

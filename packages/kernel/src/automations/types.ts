@@ -1,29 +1,29 @@
 import type { ModelRef } from "../agents/definition.js";
 
 /**
- * Scheduled tasks (spec 2026-11-11-scheduled-tasks-design.md §4): the shapes the kernel reads and
- * writes. The rows live in `capybara.scheduled_tasks`, `scheduled_task_runs` and
- * `scheduled_task_grants` (migration 0113).
+ * Automations (spec 2026-11-11-scheduled-tasks-design.md §4): the shapes the kernel reads and
+ * writes. The rows live in `capybara.automations`, `automation_runs` and
+ * `automation_grants` (migration 0113).
  */
 
 /** When a task fires: a 5-field cron, or once at a local date-time, both in an IANA zone (§5). */
-export type ScheduleTrigger =
+export type AutomationTrigger =
   | { kind: "cron"; expr: string; timeZone: string }
   | { kind: "once"; at: string /* local ISO date-time, no offset */; timeZone: string };
 
 /** Where a run posts: a new conversation, one existing conversation, or an IM chat (§3). */
-export type ScheduleMode = "new" | "conversation" | "chat";
+export type AutomationMode = "new" | "conversation" | "chat";
 
 /** The IM chat a `chat`-mode task posts into. */
-export interface ScheduleChat {
+export interface AutomationChat {
   connectionId: string;
   chatId: string;
   chatType: "dm" | "group";
 }
 
-export type ScheduleStatus = "active" | "paused" | "ended";
+export type AutomationStatus = "active" | "paused" | "ended";
 
-export type SchedulePauseReason =
+export type AutomationPauseReason =
   | "creator"
   | "admin"
   | "failures"
@@ -59,8 +59,8 @@ export type TaskRunSkipReason =
   /** The task was paused after the scan recorded the tick (a "run now" still runs). */
   | "task_paused";
 
-/** A task as the kernel reads it: the columns of `capybara.scheduled_tasks`, camel-cased. */
-export interface ScheduledTask {
+/** A task as the kernel reads it: the columns of `capybara.automations`, camel-cased. */
+export interface Automation {
   id: string;
   orgId: string;
   /** The creator: every run acts as this account. */
@@ -68,20 +68,20 @@ export interface ScheduledTask {
   agentId: string;
   name: string;
   prompt: string;
-  trigger: ScheduleTrigger;
-  mode: ScheduleMode;
+  trigger: AutomationTrigger;
+  mode: AutomationMode;
   /** The target conversation (`conversation` mode only). */
   conversationId: string | null;
   /** The target chat (`chat` mode only). */
-  chat: ScheduleChat | null;
+  chat: AutomationChat | null;
   /** Null = the agent's default model. */
   model: ModelRef | null;
   /** Null = the agent's default effort. */
   effort: string | null;
   /** Null = the default pick for new conversations. */
   deviceId: string | null;
-  status: ScheduleStatus;
-  pauseReason: SchedulePauseReason | null;
+  status: AutomationStatus;
+  pauseReason: AutomationPauseReason | null;
   /** The account that paused the task (creator or admin); null when not paused by a person. */
   pausedBy: string | null;
   /** The next fire time, jitter included; null when the task is not active. */
@@ -93,7 +93,7 @@ export interface ScheduledTask {
   updatedAt: Date;
 }
 
-/** One tick of a task (or a trial run): the columns of `capybara.scheduled_task_runs`. */
+/** One tick of a task (or a trial run): the columns of `capybara.automation_runs`. */
 export interface TaskRun {
   id: string;
   taskId: string;
@@ -129,7 +129,7 @@ export interface ScheduleMarker {
 }
 
 /** A remembered "always allow" of a task (same meaning as `conversation_tool_grants`). */
-export interface ScheduledTaskGrant {
+export interface AutomationGrant {
   toolKey: string;
   specHash: string;
   connectorId: string | null;

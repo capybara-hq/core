@@ -399,11 +399,11 @@ describe("effectiveDefinition", () => {
     expect(CHILD_REMOVED_TOOLS).toEqual([
       "AskUserQuestion",
       "Deliver",
-      "ScheduleCreate",
-      "ScheduleUpdate",
-      "ScheduleList",
-      "ScheduleTargets",
-      "ScheduleDelete",
+      "AutomationCreate",
+      "AutomationUpdate",
+      "AutomationList",
+      "AutomationTargets",
+      "AutomationDelete",
     ]);
     expect(r.definition).toEqual({
       name: "Lead › general-purpose",

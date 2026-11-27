@@ -1,6 +1,6 @@
 import { CronTime } from "cron";
 import { isTimeZone } from "../time-zone.js";
-import type { ScheduleTrigger } from "./types.js";
+import type { AutomationTrigger } from "./types.js";
 
 /** Spec §5: how many upcoming fire times the minimum-interval check looks at. */
 const GAP_SAMPLE = 50;
@@ -8,10 +8,10 @@ const JITTER_CAP_SECONDS = 300;
 const LOCAL_AT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
 
 export type TriggerError =
-  | "schedule.invalid_cron"
-  | "schedule.invalid_time_zone"
-  | "schedule.invalid_once_time"
-  | "schedule.once_in_past";
+  | "automation.invalid_cron"
+  | "automation.invalid_time_zone"
+  | "automation.invalid_once_time"
+  | "automation.once_in_past";
 
 function cronTime(expr: string, timeZone: string): CronTime | null {
   if (expr.trim().split(/\s+/).length !== 5) return null;
@@ -106,23 +106,23 @@ function onceInstant(at: string, timeZone: string): Date | null {
 }
 
 export function validateTrigger(
-  t: ScheduleTrigger,
+  t: AutomationTrigger,
   now: Date,
 ): { ok: true } | { ok: false; code: TriggerError } {
-  if (!isTimeZone(t.timeZone)) return { ok: false, code: "schedule.invalid_time_zone" };
+  if (!isTimeZone(t.timeZone)) return { ok: false, code: "automation.invalid_time_zone" };
   if (t.kind === "cron") {
     return cronTime(t.expr, t.timeZone)
       ? { ok: true }
-      : { ok: false, code: "schedule.invalid_cron" };
+      : { ok: false, code: "automation.invalid_cron" };
   }
   const at = onceInstant(t.at, t.timeZone);
-  if (!at) return { ok: false, code: "schedule.invalid_once_time" };
-  if (at.getTime() <= now.getTime()) return { ok: false, code: "schedule.once_in_past" };
+  if (!at) return { ok: false, code: "automation.invalid_once_time" };
+  if (at.getTime() <= now.getTime()) return { ok: false, code: "automation.once_in_past" };
   return { ok: true };
 }
 
 /** The first tick strictly after `after` (before jitter); null for a past once task. */
-export function nextTick(t: ScheduleTrigger, after: Date): Date | null {
+export function nextTick(t: AutomationTrigger, after: Date): Date | null {
   return ticker(t)(after);
 }
 
@@ -133,7 +133,7 @@ export type Ticker = (after: Date) => Date | null;
  * The scanner's ticker for one trigger ({@link nextTick} without rebuilding its `CronTime`s per
  * call), for callers that walk the same trigger many times ({@link ticksIn}).
  */
-export function tickerOf(t: ScheduleTrigger): Ticker {
+export function tickerOf(t: AutomationTrigger): Ticker {
   return ticker(t);
 }
 
@@ -159,7 +159,7 @@ function nextOrNull(search: () => number): number | null {
  * {@link nextTick} for one trigger, with its `CronTime`s built once: callers that walk many ticks
  * (the gap sample, the catch-up enumeration) reuse one ticker instead of rebuilding per tick.
  */
-function ticker(t: ScheduleTrigger): Ticker {
+function ticker(t: AutomationTrigger): Ticker {
   if (t.kind === "once") {
     const at = onceInstant(t.at, t.timeZone);
     return (after) => (at && at.getTime() > after.getTime() ? at : null);
@@ -200,7 +200,7 @@ function ticker(t: ScheduleTrigger): Ticker {
  * that walks one trigger in many windows passes a {@link tickerOf} it built once.
  */
 export function ticksIn(
-  t: ScheduleTrigger | Ticker,
+  t: AutomationTrigger | Ticker,
   after: Date,
   until: Date,
   max: number,
@@ -238,7 +238,7 @@ export interface ScanStep {
  */
 export function scanStep(
   task: {
-    trigger: ScheduleTrigger;
+    trigger: AutomationTrigger;
     nextRunAt: Date;
     jitterSeconds: number;
     expiresAt: Date | null;
@@ -271,7 +271,7 @@ function localWallClock(at: Date, timeZone: string): number {
 }
 
 /** The smallest gap, in minutes, among the next 50 fire times after `from`; null for once. */
-export function minGapMinutes(t: ScheduleTrigger, from: Date): number | null {
+export function minGapMinutes(t: AutomationTrigger, from: Date): number | null {
   if (t.kind === "once") return null;
   const next = ticker(t);
   let prev = next(from);
@@ -296,7 +296,7 @@ function fnv1a32(s: string): number {
 }
 
 /** A fixed per-task offset: `fnv1a32(id) mod min(floor(10 % of the interval), 300 s)`; once is 0. */
-export function jitterSeconds(taskId: string, t: ScheduleTrigger, from: Date): number {
+export function jitterSeconds(taskId: string, t: AutomationTrigger, from: Date): number {
   return jitterForGap(taskId, minGapMinutes(t, from));
 }
 
@@ -319,7 +319,7 @@ export function jitterForGap(taskId: string, gap: number | null): number {
  * computations, not thousands.
  */
 export function dueTicks(
-  t: ScheduleTrigger,
+  t: AutomationTrigger,
   lastTick: Date,
   now: Date,
   catchUpWindowMinutes: number,

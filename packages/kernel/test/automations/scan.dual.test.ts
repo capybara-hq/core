@@ -10,25 +10,25 @@ import {
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
+import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
+import type { Automation, TaskRun } from "../../src/automations/types.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
-import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
-import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { ScheduledTask, TaskRun } from "../../src/schedules/types.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { enableExtensions, PW, waitFor } from "../helpers/runs.js";
 
 /**
- * Scheduled tasks spec §6, §13 on two replicas (Task 6): both replicas scan at once (the scan's
+ * Automations spec §6, §13 on two replicas (Task 6): both replicas scan at once (the scan's
  * name enqueued on the maintenance queue runs its body with no tick lock, so the row locks and the
  * unique tick key alone keep it exactly once), and a long outage fires one catch-up run and
  * records the missed ticks as one skipped run.
  */
 
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 const HOUR = 3_600_000;
 const FIVE_MIN = 5 * 60_000;
 
@@ -111,7 +111,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rdc?.stop()]);
 });
 
-async function task(over: Partial<ScheduledTaskInsert>): Promise<ScheduledTask> {
+async function task(over: Partial<AutomationInsert>): Promise<Automation> {
   return store.insertTask(db, {
     id: randomUUID(),
     orgId,
@@ -141,7 +141,7 @@ async function task(over: Partial<ScheduledTaskInsert>): Promise<ScheduledTask> 
 async function scanEverywhere(n = 12): Promise<string[]> {
   const tag = randomUUID().slice(0, 8);
   const ids = Array.from({ length: n }, (_, i) => `scan-${tag}-${i}`);
-  await Promise.all(ids.map((jobId) => maint.add(SCHED_SCAN_JOB, {}, { jobId })));
+  await Promise.all(ids.map((jobId) => maint.add(AUTOMATION_SCAN_JOB, {}, { jobId })));
   return ids;
 }
 
@@ -174,9 +174,9 @@ const settledRuns = (taskId: string, n: number) =>
   );
 
 const kernelRunsOf = async (r: TaskRun) =>
-  db.selectFrom("runs").select("id").where("scheduled_task_run_id", "=", r.id).execute();
+  db.selectFrom("runs").select("id").where("automation_run_id", "=", r.id).execute();
 
-describe("scheduled task scan on two replicas", () => {
+describe("automation scan on two replicas", () => {
   it("two replicas fire one run per tick", async () => {
     expect(h.replicas.map((r) => r.roles.includes("worker"))).toEqual([true, true]);
     // the test's scans take a few seconds: started just before a five-minute boundary, the next
@@ -195,7 +195,7 @@ describe("scheduled task scan on two replicas", () => {
     const convs = await db
       .selectFrom("conversations")
       .select("id")
-      .where("scheduled_task_id", "=", t.id)
+      .where("automation_id", "=", t.id)
       .execute();
     expect(convs).toHaveLength(1);
     expect(await kernelRunsOf(runs[0] as TaskRun)).toHaveLength(1);

@@ -11,6 +11,12 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AutomationsService } from "../../src/automations/automations.service.js";
+import { AutomationFirer } from "../../src/automations/fire.js";
+import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
+import { AutomationScanJob } from "../../src/automations/scan.job.js";
+import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
+import type { Automation, TaskRun } from "../../src/automations/types.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { ConversationQueue } from "../../src/conversations/queue.service.js";
@@ -20,12 +26,6 @@ import {
   FORBIDDEN_TOOLS_UNREADABLE_ERROR,
   OrgSettingsService,
 } from "../../src/orgs/settings.service.js";
-import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
-import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
-import { ScheduledTaskScanJob } from "../../src/schedules/scan.job.js";
-import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
-import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { ScheduledTask, TaskRun } from "../../src/schedules/types.js";
 import { openBarrier, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -47,7 +47,7 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Scheduled tasks spec §6, §8 (Task 6): the scanner inserts one task run per tick, the fire job
+ * Automations spec §6, §8 (Task 6): the scanner inserts one task run per tick, the fire job
  * checks and starts it (a new conversation, the target conversation's queue, or the DM's current
  * conversation), and the run tracker follows the kernel run to its end.
  */
@@ -70,7 +70,7 @@ let bobId: string;
 let orgId: string;
 let agentId: string;
 let connId: string;
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -90,7 +90,7 @@ beforeAll(async () => {
     ),
   );
   // the tests own the scanner: the worker's once-a-minute scan would race their scanAt calls
-  k.app.get(SchedulerRegistry).getCronJob(SCHED_SCAN_JOB).stop();
+  k.app.get(SchedulerRegistry).getCronJob(AUTOMATION_SCAN_JOB).stop();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   const accounts = accountsFor(db);
@@ -147,12 +147,12 @@ afterAll(async () => {
 });
 
 const FIVE_MIN = 5 * 60_000;
-const firer = () => k.app.get(ScheduledTaskFirer);
-const scanner = () => k.app.get(ScheduledTaskScanJob);
-const svc = () => k.app.get(ScheduledTasksService);
+const firer = () => k.app.get(AutomationFirer);
+const scanner = () => k.app.get(AutomationScanJob);
+const svc = () => k.app.get(AutomationsService);
 
 /** A task stored directly (no interval check), every 5 minutes in UTC, not due until set so. */
-async function task(over: Partial<ScheduledTaskInsert> = {}): Promise<ScheduledTask> {
+async function task(over: Partial<AutomationInsert> = {}): Promise<Automation> {
   return store.insertTask(db, {
     id: randomUUID(),
     orgId,
@@ -177,7 +177,7 @@ async function task(over: Partial<ScheduledTaskInsert> = {}): Promise<ScheduledT
 
 /** A pending task run of `t` for `at` (default now), as the scanner or "run now" writes it. */
 async function pendingRun(
-  t: ScheduledTask,
+  t: Automation,
   over: { scheduledFor?: Date; firedAt?: Date | null; conversationId?: string } = {},
 ): Promise<TaskRun> {
   const r = await store.insertRun(db, {
@@ -216,15 +216,15 @@ const conversationsOf = async (taskId: string) =>
   db
     .selectFrom("conversations")
     .select(["id", "create_request_id"])
-    .where("scheduled_task_id", "=", taskId)
+    .where("automation_id", "=", taskId)
     .execute();
 
 type UserMessage = Extract<ConversationEvent, { type: "user_message" }>;
 const userMessages = async (conv: string): Promise<UserMessage[]> =>
   (await eventsOf(db, conv)).filter((e): e is UserMessage => e.type === "user_message");
 
-const setSchedules = (patch: Record<string, unknown>) =>
-  k.app.get(OrgSettingsService).update(orgId, { scheduledTasks: patch }, ownerId);
+const setAutomations = (patch: Record<string, unknown>) =>
+  k.app.get(OrgSettingsService).update(orgId, { automations: patch }, ownerId);
 
 /** The latest 5-minute tick at or before `at`. */
 const tickAt = (at: number) => new Date(Math.floor(at / FIVE_MIN) * FIVE_MIN);
@@ -309,10 +309,10 @@ describe("scanning and firing", () => {
       expect(msg?.payload.schedule).toMatchObject({ taskId: t.id, taskRunId: done.id });
       const runs = await db
         .selectFrom("runs")
-        .select(["id", "scheduled_task_run_id"])
+        .select(["id", "automation_run_id"])
         .where("conversation_id", "=", done.conversationId as string)
         .execute();
-      expect(runs).toEqual([{ id: done.runId, scheduled_task_run_id: done.id }]);
+      expect(runs).toEqual([{ id: done.runId, automation_run_id: done.id }]);
     }
   });
 
@@ -381,7 +381,7 @@ describe("scanning and firing", () => {
     const skipped = await pendingRun(other, { scheduledFor: new Date(Date.now() - 3 * FIVE_MIN) });
     await store.updateRun(db, skipped.id, { status: "skipped", skipReason: "overlap" });
     expect(await store.countFiredSince(db, orgId, hourAgo())).toBe(n);
-    await setSchedules({ maxRunsPerHour: n });
+    await setAutomations({ maxRunsPerHour: n });
     try {
       const r = await pendingRun(t);
       await firer().fire(r.id);
@@ -392,7 +392,7 @@ describe("scanning and firing", () => {
       });
       expect((await taskOf(t.id)).status).toBe("active");
     } finally {
-      await setSchedules({ maxRunsPerHour: 60 });
+      await setAutomations({ maxRunsPerHour: 60 });
     }
   });
 
@@ -428,11 +428,11 @@ describe("scanning and firing", () => {
     expect(mine).toHaveLength(1);
     const run = await db
       .selectFrom("runs")
-      .select(["trigger_seq", "scheduled_task_run_id"])
+      .select(["trigger_seq", "automation_run_id"])
       .where("id", "=", done.runId as string)
       .executeTakeFirstOrThrow();
     expect(Number(run.trigger_seq)).toBe(mine[0]?.seq);
-    expect(run.scheduled_task_run_id).toBe(r.id);
+    expect(run.automation_run_id).toBe(r.id);
     // never this task's conversation
     expect(await conversationsOf(t.id)).toEqual([]);
     scriptRules([]);
@@ -553,10 +553,10 @@ describe("scanning and firing", () => {
     expect((await userMessages(live)).filter((m) => m.payload.schedule)).toHaveLength(1);
     const conv = await db
       .selectFrom("conversations")
-      .select("scheduled_task_id")
+      .select("automation_id")
       .where("id", "=", live)
       .executeTakeFirstOrThrow();
-    expect(conv.scheduled_task_id).toBeNull();
+    expect(conv.automation_id).toBeNull();
     expect(await conversationsOf(t.id)).toEqual([]);
   });
 
@@ -646,7 +646,7 @@ describe("scanning and firing", () => {
   it("start failures count toward the pause, and the inbox shows the failed run", async () => {
     // a model gone since the task was saved: the start is refused (not a lasting skip)
     const t = await task({ model: { provider: "model-script", model: "gone-model" } });
-    await setSchedules({ pauseAfterFailures: 2 });
+    await setAutomations({ pauseAfterFailures: 2 });
     try {
       const r1 = await pendingRun(t, { scheduledFor: new Date(Date.now() - 2 * FIVE_MIN) });
       await firer().fire(r1.id);
@@ -682,13 +682,13 @@ describe("scanning and firing", () => {
       expect(await runOf(trial?.id as string)).toMatchObject({ status: "failed" });
       expect((await taskOf(t.id)).consecutiveFailures).toBe(0);
     } finally {
-      await setSchedules({ pauseAfterFailures: 5 });
+      await setAutomations({ pauseAfterFailures: 5 });
     }
   });
 
   it("an unreadable forbidden tool list fails the run with an actionable error", async () => {
     const t = await task();
-    await sql`UPDATE capybara.orgs SET settings = jsonb_set(settings, '{scheduledTasks}', '{"forbiddenTools": "Bash"}'::jsonb)
+    await sql`UPDATE capybara.orgs SET settings = jsonb_set(settings, '{automations}', '{"forbiddenTools": "Bash"}'::jsonb)
       WHERE id = ${orgId}`.execute(raw);
     try {
       const r = await pendingRun(t);
@@ -700,7 +700,7 @@ describe("scanning and firing", () => {
       expect(await conversationsOf(t.id)).toEqual([]);
       expect(await taskOf(t.id)).toMatchObject({ consecutiveFailures: 1 });
     } finally {
-      await setSchedules({ forbiddenTools: [] });
+      await setAutomations({ forbiddenTools: [] });
     }
   });
 
@@ -776,7 +776,7 @@ describe("scanning and firing", () => {
   it("a task the scan cannot advance is paused and does not hold the others back", async () => {
     const bad = await task({ nextRunAt: new Date(Date.now() - 60_000) });
     // a stored trigger the schedule math cannot read
-    await sql`UPDATE capybara.scheduled_tasks SET trigger = '{"what": 1}'::jsonb
+    await sql`UPDATE capybara.automations SET trigger = '{"what": 1}'::jsonb
       WHERE id = ${bad.id}`.execute(raw);
     const good = await task({ nextRunAt: tickAt(Date.now()) });
     await scanner().scanAt(new Date());
@@ -796,10 +796,10 @@ describe("scanning and firing", () => {
     await sql
       .raw(`CREATE OR REPLACE FUNCTION capybara.fail_sched_insert() RETURNS trigger AS $$
         BEGIN
-          IF NEW.task_id = '${t.id}' THEN RAISE EXCEPTION 'simulated database error'; END IF;
+          IF NEW.automation_id = '${t.id}' THEN RAISE EXCEPTION 'simulated database error'; END IF;
           RETURN NEW;
         END $$ LANGUAGE plpgsql;
-        CREATE TRIGGER fail_sched_insert BEFORE INSERT ON capybara.scheduled_task_runs
+        CREATE TRIGGER fail_sched_insert BEFORE INSERT ON capybara.automation_runs
           FOR EACH ROW EXECUTE FUNCTION capybara.fail_sched_insert();`)
       .execute(raw);
     try {
@@ -808,7 +808,7 @@ describe("scanning and firing", () => {
       expect(await store.listRuns(db, t.id, 10)).toEqual([]);
     } finally {
       await sql
-        .raw(`DROP TRIGGER IF EXISTS fail_sched_insert ON capybara.scheduled_task_runs;
+        .raw(`DROP TRIGGER IF EXISTS fail_sched_insert ON capybara.automation_runs;
           DROP FUNCTION IF EXISTS capybara.fail_sched_insert();`)
         .execute(raw);
     }

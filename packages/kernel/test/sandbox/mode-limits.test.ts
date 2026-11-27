@@ -103,7 +103,7 @@ beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs, capybara.scheduled_tasks, capybara.scheduled_task_runs",
+    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs, capybara.automations, capybara.automation_runs",
   );
   if (root) await rm(root, { recursive: true, force: true });
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-modes-"));
@@ -1023,26 +1023,26 @@ describe("scheduled runs use the effective mode like any use", () => {
     const taskRunId = randomUUID();
     const runId = randomUUID();
     const conversationId = randomUUID();
-    await sql`INSERT INTO capybara.scheduled_tasks (id, org_id, account_id, agent_id, name, prompt,
+    await sql`INSERT INTO capybara.automations (id, org_id, account_id, agent_id, name, prompt,
         trigger, mode, device_id)
       VALUES (${taskId}, ${orgId}, ${accountId}, 'agent', 'T', 'p',
         ${JSON.stringify({ kind: "cron", expr: "0 9 * * *", timeZone: "UTC" })}::jsonb, 'new',
         ${deviceId})`.execute(raw);
-    await sql`INSERT INTO capybara.scheduled_task_runs (id, task_id, org_id, scheduled_for, trial,
+    await sql`INSERT INTO capybara.automation_runs (id, automation_id, org_id, scheduled_for, trial,
         status)
       VALUES (${taskRunId}, ${taskId}, ${orgId}, now(), false, 'running')`.execute(raw);
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
       SELECT ${conversationId}, ${orgId}, a.id, ${accountId}
       FROM capybara.agents a WHERE a.org_id = ${orgId} LIMIT 1`.execute(raw);
     await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version,
-        trigger_account_id, trigger_seq, scheduled_task_run_id)
+        trigger_account_id, trigger_seq, automation_run_id)
       VALUES (${runId}, ${conversationId}, 'running', 1, ${accountId}, 0, ${taskRunId})`.execute(
       raw,
     );
     await use(s, runId);
     expect(await modeOf()).toBe("sandbox");
     const row = await db
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .select("missing_grants")
       .where("id", "=", taskRunId)
       .executeTakeFirstOrThrow();

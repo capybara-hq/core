@@ -14,15 +14,15 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AutomationFirer } from "../../src/automations/fire.js";
+import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
+import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
+import type { Automation, TaskRun } from "../../src/automations/types.js";
 import { idempotencyKey } from "../../src/channels/outbound.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
-import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
-import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { ScheduledTask, TaskRun } from "../../src/schedules/types.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { openBarrier, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
@@ -42,7 +42,7 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Scheduled tasks spec §8 (Task 8): a run's answer reaches the chat (a DM on a fake Telegram), a
+ * Automations spec §8 (Task 8): a run's answer reaches the chat (a DM on a fake Telegram), a
  * group run starts its own thread at its first post and a reply in that thread continues it, and
  * a delivery failing with `target_gone` / `auth` pauses the task of the run being delivered.
  */
@@ -71,7 +71,7 @@ let agentId: string;
 let miniId: string;
 let plainId: string;
 let tgId: string;
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 
 const ANSWER = "Your digest: all good";
 const CHART_ANSWER = "Here is your chart";
@@ -124,7 +124,7 @@ beforeAll(async () => {
     ),
   );
   // the tests fire task runs themselves
-  k.app.get(SchedulerRegistry).getCronJob(SCHED_SCAN_JOB).stop();
+  k.app.get(SchedulerRegistry).getCronJob(AUTOMATION_SCAN_JOB).stop();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   const accounts = accountsFor(db);
@@ -181,13 +181,13 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-const firer = () => k.app.get(ScheduledTaskFirer);
+const firer = () => k.app.get(AutomationFirer);
 
 /** A chat task stored directly, never due by itself. */
 async function chatTask(
-  chat: NonNullable<ScheduledTaskInsert["chat"]>,
-  over: Partial<ScheduledTaskInsert> = {},
-): Promise<ScheduledTask> {
+  chat: NonNullable<AutomationInsert["chat"]>,
+  over: Partial<AutomationInsert> = {},
+): Promise<Automation> {
   return store.insertTask(db, {
     id: randomUUID(),
     orgId,
@@ -210,7 +210,7 @@ async function chatTask(
   });
 }
 
-async function fireNow(t: ScheduledTask): Promise<TaskRun> {
+async function fireNow(t: Automation): Promise<TaskRun> {
   const r = await store.insertRun(db, {
     id: randomUUID(),
     taskId: t.id,
@@ -279,7 +279,7 @@ const threadOf = (conversationId: string) =>
     "the run's thread is bound",
   );
 
-describe("scheduled task channel delivery (spec §8)", () => {
+describe("automation channel delivery (spec §8)", () => {
   it("dm delivery posts the run's answer to the fake Telegram chat", async () => {
     const t = await chatTask({ connectionId: tgId, chatId: "777", chatType: "dm" });
     const r = await fireNow(t);
@@ -345,10 +345,10 @@ describe("scheduled task channel delivery (spec §8)", () => {
     expect(conv).toBeTruthy();
     const scheduled = await db
       .selectFrom("conversations")
-      .select("scheduled_task_id")
+      .select("automation_id")
       .where("id", "=", conv)
       .executeTakeFirstOrThrow();
-    expect(scheduled.scheduled_task_id).toBe(t.id);
+    expect(scheduled.automation_id).toBe(t.id);
 
     // the run's first post is the thread root: a top-level message, its id the thread key
     const thread = await threadOf(conv);

@@ -21,7 +21,7 @@ import {
   type TestKernel,
 } from "../helpers/runs.js";
 
-/** The schedules.* Platform operations run through their own `run` and `summary`. */
+/** The automations.* Platform operations run through their own `run` and `summary`. */
 
 const MODEL = { provider: "model-fake", model: "fake-1" };
 const DIGEST = { kind: "cron", expr: "0 9 * * *" };
@@ -107,7 +107,7 @@ const summary = (id: string, input: unknown, ctx: OperationContext) => {
 
 async function createTask(accountId = aliceId) {
   const out = (await run(
-    "schedules.create",
+    "automations.create",
     {
       agentId,
       name: "Daily digest",
@@ -122,12 +122,12 @@ async function createTask(accountId = aliceId) {
   return out.task;
 }
 
-describe("schedules operations", () => {
+describe("automations operations", () => {
   it("create, list, get: output mapping and the model object", async () => {
     const t = await createTask();
     expect(t.model).toEqual(MODEL);
     expect(t.trigger.timeZone).toBe("Asia/Shanghai");
-    const list = (await run("schedules.list", {}, ctxOf(aliceId))) as { items: object[] };
+    const list = (await run("automations.list", {}, ctxOf(aliceId))) as { items: object[] };
     expect(list.items).toEqual([
       expect.objectContaining({
         id: t.id,
@@ -137,33 +137,33 @@ describe("schedules operations", () => {
       }),
     ]);
     expect(list.items[0]).not.toHaveProperty("prompt");
-    const got = (await run("schedules.get", { scheduleId: t.id }, ctxOf(aliceId))) as {
+    const got = (await run("automations.get", { automationId: t.id }, ctxOf(aliceId))) as {
       task: { prompt: string };
     };
     expect(got.task.prompt).toBe("Summarize yesterday.");
     const card = await summary(
-      "schedules.create",
+      "automations.create",
       { agentId, name: "N", prompt: "p", trigger: DIGEST, mode: "new" },
       ctxOf(aliceId),
     );
     expect(card?.en).toContain('"N"');
   });
 
-  it("update takes scheduleId and names the task in its card", async () => {
+  it("update takes automationId and names the task in its card", async () => {
     const t = await createTask();
     const ctx = ctxOf(aliceId);
     const out = (await run(
-      "schedules.update",
-      { scheduleId: t.id, name: "Digest 2", model: null },
+      "automations.update",
+      { automationId: t.id, name: "Digest 2", model: null },
       ctx,
     )) as { task: { name: string; model: unknown } };
     expect(out.task).toMatchObject({ name: "Digest 2", model: null });
-    expect(await summary("schedules.update", { scheduleId: t.id, name: "x" }, ctx)).toEqual({
-      zh: "修改定时任务「Digest 2」",
-      en: 'Change scheduled task "Digest 2"',
+    expect(await summary("automations.update", { automationId: t.id, name: "x" }, ctx)).toEqual({
+      zh: "修改自动化「Digest 2」",
+      en: 'Change automation "Digest 2"',
     });
     await expect(
-      run("schedules.update", { scheduleId: t.id, name: "y" }, ctxOf(bobId)),
+      run("automations.update", { automationId: t.id, name: "y" }, ctxOf(bobId)),
     ).rejects.toThrow();
   });
 
@@ -175,55 +175,61 @@ describe("schedules operations", () => {
       .where("account_id", "=", aliceId)
       .execute();
     const ctx = ctxOf(aliceId);
-    const paused = (await run("schedules.pause", { scheduleId: t.id }, ctx)) as {
+    const paused = (await run("automations.pause", { automationId: t.id }, ctx)) as {
       task: { status: string; pauseReason: string };
     };
     expect(paused.task).toMatchObject({ status: "paused", pauseReason: "creator" });
-    expect(await summary("schedules.pause", { scheduleId: t.id }, ctx)).toEqual({
-      zh: "暂停定时任务「Daily digest」",
-      en: 'Pause scheduled task "Daily digest"',
+    expect(await summary("automations.pause", { automationId: t.id }, ctx)).toEqual({
+      zh: "暂停自动化「Daily digest」",
+      en: 'Pause automation "Daily digest"',
     });
-    await expect(run("schedules.resume", { scheduleId: t.id }, ctx)).rejects.toThrow();
-    expect(await run("schedules.delete", { scheduleId: t.id }, ctx)).toEqual({
+    await expect(run("automations.resume", { automationId: t.id }, ctx)).rejects.toThrow();
+    expect(await run("automations.delete", { automationId: t.id }, ctx)).toEqual({
       id: t.id,
       deleted: true,
     });
     const bobs = await createTask(bobId);
-    await expect(run("schedules.pause", { scheduleId: bobs.id }, ctx)).rejects.toThrow();
-    await expect(run("schedules.delete", { scheduleId: bobs.id }, ctx)).rejects.toThrow();
+    await expect(run("automations.pause", { automationId: bobs.id }, ctx)).rejects.toThrow();
+    await expect(run("automations.delete", { automationId: bobs.id }, ctx)).rejects.toThrow();
   });
 
   it("grants add, list and remove; run and runs", async () => {
     const t = await createTask();
     const ctx = ctxOf(aliceId);
     const grants = [{ toolKey: "AskUserQuestion" }];
-    const added = (await run("schedules.grants-add", { scheduleId: t.id, grants }, ctx)) as {
+    const added = (await run("automations.grants-add", { automationId: t.id, grants }, ctx)) as {
       items: object[];
     };
     expect(added.items).toEqual([{ toolKey: "AskUserQuestion", connectorId: null }]);
-    expect(await summary("schedules.grants-add", { scheduleId: t.id, grants }, ctx)).toEqual({
-      zh: "为定时任务「Daily digest」预先批准工具：AskUserQuestion",
-      en: 'Approve tools in advance for scheduled task "Daily digest": AskUserQuestion',
+    expect(await summary("automations.grants-add", { automationId: t.id, grants }, ctx)).toEqual({
+      zh: "为自动化「Daily digest」预先批准工具：AskUserQuestion",
+      en: 'Approve tools in advance for automation "Daily digest": AskUserQuestion',
     });
-    expect(await run("schedules.grants-list", { scheduleId: t.id }, ctx)).toEqual({
+    expect(await run("automations.grants-list", { automationId: t.id }, ctx)).toEqual({
       items: [{ toolKey: "AskUserQuestion", connectorId: null, stale: false }],
     });
     expect(
-      await run("schedules.grants-remove", { scheduleId: t.id, toolKey: "AskUserQuestion" }, ctx),
+      await run(
+        "automations.grants-remove",
+        { automationId: t.id, toolKey: "AskUserQuestion" },
+        ctx,
+      ),
     ).toEqual({ id: t.id, toolKey: "AskUserQuestion", removed: true });
-    expect(await run("schedules.grants-list", { scheduleId: t.id }, ctx)).toEqual({ items: [] });
+    expect(await run("automations.grants-list", { automationId: t.id }, ctx)).toEqual({
+      items: [],
+    });
 
-    const r = (await run("schedules.run", { scheduleId: t.id, trial: true }, ctx)) as {
+    const r = (await run("automations.run", { automationId: t.id, trial: true }, ctx)) as {
       run: { id: string; trial: boolean; status: string };
     };
     expect(r.run).toMatchObject({ trial: true });
-    const runs = (await run("schedules.runs", { scheduleId: t.id }, ctx)) as {
+    const runs = (await run("automations.runs", { automationId: t.id }, ctx)) as {
       items: { id: string }[];
     };
     expect(runs.items.map((x) => x.id)).toContain(r.run.id);
-    expect(await summary("schedules.run", { scheduleId: t.id, trial: true }, ctx)).toEqual({
-      zh: "立即运行定时任务「Daily digest」（试运行）",
-      en: 'Run scheduled task "Daily digest" now as a trial',
+    expect(await summary("automations.run", { automationId: t.id, trial: true }, ctx)).toEqual({
+      zh: "立即运行自动化「Daily digest」（试运行）",
+      en: 'Run automation "Daily digest" now as a trial',
     });
   });
 });

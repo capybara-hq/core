@@ -7,6 +7,15 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  AutomationsService,
+  type CreateTaskInput,
+  grantRefusal,
+  grantRefusalOf,
+} from "../../src/automations/automations.service.js";
+import { nextTick } from "../../src/automations/schedule-math.js";
+import { AutomationStore } from "../../src/automations/store.js";
+import type { AutomationTrigger } from "../../src/automations/types.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
@@ -14,15 +23,6 @@ import {
   FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR,
   OrgSettingsService,
 } from "../../src/orgs/settings.service.js";
-import { nextTick } from "../../src/schedules/schedule-math.js";
-import {
-  type CreateTaskInput,
-  grantRefusal,
-  grantRefusalOf,
-  ScheduledTasksService,
-} from "../../src/schedules/scheduled-tasks.service.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { ScheduleTrigger } from "../../src/schedules/types.js";
 import type { ResolvedTool } from "../../src/tools/registry.js";
 import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { truncateTables } from "../helpers/db.js";
@@ -47,7 +47,7 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
-let svc: ScheduledTasksService;
+let svc: AutomationsService;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -69,7 +69,7 @@ beforeAll(async () => {
       },
     ),
   );
-  svc = k.app.get(ScheduledTasksService);
+  svc = k.app.get(AutomationsService);
 });
 afterAll(async () => {
   await k?.close();
@@ -142,8 +142,8 @@ async function codeOf(p: Promise<unknown>): Promise<string> {
   throw new Error("expected a refusal");
 }
 
-const setSchedules = (patch: Record<string, unknown>) =>
-  k.app.get(OrgSettingsService).update(orgId, { scheduledTasks: patch }, ownerId);
+const setAutomations = (patch: Record<string, unknown>) =>
+  k.app.get(OrgSettingsService).update(orgId, { automations: patch }, ownerId);
 
 async function seedConnection(agent = agentId): Promise<string> {
   // a connection exists only on an extension the org has enabled (a chat target asks for it)
@@ -170,7 +170,7 @@ async function seedThread(
       ${archived ? sql`now()` : null})`.execute(raw);
 }
 
-describe("ScheduledTasksService", () => {
+describe("AutomationsService", () => {
   it("creates with the account zone, else the browser zone", async () => {
     const browser = await svc.create(orgId, aliceId, daily(), "Europe/Berlin");
     expect(browser.trigger.timeZone).toBe("Europe/Berlin");
@@ -192,7 +192,7 @@ describe("ScheduledTasksService", () => {
       .select(["action", "actor_account_id"])
       .where("target", "=", own.id)
       .execute();
-    expect(audit).toEqual([{ action: "schedule.created", actor_account_id: aliceId }]);
+    expect(audit).toEqual([{ action: "automation.created", actor_account_id: aliceId }]);
   });
 
   it("refuses an interval below the org minimum", async () => {
@@ -200,8 +200,8 @@ describe("ScheduledTasksService", () => {
       await codeOf(
         svc.create(orgId, aliceId, daily({ trigger: { kind: "cron", expr: "*/30 * * * *" } })),
       ),
-    ).toBe("schedule.interval_too_short");
-    await setSchedules({ minIntervalMinutes: 30 });
+    ).toBe("automation.interval_too_short");
+    await setAutomations({ minIntervalMinutes: 30 });
     const ok = await svc.create(
       orgId,
       aliceId,
@@ -210,29 +210,29 @@ describe("ScheduledTasksService", () => {
     expect(ok.trigger).toMatchObject({ expr: "*/30 * * * *" });
     expect(
       await codeOf(svc.create(orgId, aliceId, daily({ trigger: { kind: "cron", expr: "nope" } }))),
-    ).toBe("schedule.invalid_cron");
+    ).toBe("automation.invalid_cron");
     expect(await codeOf(svc.create(orgId, aliceId, daily({ timeZone: "Mars/Base" })))).toBe(
-      "schedule.invalid_time_zone",
+      "automation.invalid_time_zone",
     );
   });
 
   it("lowered limit refuses new tasks only", async () => {
-    await setSchedules({ maxTasksPerMember: 2 });
+    await setAutomations({ maxTasksPerMember: 2 });
     const a = await svc.create(orgId, aliceId, daily());
     await svc.create(orgId, aliceId, daily());
-    expect(await codeOf(svc.create(orgId, aliceId, daily()))).toBe("schedule.limit_reached");
+    expect(await codeOf(svc.create(orgId, aliceId, daily()))).toBe("automation.limit_reached");
     // bob is counted on his own
     await svc.create(orgId, bobId, daily());
-    await setSchedules({ maxTasksPerMember: 1 });
+    await setAutomations({ maxTasksPerMember: 1 });
     // existing tasks keep working: pause, resume, edit
     await svc.pause(orgId, me(aliceId), a.id);
     expect((await svc.resume(orgId, me(aliceId), a.id)).status).toBe("active");
     expect((await svc.update(orgId, aliceId, a.id, { name: "Renamed" })).name).toBe("Renamed");
-    expect(await codeOf(svc.create(orgId, aliceId, daily()))).toBe("schedule.limit_reached");
-    await setSchedules({ maxTasksPerMember: 20, maxTasksPerOrg: 3 });
-    expect(await codeOf(svc.create(orgId, bobId, daily()))).toBe("schedule.limit_reached");
-    await setSchedules({ enabled: false, maxTasksPerOrg: 200 });
-    expect(await codeOf(svc.create(orgId, bobId, daily()))).toBe("schedule.disabled");
+    expect(await codeOf(svc.create(orgId, aliceId, daily()))).toBe("automation.limit_reached");
+    await setAutomations({ maxTasksPerMember: 20, maxTasksPerOrg: 3 });
+    expect(await codeOf(svc.create(orgId, bobId, daily()))).toBe("automation.limit_reached");
+    await setAutomations({ enabled: false, maxTasksPerOrg: 200 });
+    expect(await codeOf(svc.create(orgId, bobId, daily()))).toBe("automation.disabled");
   });
 
   it("guest cannot create", async () => {
@@ -266,8 +266,8 @@ describe("ScheduledTasksService", () => {
       (await svc.list(orgId, me(adminId, "admin"), { all: true })).map((t) => t.id).sort(),
     ).toEqual([a.id, b.id].sort());
     // a member cannot see another member's task
-    expect(await codeOf(svc.get(orgId, me(bobId), a.id))).toBe("schedule.not_found");
-    expect(await codeOf(svc.pause(orgId, me(bobId), a.id))).toBe("schedule.not_found");
+    expect(await codeOf(svc.get(orgId, me(bobId), a.id))).toBe("automation.not_found");
+    expect(await codeOf(svc.pause(orgId, me(bobId), a.id))).toBe("automation.not_found");
     expect((await svc.get(orgId, me(adminId, "admin"), a.id)).id).toBe(a.id);
 
     const paused = await svc.pause(orgId, me(adminId, "admin"), a.id);
@@ -279,35 +279,35 @@ describe("ScheduledTasksService", () => {
     });
     expect((await svc.resume(orgId, me(adminId, "admin"), a.id)).status).toBe("active");
     await svc.remove(orgId, me(adminId, "admin"), b.id);
-    expect(await codeOf(svc.get(orgId, me(bobId), b.id))).toBe("schedule.not_found");
+    expect(await codeOf(svc.get(orgId, me(bobId), b.id))).toBe("automation.not_found");
     const actions = await db
       .selectFrom("audit_events")
       .select(["action", "actor_account_id", "target"])
       .where("org_id", "=", orgId)
-      .where("action", "in", ["schedule.paused", "schedule.resumed", "schedule.deleted"])
+      .where("action", "in", ["automation.paused", "automation.resumed", "automation.deleted"])
       .orderBy("id")
       .execute();
     expect(actions).toEqual([
-      { action: "schedule.paused", actor_account_id: adminId, target: a.id },
-      { action: "schedule.resumed", actor_account_id: adminId, target: a.id },
-      { action: "schedule.deleted", actor_account_id: adminId, target: b.id },
+      { action: "automation.paused", actor_account_id: adminId, target: a.id },
+      { action: "automation.resumed", actor_account_id: adminId, target: a.id },
+      { action: "automation.deleted", actor_account_id: adminId, target: b.id },
     ]);
     // another org's admin sees nothing
     expect(await codeOf(svc.get(randomUUID(), me(adminId, "admin"), a.id))).toBe(
-      "schedule.not_found",
+      "automation.not_found",
     );
   });
 
-  it("admin cannot update another's task (schedule.forbidden)", async () => {
+  it("admin cannot update another's task (automation.forbidden)", async () => {
     const a = await svc.create(orgId, aliceId, daily());
     expect(await codeOf(svc.update(orgId, adminId, a.id, { prompt: "Other" }))).toBe(
-      "schedule.forbidden",
+      "automation.forbidden",
     );
     expect(
       await codeOf(svc.addGrants(orgId, adminId, a.id, [{ toolKey: "AskUserQuestion" }])),
-    ).toBe("schedule.forbidden");
+    ).toBe("automation.forbidden");
     expect(await codeOf(svc.update(orgId, bobId, a.id, { prompt: "Other" }))).toBe(
-      "schedule.not_found",
+      "automation.not_found",
     );
     expect((await svc.update(orgId, aliceId, a.id, { prompt: "Mine" })).prompt).toBe("Mine");
   });
@@ -315,18 +315,18 @@ describe("ScheduledTasksService", () => {
   it("mode and target must agree", async () => {
     const conv = await createConv(alice, orgId, agentId);
     expect(await codeOf(svc.create(orgId, aliceId, daily({ conversationId: conv })))).toBe(
-      "schedule.target_invalid",
+      "automation.target_invalid",
     );
     expect(await codeOf(svc.create(orgId, aliceId, daily({ mode: "conversation" })))).toBe(
-      "schedule.target_invalid",
+      "automation.target_invalid",
     );
     expect(await codeOf(svc.create(orgId, aliceId, daily({ mode: "chat" })))).toBe(
-      "schedule.target_invalid",
+      "automation.target_invalid",
     );
     // someone else's conversation is not a target
     expect(
       await codeOf(svc.create(orgId, bobId, daily({ mode: "conversation", conversationId: conv }))),
-    ).toBe("schedule.target_invalid");
+    ).toBe("automation.target_invalid");
     const t = await svc.create(
       orgId,
       aliceId,
@@ -334,7 +334,7 @@ describe("ScheduledTasksService", () => {
     );
     expect(t).toMatchObject({ mode: "conversation", conversationId: conv, chat: null });
     expect(await codeOf(svc.update(orgId, aliceId, t.id, { mode: "new" }))).toBe(
-      "schedule.target_invalid",
+      "automation.target_invalid",
     );
     expect(
       (await svc.update(orgId, aliceId, t.id, { mode: "new", conversationId: null })).mode,
@@ -351,7 +351,9 @@ describe("ScheduledTasksService", () => {
     const t = await svc.create(orgId, aliceId, dm("chat-a"));
     expect(t.chat).toEqual({ connectionId: conn, chatId: "chat-a", chatType: "dm" });
     // bob's DM is not alice's
-    expect(await codeOf(svc.create(orgId, aliceId, dm("chat-b")))).toBe("schedule.target_invalid");
+    expect(await codeOf(svc.create(orgId, aliceId, dm("chat-b")))).toBe(
+      "automation.target_invalid",
+    );
     // a connection bound to another agent
     const other = await alice({
       method: "POST",
@@ -370,7 +372,7 @@ describe("ScheduledTasksService", () => {
     const conn2 = await seedConnection(otherAgent);
     await seedThread(conn2, "chat-a", "dm:ext-alice", aliceId);
     expect(await codeOf(svc.create(orgId, aliceId, dm("chat-a", conn2)))).toBe(
-      "schedule.target_invalid",
+      "automation.target_invalid",
     );
     // an inactive connection
     await db
@@ -378,7 +380,9 @@ describe("ScheduledTasksService", () => {
       .set({ status: "disabled" })
       .where("id", "=", conn)
       .execute();
-    expect(await codeOf(svc.create(orgId, aliceId, dm("chat-a")))).toBe("schedule.target_invalid");
+    expect(await codeOf(svc.create(orgId, aliceId, dm("chat-a")))).toBe(
+      "automation.target_invalid",
+    );
     await db
       .updateTable("channel_connections")
       .set({ status: "active" })
@@ -387,28 +391,30 @@ describe("ScheduledTasksService", () => {
     // a group needs alice's thread there (fake-im has threads)
     const group = (chatId: string) =>
       daily({ mode: "chat", chat: { connectionId: conn, chatId, chatType: "group" } });
-    expect(await codeOf(svc.create(orgId, aliceId, group("grp")))).toBe("schedule.target_invalid");
+    expect(await codeOf(svc.create(orgId, aliceId, group("grp")))).toBe(
+      "automation.target_invalid",
+    );
     await seedThread(conn, "grp", "om_root_1", aliceId);
     expect((await svc.create(orgId, aliceId, group("grp"))).chat?.chatType).toBe("group");
     // a DM chat type does not accept a group's thread row
-    expect(await codeOf(svc.create(orgId, aliceId, dm("grp")))).toBe("schedule.target_invalid");
+    expect(await codeOf(svc.create(orgId, aliceId, dm("grp")))).toBe("automation.target_invalid");
   });
 
   it("refuses every new grant while the org's forbidden list is unreadable", async () => {
     const t = await svc.create(orgId, aliceId, daily());
-    await sql`UPDATE capybara.orgs SET settings = jsonb_set(settings, '{scheduledTasks}', '{"forbiddenTools": 7}'::jsonb)
+    await sql`UPDATE capybara.orgs SET settings = jsonb_set(settings, '{automations}', '{"forbiddenTools": 7}'::jsonb)
       WHERE id = ${orgId}`.execute(raw);
     try {
       const refused = await svc
         .addGrants(orgId, aliceId, t.id, [{ toolKey: "AskUserQuestion" }])
         .catch((e: unknown) => e);
       expect(refused).toMatchObject({
-        code: "schedule.grant_not_allowed",
+        code: "automation.grant_not_allowed",
         message: FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR,
       });
       expect(await svc.grants(orgId, me(aliceId), t.id)).toEqual([]);
     } finally {
-      await setSchedules({ forbiddenTools: [] });
+      await setAutomations({ forbiddenTools: [] });
     }
   });
 
@@ -425,13 +431,13 @@ describe("ScheduledTasksService", () => {
       { toolKey: "AskUserQuestion", connectorId: randomUUID() },
     ]) {
       expect(await codeOf(svc.addGrants(orgId, aliceId, t.id, [g]))).toBe(
-        "schedule.grant_not_allowed",
+        "automation.grant_not_allowed",
       );
     }
-    await setSchedules({ forbiddenTools: ["AskUserQuestion"] });
+    await setAutomations({ forbiddenTools: ["AskUserQuestion"] });
     expect(
       await codeOf(svc.create(orgId, aliceId, daily({ grants: [{ toolKey: "AskUserQuestion" }] }))),
-    ).toBe("schedule.grant_not_allowed");
+    ).toBe("automation.grant_not_allowed");
     // the refused create left nothing behind
     expect(await svc.list(orgId, me(aliceId))).toHaveLength(1);
     await svc.removeGrant(orgId, aliceId, t.id, "AskUserQuestion");
@@ -481,10 +487,10 @@ describe("ScheduledTasksService", () => {
   it("once in the past is refused", async () => {
     const once = (at: string) => daily({ trigger: { kind: "once", at }, timeZone: "UTC" });
     expect(await codeOf(svc.create(orgId, aliceId, once("2020-01-01T09:00")))).toBe(
-      "schedule.once_in_past",
+      "automation.once_in_past",
     );
     expect(await codeOf(svc.create(orgId, aliceId, once("2030-02-30T09:00")))).toBe(
-      "schedule.invalid_once_time",
+      "automation.invalid_once_time",
     );
     const t = await svc.create(orgId, aliceId, once("2030-01-01T09:00"));
     expect(t).toMatchObject({ jitterSeconds: 0, expiresAt: null });
@@ -500,7 +506,7 @@ describe("ScheduledTasksService", () => {
     expect(
       await codeOf(svc.create(orgId, aliceId, daily({ expiresAt: new Date(Date.now() - 1000) }))),
     ).toBe("validation_failed");
-    await setSchedules({ defaultExpiryDays: 7 });
+    await setAutomations({ defaultExpiryDays: 7 });
     // an explicit expiry beats the org default
     expect((await svc.create(orgId, aliceId, daily({ expiresAt: until }))).expiresAt).toEqual(
       until,
@@ -564,7 +570,7 @@ describe("ScheduledTasksService", () => {
     // the new agent lacks the granted tool: refused, nothing changes
     const bare = await mkAgent([]);
     expect(await codeOf(svc.update(orgId, aliceId, t.id, { agentId: bare }))).toBe(
-      "schedule.grant_not_allowed",
+      "automation.grant_not_allowed",
     );
     expect((await svc.get(orgId, me(aliceId), t.id)).agentId).toBe(agentId);
     // the new agent has it: the grant carries over
@@ -582,14 +588,14 @@ describe("ScheduledTasksService", () => {
     expect(paused).toMatchObject({ status: "paused", pauseReason: "creator", pausedBy: aliceId });
     // a stale next run and failures from before the pause do not survive the resume
     await db
-      .updateTable("scheduled_tasks")
+      .updateTable("automations")
       .set({ next_run_at: new Date("2020-01-01T00:00:00Z"), consecutive_failures: 4 })
       .where("id", "=", t.id)
       .execute();
     const from = new Date();
     const resumed = await svc.resume(orgId, me(aliceId), t.id);
     const to = new Date();
-    const full: ScheduleTrigger = { ...trigger, timeZone: "UTC" };
+    const full: AutomationTrigger = { ...trigger, timeZone: "UTC" };
     const expected = [from, to].map(
       (d) => (nextTick(full, d)?.getTime() ?? 0) + t.jitterSeconds * 1000,
     );
@@ -656,7 +662,7 @@ describe("ScheduledTasksService", () => {
   it("update with a null expiry falls back to the org default for a cron task", async () => {
     const t = await svc.create(orgId, aliceId, daily());
     expect(t.expiresAt).toBeNull();
-    await setSchedules({ defaultExpiryDays: 7 });
+    await setAutomations({ defaultExpiryDays: 7 });
     const before = Date.now();
     const u = await svc.update(orgId, aliceId, t.id, { expiresAt: null });
     const ms = (u.expiresAt?.getTime() ?? 0) - before;
@@ -698,7 +704,7 @@ describe("ScheduledTasksService", () => {
   });
 });
 
-describe("ScheduledTasksService.calendar", () => {
+describe("AutomationsService.calendar", () => {
   const DAY = 86_400_000;
   /** A week around now in UTC (whole days). */
   const week = (over: Partial<{ all: boolean; taskId: string; from: Date; to: Date }> = {}) => {
@@ -713,7 +719,7 @@ describe("ScheduledTasksService.calendar", () => {
   /** A finished run of the task two days ago at 09:00 UTC, with the details only its creator sees. */
   const pastRun = async (taskId: string) => {
     const at = new Date(Math.floor(Date.now() / DAY) * DAY - 2 * DAY + 9 * 3_600_000);
-    const store = k.app.get(ScheduledTaskStore);
+    const store = k.app.get(AutomationStore);
     const run = await store.insertRun(db, {
       id: randomUUID(),
       taskId,
@@ -780,9 +786,9 @@ describe("ScheduledTasksService.calendar", () => {
   it("taskId must be a task the caller may see", async () => {
     const theirs = await svc.create(orgId, bobId, daily());
     const range = { ...week({ taskId: theirs.id }), to: new Date(week().from.getTime() + DAY) };
-    expect(await codeOf(svc.calendar(orgId, me(aliceId), range))).toBe("schedule.not_found");
+    expect(await codeOf(svc.calendar(orgId, me(aliceId), range))).toBe("automation.not_found");
     expect(await codeOf(svc.calendar(orgId, me(aliceId), { ...range, taskId: randomUUID() }))).toBe(
-      "schedule.not_found",
+      "automation.not_found",
     );
     expect((await svc.calendar(orgId, me(bobId), range)).collapsed).toEqual([]);
   });
@@ -824,7 +830,7 @@ describe("ScheduledTasksService.calendar", () => {
     expect(a.tasks.map((t) => t.id).sort()).toEqual([paused.id, live.id].sort());
     expect(a.items.filter((i) => i.taskId === paused.id).map((i) => i.kind)).toEqual(["run"]);
     expect(a.items.some((i) => i.taskId === live.id && i.kind === "occurrence")).toBe(true);
-    await setSchedules({ enabled: false });
+    await setAutomations({ enabled: false });
     const off = await svc.calendar(orgId, me(aliceId), week());
     expect(off.items.map((i) => i.kind)).toEqual(["run"]);
   });

@@ -198,8 +198,8 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       },
       { run: async (id) => void calls.push(["owned-cleanup", id]) },
       {
-        fire: async (id) => void calls.push(["sched-fire", id]),
-        settle: async (d) => void calls.push(["sched-settle", d]),
+        fire: async (id) => void calls.push(["automation-fire", id]),
+        settle: async (d) => void calls.push(["automation-settle", d]),
       },
       {
         runNow: async (name) => {
@@ -234,8 +234,8 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     await processor.process(job("stop-tree", { conversationId: "c3", byAccountId: "a1" }));
     await processor.process(job("deliver-to-parent", { childRunId: "r2" }));
     await processor.process(job("owned-plugin-cleanup", { itemId: "i1" }));
-    await processor.process(job("sched-fire", { taskRunId: "tr1" }));
-    await processor.process(job("sched-settle", { taskRunId: "tr1", check: 2 }));
+    await processor.process(job("automation-fire", { taskRunId: "tr1" }));
+    await processor.process(job("automation-settle", { taskRunId: "tr1", check: 2 }));
     const shareObject = { orgId: "o", shareId: "s1", generation: 1, objectKey: "shares/s1/1" };
     await processor.process(job("share-object-delete", shareObject));
     const iconObject = { purpose: "app", objectKey: `platform-icons/app-${"a".repeat(64)}.png` };
@@ -260,8 +260,8 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["stop-deleted-tree", "c3", "a1"],
       ["deliver", "r2"],
       ["owned-cleanup", "i1"],
-      ["sched-fire", "tr1"],
-      ["sched-settle", { taskRunId: "tr1", check: 2 }],
+      ["automation-fire", "tr1"],
+      ["automation-settle", { taskRunId: "tr1", check: 2 }],
       ["share-object-delete", shareObject],
       ["platform-icon-delete", iconObject],
       // the prompt attempt runs on a short device budget

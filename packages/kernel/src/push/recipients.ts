@@ -20,23 +20,23 @@ export type ResolvedRecipients = Omit<ResolvedPush, "eventId">;
  *   while it is still `pending`; a question only while pending; both, and a connect request, go to
  *   the run's trigger account (an approval assigned to someone goes to that person);
  * - `replies`: chat conversations only, to the conversation's owner, never for a run serving a
- *   scheduled task (that pushes as `schedules`);
+ *   automation (that pushes as `automations`);
  * - `tasks`: the root conversation's owner;
- * - `schedules`: the task's owner, for a task run `completed` or `failed` of a task not deleted;
+ * - `automations`: the task's owner, for a task run `completed` or `failed` of a task not deleted;
  * - eval conversations (a sub-agent under an eval root too) and deleted conversations never push;
  * - an escalated approval whose run is gone pushes nothing (its initiator is unknown).
  *
  * The path carries the org (`/chat/<root>?org=<orgId>`, `&subagent=<child>` for an event of a
- * sub-agent's log; a schedule run without a conversation opens `/inbox?org=<orgId>`), the thread
- * is the root conversation (`schedule-<taskId>` for a schedule), the title the root's agent name
+ * sub-agent's log; an automation run without a conversation opens `/inbox?org=<orgId>`), the thread
+ * is the root conversation (`automation-<taskId>` for an automation), the title the root's agent name
  * (the task's name).
  */
 export async function resolveRecipients(
   db: KernelSchemaDb,
   source: PushFanoutData["source"],
 ): Promise<ResolvedRecipients | null> {
-  return source.kind === "schedule"
-    ? resolveSchedule(db, source.taskRunId)
+  return source.kind === "automation"
+    ? resolveAutomation(db, source.taskRunId)
     : resolveConversation(db, source.conversationId, source.seq);
 }
 
@@ -140,11 +140,11 @@ async function resolveConversation(
       if (event.run_id === null) return null;
       const run = await db
         .selectFrom("runs")
-        .select("scheduled_task_run_id")
+        .select("automation_run_id")
         .where("id", "=", event.run_id)
         .where("conversation_id", "=", conversationId)
         .executeTakeFirst();
-      if (!run || run.scheduled_task_run_id !== null) return null;
+      if (!run || run.automation_run_id !== null) return null;
       candidates = [owner];
       break;
     }
@@ -177,27 +177,27 @@ async function resolveConversation(
   };
 }
 
-async function resolveSchedule(
+async function resolveAutomation(
   db: KernelSchemaDb,
   taskRunId: string,
 ): Promise<ResolvedRecipients | null> {
   // org-filter: taskRunId comes from the kernel-written push fan-out job; this read learns the
   // run's org (checked against its task's below), which every later read filters by
   const row = await db
-    .selectFrom("scheduled_task_runs")
-    .innerJoin("scheduled_tasks", "scheduled_tasks.id", "scheduled_task_runs.task_id")
+    .selectFrom("automation_runs")
+    .innerJoin("automations", "automations.id", "automation_runs.automation_id")
     .select([
-      "scheduled_task_runs.org_id",
-      "scheduled_task_runs.status",
-      "scheduled_task_runs.conversation_id",
-      "scheduled_tasks.id as task_id",
-      "scheduled_tasks.org_id as task_org_id",
-      "scheduled_tasks.account_id",
-      "scheduled_tasks.name",
+      "automation_runs.org_id",
+      "automation_runs.status",
+      "automation_runs.conversation_id",
+      "automations.id as automation_id",
+      "automations.org_id as task_org_id",
+      "automations.account_id",
+      "automations.name",
     ])
-    .where("scheduled_task_runs.id", "=", taskRunId)
+    .where("automation_runs.id", "=", taskRunId)
     // a deleted task pushes nothing
-    .where("scheduled_tasks.deleted_at", "is", null)
+    .where("automations.deleted_at", "is", null)
     .executeTakeFirst();
   if (!row || row.org_id !== row.task_org_id) return null;
   if (row.status !== "completed" && row.status !== "failed") return null;
@@ -219,12 +219,12 @@ async function resolveSchedule(
   return {
     orgId,
     accountIds,
-    category: "schedules",
+    category: "automations",
     path: conv === undefined ? `/inbox?org=${org}` : `/chat/${row.conversation_id}?org=${org}`,
-    threadId: `schedule-${row.task_id}`,
+    threadId: `automation-${row.automation_id}`,
     title: row.name,
     conversationTitle: conv?.title ?? null,
-    text: row.status === "completed" ? "scheduleRan" : "scheduleFailed",
+    text: row.status === "completed" ? "automationRan" : "automationFailed",
   };
 }
 

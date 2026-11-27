@@ -6,9 +6,9 @@ import {
   type CalendarItem,
   dayKey,
   startOfLocalDay,
-} from "../../src/schedules/calendar.js";
-import { nextTick } from "../../src/schedules/schedule-math.js";
-import type { ScheduledTask, ScheduleTrigger, TaskRun } from "../../src/schedules/types.js";
+} from "../../src/automations/calendar.js";
+import { nextTick } from "../../src/automations/schedule-math.js";
+import type { Automation, AutomationTrigger, TaskRun } from "../../src/automations/types.js";
 
 const ME = "acct-me";
 const OTHER = "acct-other";
@@ -16,14 +16,14 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const NOW = new Date("2026-11-12T03:30:00Z");
 
-const cron = (expr: string, timeZone = "UTC"): ScheduleTrigger => ({
+const cron = (expr: string, timeZone = "UTC"): AutomationTrigger => ({
   kind: "cron",
   expr,
   timeZone,
 });
 
 /** An active task whose next_run_at is the first tick after NOW plus its jitter. */
-function task(id: string, over: Partial<ScheduledTask> = {}): ScheduledTask {
+function task(id: string, over: Partial<Automation> = {}): Automation {
   const trigger = over.trigger ?? cron("0 9 * * *");
   const jitterSeconds = over.jitterSeconds ?? 0;
   const tick = nextTick(trigger, NOW);

@@ -36,12 +36,12 @@ import {
   type CalendarLimits,
   calendarRunReadLimit,
 } from "./calendar.js";
-import { type EffectiveScheduleSettings, readScheduleSettings } from "./effective-settings.js";
+import { type EffectiveAutomationSettings, readAutomationSettings } from "./effective-settings.js";
 import {
+  automationDisabled,
+  automationForbidden,
+  automationNotFound,
   grantNotAllowed,
-  scheduleDisabled,
-  scheduleForbidden,
-  scheduleNotFound,
   targetInvalid,
 } from "./errors.js";
 import {
@@ -64,17 +64,17 @@ import {
   normalizeGitGrantKey,
   tierGrantRefusal,
 } from "./grant-rules.js";
-import { oweSchedFire, oweSchedSettleUnfired } from "./job-ids.js";
+import { oweAutomationFire, oweAutomationSettleUnfired } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { jitterForGap, minGapMinutes, nextTick, validateTrigger } from "./schedule-math.js";
-import { type ScheduledTaskPatch, ScheduledTaskStore } from "./store.js";
+import { type AutomationPatch, AutomationStore } from "./store.js";
 import type {
-  ScheduleChat,
-  ScheduledTask,
-  ScheduledTaskGrant,
-  ScheduleMode,
-  SchedulePauseReason,
-  ScheduleTrigger,
+  Automation,
+  AutomationChat,
+  AutomationGrant,
+  AutomationMode,
+  AutomationPauseReason,
+  AutomationTrigger,
   TaskRun,
 } from "./types.js";
 
@@ -89,15 +89,15 @@ export {
 /** When a task fires, before the zone is fixed (spec §5). */
 export type TriggerInput = { kind: "cron"; expr: string } | { kind: "once"; at: string };
 
-/** A scheduled task that needs its creator's attention (spec §8): the inbox item's payload. */
-export interface ScheduleAttention {
+/** An automation that needs its creator's attention (spec §8): the inbox item's payload. */
+export interface AutomationAttention {
   taskId: string;
   name: string;
   /**
    * `missing_grants`: the latest run was refused tools or connections the task lacks; `failed`:
    * the latest settled run of an active task failed (its start included); else the pause reason.
    */
-  reason: SchedulePauseReason | "missing_grants" | "failed";
+  reason: AutomationPauseReason | "missing_grants" | "failed";
   /** The person who paused the task (`reason: "admin"` names the admin); else null. */
   pausedBy: PersonRef | null;
   /**
@@ -137,11 +137,11 @@ export interface CreateTaskInput {
   trigger: TriggerInput;
   /** Absent: the creator's effective zone (account, browser, org, UTC). */
   timeZone?: string;
-  mode: ScheduleMode;
+  mode: AutomationMode;
   /** `conversation` mode only. */
   conversationId?: string;
   /** `chat` mode only. */
-  chat?: ScheduleChat;
+  chat?: AutomationChat;
   /**
    * `new` mode only (a conversation or chat task runs with that conversation's selection and
    * device): the model, which must resolve for the org, and an effort it declares.
@@ -167,9 +167,9 @@ export interface UpdateTaskInput {
   prompt?: string;
   trigger?: TriggerInput;
   timeZone?: string;
-  mode?: ScheduleMode;
+  mode?: AutomationMode;
   conversationId?: string | null;
-  chat?: ScheduleChat | null;
+  chat?: AutomationChat | null;
   model?: ModelRef | null;
   effort?: string | null;
   deviceId?: string | null;
@@ -178,7 +178,7 @@ export interface UpdateTaskInput {
 
 /**
  * Where a grant write comes from: `fromSession` only for a person in a signed-in web session (not a
- * personal access token, the Platform tool or the schedule tools). Network domains are approved
+ * personal access token, the Platform tool or the automation tools). Network domains are approved
  * only there (network ask-to-allow spec §8.1): an agent must never pre-approve a domain for itself.
  */
 export interface GrantWriteSource {
@@ -198,7 +198,7 @@ const GIT_GRANT_NEEDS_PERSON = "Git pushes are approved on the task page by a pe
 const isNonToolGrantKey = (key: string): boolean => isPolicyGrantKey(key) || isGitGrantKey(key);
 
 /** Who acts on a task: the service reads their live role itself and decides by that one. */
-export interface ScheduleActor {
+export interface AutomationActor {
   accountId: string;
 }
 
@@ -212,7 +212,7 @@ const PROMPT_MAX = 20_000;
 /** A DM thread's key on `channel_threads` (`channels/threads.ts` `threadKeyOf`). */
 const DM_THREAD_PREFIX = "dm:";
 
-/** One of the agent's tools as the task form offers it (`GET …/schedules/grantable-tools`). */
+/** One of the agent's tools as the task form offers it (`GET …/automations/grantable-tools`). */
 export interface GrantableTool {
   key: string;
   /** The tool's display title, when it declares one. */
@@ -228,11 +228,11 @@ export interface GrantableTool {
  * A grant as the task page shows it: `stale` when the tool's definition changed or the tool left
  * (spec §7); null when the agent's tools cannot be read now.
  */
-export interface ScheduledTaskGrantView extends ScheduledTaskGrant {
+export interface AutomationGrantView extends AutomationGrant {
   stale: boolean | null;
 }
 
-/** An agent's tools by key, as {@link ScheduledTasksService} checks grants against them. */
+/** An agent's tools by key, as {@link AutomationsService} checks grants against them. */
 type AgentToolFacts = Map<string, { specHash: string; requiredRole?: OrgRole }>;
 
 /** The latest settled (completed, failed or skipped) non-trial run of a task. */
@@ -244,10 +244,10 @@ export interface TaskLastRun {
 }
 
 /** A task in a list, with its latest settled run. */
-export type ScheduledTaskListItem = ScheduledTaskView & { lastRun: TaskLastRun | null };
+export type AutomationListItem = AutomationView & { lastRun: TaskLastRun | null };
 
 /** A task with its creator as a person (null when the account is gone). */
-export type ScheduledTaskView = ScheduledTask & { account: PersonRef | null };
+export type AutomationView = Automation & { account: PersonRef | null };
 
 /**
  * A chat the creator can point a `chat` task at (spec §8): their DM with a connection's bot
@@ -267,22 +267,22 @@ export interface ChatTarget {
 }
 
 /**
- * Scheduled tasks for people (spec §5, §7–§10): create, edit, pause, resume, delete, their runs
+ * Automations for people (spec §5, §7–§10): create, edit, pause, resume, delete, their runs
  * and grants. Every write runs in one transaction under the org row lock (`OrgLock`), which also
  * serializes the per-member and per-org caps, re-reads the actor's role there, and holds the task
  * row (`FOR UPDATE`) so the scanner skips it until the write commits.
  *
- * Roles: `schedules.use` (member) creates and edits one's own tasks; `schedules.manage` (admin)
+ * Roles: `automations.use` (member) creates and edits one's own tasks; `automations.manage` (admin)
  * lists, pauses, resumes and deletes any task of the org, never edits another person's (the task
- * runs as its creator). A task the caller may not see is `schedule.not_found`.
+ * runs as its creator). A task the caller may not see is `automation.not_found`.
  */
 @Injectable()
-export class ScheduledTasksService {
+export class AutomationsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(ScheduledTaskStore) private readonly store: ScheduledTaskStore,
+    @Inject(AutomationStore) private readonly store: AutomationStore,
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "get">,
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
@@ -305,21 +305,21 @@ export class ScheduledTasksService {
     input: CreateTaskInput,
     browserTimeZone?: string,
     source: GrantWriteSource = {},
-  ): Promise<ScheduledTask> {
-    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "schedules.use");
+  ): Promise<Automation> {
+    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "automations.use");
     const t = this.db.db;
-    const settings = await readScheduleSettings(t, this.config, orgId);
-    if (!settings.enabled) throw scheduleDisabled();
+    const settings = await readAutomationSettings(t, this.config, orgId);
+    if (!settings.enabled) throw automationDisabled();
     if ((await this.store.countActive(t, orgId, accountId)) >= settings.maxTasksPerMember) {
       throw new ApiError(
-        "schedule.limit_reached",
-        `You already have ${settings.maxTasksPerMember} scheduled tasks in this organization; delete one to create another`,
+        "automation.limit_reached",
+        `You already have ${settings.maxTasksPerMember} automations in this organization; delete one to create another`,
       );
     }
     if ((await this.store.countActive(t, orgId)) >= settings.maxTasksPerOrg) {
       throw new ApiError(
-        "schedule.limit_reached",
-        `This organization already has ${settings.maxTasksPerOrg} scheduled tasks; delete one to create another`,
+        "automation.limit_reached",
+        `This organization already has ${settings.maxTasksPerOrg} automations; delete one to create another`,
       );
     }
     const name = requiredText(input.name, "name", NAME_MAX);
@@ -381,7 +381,7 @@ export class ScheduledTasksService {
     await audit(t, {
       actorAccountId: accountId,
       orgId,
-      action: "schedule.created",
+      action: "automation.created",
       target: id,
       detail: {
         name,
@@ -394,20 +394,20 @@ export class ScheduledTasksService {
     return task;
   }
 
-  /** Creator only: an org admin gets `schedule.forbidden`, anyone else `schedule.not_found`. */
+  /** Creator only: an org admin gets `automation.forbidden`, anyone else `automation.not_found`. */
   @Transactional()
   async update(
     orgId: string,
     accountId: string,
     id: string,
     patch: UpdateTaskInput,
-  ): Promise<ScheduledTask> {
-    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "schedules.use");
+  ): Promise<Automation> {
+    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "automations.use");
     const t = this.db.db;
     const task = await this.lockOwn(orgId, accountId, role, id);
-    const settings = await readScheduleSettings(t, this.config, orgId);
+    const settings = await readAutomationSettings(t, this.config, orgId);
     const now = new Date();
-    const changes: ScheduledTaskPatch = {};
+    const changes: AutomationPatch = {};
     if (patch.name !== undefined) changes.name = requiredText(patch.name, "name", NAME_MAX);
     if (patch.prompt !== undefined) {
       changes.prompt = requiredText(patch.prompt, "prompt", PROMPT_MAX);
@@ -509,16 +509,16 @@ export class ScheduledTasksService {
     await audit(t, {
       actorAccountId: accountId,
       orgId,
-      action: "schedule.updated",
+      action: "automation.updated",
       target: task.id,
       detail: { fields: Object.keys(changes).sort() },
     });
     return updated;
   }
 
-  /** The creator, or an org admin (`schedules.manage`); a task not active is returned as is. */
+  /** The creator, or an org admin (`automations.manage`); a task not active is returned as is. */
   @Transactional()
-  async pause(orgId: string, actor: ScheduleActor, id: string): Promise<ScheduledTask> {
+  async pause(orgId: string, actor: AutomationActor, id: string): Promise<Automation> {
     const { task, byAdmin } = await this.lockManaged(orgId, actor.accountId, id, "org.read");
     if (task.status !== "active") return task;
     const paused = await this.store.updateTask(this.db.db, task.id, {
@@ -530,7 +530,7 @@ export class ScheduledTasksService {
     await audit(this.db.db, {
       actorAccountId: actor.accountId,
       orgId,
-      action: "schedule.paused",
+      action: "automation.paused",
       target: task.id,
       detail: { reason: byAdmin ? "admin" : "creator", creator: task.accountId },
     });
@@ -538,20 +538,20 @@ export class ScheduledTasksService {
   }
 
   /**
-   * The creator (`schedules.use`), or an org admin. The next run is computed from now (missed ticks
+   * The creator (`automations.use`), or an org admin. The next run is computed from now (missed ticks
    * are not caught up) and the failure count starts over. An ended task cannot be resumed.
    */
   @Transactional()
-  async resume(orgId: string, actor: ScheduleActor, id: string): Promise<ScheduledTask> {
-    const { task, byAdmin } = await this.lockManaged(orgId, actor.accountId, id, "schedules.use");
+  async resume(orgId: string, actor: AutomationActor, id: string): Promise<Automation> {
+    const { task, byAdmin } = await this.lockManaged(orgId, actor.accountId, id, "automations.use");
     if (task.status === "active") return task;
-    if (task.status === "ended") throw new ApiError("conflict", "This scheduled task has ended");
-    const settings = await readScheduleSettings(this.db.db, this.config, orgId);
-    if (!settings.enabled) throw scheduleDisabled();
+    if (task.status === "ended") throw new ApiError("conflict", "This automation has ended");
+    const settings = await readAutomationSettings(this.db.db, this.config, orgId);
+    if (!settings.enabled) throw automationDisabled();
     const now = new Date();
     const next = fireAt(task.trigger, now, task.jitterSeconds);
     if (next === null) {
-      throw new ApiError("schedule.once_in_past", "The task's time has passed; set a new time");
+      throw new ApiError("automation.once_in_past", "The task's time has passed; set a new time");
     }
     const resumed = await this.store.updateTask(this.db.db, task.id, {
       status: "active",
@@ -563,7 +563,7 @@ export class ScheduledTasksService {
     await audit(this.db.db, {
       actorAccountId: actor.accountId,
       orgId,
-      action: "schedule.resumed",
+      action: "automation.resumed",
       target: task.id,
       detail: { byAdmin, creator: task.accountId },
     });
@@ -572,31 +572,31 @@ export class ScheduledTasksService {
 
   /** The creator, or an org admin. */
   @Transactional()
-  async remove(orgId: string, actor: ScheduleActor, id: string): Promise<void> {
+  async remove(orgId: string, actor: AutomationActor, id: string): Promise<void> {
     const { task, byAdmin } = await this.lockManaged(orgId, actor.accountId, id, "org.read");
     await this.store.softDelete(this.db.db, task.id);
     await audit(this.db.db, {
       actorAccountId: actor.accountId,
       orgId,
-      action: "schedule.deleted",
+      action: "automation.deleted",
       target: task.id,
       detail: { byAdmin, creator: task.accountId, name: task.name },
     });
   }
 
   /** The creator, or an org admin. */
-  async get(orgId: string, actor: ScheduleActor, id: string): Promise<ScheduledTaskView> {
+  async get(orgId: string, actor: AutomationActor, id: string): Promise<AutomationView> {
     const role = await this.liveRole(orgId, actor.accountId);
     const task = await this.store.getTask(this.db.db, orgId, id);
-    if (!task || (task.accountId !== actor.accountId && !can(role, "schedules.manage"))) {
-      throw scheduleNotFound();
+    if (!task || (task.accountId !== actor.accountId && !can(role, "automations.manage"))) {
+      throw automationNotFound();
     }
     const [view] = await this.withAccounts([task]);
-    return view as ScheduledTaskView;
+    return view as AutomationView;
   }
 
   /** Each task with its creator as a person, in one query. */
-  private async withAccounts(tasks: ScheduledTask[]): Promise<ScheduledTaskView[]> {
+  private async withAccounts(tasks: Automation[]): Promise<AutomationView[]> {
     const people = await loadPeople(
       this.db.db,
       tasks.map((t) => t.accountId),
@@ -607,14 +607,14 @@ export class ScheduledTasksService {
   /** The actor's own tasks; `all` (org admins only, else `forbidden`): every task of the org. */
   async list(
     orgId: string,
-    actor: ScheduleActor,
+    actor: AutomationActor,
     opts: { all?: boolean; conversationId?: string } = {},
-  ): Promise<ScheduledTaskListItem[]> {
+  ): Promise<AutomationListItem[]> {
     const role = await this.liveRole(orgId, actor.accountId);
-    let tasks: ScheduledTask[];
+    let tasks: Automation[];
     if (opts.all === true) {
-      if (!can(role, "schedules.manage")) {
-        throw new ApiError("forbidden", "Only org admins can list every scheduled task");
+      if (!can(role, "automations.manage")) {
+        throw new ApiError("forbidden", "Only org admins can list every automation");
       }
       tasks = await this.store.listForOrg(this.db.db, orgId);
     } else {
@@ -629,22 +629,22 @@ export class ScheduledTasksService {
   /**
    * The calendar between two instants (calendar spec §5): the runs and planned occurrences of the
    * actor's own tasks, or with `all` (org admins only, else `forbidden`) every task of the org; with
-   * `taskId` only that task (one the actor may see, else `schedule.not_found`), never collapsed.
+   * `taskId` only that task (one the actor may see, else `automation.not_found`), never collapsed.
    * Another creator's runs come without `conversationId`, `error` and `missingGrants` (§15 Q3).
    * A range longer than 43 days (2 with `taskId`), or not forward, is `validation_failed`. `now`
    * is for tests.
    */
   async calendar(
     orgId: string,
-    actor: ScheduleActor,
+    actor: AutomationActor,
     q: { from: Date; to: Date; timeZone: string; all?: boolean; taskId?: string },
     now: Date = new Date(),
     limits: CalendarLimits = CALENDAR_LIMITS,
   ): Promise<CalendarAnswer> {
     const role = await this.liveRole(orgId, actor.accountId);
-    const manage = can(role, "schedules.manage");
+    const manage = can(role, "automations.manage");
     if (q.all === true && !manage) {
-      throw new ApiError("forbidden", "Only org admins can read every scheduled task");
+      throw new ApiError("forbidden", "Only org admins can read every automation");
     }
     const span = q.to.getTime() - q.from.getTime();
     const maxDays = q.taskId === undefined ? CALENDAR_RANGE_DAYS : CALENDAR_TASK_RANGE_DAYS;
@@ -656,10 +656,10 @@ export class ScheduledTasksService {
       );
     }
     const t = this.db.db;
-    let tasks: ScheduledTask[];
+    let tasks: Automation[];
     if (q.taskId !== undefined) {
       const task = await this.store.getTask(t, orgId, q.taskId);
-      if (!task || (task.accountId !== actor.accountId && !manage)) throw scheduleNotFound();
+      if (!task || (task.accountId !== actor.accountId && !manage)) throw automationNotFound();
       tasks = [task];
     } else {
       tasks =
@@ -676,7 +676,7 @@ export class ScheduledTasksService {
       // one row past the caps tells the assembly where to cut
       calendarRunReadLimit(limits),
     );
-    const settings = await readScheduleSettings(t, this.config, orgId);
+    const settings = await readAutomationSettings(t, this.config, orgId);
     return assembleCalendar(
       {
         tasks,
@@ -700,9 +700,9 @@ export class ScheduledTasksService {
    */
   private async postingInto(
     orgId: string,
-    tasks: ScheduledTask[],
+    tasks: Automation[],
     conversationId: string,
-  ): Promise<ScheduledTask[]> {
+  ): Promise<Automation[]> {
     const chats = tasks.some((t) => t.mode === "chat")
       ? await this.db.db
           .selectFrom("channel_threads")
@@ -728,29 +728,26 @@ export class ScheduledTasksService {
   }
 
   /** Each task with its latest settled non-trial run, in one query. */
-  private async withLastRuns(
-    orgId: string,
-    plain: ScheduledTask[],
-  ): Promise<ScheduledTaskListItem[]> {
+  private async withLastRuns(orgId: string, plain: Automation[]): Promise<AutomationListItem[]> {
     if (plain.length === 0) return [];
     const tasks = await this.withAccounts(plain);
     const rows = await this.db.db
-      .selectFrom("scheduled_task_runs")
-      .select(["task_id", "status", "skip_reason", "fired_at", "scheduled_for"])
-      .distinctOn("task_id")
+      .selectFrom("automation_runs")
+      .select(["automation_id", "status", "skip_reason", "fired_at", "scheduled_for"])
+      .distinctOn("automation_id")
       .where("org_id", "=", orgId)
       .where(
-        "task_id",
+        "automation_id",
         "in",
         tasks.map((t) => t.id),
       )
       .where("trial", "=", false)
       .where("status", "in", ["completed", "failed", "skipped"])
-      .orderBy("task_id")
+      .orderBy("automation_id")
       .orderBy("scheduled_for", "desc")
       .orderBy("id", "desc")
       .execute();
-    const last = new Map(rows.map((r) => [r.task_id, r]));
+    const last = new Map(rows.map((r) => [r.automation_id, r]));
     return tasks.map((t) => {
       const r = last.get(t.id);
       return {
@@ -770,7 +767,7 @@ export class ScheduledTasksService {
   /**
    * The chats the caller can point a `chat` task at (spec §8): per active connection of the org
    * whose extension is enabled in it, their DM threads (archived included) and, on a channel with
-   * threads, the groups they have a thread in. Members up (`schedules.use`, the route's).
+   * threads, the groups they have a thread in. Members up (`automations.use`, the route's).
    */
   async chatTargets(orgId: string, accountId: string): Promise<ChatTarget[]> {
     await this.liveRole(orgId, accountId);
@@ -828,7 +825,7 @@ export class ScheduledTasksService {
   ): Promise<GrantableTool[]> {
     const role = await this.liveRole(orgId, accountId);
     const agent = await this.agents.get(orgId, agentId, accountId);
-    const settings = await readScheduleSettings(this.db.db, this.config, orgId);
+    const settings = await readAutomationSettings(this.db.db, this.config, orgId);
     const d = agent.definition;
     const { tools } = await this.tools.forAgent(orgId, {
       disabledTools: d.disabledTools ?? [],
@@ -855,14 +852,19 @@ export class ScheduledTasksService {
   }
 
   /** The task's runs, latest first (default 50, at most 200); visible as {@link get}. */
-  async runs(orgId: string, actor: ScheduleActor, id: string, limit?: number): Promise<TaskRun[]> {
+  async runs(
+    orgId: string,
+    actor: AutomationActor,
+    id: string,
+    limit?: number,
+  ): Promise<TaskRun[]> {
     const task = await this.get(orgId, actor, id);
     const n = Math.min(Math.max(Math.trunc(limit ?? RUNS_DEFAULT), 1), RUNS_MAX);
     return this.store.listRuns(this.db.db, task.id, n);
   }
 
   /** The task's grants; visible as {@link get}. */
-  async grants(orgId: string, actor: ScheduleActor, id: string): Promise<ScheduledTaskGrantView[]> {
+  async grants(orgId: string, actor: AutomationActor, id: string): Promise<AutomationGrantView[]> {
     const task = await this.get(orgId, actor, id);
     const grants = await this.store.listGrants(this.db.db, task.id);
     if (grants.length === 0) return [];
@@ -893,11 +895,11 @@ export class ScheduledTasksService {
     id: string,
     grants: GrantInput[],
     source: GrantWriteSource = {},
-  ): Promise<ScheduledTaskGrant[]> {
-    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "schedules.use");
+  ): Promise<AutomationGrant[]> {
+    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "automations.use");
     const t = this.db.db;
     const task = await this.lockOwn(orgId, accountId, role, id);
-    const settings = await readScheduleSettings(t, this.config, orgId);
+    const settings = await readAutomationSettings(t, this.config, orgId);
     const agent = await this.agents.get(orgId, task.agentId, accountId);
     const resolved = await this.resolveGrants(
       orgId,
@@ -912,7 +914,7 @@ export class ScheduledTasksService {
     await audit(t, {
       actorAccountId: accountId,
       orgId,
-      action: "schedule.grants_changed",
+      action: "automation.grants_changed",
       target: task.id,
       detail: { added: resolved.map((g) => g.toolKey) },
     });
@@ -922,14 +924,14 @@ export class ScheduledTasksService {
   /** Creator only; removing a grant the task does not have is a no-op. */
   @Transactional()
   async removeGrant(orgId: string, accountId: string, id: string, toolKey: string): Promise<void> {
-    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "schedules.use");
+    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "automations.use");
     const t = this.db.db;
     const task = await this.lockOwn(orgId, accountId, role, id);
     if (await this.store.removeGrant(t, task.id, toolKey)) {
       await audit(t, {
         actorAccountId: accountId,
         orgId,
-        action: "schedule.grants_changed",
+        action: "automation.grants_changed",
         target: task.id,
         detail: { removed: [toolKey] },
       });
@@ -937,19 +939,19 @@ export class ScheduledTasksService {
   }
 
   /**
-   * The creator's scheduled tasks that need attention (spec §8), derived live: a paused task whose
+   * The creator's automations that need attention (spec §8), derived live: a paused task whose
    * reason is not `creator` (resuming clears it), an active task whose latest settled non-trial
    * run failed (the next good run clears it), and a task whose latest settled non-trial run was
    * refused tools, connections or domains (a tool granted since drops out, a domain too while the
    * org's network allowlist admits it; the next clean run clears the rest). Newest first.
    */
-  async attentionFor(orgId: string, accountId: string): Promise<ScheduleAttention[]> {
+  async attentionFor(orgId: string, accountId: string): Promise<AutomationAttention[]> {
     const db = this.db.db;
     const tasks = (await this.store.listForAccount(db, orgId, accountId)).filter(
       (t) => t.status !== "ended",
     );
     if (tasks.length === 0) return [];
-    const out: ScheduleAttention[] = [];
+    const out: AutomationAttention[] = [];
     const pausers = tasks.flatMap((t) =>
       t.status === "paused" && t.pausedBy !== null ? [t.pausedBy] : [],
     );
@@ -957,29 +959,29 @@ export class ScheduledTasksService {
     const ids = tasks.map((t) => t.id);
     // the latest settled non-trial run of each task, and every grant of these tasks, in one query each
     const latest = await db
-      .selectFrom("scheduled_task_runs")
-      .select(["task_id", "fired_at", "scheduled_for", "missing_grants", "status", "error"])
-      .distinctOn("task_id")
+      .selectFrom("automation_runs")
+      .select(["automation_id", "fired_at", "scheduled_for", "missing_grants", "status", "error"])
+      .distinctOn("automation_id")
       .where("org_id", "=", orgId)
-      .where("task_id", "in", ids)
+      .where("automation_id", "in", ids)
       .where("trial", "=", false)
       .where("status", "<>", "skipped")
-      .orderBy("task_id")
+      .orderBy("automation_id")
       .orderBy("scheduled_for", "desc")
       .orderBy("id", "desc")
       .execute();
-    const runs = new Map(latest.map((r) => [r.task_id, r]));
+    const runs = new Map(latest.map((r) => [r.automation_id, r]));
     const grantRows = await db
-      .selectFrom("scheduled_task_grants")
-      .select(["task_id", "tool_key", "spec_hash"])
-      .where("task_id", "in", ids)
+      .selectFrom("automation_grants")
+      .select(["automation_id", "tool_key", "spec_hash"])
+      .where("automation_id", "in", ids)
       .execute();
     /** Per task: each granted tool key with the definition hash it was granted for. */
     const granted = new Map<string, Map<string, string>>();
     for (const g of grantRows) {
-      const byKey = granted.get(g.task_id) ?? new Map<string, string>();
+      const byKey = granted.get(g.automation_id) ?? new Map<string, string>();
       byKey.set(g.tool_key, g.spec_hash);
-      granted.set(g.task_id, byKey);
+      granted.set(g.automation_id, byKey);
     }
     let loaded = false;
     let role: OrgRole | null = null;
@@ -1115,7 +1117,7 @@ export class ScheduledTasksService {
       );
     } catch (e) {
       if (e instanceof ApiError && e.code === "agent.not_found") return new Map();
-      this.log.warn("scheduled task: the agent's tools could not be read", {
+      this.log.warn("automation: the agent's tools could not be read", {
         orgId,
         agentId,
         error: e instanceof Error ? e.message : String(e),
@@ -1132,7 +1134,7 @@ export class ScheduledTasksService {
   async pauseFor(
     t: KernelSchemaDb,
     taskId: string,
-    reason: SchedulePauseReason,
+    reason: AutomationPauseReason,
     by: string | null,
   ): Promise<void> {
     await pauseTaskIn(t, taskId, reason, by);
@@ -1152,12 +1154,12 @@ export class ScheduledTasksService {
     id: string,
     opts: { trial: boolean },
   ): Promise<TaskRun> {
-    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "schedules.use");
+    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "automations.use");
     const t = this.db.db;
     const task = await this.lockOwn(orgId, accountId, role, id);
-    if (task.status === "ended") throw new ApiError("conflict", "This scheduled task has ended");
-    const settings = await readScheduleSettings(t, this.config, orgId);
-    if (!settings.enabled) throw scheduleDisabled();
+    if (task.status === "ended") throw new ApiError("conflict", "This automation has ended");
+    const settings = await readAutomationSettings(t, this.config, orgId);
+    if (!settings.enabled) throw automationDisabled();
     const run = await this.store.insertRun(t, {
       id: randomUUID(),
       taskId: task.id,
@@ -1170,17 +1172,17 @@ export class ScheduledTasksService {
     await audit(t, {
       actorAccountId: accountId,
       orgId,
-      action: "schedule.run_now",
+      action: "automation.run_now",
       target: task.id,
       detail: { taskRunId: run.id, trial: opts.trial },
     });
-    await oweSchedFire(this.outbox, run.id, orgId);
+    await oweAutomationFire(this.outbox, run.id, orgId);
     // a fire job that fails for good before its claim leaves the run to this check (`removed`)
-    await oweSchedSettleUnfired(this.outbox, run.id, orgId, run.scheduledFor, null);
+    await oweAutomationSettleUnfired(this.outbox, run.id, orgId, run.scheduledFor, null);
     return run;
   }
 
-  /** The live role of a member of the org; not a member → `schedule.not_found`. */
+  /** The live role of a member of the org; not a member → `automation.not_found`. */
   private async liveRole(orgId: string, accountId: string): Promise<OrgRole> {
     const m = await this.db
       .selectFrom("memberships")
@@ -1190,45 +1192,45 @@ export class ScheduledTasksService {
       .where("memberships.account_id", "=", accountId)
       .where("orgs.deleted_at", "is", null)
       .executeTakeFirst();
-    if (!m) throw scheduleNotFound();
+    if (!m) throw automationNotFound();
     return m.role;
   }
 
-  /** The actor's own task, row-locked; another's: `schedule.forbidden` for an admin, else 404. */
+  /** The actor's own task, row-locked; another's: `automation.forbidden` for an admin, else 404. */
   private async lockOwn(
     orgId: string,
     accountId: string,
     role: OrgRole,
     id: string,
-  ): Promise<ScheduledTask> {
+  ): Promise<Automation> {
     const task = await this.store.lockTask(this.db.db, orgId, id);
-    if (!task) throw scheduleNotFound();
+    if (!task) throw automationNotFound();
     if (task.accountId !== accountId) {
-      throw can(role, "schedules.manage") ? scheduleForbidden() : scheduleNotFound();
+      throw can(role, "automations.manage") ? automationForbidden() : automationNotFound();
     }
     return task;
   }
 
   /**
    * A task the actor may pause, resume or delete, row-locked under the org lock: their own (with
-   * `creatorAction`), or any as an org admin (`schedules.manage`); otherwise `schedule.not_found`.
+   * `creatorAction`), or any as an org admin (`automations.manage`); otherwise `automation.not_found`.
    */
   private async lockManaged(
     orgId: string,
     accountId: string,
     id: string,
-    creatorAction: "org.read" | "schedules.use",
-  ): Promise<{ task: ScheduledTask; byAdmin: boolean }> {
+    creatorAction: "org.read" | "automations.use",
+  ): Promise<{ task: Automation; byAdmin: boolean }> {
     const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "org.read");
     const task = await this.store.lockTask(this.db.db, orgId, id);
-    if (!task) throw scheduleNotFound();
+    if (!task) throw automationNotFound();
     if (task.accountId === accountId) {
       if (!can(role, creatorAction)) {
         throw new ApiError("forbidden", "Insufficient organization role");
       }
       return { task, byAdmin: false };
     }
-    if (!can(role, "schedules.manage")) throw scheduleNotFound();
+    if (!can(role, "automations.manage")) throw automationNotFound();
     return { task, byAdmin: true };
   }
 
@@ -1245,7 +1247,7 @@ export class ScheduledTasksService {
     orgId: string,
     accountId: string,
     agentId: string,
-    target: { mode: ScheduleMode; conversationId: string | null; chat: ScheduleChat | null },
+    target: { mode: AutomationMode; conversationId: string | null; chat: AutomationChat | null },
   ): Promise<void> {
     const { mode, conversationId, chat } = target;
     if (mode === "new" && (conversationId !== null || chat !== null)) {
@@ -1335,7 +1337,7 @@ export class ScheduledTasksService {
     orgId: string,
     accountId: string,
     agent: AgentView,
-    mode: ScheduleMode,
+    mode: AutomationMode,
     pick: { model: ModelRef | null; effort: string | null; deviceId: string | null },
     deviceChanged = true,
   ): Promise<void> {
@@ -1386,7 +1388,7 @@ export class ScheduledTasksService {
    * `deviceId`, the task's device (null: none can be determined, the device rule is skipped),
    * stored with `spec_hash` `network` and no connector (plan P-D7), and only when
    * `source.fromSession` (a person on the task page; never a token, the Platform tool or the
-   * schedule tools). Each git push key (`git:push`, `git:push:<owner>/<repo>`, the repository
+   * automation tools). Each git push key (`git:push`, `git:push:<owner>/<repo>`, the repository
    * lower-cased) is refused by {@link gitGrantRefusal} and stored with `spec_hash` `git` and no
    * connector, also only when `source.fromSession`. Duplicates keep the last.
    */
@@ -1394,17 +1396,17 @@ export class ScheduledTasksService {
     orgId: string,
     role: OrgRole,
     agent: AgentView,
-    settings: EffectiveScheduleSettings,
+    settings: EffectiveAutomationSettings,
     grants: readonly GrantInput[],
     _deviceId: string | null,
     source: GrantWriteSource = {},
-  ): Promise<ScheduledTaskGrant[]> {
+  ): Promise<AutomationGrant[]> {
     if (grants.length === 0) return [];
     // fail closed: no grant can be checked against a list that cannot be read
     if (settings.forbiddenToolsUnreadable) {
       throw grantNotAllowed(FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR);
     }
-    const out = new Map<string, ScheduledTaskGrant>();
+    const out = new Map<string, AutomationGrant>();
     const network = grants.filter((g) => isNetworkGrantKey(g.toolKey));
     if (network.length > 0) {
       if (source.fromSession !== true) throw grantNotAllowed(NETWORK_GRANT_NEEDS_PERSON);
@@ -1487,7 +1489,7 @@ export class ScheduledTasksService {
   private async taskDeviceOf(
     orgId: string,
     task: {
-      mode: ScheduleMode;
+      mode: AutomationMode;
       deviceId: string | null;
       conversationId: string | null;
     },
@@ -1514,7 +1516,7 @@ function requiredText(v: string, field: string, max: number): string {
   return s;
 }
 
-function withZone(t: TriggerInput, timeZone: string): ScheduleTrigger {
+function withZone(t: TriggerInput, timeZone: string): AutomationTrigger {
   return t.kind === "cron"
     ? { kind: "cron", expr: t.expr.trim(), timeZone }
     : { kind: "once", at: t.at, timeZone };
@@ -1525,31 +1527,31 @@ function withZone(t: TriggerInput, timeZone: string): ScheduleTrigger {
  * the sampled gap (null for once), from which the jitter is derived.
  */
 function checkTrigger(
-  t: ScheduleTrigger,
+  t: AutomationTrigger,
   now: Date,
-  settings: EffectiveScheduleSettings,
+  settings: EffectiveAutomationSettings,
 ): number | null {
   if (!isTimeZone(t.timeZone)) {
-    throw new ApiError("schedule.invalid_time_zone", `${t.timeZone} is not an IANA time zone`);
+    throw new ApiError("automation.invalid_time_zone", `${t.timeZone} is not an IANA time zone`);
   }
   const v = validateTrigger(t, now);
   if (!v.ok) {
     const message: Record<typeof v.code, string> = {
-      "schedule.invalid_cron": "The schedule is not a 5-field cron expression",
-      "schedule.invalid_time_zone": `${t.timeZone} is not an IANA time zone`,
-      "schedule.invalid_once_time": "The time is not a local date-time such as 2026-12-01T09:00",
-      "schedule.once_in_past": "The time is not in the future",
+      "automation.invalid_cron": "The schedule is not a 5-field cron expression",
+      "automation.invalid_time_zone": `${t.timeZone} is not an IANA time zone`,
+      "automation.invalid_once_time": "The time is not a local date-time such as 2026-12-01T09:00",
+      "automation.once_in_past": "The time is not in the future",
     };
     throw new ApiError(v.code, message[v.code]);
   }
   if (t.kind === "cron") {
     if (nextTick(t, now) === null) {
-      throw new ApiError("schedule.invalid_cron", "The schedule never fires");
+      throw new ApiError("automation.invalid_cron", "The schedule never fires");
     }
     const gap = minGapMinutes(t, now);
     if (gap !== null && gap < settings.minIntervalMinutes) {
       throw new ApiError(
-        "schedule.interval_too_short",
+        "automation.interval_too_short",
         `The schedule fires every ${gap} minutes; this organization allows at least ${settings.minIntervalMinutes}`,
       );
     }
@@ -1559,7 +1561,7 @@ function checkTrigger(
 }
 
 /** The next fire time after `now`, jitter included; null when there is none (a past once). */
-function fireAt(t: ScheduleTrigger, now: Date, jitter: number): Date | null {
+function fireAt(t: AutomationTrigger, now: Date, jitter: number): Date | null {
   const tick = nextTick(t, now);
   return tick === null ? null : new Date(tick.getTime() + jitter * 1000);
 }
@@ -1571,9 +1573,9 @@ function fireAt(t: ScheduleTrigger, now: Date, jitter: number): Date | null {
  */
 function expiryOf(
   v: Date | null,
-  trigger: ScheduleTrigger,
+  trigger: AutomationTrigger,
   now: Date,
-  settings: EffectiveScheduleSettings,
+  settings: EffectiveAutomationSettings,
 ): Date | null {
   if (v !== null) return checkExpiry(v, now);
   return trigger.kind === "cron" && settings.defaultExpiryDays !== null

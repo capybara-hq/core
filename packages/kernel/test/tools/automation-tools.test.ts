@@ -4,22 +4,22 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
+import { AutomationsService } from "../../src/automations/automations.service.js";
+import { AutomationStore } from "../../src/automations/store.js";
+import type { Automation } from "../../src/automations/types.js";
+import { UNATTENDED_FIXED_ASK_ERROR } from "../../src/automations/unattended.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
-import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { ScheduledTask } from "../../src/schedules/types.js";
-import { UNATTENDED_FIXED_ASK_ERROR } from "../../src/schedules/unattended.js";
-import { SCHEDULE_TOOL_NAMES } from "../../src/tools/builtin-names.js";
-import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
+import { AUTOMATION_TOOL_NAMES } from "../../src/tools/builtin-names.js";
 import {
   cardChangedText,
   NOT_A_MEMBER_TEXT,
   notYoursText,
   scheduleWords,
-} from "../../src/tools/builtins/schedules.js";
+} from "../../src/tools/builtins/automations.js";
+import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import { createDecidePolicy } from "../../src/tools/policy.js";
 import {
   type BuiltinCallContext,
@@ -51,10 +51,10 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * The schedule builtins (scheduled tasks spec §11): `ScheduleCreate` / `ScheduleUpdate` are fixed
+ * The automation builtins (scheduled tasks spec §11): `AutomationCreate` / `AutomationUpdate` are fixed
  * asks whose kernel-rendered card shows the whole task and whose result is exactly the approved
  * input; `here` targets this conversation or its IM direct chat; an unattended run can never
- * create or widen a task; `ScheduleList` / `ScheduleDelete` touch only the person's own tasks.
+ * create or widen a task; `AutomationList` / `AutomationDelete` touch only the person's own tasks.
  */
 
 let pgc: TestContainer;
@@ -62,7 +62,7 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -113,7 +113,7 @@ beforeEach(async () => {
     modelParams: {},
     fallbackParams: {},
     disabledSkills: [],
-    disabledTools: builtinsOff(...SCHEDULE_TOOL_NAMES, "CurrentTime"),
+    disabledTools: builtinsOff(...AUTOMATION_TOOL_NAMES, "CurrentTime"),
     toolPolicies: {},
   };
   const res = await owner({
@@ -133,7 +133,7 @@ beforeEach(async () => {
   agentId = (res.json() as { agent: { id: string } }).agent.id;
 });
 
-const svc = () => k.app.get(ScheduledTasksService);
+const svc = () => k.app.get(AutomationsService);
 const tool = (name: string): BuiltinTool => {
   const t = k.app
     .get(BuiltinTools)
@@ -195,7 +195,7 @@ async function seedDm(conv: string, accountId: string): Promise<string> {
   return connectionId;
 }
 
-const dailyTask = (accountId: string, name = "Digest"): Promise<ScheduledTask> =>
+const dailyTask = (accountId: string, name = "Digest"): Promise<Automation> =>
   svc().create(orgId, accountId, {
     agentId,
     name,
@@ -206,8 +206,8 @@ const dailyTask = (accountId: string, name = "Digest"): Promise<ScheduledTask> =
     grants: [{ toolKey: "CurrentTime" }],
   });
 
-describe("schedule tools (spec §11)", () => {
-  it("ScheduleCreate asks and the created task matches the approved input", async () => {
+describe("automation tools (spec §11)", () => {
+  it("AutomationCreate asks and the created task matches the approved input", async () => {
     await db
       .updateTable("accounts")
       .set({ time_zone: "Asia/Shanghai" })
@@ -221,13 +221,13 @@ describe("schedule tools (spec §11)", () => {
       mode: "new",
       approvedTools: ["CurrentTime"],
     };
-    await postMessage(alice, orgId, conv, `tool:ScheduleCreate:${JSON.stringify(input)}`);
+    await postMessage(alice, orgId, conv, `tool:AutomationCreate:${JSON.stringify(input)}`);
     const asked = await waitFor(
       async () => ofType(await eventsOf(db, conv), "approval_requested")[0],
       20_000,
       "approval_requested",
     );
-    expect(asked.payload.toolKey).toBe("ScheduleCreate");
+    expect(asked.payload.toolKey).toBe("AutomationCreate");
     const res = await alice({
       method: "GET",
       url: `/api/v1/orgs/${orgId}/approvals/${asked.payload.approvalId}`,
@@ -239,10 +239,10 @@ describe("schedule tools (spec §11)", () => {
     expect(asked.payload.policy).toBe("fixed");
     expect(approval.summary).toEqual({
       zh:
-        "创建定时任务「Morning brief」：每个工作日 09:00（Asia/Shanghai）；" +
+        "创建自动化「Morning brief」：每个工作日 09:00（Asia/Shanghai）；" +
         "运行位置：每次运行新建对话；预先批准的工具：CurrentTime",
       en:
-        'Create the scheduled task "Morning brief": every weekday at 09:00 (Asia/Shanghai); ' +
+        'Create the automation "Morning brief": every weekday at 09:00 (Asia/Shanghai); ' +
         "runs in a new conversation for every run; approved tools: CurrentTime",
     });
     expect(await tasksOf(aliceId)).toEqual([]);
@@ -254,7 +254,7 @@ describe("schedule tools (spec §11)", () => {
     expect(ok.statusCode, ok.body).toBe(200);
     await waitForTerminal(db, conv, 1, 30_000);
     const result = ofType(await eventsOf(db, conv), "tool_result").at(-1)?.payload;
-    expect(result).toMatchObject({ toolKey: "ScheduleCreate", isError: false });
+    expect(result).toMatchObject({ toolKey: "AutomationCreate", isError: false });
     const [task] = await tasksOf(aliceId);
     expect(task).toMatchObject({
       accountId: aliceId,
@@ -280,10 +280,10 @@ describe("schedule tools (spec §11)", () => {
       runAt: "2099-01-01T15:00",
       mode: "here",
     };
-    const p = await policyOf("ScheduleCreate", input, aliceId, conv);
+    const p = await policyOf("AutomationCreate", input, aliceId, conv);
     expect(p.summary?.en).toContain("runs in the direct chat on Team bot");
     expect(p.summary?.zh).toContain("运行位置：Team bot 的私聊");
-    const r = await tool("ScheduleCreate").run(input, callCtx(aliceId, conv));
+    const r = await tool("AutomationCreate").run(input, callCtx(aliceId, conv));
     expect(textOf(r)).toContain("the direct chat on Team bot");
     const [task] = await tasksOf(aliceId);
     expect(task).toMatchObject({
@@ -304,10 +304,10 @@ describe("schedule tools (spec §11)", () => {
       mode: "chat",
       chat: { connectionId, chatId: "chat-dm-1", agentId },
     };
-    const p = await policyOf("ScheduleCreate", input, aliceId, conv);
-    expect(p).toMatchObject({ key: "ScheduleCreate", policy: "ask", remember: false });
+    const p = await policyOf("AutomationCreate", input, aliceId, conv);
+    expect(p).toMatchObject({ key: "AutomationCreate", policy: "ask", remember: false });
     expect(p.summary?.en).toContain("runs in the direct chat on Team bot");
-    const r = await tool("ScheduleCreate").run(input, callCtx(aliceId, conv));
+    const r = await tool("AutomationCreate").run(input, callCtx(aliceId, conv));
     expect(textOf(r)).toContain("the direct chat on Team bot");
     const [task] = await tasksOf(aliceId);
     expect(task).toMatchObject({
@@ -335,19 +335,19 @@ describe("schedule tools (spec §11)", () => {
       mode: "chat",
       chat: { connectionId: foreign, chatId: "chat-dm-1", agentId },
     };
-    const p = await policyOf("ScheduleCreate", input, aliceId, conv);
+    const p = await policyOf("AutomationCreate", input, aliceId, conv);
     expect(p.summary?.en).not.toContain("Other org bot");
     expect(p.summary?.en).toContain(`the direct chat on ${foreign}`);
-    expect(await refusal(tool("ScheduleCreate").run(input, callCtx(aliceId, conv)))).toBeTruthy();
+    expect(await refusal(tool("AutomationCreate").run(input, callCtx(aliceId, conv)))).toBeTruthy();
     expect(await tasksOf(aliceId)).toEqual([]);
   });
 
   it("agentId is a chat property; the old top-level form is rejected", async () => {
     type Schema = { properties: Record<string, { properties?: Record<string, unknown> }> };
-    const create = tool("ScheduleCreate").spec.inputSchema as Schema;
+    const create = tool("AutomationCreate").spec.inputSchema as Schema;
     expect(create.properties.agentId).toBeUndefined();
     expect(create.properties.chat?.properties?.agentId).toBeDefined();
-    const update = tool("ScheduleUpdate").spec.inputSchema as Schema;
+    const update = tool("AutomationUpdate").spec.inputSchema as Schema;
     expect(update.properties.agentId).toBeUndefined();
     expect(update.properties.chat?.properties?.agentId).toBeDefined();
     // a direct call parses with the tool's strict schema: the former top-level form no longer does
@@ -361,12 +361,12 @@ describe("schedule tools (spec §11)", () => {
       chat: { connectionId, chatId: "chat-dm-1" },
       agentId,
     };
-    expect(await refusal(tool("ScheduleCreate").run(old, callCtx(aliceId, conv)))).toContain(
+    expect(await refusal(tool("AutomationCreate").run(old, callCtx(aliceId, conv)))).toContain(
       "Invalid input",
     );
     const task = await dailyTask(aliceId);
     expect(
-      await refusal(tool("ScheduleUpdate").run({ id: task.id, agentId }, callCtx(aliceId, conv))),
+      await refusal(tool("AutomationUpdate").run({ id: task.id, agentId }, callCtx(aliceId, conv))),
     ).toContain("Invalid input");
     expect((await tasksOf(aliceId)).map((t) => t.id)).toEqual([task.id]);
   });
@@ -391,13 +391,13 @@ describe("schedule tools (spec §11)", () => {
       mode: "chat",
       chat: { connectionId, chatId: "chat-dm-1", agentId: otherAgentId },
     };
-    expect(await refusal(tool("ScheduleCreate").run(input, callCtx(aliceId, conv)))).toContain(
+    expect(await refusal(tool("AutomationCreate").run(input, callCtx(aliceId, conv)))).toContain(
       "The chat belongs to another agent",
     );
     expect(await tasksOf(aliceId)).toEqual([]);
   });
 
-  it("ScheduleTargets lists the user's chats, the same data as the service", async () => {
+  it("AutomationTargets lists the user's chats, the same data as the service", async () => {
     const conv = await createConv(alice, orgId, agentId);
     const connectionId = await seedDm(conv, aliceId);
     // a group on a channel without threads, and another member's DM, are not offered
@@ -413,7 +413,7 @@ describe("schedule tools (spec §11)", () => {
     );
     const expected = await svc().chatTargets(orgId, aliceId);
     expect(expected.map((t) => t.chatId)).toEqual(["chat-dm-1"]);
-    const r = await tool("ScheduleTargets").run({}, callCtx(aliceId, conv));
+    const r = await tool("AutomationTargets").run({}, callCtx(aliceId, conv));
     const text = textOf(r);
     expect(text).toContain(`connectionId=${connectionId}`);
     expect(text).toContain("chatId=chat-dm-1");
@@ -431,7 +431,7 @@ describe("schedule tools (spec §11)", () => {
     const connectionId = await seedDm(conv, aliceId);
     await sql`UPDATE capybara.extension_org_configs SET enabled = false
       WHERE org_id = ${orgId} AND plugin = 'fake-im'`.execute(raw);
-    const listed = textOf(await tool("ScheduleTargets").run({}, callCtx(aliceId, conv)));
+    const listed = textOf(await tool("AutomationTargets").run({}, callCtx(aliceId, conv)));
     expect(listed).toContain("no IM chats");
     const input = {
       name: "Hidden",
@@ -440,13 +440,13 @@ describe("schedule tools (spec §11)", () => {
       mode: "chat",
       chat: { connectionId, chatId: "chat-dm-1" },
     };
-    expect(await refusal(tool("ScheduleCreate").run(input, callCtx(aliceId, conv)))).toContain(
+    expect(await refusal(tool("AutomationCreate").run(input, callCtx(aliceId, conv)))).toContain(
       "extension is disabled in this organization",
     );
     expect(await tasksOf(aliceId)).toEqual([]);
   });
 
-  it("ScheduleUpdate moves a task into a chat", async () => {
+  it("AutomationUpdate moves a task into a chat", async () => {
     const task = await dailyTask(aliceId);
     const conv = await createConv(alice, orgId, agentId);
     const connectionId = await seedDm(conv, aliceId);
@@ -455,11 +455,11 @@ describe("schedule tools (spec §11)", () => {
       mode: "chat" as const,
       chat: { connectionId, chatId: "chat-dm-1", agentId },
     };
-    const p = await policyOf("ScheduleUpdate", input, aliceId, conv);
+    const p = await policyOf("AutomationUpdate", input, aliceId, conv);
     expect(p.summary?.en).toContain(
       "runs in a new conversation for every run → the direct chat on Team bot",
     );
-    await tool("ScheduleUpdate").run(input, callCtx(aliceId, conv));
+    await tool("AutomationUpdate").run(input, callCtx(aliceId, conv));
     expect(await store.getTask(db, orgId, task.id)).toMatchObject({
       mode: "chat",
       conversationId: null,
@@ -475,9 +475,9 @@ describe("schedule tools (spec §11)", () => {
       runAt: "2099-01-01T15:00",
       mode: "here",
     };
-    const p = await policyOf("ScheduleCreate", input, aliceId, conv);
+    const p = await policyOf("AutomationCreate", input, aliceId, conv);
     expect(p.summary?.en).toContain("runs in this conversation");
-    await tool("ScheduleCreate").run(input, callCtx(aliceId, conv));
+    await tool("AutomationCreate").run(input, callCtx(aliceId, conv));
     const [task] = await tasksOf(aliceId);
     expect(task).toMatchObject({ mode: "conversation", conversationId: conv, chat: null });
     // no run_context yet: the org's zone, else UTC
@@ -489,13 +489,13 @@ describe("schedule tools (spec §11)", () => {
     const { tools } = await k.app
       .get(ToolRegistry)
       .forAgent(orgId, { ...definition, source: "web" });
-    const create = tools.find((t) => t.key === "ScheduleCreate") as ResolvedTool;
-    const update = tools.find((t) => t.key === "ScheduleUpdate") as ResolvedTool;
+    const create = tools.find((t) => t.key === "AutomationCreate") as ResolvedTool;
+    const update = tools.find((t) => t.key === "AutomationUpdate") as ResolvedTool;
     expect(create).toBeDefined();
     // even a task grant for it does not let it through
     const task = await dailyTask(aliceId);
     await store.addGrant(db, task.id, {
-      toolKey: "ScheduleCreate",
+      toolKey: "AutomationCreate",
       specHash: create.specHash,
       connectorId: null,
     });
@@ -519,76 +519,78 @@ describe("schedule tools (spec §11)", () => {
       }),
     });
     expect(await decide(create, definition, await ctx(create, "fail"))).toEqual({
-      refused: UNATTENDED_FIXED_ASK_ERROR("ScheduleCreate"),
+      refused: UNATTENDED_FIXED_ASK_ERROR("AutomationCreate"),
     });
     // wait mode and attended runs: a fixed ask, never a grant
     expect(await decide(create, definition, await ctx(create, "wait"))).toMatchObject({
-      ask: { toolKey: "ScheduleCreate", policy: "fixed" },
+      ask: { toolKey: "AutomationCreate", policy: "fixed" },
     });
     expect(await decide(create, definition, await ctx(create, null))).toMatchObject({
-      ask: { toolKey: "ScheduleCreate", policy: "fixed" },
+      ask: { toolKey: "AutomationCreate", policy: "fixed" },
     });
     // the update of an own task is refused the same way
-    const upd = { id: task.id, approvedTools: ["CurrentTime", "ScheduleList"] };
+    const upd = { id: task.id, approvedTools: ["CurrentTime", "AutomationList"] };
     const updCtx = {
       ...(await ctx(update, "fail")),
-      callPolicy: await policyOf("ScheduleUpdate", upd, aliceId, conv),
+      callPolicy: await policyOf("AutomationUpdate", upd, aliceId, conv),
     };
     expect(await decide(update, definition, updCtx)).toEqual({
-      refused: UNATTENDED_FIXED_ASK_ERROR("ScheduleUpdate"),
+      refused: UNATTENDED_FIXED_ASK_ERROR("AutomationUpdate"),
     });
   });
 
-  it("ScheduleDelete refuses another member's task", async () => {
+  it("AutomationDelete refuses another member's task", async () => {
     const bobs = await dailyTask(bobId, "Bob's digest");
     const mine = await dailyTask(aliceId, "Alice's digest");
     const conv = await createConv(owner, orgId, agentId);
     // the owner is an org admin, and still cannot delete bob's task through the tool
-    expect(await refusal(tool("ScheduleDelete").run({ id: bobs.id }, callCtx(ownerId, conv)))).toBe(
-      notYoursText(bobs.id),
-    );
+    expect(
+      await refusal(tool("AutomationDelete").run({ id: bobs.id }, callCtx(ownerId, conv))),
+    ).toBe(notYoursText(bobs.id));
     expect(await store.getTask(db, orgId, bobs.id)).not.toBeNull();
     const aliceConv = await createConv(alice, orgId, agentId);
     expect(
-      await refusal(tool("ScheduleDelete").run({ id: bobs.id }, callCtx(aliceId, aliceConv))),
+      await refusal(tool("AutomationDelete").run({ id: bobs.id }, callCtx(aliceId, aliceConv))),
     ).toBe(notYoursText(bobs.id));
-    const r = await tool("ScheduleDelete").run({ id: mine.id }, callCtx(aliceId, aliceConv));
-    expect(textOf(r)).toContain('Deleted scheduled task "Alice\'s digest"');
+    const r = await tool("AutomationDelete").run({ id: mine.id }, callCtx(aliceId, aliceConv));
+    expect(textOf(r)).toContain('Deleted automation "Alice\'s digest"');
     expect(await store.getTask(db, orgId, mine.id)).toBeNull();
   });
 
-  it("ScheduleUpdate shows the diff and grants exactly the approved list", async () => {
+  it("AutomationUpdate shows the diff and grants exactly the approved list", async () => {
     const task = await dailyTask(aliceId);
     const conv = await createConv(alice, orgId, agentId);
-    const input = { id: task.id, cron: "0 10 * * 1", approvedTools: ["ScheduleList"] };
-    const p = await policyOf("ScheduleUpdate", input, aliceId, conv);
-    expect(p).toMatchObject({ key: "ScheduleUpdate", policy: "ask", remember: false });
+    const input = { id: task.id, cron: "0 10 * * 1", approvedTools: ["AutomationList"] };
+    const p = await policyOf("AutomationUpdate", input, aliceId, conv);
+    expect(p).toMatchObject({ key: "AutomationUpdate", policy: "ask", remember: false });
     expect(p.summary?.en).toBe(
-      'Change the scheduled task "Digest": schedule every day at 09:00 (UTC) → every Monday at ' +
-        "10:00 (UTC); approved tools: ScheduleList (adds ScheduleList; removes CurrentTime)",
+      'Change the automation "Digest": schedule every day at 09:00 (UTC) → every Monday at ' +
+        "10:00 (UTC); approved tools: AutomationList (adds AutomationList; removes CurrentTime)",
     );
     expect(p.summary?.zh).toBe(
-      "修改定时任务「Digest」：时间 每天 09:00（UTC） → 每周一 10:00（UTC）；" +
-        "预先批准的工具：ScheduleList（新增 ScheduleList；移除 CurrentTime）",
+      "修改自动化「Digest」：时间 每天 09:00（UTC） → 每周一 10:00（UTC）；" +
+        "预先批准的工具：AutomationList（新增 AutomationList；移除 CurrentTime）",
     );
-    await tool("ScheduleUpdate").run(input, callCtx(aliceId, conv));
-    expect(await grantsOf(task.id)).toEqual(["ScheduleList"]);
+    await tool("AutomationUpdate").run(input, callCtx(aliceId, conv));
+    expect(await grantsOf(task.id)).toEqual(["AutomationList"]);
     expect((await store.getTask(db, orgId, task.id))?.trigger).toEqual({
       kind: "cron",
       expr: "0 10 * * 1",
       timeZone: "UTC",
     });
     // a refused grant rolls the whole change back
-    const bad = { id: task.id, name: "Renamed", approvedTools: ["ScheduleCreate"] };
-    expect(await refusal(tool("ScheduleUpdate").run(bad, callCtx(aliceId, conv)))).toContain(
+    const bad = { id: task.id, name: "Renamed", approvedTools: ["AutomationCreate"] };
+    expect(await refusal(tool("AutomationUpdate").run(bad, callCtx(aliceId, conv)))).toContain(
       "Remove it from approvedTools",
     );
     expect((await store.getTask(db, orgId, task.id))?.name).toBe("Digest");
-    expect(await grantsOf(task.id)).toEqual(["ScheduleList"]);
+    expect(await grantsOf(task.id)).toEqual(["AutomationList"]);
     // another member's task is denied before anyone is asked
     const bobs = await dailyTask(bobId);
-    expect(await policyOf("ScheduleUpdate", { id: bobs.id, name: "Mine" }, aliceId, conv)).toEqual({
-      key: "ScheduleUpdate",
+    expect(
+      await policyOf("AutomationUpdate", { id: bobs.id, name: "Mine" }, aliceId, conv),
+    ).toEqual({
+      key: "AutomationUpdate",
       policy: "deny",
       remember: false,
       denyReason: notYoursText(bobs.id),
@@ -598,7 +600,7 @@ describe("schedule tools (spec §11)", () => {
   it("a target that changed after the approval refuses the call", async () => {
     const conv = await createConv(alice, orgId, agentId);
     const input = { name: "Later", prompt: "Look again.", runAt: "2099-01-01T15:00", mode: "here" };
-    await postMessage(alice, orgId, conv, `tool:ScheduleCreate:${JSON.stringify(input)}`);
+    await postMessage(alice, orgId, conv, `tool:AutomationCreate:${JSON.stringify(input)}`);
     const asked = await waitFor(
       async () => ofType(await eventsOf(db, conv), "approval_requested")[0],
       20_000,
@@ -615,9 +617,9 @@ describe("schedule tools (spec §11)", () => {
     await waitForTerminal(db, conv, 1, 30_000);
     const result = ofType(await eventsOf(db, conv), "tool_result").at(-1)?.payload;
     expect(result).toMatchObject({
-      toolKey: "ScheduleCreate",
+      toolKey: "AutomationCreate",
       isError: true,
-      content: cardChangedText("ScheduleCreate"),
+      content: cardChangedText("AutomationCreate"),
     });
     expect(await tasksOf(aliceId)).toEqual([]);
   });
@@ -626,17 +628,17 @@ describe("schedule tools (spec §11)", () => {
     const task = await dailyTask(aliceId);
     const conv = await createConv(alice, orgId, agentId);
     const p = await policyOf(
-      "ScheduleUpdate",
+      "AutomationUpdate",
       { id: task.id, prompt: "Only the headlines." },
       aliceId,
       conv,
     );
     expect(p.summary).toEqual({
-      zh: "修改定时任务「Digest」：新提示词「Only the headlines.」；预先批准的工具：CurrentTime（不变）",
-      en: 'Change the scheduled task "Digest": new prompt "Only the headlines."; approved tools: CurrentTime (unchanged)',
+      zh: "修改自动化「Digest」：新提示词「Only the headlines.」；预先批准的工具：CurrentTime（不变）",
+      en: 'Change the automation "Digest": new prompt "Only the headlines."; approved tools: CurrentTime (unchanged)',
     });
     const long = "x".repeat(400);
-    const q = await policyOf("ScheduleUpdate", { id: task.id, prompt: long }, aliceId, conv);
+    const q = await policyOf("AutomationUpdate", { id: task.id, prompt: long }, aliceId, conv);
     expect(q.summary?.en).toContain(`new prompt "${"x".repeat(299)}…"`);
   });
 
@@ -646,34 +648,32 @@ describe("schedule tools (spec §11)", () => {
     await sql`DELETE FROM capybara.memberships WHERE org_id = ${orgId} AND account_id = ${aliceId}`.execute(
       raw,
     );
-    expect(await refusal(tool("ScheduleList").run({}, callCtx(aliceId, conv)))).toBe(
+    expect(await refusal(tool("AutomationList").run({}, callCtx(aliceId, conv)))).toBe(
       NOT_A_MEMBER_TEXT,
     );
-    expect(await refusal(tool("ScheduleDelete").run({ id: task.id }, callCtx(aliceId, conv)))).toBe(
-      NOT_A_MEMBER_TEXT,
-    );
+    expect(
+      await refusal(tool("AutomationDelete").run({ id: task.id }, callCtx(aliceId, conv))),
+    ).toBe(NOT_A_MEMBER_TEXT);
     expect(await store.getTask(db, orgId, task.id)).not.toBeNull();
   });
 
-  it("ScheduleList lists only the person's own tasks", async () => {
+  it("AutomationList lists only the person's own tasks", async () => {
     const mine = await dailyTask(aliceId, "Alice's digest");
     await dailyTask(bobId, "Bob's digest");
     const conv = await createConv(alice, orgId, agentId);
-    const text = textOf(await tool("ScheduleList").run({}, callCtx(aliceId, conv)));
+    const text = textOf(await tool("AutomationList").run({}, callCtx(aliceId, conv)));
     expect(text).toContain(`- ${mine.id}: "Alice's digest", every day at 09:00 (UTC), active`);
     expect(text).not.toContain("Bob's digest");
   });
 
-  it("the tools are hidden while the org has scheduled tasks turned off", async () => {
+  it("the tools are hidden while the org has automations turned off", async () => {
     const before = await k.app.get(ToolRegistry).forAgent(orgId, { ...definition, source: "web" });
     expect(before.tools.map((t) => t.key)).toEqual(
-      expect.arrayContaining([...SCHEDULE_TOOL_NAMES]),
+      expect.arrayContaining([...AUTOMATION_TOOL_NAMES]),
     );
-    await k.app
-      .get(OrgSettingsService)
-      .update(orgId, { scheduledTasks: { enabled: false } }, ownerId);
+    await k.app.get(OrgSettingsService).update(orgId, { automations: { enabled: false } }, ownerId);
     const after = await k.app.get(ToolRegistry).forAgent(orgId, { ...definition, source: "web" });
-    for (const n of SCHEDULE_TOOL_NAMES) expect(after.tools.map((t) => t.key)).not.toContain(n);
+    for (const n of AUTOMATION_TOOL_NAMES) expect(after.tools.map((t) => t.key)).not.toContain(n);
     expect(after.unavailable).toEqual([]);
   });
 

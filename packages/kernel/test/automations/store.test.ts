@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  type AutomationInsert,
+  AutomationStore,
+  findTaskGrant,
+} from "../../src/automations/store.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import {
-  findTaskGrant,
-  type ScheduledTaskInsert,
-  ScheduledTaskStore,
-} from "../../src/schedules/store.js";
 import { truncateTables } from "../helpers/db.js";
 import { legacyDbFor } from "../helpers/identity.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
@@ -18,7 +18,7 @@ let pgc: TestContainer;
 let raw: ReturnType<typeof createDb>;
 /** The `capybara` view the store queries through. */
 let db: KernelSchemaDb;
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 let seed: Awaited<ReturnType<typeof seedConversation>>;
 
 beforeAll(async () => {
@@ -42,7 +42,7 @@ beforeEach(async () => {
 const NOW = new Date("2026-11-11T09:00:00.000Z");
 const TICK = new Date("2026-11-11T09:00:00.000Z");
 
-const task = (over: Partial<ScheduledTaskInsert> = {}): ScheduledTaskInsert => ({
+const task = (over: Partial<AutomationInsert> = {}): AutomationInsert => ({
   id: randomUUID(),
   orgId: seed.orgId,
   accountId: seed.accountId,
@@ -71,7 +71,7 @@ const run = (taskId: string, over: { trial?: boolean; scheduledFor?: Date } = {}
   trial: over.trial ?? false,
 });
 
-describe("ScheduledTaskStore", () => {
+describe("AutomationStore", () => {
   it("round-trips a task and lists it for its creator and its org", async () => {
     const t = task({
       mode: "chat",

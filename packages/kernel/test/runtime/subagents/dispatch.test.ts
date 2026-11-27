@@ -352,11 +352,11 @@ describe("dispatch", () => {
       deny: [
         "AskUserQuestion",
         "Deliver",
-        "ScheduleCreate",
-        "ScheduleUpdate",
-        "ScheduleList",
-        "ScheduleTargets",
-        "ScheduleDelete",
+        "AutomationCreate",
+        "AutomationUpdate",
+        "AutomationList",
+        "AutomationTargets",
+        "AutomationDelete",
       ],
     });
     const task = cev[1] as Ev<"user_message">;
