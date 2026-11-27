@@ -121,8 +121,9 @@ export type ComposerMenuController = {
   /**
    * The composer textarea's keys: ↑↓ move, ↵ picks (with nothing to choose it closes the menu,
    * while results load it waits; it never sends), Esc closes, Backspace through the trigger (no
-   * selection) and a space right after `@` or after `@…` with no match close (the key still types). `true` when the
-   * menu took the key (the composer then stops); never during an IME composition.
+   * selection) and a space right after `@` or after `@…` with no match close (the key still
+   * types). `true` when the menu took the key (the composer then stops); never during an IME
+   * composition.
    */
   onKeyDown(e: KeyboardEvent<HTMLElement>): boolean;
   /** The rows after ranking, for `ComposerMenu`. */

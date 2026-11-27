@@ -7,6 +7,7 @@ import {
   type ComposerMenuGroup,
   type ComposerMenuProps,
   DesignProvider,
+  OVERLAY_HISTORY_MARKER,
   rankComposerMenu,
   useComposerMenu,
 } from "../src/index";
@@ -697,6 +698,25 @@ describe("ComposerMenu keyboard edges", () => {
     }
   });
 
+  it("↑ from the first row wraps to the last choosable row", () => {
+    wrap(<Harness groups={slashGroups()} />);
+    expect(active()?.textContent).toContain("brainstorming");
+    key("ArrowUp");
+    expect(active()?.textContent).toContain("compact");
+  });
+
+  it("aria-activedescendant names an existing option after the query re-ranks the rows", () => {
+    wrap(<Harness groups={slashGroups()} />);
+    key("ArrowDown");
+    key("ArrowDown");
+    expect(active()?.textContent).toContain("compact");
+    fireEvent.change(textarea(), { target: { value: "/brain" } });
+    const el = active();
+    expect(el?.getAttribute("role")).toBe("option");
+    expect(el?.textContent).toContain("brainstorming");
+    expect(options()).toContain(el);
+  });
+
   it("the footer's switch hints are not tab stops", () => {
     wrap(<Harness groups={slashGroups()} onSwitch={() => {}} />);
     const foot = document.querySelector('[data-part="composer-menu-foot"]') as HTMLElement;
@@ -719,18 +739,29 @@ function compactWindow(touch: boolean): typeof window.matchMedia {
 }
 
 describe("ComposerMenu (compact) focus and Esc", () => {
-  function Page({ onClose }: { onClose?: () => void }) {
+  /** The page's `/` sheet; a pick runs the row's action and closes it (the caller's rule). */
+  function Page({ onClose, picks }: { onClose?: () => void; picks?: Picks }) {
     const [open, setOpen] = useState(false);
+    const close = () => {
+      onClose?.();
+      setOpen(false);
+    };
     const props: ComposerMenuProps | null = open
       ? {
           kind: "slash",
-          groups: slashGroups(),
+          groups: slashGroups(picks).map((g) => ({
+            ...g,
+            items: g.items.map((it) => ({
+              ...it,
+              onSelect: () => {
+                it.onSelect();
+                close();
+              },
+            })),
+          })),
           query: "",
           empty: "没有匹配",
-          onClose: () => {
-            onClose?.();
-            setOpen(false);
-          },
+          onClose: close,
           onQueryChange: () => {},
         }
       : null;
@@ -776,6 +807,55 @@ describe("ComposerMenu (compact) focus and Esc", () => {
     });
     await waitFor(() => expect(sheet()).toBeNull());
     expect(document.activeElement).not.toBe(ta);
+  });
+
+  it("on touch a pick never focuses the composer either", async () => {
+    window.matchMedia = compactWindow(true);
+    const picks: Picks = {};
+    wrap(<Page picks={picks} />);
+    const ta = openFromComposer();
+    await waitFor(() => expect(document.activeElement).not.toBe(ta));
+    act(() => {
+      fireEvent.click(within(sheet() as HTMLElement).getAllByRole("option")[1] as HTMLElement);
+    });
+    await waitFor(() => expect(sheet()).toBeNull());
+    expect(picks["fix-issue"]).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).not.toBe(ta);
+  });
+
+  it("↵ in the search field picks the active row", () => {
+    window.matchMedia = compactWindow(false);
+    const picks: Picks = {};
+    wrap(<Page picks={picks} />);
+    openFromComposer();
+    const search = within(sheet() as HTMLElement).getByRole("searchbox", { name: "搜索" });
+    act(() => {
+      fireEvent.keyDown(search, { key: "ArrowDown" });
+    });
+    act(() => {
+      fireEvent.keyDown(search, { key: "Enter" });
+    });
+    expect(picks["fix-issue"]).toHaveBeenCalledTimes(1);
+  });
+
+  it("the system back closes the sheet (its one history entry)", async () => {
+    window.matchMedia = compactWindow(true);
+    const onClose = vi.fn();
+    wrap(<Page onClose={onClose} />);
+    openFromComposer();
+    expect(sheet()).not.toBeNull();
+    // the entry is pushed once an earlier test's own pop has landed
+    await waitFor(() =>
+      expect(
+        (history.state as Record<string, unknown> | null)?.[OVERLAY_HISTORY_MARKER],
+      ).toBeTruthy(),
+    );
+    act(() => {
+      history.back();
+    });
+    await waitFor(() => expect(sheet()).toBeNull());
+    expect(onClose).toHaveBeenCalledTimes(1);
+    history.replaceState(null, "", "/");
   });
 
   it("Esc in the search field closes once", async () => {
