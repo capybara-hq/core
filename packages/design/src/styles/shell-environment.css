@@ -314,6 +314,13 @@
     container: cb-head / inline-size;
     padding-top: max(0px, calc(var(--cb-space-5) - var(--cb-shell-row) * 100000));
   }
+  /* A head without a path row (a first-level page, layered shell spec §3): its title row (or a
+     title-less head's actions) starts below the top row, so the actions keep clear of end
+     controls and the title of start controls past a rail; the window drags by the paper's top
+     gutter and the row's own filler. */
+  :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
+    padding-top: max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)));
+  }
   :root[data-shell="desktop"]
     .cb-shell-main
     .cb-template-head
@@ -336,14 +343,6 @@
         max(var(--cb-space-5), calc(var(--cb-shell-column-reserve) + var(--cb-space-3)))
       )
     );
-  }
-  /* A path of the org slug alone (no page segment: the error page on the home) is not shown in the
-     top row; the row keeps its height and its filler. */
-  :root[data-shell="desktop"]
-    .cb-shell-main
-    .cb-pageheader-path:not(:has(.cb-pageheader-path-sep))
-    > .cb-pageheader-path-seg {
-    max-width: max(0px, calc(100000px - var(--cb-shell-row) * 100000));
   }
   :root[data-shell="desktop"] .cb-shell-main :is(.cb-pageheader-path, .cb-pageheader-titleless) {
     padding-right: max(
@@ -482,7 +481,8 @@
    every mouse event over it whatever is stacked above it, and a control inside one cannot be used,
    so only dedicated empty fillers drag: the flex spacers the templates draw between a top row's
    controls (`.cb-drag-fill`: the sidebar's brand row, the conversation title bar, the page head's
-   path row, the shared file page's bar) and the controls area itself (`.cb-shell-band`, a real
+   path row and title row, the shared file page's bar, and from 600 up the paper's top gutter, the
+   ground above the page) and the controls area itself (`.cb-shell-band`, a real
    element the AppShell draws over the space every row there keeps empty; across the whole window
    while there is a band). Never a container that holds controls (drag-regions.test.tsx). */
 .cb-shell-band {

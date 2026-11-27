@@ -142,7 +142,6 @@ function shell(nav: NativeNavHandle | undefined, pathname: string, extra: Extra 
     <DesignProvider locale="zh" {...(extra.native ? { native: extra.native } : {})}>
       <AppShell
         sidebar={sidebar}
-        status={status}
         pathname={pathname}
         chatSurface={chatPaths.has(pathname) || pathname.startsWith("/chat/")}
         drawer={extra.drawer ?? drawerData()}
@@ -266,13 +265,7 @@ describe("the native strip (nav@1)", () => {
     }
     const tree = (n: number) => (
       <DesignProvider locale="zh">
-        <AppShell
-          sidebar={sidebar}
-          status={status}
-          pathname="/agents"
-          drawer={drawerData()}
-          nativeNav={fake.nav}
-        >
+        <AppShell sidebar={sidebar} pathname="/agents" drawer={drawerData()} nativeNav={fake.nav}>
           <Inline n={n} />
         </AppShell>
       </DesignProvider>

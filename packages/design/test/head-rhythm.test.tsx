@@ -229,6 +229,10 @@ const ALLOWED: Record<string, Record<string, string[]>> = {
   ':root[data-shell="desktop"] .cb-shell-main .cb-template-head': {
     "padding-top": ["max(0px, calc(var(--cb-space-5) - var(--cb-shell-row) * 100000))"],
   },
+  // A head without a path row (layered shell spec §3) starts below the top row instead.
+  ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))': {
+    "padding-top": ["max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)))"],
+  },
   ':root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path': {
     "min-height": ["var(--cb-shell-row)"],
   },

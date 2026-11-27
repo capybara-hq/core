@@ -62,7 +62,6 @@ describe("the document never scrolls under the App Shell", () => {
           thread={<div>thread</div>}
           working
           composer={<div>composer</div>}
-          status={{ context: "c", version: "v" }}
           right="none"
           onCloseRight={() => {}}
         />

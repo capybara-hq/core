@@ -246,12 +246,10 @@ const sidebar = {
   activeNav: "agents",
   account: { name: "grant", menu: [] },
 };
-const status = { context: "grant@acme:/", version: "0.1.0" };
 const shellTree = (singleScheme?: boolean) => (
   <DesignProvider locale="zh">
     <AppShell
       sidebar={sidebar}
-      status={status}
       capState="run=idle"
       {...(singleScheme === undefined ? {} : { singleScheme })}
     >
@@ -320,7 +318,7 @@ describe("the AppShell in a shell (after hydration)", () => {
       await Promise.resolve();
     });
     expect(setAppearance).toHaveBeenCalledTimes(1);
-    expect(setAppearance).toHaveBeenCalledWith({ scheme: "light", background: "#FAF9F6" });
+    expect(setAppearance).toHaveBeenCalledWith({ scheme: "light", background: "#FDFDFC" });
     // an unrelated change (insets) sends nothing new
     act(() => f.change({ insets: { top: 0, right: 0, bottom: 0, left: 0 } }));
     expect(setAppearance).toHaveBeenCalledTimes(1);
@@ -698,27 +696,21 @@ describe("the page path in the desktop's top row (desktop client spec §7.3, dec
     ).toContain("var(--cb-shell-toggle, 0px)");
   });
 
-  it("hides a path of the org slug alone in the top row, and only with controls", () => {
+  it("a slug-only or first-level path draws no path row; the head starts below the top row", () => {
+    for (const path of [
+      [{ label: "capybara", href: "/" }],
+      [{ label: "capybara", href: "/" }, { label: "inbox" }],
+    ]) {
+      const html = renderToStaticMarkup(
+        <DesignProvider locale="zh">
+          <PageHeader path={path} title="收件箱" />
+        </DesignProvider>,
+      );
+      expect(html).not.toContain("cb-pageheader-path");
+    }
     expect(
-      find(
-        `${DESKTOP_HEAD} .cb-pageheader-path:not(:has(.cb-pageheader-path-sep)) > .cb-pageheader-path-seg`,
-        "max-width",
-      ),
-    ).toBe("max(0px, calc(100000px - var(--cb-shell-row) * 100000))");
-    // a slug-only path has no separator (what the rule keys on); a page path has one
-    const slug = renderToStaticMarkup(
-      <DesignProvider locale="zh">
-        <PageHeader path={[{ label: "capybara", href: "/" }]} title="出错了" />
-      </DesignProvider>,
-    );
-    expect(slug).toContain("cb-pageheader-path");
-    expect(slug).not.toContain("cb-pageheader-path-sep");
-    const page = renderToStaticMarkup(
-      <DesignProvider locale="zh">
-        <PageHeader path={[{ label: "capybara", href: "/" }, { label: "inbox" }]} title="收件箱" />
-      </DesignProvider>,
-    );
-    expect(page).toContain("cb-pageheader-path-sep");
+      find(`${DESKTOP_HEAD} .cb-template-head:not(:has(.cb-pageheader-path))`, "padding-top"),
+    ).toBe("max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)))");
   });
 
   it("keeps the browser's path row: no rule outside the desktop shell moves or hides it", () => {

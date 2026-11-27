@@ -1981,8 +1981,6 @@ li:first-child > .cb-ld-row {
    frame, and reserves the head's scrollbar gutter, so its left edge is the head's. */
 .cb-inbox-frame {
   --cb-segment-trail: var(--cb-content-pad);
-  /* the shell's status bar under the page */
-  --cb-segment-trail-block: var(--cb-layout-status-bar);
   display: flex;
   flex: 1;
   box-sizing: border-box;

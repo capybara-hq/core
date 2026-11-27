@@ -110,7 +110,6 @@ const shell = ({ pathname = "/", chatSurface = true, drawer, link, children }: S
   <DesignProvider locale="zh" {...(link ? { link } : {})}>
     <AppShell
       sidebar={sidebar}
-      status={status}
       commands={[]}
       pathname={pathname}
       chatSurface={chatSurface}
@@ -491,7 +490,6 @@ describe("drawer search opens the palette (T27 review)", () => {
       <DesignProvider locale="zh">
         <AppShell
           sidebar={sidebar}
-          status={status}
           commands={[{ label: "跳转", items: [{ id: "a", label: "智能体", onSelect: () => {} }] }]}
           pathname="/"
           chatSurface
@@ -595,7 +593,6 @@ describe("head actions and the scrolled title in the compact top row (responsive
     <DesignProvider locale="zh">
       <AppShell
         sidebar={sidebar}
-        status={status}
         commands={[]}
         pathname="/agents/a1"
         chatSurface={false}

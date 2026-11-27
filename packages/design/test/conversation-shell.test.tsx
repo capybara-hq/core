@@ -54,7 +54,6 @@ const page = (over: Partial<ConversationPageProps> = {}): ConversationPageProps 
   titleBar: titleBar(),
   thread: <p>消息</p>,
   composer: <div data-testid="composer" />,
-  status: { context: "grant@示例组织:/chat/9f3a", version: "v0.1.0" },
   properties: <aside data-testid="properties" />,
   panel: <aside data-testid="panel" />,
   right: "none",
@@ -64,27 +63,19 @@ const page = (over: Partial<ConversationPageProps> = {}): ConversationPageProps 
 });
 
 describe("ConversationPage (§5.4)", () => {
-  it("the status bar shows the time zone after the version", () => {
-    wrap(
-      <ConversationPage
-        {...page({
-          status: { context: "grant@acme:~/chat/9f3a", version: "v1", timeZone: "UTC+8" },
-        })}
-      />,
-    );
-    const bar = document.querySelector('[data-part="status-bar"]') ?? document.body;
-    expect(bar.textContent).toContain("grant@acme:~/chat/9f3a");
-    expect(bar.textContent).toMatch(/v1.*UTC\+8/);
+  it("draws no status bar", () => {
+    wrap(<ConversationPage {...page({ announce: "运行中" })} />);
+    expect(document.querySelector('[data-part="status-bar"]')).toBeNull();
+    expect(document.querySelector(".cb-statusbar")).toBeNull();
   });
 
-  it("announces the run state once, in a polite status (final review I2)", () => {
-    render(
-      <ConversationPage
-        {...page({ status: { context: "c", version: "v", right: ["运行中", "上下文 12%"] } })}
-      />,
-    );
+  it("announces the run state once, in a polite status inside the middle column", () => {
+    render(<ConversationPage {...page({ announce: "运行中" })} />);
     const status = screen.getByRole("status");
     expect(status.textContent).toBe("运行中");
+    expect(status.getAttribute("data-part")).toBe("run-status");
+    expect(status.classList.contains("cb-sr-only")).toBe(true);
+    expect(status.closest('[data-part="conv-main"]')).toBeTruthy();
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
@@ -144,7 +135,6 @@ describe("ConversationPage (§5.4)", () => {
       <ConversationPage
         {...page({
           newConversation: { agentName: "研究助手", description: "检索资料" },
-          status: { context: "grant@示例组织:/chat", version: "v0.1.0" },
         })}
       />,
     );
@@ -924,7 +914,7 @@ describe("ConversationPage on a phone (§5.4, mobile layout spec §5.4)", () => 
       open = true,
     ) => (
       <DesignProvider locale="zh">
-        <AppShell sidebar={sidebar} status={status} pathname="/chat/9f3a">
+        <AppShell sidebar={sidebar} pathname="/chat/9f3a">
           <ConversationPage
             {...page({
               right: open ? "panel" : "none",
@@ -997,5 +987,43 @@ describe("ConversationPage on a phone (§5.4, mobile layout spec §5.4)", () => 
     expect(within(pushed).queryByRole("button", { name: "关闭" })).toBeNull();
     expect(within(pushed).queryByRole("button", { name: "全屏" })).toBeNull();
     expect(within(pushed).queryAllByRole("button", { name: "返回" })).toHaveLength(1);
+  });
+});
+
+describe("the conversation's papers (layered shell spec §2)", () => {
+  const rules = parseCss(css("conversation-page.css")).filter((r) => r.at === "(min-width: 600px)");
+  const decls = (sel: string) => rules.find((r) => r.selector === sel)?.decls ?? {};
+
+  it("the middle column and the inline panel are papers space.2 apart, no border, no shadow", () => {
+    expect(decls(".cb-conv-page").gap).toBe("var(--cb-space-2)");
+    expect(decls(".cb-conv-page").padding).toMatch(/^var\(--cb-space-2\) var\(--cb-space-2\) /);
+    const main = decls(".cb-conv-main");
+    expect(main.background).toBe("var(--cb-bg)");
+    expect(main["border-radius"]).toBe("var(--cb-radius-md)");
+    expect(main.overflow).toBe("clip");
+    const panel = decls('.cb-conv-page .cb-conv-panel:not([data-full="true"])');
+    expect(panel["border-radius"]).toBe("var(--cb-radius-md)");
+    const inner = decls('.cb-conv-page .cb-conv-panel:not([data-full="true"]) > .cb-rpanel');
+    expect(inner["border-left"]).toBe("0");
+    expect(inner.overflow).toBe("clip");
+    for (const d of [main, panel, inner]) {
+      expect(d["box-shadow"]).toBeUndefined();
+      expect(d.border).toBeUndefined();
+    }
+  });
+
+  it("the resize handle fills the gap between the papers", () => {
+    expect(decls(".cb-conv-page .cb-conv-panel > .cb-conv-resize").left).toBe(
+      "calc(-1 * var(--cb-space-2))",
+    );
+  });
+
+  it("a maximised panel draws no paper of its own; the shell main draws none on this page", () => {
+    expect(rules.some((r) => /\.cb-conv-panel\[data-full="true"\]/.test(r.selector))).toBe(false);
+    const shell = parseCss(css("shell.css")).find(
+      (r) => r.at === "(min-width: 600px)" && r.selector === ".cb-shell-main:has(.cb-conv-page)",
+    )?.decls;
+    expect(shell?.margin).toBe("0");
+    expect(shell?.background).toBe("transparent");
   });
 });

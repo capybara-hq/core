@@ -111,7 +111,6 @@ describe("side from nav@1 is written as data-strip", () => {
             activeNav: "",
             account: { name: "grant", menu: [] },
           }}
-          status={{ context: "demo", version: "0.1.0" }}
         >
           <p data-testid="page">page</p>
         </AppShell>

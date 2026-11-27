@@ -182,7 +182,7 @@ describe("ListDetail on two segments", () => {
     expect(by(v, ".cb-conv-page .cb-conv-main").flex).toBe("1 1 0");
     expect(by(v, ".cb-conv-page .cb-conv-panel").flex).toBe("0 0 env(viewport-segment-height 0 1)");
     expect(by(v, ".cb-conv-page .cb-conv-cols > .cb-properties").flex).toBe(
-      "0 0 calc(env(viewport-segment-height 0 1) - var(--cb-layout-status-bar))",
+      "0 0 env(viewport-segment-height 0 1)",
     );
   });
 });

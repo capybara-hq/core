@@ -21,7 +21,6 @@ const sidebar = {
   activeNav: "",
   account: { name: "grant", menu: [] },
 };
-const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
 const notice = (onCopy = () => {}) => ({
   title: "请在电脑上管理",
   description: "插件、扩展、渠道、组织设置和管理后台这类配置，只在电脑上提供。",
@@ -56,7 +55,6 @@ const shell = (props: { desktopOnly?: ReturnType<typeof notice>; onEffect?: () =
   <DesignProvider locale="zh">
     <AppShell
       sidebar={sidebar}
-      status={status}
       pathname="/settings/members"
       {...(props.desktopOnly ? { desktopOnly: props.desktopOnly } : {})}
     >
