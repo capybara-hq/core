@@ -15,11 +15,13 @@ import {
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
+import { projectFileText } from "../../src/conversations/conversations.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { createKv } from "../../src/ctx/kv.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DeviceProjectFilesService } from "../../src/devices/device-project-files.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { ApiError } from "../../src/errors.js";
@@ -1595,6 +1597,65 @@ describe("reconstructRequest：基线零漂移", () => {
     const call = modelCalls(toEvents(snap))[0] as ModelCallEvent;
     expect(call.payload.request.media).toEqual([{ attachmentId: id, outcome: "reference" }]);
     await expectZeroDrift(conv, snap);
+  });
+
+  it("referenced project files: their logged blocks before an uploaded file's, zero drift, nothing read at build time", async () => {
+    reset();
+    const root = "/Users/u/src/ledger";
+    const stat = vi
+      .spyOn(k.app.get(DeviceProjectFilesService), "statAll")
+      .mockResolvedValue({ missing: [] });
+    // the run start's read of the bound project is not what this fixture records (true: go on)
+    const knowledge = vi
+      .spyOn(k.app.get(ProjectKnowledgeService), "record")
+      .mockResolvedValue(true);
+    const kernelRead = vi.spyOn(k.app.get(SandboxService), "withKernelRead");
+    try {
+      const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+      const conv = await createConv(owner, orgId, agentId);
+      await db
+        .updateTable("conversations")
+        .set({ project_name: "ledger" as never, project_path: root as never })
+        .where("id", "=", conv)
+        .execute();
+      const id = await attach("notes.txt", Buffer.from("notes", "utf8"), "text/plain");
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload: {
+          text: "echo:read them",
+          files: [id],
+          projectFiles: [{ path: "src/a.ts" }, { path: "./docs/b.md" }],
+        },
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      await waitForTerminal(db, conv, 1, 30_000);
+      expect(stat).toHaveBeenCalledTimes(1);
+      const message = (await eventsOf(db, conv)).find((e) => e.type === "user_message") as Extract<
+        ConversationEvent,
+        { type: "user_message" }
+      >;
+      expect(message.payload.projectFiles).toEqual([{ path: "src/a.ts" }, { path: "docs/b.md" }]);
+      expect(message.payload.content.slice(0, 3)).toEqual([
+        { type: "text", text: "echo:read them" },
+        { type: "text", text: projectFileText("src/a.ts", root) },
+        { type: "text", text: projectFileText("docs/b.md", root) },
+      ]);
+      expect(message.payload.content[3]).toMatchObject({
+        type: "document",
+        source: { attachmentId: id },
+      });
+      // the request carries the logged blocks as they are
+      expect(JSON.stringify(sent[0]?.messages)).toContain(
+        "Referenced project file: docs/b.md (in the project root /Users/u/src/ledger; read it with Read when needed).",
+      );
+      await expectZeroDrift(conv, await snapshotOf(conv));
+      expect(kernelRead).not.toHaveBeenCalled();
+    } finally {
+      stat.mockRestore();
+      knowledge.mockRestore();
+      kernelRead.mockRestore();
+    }
   });
 
   it("不支持视觉的模型：图片换成占位，不取字节", async () => {
