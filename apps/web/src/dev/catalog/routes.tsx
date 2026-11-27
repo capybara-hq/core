@@ -160,6 +160,10 @@ export const REFERENCE_COMPONENTS = [
   "subagent-group",
   "title-bar",
   "composer",
+  // the composer's +, / and @ menus (composer menus spec §1)
+  "composer-menu",
+  // the composer's project files picker (composer menus spec §5)
+  "project-file-picker",
   "picker-menu",
   "mode-menu",
   "command-palette",

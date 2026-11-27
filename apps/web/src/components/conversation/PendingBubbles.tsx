@@ -24,7 +24,7 @@ export type PendingSend = {
   clientMessageId: string;
   text: string;
   skill?: string;
-  files: { name: string; kind: "image" | "file" }[];
+  files: { name: string; kind: "image" | "file"; type?: string }[];
 };
 
 /** The `clientMessageId`s of the log's user messages. */
@@ -84,6 +84,7 @@ export function PendingBubbles({ items }: { items: readonly PendingSend[] }) {
                         id: `${p.clientMessageId}:${i}`,
                         kind: f.kind,
                         name: f.name,
+                        ...(f.type !== undefined ? { type: f.type } : {}),
                       }))}
                     />
                   ),

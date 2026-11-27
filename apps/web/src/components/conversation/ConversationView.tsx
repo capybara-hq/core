@@ -389,6 +389,10 @@ export function useConversationPage(
         text: d.retry.text,
         clientMessageId,
         files: d.retry.files.map((f) => f.attachmentId),
+        ...(d.retry.attachments !== undefined ? { attachments: d.retry.attachments } : {}),
+        ...(d.retry.projectFiles !== undefined
+          ? { projectFiles: d.retry.projectFiles.map((path) => ({ path })) }
+          : {}),
         retryOf: d.retry.seq,
         ...(d.retry.skill !== undefined ? { skill: { name: d.retry.skill } } : {}),
         ...pick,
@@ -599,6 +603,17 @@ export function useConversationPage(
               ? undefined
               : conversationId
           }
+          // the project's files can be referenced by its owner (the listing is the owner's)
+          {...(conv.conversation?.project &&
+          conv.conversation.deviceId &&
+          conv.conversation.accountId === session.me.account.id
+            ? {
+                project: {
+                  deviceId: conv.conversation.deviceId,
+                  name: conv.conversation.project.name,
+                },
+              }
+            : {})}
           running={active}
           waiting={waitHint}
           stop={{ onStop: conv.stop, stopping: conv.stopping }}

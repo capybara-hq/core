@@ -577,6 +577,49 @@ describe("buildTimeline", () => {
     expect(out.some((e) => e.kind === "user")).toBe(false);
   });
 
+  it("a message with resources and project files keeps content[0] as its text and names the files", () => {
+    const block = (path: string) => ({
+      type: "text",
+      text: `Referenced project file: ${path} (in the project root /p/core; read it with Read when needed).`,
+    });
+    const out = buildTimeline(
+      [
+        user(1, "look at these", {
+          content: [
+            { type: "text", text: "look at these" },
+            { type: "text", text: "the handbook body" },
+            block("src/app.ts"),
+            block("README.md"),
+          ],
+          attachments: [{ appId: "k1", appName: "Docs", uri: "docs://h", name: "Handbook" }],
+          projectFiles: [{ path: "src/app.ts" }, { path: "README.md" }],
+        }),
+        // project files alone: the blocks never join the text either
+        user(2, "and this", {
+          content: [{ type: "text", text: "and this" }, block("a.txt")],
+          projectFiles: [{ path: "a.txt" }],
+        }),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    const users = out.filter((e) => e.kind === "user");
+    expect(users).toMatchObject([
+      {
+        text: "look at these",
+        attachments: [{ appId: "k1", uri: "docs://h" }],
+        projectFiles: ["src/app.ts", "README.md"],
+      },
+      { text: "and this", attachments: [], projectFiles: ["a.txt"] },
+    ]);
+    expect(users.some((e) => e.kind === "user" && e.text.includes("Referenced"))).toBe(false);
+    // a plain message carries no project files
+    expect(buildTimeline([user(1, "hi")], [], new Map(), "en")[0]).not.toHaveProperty(
+      "projectFiles",
+    );
+  });
+
   describe("a manual compact run draws no run row, only its outcome (maintainer decision 2026-11-28)", () => {
     const compactRun = (...rest: ReturnType<typeof ev>[]) =>
       buildTimeline(
@@ -694,6 +737,31 @@ describe("buildTimeline", () => {
       status: "failed",
       retried: true,
       retry: { seq: 1, text: "hello" },
+    });
+  });
+
+  it("Retry of a failed message repeats its resources and project files", () => {
+    const events = [
+      user(1, "look", {
+        content: [
+          { type: "text", text: "look" },
+          { type: "text", text: "the handbook body" },
+          { type: "text", text: "Referenced project file: src/app.ts (...)" },
+        ],
+        attachments: [{ appId: "k1", appName: "Docs", uri: "docs://h", name: "Handbook" }],
+        projectFiles: [{ path: "src/app.ts" }],
+      }),
+      ev(2, "run_failed", { error: { code: "model.timeout", message: "x" } }),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(out[1]).toMatchObject({
+      status: "failed",
+      retry: {
+        seq: 1,
+        text: "look",
+        attachments: [{ connectorId: "k1", uri: "docs://h" }],
+        projectFiles: ["src/app.ts"],
+      },
     });
   });
 

@@ -154,6 +154,18 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
   (`isTouchPointer()`, read at the tap) a choice never focuses the composer, and a quick action
   fills it without focus. The shell lifts the conversation column above the iOS keyboard
   (`--cb-keyboard-inset`); pages add nothing for it.
+- **Composer menus** (composer menus spec 2026-11-28, design §6.16.30): ＋, `/` and `@` open one
+  `ComposerMenu` anchored above the composer (a `BottomSheet` on compact), never `CommandPalette`
+  (it stays for ⌘K only). `ComposerBar` owns the state (`kind`, the trigger's index in the text,
+  the query's end, an `@` scope), builds the groups as data (`ComposerMenuItem`: `icon` for a
+  command `terminal` / skill `skills` / ＋ row, `mark` with the connector's icon URL for connector
+  rows, prompts and resources, no `/` prefix in names) and passes `useComposerMenu`'s `combobox`
+  and `onKeyDown` with the node to `ComposerBox menu`, `attachOpen` for ＋. The design hook takes
+  no key while the menu is closed, so the page decides the triggers: `/` on an empty draft, `@` at
+  the start or after whitespace (`a@b` and an IME composition open nothing). The trigger stays in
+  the text and the text after it is the query; a pick removes both, Esc keeps the text. The `@`
+  query is searched on the kernel (`connectorResourcesQuery(orgId, query)`, debounced, one cache
+  entry per text, `filter={false}`); the textarea is a `combobox` in tests, not a `textbox`.
 - A card whose state the log does not carry (a sub-agent's approval or question, named only by id)
   reads it before the first paint (`openWaitReads` in the route's `then`) and draws nothing until
   that read answers (`ApprovalCard fromRead`), never a pending card first (web query cache spec §6).

@@ -596,7 +596,7 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
     ).toMatchObject({ truncated: false });
   });
 
-  it("is reachable only from the knowledge and write base services; the owner start only from the projects service", async () => {
+  it("is reachable only from the knowledge and write base services; the owner start only from the projects and project files services", async () => {
     const { readFile: read } = await import("node:fs/promises");
     const { execSync } = await import("node:child_process");
     const src = join(import.meta.dirname, "../../src");
@@ -615,7 +615,12 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
       .split("\n")
       .map((p) => p.slice(src.length + 1))
       .sort();
-    expect(starters).toEqual(["devices/device-projects.service.ts", "sandbox/sandbox.service.ts"]);
+    // the owner routes: a device's projects and a project's files (composer menus §5)
+    expect(starters).toEqual([
+      "devices/device-project-files.service.ts",
+      "devices/device-projects.service.ts",
+      "sandbox/sandbox.service.ts",
+    ]);
     expect(await read(join(src, "tools/builtins/sandbox/common.ts"), "utf8")).not.toContain(
       "withKernelRead",
     );

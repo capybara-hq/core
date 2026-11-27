@@ -188,6 +188,10 @@
       "queue_full": "排队的消息已满。请等排队消息发出，或删掉一些。",
       "queue_item_not_found": "这条排队消息已发出或已删除。",
       "read_only": "这是子智能体的会话，不能在这里发消息。",
+      "project_file_unavailable": {
+        "default": "引用的项目文件已不可用。请确认它仍在项目中，移除后再试。",
+        "no_project": "这个会话没有绑定设备项目，无法引用项目文件。请移除它们，或在项目中开始会话。"
+      },
       "busy": "这个会话正在运行，请等它结束后再试。"
     },
     "background_task": {
@@ -397,6 +401,8 @@
       "project_path_unreadable": "该路径是文件或在设备上无法读取，请选择一个可读的目录。",
       "project_not_found": "这台设备上没有该名称的项目。",
       "projects_unsupported": "这台设备不支持项目。",
+      "path_outside_project": "这个路径超出了项目范围，请选择项目内的文件或文件夹。",
+      "list_unsupported": "这台设备无法列出项目文件。",
       "projects_unavailable": "现在无法向设备确认该目录，请稍后重试。",
       "not_running": "设备在读取前已停止。请重试，系统会先启动它。",
       "permission_reconcile_required": "该设备的沙箱限制需要重新确立，确立之前不会运行任何命令。请在设备页面重建文件后再试。",
@@ -1518,6 +1524,8 @@
     "attachments": "附件",
     "removeAttachment": "移除 {name}",
     "attachLimit": "每条消息最多 {max} 个附件。",
+    "referencesNeedText": "引用资源或项目文件时，请写一句消息再发送。",
+    "projectFileMissing": "{path} 已不在项目中，请移除或重新选择。",
     "noInvocable": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中，才能用 / 调用。",
     "noInvocableAction": "去选择技能",
     "noInvocableReadOnly": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中才能调用，请联系它的所有者或组织管理员。",
@@ -1772,6 +1780,20 @@
       "summary": "“{text}”，{profile}，设备 {device}。",
       "summaryNoDevice": "“{text}”，{profile}，无设备。",
       "changed": "之后你改了选择：现在发送会是一个新的请求，“重试原消息”则按原样再次发送。"
+    },
+    "composerMenu": {
+      "add": "添加",
+      "upload": "上传文件",
+      "resources": "连接器资源",
+      "projectFiles": "项目文件",
+      "projectFilesHint": "引用项目 {project} 中的文件，不上传",
+      "abilities": "能力",
+      "skills": "技能",
+      "connectors": "连接器",
+      "needsConfig": "待配置",
+      "noMatch": "没有匹配项",
+      "noResources": "没有匹配的资源",
+      "search": "搜索"
     }
   },
   "ui": {

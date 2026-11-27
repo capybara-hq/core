@@ -77,7 +77,7 @@ const newRoutes = (projects: unknown = projectsOf()) => ({
   [`GET ${ORG}/conversations/groups`]: () => json(200, GROUPS),
 });
 
-const input = (m = en) => screen.getByRole("textbox", { name: m.chat.inputLabel, hidden: true });
+const input = (m = en) => screen.getByRole("combobox", { name: m.chat.inputLabel, hidden: true });
 const devicePicker = (m = en) =>
   screen.getByRole("button", { name: new RegExp(`^${m.chat.pickDevice}: `) });
 const createdAt = () =>
@@ -463,9 +463,12 @@ describe("the / menu groups entries by source", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
-    const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText("/fix-issue");
-    const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
+    await screen.findByRole("listbox");
+    const dialog = document.querySelector('[data-part="composer-menu"]') as HTMLElement;
+    await within(dialog).findByText("fix-issue");
+    const headings = [...dialog.querySelectorAll('[data-part="composer-menu-label"]')].map(
+      (h) => h.textContent,
+    );
     expect(headings).toEqual([
       en.chat.skillSource.project,
       en.chat.skillSource.agent,
@@ -474,16 +477,14 @@ describe("the / menu groups entries by source", () => {
       en.chat.commandsGroup,
     ]);
     const group = (label: string) =>
-      [...dialog.querySelectorAll("[cmdk-group]")].find(
-        (g) => g.querySelector("[cmdk-group-heading]")?.textContent === label,
-      ) as HTMLElement;
+      within(dialog).getByRole("group", { name: label, hidden: true }) as HTMLElement;
     expect(
       within(group(en.chat.skillSource.project))
         .getAllByRole("option")
         .map((o) => o.textContent),
-    ).toEqual([`/fix-issueFix an issue${en.chat.skillSourceTag.project}`]);
+    ).toEqual([`fix-issue${en.chat.skillSourceTag.project} · Fix an issue`]);
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
-    await user.click(within(dialog).getByRole("option", { name: /^\/fix-issue/ }));
+    await user.click(within(dialog).getByRole("option", { name: /^fix-issue/ }));
     await user.type(input(), "42{Enter}");
     const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
     expect(post).toHaveLength(1);

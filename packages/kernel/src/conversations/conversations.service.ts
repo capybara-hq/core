@@ -14,7 +14,10 @@ import {
   ConversationDevices,
   type NewConversationDevice,
 } from "../devices/conversation-devices.js";
+import { DeviceProjectFilesService } from "../devices/device-project-files.service.js";
 import { DeviceProjectsService } from "../devices/device-projects.service.js";
+import { projectFilePath } from "../devices/project-paths.js";
+import { clipped } from "../devices/project-rules.js";
 import { ApiError } from "../errors.js";
 import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import { afterCommit } from "../infra/database/after-commit.js";
@@ -313,12 +316,40 @@ export interface AttachmentRef {
   uri: string;
 }
 
-/** Resolved `@` resources: the blocks after the user text and their metadata. */
+/**
+ * Resolved `@` resources and referenced project files: the blocks after the user text (the
+ * resources' bodies, then one text block per project file) and their metadata.
+ */
 export interface ResolvedExtra {
   blocks: { type: "text"; text: string }[];
   /** 写进 user_message 的附件元数据：事件 payload 字段名仍为 `appId` / `appName`（C27）。 */
   attachments: { appId: string; appName: string; uri: string; name: string }[];
+  /** The referenced project files (normalized paths), in block order; absent: none. */
+  projectFiles?: { path: string }[];
+  /** The project root the project file blocks name (set with `projectFiles`). */
+  projectRoot?: string;
 }
+
+export { MAX_PROJECT_FILES } from "../devices/device-project-files.service.js";
+
+/** Where a message's project files are checked: the conversation's device and bound project. */
+export interface ProjectFilesTarget {
+  deviceId: string | null;
+  project: { name: string; path: string } | null | undefined;
+  /** Stops the check on the device (the request's signal: the client hung up). */
+  signal?: AbortSignal | undefined;
+}
+
+/**
+ * The model-visible text of one referenced project file (composer menus §5): English, logged in
+ * the `user_message`, so replay rebuilds it from the log as it is.
+ */
+export const projectFileText = (path: string, root: string): string =>
+  `Referenced project file: ${path} (in the project root ${root}; read it with Read when needed).`;
+
+/** A message's project file that cannot be referenced (422, `details: [{ path }]` or `reason`). */
+const projectFileUnavailable = (message: string, details: unknown[]): ApiError =>
+  new ApiError("conversation.project_file_unavailable", message, details);
 
 export { userMessageIdemKey } from "./idem-keys.js";
 
@@ -403,6 +434,11 @@ export interface UserMessageInput {
   clientMessageId?: string;
   attachments?: AttachmentRef[];
   files?: string[];
+  /**
+   * Files of the conversation's device project, referenced by their paths relative to the
+   * project root (composer menus §5): checked with `stat`, never read or copied.
+   */
+  projectFiles?: { path: string }[];
   /** Switch the conversation's model from the next run (the agent's own model = back to it). */
   model?: ModelRef;
   /** Switch the effort (one of the model's declared `effort` values). */
@@ -434,6 +470,8 @@ export interface UserMessageInput {
  */
 export interface InternalMessageOptions {
   initialPermission?: PermissionSelection;
+  /** The request's signal: the project file check on the device stops when the client hangs up. */
+  signal?: AbortSignal;
   createRequestHash?: string;
   schedule?: ScheduleMarker;
   timeZoneOverride?: string;
@@ -507,6 +545,9 @@ export class ConversationsService {
     /** The project of that device a new conversation is bound to (project root design §4.3). */
     @Inject(DeviceProjectsService)
     private readonly projects: Pick<DeviceProjectsService, "resolveForBinding">,
+    /** Checks a message's referenced project files on the device (composer menus §5). */
+    @Inject(DeviceProjectFilesService)
+    private readonly projectFiles: Pick<DeviceProjectFilesService, "statAll">,
     /** A starter's message skips the run's pending questions (reply-while-question spec §8.1). */
     @Inject(QuestionsService)
     private readonly questions: Pick<QuestionsService, "skipPendingIn">,
@@ -597,7 +638,16 @@ export class ConversationsService {
     if (prior) return prior;
     const deviceId = await this.devices.forNew(orgId, accountId, pick);
     const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
-    const extra = await this.resolveExtra(orgId, accountId, input);
+    // the project its files are checked in, read before the write (the binding inside it decides)
+    const project =
+      (input.projectFiles?.length ?? 0) > 0
+        ? await this.bindingFor(orgId, accountId, deviceId, pick.project)
+        : undefined;
+    const extra = await this.resolveExtra(orgId, accountId, input, {
+      deviceId,
+      project,
+      signal: internal.signal,
+    });
     const invoked = await this.prepareSkill(
       orgId,
       accountId,
@@ -675,6 +725,10 @@ export class ConversationsService {
     const { id, orgId, accountId } = conv;
     if (internal.initialPermission) await this.permissions.lockInitial(orgId, id, conv.deviceId);
     const project = await this.bindingFor(orgId, accountId, conv.deviceId, conv.project);
+    // the project changed since its files were checked: the blocks would name another root
+    if (extra.projectRoot !== undefined && extra.projectRoot !== project?.path) {
+      throw new ApiError("conflict", "The project changed while the message was sent; retry");
+    }
     const row = await this.db
       .insertInto("conversations")
       .values({
@@ -1482,24 +1536,36 @@ export class ConversationsService {
   }
 
   /**
-   * 追加一条用户消息；带 `clientMessageId` 时重复提交返回同一事件。写入后调用 `ensureRun`：
-   * 没有进行中的运行时投递一轮；运行中则由当前运行在步骤间隙吸收，或在它结束时再次 `ensureRun`。
-   * A failed `ensureRun` is logged, not thrown: the message's transaction owes the ensure-run
+   * Appends a user message; a repeated send with the same `clientMessageId` returns the same
+   * event. After the write it calls `ensureRun`: with no run in progress it enqueues one; during
+   * a run the current run takes the message in between steps, or `ensureRun` runs again when it
+   * ends. A failed `ensureRun` is logged, not thrown: the message's transaction owes the ensure-run
    * backstop, which starts the run once the queue is reachable (transactional outbox spec §6).
    *
-   * `attachments`（`@` 资源引用）：内核以发送者的凭据读取资源（打码、限长），作为用户文本之后的额外文本块写入同一条
-   * user_message，并在 `payload.attachments` 记录元数据（第 i 个附件对应 `content[i + 1]`）。读取失败整条不写。
-   * 带 `clientMessageId` 的重复提交直接返回已写入的事件，不再读取。
+   * `attachments` (`@` resource references): the kernel reads each resource with the sender's
+   * credentials (redacted, length-capped) and writes it as an extra text block after the user's
+   * text in the same user_message, with its metadata in `payload.attachments` (attachment i is
+   * `content[i + 1]`). A failed read writes nothing. A repeated send with the same
+   * `clientMessageId` returns the written event without reading again.
    *
-   * `files`（上传的附件 id）：在写事件的同一事务里校验并绑定到本会话（见 {@link BindFiles}），作为 image /
-   * document 引用块追加在最后（`@` 资源块之后）；任一附件不可用则整条不写。日志里只有引用，没有字节。
-   * `text` 为空时（只发附件，HTTP 层保证此时有 `files` 且没有 `@` 资源）不写文本块。
+   * `files` (uploaded attachment ids): checked and bound to this conversation in the transaction
+   * that writes the event (see {@link BindFiles}) and appended last as image / document reference
+   * blocks (after the `@` resource blocks); any unavailable file writes nothing. The log holds
+   * only references, never bytes. With empty `text` (files only: the HTTP layer ensures `files`
+   * and no `@` resources then) no text block is written.
+   *
+   * `projectFiles` (composer menus §5): checked in the conversation's stored project before the
+   * write ({@link resolveExtra}); one block each after the `@` resources' bodies, before the
+   * uploaded files' blocks, and `payload.projectFiles`. Any refusal writes nothing; a repeated
+   * send with the same `clientMessageId` returns the written event without checking again.
    */
   async postUserMessage(
     orgId: string,
     conversationId: string,
     accountId: string,
     input: UserMessageInput,
+    /** The request's signal: the project file check on the device stops when the client hangs up. */
+    signal?: AbortSignal,
   ): Promise<ConversationEvent> {
     const conv = await this.writable(orgId, conversationId, accountId);
     // A retry returns the written event before resolving today's model or resources.
@@ -1518,7 +1584,7 @@ export class ConversationsService {
     const agent = needsAgent
       ? (await this.agents.get(orgId, conv.agentId, accountId)).definition
       : undefined;
-    const extra = await this.resolveExtra(orgId, accountId, input);
+    const extra = await this.resolveExtra(orgId, accountId, input, { ...conv, signal });
     const invoked =
       agent === undefined
         ? undefined
@@ -1853,17 +1919,74 @@ export class ConversationsService {
   }
 
   /**
-   * Reads the `@` resources with the sender's credentials (nothing when there are none). Shared
-   * with the queue, which reads them when a message is queued (decision 15).
+   * Reads the `@` resources with the sender's credentials and checks the referenced project files
+   * (nothing when there are none). Shared with the queue, which reads the resources when a
+   * message is queued (decision 15; a queued message carries no project files).
+   *
+   * Project files (composer menus §5) are checked in `target`'s project on its device as the
+   * sender (the conversation's owner, through `DeviceProjectFilesService.statAll`, outside any
+   * transaction): no bound project → `conversation.project_file_unavailable` with `reason:
+   * "no_project"`; a path leaving the project → `device.path_outside_project`; one that is not a
+   * file there → `conversation.project_file_unavailable` with its path; the device codes pass on.
+   * Each becomes a {@link projectFileText} block after the resources' bodies.
    */
   async resolveExtra(
     orgId: string,
     accountId: string,
-    input: Pick<UserMessageInput, "attachments">,
+    input: Pick<UserMessageInput, "attachments" | "projectFiles">,
+    target?: ProjectFilesTarget,
   ): Promise<ResolvedExtra> {
     const refs = input.attachments ?? [];
-    if (refs.length === 0) return { blocks: [], attachments: [] };
-    return this.content.resolveAttachments(orgId, accountId, refs);
+    const files = await this.checkProjectFiles(orgId, accountId, input.projectFiles ?? [], target);
+    const resolved =
+      refs.length === 0
+        ? { blocks: [], attachments: [] }
+        : await this.content.resolveAttachments(orgId, accountId, refs);
+    if (files === undefined) return resolved;
+    return {
+      blocks: [
+        ...resolved.blocks,
+        ...files.paths.map((path) => ({
+          type: "text" as const,
+          text: projectFileText(path, files.root),
+        })),
+      ],
+      attachments: resolved.attachments,
+      projectFiles: files.paths.map((path) => ({ path })),
+      projectRoot: files.root,
+    };
+  }
+
+  /** {@link resolveExtra}'s project file check: the normalized paths and the root, or none. */
+  private async checkProjectFiles(
+    orgId: string,
+    accountId: string,
+    refs: readonly { path: string }[],
+    target: ProjectFilesTarget | undefined,
+  ): Promise<{ paths: string[]; root: string } | undefined> {
+    if (refs.length === 0) return undefined;
+    const project = target?.project;
+    if (!project || target?.deviceId == null) {
+      throw projectFileUnavailable(
+        "This conversation has no device project, so it cannot reference project files; start it in a project",
+        [{ reason: "no_project" }],
+      );
+    }
+    // normalized first (a path leaving the project is refused before the device is asked), once each
+    const paths = [...new Set(refs.map((r) => projectFilePath(r.path)))];
+    const { missing } = await this.projectFiles.statAll(
+      { orgId, accountId, deviceId: target.deviceId },
+      project.path,
+      paths,
+      target.signal,
+    );
+    if (missing.length > 0) {
+      throw projectFileUnavailable(
+        `${clipped(missing[0] as string)} is not a file in the project ${project.name}; pick it again`,
+        missing.map((path) => ({ path: clipped(path) })),
+      );
+    }
+    return { paths, root: project.path };
   }
 
   /**
@@ -1908,6 +2031,8 @@ export class ConversationsService {
           ...fileBlocks,
         ],
         ...(extra.attachments.length > 0 && { attachments: extra.attachments }),
+        ...(extra.projectFiles !== undefined &&
+          extra.projectFiles.length > 0 && { projectFiles: extra.projectFiles }),
         authorAccountId: accountId,
         ...context,
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
