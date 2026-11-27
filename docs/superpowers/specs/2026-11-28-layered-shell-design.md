@@ -55,11 +55,15 @@ three pieces of chrome change.
 | `sidebar` (now also the shell ground from 600 up) | `#F3F2EE` → **`#EDECE7`** | `#111110` → **`#171716`** |
 | `bg` (the paper) | `#FAF9F6` → **`#FDFDFC`** | `#0A0A0A` (unchanged) |
 | `panel` (cards on the paper) | `#FFFFFF` (unchanged) | `#111110` (unchanged) |
-| `hover` | overlay (unchanged) | `#171716` → **`rgba(255,255,255,0.04)`** |
+| `hover` | `rgba(26,26,24,0.04)` → **`rgba(26,26,24,0.045)`** | `#171716` → **`rgba(255,255,255,0.04)`** |
 | `sidebar-active` | overlay (unchanged) | `#1A1A18` → **`rgba(255,255,255,0.07)`** |
+| `selected` | overlay (unchanged) | `#1F1F1D` → **`#21211F`** |
 
 Dark `hover` and `sidebar-active` become overlays like the light ones, so they read on the ground and on
-the paper alike (an opaque `#171716` hover would vanish on the new ground). The existing contrast pairs
+the paper alike (an opaque `#171716` hover would vanish on the new ground). Two values follow from
+the `check:tokens` separation rules on the new ground (implementation, 2026-11-28): the light `hover`
+overlay goes from 0.04 to 0.045 (hover on the darker sidebar stays above the 2.5 floor), and the dark
+`selected` lightens one step so it still stands further from the ground than hover. The existing contrast pairs
 must still pass (`check:tokens`); the light `bg` change also lightens every compact page, which is
 intended (one paper colour). `preview-light` keeps `#FAF9F6` (an icon preview ground, not the page).
 

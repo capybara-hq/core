@@ -53,7 +53,6 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
       <DesignProvider locale="zh">
         <AppShell
           sidebar={sidebarProps()}
-          status={{ context: "demo", version: "0.1.0", timeZone: "UTC" }}
         />
       </DesignProvider>,
     );
@@ -109,7 +108,6 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
       <DesignProvider locale="zh">
         <AppShell
           sidebar={sidebarProps()}
-          status={{ context: "demo", version: "0.1.0", timeZone: "UTC" }}
           capState="run=idle theme=builtin"
         />
       </DesignProvider>,
@@ -128,7 +126,6 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
           <AppShell
             sidebar={sidebarProps()}
             {...(collapsed === undefined ? {} : { collapsed })}
-            status={{ context: "demo", version: "0.1.0", timeZone: "UTC" }}
           />
         </DesignProvider>,
       );

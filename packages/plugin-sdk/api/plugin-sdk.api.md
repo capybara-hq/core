@@ -4573,12 +4573,12 @@ export const THEME_TOKENS: {
             readonly light: "#FFFFFF";
         };
         readonly selected: {
-            readonly dark: "#1F1F1D";
+            readonly dark: "#21211F";
             readonly light: "rgba(26,26,24,0.07)";
         };
         readonly hover: {
             readonly dark: "rgba(255,255,255,0.04)";
-            readonly light: "rgba(26,26,24,0.04)";
+            readonly light: "rgba(26,26,24,0.045)";
         };
         readonly "line-soft": {
             readonly dark: "#1C1C1A";

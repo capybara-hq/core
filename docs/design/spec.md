@@ -43,8 +43,8 @@ A **theme** (a plugin's contribution, spec `docs/superpowers/specs/2026-11-08-th
 | `sidebar` | `#171716` | `#EDECE7` | The ground: the sidebar and the shell's gutters from 600 up (§4) |
 | `sidebar-active` | `rgba(255,255,255,0.07)` | `rgba(26,26,24,0.09)` | Current nav item or conversation in the sidebar |
 | `raised` | `#141413` | `#FFFFFF` | Floating inline cards, the composer |
-| `selected` | `#1F1F1D` | `rgba(26,26,24,0.07)` | Selection ground: selected segment, filter chip, option card, the palette's current row, the waterfall's selected row; avatar, skeleton bars |
-| `hover` | `rgba(255,255,255,0.04)` | `rgba(26,26,24,0.04)` | Hover ground, disabled input ground |
+| `selected` | `#21211F` | `rgba(26,26,24,0.07)` | Selection ground: selected segment, filter chip, option card, the palette's current row, the waterfall's selected row; avatar, skeleton bars |
+| `hover` | `rgba(255,255,255,0.04)` | `rgba(26,26,24,0.045)` | Hover ground, disabled input ground |
 | `line-soft` | `#1C1C1A` | `#E8E7E2` | Column dividers, table row dividers, the action row's top line, disabled borders |
 | `line` | `#2A2A28` | `#D9D8D2` | Input and button border |
 | `line-strong` | `#3A3A37` | `#B5B5AE` | Overlay border, the border of a selected option card or palette row |

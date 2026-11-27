@@ -123,7 +123,7 @@
   --cb-sidebar: #171716;
   --cb-sidebar-active: rgba(255,255,255,0.07);
   --cb-raised: #141413;
-  --cb-selected: #1F1F1D;
+  --cb-selected: #21211F;
   --cb-hover: rgba(255,255,255,0.04);
   --cb-line-soft: #1C1C1A;
   --cb-line: #2A2A28;
@@ -196,7 +196,7 @@
   --cb-sidebar-active: rgba(26,26,24,0.09);
   --cb-raised: #FFFFFF;
   --cb-selected: rgba(26,26,24,0.07);
-  --cb-hover: rgba(26,26,24,0.04);
+  --cb-hover: rgba(26,26,24,0.045);
   --cb-line-soft: #E8E7E2;
   --cb-line: #D9D8D2;
   --cb-line-strong: #B5B5AE;
