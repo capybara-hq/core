@@ -12,6 +12,7 @@ import type { ConversationGroupsPage } from "../conversations";
 import type { OrgRole } from "../members";
 import { adminClientExtensionsQuery, clientExtensionsQuery } from "../query/client-extensions";
 import { contributionsQuery } from "../query/conversation";
+import { orgSettingsQuery } from "../query/settings";
 import {
   conversationGroupsQuery,
   extensionPagesQuery,
@@ -191,6 +192,10 @@ export async function getShell(
       clientRead(qc, clientSource),
       route,
     ]);
+    // the org's navigation choices place its plugin pages: read (into the cache only) when it has any
+    if (extensions !== null && extensions.length > 0) {
+      await section(fetchShell(qc, orgSettingsQuery(orgId)));
+    }
     const theme = themes?.resolved ?? null;
     return {
       kind: "ready",

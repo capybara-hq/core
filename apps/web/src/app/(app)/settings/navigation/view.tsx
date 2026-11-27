@@ -109,8 +109,10 @@ function NavigationSettings({ orgId }: { orgId: string }) {
 
   async function save() {
     if (tooMany) return;
-    // the saved choices stay (also for pages not listed now), the changed ones replace or join
-    const next = new Map(saved);
+    // the saved choices of pages still listed stay (a stale one for a removed page would count
+    // toward the limit unseen), the changed ones replace or join
+    const listed = new Set(pages.map(keyOf));
+    const next = new Map([...saved].filter(([k]) => listed.has(k)));
     for (const [k, v] of changed) next.set(k, v);
     try {
       await update.mutateAsync({

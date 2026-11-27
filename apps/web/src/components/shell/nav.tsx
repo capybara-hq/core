@@ -280,21 +280,30 @@ export type ExtensionNavItem = {
 
 /**
  * The navigation section of each page, in order (plugin full pages spec §9): the org admin's saved
- * choice, else the contribution's `nav` suggestion, else `more`; at most
- * {@link NAV_PRIMARY_MAX} pages in primary, the later ones falling back to `more`.
+ * choice, else the contribution's `nav` suggestion, else `more`. At most {@link NAV_PRIMARY_MAX}
+ * pages are primary: saved primaries take their slots first, suggestions fill the rest in order,
+ * and any other page falls back to `more`.
  */
 export function pageSections(
   pages: readonly Pick<UiContributionItem, "plugin" | "id" | "nav">[],
   saved: NavigationSetting | undefined,
 ): ("primary" | "more")[] {
   const chosen = new Map((saved?.pluginPages ?? []).map((e) => [e.contribution, e.section]));
+  const keyOf = (p: { plugin: string; id: string }) => `${p.plugin}/${p.id}`;
+  const out: ("primary" | "more")[] = pages.map(() => "more");
   let primary = 0;
-  return pages.map((p) => {
-    const want = chosen.get(`${p.plugin}/${p.id}`) ?? p.nav ?? "more";
-    if (want === "more" || primary >= NAV_PRIMARY_MAX) return "more";
-    primary += 1;
-    return "primary";
+  pages.forEach((p, i) => {
+    if (chosen.get(keyOf(p)) === "primary" && primary < NAV_PRIMARY_MAX) {
+      out[i] = "primary";
+      primary += 1;
+    }
   });
+  pages.forEach((p, i) => {
+    if (chosen.has(keyOf(p)) || p.nav !== "primary" || primary >= NAV_PRIMARY_MAX) return;
+    out[i] = "primary";
+    primary += 1;
+  });
+  return out;
 }
 
 /**

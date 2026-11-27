@@ -92,6 +92,10 @@ describe("the sidebar's plugin pages", () => {
   it("at most 3 pages are primary: later ones fall back to more", () => {
     const pages = ["a", "b", "c", "d"].map((id) => page(id, id, "primary"));
     expect(pageSections(pages, undefined)).toEqual(["primary", "primary", "primary", "more"]);
+    // a saved primary keeps its slot against earlier suggestions
+    expect(
+      pageSections(pages, { pluginPages: [{ contribution: "acme/d", section: "primary" }] }),
+    ).toEqual(["primary", "primary", "more", "primary"]);
     // a saved choice for the first moves the fourth up
     expect(
       pageSections(pages, { pluginPages: [{ contribution: "acme/a", section: "more" }] }),
@@ -174,6 +178,30 @@ describe("/settings/navigation", () => {
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
       navigation: { pluginPages: [{ contribution: "acme/b", section: "more" }] },
+    });
+  });
+
+  it("saving drops a saved choice for a page no longer listed", async () => {
+    resetNavigation("/settings/navigation");
+    const calls = stubApi(
+      routes({
+        pluginPages: [
+          { contribution: "gone/page", section: "primary" },
+          { contribution: "acme/a", section: "more" },
+        ],
+      }),
+    );
+    await renderRouteWithCache("/settings/navigation", lastStubRoutes(), { locale: "zh" });
+    await choose("页面乙", "更多");
+    await userEvent.setup().click(await screen.findByRole("button", { name: "保存" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      navigation: {
+        pluginPages: [
+          { contribution: "acme/a", section: "more" },
+          { contribution: "acme/b", section: "more" },
+        ],
+      },
     });
   });
 
