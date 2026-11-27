@@ -1,5 +1,6 @@
 import {
   type ClipboardEvent,
+  type CompositionEvent,
   forwardRef,
   type JSX,
   type KeyboardEvent,
@@ -21,6 +22,7 @@ import { BoxScope } from "../layout/box";
 import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
 import { isTouchPointer } from "../shell/pointer";
+import type { ComposerMenuCombobox } from "./composer-menu";
 import { ComposerOptions } from "./composer-options";
 import { ContextMeter } from "./context-meter";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
@@ -273,13 +275,36 @@ export type ComposerBoxProps = {
   onChange(v: string): void;
   onKeyDown?(e: KeyboardEvent<HTMLTextAreaElement>): void;
   onPaste?(e: ClipboardEvent<HTMLTextAreaElement>): void;
+  /**
+   * An IME composition starts or ends in the textarea (its edits are the IME's until it ends;
+   * `compositionend` carries the committed text as `data`).
+   */
+  onCompositionStart?(e: CompositionEvent<HTMLTextAreaElement>): void;
+  onCompositionEnd?(e: CompositionEvent<HTMLTextAreaElement>): void;
   placeholder: string;
-  /** Replaces the placeholder while a run is going ("运行中发送的消息会在下一步交给智能体"). */
+  /** Replaces the placeholder while a run is going (messages sent then reach the agent later). */
   hint?: string;
   /** The attachment strip, above the textarea. */
   attachments?: ReactNode;
+  /** The + button: the file picker, or (with `attachOpen`) the + menu (§6.16.30). */
   onAttach(): void;
   attachDisabled?: boolean;
+  /**
+   * The + menu is open: the + button then carries `aria-haspopup="menu"` and this as
+   * `aria-expanded`. Absent: + is a plain button (the file picker).
+   */
+  attachOpen?: boolean;
+  /**
+   * The composer's menu host (§6.16.30): `node` is the open `ComposerMenu` (drawn above the frame;
+   * absent while none is open), `combobox` the attributes the textarea takes as its combobox, and
+   * `onKeyDown` the menu's keys, offered before the composer's own (a `true` return stops them).
+   * Both from `useComposerMenu`.
+   */
+  menu?: {
+    node?: ReactNode;
+    combobox: ComposerMenuCombobox;
+    onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>): boolean;
+  };
   /**
    * The pickers. `agent` is absent on the new conversation page, whose agents row chooses the
    * agent (agent profile design §4.2); the model and effort pickers stay. `device` sits
@@ -409,11 +434,15 @@ export function ComposerBox({
   onChange,
   onKeyDown,
   onPaste,
+  onCompositionStart,
+  onCompositionEnd,
   placeholder,
   hint,
   attachments,
   onAttach,
   attachDisabled,
+  attachOpen,
+  menu,
   pickers,
   mode,
   quickActions,
@@ -492,6 +521,8 @@ export function ComposerBox({
   };
   const keyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const el = e.currentTarget;
+    // an open menu takes its keys first (↑↓ ↵ Esc): its ↵ picks, it never sends
+    if (menu?.onKeyDown(e)) return;
     if (suggested && !e.nativeEvent.isComposing) {
       // Tab is taken only here (an empty draft showing a suggestion), so focus navigation is
       // unchanged everywhere else; Shift+Tab and Tab with a modifier never are.
@@ -551,7 +582,10 @@ export function ComposerBox({
         // any edit that leaves text ends the suggestion for this run
         if (suggestion && e.target.value !== "") suggestion.onDismiss();
       }}
-      {...(onKeyDown || token || suggested || mode ? { onKeyDown: keyDown } : {})}
+      {...(onCompositionStart ? { onCompositionStart } : {})}
+      {...(onCompositionEnd ? { onCompositionEnd } : {})}
+      {...(menu ? menu.combobox : {})}
+      {...(onKeyDown || token || suggested || mode || menu ? { onKeyDown: keyDown } : {})}
       onPaste={(e) => {
         if (findTokenLikeSpans(e.clipboardData?.getData("text/plain") ?? "").length > 0) {
           setWarn(true);
@@ -607,6 +641,7 @@ export function ComposerBox({
   ) : null;
   return (
     <ComposerFrame busy={send.busy === true} bare={!frame}>
+      {menu?.node ?? null}
       {tokenWarning}
       {attachments}
       <label className="cb-sr-only" htmlFor={id}>
@@ -641,6 +676,16 @@ export function ComposerBox({
           className="cb-composer-attach"
           icon={<Icon name="plus" size={16} />}
           disabled={attachDisabled}
+          {...(attachOpen === undefined
+            ? {}
+            : {
+                "aria-haspopup": "menu" as const,
+                "aria-expanded": attachOpen,
+                // the open + menu's list (the textarea's combobox controls the same one)
+                ...(attachOpen && menu?.combobox["aria-controls"]
+                  ? { "aria-controls": menu.combobox["aria-controls"] }
+                  : {}),
+              })}
           onClick={() => {
             // attaching a file counts as typing
             suggested?.onDismiss();

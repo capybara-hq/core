@@ -44,6 +44,7 @@ import {
   type ComposerControl,
   type ComposerDraft,
   type ComposerMessage,
+  missingProjectFiles,
   newClientMessageId,
 } from "./ComposerBar";
 import {
@@ -263,7 +264,11 @@ export function useNewConversationPage(
       if (m) {
         pending.drop(attempt.clientMessageId);
         setBlocked(false);
-        setRestore((r) => ({ n: r.n + 1, ...(m.draft !== undefined ? { draft: m.draft } : {}) }));
+        // the next composer marks the refused project files (this one is gone with the remount)
+        const missing = missingProjectFiles(e, m.draft?.projectFiles ?? []);
+        const draft =
+          m.draft !== undefined && missing.length > 0 ? { ...m.draft, missing } : m.draft;
+        setRestore((r) => ({ n: r.n + 1, ...(draft !== undefined ? { draft } : {}) }));
       }
       return { ok: false, error: e };
     } finally {
@@ -283,6 +288,7 @@ export function useNewConversationPage(
         text: m.text,
         ...(m.attachments !== undefined ? { attachments: m.attachments } : {}),
         ...(m.files !== undefined ? { files: m.files } : {}),
+        ...(m.projectFiles !== undefined ? { projectFiles: m.projectFiles } : {}),
         ...(m.skill !== undefined ? { skill: m.skill } : {}),
         ...selection.pending,
       },
@@ -480,6 +486,9 @@ export function useNewConversationPage(
           }}
           onSend={send}
           control={composer}
+          {...(device.deviceId !== undefined && device.project !== undefined
+            ? { project: { deviceId: device.deviceId, name: device.project } }
+            : {})}
           pickers={{
             ...(device.picker ? { device: device.picker } : {}),
             permission: permission.picker,

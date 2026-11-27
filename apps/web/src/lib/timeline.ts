@@ -356,11 +356,18 @@ export type RunData = {
 
 export type FailedRun = Extract<TimelineEntry, { kind: "run"; status: "failed" }>;
 
-/** What Retry repeats: the text (an invocation's arguments), files and the skill invoked. */
+/**
+ * What Retry repeats: the text (an invocation's arguments), files, `@` resources, project files and
+ * the skill invoked.
+ */
 export interface RetryMessage {
   seq: number;
   text: string;
   files: MessageFile[];
+  /** The `@` resources, as the send body names them. Absent: none. */
+  attachments?: { connectorId: string; uri: string }[];
+  /** The referenced project files' paths (composer menus §5). Absent: none. */
+  projectFiles?: string[];
   /** A skill invocation: the name to invoke again (`<plugin>:<name>` for a plugin's skill). */
   skill?: string;
 }
@@ -384,6 +391,11 @@ export type TimelineEntry =
       text: string;
       files: MessageFile[];
       attachments: MessageAttachment[];
+      /**
+       * Referenced project files (composer menus §5), paths relative to the project root: chips on
+       * the bubble, their English blocks never part of `text`. Absent: none.
+       */
+      projectFiles?: string[];
       /** A skill invocation (phase D): the chip ("/fix-issue") and how it runs. */
       skill?: { label: string; mode: "inline" | "fork" };
       /** An inline invocation's rendered text, sent in the person's name (`content[0]`). */
@@ -674,10 +686,14 @@ export function messageFiles(content: ContentBlock[]): MessageFile[] {
   );
 }
 
-/** The text a person typed (with `@` resources only `content[0]`; their bodies stay folded). */
+/**
+ * The text a person typed (with `@` resources or project files only `content[0]`: the resources'
+ * bodies stay folded, the project files' blocks are the model's, shown as chips).
+ */
 function userText(e: Extract<ConversationEvent, { type: "user_message" }>): string {
   const attachments = e.payload.attachments ?? [];
-  return attachments.length > 0
+  const projectFiles = e.payload.projectFiles ?? [];
+  return attachments.length > 0 || projectFiles.length > 0
     ? joinText(e.payload.content.slice(0, 1), "text")
     : joinText(e.payload.content, "text");
 }
@@ -1430,6 +1446,8 @@ export function buildEventTimeline(
             attachments: e.payload.attachments ?? [],
             authorAccountId: e.payload.authorAccountId,
           };
+          const projectFiles = e.payload.projectFiles ?? [];
+          if (projectFiles.length > 0) entry.projectFiles = projectFiles.map((f) => f.path);
           if (skill) {
             entry.skill = { label: skillChipLabel(skill.name), mode: skill.mode };
             // A fork's content[0] is the lead for the model, not the instructions: those are the
@@ -1447,10 +1465,17 @@ export function buildEventTimeline(
         if (skill?.mode === "fork") {
           forks.set(e.seq, { label: `/${skill.name}`, dispatched: false, reported: false });
         }
+        const retryAttachments = (e.payload.attachments ?? []).map((a) => ({
+          connectorId: a.appId,
+          uri: a.uri,
+        }));
+        const retryProjectFiles = (e.payload.projectFiles ?? []).map((f) => f.path);
         lastUser = {
           seq: retryOf ?? e.seq,
           text,
           files,
+          ...(retryAttachments.length > 0 ? { attachments: retryAttachments } : {}),
+          ...(retryProjectFiles.length > 0 ? { projectFiles: retryProjectFiles } : {}),
           ...(skill ? { skill: skill.plugin ? `${skill.plugin}:${skill.name}` : skill.name } : {}),
         };
         break;

@@ -188,6 +188,10 @@
       "queue_full": "The queue is full. Wait for queued messages to go out, or remove some.",
       "queue_item_not_found": "The queued message has already been sent or removed.",
       "read_only": "This is a sub-agent's conversation; it doesn't take messages.",
+      "project_file_unavailable": {
+        "default": "A referenced project file is no longer available. Check that it still exists in the project, then remove it and try again.",
+        "no_project": "This conversation has no device project, so it can't reference project files. Remove them, or start the conversation in a project."
+      },
       "busy": "The conversation is busy. Wait for the current run to finish."
     },
     "background_task": {
@@ -406,6 +410,8 @@
       "project_path_unreadable": "This path is a file or cannot be read on the device. Choose a readable directory.",
       "project_not_found": "This device has no project with this name.",
       "projects_unsupported": "This device does not support projects.",
+      "path_outside_project": "This path leaves the project. Pick a file or folder inside the project.",
+      "list_unsupported": "This device cannot list its project files.",
       "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment.",
       "not_running": "The device stopped before it could be read. Try again; it will be started first.",
       "permission_reconcile_required": "This device's sandbox limits must be established again before it runs anything. Rebuild its files on its device page, then try again.",
@@ -1527,6 +1533,8 @@
     "attachments": "Attachments",
     "removeAttachment": "Remove {name}",
     "attachLimit": "At most {max} attachments per message.",
+    "referencesNeedText": "Write a message to send with the referenced resources or project files.",
+    "projectFileMissing": "{path} is no longer in the project. Remove it or pick it again.",
     "noInvocable": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills before you can invoke it with /.",
     "noInvocableAction": "Choose skills",
     "noInvocableReadOnly": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills first; ask its owner or an org admin.",
@@ -1793,6 +1801,20 @@
       "summary": "“{text}” with {profile} on {device}.",
       "summaryNoDevice": "“{text}” with {profile}, without a device.",
       "changed": "Your choices changed since: sending now starts a new request, and Retry original sends it as it was."
+    },
+    "composerMenu": {
+      "add": "Add",
+      "upload": "Upload files",
+      "resources": "Connector resources",
+      "projectFiles": "Project files",
+      "projectFilesHint": "Reference files of the project {project} without uploading them",
+      "abilities": "Abilities",
+      "skills": "Skills",
+      "connectors": "Connectors",
+      "needsConfig": "Needs setup",
+      "noMatch": "Nothing matches",
+      "noResources": "No matching resources",
+      "search": "Search"
     }
   },
   "ui": {

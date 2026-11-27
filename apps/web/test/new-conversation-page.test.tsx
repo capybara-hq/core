@@ -116,7 +116,7 @@ const routes = (agents: unknown = AGENTS, groups: unknown = GROUPS) => ({
   [`GET ${ORG}/conversations/groups`]: () => json(200, groups),
 });
 
-const input = () => screen.getByRole("textbox", { name: en.chat.inputLabel, hidden: true });
+const input = () => screen.getByRole("combobox", { name: en.chat.inputLabel, hidden: true });
 const row = () => screen.queryByRole("group", { name: "Choose an agent" });
 /** The quick actions: a zap button in the composer's control row (spec §6.16.27). */
 const quick = () => screen.queryByRole("button", { name: "Common tasks" });

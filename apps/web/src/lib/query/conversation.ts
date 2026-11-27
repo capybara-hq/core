@@ -411,11 +411,11 @@ export const connectorPromptsQuery = (orgId: string) =>
     freshness: "orgConfig",
   });
 
-/** The connectors' resources for the composer's `@` menu. */
-export const connectorResourcesQuery = (orgId: string) =>
+/** The connectors' resources for the composer's `@` menu, searched on the kernel by `query`. */
+export const connectorResourcesQuery = (orgId: string, query: string) =>
   defineQuery({
-    key: keys.org(orgId).connectorItems("resources"),
-    fn: () => listConnectorResources(orgId),
+    key: keys.org(orgId).connectorItems("resources", query),
+    fn: () => listConnectorResources(orgId, query),
     freshness: "orgConfig",
   });
 

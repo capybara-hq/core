@@ -495,7 +495,7 @@ export class PermissionFacts {
     if (row === null) throw projectNotFound(name);
     // a home reported after the project was added can put it above the home: the working root
     // would fall back for it, so it is not bound (the add rule, project root §4.3)
-    if (aboveHome(row.path, scope.home)) throw tooBroad(row.path);
+    if (aboveHome(row.path, scope.home)) throw tooBroad(row.name);
     return { name: row.name, path: row.path };
   }
 

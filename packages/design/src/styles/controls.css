@@ -586,6 +586,11 @@
   font: inherit;
   font-variant-numeric: tabular-nums;
 }
+/* The line fills the field, so the text (and the placeholder) sits where the signed reference's
+   field draws it: with a shorter line Chrome puts it 1px under the centre. */
+.cb-input input {
+  line-height: calc(var(--cb-field-height) - 2px);
+}
 .cb-input input::placeholder,
 .cb-textarea textarea::placeholder {
   color: var(--cb-faint);
@@ -800,7 +805,9 @@
   height: 14px;
   margin-top: 3px;
   border: 1px solid var(--cb-line-strong);
-  border-radius: var(--cb-radius-sm);
+  /* The base radius.sm under the mobile sizes too (spec §6.3): their 12 would round the 14 box
+     into a radio. */
+  border-radius: 4px;
   background: transparent;
   color: var(--cb-on-accent);
   font-size: var(--cb-type-small-size);

@@ -68,7 +68,7 @@ const assistant = (seq: number, text: string, runId = "r1") =>
 const FINISHED = [userMsg(1, "hi"), runStarted(2), assistant(3, "hello"), runFinished(4)];
 
 const input = () =>
-  screen.getByRole("textbox", { name: en.chat.inputLabel, hidden: true }) as HTMLTextAreaElement;
+  screen.getByRole("combobox", { name: en.chat.inputLabel, hidden: true }) as HTMLTextAreaElement;
 const placeholder = () => input().getAttribute("placeholder");
 const es = () => FakeEventSource.instances.at(-1) as FakeEventSource;
 const suggest = (runId: string, afterSeq: number, text = TEXT) =>
@@ -195,7 +195,7 @@ describe("prompt suggestions in the composer", () => {
     await screen.findByText("hi");
     suggest("r1", 4);
     await act(async () => {});
-    expect(screen.queryByRole("textbox", { name: en.chat.inputLabel, hidden: true })).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: en.chat.inputLabel, hidden: true })).toBeTruthy();
     expect(placeholder()).not.toBe(TEXT);
   });
 });

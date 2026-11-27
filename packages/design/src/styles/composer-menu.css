@@ -1,0 +1,257 @@
+/* ── The composer's menus: ＋, / and @ (spec §6.16.30) ── */
+
+/* As wide as the frame (over its 1px border), start-aligned, space.2 above it; the menu ground and
+   line of §6.7; the list scrolls under the height cap while the footer stays. */
+.cb-cmm {
+  position: absolute;
+  right: -1px;
+  bottom: calc(100% + 1px + var(--cb-space-2));
+  left: -1px;
+  z-index: var(--cb-z-popover);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: var(--cb-layout-menu-max-height);
+  padding: var(--cb-space-1);
+  border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  color: var(--cb-ink);
+  box-shadow: var(--cb-shadow-1);
+}
+/* The frame anchors the open menu: its padding box, not a grid area (an absolutely positioned
+   grid child with a placement takes its area as the containing block). */
+.cb-composer:has(> .cb-cmm) {
+  position: relative;
+}
+.cb-composer > .cb-cmm {
+  grid-area: auto;
+}
+/* ＋ while its menu is open: the ghost button's hover ground and ink. */
+.cb-composer-attach[aria-expanded="true"] {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-cmm-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
+}
+.cb-cmm-group-label {
+  padding: var(--cb-space-2) var(--cb-pad-default-x) var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+/* A row (the described-item row of §6.16.3): the lead, the name and its hint over one muted line,
+   a trailing badge; the active row on `selected`. */
+.cb-cmm-item {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  box-sizing: border-box;
+  min-height: var(--cb-row-default);
+  padding: var(--cb-space-1) var(--cb-pad-default-x);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+  cursor: pointer;
+}
+.cb-cmm-item[data-described="true"] {
+  padding-top: var(--cb-space-2);
+  padding-bottom: var(--cb-space-2);
+}
+.cb-cmm-item[aria-selected="true"] {
+  background: var(--cb-selected);
+}
+.cb-cmm-item[data-disabled="true"] {
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
+.cb-cmm-lead {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-space-6);
+  height: var(--cb-space-6);
+  color: var(--cb-muted);
+}
+.cb-cmm-item[data-disabled="true"] .cb-cmm-lead {
+  color: var(--cb-disabled);
+}
+.cb-cmm-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-cmm-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+.cb-cmm-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cb-cmm-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-faint);
+  text-overflow: ellipsis;
+}
+.cb-cmm-desc {
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-cmm-item[data-disabled="true"] .cb-cmm-desc,
+.cb-cmm-item[data-disabled="true"] .cb-cmm-hint {
+  color: var(--cb-disabled);
+}
+.cb-cmm-badge {
+  display: inline-flex;
+  flex: none;
+}
+.cb-cmm-empty,
+.cb-cmm-loading {
+  padding: var(--cb-space-2) var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-cmm-notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-1) var(--cb-space-2);
+  padding: var(--cb-space-1) var(--cb-pad-default-x) var(--cb-space-2);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-cmm-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+/* The key hints (from 841 up): `faint` text, the keys `muted`; the menu switches are buttons. */
+.cb-cmm-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-1);
+  margin-top: var(--cb-space-1);
+  padding: var(--cb-space-2) var(--cb-pad-default-x) var(--cb-space-1);
+  overflow: hidden;
+  border-top: 1px solid var(--cb-line-soft);
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  white-space: nowrap;
+}
+.cb-cmm-key {
+  color: var(--cb-muted);
+}
+.cb-cmm-switch {
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.cb-cmm-switch:hover,
+.cb-cmm-switch:hover .cb-cmm-key {
+  color: var(--cb-ink);
+}
+.cb-cmm-switch:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 1px;
+}
+.cb-cmm-grow {
+  flex: 1;
+  min-width: 0;
+}
+.cb-cmm-type {
+  color: var(--cb-muted);
+}
+@media (max-width: 840px) {
+  .cb-cmm-foot {
+    display: none;
+  }
+}
+
+/* The compact form (spec §6.16.30, §6.59): the sheet's body, a search field over the sheet's
+   grouped rows, `touch.row` high; a bottom sheet exists only where the touch sizes apply, so these
+   hold at every pointer. */
+.cb-cmm[data-form="sheet"] {
+  position: static;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.cb-cmm-search {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--cb-touch-hit);
+  margin: 0 0 var(--cb-touch-sheet-inset);
+  padding: 0 var(--cb-space-4);
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+  font: inherit;
+  outline: none;
+}
+.cb-cmm-search::placeholder {
+  color: var(--cb-faint);
+}
+.cb-cmm-search:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-cmm[data-form="sheet"] .cb-cmm-group + .cb-cmm-group {
+  margin-top: var(--cb-touch-sheet-inset);
+}
+.cb-cmm[data-form="sheet"] .cb-cmm-item {
+  position: relative;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-touch-row);
+  padding: 0 var(--cb-space-4);
+  border-radius: 0;
+}
+.cb-cmm[data-form="sheet"] .cb-cmm-item[data-described="true"] {
+  padding-top: var(--cb-space-2);
+  padding-bottom: var(--cb-space-2);
+}
+/* the separator: from the text column to the row's end, as SheetRow's */
+.cb-cmm[data-form="sheet"] .cb-cmm-item + .cb-cmm-item::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: calc(var(--cb-space-4) + var(--cb-space-6) + var(--cb-space-3));
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-cmm[data-form="sheet"] .cb-cmm-empty,
+.cb-cmm[data-form="sheet"] .cb-cmm-loading {
+  padding: var(--cb-space-3) var(--cb-space-4);
+}

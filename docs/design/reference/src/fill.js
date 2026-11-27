@@ -97,7 +97,7 @@
 
   /** The panel empty state (design spec §6.18): the line capybara at scale 4 over the words. */
   function sidebarEmpty(text, action) {
-    return `<div class="r-sb-empty" data-part="empty-state" data-size="panel"><span class="r-empty-art" data-part="empty-illustration" aria-hidden="true"><svg class="r-logo-line" width="57" height="41" viewBox="0 0 57 41" shape-rendering="crispEdges" aria-hidden="true"><path d="M40.5 0.5H44.5M40.5 0.5V4.5M44.5 0.5V4.5M36.5 4.5H40.5M36.5 4.5V8.5M44.5 4.5H48.5M48.5 4.5V8.5M12.5 8.5H16.5M12.5 8.5V12.5M16.5 8.5H20.5M20.5 8.5H24.5M24.5 8.5H28.5M28.5 8.5H32.5M32.5 8.5H36.5M44.5 12.5H48.5M48.5 8.5H52.5M52.5 8.5H56.5M56.5 8.5V12.5M8.5 12.5H12.5M8.5 12.5V16.5M44.5 12.5V16.5M48.5 12.5V16.5M56.5 12.5V16.5M4.5 16.5H8.5M4.5 16.5V20.5M44.5 16.5H48.5M56.5 16.5V20.5M4.5 20.5V24.5M52.5 24.5H56.5M56.5 20.5V24.5M4.5 28.5H8.5M4.5 24.5V28.5M48.5 28.5H52.5M52.5 24.5V28.5M8.5 28.5V32.5M16.5 32.5H20.5M20.5 32.5H24.5M28.5 32.5H32.5M32.5 32.5H36.5M44.5 32.5H48.5M48.5 28.5V32.5M8.5 32.5V36.5M16.5 32.5V36.5M24.5 32.5V36.5M28.5 32.5V36.5M36.5 32.5V36.5M44.5 32.5V36.5M8.5 40.5H12.5M8.5 36.5V40.5M12.5 40.5H16.5M16.5 36.5V40.5M24.5 40.5H28.5M24.5 36.5V40.5M28.5 36.5V40.5M36.5 40.5H40.5M36.5 36.5V40.5M40.5 40.5H44.5M44.5 36.5V40.5"/></svg></span><span class="r-empty-words"><p class="r-empty-text" data-part="empty-state-text">${esc(text)}</p></span><span class="r-empty-action">${action}</span></div>`;
+    return `<div class="r-sb-empty" data-part="empty-state" data-size="panel"><span class="r-empty-art" data-part="empty-illustration" aria-hidden="true"><svg class="r-logo-line" width="57" height="41" viewBox="0 0 57 41" shape-rendering="crispEdges" aria-hidden="true"><path d="M40.5 0.5H44.5M40.5 0.5V4.5M44.5 0.5V4.5M36.5 4.5H40.5M36.5 4.5V8.5M44.5 4.5H48.5M48.5 4.5V8.5M12.5 8.5H16.5M12.5 8.5V12.5M16.5 8.5H20.5M20.5 8.5H24.5M24.5 8.5H28.5M28.5 8.5H32.5M32.5 8.5H36.5M44.5 12.5H48.5M48.5 8.5H52.5M52.5 8.5H56.5M56.5 8.5V12.5M8.5 12.5H12.5M8.5 12.5V16.5M44.5 12.5V16.5M48.5 12.5V16.5M56.5 12.5V16.5M4.5 16.5H8.5M4.5 16.5V20.5M44.5 16.5H48.5M56.5 16.5V20.5M4.5 20.5V24.5M52.5 24.5H56.5M56.5 20.5V24.5M4.5 28.5H8.5M4.5 24.5V28.5M48.5 28.5H52.5M52.5 24.5V28.5M8.5 28.5V32.5M16.5 32.5H20.5M20.5 32.5H24.5M28.5 32.5H32.5M32.5 32.5H36.5M44.5 32.5H48.5M48.5 28.5V32.5M8.5 32.5V36.5M16.5 32.5V36.5M24.5 32.5V36.5M28.5 32.5V36.5M36.5 32.5V36.5M44.5 32.5V36.5M8.5 40.5H12.5M8.5 36.5V40.5M12.5 40.5H16.5M16.5 36.5V40.5M24.5 40.5H28.5M24.5 36.5V40.5M28.5 36.5V40.5M36.5 40.5H40.5M36.5 36.5V40.5M40.5 40.5H44.5M44.5 36.5V40.5"/></svg></span><span class="r-empty-words"><p class="r-empty-text" data-part="empty-state-text">${esc(text)}</p></span>${action ? `<span class="r-empty-action">${action}</span>` : ""}</div>`;
   }
 
   function conversationList(o) {
@@ -665,7 +665,10 @@
 
   // The conversation-page renderers (conversation.js, UI refresh B) when the page loads them.
   if (window.__CB_EXTRA__) {
-    Object.assign(RENDER, window.__CB_EXTRA__({ F, esc, icon, state, stamp, sidebar, table }));
+    Object.assign(
+      RENDER,
+      window.__CB_EXTRA__({ F, esc, icon, state, stamp, sidebar, table, emptyPanel: sidebarEmpty }),
+    );
   }
 
   for (const t of document.querySelectorAll("template[data-fixture]")) {

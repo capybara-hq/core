@@ -1,0 +1,238 @@
+/* ── The project file picker (spec §6.16.31) ── */
+
+/* The body: the path row, the filter, then the rows (or their status) under one another, inside
+   the 640 dialog's body (a bottom sheet's below 600); no box of its own (spec §1). */
+.cb-pfp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+/* The reference set's and /dev/ui's dialog drawn in place: no fixed position, scrim or entrance. */
+.cb-pfp-dialog[data-inline="true"] {
+  position: relative;
+  top: auto;
+  left: auto;
+  z-index: auto;
+  translate: none;
+  max-height: none;
+  animation: none;
+}
+
+/* The path row: the project, then each folder; every segment but the last goes back up. */
+.cb-pfp-path {
+  min-width: 0;
+}
+.cb-pfp-crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+  white-space: nowrap;
+}
+.cb-pfp-crumb {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-pfp-sep {
+  flex: none;
+  color: var(--cb-faint);
+}
+.cb-pfp-segment {
+  display: inline-block;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  height: var(--cb-control-dense);
+  padding: 0 var(--cb-space-1);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-family: var(--cb-font-code);
+  line-height: var(--cb-control-dense);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.cb-pfp-segment {
+  cursor: pointer;
+}
+button.cb-pfp-segment:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-pfp-segment[aria-current="location"] {
+  color: var(--cb-ink);
+}
+
+/* The rows: `row.default` high, padded `pad.default.x`; the scroll pulls out by that padding so
+   the names line up with the path row and the filter. One height for every folder, so the dialog
+   does not jump while a person moves around. */
+.cb-pfp-scroll {
+  display: flex;
+  flex-direction: column;
+  height: calc(var(--cb-row-default) * 9);
+  margin: 0 calc(-1 * var(--cb-pad-default-x));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
+}
+.cb-pfp-scroll > .cb-empty-state {
+  margin: auto;
+}
+.cb-pfp-list {
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+.cb-pfp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  box-sizing: border-box;
+  min-height: var(--cb-row-default);
+  padding: 0 var(--cb-pad-default-x);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+  cursor: pointer;
+}
+.cb-pfp-row:hover {
+  background: var(--cb-hover);
+}
+/* The active row while the list has the keyboard: the palette's current item (§6.7). */
+.cb-pfp-list:focus-visible .cb-pfp-row[data-active="true"] {
+  background: var(--cb-selected);
+  outline: 1px solid var(--cb-line-strong);
+  outline-offset: -1px;
+}
+.cb-pfp-row[data-disabled="true"] {
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
+.cb-pfp-row[data-disabled="true"]:hover {
+  background: transparent;
+}
+.cb-pfp-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  /* space.1 more after the box, so a wide type badge (JSON) never touches it */
+  margin-right: var(--cb-space-1);
+}
+.cb-pfp-check .cb-box {
+  margin-top: 0;
+}
+.cb-pfp-row[data-disabled="true"] .cb-box {
+  border-color: var(--cb-line);
+  background: var(--cb-hover);
+}
+.cb-pfp-lead {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-space-6);
+  color: var(--cb-muted);
+}
+.cb-pfp-row[data-disabled="true"] .cb-pfp-lead,
+.cb-pfp-row[data-disabled="true"] .cb-type-badge {
+  color: var(--cb-disabled);
+}
+.cb-pfp-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-pfp-size {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-pfp-trail {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-faint);
+}
+
+/* The loading row and the cap's hint: one prose `small` `muted` line in the rows' padding. */
+.cb-pfp-loading,
+.cb-pfp-truncated {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-2) var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+/* A failed listing (the caller's ErrorDetail) takes the rows' place, at their height. */
+.cb-pfp-error {
+  min-height: calc(var(--cb-row-default) * 9);
+  padding: var(--cb-space-2) 0;
+}
+
+/* The footer: the count at the start, Cancel and 「引用」 at the end. */
+.cb-pfp-foot {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-pfp-count {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-pfp-count[data-max="true"] {
+  color: var(--cb-warn);
+}
+.cb-pfp-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Below 600 (the Dialog's bottom sheet, §6.59): the rows follow the sheet's scroll; the footer
+   stacks the count over the full-width buttons, 「引用」 first so Cancel lies under it (§2.4). */
+.cb-dialog-sheet .cb-pfp-scroll,
+.cb-dialog-sheet .cb-pfp-error {
+  height: auto;
+  margin: 0;
+  min-height: calc(var(--cb-row-default) * 5);
+}
+.cb-dialog-sheet-foot > .cb-pfp-foot {
+  flex-direction: column;
+  align-items: stretch;
+}
+.cb-dialog-sheet-foot > .cb-pfp-foot > .cb-btn {
+  width: 100%;
+}
+.cb-dialog-sheet-foot > .cb-pfp-foot > .cb-pfp-count {
+  order: -2;
+  text-align: center;
+}
+.cb-dialog-sheet-foot > .cb-pfp-foot > .cb-btn[data-variant="primary"] {
+  order: -1;
+}
+.cb-dialog-sheet-foot > .cb-pfp-foot > .cb-pfp-grow {
+  display: none;
+}

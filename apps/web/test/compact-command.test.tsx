@@ -74,7 +74,13 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
   });
 }
 
-const input = () => screen.getByRole("textbox", { name: en.chat.inputLabel, hidden: true });
+const input = () => screen.getByRole("combobox", { name: en.chat.inputLabel, hidden: true });
+const menu = async () => {
+  await screen.findByRole("listbox");
+  return document.querySelector('[data-part="composer-menu"]') as HTMLElement;
+};
+const headingsOf = (el: HTMLElement) =>
+  [...el.querySelectorAll('[data-part="composer-menu-label"]')].map((h) => h.textContent);
 const posts = (calls: Call[], path: string) =>
   calls.filter((c) => c.method === "POST" && c.url.split("?")[0] === path);
 const compactPosts = (calls: Call[]) => posts(calls, COMPACT);
@@ -252,11 +258,11 @@ describe("the / menu command entry", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
-    const dialog = await screen.findByRole("dialog");
-    const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
+    const dialog = await menu();
+    const headings = headingsOf(dialog);
     // after the agent's skills (a command never takes the first Enter meant for a skill)
     expect(headings).toEqual([en.chat.skillSource.platform, en.chat.commandsGroup]);
-    const command = await within(dialog).findByRole("option", { name: /^\/compact/ });
+    const command = await within(dialog).findByRole("option", { name: /^compact/ });
     await user.click(command);
     await vi.waitFor(() => expect(compactPosts(calls)).toHaveLength(1));
     expect(messagePosts(calls)).toHaveLength(0);
@@ -272,16 +278,16 @@ describe("the / menu command entry", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
-    const dialog = await screen.findByRole("dialog");
-    const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
+    const dialog = await menu();
+    const headings = headingsOf(dialog);
     expect(headings).toEqual([en.chat.commandsGroup]);
-    expect(await within(dialog).findByRole("option", { name: /^\/compact/ })).toBeTruthy();
+    expect(await within(dialog).findByRole("option", { name: /^compact/ })).toBeTruthy();
     // the guidance (and the next step for an owner) stands under the command
     expect(within(dialog).getByText(en.chat.noInvocable)).toBeTruthy();
     expect(within(dialog).getByRole("link", { name: en.chat.noInvocableAction })).toBeTruthy();
   });
 
-  it("is not in the @ resources palette (there it would sit above the resources)", async () => {
+  it("is not in the @ resources menu (there it would sit above the resources)", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${ORG}/connectors/resources`]: () =>
@@ -302,11 +308,11 @@ describe("the / menu command entry", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "read @");
-    const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText("Handbook · docs://handbook");
-    const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
+    const dialog = await menu();
+    await within(dialog).findByText("Handbook");
+    const headings = headingsOf(dialog);
     expect(headings).toEqual(["Docs"]);
-    expect(within(dialog).queryByRole("option", { name: /^\/compact/ })).toBeNull();
+    expect(within(dialog).queryByRole("option", { name: /^compact/ })).toBeNull();
     expect(within(dialog).queryByText(en.chat.commandsGroup)).toBeNull();
     expect(compactPosts(calls)).toHaveLength(0);
   });
@@ -478,7 +484,7 @@ describe("i18n", () => {
     await user.click(screen.getByRole("button", { name: /^未命名会话/ }));
     expect(await screen.findByRole("menuitem", { name: zh.chat.compact })).toBeTruthy();
     await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("textbox", { name: zh.chat.inputLabel, hidden: true }));
+    await user.click(screen.getByRole("combobox", { name: zh.chat.inputLabel, hidden: true }));
     await user.paste("/compact foo");
     await user.keyboard("{Enter}");
     expect(await screen.findByText(zh.chat.compactNoArgs)).toBeTruthy();

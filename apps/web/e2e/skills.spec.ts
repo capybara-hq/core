@@ -317,17 +317,18 @@ test("phase D: invoke skills from the / menu and typed, send one while running, 
 
   // 1. the / menu: skills first, tagged; filter, pick, the chip, the arguments
   await input.press("/");
-  const palette = page.getByRole("dialog");
-  await expect(palette.getByRole("option", { name: /^\/e2e-fix-issue/ })).toBeVisible();
-  await expect(palette.getByRole("option", { name: /^\/e2e-manual-check/ })).toContainText(
+  // the composer menu: the textarea is its combobox, what follows the trigger its query
+  const menu = page.getByRole("listbox");
+  await expect(menu.getByRole("option", { name: /^e2e-fix-issue/ })).toBeVisible();
+  await expect(menu.getByRole("option", { name: /^e2e-manual-check/ })).toContainText(
     zh.chat.skillTag.manual,
   );
-  await expect(palette.getByRole("option", { name: /^\/e2e-review/ })).toContainText(
+  await expect(menu.getByRole("option", { name: /^e2e-review/ })).toContainText(
     zh.chat.skillTag.fork,
   );
-  await palette.getByRole("combobox").fill("fix-iss");
-  await expect(palette.getByRole("option")).toHaveCount(1);
-  await palette.getByRole("option", { name: /^\/e2e-fix-issue/ }).click();
+  await input.pressSequentially("fix-iss");
+  await expect(menu.getByRole("option")).toHaveCount(1);
+  await menu.getByRole("option", { name: /^e2e-fix-issue/ }).click();
   await expect(page.locator('[data-part="composer-token"]')).toContainText("/e2e-fix-issue");
   await expect(input).toHaveAttribute("placeholder", "[issue-number]");
   await input.fill("123");

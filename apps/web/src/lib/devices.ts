@@ -375,6 +375,41 @@ export const listDeviceProjects = (orgId: string, id: string) =>
 export const listDeviceProjectCandidates = (orgId: string, id: string) =>
   apiFetch<DeviceProjectCandidates>(`${org(orgId)}/${enc(id)}/projects/candidates`);
 
+/** One entry of a project directory (kernel `ProjectFileEntry`): `path` is relative to the root. */
+export interface ProjectFileEntry {
+  name: string;
+  path: string;
+  kind: "file" | "dir";
+  /** Bytes, when the device reports them. */
+  size?: number;
+}
+
+/** `GET …/devices/:id/projects/:name/files` (composer menus §5; kernel `ProjectFileList`). */
+export interface ProjectFileList {
+  entries: ProjectFileEntry[];
+  /** More entries matched than the kernel lists (200): the picker hints to filter. */
+  truncated: boolean;
+}
+
+/**
+ * One directory of a device project (owner only): `path` relative to the project root (empty: the
+ * root), `q` filters the names in it. Lists through the device, which is started for its owner.
+ */
+export const listDeviceProjectFiles = (
+  orgId: string,
+  id: string,
+  name: string,
+  opts: { path: string; q: string },
+) => {
+  const q = new URLSearchParams();
+  if (opts.path !== "") q.set("path", opts.path);
+  if (opts.q !== "") q.set("q", opts.q);
+  const s = q.toString();
+  return apiFetch<ProjectFileList>(
+    `${org(orgId)}/${enc(id)}/projects/${enc(name)}/files${s === "" ? "" : `?${s}`}`,
+  );
+};
+
 export const addDeviceProject = (
   orgId: string,
   id: string,

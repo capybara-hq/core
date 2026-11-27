@@ -744,6 +744,16 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
               ...(f.kind === "image" ? { src: srcOf(f.attachmentId) } : {}),
             }),
           ),
+          // referenced project files: named by their path, nothing to open or download
+          ...(e.projectFiles ?? []).map(
+            (path): BubbleAttachment => ({
+              id: `project:${path}`,
+              kind: "file",
+              name: path,
+              type: typeBadge(path, ""),
+              downloadable: false,
+            }),
+          ),
           ...e.attachments.map(
             (a): BubbleAttachment => ({
               id: `@${a.appId}:${a.uri}`,
@@ -808,16 +818,17 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
                           const file = e.files.find((f) => f.attachmentId === id);
                           // An image zooms in the page; another upload opens in the right panel
                           // once the files list has it (downloads otherwise: before the list is
-                          // read again, past its cap, or with no panel); a resource mention does
-                          // nothing.
+                          // read again, past its cap, or with no panel); a resource mention or
+                          // a project file (not an upload) does nothing.
                           if (file?.kind === "image") setZoomId(id);
-                          else if (!id.startsWith("@")) {
+                          else if (!id.startsWith("@") && !id.startsWith("project:")) {
                             if (onOpenFile && listedFiles?.has(id)) onOpenFile(id);
                             else openDownload(fileDownloadUrl(orgId, id));
                           }
                         }}
                         onDownload={(id) => {
-                          if (!id.startsWith("@")) openDownload(fileDownloadUrl(orgId, id));
+                          if (id.startsWith("@") || id.startsWith("project:")) return;
+                          openDownload(fileDownloadUrl(orgId, id));
                         }}
                       />
                     ),
