@@ -1879,6 +1879,8 @@ export interface AutomationRunsTable {
   >;
   error: NullableText;
   missing_grants: ColumnType<string[], string | undefined, string>;
+  /** 0189: when the run was recorded (an event run's moment before its claim). */
+  created_at: Ts;
 }
 
 /**

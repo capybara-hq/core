@@ -150,6 +150,10 @@ const posInt = (max: number, def: number) =>
 const isForbiddenToolEntry = (v: unknown): v is string =>
   typeof v === "string" && v.length >= 1 && v.length <= 200;
 
+/** A stored `eventSourcesOff` entry worth keeping: an extension name of the length the PATCH accepts. */
+const isEventSourceEntry = (v: unknown): v is string =>
+  typeof v === "string" && v.length >= 1 && v.length <= 214;
+
 /**
  * Org settings of automations (spec §9); every field reads leniently (invalid = default,
  * except `forbiddenTools`, which keeps its valid entries). A stored `forbiddenTools` that is not a
@@ -166,6 +170,20 @@ export const AutomationsSettingsSchema = z.object({
   catchUpWindowMinutes: posInt(1_000_000, 60),
   unattendedAsk: z.enum(["fail", "wait"]).default("fail").catch("fail"),
   pauseAfterFailures: posInt(1000, 5),
+  // event automations (collaboration spec §4.7): the chain depth past which an event is stored
+  // but not dispatched, the window that coalesces one subject's events into one run, and the runs
+  // one automation may make for one subject per hour
+  maxEventDepth: posInt(1000, 8),
+  coalesceSeconds: posInt(86_400, 30),
+  maxEventRunsPerSubjectPerHour: posInt(1_000_000, 12),
+  // the trigger sources (extension names) whose events fire no automation of the org; an invalid
+  // entry is dropped, the valid ones stay off
+  eventSourcesOff: z
+    .preprocess(
+      (v) => (Array.isArray(v) ? v.filter(isEventSourceEntry).slice(0, 200) : v),
+      z.array(z.string()).max(200).default([]),
+    )
+    .catch([]),
   // fail-safe: an invalid entry is dropped, the valid ones stay forbidden (never reset to []);
   // past the PATCH's 500 the list is truncated
   forbiddenTools: z
@@ -193,6 +211,10 @@ export const AutomationsPatchSchema = z
     catchUpWindowMinutes: z.number().int().min(1).max(1_000_000),
     unattendedAsk: z.enum(["fail", "wait"]),
     pauseAfterFailures: z.number().int().min(1).max(1000),
+    maxEventDepth: z.number().int().min(1).max(1000),
+    coalesceSeconds: z.number().int().min(1).max(86_400),
+    maxEventRunsPerSubjectPerHour: z.number().int().min(1).max(1_000_000),
+    eventSourcesOff: z.array(z.string().min(1).max(214)).max(200),
     forbiddenTools: z.array(z.string().min(1).max(200)).max(500),
   })
   .partial()

@@ -219,6 +219,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         },
       },
       { dispatch: async (d) => void calls.push(["trigger-dispatch", d]) },
+      { flush: async (d) => void calls.push(["automation-coalesce", d]) },
     );
     const job = (name: string, data: unknown) => ({ name, data, id: `${name}-1` }) as never;
     await processor.process(job("wait-timeout", { waitId: "w" }), "tok");
@@ -243,6 +244,8 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     await processor.process(job("platform-icon-delete", iconObject));
     await processor.process(job("device-conversation-notice", { orgId: "o", noticeId: "n1" }));
     await processor.process(job("trigger-dispatch", { orgId: "o", eventId: "e1" }));
+    const pair = { orgId: "o", automationId: "a1", subjectKey: "item-0123456789abcdef" };
+    await processor.process(job("automation-coalesce", pair));
     await processor.process(job("sandbox-suspend-idle", {}));
     // an unknown name fails (BullMQ retries it, a newer replica knows it), never completes unrun
     await expect(processor.process(job("no-such-job", {}))).rejects.toThrow(
@@ -269,6 +272,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       // the prompt attempt runs on a short device budget
       ["conversation-notice", "o", "n1", 5_000],
       ["trigger-dispatch", { orgId: "o", eventId: "e1" }],
+      ["automation-coalesce", pair],
       ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([]);

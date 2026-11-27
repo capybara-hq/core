@@ -67,7 +67,7 @@ import {
 import { oweAutomationFire, oweAutomationSettleUnfired } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { jitterForGap, minGapMinutes, nextTick, validateTrigger } from "./schedule-math.js";
-import { type AutomationPatch, AutomationStore } from "./store.js";
+import { type AutomationPatch, AutomationStore, runOrderMoment } from "./store.js";
 import type {
   Automation,
   AutomationChat,
@@ -745,7 +745,7 @@ export class AutomationsService {
     const tasks = await this.withAccounts(plain);
     const rows = await this.db.db
       .selectFrom("automation_runs")
-      .select(["automation_id", "status", "skip_reason", "fired_at", "scheduled_for"])
+      .select(["automation_id", "status", "skip_reason", "fired_at", "scheduled_for", "created_at"])
       .distinctOn("automation_id")
       .where("org_id", "=", orgId)
       .where(
@@ -756,7 +756,7 @@ export class AutomationsService {
       .where("trial", "=", false)
       .where("status", "in", ["completed", "failed", "skipped"])
       .orderBy("automation_id")
-      .orderBy("scheduled_for", "desc")
+      .orderBy(runOrderMoment, "desc")
       .orderBy("id", "desc")
       .execute();
     const last = new Map(rows.map((r) => [r.automation_id, r]));
@@ -770,7 +770,7 @@ export class AutomationsService {
             : {
                 status: r.status as TaskLastRun["status"],
                 skipReason: r.skip_reason,
-                at: runMoment(r.fired_at, r.scheduled_for),
+                at: runMoment(r.fired_at, r.scheduled_for, r.created_at),
               },
       };
     });
@@ -972,14 +972,22 @@ export class AutomationsService {
     // the latest settled non-trial run of each task, and every grant of these tasks, in one query each
     const latest = await db
       .selectFrom("automation_runs")
-      .select(["automation_id", "fired_at", "scheduled_for", "missing_grants", "status", "error"])
+      .select([
+        "automation_id",
+        "fired_at",
+        "scheduled_for",
+        "created_at",
+        "missing_grants",
+        "status",
+        "error",
+      ])
       .distinctOn("automation_id")
       .where("org_id", "=", orgId)
       .where("automation_id", "in", ids)
       .where("trial", "=", false)
       .where("status", "<>", "skipped")
       .orderBy("automation_id")
-      .orderBy("scheduled_for", "desc")
+      .orderBy(runOrderMoment, "desc")
       .orderBy("id", "desc")
       .execute();
     const runs = new Map(latest.map((r) => [r.automation_id, r]));
@@ -1036,7 +1044,7 @@ export class AutomationsService {
           needsRole: [],
           needsAdmin: [],
           error: run.error,
-          at: runMoment(run.fired_at, run.scheduled_for),
+          at: runMoment(run.fired_at, run.scheduled_for, run.created_at),
         });
       }
       const have = granted.get(task.id);
@@ -1083,7 +1091,7 @@ export class AutomationsService {
         needsAdmin,
         // the wire field stays for the web; no network grant is refused by a device now
         error: null,
-        at: runMoment(run.fired_at, run.scheduled_for),
+        at: runMoment(run.fired_at, run.scheduled_for, run.created_at),
       });
     }
     return out.sort((a, b) => b.at.getTime() - a.at.getTime());
@@ -1529,12 +1537,15 @@ function requiredText(v: string, field: string, max: number): string {
 }
 
 /**
- * When a run happened, for lists: its fire time, else its tick. An event run has no tick; it is
- * recorded when its events are flushed, so the epoch stands in only for a row with neither.
+ * When a run happened, for lists: its fire time, else its tick, else when it was recorded (an
+ * event run has no tick and no fire time before its claim).
  */
-function runMoment(firedAt: Date | string | null, scheduledFor: Date | string | null): Date {
-  const v = firedAt ?? scheduledFor;
-  return v === null ? new Date(0) : new Date(v);
+function runMoment(
+  firedAt: Date | string | null,
+  scheduledFor: Date | string | null,
+  createdAt: Date | string,
+): Date {
+  return new Date(firedAt ?? scheduledFor ?? createdAt);
 }
 
 function withZone(t: TriggerInput, timeZone: string): AutomationTimeTrigger {

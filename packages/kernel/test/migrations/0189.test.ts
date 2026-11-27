@@ -86,6 +86,7 @@ describe("0189_event_automations", () => {
     ]);
     expect(await col("automation_runs", "trigger_key")).toBe("NO");
     expect(await col("automation_runs", "scheduled_for")).toBe("YES");
+    expect(await col("automation_runs", "created_at")).toBe("NO");
   });
 
   it("keys runs by (automation_id, trigger_key) outside trials", async () => {

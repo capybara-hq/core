@@ -14,3 +14,13 @@ event's org, which sets the chain depth, or an active member), stores one `trigg
 the declared event types as a group of their own (`permissions.triggers:<type>`, blocking, not
 sensitive). `@capybara-hq/testing` adds the `fake-trigger-source` fixture; `capybara-plugin check`
 reports `perm-triggers` when `ctx.triggers` is used without `permissions.triggers`.
+
+Dispatch and coalesce event automations: a stored event fires the org's active event automations
+on its source and type whose filter matches (filterable facts only), except the cause run's own
+owner and agent, for the owners the source's `visible()` admits. Events of one (automation,
+subject) within `automations.coalesceSeconds` become one run keyed by the first event; past
+`maxEventRunsPerSubjectPerHour` the run is skipped with `subject_rate`; past `maxEventDepth` the
+event is `depth_stopped`; a source in `eventSourcesOff` or one not serving the org leaves it
+`undelivered`. New org settings `maxEventDepth`, `coalesceSeconds`,
+`maxEventRunsPerSubjectPerHour`, `eventSourcesOff`, clamped by the kernel config caps
+`automations.maxEventDepthCap`, `coalesceSecondsCap`, `maxEventRunsPerSubjectPerHourCap`.

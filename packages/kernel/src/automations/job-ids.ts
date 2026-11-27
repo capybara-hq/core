@@ -160,3 +160,18 @@ export interface TriggerDispatchJobData {
 /** The dispatch job's id: `trigger-dispatch-<eventId>` (no `:`, event ids are UUIDs). */
 export const triggerDispatchJobId = (eventId: string): string =>
   `${TRIGGER_DISPATCH_JOB}-${eventId}`;
+
+/**
+ * The delayed job that turns one window of an event automation's events for one subject into one
+ * run (collaboration spec §4.7), on `cap-kernel-maintenance`, owed by the dispatch that opens the
+ * window: the first event delivered to the (automation, subject) pair while none waits for a run.
+ */
+export const AUTOMATION_COALESCE_JOB = "automation-coalesce";
+
+/** The data of a {@link AUTOMATION_COALESCE_JOB}. */
+export interface AutomationCoalesceJobData {
+  orgId: string;
+  automationId: string;
+  /** `subjectKey(subject)` of the events (`automation_event_deliveries.subject_key`). */
+  subjectKey: string;
+}

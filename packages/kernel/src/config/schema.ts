@@ -1832,6 +1832,42 @@ export const KernelConfigSchema = z.strictObject({
               "Largest number of automation runs per organization per hour an organization may allow; a higher org value is clamped down to it",
           }),
         ),
+      maxEventDepthCap: z
+        .number()
+        .int()
+        .positive()
+        .default(16)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Largest event chain depth an organization may allow before an event caused by an automation run stops being dispatched; a higher org value is clamped down to it",
+          }),
+        ),
+      coalesceSecondsCap: z
+        .number()
+        .int()
+        .positive()
+        .default(3600)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Longest window, in seconds, an organization may set for coalescing one subject's events into one automation run; a longer org value is clamped down to it",
+          }),
+        ),
+      maxEventRunsPerSubjectPerHourCap: z
+        .number()
+        .int()
+        .positive()
+        .default(120)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Largest number of runs per hour one event automation may make for one subject that an organization may allow; a higher org value is clamped down to it",
+          }),
+        ),
     })
     .prefault({} as never),
   sandbox: z

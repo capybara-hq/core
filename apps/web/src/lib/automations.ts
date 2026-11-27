@@ -234,6 +234,14 @@ export interface AutomationsSettings {
   catchUpWindowMinutes: number;
   unattendedAsk: "fail" | "wait";
   pauseAfterFailures: number;
+  /** Event automations: the chain depth past which an event is not dispatched. */
+  maxEventDepth: number;
+  /** Event automations: the window, in seconds, that coalesces one subject's events. */
+  coalesceSeconds: number;
+  /** Event automations: the runs one automation may make for one subject per hour. */
+  maxEventRunsPerSubjectPerHour: number;
+  /** The trigger sources (extension names) whose events fire no automation of the org. */
+  eventSourcesOff: string[];
   forbiddenTools: string[];
   /**
    * In responses only: the stored list cannot be read (`forbiddenTools` reads `[]`); unattended
@@ -253,6 +261,10 @@ export const AUTOMATION_SETTINGS_DEFAULTS: AutomationsSettings = {
   catchUpWindowMinutes: 60,
   unattendedAsk: "fail",
   pauseAfterFailures: 5,
+  maxEventDepth: 8,
+  coalesceSeconds: 30,
+  maxEventRunsPerSubjectPerHour: 12,
+  eventSourcesOff: [],
   forbiddenTools: [],
 };
 

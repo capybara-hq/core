@@ -52,6 +52,22 @@ export const OUTBOX_JOBS = {
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
     opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
   },
+  // `automations/job-ids.ts` AUTOMATION_COALESCE_JOB: owed by the dispatch that opens a window of
+  // events for one (automation, subject) pair (`TriggerDispatcher`, collaboration spec §4.7), under
+  // `<coalesceJobId(automation, subject)>-<first event id>`, due when the window closes
+  "automation-coalesce": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Flushes the pair's deliveries still waiting for a run under the automation row lock; a repeat finds none and records nothing",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // removed once done, so a later window's add is never swallowed by a kept job
+    opts: {
+      attempts: 10,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
   // `shares/share-objects.ts` SHARE_OBJECT_DELETE_JOB: owed by a share's refresh (the previous
   // generation) and revoke (the current one), under `shareObjectDeleteJobId` (file sharing spec §2)
   "share-object-delete": {

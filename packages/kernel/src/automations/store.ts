@@ -16,14 +16,11 @@ export type AutomationPatch = Partial<
   Omit<Automation, "id" | "orgId" | "accountId" | "createdAt" | "updatedAt">
 >;
 
-/** What a caller supplies to create a task run; it starts `pending`. */
-export interface TaskRunInsert {
+/** The fields of a task run insert either kind of run has; it starts `pending`. */
+interface TaskRunInsertBase {
   id: string;
   taskId: string;
   orgId: string;
-  scheduledFor: Date;
-  /** Default: the tick as `Date.toISOString()` (a time run). */
-  triggerKey?: string;
   trial: boolean;
   /** A person's "run now" (default false: a tick of the schedule). */
   manual?: boolean;
@@ -32,6 +29,28 @@ export interface TaskRunInsert {
   firedAt?: Date | null;
   conversationId?: string | null;
 }
+
+/** A time run: a tick of the schedule (or a person's "run now" at a moment). */
+export interface TimedTaskRunInsert extends TaskRunInsertBase {
+  scheduledFor: Date;
+  /** Default: the tick as `Date.toISOString()`. */
+  triggerKey?: string;
+}
+
+/** An event run (collaboration spec §4.7): no tick; keyed by the first event it serves. */
+export interface EventTaskRunInsert extends TaskRunInsertBase {
+  scheduledFor: null;
+  triggerKey: string;
+}
+
+/** What a caller supplies to create a task run; it starts `pending`. */
+export type TaskRunInsert = TimedTaskRunInsert | EventTaskRunInsert;
+
+/**
+ * The moment a run is ordered by in the run lists: its tick, else its claim, else when it was
+ * recorded (an event run has no tick and no claim before its fire job takes it).
+ */
+export const runOrderMoment = sql<Date>`coalesce(scheduled_for, fired_at, created_at)`;
 
 export type TaskRunPatch = Partial<
   Omit<TaskRun, "id" | "taskId" | "orgId" | "trial" | "manual" | "triggerKey">
@@ -276,7 +295,9 @@ export class AutomationStore {
    * Inserts a task run; null when a non-trial run for the same trigger key (a time run's tick)
    * already exists (the exactly-once guard, `UNIQUE (automation_id, trigger_key) WHERE NOT trial`).
    */
-  async insertRun(t: KernelSchemaDb, run: TaskRunInsert): Promise<TimedTaskRun | null> {
+  async insertRun(t: KernelSchemaDb, run: TimedTaskRunInsert): Promise<TimedTaskRun | null>;
+  async insertRun(t: KernelSchemaDb, run: EventTaskRunInsert): Promise<TaskRun | null>;
+  async insertRun(t: KernelSchemaDb, run: TaskRunInsert): Promise<TaskRun | null> {
     const row = await t
       .insertInto("automation_runs")
       .values({
@@ -284,7 +305,10 @@ export class AutomationStore {
         automation_id: run.taskId,
         org_id: run.orgId,
         scheduled_for: run.scheduledFor,
-        trigger_key: run.triggerKey ?? run.scheduledFor.toISOString(),
+        trigger_key:
+          run.scheduledFor === null
+            ? run.triggerKey
+            : (run.triggerKey ?? run.scheduledFor.toISOString()),
         trial: run.trial,
         manual: run.manual ?? false,
         status: run.status ?? "pending",
@@ -297,7 +321,8 @@ export class AutomationStore {
       )
       .returningAll()
       .executeTakeFirst();
-    return row ? toTimedRun(row) : null;
+    if (!row) return null;
+    return run.scheduledFor === null ? toRun(row) : toTimedRun(row);
   }
 
   /** Patches a task run; null when it does not exist. */
@@ -347,7 +372,7 @@ export class AutomationStore {
       .where("status", "in", NON_TERMINAL);
     if (exceptId !== undefined) q = q.where("id", "!=", exceptId);
     const row = await q
-      .orderBy("scheduled_for", "desc")
+      .orderBy(runOrderMoment, "desc")
       .orderBy("id", "desc")
       .limit(1)
       .executeTakeFirst();
@@ -369,14 +394,14 @@ export class AutomationStore {
     return Number(row.n);
   }
 
-  /** A task's runs, latest tick first. */
+  /** A task's runs, latest first (by tick, else claim, else record: {@link runOrderMoment}). */
   // org-filter: by the id of a task its caller read under an org filter (AutomationsService.get)
   async listRuns(t: KernelSchemaDb, taskId: string, limit: number): Promise<TaskRun[]> {
     const rows = await t
       .selectFrom("automation_runs")
       .selectAll()
       .where("automation_id", "=", taskId)
-      .orderBy("scheduled_for", "desc")
+      .orderBy(runOrderMoment, "desc")
       .orderBy("id", "desc")
       .limit(limit)
       .execute();

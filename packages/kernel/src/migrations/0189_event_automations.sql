@@ -99,6 +99,9 @@ SET trigger_key = to_char(scheduled_for AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:M
 WHERE trigger_key IS NULL AND scheduled_for IS NOT NULL;
 ALTER TABLE automation_runs ALTER COLUMN trigger_key SET NOT NULL;
 ALTER TABLE automation_runs ALTER COLUMN scheduled_for DROP NOT NULL;
+-- when the run was recorded: an event run has no tick, and `fired_at` is its claim (null until
+-- the fire job claims it), so the run lists and the subject rate order and count by this
+ALTER TABLE automation_runs ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 
 -- The exactly-once guard moves from the tick to the trigger key (trial runs stay free of it).
 DROP INDEX IF EXISTS automation_runs_tick_uq;
