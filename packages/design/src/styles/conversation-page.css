@@ -1373,19 +1373,6 @@ span.cb-title-btn {
 .cb-property-line > .cb-property-row {
   flex: 1;
 }
-.cb-property-view {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  color: var(--cb-faint);
-}
-.cb-property-view:hover {
-  color: var(--cb-ink);
-}
-.cb-property-view:focus-visible {
-  outline: 1px solid var(--cb-accent);
-  outline-offset: 1px;
-}
 .cb-property-row {
   display: flex;
   align-items: center;

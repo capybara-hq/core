@@ -175,7 +175,7 @@ export function FilePreviewFrame({
               aria-label={t("files.viewInFiles")}
               title={t("files.viewInFiles")}
             >
-              <Icon name="external-link" size={16} />
+              <Icon name="arrow-up-right" size={16} />
             </Link>
           ) : null}
           {h.onShare ? (

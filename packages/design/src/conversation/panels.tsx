@@ -451,7 +451,7 @@ export function FilesSection({
                 aria-label={t("files.viewInFiles")}
                 title={t("files.viewInFiles")}
               >
-                <Icon name="external-link" size={12} />
+                <Icon name="arrow-up-right" size={14} />
               </Link>
             ) : null}
           </div>

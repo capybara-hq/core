@@ -1,4 +1,3 @@
-import { DesignProvider } from "@capybara-hq/design";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +14,7 @@ import {
   userMsg,
 } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
+import { ME, pageElement } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
@@ -456,18 +456,35 @@ describe("the file panel: HTML and Share", () => {
     await openAt("#file=f4");
     panel = await screen.findByRole("complementary", { name: "old.txt" });
     expect(within(panel).queryByRole("button", { name: /^Share/ })).toBeNull();
+    expect(within(panel).queryByRole("link", { name: "View in Files" })).toBeNull();
   });
 });
 
 describe("the properties Files section", () => {
-  it("each row links to its place in the library", () => {
+  const as = (role: "guest" | "member") => ({
+    ...ME,
+    account: { ...ME.account, isSuperAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
+  });
+  const show = (files: unknown[], role: "guest" | "member") =>
     render(
-      <DesignProvider locale="en">
-        <FilesSection files={[DOCX, CSV] as unknown as FileOutput[]} onOpen={() => {}} />
-      </DesignProvider>,
+      pageElement(<FilesSection files={files as FileOutput[]} onOpen={() => {}} />, {
+        me: as(role),
+      }),
     );
+
+  it("each available row links to its place in the library", () => {
+    show([DOCX, CSV], "member");
     const links = screen.getAllByRole("link", { name: "View in Files" });
     expect(links.map((l) => l.getAttribute("href"))).toEqual(["/files#item=f1", "/files#item=f2"]);
+  });
+
+  it("a removed file has no link, and a guest sees none", () => {
+    show([DOCX, GONE], "member");
+    expect(screen.getAllByRole("link", { name: "View in Files" })).toHaveLength(1);
+    cleanup();
+    show([DOCX], "guest");
+    expect(screen.queryByRole("link", { name: "View in Files" })).toBeNull();
   });
 });
 

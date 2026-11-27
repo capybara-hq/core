@@ -2,15 +2,17 @@
 
 import { FileCard, FilePreviewFrame, formatRelative, typeBadge, useNow } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { sourceUrls } from "../../lib/file-source";
 import type { FileOutput } from "../../lib/files";
 import { libraryHref } from "../../lib/library-href";
+import { myRole, roleAtLeast } from "../../lib/members";
 import { uiLocale } from "../../lib/ui";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { FilePreviewBody } from "../file-preview/FilePreviewBody";
 import { ShareDialog } from "../file-preview/ShareDialog";
 import { useOpenDownload } from "../SessionFilePreview";
+import { SessionContext } from "../shell/session";
 
 /**
  * A file output in the right panel (spec §5.8, design `FilePreviewFrame`): the header switches
@@ -44,6 +46,8 @@ export function FilePanel({
   const source = { kind: "conversation" as const, orgId, conversationId, file };
   const download = () => openDownload(sourceUrls(source).download);
   const available = file.status !== "removed";
+  const me = useContext(SessionContext)?.me;
+  const member = me !== undefined && roleAtLeast(myRole(me), "member");
 
   const header = {
     badge: typeBadge(file.name, file.contentType),
@@ -58,7 +62,7 @@ export function FilePanel({
     onSwitch,
     onPreviewer: setPicked,
     ...(available ? { onShare: () => setSharing(true), shared: file.shared === true } : {}),
-    libraryHref: libraryHref(file.id),
+    ...(available && member ? { libraryHref: libraryHref(file.id) } : {}),
     onDownload: download,
     onFullscreen,
     onClose,
