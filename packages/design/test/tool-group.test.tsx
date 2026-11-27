@@ -113,8 +113,43 @@ describe("summarizeTools (spec §7 verb table)", () => {
       row({ kind: "command" }),
       row({ kind: "read", status: "running" }),
     ];
-    expect(summarizeTools(rows, "zh")).toBe("正在读取文件 · 已完成 2 个");
-    expect(summarizeTools(rows, "en")).toBe("Reading file · 2 done");
+    expect(summarizeTools(rows, "zh")).toBe("正在读取 1 个文件 · 已完成 2 个");
+    expect(summarizeTools(rows, "en")).toBe("Reading 1 file · 2 done");
+  });
+
+  it("running commands: the count of the group's commands, done or not", () => {
+    const rows = [
+      row({ kind: "command", status: "running" }),
+      row({ kind: "command", status: "pending" }),
+    ];
+    expect(summarizeTools(rows, "zh")).toBe("正在运行 2 个命令 · 已完成 0 个");
+    expect(summarizeTools(rows, "en")).toBe("Running 2 commands · 0 done");
+    const done = rows.map((r) => ({ ...r, status: "done" as const }));
+    expect(summarizeTools(done, "zh")).toBe("已运行 2 个命令");
+  });
+
+  it("in a rail the group header and a single running line draw no spinner", () => {
+    const rows = [
+      row({ id: "a", kind: "command", status: "running", startedAt: 0 }),
+      row({ id: "b", kind: "command", status: "running", startedAt: 0 }),
+    ];
+    const group = render(
+      <DesignProvider locale="zh">
+        <ToolGroup inRail rows={rows} now={1_000} />
+      </DesignProvider>,
+    );
+    const header = group.container.querySelector(".cb-tool-group > .cb-tool-line") as HTMLElement;
+    expect(header.querySelector('[data-part="spinner"]')).toBeNull();
+    expect(group.container.querySelectorAll('[data-part="spinner"]')).toHaveLength(2);
+    cleanup();
+    const single = render(
+      <DesignProvider locale="zh">
+        <ToolGroup inRail rows={[rows[0] as ToolRowData]} now={3_000} />
+      </DesignProvider>,
+    );
+    expect(single.container.querySelector('[data-part="spinner"]')).toBeNull();
+    // it says it runs by its time
+    expect(single.container.textContent).toContain("3 秒");
   });
 });
 
@@ -711,7 +746,7 @@ describe("ToolGroup (§6.16.8)", () => {
     const { container } = wrap(<ToolGroup rows={rows} now={12_000} />);
     expect(container.querySelector('[data-part="tool-line"]')?.tagName).not.toBe("BUTTON");
     expect(container.querySelector('[data-part="tool-line"]')?.textContent).toContain(
-      "正在运行命令 · 已完成 1 个",
+      "正在运行 2 个命令 · 已完成 1 个",
     );
     expect(container.querySelector('[data-part="tool-box"]')).not.toBeNull();
     expect(container.textContent).toContain("12 秒");
@@ -834,7 +869,7 @@ describe("a call waiting for a person (§6.16.9)", () => {
     expect(container.querySelector('[data-part="tool-box"]')).not.toBeNull();
     // another call still running: the running verb and its spinner
     const mixed = [...rows, row({ kind: "read", status: "running", startedAt: 0 })];
-    expect(summarizeTools(mixed, "zh")).toBe("正在读取文件 · 已完成 1 个");
+    expect(summarizeTools(mixed, "zh")).toBe("正在读取 1 个文件 · 已完成 1 个");
   });
 });
 

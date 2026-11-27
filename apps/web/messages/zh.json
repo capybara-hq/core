@@ -1472,6 +1472,7 @@
       "subagent": "子智能体",
       "subagentTools": "{n} 个工具",
       "openSubagent": "打开",
+      "moreCommands": "{first} 等 {n} 个命令",
       "kind": {
         "thinking": "思考",
         "terminal": "命令",

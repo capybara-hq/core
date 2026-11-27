@@ -1493,11 +1493,15 @@ export function buildEventTimeline(
           const command = kind === "command" && typeof rec.command === "string";
           // Claude Code's look: "Bash", "CRM [search]"; before the info arrives, from the key
           const label = ti ? toolLabel(ti, locale) : toolLabelOfKey(b.name);
+          // a call counts from when it was logged until its `tool_call_started` says when it
+          // started: every live row shows its time, a queued sibling too (spec §1.3)
+          const logged = Date.parse(e.createdAt);
           const row: ToolRowData = {
             id: callKey(e.runId, b.id),
             kind,
             name: label.name,
             status: "pending",
+            ...(Number.isNaN(logged) ? {} : { startedAt: logged }),
             ...(label.tool !== undefined ? { tool: label.tool } : {}),
             ...(label.tooltip !== undefined ? { tooltip: label.tooltip } : {}),
             ...(keyArg !== undefined && keyArg !== "" ? { keyArg } : {}),
@@ -1602,6 +1606,8 @@ export function buildEventTimeline(
         const end = Date.parse(e.createdAt);
         if (c.started !== null && !Number.isNaN(end)) row.durationMs = Math.max(0, end - c.started);
         if (view?.kind === "command" && view.description) row.description = view.description;
+        // the exit code goes into the detail; the row names it only when it is not zero
+        if (view?.kind === "command" && view.exitCode !== null) row.exitCode = view.exitCode;
         if (view?.kind === "edit") {
           row.keyArg = view.path;
           // A Write over a binary or very large file has no diff: no "+0 −0", no empty diff block
@@ -1617,11 +1623,14 @@ export function buildEventTimeline(
           if (view.fromLine !== undefined && view.toLine !== undefined)
             c.tool.lines = { from: view.fromLine, to: view.toLine };
         }
-        // An extension's display summary (`ToolResult.display`) reads as the row's extra.
+        // An extension's display summary (`ToolResult.display`) reads as the row's extra; a
+        // command's (the exit code and the command line) does not: the row is "Bash <description>",
+        // the command and the exit code are in its detail
         const summary = p.display?.summary[locale];
         if (
           typeof summary === "string" &&
           summary !== "" &&
+          view?.kind !== "command" &&
           row.extra === undefined &&
           c.tool.lines === undefined
         )

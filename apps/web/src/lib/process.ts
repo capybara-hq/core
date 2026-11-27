@@ -74,6 +74,11 @@ export type ProcessEntry = {
    * block's end, in log order, and the run's latest one: the rail's sections (#924).
    */
   taskLists: { cards: Entry<"card">[]; latest: Entry<"card"> | null };
+  /**
+   * The run is live and no step is (the model plans the next one): the rail ends in the planning
+   * row (the capybara), set only on the run's latest block by {@link groupProcess}.
+   */
+  planning?: boolean;
 };
 
 export type PendingEntry = {
@@ -152,6 +157,16 @@ function folds(e: Folded, b: ProcessEntry | null): boolean {
   }
 }
 
+/** Entries after a block that end its stretch: the planning row then needs a block of its own. */
+const ENDS_TAIL: ReadonlySet<ThreadEntry["kind"]> = new Set([
+  "user",
+  "prose",
+  "run",
+  "task",
+  "skill-report",
+  "subagents",
+]);
+
 const isLive = (status: TimelineTool["row"]["status"]) =>
   status === "running" || status === "pending" || status === "streaming";
 
@@ -177,6 +192,7 @@ function waits(o: OpenBlock): boolean {
 export function groupProcess(
   entries: readonly TimelineEntry[],
   run?: RunClockState,
+  planning?: boolean,
 ): ThreadEntry[] {
   const finishedTasks = new Set<string>();
   for (const e of entries) if (e.kind === "background") finishedTasks.add(e.taskId);
@@ -430,6 +446,52 @@ export function groupProcess(
       (last.state === "running" || last.state === "waiting")
     )
       last.clock = { workedMs: run.workedMs, resumedAt: run.resumedAt };
+  }
+
+  // The model plans the next step (spec §1.3, the planning row): the latest block ends in the
+  // capybara while it is the run's live tail; else (the run's start, or after its answer or a
+  // message) a block of its own stands at the end, so the block is there before its first step.
+  if (planning === true) {
+    const at = out.findLastIndex((e) => e.kind === "process");
+    const last = at < 0 ? undefined : (out[at] as ProcessEntry);
+    const runId = run?.runId ?? null;
+    const tail =
+      last !== undefined &&
+      last.state === "running" &&
+      (runId === null || last.runId === null || last.runId === runId) &&
+      out.slice(at + 1).every((e) => !ENDS_TAIL.has(e.kind));
+    if (last !== undefined && tail) last.planning = true;
+    else {
+      // the key the next step's block will take (`p<runId>:<step>`), so that block replaces this
+      // one in place when its first step lands
+      let next = 0;
+      for (const e of entries) {
+        const at =
+          e.kind === "thinking" ||
+          e.kind === "prose" ||
+          e.kind === "tools" ||
+          e.kind === "subagents"
+            ? e.step
+            : undefined;
+        if (at !== undefined && at.runId === runId) next = Math.max(next, at.step + 1);
+      }
+      out.push({
+        kind: "process",
+        key: runId === null ? "pnext:planning" : `p${runId}:${next}`,
+        runId,
+        state: "running",
+        steps: [],
+        pinned: [],
+        durationMs: null,
+        clock:
+          run !== undefined && runId !== null
+            ? { workedMs: run.workedMs, resumedAt: run.resumedAt }
+            : null,
+        backgroundRunning: 0,
+        taskLists: { cards: [], latest: null },
+        planning: true,
+      });
+    }
   }
 
   // Each block sees its run's task lists up to its own end; the run's latest decides which

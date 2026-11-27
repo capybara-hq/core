@@ -83,7 +83,7 @@ import { LeftoverBubbles, PendingBubbles, usePendingSends } from "./PendingBubbl
 import { useConversationPermission } from "./PermissionPicker";
 import { useDeviceRefresh } from "./PropertiesSections";
 import { useRightAreaSlot } from "./RightArea";
-import { Thread, type ThreadProps } from "./Thread";
+import { PlanningBlock, Thread, type ThreadProps } from "./Thread";
 import { useBackgroundLive } from "./useBackgroundLive";
 import { type SendResult, useConversation } from "./useConversation";
 import { useRootPermissionSubscription } from "./useRootPermissionSubscription";
@@ -330,8 +330,6 @@ export function useConversationPage(
   // the timeline itself
   // the window's runs after those started above it (history paging spec §5)
   const windowStats = useMemo(() => runStats(conv.events), [conv.events]);
-  // the going run's clock times its latest block's head from the run's start (spec §1.3)
-  const threadEntries = useMemo(() => groupProcess(entries, windowStats), [entries, windowStats]);
   const pending = usePendingSends(conv.events);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
@@ -348,6 +346,22 @@ export function useConversationPage(
       : undefined,
   );
   const awaiting = awaitingRun(conv.events, sentHere, awaitAt);
+  // The model plans the next step (decided from the log and this view's pending bubbles, spec
+  // §2.2): the planning row (the capybara) ends the run's latest block in the thread; a message
+  // only this view knows of (no run yet) gets a planning block of its own after its bubble.
+  const planning = workingLineVisible(conv.events, conv.state.drafts, {
+    waiting: conv.waiting,
+    pending: pending.shown.length,
+    sentHere,
+    now: awaitAt,
+  });
+  const planningAfterPending = planning && windowStats.runId === null && pending.shown.length > 0;
+  const planningInThread = planning && !planningAfterPending;
+  // the going run's clock times its latest block's head from the run's start (spec §1.3)
+  const threadEntries = useMemo(
+    () => groupProcess(entries, windowStats, planningInThread),
+    [entries, windowStats, planningInThread],
+  );
   const busy = conv.running || pending.shown.length > 0 || awaiting;
   const active = busy || conv.waiting;
   // what a message does while the run waits for a person: skips the viewer's question, or waits
@@ -574,17 +588,11 @@ export function useConversationPage(
           {...(slot?.thread ?? {})}
         />
         <PendingBubbles items={pending.shown} />
+        {planningAfterPending ? <PlanningBlock /> : null}
       </>
     ),
     // messages an older version queued, until the kernel sends them (run input spec D3)
     queue: <LeftoverBubbles orgId={orgId} conversationId={conversationId} events={conv.events} />,
-    // decided from the log and this view's pending bubbles (spec §2.2)
-    working: workingLineVisible(conv.events, conv.state.drafts, {
-      waiting: conv.waiting,
-      pending: pending.shown.length,
-      sentHere,
-      now: awaitAt,
-    }),
     composer: ({ sendDisabled }) => (
       <Stack gap={8}>
         {conv.error !== undefined && <FormError message={conv.error} />}

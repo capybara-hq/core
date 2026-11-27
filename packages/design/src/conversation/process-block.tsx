@@ -1,5 +1,6 @@
 import { type JSX, type ReactNode, useId } from "react";
 import { formatDuration } from "../display/duration";
+import { Markdown } from "../display/markdown";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
@@ -7,6 +8,7 @@ import { RailList, type RailRow, useRailRow } from "./process-rail";
 import { Spinner } from "./prose";
 import { fillCopy } from "./tool-copy";
 import { ErrorDot } from "./tool-row";
+import { RailPlanning } from "./working-line";
 
 // The process block (conversation process blocks spec §1.3, §3, §4; design spec §6.16.8a): one
 // run's thinking, tool calls and narration as a head (kind chips, one summary line), a rail of
@@ -53,6 +55,15 @@ export type ProcessBlockProps = {
   rows?: readonly RailRow[];
   /** `RailStep` elements, all mounted (a short rail drawn by hand). */
   children?: ReactNode;
+  /**
+   * Running and no step is live (the model plans the next one): the rail ends in the planning row
+   * (the capybara and the rotating caption, {@link RailPlanning}), shown even when the rail is
+   * otherwise empty (the block stands from the run's start); the head reads only "Running" and
+   * the time. Ignored unless `state` is `running`.
+   */
+  planning?: boolean;
+  /** The planning row's still form (the reference set, screenshots). */
+  planningStill?: boolean;
 };
 
 /** The most kind chips a head draws. */
@@ -82,11 +93,17 @@ export function ProcessBlock({
   backgroundRunning,
   rows,
   children,
+  planning,
+  planningStill,
 }: ProcessBlockProps): JSX.Element {
   const t = useDesignT();
   const locale = useDesignLocale();
   const railId = useId();
   const live = state === "running" || state === "waiting";
+  // the planning row is the rail's last row; while it stands the head names no step
+  const plans = planning === true && state === "running";
+  const step = plans ? undefined : current;
+  const heard = plans ? undefined : announce;
 
   const time =
     elapsedMs === null
@@ -126,28 +143,28 @@ export function ProcessBlock({
         <span
           className="cb-tool-label"
           data-part="process-summary"
-          aria-hidden={announce !== undefined && state === "running" ? true : undefined}
+          aria-hidden={heard !== undefined && state === "running" ? true : undefined}
         >
           {state === "waiting" ? (
             <>
               <span className="cb-accent-word" data-part="process-waiting">
                 {waiting}
               </span>
-              {current ? ` · ` : null}
+              {step ? ` · ` : null}
             </>
           ) : (
             <>
               {t("process.running")}
-              {current ? ` · ` : null}
+              {step ? ` · ` : null}
             </>
           )}
-          {current}
+          {step}
         </span>
-        {announce !== undefined && state === "running" ? (
+        {heard !== undefined && state === "running" ? (
           <span className="cb-sr-only" data-part="process-announce">
             {t("process.running")}
-            {announce ? ` · ` : null}
-            {announce}
+            {heard ? ` · ` : null}
+            {heard}
           </span>
         ) : null}
         {elapsedMs === null ? null : (
@@ -227,9 +244,9 @@ export function ProcessBlock({
           {pinned}
         </div>
       ) : null}
-      {open ? (
+      {open || plans ? (
         <div id={railId} className="cb-process-rail" data-part="process-rail">
-          {hiddenBefore !== undefined && hiddenBefore > 0 ? (
+          {open && hiddenBefore !== undefined && hiddenBefore > 0 ? (
             <button
               type="button"
               className="cb-process-fold"
@@ -246,7 +263,26 @@ export function ProcessBlock({
               </span>
             </button>
           ) : null}
-          {rows !== undefined ? <RailList rows={rows} /> : children}
+          {rows !== undefined ? (
+            <RailList
+              rows={
+                plans
+                  ? [
+                      ...(open ? rows : []),
+                      {
+                        key: "planning",
+                        render: () => <RailPlanning still={planningStill === true} />,
+                      },
+                    ]
+                  : rows
+              }
+            />
+          ) : (
+            <>
+              {open ? children : null}
+              {plans ? <RailPlanning still={planningStill === true} /> : null}
+            </>
+          )}
         </div>
       ) : null}
     </div>
@@ -254,8 +290,11 @@ export function ProcessBlock({
 }
 
 export type RailStepProps = {
-  /** The step's mark in the gutter: a kind icon, a bare dot (narration), the live spinner or the hand. */
-  icon: ProcessIcon | "dot" | "spinner" | "hand";
+  /**
+   * The step's mark in the gutter: its kind icon, or a bare dot (narration). Always the kind, live
+   * or not: the block's head carries the spinner and a live row says its state in words (§6.16.8a).
+   */
+  icon: ProcessIcon | "dot";
   children: ReactNode;
 };
 
@@ -263,16 +302,12 @@ export type RailStepProps = {
 export function RailStep({ icon, children }: RailStepProps): JSX.Element {
   // its place on the rail, when a RailList draws it
   const row = useRailRow();
-  let mark: JSX.Element;
-  if (icon === "dot") mark = <span className="cb-rail-dot" data-part="rail-dot" />;
-  else if (icon === "spinner") mark = <Spinner size={16} />;
-  else if (icon === "hand") {
-    mark = (
-      <span className="cb-accent-word">
-        <Icon name="hand" size={14} />
-      </span>
+  const mark =
+    icon === "dot" ? (
+      <span className="cb-rail-dot" data-part="rail-dot" />
+    ) : (
+      <ProcessMark icon={icon} size={14} />
     );
-  } else mark = <ProcessMark icon={icon} size={14} />;
   return (
     <div className="cb-rail-step" data-part="rail-step" {...row}>
       <span className="cb-rail-gutter" data-part="rail-gutter" aria-hidden="true">
@@ -283,12 +318,15 @@ export function RailStep({ icon, children }: RailStepProps): JSX.Element {
   );
 }
 
-/** A narration step's text (§1.3): `prose-small` in `muted`, the dot in the gutter holds the place. */
+/**
+ * A narration step's text (§1.3): `prose-small` in `muted`, the dot in the gutter holds the place.
+ * A string is the model's Markdown, rendered compactly (inline code, bold, links, lists).
+ */
 export function RailText({ children }: { children: ReactNode }): JSX.Element {
   return (
-    <p className="cb-rail-say" data-part="rail-text">
-      {children}
-    </p>
+    <div className="cb-rail-say" data-part="rail-text">
+      {typeof children === "string" ? <Markdown text={children} /> : children}
+    </div>
   );
 }
 

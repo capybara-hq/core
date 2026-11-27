@@ -1095,6 +1095,7 @@ function ToolStep({ tools, c }: { tools: TimelineTool[]; c: EntryContext }): Rea
       data-tool-step-status={tools.map((r) => r.row.status).join(" ")}
     >
       <ToolGroup
+        inRail
         rows={tools.map((r) => rowOf(r, c, t, tb))}
         onViewAll={(rowId) => {
           const r = byRow(rowId);
@@ -1212,9 +1213,18 @@ function toolKind(
   return { key: name, icon: { name }, label: label(name) };
 }
 
-/** A live call: running, pending, or still streaming its input (its gutter shows the spinner). */
+/** A live call: running, pending, or still streaming its input. */
 const isLiveRow = (r: ToolRowData) =>
   r.status === "running" || r.status === "pending" || r.status === "streaming";
+
+/**
+ * A call as the running head names it (spec §1.3): a command by its description when it has one
+ * (the words the model gave it, never the raw command line), else by the tool and its first line.
+ */
+const stepLabel = (r: ToolRowData): string => {
+  if (r.kind === "command" && r.description) return r.description;
+  return [r.name, r.keyArg?.split("\n")[0]].filter(Boolean).join(" ");
+};
 
 /**
  * A value that follows `value` at most every `ms`: the first change shows at once, later ones
@@ -1343,12 +1353,21 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
         tools++;
         if (r.status === "failed") errors++;
         addKind(kindOf(tool));
-        // the label the row itself draws: a description replaces the command only for a command
-        const arg = r.kind === "command" ? (r.description ?? r.keyArg) : r.keyArg;
-        current = [r.name, arg?.split("\n")[0]].filter(Boolean).join(" ");
+        current = stepLabel(r);
         currentStreaming = r.status === "streaming";
         if (isLiveRow(r) && r.waiting !== undefined)
           waitingWords ??= waitingText(r.waiting, r.waitingFor, locale);
+      }
+      // several commands running side by side: the first one's words and how many more
+      const liveCommands = it.tools.filter((x) => x.row.kind === "command" && isLiveRow(x.row));
+      const first = liveCommands[0];
+      if (first !== undefined && liveCommands.length > 1) {
+        current = t("process.moreCommands", {
+          first: stepLabel(first.row),
+          n: liveCommands.length,
+          more: liveCommands.length - 1,
+        });
+        currentStreaming = liveCommands.some((x) => x.row.status === "streaming");
       }
     } else if (it.kind === "subagent") {
       const r = it.row.row;
@@ -1371,24 +1390,17 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
     b.state === "finished" || ui?.all === true ? 0 : Math.max(0, items.length - LIVE_STEPS);
   const sections = useMemo(() => sectionRail(items, b.taskLists), [items, b.taskLists]);
 
+  // a step's kind icon, live or not: the head spins, a live row says its state in words (§1.3)
   const stepIcon = (it: RailItem): RailStepProps["icon"] => {
     switch (it.kind) {
       case "thinking":
-        return live && it.e.live ? "spinner" : { name: "lightbulb" };
+        return { name: "lightbulb" };
       case "narration":
         return "dot";
-      case "tool": {
-        const rows = it.tools.map((x) => x.row);
-        if (live && rows.some((r) => isLiveRow(r) && r.waiting === undefined)) return "spinner";
-        if (live && rows.some((r) => isLiveRow(r) && r.waiting !== undefined)) return "hand";
+      case "tool":
         return it.tools[0] !== undefined ? kindOf(it.tools[0]).icon : { name: "extension" };
-      }
-      case "subagent": {
-        const s = it.row.row.status;
-        if (live && s === "waiting") return "hand";
-        if (live && (s === "running" || s === "queued")) return "spinner";
+      case "subagent":
         return { name: "agent" };
-      }
       case "note":
         return { name: it.step.note === "compacted" ? "archive" : "refresh" };
       case "decided": {
@@ -1510,6 +1522,29 @@ function ProcessView({ b, c }: { b: ProcessEntry; c: EntryContext }): ReactNode 
       {...(pinned !== undefined ? { pinned } : {})}
       backgroundRunning={b.backgroundRunning}
       rows={rows}
+      planning={b.planning === true}
+    />
+  );
+}
+
+const noop = () => {};
+
+/**
+ * A planning block of its own (spec §1.3): a message only this view knows of (sent, not logged,
+ * no run yet) gets the block's head and the planning row right away, after its bubble; the logged
+ * run's block takes over at the same place.
+ */
+export function PlanningBlock(): ReactNode {
+  return (
+    <ProcessBlock
+      state="running"
+      elapsedMs={null}
+      summary={{ thoughts: 0, tools: 0, errors: 0 }}
+      kinds={[]}
+      open
+      onToggle={noop}
+      rows={[]}
+      planning
     />
   );
 }
@@ -1555,7 +1590,7 @@ function SubagentStep({ row, c }: { row: TimelineSubagent; c: EntryContext }): R
       : {}),
     ...(onOpen !== undefined ? { link: { label: t("process.openSubagent"), onOpen } } : {}),
   };
-  return <ToolGroup rows={[line]} />;
+  return <ToolGroup inRail rows={[line]} />;
 }
 
 /**

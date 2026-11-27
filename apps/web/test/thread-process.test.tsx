@@ -542,9 +542,11 @@ describe("the thread draws process blocks", () => {
     expect(label()).toBe("Running · Bash ls");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const es = FakeEventSource.instances[0] as FakeEventSource;
-    // a row changing (its result) is no new step: the head says the same
+    // its result: the model plans the next step, so the head names none (the planning row
+    // stands at the rail's end)
     act(() => es.emit("event", result(4, "t1")));
-    expect(label()).toBe("Running · Bash ls");
+    expect(label()).toBe("Running");
+    expect(block.querySelector('[data-part="rail-planning"]')).not.toBeNull();
     // a new step changes it: the first change at once, later ones at most every few seconds
     act(() => es.emit("event", step(5, 1, [bash("t2", "cat notes.md")])));
     expect(label()).toBe("Running · Bash cat notes.md");
@@ -595,7 +597,7 @@ describe("the thread draws process blocks", () => {
     act(() => {
       vi.advanceTimersByTime(500);
     });
-    expect(label()).toBe("Running · Bash Read the notes");
+    expect(label()).toBe("Running · Read the notes");
     // the live region keeps the announce interval: the visible label is hidden from it
     const announced = () =>
       (block.querySelector('[data-part="process-announce"]') as HTMLElement).textContent;
@@ -606,7 +608,7 @@ describe("the thread draws process blocks", () => {
     act(() => {
       vi.advanceTimersByTime(3000);
     });
-    expect(announced()).toBe("Running · Bash Read the notes");
+    expect(announced()).toBe("Running · Read the notes");
   });
 
   it("a run that ends without an answer shows its last narration as the answer", async () => {
@@ -761,5 +763,179 @@ describe("the thread draws process blocks", () => {
     expect(row.textContent).toContain(en.chat.deviceCode.used);
     // the spent code is not shown again
     expect(screen.queryByText("AB-12")).toBeNull();
+  });
+});
+
+// The live state (maintainer decision 2026-11-27, design spec §6.16.8a): spinners only in the head
+// and on each of several concurrent rows; rail icons are always the step's kind.
+describe("the live process block", () => {
+  const described = (id: string, command: string, description: string) => ({
+    type: "tool_call",
+    id,
+    name: "Bash",
+    input: { command, description },
+  });
+  const started = (seq: number, callId: string) =>
+    ev(seq, "tool_call_started", { step: 0, callId, toolKey: "Bash", specHash: "h" });
+
+  it("a parallel command group: the head and each running row spin, the rail shows the terminal", async () => {
+    api([
+      userMsg(1, "go"),
+      runStarted(2),
+      step(3, 0, [
+        described("t1", "pnpm why xlsx", "Check deps"),
+        described("t2", "pnpm test", "Run tests"),
+      ]),
+      started(4, "t1"),
+    ]);
+    await renderChatRoute();
+    const block = await vi.waitFor(theBlock);
+    const spinners = block.querySelectorAll('[data-part="spinner"]');
+    expect(spinners).toHaveLength(3);
+    expect(block.querySelectorAll('[data-part="process-head"] [data-part="spinner"]')).toHaveLength(
+      1,
+    );
+    expect(block.querySelectorAll('[data-part="tool-row"] [data-part="spinner"]')).toHaveLength(2);
+    expect(block.querySelector('[data-part="rail-gutter"] [data-part="spinner"]')).toBeNull();
+    expect(block.querySelector('[data-part="rail-gutter"] [data-icon="terminal"]')).not.toBeNull();
+    expect(block.textContent).toContain("Running 2 commands · 0 done");
+    // both rows show their time, the queued one too
+    const ends = [...block.querySelectorAll('[data-part="tool-row"] .cb-tool-end')];
+    expect(ends).toHaveLength(2);
+    // the head names the first command by its description, and how many more run beside it
+    const summary = block.querySelector('[data-part="process-summary"]') as HTMLElement;
+    expect(summary.textContent).toBe("Running · Check deps and 1 more command");
+    expect(summary.textContent).not.toContain("pnpm");
+  });
+
+  it("a single running command: the head reads its description, the line has no spinner", async () => {
+    api([
+      userMsg(1, "go"),
+      runStarted(2),
+      step(3, 0, [described("t1", "pnpm test --filter x", "Run the tests")]),
+      started(4, "t1"),
+    ]);
+    await renderChatRoute();
+    const block = await vi.waitFor(theBlock);
+    expect((block.querySelector('[data-part="process-summary"]') as HTMLElement).textContent).toBe(
+      "Running · Run the tests",
+    );
+    expect(block.querySelectorAll('[data-part="spinner"]')).toHaveLength(1);
+  });
+
+  it("live thinking: one spinner (the head), the lightbulb, then the collapsed thought", async () => {
+    api([userMsg(1, "go"), runStarted(2)]);
+    await renderChatRoute();
+    // the block stands before the first step: thinking takes the planning row's place in it
+    const planned = await vi.waitFor(theBlock);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    act(() => {
+      es.emit("delta", {
+        runId: "r1",
+        step: 0,
+        delta: "thinking",
+        text: "**Status**: read `a.md` first.",
+        offset: 0,
+      });
+    });
+    act(() => {
+      for (const f of frames.splice(0)) f(0);
+    });
+    const block = theBlock();
+    expect(block).toBe(planned);
+    expect(block.querySelector('[data-part="rail-planning"]')).toBeNull();
+    expect(block.querySelectorAll('[data-part="spinner"]')).toHaveLength(1);
+    expect(block.querySelector('[data-part="process-head"] [data-part="spinner"]')).not.toBeNull();
+    const gutter = block.querySelector('[data-part="rail-gutter"]') as HTMLElement;
+    expect(gutter.querySelector('[data-icon="lightbulb"]')).not.toBeNull();
+    const tail = await vi.waitFor(() => {
+      const t = block.querySelector('[data-part="thinking-tail"]');
+      if (t === null) throw new Error("no tail");
+      return t as HTMLElement;
+    });
+    expect(tail.querySelector("strong")?.textContent).toBe("Status");
+    expect(tail.textContent).not.toContain("**");
+    act(() =>
+      es.emit(
+        "event",
+        step(3, 0, [
+          { type: "thinking", text: "**Status**: read `a.md` first." },
+          bash("t1", "ls"),
+        ]),
+      ),
+    );
+    await vi.waitFor(() => {
+      if (block.querySelector('[data-part="thinking-tail"]') !== null)
+        throw new Error("still live");
+    });
+    const line = within(block).getByRole("button", { name: /Thought/ });
+    expect(line.getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(line);
+    const body = block.querySelector('[data-part="thinking-body"]') as HTMLElement;
+    expect(body.querySelector("code")?.textContent).toBe("a.md");
+  });
+
+  it("a finished command shows its exit code on the row only when it is not zero", async () => {
+    api([
+      userMsg(1, "go"),
+      runStarted(2),
+      step(3, 0, [described("t1", "true", "Pass"), described("t2", "false", "Fail")]),
+      result(4, "t1", {
+        view: { kind: "command", exitCode: 0, timedOut: false, description: "Pass" },
+        display: {
+          summary: { zh: "运行命令（退出码 0）：true", en: "Ran command (exit 0): true" },
+        },
+      }),
+      result(5, "t2", {
+        callId: "t2",
+        view: { kind: "command", exitCode: 3, timedOut: false, description: "Fail" },
+        display: {
+          summary: { zh: "运行命令（退出码 3）：false", en: "Ran command (exit 3): false" },
+        },
+      }),
+      finished(6),
+    ]);
+    await renderChatRoute();
+    const block = await vi.waitFor(theBlock);
+    await userEvent.click(within(block).getAllByRole("button")[0] as HTMLElement);
+    await userEvent.click(within(block).getByRole("button", { name: /Ran 2 commands/ }));
+    const rows = [...block.querySelectorAll<HTMLElement>('[data-part="tool-row"]')];
+    expect(
+      rows.map((r) => r.querySelector('[data-part="exit-code"]')?.textContent ?? null),
+    ).toEqual([null, " · exit 3"]);
+    expect(block.textContent).not.toContain("Ran command (exit");
+  });
+
+  it("narration renders its Markdown: inline code and bold, no raw marks", async () => {
+    api([
+      userMsg(1, "go"),
+      runStarted(2),
+      step(3, 0, [{ type: "text", text: "core `29e091ba1` is **released**" }, bash("t1", "ls")]),
+      result(4, "t1"),
+      finished(5),
+    ]);
+    await renderChatRoute();
+    const block = await vi.waitFor(theBlock);
+    await userEvent.click(within(block).getAllByRole("button")[0] as HTMLElement);
+    const say = block.querySelector('[data-part="rail-text"]') as HTMLElement;
+    expect(say.querySelector("code")?.textContent).toBe("29e091ba1");
+    expect(say.querySelector("strong")?.textContent).toBe("released");
+    expect(say.textContent).not.toMatch(/[`*]/);
+  });
+
+  it("before the first step the block stands with the planning row as its last row", async () => {
+    api([userMsg(1, "go"), runStarted(2)]);
+    await renderChatRoute();
+    const block = await vi.waitFor(theBlock);
+    const list = block.querySelector('[data-part="rail-list"]') as HTMLElement;
+    expect(list.lastElementChild?.getAttribute("data-part")).toBe("rail-planning");
+    expect(list.lastElementChild?.getAttribute("data-edge")).toBe("only");
+    expect(document.querySelector('[data-part="working-line"]')).toBeNull();
+    expect((block.querySelector('[data-part="process-summary"]') as HTMLElement).textContent).toBe(
+      "Running",
+    );
   });
 });

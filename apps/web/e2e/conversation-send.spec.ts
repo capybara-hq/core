@@ -4,12 +4,12 @@ import { signIn } from "./support/sign-in";
 
 /**
  * The send experience (conversation send spec 2026-11-04 §4): from `/` the composer clears at
- * once, the working line shows before the first token, and the reply streams.
+ * once, the planning row shows before the first token, and the reply streams.
  */
 
 const LONG = "Capybaras are the largest living rodents and very calm swimmers. ".repeat(4).trim();
 
-test("send from / (the new conversation): the composer clears at once, the working line, then a streaming reply", async ({
+test("send from / (the new conversation): the composer clears at once, the planning row, then a streaming reply", async ({
   page,
 }) => {
   await signIn(page);
@@ -23,8 +23,8 @@ test("send from / (the new conversation): the composer clears at once, the worki
   await input.press("Enter");
   // the composer is empty within 100 ms, long before the create answers
   await expect(input).toHaveValue("", { timeout: 100 });
-  // the working line shows before the first token
-  const line = page.locator('[data-part="working-line"]');
+  // the planning row (the process block's live tail, §6.16.8a) shows before the first token
+  const line = page.locator('[data-part="rail-planning"]');
   await expect(line).toBeVisible();
   await expect(replies(page)).toHaveCount(0);
   // the reply streams: at least two growth steps before it is whole

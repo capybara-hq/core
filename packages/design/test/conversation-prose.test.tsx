@@ -60,8 +60,8 @@ describe("ThinkingRow (§6.16.5)", () => {
     expect(screen.queryByText("先查本周消息")).toBeNull();
     await userEvent.click(btn);
     expect(btn.getAttribute("aria-expanded")).toBe("true");
-    const body = screen.getByText("先查本周消息");
-    expect(body.getAttribute("data-part")).toBe("thinking-body");
+    const body = screen.getByText("先查本周消息").closest('[data-part="thinking-body"]');
+    expect(body).not.toBeNull();
     expect(document.getElementById(btn.getAttribute("aria-controls") ?? "")).toBe(body);
   });
 
@@ -79,14 +79,14 @@ describe("ThinkingRow (§6.16.5)", () => {
     expect(screen.getByText("思考了 2 秒")).toBeTruthy();
   });
 
-  it("live: spinner, elapsed seconds, streaming body with a cursor, no toggle", () => {
+  it("live: no spinner, elapsed seconds, the streaming tail with a cursor, no toggle", () => {
     const { container } = wrap(<ThinkingRow seconds={4} text="两种说法" live />);
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByText("正在思考")).toBeTruthy();
     expect(container.textContent).toContain("4 秒");
-    expect(container.querySelector('[data-part="spinner"]')).not.toBeNull();
-    const body = container.querySelector('[data-part="thinking-body"]');
-    expect(body?.querySelector('[data-part="cursor"]')).not.toBeNull();
+    expect(container.querySelector('[data-part="spinner"]')).toBeNull();
+    const tail = container.querySelector('[data-part="thinking-tail"]');
+    expect(tail?.querySelector('[data-part="cursor"]')).not.toBeNull();
   });
 
   it("can start open", () => {
@@ -384,11 +384,8 @@ describe("RunDivider (§6.16.7)", () => {
   });
 });
 
-describe("the thinking row's live spinner (§6.16.5)", () => {
-  it("is 16, the Spinner's default stays 12 (panel headers, background tasks)", () => {
-    const { container } = wrap(<ThinkingRow seconds={2} text="…" live />);
-    const icon = container.querySelector('[data-part="spinner"] svg') as SVGElement;
-    expect(icon.getAttribute("width")).toBe("16");
+describe("the Spinner's size (§6.16)", () => {
+  it("defaults to 12 (panel headers, background tasks)", () => {
     const tool = wrap(<Spinner />);
     expect(tool.container.querySelector('[data-part="spinner"] svg')?.getAttribute("width")).toBe(
       "12",

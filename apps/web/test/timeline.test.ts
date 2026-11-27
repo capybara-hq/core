@@ -141,6 +141,9 @@ describe("buildTimeline", () => {
     expect(summarizeTools(rows, "zh")).toBe("已运行 2 个命令，已使用 1 个工具");
     expect(rows[0]).toMatchObject({ description: "List files", detail: { command: "ls" } });
     expect(rows[1]).toMatchObject({ status: "done", detail: { output: "boom\nmore" } });
+    // the exit code goes on the row (named there only when not zero), the kernel's summary not
+    expect(rows[0]?.exitCode).toBe(0);
+    expect(rows[1]?.exitCode).toBe(1);
     expect(rows[1]).not.toHaveProperty("error");
     expect(rows[1]?.detail).not.toHaveProperty("errorText");
     expect(rows[0]).toMatchObject({ name: "Bash" });
@@ -2286,5 +2289,29 @@ describe("image slots", () => {
       { kind: "image", file: expect.objectContaining({ id: "i1" }), ratio: null },
     ]);
     expect(files?.others).toEqual([]);
+  });
+});
+
+describe("command rows: the display summary, the exit code and the time of a queued call", () => {
+  it("a command's display summary is no extra; every logged call has a start time", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        { id: "a", name: "Bash", input: { command: "pnpm test", description: "Run the tests" } },
+        { id: "b", name: "Bash", input: { command: "pnpm lint", description: "Lint" } },
+      ]),
+      result(3, "a", "Bash", {
+        view: { kind: "command", exitCode: 0, timedOut: false, description: "Run the tests" },
+        display: {
+          summary: { zh: "运行命令（退出码 0）：pnpm test", en: "Ran command (exit 0): pnpm test" },
+        },
+      }),
+    ];
+    const rows = tools(buildTimeline(events, [], INFO, "zh"))[0]?.rows.map((r) => r.row) ?? [];
+    expect(rows[0]).not.toHaveProperty("extra");
+    expect(rows[0]).toMatchObject({ exitCode: 0, detail: { command: "pnpm test" } });
+    // the second call is still queued: it counts from when it was logged
+    expect(rows[1]?.status).toBe("pending");
+    expect(typeof rows[1]?.startedAt).toBe("number");
   });
 });
