@@ -219,7 +219,9 @@ describe("Sidebar navigation (work context)", () => {
     );
     const sw = screen.getByRole("button", { name: "当前组织：示例组织，切换组织" });
     expect(sw.textContent).toContain("示例组织");
-    expect(sw.textContent).toContain("~/demo · 所有者");
+    // the name only: the slug and the role stay in the switch menu (layered shell spec §4)
+    expect(sw.textContent).not.toContain("~/demo");
+    expect(sw.querySelector(".cb-sidebar-org-meta")).toBeNull();
     expect(sw.querySelector('[data-part="org-initial"]')?.textContent).toBe("示");
     await userEvent.click(sw);
     await userEvent.click(await screen.findByRole("menuitemradio", { name: "另一个组织" }));
@@ -336,11 +338,21 @@ describe("Sidebar navigation (work context)", () => {
         })}
       />,
     );
-    const block = document.querySelector('[data-part="context-block"]');
-    expect(block?.textContent).toContain("管理后台");
-    expect(block?.textContent).toContain("整个部署 · /admin");
-    expect(block?.tagName).not.toBe("BUTTON");
-    expect(screen.getByRole("link", { name: "回到工作区 ~/demo" }).getAttribute("href")).toBe("/");
+    // one block: the shield, the Admin console label and the dense way back at its end; no scope line
+    const blocks = document.querySelectorAll('[data-part="context-block"]');
+    expect(blocks).toHaveLength(1);
+    const block = blocks[0] as HTMLElement;
+    expect(block.textContent).toContain("管理后台");
+    expect(block.textContent).not.toContain("整个部署");
+    expect(block.querySelector(".cb-sidebar-org-meta")).toBeNull();
+    expect(block.querySelector('[data-tone="accent"] svg')).toBeTruthy();
+    expect(block.tagName).not.toBe("BUTTON");
+    const back = screen.getByRole("link", { name: "回到工作区 ~/demo" });
+    expect(back.getAttribute("href")).toBe("/");
+    expect(back.getAttribute("title")).toBe("回到工作区 ~/demo");
+    expect(back.textContent).toBe("回到工作区");
+    expect(block.contains(back)).toBe(true);
+    expect(block.lastElementChild).toBe(back);
     const nav = mainNav();
     expect(
       within(nav)
@@ -395,6 +407,107 @@ describe("Sidebar navigation (work context)", () => {
     expect(row().querySelector("img")?.getAttribute("src")).toBe("/api/v1/accounts/a1/avatar?v=1");
   });
 });
+describe("Sidebar admin rail", () => {
+  it("admin rail keeps the shield and the back button", () => {
+    zh(
+      <Sidebar
+        {...props({
+          activeNav: "overview",
+          context: {
+            kind: "admin",
+            back: { href: "/", slug: "demo" },
+            items: [{ id: "overview", label: "概览", href: "/admin", icon: "home" }],
+          },
+        })}
+        mode="rail"
+      />,
+    );
+    const block = document.querySelector('[data-part="context-block"]') as HTMLElement;
+    expect(block.querySelector('[data-tone="accent"] svg')).toBeTruthy();
+    expect(block.textContent).toBe("管理后台");
+    expect(block.textContent).not.toContain("整个部署");
+    const back = screen.getByRole("link", { name: "回到工作区 ~/demo" });
+    expect(back.closest(".cb-sidebar-context")?.contains(block)).toBe(true);
+    expect(block.contains(back)).toBe(false);
+  });
+});
+
+describe("Sidebar account status and footnote", () => {
+  const menu = [{ label: "退出登录", onSelect: vi.fn() }];
+
+  it("a fail status draws a fail dot on the account row and the status line at the menu's top", async () => {
+    zh(
+      <Sidebar
+        {...props({
+          account: { name: "grant", menu, status: { text: "连接已断开", tone: "fail" } },
+        })}
+      />,
+    );
+    const row = screen.getByRole("button", { name: "账户: grant · 连接已断开" });
+    expect(row.querySelector('.cb-sidebar-dot[data-tone="fail"]')).toBeTruthy();
+    await userEvent.click(row);
+    const m = await screen.findByRole("menu");
+    const head = m.querySelector('[data-part="menu-head"]') as HTMLElement;
+    expect(head.textContent).toBe("连接已断开");
+    expect(head.querySelector('.cb-sidebar-dot[data-tone="fail"]')).toBeTruthy();
+    // above the first item, not an item and not focusable
+    const first = screen.getByRole("menuitem", { name: "退出登录" });
+    expect(head.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(head.getAttribute("role")).not.toBe("menuitem");
+    expect(head.hasAttribute("tabindex")).toBe(false);
+  });
+
+  it("the footnote is the menu's last line", async () => {
+    zh(
+      <Sidebar
+        {...props({ account: { name: "grant", menu, footnote: "v0.1.0 · Asia/Shanghai" } })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "账户: grant" }));
+    const m = await screen.findByRole("menu");
+    const foot = m.querySelector('[data-part="menu-foot"]') as HTMLElement;
+    expect(foot.textContent).toBe("v0.1.0 · Asia/Shanghai");
+    expect(m.lastElementChild).toBe(foot);
+    expect(m.querySelector('[data-part="menu-head"]')).toBeNull();
+  });
+
+  it("no status: no dot and no head line", async () => {
+    zh(<Sidebar {...props({ account: { name: "grant", menu } })} />);
+    const row = screen.getByRole("button", { name: "账户: grant" });
+    expect(row.querySelector(".cb-sidebar-dot")).toBeNull();
+    await userEvent.click(row);
+    const m = await screen.findByRole("menu");
+    expect(m.querySelector('[data-part="menu-head"]')).toBeNull();
+    expect(m.querySelector('[data-part="menu-foot"]')).toBeNull();
+  });
+
+  it("a static account row (no menu yet) carries the status in its accessible text", () => {
+    zh(
+      <Sidebar
+        {...props({
+          account: { name: "grant", menu: [], status: { text: "连接已断开", tone: "fail" } },
+        })}
+      />,
+    );
+    const row = document.querySelector('[data-part="account"]') as HTMLElement;
+    expect(row.querySelector('.cb-sidebar-dot[data-tone="fail"]')).toBeTruthy();
+    expect(row.querySelector(".cb-sr-only")?.textContent).toBe(" · 连接已断开");
+  });
+
+  it("the rail's account row carries the dot too", () => {
+    zh(
+      <Sidebar
+        {...props({
+          account: { name: "grant", menu, status: { text: "连接已断开", tone: "fail" } },
+        })}
+        mode="rail"
+      />,
+    );
+    const row = screen.getByRole("button", { name: "账户: grant · 连接已断开" });
+    expect(row.querySelector('.cb-sidebar-dot[data-tone="fail"]')).toBeTruthy();
+  });
+});
+
 describe("Sidebar theme switch and account submenus", () => {
   const theme = () => ({
     label: "主题",

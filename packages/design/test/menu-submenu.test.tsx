@@ -57,3 +57,32 @@ describe("Menu submenus", () => {
     expect(await screen.findByRole("menuitemradio", { name: "Beta" })).toBeTruthy();
   });
 });
+
+describe("Menu head and foot", () => {
+  it("draw non-interactive lines above the first item and below the last", async () => {
+    render(
+      <DesignProvider locale="zh">
+        <Menu
+          trigger={<button type="button">账户</button>}
+          head="连接已断开"
+          foot="v0.1.0 · UTC"
+          items={[{ label: "退出登录", onSelect: vi.fn() }]}
+        />
+      </DesignProvider>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "账户" }));
+    const menu = screen.getByRole("menu");
+    const head = menu.querySelector('[data-part="menu-head"]') as HTMLElement;
+    const foot = menu.querySelector('[data-part="menu-foot"]') as HTMLElement;
+    expect(head.textContent).toBe("连接已断开");
+    expect(foot.textContent).toBe("v0.1.0 · UTC");
+    expect(menu.firstElementChild).toBe(head);
+    expect(menu.lastElementChild).toBe(foot);
+    // only the item is a menu item; arrow keys never land on the lines
+    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+    expect(head.hasAttribute("tabindex")).toBe(false);
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "退出登录" }));
+  });
+});

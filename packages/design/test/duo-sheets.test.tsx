@@ -205,7 +205,6 @@ function shell(width: number, nav: NativeNavHandle | undefined, pathname = "/") 
     <DesignProvider locale="zh">
       <AppShell
         sidebar={sidebar}
-        status={status}
         pathname={pathname}
         chatSurface={pathname === "/"}
         drawer={drawerData()}

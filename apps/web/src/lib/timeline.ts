@@ -30,6 +30,7 @@ import { parsePartialJson } from "./partial-json";
 import type { PersonRef } from "./people";
 import { PersonWaits } from "./person-waits";
 import { type DraftBase, type DraftTool, isSettledBase } from "./run-drafts";
+import { skillChipLabel } from "./skills";
 import { inputValue, loggedLiveView, streamingView } from "./streaming-tool-view";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 
@@ -140,6 +141,7 @@ export interface SubagentLive {
       startedAt?: string;
       pendingApprovalIds: string[];
       pendingQuestionIds: string[];
+      watchedQuestionIds?: string[];
     }
   >;
   /**
@@ -279,7 +281,7 @@ export interface ConnectItem {
 export type DividerData =
   | { divider: "compacted"; summary: string; savedTokens: number | null }
   /** A manual compaction found nothing to summarize (`compaction_skipped`). */
-  | { divider: "compact-skipped"; keepRecentTurns: number }
+  | { divider: "compact-skipped" }
   /** A manual compaction failed: its `compaction_failed` reason, or its run's failure. */
   | { divider: "compact-failed"; reason: string }
   /** A manual compact run was stopped. */
@@ -341,7 +343,7 @@ export type RunData = {
   compact?: boolean;
   /**
    * The run's working time: from `run_started` to the terminal event without its waits for a
-   * person (an approval or a question, until answered), the same derivation as the status bar's
+   * person (an approval or a question, until answered), the same derivation as the Turns row's
    * elapsed time ({@link runStats}), so the two agree; null without a start.
    */
   durationMs: number | null;
@@ -1140,9 +1142,9 @@ export function buildEventTimeline(
     else c.tool.row.waitingFor = who;
     if (id !== undefined) waitCalls.set(id, c);
   };
-  const waitEnded = (id: string, what: NonNullable<ToolRowData["waiting"]>) => {
+  const waitEnded = (id: string, ...what: NonNullable<ToolRowData["waiting"]>[]) => {
     const c = waitCalls.get(id);
-    if (c && c.tool.row.waiting === what) {
+    if (c && c.tool.row.waiting !== undefined && what.includes(c.tool.row.waiting)) {
       delete c.tool.row.waiting;
       delete c.tool.row.waitingFor;
     }
@@ -1209,7 +1211,7 @@ export function buildEventTimeline(
     e: ConversationEvent,
   ): Pick<RunData, "runId" | "model" | "compact" | "durationMs" | "tokens" | "at"> => {
     const r = e.runId === null ? undefined : runs.get(e.runId);
-    // the run's working time, as the status bar counts it (waits for a person left out)
+    // the run's working time, as the Turns row counts it (waits for a person left out)
     r?.clock?.end(Date.parse(e.createdAt));
     return {
       runId: e.runId,
@@ -1428,7 +1430,7 @@ export function buildEventTimeline(
             authorAccountId: e.payload.authorAccountId,
           };
           if (skill) {
-            entry.skill = { label: `/${skill.name}`, mode: skill.mode };
+            entry.skill = { label: skillChipLabel(skill.name), mode: skill.mode };
             // A fork's content[0] is the lead for the model, not the instructions: those are the
             // sub-agent's task, which its row opens.
             if (skill.mode === "inline") {
@@ -1924,8 +1926,10 @@ export function buildEventTimeline(
           reopen(s, e.payload.childRunId, Number.NaN);
         if (s && row && !s.finished && (deep || s.childRunId === e.payload.childRunId)) {
           row.status = "waiting";
-          row.waiting = e.payload.kind;
-          if (deep) deepWaits.set(top, { id: e.payload.subagentId, kind: e.payload.kind });
+          const waitKind: SubagentWaitKind =
+            e.payload.kind === "input" && e.payload.watch === true ? "watch" : e.payload.kind;
+          row.waiting = waitKind;
+          if (deep) deepWaits.set(top, { id: e.payload.subagentId, kind: waitKind });
           else deepWaits.delete(top);
         }
         const branch = row?.description || row?.agentType || e.payload.subagentId;
@@ -2023,7 +2027,10 @@ export function buildEventTimeline(
         break;
       }
       case "question_asked":
-        waitOn(e.runId, e.payload.callId, "input", e.payload.questionId, starterOf(e.runId));
+        // a watched wait asks nobody: its own word, no "waiting for X to answer"
+        if (e.payload.watch === true)
+          waitOn(e.runId, e.payload.callId, "watch", e.payload.questionId);
+        else waitOn(e.runId, e.payload.callId, "input", e.payload.questionId, starterOf(e.runId));
         questions.set(e.payload.questionId, out.length);
         out.push({
           kind: "question",
@@ -2040,7 +2047,7 @@ export function buildEventTimeline(
         });
         break;
       case "question_answered": {
-        waitEnded(e.payload.questionId, "input");
+        waitEnded(e.payload.questionId, "input", "watch");
         const i = questions.get(e.payload.questionId);
         const prev = i === undefined ? undefined : out[i];
         if (i !== undefined && prev?.kind === "question")
@@ -2114,12 +2121,7 @@ export function buildEventTimeline(
         break;
       case "compaction_skipped":
         // only a manual compact run writes it: its outcome when there was nothing to summarize
-        out.push({
-          kind: "divider",
-          key,
-          divider: "compact-skipped",
-          keepRecentTurns: e.payload.keepRecentTurns,
-        });
+        out.push({ kind: "divider", key, divider: "compact-skipped" });
         break;
       case "run_finished":
         // a compact run draws no run row: its outcome is its divider (summary, skip or failure)
@@ -2360,7 +2362,7 @@ export function buildEventTimeline(
   return { entries: withExtras, modelOf, info, locale };
 }
 
-/** Turns, elapsed time and the running state for the status bar. */
+/** Turns, elapsed time and the running state for the properties panel's Turns row. */
 export interface RunStats {
   /** `run_started` count. */
   turns: number;
@@ -2386,13 +2388,13 @@ export interface RunStats {
   waitingFor: "approval" | "input" | null;
 }
 
-/** The running time the status bar shows: worked time, plus the open working stretch. */
+/** The running time the Turns row shows: worked time, plus the open working stretch. */
 export const workedMsAt = (s: RunStats, now: number): number | null =>
   s.startedAt === null ? null : s.workedMs + (s.resumedAt === null ? 0 : now - s.resumedAt);
 
 /**
  * One run's working time: from its start to its end without its waits for a person (an approval,
- * a question; {@link PersonWaits}). The status bar's elapsed time and the run row's duration both
+ * a question; {@link PersonWaits}). The Turns row's elapsed time and the run row's duration both
  * read it, so the two agree.
  */
 class RunClock {

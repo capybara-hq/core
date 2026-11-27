@@ -225,3 +225,18 @@ describe("ComposerBox frame", () => {
     expect(screen.getByRole("button", { name: /send/i })).toBeTruthy();
   });
 });
+
+describe("composer context meter", () => {
+  it("context meter sits right before the send button", () => {
+    wrap(<ComposerBox {...props({ context: { pct: 43, over: false } })} />);
+    const meter = document.querySelector('[data-part="composer-context-meter"]');
+    expect(meter).toBeTruthy();
+    const next = meter?.nextElementSibling;
+    expect(next?.getAttribute("data-part")).toBe("send");
+  });
+
+  it("no meter without context", () => {
+    wrap(<ComposerBox {...props()} />);
+    expect(document.querySelector('[data-part="composer-context-meter"]')).toBeNull();
+  });
+});

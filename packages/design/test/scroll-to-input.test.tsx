@@ -30,7 +30,6 @@ const sidebar = {
   activeNav: "agents",
   account: { name: "grant", menu: [] },
 };
-const status = { context: "grant@acme:/", version: "0.1.0" };
 
 const originalMatchMedia = window.matchMedia;
 const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
@@ -64,7 +63,7 @@ const renderAt = (width: number) => {
   window.matchMedia = matchMediaFor(width).matchMedia;
   return render(
     <DesignProvider locale="en">
-      <AppShell sidebar={sidebar} status={status}>
+      <AppShell sidebar={sidebar}>
         <div style={{ overflowY: "auto" }}>
           <Input aria-label="name" />
           <Textarea aria-label="notes" />
@@ -104,7 +103,7 @@ describe("scroll to input", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const { getByLabelText } = render(
       <DesignProvider locale="en">
-        <AppShell sidebar={sidebar} status={status}>
+        <AppShell sidebar={sidebar}>
           <Input aria-label="plain" />
         </AppShell>
       </DesignProvider>,
@@ -138,7 +137,7 @@ describe("scroll to input", () => {
       );
     const { getByLabelText } = render(
       <DesignProvider locale="en">
-        <AppShell sidebar={sidebar} status={status}>
+        <AppShell sidebar={sidebar}>
           <Sheet />
         </AppShell>
       </DesignProvider>,

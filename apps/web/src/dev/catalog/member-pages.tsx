@@ -35,7 +35,7 @@ import type { Me } from "../../lib/session";
 import type { SkillSummary } from "../../lib/skills";
 import { COMMANDS } from "./fixtures";
 import type { MemberPage } from "./routes";
-import { sidebarProps, statusFixture } from "./shell-fixture";
+import { sidebarProps } from "./shell-fixture";
 
 /**
  * `/dev/ui/pages/member-<page>`: the member pages (agents, skills, connectors, automations'
@@ -321,7 +321,7 @@ export function MemberPageCatalog({ page }: { page: MemberPage }) {
   return (
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={SESSION}>
-        <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture(`/${page}`)}>
+        <AppShell sidebar={sidebar} commands={COMMANDS}>
           <Page page={page} />
         </AppShell>
       </SessionContext.Provider>

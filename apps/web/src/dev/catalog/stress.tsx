@@ -6,7 +6,6 @@ import {
   Stack,
   StatusMark,
   Text,
-  useStatusBar,
 } from "@capybara-hq/design";
 import { FixtureShell } from "./frame";
 
@@ -31,7 +30,6 @@ const COLUMNS: Column<Row>[] = [
 ];
 
 function StressBody() {
-  useStatusBar(`· 已筛选 1,234,567 / 9,999,999 · ${RARE}`);
   return (
     <DetailPage
       header={{
@@ -86,7 +84,7 @@ function StressBody() {
 /** `/dev/ui/stress`：超长标题、7 位数指标、生僻字。 */
 export function StressCatalog() {
   return (
-    <FixtureShell nav="agents" context={`agents/${LONG_TITLE}`}>
+    <FixtureShell nav="agents">
       <StressBody />
     </FixtureShell>
   );

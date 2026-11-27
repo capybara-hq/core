@@ -147,9 +147,12 @@ fails when the native projects drift from it.
 
 ### 4.4 Loading and navigation
 
-- The WebView loads the profile's origin. Same-origin navigations stay; connector OAuth may leave
-  the origin top-level and come back, as on the desktop (desktop spec §7.1); `target=_blank` and
-  other origins open in an in-app browser sheet (`SFSafariViewController` / Custom Tabs).
+- The WebView loads the profile's origin. Same-origin navigations stay; `target=_blank` and other
+  origins open in an in-app browser sheet (`SFSafariViewController` / Custom Tabs). Connector OAuth
+  and linking a login method open the system browser through `openExternal@1` and a handoff link
+  (`2026-11-28-shell-external-authorization-design.md`); the browser's done page comes back with
+  `<scheme>://open?url=<page>`, which the app routes to the profile whose origin matches and loads
+  there (other origins are ignored).
 - **Launch without a flash**: the native splash stays until the web's first paint (the web tells
   the shell through `chrome@1.ready()`, §6), with the theme's background set natively from the
   last `chrome@1.setAppearance` of the profile.

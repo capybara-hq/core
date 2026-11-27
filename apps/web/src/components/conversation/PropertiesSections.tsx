@@ -13,7 +13,7 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useContext, useEffect, useMemo, useRef } from "react";
+import { type ReactNode, useContext, useEffect, useMemo, useRef } from "react";
 import { automationState } from "../../lib/automations";
 import type {
   BackgroundTaskView,
@@ -142,6 +142,7 @@ export function ContextSection({
   model,
   contextPct,
   lastRun,
+  rounds,
   total,
 }: {
   orgId: string;
@@ -151,6 +152,8 @@ export function ContextSection({
   contextPct: number | null;
   /** The last run's parts, once a run ended (the model only when it differs from `model`). */
   lastRun?: readonly string[] | undefined;
+  /** The conversation's rounds and working time, once it had a run. */
+  rounds?: ReactNode;
   /** The tokens with sub-agents line, once there are any. */
   total?: string | undefined;
 }) {
@@ -201,6 +204,7 @@ export function ContextSection({
         : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
       {...(lastRun !== undefined ? { lastRun } : {})}
+      {...(rounds !== undefined ? { rounds } : {})}
       {...(total !== undefined ? { total } : {})}
     />
   );
@@ -244,6 +248,7 @@ export function PropertiesSections({
   model,
   contextPct,
   lastRun,
+  rounds,
   files,
   onOpenFile,
   background,
@@ -257,6 +262,7 @@ export function PropertiesSections({
   model: ModelRef | null;
   contextPct: number | null;
   lastRun?: readonly string[] | undefined;
+  rounds?: ReactNode;
   files: FileOutput[];
   onOpenFile(id: string): void;
   background?:
@@ -289,6 +295,7 @@ export function PropertiesSections({
         model={model}
         contextPct={contextPct}
         lastRun={lastRun}
+        {...(rounds !== undefined ? { rounds } : {})}
         total={total}
       />
       {after("context")}

@@ -7,10 +7,13 @@ import {
   type ModelProvider,
   type ModelRequest,
   type ModelStreamEvent,
+  validateCacheWriteByTtl,
   validateMediaBlock,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
+  checkCacheDeclaration,
+  checkCacheWriteTiers,
   checkDeclaredParameters,
   checkToolStream,
   describeModelProviderConformance,
@@ -28,6 +31,16 @@ const usage = (cacheRead: number) => ({
   cacheReadTokens: cacheRead,
   cacheWriteTokens: 0,
 });
+
+/** The in-memory model's cache: service-decided, no options (the ttl options case skips). */
+const IMPLICIT = {
+  mechanism: "implicit" as const,
+  ttlOptions: [],
+  ttlIsMinimum: false,
+  refreshOnHit: false,
+  ttlClock: "unknown" as const,
+  guaranteed: false,
+};
 
 /** 内存中的最小供应商：仅用于证明一致性套件可运行。 */
 function makeProvider(
@@ -55,7 +68,6 @@ function makeProvider(
             tools: false,
             vision: false,
             reasoning: false,
-            caching: false,
             midConversationSystem: false,
           },
           parameters: [],
@@ -69,9 +81,9 @@ function makeProvider(
             tools: true,
             vision: false,
             reasoning: true,
-            caching: true,
             midConversationSystem: true,
           },
+          cache: IMPLICIT,
           parameters,
         },
       ];
@@ -166,7 +178,7 @@ function makeMediaProvider(): ModelProvider {
   const base = makeProvider();
   return {
     async listModels() {
-      const [m] = await base.listModels();
+      const m = (await base.listModels()).find((x) => x.id === "m");
       if (m === undefined) throw new Error("no model");
       return [
         {
@@ -258,7 +270,6 @@ describe("checkDeclaredParameters", () => {
       tools: false,
       vision: false,
       reasoning: false,
-      caching: false,
       midConversationSystem: false,
     },
     parameters,
@@ -392,5 +403,187 @@ describe("checkToolStream", () => {
 
   it("accepts a stream with no tool events", () => {
     expect(checkToolStream([], done({}))).toEqual([]);
+  });
+});
+
+const CACHE = {
+  mechanism: "explicit" as const,
+  ttlOptions: [300, 3600],
+  defaultTtl: 300,
+  ttlIsMinimum: false,
+  refreshOnHit: true,
+  ttlClock: "request_start" as const,
+  guaranteed: true,
+};
+
+/**
+ * Wraps the in-memory provider: `cache` on the model (undefined: none), every stream request
+ * recorded; `cacheWriteByTtl` reports tiers whose sum plus `extraWrite` is `cacheWriteTokens`.
+ */
+function makeCachingProvider(
+  cache: ModelInfo["cache"],
+  seen: ModelRequest[],
+  stops: Map<ModelRequest, string>,
+  cacheWriteByTtl?: (req: ModelRequest) => { ttl: number; tokens: number }[],
+  extraWrite = 0,
+): ModelProvider {
+  const inner = makeProvider();
+  return {
+    ...inner,
+    async listModels() {
+      return (await inner.listModels()).map((m) => {
+        if (m.id !== "m") return m;
+        const { cache: _, ...rest } = m;
+        return cache ? { ...rest, cache } : rest;
+      });
+    },
+    async *stream(req, opts) {
+      seen.push(req);
+      for await (const ev of inner.stream(req, opts)) {
+        if (ev.type === "message_complete") stops.set(req, ev.stopReason);
+        if (ev.type === "message_complete" && cacheWriteByTtl !== undefined) {
+          const tiers = cacheWriteByTtl(req);
+          const total = tiers.reduce((n, t) => n + t.tokens, 0);
+          yield {
+            ...ev,
+            usage: { ...ev.usage, cacheWriteTokens: total + extraWrite, cacheWriteByTtl: tiers },
+          };
+        } else yield ev;
+      }
+    },
+  };
+}
+
+const ttlRequests: ModelRequest[] = [];
+const ttlStops = new Map<ModelRequest, string>();
+const plainRequests: ModelRequest[] = [];
+describeModelProviderConformance("in-memory without a cache declaration", async () => ({
+  plugin: "in-memory",
+  provider: makeCachingProvider(undefined, plainRequests, new Map()),
+  model: "m",
+  expect: { thinking: true, caching: false },
+  async teardown() {},
+}));
+
+describeModelProviderConformance("in-memory with a cache declaration", async () => ({
+  plugin: "in-memory",
+  provider: makeCachingProvider(CACHE, ttlRequests, ttlStops, (req) => [
+    { ttl: req.cacheTtl ?? CACHE.defaultTtl, tokens: 4 },
+  ]),
+  model: "m",
+  expect: { thinking: true, caching: true },
+  async teardown() {},
+}));
+
+// Reads the requests recorded by the two suites above: vitest runs a file's top-level describes in
+// order, so this block must stay below them.
+describe("cache ttl options case", () => {
+  it("sends one request per declared ttl option, each ending end_turn", () => {
+    const withTtl = ttlRequests.filter((r) => r.cacheTtl !== undefined);
+    expect(withTtl.map((r) => r.cacheTtl)).toEqual([300, 3600]);
+    expect(withTtl.map((r) => ttlStops.get(r))).toEqual(["end_turn", "end_turn"]);
+  });
+  it("gives each ttl request its own cached prefix, so each one writes", () => {
+    const withTtl = ttlRequests.filter((r) => r.cacheTtl !== undefined);
+    const prefixes = withTtl.map((r) => JSON.stringify(r.system));
+    const earlier = ttlRequests.filter((r) => r.cacheTtl === undefined);
+    expect(new Set(prefixes).size).toBe(withTtl.length);
+    for (const p of prefixes) expect(earlier.map((r) => JSON.stringify(r.system))).not.toContain(p);
+  });
+  it("sends no cacheTtl request for a model without a cache", () => {
+    expect(plainRequests.length).toBeGreaterThan(0);
+    expect(plainRequests.every((r) => r.cacheTtl === undefined)).toBe(true);
+  });
+});
+
+describe("checkCacheDeclaration", () => {
+  const info = (cache: ModelInfo["cache"]): ModelInfo => ({
+    id: "m",
+    displayName: "m",
+    contextWindow: 1,
+    maxOutputTokens: 1,
+    capabilities: { tools: false, vision: false, reasoning: false, midConversationSystem: false },
+    parameters: [],
+    ...(cache ? { cache } : {}),
+  });
+  it("accepts a valid or absent cache", () => {
+    expect(checkCacheDeclaration(info(CACHE))).toBeNull();
+    expect(checkCacheDeclaration(info(undefined))).toBeNull();
+  });
+  it("reports the validator's message for a default ttl outside the options", () => {
+    const bad = { ...CACHE, defaultTtl: 600 };
+    const message = checkCacheDeclaration(info(bad));
+    expect(message).not.toBeNull();
+    expect(message).toContain("defaultTtl");
+  });
+  it("reports an unlisted model", () => {
+    expect(checkCacheDeclaration(undefined)).toMatch(/not listed/);
+  });
+  it("reports expect.caching on a model that declares no cache", () => {
+    const none = { ...IMPLICIT, mechanism: "none" as const };
+    expect(checkCacheDeclaration(info(undefined), true)).toMatch(/expect\.caching/);
+    expect(checkCacheDeclaration(info(none), true)).toMatch(/expect\.caching/);
+    expect(checkCacheDeclaration(info(none), false)).toBeNull();
+    expect(checkCacheDeclaration(info(CACHE), true)).toBeNull();
+  });
+});
+
+// A failing suite case cannot be observed from inside vitest, so this tests the check the
+// "cache ttl options" case calls, on usage a provider that ignores cacheTtl would report.
+describe("checkCacheWriteTiers", () => {
+  const streamUsage = async (provider: ModelProvider, cacheTtl: number) => {
+    const req: ModelRequest = {
+      model: "m",
+      system: [{ text: "prefix", cache: true }],
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      tools: [],
+      params: {},
+      maxOutputTokens: 100,
+      cacheTtl,
+    };
+    for await (const ev of provider.stream(req, { signal: new AbortController().signal })) {
+      if (ev.type === "message_complete") return ev.usage;
+    }
+    throw new Error("no message_complete");
+  };
+  it("rejects a provider that ignores cacheTtl and reports the default tier", async () => {
+    const ignoring = makeCachingProvider(CACHE, [], new Map(), () => [{ ttl: 300, tokens: 4 }]);
+    expect(checkCacheWriteTiers(await streamUsage(ignoring, 3600), 3600)).toMatch(/3600/);
+  });
+  it("accepts tiers of the requested ttl only, or no tiers", async () => {
+    const honoring = makeCachingProvider(CACHE, [], new Map(), (r) => [
+      { ttl: r.cacheTtl ?? 300, tokens: 4 },
+    ]);
+    expect(checkCacheWriteTiers(await streamUsage(honoring, 3600), 3600)).toBeNull();
+    expect(checkCacheWriteTiers(await streamUsage(makeProvider(), 3600), 3600)).toBeNull();
+  });
+});
+
+// A failing suite case cannot be observed from inside vitest, so this tests the validator the
+// "usage" case calls, on usage a provider like this would report.
+describe("usage cache write tiers", () => {
+  it("validateCacheWriteByTtl rejects tiers summing to cacheWriteTokens - 1", async () => {
+    const seen: ModelRequest[] = [];
+    const provider = makeCachingProvider(
+      CACHE,
+      seen,
+      new Map(),
+      () => [{ ttl: 300, tokens: 4 }],
+      1,
+    );
+    const req: ModelRequest = {
+      model: "m",
+      system: [],
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      tools: [],
+      params: {},
+      maxOutputTokens: 100,
+    };
+    let usageSeen: Extract<ModelStreamEvent, { type: "message_complete" }>["usage"] | undefined;
+    for await (const ev of provider.stream(req, { signal: new AbortController().signal })) {
+      if (ev.type === "message_complete") usageSeen = ev.usage;
+    }
+    expect(usageSeen).toBeDefined();
+    if (usageSeen) expect(validateCacheWriteByTtl(usageSeen)).toMatch(/cacheWriteTokens/);
   });
 });

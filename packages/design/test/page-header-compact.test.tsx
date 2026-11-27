@@ -26,7 +26,12 @@ afterEach(() => {
   window.matchMedia = real;
 });
 
-const path = [{ label: "capybara", href: "/" }, { label: "智能体" }];
+// three segments: a first-level path (two) draws no path row at any width
+const path = [
+  { label: "capybara", href: "/" },
+  { label: "agents", href: "/agents" },
+  { label: "智能体" },
+];
 const ACTIONS: HeaderAction[] = [
   { label: "导入", variant: "default", onSelect: () => {} },
   { label: "新建", variant: "primary", onSelect: () => {} },

@@ -299,8 +299,10 @@ describe("the right area", () => {
     await renderChatRoute();
     const meter = await screen.findByRole("meter", { name: "Context" });
     await vi.waitFor(() => expect(meter.getAttribute("aria-valuenow")).toBe("50"));
-    // The status bar shows it too.
-    expect(screen.getByText("Context 50%")).toBeTruthy();
+    // The composer's meter shows it too.
+    expect(
+      screen.getByRole("meter", { name: "Context 50% used" }).getAttribute("aria-valuenow"),
+    ).toBe("50");
   });
 });
 

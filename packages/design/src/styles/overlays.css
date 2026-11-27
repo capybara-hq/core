@@ -286,6 +286,17 @@
   margin: 4px 0;
   background: var(--cb-line);
 }
+/* A menu's head or foot line (the account menu's status and version · time zone): not an item. */
+.cb-menu-note {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-1) var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  cursor: default;
+}
 
 /* Toast (spec §6.7): top center, 16px below the top of the content area, stacked downward with the
    newest on top; centered so it never covers the page head's actions (top right). On narrow screens

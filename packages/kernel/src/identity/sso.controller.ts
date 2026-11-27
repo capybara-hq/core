@@ -13,6 +13,8 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
+import { assertReturnSchemeAllowed, HandoffRequestSchema } from "../handoff/app-schemes.js";
+import { HandoffTickets } from "../handoff/handoff-tickets.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
@@ -34,6 +36,7 @@ import {
   SSO_COOKIE_PATH,
   SSO_STATE_TTL_SECONDS,
   SsoFlow,
+  safeReturnTo,
   ssoBrowserBinding,
   withError,
 } from "./sso.js";
@@ -51,11 +54,42 @@ const LinkBodySchema = z.object({
 });
 class LinkBody extends createZodDto(LinkBodySchema, "SsoLinkBody") {}
 
+/**
+ * `POST /auth/sso/:plugin/start`: a link intent and the page to come back to. `handoff` (a native
+ * shell): finish the link in the system browser through a handoff ticket instead.
+ */
 const StartLinkBodySchema = z.object({
   intent: z.literal("link"),
   returnTo: z.string().max(2000).optional(),
+  handoff: HandoffRequestSchema.optional(),
 });
 class StartLinkBody extends createZodDto(StartLinkBodySchema, "SsoStartLinkBody") {}
+
+/**
+ * The link start's answer: where the browser goes next (the source's authorize URL, or the page
+ * with `?error=<code>`), or with `handoff` the web page that starts the link in the system browser.
+ */
+export type SsoStartLinkResponse = { location: string } | { handoffUrl: string };
+
+/**
+ * Writes the SSO browser binding cookie `cap_sso` (HttpOnly, SameSite=Lax: the source's redirect
+ * back is a cross-site top-level GET, which Lax sends; Path only `/api/v1/auth/sso`). `secure` is
+ * {@link SsoFlow.cookieSecure}.
+ */
+export function setSsoBindingCookie(
+  reply: FastifyReply,
+  binding: string,
+  secure: boolean,
+  maxAge: number = SSO_STATE_TTL_SECONDS,
+): void {
+  reply.setCookie(SSO_BINDING_COOKIE, binding, {
+    path: SSO_COOKIE_PATH,
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    maxAge,
+  });
+}
 
 /** What the link page shows (`GET /api/v1/auth/sso/link`). */
 export interface SsoLinkView {
@@ -94,6 +128,7 @@ export class SsoController {
     @Inject(SsoLinkTickets) private readonly linkTickets: SsoLinkTickets,
     @Inject(ExternalIdentities) private readonly external: ExternalIdentities,
     @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
+    @Inject(HandoffTickets) private readonly tickets: HandoffTickets,
   ) {}
 
   @Get("sources")
@@ -131,7 +166,7 @@ export class SsoController {
       typeof returnTo === "string" ? returnTo : undefined,
       binding,
     );
-    this.setBindingCookie(reply, binding, SSO_STATE_TTL_SECONDS);
+    setSsoBindingCookie(reply, binding, this.flow.cookieSecure());
     await reply.header("cache-control", "no-store").redirect(location, 302);
   }
 
@@ -140,7 +175,10 @@ export class SsoController {
    * method it needs the CSRF header (global guard), so no other site can start it. The state
    * records the session's account; the callback must carry the same session. Writes the binding
    * cookie as the GET start does and returns where the browser goes next: the source's authorize
-   * URL, or, on failure, the page with `?error=<code>`.
+   * URL, or, on failure, the page with `?error=<code>`. With `handoff` (a native shell, shell
+   * external authorization spec §1): no cookie and no state; a source on offer gets a handoff
+   * ticket and its web page, where the link starts when the person redeems it in the system
+   * browser; a source not on offer answers the same `?error=sso.unavailable` location.
    */
   @Post("sso/:plugin/start")
   @SessionOnly()
@@ -151,8 +189,25 @@ export class SsoController {
     @CurrentPrincipal() principal: Principal,
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<{ location: string }> {
+  ): Promise<SsoStartLinkResponse> {
     const p = requireUser(principal);
+    reply.header("cache-control", "no-store");
+    if (body.handoff !== undefined) {
+      const returnScheme = body.handoff.returnScheme;
+      assertReturnSchemeAllowed(this.config.get(), returnScheme);
+      const returnTo = safeReturnTo(body.returnTo);
+      if (!(await this.flow.linkAvailable(plugin))) {
+        return { location: this.flow.webUrl(withError(returnTo, "sso.unavailable")) };
+      }
+      const ticket = await this.tickets.create({
+        kind: "identity-link",
+        accountId: p.account.id,
+        plugin,
+        returnTo,
+        ...(returnScheme !== undefined && { returnScheme }),
+      });
+      return { handoffUrl: this.tickets.url(ticket) };
+    }
     const binding = ssoBrowserBinding(req.cookies[SSO_BINDING_COOKIE]);
     const location = await this.flow.start(
       plugin,
@@ -161,19 +216,8 @@ export class SsoController {
       p.account.id,
       body.intent,
     );
-    this.setBindingCookie(reply, binding, SSO_STATE_TTL_SECONDS);
-    reply.header("cache-control", "no-store");
+    setSsoBindingCookie(reply, binding, this.flow.cookieSecure());
     return { location };
-  }
-
-  private setBindingCookie(reply: FastifyReply, binding: string, maxAge: number): void {
-    reply.setCookie(SSO_BINDING_COOKIE, binding, {
-      path: SSO_COOKIE_PATH,
-      httpOnly: true,
-      sameSite: "lax",
-      secure: this.flow.cookieSecure(),
-      maxAge,
-    });
   }
 
   /**
@@ -204,7 +248,7 @@ export class SsoController {
           : this.flow.webUrl(withError(r.returnTo, r.error));
     } else if (r.kind === "link_page") {
       // the binding value is the one the state was checked against
-      this.setBindingCookie(reply, binding as string, SSO_LINK_TTL_SECONDS);
+      setSsoBindingCookie(reply, binding as string, this.flow.cookieSecure(), SSO_LINK_TTL_SECONDS);
       const target = this.flow.webUrl(
         `${SSO_LINK_PAGE_PATH}?ticket=${encodeURIComponent(r.ticket)}`,
       );

@@ -399,7 +399,7 @@ function runDividerBlocks(): ReactNode {
         <RunDivider kind="notice" text="已切换到 deepseek-v4，推理强度 高" />
       </Block>
       <Block id="run-divider-notice-compact-skipped">
-        <RunDivider kind="notice" text="无需压缩 · 对话未超过 4 轮，最近 4 轮会原样保留" />
+        <RunDivider kind="notice" text="无需压缩 · 对话还很短" />
       </Block>
       <Block id="run-divider-notice-compact-failed">
         <RunDivider kind="notice" text="压缩失败：the model is unavailable" />

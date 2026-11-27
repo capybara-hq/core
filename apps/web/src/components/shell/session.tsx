@@ -24,9 +24,9 @@ export type Session = {
   switching?: boolean;
   /** Reads the sidebar's pending count again now (after handling an approval). */
   refreshPending?(): void;
-  /** The web version (pages that draw their own status bar show it). */
+  /** The web version (the admin overview's health section shows it). */
   version?: string;
-  /** The viewer's time zone (`UTC+8`; none in the server render), for those status bars too. */
+  /** The viewer's time zone (`UTC+8`; none in the server render). */
   timeZone?: string;
 };
 

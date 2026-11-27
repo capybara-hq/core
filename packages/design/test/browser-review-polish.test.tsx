@@ -69,15 +69,6 @@ describe("F12: disabled never adds a border", () => {
   });
 });
 
-describe("F14: the status bar keeps the page status whole", () => {
-  it("the prompt shrinks far before the page status", () => {
-    const context = decls(".cb-statusbar-context").get("flex") ?? "";
-    const page = decls(".cb-statusbar-page").get("flex") ?? "";
-    const shrink = (flex: string) => Number(flex.split(" ")[1]);
-    expect(shrink(context)).toBeGreaterThanOrEqual(100 * shrink(page));
-  });
-});
-
 describe("F15: the thread fades at both scroll edges", () => {
   it("masks the top and bottom space.4", () => {
     const mask = decls('.cb-conv-scroll:not([data-center="true"])').get("mask-image") ?? "";

@@ -234,7 +234,7 @@ function KernelGroup({ health, t }: { health: AdminHealth; t: T }) {
       )
     );
   // The product version: the web app's (released in step with @capybara-hq/capybara), as the
-  // status bar shows it
+  // account menu shows it
   const productVersion = useContext(SessionContext)?.version;
   return (
     <Subsection title={t("groups.kernel")} variant="divided">

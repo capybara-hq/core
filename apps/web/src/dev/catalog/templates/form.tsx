@@ -143,7 +143,7 @@ function FormBody() {
 /** T4 表单：新建智能体（e-form）。 */
 export function FormTemplate() {
   return (
-    <FixtureShell nav="agents" context="agents/new">
+    <FixtureShell nav="agents">
       <FormBody />
     </FixtureShell>
   );

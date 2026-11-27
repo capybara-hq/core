@@ -1085,6 +1085,30 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
     },
   },
   {
+    pattern: "/handoff/[ticket]",
+    // The session (the handoff layout sends a signed-out visitor to sign-in first); the ticket is
+    // redeemed in the browser, once.
+    queries: () => [q(maybeMeQuery())],
+  },
+  {
+    pattern: "/handoff/done",
+    // The platform's app schemes (the back link), the session and what names the result: the
+    // login methods for a link; then the connector for a signed-in connector result.
+    queries: ({ search }) => [
+      q(platformMetaQuery()),
+      q(maybeMeQuery()),
+      ...(search.get("kind") === "identity-link" ? [q(authSourcesQuery())] : []),
+    ],
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ search }, qc) => {
+      const me = qc.getQueryData<Me | null>(maybeMeQuery().queryKey);
+      const orgId = search.get("org");
+      const connectorId = search.get("connector");
+      if (!me || search.get("kind") !== "connector" || !orgId || !connectorId) return;
+      await qc.prefetchQuery({ ...connectorQuery(orgId, connectorId), retry: false });
+    },
+  },
+  {
     pattern: "/invite/[token]",
     // The invitation's public preview, and the session (`null` signed out: sign in or sign up).
     queries: ({ params }) =>

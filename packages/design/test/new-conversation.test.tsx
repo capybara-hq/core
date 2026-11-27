@@ -504,7 +504,6 @@ describe("ConversationPage new-conversation slots", () => {
       panels: [],
     },
     composer: <div data-testid="composer">composer</div>,
-    status: { context: "c", version: "v" },
     right: "none" as const,
     onCloseRight: () => {},
   };
@@ -584,7 +583,6 @@ describe("AgentRowLoading (spec §6.16.26)", () => {
         }}
         newConversation={{ agents: <div data-part="real-row" /> }}
         composer={<div />}
-        status={{ context: "", version: "" } as never}
         right="none"
         onCloseRight={() => {}}
         loading={{ agents: true }}

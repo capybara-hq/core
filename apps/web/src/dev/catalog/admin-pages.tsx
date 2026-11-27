@@ -37,7 +37,7 @@ import type { TrajectoryListItem } from "../../lib/trajectories";
 import { COMMANDS } from "./fixtures";
 import { AGENTS, AUTOMATIONS, ME, ORG, RECENT, seeded, T } from "./member-pages";
 import type { AdminPage } from "./routes";
-import { sidebarProps, statusFixture } from "./shell-fixture";
+import { sidebarProps } from "./shell-fixture";
 
 /**
  * `/dev/ui/pages/org-<page>`: the org admin pages phase 2 changed (settings members, tokens,
@@ -316,7 +316,7 @@ export function AdminPageCatalog({ page }: { page: AdminPage }) {
   return (
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={SESSION}>
-        <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture(`/${page}`)}>
+        <AppShell sidebar={sidebar} commands={COMMANDS}>
           <Page page={page} />
         </AppShell>
       </SessionContext.Provider>

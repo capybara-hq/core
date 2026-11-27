@@ -57,7 +57,7 @@ afterEach(() => {
 const renderShell = () =>
   render(
     <DesignProvider locale="zh">
-      <AppShell sidebar={sidebar} status={status}>
+      <AppShell sidebar={sidebar}>
         <textarea aria-label="消息" />
       </AppShell>
     </DesignProvider>,
@@ -104,12 +104,13 @@ describe("the keyboard inset (spec §4.3)", () => {
     expect(remove.mock.calls.map((c) => c[0]).sort()).toEqual(["resize", "scroll"]);
   });
 
-  it("the conversation page lifts its column by it and drops the status bar while it is open", () => {
+  it("the conversation page lifts its column by it (below the paper's inset from 600 up)", () => {
     const css = readFileSync(resolve(__dirname, "../src/styles/conversation-page.css"), "utf8");
     expect(css).toMatch(/\.cb-conv-page \{[^}]*padding-bottom: var\(--cb-keyboard-inset, 0px\);/);
     expect(css).toMatch(
-      /\.cb-shell\[data-keyboard="open"\] \.cb-conv-page \.cb-statusbar \{\s*display: none;/,
+      /\.cb-conv-page \{[^}]*padding:[^;]*calc\(var\(--cb-space-2\) \+ var\(--cb-keyboard-inset, 0px\)\)/,
     );
+    expect(css).not.toContain("cb-statusbar");
   });
 });
 

@@ -116,7 +116,6 @@ describe("ConversationPage history", () => {
         thread={<p>first</p>}
         {...(history ? { history } : {})}
         composer={<div>c</div>}
-        status={{ context: "", version: "" }}
         right="none"
         onCloseRight={() => {}}
       />

@@ -121,7 +121,6 @@ describe("ConversationPage working line", () => {
       panels: [],
     },
     composer: <div>composer</div>,
-    status: { context: "c", version: "v" },
     right: "none" as const,
     onCloseRight: () => {},
   };

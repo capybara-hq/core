@@ -602,18 +602,18 @@ describe("buildTimeline", () => {
         { kind: "divider", key: "e2", divider: "compacted", summary: "summary", savedTokens: 900 },
       ]);
     });
-    it("nothing to compact: the skipped divider with the kept turns", () => {
-      expect(
-        compactRun(
-          ev(2, "compaction_skipped", {
-            reason: "too_few_turns",
-            keepRecentTurns: 4,
-            turns: 1,
-            step: 0,
-          }),
-          ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
-        ),
-      ).toEqual([{ kind: "divider", key: "e2", divider: "compact-skipped", keepRecentTurns: 4 }]);
+    it("nothing to compact: the skipped divider, an earlier plan's reason too", () => {
+      for (const payload of [
+        { reason: "nothing_to_summarize", turns: 1, step: 0 },
+        { reason: "too_few_turns", keepRecentTurns: 4, turns: 1, step: 0 },
+      ]) {
+        expect(
+          compactRun(
+            ev(2, "compaction_skipped", payload),
+            ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
+          ),
+        ).toEqual([{ kind: "divider", key: "e2", divider: "compact-skipped" }]);
+      }
     });
     it("failed: the failure's first line, from compaction_failed or the run's failure", () => {
       expect(
@@ -1974,6 +1974,29 @@ describe("Agent call rows across a child's runs (final review)", () => {
     expect(rowOf(buildTimeline(after, [], new Map(), "en"))).toMatchObject({
       status: "completed",
       tokens: 7,
+    });
+  });
+
+  it("reads watch from the live view, an ordinary question stays input", () => {
+    const events = [user(1, "go"), agentCall, dispatched(3, "k1", "run-a")];
+    const view = (watched: string[]) =>
+      new Map([
+        [
+          "ch1",
+          {
+            status: "waiting",
+            pendingApprovalIds: [],
+            pendingQuestionIds: ["q1"],
+            watchedQuestionIds: watched,
+          },
+        ],
+      ]);
+    expect(
+      rowOf(buildTimeline(events, [], new Map(), "en", { views: view(["q1"]) })),
+    ).toMatchObject({ status: "waiting", waiting: "watch" });
+    expect(rowOf(buildTimeline(events, [], new Map(), "en", { views: view([]) }))).toMatchObject({
+      status: "waiting",
+      waiting: "input",
     });
   });
 });
