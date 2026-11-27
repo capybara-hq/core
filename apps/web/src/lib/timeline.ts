@@ -424,6 +424,11 @@ export type TimelineEntry =
       expiresAt?: string;
       /** The child's question is a watched wait. */
       watch?: true;
+      /**
+       * The wait is over: a later wait of the same sub-agent replaced it, or its row no longer
+       * waits (decided, answered, connected, finished). The process block folds it into its rail.
+       */
+      ended?: true;
     }
   | {
       kind: "task";
@@ -466,6 +471,8 @@ export type TimelineEntry =
        * the rail under its call.
        */
       placement: "output" | "pinned" | "process";
+      /** A pinned card's Markdown (`ToolResult.card.text`); the rail's sections read a task list in it. */
+      text?: string;
     }
   | {
       /**
@@ -1204,6 +1211,8 @@ export function buildEventTimeline(
   };
   /** Root-level sub-agent id → the latest wait of an agent below it (agent map spec §7). */
   const deepWaits = new Map<string, { id: string; kind: SubagentWaitKind }>();
+  /** Root-level sub-agent id → its waits (`subagent-wait` entries) in log order. */
+  const subagentWaits = new Map<string, Extract<TimelineEntry, { kind: "subagent-wait" }>[]>();
   /** Child runs that handed back a report: the description their end entry is named by. */
   const reported = new Map<string, string>();
   /** Child runs (of `reported`) whose end entry is in `out`. */
@@ -1617,6 +1626,7 @@ export function buildEventTimeline(
             callId: p.callId,
             ...(p.card.key !== undefined ? { cardKey: p.card.key } : {}),
             placement: p.card.placement ?? "output",
+            ...(p.card.text !== undefined ? { text: p.card.text } : {}),
           });
           groupCards.set(c.group, list);
         }
@@ -1839,7 +1849,7 @@ export function buildEventTimeline(
           else deepWaits.delete(top);
         }
         const branch = row?.description || row?.agentType || e.payload.subagentId;
-        out.push({
+        const wait: Extract<TimelineEntry, { kind: "subagent-wait" }> = {
           kind: "subagent-wait",
           key,
           subagent: {
@@ -1855,7 +1865,11 @@ export function buildEventTimeline(
           ...approverField(e.payload),
           ...(e.payload.expiresAt !== undefined ? { expiresAt: e.payload.expiresAt } : {}),
           ...(e.payload.watch === true ? { watch: true as const } : {}),
-        });
+        };
+        out.push(wait);
+        const list = subagentWaits.get(top) ?? [];
+        list.push(wait);
+        subagentWaits.set(top, list);
         break;
       }
       case "subagent_delivery": {
@@ -2149,6 +2163,19 @@ export function buildEventTimeline(
         delete row.waiting;
       }
     }
+  }
+
+  // A sub-agent's wait is over once a later wait of the same root-level child replaced it, or its
+  // row (after the live pass above) no longer waits; a connection only once the child ended (its
+  // call goes on without waiting, so the row runs while the line still offers to open it). A
+  // child the log never dispatched stays open.
+  for (const [top, waits] of subagentWaits) {
+    const s = subagentRows.get(top);
+    waits.forEach((w, i) => {
+      const over =
+        s !== undefined && (w.wait === "connect" ? s.finished : s.sub.row.status !== "waiting");
+      if (i < waits.length - 1 || over) w.ended = true;
+    });
   }
 
   // One connect card per connector: each tool that hits a missing connection asks again, so only

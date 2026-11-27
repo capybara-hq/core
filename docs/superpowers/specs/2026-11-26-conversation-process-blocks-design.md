@@ -94,9 +94,11 @@ only where it is still useful (a burst of parallel calls).
 - **Default state**: open while running or waiting; collapsed when the run finishes. While
   running, the rail shows only the last four steps; earlier ones fold into a "前 N 步" /
   "N earlier steps" row that opens them.
-- **Long runs**: the rail pages 200 steps at a time; a fold row adds 200 more (no virtualization).
-  Sectioning the rail under the todo item that was current when a step ran is a follow-up, not
-  implemented.
+- **Long runs**: the rail is windowed (only the rows near the viewport are mounted; spacers keep
+  its height and rule; #925), with no paging. With a task list in play (a pinned card whose `text`
+  is a Markdown task list) the rail is sectioned under the item that was current when each step
+  ran (the first unchecked item of the latest list before the step); a section header per item,
+  closed once the run's latest list has the item done (#924).
 - Earlier blocks of a run that a queued message split show "已处理" / "Worked" without a time; the
   working time sits on the run's last block.
 - The head's pinned summary (the pinned card's title and badge) comes from the view cache only:
@@ -154,8 +156,10 @@ it. Four classes:
 | **Process** | network facts, diffs, command output | Stay in the rail under their call |
 
 A pinned card is a list: the latest card per (extension, view), drawn together under the head.
-When the run stops or fails, the pinned cards stand outside the block. A device-code card and a
-sub-agent wait stay outside after completion too.
+When the run stops or fails, the pinned cards stand outside the block. A device-code card folds
+into the rail once its call ended (the code was used or expired), a sub-agent wait once it ended
+(a later wait replaced it, or the child no longer waits; a connection once the child ended), each
+as a one-line rail row; until then they stay outside (#926).
 
 Order outside the block is fixed: block → blocking cards → pending actions → files and edits →
 answer.
@@ -288,12 +292,13 @@ Steps 1–2 ship alone; 3–5 follow together.
 ### Execution rulings (2026-11-26)
 
 1. The rail pages 200 steps at a time (a fold row adds 200 more) instead of virtualization (§1.3).
-2. Sectioning the rail by todo item (§1.3) is a follow-up, not implemented.
+   Superseded by #925: the rail is windowed.
+2. Sectioning the rail by todo item (§1.3) is a follow-up, not implemented. Done in #924.
 3. The parallel calls of one model step are one rail step (§1.2).
 4. `ProcessEntry.pinned` is a list: the latest card per (extension, view); pinned cards of a
    stopped or failed run stand outside (§4, §5).
 5. Handoffs and reveals merge into one pending entry per turn (§4); device-code and sub-agent-wait
-   entries stay outside after completion.
+   entries stay outside after completion. Superseded by #926: they fold into the rail once over.
 6. The channel progress card's finished meta has no todo count, since the kernel cannot read a
    pinned card's counts (§1.3 keeps it for the web head; §6.2 for channels).
 7. `process_display: off` keeps today's delivery exactly (streaming draft and narration messages)

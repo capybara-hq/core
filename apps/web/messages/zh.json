@@ -1580,7 +1580,9 @@
     "deviceCode": {
       "title": "登录 GitHub",
       "body": "打开 GitHub 并输入下面的一次性代码，完成登录。登录在设备内进行，令牌不会离开设备。",
-      "codeLabel": "一次性代码"
+      "codeLabel": "一次性代码",
+      "used": "已使用",
+      "expired": "已失效"
     },
     "toolLines": "第 {from}–{to} 行",
     "pickModel": "切换模型",
@@ -5909,7 +5911,8 @@
     },
     "contextTotal": "{n} token（含子智能体）",
     "background": "后台任务",
-    "startingGrant": "运行中的工作保留开始时的权限，权限更改只对新的操作生效；撤销设备或组织的访问仍可能使其停止。"
+    "startingGrant": "运行中的工作保留开始时的权限，权限更改只对新的操作生效；撤销设备或组织的访问仍可能使其停止。",
+    "connectEnded": "子智能体 {name} 的连接请求已结束。"
   },
   "background": {
     "inBackground": "后台运行",

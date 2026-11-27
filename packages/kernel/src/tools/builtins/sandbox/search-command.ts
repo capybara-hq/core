@@ -2,10 +2,18 @@ import { shellQuote } from "./common.js";
 
 /**
  * Directories `Grep` and `Glob` never walk into, whatever the ignore files say: version control
- * metadata and installed packages. A path given explicitly is still searched (only directories
- * met while walking are skipped).
+ * metadata, installed packages and tool caches (`.cache`: a docker device's HOME is the workspace,
+ * so a search of the workspace outside a repository would walk its caches). A path given
+ * explicitly is still searched (only directories met while walking are skipped).
  */
-export const ALWAYS_SKIPPED_DIRS = [".git", ".hg", ".svn", ".jj", "node_modules"] as const;
+export const ALWAYS_SKIPPED_DIRS = [
+  ".git",
+  ".hg",
+  ".svn",
+  ".jj",
+  "node_modules",
+  ".cache",
+] as const;
 
 /**
  * Runs `rg` when the device has it, else `fallback`, in one shell command (no extra round trip

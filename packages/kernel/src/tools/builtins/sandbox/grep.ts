@@ -35,7 +35,8 @@ const SPEC: ToolSpec = {
     'syntax as in grep -E, e.g. "log.*Error" or "def (load|save)"; no backreferences or ' +
     "look-around). Use it to find where something is defined or mentioned. Searches path (a " +
     "file, or a directory recursively; default: the workspace directory). A directory search " +
-    "skips binary files, .git and node_modules directories and, where the device supports it, " +
+    "skips binary files, version control (.git, .hg, .svn, .jj), node_modules and .cache " +
+    "directories and, where the device supports it, " +
     "files ignored by .gitignore, .ignore or .rgignore files; to search inside a skipped " +
     "directory, pass that directory or a file in it as path. glob limits " +
     'the files searched by name, e.g. "*.py". output_mode picks what comes back: ' +

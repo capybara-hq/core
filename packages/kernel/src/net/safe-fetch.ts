@@ -93,20 +93,111 @@ function capBody(body: ReadableStream<Uint8Array>, maxBytes: number): ReadableSt
   );
 }
 
+export type SafeFetchOptions = {
+  lookup?: LookupFn;
+  maxBytes?: number;
+  /** A 3xx response (other than 304): `refuse` (default) rejects with `net.redirect`, `return` returns it. */
+  redirects?: "refuse" | "return";
+  /** Tests only: wraps the pinned dispatcher (defaults to {@link pinnedAgent}). */
+  dispatcherFor?: (ips: string[]) => Agent;
+  /** Tests only: builds the proxy dispatcher (defaults to {@link proxyAgent}). */
+  proxyDispatcherFor?: (proxyUrl: string) => Agent;
+  /**
+   * Retry transient failures of an idempotent request (a GET, or a POST that only reads, with a
+   * replayable body): a connection error or HTTP 502 / 503 / 504, up to `attempts` tries in all
+   * (default 3) with exponential backoff from `backoffMs` (default 500 ms), cut short by the
+   * request's signal. Network refusals (`NetDeniedError`), an oversized body and an abort are
+   * never retried. After the last try a 5xx response is returned as is.
+   */
+  retry?: { attempts?: number; backoffMs?: number };
+};
+
+const RETRY_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = 500;
+const RETRY_STATUSES = new Set([502, 503, 504]);
+
+function retryDelay(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+const CONNECTION_CODES = new Set([
+  "ETIMEDOUT",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+/**
+ * Why a fetch failed, with undici's hidden cause ("fetch failed" -> ETIMEDOUT, ECONNRESET, ...).
+ * A connection-level failure names the egress proxy setting: the kernel connects directly unless
+ * `net.httpsProxy` is set, and never reads HTTPS_PROXY.
+ */
+export function describeFetchError(e: unknown): string {
+  if (!(e instanceof Error)) return String(e);
+  const cause = (e as { cause?: unknown }).cause;
+  if (!(cause instanceof Error) || cause.message === "" || cause.message === e.message) {
+    return e.message;
+  }
+  const code = (cause as { code?: unknown }).code;
+  const text = `${e.message} (${typeof code === "string" ? `${code}: ` : ""}${cause.message})`;
+  return typeof code === "string" && CONNECTION_CODES.has(code)
+    ? `${text}. If this deployment reaches the internet through a proxy, set net.httpsProxy (CAPYBARA_NET__HTTPSPROXY); HTTPS_PROXY is not read`
+    : text;
+}
+
 export async function safeFetch(
   url: string,
   init: RequestInit & { signal: AbortSignal },
   policy: NetPolicy,
-  opts: {
-    lookup?: LookupFn;
-    maxBytes?: number;
-    /** A 3xx response (other than 304): `refuse` (default) rejects with `net.redirect`, `return` returns it. */
-    redirects?: "refuse" | "return";
-    /** Tests only: wraps the pinned dispatcher (defaults to {@link pinnedAgent}). */
-    dispatcherFor?: (ips: string[]) => Agent;
-    /** Tests only: builds the proxy dispatcher (defaults to {@link proxyAgent}). */
-    proxyDispatcherFor?: (proxyUrl: string) => Agent;
-  } = {},
+  opts: SafeFetchOptions = {},
+): Promise<Response> {
+  const retry = opts.retry;
+  if (retry === undefined) return safeFetchOnce(url, init, policy, opts);
+  const attempts = Math.max(1, retry.attempts ?? RETRY_ATTEMPTS);
+  const base = retry.backoffMs ?? RETRY_BACKOFF_MS;
+  for (let attempt = 1; ; attempt++) {
+    let res: Response | undefined;
+    let failure: unknown;
+    try {
+      res = await safeFetchOnce(url, init, policy, opts);
+    } catch (e) {
+      failure = e;
+    }
+    const transient =
+      res !== undefined
+        ? RETRY_STATUSES.has(res.status)
+        : !init.signal.aborted &&
+          !(failure instanceof NetDeniedError) &&
+          !(failure instanceof NetBodyTooLargeError);
+    if (!transient || attempt >= attempts) {
+      if (res !== undefined) return res;
+      throw failure;
+    }
+    await res?.body?.cancel().catch(() => {});
+    await retryDelay(base * 2 ** (attempt - 1), init.signal);
+  }
+}
+
+async function safeFetchOnce(
+  url: string,
+  init: RequestInit & { signal: AbortSignal },
+  policy: NetPolicy,
+  opts: SafeFetchOptions,
 ): Promise<Response> {
   let target: URL;
   try {

@@ -1,4 +1,5 @@
-import type { DividerData, TimelineEntry, TimelineSubagent } from "./timeline";
+import type { ModelRef } from "./conversations";
+import type { DividerData, TimelineEntry, TimelineSubagent, TimelineTool } from "./timeline";
 
 /**
  * Process blocks (conversation process blocks spec §1–§5): a pure pass after the timeline
@@ -19,7 +20,8 @@ import type { DividerData, TimelineEntry, TimelineSubagent } from "./timeline";
  * - An undecided approval, question or connect, a device code and a sub-agent's wait stand outside,
  *   right after the block (the block is `waiting` while one is undecided); once decided an
  *   approval or question is a `decided` step at its place in the rail, a connect once its run
- *   ended (until then it still offers Connect).
+ *   ended (until then it still offers Connect), a device code once its call ended (the code was
+ *   used or expired), a sub-agent's wait once it ended (`ended`, set by the timeline).
  * - Handoffs and reveals of a turn (up to the next message that starts a run, so across the blocks
  *   a sub-agent group or a queued message splits) merge into one `pending` entry, after the
  *   blocking cards of the turn's last block; `output` cards, files, sub-agent deliveries and
@@ -30,6 +32,8 @@ import type { DividerData, TimelineEntry, TimelineSubagent } from "./timeline";
  *   latest block that wrote one (earlier versions are only their call's rail row); after a
  *   `failed` / `stopped` run they stand outside, right after that block. `process` cards stay as
  *   steps after their tools step.
+ * - `taskLists`: the run's pinned cards whose `text` is a Markdown task list, up to the block's
+ *   end, and the run's latest one; {@link sectionRail} sections the rail by them.
  */
 
 type Entry<K extends TimelineEntry["kind"]> = Extract<TimelineEntry, { kind: K }>;
@@ -39,7 +43,10 @@ export type ProcessStep =
   | { kind: "narration"; key: string; text: string; streaming: boolean }
   | { kind: "subagent"; key: string; row: TimelineSubagent }
   | { kind: "note"; key: string; note: "fallback" | "compacted"; divider: DividerData }
-  | { kind: "decided"; key: string; entry: Entry<"approval" | "question" | "connect"> };
+  | { kind: "decided"; key: string; entry: Folded };
+
+/** The blocking cards that fold into the rail once over (spec §4, #926). */
+type Folded = Entry<"approval" | "question" | "connect" | "device-code" | "subagent-wait">;
 
 export type ProcessEntry = {
   kind: "process";
@@ -54,6 +61,11 @@ export type ProcessEntry = {
   durationMs: number | null;
   /** Background tasks the block started that are still running. */
   backgroundRunning: number;
+  /**
+   * The run's task-list cards (pinned cards whose `text` is a Markdown task list) up to this
+   * block's end, in log order, and the run's latest one: the rail's sections (#924).
+   */
+  taskLists: { cards: Entry<"card">[]; latest: Entry<"card"> | null };
 };
 
 export type PendingEntry = {
@@ -68,7 +80,7 @@ export type ThreadEntry =
   | PendingEntry;
 
 /** The cards that wait for a person: outside the block, right after it. */
-type Blocking = Entry<"approval" | "question" | "connect" | "device-code" | "subagent-wait">;
+type Blocking = Folded;
 
 interface OpenBlock {
   block: ProcessEntry;
@@ -113,9 +125,24 @@ function decided(e: Entry<"approval" | "question" | "connect">, b: ProcessEntry 
  * still offers Connect and stays outside: folded into a block that closes at the answer, its
  * button would vanish under the person's hand.
  */
-function folds(e: Entry<"approval" | "question" | "connect">, b: ProcessEntry | null): boolean {
-  return e.kind === "connect" ? e.item.closed : decided(e, b);
+function folds(e: Folded, b: ProcessEntry | null): boolean {
+  switch (e.kind) {
+    case "connect":
+      return e.item.closed;
+    case "device-code": {
+      // the code was used or expired: its call ended (a call not in the block stays outside)
+      const call = b === null ? undefined : toolsOf(b).find((t) => t.callId === e.callId);
+      return call !== undefined && !isLive(call.row.status);
+    }
+    case "subagent-wait":
+      return e.ended === true;
+    default:
+      return decided(e, b);
+  }
 }
+
+const isLive = (status: TimelineTool["row"]["status"]) =>
+  status === "running" || status === "pending" || status === "streaming";
 
 /** Waiting for a person: an undecided card outside, a row waiting, a device code's call running. */
 function waits(o: OpenBlock): boolean {
@@ -125,8 +152,7 @@ function waits(o: OpenBlock): boolean {
       if (!decided(c, o.block)) return true;
     } else if (c.kind === "device-code") {
       const call = rows.find((t) => t.callId === c.callId);
-      if (call !== undefined && (call.row.status === "running" || call.row.status === "pending"))
-        return true;
+      if (call !== undefined && isLive(call.row.status)) return true;
     }
   }
   if (rows.some((t) => t.row.waiting !== undefined)) return true;
@@ -190,6 +216,7 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
           pinned: [],
           durationMs: null,
           backgroundRunning: 0,
+          taskLists: { cards: [], latest: null },
         },
         blocking: [],
         outputs: [],
@@ -238,8 +265,15 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
     else if (bucket === "blocking") s.open.blocking.push(e as Blocking);
     else s.open.outputs.push(e);
   };
+  /** Each block's own task-list cards, in log order (spread over the run's blocks after the pass). */
+  const ownLists = new Map<ProcessEntry, Entry<"card">[]>();
   const pin = (e: Entry<"card">) => {
     const b = ensure(e).block;
+    if (parseTaskList(e.text) !== null) {
+      const own = ownLists.get(b) ?? [];
+      own.push(e);
+      ownLists.set(b, own);
+    }
     const runId = b.runId;
     if (runId === null) {
       // no run named yet: the latest per (plugin, view) on this block alone
@@ -307,13 +341,11 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
       case "approval":
       case "question":
       case "connect":
+      case "device-code":
+      case "subagent-wait":
         if (s.open !== null && folds(e, s.open.block))
           addStep(e, { kind: "decided", key: e.key, entry: e });
         else outside(e, "blocking");
-        break;
-      case "device-code":
-      case "subagent-wait":
-        outside(e, "blocking");
         break;
       case "handoff":
       case "reveal":
@@ -374,6 +406,20 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
   close("live");
   endTurn();
 
+  // Each block sees its run's task lists up to its own end; the run's latest decides which
+  // sections are done.
+  const runLists = new Map<string, Entry<"card">[]>();
+  const blocksOut = out.filter((e): e is ProcessEntry => e.kind === "process");
+  for (const b of blocksOut) {
+    const own = ownLists.get(b) ?? [];
+    const cards = b.runId === null ? own : [...(runLists.get(b.runId) ?? []), ...own];
+    if (b.runId !== null) runLists.set(b.runId, cards);
+    b.taskLists = { cards, latest: cards.at(-1) ?? null };
+  }
+  for (const b of blocksOut) {
+    if (b.runId !== null) b.taskLists.latest = runLists.get(b.runId)?.at(-1) ?? null;
+  }
+
   // A stopped or failed run's pinned cards stand outside, right after their block (spec §4).
   const result: ThreadEntry[] = [];
   for (const e of out) {
@@ -388,4 +434,162 @@ export function groupProcess(entries: readonly TimelineEntry[]): ThreadEntry[] {
     }
   }
   return result;
+}
+
+// ── The rail: its rows and its sections ─────────────────────────────────────
+
+type Extra = Extract<ProcessStep, { kind: "network-facts" | "card" }>;
+
+/** One rail row: a step, with the process cards and network facts of its calls under it. */
+export type RailItem =
+  | { kind: "thinking"; key: string; e: Extract<ProcessStep, { kind: "thinking" }> }
+  | { kind: "narration"; key: string; text: string }
+  | { kind: "tool"; key: string; tools: TimelineTool[]; extras: Extra[] }
+  | { kind: "subagent"; key: string; row: TimelineSubagent }
+  | { kind: "note"; key: string; step: Extract<ProcessStep, { kind: "note" }> }
+  | { kind: "decided"; key: string; e: Folded }
+  | { kind: "extra"; key: string; extra: Extra };
+
+/**
+ * A block's steps as rail rows: one per model step's tool calls (a `tools` entry runs on across
+ * steps, so it is split where the step changes; the row's key is its first call's); a process
+ * card or a network fact goes under the step of the call that made it; thinking the model does
+ * not show is left out. `byCall`: each call's row.
+ */
+export function railItems(
+  b: ProcessEntry,
+  reasoningOf: (m: ModelRef) => boolean | undefined,
+): { items: RailItem[]; byCall: Map<string, Extract<RailItem, { kind: "tool" }>> } {
+  const items: RailItem[] = [];
+  const byCall = new Map<string, Extract<RailItem, { kind: "tool" }>>();
+  for (const s of b.steps) {
+    switch (s.kind) {
+      case "thinking":
+        if (s.model === null || reasoningOf(s.model) !== false)
+          items.push({ kind: "thinking", key: s.key, e: s });
+        break;
+      case "narration":
+        items.push({ kind: "narration", key: s.key, text: s.text });
+        break;
+      case "tools": {
+        let item: Extract<RailItem, { kind: "tool" }> | null = null;
+        let at: string | null = null;
+        for (const r of s.rows) {
+          const step = r.step === undefined ? `call:${r.callId}` : `${r.step.runId}:${r.step.step}`;
+          if (item === null || step !== at) {
+            item = { kind: "tool", key: `${s.key}:${r.callId}`, tools: [], extras: [] };
+            at = step;
+            items.push(item);
+          }
+          item.tools.push(r);
+          byCall.set(r.callId, item);
+        }
+        break;
+      }
+      case "network-facts":
+      case "card": {
+        const at = byCall.get(s.callId);
+        if (at !== undefined) at.extras.push(s);
+        else items.push({ kind: "extra", key: s.key, extra: s });
+        break;
+      }
+      case "subagent":
+        items.push({ kind: "subagent", key: s.key, row: s.row });
+        break;
+      case "note":
+        items.push({ kind: "note", key: s.key, step: s });
+        break;
+      case "decided":
+        items.push({ kind: "decided", key: s.key, e: s.entry });
+        break;
+    }
+  }
+  return { items, byCall };
+}
+
+/** One item of a task list: its words (Markdown emphasis removed) and whether it is checked. */
+export type TaskListItem = { label: string; done: boolean };
+
+const TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s+(.*)$/;
+
+/**
+ * The task list in a pinned card's Markdown (`- [x] done`, `- [ ] open`, as the todo plugin writes
+ * it), or null when the text holds none. The words lose their emphasis marks and an in-progress
+ * suffix, so an item reads the same while it runs and once done.
+ */
+export function parseTaskList(text: string | undefined): TaskListItem[] | null {
+  if (text === undefined) return null;
+  const items: TaskListItem[] = [];
+  for (const line of text.split("\n")) {
+    const m = TASK_LINE.exec(line);
+    if (m === null) continue;
+    const label = (m[2] ?? "")
+      .replace(/\*\*|__|~~/g, "")
+      .replace(/\s*\(in progress\)\s*$/i, "")
+      .trim();
+    if (label !== "") items.push({ label, done: m[1] !== " " });
+  }
+  return items.length > 0 ? items : null;
+}
+
+/** A stretch of the rail run under one task list item (#924). */
+export type RailSection = {
+  /** The first item's key, prefixed: stable while the section grows. */
+  key: string;
+  /**
+   * The item that was current (the list's first unchecked one) when the steps ran: its words and
+   * whether the run's latest list has it done; null before the run's first list, or while no item
+   * was open.
+   */
+  task: { index: number; label: string; done: boolean } | null;
+  items: RailItem[];
+  /** The index of the section's first item among the block's rail items. */
+  start: number;
+};
+
+/**
+ * The rail's items cut into sections by the task list that was current when each ran: the latest
+ * task-list card before the step (a list written by a step applies from the next step on, so the
+ * step that marks an item done stays in that item's section). A block with no list is one
+ * section with no task.
+ */
+export function sectionRail(
+  items: readonly RailItem[],
+  lists: ProcessEntry["taskLists"],
+): RailSection[] {
+  const inBlock = new Set<string>();
+  for (const it of items) if (it.kind === "tool") for (const t of it.tools) inBlock.add(t.callId);
+  // lists written before the block apply from its start; the block's own after their step
+  let current: TaskListItem[] | null = null;
+  const written = new Map<string, TaskListItem[]>();
+  for (const c of lists.cards) {
+    const parsed = parseTaskList(c.text);
+    if (parsed === null) continue;
+    if (inBlock.has(c.callId)) written.set(c.callId, parsed);
+    else current = parsed;
+  }
+  const latest = parseTaskList(lists.latest?.text);
+  const sections: RailSection[] = [];
+  items.forEach((it, i) => {
+    const index = current === null ? -1 : current.findIndex((x) => !x.done);
+    const last = sections.at(-1);
+    if (last === undefined || (last.task?.index ?? -1) !== index) {
+      const now = index < 0 ? undefined : current?.[index];
+      const end = index < 0 ? undefined : latest?.[index];
+      sections.push({
+        key: `section:${it.key}`,
+        task:
+          now === undefined
+            ? null
+            : { index, label: end?.label ?? now.label, done: end?.done ?? false },
+        items: [],
+        start: i,
+      });
+    }
+    sections.at(-1)?.items.push(it);
+    if (it.kind === "tool") {
+      for (const t of it.tools) current = written.get(t.callId) ?? current;
+    }
+  });
+  return sections;
 }
