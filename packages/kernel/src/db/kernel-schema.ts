@@ -1452,6 +1452,10 @@ export interface DeviceConversationNoticesTable {
   next_attempt_at: Ts;
   /** The lease of the attempt under way; null or past: free. */
   claimed_until: TsNullable;
+  /** The token of the attempt holding the lease (release and delete act only under it). */
+  claim_token: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Consecutive failed attempts (the backoff). */
+  failures: ColumnType<number, number | undefined, number>;
   /** The service ids (`<extension>.<name>`) that answered the notice. */
   acked_services: ColumnType<string[], string[] | undefined, string[]>;
   last_failure: ColumnType<string | null, string | null | undefined, string | null>;

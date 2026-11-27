@@ -282,3 +282,29 @@ request path passes a request body of this shape untouched.
 - **Public API reports**: SDK device service protocol helpers, `pnpm gen:sdk-api` and a changeset on
   `@capybara-hq/plugin-sdk`.
 - **Extensions / Sandboxes**: no contract change; providers pass the body through.
+
+## Review fixes (2026-11-27, review of core#938)
+
+- **One attempt per silent machine per tick.** A sweep stops a device's chain at its first
+  unreachable outcome (the attempt reports `unreachable`), so a half-open machine costs one
+  attempt's deadline per tick whatever its number of owed notices. The prompt outbox attempt runs
+  on a 5 s device budget, so it never holds a maintenance slot for long; the sweep keeps 20 s.
+- **Settled past the window when the machine answered.** After the restore window a failure that
+  is not unreachable (the machine or provider answered with an error: an outdated device program,
+  a provider failure) settles the row like a reach; only an unreachable machine keeps it owed until
+  the 7-day expiry. A failure is logged once per row and kind (`last_failure` changes), not per
+  attempt.
+- **Fenced lease.** The claim writes a fresh `claim_token`; release and delete act only under it,
+  so an attempt that overran its lease never clears or overwrites another attempt's row.
+- **Backoff by failures.** A `failures` column counts consecutive failed attempts (reset by any
+  attempt without a failure); pending-service attempts inside the window no longer push the first
+  real failure to the cap.
+- **Database clock.** The claim returns whether the window passed (`created_at <= now() - window`),
+  so replica clock skew does not move it.
+- The sweep honours the `@LockedInterval` signal between notices; `created_at` is indexed for the
+  expiry delete.
+- The SDK doc says the notice arrives on a request connection only; a stream message of that shape
+  is panel input, and an extension's own request of that shape is the extension's.
+- Ruling 11 (review M9, kept): the notice also reaches running services of extensions switched off
+  in the org since; only the device owner's own opaque conversation id leaves. Cost if wrong: a
+  disabled extension's service learns of a deletion in a conversation it once served.

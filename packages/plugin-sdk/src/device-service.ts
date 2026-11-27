@@ -91,12 +91,16 @@ export const DEVICE_SERVICE_RESTORE_MAX_AGE_MS = 10 * 60_000;
  * The kernel's notice that a conversation was deleted: a request body the kernel sends every
  * running service of an extension on the deleted conversation's device, at least once, soon after
  * the deletion (a device that is offline gets it when it is back; a service that is stopped gets
- * it when it runs again within {@link DEVICE_SERVICE_RESTORE_MAX_AGE_MS}). Only the kernel builds
- * it, from the deleted conversation's id; no extension, tool or panel input reaches it. The
- * service forgets what it keeps for that conversation and for the conversations whose tree root
- * it is (closes their pages, drops their state; never shared data such as a browser profile) and
- * answers with any message: the kernel reads no more than that it answered. Handling it twice
- * must be harmless. A service that does not know it ignores it, as any unknown body.
+ * it when it runs again within {@link DEVICE_SERVICE_RESTORE_MAX_AGE_MS}). The kernel builds it
+ * from the deleted conversation's id. It arrives on a **request** connection only: a stream
+ * message of this shape is a viewer's (panel) input and never the notice, so a service parses it
+ * only on request connections. As with the roll check, the extension's own requests
+ * (`ctx.deviceAccess.request`) reach the same connection kind: a body of this shape sent by the
+ * extension is the extension's to answer for. The service forgets what it keeps for that
+ * conversation and for the conversations whose tree root it is (closes their pages, drops their
+ * state; never shared data such as a browser profile) and answers with any message: the kernel
+ * reads no more than that it answered. Handling it twice must be harmless. A service that does
+ * not know it ignores it, as any unknown body.
  */
 export interface DeviceServiceConversationDeleted {
   capybara: "conversation-deleted";

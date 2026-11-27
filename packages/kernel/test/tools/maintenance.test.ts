@@ -213,8 +213,8 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       { deleteObject: async (d) => void calls.push(["share-object-delete", d]) },
       { deleteObject: async (d) => void calls.push(["platform-icon-delete", d]) },
       {
-        attempt: async (orgId, noticeId) => {
-          calls.push(["conversation-notice", orgId, noticeId]);
+        attempt: async (orgId, noticeId, opts) => {
+          calls.push(["conversation-notice", orgId, noticeId, opts?.timeoutMs]);
           return "delivered";
         },
       },
@@ -264,7 +264,8 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["sched-settle", { taskRunId: "tr1", check: 2 }],
       ["share-object-delete", shareObject],
       ["platform-icon-delete", iconObject],
-      ["conversation-notice", "o", "n1"],
+      // the prompt attempt runs on a short device budget
+      ["conversation-notice", "o", "n1", 5_000],
       ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([]);

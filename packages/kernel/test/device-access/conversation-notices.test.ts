@@ -24,6 +24,7 @@ import {
   type DeviceAccessCaller,
   DeviceAccessService,
 } from "../../src/device-access/device-access.service.js";
+import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -356,7 +357,7 @@ describe("conversation-deleted notice", () => {
       new DeviceOfflineError(s.deviceId),
     );
     await ageNotice();
-    expect(await attemptNow()).toBe("owed");
+    expect(await attemptNow()).toBe("unreachable");
     const [row] = await notices();
     expect(row?.last_failure).toBe("unreachable");
     const wait = (row?.next_attempt_at.getTime() ?? 0) - Date.now();
@@ -365,6 +366,102 @@ describe("conversation-deleted notice", () => {
     vi.restoreAllMocks();
     expect(await attemptNow()).toBe("delivered");
     expect(await logged()).toEqual([body(s.conversationId)]);
+  });
+
+  it("an error from a machine that answered stays owed inside the window and settles after it", async () => {
+    await startEcho();
+    await stopEcho();
+    await deleteConv({ holdJob: true });
+    // a pending service first: owed, no failure counted
+    expect(await attemptNow()).toBe("owed");
+    expect((await notices())[0]?.failures).toBe(0);
+    // then the provider fails in an ordinary way (an outdated machine program, a provider bug)
+    vi.spyOn(k.app.get(SandboxService), "ifRunning").mockRejectedValue(
+      new Error("the machine does not know service.status"),
+    );
+    const warn = vi.spyOn((delivery as unknown as { log: { warn: () => void } }).log, "warn");
+    expect(await attemptNow()).toBe("owed");
+    expect(await attemptNow()).toBe("owed");
+    const [row] = await notices();
+    expect(row?.last_failure).toBe("the machine does not know service.status");
+    expect(row?.failures).toBe(2);
+    // the backoff counts failures only: the first failure waited 30 s, the second 60 s
+    const wait = (row?.next_attempt_at.getTime() ?? 0) - Date.now();
+    expect(wait).toBeGreaterThan(NOTICE_BACKOFF_MS);
+    expect(wait).toBeLessThanOrEqual(2 * NOTICE_BACKOFF_MS + 5_000);
+    // logged once for the row, not per attempt
+    expect(warn).toHaveBeenCalledTimes(1);
+    // past the window the answered failure settles it
+    await ageNotice();
+    expect(await attemptNow()).toBe("delivered");
+    expect(await notices()).toEqual([]);
+  });
+
+  it("a delete that rolls back owes nothing", async () => {
+    const outbox = k.app.get(OutboxService);
+    const add = outbox.add.bind(outbox);
+    vi.spyOn(outbox, "add").mockImplementation(async (job) => {
+      if (job.name === CONVERSATION_NOTICE_JOB) throw new Error("outbox down");
+      return add(job);
+    });
+    const res = await s.req({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/conversations/${s.conversationId}`,
+    });
+    expect(res.statusCode).toBe(500);
+    expect(await notices()).toEqual([]);
+    const conv = await db
+      .selectFrom("conversations")
+      .select("deleted_at")
+      .where("id", "=", s.conversationId)
+      .executeTakeFirstOrThrow();
+    expect(conv.deleted_at).toBeNull();
+  });
+
+  it("the sweep tries an unreachable device once per tick and drops notices past 7 days", async () => {
+    const owe = async (age = "0 seconds") => {
+      const conversationId = await createConv(s.req, orgId, s.agentId);
+      await db
+        .updateTable("conversations")
+        .set({ device_id: s.deviceId, deleted_at: sql<Date>`now()` })
+        .where("id", "=", conversationId)
+        .execute();
+      const id = randomUUID();
+      await db
+        .insertInto("device_conversation_notices")
+        .values({
+          id,
+          org_id: orgId,
+          device_id: s.deviceId,
+          conversation_id: conversationId,
+          kind: "conversation_deleted",
+          created_at: sql<Date>`now() - ${age}::interval`,
+          next_attempt_at: sql<Date>`now() - interval '1 second'`,
+        })
+        .execute();
+      return id;
+    };
+    await startEcho();
+    const [a, b] = [await owe(), await owe()];
+    const old = await owe("8 days");
+    const ifRunning = vi
+      .spyOn(k.app.get(SandboxService), "ifRunning")
+      .mockRejectedValue(new DeviceOfflineError(s.deviceId));
+    const out = await delivery.sweepOnce();
+    // one attempt reached the silent machine; the device's other notice waits for a later tick
+    expect(ifRunning).toHaveBeenCalledTimes(1);
+    expect([...out.values()]).toEqual(["unreachable"]);
+    expect(out.has(old)).toBe(false);
+    const left = await db
+      .selectFrom("device_conversation_notices")
+      .select("id")
+      .where("id", "in", [a, b, old])
+      .execute();
+    expect(left.map((r) => r.id).sort()).toEqual([a, b].sort());
+    // an aborted sweep attempts nothing
+    ifRunning.mockClear();
+    expect((await delivery.sweepOnce(AbortSignal.abort())).size).toBe(0);
+    expect(ifRunning).not.toHaveBeenCalled();
   });
 
   it("is never reached under another org, and a held lease skips a second attempt", async () => {

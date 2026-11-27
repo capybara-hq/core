@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   DEVICE_SERVICE_RESTORE_MAX_AGE_MS,
   encodeConversationDeleted,
@@ -22,9 +23,14 @@ export const CONVERSATION_NOTICE_SWEEP_JOB = "device-conversation-notice-sweep";
 export const NOTICE_SWEEP_MS = 30_000;
 /** The longest one attempt holds its row (the lease); an attempt's own deadline stays under it. */
 export const NOTICE_CLAIM_MS = 60_000;
-/** One attempt's deadline: the lease wait, the status checks and the requests. */
+/** A sweep attempt's deadline: the lease wait, the status checks and the requests. */
 export const NOTICE_ATTEMPT_TIMEOUT_MS = 20_000;
-/** One service request's deadline. */
+/**
+ * The prompt attempt's deadline (the outbox job after the deletion, on the shared maintenance
+ * queue): short, so a silent machine never holds a maintenance slot for long; the sweep retries.
+ */
+export const NOTICE_PROMPT_TIMEOUT_MS = 5_000;
+/** One service request's deadline (never past the attempt's). */
 export const NOTICE_REQUEST_TIMEOUT_MS = 10_000;
 /** The first retry delay after a failed attempt; it doubles up to {@link NOTICE_BACKOFF_MAX_MS}. */
 export const NOTICE_BACKOFF_MS = 30_000;
@@ -43,25 +49,34 @@ export type NoticeOutcome =
   /** Delivered (or no longer deliverable: the device is gone): the row is deleted. */
   | "delivered"
   /** Still owed: a service was not running inside the restore window, or the attempt failed. */
-  | "owed";
+  | "owed"
+  /** Still owed: the device's machine did not answer (the sweep tries its other notices later). */
+  | "unreachable";
 
 interface NoticeRow {
   id: string;
   org_id: string;
   device_id: string;
   conversation_id: string;
-  created_at: Date;
-  attempts: number;
+  failures: number;
   acked_services: string[];
+  last_failure: string | null;
+  /** This attempt's lease token: release and remove act only while it is still the row's. */
+  claim_token: string;
+  /** Whether the restore window since the deletion has passed (the database's clock). */
+  window_passed: boolean;
+}
+
+interface Failure {
+  unreachable: boolean;
+  detail: string;
 }
 
 /** What reaching the device found. */
 interface Reach {
   /** Service ids that answered the notice in this attempt. */
   acked: string[];
-  /** Whether every declared service not acked yet was found stopped or absent (none failed). */
-  reached: boolean;
-  failure?: { unreachable: boolean; detail: string };
+  failure?: Failure;
 }
 
 /**
@@ -69,9 +84,10 @@ interface Reach {
  * design §4.3). A notice row is owed by the conversation's deletion
  * ({@link oweConversationDeletedNotice}); one attempt:
  *
- * 1. claims the row for {@link NOTICE_CLAIM_MS} (a row lease, never a lock inside a transaction):
- *    a row another attempt holds, or one already delivered, is skipped, so replicas never deliver
- *    one notice at once;
+ * 1. claims the row for {@link NOTICE_CLAIM_MS} under a fresh token (a row lease, never a lock
+ *    inside a transaction): a row another live attempt holds, or one already delivered, is
+ *    skipped; release and remove act only under the attempt's own token, so an attempt that
+ *    overran its lease never touches the row another attempt holds;
  * 2. a device that is gone (no row, deleted) ends the notice; a device whose provider is not
  *    loaded on this replica keeps it owed;
  * 3. on the device's current instance only, while it runs (`ifRunning`: never created, resumed or
@@ -79,9 +95,12 @@ interface Reach {
  *    acked yet: a running one gets the kernel's body ({@link encodeConversationDeleted}) and acks
  *    by answering; a stopped one stays pending;
  * 4. delivered (row deleted) once every declared service acked, or once the restore window
- *    (`DEVICE_SERVICE_RESTORE_MAX_AGE_MS`) since the deletion has passed and the attempt reached the
- *    device; otherwise owed, with the next turn after the sweep period (pending services) or a
- *    backoff (a failure; an unreachable device stays owed whatever the window).
+ *    (`DEVICE_SERVICE_RESTORE_MAX_AGE_MS`, measured on the database's clock) since the deletion
+ *    has passed and the attempt reached the device's machine (it answered, even with an error:
+ *    an outdated program or a provider failure will not change by retrying); otherwise owed, with
+ *    the next turn after the sweep period (pending services) or a backoff by the row's failures
+ *    (an unreachable machine stays owed whatever the window, up to {@link NOTICE_MAX_AGE_MS}).
+ *    A failure is logged once per row and kind of failure, not per attempt.
  *
  * The body is built here, from the row's conversation id, and nowhere else.
  */
@@ -101,20 +120,25 @@ export class ConversationNoticeDelivery {
     return this.kdb.db;
   }
 
-  /** One attempt at notice `noticeId` of org `orgId` (in that org's scope). */
-  async attempt(orgId: string, noticeId: string): Promise<NoticeOutcome> {
+  /**
+   * One attempt at notice `noticeId` of org `orgId` (in that org's scope). `timeoutMs`: the
+   * attempt's device budget ({@link NOTICE_PROMPT_TIMEOUT_MS} for the prompt job, the default
+   * {@link NOTICE_ATTEMPT_TIMEOUT_MS} for the sweep).
+   */
+  async attempt(
+    orgId: string,
+    noticeId: string,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<NoticeOutcome> {
     const row = await this.claim(orgId, noticeId);
     if (!row) return "skipped";
     try {
-      return await this.deliver(row);
+      return await this.deliver(row, opts.timeoutMs ?? NOTICE_ATTEMPT_TIMEOUT_MS);
     } catch (err) {
       // a kernel failure (the database, a lease wait): owed, the sweep tries again
-      await this.release(row, { unreachable: false, detail: errText(err) });
-      this.log.warn("conversation notice attempt failed; it stays owed", {
-        noticeId: row.id,
-        deviceId: row.device_id,
-        err,
-      });
+      const failure = { unreachable: false, detail: errText(err) };
+      this.warnOnce(row, failure);
+      await this.release(row, failure);
       return "owed";
     }
   }
@@ -122,10 +146,12 @@ export class ConversationNoticeDelivery {
   /**
    * One sweep: drops notices older than {@link NOTICE_MAX_AGE_MS}, then attempts up to
    * {@link NOTICES_PER_SWEEP} owed notices whose turn came and that no attempt holds, oldest turn
-   * first: devices side by side, one device's notices one after another (a silent machine costs
-   * one attempt's deadline per tick). Returns the outcomes by notice id.
+   * first: devices side by side, one device's notices one after another, and a device whose
+   * machine did not answer gets no further attempt in this sweep (a silent machine costs one
+   * attempt's deadline per tick). Stops between notices once `signal` aborts (the tick's lock
+   * lost, the replica stopping). Returns the outcomes by notice id.
    */
-  async sweepOnce(): Promise<Map<string, NoticeOutcome>> {
+  async sweepOnce(signal?: AbortSignal): Promise<Map<string, NoticeOutcome>> {
     const rows = await this.due();
     const byDevice = new Map<string, { id: string; org_id: string }[]>();
     for (const r of rows) byDevice.set(r.device_id, [...(byDevice.get(r.device_id) ?? []), r]);
@@ -133,8 +159,11 @@ export class ConversationNoticeDelivery {
     await Promise.all(
       [...byDevice.values()].map(async (list) => {
         for (const r of list) {
+          if (signal?.aborted) return;
           // each notice in its own org's scope
-          out.set(r.id, await withOrgScope(r.org_id, () => this.attempt(r.org_id, r.id)));
+          const outcome = await withOrgScope(r.org_id, () => this.attempt(r.org_id, r.id));
+          out.set(r.id, outcome);
+          if (outcome === "unreachable") return;
         }
       }),
     );
@@ -171,12 +200,14 @@ export class ConversationNoticeDelivery {
     });
   }
 
-  /** Takes the row's lease, or null when another attempt holds it or it is gone. */
+  /** Takes the row's lease under a new token, or null when another attempt holds it or it is gone. */
   private async claim(orgId: string, noticeId: string): Promise<NoticeRow | null> {
+    const token = randomUUID();
     const row = await this.db
       .updateTable("device_conversation_notices")
       .set({
         claimed_until: sql<Date>`now() + ${NOTICE_CLAIM_MS}::integer * interval '1 millisecond'`,
+        claim_token: token,
         attempts: sql<number>`attempts + 1`,
       })
       .where("id", "=", noticeId)
@@ -189,15 +220,18 @@ export class ConversationNoticeDelivery {
         "org_id",
         "device_id",
         "conversation_id",
-        "created_at",
-        "attempts",
+        "failures",
         "acked_services",
+        "last_failure",
+        sql<boolean>`created_at <= now() - ${DEVICE_SERVICE_RESTORE_MAX_AGE_MS}::integer * interval '1 millisecond'`.as(
+          "window_passed",
+        ),
       ])
       .executeTakeFirst();
-    return row ?? null;
+    return row ? { ...row, claim_token: token } : null;
   }
 
-  private async deliver(row: NoticeRow): Promise<NoticeOutcome> {
+  private async deliver(row: NoticeRow, timeoutMs: number): Promise<NoticeOutcome> {
     const device = await this.db
       .selectFrom("devices")
       .select(["id", "deleted_at"])
@@ -210,41 +244,37 @@ export class ConversationNoticeDelivery {
       return "delivered";
     }
     if (!(await this.sandbox.providerLoaded(row.device_id))) {
-      await this.release(row, { unreachable: false, detail: "provider not loaded" });
+      await this.release(row, undefined);
       return "owed";
     }
     const declared = await queryDeclaredDeviceServices(this.db);
     const pending = declared.filter((id) => !row.acked_services.includes(id));
-    const reach =
-      pending.length === 0 ? { acked: [], reached: true } : await this.reach(row, pending);
+    const reach: Reach =
+      pending.length === 0 ? { acked: [] } : await this.reach(row, pending, timeoutMs);
     const acked = [...new Set([...row.acked_services, ...reach.acked])].sort();
     if (declared.every((id) => acked.includes(id))) {
       await this.remove(row);
       return "delivered";
     }
-    const windowPassed = Date.now() - row.created_at.getTime() >= DEVICE_SERVICE_RESTORE_MAX_AGE_MS;
-    if (reach.failure === undefined && reach.reached && windowPassed) {
+    // past the window, a machine that answered (even with an error) settles the notice
+    if (row.window_passed && !reach.failure?.unreachable) {
       await this.remove(row);
       return "delivered";
     }
+    if (reach.failure) this.warnOnce(row, reach.failure);
     await this.release(row, reach.failure, acked);
-    if (reach.failure && !reach.failure.unreachable)
-      this.log.warn("conversation notice not delivered; it stays owed", {
-        noticeId: row.id,
-        deviceId: row.device_id,
-        detail: reach.failure.detail,
-      });
-    return "owed";
+    return reach.failure?.unreachable ? "unreachable" : "owed";
   }
 
   /** Sends the notice to each pending service that runs on the device's running instance. */
-  private async reach(row: NoticeRow, pending: string[]): Promise<Reach> {
+  private async reach(row: NoticeRow, pending: string[], timeoutMs: number): Promise<Reach> {
     const current = await this.sandbox.currentInstance(row.device_id);
     // no instance: nothing runs (a resume within the window restores, so the caller keeps it owed)
-    if (!current) return { acked: [], reached: true };
+    if (!current) return { acked: [] };
     const body = encodeConversationDeleted(row.conversation_id);
     const acked: string[] = [];
-    let failure: Reach["failure"];
+    let failure: Failure | undefined;
+    const requestTimeout = Math.min(NOTICE_REQUEST_TIMEOUT_MS, timeoutMs);
     const r = await this.sandbox
       .ifRunning(
         row.device_id,
@@ -255,7 +285,7 @@ export class ConversationNoticeDelivery {
             try {
               const status = await p.serviceStatus(h, id, signal);
               if (status.state !== "running") continue;
-              await p.serviceRequest(h, id, body, { timeoutMs: NOTICE_REQUEST_TIMEOUT_MS, signal });
+              await p.serviceRequest(h, id, body, { timeoutMs: requestTimeout, signal });
               acked.push(id);
             } catch (err) {
               failure = { unreachable: isUnreachable(err), detail: errText(err) };
@@ -264,7 +294,7 @@ export class ConversationNoticeDelivery {
             }
           }
         },
-        AbortSignal.timeout(NOTICE_ATTEMPT_TIMEOUT_MS),
+        AbortSignal.timeout(timeoutMs),
       )
       .catch((err: unknown) => {
         failure = { unreachable: isUnreachable(err), detail: errText(err) };
@@ -272,7 +302,18 @@ export class ConversationNoticeDelivery {
       });
     if (r !== null && r.kind === "other_instance" && failure === undefined)
       failure = { unreachable: false, detail: "the device's instance changed" };
-    return { acked, reached: failure === undefined, ...(failure && { failure }) };
+    return { acked, ...(failure && { failure }) };
+  }
+
+  /** Logs a failure once per row and kind of failure (`last_failure` holds the previous one). */
+  private warnOnce(row: NoticeRow, failure: Failure): void {
+    if (row.last_failure === failureText(failure)) return;
+    this.log.warn(
+      failure.unreachable
+        ? "conversation notice: the device did not answer; it stays owed"
+        : "conversation notice not delivered; it stays owed",
+      { noticeId: row.id, deviceId: row.device_id, detail: failure.detail },
+    );
   }
 
   private async remove(row: NoticeRow): Promise<void> {
@@ -280,36 +321,46 @@ export class ConversationNoticeDelivery {
       .deleteFrom("device_conversation_notices")
       .where("id", "=", row.id)
       .where("org_id", "=", row.org_id)
+      .where("claim_token", "=", row.claim_token)
       .execute();
   }
 
-  /** Frees the lease and sets the next turn: the sweep period, or a backoff after a failure. */
+  /**
+   * Frees the lease (only while it is still this attempt's) and sets the next turn: the sweep
+   * period, or a backoff by the row's consecutive failures after a failure.
+   */
   private async release(
     row: NoticeRow,
-    failure: { unreachable: boolean; detail: string } | undefined,
+    failure: Failure | undefined,
     acked: string[] = row.acked_services,
   ): Promise<void> {
+    const failures = failure === undefined ? 0 : row.failures + 1;
     const delay =
       failure === undefined
         ? NOTICE_SWEEP_MS
-        : Math.min(NOTICE_BACKOFF_MS * 2 ** Math.max(0, row.attempts - 1), NOTICE_BACKOFF_MAX_MS);
+        : Math.min(NOTICE_BACKOFF_MS * 2 ** (failures - 1), NOTICE_BACKOFF_MAX_MS);
     await this.db
       .updateTable("device_conversation_notices")
       .set({
         claimed_until: null,
+        claim_token: null,
         next_attempt_at: sql<Date>`now() + ${delay}::integer * interval '1 millisecond'`,
         acked_services: acked,
-        last_failure:
-          failure === undefined ? null : failure.unreachable ? "unreachable" : failure.detail,
+        failures,
+        last_failure: failure === undefined ? null : failureText(failure),
       })
       .where("id", "=", row.id)
       .where("org_id", "=", row.org_id)
+      .where("claim_token", "=", row.claim_token)
       .execute();
   }
 }
 
 const errText = (err: unknown): string =>
   (err instanceof Error ? err.message : String(err)).slice(0, FAILURE_MAX);
+
+/** The `last_failure` a failure records: `unreachable`, or its clipped detail. */
+const failureText = (f: Failure): string => (f.unreachable ? "unreachable" : f.detail);
 
 /**
  * The sweep of owed conversation notices: once per tick across replicas (`@LockedInterval`),
@@ -326,8 +377,8 @@ export class ConversationNoticeSweepJob {
   ) {}
 
   @LockedInterval(CONVERSATION_NOTICE_SWEEP_JOB, () => NOTICE_SWEEP_MS)
-  async sweep(): Promise<void> {
-    await this.delivery.sweepOnce();
+  async sweep(signal?: AbortSignal): Promise<void> {
+    await this.delivery.sweepOnce(signal);
   }
 }
 

@@ -9,6 +9,7 @@ import { EventLogModule } from "../conversations/event-log.js";
 import {
   ConversationNoticeDelivery,
   ConversationNoticesModule,
+  NOTICE_PROMPT_TIMEOUT_MS,
 } from "../device-access/conversation-notice-delivery.js";
 import {
   CONVERSATION_NOTICE_JOB,
@@ -244,7 +245,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       // a deleted conversation's notice to its device's services (close tabs on delete §4.3)
       case CONVERSATION_NOTICE_JOB: {
         const { orgId, noticeId } = job.data as ConversationNoticeJobData;
-        await this.notices.attempt(orgId, noticeId);
+        // a short device budget: a silent machine never holds a maintenance slot for long
+        await this.notices.attempt(orgId, noticeId, { timeoutMs: NOTICE_PROMPT_TIMEOUT_MS });
         return;
       }
       default:
