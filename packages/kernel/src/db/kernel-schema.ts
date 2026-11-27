@@ -1736,7 +1736,7 @@ export interface ModelUsageTable {
 type NullableText = ColumnType<string | null, string | null | undefined, string | null>;
 type NullableTs = ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 
-/** 0113 (`scheduled_tasks`, renamed in 0188): an automation (scheduled tasks spec §4). */
+/** 0113 (renamed in 0188 from the scheduled tasks table): an automation (scheduled tasks spec §4). */
 export interface AutomationsTable {
   id: string;
   org_id: string;
@@ -1817,7 +1817,7 @@ export interface FileSharesTable {
   updated_at: Ts;
 }
 
-/** 0113 (`scheduled_task_runs`, renamed in 0188): one tick (or trial run) of an automation; unique per (task, tick) when not trial. */
+/** 0113 (renamed in 0188 from the scheduled task runs table): one tick (or trial run) of an automation; unique per (task, tick) when not trial. */
 export interface AutomationRunsTable {
   id: string;
   /** 0188: renamed from `task_id`. */
@@ -1840,7 +1840,7 @@ export interface AutomationRunsTable {
   missing_grants: ColumnType<string[], string | undefined, string>;
 }
 
-/** 0113 (`scheduled_task_grants`, renamed in 0188): an automation's remembered grants (same shape as `conversation_tool_grants`). */
+/** 0113 (renamed in 0188 from the scheduled task grants table): an automation's remembered grants (same shape as `conversation_tool_grants`). */
 export interface AutomationGrantsTable {
   /** 0188: renamed from `task_id`. */
   automation_id: string;

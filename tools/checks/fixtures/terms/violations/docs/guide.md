@@ -19,3 +19,5 @@ Only accounts with `isEnterpriseAdmin` may call it.
 The `EnterpriseAdminLock` provider serializes `countEnterpriseAdmins()`.
 The column `is_enterprise_admin` and the error `account.last_enterprise_admin` are gone.
 The decorator lives in `identity/enterprise-admin.ts`.
+The table `scheduled_tasks` keeps `scheduled_task_runs`, and the tool `ScheduleCreate` lists them.
+Set `CAPYBARA_SCHEDULES__MAX_TASKS_PER_ORG` and read `schedule_attention` in the inbox.

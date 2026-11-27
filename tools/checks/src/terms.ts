@@ -108,6 +108,7 @@ export const OLD_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "pluginPermissions",
   "catalogs",
   "directory",
+  "schedules",
 ]);
 
 /** Old route shapes (path without the leading slash). */
@@ -118,6 +119,7 @@ const OLD_ROUTES: { re: RegExp; what: string }[] = [
   { re: /\/app-installs(?:\/|$)/, what: "/app-installs (now /plugin-installs)" },
   { re: /orgs\/:orgId\/directory(?:\/|-|$)/, what: "/orgs/:orgId/directory (now /catalog)" },
   { re: /\/directory-requests(?:\/|$)/, what: "/directory-requests (now /catalog-requests)" },
+  { re: /\/schedules(?:\/|$)/, what: "/schedules (now /automations)" },
 ];
 
 /** A path where one {@link OLD_REFERENCES} rule (only that rule) does not apply, with the reason. */
@@ -279,6 +281,36 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
       },
     ],
   },
+  {
+    // Scheduled tasks became automations (migration 0188). Frozen and kept on purpose: the event-log
+    // names (`ScheduleMarker*`, `user_message.schedule`, `trigger: "schedule"`, `execution:
+    // "scheduled"`), the design component `schedule-calendar`, the model-visible "scheduled run" and
+    // the unrelated `infra/schedule`; none of them matches these spellings.
+    re: /\bscheduled_task(?:s|_runs|_grants|_run_id|_id)\b|\bSchedule(?:Create|Update|List|Targets|Delete)\b|\bCAPYBARA_SCHEDULES(?:__\w*)?\b|\bschedule_attention\b|\/api\/v1\/orgs\/:orgId\/schedules\b/,
+    what: "an old scheduled task name (now automations / Automation* / CAPYBARA_AUTOMATIONS__ / automation_attention)",
+    allowedIn: [
+      {
+        path: /^packages\/kernel\/src\/migrations\/(?:0113|0122|0128|0172|0182|0188)_/,
+        reason: "migrations that created, changed or renamed the scheduled task tables",
+      },
+      {
+        path: /^packages\/kernel\/test\/migrations\/(?:0113|0188)\.test\.ts$/,
+        reason: "tests of migrations 0113 and 0188 seed the old names",
+      },
+      {
+        path: /^docs\/(?:superpowers|reviews)\//,
+        reason: "design docs, plans and dated design reviews are a historical record",
+      },
+      {
+        path: /(?:^|\/)CHANGELOG\.md$/,
+        reason: "changelogs are release history, generated from the reviewed changesets",
+      },
+      {
+        path: /^\.changeset\//,
+        reason: "the rename's release notes map the old names; archived ones are release history",
+      },
+    ],
+  },
 ];
 
 /** Paths (prefix or full path) never searched by terms-reference, with the reason. */
@@ -344,6 +376,11 @@ export const REFERENCE_EXEMPT_LINES: { path: string; line: RegExp; reason: strin
     path: "tools/checks/README.md",
     line: /^\s*- `terms-tool-key`/,
     reason: "the bullet describing the rule lists the old keys it guards",
+  },
+  {
+    path: "tools/checks/README.md",
+    line: /^\s*- `terms-automations`/,
+    reason: "the bullet describing the pattern lists the old scheduled task names it guards",
   },
   {
     path: "tools/checks/README.md",

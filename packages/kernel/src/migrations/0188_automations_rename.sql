@@ -20,10 +20,11 @@
 -- - jobs already handed to Redis under the old names, and pending Platform-tool approvals that name
 --   a `schedules.*` operation;
 -- - deployment config: a deployment renames its `schedules.*` config (env `CAPYBARA_SCHEDULES__*`,
---   config file or Nacos) to `automations.*` itself. `automation_grants` has no `org_id`, so,
--- like `scheduled_task_grants` before it, it gets no RLS policy (RLS spec §6, child tables); the
--- `org_scope` policies of 0182 follow their tables through the rename and are stated again under
--- the new names. Idempotent: a second run matches nothing it could change.
+--   config file or Nacos) to `automations.*` itself.
+--
+-- `automation_grants` has no `org_id`, so, like `scheduled_task_grants` before it, it gets no RLS
+-- policy (RLS spec §6, child tables); the `org_scope` policies of 0182 follow their tables through
+-- the rename and are stated again under the new names. Idempotent: a second run matches nothing it could change.
 
 -- capybara:allow-destructive table rename; the kernel code is renamed in the same release (project not released, no compatibility layer)
 ALTER TABLE IF EXISTS scheduled_tasks RENAME TO automations;
