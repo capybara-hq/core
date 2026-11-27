@@ -60,18 +60,29 @@ export interface CaseSnapshot {
   parent?: { conversationId: string; runId: string; callId: string };
 }
 
-/** The follow-up narrowing on the last sub-agent task message of `events`, if any. */
-function lastTaskNarrowing(events: readonly SnapshotEvent[]): FollowUpNarrowing | undefined {
+/**
+ * The follow-up narrowing of run `runId`: the one on the last sub-agent task message up to the
+ * run's last event (its terminal event when it has one), if any. A task message logged after the
+ * run (a later follow-up's, which a live snapshot may hold) never narrows this run's definition.
+ * Without any event of the run, every event counts.
+ */
+export function runTaskNarrowing(
+  events: readonly SnapshotEvent[],
+  runId: string,
+): FollowUpNarrowing | undefined {
+  const end = events.findLast((e) => e.runId === runId)?.seq ?? Number.POSITIVE_INFINITY;
   const task = events.findLast(
     (e) =>
-      e.type === "user_message" && (e.payload as { dispatch?: unknown }).dispatch !== undefined,
+      e.seq <= end &&
+      e.type === "user_message" &&
+      (e.payload as { dispatch?: unknown }).dispatch !== undefined,
   );
   return (task?.payload as EventPayload<"user_message"> | undefined)?.dispatch?.narrowed;
 }
 
 const TERMINAL = new Set<ConversationEventType>(["run_finished", "run_failed", "run_aborted"]);
 
-/** 读事件的分页大小。 */
+/** The page size when reading events. */
 const PAGE = 1000;
 
 type ModelCallEvent = Extract<ConversationEvent, { type: "model_call" }>;
@@ -182,10 +193,10 @@ async function snapshotOf(
     ...(started !== undefined && {
       subagent: {
         // this run's definition: the frozen one with its follow-up's narrowing (final review
-        // I1); the run's task message is the last one up to its terminal event
+        // I1); the run's task message is the last one up to the run's last event
         definition: childRunDefinition(
           normalizeStoredDefinition(started.definition),
-          lastTaskNarrowing(events),
+          runTaskNarrowing(events, runId),
         ),
         preamble: started.preamble,
         ...(invokedSkill !== undefined && { invokedSkill }),

@@ -51,6 +51,7 @@
   "evals/plan.test.ts",
   "evals/recorded-permission-context.test.ts",
   "evals/sets.unit.test.ts",
+  "evals/snapshot.unit.test.ts",
   "evals/trajectory.test.ts",
   "extensions/bootstrap-download-retry.test.ts",
   "extensions/bootstrap-extra.test.ts",

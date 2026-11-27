@@ -16,6 +16,7 @@ import {
   type InContextBoundary,
   inContextInstruction,
 } from "../../../src/runtime/context/in-context-compaction.js";
+import { UNKNOWN_RESULT_TEXT } from "../../../src/runtime/context/pairing.js";
 import { assembleModelRequest } from "../../../src/runtime/model-call.js";
 
 /**
@@ -305,6 +306,49 @@ describe("buildInContextCompactionRequest", () => {
     });
   });
 
+  it("an aborted last reply with an unpaired tool call: paired as unknown, instruction after it", () => {
+    const r = new Recorder();
+    r.user("What is my cash balance?");
+    r.started();
+    r.call(1);
+    r.assistant(
+      1,
+      [
+        { type: "text", text: "Let me check." },
+        { type: "tool_call", id: "call-1", name: "Lookup", input: { account: "cash" } },
+        { type: "tool_call", id: "call-2", name: "Lookup", input: { account: "savings" } },
+      ],
+      "aborted",
+    );
+    r.usage(1);
+    const ref = reference(r.snapshot());
+    const out = built(r);
+    expectPrefix(out.request, ref);
+    const added = out.request.messages.slice(ref.messages.length);
+    expect(added).toHaveLength(2);
+    expect(added[0]?.role).toBe("assistant");
+    // every tool call of the request has its result (the pairing guard's unknown one)
+    expect(added[1]).toEqual({
+      role: "user",
+      content: [
+        { type: "tool_result", callId: "call-1", content: UNKNOWN_RESULT_TEXT, isError: true },
+        { type: "tool_result", callId: "call-2", content: UNKNOWN_RESULT_TEXT, isError: true },
+        { type: "text", text: inContextInstruction(null) },
+      ],
+    });
+    const calls = out.request.messages.flatMap((m) =>
+      m.role === "system" ? [] : m.content.flatMap((b) => (b.type === "tool_call" ? [b.id] : [])),
+    );
+    const results = new Set(
+      out.request.messages.flatMap((m) =>
+        m.role === "system"
+          ? []
+          : m.content.flatMap((b) => (b.type === "tool_result" ? [b.callId] : [])),
+      ),
+    );
+    expect(calls.every((id) => results.has(id))).toBe(true);
+  });
+
   it("keeps the recorded cacheTtl absence even when the model offers the long tier", () => {
     // the last call asked for no tier (the org had longTtl off then); whatever the setting now,
     // the summary request asks for what the cached prefix was written with
@@ -479,6 +523,7 @@ describe("inContextInstruction", () => {
       "<skill_invocation>",
       '"Report from the sub-agent that ran the skill',
       "platform notices",
+      'starts with "[system]"',
       "<conversation_summary>",
     ]) {
       expect(text).toContain(origin);
