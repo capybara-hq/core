@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { type ComponentType, createElement, type ReactElement, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DESIGN_NAMES } from "../src/design.js";
@@ -69,6 +69,51 @@ describe("forwarded design components", () => {
     );
     fireEvent.click(screen.getByText("b"));
     expect(onOpen).toHaveBeenCalledWith({ n: "b" });
+  });
+
+  it("DataTable says its state, lists no rows while loading, and draws empty or noResults", () => {
+    const columns = [{ key: "n", header: "Name", cell: (r: { n: string }) => r.n }];
+    const rowKey = (r: { n: string }) => r.n;
+    const view = host(
+      <api.DataTable
+        label="States"
+        columns={columns}
+        rows={[{ n: "a" }]}
+        rowKey={rowKey}
+        state="loading"
+      />,
+    );
+    const table = () => screen.getByRole("table", { name: "States" });
+    expect(table().getAttribute("data-state")).toBe("loading");
+    expect(within(table()).queryByText("a")).toBeNull();
+    view.unmount();
+    const empty = host(
+      <api.DataTable
+        label="States"
+        columns={columns}
+        rows={[]}
+        rowKey={rowKey}
+        empty={{ title: "No items yet" }}
+      />,
+    );
+    expect(table().getAttribute("data-state")).toBe("ready");
+    expect(screen.getByText("No items yet")).toBeTruthy();
+    empty.unmount();
+    const onClear = vi.fn();
+    host(
+      <api.DataTable
+        label="States"
+        columns={columns}
+        rows={[]}
+        rowKey={rowKey}
+        empty={{ title: "No items yet" }}
+        noResults={{ description: "Nothing matches", onClear }}
+      />,
+    );
+    expect(screen.queryByText("No items yet")).toBeNull();
+    expect(screen.getByText("Nothing matches")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(onClear).toHaveBeenCalledTimes(1);
   });
 
   it("Tabs call onChange with the tab id", () => {

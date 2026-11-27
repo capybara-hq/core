@@ -95,10 +95,18 @@ export interface FakeHost {
  * Plain stand-ins for the host's design components: `<span data-fake-design="Name">`. `Select` is
  * a native select over its options and `Switch` a `role="switch"` button, so a test picks a value
  * or flips the switch the way a person would. `DataTable` is a table of its rows (a click on a
- * row calls `onOpen`), `Tabs` a row of `role="tab"` buttons, `Dialog` a `role="dialog"` while
- * open, `Input` / `Textarea` plain controls, `PrincipalPicker` a button per option, and `Board`
- * its cards with one "Move <card> to <column>" button per column (they call `onMove` at index 0,
- * unless `canMove` refuses).
+ * row calls `onOpen`; `data-state` is its `state`, a loading or failed table lists no rows, an
+ * empty ready one shows `noResults` with a Clear button, else `empty`), `Tabs` a row of
+ * `role="tab"` buttons, `Dialog` a `role="dialog"` while open, `Input` / `Textarea` plain
+ * controls, `PrincipalPicker` a button per option, and `Board` its cards with one "Move <card> to
+ * <column>" button per column (they call `onMove` at index 0, unless `canMove` refuses).
+ *
+ * Where they differ from the host: templates draw no header, path or crumbs (only their
+ * children) and the host's one-template rule of a page frame is not checked; links are not
+ * normalized; DataTable has no sorting, pagination, row menus, toolbar or error state body;
+ * every other component (Sheet, Popover, DangerConfirm, Menu among them) is the plain span with
+ * its `children` only (a Menu's items, a trigger and props are not drawn); no styles, focus
+ * handling or keyboard behaviour. Test those against the host itself.
  */
 function fakeDesign(): Record<string, ComponentType<never>> {
   const out: Record<string, ComponentType<never>> = {};
@@ -140,10 +148,38 @@ function fakeDesign(): Record<string, ComponentType<never>> {
       onClick: () => props.onChange(!props.checked),
     });
   out.Switch = FakeSwitch as ComponentType<never>;
-  const FakeDataTable = (props: DataTableProps<unknown>) =>
-    createElement(
+  const FakeDataTable = (props: DataTableProps<unknown>) => {
+    const state = props.state ?? "ready";
+    // an empty ready table draws its `noResults` (a filter matched nothing) or `empty`, as the
+    // host's table does; a loading or failed one draws no rows
+    const placeholder =
+      state === "ready" && props.rows.length === 0
+        ? props.noResults
+          ? createElement(
+              "tr",
+              { "data-fake-empty": "no-results" },
+              createElement(
+                "td",
+                null,
+                props.noResults.description,
+                createElement(
+                  "button",
+                  { type: "button", onClick: () => props.noResults?.onClear() },
+                  "Clear",
+                ),
+              ),
+            )
+          : props.empty
+            ? createElement(
+                "tr",
+                { "data-fake-empty": "empty" },
+                createElement("td", null, props.empty.title, props.empty.hint ?? null),
+              )
+            : null
+        : null;
+    return createElement(
       "table",
-      { "data-fake-design": "DataTable", "aria-label": props.label },
+      { "data-fake-design": "DataTable", "aria-label": props.label, "data-state": state },
       createElement(
         "thead",
         null,
@@ -156,7 +192,8 @@ function fakeDesign(): Record<string, ComponentType<never>> {
       createElement(
         "tbody",
         null,
-        ...props.rows.map((row) =>
+        placeholder,
+        ...(state === "ready" ? props.rows : []).map((row) =>
           createElement(
             "tr",
             {
@@ -169,6 +206,7 @@ function fakeDesign(): Record<string, ComponentType<never>> {
         ),
       ),
     );
+  };
   out.DataTable = FakeDataTable as ComponentType<never>;
   const FakeTabs = (props: TabsProps) =>
     createElement(

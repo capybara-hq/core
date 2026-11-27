@@ -1,11 +1,32 @@
 // @vitest-environment jsdom
 import { DesignProvider } from "@capybara-hq/design";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import type { ComponentType, ReactNode } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HOST_DESIGN, PageCrumbsProvider } from "../src/components/client-ext/host-api";
 import { DESIGN_SUBSET } from "../src/lib/client-host/api.generated";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+type PageProps = {
+  header: {
+    title: string;
+    path?: { label: string; href?: string }[];
+    actions?: unknown[];
+    tabs?: unknown[];
+  };
+  children?: ReactNode;
+};
+const ListPage = HOST_DESIGN.ListPage as unknown as ComponentType<PageProps>;
+
+/** The path line's labels in document order (the crumbs, then the heading). */
+const textOrder = (...labels: string[]) => {
+  const text = document.body.textContent ?? "";
+  return labels.map((l) => text.indexOf(l));
+};
 
 describe("forwarded templates", () => {
   it("the host map has an entry for every name of the design subset", () => {
@@ -29,5 +50,91 @@ describe("forwarded templates", () => {
     expect(text.indexOf("Acme")).toBeLessThan(text.indexOf("Tracker"));
     expect(text.indexOf("Tracker")).toBeLessThan(text.indexOf("Open"));
     expect(screen.getByRole("heading", { name: "Items" })).toBeTruthy();
+  });
+
+  it("without host crumbs (outside a plugin page) the path is the plugin's own", () => {
+    render(
+      <DesignProvider locale="en">
+        <ListPage
+          header={{
+            title: "Items",
+            path: [{ label: "Here" }, { label: "There" }, { label: "Where" }],
+          }}
+        />
+      </DesignProvider>,
+    );
+    const [here, there, where] = textOrder("Here", "There", "Where");
+    expect(here).toBe(0);
+    expect(here).toBeLessThan(there as number);
+    expect(there).toBeLessThan(where as number);
+  });
+
+  it("a template without a header is a host error naming it, not a TypeError", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const Bare = ListPage as unknown as ComponentType<Record<string, never>>;
+    expect(() =>
+      render(
+        <DesignProvider locale="en">
+          <Bare />
+        </DesignProvider>,
+      ),
+    ).toThrow(/ListPage: `header` is required/);
+  });
+});
+
+describe("links in forwarded components", () => {
+  it("same-origin paths and http(s) URLs pass; javascript:, data: and other schemes are dropped", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ItemListItem = HOST_DESIGN.ItemListItem as unknown as ComponentType<{
+      title: string;
+      href?: string;
+    }>;
+    const EmptyState = HOST_DESIGN.EmptyState as unknown as ComponentType<{
+      text: string;
+      action?: { label: string; href: string };
+    }>;
+    render(
+      <DesignProvider locale="en">
+        <PageCrumbsProvider value={[{ label: "Acme", href: "/" }]}>
+          <ListPage
+            header={{
+              title: "Items",
+              path: [
+                { label: "Ok", href: "/p/tracker/items?x=1" },
+                { label: "Evil", href: "javascript:alert(1)" },
+              ],
+              actions: [{ label: "Docs", href: "https://docs.example/a" }],
+            }}
+          >
+            <ItemListItem title="Data" href="data:text/html,hi" />
+            <ItemListItem title="Proto" href="//evil.example/x" />
+            <ItemListItem title="Tab" href={"/\t/evil.example"} />
+            <ItemListItem title="Fine" href="/p/tracker/items" />
+            <EmptyState text="none" action={{ label: "Mail", href: "mailto:a@b.c" }} />
+          </ListPage>
+        </PageCrumbsProvider>
+      </DesignProvider>,
+    );
+    const hrefs = [...document.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(hrefs).toEqual(
+      expect.arrayContaining([
+        "/p/tracker/items?x=1",
+        "https://docs.example/a",
+        "/p/tracker/items",
+      ]),
+    );
+    for (const bad of [
+      "javascript:alert(1)",
+      "data:text/html,hi",
+      "//evil.example/x",
+      "mailto:a@b.c",
+    ]) {
+      expect(hrefs).not.toContain(bad);
+    }
+    expect(hrefs.some((h) => h?.includes("evil"))).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('dropped the link "javascript:alert(1)"'),
+    );
+    expect(warn).toHaveBeenCalledTimes(5);
   });
 });

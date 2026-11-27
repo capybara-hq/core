@@ -11,6 +11,7 @@ import {
   type UiContribution,
   type UiIcon,
   type UiOpen,
+  type UiPageFrame,
   type UiSlotId,
   type UiSlotScope,
   type UiView,
@@ -71,6 +72,8 @@ export interface UiContributionItem {
   icon: UiIcon;
   /** The form on a compact screen: the slot's, narrowed by the contribution's (spec §5.6). */
   compact: CompactForm;
+  /** `org.page` component only, when the manifest names it: who draws the page frame. */
+  frame?: UiPageFrame;
 }
 
 /** A list slot of an arrangement listing: where its entry comes from and its items in order. */
@@ -313,6 +316,7 @@ function listed(entries: LoadedUiContribution[]): UiContributionItem[] {
       ...(c.kind === "embed" && c.path !== undefined && { path: c.path }),
       icon: c.icon ?? "puzzle",
       compact: effectiveCompact(s.compact, c.compact),
+      ...(c.frame !== undefined && { frame: c.frame }),
     }));
 }
 

@@ -91,6 +91,17 @@ afterAll(async () => {
 const query = (req: Req, body: Record<string, unknown>, base = ui, id = "board") =>
   req({ method: "POST", url: `${base}/query/fake-client-page/${id}`, payload: body });
 
+describe("contributions list", () => {
+  it("names the frame of a component page that declares one", async () => {
+    const r = await owner({ method: "GET", url: `${ui}/contributions` });
+    expect(r.statusCode, r.body).toBe(200);
+    const items = (r.json() as { items: { id: string; frame?: string }[] }).items;
+    expect(items.find((i) => i.id === "board")?.frame).toBe("page");
+    // a view names none
+    expect(items.find((i) => i.id === "summary")).not.toHaveProperty("frame");
+  });
+});
+
 describe("component queries", () => {
   it("returns the handler's data for an offered component", async () => {
     const r = await query(owner, { query: "items", params: { column: "todo" }, locale: "zh" });

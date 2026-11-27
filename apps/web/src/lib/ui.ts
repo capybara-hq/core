@@ -48,6 +48,11 @@ export interface UiContributionItem {
   icon: UiIcon;
   /** The form on a compact screen: the slot's, narrowed by the contribution's (spec §5.6). */
   compact: UiCompactForm;
+  /**
+   * `org.page` component only, when the manifest names it: `page` draws the whole page itself
+   * (plugin full pages spec §2), `host` (as when absent) is drawn inside the host's DetailPage.
+   */
+  frame?: "host" | "page";
 }
 
 /** What a contribution becomes on a compact screen: drawn, handed to the owner's sheet, or not drawn. */
@@ -106,8 +111,13 @@ export interface UiView {
 
 export type UiLocale = "zh" | "en";
 
-/** 动作结果：一条提示，或一份新的视图（`{}` 表示什么都不做）。 */
-export type UiActionResult = { toast?: { zh: string; en: string } } | { view: UiView };
+/**
+ * An action's answer: a toast, or a new view (`{}` does nothing). `invalidate`: a component's
+ * query names to refetch (plugin full pages spec §4.1).
+ */
+export type UiActionResult =
+  | { toast?: { zh: string; en: string }; invalidate?: string[] }
+  | { view: UiView; invalidate?: string[] };
 
 /** 视图里的按钮或表单提交。 */
 export interface UiActionRequest {
@@ -116,10 +126,14 @@ export interface UiActionRequest {
   answer?: FormAnswer;
 }
 
-/** SSE `event: ui` 帧：某个插件的某个贡献变了，去重新取。 */
+/**
+ * The SSE `event: ui` frame: a contribution of a plugin changed, read it again. `queries`: its
+ * component queries changed too (every `ctx.ui.invalidate`, plugin full pages spec §4.1).
+ */
 export interface UiRefresh {
   plugin: string;
   contribution: string;
+  queries?: true;
 }
 
 /** 刷新与取数状态里贡献的键。 */
@@ -265,6 +279,33 @@ export const postUiAction = (
   });
 
 /**
+ * Runs a component's named query (`POST /api/v1/orgs/:orgId/ui/query/:plugin/:id`, plugin full
+ * pages spec §4.1; org scope only): `{ data }`, the handler's JSON. The kernel times it out at
+ * 10 s (`ui.query_timeout`).
+ */
+export const postUiQuery = (
+  orgId: string,
+  plugin: string,
+  id: string,
+  body: {
+    query: string;
+    params?: unknown;
+    conversationId?: string;
+    agentId?: string;
+    locale: UiLocale;
+  },
+  signal?: AbortSignal,
+) =>
+  apiFetch<{ data: unknown }>(
+    `/api/v1/orgs/${encodeURIComponent(orgId)}/ui/query/${target(plugin, id)}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+      ...(signal !== undefined && { signal }),
+    },
+  );
+
+/**
  * Mints an embed token: a conversation's embed carries `conversationId` (and `fileId` for a file
  * previewer), an org page none; a skill file's previewer carries `skill` (`{ skillId, version,
  * path }`, never mixed with a conversation, an agent or a file id).
@@ -313,9 +354,9 @@ export const uiStreamUrl = (orgId: string | null) => `${base(orgId)}/stream`;
 /** 解析 `event: ui` 帧的 data；形状不对返回 undefined。 */
 export function parseUiRefresh(data: unknown): UiRefresh | undefined {
   if (typeof data !== "object" || data === null) return undefined;
-  const { plugin, contribution } = data as Record<string, unknown>;
+  const { plugin, contribution, queries } = data as Record<string, unknown>;
   return typeof plugin === "string" && typeof contribution === "string"
-    ? { plugin, contribution }
+    ? { plugin, contribution, ...(queries === true && { queries: true }) }
     : undefined;
 }
 

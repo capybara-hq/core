@@ -64,8 +64,10 @@ import {
 } from "react";
 import type { ClientExtensionItem } from "../../lib/client-extensions";
 import { CLIENT_API_VERSION } from "../../lib/client-host/api.generated";
+import { isParamRecord, safeHref } from "../../lib/page-params";
 import { meQuery } from "../../lib/query/shell";
 import type { UiActionRequest, UiView } from "../../lib/ui";
+import { useTemplateMark } from "../extension-ui/template-guard";
 import { useResolvedTheme } from "../theme-root";
 import { UiViewRenderer } from "../ui-view/UiViewRenderer";
 import type { CapybaraEvent } from "./events";
@@ -99,7 +101,21 @@ export interface ViewState {
 export type ActionFn = (
   actionId: string,
   input?: { payload?: unknown; answer?: Record<string, unknown> },
-) => Promise<{ view?: UiView; toast?: string }>;
+) => Promise<{ view?: UiView; toast?: string; invalidate?: string[] }>;
+
+/** A component query's state (`usePluginQuery`). */
+export interface QueryState<T = unknown> {
+  data: T | undefined;
+  status: "loading" | "ready" | "error";
+  error?: string;
+  refetch(): void;
+}
+
+/** Where `useNavigate` may go: this page's params, another page of the plugin, a conversation. */
+export type NavigateTarget =
+  | { params: Record<string, string | null>; replace?: boolean }
+  | { page: { id: string; params?: Record<string, string> } }
+  | { conversation: string };
 
 /**
  * What the host implements per rendered component; the hooks read it, nothing else. The functions
@@ -108,6 +124,15 @@ export type ActionFn = (
 export interface HostApi extends HostServices {
   view: ViewState;
   action: ActionFn;
+  /**
+   * A hook (called during the component's render, by `usePluginQuery`): the component's named
+   * query, cached by `(query, params)`, served `staleMs` (default 0) fresh.
+   */
+  query<T = unknown>(query: string, params: unknown, opts: { staleMs?: number }): QueryState<T>;
+  /** The page's URL params (`org.page`); empty elsewhere. */
+  pageParams: Record<string, string>;
+  /** Navigates to a target {@link checkNavigateTarget} accepted. */
+  navigate(to: NavigateTarget): void;
 }
 
 /** The part of {@link HostApi} that does not depend on the component's view. */
@@ -361,17 +386,101 @@ export interface PageCrumb {
 const PageCrumbsContext = createContext<readonly PageCrumb[]>([]);
 export const PageCrumbsProvider = PageCrumbsContext.Provider;
 
-type WithHeader = { header: { path?: PageCrumb[] } };
+// ---- links in forwarded components ----
 
-/** A forwarded template: the design template with the host's crumbs before the plugin's path. */
-function hostTemplate<P extends WithHeader>(
-  Template: ComponentType<never>,
+/**
+ * A forwarded component's link, checked (`safeHref`: same-origin paths and http(s) URLs); any
+ * other is dropped with a console warning, the rest of the item stays.
+ */
+function linkOf<T>(item: T, where: string): T {
+  if (typeof item !== "object" || item === null || !("href" in item)) return item;
+  const { href, ...rest } = item as { href?: unknown };
+  if (href === undefined) return item;
+  const ok = safeHref(href);
+  if (ok === undefined) {
+    console.warn(
+      `${where}: dropped the link ${JSON.stringify(href)} (only same-origin paths and http(s) URLs)`,
+    );
+    return rest as T;
+  }
+  return { ...rest, href: ok } as T;
+}
+
+type MenuEntry = "separator" | { href?: unknown; submenu?: MenuEntry[] };
+
+/** Menu items with every link checked, submenus too. */
+function menuLinks<T>(items: T, where: string): T {
+  if (!Array.isArray(items)) return items;
+  return (items as MenuEntry[]).map((i) =>
+    typeof i === "object" && i !== null && Array.isArray(i.submenu)
+      ? { ...i, submenu: menuLinks(i.submenu, where) }
+      : linkOf(i, where),
+  ) as T;
+}
+
+type Header = {
+  path?: PageCrumb[];
+  actions?: ({ menu?: MenuEntry[] } & { href?: unknown })[];
+  tabs?: { href?: unknown }[];
+};
+
+/** A page header with its links checked (path, actions and their menus, tabs). */
+function headerLinks(header: Header, where: string): Header {
+  const out: Header = { ...header };
+  if (Array.isArray(header.path)) out.path = header.path.map((c) => linkOf(c, where));
+  if (Array.isArray(header.actions)) {
+    out.actions = header.actions.map((a) =>
+      Array.isArray(a.menu) ? { ...a, menu: menuLinks(a.menu, where) } : linkOf(a, where),
+    );
+  }
+  if (Array.isArray(header.tabs)) out.tabs = header.tabs.map((t) => linkOf(t, where));
+  return out;
+}
+
+/** A forwarded component whose props are passed through `fix` first (its links checked). */
+function withLinks<P extends object>(
+  Base: ComponentType<never>,
   name: string,
+  fix: (props: P) => P,
 ): ComponentType<P> {
-  const Hosted = (props: P) => {
+  const Linked = (props: P) => createElement(Base as ComponentType<object>, fix(props));
+  Linked.displayName = name;
+  return Linked;
+}
+
+type TemplateProps = {
+  header: Header;
+  tabs?: { items?: { href?: unknown }[] };
+  nav?: { items?: { href?: unknown }[] }[];
+};
+
+/**
+ * A forwarded page template: the design template with the host's crumbs before the plugin's path,
+ * its links checked, counted by the page frame's template guard (plugin full pages spec §2). A
+ * missing `header` is a host error naming the template, not a TypeError inside it.
+ */
+function hostTemplate(Template: ComponentType<never>, name: string): ComponentType<TemplateProps> {
+  const Hosted = (props: TemplateProps) => {
+    useTemplateMark();
     const crumbs = useContext(PageCrumbsContext);
-    const header = { ...props.header, path: [...crumbs, ...(props.header.path ?? [])] };
-    return createElement(Template as ComponentType<object>, { ...props, header });
+    if (typeof props.header !== "object" || props.header === null) {
+      throw new Error(
+        `${name}: \`header\` is required ({ title, path?, ... }); the host puts its own crumbs ` +
+          "before `header.path`",
+      );
+    }
+    const own = headerLinks(props.header, name);
+    const header = { ...own, path: [...crumbs, ...(own.path ?? [])] };
+    const out: TemplateProps = { ...props, header };
+    if (props.tabs !== undefined && Array.isArray(props.tabs?.items)) {
+      out.tabs = { ...props.tabs, items: props.tabs.items.map((t) => linkOf(t, name)) };
+    }
+    if (Array.isArray(props.nav)) {
+      out.nav = props.nav.map((g) =>
+        Array.isArray(g.items) ? { ...g, items: g.items.map((i) => linkOf(i, name)) } : g,
+      );
+    }
+    return createElement(Template as ComponentType<object>, out);
   };
   Hosted.displayName = name;
   return Hosted;
@@ -386,24 +495,46 @@ export const HOST_DESIGN: Record<string, ComponentType<never>> = {
   Button,
   CellTitle,
   DangerConfirm,
-  DataTable,
+  DataTable: withLinks<{ rowMenu?: (row: unknown) => unknown }>(
+    DataTable as unknown as ComponentType<never>,
+    "DataTable",
+    (p) =>
+      typeof p.rowMenu === "function"
+        ? { ...p, rowMenu: (row: unknown) => menuLinks(p.rowMenu?.(row), "DataTable") }
+        : p,
+  ),
   DetailPage: hostTemplate(DetailPage as unknown as ComponentType<never>, "DetailPage"),
   Dialog,
-  EmptyState,
+  EmptyState: withLinks<{ action?: unknown }>(
+    EmptyState as unknown as ComponentType<never>,
+    "EmptyState",
+    (p) => (p.action === undefined ? p : { ...p, action: linkOf(p.action, "EmptyState") }),
+  ),
   Field,
   FilterChip,
   FormPage: hostTemplate(FormPage as unknown as ComponentType<never>, "FormPage"),
   FormSection,
   Icon,
   Input,
-  ItemList,
-  ItemListItem,
+  ItemList: withLinks<{ rows?: unknown[] }>(
+    ItemList as unknown as ComponentType<never>,
+    "ItemList",
+    (p) => (Array.isArray(p.rows) ? { ...p, rows: p.rows.map((r) => linkOf(r, "ItemList")) } : p),
+  ),
+  ItemListItem: withLinks<object>(
+    ItemListItem as unknown as ComponentType<never>,
+    "ItemListItem",
+    (p) => linkOf(p, "ItemListItem"),
+  ),
   Kbd,
   KeyValue,
   ListPage: hostTemplate(ListPage as unknown as ComponentType<never>, "ListPage"),
   Logo,
   Markdown,
-  Menu,
+  Menu: withLinks<{ items?: unknown }>(Menu as unknown as ComponentType<never>, "Menu", (p) => ({
+    ...p,
+    items: menuLinks(p.items, "Menu"),
+  })),
   PersonName,
   Popover,
   PrincipalPicker,
@@ -422,8 +553,48 @@ export const HOST_DESIGN: Record<string, ComponentType<never>> = {
   ViewBlocks,
 } as unknown as Record<string, ComponentType<never>>;
 
-function notYet(hook: string): never {
-  throw new Error(`${hook}() is not supported until full pages ship`);
+const NAV_ERR = "navigate target must be { params }, { page } or { conversation }";
+
+/**
+ * The host's own check of a `useNavigate` target (the package checks the shape too, the host does
+ * not rely on it): exactly one of `{ params }` (a plain object of string or null values, with an
+ * optional boolean `replace`), `{ page: { id, params? } }` (string params) or `{ conversation }`
+ * (an id). Anything else throws.
+ */
+export function checkNavigateTarget(to: unknown): NavigateTarget {
+  const fail = (): never => {
+    let shown: string;
+    try {
+      shown = JSON.stringify(to) ?? String(to);
+    } catch {
+      shown = String(to);
+    }
+    throw new Error(`${NAV_ERR}: got ${shown}`);
+  };
+  if (typeof to !== "object" || to === null || Array.isArray(to)) return fail();
+  const o = to as Record<string, unknown>;
+  const names = Object.keys(o).filter((k) => k !== "replace");
+  if (names.length !== 1) return fail();
+  if (o.replace !== undefined && (names[0] !== "params" || typeof o.replace !== "boolean")) {
+    return fail();
+  }
+  if (names[0] === "params") {
+    if (!isParamRecord(o.params, true)) return fail();
+    return to as NavigateTarget;
+  }
+  if (names[0] === "page") {
+    const page = o.page as Record<string, unknown> | null;
+    if (typeof page !== "object" || page === null || Array.isArray(page)) return fail();
+    if (typeof page.id !== "string" || page.id === "") return fail();
+    if (Object.keys(page).some((k) => k !== "id" && k !== "params")) return fail();
+    if (page.params !== undefined && !isParamRecord(page.params, false)) return fail();
+    return to as NavigateTarget;
+  }
+  if (names[0] === "conversation") {
+    if (typeof o.conversation !== "string" || o.conversation === "") return fail();
+    return to as NavigateTarget;
+  }
+  return fail();
 }
 
 /** Every runtime export of `@capybara-hq/plugin-client`, implemented by the host. */
@@ -465,8 +636,11 @@ export const PLUGIN_CLIENT: Record<string, unknown> = {
   useSignIn: () => useHost("useSignIn").api.signIn,
   useSizeClass: () => useHost("useSizeClass").api.sizeClass,
   useViewportSegments: () => useHost("useViewportSegments").api.viewportSegments,
-  // TODO(full-pages F6): the real page hooks; until then they throw so the export list is complete.
-  useNavigate: () => notYet("useNavigate"),
-  usePageParams: () => notYet("usePageParams"),
-  usePluginQuery: () => notYet("usePluginQuery"),
+  useNavigate: () => {
+    const { navigate } = useHost("useNavigate").api;
+    return (to: unknown) => navigate(checkNavigateTarget(to));
+  },
+  usePageParams: () => useHost("usePageParams").api.pageParams,
+  usePluginQuery: (query: string, params: unknown = null, opts: { staleMs?: number } = {}) =>
+    useHost("usePluginQuery").api.query(query, params, opts),
 };

@@ -676,6 +676,9 @@ describe("ClientHost", () => {
           ...services,
           view: { view: null, status: "loading", retry: () => {} },
           action: async () => ({}),
+          query: () => ({ data: undefined, status: "loading", refetch: () => {} }),
+          pageParams: {},
+          navigate: () => {},
         },
       };
       return (

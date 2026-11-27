@@ -466,6 +466,25 @@ export const keys = {
         contribution: string,
         rest: string,
       ): readonly unknown[] => [...all, "uiView", scope, plugin, contribution, rest],
+      /**
+       * Component queries (`usePluginQuery`, plugin full pages spec §4.1): every query of one
+       * contribution, or of one query name of it (prefixes), or one read (`params` and `rest`:
+       * the JSON of the params, and of the locale and scope ids).
+       */
+      pluginQueries: (plugin: string, contribution: string, query?: string): readonly unknown[] => [
+        ...all,
+        "plugin-query",
+        plugin,
+        contribution,
+        ...(query === undefined ? [] : [query]),
+      ],
+      pluginQuery: (
+        plugin: string,
+        contribution: string,
+        query: string,
+        params: string,
+        rest: string,
+      ): readonly unknown[] => [...all, "plugin-query", plugin, contribution, query, params, rest],
       /** Every share list of the org (an invalidation prefix). */
       sharesAll: (): readonly unknown[] => [...all, "shares"],
       /** The org's shares: the person's own (`mine`) or every one (`all`, org admins). */
