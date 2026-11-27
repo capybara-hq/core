@@ -6,6 +6,14 @@ import { BG_WAKE_JOB, type BgWakeJobData } from "../background/wake-rules.js";
 import { OWNED_PLUGIN_CLEANUP_JOB, type OwnedPluginCleanupData } from "../catalog/job-ids.js";
 import { OwnedPluginCleanup, OwnedPluginCleanupModule } from "../catalog/owned-plugin-cleanup.js";
 import { EventLogModule } from "../conversations/event-log.js";
+import {
+  ConversationNoticeDelivery,
+  ConversationNoticesModule,
+} from "../device-access/conversation-notice-delivery.js";
+import {
+  CONVERSATION_NOTICE_JOB,
+  type ConversationNoticeJobData,
+} from "../device-access/conversation-notices.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { runJob } from "../infra/queue/run-job.js";
@@ -85,7 +93,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
  * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}, `share-object-delete` → {@link ShareObjects}, `platform-icon-delete` →
- * {@link PlatformIconObjects}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * {@link PlatformIconObjects}, `device-conversation-notice` → {@link ConversationNoticeDelivery}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -121,6 +129,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(ShareObjects) private readonly shareObjects: Pick<ShareObjects, "deleteObject">,
     @Inject(PlatformIconObjects)
     private readonly platformIcons: Pick<PlatformIconObjects, "deleteObject">,
+    @Inject(ConversationNoticeDelivery)
+    private readonly notices: Pick<ConversationNoticeDelivery, "attempt">,
     @Optional()
     @Inject(CloudPermissionSnapshots)
     private readonly snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
@@ -231,6 +241,12 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case PLATFORM_ICON_DELETE_JOB:
         await this.platformIcons.deleteObject(job.data as PlatformIconDeleteData);
         return;
+      // a deleted conversation's notice to its device's services (close tabs on delete §4.3)
+      case CONVERSATION_NOTICE_JOB: {
+        const { orgId, noticeId } = job.data as ConversationNoticeJobData;
+        await this.notices.attempt(orgId, noticeId);
+        return;
+      }
       default:
         if (await this.scheduled.runNow(job.name)) return;
         // never completed unrun: in a rolling deploy an old worker meets a job a newer replica
@@ -276,6 +292,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     ShareObjectsModule,
     // the platform icon object deletion
     PlatformIconObjectsModule,
+    // a deleted conversation's notice to its device's services
+    ConversationNoticesModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [

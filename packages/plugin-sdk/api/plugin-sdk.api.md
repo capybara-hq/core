@@ -1001,6 +1001,9 @@ export const DEVICE_SERVICE_MAX_MESSAGE: number;
 export const DEVICE_SERVICE_NAME_RE: RegExp;
 
 // @public
+export const DEVICE_SERVICE_RESTORE_MAX_AGE_MS: number;
+
+// @public
 export const DEVICE_SERVICE_ROLL_CHECK = "{\"capybara\":\"roll-check\"}";
 
 // @public
@@ -1190,6 +1193,12 @@ export class DeviceRequestNotSentError extends SandboxScopeDeniedError {
 // @public
 export interface DevicesCtx {
     reportChanged(deviceId: string): Promise<void>;
+}
+
+// @public
+export interface DeviceServiceConversationDeleted {
+    capybara: "conversation-deleted";
+    conversationId: string;
 }
 
 // @public
@@ -1613,6 +1622,9 @@ export interface EmbedResult {
     };
     vectors: number[][];
 }
+
+// @public
+export function encodeConversationDeleted(conversationId: string): Uint8Array;
 
 // @public
 export function encodeDialInStreamData(streamId: string, data: Uint8Array): Uint8Array;
@@ -3163,6 +3175,9 @@ export function parseBootstrapManifest(json: unknown): BootstrapManifest | {
 export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile | {
     errors: string[];
 };
+
+// @public
+export function parseConversationDeleted(body: Uint8Array | string): DeviceServiceConversationDeleted | null;
 
 // @public
 export function parseDeviceReport(value: unknown): DeviceReport;
