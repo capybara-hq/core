@@ -1,6 +1,8 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef } from "react";
 import { IconButton } from "../controls/index";
 import { KeyValue } from "../display/key-value";
+import { ListEnd, ListMoreButton, type ListMoreProps } from "../display/list-end";
+import { SkeletonText } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { useDesignT } from "../provider";
@@ -182,16 +184,25 @@ export function ListDetailList({
   groups,
   current,
   onOpen,
+  onLoadMore,
+  hasMore,
+  loadingMore,
+  loadMoreError,
 }: {
   label: string;
   current?: string | undefined;
   onOpen(id: string): void;
-} & (
-  | { items: ListDetailListItem[]; groups?: undefined }
-  | { groups: ListDetailListGroup[]; items?: undefined }
-)) {
+} & ListMoreProps &
+  (
+    | { items: ListDetailListItem[]; groups?: undefined }
+    | { groups: ListDetailListGroup[]; items?: undefined }
+  )) {
   const t = useDesignT();
-  const rows = (list: ListDetailListItem[], name: string, part: string) => (
+  // More pages (a cursor): below 600 the last rows' end reads the next page as it comes into
+  // view, from 600 a Load more button under the list (ListMoreProps).
+  const more: ListMoreProps = { onLoadMore, hasMore, loadingMore, loadMoreError };
+  const end = <ListEnd more={more} skeleton={<LoadingRow />} />;
+  const rows = (list: ListDetailListItem[], name: string, part: string, last: boolean) => (
     <ul className="cb-ld-list" data-part={part} aria-label={name}>
       {list.map((it) => (
         <li key={it.id}>
@@ -242,23 +253,48 @@ export function ListDetailList({
           </button>
         </li>
       ))}
+      {last ? end : null}
     </ul>
   );
-  if (groups === undefined) return rows(items, label, "list");
+  if (groups === undefined) {
+    return (
+      <>
+        {rows(items, label, "list", true)}
+        <ListMoreButton more={more} />
+      </>
+    );
+  }
+  const shown = groups.filter((g) => g.items.length > 0);
   return (
-    // biome-ignore lint/a11y/useSemanticElements: a named group of lists, not a form's fieldset
-    <div className="cb-ld-groups" data-part="list" role="group" aria-label={label}>
-      {groups
-        .filter((g) => g.items.length > 0)
-        .map((g) => (
+    <>
+      {/* biome-ignore lint/a11y/useSemanticElements: a named group of lists, not a form's fieldset */}
+      <div className="cb-ld-groups" data-part="list" role="group" aria-label={label}>
+        {shown.map((g, i) => (
           <section key={g.id} className="cb-ld-group" data-part="list-group">
             <h3 className="cb-ld-group-label" data-part="list-group-label">
               {g.label}
             </h3>
-            {rows(g.items, g.label, "list-group-rows")}
+            {rows(g.items, g.label, "list-group-rows", i === shown.length - 1)}
           </section>
         ))}
-    </div>
+      </div>
+      <ListMoreButton more={more} />
+    </>
+  );
+}
+
+/** The row a list with more pages shows at its end while the next page loads. */
+function LoadingRow() {
+  return (
+    <li data-end="skeleton" aria-hidden>
+      <span className="cb-ld-row" data-part="loading-row">
+        <span className="cb-ld-icon" aria-hidden="true" />
+        <span className="cb-ld-text">
+          <SkeletonText width="55%" />
+          <SkeletonText width="30%" size="small" />
+        </span>
+      </span>
+    </li>
   );
 }
 

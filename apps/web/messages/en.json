@@ -2046,7 +2046,6 @@
     },
     "actions": {
       "openConversation": "Open conversation",
-      "newConversation": "New conversation",
       "share": "Share",
       "download": "Download",
       "delete": "Delete"
@@ -2054,6 +2053,7 @@
     "delete": {
       "title": "Delete {name}?",
       "body": "The file leaves your files and its share links stop working; conversations that refer to it show it as no longer available.",
+      "bodyNewest": "Only the newest version is deleted: it leaves your files, its share links stop working and conversations that refer to it show it as no longer available. The {count, plural, one {# earlier version stays} other {# earlier versions stay}}.",
       "confirm": "Delete",
       "done": "Deleted {name}"
     },

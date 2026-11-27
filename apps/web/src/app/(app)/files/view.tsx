@@ -5,6 +5,7 @@ import {
   DateTime,
   Dialog,
   dayBucket,
+  EmptyState,
   type EmptyStateProps,
   formatBytes,
   formatListTime,
@@ -29,6 +30,7 @@ import {
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ChangeEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { useCursorPages } from "../../../components/cursor-pages";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { LibraryPreviewEmbed } from "../../../components/extension-ui/LibraryPreviewEmbed";
 import { FilePreviewBody } from "../../../components/file-preview/FilePreviewBody";
@@ -72,6 +74,9 @@ type FilesT = ReturnType<typeof useTranslations<"files">>;
 
 /** The head's tabs: every file, then each origin (`?origin=`). */
 const TABS: readonly (LibraryOrigin | "")[] = ["", "delivered", "generated", "upload"];
+
+/** How long the search waits after typing stops before it reads (as the admin lists do). */
+const SEARCH_DEBOUNCE_MS = 300;
 
 /** The list's time groups (今天 / 本周 / 更早): yesterday and the days before it fall in 本周. */
 const GROUPS = ["today", "week", "older"] as const;
@@ -117,28 +122,50 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
   const [type, setType] = useUrlParam("type", initial.type, parseType, "");
   const [q, setQ] = useUrlParam("q", initial.q, parseSearch, "");
   const url: FilesUrl = { origin, agent, type, q };
+  const filter = libraryFilterOf(url);
   const filtered = isFiltered(url);
 
+  // The search box: typed here, written to the address 300 ms after typing stops; an address
+  // change from elsewhere (Clear filters, Back) replaces the text.
+  const [text, setText] = useState(q);
+  const [seenQ, setSeenQ] = useState(q);
+  if (seenQ !== q) {
+    setSeenQ(q);
+    setText(q);
+  }
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const onSearch = (v: string) => {
+    const next = parseSearch(v);
+    setText(next);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setQ(next), SEARCH_DEBOUNCE_MS);
+  };
+
   // A new filter keeps the rows shown until its own answer lands (no flash of the loading list).
-  const list = usePageQuery({
-    ...libraryFilesQuery(orgId, libraryFilterOf(url)),
-    placeholderData: keepPreviousData,
-  });
+  const listQ = { ...libraryFilesQuery(orgId, filter), placeholderData: keepPreviousData };
+  const list = usePageQuery(listQ);
+  const placeholder = useQuery({
+    ...listQ,
+    retryOnMount: retryOnMountOf(listQ.queryKey),
+  }).isPlaceholderData;
+  // Later pages (Load more) continue the current filter's first page by the kernel's cursor.
+  const pages = useCursorPages(
+    list.kind === "ready" && !placeholder ? list.data : undefined,
+    (after) => libraryFilesQuery(orgId, { ...filter, cursor: after }),
+    (p) => ({ rows: p.files, next: p.next }),
+  );
   const usageQ = libraryUsageQuery(orgId);
   const usage = useQuery({ ...usageQ, retryOnMount: retryOnMountOf(usageQ.queryKey) }).data;
   const agentsQ = agentsQuery(orgId);
   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data;
 
-  // The selection is the hash; whether it is shown away from the list (pushed below 600, the side
-  // sheet when two panes do not fit) is its own state, so Back keeps the row current.
+  // The open file is the hash (so the system back closes it, as on the inbox); the last file
+  // opened stays the current row and the two-pane detail after it is closed.
   const hashItem = useHashItem();
-  const selectedId = hashItem.id;
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    // A deep link (or Forward) opens the file it names
-    if (selectedId !== null) setOpen(true);
-    else setOpen(false);
-  }, [selectedId]);
+  const [lastId, setLastId] = useState<string | null>(null);
+  const selectedId = hashItem.id ?? lastId;
+  const open = hashItem.id !== null;
   const detailQ = libraryFileQuery(orgId, selectedId ?? "");
   const details = useQuery({
     ...detailQ,
@@ -159,6 +186,7 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
     for (const file of files) {
       try {
         await upload.mutateAsync({ file });
+        pages.reset();
         toast.success(t("uploaded", { name: file.name }));
       } catch (e) {
         toast.error(errorMessage(e));
@@ -178,6 +206,8 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
     );
   };
   const clear = () => {
+    clearTimeout(timer.current);
+    setText("");
     setOrigin("");
     setAgent("");
     setType("");
@@ -193,7 +223,7 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
       onSelect: () => setOrigin(o),
     })),
     activeTab: origin === "" ? "all" : origin,
-    search: { label: t("search"), value: q, onChange: (v: string) => setQ(parseSearch(v)) },
+    search: { label: t("search"), value: text, onChange: onSearch },
   };
   const uploadAction: HeaderAction = {
     label: t("upload"),
@@ -250,7 +280,7 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
     actions: [uploadAction],
     filters,
     filterCount: fieldFilterCount(url),
-    onBack: () => setOpen(false),
+    onBack: () => hashItem.close(),
   };
   if (list.kind === "loading") {
     return (
@@ -261,7 +291,13 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
     );
   }
 
-  const files = list.data.files;
+  // The rows: the placeholder's while a new filter loads, else every page read, each file once.
+  const seen = new Set<string>();
+  const files = (placeholder ? list.data.files : pages.rows).filter((f) => {
+    if (seen.has(f.id)) return false;
+    seen.add(f.id);
+    return true;
+  });
   const groups: ListDetailListGroup[] = GROUPS.map((g) => ({
     id: g,
     label: t(`groups.${g}`),
@@ -277,13 +313,14 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
       })),
   })).filter((g) => g.items.length > 0);
 
-  // The open file: the row's view, else (a deep link past the first page or another filter) the
+  // The open file: the row's view, else (a deep link past the pages read or another filter) the
   // details' own view.
   const loaded = details.data?.file.id === selectedId ? details.data : undefined;
   const file: LibraryFileView | null =
     selectedId === null ? null : (files.find((f) => f.id === selectedId) ?? loaded?.file ?? null);
-  const gone = selectedId !== null && details.error?.status === 404;
-  const shown = gone ? null : file;
+  const gone = selectedId !== null && file === null && details.error != null;
+  const pending = selectedId !== null && file === null && !gone;
+  const shown = file;
 
   const empty: EmptyStateProps | undefined =
     files.length > 0
@@ -300,26 +337,21 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
             action: { label: t("upload"), icon: "upload", variant: "primary", onSelect: pick },
           };
 
+  const source = shown?.sourceConversation ?? null;
   const actions: LibraryAction[] =
     shown === null
       ? []
       : [
-          shown.sourceConversation !== null && !shown.sourceConversation.deleted
-            ? {
-                id: "conversation",
-                label: t("actions.openConversation"),
-                icon: "chats",
-                onSelect: () =>
-                  router.push(
-                    `/chat/${encodeURIComponent((shown.sourceConversation as LibraryConversation).id)}`,
-                  ),
-              }
-            : {
-                id: "new",
-                label: t("actions.newConversation"),
-                icon: "square-pen",
-                onSelect: () => router.push("/"),
-              },
+          ...(source !== null && !source.deleted
+            ? [
+                {
+                  id: "conversation",
+                  label: t("actions.openConversation"),
+                  icon: "chats" as const,
+                  onSelect: () => router.push(`/chat/${encodeURIComponent(source.id)}`),
+                },
+              ]
+            : []),
           {
             id: "share",
             label: t("actions.share"),
@@ -343,6 +375,23 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
           },
         ];
 
+  // The detail: the file, or (a deep link) its loading state or why it is not there.
+  const detail: ReactNode | null =
+    shown !== null ? (
+      <FileDetail
+        key={shown.id}
+        orgId={orgId}
+        file={shown}
+        details={loaded}
+        agent={agentName(shown.agentId, shown.agentName)}
+        t={t}
+      />
+    ) : pending ? (
+      <Skeleton rows={8} />
+    ) : gone ? (
+      <EmptyState size="panel" text={t("detail.gone")} />
+    ) : null;
+
   return (
     <>
       <LibraryPage
@@ -359,27 +408,21 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
             groups={groups}
             current={selectedId ?? undefined}
             onOpen={(id) => {
+              setLastId(id);
               hashItem.open(id);
-              setOpen(true);
             }}
+            // Later pages by the kernel's cursor (not while a new filter's answer is on its way)
+            onLoadMore={pages.loadMore}
+            hasMore={pages.next !== null && !placeholder}
+            loadingMore={pages.loadingMore}
+            loadMoreError={pages.error}
           />
         }
-        detail={
-          shown === null ? null : (
-            <FileDetail
-              key={shown.id}
-              orgId={orgId}
-              file={shown}
-              details={loaded}
-              agent={agentName(shown.agentId, shown.agentName)}
-              t={t}
-            />
-          )
-        }
+        detail={detail}
         {...(shown !== null ? { detailTitle: shown.name } : {})}
         detailActions={actions}
-        detailEmpty={{ text: gone ? t("detail.gone") : t("detail.pick") }}
-        open={open && shown !== null}
+        detailEmpty={{ text: t("detail.pick") }}
+        open={open && detail !== null}
         {...(empty !== undefined ? { empty } : {})}
       />
       {input}
@@ -394,12 +437,14 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
       {deleting !== null && (
         <DeleteFileDialog
           name={deleting.name}
+          versions={deleting.versions}
           onClose={() => setDeleting(null)}
           onDelete={async () => {
             await remove.mutateAsync({ fileId: deleting.id });
+            pages.reset();
             if (selectedId === deleting.id) {
-              setOpen(false);
-              hashItem.close();
+              setLastId(null);
+              if (hashItem.id === deleting.id) hashItem.close();
             }
             toast.success(t("delete.done", { name: deleting.name }));
             setDeleting(null);
@@ -444,6 +489,10 @@ function FileDetail({
   const [picked, setPicked] = useState<string | null>(null);
   const source = { kind: "library" as const, orgId, file };
   const download = () => openDownload(sourceUrls(source).download);
+  // The conversations that refer to it besides the one it came from (shown on its own row)
+  const referring = (details?.conversations ?? []).filter(
+    (c) => c.id !== file.sourceConversation?.id,
+  );
   const rows: { k: ReactNode; v: ReactNode; mono?: boolean }[] = [
     { k: t("facts.origin"), v: t(`origin.${file.origin}`) },
     ...(agent !== null ? [{ k: t("facts.agent"), v: agent }] : []),
@@ -457,11 +506,11 @@ function FileDetail({
           {
             k: t("facts.referencedBy"),
             v:
-              details.conversations.length === 0 ? (
+              referring.length === 0 ? (
                 t("facts.none")
               ) : (
                 <Stack gap={4}>
-                  {details.conversations.map((c) => (
+                  {referring.map((c) => (
                     <span key={c.id}>
                       <ConversationRef c={c} t={t} />
                     </span>
@@ -527,13 +576,19 @@ function FileDetail({
   );
 }
 
-/** Confirms deleting a file: its share links stop working and conversations show it as gone. */
+/**
+ * Confirms deleting a file: its share links stop working and conversations show it as gone. A row
+ * with versions deletes only the newest; the body says the earlier ones stay.
+ */
 function DeleteFileDialog({
   name,
+  versions,
   onClose,
   onDelete,
 }: {
   name: string;
+  /** The row's versions: only the newest is deleted, the earlier ones stay. */
+  versions: number;
   onClose(): void;
   onDelete(): Promise<void>;
 }) {
@@ -578,7 +633,9 @@ function DeleteFileDialog({
       }
     >
       <Stack gap={12}>
-        <Text variant="prose">{t("body")}</Text>
+        <Text variant="prose">
+          {versions > 1 ? t("bodyNewest", { count: versions - 1 }) : t("body")}
+        </Text>
         {error !== undefined && <FormError message={error} />}
       </Stack>
     </Dialog>

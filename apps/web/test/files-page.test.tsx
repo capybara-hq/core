@@ -1,5 +1,5 @@
 import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -83,7 +83,10 @@ const detailRoutes = {
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 const template = () => document.querySelector('[data-template="LibraryPage"]');
 
-beforeEach(() => resetNavigation("/files"));
+beforeEach(() => {
+  resetNavigation("/files");
+  window.history.replaceState(null, "", "/files");
+});
 afterEach(() => {
   cleanup();
   window.history.replaceState(null, "", "/");
@@ -229,6 +232,130 @@ describe("/files", () => {
     expect(calls.filter((c) => c.method === "GET" && c.url === FILES).length).toBeGreaterThan(0);
     expect(calls.some((c) => c.method === "GET" && c.url === `${FILES}/usage`)).toBe(true);
     expect(window.location.hash).toBe("");
+  });
+
+  it("Back closes the open file (the hash goes) and keeps its row current", async () => {
+    stubApi({ ...routes, ...detailRoutes });
+    const { container } = await renderRouteWithCache("/files", lastStubRoutes());
+    const region = () => container.querySelector('[data-part="list-detail"]');
+    const user = userEvent.setup();
+    await user.click(screen.getByText("report.pdf"));
+    expect(window.location.hash).toBe("#item=f1");
+    await waitFor(() => expect(region()?.getAttribute("data-open")).toBe("true"));
+    await user.click(screen.getAllByRole("button", { name: "Back" })[0] as HTMLElement);
+    await waitFor(() => expect(region()?.getAttribute("data-open")).toBe("false"));
+    expect(window.location.hash).toBe("");
+    expect(window.location.pathname).toBe("/files");
+    const row = document.querySelector('[data-part="list-row"][aria-current="true"]');
+    expect(row?.textContent).toContain("report.pdf");
+  });
+
+  it("a deep link to a file that is gone says so in the detail", async () => {
+    window.history.replaceState(null, "", "/files#item=fx");
+    stubApi({
+      ...routes,
+      [`GET ${FILES}/fx`]: () => json(404, { error: { code: "file.not_found", message: "no" } }),
+    });
+    await renderRouteWithCache("/files", lastStubRoutes());
+    expect(await screen.findByText(E.detail.gone)).toBeTruthy();
+  });
+
+  it("Load more reads the next page by the kernel's cursor and appends it", async () => {
+    const calls = stubApi({
+      ...routes,
+      [`GET ${FILES}`]: (c: { url: string }) =>
+        c.url.includes("cursor=n1")
+          ? json(200, { files: [file({ id: "f3", name: "older.pdf" })], next: null })
+          : json(200, { files: [file(), UPLOAD], next: "n1" }),
+    });
+    await renderRouteWithCache("/files", lastStubRoutes());
+    await userEvent.setup().click(screen.getByRole("button", { name: "Load more" }));
+    expect(await screen.findByText("older.pdf")).toBeTruthy();
+    expect(screen.getByText("report.pdf")).toBeTruthy();
+    expect(calls.some((c) => c.url === `${FILES}?cursor=n1`)).toBe(true);
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("the search writes q to the address after typing stops, then reads it", async () => {
+    const lists = routesOf((url) => (url.includes("q=notes") ? [UPLOAD] : [file(), UPLOAD]));
+    const calls = stubApi(lists);
+    await renderRouteWithCache("/files", lists);
+    const box = screen.getAllByRole("searchbox", { name: E.search })[0] as HTMLElement;
+    await userEvent.setup().type(box, "notes");
+    // nothing per keystroke: one read for the finished text
+    await waitFor(() => expect(window.location.search).toBe("?q=notes"));
+    await waitFor(() => expect(screen.queryByText("report.pdf")).toBeNull());
+    expect(calls.filter((c) => c.url.startsWith(`${FILES}?q=`)).map((c) => c.url)).toEqual([
+      `${FILES}?q=notes`,
+    ]);
+  });
+
+  it("the agent and type selects write the address and read the list", async () => {
+    const AG = { id: "ag1", definition: { name: "Helper" } };
+    const lists = {
+      ...routesOf((url) => (url.includes("type=image") ? [] : [file(), UPLOAD])),
+      [`GET ${ORG}/agents`]: ok({ agents: [AG] }),
+    };
+    const calls = stubApi(lists);
+    await renderRouteWithCache("/files", lists);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("combobox", { name: E.filters.agent })[0] as HTMLElement);
+    await user.click(await screen.findByRole("option", { name: "Helper" }));
+    await waitFor(() => expect(window.location.search).toBe("?agent=ag1"));
+    await waitFor(() => expect(calls.some((c) => c.url === `${FILES}?agentId=ag1`)).toBe(true));
+    await user.click(screen.getAllByRole("combobox", { name: E.filters.type })[0] as HTMLElement);
+    await user.click(await screen.findByRole("option", { name: E.types.image }));
+    await waitFor(() => expect(window.location.search).toBe("?agent=ag1&type=image"));
+    expect(await screen.findByText(E.empty.filtered)).toBeTruthy();
+    expect(calls.some((c) => c.url === `${FILES}?agentId=ag1&type=image`)).toBe(true);
+  });
+
+  it("an upload posts the file to the library, then reads the list and usage again", async () => {
+    let uploaded = false;
+    const calls = stubApi({
+      ...routesOf(() => (uploaded ? [file({ id: "f9", name: "a.txt" }), UPLOAD] : [UPLOAD])),
+      [`POST ${FILES}`]: () => {
+        uploaded = true;
+        return json(201, {
+          file: { id: "f9", name: "a.txt", contentType: "text/plain", size: 3, status: "ready" },
+          upload: null,
+          expiresAt: null,
+        });
+      },
+    });
+    await renderRouteWithCache("/files", lastStubRoutes());
+    const input = document.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(["abc"], "a.txt", { type: "text/plain" })] },
+    });
+    expect(await screen.findByText("a.txt")).toBeTruthy();
+    const post = calls.find((c) => c.method === "POST" && c.url === FILES);
+    expect(JSON.parse(String(post?.body))).toMatchObject({ name: "a.txt", purpose: "library" });
+    expect(calls.some((c) => c.method === "GET" && c.url === `${FILES}/usage`)).toBe(true);
+  });
+
+  it("deleting a row with earlier versions says only the newest goes", async () => {
+    stubApi({
+      ...routesOf(() => [file({ versions: 3 })]),
+      ...detailRoutes,
+    });
+    await renderRouteWithCache("/files", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(screen.getByText("report.pdf"));
+    const head = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLElement>('[data-part="library-detail-head"]');
+      if (el === null) throw new Error("no detail head");
+      return el;
+    });
+    const more = within(head).getAllByRole("button", { name: en.common.moreActions });
+    await user.click(more[more.length - 1] as HTMLElement);
+    await user.click(await screen.findByRole("menuitem", { name: E.actions.delete }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete report.pdf?" });
+    expect(
+      within(dialog).getByText(/Only the newest version is deleted.*The 2 earlier versions stay\./),
+    ).toBeTruthy();
   });
 
   it("a guest sees the no-access state and nothing is read", async () => {

@@ -2034,7 +2034,6 @@
     },
     "actions": {
       "openConversation": "打开会话",
-      "newConversation": "新会话",
       "share": "分享",
       "download": "下载",
       "delete": "删除"
@@ -2042,6 +2041,7 @@
     "delete": {
       "title": "删除 {name}？",
       "body": "文件会从你的文件中移除，它的分享链接随之失效；引用它的会话会显示这个文件已不可用。",
+      "bodyNewest": "只删除最新版本：文件会从你的文件中移除，它的分享链接随之失效，引用它的会话会显示这个文件已不可用。较早的 {count} 个版本会保留。",
       "confirm": "删除",
       "done": "已删除 {name}"
     },
