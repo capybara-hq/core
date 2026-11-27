@@ -113,6 +113,7 @@
   "runtime/context/build-skills.test.ts",
   "runtime/context/build-tools.test.ts",
   "runtime/context/build.test.ts",
+  "runtime/context/cache-expiry.test.ts",
   "runtime/context/cache-ttl.test.ts",
   "runtime/context/compaction.test.ts",
   "runtime/context/current-turn-compaction.test.ts",
