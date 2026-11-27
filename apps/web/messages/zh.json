@@ -1522,6 +1522,9 @@
       "agent": "智能体技能",
       "project": "项目技能"
     },
+    "skillSourceTag": {
+      "project": "项目"
+    },
     "skillTag": {
       "manual": "手动",
       "fork": "子智能体"

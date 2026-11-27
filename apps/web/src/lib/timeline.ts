@@ -30,6 +30,7 @@ import { parsePartialJson } from "./partial-json";
 import type { PersonRef } from "./people";
 import { PersonWaits } from "./person-waits";
 import { type DraftBase, type DraftTool, isSettledBase } from "./run-drafts";
+import { skillChipLabel } from "./skills";
 import { inputValue, loggedLiveView, streamingView } from "./streaming-tool-view";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 
@@ -1428,7 +1429,7 @@ export function buildEventTimeline(
             authorAccountId: e.payload.authorAccountId,
           };
           if (skill) {
-            entry.skill = { label: `/${skill.name}`, mode: skill.mode };
+            entry.skill = { label: skillChipLabel(skill.name), mode: skill.mode };
             // A fork's content[0] is the lead for the model, not the instructions: those are the
             // sub-agent's task, which its row opens.
             if (skill.mode === "inline") {

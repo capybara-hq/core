@@ -51,6 +51,7 @@ import {
   type InvocableSource,
   parseSlashCommand,
   skillChipLabel,
+  skillShownName,
 } from "../../lib/skills";
 import type { PromptSuggestion } from "../../lib/stream";
 import { useErrorMessage } from "../../lib/use-error-message";
@@ -419,8 +420,10 @@ export function ComposerBar({
         resolving.current = true;
         const list = skills ?? (await loadSkills().finally(() => (resolving.current = false)));
         resolving.current = false;
-        if (findInvocable(list, typed.name) !== undefined) {
-          invoke = typed.name;
+        const found = findInvocable(list, typed.name);
+        if (found !== undefined) {
+          // a project skill typed by its bare name is invoked as `project:<name>`
+          invoke = found.source === "project" ? found.name : typed.name;
           args = typed.args;
           typedInvoke = true;
         }
@@ -610,7 +613,7 @@ export function ComposerBar({
 
   const skillItem = (sk: InvocableSkill) => ({
     id: `skill:${sk.id}`,
-    label: `/${sk.name}`,
+    label: `/${skillShownName(sk)}`,
     ...(sk.argumentHint !== undefined ? { hint: sk.argumentHint } : {}),
     ...(sk.manual || sk.fork
       ? {
@@ -621,6 +624,8 @@ export function ComposerBar({
         }
       : {}),
     ...(sk.plugin !== undefined ? { search: `${sk.plugin}:${sk.name}`, source: sk.plugin } : {}),
+    // a project skill shows its bare name, tagged like a plugin's; `project:` still finds it
+    ...(sk.source === "project" ? { search: sk.name, source: t("skillSourceTag.project") } : {}),
     ...(sk.description !== "" ? { description: sk.description } : {}),
     onSelect: () => {
       picked();
@@ -806,7 +811,7 @@ export function ComposerBar({
       {...(skill !== null
         ? {
             token: {
-              label: `/${skill.name}`,
+              label: `/${skillShownName(skill)}`,
               ...(skill.argumentHint !== undefined ? { hint: skill.argumentHint } : {}),
               onRemove: () => setSkill(null),
             },
