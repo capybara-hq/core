@@ -833,7 +833,7 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
       const id = params.conversationId;
       if (orgId === null || id === undefined) return [];
       return [
-        // members up: my tasks posting into it (the properties panel's 自动化 section)
+        // members up: my tasks posting into it (the properties panel's Automations section)
         ...(atLeast(me, "member") ? [q(conversationAutomationsQuery(orgId, id))] : []),
         q(conversationQuery(orgId, id)),
         q(eventsQuery(orgId, id)),

@@ -51,7 +51,7 @@ const LIVE_MS = 60_000;
  * The calendar view of `/automations` (calendar spec §4, §8, §9): ListPage with the page head's tabs
  * and `ScheduleCalendar` (week or month, the phone's agenda by CSS), the range read with the
  * previous range kept while the next one loads, a live poll while the range holds now, the admin
- * 全组织 scope and the run panel (`AutomationRunSheet`, its item in the address hash).
+ * whole-organization scope and the run panel (`AutomationRunSheet`, its item in the address hash).
  */
 export function AutomationCalendarView({
   orgId,

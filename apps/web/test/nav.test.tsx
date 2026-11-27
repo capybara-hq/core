@@ -64,11 +64,11 @@ function ids(level: NavLevel, superAdmin: boolean) {
 
 describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   // The inbox is the brand row's button (acceptance round 2, B2). No home item: 新会话 is the home;
-  // 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07). 技能 is for members up.
+  // Skills and Connectors sit under Agents (acceptance 2026-11-07). Skills is for members up.
   const primaryGuest = ["agents", "connectors"];
-  // 自动化 for members up (guests can't create tasks; automations spec §10)
+  // Automations for members up (guests can't create tasks; automations spec §10)
   const primary = ["agents", "skills", "connectors", "automations"];
-  // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
+  // Organization settings is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
   // 智能体模板 is no item: it is the 模板 tab of 智能体 (ruling P4-14)
   // 设备 sits under 更多 (acceptance 2026-11-12)

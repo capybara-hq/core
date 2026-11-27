@@ -82,7 +82,7 @@ export const grantableToolsQuery = (orgId: string, agentId: string) =>
     freshness: "orgConfig",
   });
 
-/** My tasks that post into a conversation (the properties panel's 自动化 section). */
+/** My tasks that post into a conversation (the properties panel's Automations section). */
 export const conversationAutomationsQuery = (orgId: string, conversationId: string) =>
   defineQuery({
     key: keys.org(orgId).conversationAutomations(conversationId),

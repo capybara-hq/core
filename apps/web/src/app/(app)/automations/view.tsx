@@ -30,8 +30,8 @@ import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
 /**
- * `/automations` (自动化): my automations, as a calendar or a list (the page head's tabs 日历 /
- * 列表, calendar spec §4.1; the calendar is the default). The list (`?view=list`) is ListPage + DataTable: name, agent, the schedule in words
+ * `/automations`: my automations, as a calendar or a list (the page head's Calendar / List
+ * tabs, calendar spec §4.1; the calendar is the default). The list (`?view=list`) is ListPage + DataTable: name, agent, the schedule in words
  * with its zone, status, next run and last result; a row opens the task, its menu pauses, resumes
  * or deletes it. The calendar (the bare `/automations`) is ListPage + `ScheduleCalendar`
  * (`components/AutomationCalendarView`). Members up (guests can't create tasks: the no-access

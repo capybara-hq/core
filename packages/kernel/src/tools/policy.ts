@@ -40,10 +40,10 @@ export interface PolicyInput {
   connectorDefault: ToolPolicy;
   /** agent 负责人的收紧（`definition.toolPolicies[key]`）。 */
   agentOverride?: "ask" | "deny";
-  /** `requiresUserInteraction`。 */
+  /** `requiresUserInteraction`. */
   fixedAsk: boolean;
   /**
-   * 已记住且 specHash 与当前一致的授权; `task`: an automation's grant in its unattended run.
+   * A remembered grant whose specHash matches the current one; `task`: an automation's grant in its unattended run.
    */
   grant: GrantKind | null;
 }

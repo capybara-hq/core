@@ -30,8 +30,8 @@ export type NavLevel = "guest" | "member" | "admin";
 
 /**
  * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
- * `primary` items follow New conversation (智能体, 技能, 连接器, 设备, 自动化; there is no home page: the new
- * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the 更多
+ * `primary` items follow New conversation (Agents, Skills, Connectors, Devices, Automations; there is no home page: the new
+ * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the More
  * flyout (then the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
  * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
  * console is the entry above the account row, for super admins. `drawer` places an item in the
