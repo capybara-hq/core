@@ -16,7 +16,6 @@ const info = (id: string, media: boolean): ModelInfo => ({
     tools: false,
     vision: media,
     reasoning: false,
-    caching: false,
     midConversationSystem: true,
     documents: media,
   },

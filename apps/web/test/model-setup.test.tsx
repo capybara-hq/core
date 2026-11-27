@@ -83,7 +83,7 @@ const CHAT = {
   displayName: "Claude X",
   contextWindow: 1000,
   maxOutputTokens: 100,
-  capabilities: { tools: true, vision: false, reasoning: false, caching: false },
+  capabilities: { tools: true, vision: false, reasoning: false },
   parameters: [],
 };
 

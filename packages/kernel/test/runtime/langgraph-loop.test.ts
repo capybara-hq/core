@@ -74,7 +74,6 @@ const stubInfo: ModelInfo = {
     tools: true,
     vision: false,
     reasoning: false,
-    caching: false,
     midConversationSystem: true,
   },
   parameters: [],

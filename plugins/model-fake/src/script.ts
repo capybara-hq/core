@@ -4,6 +4,7 @@ import {
   type ContentBlock,
   type ImageGenerateRequest,
   type ImageSize,
+  type ModelCacheInfo,
   type ModelCallOptions,
   ModelError,
   type ModelErrorKind,
@@ -46,7 +47,27 @@ export interface FakeModelConfig {
   maxReferenceImages?: number | undefined;
   /** The sizes of an image_generation model (default 1024x1024, 1536x1024, 1024x1536; the first is the default). */
   imageSizes?: ImageSize[] | undefined;
+  /** The prompt cache the model declares (default {@link FAKE_CACHE}); "none" declares none and counts no cache tokens. */
+  cache?:
+    | (Omit<ModelCacheInfo, "defaultTtl" | "minTokens"> & {
+        defaultTtl?: number | undefined;
+        minTokens?: number | undefined;
+      })
+    | "none"
+    | undefined;
 }
+
+/** The prompt cache model-fake declares by default (an Anthropic-like explicit cache). */
+export const FAKE_CACHE: ModelCacheInfo = {
+  mechanism: "explicit",
+  ttlOptions: [300, 3600],
+  defaultTtl: 300,
+  ttlIsMinimum: false,
+  refreshOnHit: true,
+  ttlClock: "request_start",
+  minTokens: 1,
+  guaranteed: true,
+};
 
 /**
  * A valid 1x1 PNG, base64. `@capybara-hq/testing` exports `FAKE_PNG_BASE64` with the same value
@@ -80,7 +101,6 @@ const IMAGE_SIZES: ImageSize[] = [
   { width: 1024, height: 1536 },
 ];
 
-const CACHE_TTL_SECONDS = 300;
 const CHUNK_CHARS = 4;
 /** 多块输出时块间默认间隔，保证调用方能在流进行中中止。 */
 const DEFAULT_CHUNK_DELAY_MS = 2;
@@ -453,6 +473,15 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
     "aborted",
     "refusal",
   ] satisfies ModelErrorKind[];
+  function cacheOf(c: Exclude<FakeModelConfig["cache"], "none">): ModelCacheInfo {
+    if (c === undefined) return structuredClone(FAKE_CACHE);
+    const { defaultTtl, minTokens, ...rest } = structuredClone(c);
+    return {
+      ...rest,
+      ...(defaultTtl !== undefined ? { defaultTtl } : {}),
+      ...(minTokens !== undefined ? { minTokens } : {}),
+    };
+  }
   function infosOf(models: readonly FakeModelConfig[] | undefined): ModelInfo[] {
     const configured = models !== undefined && models.length > 0 ? models : [{ id: "fake-1" }];
     return configured.map((m) => {
@@ -484,6 +513,7 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
               },
             }
           : {}),
+        ...(m.cache !== "none" ? { cache: cacheOf(m.cache) } : {}),
         contextWindow: m.contextWindow ?? 32000,
         maxOutputTokens: 4096,
         capabilities: {
@@ -491,7 +521,6 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
           vision: m.vision ?? false,
           documents: m.documents ?? false,
           reasoning: false,
-          caching: true,
           midConversationSystem: true,
         },
         ...(m.streamIdleTimeoutMs !== undefined
@@ -510,22 +539,38 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
   }
 
   /**
-   * 可缓存的系统前缀：首次出现计为缓存写，再次出现计为缓存读（命中记录在 kv，TTL 300 秒）。
-   * `cachedChars` 为前缀字符数，从 inputTokens 中扣除（inputTokens 只算未缓存部分）。
+   * Cacheable system prefix: the first appearance counts as a cache write, a repeat as a cache read
+   * (hit records live in kv for the request's tier: `req.cacheTtl ?? defaultTtl` seconds; a hit
+   * re-sets the record with that TTL when the model declares `refreshOnHit`; a model without a
+   * cache counts nothing). A model with no `ttlOptions` and no `defaultTtl` ignores `cacheTtl`,
+   * reports no tier (`ttl` null) and keeps its records for 300 seconds.
+   * `cachedChars` is the prefix length in characters, deducted from inputTokens (inputTokens counts
+   * only the uncached part).
    */
   async function cacheUsage(
     req: ModelRequest,
-  ): Promise<{ read: number; write: number; cachedChars: number }> {
+    call: ModelCallOptions | undefined,
+  ): Promise<{ read: number; write: number; cachedChars: number; ttl: number | null }> {
+    const info = infosFor(call).find((i) => i.id === req.model);
+    const none = { read: 0, write: 0, cachedChars: 0, ttl: null };
+    if (info?.cache === undefined || info.cache.mechanism === "none") return none;
+    const hasOptions = info.cache.ttlOptions.length > 0;
+    // the tier reported in cacheWriteByTtl; null when the model declares no lifetime at all
+    const tier = (hasOptions ? req.cacheTtl : undefined) ?? info.cache.defaultTtl ?? null;
+    const storeTtl = tier ?? 300;
     const cached = req.system.filter((s) => s.cache).map((s) => s.text);
     const prefix = cached.join("\n");
-    if (prefix === "") return { read: 0, write: 0, cachedChars: 0 };
+    if (prefix === "") return none;
     const key = `model-fake:prefix:${createHash("sha256").update(prefix).digest("hex")}`;
     const cachedChars = cached.reduce((n, t) => n + t.length, 0);
     if ((await opts.kv.get(key)) !== null) {
-      return { read: tokens(cachedChars), write: 0, cachedChars };
+      if (info.cache.refreshOnHit) {
+        await opts.kv.set(key, String(cachedChars), { ttlSeconds: storeTtl });
+      }
+      return { read: tokens(cachedChars), write: 0, cachedChars, ttl: tier };
     }
-    await opts.kv.set(key, String(cachedChars), { ttlSeconds: CACHE_TTL_SECONDS });
-    return { read: 0, write: tokens(cachedChars), cachedChars };
+    await opts.kv.set(key, String(cachedChars), { ttlSeconds: storeTtl });
+    return { read: 0, write: tokens(cachedChars), cachedChars, ttl: tier };
   }
 
   return {
@@ -609,12 +654,15 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
       if (p.kind === "fail") throw p.error;
       if (p.kind === "stall") return await waitForAbort(signal);
 
-      const cache = await cacheUsage(req);
+      const cache = await cacheUsage(req, call);
       const usage = (outChars: number) => ({
         inputTokens: tokens(inputChars(req) - cache.cachedChars),
         outputTokens: tokens(outChars),
         cacheReadTokens: cache.read,
         cacheWriteTokens: cache.write,
+        ...(cache.write > 0 && cache.ttl !== null
+          ? { cacheWriteByTtl: [{ ttl: cache.ttl, tokens: cache.write }] }
+          : {}),
       });
 
       if (p.kind === "tool") {

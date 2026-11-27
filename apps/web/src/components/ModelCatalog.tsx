@@ -42,7 +42,11 @@ export interface KindExtras<M> {
   expand?: (m: M) => ReactNode | null;
 }
 
-const CAPS = ["tools", "vision", "documents", "reasoning", "caching"] as const;
+const CAPS = ["tools", "vision", "documents", "reasoning"] as const;
+
+/** Whether the model caches prompts (`cache.mechanism` explicit or implicit). */
+const caches = (m: AdminModelInfo): boolean =>
+  m.cache?.mechanism === "explicit" || m.cache?.mechanism === "implicit";
 
 /**
  * The columns the model info carries for a kind (between the model and the page's own): a chat
@@ -65,8 +69,10 @@ function useKindColumns<M extends AdminModelInfo>(): (kind: ModelKind) => Column
           wrap: true,
           width: 160,
           // A list: DataTable joins it with 「 · 」 and breaks lines only between items
-          cell: (m) =>
-            CAPS.filter((c) => m.capabilities[c] === true).map((c) => t(`capability.${c}`)),
+          cell: (m) => [
+            ...CAPS.filter((c) => m.capabilities[c] === true).map((c) => t(`capability.${c}`)),
+            ...(caches(m) ? [t("capability.caching")] : []),
+          ],
         },
         {
           key: "context",

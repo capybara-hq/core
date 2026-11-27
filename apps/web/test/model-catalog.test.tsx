@@ -21,7 +21,6 @@ const caps = {
   tools: true,
   vision: false,
   reasoning: false,
-  caching: false,
   midConversationSystem: true,
 };
 
@@ -69,6 +68,38 @@ afterEach(() => {
 });
 
 describe("ModelCatalog", () => {
+  it("lists Caching for a chat model whose cache mechanism is explicit or implicit", () => {
+    const cache = {
+      mechanism: "explicit",
+      ttlOptions: [300, 3600],
+      defaultTtl: 300,
+      ttlIsMinimum: false,
+      refreshOnHit: true,
+      ttlClock: "request_start",
+      guaranteed: true,
+    };
+    renderPage(
+      <ModelCatalog
+        provider="p"
+        title="P"
+        models={
+          [
+            model("cached", { cache }),
+            model("implicit", { cache: { ...cache, mechanism: "implicit" } }),
+            model("uncached", { cache: { mechanism: "none" } }),
+            model("plain"),
+          ] as AdminModelInfo[]
+        }
+        onChange={() => {}}
+      />,
+    );
+    const caching = en.models.capability.caching;
+    expect(screen.getByRole("row", { name: /^cached/ }).textContent).toContain(caching);
+    expect(screen.getByRole("row", { name: /^implicit/ }).textContent).toContain(caching);
+    expect(screen.getByRole("row", { name: /^uncached/ }).textContent).not.toContain(caching);
+    expect(screen.getByRole("row", { name: /^plain/ }).textContent).not.toContain(caching);
+  });
+
   it("groups 300 models by kind with counts and filters by search and publisher", async () => {
     const user = userEvent.setup();
     renderPage(

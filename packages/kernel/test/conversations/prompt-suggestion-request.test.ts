@@ -39,7 +39,6 @@ const MODEL: ModelInfo = {
     tools: true,
     vision: false,
     reasoning: true,
-    caching: true,
     midConversationSystem: true,
   },
   parameters: [],
