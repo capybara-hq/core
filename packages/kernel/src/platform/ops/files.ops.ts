@@ -23,7 +23,7 @@ const row = (f: LibraryFileView) => ({
       ...(f.sourceConversation.deleted && { deleted: true }),
     },
   }),
-  versions: f.versions,
+  versionCount: f.versions,
   createdAt: f.createdAt,
 });
 
@@ -45,7 +45,7 @@ export class FilesOperations implements OnModuleInit {
       defineOperation({
         id: "files.list",
         description:
-          "List your files (the Files page), newest first: files you uploaded and files agents delivered or generated in your conversations, each with id, name, type, size, origin, the agent and the conversation it came from (deleted conversations keep their files) and the number of versions (repeated deliveries of one path in one conversation are one entry). Filter by origin, agentId, type (image, document, text, other) or q (part of the name). Pages by 50: pass the returned next as params.cursor.",
+          "List your files (the Files page), newest first: files you uploaded and files agents delivered or generated in your conversations, each with id, name, type, size, origin, the agent and the conversation it came from (deleted conversations keep their files) and the number of versions as versionCount (repeated deliveries of one path in one conversation are one entry). Filter by origin, agentId, type (image, document, text, other) or q (part of the name). Pages by 50: pass the returned next as params.cursor.",
         input: LibraryListQuery.pick({
           origin: true,
           agentId: true,

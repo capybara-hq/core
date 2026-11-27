@@ -537,6 +537,13 @@ describe("file-preview@1 for library files", () => {
     expect(claims).not.toHaveProperty("conversationId");
     const stranger = await other({ method: "POST", url: tokenUrl, payload: { fileId: id } });
     expect(stranger.statusCode).toBe(404);
+    // a library file's token names no agent either
+    const withAgent = await owner({
+      method: "POST",
+      url: tokenUrl,
+      payload: { fileId: id, agentId: randomUUID() },
+    });
+    expect(withAgent.statusCode).toBe(400);
     // a file this embed's previewers do not take is not found either
     const pdf = await seedLibraryFile(
       k.app,

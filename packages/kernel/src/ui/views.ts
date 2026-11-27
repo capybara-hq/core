@@ -531,7 +531,10 @@ export class UiViews {
     else {
       const { fileId: f, skillFile, ...org } = t;
       if (skillFile !== undefined) return this.skillFileEmbed({ ...org, skillFile }, f);
-      if (f !== undefined && org.conversationId === undefined && org.agentId === undefined) {
+      if (f !== undefined && org.conversationId === undefined) {
+        if (org.agentId !== undefined) {
+          throw new ApiError("validation_failed", "fileId is not allowed with agentId");
+        }
         return this.libraryFileEmbed(org, f);
       }
       fileId = f;

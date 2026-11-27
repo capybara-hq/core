@@ -197,6 +197,8 @@ export class LibraryQuery {
     where: RawBuilder<unknown>[],
     limit: number,
   ): Promise<(ViewRow & { created_key: string })[]> {
+    // the filters (q, type, cursor, ...) apply after the window on purpose: the versions of one
+    // path may have different names or types, and the entry is always the group's newest version
     const conditions = [sql`m.rank = 1`, ...where];
     const rows = await sql<ViewRow & { created_key: string }>`
       WITH mine AS (
@@ -285,17 +287,29 @@ export class LibraryQuery {
     if (!row) throw notFound();
     const grouped =
       row.origin !== "upload" && row.source_path !== null && row.source_conversation_id !== null;
+    const group = () =>
+      this.db.db
+        .selectFrom("files")
+        .where("org_id", "=", orgId)
+        .where("account_id", "=", accountId)
+        .where("status", "=", "ready")
+        .where("origin", "<>", "upload")
+        .where("source_conversation_id", "=", row.source_conversation_id as string)
+        .where("source_path", "=", row.source_path as string);
+    // the count is over every ready version (as the list counts), the listed ones are capped
+    const count = grouped
+      ? Number(
+          (
+            await group()
+              .select((eb) => eb.fn.countAll<string>().as("n"))
+              .executeTakeFirst()
+          )?.n ?? 1,
+        )
+      : 1;
     const versions = grouped
       ? (
-          await this.db.db
-            .selectFrom("files")
+          await group()
             .select(["id", "size", "created_at"])
-            .where("org_id", "=", orgId)
-            .where("account_id", "=", accountId)
-            .where("status", "=", "ready")
-            .where("origin", "<>", "upload")
-            .where("source_conversation_id", "=", row.source_conversation_id as string)
-            .where("source_path", "=", row.source_path as string)
             .orderBy("created_at", "desc")
             .orderBy("id", "desc")
             .limit(FILE_VERSIONS_MAX)
@@ -317,7 +331,7 @@ export class LibraryQuery {
       .orderBy("c.id")
       .execute();
     return {
-      file: { ...view, versions: grouped ? versions.length : 1 },
+      file: { ...view, versions: count },
       conversations: conversations.map((c) => ({
         id: c.id,
         title: c.title,

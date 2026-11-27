@@ -822,12 +822,12 @@ describe("files operations (file library spec §6)", () => {
     const mine = ctxOf(env.memId);
 
     const listed = (await run("files.list", {}, mine)) as {
-      files: { id: string; name: string; origin: string; versions: number }[];
+      files: { id: string; name: string; origin: string; versionCount: number }[];
       next: string | null;
     };
     expect(listed.next).toBeNull();
     expect(listed.files.map((f) => f.id).sort()).toEqual([notes, plan].sort());
-    expect(listed.files[0]).toMatchObject({ origin: "upload", versions: 1 });
+    expect(listed.files[0]).toMatchObject({ origin: "upload", versionCount: 1 });
     const searched = (await run("files.list", { q: "PLAN" }, mine)) as { files: { id: string }[] };
     expect(searched.files.map((f) => f.id)).toEqual([plan]);
     // a cursor the list did not hand out: the error says what to pass

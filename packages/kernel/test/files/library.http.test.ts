@@ -607,6 +607,50 @@ describe("the library routes", () => {
     expect((await k.http.inject({ method: "GET", url: path })).statusCode).toBe(404);
   });
 
+  it("deleting a file whose blob another account also uses leaves that account's reads intact", async () => {
+    const m = await member();
+    const n = await member();
+    const a = await createConv(m.req, orgId, agentId);
+    const b = await createConv(n.req, orgId, agentId);
+    const mine = await deliver(a, m.id, "shared text", "/workspace/s.txt", "s.txt");
+    const theirs = await deliver(b, n.id, "shared text", "/workspace/s.txt", "s.txt");
+    const blobs = await db
+      .selectFrom("files")
+      .select("blob_id")
+      .where("id", "in", [mine, theirs])
+      .execute();
+    expect(new Set(blobs.map((r) => r.blob_id)).size).toBe(1);
+    expect((await m.req({ method: "DELETE", url: `${lib()}/${mine}` })).statusCode).toBe(204);
+    const usage = async (req: Req) =>
+      (await req({ method: "GET", url: `${lib()}/usage` })).json() as unknown;
+    expect(await usage(m.req)).toEqual({ files: 0, bytes: 0 });
+    expect(await usage(n.req)).toEqual({ files: 1, bytes: 11 });
+    const content = await n.req({ method: "GET", url: `${lib()}/${theirs}/content` });
+    expect(content.statusCode, content.body).toBe(200);
+    expect(content.body).toBe("shared text");
+    const download = await n.req({ method: "GET", url: `${lib()}/${theirs}/download?as=url` });
+    expect(download.statusCode, download.body).toBe(200);
+    expect((await list(n.req)).files.map((f) => f.id)).toEqual([theirs]);
+  });
+
+  it("a group's versions count every ready version; the details list at most twenty", async () => {
+    const m = await member();
+    const conv = await createConv(m.req, orgId, agentId);
+    let last = "";
+    for (let i = 0; i < 21; i++) {
+      last = await deliver(conv, m.id, `v${i}`, "/workspace/log.txt", "log.txt");
+      await at(last, 30 + i);
+    }
+    const [entry] = (await list(m.req)).files;
+    expect(entry).toMatchObject({ id: last, versions: 21 });
+    const d = (await m.req({ method: "GET", url: `${lib()}/${last}` })).json() as {
+      file: { versions: number };
+      versions: unknown[];
+    };
+    expect(d.file.versions).toBe(21);
+    expect(d.versions).toHaveLength(20);
+  });
+
   it("another account gets 404 file.not_found on every route", async () => {
     const m = await member();
     const n = await member();

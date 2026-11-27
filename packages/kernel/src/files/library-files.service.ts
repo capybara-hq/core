@@ -623,7 +623,7 @@ export class LibraryFilesService {
       .where("account_id", "=", accountId)
       .forUpdate()
       .executeTakeFirst();
-    if (!locked || locked.status !== "uploading" || locked.expired) {
+    if (locked?.status !== "uploading" || locked.expired) {
       await trx
         .updateTable("blobs")
         .set({ status: "deleting" })
