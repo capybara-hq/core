@@ -83,6 +83,8 @@ describe("checkTerms", () => {
       ["terms-reference", ...at("docs/guide.md", "`scheduledTasks.forbiddenToolsUnreadable`")],
       ["terms-reference", ...at("docs/guide.md", "scheduled_tasks_org_idx")],
       ["terms-reference", ...at("docs/guide.md", "`scheduledTaskId`")],
+      ["terms-reference", ...at("docs/guide.md", "`sched-fire`")],
+      ["terms-reference", ...at("docs/guide.md", "`scheduleSettings.title`")],
       ["terms-reference", ...at("packages/kernel/src/packages/tgz.ts", "definePlugin")],
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');

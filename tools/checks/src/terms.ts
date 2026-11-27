@@ -286,7 +286,7 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
     // names (`ScheduleMarker*`, `user_message.schedule`, `trigger: "schedule"`, `execution:
     // "scheduled"`), the design component `schedule-calendar`, the model-visible "scheduled run" and
     // the unrelated `infra/schedule`; none of them matches these spellings.
-    re: /\bscheduled_tasks?(?:_\w+)?\b|\bscheduledTasks?\w*|\bScheduledTask\w*|\bSchedule(?:Create|Update|List|Targets|Delete)\b|\bCAPYBARA_SCHEDULES(?:__\w*)?\b|\bschedule_attention\b|\/api\/v1\/orgs\/:orgId\/schedules\b/,
+    re: /\bscheduled_tasks?(?:_\w+)?\b|\bscheduledTasks?\w*|\bScheduledTask\w*|\bSchedule(?:Create|Update|List|Targets|Delete)\b|\bCAPYBARA_SCHEDULES(?:__\w*)?\b|\bschedule_attention\b|\bsched-(?:fire|settle)\b|\bschedules\.(?:use|manage)\b|\b(?:scheduleSettings|inboxSchedule)\.|\/api\/v1\/orgs\/:orgId\/schedules\b/,
     what: "an old scheduled task name (now automations / Automation* / CAPYBARA_AUTOMATIONS__ / automation_attention)",
     allowedIn: [
       {
@@ -308,6 +308,10 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
       {
         path: /^\.changeset\//,
         reason: "the rename's release notes map the old names; archived ones are release history",
+      },
+      {
+        path: /^docs\/deploy\/upgrade\.md$/,
+        reason: "the upgrade note for the automations rename maps the old names to the new",
       },
     ],
   },

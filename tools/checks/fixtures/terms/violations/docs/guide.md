@@ -24,3 +24,5 @@ Set `CAPYBARA_SCHEDULES__MAX_TASKS_PER_ORG` and read `schedule_attention` in the
 The org setting `scheduledTasks.forbiddenToolsUnreadable` is read by `ScheduledTaskStore`.
 The index `scheduled_tasks_org_idx` is renamed with its table.
 The run row keeps `scheduledTaskId` and a `scheduledTaskRuns` list.
+The jobs `sched-fire` and `sched-settle` run under the roles `schedules.use` and `schedules.manage`.
+The copy lives under `scheduleSettings.title` and `inboxSchedule.label`.

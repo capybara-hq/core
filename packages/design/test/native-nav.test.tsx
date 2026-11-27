@@ -163,7 +163,7 @@ const FOUR = [
   { id: "chats", label: "对话" },
   { id: "inbox", label: "收件箱", count: 3 },
   { id: "agents", label: "智能体" },
-  { id: "automations", label: "自动化" },
+  { id: "schedules", label: "自动化" },
 ];
 const NEW = { id: "new-conversation", label: "新会话", icon: "square-pen" };
 const ACCOUNT = { name: "Grant", initial: "G" };

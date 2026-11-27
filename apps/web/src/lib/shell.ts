@@ -196,6 +196,8 @@ type PushPlatform = "ios" | "android";
  * (`@capybara-hq/plugin-sdk`; apps/web depends only on the design system and may not import it),
  * keep in step. Capability keys are `name@major`; a rejected call carries `{ code: ShellCallError }`.
  */
+// The nav@1 section id `"schedules"` below is a frozen contract name kept from before the
+// automations rename (the web maps it to `/automations`).
 export const SHELL_CAPABILITY_KEYS = {
   chrome: "chrome@1",
   notify: "notify@1",
@@ -318,14 +320,14 @@ export const MENU_ITEM_ID = /^[A-Za-z0-9_.-]{1,64}$/;
  * The strip's items: the four sections and, last, `search` (opens the web's command palette; never
  * `current`).
  */
-export type NavSectionId = "chats" | "inbox" | "agents" | "automations" | "search";
+export type NavSectionId = "chats" | "inbox" | "agents" | "schedules" | "search";
 
 /** The strip's items in display order. */
 export const NAV_SECTION_ORDER: readonly NavSectionId[] = [
   "chats",
   "inbox",
   "agents",
-  "automations",
+  "schedules",
   "search",
 ];
 
@@ -361,7 +363,7 @@ export interface NavAccountV1 {
 }
 
 export interface NavStateV1 {
-  /** The items the person sees, in NAV_SECTION_ORDER (a guest has no `automations`). */
+  /** The items the person sees, in NAV_SECTION_ORDER (a guest has no `schedules`). */
   items: NavItemV1[];
   /**
    * The section of the page on screen; `null`: no section is selected and the shell clears its

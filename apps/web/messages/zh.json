@@ -2189,7 +2189,7 @@
     "skill_change": "一项技能变更在等你决定",
     "catalog_request": "一个目录申请在等你处理",
     "catalog_request_decided": "你的申请有了结果",
-    "automation_attention": "一个自动化需要你处理",
+    "automation_attention": "一项自动化需要你处理",
     "other": "收件箱里有新消息"
   },
   "inbox": {
@@ -6941,7 +6941,7 @@
       "domainRemoved": "已从任务移除这个域名"
     },
     "startedBy": "由自动化 <link>{name}</link> 发起",
-    "turnedOff": "本组织已关闭自动化：任务不会运行，也不能新建。",
+    "turnedOff": "本组织已关闭自动化：自动化不会运行，也不能新建。",
     "startedByGone": "由一个已不存在的自动化发起",
     "panelTitle": "自动化",
     "nextRunAt": "下次运行 {at}",
@@ -7049,7 +7049,7 @@
     "forbiddenHint": "定时运行中永远不允许使用的工具，也不能被预先批准。",
     "forbiddenTools": "工具键",
     "forbiddenHelp": "每行一个工具键，例如 Bash 或 mcp__github__create_issue。",
-    "forbiddenUnreadable": "组织的禁用工具列表无法读取：自动化的无人值守运行会失败，也不能为任务批准工具。请检查下方的列表并保存来修复。",
+    "forbiddenUnreadable": "组织的禁用工具列表无法读取：自动化的无人值守运行会失败，也不能为自动化批准工具。请检查下方的列表并保存来修复。",
     "saveRepair": "保存列表",
     "invalid": "请输入不小于 1 的整数。",
     "save": "保存",

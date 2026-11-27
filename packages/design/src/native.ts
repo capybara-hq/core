@@ -13,16 +13,27 @@ import type { MenuItem } from "./overlays/menus";
  * The native strip's items (`nav@1`), in display order: the four sections and `search`, which
  * opens the command palette (never current).
  */
-export type NativeSectionId = "chats" | "inbox" | "agents" | "automations" | "search";
+// The id `"schedules"` is a frozen `nav@1` contract name kept from before the automations rename.
+export type NativeSectionId = "chats" | "inbox" | "agents" | "schedules" | "search";
 
 /** The strip's items in display order (the SDK's `NAV_SECTION_ORDER`). */
 export const NATIVE_SECTION_ORDER: readonly NativeSectionId[] = [
   "chats",
   "inbox",
   "agents",
-  "automations",
+  "schedules",
   "search",
 ];
+
+/** The shell-side id of a drawer section: the automations section keeps its frozen `nav@1` id. */
+export function nativeIdOfSection(drawerId: string): string {
+  return drawerId === "automations" ? "schedules" : drawerId;
+}
+
+/** The drawer section a `nav@1` id names (the inverse of {@link nativeIdOfSection}). */
+export function drawerIdOfNative(nativeId: string): string {
+  return nativeId === "schedules" ? "automations" : nativeId;
+}
 
 /** The bounds the shell validates `nav@1` state against (the SDK's `MOBILE_SHELL_LIMITS`). */
 export const NATIVE_NAV_LIMITS = { label: 32, count: 9999 } as const;

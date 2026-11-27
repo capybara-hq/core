@@ -18,5 +18,5 @@ accounts open the admin console. Slack Enterprise Grid, a custom marketplace and
 Automations (`automations`, `automation_runs`, `AutomationCreate`, `CAPYBARA_AUTOMATIONS__MAX_PER_ORG`) are
 the new names; the frozen ones stay: `ScheduleMarker`, `user_message.schedule`, `trigger: "schedule"`,
 `execution: "scheduled"`, `schedule-calendar`, `SCHEDULE_CALENDAR_ROWS`, `scheduleCalendar.title`,
-`schedules-calendar.spec.ts`, `infra/schedule` and a scheduled run.
+`schedules-calendar.spec.ts`, `infra/schedule`, the nav@1 id "schedules" and a scheduled run.
 Specs: `2026-11-11-scheduled-tasks-design.md` and `2026-11-12-scheduled-tasks-calendar-design.md`.

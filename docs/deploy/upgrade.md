@@ -119,6 +119,23 @@ Notes for upgrades that need more than the steps above. Before 0.1.0 Capybara ke
 compatibility layers for its earlier builds: the kernel reads only the current formats, and the
 migrations rewrite stored data once where they can.
 
+### Scheduled tasks are renamed to automations (migration 0188)
+
+Migration 0188 renames the scheduled task tables (to `automations`, `automation_runs` and
+`automation_grants`) and rewrites the stored values that name the feature. It cannot be rolled back
+with old replicas running: old code looks for the old table names. Stop the old `api`, `worker` and
+`gateway` replicas before migrating, then start the new ones.
+
+- **Rename the kernel config group `schedules.*` to `automations.*` before starting the new
+  version**: in the environment (`CAPYBARA_SCHEDULES__*` becomes `CAPYBARA_AUTOMATIONS__*`, the same
+  field names), in the config file and in Nacos. The config schema is strict and refuses the old
+  key, so a kernel that still has it does not start.
+- **Jobs already queued are dropped.** `sched-fire` and `sched-settle` jobs in Redis are for the
+  old queue names; the next scan tick finds the due automations again and recovers them.
+- **API names changed** (no compatibility routes): the routes `/schedules` are `/automations`, and
+  the builtin tools `Schedule*` are `Automation*`. Update clients, agents that name these tools in
+  their allow lists, and anything that calls the old routes.
+
 ### Local devices move to the device-local plugin (migration 0177)
 
 The kernel no longer serves local devices itself: its `@local` provider is gone, and a local
