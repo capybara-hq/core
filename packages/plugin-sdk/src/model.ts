@@ -63,10 +63,7 @@ export type ModelCacheMechanism = "explicit" | "implicit" | "none";
 
 /** How a model's prompt cache behaves. Absent or `mechanism: "none"` = no caching. */
 export interface ModelCacheInfo {
-  /**
-   * explicit: the plugin places breakpoints and the lifetime is known; implicit: the service caches
-   * on its own (best-effort unless it declares a lifetime floor); none: no caching.
-   */
+  /** See {@link ModelCacheMechanism}. */
   mechanism: ModelCacheMechanism;
   /**
    * Lifetimes a request can choose, in seconds ([300, 3600] Anthropic / Qwen4, [1800, 43200]
@@ -98,6 +95,9 @@ const isPositiveInt = (n: unknown): n is number =>
  */
 export function validateModelCache(cache: ModelCacheInfo | undefined): string | null {
   if (cache === undefined) return null;
+  if (typeof cache !== "object" || cache === null || Array.isArray(cache)) {
+    return "cache must be an object";
+  }
   if (!["explicit", "implicit", "none"].includes(cache.mechanism)) {
     return `cache.mechanism must be "explicit", "implicit" or "none"`;
   }
@@ -119,6 +119,9 @@ export function validateModelCache(cache: ModelCacheInfo | undefined): string | 
   }
   if (!["request_start", "unknown"].includes(cache.ttlClock)) {
     return `cache.ttlClock must be "request_start" or "unknown"`;
+  }
+  for (const field of ["ttlIsMinimum", "refreshOnHit", "guaranteed"] as const) {
+    if (typeof cache[field] !== "boolean") return `cache.${field} must be a boolean`;
   }
   if (cache.minTokens !== undefined && !isPositiveInt(cache.minTokens)) {
     return "cache.minTokens must be a positive integer";
@@ -463,12 +466,14 @@ export interface CacheWriteByTtl {
  * integer `tokens`; the tokens sum to `cacheWriteTokens`. Returns the first problem, or `null`.
  */
 export function validateCacheWriteByTtl(usage: ModelUsage): string | null {
+  if (typeof usage !== "object" || usage === null) return "usage must be an object";
   const tiers = usage.cacheWriteByTtl;
   if (tiers === undefined) return null;
   if (!Array.isArray(tiers)) return "cacheWriteByTtl must be an array";
   const seen = new Set<number>();
   let sum = 0;
   for (const [i, tier] of tiers.entries()) {
+    if (typeof tier !== "object" || tier === null) return `cacheWriteByTtl[${i}] must be an object`;
     if (!isPositiveInt(tier.ttl)) {
       return `cacheWriteByTtl[${i}].ttl must be a positive integer (seconds)`;
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  type CacheWriteByTtl,
   type ModelCacheInfo,
   type ModelUsage,
   validateCacheWriteByTtl,
@@ -76,6 +77,20 @@ describe("validateModelCache", () => {
     expect(validateModelCache({ ...DEEPSEEK, guaranteed: true })).toMatch(/guaranteed/);
   });
 
+  it.each([null, "explicit", 42, []])("returns a message for the malformed declaration %j", (x) => {
+    expect(validateModelCache(x as unknown as ModelCacheInfo)).toMatch(/cache/);
+  });
+
+  it.each(["ttlIsMinimum", "refreshOnHit", "guaranteed"])("rejects a non-boolean %s", (field) => {
+    const cache = { ...ANTHROPIC, [field]: "yes" } as unknown as ModelCacheInfo;
+    expect(validateModelCache(cache)).toMatch(new RegExp(field));
+  });
+
+  it("rejects an unknown ttlClock", () => {
+    const cache = { ...ANTHROPIC, ttlClock: "response_end" } as unknown as ModelCacheInfo;
+    expect(validateModelCache(cache)).toMatch(/ttlClock/);
+  });
+
   it("rejects minTokens 0", () => {
     expect(validateModelCache({ ...ANTHROPIC, minTokens: 0 })).toMatch(/minTokens/);
   });
@@ -115,6 +130,16 @@ describe("validateCacheWriteByTtl", () => {
         }),
       ),
     ).toMatch(/cacheWriteByTtl/);
+  });
+
+  it("returns a message for a null tier or a malformed usage", () => {
+    const tiers = [null, { ttl: 3600, tokens: 100 }] as unknown as CacheWriteByTtl[];
+    expect(validateCacheWriteByTtl(usage({ cacheWriteByTtl: tiers }))).toMatch(/cacheWriteByTtl/);
+    const notArray = { ttl: 300, tokens: 100 } as unknown as CacheWriteByTtl[];
+    expect(validateCacheWriteByTtl(usage({ cacheWriteByTtl: notArray }))).toMatch(
+      /cacheWriteByTtl/,
+    );
+    expect(validateCacheWriteByTtl(null as unknown as ModelUsage)).toMatch(/usage/);
   });
 
   it("rejects a duplicate ttl", () => {

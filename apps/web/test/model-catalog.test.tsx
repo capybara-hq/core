@@ -82,13 +82,22 @@ describe("ModelCatalog", () => {
       <ModelCatalog
         provider="p"
         title="P"
-        models={[model("cached", { cache }), model("plain")] as AdminModelInfo[]}
+        models={
+          [
+            model("cached", { cache }),
+            model("implicit", { cache: { ...cache, mechanism: "implicit" } }),
+            model("uncached", { cache: { mechanism: "none" } }),
+            model("plain"),
+          ] as AdminModelInfo[]
+        }
         onChange={() => {}}
       />,
     );
     const caching = en.models.capability.caching;
-    expect(screen.getByRole("row", { name: /cached/ }).textContent).toContain(caching);
-    expect(screen.getByRole("row", { name: /plain/ }).textContent).not.toContain(caching);
+    expect(screen.getByRole("row", { name: /^cached/ }).textContent).toContain(caching);
+    expect(screen.getByRole("row", { name: /^implicit/ }).textContent).toContain(caching);
+    expect(screen.getByRole("row", { name: /^uncached/ }).textContent).not.toContain(caching);
+    expect(screen.getByRole("row", { name: /^plain/ }).textContent).not.toContain(caching);
   });
 
   it("groups 300 models by kind with counts and filters by search and publisher", async () => {
