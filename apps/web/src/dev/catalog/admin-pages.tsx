@@ -8,8 +8,8 @@ import EvalRunView from "../../app/(app)/evals/runs/[runId]/view";
 import EvalSetsView from "../../app/(app)/evals/view";
 import ExtensionsView from "../../app/(app)/extensions/view";
 import AuditView from "../../app/(app)/settings/audit/view";
+import AutomationSettingsView from "../../app/(app)/settings/automations/view";
 import MembersView from "../../app/(app)/settings/members/view";
-import ScheduleSettingsView from "../../app/(app)/settings/schedules/view";
 import TokensView from "../../app/(app)/settings/tokens/view";
 import TrajectoriesView from "../../app/(app)/trajectories/view";
 import { type Session, SessionContext } from "../../components/shell/session";
@@ -19,6 +19,7 @@ import type { OrgExtension } from "../../lib/extensions";
 import type { Invitation, Member } from "../../lib/members";
 import type { ServiceToken } from "../../lib/orgs";
 import { agentQuery } from "../../lib/query/agents";
+import { automationsQuery } from "../../lib/query/automations";
 import { orgExtensionsQuery } from "../../lib/query/channels";
 import {
   type EvalRunState,
@@ -28,20 +29,19 @@ import {
   evalSetsQuery,
 } from "../../lib/query/evals";
 import { membersQuery } from "../../lib/query/members";
-import { schedulesQuery } from "../../lib/query/schedules";
 import { invitationsQuery, orgAuditQuery, serviceTokensQuery } from "../../lib/query/settings";
 import { meQuery } from "../../lib/query/shell";
 import { trajectoriesQuery, trajectoryFilters } from "../../lib/query/trajectories";
 import type { Me } from "../../lib/session";
 import type { TrajectoryListItem } from "../../lib/trajectories";
 import { COMMANDS } from "./fixtures";
-import { AGENTS, ME, ORG, RECENT, SCHEDULES, seeded, T } from "./member-pages";
+import { AGENTS, AUTOMATIONS, ME, ORG, RECENT, seeded, T } from "./member-pages";
 import type { AdminPage } from "./routes";
 import { sidebarProps } from "./shell-fixture";
 
 /**
  * `/dev/ui/pages/org-<page>`: the org admin pages phase 2 changed (settings members, tokens,
- * schedules and audit, extensions, trajectories, evals with a set and a run) drawn from a seeded
+ * automations and audit, extensions, trajectories, evals with a set and a run) drawn from a seeded
  * query cache at an admin's role, for the responsive matrix (`visual/responsive.spec.ts`). They
  * are desktop-only on touch, so the matrix draws them with a fine pointer at every width.
  */
@@ -261,7 +261,7 @@ function seededAdmin(): QueryClient {
   qc.setQueryData(invitationsQuery(ORG).queryKey, { invitations: INVITATIONS });
   qc.setQueryData(serviceTokensQuery(ORG).queryKey, { tokens: TOKENS });
   qc.setQueryData(orgAuditQuery(ORG).queryKey, AUDIT);
-  qc.setQueryData(schedulesQuery(ORG, "all").queryKey, { items: SCHEDULES });
+  qc.setQueryData(automationsQuery(ORG, "all").queryKey, { items: AUTOMATIONS });
   qc.setQueryData(orgExtensionsQuery(ORG).queryKey, { extensions: EXTENSIONS });
   qc.setQueryData(trajectoriesQuery(ORG, trajectoryFilters("", "")).queryKey, {
     items: TRAJECTORIES,
@@ -289,8 +289,8 @@ function Page({ page }: { page: AdminPage }) {
       return <MembersView />;
     case "tokens":
       return <TokensView />;
-    case "schedules":
-      return <ScheduleSettingsView />;
+    case "automations":
+      return <AutomationSettingsView />;
     case "audit":
       return <AuditView />;
     case "extensions":

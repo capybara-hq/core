@@ -12,8 +12,8 @@ export type PushTextKey =
   | "runFailed"
   | "backgroundFinished"
   | "subagentFinished"
-  | "scheduleRan"
-  | "scheduleFailed";
+  | "automationRan"
+  | "automationFailed";
 
 /** What one event pushes: its category (the person's switch) and its sentence. */
 export interface PushTrigger {

@@ -362,14 +362,14 @@ describe("AskUserQuestion 端到端", () => {
     expect(calls[0]?.payload.request.tools?.map((t) => t.key).sort()).toEqual([
       "Agent",
       "AskUserQuestion",
+      "AutomationCreate",
+      "AutomationDelete",
+      "AutomationList",
+      "AutomationTargets",
+      "AutomationUpdate",
       "CurrentTime",
       "Platform",
       "ReadToolOutput",
-      "ScheduleCreate",
-      "ScheduleDelete",
-      "ScheduleList",
-      "ScheduleTargets",
-      "ScheduleUpdate",
       "SendMessage",
     ]);
     expect(

@@ -103,15 +103,15 @@ export const keys = {
         "device-project-candidates",
         id,
       ],
-      /** Scheduled task lists (an invalidation prefix: mine and the org's). */
-      schedulesAll: (): readonly unknown[] => [...all, "schedules"],
-      /** My scheduled tasks (`all`: every task of the org, org admins). */
-      schedules: (scope: "mine" | "all"): readonly unknown[] => [...all, "schedules", scope],
+      /** Automation lists (an invalidation prefix: mine and the org's). */
+      automationsAll: (): readonly unknown[] => [...all, "automations"],
+      /** My automations (`all`: every task of the org, org admins). */
+      automations: (scope: "mine" | "all"): readonly unknown[] => [...all, "automations", scope],
       /**
-       * A calendar range (under `schedulesAll`: every task mutation refreshes it); `taskId`: one
+       * A calendar range (under `automationsAll`: every task mutation refreshes it); `taskId`: one
        * task's day in the run panel.
        */
-      scheduleCalendar: (
+      automationCalendar: (
         scope: "mine" | "all",
         from: string,
         to: string,
@@ -119,7 +119,7 @@ export const keys = {
         taskId?: string,
       ): readonly unknown[] => [
         ...all,
-        "schedules",
+        "automations",
         "calendar",
         scope,
         from,
@@ -127,30 +127,30 @@ export const keys = {
         timeZone,
         taskId ?? null,
       ],
-      /** One scheduled task, its runs and grants (under it: invalidating the task refreshes them). */
-      schedule: (id: string): readonly unknown[] => [...all, "schedule", id],
-      scheduleRuns: (id: string): readonly unknown[] => [...all, "schedule", id, "runs"],
-      scheduleGrants: (id: string): readonly unknown[] => [...all, "schedule", id, "grants"],
+      /** One automation, its runs and grants (under it: invalidating the task refreshes them). */
+      automation: (id: string): readonly unknown[] => [...all, "automation", id],
+      automationRuns: (id: string): readonly unknown[] => [...all, "automation", id, "runs"],
+      automationGrants: (id: string): readonly unknown[] => [...all, "automation", id, "grants"],
       /** The chats a `chat` task of mine can post into. */
-      scheduleChatTargets: (): readonly unknown[] => [...all, "schedules", "chatTargets"],
+      automationChatTargets: (): readonly unknown[] => [...all, "automations", "chatTargets"],
       /** An agent's tools as a task's grant picker offers them. */
-      scheduleGrantable: (agentId: string): readonly unknown[] => [
+      automationGrantable: (agentId: string): readonly unknown[] => [
         ...all,
-        "schedules",
+        "automations",
         "grantable",
         agentId,
       ],
       /** My tasks that post into a conversation (its side panel). */
-      conversationSchedules: (conversationId: string): readonly unknown[] => [
+      conversationAutomations: (conversationId: string): readonly unknown[] => [
         ...all,
-        "schedules",
+        "automations",
         "conversation",
         conversationId,
       ],
       /** My conversations with an agent that a task can post into. */
-      scheduleTargets: (agentId: string): readonly unknown[] => [
+      automationTargets: (agentId: string): readonly unknown[] => [
         ...all,
-        "schedules",
+        "automations",
         "targets",
         agentId,
       ],

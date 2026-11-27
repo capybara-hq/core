@@ -68,11 +68,11 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "web.fetch.timeoutMs": () => {},
   // The push fanout reads the preview setting at every fanout.
   "push.previews": () => {},
-  // Scheduled-task settings are clamped to these bounds on every read.
-  "schedules.minIntervalFloorMinutes": () => {},
-  "schedules.maxTasksPerMemberCap": () => {},
-  "schedules.maxTasksPerOrgCap": () => {},
-  "schedules.maxRunsPerHourCap": () => {},
+  // Automation settings are clamped to these bounds on every read.
+  "automations.minIntervalFloorMinutes": () => {},
+  "automations.maxTasksPerMemberCap": () => {},
+  "automations.maxTasksPerOrgCap": () => {},
+  "automations.maxRunsPerHourCap": () => {},
   // Run start reads the skills catalog budget when it records a snapshot.
   "skills.catalogBudgetChars": () => {},
   // The attribution defaults are read live at every run start, admin settings view and org settings.

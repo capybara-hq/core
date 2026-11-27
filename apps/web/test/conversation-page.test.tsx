@@ -2143,8 +2143,8 @@ describe("run rows (spec §6.16.23)", () => {
   });
 });
 
-describe("scheduled tasks on the conversation page", () => {
-  const SCHED = "/api/v1/orgs/o1/schedules";
+describe("automations on the conversation page", () => {
+  const SCHED = "/api/v1/orgs/o1/automations";
   const task = (over: Record<string, unknown> = {}) => ({
     id: "s1",
     name: "Daily report",
@@ -2160,15 +2160,15 @@ describe("scheduled tasks on the conversation page", () => {
     "a conversation a task started names it and links to it (%s)",
     async (locale) => {
       api({
-        [`GET ${BASE}`]: () => json(200, CONV("c1", { scheduledTaskId: "s1" })),
+        [`GET ${BASE}`]: () => json(200, CONV("c1", { automationId: "s1" })),
         [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "Summarize.")] }),
         [`GET ${SCHED}/s1`]: () => json(200, { task: task() }),
         [`GET ${SCHED}`]: () => json(200, { items: [] }),
       });
       await renderChat(locale);
       const link = await screen.findByRole("link", { name: "Daily report" });
-      expect(link.getAttribute("href")).toBe("/schedules/s1");
-      const words = (locale === "zh" ? zh : en).schedules.startedBy.replace(
+      expect(link.getAttribute("href")).toBe("/automations/s1");
+      const words = (locale === "zh" ? zh : en).automations.startedBy.replace(
         /<link>\{name\}<\/link>/,
         "Daily report",
       );
@@ -2178,14 +2178,14 @@ describe("scheduled tasks on the conversation page", () => {
 
   it("a task since deleted is named without a link; a person's conversation says nothing", async () => {
     api({
-      [`GET ${BASE}`]: () => json(200, CONV("c1", { scheduledTaskId: "gone" })),
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { automationId: "gone" })),
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${SCHED}/gone`]: () =>
-        json(404, { error: { code: "schedule.not_found", message: "Scheduled task not found" } }),
+        json(404, { error: { code: "automation.not_found", message: "Automation not found" } }),
       [`GET ${SCHED}`]: () => json(200, { items: [] }),
     });
     await renderChat("en");
-    expect(await screen.findByText(en.schedules.startedByGone)).toBeTruthy();
+    expect(await screen.findByText(en.automations.startedByGone)).toBeTruthy();
     cleanup();
     api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
@@ -2193,7 +2193,7 @@ describe("scheduled tasks on the conversation page", () => {
     });
     await renderChat("en");
     await screen.findByText("hi");
-    expect(screen.queryByText(en.schedules.startedByGone)).toBeNull();
+    expect(screen.queryByText(en.automations.startedByGone)).toBeNull();
     expect(screen.queryByRole("link", { name: "Daily report" })).toBeNull();
   });
 
@@ -2204,9 +2204,9 @@ describe("scheduled tasks on the conversation page", () => {
       [`GET ${SCHED}`]: () => json(200, { items: [task({ name: "Weekly sync" })] }),
     });
     const { calls } = await renderChat("en");
-    const list = await screen.findByRole("list", { name: en.schedules.panelTitle });
+    const list = await screen.findByRole("list", { name: en.automations.panelTitle });
     const link = within(list).getByRole("link", { name: "Weekly sync" });
-    expect(link.getAttribute("href")).toBe("/schedules/s1");
+    expect(link.getAttribute("href")).toBe("/automations/s1");
     expect(list.textContent).toContain("Next run");
     // read with the first paint on the server, not again in the browser
     expect(calls.some((c) => c.url === `${SCHED}?conversationId=c1`)).toBe(true);

@@ -10,9 +10,9 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { type PrefixedStorage, StorageService } from "./storage.service.js";
 
-/** 定时任务：清理已删除组织的对象存储（名字不含 `:`），每小时整点。 */
+/** Scheduled job: purges the object storage of deleted organizations (the name has no `:`), hourly on the hour. */
 export const STORAGE_PURGE_JOB = "storage-org-purge";
-/** 每次运行最多处理的组织数（成功与失败合计）。 */
+/** The most organizations one run handles (successes and failures together). */
 const PURGE_BATCH = 100;
 /** 认领超过这么久仍未完成（运行中途退出）就可被重新认领。 */
 const CLAIM_STALE_MINUTES = 60;

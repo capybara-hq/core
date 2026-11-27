@@ -501,7 +501,7 @@ export function useLockedPermissionPicker(
  *
  * - Read: the owner-only authoritative view (`enabled` only for the owner; a viewer reads nothing
  *   and gets no picker). Until it lands, the profile the log recorded is shown, locked.
- * - Edit: only an interactive root (no parent, no scheduled task) whose view is confirmed. A new
+ * - Edit: only an interactive root (no parent, no automation) whose view is confirmed. A new
  *   choice is a PATCH with the view's `expectedRevision` (Auto only after the dialog for the
  *   view's own device, project and scope revision). The answer's revision raises the root's
  *   watermark inside the mutation, before the views are read again.
@@ -510,7 +510,7 @@ export function useLockedPermissionPicker(
  *   its error with a Refresh that only reads. Nothing is rolled back or sent again.
  * - A failed PATCH (409: revision, binding or consent changed meanwhile; or no answer) reads the
  *   state again and needs a new choice: never resent.
- * - A child shows its root's profile as inherited, a scheduled task's as its own rules, locked.
+ * - A child shows its root's profile as inherited, an automation's as its own rules, locked.
  */
 export function useConversationPermission(o: {
   orgId: string;
@@ -553,7 +553,7 @@ export function useConversationPermission(o: {
   const unknown = unknownAt !== null && !(read.dataUpdatedAt > unknownAt);
   const confirmed = permissionsConfirmed(view, required) && !unknown;
   const child = view !== undefined && rootId !== conversationId;
-  const scheduled = Boolean(row?.scheduledTaskId);
+  const scheduled = Boolean(row?.automationId);
   const interactiveRoot =
     owner && !child && !scheduled && row !== undefined && !row.parentConversationId;
   const [failure, setFailure] = useState<unknown>(null);

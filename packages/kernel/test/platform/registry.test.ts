@@ -61,7 +61,7 @@ describe("PlatformOperations", () => {
       "channels",
       "org-settings",
       "devices",
-      "schedules",
+      "automations",
       "setup",
       "themes",
       "ui",

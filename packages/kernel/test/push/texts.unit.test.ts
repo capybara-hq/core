@@ -17,8 +17,8 @@ const COPY = {
   runFailed: ["failed", "运行失败"],
   backgroundFinished: ["a background task ended", "后台任务已结束"],
   subagentFinished: ["a sub-agent finished", "子智能体已完成"],
-  scheduleRan: ["your scheduled task ran", "你的定时任务已运行"],
-  scheduleFailed: ["your scheduled task failed", "你的定时任务运行失败"],
+  automationRan: ["your automation ran", "你的自动化已运行"],
+  automationFailed: ["your automation failed", "你的自动化运行失败"],
 } as const;
 
 const resolved = (over: Partial<ResolvedPush> = {}): ResolvedPush => ({

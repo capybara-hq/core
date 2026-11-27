@@ -1308,7 +1308,7 @@ export class RunWorker {
                   trigger: "subagent" as const,
                   triggerSeq: Number(run.trigger_seq),
                 }),
-                // a scheduled task's message (scheduled tasks spec §6); display only
+                // an automation's message (scheduled tasks spec §6); display only
                 ...(boundary?.type === "user_message" &&
                   (boundary.payload as { schedule?: unknown }).schedule !== undefined && {
                     trigger: "schedule" as const,

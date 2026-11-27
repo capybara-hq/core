@@ -43,8 +43,10 @@ export function useOrgSettingsNav(): NavGroup[] {
       group: t("groupCapabilities"),
       items: [
         { id: "sandbox", label: t("sandbox"), href: "/settings/sandbox" },
-        // schedules.manage: admins (every task of the org and the §9 settings)
-        ...(admin ? [{ id: "schedules", label: t("schedules"), href: "/settings/schedules" }] : []),
+        // automations.manage: admins (every task of the org and the §9 settings)
+        ...(admin
+          ? [{ id: "automations", label: t("automations"), href: "/settings/automations" }]
+          : []),
       ],
     },
   ];

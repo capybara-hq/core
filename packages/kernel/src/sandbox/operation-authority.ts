@@ -705,7 +705,7 @@ export class SandboxOperationAuthority {
       ctx.deviceId,
       root.project_name ?? undefined,
     );
-    let unattended = root.scheduled_task_id !== null;
+    let unattended = root.automation_id !== null;
     if (ctx.actor.runId)
       unattended ||= await this.runScheduledLocked(
         ctx.holderConversationId,
@@ -809,7 +809,7 @@ export class SandboxOperationAuthority {
 
   /**
    * The actual run of an operation or context read: still this conversation's, triggered by this
-   * actor and not ended; true when it serves a scheduled task run (an unattended child or wake
+   * actor and not ended; true when it serves an automation run (an unattended child or wake
    * included). Shared by admission and the recorded permission context.
    */
   private async runScheduledLocked(
@@ -819,7 +819,7 @@ export class SandboxOperationAuthority {
   ): Promise<boolean> {
     const run = await this.db
       .selectFrom("runs")
-      .select(["conversation_id", "trigger_account_id", "scheduled_task_run_id", "status"])
+      .select(["conversation_id", "trigger_account_id", "automation_run_id", "status"])
       .where("id", "=", runId)
       .executeTakeFirst();
     if (
@@ -829,7 +829,7 @@ export class SandboxOperationAuthority {
       !["running", "queued", "waiting"].includes(run.status)
     )
       throw new ApiError("forbidden", "The operation run is no longer authorized");
-    return run.scheduled_task_run_id !== null;
+    return run.automation_run_id !== null;
   }
 
   /**
@@ -1002,7 +1002,7 @@ export class SandboxOperationAuthority {
     await this.publication.assertCurrent();
     const scheduled =
       (await this.runScheduledLocked(input.conversationId, input.accountId, input.runId)) ||
-      root.scheduled_task_id !== null;
+      root.automation_id !== null;
     const header = {
       version: 2 as const,
       // only a supported context carries the device sandbox block (below)

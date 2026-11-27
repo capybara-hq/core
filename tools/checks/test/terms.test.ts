@@ -50,9 +50,14 @@ describe("checkTerms", () => {
       ],
       ["terms-error-code", ...at("packages/kernel/src/errors.ts", "directory.item_not_found")],
       ["terms-config-key", ...at("packages/kernel/src/config/schema.ts", "pluginHost")],
+      ["terms-config-key", ...at("packages/kernel/src/config/schema.ts", "schedules:")],
       [
         "terms-route",
         ...at("packages/kernel/src/catalog/catalog.controller.ts", "api/v1/admin/catalogs"),
+      ],
+      [
+        "terms-route",
+        ...at("packages/kernel/src/catalog/schedules.controller.ts", "orgs/:orgId/schedules"),
       ],
       ["terms-cli", ...at("apps/capybara/src/args.ts", "capybara plugins approve")],
       ["terms-reference", ...at("docs/guide.md", "CAPYBARA_PLUGIN_CONFIG")],
@@ -73,15 +78,22 @@ describe("checkTerms", () => {
       ["terms-reference", ...at("docs/guide.md", "EnterpriseAdminLock")],
       ["terms-reference", ...at("docs/guide.md", "is_enterprise_admin")],
       ["terms-reference", ...at("docs/guide.md", "identity/enterprise-admin.ts")],
+      ["terms-reference", ...at("docs/guide.md", "`scheduled_tasks`")],
+      ["terms-reference", ...at("docs/guide.md", "CAPYBARA_SCHEDULES__")],
+      ["terms-reference", ...at("docs/guide.md", "`scheduledTasks.forbiddenToolsUnreadable`")],
+      ["terms-reference", ...at("docs/guide.md", "scheduled_tasks_org_idx")],
+      ["terms-reference", ...at("docs/guide.md", "`scheduledTaskId`")],
+      ["terms-reference", ...at("docs/guide.md", "`sched-fire`")],
+      ["terms-reference", ...at("docs/guide.md", "`scheduleSettings.title`")],
       ["terms-reference", ...at("packages/kernel/src/packages/tgz.ts", "definePlugin")],
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');
     expect(f[3]?.message).toContain('"PluginPackageSection"');
-    expect(f[7]?.message).toContain("/marketplaces");
-    expect(f[9]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
-    expect(f[13]?.message).toContain('"writing-apps"');
-    expect(f[14]?.message).toContain("an old package format name");
-    expect(f[14]?.message).toContain('"app.yaml"');
+    expect(f[8]?.message).toContain("/marketplaces");
+    expect(f[11]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
+    expect(f[15]?.message).toContain('"writing-apps"');
+    expect(f[16]?.message).toContain("an old package format name");
+    expect(f[16]?.message).toContain('"app.yaml"');
   });
 
   it("an old builtin tool key is reported with the new names; exempt homes and the word agent pass", () => {

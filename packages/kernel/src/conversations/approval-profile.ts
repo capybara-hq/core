@@ -12,8 +12,8 @@ export interface ApprovalProfile {
 
 /**
  * Resolves the profile that decides an ask addressed to the conversation's person (profiles govern
- * every approval, ruling R1). Only an interactive chat (`kind = 'chat'`, no scheduled task) whose
- * owner is the person asked has one: any other root, a scheduled task's conversation or an ask
+ * every approval, ruling R1). Only an interactive chat (`kind = 'chat'`, no automation) whose
+ * owner is the person asked has one: any other root, an automation's conversation or an ask
  * addressed to another account keeps asking. The profile is the root's effective one as the
  * permission view reads it (Auto falls back to Approve for me where a bound device's consent no
  * longer holds; without a device Auto holds, ruling R8).
@@ -40,7 +40,7 @@ export class ConversationApprovalProfile {
     if (
       row === undefined ||
       row.kind !== "chat" ||
-      row.scheduled_task_id !== null ||
+      row.automation_id !== null ||
       row.account_id !== input.requestedFor
     )
       return null;

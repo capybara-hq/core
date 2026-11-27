@@ -1782,7 +1782,7 @@ export const KernelConfigSchema = z.strictObject({
         .prefault({} as never),
     })
     .prefault({} as never),
-  schedules: z
+  automations: z
     .strictObject({
       minIntervalFloorMinutes: z
         .number()
@@ -1793,7 +1793,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Smallest value an organization may set for the minimum gap between two fire times of a scheduled task, in minutes; a lower org value is clamped up to it",
+              "Smallest value an organization may set for the minimum gap between two fire times of an automation, in minutes; a lower org value is clamped up to it",
           }),
         ),
       maxTasksPerMemberCap: z
@@ -1805,7 +1805,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Largest number of scheduled tasks per member an organization may allow; a higher org value is clamped down to it",
+              "Largest number of automations per member an organization may allow; a higher org value is clamped down to it",
           }),
         ),
       maxTasksPerOrgCap: z
@@ -1817,7 +1817,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Largest number of scheduled tasks per organization an organization may allow; a higher org value is clamped down to it",
+              "Largest number of automations per organization an organization may allow; a higher org value is clamped down to it",
           }),
         ),
       maxRunsPerHourCap: z
@@ -1829,7 +1829,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Largest number of scheduled task runs per organization per hour an organization may allow; a higher org value is clamped down to it",
+              "Largest number of automation runs per organization per hour an organization may allow; a higher org value is clamped down to it",
           }),
         ),
     })

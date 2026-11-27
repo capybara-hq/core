@@ -3,6 +3,8 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import { visibleTo } from "../agents/agent-lookup.js";
+import { linkStartedRunIn } from "../automations/run-tracker.js";
+import { automationRunAt } from "../automations/unattended.js";
 import { wakeDecisionIn } from "../background/wake-rules.js";
 import { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
@@ -14,8 +16,6 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { linkStartedRunIn } from "../schedules/run-tracker.js";
-import { scheduledTaskRunAt } from "../schedules/unattended.js";
 import type { RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock } from "./conversation-lock.js";
@@ -362,7 +362,7 @@ export class RunQueue {
     if (!(await this.oweJob(conversationId, runId, jobId.id, "chat", conv.org_id))) return null;
     // scheduled tasks spec §4: a task's message makes the run unattended; a wake inherits it
     // from the run that produced its event; a person's message never does
-    const taskRunId = await scheduledTaskRunAt(t, conversationId, trigger.seq);
+    const taskRunId = await automationRunAt(t, conversationId, trigger.seq);
     await t
       .insertInto("runs")
       .values({
@@ -376,7 +376,7 @@ export class RunQueue {
         // a chat conversation always has its person-triggered run before any wake (a wake event
         // comes from a run of it or of its tree); null would only make the wake run its own window
         budget_run_id: isWake ? await budgetWindowOf(t, conversationId) : null,
-        scheduled_task_run_id: taskRunId,
+        automation_run_id: taskRunId,
       })
       .execute();
     // the task run its message started follows this run from now on (spec §6)
@@ -528,8 +528,8 @@ export class RunQueue {
         trigger_seq: wake.seq,
         job_id: jobId.recorded,
         budget_run_id: await budgetWindowOf(t, rootId),
-        // a parent's message or a wake: unattended when the run behind it was (scheduled tasks §4)
-        scheduled_task_run_id: await scheduledTaskRunAt(t, conversationId, wake.seq),
+        // a parent's message or a wake: unattended when the run behind it was (automations §4)
+        automation_run_id: await automationRunAt(t, conversationId, wake.seq),
       })
       .execute();
     return runId;

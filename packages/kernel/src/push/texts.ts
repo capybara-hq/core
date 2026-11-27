@@ -10,8 +10,8 @@ const PUSH_TEXTS: Record<PushTextKey, { en: string; zh: string }> = {
   runFailed: { en: "failed", zh: "运行失败" },
   backgroundFinished: { en: "a background task ended", zh: "后台任务已结束" },
   subagentFinished: { en: "a sub-agent finished", zh: "子智能体已完成" },
-  scheduleRan: { en: "your scheduled task ran", zh: "你的定时任务已运行" },
-  scheduleFailed: { en: "your scheduled task failed", zh: "你的定时任务运行失败" },
+  automationRan: { en: "your automation ran", zh: "你的自动化已运行" },
+  automationFailed: { en: "your automation failed", zh: "你的自动化运行失败" },
 };
 
 /** Every push text key. */
@@ -24,16 +24,16 @@ export function pushText(key: PushTextKey, locale: "zh" | "en"): string {
 
 /** An event's push as the fanout resolved it (`recipients.ts`), with the event id. */
 export interface ResolvedPush {
-  /** `conv-<conversationId>-<seq>` or `sched-<taskRunId>`: the message's collapse id. */
+  /** `conv-<conversationId>-<seq>` or `automation-<taskRunId>`: the message's collapse id. */
   eventId: string;
   orgId: string;
   accountIds: string[];
   category: PushCategory;
   /** In-app path with `?org=` (plan decision 8). */
   path: string;
-  /** The root conversation id, or `schedule-<taskId>`. */
+  /** The root conversation id, or `automation-<taskId>`. */
   threadId: string;
-  /** The agent's display name (the task's name for a schedule). */
+  /** The agent's display name (the task's name for an automation). */
   title: string;
   /** Shown only with `push.previews: "titles"`. */
   conversationTitle: string | null;

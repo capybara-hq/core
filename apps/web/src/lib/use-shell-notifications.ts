@@ -95,7 +95,7 @@ const BODY_TYPES = [
   "skill_change",
   "catalog_request",
   "catalog_request_decided",
-  "schedule_attention",
+  "automation_attention",
 ] as const;
 
 function bodyKey(i: InboxItem): (typeof BODY_TYPES)[number] | "other" {

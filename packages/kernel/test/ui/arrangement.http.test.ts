@@ -243,24 +243,24 @@ describe("arrangement", () => {
       .where("id", "=", orgId)
       .execute();
   });
-  it("a scheduledTasks patch round-trips through the org settings route", async () => {
+  it("an automations patch round-trips through the org settings route", async () => {
     const url = `/api/v1/orgs/${orgId}/settings`;
     const p = await admin({
       method: "PATCH",
       url,
-      payload: { scheduledTasks: { minIntervalMinutes: 15, forbiddenTools: ["Bash"] } },
+      payload: { automations: { minIntervalMinutes: 15, forbiddenTools: ["Bash"] } },
     });
     expect(p.statusCode, p.body).toBe(200);
     const g = await admin({ method: "GET", url });
-    const st = (g.json() as { settings: { scheduledTasks: Record<string, unknown> } }).settings
-      .scheduledTasks;
+    const st = (g.json() as { settings: { automations: Record<string, unknown> } }).settings
+      .automations;
     expect(st).toMatchObject({
       minIntervalMinutes: 15,
       forbiddenTools: ["Bash"],
       maxTasksPerOrg: 200,
       enabled: true,
     });
-    const bad = await admin({ method: "PATCH", url, payload: { scheduledTasks: { enabled: 1 } } });
+    const bad = await admin({ method: "PATCH", url, payload: { automations: { enabled: 1 } } });
     expect(bad.statusCode).toBe(400);
     await db
       .updateTable("orgs")

@@ -808,19 +808,19 @@ describe("where the choice shows (editable in a new conversation and an owner's 
     expect(composerPermission()?.getAttribute("title")).toBe("跟随主对话的权限");
   });
 
-  it("a scheduled task's conversation says it keeps its own unattended approvals", async () => {
+  it("an automation's conversation says it keeps its own unattended approvals", async () => {
     await renderRouteWithCache(
       "/chat/c1",
       {
-        ...chatRoutes("c1", { scheduledTaskId: "t1" }),
-        "GET /api/v1/orgs/o1/schedules/t1": () =>
-          json(404, { error: { code: "schedule.not_found", message: "Scheduled task not found" } }),
+        ...chatRoutes("c1", { automationId: "t1" }),
+        "GET /api/v1/orgs/o1/automations/t1": () =>
+          json(404, { error: { code: "automation.not_found", message: "Automation not found" } }),
       },
       { locale: "en" },
     );
     await screen.findAllByText("Approve for me");
     expect(composerPermission()?.getAttribute("title")).toBe(
-      "Scheduled tasks keep their own unattended approval rules",
+      "Automations keep their own unattended approval rules",
     );
   });
 

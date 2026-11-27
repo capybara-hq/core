@@ -807,7 +807,7 @@ describe("个人凭据型连接器", () => {
   });
 });
 
-describe("定时任务与 list_changed", () => {
+describe("自动化与 list_changed", () => {
   it("job ids contain no colon; list_changed dedupes by the minute bucket", async () => {
     expect(DRIFT_SCAN_JOB).not.toContain(":");
     expect(DRIFT_CONNECTOR_JOB).not.toContain(":");

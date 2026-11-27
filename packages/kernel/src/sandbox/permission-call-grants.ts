@@ -95,11 +95,11 @@ export class PermissionCallGrants {
     if (
       root.id !== binding.rootConversationId ||
       root.device_id !== binding.deviceId ||
-      root.scheduled_task_id ||
+      root.automation_id ||
       !run ||
       run.conversation_id !== binding.conversationId ||
       run.trigger_account_id !== binding.accountId ||
-      run.scheduled_task_run_id ||
+      run.automation_run_id ||
       !["running", "waiting", "queued"].includes(run.status) ||
       device?.owner_account_id !== binding.accountId ||
       view.availability.state !== "supported" ||

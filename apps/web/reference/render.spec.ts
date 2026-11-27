@@ -103,7 +103,7 @@ const PAGES = [
   "overview-section",
   // the usage chart: two panels on one x-axis (admin overview design §10.1)
   "trend-chart",
-  // the scheduled tasks calendar: week, month and the phone agenda (calendar design §11)
+  // the automations calendar: week, month and the phone agenda (calendar design §11)
   "schedule-calendar",
   // a device's head and its two modes (auto mode design §4, plan Task 10)
   "device-nameplate",

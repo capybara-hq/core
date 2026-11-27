@@ -946,7 +946,7 @@ export class SandboxService {
   }
 
   /**
-   * The org's limits for a standing network grant (a scheduled task's grant, a network approval):
+   * The org's limits for a standing network grant (an automation's grant, a network approval):
    * {@link deviceLimits} with the org's per-call host ceiling as an allowlist (`hostGrantCeiling`
    * with no device). Where that ceiling is bounded by the kernel only (`any`, which an allowlist
    * cannot carry with its exclusions), the org's effective hosts: a standing grant never reaches

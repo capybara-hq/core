@@ -20,6 +20,17 @@ import {
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
+import {
+  appendMissingGrant,
+  connectionGrantKey,
+  UNATTENDED_CONNECTION_ERROR,
+  UNATTENDED_ELICITATION_NOTE,
+  UNATTENDED_QUESTION_ERROR,
+  type UnattendedRun,
+  unattendedFails,
+  unattendedRules,
+  unattendedRunOf,
+} from "../automations/unattended.js";
 import { backgroundMaxSeconds } from "../background/launch.js";
 import { ConversationApprovalProfile } from "../conversations/approval-profile.js";
 import { AttachmentsService } from "../conversations/attachments.service.js";
@@ -95,17 +106,6 @@ import {
 } from "../sandbox/review/permission-candidate.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
-import {
-  appendMissingGrant,
-  connectionGrantKey,
-  UNATTENDED_CONNECTION_ERROR,
-  UNATTENDED_ELICITATION_NOTE,
-  UNATTENDED_QUESTION_ERROR,
-  type UnattendedRun,
-  unattendedFails,
-  unattendedRules,
-  unattendedRunOf,
-} from "../schedules/unattended.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
 import {
   type ApprovalRecord,
@@ -261,7 +261,7 @@ export const WAIT_SKIPPED_TEXT =
   "The user sent a message while this wait was running, which ended it; read the message below and continue. Call the tool again only if the wait is still needed.";
 /** A watched ask over `tools.maxWatchedWaitsPerAccount` (spec §5.2). */
 export const TOO_MANY_WATCHED_WAITS_TEXT =
-  "Too many waits are running for this user; end one, or finish and let a scheduled task check later.";
+  "Too many waits are running for this user; end one, or finish and let an automation check later.";
 /** A tool asked for a watched wait without a registered watcher (spec §5.2). */
 export const watchWithoutWatcherText = (key: string): string =>
   `Tool ${key} asked for a watched wait but registers no watcher.`;
@@ -457,7 +457,7 @@ export interface PolicyContext {
    */
   callPolicy?: CallPolicy | null;
   /**
-   * The scheduled task run the run serves, unattended or trial (scheduled tasks spec §7); unset or
+   * The automation run the run serves, unattended or trial (scheduled tasks spec §7); unset or
    * null: an attended run.
    */
   unattended?: UnattendedRun | null;
@@ -641,7 +641,7 @@ export interface ToolStepContext {
    */
   parent?: SubagentParent;
   /**
-   * The scheduled task run this run serves (scheduled tasks spec §7); filled by `runStep` once per
+   * The automation run this run serves (scheduled tasks spec §7); filled by `runStep` once per
    * step from PG (`unattendedRunOf`), null when attended. Callers leave it unset.
    */
   unattended?: UnattendedRun | null;

@@ -155,7 +155,8 @@ export const DEVICE_SERVICE_WORKSPACE_ENV = "CAPYBARA_SERVICE_WORKSPACE";
  * {@link DEVICE_SERVICE_INSTALL_SEAL} in it; from its next start on the directory is read only
  * for the service, so nothing the service later runs (a compromised browser included) can
  * replace what was installed. The provider empties it at every start that does not find it
- * sealed under the service's current files (unsealed, or a plugin upgrade since), so a service
+ * sealed under the service's current files (unsealed, or a plugin upgrade since; under its
+ * {@link DEVICE_SERVICE_INSTALL_KEY_FILE} where the service ships one), so a service
  * installs afresh while unsealed and never trusts what it finds there. The process that seals
  * keeps its write access until it exits, so a service runs no untrusted input (no web page) while
  * unsealed, seals only a complete install and then exits; the next start, reviewed again, runs it
@@ -164,6 +165,24 @@ export const DEVICE_SERVICE_WORKSPACE_ENV = "CAPYBARA_SERVICE_WORKSPACE";
 export const DEVICE_SERVICE_INSTALL_ENV = "CAPYBARA_SERVICE_INSTALL";
 /** The file that seals a service's install directory ({@link DEVICE_SERVICE_INSTALL_ENV}). */
 export const DEVICE_SERVICE_INSTALL_SEAL = ".sealed";
+/**
+ * A service file naming what its install directory holds ({@link DEVICE_SERVICE_INSTALL_ENV}): one
+ * line matching {@link DEVICE_SERVICE_INSTALL_KEY_RE}, such as the browser revision. capybara-device
+ * (the device-local provider's machine program, capybara-hq/plugins#311) keeps such installs in a
+ * machine-wide cache of the OS user and keys them by it instead of by the service's files, so a
+ * plugin upgrade that keeps the key reuses the sealed install, and so do the other devices of the
+ * same deployment (its URL's origin and path) on that machine. Services of other deployments,
+ * platforms or launch environments never see it. The provider still hands an unsealed install out
+ * empty and private to one start, publishes it only once the service exits sealed (every link
+ * inside it, no hard link, no special file) and verifies it before every reuse. It assumes the
+ * unsealed install is the service's own code running no untrusted input, as the seal does: a
+ * child that left its process group could still write through an open file after the digest
+ * (the next reuse's verification catches it). Absent (or malformed): the install is keyed by the
+ * files.
+ */
+export const DEVICE_SERVICE_INSTALL_KEY_FILE = "capybara-install-key";
+/** What {@link DEVICE_SERVICE_INSTALL_KEY_FILE} holds: lower case, so it is one name on every file system. */
+export const DEVICE_SERVICE_INSTALL_KEY_RE = /^[a-z0-9][a-z0-9._+-]{0,127}$/;
 /**
  * Names the Mach service allowances the provider's sandbox gives the service (macOS: device-local
  * sets it, a spec cannot). Its value {@link DEVICE_SERVICE_MACH_CHROMIUM} means the full Chromium

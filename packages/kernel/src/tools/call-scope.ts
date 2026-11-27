@@ -21,7 +21,7 @@ export interface CallFacts {
   step: number;
   /** The root conversation of the run's tree (a sub-agent works in its root's device). */
   rootConversationId: string;
-  /** An unattended run (a scheduled task): nobody is there to answer an ask. */
+  /** An unattended run (an automation): nobody is there to answer an ask. */
   unattended: boolean;
   agentVersion: number;
   conversationKind?: ConversationKindForHooks;

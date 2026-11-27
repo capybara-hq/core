@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import {
+  automationRunEventId,
   conversationEventId,
   pushDeliverJobId,
   pushFanoutJobId,
-  scheduleRunEventId,
 } from "../../src/push/jobs.js";
 import { pushTriggerOf } from "../../src/push/triggers.js";
 
@@ -52,11 +52,13 @@ describe("push job ids", () => {
   const conv = "3f0c8a5e-2b1d-4c6e-9a7f-0d1e2f3a4b5c";
   const reg = "9b8a7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
   it("contain no `:` for UUID inputs", () => {
-    for (const eventId of [conversationEventId(conv, 42), scheduleRunEventId(conv)]) {
+    for (const eventId of [conversationEventId(conv, 42), automationRunEventId(conv)]) {
       expect(pushFanoutJobId(eventId)).not.toContain(":");
       expect(pushDeliverJobId(eventId, reg)).not.toContain(":");
     }
     expect(pushFanoutJobId(conversationEventId(conv, 42))).toBe(`push-fanout-conv-${conv}-42`);
-    expect(pushDeliverJobId(scheduleRunEventId(conv), reg)).toBe(`push-sched-${conv}-${reg}`);
+    expect(pushDeliverJobId(automationRunEventId(conv), reg)).toBe(
+      `push-automation-${conv}-${reg}`,
+    );
   });
 });

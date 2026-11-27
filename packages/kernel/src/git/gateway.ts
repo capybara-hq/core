@@ -3,6 +3,8 @@ import { pipeline } from "node:stream/promises";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Redis } from "ioredis";
+import { normalizeGitRepo } from "../automations/grant-rules.js";
+import { appendMissingGrant } from "../automations/unattended.js";
 import { productName } from "../config/product-name.js";
 import type { KernelConfig } from "../config/schema.js";
 import { audit } from "../identity/audit.js";
@@ -12,8 +14,6 @@ import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { NetDeniedError } from "../net/public-address.js";
 import { safeFetch } from "../net/safe-fetch.js";
-import { normalizeGitRepo } from "../schedules/grant-rules.js";
-import { appendMissingGrant } from "../schedules/unattended.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "../tools/credentials.js";
 import {
   gitAskedNote,
