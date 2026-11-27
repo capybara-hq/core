@@ -119,10 +119,10 @@ export function ComposerPlaceChip({
   const can = (p?: PickerProps) => p !== undefined && !p.locked && p.disabled !== true;
   const changeable = can(device) || can(project);
   if (!changeable) {
-    const title = [
-      full.join(" / "),
-      ...[device.locked?.hint, project?.locked?.hint].filter((h): h is string => Boolean(h)),
-    ].join(": ");
+    const hints = [device.locked?.hint, project?.locked?.hint].filter((h): h is string =>
+      Boolean(h),
+    );
+    const title = hints.length > 0 ? `${full.join(" / ")}: ${hints.join("; ")}` : full.join(" / ");
     // A locked picker's warning (a project that is no longer there) stays reachable on a phone:
     // the chip shows its mark and opens what the warning inspects.
     const warning = device.locked?.warning ?? project?.locked?.warning;
@@ -153,6 +153,12 @@ export function ComposerPlaceChip({
         title={title}
       >
         <ChipValue device={device} {...(project ? { project } : {})} />
+        {/* the lock reason is announced, not only shown on hover */}
+        {hints.length > 0 ? (
+          <span className="cb-sr-only" data-part="place-hint">
+            {hints.join("; ")}
+          </span>
+        ) : null}
       </span>
     );
   }
@@ -258,6 +264,7 @@ function PlaceGroup({
   onPick(id: string): void;
   onAction(action: PickerProps["action"]): void;
 }): JSX.Element {
+  const empty = !picker.locked && picker.groups.every((g) => g.items.length === 0);
   return (
     <section
       className="cb-place-group"
@@ -265,6 +272,13 @@ function PlaceGroup({
       data-group={group}
       onKeyDownCapture={(e) => moveWithoutPicking(e, onPick)}
     >
+      {empty ? (
+        // nothing to choose yet (the projects loading): the heading still names the group, the
+        // picker's notice under it says why
+        <h3 className="cb-sheet-group-heading" data-part="sheet-group-heading">
+          {title}
+        </h3>
+      ) : null}
       {picker.notice ? (
         <p className="cb-options-sheet-note" data-part="place-notice">
           {picker.notice}
@@ -275,32 +289,34 @@ function PlaceGroup({
           <SheetRow static label={picker.value} description={picker.locked.hint} />
         </SheetGroup>
       ) : (
-        picker.groups.map((g, i) => (
-          <SheetGroup
-            // biome-ignore lint/suspicious/noArrayIndexKey: a picker's groups have no ids; their order is fixed
-            key={i}
-            heading={i === 0 ? title : (g.label ?? title)}
-            part="sheet-group"
-          >
-            <SheetOptionList
-              label={g.label ?? title}
-              options={g.items.map((it) => ({
-                id: it.id,
-                label: it.label,
-                ...(it.tag ? { tag: it.tag } : {}),
-                ...(it.badge ? { badge: it.badge } : {}),
-                ...(it.badgeTone ? { badgeTone: it.badgeTone } : {}),
-                ...(it.checked ? { checked: true } : {}),
-                ...(it.disabled || picker.disabled ? { disabled: true } : {}),
-              }))}
-              onPick={(id) => {
-                const item = g.items.find((it) => it.id === id);
-                if (!item || item.disabled === true || picker.disabled === true) return;
-                onPick(id);
-              }}
-            />
-          </SheetGroup>
-        ))
+        picker.groups
+          .filter((g) => g.items.length > 0)
+          .map((g, i) => (
+            <SheetGroup
+              // biome-ignore lint/suspicious/noArrayIndexKey: a picker's groups have no ids; their order is fixed
+              key={i}
+              heading={i === 0 ? title : (g.label ?? title)}
+              part="sheet-group"
+            >
+              <SheetOptionList
+                label={g.label ?? title}
+                options={g.items.map((it) => ({
+                  id: it.id,
+                  label: it.label,
+                  ...(it.tag ? { tag: it.tag } : {}),
+                  ...(it.badge ? { badge: it.badge } : {}),
+                  ...(it.badgeTone ? { badgeTone: it.badgeTone } : {}),
+                  ...(it.checked ? { checked: true } : {}),
+                  ...(it.disabled || picker.disabled ? { disabled: true } : {}),
+                }))}
+                onPick={(id) => {
+                  const item = g.items.find((it) => it.id === id);
+                  if (!item || item.disabled === true || picker.disabled === true) return;
+                  onPick(id);
+                }}
+              />
+            </SheetGroup>
+          ))
       )}
       {picker.action && !picker.locked ? (
         <Button

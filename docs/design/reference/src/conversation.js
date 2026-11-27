@@ -631,7 +631,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
     if (o.form === "compact") {
       // the touch form: the row above the pill, then the pill (＋, the text, send)
       const chip = locked
-        ? `<span class="r-place-chip" data-part="composer-place-chip" data-locked title="${esc(`${device} / ${project}: ${K.deviceLocked}: ${K.projectLocked}`)}"><span class="r-place-value">${esc(device)}</span><span class="r-place-sep" aria-hidden="true">/</span><span class="r-place-value" data-project>${esc(project)}</span></span>`
+        ? `<span class="r-place-chip" data-part="composer-place-chip" data-locked title="${esc(`${device} / ${project}: ${K.deviceLocked}; ${K.projectLocked}`)}"><span class="r-place-value">${esc(device)}</span><span class="r-place-sep" aria-hidden="true">/</span><span class="r-place-value" data-project>${esc(project)}</span></span>`
         : `<button class="r-place-chip" data-part="composer-place-chip" aria-label="${esc(`${K.place}: ${device} / ${project}`)}"><span class="r-place-value">${esc(device)}</span><span class="r-place-sep" aria-hidden="true">/</span><span class="r-place-value" data-project>${esc(project)}</span>${icon("chevron-down", 12)}</button>`;
       const mode = `<button class="r-icon-btn r-touch-icon" data-part="mode-button" title="${esc(modeTitle)}" aria-label="${esc(`${M.label}: ${P.label}: ${M.effortLabel} ${effort}`)}">${icon(P.icon, 14)}</button>`;
       const options = `<button class="r-place-chip r-options-chip" data-part="composer-options" aria-label="${esc(`会话选项: ${model} · ${effort}`)}"><span class="r-place-value">${esc(model)}</span>${icon("chevron-down", 12)}</button>`;

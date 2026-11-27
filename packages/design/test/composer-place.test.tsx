@@ -385,7 +385,7 @@ describe("review fixes", () => {
     );
     const chip = strip().querySelector('[data-part="composer-place-chip"]') as HTMLElement;
     expect(chip.getAttribute("title")).toBe(
-      "开发沙盒 / billing-reconciliation-service: 不能换设备: 不能换项目",
+      "开发沙盒 / billing-reconciliation-service: 不能换设备; 不能换项目",
     );
   });
 
@@ -410,5 +410,54 @@ describe("review fixes", () => {
     await user.click(chip);
     expect(onInspect).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("announces the static chip's lock reasons", () => {
+    wrap(
+      <ComposerBox
+        {...props({
+          place: {
+            device: devicePicker({ locked: { hint: "不能换设备" } }),
+            project: projectPicker({ locked: { hint: "不能换项目" } }),
+          },
+        })}
+      />,
+    );
+    const chip = strip().querySelector('[data-part="composer-place-chip"]') as HTMLElement;
+    const hint = chip.querySelector('[data-part="place-hint"]') as HTMLElement;
+    expect(hint.className).toBe("cb-sr-only");
+    expect(hint.textContent).toBe("不能换设备; 不能换项目");
+  });
+
+  it("moves the effort out of the mode menu on a touch device at 800", async () => {
+    const sized = matchMediaFor(800).matchMedia;
+    vi.stubGlobal("matchMedia", (q: string) =>
+      q === "(pointer: coarse)" || q === "(any-pointer: coarse)"
+        ? { ...sized(q), matches: true }
+        : sized(q),
+    );
+    const user = userEvent.setup();
+    wrap(<ComposerBox {...props()} />);
+    await user.click(screen.getByRole("button", { name: /^权限/ }));
+    expect(within(screen.getByRole("menu")).queryByRole("group", { name: "思考档位" })).toBeNull();
+  });
+
+  it("keeps the project heading and its notice while the projects load", async () => {
+    const user = userEvent.setup();
+    wrap(
+      <ComposerBox
+        {...props({
+          place: {
+            device: devicePicker(),
+            project: projectPicker({ disabled: true, groups: [], notice: "正在加载项目" }),
+          },
+        })}
+      />,
+    );
+    await user.click(within(strip()).getByRole("button", { name: /^运行位置/ }));
+    const sheet = screen.getByRole("dialog", { name: "运行位置" });
+    const project = sheet.querySelector('[data-group="project"]') as HTMLElement;
+    expect(project.querySelector('[data-part="sheet-group-heading"]')?.textContent).toBe("项目");
+    expect(project.querySelector('[data-part="place-notice"]')?.textContent).toBe("正在加载项目");
   });
 });
