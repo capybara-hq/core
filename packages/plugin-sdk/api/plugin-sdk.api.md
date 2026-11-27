@@ -995,6 +995,12 @@ export const DEVICE_SERVICE_ID_RE: RegExp;
 export const DEVICE_SERVICE_INSTALL_ENV = "CAPYBARA_SERVICE_INSTALL";
 
 // @public
+export const DEVICE_SERVICE_INSTALL_KEY_FILE = "capybara-install-key";
+
+// @public
+export const DEVICE_SERVICE_INSTALL_KEY_RE: RegExp;
+
+// @public
 export const DEVICE_SERVICE_INSTALL_SEAL = ".sealed";
 
 // @public

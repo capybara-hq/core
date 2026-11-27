@@ -17,6 +17,7 @@ import { dirname, isAbsolute, join, normalize } from "node:path";
 import {
   DEVICE_SERVICE_ID_RE,
   DEVICE_SERVICE_INSTALL_ENV,
+  DEVICE_SERVICE_INSTALL_KEY_FILE,
   DEVICE_SERVICE_INSTALL_SEAL,
   DEVICE_SERVICE_SOCKET_ENV,
   DEVICE_SERVICE_STATE_ENV,
@@ -29,6 +30,7 @@ import {
   SandboxScopeDeniedError,
   ServiceMessageDecoder,
 } from "@capybara-hq/plugin-sdk";
+import { type InstallCache, type InstallLease, validInstallKey } from "./install-cache.js";
 
 /**
  * The longest unix socket path a service is given, in bytes: macOS's `sun_path` holds 104 bytes
@@ -182,6 +184,12 @@ export interface ServiceLauncher {
   networkKey?(network: SandboxLimits["network"] | undefined): Promise<string>;
   /** The owner ceiling revision a launch would be built under now (absent: never changes). */
   ceilingRevision?(): Promise<string>;
+  /**
+   * What this launcher tells a service that may change what it installs (the macOS launcher's
+   * Mach allowances decide which Chromium build the browser installs): part of the install
+   * cache's scope, so a launch told something else never reuses an install made for another.
+   */
+  installVariant?(): string;
 }
 
 /** A service's request or stream connection could not be served. */
@@ -247,6 +255,14 @@ export interface ServiceSupervisorOptions {
   beforeLaunch?: () => Promise<void>;
   /** How long a service without its socket gets to exit ({@link SERVICE_EXITING_GRACE_MS}). */
   exitingGraceMs?: number;
+  /**
+   * The machine-wide install cache (capybara-hq/plugins#311): a service whose files carry
+   * {@link DEVICE_SERVICE_INSTALL_KEY_FILE} gets its install directory from it instead of
+   * `<device dir>/svc-install/<id>`. Absent: every install is the device's own.
+   */
+  installCache?: InstallCache;
+  /** Where a warning goes (the device's service log): a start that could not use the cache. */
+  warn?: (line: string) => void;
   now?: () => Date;
 }
 
@@ -779,14 +795,6 @@ export class ServiceSupervisor {
     const tmpDir = await realDirectory(stateDir, [TMP_NAME]);
     // the code lives apart from the state: `<device dir>/svc-files/<name>`, written only here
     const codeDir = await realDirectory(this.o.deviceDir, ["svc-files", spec.name]);
-    // what the service installed once (a browser): read only once it sealed it, emptied when
-    // its files change; a restart on stored code keeps it as it is
-    const install = await this.installDir(
-      spec.name,
-      o.storedCode
-        ? null
-        : (filesDigest ?? (spec.files ? deviceServiceFilesDigest(spec.files) : null)),
-    );
     // files are (re)written on start only; the state directory is the service's own and kept (a
     // browser profile)
     if (o.storedCode) {
@@ -809,6 +817,99 @@ export class ServiceSupervisor {
       if (filesDigest !== undefined)
         await writeNewFile(join(codeDir, DIGEST_NAME), Buffer.from(filesDigest));
     }
+    // what the service installed once (a browser): read only once it sealed it, emptied when
+    // its files change; a restart on stored code keeps it as it is. A service that names its
+    // install key gets it from the machine-wide cache instead, keyed by that
+    const installKey = this.o.installCache
+      ? await readSmallFile(join(codeDir, DEVICE_SERVICE_INSTALL_KEY_FILE))
+      : undefined;
+    let lease: InstallLease | undefined;
+    let install: { dir: string; sealed: boolean };
+    let installRoot: string;
+    if (this.o.installCache && validInstallKey(installKey)) {
+      try {
+        lease = await this.o.installCache.acquire(
+          spec.name,
+          installKey,
+          signal,
+          this.o.launcher()?.installVariant?.() ?? "",
+        );
+      } catch (error) {
+        // a cache this start cannot use (its lock held too long, this process's start time
+        // unreadable, the root not private, a file system without hard links) falls back to the
+        // device's own install directory, and says why
+        signal.throwIfAborted();
+        lease = undefined;
+        this.o.warn?.(
+          `The install cache is not used for device service ${spec.name}: ${(error as Error).message}; it installs into the device's own install directory instead`,
+        );
+      }
+    }
+    if (lease) {
+      install = { dir: lease.dir, sealed: lease.sealed };
+      installRoot = (this.o.installCache as InstallCache).root;
+      // the device's own copy is kept while it was made for these files (a later fallback reuses
+      // it sealed); one made for other files would be emptied by a fallback anyway
+      await this.dropDeviceInstall(
+        spec.name,
+        o.storedCode
+          ? (o.runningDigest ?? null)
+          : (filesDigest ?? (spec.files ? deviceServiceFilesDigest(spec.files) : null)),
+      );
+    } else {
+      install = await this.installDir(
+        spec.name,
+        o.storedCode
+          ? null
+          : (filesDigest ?? (spec.files ? deviceServiceFilesDigest(spec.files) : null)),
+      );
+      installRoot = serviceInstallRoot(this.o.deviceDir);
+    }
+    try {
+      return await this.launchWith(spec, network, key, signal, {
+        ...o,
+        paths,
+        stateDir,
+        downloads,
+        tmpDir,
+        codeDir,
+        install,
+        installRoot,
+        lease,
+      });
+    } catch (error) {
+      // a launch that never ran (or whose process is gone already) gives its install back
+      if (lease && !this.running.has(spec.name)) await lease.release();
+      throw error;
+    }
+  }
+
+  /** The launch of {@link start}, once every directory was made and the install resolved. */
+  private async launchWith(
+    spec: LocalServiceSpec,
+    network: SandboxLimits["network"] | undefined,
+    key: string,
+    signal: AbortSignal,
+    o: {
+      filesDigest?: string;
+      storedCode?: boolean;
+      runningDigest?: string | undefined;
+      paths: ReturnType<typeof servicePaths>;
+      stateDir: string;
+      downloads: string;
+      tmpDir: string;
+      codeDir: string;
+      install: { dir: string; sealed: boolean };
+      installRoot: string;
+      lease: InstallLease | undefined;
+    },
+  ): Promise<DeviceServiceStatus> {
+    const { filesDigest, paths, stateDir, downloads, tmpDir, codeDir, install, lease } = o;
+    const launcher = this.o.launcher();
+    if (!launcher)
+      throw new SandboxPermissionUnsupportedError(
+        "Device services need a macOS host device in this version of capybara-device",
+      );
     // a socket left by an earlier run would make the bind fail
     await removeEntry(join(stateDir, SOCKET_NAME));
     if (paths.alias) await this.makeAlias(paths.alias, stateDir);
@@ -827,7 +928,7 @@ export class ServiceSupervisor {
     const realState = await resolvedInside(stateDir, serviceRoot(this.o.deviceDir));
     const realDownloads = await resolvedInside(downloads, this.o.workspace);
     const realCode = await resolvedInside(codeDir, serviceCodeRoot(this.o.deviceDir));
-    const realInstall = await resolvedInside(install.dir, serviceInstallRoot(this.o.deviceDir));
+    const realInstall = await resolvedInside(install.dir, o.installRoot);
     const proc = await launcher.launch(
       {
         name: spec.name,
@@ -873,8 +974,10 @@ export class ServiceSupervisor {
     let exited = false;
     record.gone = record.gone.then(async () => {
       exited = true;
-      if (this.running.get(spec.name) === record) this.running.delete(spec.name);
       for (const c of record.conns) c.destroy();
+      // published (or let go) before the name is free: the next start finds the sealed install
+      await lease?.release();
+      if (this.running.get(spec.name) === record) this.running.delete(spec.name);
       if (paths.alias) await this.removeAlias(paths.alias, stateDir).catch(() => {});
     });
     this.running.set(spec.name, record);
@@ -919,6 +1022,18 @@ export class ServiceSupervisor {
       await rm(join(dir, entry), { recursive: true, force: true });
     if (digest !== null && recorded !== digest) await writeNewFile(record, Buffer.from(digest));
     return { dir, sealed: false };
+  }
+
+  /**
+   * Empties `<device dir>/svc-install/<id>` and drops its record unless the record names `digest`
+   * (the files this start runs): the install of a service that moved to the machine-wide cache, no
+   * longer of use to a fallback (never through a link: rm removes a link itself).
+   */
+  private async dropDeviceInstall(name: string, digest: string | null): Promise<void> {
+    const root = await realDirectory(this.o.deviceDir, ["svc-install"]);
+    if (digest !== null && (await readSmallFile(join(root, `.${name}`))) === digest) return;
+    await rm(join(root, name), { recursive: true, force: true });
+    await rm(join(root, `.${name}`), { force: true });
   }
 
   /**
