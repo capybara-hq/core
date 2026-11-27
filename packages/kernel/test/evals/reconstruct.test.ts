@@ -1675,7 +1675,7 @@ describe("reconstructRequest：基线零漂移", () => {
       ]);
       expect(message.payload.content[3]).toMatchObject({
         type: "document",
-        source: { attachmentId: id },
+        source: { kind: "ref", fileId: id },
       });
       // the request carries the logged blocks as they are
       expect(JSON.stringify(sent[0]?.messages)).toContain(
@@ -1857,7 +1857,7 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, snap);
   });
 
-  it("a message logged before the 0188 copy (attachmentId refs, a file block) runs after it with zero drift", async () => {
+  it("a message logged before the 0190 copy (attachmentId refs, a file block) runs after it with zero drift", async () => {
     reset();
     const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
     const conv = await createConv(owner, orgId, agentId);
