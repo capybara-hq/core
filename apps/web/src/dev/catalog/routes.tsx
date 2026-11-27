@@ -216,6 +216,8 @@ export const REFERENCE_COMPONENTS = [
   "schedule-calendar",
   // the kanban board: columns, a held card, a locked column, the phone form (spec §6.69)
   "board",
+  // the people and agents picker: field, panel states, the phone sheet (spec §6.70)
+  "principal-picker",
   // tools with their policy next to them (the agent page's 工具 section, 2026-11-08)
   "tool-policy-list",
   // skills to choose, grouped with a select-all per group (maintainer acceptance 2026-11-12)

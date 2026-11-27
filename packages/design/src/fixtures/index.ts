@@ -954,3 +954,24 @@ export const BOARD_FIXTURE = {
     action: "新建任务",
   },
 } as const;
+
+/**
+ * The PrincipalPicker's fixed data (spec §6.70): the options of every block and test. The first
+ * option has no hint, so a plain row comes first; 发票核对 is a disabled agent whose hint is the
+ * reason; `search` is the query of the searching block and `active` the option it has active.
+ */
+export const PRINCIPAL_PICKER_FIXTURE = {
+  options: [
+    { kind: "person", id: "u-lin", name: "林远" },
+    { kind: "person", id: "u-zhou", name: "周宁", hint: "产品经理" },
+    { kind: "person", id: "u-grace", name: "Grace Chen", hint: "客户成功" },
+    { kind: "agent", id: "a-support", name: "客服助手", hint: "回答客户问题" },
+    { kind: "agent", id: "a-invoice", name: "发票核对", hint: "尚未配置", disabled: true },
+  ],
+  label: "指派给",
+  placeholder: "选择成员",
+  search: "周",
+  searchGrace: "grace",
+  noMatch: "没有这个人",
+  active: "u-zhou",
+} as const;

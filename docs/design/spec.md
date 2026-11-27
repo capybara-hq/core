@@ -4320,6 +4320,55 @@ States: `idle`, `dragging`, `over`, `locked-over`, `empty`, `loading`, `compact`
 | board-card | compact | border-top-left-radius | radius.md |
 | board-move | compact | height | control.default |
 
+### 6.70 PrincipalPicker
+
+`PrincipalPicker({ options, value, onChange, multiple?, placeholder?, groups?, onSearch?, loading?, disabled? })` picks people and agents, one or many (plugin full pages design §7; forwarded to plugins through `@capybara-hq/plugin-client`): `options` are `{ kind: "person" | "agent", id, name, avatar?, hint?, disabled? }`, `value` the chosen ids, `onChange` receives the new ids. It is built from the `Popover` (§6.7), the composer picker's search field and list pieces (`cb-cmenu-filter`, `picker-groups`) and the `Avatar` (§6.13); a person's avatar is a circle (never a preset: the initial instead), an agent's a square with its preset.
+
+- **Closed**: a `Select`-like field (§6.2): a `combobox` button `control.default` high, `radius.sm`, a `line` border, the chevron at the end, `aria-haspopup="listbox"`. The value is the chosen option's 16 circle or square avatar and name (`select-label` rhythm: `space.1` between them); with several chosen the first one and a muted `+N`; nothing chosen shows the placeholder in `faint` (default 选择成员 / Select). A chosen id that matches no option shows the id. `disabled` is the field's disabled state and never opens.
+- **Open** (from 600 up): the `Popover` panel (`menu` ground `panel`, `line-strong` border, `radius.md`, the shadow of §6.7, no padding of its own), at least the field's width and at least 240, at most min(360, the window less 16); the field takes the `accent` border while it is open. A search field first (`control.dense` high, the `cb-cmenu-filter` look, `type.small`, `role="combobox"` with `aria-controls` and `aria-activedescendant`), then the list (`role="listbox"`, capped at `layout.menu-max-height` and scrolling, `aria-multiselectable` for `multiple`). The search field takes the focus as the panel opens; Escape closes and focus returns to the field.
+- **Option**: `row.default` high (`row.roomy` when it has a `hint`), `pad.default.x` inline, `radius.sm`; the 24 avatar, the name (`type.body`, `ink`, ellipsis) and, under it, the `hint` (`type.small`, `muted`, ellipsis). The active option (arrows or pointer) is on the `hover` ground, a chosen one on `selected` with a trailing `check`. A **disabled** option is `disabled` ink, not active, not choosable (`aria-disabled`); its hint is the reason. The avatar is `aria-hidden`: the name is the option's name, the hint its description.
+- **Searching**: typing filters the options by name (trimmed, case-insensitive, locally) and calls `onSearch(query)` with the raw text on every change, so a caller can fetch more; the first enabled match becomes active. An empty query keeps everything.
+- **Grouped**: with `groups` the list is two groups, 人员 / People (`kind: "person"`) then 智能体 / Agents (`kind: "agent"`), each a `role="group"` named by its heading (`type.micro`, `muted`, `pad.default.x` inline, `space.2` above and `space.1` below); a group with no option is not drawn; without `groups` the options keep the given order with no headings.
+- **Keyboard**: the search field keeps the focus. ArrowDown / ArrowUp move the active option over the enabled ones and wrap, Home / End jump, Enter chooses the active one, Escape closes. A closed field opens on Enter, Space, ArrowDown and ArrowUp.
+- **Choosing**: single closes the panel and calls `onChange([id])` (the chosen id again calls nothing); `multiple` keeps it open and toggles the id in `value` (`onChange` gets the new array: the id appended on choose, removed on unchoose).
+- **States**: `empty` (no option, or none left by the search): one muted line 没有匹配项 / No matches (`type.small`, `muted`); `loading` (`loading` true): the options already known stay, with a muted 正在加载 / Loading line (a `status`) after them; with none yet, only that line.
+- **Compact** (below 600; a `ClassForms` compact form, §6.64: the interaction differs): the field opens a `BottomSheet` (§6.59) titled with the field's `aria-label`, else the placeholder, holding the same search field and list; the rows take the touch sizes (`row.default` is 44 there) and the sheet stays open for `multiple` (its close button and the scrim close it), closes after a single choice.
+- `forced-colors`: the active option is outlined in `Highlight`, a chosen one marked by its check; disabled text `GrayText`.
+
+<!-- states: principal-picker -->
+States: `closed`, `open`, `searching`, `grouped`, `multi`, `disabled-option`, `empty`, `loading`, `compact`
+
+<!-- size-table: principal-picker -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| principal-picker | closed | height | control.default |
+| principal-picker | closed | border-top-left-radius | radius.sm |
+| principal-picker | closed | border-top-color | color.line |
+| principal-picker-label avatar[data-size=16] | closed | width | 16 |
+| principal-picker-label | closed | column-gap | space.1 |
+| principal-picker-label[data-placeholder=true] | closed | color | color.faint |
+| principal-picker | open | border-top-color | color.accent |
+| principal-picker-panel | open | background-color | color.panel |
+| principal-picker-panel | open | border-top-color | color.line-strong |
+| principal-picker-panel | open | border-top-left-radius | radius.md |
+| principal-picker-search | open | height | control.dense |
+| principal-picker-search | open | font-size | type.small |
+| principal-picker-option | open | height | row.default |
+| principal-picker-option | open | padding-left | pad.default.x |
+| principal-picker-option avatar[data-size=24] | open | width | 24 |
+| principal-picker-option[aria-selected=true] | open | background-color | color.selected |
+| principal-picker-option[data-hinted=true] | open | height | row.roomy |
+| principal-picker-hint | open | color | color.muted |
+| principal-picker-hint | open | font-size | type.small |
+| principal-picker-group-label | grouped | color | color.muted |
+| principal-picker-group-label | grouped | font-size | type.micro |
+| principal-picker-option[aria-disabled=true] | disabled-option | color | color.disabled |
+| principal-picker-empty | empty | color | color.muted |
+| principal-picker-empty | empty | font-size | type.small |
+| principal-picker-loading | loading | color | color.muted |
+| principal-picker-option | multi | height | row.default |
+| principal-picker | compact | height | control.default |
+
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
 - Thousands separators for numbers; amounts `¥412.80`; relative time ("2 hours ago") for lists, absolute time (`10-18 14:02:11`) for records and logs.

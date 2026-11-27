@@ -81,6 +81,7 @@ import { COMMANDS } from "./fixtures";
 import { headRhythmBlocks } from "./head-rhythm-blocks";
 import { SHEET_BLOCKS } from "./overlays";
 import { OVERVIEW_SECTION_BLOCKS } from "./overview-section-blocks";
+import { PRINCIPAL_PICKER_BLOCKS } from "./principal-picker-blocks";
 import { RefBlock } from "./ref-block";
 import { SCHEDULE_CALENDAR_BLOCKS } from "./schedule-calendar-blocks";
 import { SHARE_BLOCKS } from "./share-blocks";
@@ -1424,6 +1425,7 @@ export const REFERENCE_BLOCKS = {
   ...TREND_CHART_BLOCKS,
   ...SCHEDULE_CALENDAR_BLOCKS,
   ...BOARD_BLOCKS,
+  ...PRINCIPAL_PICKER_BLOCKS,
   ...THEME_SWATCH_BLOCKS,
   ...DEVICE_BLOCKS,
   ...TOUCH_BLOCKS,
