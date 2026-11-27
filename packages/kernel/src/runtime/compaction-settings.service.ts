@@ -3,6 +3,8 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import {
   type CompactionSettings,
   effectiveCompactionSettings,
+  effectivePromptCacheSettings,
+  type PromptCacheSettings,
   SettingsService,
 } from "../identity/settings.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -29,6 +31,16 @@ export async function resolveCompactionSettings(
   return effectiveCompactionSettings(platform.compaction, org.compaction);
 }
 
+/** The effective prompt cache settings for `orgId` (org override > platform setting). */
+export async function resolvePromptCacheSettings(
+  settings: Pick<SettingsService, "get">,
+  db: KernelSchemaDb,
+  orgId: string,
+): Promise<PromptCacheSettings> {
+  const [platform, org] = await Promise.all([settings.get(), readOrgSettings(db, orgId)]);
+  return effectivePromptCacheSettings(platform.promptCache, org.promptCache);
+}
+
 /**
  * The compaction settings in effect for one organization (context compaction spec §4.8):
  * the organization's override over the platform's stored settings, which carry the built-in
@@ -45,5 +57,10 @@ export class CompactionSettingsService {
   /** The effective settings for `orgId`: org override > platform setting > built-in default. */
   resolve(orgId: string): Promise<CompactionSettings> {
     return resolveCompactionSettings(this.settings, this.db.db, orgId);
+  }
+
+  /** The effective prompt cache settings for `orgId`. */
+  resolvePromptCache(orgId: string): Promise<PromptCacheSettings> {
+    return resolvePromptCacheSettings(this.settings, this.db.db, orgId);
   }
 }

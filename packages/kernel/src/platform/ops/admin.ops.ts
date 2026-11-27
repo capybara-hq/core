@@ -264,12 +264,13 @@ export class AdminOperations implements OnModuleInit {
         authz: { superAdmin: true },
         mirrors: ["PUT /api/v1/admin/settings"],
         // the per-org override records are orgs.set-limits (one org at a time); compaction is
-        // changed in the admin console's settings page
+        // changed in the admin console's settings page, as is promptCache
         omits: [
           "runConcurrencyOverrides",
           "sandboxLimitOverrides",
           "subagentLimitOverrides",
           "compaction",
+          "promptCache",
         ],
         confirm: "platform",
         errors: [
