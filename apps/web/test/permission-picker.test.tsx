@@ -776,8 +776,10 @@ describe("where the choice shows (editable in a new conversation and an owner's 
     await renderRouteWithCache("/", homeRoutes(), { locale: "en" });
     expect(modeButton().getAttribute("aria-label")).toMatch(/^Permissions: Approve for me/);
     expect(composerPermission()).toBeNull();
+    // with the top strip the phone's mode button is the same one: the settings chip holds the
+    // model and the effort only
     const options = document.querySelector('[data-part="composer-options"]') as HTMLElement;
-    expect(options.getAttribute("aria-label")).toContain("Approve for me");
+    expect(options.getAttribute("aria-label")).not.toContain("Approve for me");
     // the selected device's preview was prefetched: no browser read
     expect(browser).toEqual([]);
   });

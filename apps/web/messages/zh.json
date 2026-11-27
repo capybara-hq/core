@@ -1621,6 +1621,7 @@
     "noDevice": "不用设备",
     "deviceOffline": "你的本地设备都已离线，本对话将在没有设备的情况下开始。在机器上启动 capybara-device 后即可使用设备。",
     "deviceLocked": "对话开始后设备不再更换",
+    "projectLocked": "发送第一条消息后不能再换项目",
     "projectGroup": "项目",
     "freeMode": "自由模式",
     "project": {

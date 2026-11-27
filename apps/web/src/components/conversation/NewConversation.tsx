@@ -489,8 +489,15 @@ export function useNewConversationPage(
           {...(device.deviceId !== undefined && device.project !== undefined
             ? { project: { deviceId: device.deviceId, name: device.project } }
             : {})}
+          {...(device.picker
+            ? {
+                place: {
+                  device: device.picker,
+                  ...(device.projectPicker ? { project: device.projectPicker } : {}),
+                },
+              }
+            : {})}
           pickers={{
-            ...(device.picker ? { device: device.picker } : {}),
             permission: permission.picker,
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),

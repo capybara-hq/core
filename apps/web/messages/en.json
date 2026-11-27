@@ -1621,6 +1621,7 @@
     "noDevice": "No device",
     "deviceOffline": "Your local devices are offline, so this conversation starts without a device. Start capybara-device on the machine to use it.",
     "deviceLocked": "A conversation keeps its device",
+    "projectLocked": "A conversation keeps its project after the first message",
     "projectGroup": "Project",
     "freeMode": "Free mode",
     "project": {

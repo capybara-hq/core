@@ -460,6 +460,14 @@ describe("the conversation's device (environments design §4.1 item 2)", () => {
       [`GET ${conv("c1")}/device`]: () => json(200, { device }),
     });
 
+  /** The locked values in the composer's top strip (composer menus spec §6). */
+  const lockedPlace = () =>
+    [
+      ...document.querySelectorAll(
+        '[data-part="composer-place-full"] [data-part="picker"][data-locked="true"]',
+      ),
+    ].map((e) => e.textContent);
+
   it("properties panel shows the conversation's device", async () => {
     bound(envView("e1", null, { instance: { status: "running", lastUsedAt: T } }));
     const props = await open();
@@ -468,10 +476,8 @@ describe("the conversation's device (environments design §4.1 item 2)", () => {
         exact: false,
       }),
     ).toBeTruthy();
-    // the composer shows it read only, before the model
-    expect(
-      screen.getByText(en.devices.personal, { selector: '[data-part="picker"]' }),
-    ).toBeTruthy();
+    // the composer's top strip shows it read only
+    expect(lockedPlace()).toEqual([en.devices.personal]);
   });
 
   it("a device that is not started or whose provider is gone shows that state", async () => {
@@ -486,16 +492,14 @@ describe("the conversation's device (environments design §4.1 item 2)", () => {
     bound(null);
     const props = await open();
     expect(within(props).getByText(en.chatPanel.deviceDeleted, { exact: false })).toBeTruthy();
-    expect(
-      screen.getByText(en.chat.deviceDeleted, { selector: '[data-part="picker"]' }),
-    ).toBeTruthy();
+    expect(lockedPlace()).toEqual([en.chat.deviceDeleted]);
   });
 
   it("a row read before its first tool call bound it still shows the bound device", async () => {
     // the row says unbound, the device route (read after the first tool call) has one
     bound(envView("e1", "Build box"), null);
     await open();
-    expect(await screen.findByText("Build box", { selector: '[data-part="picker"]' })).toBeTruthy();
+    await vi.waitFor(() => expect(lockedPlace()).toEqual(["Build box"]));
   });
 
   it("a conversation with no device bound says so and shows no picker", async () => {

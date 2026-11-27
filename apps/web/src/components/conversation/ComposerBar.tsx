@@ -10,6 +10,7 @@ import {
   type ComposerMenuItem,
   type ComposerMenuKind,
   type ComposerMenuProps,
+  type ComposerPlace,
   Dialog,
   Field,
   FileDrop,
@@ -326,6 +327,7 @@ export function ComposerBar({
   stop,
   onSend,
   pickers,
+  place,
   quickActions,
   agents,
   context,
@@ -362,12 +364,16 @@ export function ComposerBar({
   /** The agent picker is absent on the new conversation page (its agents row picks). */
   pickers: {
     agent?: PickerProps;
-    device?: PickerProps;
-    /** The conversation's permission profile, after the device (design slot order). */
+    /** The conversation's permission profile (design slot order). */
     permission?: PickerProps;
     model: PickerProps;
     effort?: PickerProps;
   };
+  /**
+   * The top strip (composer menus spec §6, §7): the device, then its project (absent when the
+   * device offers none); both locked on an existing conversation. Absent without a device choice.
+   */
+  place?: ComposerPlace | undefined;
   /** The selected agent's quick actions (`QuickActions`), after the effort picker. */
   quickActions?: ReactNode;
   /** The agent map's entry (`AgentsChip`, AC3), after the quick actions; a conversation's only. */
@@ -1432,6 +1438,7 @@ export function ComposerBar({
         onKeyDown: menuController.onKeyDown,
       }}
       pickers={pickers}
+      {...(place !== undefined ? { place } : {})}
       // one mode button before send holds the profile and the effort (from 640 up)
       {...(pickers.permission !== undefined
         ? {

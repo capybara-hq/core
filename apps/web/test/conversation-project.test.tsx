@@ -24,9 +24,9 @@ import { renderRouteWithCache } from "./support/query";
 import { expectNoFirstPaintFetch } from "./support/server";
 
 /**
- * Project root spec §4.3, §4.6 (plan Task 12): a new conversation is bound to one of its device's
- * projects from the composer's device picker (自由模式 by default); an existing conversation shows
- * its binding read only; the conversation names its project and whether it loaded (or why it is
+ * Project root spec §4.3, §4.6 (plan Task 12), composer menus spec §6: a new conversation is bound
+ * to one of its device's projects from the project picker after the device picker in the composer's
+ * top strip (自由模式 by default); an existing conversation shows its device and project read only; the conversation names its project and whether it loaded (or why it is
  * unavailable) from the view's `projectState` (the latest `project_root` event, wherever it lies in
  * the log); the `/` menu groups its entries by source,
  * the project's skills under their own heading.
@@ -80,6 +80,10 @@ const newRoutes = (projects: unknown = projectsOf()) => ({
 const input = (m = en) => screen.getByRole("combobox", { name: m.chat.inputLabel, hidden: true });
 const devicePicker = (m = en) =>
   screen.getByRole("button", { name: new RegExp(`^${m.chat.pickDevice}: `) });
+const projectPicker = (m = en) =>
+  screen.queryByRole("button", { name: new RegExp(`^${m.chat.projectGroup}: `) });
+const strip = (container: HTMLElement) =>
+  container.querySelector('[data-part="composer-place-full"]') as HTMLElement;
 const createdAt = () =>
   json(201, { ...CONV("c9"), event: userMsg(1, "go"), events: [userMsg(1, "go")] });
 
@@ -95,15 +99,31 @@ afterEach(() => {
   FakeEventSource.instances = [];
 });
 
-describe("binding a new conversation to a project (the device picker)", () => {
+describe("binding a new conversation to a project (the top strip)", () => {
   it("offers 自由模式 and the chosen device's projects; the first paint reads nothing", async () => {
     resetNavigation("/");
     expectNoFirstPaintFetch();
-    await renderRouteWithCache("/", newRoutes(), { locale: "zh" });
+    const { container } = await renderRouteWithCache("/", newRoutes(), { locale: "zh" });
     const user = userEvent.setup();
+    // the strip reads device / project above the text; the control row has no device picker
+    const project = await vi.waitFor(() => projectPicker(zh) as HTMLElement);
+    expect(project.getAttribute("aria-label")).toBe(`${zh.chat.projectGroup}: ${zh.chat.freeMode}`);
+    const place = strip(container);
+    expect(place.contains(devicePicker(zh))).toBe(true);
+    expect(
+      devicePicker(zh).compareDocumentPosition(project) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const bar = container.querySelector('[data-part="composer-bar"]') as HTMLElement;
+    expect(
+      within(bar).queryByRole("button", { name: new RegExp(`^${zh.chat.pickDevice}: `) }),
+    ).toBeNull();
+    // the device's menu lists devices only
     await user.click(devicePicker(zh));
+    const devices = await screen.findByRole("menu");
+    expect(within(devices).queryByRole("menuitemradio", { name: zh.chat.freeMode })).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(project);
     const menu = await screen.findByRole("menu");
-    expect(within(menu).getByText(zh.chat.projectGroup)).toBeTruthy();
     const free = within(menu).getByRole("menuitemradio", { name: zh.chat.freeMode });
     expect(free.getAttribute("aria-checked")).toBe("true");
     expect(within(menu).getByRole("menuitemradio", { name: "core" })).toBeTruthy();
@@ -116,9 +136,10 @@ describe("binding a new conversation to a project (the device picker)", () => {
     const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache("/", newRoutes());
     const user = userEvent.setup();
-    await user.click(devicePicker());
+    await user.click(await vi.waitFor(() => projectPicker() as HTMLElement));
     await user.click(await screen.findByRole("menuitemradio", { name: "core" }));
-    expect(devicePicker().textContent).toContain("core");
+    expect(projectPicker()?.textContent).toContain("core");
+    expect(devicePicker().textContent).not.toContain("core");
     await user.type(input(), "go{Enter}");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
@@ -146,15 +167,12 @@ describe("binding a new conversation to a project (the device picker)", () => {
     });
     await renderRouteWithCache("/", newRoutes());
     const user = userEvent.setup();
-    await user.click(devicePicker());
+    await user.click(await vi.waitFor(() => projectPicker() as HTMLElement));
     await user.click(await screen.findByRole("menuitemradio", { name: "core" }));
     await user.click(devicePicker());
     await user.click(await screen.findByRole("menuitemradio", { name: /Build box/ }));
-    await user.click(devicePicker());
-    const menu = await screen.findByRole("menu");
     // a device without projects offers no project choice
-    await vi.waitFor(() => expect(within(menu).queryByText(en.chat.projectGroup)).toBeNull());
-    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(projectPicker()).toBeNull());
     await user.type(input(), "go{Enter}");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     const body = bodyOf(calls.find((c) => c.method === "POST"));
@@ -170,15 +188,16 @@ describe("binding a new conversation to a project (the device picker)", () => {
     });
     await renderRouteWithCache("/", newRoutes());
     const user = userEvent.setup();
-    await user.click(devicePicker());
+    await user.click(await vi.waitFor(() => projectPicker() as HTMLElement));
     await user.click(await screen.findByRole("menuitemradio", { name: "core" }));
     await user.click(devicePicker());
     await user.click(await screen.findByRole("menuitemradio", { name: /Build box/ }));
+    await vi.waitFor(() => expect(projectPicker()?.textContent).toBe(en.chat.freeMode));
     await user.click(devicePicker());
     await user.click(
       await screen.findByRole("menuitemradio", { name: new RegExp(en.devices.personal) }),
     );
-    expect(devicePicker().textContent).not.toContain("core");
+    await vi.waitFor(() => expect(projectPicker()?.textContent).toBe(en.chat.freeMode));
     await user.type(input(), "go{Enter}");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     const body = bodyOf(calls.find((c) => c.method === "POST"));
@@ -193,9 +212,10 @@ describe("binding a new conversation to a project (the device picker)", () => {
       newRoutes(projectsOf({ projects: [] as unknown[], supported: false })),
     );
     const user = userEvent.setup();
+    await vi.waitFor(() => expect(devicePicker()).toBeTruthy());
+    expect(projectPicker()).toBeNull();
     await user.click(devicePicker());
     const menu = await screen.findByRole("menu");
-    expect(within(menu).queryByText(en.chat.projectGroup)).toBeNull();
     expect(within(menu).queryByRole("menuitemradio", { name: en.chat.freeMode })).toBeNull();
   });
 });
@@ -228,15 +248,30 @@ const projectRoot = (seq: number, payload: Record<string, unknown>) =>
   ev(seq, "project_root", { project: "core", root: ROOT, skills: [], ...payload });
 
 describe("an existing conversation's project", () => {
-  it("the device picker shows the binding read only", async () => {
+  it("the top strip shows the device and the project read only", async () => {
     resetNavigation("/chat/c1");
     chatApi([userMsg(1, "hi")]);
+    const { container } = await renderChatRoute({ locale: "zh" });
+    await screen.findByText("hi");
+    const locked = [...strip(container).querySelectorAll('[data-locked="true"]')];
+    expect(locked.map((e) => e.textContent)).toEqual(["Laptop", "core"]);
+    expect(locked.map((e) => e.getAttribute("title"))).toEqual([
+      `Laptop: ${zh.chat.deviceLocked}`,
+      `core: ${zh.chat.projectLocked}`,
+    ]);
+    // nothing in it can change: no buttons, and the compact chip is static text too
+    expect(within(strip(container)).queryAllByRole("button")).toEqual([]);
+    const chip = container.querySelector('[data-part="composer-place-chip"]') as HTMLElement;
+    expect(chip.getAttribute("data-locked")).toBe("true");
+  });
+
+  it("a conversation in 自由模式 shows its device alone", async () => {
+    resetNavigation("/chat/c1");
+    chatApi([userMsg(1, "hi")], {}, null);
     const { container } = await renderChatRoute();
     await screen.findByText("hi");
-    const bar = container.querySelector('[data-part="composer"]') as HTMLElement;
-    const locked = bar.querySelector('[data-locked="true"]') as HTMLElement;
-    expect(locked.textContent).toContain("Laptop");
-    expect(locked.textContent).toContain("core");
+    const locked = [...strip(container).querySelectorAll('[data-locked="true"]')];
+    expect(locked.map((e) => e.textContent)).toEqual(["Laptop"]);
   });
 
   it.each(["zh", "en"] as const)(
@@ -322,7 +357,7 @@ describe("an existing conversation's project", () => {
     expect(screen.queryByRole("region", { name: "项目上下文" })).toBeNull();
     const composer = container.querySelector('[data-part="composer"]') as HTMLElement;
     await user.click(
-      within(composer).getByRole("button", { name: new RegExp(`^${zh.chat.pickDevice}:`) }),
+      within(composer).getByRole("button", { name: new RegExp(`^${zh.chat.projectGroup}:`) }),
     );
     expect(screen.getByRole("region", { name: "项目上下文" })).toBeTruthy();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
@@ -341,7 +376,7 @@ describe("an existing conversation's project", () => {
     });
     const composer = container.querySelector('[data-part="composer"]') as HTMLElement;
     await user.click(
-      within(composer).getByRole("button", { name: new RegExp(`^${zh.chat.pickDevice}:`) }),
+      within(composer).getByRole("button", { name: new RegExp(`^${zh.chat.projectGroup}:`) }),
     );
     await vi.waitFor(() => expect(detailsAtScroll).toEqual([true]));
   });

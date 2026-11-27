@@ -176,14 +176,13 @@ describe("the new conversation page (agent profile design §4)", () => {
       "More +2",
     ]);
     expect(chips[0]?.getAttribute("aria-pressed")).toBe("true");
-    // Beta's quick actions: a zap button right after the effort picker, its menu lists all five
+    // Beta's quick actions: a zap button right after the mode and settings, its menu lists all five
     const bar = container.querySelector('[data-part="composer-bar"]') as HTMLElement;
     expect(bar.contains(quick())).toBe(true);
     const parts = [...bar.children].map((e) => e.getAttribute("data-part"));
-    // after the pickers (640 and up) and the options button that stands for them on a phone
-    expect(parts.slice(parts.indexOf("quick-actions") - 2, parts.indexOf("quick-actions"))).toEqual(
-      ["composer-pickers", "composer-options"],
-    );
+    // the top strip's row (composer menus spec §6): mode and settings, quick actions, the model
+    expect(parts.indexOf("quick-actions")).toBe(parts.indexOf("composer-settings") + 1);
+    expect(parts.indexOf("composer-pickers")).toBeGreaterThan(parts.indexOf("quick-actions"));
     expect(await titles(userEvent.setup())).toEqual(["Plan", "Review", "Draft", "Polish", "Ship"]);
     // the composer has no agent picker; the model picker stays
     expect(bar.textContent).not.toContain("Beta");
@@ -880,7 +879,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     });
   });
 
-  it("on a phone the options sheet chooses the profile the first message carries", async () => {
+  it("on a phone the mode button chooses the profile the first message carries", async () => {
     const original = window.matchMedia;
     window.matchMedia = ((query: string) => ({
       matches: query.includes("coarse"),
@@ -892,12 +891,14 @@ describe("the first send carries the permission choice (atomic first message, Ta
       const calls = stubApi({ [FIRST]: created() });
       await renderRouteWithCache("/", routes());
       const user = userEvent.setup();
+      // with the top strip the settings sheet holds the model and the effort, never the profile
       await user.click(document.querySelector('[data-part="composer-options"]') as HTMLElement);
       const sheet = screen.getByRole("dialog");
-      const group = within(sheet).getByRole("radiogroup", { name: "Permissions" });
-      await user.click(within(group).getByRole("radio", { name: /^Request approval/ }));
+      expect(within(sheet).queryByRole("radiogroup", { name: "Permissions" })).toBeNull();
       await user.keyboard("{Escape}");
       await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await user.click(permissionButton());
+      await user.click(await screen.findByRole("menuitemradio", { name: /^Request approval/ }));
       await user.type(input(), "go{Enter}");
       await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
       expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({

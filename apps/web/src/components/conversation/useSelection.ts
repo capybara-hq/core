@@ -221,10 +221,15 @@ export type DeviceChoice = {
   unavailable?: string;
   /**
    * Undefined when the person has no device and cannot create one (no device provider is on in
-   * the org): the composer then has no device picker. With no device but a provider, the picker
+   * the org): the composer then has no top strip. With no device but a provider, the picker
    * reads "No device" and offers only "New device".
    */
   picker: PickerProps | undefined;
+  /**
+   * The chosen device's project picker (project root §4.3, composer menus spec §6): 自由模式 and
+   * the projects its current mode can read; undefined when the device offers none.
+   */
+  projectPicker?: PickerProps;
   /**
    * The new-device dialog the picker's "New device" opened (the Devices page's, `DeviceCreateDialog`):
    * the composer draws it while set.
@@ -232,7 +237,7 @@ export type DeviceChoice = {
   create?: { onClose(): void };
 };
 
-/** A project item's id in the device picker (device ids never start with it). */
+/** A project item's id in the project picker; the bare prefix is 自由模式. */
 const PROJECT_ITEM = "project:";
 
 /**
@@ -245,10 +250,10 @@ const PROJECT_ITEM = "project:";
  * device offline, nothing is chosen and `unavailable` holds the reason the composer shows; the
  * first send then goes without a device.
  *
- * The same menu binds the conversation to a project (project root §4.3: one entry point): under
- * 项目, 自由模式 (the default) and the chosen device's projects its current mode can read. A
- * device without projects, or one that does not support them, offers none; another device drops
- * the pick.
+ * A second picker after it binds the conversation to a project (project root §4.3, composer menus
+ * spec §6: the top strip reads device / project): 自由模式 (the default) and the chosen device's
+ * projects its current mode can read. A device without projects, or one that does not support
+ * them, offers no project picker; another device drops the pick.
  *
  * With no device at all but a device provider on in the org ({@link canCreateDevice}), there is
  * nothing to pick: the button leads with the device icon and says "No device" (the first send goes
@@ -314,7 +319,7 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
     ...(id === undefined && list.providers.length === 0 ? { unavailable: t("deviceOffline") } : {}),
     picker: {
       label: t("pickDevice"),
-      value: project === undefined ? name : `${name} · ${project}`,
+      value: name,
       groups: [
         {
           items: list.items.map((e) => ({
@@ -325,10 +330,21 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
             ...tagOf(e),
           })),
         },
-        ...(id !== undefined && offered.length > 0
-          ? [
+      ],
+      note: t("deviceNote"),
+      onPick: (choice) => {
+        // a project belongs to its device: another device (even back to this one) starts free
+        if (choice !== id) setPickedProject(null);
+        setPicked(choice);
+      },
+    },
+    ...(id !== undefined && offered.length > 0
+      ? {
+          projectPicker: {
+            label: t("projectGroup"),
+            value: project ?? t("freeMode"),
+            groups: [
               {
-                label: t("projectGroup"),
                 items: [
                   { id: PROJECT_ITEM, label: t("freeMode"), checked: project === undefined },
                   ...offered.map((p) => ({
@@ -338,42 +354,49 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
                   })),
                 ],
               },
-            ]
-          : []),
-      ],
-      note: t("deviceNote"),
-      onPick: (choice) => {
-        if (!choice.startsWith(PROJECT_ITEM)) {
-          // a project belongs to its device: another device (even back to this one) starts free
-          if (choice !== id) setPickedProject(null);
-          setPicked(choice);
-          return;
+            ],
+            onPick: (choice: string) => {
+              const name = choice.slice(PROJECT_ITEM.length);
+              setPickedProject(name === "" ? null : { device: id, name });
+            },
+          },
         }
-        const name = choice.slice(PROJECT_ITEM.length);
-        setPickedProject(name === "" || id === undefined ? null : { device: id, name });
-      },
-    },
+      : {}),
   };
 }
 
 /**
- * An existing conversation's device, read only (the composer's `locked` picker): its name and
- * the project it is bound to, 设备已删除 when the bound device is gone, nothing for a conversation
- * with none bound.
+ * An existing conversation's device, read only (the top strip's `locked` picker): its name,
+ * 设备已删除 when the bound device is gone, nothing for a conversation with none bound.
  */
 export function lockedDevicePicker(
   text: { label: string; hint: string; deleted: string },
   deviceId: string | null | undefined,
   device: Pick<Device, "name"> | null | undefined,
   nameOf: (e: Pick<Device, "name">) => string,
-  /** The project it is bound to (project root §4.3: shown, never changed here). */
-  project?: string | null,
 ): PickerProps | undefined {
   if (!deviceId || device === undefined) return undefined;
-  const name = device === null ? text.deleted : nameOf(device);
   return {
     label: text.label,
-    value: project ? `${name} · ${project}` : name,
+    value: device === null ? text.deleted : nameOf(device),
+    locked: { hint: text.hint },
+    groups: [],
+    onPick: () => {},
+  };
+}
+
+/**
+ * An existing conversation's project, read only (project root §4.3: shown, never changed here):
+ * the top strip's locked project picker, nothing for a conversation in 自由模式.
+ */
+export function lockedProjectPicker(
+  text: { label: string; hint: string },
+  project: string | null | undefined,
+): PickerProps | undefined {
+  if (!project) return undefined;
+  return {
+    label: text.label,
+    value: project,
     locked: { hint: text.hint },
     groups: [],
     onPick: () => {},
