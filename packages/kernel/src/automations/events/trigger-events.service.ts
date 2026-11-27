@@ -157,8 +157,8 @@ export class TriggerEventsService {
    * pipeline made (its run read from the call scope, never from the context's own fields) for a
    * run of the event's org, and the event's depth is that run's trigger event's depth + 1 (0 when
    * the run started from no event); a handle ({@link causeOf}) must be an unexpired one this plugin
-   * made in the event's org, and stands for its run as a call context would; an account must be an
-   * active member of the org (depth 0).
+   * made in the event's org whose run is still the org's, and gives the run, account and depth it
+   * recorded when it was made; an account must be an active member of the org (depth 0).
    * Then inserts the `trigger_events` row and owes its `trigger-dispatch` job in the same
    * transaction. An event already stored for (org, plugin, dedupe key) is a duplicate: its id comes
    * back with `duplicate: true` and nothing is owed. The caller runs it in the event's org scope.
@@ -240,24 +240,28 @@ export class TriggerEventsService {
   /**
    * A handle for the cause `call` (`ctx.triggers.causeOf`, collaboration spec §4.2) that `plugin`
    * may pass later as `cause: { handle }`: `call` is verified as `emit` verifies `cause.call` (a
-   * context the pipeline made, for a run of `call.orgId`), then a `trigger_cause_handles` row binds
-   * the org, the plugin and the run for {@link TRIGGER_CAUSE_HANDLE_TTL_MS}. The caller runs it in
-   * `call.orgId`'s scope. Throws `TriggerError("invalid_event")` for any other context.
+   * context the pipeline made, for a run of `orgId`, the call's org as the ctx read it once), then
+   * a `trigger_cause_handles` row binds the org, the plugin and the run, with the depth and trigger
+   * account the run gives an event now (the retention sweep may delete the run's trigger event
+   * before the handle is used), for {@link TRIGGER_CAUSE_HANDLE_TTL_MS}. The caller runs it in
+   * `orgId`'s scope. Throws `TriggerError("invalid_event")` for any other context.
    */
   @Transactional()
-  async causeOf(plugin: string, call: ToolCallContext): Promise<string> {
-    if (!isPlainObject(call) || !nonEmpty(call.orgId))
+  async causeOf(plugin: string, orgId: string, call: ToolCallContext): Promise<string> {
+    if (!nonEmpty(orgId) || !isPlainObject(call))
       throw invalid("causeOf takes the tool call context the kernel passed to the handler");
     // the run must be one of the call's org (as for cause.call)
-    const { runId } = await this.causeOfRun(call.orgId, this.runIdOfCall(call));
+    const cause = await this.causeOfRun(orgId, this.runIdOfCall(call));
     const id = randomUUID();
     await this.kdb.db
       .insertInto("trigger_cause_handles")
       .values({
         id,
-        org_id: call.orgId,
+        org_id: orgId,
         plugin,
-        run_id: runId,
+        run_id: cause.runId,
+        depth: cause.depth,
+        cause_account_id: cause.accountId,
         expires_at: new Date(Date.now() + TRIGGER_CAUSE_HANDLE_TTL_MS),
       })
       .execute();
@@ -288,7 +292,7 @@ export class TriggerEventsService {
       const row = nonEmpty(cause.handle)
         ? await db
             .selectFrom("trigger_cause_handles")
-            .select("run_id")
+            .select(["run_id", "depth", "cause_account_id"])
             .where("id", "=", cause.handle)
             .where("org_id", "=", e.orgId)
             .where("plugin", "=", plugin)
@@ -297,7 +301,16 @@ export class TriggerEventsService {
         : undefined;
       if (row === undefined)
         throw invalid("cause.handle is unknown, expired, or of another org or extension");
-      return this.causeOfRun(e.orgId, row.run_id);
+      // the run must still be one of the event's org; the depth and account are the ones minted
+      const run = await db
+        .selectFrom("runs")
+        .innerJoin("conversations", "conversations.id", "runs.conversation_id")
+        .select("runs.id")
+        .where("runs.id", "=", row.run_id)
+        .where("conversations.org_id", "=", e.orgId)
+        .executeTakeFirst();
+      if (run === undefined) throw invalid("the cause's run is not one of the event's org");
+      return { runId: run.id, accountId: row.cause_account_id, depth: row.depth };
     }
     if (!nonEmpty(cause.accountId)) throw invalid("cause.accountId must be an account id");
     const member = await db

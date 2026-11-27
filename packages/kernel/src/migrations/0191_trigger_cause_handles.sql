@@ -2,8 +2,10 @@
 -- - `trigger_cause_handles`: what `ctx.triggers.causeOf(call)` returns, so an extension can emit
 --   from a queue job with `cause: { handle }` and keep the chain depth and the self-trigger check
 --   of the tool call that queued it. A handle is bound to the org, the extension that asked for it
---   and the call's run (verified from the pipeline's call scope when it was made); `emit` accepts
---   it only for an event of that org from that extension before `expires_at` (24 hours on). The
+--   and the call's run (verified from the pipeline's call scope when it was made), with the depth
+--   and trigger account the run had then (so the retention sweep deleting the run's trigger event
+--   within the handle's life cannot restart the chain); `emit` accepts it only for an event of that
+--   org from that extension before `expires_at` (24 hours on). The
 --   trigger event sweep deletes expired handles. The table carries `org_id` and its `org_scope`
 --   policy (still dark: nothing enables row level security before phase 5).
 -- - `trigger_events_settled_idx` (0189) is rebuilt with the predicate the retention sweep queries
@@ -17,9 +19,16 @@ CREATE TABLE IF NOT EXISTS trigger_cause_handles (
   plugin text NOT NULL,
   -- the run of the tool call it was made from (no foreign key, like trigger_events.cause_run_id)
   run_id text NOT NULL,
+  -- the depth an event caused by the run gets, and the run's trigger account, at mint time
+  depth integer NOT NULL,
+  cause_account_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   expires_at timestamptz NOT NULL
 );
+
+-- the org's handles (an org's rows by org, as every org-scoped table)
+CREATE INDEX IF NOT EXISTS trigger_cause_handles_org_idx
+  ON trigger_cause_handles (org_id);
 
 -- the sweep: expired handles
 CREATE INDEX IF NOT EXISTS trigger_cause_handles_expires_idx

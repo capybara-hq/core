@@ -784,7 +784,8 @@ export function createExtensionContext(
                 "invalid_event",
                 "causeOf takes the tool call context the kernel passed to the handler",
               );
-            return withOrgScope(orgId, () => b.causeOf(name, call));
+            // read once: the scope and the service get the same org
+            return withOrgScope(orgId, () => b.causeOf(name, orgId, call));
           },
         } satisfies TriggersCtx;
       })()

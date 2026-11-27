@@ -888,14 +888,43 @@ describe("trigger event sweep", () => {
     ]);
   });
 
+  it("bases the give-up on the pair's newest window, not an old one given up on", async () => {
+    await automation();
+    const old = await emit();
+    await dispatch(old);
+    await loseOwed();
+    const now = Date.now();
+    await ageDelivery(old, new Date(now - 30 * 3_600_000));
+    // a newer window of the pair (its first delivery 30 minutes old) lost its job too
+    const newer = await emit();
+    await dispatch(newer);
+    await loseOwed();
+    await ageDelivery(newer, new Date(now - 30 * 60_000));
+    expect((await sweeper().sweepAt(new Date(now))).owed).toBe(1);
+  });
+
   it("deletes expired cause handles and inbox items closed past the retention", async () => {
     const now = new Date();
     const ago = (days: number) => new Date(now.getTime() - days * DAY);
     await db
       .insertInto("trigger_cause_handles")
       .values([
-        { id: "h-expired", org_id: orgId, plugin: PLUGIN, run_id: "r1", expires_at: ago(0.01) },
-        { id: "h-live", org_id: orgId, plugin: PLUGIN, run_id: "r1", expires_at: ago(-1) },
+        {
+          id: "h-expired",
+          org_id: orgId,
+          plugin: PLUGIN,
+          run_id: "r1",
+          depth: 0,
+          expires_at: ago(0.01),
+        },
+        {
+          id: "h-live",
+          org_id: orgId,
+          plugin: PLUGIN,
+          run_id: "r1",
+          depth: 0,
+          expires_at: ago(-1),
+        },
       ])
       .execute();
     const item = (

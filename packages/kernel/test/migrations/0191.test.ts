@@ -55,15 +55,15 @@ afterAll(async () => {
 
 describe("0191_trigger_cause_handles", () => {
   it("stores a handle bound to an org, a plugin and a run, removed with its org", async () => {
-    await sql`insert into capybara.trigger_cause_handles (id, org_id, plugin, run_id, expires_at)
-      values ('h1', 'o1', 'tracker', 'r1', now() + interval '1 day')`.execute(db);
+    await sql`insert into capybara.trigger_cause_handles (id, org_id, plugin, run_id, depth, expires_at)
+      values ('h1', 'o1', 'tracker', 'r1', 0, now() + interval '1 day')`.execute(db);
     await expect(
-      sql`insert into capybara.trigger_cause_handles (id, org_id, plugin, run_id, expires_at)
-        values ('h2', 'nope', 'tracker', 'r1', now())`.execute(db),
+      sql`insert into capybara.trigger_cause_handles (id, org_id, plugin, run_id, depth, expires_at)
+        values ('h2', 'nope', 'tracker', 'r1', 0, now())`.execute(db),
     ).rejects.toThrow(/foreign key/);
     await sql`insert into capybara.orgs (id, slug, name) values ('o2', 'o2', 'O2')`.execute(db);
-    await sql`insert into capybara.trigger_cause_handles (id, org_id, plugin, run_id, expires_at)
-      values ('h3', 'o2', 'tracker', 'r1', now())`.execute(db);
+    await sql`insert into capybara.trigger_cause_handles (id, org_id, plugin, run_id, depth, expires_at)
+      values ('h3', 'o2', 'tracker', 'r1', 0, now())`.execute(db);
     await sql`delete from capybara.orgs where id = 'o2'`.execute(db);
     const ids = (
       await sql<{ id: string }>`select id from capybara.trigger_cause_handles order by id`.execute(
@@ -96,6 +96,7 @@ describe("0191_trigger_cause_handles", () => {
 
   it("adds the retention indexes", async () => {
     expect(await indexDef("trigger_cause_handles_expires_idx")).toBeDefined();
+    expect(await indexDef("trigger_cause_handles_org_idx")).toContain("(org_id)");
     expect(await indexDef("inbox_items_resolved_idx")).toBeDefined();
     expect(await indexDef("inbox_items_expires_idx")).toBeDefined();
   });

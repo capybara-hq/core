@@ -23,7 +23,10 @@ const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 /** The sweep's period (its cron). */
 const SWEEP_EVERY_MS = 5 * 60_000;
-/** A lost window older than this is no longer owed a job (the sweep logs it once and stops). */
+/**
+ * A lost pair whose newest waiting delivery is older than this is no longer owed a job (the sweep
+ * logs it once and stops).
+ */
 export const WINDOW_GIVE_UP_MS = DAY_MS;
 /** Events deleted per transaction. */
 const DELETE_BATCH = 500;
@@ -40,10 +43,12 @@ interface WaitingWindow {
   /** The event of the window's first waiting delivery (its job id names it). */
   firstEventId: string;
   first: Date;
+  /** The pair's newest waiting delivery: the start of its newest window at the latest. */
+  last: Date;
 }
 
 /**
- * What the sweep does at `nowMs` for a lost window whose first waiting delivery is `ageMs` old:
+ * What the sweep does at `nowMs` for a lost pair whose newest waiting delivery is `ageMs` old:
  * `owe` its job (every sweep for the first hour, then at sweeps on boundaries of a period that
  * doubles with each doubling of the age: 10 minutes from 1 hour, 20 from 2, ..., 160 from 16),
  * `wait`, or, past {@link WINDOW_GIVE_UP_MS}, `give_up` (`log` at the first sweep past it).
@@ -77,9 +82,11 @@ export function reoweDecision(
  *   dispatcher opened, the newest included, was due by then. Unless an outbox row of the pair is
  *   still pending (the dispatcher's, any `<coalesceJobIdOfKey>-*`, or an earlier sweep's), the
  *   sweep owes a coalesce job of its own (`<coalesceJobIdOfKey>-<first event id>-sweep-<minute>`,
- *   due now), backing off by the window's age ({@link reoweDecision}) and giving up, with one
- *   warning, after {@link WINDOW_GIVE_UP_MS}. The flush is idempotent, so a duplicate finds
- *   nothing waiting.
+ *   due now), backing off by the age of the pair's newest waiting delivery ({@link reoweDecision})
+ *   and giving up, with one warning, once that delivery is older than {@link WINDOW_GIVE_UP_MS}.
+ *   The age is the newest window's, never the oldest's: an old window given up on does not stop a
+ *   newer window of the pair that lost its job from being owed one (its flush takes both). The
+ *   flush is idempotent, so a duplicate finds nothing waiting.
  * - **Cause handles.** Expired `trigger_cause_handles` (`ctx.triggers.causeOf`) are deleted.
  * - **Inbox items.** An inbox item resolved, or past its expiry, more than `inbox.retentionDays`
  *   ago is deleted (an open item past its expiry already left the inbox).
@@ -117,7 +124,7 @@ export class TriggerEventSweepJob {
     if (deleted > 0) this.log.info("old trigger events deleted", { deleted, retentionDays: days });
     let owed = 0;
     for (const w of await this.waitingWindows(now)) {
-      const age = now.getTime() - w.first.getTime();
+      const age = now.getTime() - w.last.getTime();
       const decision = reoweDecision(age, now.getTime());
       if (decision === "wait") continue;
       if (decision !== "owe") {
@@ -127,6 +134,7 @@ export class TriggerEventSweepJob {
             automationId: w.automationId,
             subjectKey: w.subjectKey,
             waitingSince: w.first.toISOString(),
+            newestSince: w.last.toISOString(),
           });
         continue;
       }
@@ -215,8 +223,9 @@ export class TriggerEventSweepJob {
 
   /**
    * The pairs whose newest waiting delivery is older than their org's `coalesceSeconds` plus
-   * {@link COALESCE_STALE_MS} (see the class), oldest first window first; a window past
-   * {@link WINDOW_GIVE_UP_MS} by more than one sweep is left out (given up on before).
+   * {@link COALESCE_STALE_MS} (see the class), oldest first window first; a pair whose newest
+   * waiting delivery is past {@link WINDOW_GIVE_UP_MS} by more than one sweep is left out (given up
+   * on before).
    */
   private async waitingWindows(now: Date): Promise<WaitingWindow[]> {
     const db = this.kdb.db;
@@ -239,7 +248,7 @@ export class TriggerEventSweepJob {
         JOIN capybara.trigger_events e ON e.id = d.event_id
         WHERE d.automation_run_id IS NULL
         GROUP BY d.org_id, d.automation_id, d.subject_key
-        HAVING max(d.created_at) < ${older} AND min(d.created_at) >= ${since}
+        HAVING max(d.created_at) < ${older} AND max(d.created_at) >= ${since}
         ORDER BY min(d.created_at)
         LIMIT ${MAX_WINDOWS}`.execute(db),
     );
@@ -262,6 +271,7 @@ export class TriggerEventSweepJob {
         subjectKey: r.subject_key,
         firstEventId: r.first_event_id,
         first: new Date(r.first),
+        last,
       });
     }
     return out;

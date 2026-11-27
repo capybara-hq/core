@@ -290,11 +290,11 @@ describe("ctx.triggers (permissions.triggers)", () => {
   });
 
   it("causeOf asks the backend as this extension, in the call's org scope", async () => {
-    const seen: { plugin: string; call: unknown; scope: unknown }[] = [];
+    const seen: { plugin: string; orgId: string; call: unknown; scope: unknown }[] = [];
     const triggers = () => ({
       emit: async () => ({ eventId: "e1", duplicate: false }),
-      causeOf: async (plugin: string, call: unknown) => {
-        seen.push({ plugin, call, scope: currentScope() });
+      causeOf: async (plugin: string, orgId: string, call: unknown) => {
+        seen.push({ plugin, orgId, call, scope: currentScope() });
         return "h1";
       },
     });
@@ -305,7 +305,9 @@ describe("ctx.triggers (permissions.triggers)", () => {
     );
     const call = { orgId: "o1" } as never;
     expect(await ctx.triggers.causeOf(call)).toBe("h1");
-    expect(seen).toEqual([{ plugin: "perm-test", call, scope: { kind: "org", orgId: "o1" } }]);
+    expect(seen).toEqual([
+      { plugin: "perm-test", orgId: "o1", call, scope: { kind: "org", orgId: "o1" } },
+    ]);
     // the call is passed by reference: the pipeline's call scope is a symbol-keyed field
     expect(seen[0]?.call).toBe(call);
     for (const bad of [{ orgId: "" }, null, "o1"])

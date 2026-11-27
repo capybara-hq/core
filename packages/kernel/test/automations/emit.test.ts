@@ -417,7 +417,13 @@ describe("ctx.triggers.emit", () => {
         .selectAll()
         .where("id", "=", handle)
         .executeTakeFirstOrThrow(),
-    ).toMatchObject({ org_id: orgId, plugin: PLUGIN, run_id: runId });
+    ).toMatchObject({
+      org_id: orgId,
+      plugin: PLUGIN,
+      run_id: runId,
+      depth: 3,
+      cause_account_id: ownerId,
+    });
     const row = await db
       .selectFrom("trigger_cause_handles")
       .select("expires_at")
@@ -436,6 +442,13 @@ describe("ctx.triggers.emit", () => {
         depth: 3,
       });
     }
+    // the run's trigger event deleted by retention within the handle's life: the minted depth holds
+    await sql`UPDATE capybara.runs SET trigger_event_id = 'gone' WHERE id = ${runId}`.execute(raw);
+    const r = await emit({ dedupeKey: "queued-after-retention", cause: { handle } });
+    expect(await eventRow(r.eventId)).toMatchObject({ cause_run_id: runId, depth: 3 });
+    // a run no longer of the org (its conversation gone) refuses the handle
+    await sql`DELETE FROM capybara.conversations WHERE id = ${conv}`.execute(raw);
+    await expect(emit({ cause: { handle } })).rejects.toMatchObject({ code: "invalid_event" });
   });
 
   it("a cause handle is refused for another org, another plugin, past its expiry or forged", async () => {
@@ -454,6 +467,7 @@ describe("ctx.triggers.emit", () => {
         org_id: orgId,
         plugin: "another-plugin",
         run_id: runId,
+        depth: 0,
         expires_at: new Date(Date.now() + 3_600_000),
       })
       .execute();

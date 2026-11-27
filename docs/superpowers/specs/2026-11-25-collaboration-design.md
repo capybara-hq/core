@@ -242,7 +242,10 @@ zero-drift fixtures run before and after.
   (platform config, default 30). The sweep takes a window as lost only when its newest waiting
   delivery is past the window and no outbox row of the pair is pending (a window the dispatcher
   just opened is never flushed early); it owes a lost window's job again with a back-off by the
-  window's age and gives up, logging, after 24 hours. It also deletes expired cause handles (§4.2)
+  age of the pair's newest waiting delivery and gives up, logging, once that delivery is 24 hours
+  old (the newest window's age, so an old window given up on never hides a newer lost one).
+  A cause handle records the run's depth and trigger account when it is made, so retention
+  deleting the run's trigger event within the handle's life does not restart the chain. It also deletes expired cause handles (§4.2)
   and inbox items closed or past their expiry more than `inbox.retentionDays` ago (platform
   config, default 30; §4.9).
 - **Rate:** `maxRunsPerHour` applies per person (the runs of the owner's automations in the last
