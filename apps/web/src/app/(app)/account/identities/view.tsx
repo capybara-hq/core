@@ -22,6 +22,8 @@ import { usePagePath } from "../../../../components/shell/path";
 import { startLink } from "../../../../lib/auth-sources";
 import { navigateBrowser } from "../../../../lib/browser";
 import { labelLocale } from "../../../../lib/extension-label";
+import { useExternalAuth } from "../../../../lib/external-auth";
+import { handoffRequest, isHttpUrl, useBrowserHandoff } from "../../../../lib/handoff";
 import {
   type LinkErrorCode,
   type LinkedIdentity,
@@ -79,11 +81,33 @@ function Identities({
     fn: (x: LinkedIdentity) => unlinkIdentity(x.source, x.externalId),
     invalidates: () => [keys.account(accountId).identities()],
   });
-  // a link intent: the kernel answers where to go (the identity provider, or back here with ?error=)
+  // A link intent: the kernel answers where to go (the identity provider, or back here with
+  // ?error=). In a shell with openExternal@1 it answers a browser handoff instead: the system
+  // browser opens it from this click's mutation and the external authorization dialog waits.
+  const handoff = useBrowserHandoff();
+  const externalAuth = useExternalAuth();
   const link = useAppMutation({
-    fn: (plugin: string) => startLink(plugin, RETURN_TO),
+    fn: async (plugin: string) => {
+      const r = await startLink(
+        plugin,
+        RETURN_TO,
+        ...(handoff === undefined ? [] : [handoffRequest(handoff)]),
+      );
+      if (!("handoffUrl" in r)) return r;
+      if (handoff === undefined || !isHttpUrl(r.handoffUrl)) {
+        toast.error(t("linkError.unknown"));
+        return null;
+      }
+      externalAuth.open(r.handoffUrl, { kind: "identity-link", plugin });
+      void handoff.openExternal(r.handoffUrl).catch(() => {
+        // refused or failed: the dialog's Copy link still gets the person there
+      });
+      return null;
+    },
     invalidates: () => [],
-    onSuccess: (r) => navigateBrowser(r.location),
+    onSuccess: (r) => {
+      if (r !== null) navigateBrowser(r.location);
+    },
     onError: (e) => toast.error(errorMessage(e)),
   });
   const [target, setTarget] = useState<LinkedIdentity>();

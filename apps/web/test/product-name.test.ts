@@ -28,6 +28,7 @@ type Catalog = typeof enCatalog;
 const meta = (name: string | null): PlatformMeta => ({
   name,
   icons: { app: null, maskable: null, favicon: null },
+  appSchemes: [],
 });
 const messagesFor = async (locale: "en" | "zh") =>
   (

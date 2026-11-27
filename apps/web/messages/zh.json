@@ -623,6 +623,11 @@
     "sso": {
       "link_expired": "绑定链接已过期，请重新用第三方账号登录。",
       "session_mismatch": "登录状态已变化，请重新登录后再试。"
+    },
+    "handoff": {
+      "scheme_not_allowed": "这个平台还没有允许该应用打开浏览器授权，请联系平台管理员。",
+      "invalid": "这个授权链接已经失效或用过了。回到应用里重新点「连接」。",
+      "account_mismatch": "这个链接属于 {login}。请用该账号登录，或回到应用重新发起。"
     }
   },
   "agents": {
@@ -3303,7 +3308,8 @@
     "unlink": "解绑",
     "unlinkTitle": "解绑 {name}？",
     "unlinkHint": "解绑后，这个账号发来的 IM 消息不再以你的身份处理，也不能再用它登录。",
-    "unlinked": "已解绑「{name}」。"
+    "unlinked": "已解绑「{name}」。",
+    "linked": "已绑定 {platform}。"
   },
   "loginSources": {
     "section": {
@@ -7211,5 +7217,14 @@
       "enable": "开启",
       "later": "以后再说"
     }
+  },
+  "externalAuth": {
+    "title": "在浏览器中完成授权",
+    "body": "已在系统浏览器中打开授权页。在那里登录并完成授权后回到这里，结果会自动显示。浏览器没有打开，或想换一个浏览器，可以复制链接（只能用一次，10 分钟内有效）。",
+    "copy": "复制链接",
+    "copied": "链接已复制。",
+    "copyFailed": "无法复制链接，请重试。",
+    "done": "完成了",
+    "cancel": "取消"
   }
 }

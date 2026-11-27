@@ -38,6 +38,7 @@ import { navigateBrowser } from "../../lib/browser";
 import { isChatSurface } from "../../lib/chat-surface";
 import { useConnectResultToast } from "../../lib/connect";
 import { NoCurrentOrgError } from "../../lib/conversations";
+import { ExternalAuthProvider } from "../../lib/external-auth";
 import { usePreferences } from "../../lib/preferences";
 import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
@@ -240,7 +241,10 @@ export function AppFrame({
     <NewSignInContext.Provider value={newSignIn}>
       <SidebarChoiceContext.Provider value={sidebar}>
         <RunStateProvider>
-          <Frame version={version}>{children}</Frame>
+          {/* a shell's authorizations in the system browser wait in its dialog (any page) */}
+          <ExternalAuthProvider>
+            <Frame version={version}>{children}</Frame>
+          </ExternalAuthProvider>
         </RunStateProvider>
       </SidebarChoiceContext.Provider>
     </NewSignInContext.Provider>
