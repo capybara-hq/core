@@ -65,3 +65,20 @@ export function joinProjectPath(projectPath: string, rel: string): string {
   if (r === "") return root;
   return root === "/" ? `/${r}` : `${root}/${r}`;
 }
+
+/**
+ * {@link projectRelativePath} for a path that must name a file below the root: one that
+ * normalizes to the root itself (`"."`, `"./"`, `"a/.."`) is refused with
+ * `device.path_outside_project` as well, its path in `details` as given (none when empty).
+ */
+export function projectFilePath(rel: string): string {
+  const r = projectRelativePath(rel);
+  if (r === "") {
+    throw new ApiError(
+      "device.path_outside_project",
+      "The project root is not a file; give the path of a file inside the project",
+      rel === "" ? undefined : [{ path: clipped(rel) }],
+    );
+  }
+  return r;
+}

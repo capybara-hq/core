@@ -1605,10 +1605,8 @@ describe("reconstructRequest：基线零漂移", () => {
     const stat = vi
       .spyOn(k.app.get(DeviceProjectFilesService), "statAll")
       .mockResolvedValue({ missing: [] });
-    // the run start's read of the bound project is not what this fixture records (true: go on)
-    const knowledge = vi
-      .spyOn(k.app.get(ProjectKnowledgeService), "record")
-      .mockResolvedValue(true);
+    // the run start reads the bound project as in production: the device holds no project of
+    // that name, so it logs the project as unavailable (a project_root event) and the run goes on
     const kernelRead = vi.spyOn(k.app.get(SandboxService), "withKernelRead");
     try {
       const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
@@ -1649,11 +1647,19 @@ describe("reconstructRequest：基线零漂移", () => {
       expect(JSON.stringify(sent[0]?.messages)).toContain(
         "Referenced project file: docs/b.md (in the project root /Users/u/src/ledger; read it with Read when needed).",
       );
+      const events = await eventsOf(db, conv);
+      const projectRoot = events.find((e) => e.type === "project_root");
+      expect(projectRoot?.payload).toMatchObject({ project: "ledger", root, skills: [] });
+      expect(projectRoot?.payload).toHaveProperty("unavailable");
+      expect(projectRoot?.seq ?? 0).toBeGreaterThan(message.seq);
+      // the replay rebuilds every request from the log alone: the device is never asked
+      stat.mockClear();
+      kernelRead.mockClear();
       await expectZeroDrift(conv, await snapshotOf(conv));
+      expect(stat).not.toHaveBeenCalled();
       expect(kernelRead).not.toHaveBeenCalled();
     } finally {
       stat.mockRestore();
-      knowledge.mockRestore();
       kernelRead.mockRestore();
     }
   });

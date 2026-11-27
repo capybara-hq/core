@@ -16,6 +16,7 @@ import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 import type { NewConversationDevice } from "../devices/conversation-devices.js";
 import type { DeviceView } from "../devices/devices.service.js";
+import { requestSignal } from "../http/request-signal.js";
 import type { PersonRef } from "../identity/account-avatar.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
@@ -114,7 +115,9 @@ const MessageFields = z.object({
   /**
    * Files of the conversation's device project, by path relative to its root (composer menus §5):
    * checked on the device, never read or uploaded; each becomes a text block after the `@`
-   * resources' bodies. A new conversation needs `project` in the create body.
+   * resources' bodies. A path repeated (after normalization) is referenced once, so
+   * `payload.projectFiles` may be shorter than this list. A new conversation needs `project` in
+   * the create body.
    */
   projectFiles: z
     .array(z.object({ path: z.string().min(1).max(4096) }).strict())
@@ -299,7 +302,7 @@ export class ConversationsController {
         ...(m.locale !== undefined && { locale: m.locale }),
       },
       pick,
-      { source: "web" },
+      { source: "web", signal: requestSignal(reply) },
     );
     reply.status(out.created ? 201 : 200);
     return { conversation: out.conversation, event: out.event, events: out.events };
@@ -668,22 +671,29 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @ZBody(ConversationMessageBodyDto) body: z.infer<typeof MessageBody>,
+    @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ event: ConversationEvent }> {
     const p = requireUser(principal);
     return {
-      event: await this.conversations.postUserMessage(org.orgId, id, p.account.id, {
-        text: body.text,
-        ...(body.clientMessageId !== undefined && { clientMessageId: body.clientMessageId }),
-        ...(body.attachments !== undefined && { attachments: body.attachments }),
-        ...(body.files !== undefined && { files: body.files }),
-        ...(body.projectFiles !== undefined && { projectFiles: body.projectFiles }),
-        ...(body.model !== undefined && { model: body.model }),
-        ...(body.effort !== undefined && { effort: body.effort }),
-        ...(body.retryOf !== undefined && { retryOf: body.retryOf }),
-        ...(body.skill !== undefined && { skill: body.skill }),
-        ...(body.timeZone !== undefined && { timeZone: body.timeZone }),
-        ...(body.locale !== undefined && { locale: body.locale }),
-      }),
+      event: await this.conversations.postUserMessage(
+        org.orgId,
+        id,
+        p.account.id,
+        {
+          text: body.text,
+          ...(body.clientMessageId !== undefined && { clientMessageId: body.clientMessageId }),
+          ...(body.attachments !== undefined && { attachments: body.attachments }),
+          ...(body.files !== undefined && { files: body.files }),
+          ...(body.projectFiles !== undefined && { projectFiles: body.projectFiles }),
+          ...(body.model !== undefined && { model: body.model }),
+          ...(body.effort !== undefined && { effort: body.effort }),
+          ...(body.retryOf !== undefined && { retryOf: body.retryOf }),
+          ...(body.skill !== undefined && { skill: body.skill }),
+          ...(body.timeZone !== undefined && { timeZone: body.timeZone }),
+          ...(body.locale !== undefined && { locale: body.locale }),
+        },
+        requestSignal(reply),
+      ),
     };
   }
 

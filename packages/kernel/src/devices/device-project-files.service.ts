@@ -20,7 +20,7 @@ import {
   providerUnreachable,
   unavailable,
 } from "./device-projects.service.js";
-import { joinProjectPath, projectRelativePath } from "./project-paths.js";
+import { joinProjectPath, projectFilePath, projectRelativePath } from "./project-paths.js";
 import { clipped } from "./project-rules.js";
 
 /**
@@ -210,9 +210,9 @@ export class DeviceProjectFilesService {
    * Which of `paths` (relative to the project rooted at `projectPath`) are not files the device
    * reports, asked with `stat` inside one owner browse of the conversation owner's device: a
    * missing path, a directory or one the browse scope refuses counts as missing. Each path is
-   * normalized first ({@link projectRelativePath}; one that leaves the project is refused with
-   * `device.path_outside_project` before the device is asked); `missing` holds the normalized
-   * paths. The browse scope is rooted at `projectPath`, which must be absolute and normalized
+   * normalized first ({@link projectFilePath}; one that leaves the project or names its root is
+   * refused with `device.path_outside_project` before the device is asked); `missing` holds the
+   * normalized paths. The browse scope is rooted at `projectPath`, which must be absolute and normalized
    * (an internal error otherwise), and at most {@link MAX_PROJECT_FILES} paths are checked (more
    * is an internal error: the send route bounds them first). The device codes of {@link list}
    * pass on as they are.
@@ -230,7 +230,7 @@ export class DeviceProjectFilesService {
         `statAll: ${paths.length} paths, more than the ${MAX_PROJECT_FILES} one message references`,
       );
     }
-    const rels = paths.map((p) => projectRelativePath(p));
+    const rels = paths.map((p) => projectFilePath(p));
     if (rels.length === 0) return { missing: [] };
     return this.onDevice(
       ctx.orgId,

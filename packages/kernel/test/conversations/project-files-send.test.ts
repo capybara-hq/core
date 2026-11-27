@@ -10,12 +10,14 @@ import { projectFileText } from "../../src/conversations/conversations.service.j
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DeviceProjectFilesService } from "../../src/devices/device-project-files.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { deviceLeaseKey } from "../../src/dial-in/keys.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { deviceNotRunning, SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { SkillInvoker } from "../../src/skills/invoke.js";
 import { ConnectorContent } from "../../src/tools/connector-content.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import {
@@ -299,6 +301,100 @@ describe("projectFiles on send", () => {
     expect(await userMessages(conv)).toEqual([]);
   });
 
+  it("a path naming the project root is refused, never with an empty path", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    const conv = await conversation(d);
+    for (const path of [".", "./", "a/.."]) {
+      const res = await send(d, conv, { text: "hi", projectFiles: [{ path }] });
+      expect(res.statusCode, `${path}: ${res.body}`).toBe(422);
+      expect(errOf(res)).toMatchObject({
+        code: "device.path_outside_project",
+        message: "The project root is not a file; give the path of a file inside the project",
+        details: [{ path }],
+      });
+    }
+    expect(statPaths(machine)).toEqual([]);
+    expect(await userMessages(conv)).toEqual([]);
+  });
+
+  it("a duplicate path (after normalization) is referenced once: the payload may be shorter than the body", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    const conv = await conversation(d);
+    const stat = vi.spyOn(k.app.get(DeviceProjectFilesService), "statAll");
+    const res = await send(d, conv, {
+      text: "twice",
+      projectFiles: [{ path: "src/a.ts" }, { path: "./src//a.ts" }, { path: "README.md" }],
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const [m] = await userMessages(conv);
+    expect(m?.payload.projectFiles).toEqual([{ path: "src/a.ts" }, { path: "README.md" }]);
+    expect(m?.payload.content).toEqual([
+      { type: "text", text: "twice" },
+      { type: "text", text: projectFileText("src/a.ts", ROOT) },
+      { type: "text", text: projectFileText("README.md", ROOT) },
+    ]);
+    expect(statPaths(machine)).toEqual([`${ROOT}/src/a.ts`, `${ROOT}/README.md`]);
+    // checked once each, with the request's signal (stops when the client hangs up)
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat.mock.calls[0]?.[2]).toEqual(["src/a.ts", "README.md"]);
+    expect(stat.mock.calls[0]?.[3]).toBeInstanceOf(AbortSignal);
+  });
+
+  it("a retry with the same clientMessageId returns the written message without asking the device again", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    const conv = await conversation(d);
+    const body = {
+      text: "once",
+      clientMessageId: randomUUID(),
+      projectFiles: [{ path: "README.md" }],
+    };
+    const first = await send(d, conv, body);
+    expect(first.statusCode, first.body).toBe(202);
+    const again = await send(d, conv, body);
+    expect(again.statusCode, again.body).toBe(202);
+    const idOf = (r: { json(): unknown }) => (r.json() as { event: { id: string } }).event.id;
+    expect(idOf(again)).toBe(idOf(first));
+    expect(statPaths(machine)).toEqual([`${ROOT}/README.md`]);
+    expect(await userMessages(conv)).toHaveLength(1);
+  });
+
+  it("a skill invocation with empty text: the rendered skill is content[0], the file block follows", async () => {
+    const d = await owned();
+    await connect(d);
+    const conv = await conversation(d);
+    vi.spyOn(k.app.get(SkillInvoker), "prepare").mockResolvedValue({
+      text: "RENDERED SKILL",
+      skill: {
+        id: randomUUID(),
+        version: 1,
+        source: "org",
+        name: "review",
+        arguments: "",
+        mode: "inline",
+      },
+    });
+    const res = await send(d, conv, {
+      text: "",
+      skill: { name: "review" },
+      projectFiles: [{ path: "src/a.ts" }],
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const [m] = await userMessages(conv);
+    const files = m?.payload.projectFiles ?? [];
+    expect(files).toEqual([{ path: "src/a.ts" }]);
+    expect(m?.payload.content[0]).toEqual({ type: "text", text: "RENDERED SKILL" });
+    // project file i's block is content[1 + attachments.length + i]
+    const at = 1 + (m?.payload.attachments?.length ?? 0);
+    expect(m?.payload.content[at]).toEqual({
+      type: "text",
+      text: projectFileText("src/a.ts", ROOT),
+    });
+    expect(m?.payload.content).toHaveLength(2);
+  });
+
   it("a conversation without a project refuses with reason no_project", async () => {
     const d = await owned();
     await connect(d);
@@ -331,7 +427,7 @@ describe("projectFiles on send", () => {
     expect(await userMessages(conv)).toEqual([]);
   });
 
-  it("an offline machine or a device that cannot run gives the device code, nothing written", async () => {
+  it("a start that fails (device.not_running) or an offline machine (device.offline) refuses with the device code, nothing written", async () => {
     const d = await owned();
     const machine = await connect(d);
     const conv = await conversation(d);
@@ -353,6 +449,73 @@ describe("projectFiles on send", () => {
     expect(offline.statusCode, offline.body).toBe(503);
     expect(errOf(offline)?.code).toBe("device.offline");
     expect(await userMessages(conv)).toEqual([]);
+  });
+
+  it("a suspended device is resumed for the send, which then goes through", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    const conv = await conversation(d);
+    const sandbox = k.app.get(SandboxService);
+    const who = { orgId, deviceId: d.deviceId, accountId: d.accountId };
+    await sandbox.ensureRunningForOwner(who, new AbortController().signal);
+    const status = async () =>
+      (
+        await db
+          .selectFrom("device_instances")
+          .select("status")
+          .where("device_id", "=", d.deviceId)
+          .executeTakeFirst()
+      )?.status;
+    // the idle sweep as it runs a day later
+    await sandbox.suspendIdle(new Date(Date.now() + 24 * 60 * 60_000));
+    expect(await status()).toBe("suspended");
+    const resumes = () => machine.frames.filter((f) => f.type === "req" && f.op === "resume");
+    const before = resumes().length;
+    const res = await send(d, conv, { text: "hi", projectFiles: [{ path: "src/a.ts" }] });
+    expect(res.statusCode, res.body).toBe(202);
+    expect(resumes().length).toBe(before + 1);
+    expect(await status()).toBe("running");
+    const [m] = await userMessages(conv);
+    expect(m?.payload.projectFiles).toEqual([{ path: "src/a.ts" }]);
+  });
+
+  it("a project re-pointed while a new conversation's files are checked: 409 conflict, nothing created", async () => {
+    const d = await owned();
+    await connect(d);
+    const files = k.app.get(DeviceProjectFilesService);
+    const real = files.statAll.bind(files);
+    // the project's path changes between the check and the write (no sleep: inside the check)
+    vi.spyOn(files, "statAll").mockImplementationOnce(async (...args) => {
+      await db
+        .updateTable("device_projects")
+        .set({ path: `${HOME}/q` })
+        .where("device_id", "=", d.deviceId)
+        .where("name", "=", "app")
+        .execute();
+      return real(...args);
+    });
+    const clientMessageId = randomUUID();
+    const res = await d.req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations`,
+      payload: {
+        agentId,
+        deviceId: d.deviceId,
+        project: "app",
+        message: { text: "start", clientMessageId, projectFiles: [{ path: "README.md" }] },
+      },
+    });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(errOf(res)).toMatchObject({
+      code: "conflict",
+      message: "The project changed while the message was sent; retry",
+    });
+    const none = await db
+      .selectFrom("conversations")
+      .select("id")
+      .where("create_request_id", "=", clientMessageId)
+      .execute();
+    expect(none).toEqual([]);
   });
 
   it("a project removed from the device after binding still resolves through the stored path", async () => {

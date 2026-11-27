@@ -595,6 +595,11 @@ describe("device project files", () => {
     await expect(files.statAll(who, ROOT, ["ok.ts", "../etc/passwd"])).rejects.toMatchObject({
       code: "device.path_outside_project",
     });
+    // a path naming the project root is not a file: refused before the device is asked
+    await expect(files.statAll(who, ROOT, ["ok.ts", "a/.."])).rejects.toMatchObject({
+      code: "device.path_outside_project",
+      details: [{ path: "a/.." }],
+    });
     expect(reqsOf(machine, "stat")).toHaveLength(before);
     expect(await files.statAll(who, ROOT, [])).toEqual({ missing: [] });
     // a path the browse scope refuses is missing; a failing device is a 503 without its text

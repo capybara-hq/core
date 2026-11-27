@@ -36,7 +36,7 @@
 1. Path tricks on the listing and send: `a/../../etc`, `./`, `//x`, `%2e%2e` (already decoded by Fastify), a trailing `/`, a backslash, NUL, an empty path → refused or normalized, never outside the project root. Pinned in Task 1 (`projectRelativePath` table test) and Task 2 (send refusal).
 2. A symlink inside the project pointing outside: the listing shows it as the provider reports; the browse scope's roots (owner ceiling) are the boundary, the kernel never follows it itself. Task 1 test: the scope passed to the provider is rooted at the project path.
 3. A conversation whose project was removed from the device after binding: send with `projectFiles` still uses the conversation's stored `project_path` (stat decides). Task 2 test.
-4. Device stopped / offline at send time → the send is refused with the existing device codes (`device.not_running`, `device.offline`), not a 500, and nothing is written. Task 2 test.
+4. Device stopped / offline at send time: a stopped (suspended) device is started for its owner (`ensureRunningForOwner`, as the listing does; recorded decision) and the send goes through; an offline machine or a start that fails → refused with the existing device codes (`device.offline`, `device.not_running`), not a 500, and nothing is written. Task 2 tests (a suspended device resumed, a failing start, an offline machine).
 5. `@` typed mid-word (`a@b`) or with a space directly after, IME composition Enter → no menu, no pick. Task 3 (keyboard) and Task 5 tests.
 
 ---

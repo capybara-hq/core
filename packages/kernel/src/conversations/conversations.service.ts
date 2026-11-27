@@ -15,7 +15,7 @@ import {
 } from "../devices/conversation-devices.js";
 import { DeviceProjectFilesService } from "../devices/device-project-files.service.js";
 import { DeviceProjectsService } from "../devices/device-projects.service.js";
-import { projectRelativePath } from "../devices/project-paths.js";
+import { projectFilePath } from "../devices/project-paths.js";
 import { clipped } from "../devices/project-rules.js";
 import { ApiError } from "../errors.js";
 import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
@@ -334,6 +334,8 @@ export { MAX_PROJECT_FILES } from "../devices/device-project-files.service.js";
 export interface ProjectFilesTarget {
   deviceId: string | null;
   project: { name: string; path: string } | null | undefined;
+  /** Stops the check on the device (the request's signal: the client hung up). */
+  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -466,6 +468,8 @@ export interface UserMessageInput {
  */
 export interface InternalMessageOptions {
   initialPermission?: PermissionSelection;
+  /** The request's signal: the project file check on the device stops when the client hangs up. */
+  signal?: AbortSignal;
   createRequestHash?: string;
   schedule?: ScheduleMarker;
   timeZoneOverride?: string;
@@ -637,7 +641,11 @@ export class ConversationsService {
       (input.projectFiles?.length ?? 0) > 0
         ? await this.bindingFor(orgId, accountId, deviceId, pick.project)
         : undefined;
-    const extra = await this.resolveExtra(orgId, accountId, input, { deviceId, project });
+    const extra = await this.resolveExtra(orgId, accountId, input, {
+      deviceId,
+      project,
+      signal: internal.signal,
+    });
     const invoked = await this.prepareSkill(
       orgId,
       accountId,
@@ -1520,28 +1528,36 @@ export class ConversationsService {
   }
 
   /**
-   * 追加一条用户消息；带 `clientMessageId` 时重复提交返回同一事件。写入后调用 `ensureRun`：
-   * 没有进行中的运行时投递一轮；运行中则由当前运行在步骤间隙吸收，或在它结束时再次 `ensureRun`。
-   * A failed `ensureRun` is logged, not thrown: the message's transaction owes the ensure-run
+   * Appends a user message; a repeated send with the same `clientMessageId` returns the same
+   * event. After the write it calls `ensureRun`: with no run in progress it enqueues one; during
+   * a run the current run takes the message in between steps, or `ensureRun` runs again when it
+   * ends. A failed `ensureRun` is logged, not thrown: the message's transaction owes the ensure-run
    * backstop, which starts the run once the queue is reachable (transactional outbox spec §6).
    *
-   * `attachments`（`@` 资源引用）：内核以发送者的凭据读取资源（打码、限长），作为用户文本之后的额外文本块写入同一条
-   * user_message，并在 `payload.attachments` 记录元数据（第 i 个附件对应 `content[i + 1]`）。读取失败整条不写。
-   * 带 `clientMessageId` 的重复提交直接返回已写入的事件，不再读取。
+   * `attachments` (`@` resource references): the kernel reads each resource with the sender's
+   * credentials (redacted, length-capped) and writes it as an extra text block after the user's
+   * text in the same user_message, with its metadata in `payload.attachments` (attachment i is
+   * `content[i + 1]`). A failed read writes nothing. A repeated send with the same
+   * `clientMessageId` returns the written event without reading again.
    *
-   * `files`（上传的附件 id）：在写事件的同一事务里校验并绑定到本会话（见 {@link BindFiles}），作为 image /
-   * document 引用块追加在最后（`@` 资源块之后）；任一附件不可用则整条不写。日志里只有引用，没有字节。
-   * `text` 为空时（只发附件，HTTP 层保证此时有 `files` 且没有 `@` 资源）不写文本块。
+   * `files` (uploaded attachment ids): checked and bound to this conversation in the transaction
+   * that writes the event (see {@link BindFiles}) and appended last as image / document reference
+   * blocks (after the `@` resource blocks); any unavailable file writes nothing. The log holds
+   * only references, never bytes. With empty `text` (files only: the HTTP layer ensures `files`
+   * and no `@` resources then) no text block is written.
    *
    * `projectFiles` (composer menus §5): checked in the conversation's stored project before the
    * write ({@link resolveExtra}); one block each after the `@` resources' bodies, before the
-   * uploaded files' blocks, and `payload.projectFiles`. Any refusal writes nothing.
+   * uploaded files' blocks, and `payload.projectFiles`. Any refusal writes nothing; a repeated
+   * send with the same `clientMessageId` returns the written event without checking again.
    */
   async postUserMessage(
     orgId: string,
     conversationId: string,
     accountId: string,
     input: UserMessageInput,
+    /** The request's signal: the project file check on the device stops when the client hangs up. */
+    signal?: AbortSignal,
   ): Promise<ConversationEvent> {
     const conv = await this.writable(orgId, conversationId, accountId);
     // A retry returns the written event before resolving today's model or resources.
@@ -1560,7 +1576,7 @@ export class ConversationsService {
     const agent = needsAgent
       ? (await this.agents.get(orgId, conv.agentId, accountId)).definition
       : undefined;
-    const extra = await this.resolveExtra(orgId, accountId, input, conv);
+    const extra = await this.resolveExtra(orgId, accountId, input, { ...conv, signal });
     const invoked =
       agent === undefined
         ? undefined
@@ -1949,11 +1965,12 @@ export class ConversationsService {
       );
     }
     // normalized first (a path leaving the project is refused before the device is asked), once each
-    const paths = [...new Set(refs.map((r) => projectRelativePath(r.path)))];
+    const paths = [...new Set(refs.map((r) => projectFilePath(r.path)))];
     const { missing } = await this.projectFiles.statAll(
       { orgId, accountId, deviceId: target.deviceId },
       project.path,
       paths,
+      target.signal,
     );
     if (missing.length > 0) {
       throw projectFileUnavailable(

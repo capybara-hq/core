@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { joinProjectPath, projectRelativePath } from "../../src/devices/project-paths.js";
+import {
+  joinProjectPath,
+  projectFilePath,
+  projectRelativePath,
+} from "../../src/devices/project-paths.js";
 import { ApiError } from "../../src/errors.js";
 
 /** Paths relative to a device project (composer menus §5): normalized, never above the root. */
@@ -41,6 +45,35 @@ describe("projectRelativePath", () => {
     }
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ code: "device.path_outside_project" });
+  });
+});
+
+describe("projectFilePath", () => {
+  it("normalizes like projectRelativePath", () => {
+    expect(projectFilePath("./src/a.ts")).toBe("src/a.ts");
+  });
+
+  it.each([".", "./", "a/..", "a/b/../..", ""])(
+    "refuses %j, which names the project root, with a message and details that are never empty",
+    (rel) => {
+      let err: unknown;
+      try {
+        projectFilePath(rel);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(ApiError);
+      const e = err as ApiError;
+      expect(e.code).toBe("device.path_outside_project");
+      expect(e.message).toBe(
+        "The project root is not a file; give the path of a file inside the project",
+      );
+      expect(e.details).toEqual(rel === "" ? undefined : [{ path: rel }]);
+    },
+  );
+
+  it("refuses an escape as projectRelativePath does", () => {
+    expect(() => projectFilePath("../x")).toThrow(ApiError);
   });
 });
 

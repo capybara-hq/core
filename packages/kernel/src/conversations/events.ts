@@ -981,7 +981,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       /**
        * The referenced project files (composer menus §5), paths relative to the conversation's
        * project root: the text block of file i is `content[1 + attachments.length + i]`, before
-       * the uploaded files' blocks. Absent: none.
+       * the uploaded files' blocks. Normalized and deduplicated, so possibly shorter than the
+       * body's list. Absent: none.
        */
       projectFiles: z.array(z.object({ path: z.string() })).optional(),
       authorAccountId: z.string(),

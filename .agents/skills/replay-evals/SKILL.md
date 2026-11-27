@@ -139,6 +139,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   (`attachmentReferenceText`, with the object URI and `FetchAttachment`) — never bytes, never a truncated inline,
   recorded as outcome `reference`. No new model-visible input is logged, so no `DriftReason`. Case in
   `reconstruct.test.ts` ("a text attachment over the inline cap …").
+- **Referenced project files** (composer menus spec `docs/superpowers/specs/2026-11-28-composer-menus-design.md`
+  §5): checked with `stat` at send time and logged in the `user_message` as one English text block per file
+  (`projectFileText`: the relative path and the project root), after the `@` resources' bodies and before the
+  uploaded files' blocks, with `payload.projectFiles` (block i at `content[1 + attachments.length + i]`). Nothing is
+  read at build time or in a replay, so no `DriftReason`. The command review reads these lines as the person's
+  intent, never the `@` resources' bodies. Case in `reconstruct.test.ts` ("referenced project files …").
 - **A reply cut off at the output token limit** (issue #951): an `assistant_message` with `stopReason:
   "max_tokens"` is followed in the request by the `role: "system"` `OUTPUT_TRUNCATED_TEXT`
   (`runtime/context/output-truncated.ts`), derived from the logged stop reason alone, so no event
