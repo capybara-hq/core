@@ -1048,6 +1048,23 @@ describe("the permission review of a managed call", () => {
     expect(JSON.stringify(reviewRequest().messages)).toContain("File read path");
   });
 
+  it.each([
+    ["inside the workspace", `${WORKSPACE}/src/app.ts`],
+    ["in the tmp root", "/tmp/build/output.json"],
+    ["on a git hook", `${WORKSPACE}/.git/hooks/pre-commit`],
+  ])("a Read %s under a permission profile is recorded as a read", async (_where, path) => {
+    for (const permissionProfile of ["request-approval", "approve-for-me"] as const) {
+      await expect(
+        call({ toolKey: "Read", input: { file_path: path }, home: "/home/dev", permissionProfile }),
+      ).resolves.toEqual({
+        decision: "allow",
+        by: "rule",
+        rule: "allow.read",
+        reason: "Reads files; reading is allowed.",
+      });
+    }
+  });
+
   // approval-only profiles design, "Risks": the review model sits behind the fixed denies, so an
   // always-allowing review model never crosses one, under any profile and for an escalation too
   it.each(
