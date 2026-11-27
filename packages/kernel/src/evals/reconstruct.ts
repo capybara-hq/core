@@ -30,6 +30,7 @@ import {
   planMedia,
   type RequestTool,
 } from "../runtime/context/build.js";
+import { selectCacheTtl, trustedCache } from "../runtime/context/cache-ttl.js";
 import {
   applyFit,
   estimateAfterFit,
@@ -52,7 +53,7 @@ import {
 } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
 import { AGENT_TOOL } from "../tools/builtin-names.js";
-import { canonicalJson } from "./recorded-tools.js";
+import { canonicalJson } from "./canonical-json.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
 
 /** `R` when the caller did not resolve the org's settings (the built-in platform default). */
@@ -420,6 +421,16 @@ export function reconstructInputs(
   }
   const budget = opts.mediaBudgetBytes ?? rec.mediaBudgetBytes;
   const readWindow = opts.readImagesPerRequest ?? rec.readImagesPerRequest;
+  // the prompt cache tier: a recorded transport option, not model-visible, so no DriftReason
+  // either way (idle compaction spec §9.2). The baseline sends the recorded value while the model
+  // still offers it (never a value the model does not offer); a candidate recomputes it for its
+  // model, with the long tier on when the recording asked for one.
+  const cacheTtl = baseline
+    ? rec.cacheTtl !== undefined &&
+      trustedCache(opts.model.cache)?.ttlOptions.includes(rec.cacheTtl)
+      ? rec.cacheTtl
+      : undefined
+    : selectCacheTtl(opts.model.cache, rec.cacheTtl !== undefined);
 
   const input: AssembleModelRequestInput = {
     events: inputEvents(all, call),
@@ -432,6 +443,7 @@ export function reconstructInputs(
     tools,
     toolSearch: rec.catalog !== undefined,
     ...(rec.toolChoice !== undefined && { toolChoice: rec.toolChoice }),
+    ...(cacheTtl !== undefined && { cacheTtl }),
     ...(opts.mediaInfo !== undefined && { mediaInfo: opts.mediaInfo }),
     ...(opts.media !== undefined && { media: opts.media }),
     ...(budget !== undefined && { mediaBudgetBytes: budget }),

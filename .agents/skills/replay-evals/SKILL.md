@@ -61,6 +61,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `assembleModelRequest`, never inferred from the reminder text, and is not model-visible. Rendered as a system message at its
   position, dropped once a summary covers it. In the log, so no `DriftReason` (the `tools_changed` DriftReason is a different
   thing: a baseline whose rebuilt tool sequence differs from the record).
+- **`cacheTtl`** (idle compaction spec §9.2): `model_call.request.cacheTtl` is a recorded transport option, not
+  model-visible, so no `DriftReason`. Each rung picks it for its own model from `promptCache.longTtl`
+  (`runtime/context/cache-ttl.ts`: off → absent; on → the smallest declared option ≥ 1800 s; an absent, invalid or `none`
+  declaration → absent). A baseline sends the recorded value while the model still offers it (else omits it); a candidate
+  recomputes it with `selectCacheTtl(model.cache, recorded !== undefined)`. A full-run replay recomputes it from the
+  org's current `promptCache.longTtl` (like the compaction settings). Hook payloads never carry it (`hookRequestOf`).
 - **`device_paths`** (devices spec §13.1, ruling R22): the first sandbox tool call of every conversation
   (cloud included, default roots included) appends `device_paths { roots }` to the calling conversation, and a later
   call appends it again whenever the held instance's roots differ from the latest recorded ones (back to the defaults,
@@ -461,6 +467,18 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   §4.2.1): the retry logs its own compaction `usage` (key suffix `:retry`, same `chunk`); the summary
   request itself is never replayed (requests rebuild from the logged `compaction_summary` text), so
   its retry note needs no `DriftReason`.
+- The in-context summary (idle compaction spec §9.4, `runtime/context/in-context-compaction.ts`):
+  an automatic compaction first tries a side request that is the conversation's last request rebuilt
+  through the zero-drift path (`liveSnapshot` + `reconstructInputs` / `assembleModelRequest`),
+  extended with what the next step would add, plus the summary instruction (`toolChoice: "none"`,
+  the recorded `cacheTtl`, purpose `compaction`), so the vendor serves the prefix from its cache. It
+  runs only for a model in the quality-gate table (`IN_CONTEXT_SUMMARY_MODELS`), the same model as
+  the last call, and never for a manual compact run (`manual`, ruling R13: the #990 transcript
+  plan), on the reactive path (`transcriptOnly`) or in replays (no `liveSnapshot`); any skip summarizes the transcript (a `debug` line, `context=Compaction`). With
+  boundary mode `all` it covers every event the request includes. `compaction_summary.method`
+  (`in_context` / `transcript`, absent = transcript) records the path; it is not model-visible
+  except through the summary's framing sentence (`summaryText`), derived from the log, so it needs
+  no `DriftReason`, and the side request itself is never replayed.
 - A conversation title call (UI refresh B, `conversations/titles.ts`, queue `cap-kernel-titles`,
   model purpose `title`) logs its own `usage` event with `purpose: "title"`, `step` 0 and no run
   (`runId` null). It is not model-visible to the agent (request building skips `usage`), needs no

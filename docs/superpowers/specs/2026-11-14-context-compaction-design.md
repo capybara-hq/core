@@ -92,10 +92,10 @@ The summary's user message ends, after `</conversation_summary>`, with a short m
 
 - Always first (maintainer decision 2026-11-28, issue #975): "The earlier part of this conversation was compacted into the summary above and is no longer shown verbatim." — the plain statement of what the summary is; before it the framing never said so.
 - When the summary re-renders opening messages (§4.2, `openingSeqs`): "The message that opened the current turn follows, shown again verbatim; the summary covers it." (plural form for several).
-- When messages from before the summary stay verbatim after it (a user, assistant or absorbed message, reminder or forked skill report logged after `coversUpToSeq` and before the summary event: the kept tail, or a message logged while the summary call ran): "The messages after this summary (after those, when openers precede) are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them."
+- When messages from before the summary stay verbatim after it (a user, assistant or absorbed message, reminder or forked skill report logged after `coversUpToSeq` and before the summary event: the kept tail, or a message logged while the summary call ran): "The messages after this summary (after those, when openers precede) are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them." For a summary written in context (`compaction_summary.method: "in_context"`, idle compaction spec §9.4), the second sentence reads instead: "The summary covers what came before them; something it says is still pending may already have happened in them." (revision 2026-11-28; with boundary mode `all` such a summary keeps a tail only when messages were logged while it was written).
 - Always: "Continue the work from where it left off."
 
-The paragraph sits inside the summary text block, so the hard fit guard (§4.3) never truncates it. Both conditions are read only from events older than the summary (and its recorded `openingSeqs`), so the message is fixed once the summary is written and later requests stay append-only. It is derived from the log alone: no new `DriftReason`; `reconstruct.test.ts` rebuilds it with zero drift and asserts it in the current-turn compaction case.
+The paragraph sits inside the summary text block, so the hard fit guard (§4.3) never truncates it. Both conditions and the summary's `method` are read only from events older than the summary (and its recorded `openingSeqs`), so the message is fixed once the summary is written and later requests stay append-only. It is derived from the log alone: no new `DriftReason`; `reconstruct.test.ts` rebuilds it with zero drift and asserts it in the current-turn compaction case.
 
 ### 4.3 Hard fit guard
 
@@ -136,6 +136,7 @@ Applied to every request after compaction and before sending:
 - Progress is real `i/N` only in this path.
 - One `usage` event per call (`purpose: "compaction"`, optional `chunk` / `chunks`); the idempotency key includes the chunk index, and a retried call's key ends in `:retry` (its event carries the same chunk index). Hooks fire per call with the existing compaction fields; a denial fails the whole compaction. The completed calls before a failure are still billed and reported.
 - If any chunk call fails, write one `compaction_failed` (reason includes the chunk); no partial summary. The step then relies on 4.3.
+- The in-context summary request (idle compaction spec §9.4) is never chunked: it is one request the model already accepted. Chunking applies only to the transcript path, which a compaction takes when the in-context request is skipped (revision 2026-11-28).
 
 ### 4.6 Progress
 

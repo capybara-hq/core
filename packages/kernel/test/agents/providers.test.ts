@@ -316,6 +316,41 @@ describe("model-provider@2", () => {
     expect(warns).toEqual(["model dropped from the provider's list"]);
   });
 
+  it("a chat model with an invalid cache declaration stays listed (treated as not caching), one warn per list load", async () => {
+    const cache = {
+      mechanism: "explicit" as const,
+      ttlOptions: [300, 3600],
+      // not one of ttlOptions: validateModelCache refuses it
+      defaultTtl: 600,
+      ttlIsMinimum: false,
+      refreshOnHit: true,
+      ttlClock: "request_start" as const,
+      guaranteed: true,
+    };
+    const impl: ModelProvider = {
+      async listModels() {
+        return [
+          { ...chatInfo("bad-cache"), parameters: [], cache },
+          { ...chatInfo("good-cache"), parameters: [], cache: { ...cache, defaultTtl: 300 } },
+        ];
+      },
+      stream() {
+        throw new Error("unused");
+      },
+    };
+    const warns: unknown[] = [];
+    const r = reg([{ plugin: "c1", capability: "model-provider@2", impl }], warns);
+    expect((await r.list(ORG))[0]?.models.map((m) => m.id)).toEqual(["bad-cache", "good-cache"]);
+    expect(warns).toEqual(["model cache declaration invalid; treated as not caching"]);
+    // the cached list is not validated again
+    await r.list(ORG);
+    expect(warns).toHaveLength(1);
+    // the next load (the cache entry gone) logs it again
+    await redis.flushdb();
+    await r.list(ORG);
+    expect(warns).toHaveLength(2);
+  });
+
   it("@2 embedding model with malformed embedding info is dropped, one warn each; a valid one stays", async () => {
     const base = { ...chatInfo("emb"), parameters: [] };
     const good = { dimensions: [4, 8], defaultDimensions: 8, maxInputTokens: 10, maxBatch: 2 };

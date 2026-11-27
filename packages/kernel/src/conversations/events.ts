@@ -791,6 +791,11 @@ const ModelUsageShape = {
   cacheWriteTokens: count,
   /** Images produced (an image generation call). */
   outputImages: count.exactOptional(),
+  /**
+   * Cache writes per lifetime tier (`ttl` seconds), as the provider reported them; sums to
+   * `cacheWriteTokens`. Absent when the provider reported no breakdown.
+   */
+  cacheWriteByTtl: z.array(z.object({ ttl: count, tokens: count })).exactOptional(),
 };
 
 /**
@@ -1261,6 +1266,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
            * themselves are in `capybara.tool_specs` by specHash.
            */
           toolChoice: z.enum(["auto", "none"]).optional(),
+          /**
+           * The prompt cache lifetime the request asked for (`ModelRequest.cacheTtl`, seconds: one
+           * of the model's `ttlOptions`, chosen from `promptCache.longTtl`); absent when it named
+           * none (the model's default). A transport option, not model-visible: no DriftReason
+           * (idle compaction spec §9.2).
+           */
+          cacheTtl: count.optional(),
           /**
            * What became of each attachment in the request (Ruling M8, in first-seen order, one
            * entry per attachment): bytes sent (`bytes`, with the etag at finalize), inline text, a
@@ -2104,6 +2116,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * (nothing re-rendered).
        */
       openingSeqs: z.array(seqNo).optional(),
+      /**
+       * How the summary was written (idle compaction spec §9.4): `in_context` from the
+       * conversation's last request rebuilt with the summary instruction appended (its cached
+       * prefix), `transcript` from the plan's transcript. Not model-visible itself: only the
+       * framing sentence after the summary reads it (context compaction spec §4.2.2), derived from
+       * the log, so no `DriftReason`. Absent on summaries written before it (read as `transcript`).
+       */
+      method: z.enum(["transcript", "in_context"]).optional(),
       /**
        * The step the compaction ran in (0 for a manual compact run), so a later compaction in the
        * same step takes the next idempotency key.

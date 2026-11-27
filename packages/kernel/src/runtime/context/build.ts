@@ -107,6 +107,11 @@ export interface ModelCallMeta {
   /** 请求的 `toolChoice`（收尾调用为 `"none"`）；未设置则没有该字段。 */
   toolChoice?: "auto" | "none";
   /**
+   * The request's prompt cache lifetime (`ModelRequest.cacheTtl`, seconds); absent when the
+   * request named none. A transport option, not model-visible.
+   */
+  cacheTtl?: number;
+  /**
    * 请求里每个附件的处理结果（按首次出现，同一附件一条）；发了字节的带 finalize 时的 etag。没有媒体则没有该字段。
    */
   media?: MediaOutcomeEntry[];
@@ -166,6 +171,12 @@ export interface BuildModelRequestInput {
   toolSearch?: boolean;
   /** 本次请求的 `ModelRequest.toolChoice`；只在有工具时生效（没有工具时请求与 meta 都不带）。 */
   toolChoice?: "auto" | "none";
+  /**
+   * The prompt cache lifetime to ask for (`ModelRequest.cacheTtl`, seconds), copied into the
+   * request and `meta`; absent sends none (the model's default). The runtime chooses it with
+   * `selectCacheTtl`, a reconstruction passes the recorded or recomputed value. Not model-visible.
+   */
+  cacheTtl?: number;
   /**
    * 日志里媒体引用（`source.kind === "ref"`）对应的附件行（声明大小、PDF 页数）：附件 id → 信息；
    * 缺省表示没有行（已删除）→「不再可用」占位。预算（{@link planMedia}）只按这里的声明大小计算，结果确定。
@@ -865,11 +876,16 @@ export function summaryKeepsTail(
  * plain statement that the earlier conversation was compacted into it (maintainer decision
  * 2026-11-28), then what follows it. `openers` is the number of covered opening messages re-rendered right after this
  * text ({@link summaryOpeners}); `keptTail` says whether newer messages kept verbatim follow
- * ({@link summaryKeepsTail}). Model-facing English, derived from the log alone.
+ * ({@link summaryKeepsTail}); `method` is the summary's `compaction_summary.method` (idle
+ * compaction spec §9.4): an in-context summary was written from the whole conversation up to its
+ * boundary, so its tail sentence says only that it covers what came before the kept messages; a
+ * transcript one (or one without the field) says it was written without seeing them. With
+ * boundary mode `all` an in-context summary normally keeps no tail (only messages logged while it
+ * was written follow it). Model-facing English, derived from the log alone.
  */
 export function summaryText(
   summary: string,
-  framing: { openers: number; keptTail: boolean },
+  framing: { openers: number; keptTail: boolean; method?: "transcript" | "in_context" },
 ): string {
   const parts: string[] = [
     "The earlier part of this conversation was compacted into the summary above and is no longer shown verbatim.",
@@ -884,7 +900,9 @@ export function summaryText(
   if (framing.keptTail) {
     const anchor = framing.openers === 0 ? "this summary" : "those";
     parts.push(
-      `The messages after ${anchor} are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them.`,
+      framing.method === "in_context"
+        ? `The messages after ${anchor} are the most recent ones in the conversation, kept verbatim. The summary covers what came before them; something it says is still pending may already have happened in them.`
+        : `The messages after ${anchor} are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them.`,
     );
   }
   parts.push("Continue the work from where it left off.");
@@ -1187,6 +1205,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
           text: summaryText(summary.payload.text, {
             openers: openers.length,
             keptTail: summaryKeepsTail(events, summary),
+            ...(summary.payload.method !== undefined && { method: summary.payload.method }),
           }),
         },
         ...openers.flatMap((o) => userBlocks(o, false)),
@@ -1448,6 +1467,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   };
   const toolChoice = tools.length > 0 ? input.toolChoice : undefined;
   if (toolChoice !== undefined) request.toolChoice = toolChoice;
+  if (input.cacheTtl !== undefined) request.cacheTtl = input.cacheTtl;
 
   const first = events[0];
   const last = events.at(-1);
@@ -1469,6 +1489,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       catalog: catalog.map((t) => ({ key: t.key, specHash: t.specHash })),
     }),
     ...(toolChoice !== undefined && { toolChoice }),
+    ...(input.cacheTtl !== undefined && { cacheTtl: input.cacheTtl }),
     ...(mediaOutcomes.size > 0 && { media: [...mediaOutcomes.values()] }),
     ...(mediaOutcomes.size > 0 &&
       input.mediaBudgetBytes !== undefined &&

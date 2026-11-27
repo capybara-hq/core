@@ -48,7 +48,9 @@ export interface ForcedCompaction {
  * settings) and calls the shared {@link runCompaction} with `force: true`: the trigger,
  * `enabled: false` and the failure backoff are bypassed, the compaction plan is still required, with
  * the manual rule (`manual: true`: every turn before the latest summarized, about a fifth of the
- * window of the latest turn kept; maintainer decision 2026-11-28).
+ * window of the latest turn kept; maintainer decision 2026-11-28). A manual compaction always
+ * summarizes the transcript with that plan, on a model the in-context gate lists too (ruling R13,
+ * idle compaction spec §9.4).
  *
  * The run writes only its outcome, with `step: 0`: `compaction_summary` / `compaction_failed` + the
  * summary calls' `usage`, or `compaction_skipped` when there is nothing to summarize (maintainer

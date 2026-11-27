@@ -315,6 +315,7 @@ export class OrgsOperations implements OnModuleInit {
           "devicesDefaultProvider",
           "attribution",
           "compaction",
+          "promptCache",
           "externalSharing",
           "shareMaxExpiryDays",
           "htmlRenderCdnAllowlist",

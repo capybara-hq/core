@@ -29,6 +29,7 @@ import {
 } from "../../../../components/LoginMethodsSection";
 import { NoAccess } from "../../../../components/NoAccess";
 import { CompactionSection } from "../../../../components/settings/CompactionSection";
+import { PromptCacheSection } from "../../../../components/settings/PromptCacheSection";
 import { usePagePath } from "../../../../components/shell/path";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
 import {
@@ -138,6 +139,7 @@ function AdminSettingsRead() {
   const ta = useTranslations("appearance.platform");
   const tk = useTranslations("admin.settings.clientCode");
   const tcp = useTranslations("compaction");
+  const tpc = useTranslations("promptCache");
   const tps = useTranslations("promptSuggestions");
   const tsh = useTranslations("admin.settings.sharing");
   const tlm = useTranslations("loginSources.methods");
@@ -211,6 +213,12 @@ function AdminSettingsRead() {
           }}
         />
         <FormSection
+          id="prompt-cache"
+          title={tpc("title")}
+          description={tpc("description")}
+          loading={{ fields: [{ control: "switch", help: true }] }}
+        />
+        <FormSection
           id="sharing"
           title={tsh("title")}
           description={tsh("description")}
@@ -271,7 +279,11 @@ function AdminSettings({
       if (patch.attribution !== undefined) await invalidateAttribution(qc);
       // the platform's compaction defaults are what an org that follows the platform shows, and
       // the prompt suggestion switch locks the org's (both ride on every org's settings)
-      if (patch.compaction !== undefined || patch.promptSuggestions !== undefined)
+      if (
+        patch.compaction !== undefined ||
+        patch.promptCache !== undefined ||
+        patch.promptSuggestions !== undefined
+      )
         await invalidateCompactionSettings(qc);
       return r;
     },
@@ -287,6 +299,7 @@ function AdminSettings({
     Partial<Record<NetworkField, DeviceNetworkMode>>
   >({});
   const [compactionDraft, setCompactionDraft] = useState<CompactionSettingsPatch>({});
+  const [promptCacheDraft, setPromptCacheDraft] = useState<boolean | undefined>(undefined);
   const [suggestionsDraft, setSuggestionsDraft] = useState<"on" | "off" | undefined>(undefined);
   const [sharingDraft, setSharingDraft] = useState<SharingDraft>({});
   const cq = adminComponentsQuery("theme");
@@ -338,6 +351,9 @@ function AdminSettings({
   const compaction: CompactionSettings = { ...savedCompaction, ...compactionDraft };
   const compactionPatch = compactionChange(savedCompaction, compaction);
   if (compactionPatch !== null) patch.compaction = compactionPatch;
+  const savedLongTtl = saved.promptCache?.longTtl ?? false;
+  const longTtl = promptCacheDraft ?? savedLongTtl;
+  if (longTtl !== savedLongTtl) patch.promptCache = { longTtl };
   const savedSuggestions = saved.promptSuggestions ?? "on";
   const promptSuggestions = suggestionsDraft ?? savedSuggestions;
   // "on" is the default: clear the key instead of storing it (spec §6)
@@ -358,6 +374,7 @@ function AdminSettings({
       setOutsideDraft(undefined);
       setNetworkDraft({});
       setCompactionDraft({});
+      setPromptCacheDraft(undefined);
       setSuggestionsDraft(undefined);
       setSharingDraft({});
       toast.success(t("saved"));
@@ -407,6 +424,7 @@ function AdminSettings({
             setOutsideDraft(undefined);
             setNetworkDraft({});
             setCompactionDraft({});
+            setPromptCacheDraft(undefined);
             setSuggestionsDraft(undefined);
             setSharingDraft({});
           },
@@ -491,6 +509,7 @@ function AdminSettings({
         value={compaction}
         onChange={(d) => setCompactionDraft((cur) => ({ ...cur, ...d }))}
       />
+      <PromptCacheSection longTtl={longTtl} onChange={setPromptCacheDraft} />
       {saved.externalSharing !== undefined && saved.shareMaxExpiryDays !== undefined && (
         <SharingSection
           saved={saved}

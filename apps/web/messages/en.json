@@ -2953,6 +2953,14 @@
     "description": "After the agent replies, the input box suggests the next message you might send. Each suggestion is one extra call to the same model, mostly served from the prompt cache.",
     "platformOff": "Turned off by the platform"
   },
+  "promptCache": {
+    "title": "Prompt cache",
+    "description": "Choose which cache tier requests use for the model's prompt cache.",
+    "follow": "Follow the platform settings",
+    "followHint": "Turn this off to set the prompt cache for this organization only.",
+    "longTtl": "Long prompt cache",
+    "longTtlHint": "Requests use the model's cache tier of at least 30 minutes (such as 1 hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price instead of 1.25×)."
+  },
   "compaction": {
     "title": "Conversation compaction",
     "description": "Long conversations are summarized before they fill the model's context window, so a long-running conversation keeps going with the recent turns in full.",

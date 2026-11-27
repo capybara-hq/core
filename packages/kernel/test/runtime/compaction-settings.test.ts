@@ -172,6 +172,66 @@ describe("CompactionSettingsService.resolve", () => {
   });
 });
 
+describe("CompactionSettingsService.resolveStep", () => {
+  const promptCache = async (orgId: string) => (await service().resolveStep(orgId)).promptCache;
+
+  it("prompt cache: platform value, org override, and null following the platform", async () => {
+    await createOrg("org-cache");
+    expect(await promptCache("org-cache")).toEqual({ longTtl: false });
+    await db
+      .insertInto("deployment_settings")
+      .values({ key: "promptCache", value: JSON.stringify({ longTtl: true }) })
+      .execute();
+    expect(await promptCache("org-cache")).toEqual({ longTtl: true });
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ promptCache: { longTtl: false } }) })
+      .where("id", "=", "org-cache")
+      .execute();
+    expect(await promptCache("org-cache")).toEqual({ longTtl: false });
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({}) })
+      .where("id", "=", "org-cache")
+      .execute();
+    expect(await promptCache("org-cache")).toEqual({ longTtl: true });
+  });
+
+  it("returns the compaction settings resolve gives, from one read of the platform settings", async () => {
+    await createOrg("org-step");
+    await db
+      .insertInto("deployment_settings")
+      .values([
+        { key: "compaction", value: JSON.stringify({ threshold: 0.7 }) },
+        { key: "promptCache", value: JSON.stringify({ longTtl: true }) },
+      ])
+      .execute();
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ compaction: { keepRecentTurns: 2 } }) })
+      .where("id", "=", "org-step")
+      .execute();
+    const platform = settingsFor(raw);
+    let reads = 0;
+    const counted = new CompactionSettingsService(
+      {
+        get: () => {
+          reads++;
+          return platform.get();
+        },
+      },
+      handlesFor(raw).db,
+    );
+    const step = await counted.resolveStep("org-step");
+    expect(reads).toBe(1);
+    expect(step).toEqual({
+      compaction: { ...defaults, threshold: 0.7, keepRecentTurns: 2 },
+      promptCache: { longTtl: true },
+    });
+    expect(step.compaction).toEqual(await service().resolve("org-step"));
+  });
+});
+
 describe("partial compaction forms", () => {
   it("an org override keeps only the fields the org gives (no defaults injected)", () => {
     expect(OrgSettingsSchema.parse({ compaction: { keepRecentTurns: 2 } }).compaction).toEqual({
