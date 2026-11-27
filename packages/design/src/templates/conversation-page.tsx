@@ -286,8 +286,11 @@ export function ConversationPage({
   useEffect(() => {
     const el = root.current;
     if (!el || typeof ResizeObserver === "undefined") return;
+    // the page's border box: from 600 up its padding and the gap between the papers come out of
+    // the middle column (its minimum is chat-min less them, conversation-page.css), so the panel
+    // clamps against the whole page width, as it did before the papers
     const ro = new ResizeObserver((e) => {
-      const w = e[0]?.contentRect.width;
+      const w = e[0]?.borderBoxSize?.[0]?.inlineSize ?? e[0]?.contentRect.width;
       if (w !== undefined) setContent(w);
     });
     ro.observe(el);

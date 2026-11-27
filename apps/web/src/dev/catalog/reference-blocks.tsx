@@ -995,8 +995,9 @@ function loadingShapes(fields: FixtureFormField[], paired: boolean): FieldShape[
 function FormTemplateBody({ loading }: { loading?: boolean }) {
   return (
     <FormPage
-      // Loading (spec §5.3): the page knows its path's first segment, not the object or its title.
-      header={loading ? { path: F.path.slice(0, 1), title: "" } : { path: F.path, title: F.title }}
+      // Loading (spec §5.3): the page knows its parent path, not the object or its title; a head
+      // loading its title over a two-segment parent path draws the path row as the loaded one does.
+      header={loading ? { path: F.path.slice(0, 2), title: "" } : { path: F.path, title: F.title }}
       {...(loading ? { loading: true } : {})}
       actionRow={{
         unsaved: 2,

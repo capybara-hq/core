@@ -330,9 +330,10 @@ States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading
 | page-header-title | title | font-size | type.h1 |
 | page-header-title | title | line-height | type.h1.line |
 | page-header-title | title | color | color.ink |
-| page-header-row | title | margin-top | layout.head-path |
+| page-header-row | title | margin-top | 0 |
 | path | path | font-size | type.small |
 | path | path | color | color.faint |
+| page-header-row | path | margin-top | layout.head-path |
 | page-header-description | description-actions | font-size | type.prose-small |
 | page-header-description | description-actions | line-height | type.prose-small.line |
 | page-header-description | description-actions | color | color.muted |
@@ -1309,12 +1310,9 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | Part | State | Property | Value |
 |---|---|---|---|
 | sidebar | default | width | layout.sidebar |
-| sidebar | default | background-color | color.sidebar |
-| sidebar | default | border-right-color | color.line-soft |
 | sidebar | default | padding-top | space.3 |
 | sidebar | default | padding-left | space.2 |
 | org-switcher | default | height | 40 |
-| org-switcher | default | background-color | color.bg |
 | org-switcher | default | border-radius | radius.md |
 | org-initial | default | width | control.dense |
 | org-initial | default | background-color | color.ink |
@@ -1363,7 +1361,7 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | archived-back | archived | height | row.dense |
 | archived-back | archived | color | color.ink |
 | context-block | admin | height | 40 |
-| back | admin | height | row.dense |
+| back | admin | height | control.dense |
 | back | admin | color | color.muted |
 | empty-hint empty-state | empty | padding-top | space.8 |
 | empty-hint empty-state | empty | padding-bottom | space.8 |

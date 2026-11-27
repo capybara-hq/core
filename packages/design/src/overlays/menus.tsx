@@ -109,6 +109,7 @@ export function Menu({
   onOpenChange,
   label,
   modal,
+  autoFocus,
   head,
   foot,
 }: {
@@ -133,6 +134,11 @@ export function Menu({
   label?: string;
   /** Default true; false leaves the page usable while it is open (drawn open in the catalog). */
   modal?: boolean;
+  /**
+   * Default true: the menu takes focus as it opens. False keeps the focus where it is (a menu drawn
+   * open in the catalog beside another one that a page's checks expect to hold the focus).
+   */
+  autoFocus?: boolean;
 }) {
   const [own, setOwn] = useState(false);
   const isOpen = open ?? own;
@@ -183,6 +189,10 @@ export function Menu({
           {...(side ? { side } : {})}
           {...(label ? { "aria-label": label } : {})}
           {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}
+          // (Radix's menu content takes `onOpenAutoFocus`; the dropdown's types leave it out)
+          {...((autoFocus === false
+            ? { onOpenAutoFocus: (e: Event) => e.preventDefault() }
+            : {}) as Record<string, never>)}
         >
           {head !== undefined && head !== null ? (
             <>

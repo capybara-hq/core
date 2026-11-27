@@ -1263,7 +1263,9 @@ function Account({
         foot={account.footnote ? account.footnote : undefined}
         open={menuOpen}
         onOpenChange={setMenuOpen}
-        {...(account.menuOpen ? { modal: false } : {})}
+        // Drawn open for the reference set: it neither locks the page nor takes the focus (the
+        // sidebar page's checks expect the open More menu to hold it).
+        {...(account.menuOpen ? { modal: false, autoFocus: false } : {})}
         trigger={
           <button
             type="button"

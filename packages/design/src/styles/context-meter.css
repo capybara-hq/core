@@ -7,18 +7,20 @@
   width: var(--cb-control-dense);
   height: var(--cb-control-dense);
   border-radius: var(--cb-radius-sm);
+  /* the arc's colour (currentColor), so the meter's tone is its `color` */
+  color: var(--cb-muted);
+}
+.cb-context-meter[data-tone="fail"] {
+  color: var(--cb-fail);
 }
 .cb-context-meter-track {
   stroke: var(--cb-line);
 }
 .cb-context-meter-arc {
-  stroke: var(--cb-muted);
+  stroke: currentColor;
   stroke-linecap: butt;
   transform: rotate(-90deg);
   transform-origin: center;
-}
-.cb-context-meter[data-tone="fail"] .cb-context-meter-arc {
-  stroke: var(--cb-fail);
 }
 
 /* In the composer's grid the ring takes the cell before send / stop: a fourth track exists only
