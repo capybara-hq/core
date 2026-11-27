@@ -3,7 +3,12 @@ import type { AddressInfo } from "node:net";
 import { fetch as undiciFetch } from "undici";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type LookupFn, NetDeniedError, type NetPolicy } from "../../src/net/public-address.js";
-import { NetBodyTooLargeError, pinnedAgent, safeFetch } from "../../src/net/safe-fetch.js";
+import {
+  describeFetchError,
+  NetBodyTooLargeError,
+  pinnedAgent,
+  safeFetch,
+} from "../../src/net/safe-fetch.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
@@ -223,5 +228,104 @@ describe("safeFetch", () => {
       maxBytes: 1000,
     });
     expect((await res.arrayBuffer()).byteLength).toBe(1000);
+  });
+});
+
+describe("safeFetch retry", () => {
+  const retry = { attempts: 3, backoffMs: 0 };
+  const url = () => `http://127.0.0.1:${port}/r`;
+
+  it("retries a 502 and returns the next answer", async () => {
+    let calls = 0;
+    handler = (_req, res) => {
+      calls += 1;
+      if (calls === 1) res.writeHead(502).end("error code: 502");
+      else res.end("ok");
+    };
+    const res = await safeFetch(url(), init(), LOOPBACK, { retry });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+    expect(calls).toBe(2);
+  });
+
+  it("retries a dropped connection", async () => {
+    let calls = 0;
+    handler = (req, res) => {
+      calls += 1;
+      if (calls === 1) req.socket.destroy();
+      else res.end("ok");
+    };
+    const res = await safeFetch(url(), init(), LOOPBACK, { retry });
+    expect(await res.text()).toBe("ok");
+    expect(calls).toBe(2);
+  });
+
+  it("returns the last 5xx after the attempts are used up", async () => {
+    let calls = 0;
+    handler = (_req, res) => {
+      calls += 1;
+      res.writeHead(503).end("down");
+    };
+    const res = await safeFetch(url(), init(), LOOPBACK, { retry });
+    expect(res.status).toBe(503);
+    expect(calls).toBe(3);
+  });
+
+  it("does not retry a 500, a 404, a redirect or a refusal", async () => {
+    for (const status of [500, 404]) {
+      let calls = 0;
+      handler = (_req, res) => {
+        calls += 1;
+        res.writeHead(status).end();
+      };
+      expect((await safeFetch(url(), init(), LOOPBACK, { retry })).status).toBe(status);
+      expect(calls).toBe(1);
+    }
+    let calls = 0;
+    handler = (_req, res) => {
+      calls += 1;
+      res.writeHead(302, { location: "http://example.com/" }).end();
+    };
+    await denied(safeFetch(url(), init(), LOOPBACK, { retry }));
+    await denied(safeFetch(url(), init(), STRICT, { retry }));
+    expect(calls).toBe(1);
+  });
+
+  it("does not retry without the option", async () => {
+    let calls = 0;
+    handler = (_req, res) => {
+      calls += 1;
+      res.writeHead(502).end();
+    };
+    expect((await safeFetch(url(), init(), LOOPBACK)).status).toBe(502);
+    expect(calls).toBe(1);
+  });
+
+  it("stops waiting between tries when the caller aborts", async () => {
+    handler = (_req, res) => res.writeHead(502).end();
+    const ac = new AbortController();
+    const p = safeFetch(url(), { signal: ac.signal }, LOOPBACK, {
+      retry: { attempts: 3, backoffMs: 60_000 },
+    });
+    // the first answer is a 502, so the call is now in its backoff
+    while (seen.length === 0) await new Promise((r) => setImmediate(r));
+    ac.abort(new Error("stop"));
+    await expect(p).rejects.toThrow("stop");
+  });
+});
+
+describe("describeFetchError", () => {
+  it("names undici's cause and the proxy setting for a connection failure", () => {
+    const cause = Object.assign(new Error("connect ETIMEDOUT 20.205.243.166:443"), {
+      code: "ETIMEDOUT",
+    });
+    const msg = describeFetchError(new TypeError("fetch failed", { cause }));
+    expect(msg).toContain("ETIMEDOUT");
+    expect(msg).toContain("net.httpsProxy");
+  });
+
+  it("leaves other errors as they are", () => {
+    expect(describeFetchError(new Error("boom"))).toBe("boom");
+    expect(describeFetchError("x")).toBe("x");
   });
 });
