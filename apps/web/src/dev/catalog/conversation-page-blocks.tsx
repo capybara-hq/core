@@ -765,13 +765,13 @@ function composerMenuBlocks(): ReactNode {
   );
 }
 
-// ── Project file picker (§6.16.31: 项目文件, referenced without an upload) ────────
+// ── Project file picker (§6.16.31: project files, referenced without an upload) ──
 
-/** The picker drawn in place (`reference`) for one state, with fixed data. */
+/** The picker drawn in place (the dialog, or the compact sheet) for one state, with fixed data. */
 function ProjectFilePickerBlock({
-  reference = "dialog",
+  sheet = false,
   ...over
-}: Partial<ProjectFilePickerProps> & { reference?: "dialog" | "sheet" }) {
+}: Partial<ProjectFilePickerProps> & { sheet?: boolean }) {
   const P = PROJECT_FILES_FIXTURE;
   const props: ProjectFilePickerProps = {
     open: true,
@@ -788,7 +788,11 @@ function ProjectFilePickerBlock({
     onConfirm: noop,
     ...over,
   };
-  return <ProjectFilePicker {...props} reference={reference} />;
+  return sheet ? (
+    <ProjectFilePicker {...props} referenceSheet={{}} />
+  ) : (
+    <ProjectFilePicker {...props} referenceDialog />
+  );
 }
 
 function projectFilePickerBlocks(): ReactNode {
@@ -817,7 +821,7 @@ function projectFilePickerBlocks(): ReactNode {
         <ProjectFilePickerBlock entries={[]} error={<ErrorDetail summary={P.unsupported} />} />
       </RefBlock>
       <RefBlock id="project-file-picker-compact" width={390} height={844}>
-        <ProjectFilePickerBlock reference="sheet" selected={["README.md"]} />
+        <ProjectFilePickerBlock sheet selected={["README.md"]} />
       </RefBlock>
     </>
   );

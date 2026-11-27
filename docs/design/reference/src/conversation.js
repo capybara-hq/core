@@ -861,7 +861,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
     return `<div class="r-sh-stage" data-part="sheet-stage" style="--r-drag:0"><div class="r-sh-scrim" data-part="scrim"></div><div class="r-sh r-cmm-sheet" role="dialog" aria-modal="true" aria-label="技能与命令" data-part="composer-menu-sheet">${head}${body}</div></div>`;
   }
 
-  // ── Project file picker (§6.16.31: 项目文件, one folder at a time, a multi-select) ─────
+  // ── Project file picker (§6.16.31: project files, one folder at a time, a multi-select) ─
 
   /** "6420" -> "6.3 KB" (formatBytes: 1024 steps, one decimal, none when whole). */
   function pfpBytes(n) {
@@ -930,7 +930,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
     return `<div class="r-pfp">${path}${filter}<div class="r-pfp-scroll" data-part="project-file-scroll">${list}${empty}${status}</div></div>`;
   }
 
-  /** The footer: the count at the start, Cancel and 「引用」 at the end. */
+  /** The footer: the count at the start, Cancel and Reference at the end. */
   function pfpFoot(o) {
     const n = o.selected.length;
     const count = n === 0 ? "选择要引用的文件" : n >= o.max ? `已选 ${n} 个，最多 ${o.max} 个` : `已选 ${n} 个`;
@@ -939,7 +939,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar, emptyPanel }) => {
 
   /**
    * The picker (§6.16.31): the 640 dialog from 600 up; compact: the Dialog's bottom sheet at rest,
-   * the count centred over the full-width buttons, 「引用」 first.
+   * the count centred over the full-width buttons, Reference first.
    */
   function projectFilePicker(o) {
     const P = F.PROJECT_FILES_FIXTURE;

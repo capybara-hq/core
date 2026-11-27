@@ -1764,8 +1764,8 @@ export type FixtureProjectFileEntry = {
 };
 
 /**
- * The project file picker (§6.16.31): the project 「acme-web」's root, its `src/components`
- * folder (a listing stopped at its cap), the root filtered by 「read」, two files chosen, and the
+ * The project file picker (§6.16.31): the project "acme-web" root, its `src/components`
+ * folder (a listing stopped at its cap), the root filtered by "read", two files chosen, and the
  * error a device whose provider cannot list files shows.
  */
 export const PROJECT_FILES_FIXTURE: {

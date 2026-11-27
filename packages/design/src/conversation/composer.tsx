@@ -1,5 +1,6 @@
 import {
   type ClipboardEvent,
+  type CompositionEvent,
   forwardRef,
   type JSX,
   type KeyboardEvent,
@@ -273,8 +274,14 @@ export type ComposerBoxProps = {
   onChange(v: string): void;
   onKeyDown?(e: KeyboardEvent<HTMLTextAreaElement>): void;
   onPaste?(e: ClipboardEvent<HTMLTextAreaElement>): void;
+  /**
+   * An IME composition starts or ends in the textarea (its edits are the IME's until it ends;
+   * `compositionend` carries the committed text as `data`).
+   */
+  onCompositionStart?(e: CompositionEvent<HTMLTextAreaElement>): void;
+  onCompositionEnd?(e: CompositionEvent<HTMLTextAreaElement>): void;
   placeholder: string;
-  /** Replaces the placeholder while a run is going ("运行中发送的消息会在下一步交给智能体"). */
+  /** Replaces the placeholder while a run is going (messages sent then reach the agent later). */
   hint?: string;
   /** The attachment strip, above the textarea. */
   attachments?: ReactNode;
@@ -421,6 +428,8 @@ export function ComposerBox({
   onChange,
   onKeyDown,
   onPaste,
+  onCompositionStart,
+  onCompositionEnd,
   placeholder,
   hint,
   attachments,
@@ -566,6 +575,8 @@ export function ComposerBox({
         // any edit that leaves text ends the suggestion for this run
         if (suggestion && e.target.value !== "") suggestion.onDismiss();
       }}
+      {...(onCompositionStart ? { onCompositionStart } : {})}
+      {...(onCompositionEnd ? { onCompositionEnd } : {})}
       {...(menu ? menu.combobox : {})}
       {...(onKeyDown || token || suggested || mode || menu ? { onKeyDown: keyDown } : {})}
       onPaste={(e) => {
@@ -660,7 +671,14 @@ export function ComposerBox({
           disabled={attachDisabled}
           {...(attachOpen === undefined
             ? {}
-            : { "aria-haspopup": "menu" as const, "aria-expanded": attachOpen })}
+            : {
+                "aria-haspopup": "menu" as const,
+                "aria-expanded": attachOpen,
+                // the open + menu's list (the textarea's combobox controls the same one)
+                ...(attachOpen && menu?.combobox["aria-controls"]
+                  ? { "aria-controls": menu.combobox["aria-controls"] }
+                  : {}),
+              })}
           onClick={() => {
             // attaching a file counts as typing
             suggested?.onDismiss();

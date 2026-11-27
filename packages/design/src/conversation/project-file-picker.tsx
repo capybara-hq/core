@@ -3,6 +3,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -60,13 +61,15 @@ export type ProjectFilePickerProps = {
   onSelectedChange(paths: string[]): void;
   /** At most this many files; past it the other file rows are disabled. */
   max: number;
-  /** 「引用」: the chosen paths. The caller closes the picker. */
+  /** Reference: the chosen paths. The caller closes the picker. */
   onConfirm(paths: string[]): void;
   /**
-   * The reference set and `/dev/ui` only: drawn in place, the centred dialog (`dialog`) or the
-   * compact bottom sheet at rest (`sheet`), without a portal, a scrim or a focus trap.
+   * The reference set and `/dev/ui` only: the centred dialog drawn in place, without a portal, a
+   * scrim or a focus trap.
    */
-  reference?: "dialog" | "sheet";
+  referenceDialog?: boolean;
+  /** The reference set and `/dev/ui` only: the compact bottom sheet drawn in place over `page`. */
+  referenceSheet?: { page?: ReactNode };
 };
 
 const fill = (text: string, values: Record<string, string | number>) =>
@@ -101,10 +104,25 @@ function PickerBody(p: ProjectFilePickerProps & { listRef: RefObject<HTMLDivElem
   const domId = (i: number) => `${listId}-${i}`;
   const activeIndex = rows.findIndex((e) => e.path === activePath);
 
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  /** A move to another directory started inside the picker: the focus stays in it. */
+  const keepFocus = useRef(false);
   const go = (path: string) => {
+    keepFocus.current = bodyRef.current?.contains(document.activeElement) === true;
     if (p.filter !== "") p.onFilterChange("");
     p.onPathChange(path);
   };
+  // A new directory starts scrolled to its top. The listbox stays mounted, so a folder opened from
+  // it keeps the focus; a path row segment that turned into the current one (and left the
+  // document) hands the focus to the listbox.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs for each new path
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    if (!keepFocus.current) return;
+    keepFocus.current = false;
+    if (!bodyRef.current?.contains(document.activeElement)) p.listRef.current?.focus();
+  }, [p.path]);
   const toggle = (e: ProjectFileEntry) => {
     if (p.selected.includes(e.path)) {
       p.onSelectedChange(p.selected.filter((s) => s !== e.path));
@@ -146,7 +164,7 @@ function PickerBody(p: ProjectFilePickerProps & { listRef: RefObject<HTMLDivElem
   const crumbs = segments(p.project, p.path);
   const empty = !p.loading && !p.error && p.entries.length === 0;
   return (
-    <div className="cb-pfp" data-part="project-file-picker-body">
+    <div ref={bodyRef} className="cb-pfp" data-part="project-file-picker-body">
       <nav
         className="cb-pfp-path"
         data-part="project-file-path"
@@ -212,80 +230,79 @@ function PickerBody(p: ProjectFilePickerProps & { listRef: RefObject<HTMLDivElem
           {p.error}
         </div>
       ) : (
-        // a new directory starts scrolled to its top
-        <div key={p.path} className="cb-pfp-scroll" data-part="project-file-scroll">
-          {rows.length > 0 ? (
-            <div
-              ref={p.listRef}
-              id={listId}
-              role="listbox"
-              aria-multiselectable="true"
-              aria-label={crumbs[crumbs.length - 1]?.label ?? p.project}
-              tabIndex={0}
-              className="cb-pfp-list"
-              data-part="project-file-list"
-              {...(activeIndex >= 0 ? { "aria-activedescendant": domId(activeIndex) } : {})}
-              onKeyDown={onListKeyDown}
-            >
-              {rows.map((e, i) => {
-                const disabled = isDisabled(e);
-                const checked = e.kind === "file" && p.selected.includes(e.path);
-                return (
-                  // biome-ignore lint/a11y/useFocusableInteractive: an option of the listbox, which keeps the focus (aria-activedescendant)
-                  // biome-ignore lint/a11y/useKeyWithClickEvents: the listbox handles the keys
-                  <div
-                    key={e.path}
-                    id={domId(i)}
-                    role="option"
-                    className="cb-pfp-row"
-                    data-part="project-file-row"
-                    data-kind={e.kind}
-                    aria-selected={checked}
-                    aria-label={
-                      e.kind === "dir" ? fill(t("projectFiles.folder"), { name: e.name }) : e.name
-                    }
-                    {...(disabled ? { "aria-disabled": true, "data-disabled": "true" } : {})}
-                    {...(e.path === activePath ? { "data-active": "true" } : {})}
-                    onClick={() => activate(e)}
-                  >
-                    {e.kind === "file" ? (
-                      <span
-                        className="cb-check cb-pfp-check"
-                        data-part="project-file-check"
-                        data-state={checked ? "checked" : "unchecked"}
-                        aria-hidden="true"
-                      >
-                        <span className="cb-box">
-                          {checked ? <Icon name="check" size={12} /> : null}
-                        </span>
+        <div ref={scrollRef} className="cb-pfp-scroll" data-part="project-file-scroll">
+          {/* always mounted (empty while loading), so the focus survives a folder change */}
+          <div
+            ref={p.listRef}
+            id={listId}
+            role="listbox"
+            aria-multiselectable="true"
+            aria-label={crumbs[crumbs.length - 1]?.label ?? p.project}
+            tabIndex={0}
+            className="cb-pfp-list"
+            data-part="project-file-list"
+            {...(p.loading ? { "aria-busy": true } : {})}
+            {...(activeIndex >= 0 ? { "aria-activedescendant": domId(activeIndex) } : {})}
+            onKeyDown={onListKeyDown}
+          >
+            {rows.map((e, i) => {
+              const disabled = isDisabled(e);
+              const checked = e.kind === "file" && p.selected.includes(e.path);
+              return (
+                // biome-ignore lint/a11y/useFocusableInteractive: an option of the listbox, which keeps the focus (aria-activedescendant)
+                // biome-ignore lint/a11y/useKeyWithClickEvents: the listbox handles the keys
+                <div
+                  key={e.path}
+                  id={domId(i)}
+                  role="option"
+                  className="cb-pfp-row"
+                  data-part="project-file-row"
+                  data-kind={e.kind}
+                  {...(e.kind === "file" ? { "aria-selected": checked } : {})}
+                  aria-label={
+                    e.kind === "dir" ? fill(t("projectFiles.folder"), { name: e.name }) : e.name
+                  }
+                  {...(disabled ? { "aria-disabled": true, "data-disabled": "true" } : {})}
+                  {...(e.path === activePath ? { "data-active": "true" } : {})}
+                  onClick={() => activate(e)}
+                >
+                  {e.kind === "file" ? (
+                    <span
+                      className="cb-check cb-pfp-check"
+                      data-part="project-file-check"
+                      data-state={checked ? "checked" : "unchecked"}
+                      aria-hidden="true"
+                    >
+                      <span className="cb-box">
+                        {checked ? <Icon name="check" size={12} /> : null}
                       </span>
-                    ) : (
-                      <span className="cb-pfp-check" aria-hidden="true" />
-                    )}
-                    <span className="cb-pfp-lead" data-part="project-file-lead" aria-hidden="true">
-                      {e.kind === "dir" ? (
-                        <Icon name="folder" size={16} />
-                      ) : (
-                        <TypeBadge label={typeBadge(e.name, "")} />
-                      )}
                     </span>
-                    <span className="cb-pfp-name" data-part="project-file-name" title={e.name}>
-                      {e.name}
-                    </span>
+                  ) : (
+                    <span className="cb-pfp-check" aria-hidden="true" />
+                  )}
+                  <span className="cb-pfp-lead" data-part="project-file-lead" aria-hidden="true">
                     {e.kind === "dir" ? (
-                      <span className="cb-pfp-trail" aria-hidden="true">
-                        <Icon name="chevron-right" size={12} />
-                      </span>
-                    ) : e.size !== undefined ? (
-                      <span className="cb-pfp-size" data-part="project-file-size">
-                        {formatBytes(e.size)}
-                      </span>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
+                      <Icon name="folder" size={16} />
+                    ) : (
+                      <TypeBadge label={typeBadge(e.name, "")} />
+                    )}
+                  </span>
+                  <span className="cb-pfp-name" data-part="project-file-name" title={e.name}>
+                    {e.name}
+                  </span>
+                  {e.kind === "dir" ? (
+                    <span className="cb-pfp-trail" aria-hidden="true">
+                      <Icon name="chevron-right" size={12} />
+                    </span>
+                  ) : e.size !== undefined ? (
+                    <span className="cb-pfp-size" data-part="project-file-size">
+                      {formatBytes(e.size)}
+                    </span>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
           {empty ? (
             <EmptyState
               size="panel"
@@ -315,7 +332,7 @@ function PickerBody(p: ProjectFilePickerProps & { listRef: RefObject<HTMLDivElem
   );
 }
 
-/** The footer: the count (and the cap once reached), Cancel and 「引用」. */
+/** The footer: the count (and the cap once reached), Cancel and Reference. */
 function PickerFooter(p: ProjectFilePickerProps) {
   const t = useDesignT();
   const n = p.selected.length;
@@ -357,12 +374,13 @@ export function ProjectFilePicker(props: ProjectFilePickerProps): JSX.Element | 
   const title = t("projectFiles.title");
   const body = <PickerBody {...props} listRef={listRef} />;
   const footer = <PickerFooter {...props} />;
-  if (props.reference === "sheet") {
+  if (props.referenceSheet) {
     return (
       <BottomSheetFrame
         title={title}
         state="idle"
         share={0}
+        page={props.referenceSheet.page}
         footer={<div className="cb-dialog-sheet-foot">{footer}</div>}
       >
         <div className="cb-dialog-sheet" data-part="project-file-picker" data-form="sheet">
@@ -371,7 +389,7 @@ export function ProjectFilePicker(props: ProjectFilePickerProps): JSX.Element | 
       </BottomSheetFrame>
     );
   }
-  if (props.reference === "dialog") {
+  if (props.referenceDialog) {
     if (!props.open) return null;
     return (
       <div

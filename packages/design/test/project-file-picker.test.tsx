@@ -188,7 +188,7 @@ describe("ProjectFilePicker", () => {
   it("a filter that matches nothing says so; an empty folder says it is empty", () => {
     wrap(<Harness filter="zzz" />);
     expect(screen.getByText("这里没有名称包含「zzz」的项")).toBeTruthy();
-    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
     cleanup();
     wrap(<Harness entries={[]} />);
     expect(screen.getByText("这个文件夹是空的")).toBeTruthy();
@@ -202,6 +202,8 @@ describe("ProjectFilePicker", () => {
   it("loading shows the loading row in place of the rows", () => {
     wrap(<Harness loading />);
     expect(screen.queryByRole("option")).toBeNull();
+    // the listbox stays mounted (busy), so a focus inside it survives the listing
+    expect(listbox().getAttribute("aria-busy")).toBe("true");
     expect(document.querySelector('[data-part="project-file-loading"]')?.textContent).toContain(
       "正在加载",
     );
@@ -236,6 +238,64 @@ describe("ProjectFilePicker", () => {
     fireEvent.keyDown(list, { key: "Home" });
     fireEvent.keyDown(list, { key: "Enter" });
     expect(onPathChange).toHaveBeenLastCalledWith("src");
+  });
+
+  it("keyboard: opening a folder keeps the focus on the list, while loading too", () => {
+    function Loading() {
+      const [path, setPath] = useState("");
+      const [loaded, setLoaded] = useState(true);
+      return (
+        <>
+          <ProjectFilePicker
+            open
+            onOpenChange={() => {}}
+            project="capybara"
+            path={path}
+            onPathChange={(p) => {
+              setPath(p);
+              setLoaded(false);
+            }}
+            entries={loaded ? (path === "src" ? SRC : ROOT) : []}
+            loading={!loaded}
+            filter=""
+            onFilterChange={() => {}}
+            selected={[]}
+            onSelectedChange={() => {}}
+            max={10}
+            onConfirm={() => {}}
+          />
+          <button type="button" onClick={() => setLoaded(true)}>
+            loaded
+          </button>
+        </>
+      );
+    }
+    wrap(<Loading />);
+    const list = listbox();
+    list.focus();
+    fireEvent.keyDown(list, { key: "Enter" });
+    expect(screen.getByRole("navigation", { name: "位置" }).textContent).toContain("src");
+    expect(listbox()).toBe(list);
+    expect(list.getAttribute("aria-busy")).toBe("true");
+    expect(document.activeElement).toBe(list);
+    fireEvent.click(screen.getByRole("button", { name: "loaded", hidden: true }));
+    list.focus();
+    expect(list.getAttribute("aria-activedescendant")).toBe(option("app.ts").id);
+  });
+
+  it("a path row segment that becomes the current one hands the focus to the list", () => {
+    wrap(<Harness path="src" />);
+    const root = screen.getByRole("button", { name: "capybara" });
+    root.focus();
+    fireEvent.click(root);
+    expect(root.isConnected).toBe(false);
+    expect(document.activeElement).toBe(listbox());
+  });
+
+  it("folder options carry no aria-selected (only files are chosen)", () => {
+    wrap(<Harness />);
+    expect(option("文件夹 src").hasAttribute("aria-selected")).toBe(false);
+    expect(option("README.md").getAttribute("aria-selected")).toBe("false");
   });
 
   it("↓ in the filter moves into the rows", () => {
@@ -275,8 +335,8 @@ describe("ProjectFilePicker", () => {
       max: 10,
       onConfirm: () => {},
     };
-    for (const reference of ["dialog", "sheet"] as const) {
-      const r = wrap(<ProjectFilePicker {...props} reference={reference} />);
+    for (const form of [{ referenceDialog: true }, { referenceSheet: {} }]) {
+      const r = wrap(<ProjectFilePicker {...props} {...form} />);
       expect(r.container.querySelector('[data-part="project-file-picker"]')).toBeTruthy();
       expect(findNestedBoxes(r.container).map(describeNestedBox)).toEqual([]);
       cleanup();

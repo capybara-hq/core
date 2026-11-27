@@ -91,8 +91,10 @@ function Harness({
   loading,
   kind = "slash",
   onSend,
+  attachOpen,
 }: {
   onSend?: () => void;
+  attachOpen?: boolean;
   groups: ComposerMenuGroup[];
   initial?: string;
   onClose?: () => void;
@@ -126,6 +128,7 @@ function Harness({
       onChange={setText}
       placeholder="输入消息"
       onAttach={() => {}}
+      {...(attachOpen !== undefined ? { attachOpen } : {})}
       {...(onSend
         ? {
             // the page's send: ↵ without Shift, never while an IME composes
@@ -489,7 +492,52 @@ describe("ComposerMenu (anchored)", () => {
   });
 });
 
+describe("ComposerMenu (anchored) outside close", () => {
+  it("a press outside the composer closes it; a press inside does not", () => {
+    const onClose = vi.fn();
+    wrap(
+      <>
+        <Harness groups={slashGroups()} onClose={onClose} />
+        <p>elsewhere</p>
+      </>,
+    );
+    fireEvent.pointerDown(textarea());
+    fireEvent.pointerDown(options()[0] as HTMLElement);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "添加附件" }));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.pointerDown(screen.getByText("elsewhere"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("the focus leaving for an element outside closes it; leaving the window does not", () => {
+    const onClose = vi.fn();
+    wrap(
+      <>
+        <Harness groups={slashGroups()} onClose={onClose} />
+        <button type="button">outside</button>
+      </>,
+    );
+    const field = textarea();
+    field.focus();
+    // another tab or app: no element receives the focus
+    fireEvent.focusOut(field, { relatedTarget: null });
+    // a control inside the composer frame
+    fireEvent.focusOut(field, { relatedTarget: screen.getByRole("button", { name: "添加附件" }) });
+    expect(onClose).not.toHaveBeenCalled();
+    act(() => screen.getByRole("button", { name: "outside" }).focus());
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+});
+
 describe("the ＋ button", () => {
+  it("names the open + menu's listbox in aria-controls", () => {
+    wrap(<Harness kind="plus" groups={slashGroups()} attachOpen />);
+    const plus = screen.getByRole("button", { name: "添加附件" });
+    expect(plus.getAttribute("aria-controls")).toBe(screen.getByRole("listbox").id);
+  });
+
   it("keeps aria-haspopup=menu and reports attachOpen as aria-expanded", () => {
     const base = {
       value: "",

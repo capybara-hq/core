@@ -1,5 +1,13 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type JSX, type KeyboardEvent, type ReactNode, useId, useState } from "react";
+import {
+  type JSX,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { Badge } from "../display/basic";
 import { ObjectMark } from "../display/object-mark";
 import { Icon } from "../icons/icon";
@@ -618,8 +626,46 @@ export function ComposerMenu({
     );
   }
   if (compact) return <ComposerMenuSheet p={p} controller={controller} title={title} />;
+  return <AnchoredMenu p={p} controller={controller} title={title} />;
+}
+
+/**
+ * The anchored form. It closes when the person leaves the composer: a press outside the composer
+ * frame (the menu is inside it), or the focus moving to an element outside it (Tab, a click on
+ * another control). The focus leaving the window (another tab, another app) keeps it open.
+ */
+function AnchoredMenu({
+  p,
+  controller,
+  title,
+}: {
+  p: ComposerMenuProps;
+  controller: ComposerMenuController;
+  title: string;
+}): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useRef(p.onClose);
+  close.current = p.onClose;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const frame = el.closest<HTMLElement>('[data-part="composer"]') ?? el;
+    const inside = (n: EventTarget | null) => n instanceof Node && frame.contains(n);
+    const onPointerDown = (e: PointerEvent) => {
+      if (!inside(e.target)) close.current();
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      if (e.relatedTarget !== null && !inside(e.relatedTarget)) close.current();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    frame.addEventListener("focusout", onFocusOut);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      frame.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
   return (
-    <div className="cb-cmm" data-part="composer-menu" data-kind={p.kind}>
+    <div ref={ref} className="cb-cmm" data-part="composer-menu" data-kind={p.kind}>
       <div className="cb-cmm-scroll">
         <List p={p} controller={controller} title={title} />
       </div>
