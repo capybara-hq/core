@@ -1,9 +1,4 @@
-import {
-  type FormAnswer,
-  type InputForm,
-  type LocalizedText,
-  validateInputForm,
-} from "./tool.js";
+import { type FormAnswer, type InputForm, type LocalizedText, validateInputForm } from "./tool.js";
 import { isHttpUrl } from "./url.js";
 
 /**
@@ -479,7 +474,8 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
       ];
       const body = questionBody(card.form, locale);
       if (body !== undefined) lines.push(withCode("", asCode(body)));
-      const choices = card.state === "pending" ? questionChoiceButtons(card.form, locale) : undefined;
+      const choices =
+        card.state === "pending" ? questionChoiceButtons(card.form, locale) : undefined;
       if (choices)
         lines.push(line(t.options, choices.buttons.map((b) => asCode(b.label)).join(" / ")));
       if (card.answerSummary) lines.push(line(t.answer, asCode(card.answerSummary)));
