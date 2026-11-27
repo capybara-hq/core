@@ -117,25 +117,27 @@ async function query<T>(f: (db: ReturnType<typeof kernelDb>) => Promise<T>): Pro
 const NO_MANIFEST = /plugin\.json not found in the package/;
 
 /**
- * Whether a Redis key exists, in the database of `url` (bare RESP inline commands: the CLI tests
- * have no Redis client).
+ * The Redis keys matching `pattern`, in the database of `url` (bare RESP inline commands: the CLI
+ * tests have no Redis client).
  */
-function redisExists(url: string, key: string): Promise<boolean> {
+function redisKeys(url: string, pattern: string): Promise<string[]> {
   const u = new URL(url);
   const db = u.pathname.replace("/", "") || "0";
   return new Promise((resolve, reject) => {
     const sock = connect(Number(u.port || 6379), u.hostname, () => {
-      sock.write(`SELECT ${db}\r\nEXISTS ${key}\r\n`);
+      sock.write(`SELECT ${db}\r\nKEYS ${pattern}\r\n`);
     });
     let out = "";
     sock.on("data", (d) => {
       out += String(d);
-      // "+OK\r\n" then ":<n>\r\n"
+      // "+OK\r\n", then "*<n>\r\n" and n bulk strings ("$<len>\r\n<key>\r\n")
       const lines = out.split("\r\n");
-      if (lines.length >= 3) {
-        sock.end();
-        resolve(lines[1] === ":1");
-      }
+      const head = lines[1];
+      if (head === undefined || !head.startsWith("*")) return;
+      const n = Number(head.slice(1));
+      if (lines.length < 3 + 2 * n) return;
+      sock.end();
+      resolve(Array.from({ length: n }, (_, i) => lines[3 + 2 * i] as string));
     });
     sock.on("error", reject);
   });
@@ -198,11 +200,14 @@ describe("capybara plugins list / import", () => {
     const r = await run(["plugins", "import", file, "--yes"]);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("Imported notes 1.3.0");
-    // owed in the outbox by the confirm's commit (no extension to deploy), as the admin console's
-    // confirm owes it; no worker runs in this test, so the row waits for a relay, and nothing was
-    // added to BullMQ directly (earlier imports owed their own items' jobs: only this item's
-    // are checked)
-    const owed = (
+    // owed by the confirm's commit (no extension to deploy), as the admin console's confirm owes
+    // it: one job under one id per owing transaction. The commit's fast path may already have
+    // delivered the row to BullMQ (it does when the CLI's Redis connection is ready by then) or
+    // leave it in the outbox for a relay (no worker runs in this test): the job is in exactly one
+    // of the two, whichever won. Earlier imports owed their own items' jobs: only this item's are
+    // checked.
+    const idOf = new RegExp(`^scope-item-${item.id}-x\\d+$`);
+    const rows = (
       await query((db) =>
         db
           .selectFrom("outbox")
@@ -212,16 +217,19 @@ describe("capybara plugins list / import", () => {
           .execute(),
       )
     ).filter((r) => (r.data as { itemId?: string }).itemId === item.id);
-    expect(owed).toEqual([
-      {
+    const queued = (
+      await redisKeys(rd.url, `bull:cap-kernel-plugin-scope:scope-item-${item.id}-x*`)
+    )
+      .map((k) => k.slice("bull:cap-kernel-plugin-scope:".length))
+      .filter((id) => idOf.test(id));
+    for (const r of rows) {
+      expect(r).toEqual({
         job_name: "scope-item",
-        job_id: expect.stringMatching(new RegExp(`^scope-item-${item.id}-x\\d+$`)),
+        job_id: expect.stringMatching(idOf),
         data: { kind: "item", itemId: item.id },
-      },
-    ]);
-    expect(await redisExists(rd.url, `bull:cap-kernel-plugin-scope:${owed[0]?.job_id}`)).toBe(
-      false,
-    );
+      });
+    }
+    expect([...rows.map((r) => r.job_id), ...queued]).toHaveLength(1);
   }, 90_000);
 
   it("a template of another connector extension is imported with static checks only", async () => {
