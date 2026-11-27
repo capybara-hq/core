@@ -72,6 +72,7 @@ Adopt Claude Code's structured summary prompt (2.1.183), not the current free-fo
 
 - The model first writes an `<analysis>` scratchpad chronologically, then a `<summary>` with 9 sections: Primary Request and Intent; Key Technical Concepts; Files and Code Sections; Errors and fixes; Problem Solving; All user messages; Pending Tasks; Current Work; Optional Next Step. Each section keeps the template's detail requirements (file names, snippets, user feedback, verbatim quotes for the next step).
 - Capybara stores only the `<summary>` block; the `<analysis>` block is discarded and never sent in a later request. If the model returns no `<summary>` tags, use the text minus any `<analysis>` block; if the result is empty, the attempt fails.
+- **A summary cut off at the output token limit (revision 2026-11-27, issue #959).** A summary call that ends with `stopReason: "max_tokens"` is a failed attempt whatever its text: the extraction above would strip the unclosed `<analysis>` or the dangling `<summary>` tag and pass half a summary on. The call is asked once more (`buildCompactionRequest(…, { retry: true })`): the same instruction, transcript and output cap, plus a note after the transcript (`compactionRetryNote`): the previous answer stopped at the output token limit, so give the whole summary again from the start, only one `<summary>` block without the `<analysis>` block, of at most about N words, where N is three eighths of the summary cap in steps of 50, between 50 and 2000 (Claude Code's own re-ask asks for about 2,000 words). The cut-off answer is not sent back, so the retry fits the same input budget; the request overhead (§4.5) counts the note at its longest. A retry that stops at the limit too fails the compaction through `compaction_failed` (reason `summary cut off at the output token limit (<cap> tokens), also when asked again for a shorter one`, plus ` (chunk i)` when chunked) and its backoff. Not "a larger cap": the call already uses the whole summary cap (§4.8), so there is no larger cap within the setting to retry with.
 - Two Capybara adaptations stay: "Write in the same language as the conversation" and "If the transcript starts with an earlier summary, merge it into your summary."
 - Raise `COMPACTION_MAX_OUTPUT_TOKENS` from 4096 to 20000 (capped by the model's max output); the 9-section summary plus analysis does not fit in 4096. The platform/org `maxOutputTokens` default follows (20000).
 - Cost note: the prompt is longer and the summary is larger, so the post-compaction baseline is larger; the trigger and fit guard account for it.
@@ -125,12 +126,13 @@ Applied to every request after compaction and before sending:
 
 ### 4.5 Chunked compaction fallback
 
-- Budget `B = Wc - Cmax - R`, where `Wc` is the compaction model's window and `Cmax` is the compaction output cap (20000). Each call's input is `[running summary] + chunk` plus a fixed request overhead (the instruction and the transcript wrapper), so the base chunk size is `B - summaryAllowance - overhead`, where `summaryAllowance` (half of `Cmax`, rounded up) is the floor a later call reserves for its running summary; the first call has no summary.
+- Budget `B = Wc - Cmax - R`, where `Wc` is the compaction model's window and `Cmax` is the compaction output cap (20000). Each call's input is `[running summary] + chunk` plus a fixed request overhead (the instruction, the transcript wrapper and the retry note of §4.2.1 at its longest), so the base chunk size is `B - summaryAllowance - overhead`, where `summaryAllowance` (half of `Cmax`, rounded up) is the floor a later call reserves for its running summary; the first call has no summary.
 - If the transcript estimate ≤ the base chunk size, one summary call as today. Otherwise the calls after the first shrink their chunk further to reserve the **actual** running summary's estimate (`[Earlier summary]` + the summary text) when it is larger than the allowance, so chunk + running summary + overhead always stays inside `B`. A degenerate budget (one that cannot fit the allowance, the overhead and a minimum chunk) leaves the single call as before.
 - Otherwise split the transcript at line boundaries into chunks ≤ the chunk size and summarize sequentially with a rolling summary: call 1 summarizes chunk 1; call `i` summarizes `[running summary] + chunk i`. The last call's text is the summary; the acceptance check runs against the **full** transcript.
 - A single line (usually a tool result) larger than the chunk size is hard-split at a character boundary with a `[chunk split]` marker rather than failing.
+- Every chunk call follows the cut-off rule of §4.2.1: a call that stops at `max_tokens` is asked once more with the same chunk and running summary; only the retried summary is carried to the next chunk, and a second cut-off fails the compaction naming the chunk, before the next chunk is sent (revision 2026-11-27, issue #959).
 - Progress is real `i/N` only in this path.
-- One `usage` event per call (`purpose: "compaction"`, optional `chunk` / `chunks`); the idempotency key includes the chunk index. Hooks fire per call with the existing compaction fields; a denial fails the whole compaction. The completed calls before a failure are still billed and reported.
+- One `usage` event per call (`purpose: "compaction"`, optional `chunk` / `chunks`); the idempotency key includes the chunk index, and a retried call's key ends in `:retry` (its event carries the same chunk index). Hooks fire per call with the existing compaction fields; a denial fails the whole compaction. The completed calls before a failure are still billed and reported.
 - If any chunk call fails, write one `compaction_failed` (reason includes the chunk); no partial summary. The step then relies on 4.3.
 
 ### 4.6 Progress
@@ -166,10 +168,11 @@ UI: a "Conversation compaction" section on the platform settings page and the or
 ### 4.9 Events, replay, SDK
 
 - `run_started.trigger` gains `"compact"` (display only).
-- `usage` gains an optional `chunk` (the 1-based chunk a chunked compaction call summarised) and `chunks` (the number of calls the compaction attempted: the full count on a completed compaction, only the calls actually made on a failed or hook-denied one) (additive; old logs parse).
+- `usage` gains an optional `chunk` (the 1-based chunk a chunked compaction call summarised) and `chunks` (the number of chunks the compaction attempted: the full count on a completed compaction, only the chunks actually sent on a failed or hook-denied one; a chunk asked again after a cut-off summary counts once, its two calls carry the same `chunk`) (additive; old logs parse).
 - `compaction_summary` gains an optional `savedTokens` (estimated transcript input minus summary output, floored at zero: a longer summary saved nothing), so the UI does not derive it from chunked usage; the divider shows no number when it is absent (older logs) or 0.
 - `model_call.request` gains an optional `fit` plan (4.3); `buildRequest` applies it; old logs have none. Record `estimatedInputTokens` for the request **actually sent (post-fit)**; calibration and the trigger read that value.
-- `compaction_failed.reason` carries the chunk information as text; no schema change.
+- `compaction_failed.reason` carries the chunk information as text; no schema change. A summary cut off twice at the output token limit is one more reason text (§4.2.1).
+- The summary request is never replayed: reconstruction and step replay read the logged `compaction_summary` text, so the retry note (§4.2.1) needs no `DriftReason` and logs written before it rebuild unchanged.
 - No new `ModelErrorKind` (`context_overflow` exists). No SDK hook payload change; chunk calls reuse the existing compaction hook fields.
 - Step replay recomputes the fit against the candidate model's window. A candidate whose window forces a different fit than the recorded one gets a new `context_fit` `DriftReason` (added to `DRIFT_ORDER`); the baseline (same model) applies the recorded plan with zero drift.
 - Zero-drift: add cases for a trimmed request, a reactive compaction retry, and a chunked compaction (summary event + usage + savedTokens); run `reconstruct.test.ts` and `rename-compat.test.ts` before and after.
@@ -193,6 +196,7 @@ UI: a "Conversation compaction" section on the platform settings page and the or
 | Reactive compaction fails | trim + retry; then `model.context_overflow` |
 | Media rejection with bytes | `media_excluded` + in-step retry |
 | Chunk fails | one `compaction_failed` with the chunk; no partial summary |
+| Summary call stops at `max_tokens` | asked once more for a shorter summary from the start (§4.2.1); cut off again: `compaction_failed` + backoff, naming the chunk when chunked |
 | One user turn with a long tool loop outgrows the window | compacted inside the turn at a tool-pair boundary (4.2) |
 | Guard cannot reach the target (incl. a smaller fallback window) | forced compaction once, fit again (4.3 point 5) |
 | Prompt + tools + summary + latest pair too large | `run.context_too_large` before any provider call |
@@ -203,7 +207,7 @@ UI: a "Conversation compaction" section on the platform settings page and the or
 ### 4.12 Tests and checks
 
 - Unit: trigger formula, tail budget, fit plan determinism and truncation note, progressive trim targets, chunk splitting/rolling summary (including an oversized line), final-summary acceptance and `<summary>` extraction, settings precedence/ranges, backoff bypass.
-- Runtime: model-fake `context_overflow` → media exclude / force compact / trim retries; hard guard; chunked compaction usage/hooks/savedTokens; zero-drift reconstruct with `fit` and `context_fit`.
+- Runtime: model-fake `context_overflow` → media exclude / force compact / trim retries; hard guard; chunked compaction usage/hooks/savedTokens; a summary cut off at `max_tokens` (retried and stored, cut off twice and failed, a middle chunk of a chunked compaction, model-fake's own truncation); zero-drift reconstruct with `fit` and `context_fit`.
 - HTTP: compact endpoint (idle/busy/idempotent/eval 404/RBAC), SSE `compaction`, manual compact run.
 - Dual replica: manual compact claim, no duplicate summary; progress in Redis.
 - Web: `/compact`, title-menu action, compacting row, divider, savedTokens; i18n; `check:web-ui`.

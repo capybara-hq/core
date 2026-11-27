@@ -574,12 +574,11 @@ const idem = {
   /**
    * Usage of a compaction call: `n` is the compaction's ordinal in the step
    * ({@link compactionOrdinal}). A chunked compaction sends one call per chunk, so the chunk index
-   * (1-based) is part of the key (context compaction spec §4.5).
+   * (1-based) is part of the key (context compaction spec §4.5); the one retry of a call cut off at
+   * the output token limit adds `:retry` (spec §4.5, issue #959).
    */
-  compactionUsage: (runId: string, step: number, n: number, chunk?: number) =>
-    chunk === undefined
-      ? `usage_compaction:${runId}:${step}:${n}`
-      : `usage_compaction:${runId}:${step}:${n}:${chunk}`,
+  compactionUsage: (runId: string, step: number, n: number, chunk?: number, retry = false) =>
+    `usage_compaction:${runId}:${step}:${n}${chunk === undefined ? "" : `:${chunk}`}${retry ? ":retry" : ""}`,
   /**
    * The outcome of one compaction: `n` is its ordinal in the step ({@link compactionOrdinal}), so a
    * proactive summary and a forced one in the same step are two events (spec §4.4, revision
@@ -1415,9 +1414,9 @@ export async function runCompaction(
   let summary = "";
   /** Whether the compaction really took more than one call. */
   let multiChunk = false;
-  /** The chunk calls made; the total is known only when the compaction ends. */
+  /** The chunks sent (a retried chunk counts once); the total is known only when the compaction ends. */
   let attempted = 0;
-  const usages: { chunk: number | undefined; usage: ModelUsage }[] = [];
+  const usages: { chunk: number | undefined; retry: boolean; usage: ModelUsage }[] = [];
   for (;;) {
     let chunkText: string;
     if (remaining === null) {
@@ -1462,109 +1461,132 @@ export async function runCompaction(
     // call 1 summarises chunk 1; call i carries the running summary before its chunk, which the
     // instruction merges (compactionPlan formats a previous summary the same way)
     const callInput = summary === "" ? chunkText : `[Earlier summary]\n${summary}\n\n${chunkText}`;
-    const request = buildCompactionRequest(callInput, info.id, summaryCap);
-    if (hookBase && deps.hooks?.has("model.request")) {
-      let verdict: Awaited<ReturnType<HookRunner["run"]>>;
-      try {
-        verdict = await deps.hooks.run(
-          "model.request",
-          { ...hookBase, request: hookRequestOf(request, deps.log) },
-          signal,
-        );
-      } catch (e) {
-        // run() rejects only when the run's signal aborted: an abort, never a deny
-        if (signal.aborted) {
-          // an aborted attempt leaves no partial summary: drop the progress key now rather than
-          // leaving the writer-local throttle entry behind until the TTL (folded review Minor)
-          deps.compactionProgress?.clear(runId);
-          throw new StepAborted();
+    // A call that stops at the output token limit returns a cut-off summary that extractSummary
+    // would still pass on (an unclosed <analysis> or a dangling <summary> is stripped): it is a
+    // failed attempt, asked once more for a shorter summary from the start; a second cut-off fails
+    // the compaction (spec §4.5, issue #959)
+    let retry = false;
+    for (;;) {
+      const request = buildCompactionRequest(callInput, info.id, summaryCap, { retry });
+      if (hookBase && deps.hooks?.has("model.request")) {
+        let verdict: Awaited<ReturnType<HookRunner["run"]>>;
+        try {
+          verdict = await deps.hooks.run(
+            "model.request",
+            { ...hookBase, attempt: retry ? 2 : 1, request: hookRequestOf(request, deps.log) },
+            signal,
+          );
+        } catch (e) {
+          // run() rejects only when the run's signal aborted: an abort, never a deny
+          if (signal.aborted) {
+            // an aborted attempt leaves no partial summary: drop the progress key now rather than
+            // leaving the writer-local throttle entry behind until the TTL (folded review Minor)
+            deps.compactionProgress?.clear(runId);
+            throw new StepAborted();
+          }
+          throw e;
         }
-        throw e;
+        if (!verdict.allowed) {
+          denial = { verdict, chunk: chunkNo };
+          break;
+        }
       }
-      if (!verdict.allowed) {
-        denial = { verdict, chunk: chunkNo };
-        break;
-      }
-    }
-    const sentAt = Date.now();
-    try {
-      let partial = "";
-      const out = await consumeModelStream(
-        provider,
-        request,
-        info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
-        signal,
-        (ev) => {
-          if (ev.type !== "text_delta") return;
-          partial += ev.text;
-          // throttled by the sink (≤ once per 200 ms); real characters, never a percentage
-          progressOf({
-            phase: "summarizing",
-            step,
-            startedAt,
-            ...(chunked ? { chunk: chunkNo, chunks: plannedChunks } : {}),
-            chars: partial.length,
-          });
-        },
-      );
-      usages.push({ chunk: multiChunk ? chunkNo : undefined, usage: out.usage });
-      if (hookBase && deps.hooks) {
-        fireObserve(
-          deps.hooks,
-          "model.response",
-          {
-            ...hookBase,
-            outcome: "ok",
-            content: out.content,
-            stopReason: out.stopReason,
-            usage: out.usage,
-            latencyMs: Date.now() - sentAt,
-          },
+      const sentAt = Date.now();
+      try {
+        let partial = "";
+        const out = await consumeModelStream(
+          provider,
+          request,
+          info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
           signal,
-          deps.log,
+          (ev) => {
+            if (ev.type !== "text_delta") return;
+            partial += ev.text;
+            // throttled by the sink (≤ once per 200 ms); real characters, never a percentage
+            progressOf({
+              phase: "summarizing",
+              step,
+              startedAt,
+              ...(chunked ? { chunk: chunkNo, chunks: plannedChunks } : {}),
+              chars: partial.length,
+            });
+          },
         );
-      }
-      const final = out.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-      // store only the <summary> block: the <analysis> scratchpad must not enter later requests
-      summary = extractSummary(final || partial);
-      // an intermediate call with nothing to carry forward would silently drop every chunk before
-      // it: fail the compaction instead (spec §4.5), no partial summary
-      if (remaining !== null && summary === "") {
-        failure = "a chunk produced no summary";
+        usages.push({ chunk: multiChunk ? chunkNo : undefined, retry, usage: out.usage });
+        if (hookBase && deps.hooks) {
+          fireObserve(
+            deps.hooks,
+            "model.response",
+            {
+              ...hookBase,
+              attempt: retry ? 2 : 1,
+              outcome: "ok",
+              content: out.content,
+              stopReason: out.stopReason,
+              usage: out.usage,
+              latencyMs: Date.now() - sentAt,
+            },
+            signal,
+            deps.log,
+          );
+        }
+        if (out.stopReason === "max_tokens") {
+          if (!retry) {
+            deps.log.warn("compaction summary cut off at the output token limit; asking again", {
+              conversationId,
+              ...(multiChunk ? { chunk: chunkNo } : {}),
+            });
+            retry = true;
+            continue;
+          }
+          failure = `summary cut off at the output token limit (${summaryCap} tokens), also when asked again for a shorter one`;
+          failedChunk = multiChunk ? chunkNo : null;
+          break;
+        }
+        const final = out.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+        // store only the <summary> block: the <analysis> scratchpad must not enter later requests
+        summary = extractSummary(final || partial);
+        // an intermediate call with nothing to carry forward would silently drop every chunk before
+        // it: fail the compaction instead (spec §4.5), no partial summary
+        if (remaining !== null && summary === "") {
+          failure = "a chunk produced no summary";
+          failedChunk = multiChunk ? chunkNo : null;
+          break;
+        }
+        // the last call's text is the summary, accepted against the full transcript (spec §4.5)
+        if (remaining === null && !acceptSummary(summary, plan.transcript)) {
+          failure = `summary too short (${summary.length} chars)`;
+          failedChunk = multiChunk ? chunkNo : null;
+        }
+      } catch (err) {
+        if (err instanceof StepAborted) {
+          // aborted mid-call: clear the progress key here (the success and failure paths clear at
+          // the end; the abort path throws past them)
+          deps.compactionProgress?.clear(runId);
+          throw err;
+        }
+        if (hookBase && deps.hooks) {
+          fireObserve(
+            deps.hooks,
+            "model.response",
+            {
+              ...hookBase,
+              attempt: retry ? 2 : 1,
+              outcome: "failed",
+              content: [],
+              stopReason: null,
+              usage: null,
+              latencyMs: Date.now() - sentAt,
+              errorCode: classify(err).code,
+            },
+            signal,
+            deps.log,
+          );
+        }
+        failure = err instanceof Error ? err.message : String(err);
         failedChunk = multiChunk ? chunkNo : null;
         break;
       }
-      // the last call's text is the summary, accepted against the full transcript (spec §4.5)
-      if (remaining === null && !acceptSummary(summary, plan.transcript)) {
-        failure = `summary too short (${summary.length} chars)`;
-        failedChunk = multiChunk ? chunkNo : null;
-      }
-    } catch (err) {
-      if (err instanceof StepAborted) {
-        // aborted mid-call: clear the progress key here (the success and failure paths clear at
-        // the end; the abort path throws past them)
-        deps.compactionProgress?.clear(runId);
-        throw err;
-      }
-      if (hookBase && deps.hooks) {
-        fireObserve(
-          deps.hooks,
-          "model.response",
-          {
-            ...hookBase,
-            outcome: "failed",
-            content: [],
-            stopReason: null,
-            usage: null,
-            latencyMs: Date.now() - sentAt,
-            errorCode: classify(err).code,
-          },
-          signal,
-          deps.log,
-        );
-      }
-      failure = err instanceof Error ? err.message : String(err);
-      failedChunk = multiChunk ? chunkNo : null;
       break;
     }
     if (failure !== null || denial !== null) break;
@@ -1583,10 +1605,10 @@ export async function runCompaction(
 
   /** One usage event per completed call (spec §4.5); a chunked call carries its chunk index. */
   const usageEvents = (): AppendEvent[] =>
-    usages.map(({ chunk, usage }) => ({
+    usages.map(({ chunk, retry, usage }) => ({
       type: "usage" as const,
       runId,
-      idemKey: idem.compactionUsage(runId, step, ordinal, chunk),
+      idemKey: idem.compactionUsage(runId, step, ordinal, chunk, retry),
       payload: {
         step,
         provider: ref.provider,

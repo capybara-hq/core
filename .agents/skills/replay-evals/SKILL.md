@@ -437,7 +437,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   anything that pairs `usage` with a step's `model_call` (estimate calibration, trajectory steps,
   step-replay baselines, `plan_step`) must skip it; run totals (trajectory `totals`, `plan_run`,
   full-run replay summaries) include it, since it is real spend. It is not model-visible and needs no
-  `DriftReason`.
+  `DriftReason`. A summary call cut off at `max_tokens` is asked once more (context compaction spec
+  §4.2.1): the retry logs its own compaction `usage` (key suffix `:retry`, same `chunk`); the summary
+  request itself is never replayed (requests rebuild from the logged `compaction_summary` text), so
+  its retry note needs no `DriftReason`.
 - A conversation title call (UI refresh B, `conversations/titles.ts`, queue `cap-kernel-titles`,
   model purpose `title`) logs its own `usage` event with `purpose: "title"`, `step` 0 and no run
   (`runId` null). It is not model-visible to the agent (request building skips `usage`), needs no
