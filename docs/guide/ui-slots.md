@@ -10,7 +10,7 @@ of UI it accepts, the lowest role that sees it and the arguments it passes to th
 | `conversation.panel` | conversation | `view`, `embed`, `component` | guest | `conversationId`, `item` | regular | drawer |
 | `conversation.properties.section` | conversation | `view`, `embed`, `component` | guest | `conversationId` | dense | kept |
 | `conversation.tool-result.card` | conversation | `view`, `embed`, `component` | guest | `conversationId`, `card` | regular | kept |
-| `org.page` | org | `view`, `embed`, `component` | member | none | regular | kept |
+| `org.page` | org | `view`, `embed`, `component` | member | `params` | regular | kept |
 | `file.preview` | file | `embed` | guest | `conversationId`, `fileId` | regular | kept |
 | `agent.detail.section` | agent | `view`, `embed`, `component` | guest | `agentId` | regular | kept |
 | `org.settings.section` | org | `view`, `embed`, `component` | admin | none | regular | kept |
@@ -70,7 +70,7 @@ A full page in the organization navigation.
 - Scope: org
 - Accepts: `view`, `embed`, `component`
 - Minimum role: member
-- Args: none
+- Args: `params`
 - Density: regular
 - Compact: kept
 - Anchors: none

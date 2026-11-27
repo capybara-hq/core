@@ -3,7 +3,7 @@ import { DIAL_IN_PROTOCOL_RE } from "./dial-in.js";
 import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
 import { HTTP_ACCESS, type HttpPermission } from "./http-access.js";
 import { SETUP_CHECK_ID_RE, SETUP_CHECK_LIMITS } from "./setup-check.js";
-import { UI_ICONS, type UiContribution } from "./ui.js";
+import { UI_ICONS, UI_PAGE_FRAMES, UI_PAGE_NAVS, type UiContribution } from "./ui.js";
 import { isCompactForm, parseSlotRef, uiSlot } from "./ui-slots.js";
 
 /** Extension permission manifest: governance, not a sandbox; using an undeclared platform API throws ExtensionPermissionError. */
@@ -432,6 +432,19 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
     }
     if (seen.has(id)) errs.push(`ui has duplicate id "${id}"`);
     seen.set(id, c.kind);
+    if (c.frame !== undefined || c.nav !== undefined) {
+      const onPage = slotRef?.id === "org.page" && c.kind === "component";
+      for (const [k, allowed] of [
+        ["frame", UI_PAGE_FRAMES],
+        ["nav", UI_PAGE_NAVS],
+      ] as const) {
+        if (c[k] === undefined) continue;
+        if (!onPage)
+          errs.push(`ui "${id}" ${k} is only allowed on a component of the org.page slot`);
+        else if (!(allowed as readonly unknown[]).includes(c[k]))
+          errs.push(`ui "${id}" ${k} must be one of ${allowed.join(", ")}`);
+      }
+    }
     if (c.kind === "view") {
       if (c.path !== undefined) errs.push(`ui "${id}" path is only allowed for kind embed`);
       if (!views.includes(id) && !multiListed.has(id))

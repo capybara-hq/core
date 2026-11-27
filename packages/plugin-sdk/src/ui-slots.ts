@@ -130,7 +130,7 @@ const SLOT_DATA = [
     accepts: ["view", "embed", "component"],
     cardinality: "list",
     minRole: "member",
-    args: [],
+    args: ["params"],
     density: "regular",
     icon: "optional",
     compact: "kept",

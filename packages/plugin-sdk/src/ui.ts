@@ -70,7 +70,26 @@ export interface UiContribution {
    * see `effectiveCompact`. Omitted = the slot's form.
    */
   compact?: CompactForm;
+  /**
+   * `org.page` component only. `"host"` (default): the host draws the page title and the page
+   * chrome around the component; `"page"`: the component draws the whole page itself.
+   */
+  frame?: UiPageFrame;
+  /**
+   * `org.page` component only. `"primary"` (default): listed in the primary navigation;
+   * `"more"`: listed under the navigation's more entry.
+   */
+  nav?: UiPageNav;
 }
+
+/** How an `org.page` component page is framed ({@link UiContribution.frame}). */
+export type UiPageFrame = "host" | "page";
+/** Where an `org.page` component page is listed ({@link UiContribution.nav}). */
+export type UiPageNav = "primary" | "more";
+/** The accepted values of {@link UiContribution.frame}. */
+export const UI_PAGE_FRAMES: readonly UiPageFrame[] = ["host", "page"];
+/** The accepted values of {@link UiContribution.nav}. */
+export const UI_PAGE_NAVS: readonly UiPageNav[] = ["primary", "more"];
 
 /**
  * Blocks of the render schema. Text is for humans and shown as is (the plugin decides the language
@@ -148,6 +167,11 @@ export interface UiView {
  * - `textChars`: total characters of all text in the whole view (form JSON included);
  * - `payloadBytes`: UTF-8 bytes of a single button `payload` after JSON serialization.
  * - `componentDataBytes`: the UTF-8 bytes of a component view's `data` as JSON.
+ * - `componentQueryBytes`: the UTF-8 bytes of a `ctx.ui.query` result as JSON.
+ * - `componentQueryParamsBytes`: the UTF-8 bytes of a query's `params` as JSON.
+ * - `componentActionPayloadBytes`: the UTF-8 bytes of a component action's `payload` as JSON
+ *   (view block buttons keep `payloadBytes`).
+ * - `pageParamsBytes`: the UTF-8 bytes of a page's URL params (all keys and values).
  */
 export const UI_LIMITS = {
   blocks: 50,
@@ -156,6 +180,10 @@ export const UI_LIMITS = {
   textChars: 20000,
   payloadBytes: 2000,
   componentDataBytes: 32768,
+  componentQueryBytes: 1048576,
+  componentQueryParamsBytes: 16384,
+  componentActionPayloadBytes: 65536,
+  pageParamsBytes: 2048,
 } as const;
 
 const BADGE_MAX = 32;
@@ -544,8 +572,24 @@ export interface UiPlatformActionArgs extends UiPlatformRenderArgs, UiActionInpu
  */
 export type UiActionArgs = UiOrgActionArgs | UiPlatformActionArgs;
 
-/** An action result: a notice, or a new view. */
-export type UiActionResult = { toast?: { zh: string; en: string } } | { view: UiView };
+/**
+ * The args of a `ctx.ui.query` handler: the org position of the call, the query id and its params
+ * (JSON of at most `UI_LIMITS.componentQueryParamsBytes` bytes). `signal` aborts when the caller
+ * goes away.
+ */
+export interface UiQueryArgs extends UiOrgRenderArgs {
+  query: string;
+  params: JsonValue;
+  signal: AbortSignal;
+}
+
+/**
+ * An action result: a notice, or a new view. `invalidate` names queries the host refetches
+ * (component actions only).
+ */
+export type UiActionResult =
+  | { toast?: { zh: string; en: string }; invalidate?: string[] }
+  | { view: UiView; invalidate?: string[] };
 
 /** The embed claims every scope shares. `exp` is Unix seconds. */
 export interface EmbedClaimsBase {

@@ -1,4 +1,10 @@
-export { type ActionFn, PluginClientContextError, type ViewState } from "./context.js";
+export {
+  type ActionFn,
+  type NavigateTarget,
+  PluginClientContextError,
+  type QueryState,
+  type ViewState,
+} from "./context.js";
 export {
   CLIENT_API_VERSION,
   type ClientComponent,
@@ -46,6 +52,9 @@ export {
   useCapybaraEvents,
   useClientStorage,
   useLocale,
+  useNavigate,
+  usePageParams,
+  usePluginQuery,
   usePrefersReducedMotion,
   useRunState,
   useSignIn,

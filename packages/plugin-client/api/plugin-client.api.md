@@ -14,6 +14,7 @@ export type ActionFn = (actionId: string, input?: {
 }) => Promise<{
     view?: UiView;
     toast?: string;
+    invalidate?: string[];
 }>;
 
 // @public
@@ -192,6 +193,19 @@ export interface LogoProps {
 }
 
 // @public
+export type NavigateTarget = {
+    params: Record<string, string | null>;
+    replace?: boolean;
+} | {
+    page: {
+        id: string;
+        params?: Record<string, string>;
+    };
+} | {
+    conversation: string;
+};
+
+// @public
 export class PluginClientContextError extends Error {
     constructor(hook: string);
 }
@@ -210,6 +224,14 @@ export interface PropertySectionProps {
     title: string;
     value?: ReactNode;
     valueTone?: "ink" | "muted";
+}
+
+// @public
+export interface QueryState<T = unknown> {
+    data: T | undefined;
+    error?: string;
+    refetch(): void;
+    status: "loading" | "ready" | "error";
 }
 
 // @public
@@ -280,7 +302,9 @@ export interface SlotComponentProps {
             key?: string;
         };
     };
-    "org.page": Record<string, never>;
+    "org.page": {
+        params: Record<string, string>;
+    };
     "org.settings.section": Record<string, never>;
     "platform.page": Record<string, never>;
     "shell.brand": {
@@ -390,6 +414,17 @@ export function useLocale(): {
         en: string;
     }): string;
 };
+
+// @public
+export function useNavigate(): (to: NavigateTarget) => void;
+
+// @public
+export function usePageParams(): Record<string, string>;
+
+// @public
+export function usePluginQuery<T = unknown>(query: string, params?: JsonValue, opts?: {
+    staleMs?: number;
+}): QueryState<T>;
 
 // @public
 export function usePrefersReducedMotion(): boolean;

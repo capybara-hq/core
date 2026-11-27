@@ -1051,6 +1051,16 @@ export function createExtensionContext(
           },
         });
       },
+      query(id, handler) {
+        uiReg.query(id, handler);
+        ledger.add({
+          kind: "ui.query",
+          key: id,
+          dispose: async () => {
+            if (uiReg.queries.get(id) === handler) uiReg.queries.delete(id);
+          },
+        });
+      },
       // 目标先核对（一条查询）：插件在 orgId 启用；带对话时对话属于 orgId。不满足就只记 debug、不发
       // （插件拿着过期或别的组织的 id 调用不是错误，但不能借它往别的组织的流里发刷新）。A `platform.page`
       // contribution takes no orgId and refreshes the platform stream (super admins only)

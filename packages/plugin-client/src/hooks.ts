@@ -3,13 +3,16 @@ import {
   type ActionFn,
   HostContext,
   type HostContextValue,
+  type NavigateTarget,
   PluginClientContextError,
+  type QueryState,
   type ViewState,
 } from "./context.js";
 import type {
   CapybaraEvent,
   CapybaraEventType,
   ClientStorage,
+  JsonValue,
   RunState,
   SignIn,
   SizeClass,
@@ -111,4 +114,49 @@ export function useSizeClass(): SizeClass | null {
 /** The two screens of a window that spans a folded or dual-screen display, else `null`. */
 export function useViewportSegments(): ViewportSegment[] | null {
   return useHost("useViewportSegments").api.viewportSegments;
+}
+
+/**
+ * Runs the `ctx.ui.query` registered under this component's id with `params` (JSON); the result is
+ * cached by `(query, params)` and refetched when an action returns `invalidate` naming `query`.
+ * `staleMs` (default 0) is how long a cached result is served without a refetch.
+ */
+export function usePluginQuery<T = unknown>(
+  query: string,
+  params: JsonValue = null,
+  opts: { staleMs?: number } = {},
+): QueryState<T> {
+  return useHost("usePluginQuery").api.query<T>(query, params, opts);
+}
+
+/** The page's URL params (`org.page` components); an empty object elsewhere. */
+export function usePageParams(): Record<string, string> {
+  return useHost("usePageParams").api.pageParams;
+}
+
+const NAV_ERR = "navigate target must be { params }, { page } or { conversation }";
+
+/**
+ * Navigates within the plugin: `{ params }` changes this page's params (`null` removes one),
+ * `{ page }` opens another `org.page` of the plugin, `{ conversation }` opens a conversation.
+ * Anything else throws `Error("navigate target …")`.
+ */
+export function useNavigate(): (to: NavigateTarget) => void {
+  const { navigate } = useHost("useNavigate").api;
+  return (to) => {
+    if (typeof to !== "object" || to === null) throw new Error(NAV_ERR);
+    const keys = Object.keys(to).filter((k) => k !== "replace");
+    const o = to as Record<string, unknown>;
+    const ok =
+      keys.length === 1 &&
+      ((keys[0] === "params" && typeof o.params === "object" && o.params !== null) ||
+        (keys[0] === "page" &&
+          typeof o.page === "object" &&
+          o.page !== null &&
+          typeof (o.page as { id?: unknown }).id === "string") ||
+        (keys[0] === "conversation" && typeof o.conversation === "string")) &&
+      (o.replace === undefined || (keys[0] === "params" && typeof o.replace === "boolean"));
+    if (!ok) throw new Error(`${NAV_ERR}: got ${JSON.stringify(to)}`);
+    navigate(to);
+  };
 }

@@ -1,7 +1,9 @@
 import type {
   ExtensionManifest,
+  JsonValue,
   UiActionArgs,
   UiActionResult,
+  UiQueryArgs,
   UiRenderArgs,
   UiSlotSpec,
   UiView,
@@ -23,6 +25,8 @@ export function canUseSlot(slot: UiSlotSpec, role: OrgRole): boolean {
 /** 插件视图的 render 函数（`ctx.ui.view` 注册）。 */
 export type UiRender = (args: UiRenderArgs) => Promise<UiView>;
 /** 插件视图的动作处理函数（`ctx.ui.action` 注册）。 */
+/** The handler of a `ctx.ui.query` registration. */
+export type UiQueryHandler = (args: UiQueryArgs) => Promise<JsonValue>;
 export type UiActionHandler = (args: UiActionArgs) => Promise<UiActionResult>;
 
 /**
@@ -70,6 +74,8 @@ export const uiFrame = (m: UiBusMessage): string =>
 export class PluginUiRegistration {
   readonly views = new Map<string, UiRender>();
   readonly actions = new Map<string, UiActionHandler>();
+  /** TODO(full-pages F2): registered by `ctx.ui.query`; nothing reads it yet. */
+  readonly queries = new Map<string, UiQueryHandler>();
   private readonly declaredViews: Set<string>;
   private readonly contributions: Set<string>;
   /** The ids of the manifest's `component` contributions: their permission is `ui.components`. */
@@ -103,6 +109,11 @@ export class PluginUiRegistration {
 
   action(id: string, handler: UiActionHandler): void {
     this.register("action", this.actions, id, handler);
+  }
+
+  /** TODO(full-pages F2): the kernel route that calls these handlers comes with F2. */
+  query(id: string, handler: UiQueryHandler): void {
+    this.register("query", this.queries, id, handler);
   }
 
   /**

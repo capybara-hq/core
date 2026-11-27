@@ -4,6 +4,7 @@ import {
   createElement,
   type ReactElement,
   type ReactNode,
+  useEffect,
   useState,
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -12,6 +13,8 @@ import {
   type HostApi,
   HostContext,
   type HostContextValue,
+  type NavigateTarget,
+  type QueryState,
 } from "../context.js";
 import type { ClientExtension } from "../define.js";
 import {
@@ -26,11 +29,14 @@ import type {
   CapybaraEvent,
   ClientApi,
   ClientRole,
+  JsonValue,
   RunState,
   SizeClass,
   UiView,
   ViewportSegment,
 } from "../types.js";
+
+const EMPTY_PARAMS: Record<string, string> = {};
 
 export interface FakeHostOptions {
   slot: ComponentSlotId;
@@ -55,9 +61,22 @@ export interface FakeHostOptions {
   sizeClass?: SizeClass | null;
   /** What `useViewportSegments()` returns; default null. */
   viewportSegments?: ViewportSegment[] | null;
+  /**
+   * The in-memory query table behind `usePluginQuery`: query id to a function of the params. A
+   * query missing from the table, or one that throws, reads as `status: "error"`.
+   */
+  queries?: Record<string, (params: JsonValue) => unknown>;
+  /** What `usePageParams()` returns; default `{}`. */
+  params?: Record<string, string>;
 }
 
 export interface FakeHost {
+  /** Refetches the named queries, like an action result's `invalidate`. */
+  invalidate(queries: string[]): void;
+  /** How many times the query function of `query` has run. */
+  queryCalls(query: string): number;
+  /** The targets `useNavigate()` passed to the host, in order. */
+  navigations: NavigateTarget[];
   emit(e: CapybaraEvent): void;
   setRunState(s: RunState): void;
   rerender(): void;
@@ -145,6 +164,52 @@ export function renderWithFakeHost(element: ReactElement, options: FakeHostOptio
 
   let setRun: (s: RunState) => void = () => {};
 
+  const calls = new Map<string, number>();
+  const navigations: NavigateTarget[] = [];
+  const queryListeners = new Set<(names: string[]) => void>();
+  const runQuery = (query: string, params: JsonValue): unknown => {
+    const fn = options.queries?.[query];
+    if (!fn) throw new Error(`no fake query "${query}"`);
+    calls.set(query, (calls.get(query) ?? 0) + 1);
+    return fn(params);
+  };
+  // A hook the fake host's `api.query` runs inside the component calling `usePluginQuery`.
+  function useFakeQuery<T>(query: string, params: JsonValue): QueryState<T> {
+    const key = JSON.stringify([query, params]);
+    const [version, setVersion] = useState(0);
+    const [state, setState] = useState<Omit<QueryState<T>, "refetch">>({
+      data: undefined,
+      status: "loading",
+    });
+    useEffect(() => {
+      const listener = (names: string[]) => {
+        if (names.includes(query)) setVersion((v) => v + 1);
+      };
+      queryListeners.add(listener);
+      return () => void queryListeners.delete(listener);
+    }, [query]);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: key stands for query and params
+    useEffect(() => {
+      let live = true;
+      Promise.resolve()
+        .then(() => runQuery(query, params))
+        .then(
+          (data) => live && setState({ data: data as T, status: "ready" }),
+          (e: unknown) =>
+            live &&
+            setState({
+              data: undefined,
+              status: "error",
+              error: e instanceof Error ? e.message : String(e),
+            }),
+        );
+      return () => {
+        live = false;
+      };
+    }, [key, version]);
+    return { ...state, refetch: () => setVersion((v) => v + 1) };
+  }
+
   function Provider({ children }: { children: ReactNode }) {
     const [runState, setRunState] = useState<RunState>(options.runState ?? "idle");
     setRun = setRunState;
@@ -169,6 +234,9 @@ export function renderWithFakeHost(element: ReactElement, options: FakeHostOptio
       sizeClass: options.sizeClass ?? null,
       viewportSegments: options.viewportSegments ?? null,
       subscribe,
+      query: useFakeQuery,
+      pageParams: options.params ?? EMPTY_PARAMS,
+      navigate: (to) => void navigations.push(to),
     };
     const value: HostContextValue = {
       plugin,
@@ -187,6 +255,13 @@ export function renderWithFakeHost(element: ReactElement, options: FakeHostOptio
   draw();
 
   return {
+    invalidate(names) {
+      act(() => {
+        for (const l of [...queryListeners]) l(names);
+      });
+    },
+    queryCalls: (query) => calls.get(query) ?? 0,
+    navigations,
     emit(e) {
       act(() => {
         for (const s of [...subscribers]) s(e);

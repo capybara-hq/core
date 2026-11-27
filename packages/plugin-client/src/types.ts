@@ -105,7 +105,10 @@ export interface SlotComponentProps {
     conversationId: string;
     card: { callId: string; key?: string };
   };
-  "org.page": Record<string, never>;
+  "org.page": {
+    /** The page's URL params (string keys and values; at most `UI_LIMITS.pageParamsBytes`). */
+    params: Record<string, string>;
+  };
   "agent.detail.section": { agentId: string };
   "org.settings.section": Record<string, never>;
   "platform.page": Record<string, never>;

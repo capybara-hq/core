@@ -20,7 +20,15 @@ import type { ExtensionNet } from "./net.js";
 import type { SetupCheckDefinition } from "./setup-check.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolCallContext, ToolHandler, ToolSpec, ToolWatcher } from "./tool.js";
-import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
+import type {
+  EmbedClaims,
+  JsonValue,
+  UiActionArgs,
+  UiActionResult,
+  UiQueryArgs,
+  UiRenderArgs,
+  UiView,
+} from "./ui.js";
 
 /** Logger interface. */
 export interface Logger {
@@ -372,6 +380,13 @@ export interface ExtensionContext {
   ui: {
     view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
     action(id: string, handler: (args: UiActionArgs) => Promise<UiActionResult>): void;
+    /**
+     * Registers the data source of `usePluginQuery` in a component of `org.page` (only during
+     * `setup`). `id` must be a component id declared in `permissions.ui.components`; the kernel
+     * refuses any other id. The result is JSON of at most `UI_LIMITS.componentQueryBytes` bytes
+     * and the call's params at most `UI_LIMITS.componentQueryParamsBytes`.
+     */
+    query(id: string, handler: (args: UiQueryArgs) => Promise<JsonValue>): void;
     invalidate(target: {
       /** Required, except for a `platform.page` contribution, where it must be omitted. */
       orgId?: string;
