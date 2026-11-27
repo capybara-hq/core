@@ -579,13 +579,13 @@ describe("buildCompactionRequest", () => {
   });
 
   it("keeps the instruction byte for byte across the split into shared parts", () => {
-    // sha256 and length of the instruction as it was before SUMMARY_TASK_LINES and
-    // TRANSCRIPT_READING_LINES were split out (idle compaction phase 1, task 7): the split must
-    // not change one byte of the transcript form
+    // sha256 and length of main's instruction (with the automation origin of #1009) before
+    // SUMMARY_TASK_LINES and TRANSCRIPT_READING_LINES were split out (idle compaction phase 1,
+    // task 7): the split must not change one byte of the transcript form
     const text = buildCompactionRequest("User: hi", "fake-1").system[0]?.text ?? "";
-    expect(text.length).toBe(5777);
+    expect(text.length).toBe(5932);
     expect(createHash("sha256").update(text).digest("hex")).toBe(
-      "cd8752eec4cf1677b8fb7f8720862aadb77b1c8ce187b2d5456400e77ac34379",
+      "d29e35d763d448ad32eea7d0f7b6a9578d846d2b5c3295706a3bb08311fe711f",
     );
   });
 
@@ -596,6 +596,7 @@ describe("buildCompactionRequest", () => {
     // every origin label the transcript writes is named
     for (const label of [
       'text starts with "[Scheduled task"',
+      'text starts with "[Automation"',
       "User (task from the dispatching agent)",
       "User (message from the dispatching agent)",
       "loaded by the platform",
