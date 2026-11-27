@@ -15,7 +15,9 @@ import { useAppMutation } from "./mutation";
 // `shared` marker).
 
 /** What a share write makes stale: the file's shares, the org's lists, the files' markers. */
-const shareKeys = (orgId: string, conversationId: string): (readonly unknown[])[] => {
+const shareKeys = (orgId: string, conversationId: string | null): (readonly unknown[])[] => {
+  // A library file's share belongs to no conversation: only the org's lists change.
+  if (conversationId === null) return [keys.org(orgId).sharesAll()];
   const c = keys.org(orgId).conversation(conversationId);
   return [c.fileSharesAll(), c.files(), keys.org(orgId).sharesAll()];
 };
@@ -33,7 +35,7 @@ export function useCreateShare(orgId: string, conversationId: string, fileId: st
 
 /** Update to latest: copies the newest available version under the same link. */
 export function useRefreshShare(orgId: string) {
-  return useAppMutation<{ shareId: string; conversationId: string }, { share: ShareView }>({
+  return useAppMutation<{ shareId: string; conversationId: string | null }, { share: ShareView }>({
     fn: (v) => refreshShare(orgId, v.shareId),
     invalidates: (v) => shareKeys(orgId, v.conversationId),
   });
@@ -41,7 +43,7 @@ export function useRefreshShare(orgId: string) {
 
 /** Revokes a share (its creator, or an org admin). */
 export function useRevokeShare(orgId: string) {
-  return useAppMutation<{ shareId: string; conversationId: string }, void>({
+  return useAppMutation<{ shareId: string; conversationId: string | null }, void>({
     fn: (v) => revokeShare(orgId, v.shareId),
     invalidates: (v) => shareKeys(orgId, v.conversationId),
   });

@@ -28,10 +28,11 @@ export type ContentBlock =
  * stored payloads, so a block logged before the file library names its file `attachmentId` (the
  * same id): read the id with {@link refId}.
  */
-export type MediaSource = { kind: "ref"; fileId?: string; attachmentId?: string };
+export type MediaSource = { kind: "ref"; fileId: string };
 
 /** The file id a media ref names, whichever key it was logged under. */
-export const refId = (source: MediaSource): string => source.fileId ?? source.attachmentId ?? "";
+export const refId = (source: MediaSource): string =>
+  source.fileId ?? (source as { attachmentId?: string }).attachmentId ?? "";
 
 type FormText = string | { zh: string; en: string };
 

@@ -67,7 +67,7 @@ const GROUPS = { groups: [], next: null };
 
 /** The new conversation's reads; `projects` answers the default device's projects. */
 const newRoutes = (projects: unknown = projectsOf()) => ({
-  [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+  [`GET ${ORG}/files/limits`]: () => json(200, LIMITS),
   [`GET ${ORG}/agents`]: () => json(200, AGENTS),
   [`GET ${ORG}/models`]: () => json(200, MODELS),
   [`GET ${ORG}/devices`]: () => json(200, DEVICES),

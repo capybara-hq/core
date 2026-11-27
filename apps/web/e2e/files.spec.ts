@@ -63,10 +63,7 @@ test("上传 PNG（＋ 按钮）：进度后就绪、随消息发送；时间线
   const user = page.locator('[data-entry="user"]').filter({ hasText: "media:" });
   const thumb = user.getByRole("button", { name: "red.png" }).locator("img");
   await expect(thumb).toBeVisible();
-  await expect(thumb).toHaveAttribute(
-    "src",
-    /\/api\/v1\/orgs\/[^/]+\/attachments\/[^/]+\/download$/,
-  );
+  await expect(thumb).toHaveAttribute("src", /\/api\/v1\/orgs\/[^/]+\/files\/[^/]+\/download$/);
   await expect
     .poll(() => thumb.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth))
     .toBe(32);
@@ -115,7 +112,7 @@ test("前端拦下不允许的类型：显示与内核错误码一致的文案�
     buffer: Buffer.from("MZ"),
   });
   const files = draftFiles(page);
-  // 文案由内核 GET /attachments/limits 返回的类型拼出（至多六个标签，再补数量）
+  // 文案由内核 GET /files/limits 返回的类型拼出（至多六个标签，再补数量）
   await expect(files.getByRole("alert")).toHaveText(
     zh.chat.fileTypeNotAllowed.replace("{types}", "PNG / JPEG / GIF / WebP / PDF / TXT 等 13 种"),
   );

@@ -80,7 +80,7 @@ class FakeXhr {
 }
 
 const BASE = "/api/v1/orgs/o1/conversations/c1";
-const ATT = "/api/v1/orgs/o1/attachments";
+const ATT = "/api/v1/orgs/o1/files";
 const ID1 = "11111111-1111-4111-8111-111111111111";
 const ID2 = "22222222-2222-4222-8222-222222222222";
 const S3_URL = "http://s3.test:8333/capybara";
@@ -101,7 +101,12 @@ function stubApi(extra: Record<string, Handler> = {}): Call[] {
       json(200, { events: [userMsg(1, [{ type: "text", text: "hi" }])] }),
     [`POST ${ATT}`]: () =>
       json(201, {
-        id: ids.shift() ?? `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`,
+        file: {
+          id: ids.shift() ?? `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`,
+          name: "f",
+          contentType: "image/png",
+          size: 4,
+        },
         upload: {
           method: "POST",
           url: S3_URL,
@@ -201,6 +206,9 @@ describe("输入框：上传文件", () => {
       name: "chart.png",
       contentType: "image/png",
       size: 4,
+      // SHA-256 of four zero bytes
+      sha256: "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119",
+      purpose: "composer",
     });
     await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
     const xhr = FakeXhr.instances[0] as FakeXhr;
@@ -237,11 +245,26 @@ describe("输入框：上传文件", () => {
     expect(thumb.querySelector("img")?.getAttribute("src")).toBe(`${ATT}/${ID1}/download`);
   });
 
+  it("内核已有这些字节（upload 为 null）：不直传，直接 finalize", async () => {
+    const calls = stubApi({
+      [`POST ${ATT}`]: () =>
+        json(201, {
+          file: { id: ID1, name: "chart.png", contentType: "image/png", size: 4 },
+          upload: null,
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        }),
+    });
+    const { container } = await renderChat();
+    await userEvent.setup().upload(fileInput(container), png());
+    await vi.waitFor(() => expect(posted(calls, `${ATT}/${ID1}/finalize`)).toHaveLength(1));
+    expect(FakeXhr.instances).toHaveLength(0);
+  });
+
   it("PUT 直传：请求体是文件本身，带上 headers", async () => {
     stubApi({
       [`POST ${ATT}`]: () =>
         json(201, {
-          id: ID1,
+          file: { id: ID1, name: "chart.png", contentType: "image/png", size: 4 },
           upload: { method: "PUT", url: `${S3_URL}/k`, headers: { "content-type": "image/png" } },
           expiresAt: new Date(Date.now() + 300_000).toISOString(),
         }),
@@ -315,8 +338,7 @@ describe("输入框：上传文件", () => {
 
   it("内核拒绝登记（413）/ 直传失败：显示对应错误", async () => {
     stubApi({
-      [`POST ${ATT}`]: () =>
-        json(413, { error: { code: "attachment.too_large", message: "too large" } }),
+      [`POST ${ATT}`]: () => json(413, { error: { code: "file.too_large", message: "too large" } }),
     });
     const { container } = await renderChat("en");
     const user = userEvent.setup();
@@ -337,7 +359,7 @@ describe("输入框：上传文件", () => {
     act(() => (FakeXhr.instances[0] as FakeXhr).respond(403));
     const g2 = await screen.findByRole("group", { name: en.chat.files });
     await vi.waitFor(() =>
-      expect(within(g2).getByRole("alert").textContent).toBe(en.errors.attachment.upload_failed),
+      expect(within(g2).getByRole("alert").textContent).toBe(en.errors.file.upload_failed),
     );
   });
 
@@ -371,7 +393,7 @@ describe("输入框：上传文件", () => {
 });
 
 describe("输入框：上传文件（修正轮 1）", () => {
-  it("上限取自内核 GET /attachments/limits：按它预检，文案由它拼出", async () => {
+  it("上限取自内核 GET /files/limits：按它预检，文案由它拼出", async () => {
     const calls = stubApi({
       [`GET ${ATT}/limits`]: () =>
         json(200, {
@@ -430,7 +452,7 @@ describe("输入框：上传文件（修正轮 1）", () => {
     expect(posted(calls, ATT)).toHaveLength(10);
   });
 
-  it("上传中移除：登记请求也被中止（AbortSignal 传给 createAttachment）", async () => {
+  it("上传中移除：登记请求也被中止（AbortSignal 传给 createFile）", async () => {
     let seen: AbortSignal | null | undefined;
     stubApi({
       [`POST ${ATT}`]: (c) =>
@@ -491,9 +513,9 @@ describe("输入框：上传文件（修正轮 1）", () => {
       [`POST ${BASE}/messages`]: () =>
         json(404, {
           error: {
-            code: "attachment.not_found",
+            code: "file.not_found",
             message: "gone",
-            details: [{ path: "files", message: "gone", attachmentId: ID2 }],
+            details: [{ path: "files", message: "gone", fileId: ID2 }],
           },
         }),
     });
@@ -511,7 +533,7 @@ describe("输入框：上传文件（修正轮 1）", () => {
     // the files left with the send at once and came back with its failure (a new strip)
     const back = await screen.findByRole("group", { name: en.chat.files });
     const alert = await within(back).findByRole("alert");
-    expect(alert.textContent).toBe(en.errors.attachment.not_found);
+    expect(alert.textContent).toBe(en.errors.file.not_found);
     expect(within(back).getByRole("button", { name: "Retry two.png" })).toBeTruthy();
     expect(within(back).queryByRole("button", { name: "Retry one.png" })).toBeNull();
   });
@@ -564,7 +586,7 @@ describe("时间线：消息附件", () => {
               {
                 type: "document",
                 mediaType: "application/pdf",
-                source: { kind: "ref", attachmentId: ID2 },
+                source: { kind: "ref", fileId: ID2 },
                 name: "report.pdf",
               },
             ]),
@@ -598,7 +620,7 @@ describe("时间线：消息附件", () => {
               {
                 type: "file",
                 mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                source: { kind: "ref", attachmentId: ID2 },
+                source: { kind: "ref", fileId: ID2 },
                 name: "电商工行.xlsx",
                 size: 1_258_291,
               },
@@ -644,7 +666,7 @@ describe("时间线：消息附件", () => {
               {
                 type: "image",
                 mediaType: "image/png",
-                source: { kind: "ref", attachmentId: ID2 },
+                source: { kind: "ref", fileId: ID2 },
                 name: "two.png",
               },
             ]),
@@ -675,7 +697,7 @@ describe("时间线：消息附件", () => {
                 {
                   type: "document",
                   mediaType: "text/plain",
-                  source: { kind: "ref", attachmentId: ID2 },
+                  source: { kind: "ref", fileId: ID2 },
                   name: "notes.txt",
                 },
               ],
@@ -711,7 +733,7 @@ describe("时间线：登录过期后的附件（修正轮 1）", () => {
           {
             type: "document",
             mediaType: "application/pdf",
-            source: { kind: "ref", attachmentId: ID2 },
+            source: { kind: "ref", fileId: ID2 },
             name: "report.pdf",
           },
         ]),
@@ -786,7 +808,7 @@ describe("时间线：登录过期后的附件（修正轮 1）", () => {
 
 describe("uploadToStorage", () => {
   it("signal 已中止：立即拒绝，不发请求", async () => {
-    const { uploadToStorage } = await import("../src/lib/attachments");
+    const { uploadToStorage } = await import("../src/lib/uploads");
     const ctrl = new AbortController();
     ctrl.abort();
     await expect(

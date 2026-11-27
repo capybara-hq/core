@@ -19,7 +19,7 @@ export interface ShareView {
   /** The absolute link from the deployment's public URL; null when the kernel has none set. */
   url: string | null;
   audience: "internal" | "external";
-  conversationId: string;
+  conversationId: string | null;
   fileId: string;
   sourcePath: string | null;
   name: string;

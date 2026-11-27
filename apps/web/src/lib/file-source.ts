@@ -1,8 +1,8 @@
 import { artifactDownloadUrl } from "./artifacts";
-import { attachmentDownloadUrl } from "./attachments";
 import type { FileOutput } from "./files";
 import type { FilePreviewerItem } from "./previewers";
 import { skillFileContentUrl } from "./skills";
+import { fileDownloadUrl } from "./uploads";
 
 /**
  * Where a previewed file comes from (file sharing design §6): a conversation's file in the right
@@ -76,9 +76,9 @@ export function sourceUrls(s: FileSource): {
     };
   }
   const { orgId, conversationId, file } = s;
-  // An uploaded file is an attachment: its own route downloads it and serves bitmaps inline.
+  // An uploaded file is a library file: its own route downloads it and serves bitmaps inline.
   if (file.origin === "uploaded") {
-    const url = attachmentDownloadUrl(orgId, file.id);
+    const url = fileDownloadUrl(orgId, file.id);
     return { download: url, inline: url, content: url };
   }
   const download = artifactDownloadUrl(orgId, conversationId, file.id, {});

@@ -730,7 +730,7 @@ describe("a new conversation", () => {
       [`GET ${ORG}/devices`]: () => json(200, DEVICES),
       ...noProjects(),
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
-      [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+      [`GET ${ORG}/files/limits`]: () => json(200, LIMITS),
     });
     expect(input()).toHaveProperty("disabled", false);
     const user = userEvent.setup();
@@ -765,7 +765,7 @@ describe("a new conversation", () => {
       [`GET ${ORG}/devices`]: () => json(200, DEVICES),
       ...noProjects(),
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
-      [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+      [`GET ${ORG}/files/limits`]: () => json(200, LIMITS),
     });
     const user = userEvent.setup();
     await user.click(input());

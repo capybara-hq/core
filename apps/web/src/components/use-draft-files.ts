@@ -5,16 +5,17 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError, clientError } from "../lib/api";
-import {
-  type AttachmentLimits,
-  DEFAULT_LIMITS,
-  precheckFile,
-  typeList,
-  uploadAttachment,
-} from "../lib/attachments";
 import { retryOnMountOf } from "../lib/query/client";
 import { attachmentLimitsQuery } from "../lib/query/conversation";
 import { useAppMutation } from "../lib/query/mutation";
+import {
+  DEFAULT_LIMITS,
+  discardDraft,
+  precheckFile,
+  typeList,
+  type UploadLimits,
+  uploadFile,
+} from "../lib/uploads";
 import { useErrorMessage } from "../lib/use-error-message";
 
 /**
@@ -30,7 +31,7 @@ export interface DraftFile {
   progress: number;
   /** 附件 id（`ready` 时有）。 */
   id?: string;
-  /** `error` 时的错误：内核错误码、`attachment.upload_failed` 或前端预检的错误码。 */
+  /** `error` 时的错误：内核错误码、`file.upload_failed` 或前端预检的错误码。 */
   error?: unknown;
   /** 原文件：失败后可用它重试（前端预检拦下的没有，不能重试）。 */
   file?: File;
@@ -40,23 +41,23 @@ export interface DraftFile {
 const counts = (f: DraftFile) => !(f.status === "error" && f.file === undefined);
 
 /** 前端预检的错误码（重试没有意义）。 */
-const PRECHECK_CODES = new Set(["attachment.type_not_allowed", "attachment.too_large"]);
+const PRECHECK_CODES = new Set(["file.type_not_allowed", "file.too_large"]);
 
 const codeOf = (e: unknown) => (e instanceof ApiClientError ? e.code : undefined);
 
-/** 错误细节里带出的附件 id（内核 `attachment.not_found` / `not_ready` 的 `details[].attachmentId`）。 */
+/** 错误细节里带出的附件 id（内核 `file.not_found` / `not_ready` 的 `details[].fileId`）。 */
 function failedIds(e: unknown): Set<string> {
   if (!(e instanceof ApiClientError)) return new Set();
   return new Set(
     e.rawDetails.flatMap((d) => {
-      const id = (d as { attachmentId?: unknown } | null)?.attachmentId;
+      const id = (d as { fileId?: unknown } | null)?.fileId;
       return typeof id === "string" ? [id] : [];
     }),
   );
 }
 
 /**
- * 输入框的上传文件：上限取自内核 `GET /attachments/limits`（取到之前用默认值兜底），加文件时先预检、
+ * 输入框的上传文件：上限取自内核 `GET /files/limits`（取到之前用默认值兜底），加文件时先预检、
  * 通过的立即上传；条数按同步更新的 ref 计算，并发加文件（同时拖入、粘贴）也不会超过上限。
  */
 export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = []) {
@@ -66,11 +67,16 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
   // Until the limits are read (or when the read failed) the defaults apply.
   const limitsQ = attachmentLimitsQuery(orgId);
   const read = useQuery({ ...limitsQ, retryOnMount: retryOnMountOf(limitsQ.queryKey) }).data;
-  const limits = useMemo<AttachmentLimits>(() => read ?? DEFAULT_LIMITS, [read]);
+  const limits = useMemo<UploadLimits>(() => read ?? DEFAULT_LIMITS, [read]);
   // An upload's answer is the attachment: nothing cached changes.
   const { mutateAsync: upload } = useAppMutation({
     fn: (v: { file: File; signal: AbortSignal; onProgress(p: number): void }) =>
-      uploadAttachment(orgId, v.file, { signal: v.signal, onProgress: v.onProgress }),
+      uploadFile(orgId, v.file, { signal: v.signal, onProgress: v.onProgress }),
+    invalidates: () => [],
+  });
+  // Drops a draft on the kernel; the answer changes nothing cached.
+  const { mutateAsync: discard } = useAppMutation({
+    fn: (id: string) => discardDraft(orgId, id),
     invalidates: () => [],
   });
   // `initial`: a failed send's files given back to a new composer (their uploads are done).
@@ -170,6 +176,9 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
   const remove = (key: string) => {
     uploads.current.get(key)?.abort();
     uploads.current.delete(key);
+    // A draft that finished uploading is dropped on the kernel too (best effort).
+    const id = filesRef.current.find((f) => f.key === key)?.id;
+    if (id !== undefined) void discard(id);
     update((list) => list.filter((f) => f.key !== key));
   };
 
@@ -231,12 +240,12 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
   /** 条目的错误文字：大小 / 类型超限按当前上限拼出，其余按错误码翻译。 */
   const errorText = (f: DraftFile): string => {
     switch (codeOf(f.error)) {
-      case "attachment.too_large":
+      case "file.too_large":
         return t("fileTooLarge", {
           image: formatBytes(limits.imageMaxBytes),
           other: formatBytes(limits.maxBytes),
         });
-      case "attachment.type_not_allowed":
+      case "file.type_not_allowed":
         return t("fileTypeNotAllowed", {
           types: typeList(limits.types, (count) => t("fileTypeMore", { count })),
         });

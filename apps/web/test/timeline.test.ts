@@ -2397,7 +2397,11 @@ describe("messageFiles", () => {
     const files = messageFiles([
       { type: "text", text: "see" },
       { type: "image", mediaType: "image/png", source: { kind: "ref", fileId: a }, name: "a.png" },
-      { type: "file", mediaType: "application/zip", source: { kind: "ref", attachmentId: b } },
+      {
+        type: "file",
+        mediaType: "application/zip",
+        source: { kind: "ref", attachmentId: b } as never,
+      },
     ]);
     expect(files.map((f) => [f.attachmentId, f.name])).toEqual([
       [a, "a.png"],

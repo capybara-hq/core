@@ -257,7 +257,7 @@ describe("profiles@1: 切换平台", () => {
 });
 
 describe("downloads in a shell with openExternal@1", () => {
-  const ROUTE = "/api/v1/orgs/o1/attachments/f1/download";
+  const ROUTE = "/api/v1/orgs/o1/files/f1/download";
   const PRESIGNED = "https://store.example/bucket/f1?X-Amz-Signature=abc";
   function Download({ url, isPublic }: { url: string; isPublic?: boolean }) {
     const open = useOpenDownload();

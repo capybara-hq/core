@@ -260,7 +260,7 @@ describe("the file panel", () => {
     const user = userEvent.setup();
     await user.click(within(panel).getAllByRole("button", { name: "Download" })[0] as HTMLElement);
     await vi.waitFor(() =>
-      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/attachments/a1/download$`)),
+      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/files/a1/download$`)),
     );
     await user.click(within(panel).getByRole("button", { name: /brief\.docx/ }));
     const menu = await screen.findByRole("menu");
@@ -272,7 +272,7 @@ describe("the file panel", () => {
     ]);
     await user.click(within(menu).getByText("photo.png"));
     const img = await screen.findByRole("img", { name: "photo.png" });
-    expect(img.getAttribute("src")).toBe(`${ORG}/attachments/a2/download`);
+    expect(img.getAttribute("src")).toBe(`${ORG}/files/a2/download`);
   });
 
   it("a click on the panel's image opens the viewer; new tab opens the inline URL", async () => {
@@ -352,7 +352,7 @@ describe("the file panel", () => {
     // not listed (yet): the click downloads it, never doing nothing
     await user.click(within(log).getByRole("button", { name: /fresh\.pdf/ }));
     await vi.waitFor(() =>
-      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/attachments/a9/download$`)),
+      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/files/a9/download$`)),
     );
     expect(window.location.hash).toBe("#file=a1");
   });

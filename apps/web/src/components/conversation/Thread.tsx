@@ -50,7 +50,6 @@ import {
 } from "react";
 import { ApiClientError, ensureSession } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
-import { attachmentDownloadUrl } from "../../lib/attachments";
 import { orgIconUrl } from "../../lib/catalog";
 import type { ModelRef, ToolInfo } from "../../lib/conversations";
 import { type ModelConfigViewer, modelConfigViewer } from "../../lib/model-config";
@@ -78,6 +77,7 @@ import {
   type TimelineTool,
 } from "../../lib/timeline";
 import { uiLocale } from "../../lib/ui";
+import { fileDownloadUrl } from "../../lib/uploads";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { ApprovalCard } from "../ApprovalCard";
 import { ConnectCard, useConnectConnector } from "../ConnectCard";
@@ -813,11 +813,11 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
                           if (file?.kind === "image") setZoomId(id);
                           else if (!id.startsWith("@")) {
                             if (onOpenFile && listedFiles?.has(id)) onOpenFile(id);
-                            else openDownload(attachmentDownloadUrl(orgId, id));
+                            else openDownload(fileDownloadUrl(orgId, id));
                           }
                         }}
                         onDownload={(id) => {
-                          if (!id.startsWith("@")) openDownload(attachmentDownloadUrl(orgId, id));
+                          if (!id.startsWith("@")) openDownload(fileDownloadUrl(orgId, id));
                         }}
                       />
                     ),
@@ -842,12 +842,12 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
                 }}
                 onDownload={(i) => {
                   const p = pictures[i];
-                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
+                  if (p) openDownload(fileDownloadUrl(orgId, p.attachmentId));
                 }}
                 // The kernel serves an attachment's image inline at its download URL.
                 onOpenInNewTab={(i) => {
                   const p = pictures[i];
-                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
+                  if (p) openDownload(fileDownloadUrl(orgId, p.attachmentId));
                 }}
                 // One retry per image (a session refresh, then its retry token): none left, no button
                 {...(shown !== undefined && !retried.has(shown.attachmentId)
@@ -1022,7 +1022,7 @@ function DividerView({
 
 /** An attachment's image as the thread loads it (a retry after a failed load asks again). */
 const imageSrcOf = (c: EntryContext, id: string) =>
-  `${attachmentDownloadUrl(c.orgId, id)}${c.retried.has(id) ? "?retry=1" : ""}`;
+  `${fileDownloadUrl(c.orgId, id)}${c.retried.has(id) ? "?retry=1" : ""}`;
 
 /** A tool row as the thread draws it: its line range or background label, images, output size. */
 function rowOf(
@@ -1133,11 +1133,11 @@ function ToolStep({ tools, c }: { tools: TimelineTool[]; c: EntryContext }): Rea
           }}
           onDownload={(i) => {
             const p = pictures[i];
-            if (p) openDownload(attachmentDownloadUrl(c.orgId, p.attachmentId));
+            if (p) openDownload(fileDownloadUrl(c.orgId, p.attachmentId));
           }}
           onOpenInNewTab={(i) => {
             const p = pictures[i];
-            if (p) openDownload(attachmentDownloadUrl(c.orgId, p.attachmentId));
+            if (p) openDownload(fileDownloadUrl(c.orgId, p.attachmentId));
           }}
           {...(shown !== undefined && !c.retried.has(shown.attachmentId)
             ? { onRetry: () => c.onImageError(shown.attachmentId) }
