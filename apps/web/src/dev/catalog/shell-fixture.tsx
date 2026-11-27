@@ -44,14 +44,16 @@ export type SidebarFixture = {
   context?: "admin" | "setup";
   /** The setup context's steps: the super admin's (default) or a member's. */
   setup?: "admin" | "member";
+  /** The account row shows a system status (a fail dot) and the menu's foot line. */
+  accountStatus?: boolean;
+  /** Draw the account menu open (status head line and foot line included). */
+  accountMenu?: boolean;
   /** Draw the 更多 flyout open. */
   moreOpen?: boolean;
   /** Draw the conversation filter open with this query and state. */
   filter?: { q: string; state: "all" | "running" | "waiting" };
   /** Draw the archived list in place of the conversations. */
   archived?: boolean;
-  /** Draw the account's system status (fail) and the version footnote (the account menu's head and foot). */
-  accountStatus?: boolean;
 };
 
 /**
@@ -139,10 +141,17 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
     },
     account: {
       name: FIXTURE_USER.name,
-      menu: [],
-      ...(o.accountStatus
+      menu:
+        o.accountStatus || o.accountMenu
+          ? [
+              { label: "个人设置", onSelect: noop },
+              { label: "退出登录", onSelect: noop },
+            ]
+          : [],
+      ...(o.accountStatus || o.accountMenu
         ? { status: { text: "连接已断开", tone: "fail" as const }, footnote: "v0.1.0 · UTC+8" }
         : {}),
+      ...(o.accountMenu ? { menuOpen: true } : {}),
     },
     ...(o.moreOpen ? { moreOpen: true } : {}),
     onOpenCommands: noop,

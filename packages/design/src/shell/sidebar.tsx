@@ -131,6 +131,8 @@ export type SidebarAccount = {
   menu: MenuItem[];
   status?: { text: string; tone: "fail" };
   footnote?: string;
+  /** Draw the menu open (the reference set); it then leaves the page usable. */
+  menuOpen?: boolean;
 };
 
 /** The panel a `brand` is drawn in: the full sidebar or the rail (collapsed). */
@@ -1201,6 +1203,7 @@ function Account({
   trailing?: ReactNode;
 }) {
   const t = useDesignT();
+  const [menuOpen, setMenuOpen] = useState(account.menuOpen ?? false);
   const text = account.name;
   const status = account.status;
   // The system status (only when not ok): a dot on the row, its text in the row's name and at the
@@ -1258,6 +1261,9 @@ function Account({
           ) : undefined
         }
         foot={account.footnote ? account.footnote : undefined}
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+        {...(account.menuOpen ? { modal: false } : {})}
         trigger={
           <button
             type="button"

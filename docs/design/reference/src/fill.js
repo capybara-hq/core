@@ -179,7 +179,7 @@
     if (o.mode === "rail") {
       return `<button class="r-sb-org" data-rail="true" aria-label="当前组织：${esc(org.name)}，切换组织"><span class="r-sb-org-initial">${esc(org.initial)}</span></button>`;
     }
-    return `<button class="r-sb-org" aria-label="当前组织：${esc(org.name)}，切换组织"><span class="r-sb-org-initial">${esc(org.initial)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(org.name)}</span><span class="r-sb-org-meta">~/${esc(org.slug)} · ${esc(org.role)}</span></span>${icon("chevrons-up-down", 14)}</button>`;
+    return `<button class="r-sb-org" aria-label="当前组织：${esc(org.name)}，切换组织"><span class="r-sb-org-initial">${esc(org.initial)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(org.name)}</span></span>${icon("chevrons-up-down", 14)}</button>`;
   }
 
   function adminBlock(o) {
@@ -310,8 +310,12 @@
         : "";
     const foot = rail
       ? `<div class="r-sb-foot"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true" title="${esc(C.account)}">${F.FIXTURE_USER.initial}</span></div>`
-      : `<div class="r-sb-foot"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true">${F.FIXTURE_USER.initial}</span><span class="r-ellipsis">${esc(C.account)}</span>${o.accountStatus ? '<span class="r-conv-dot" data-part="account-status-dot" data-tone="fail" aria-hidden="true"></span>' : ""}<span class="r-theme">${icon("sun", 12)}${icon("moon", 12)}</span></div>`;
-    return `<aside class="r-sidebar" data-mode="${o.mode || "full"}">${top}${context}${navBlock}${middle}${adminEntry}${foot}</aside>`;
+      : `<div class="r-sb-foot"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true">${F.FIXTURE_USER.initial}</span><span class="r-ellipsis">${esc(C.account)}</span>${o.accountStatus || o.accountMenu ? '<span class="r-conv-dot" data-part="account-status-dot" data-tone="fail" aria-hidden="true"></span>' : ""}<span class="r-theme">${icon("sun", 12)}${icon("moon", 12)}</span></div>`;
+    // The account menu drawn open (status head line, items, foot line), above the account row.
+    const accountMenu = o.accountMenu
+      ? `<div class="r-menu r-account-menu" role="menu" aria-label="${esc(C.account)}"><div class="r-menu-note r-menu-note-head"><span class="r-conv-dot" data-tone="fail" aria-hidden="true"></span>连接已断开</div><div class="r-menu-item" role="menuitem">个人设置</div><div class="r-menu-item" role="menuitem">退出登录</div><div class="r-menu-note">v0.1.0 · UTC+8</div></div>`
+      : "";
+    return `<aside class="r-sidebar" data-mode="${o.mode || "full"}">${top}${context}${navBlock}${middle}${adminEntry}${foot}${accountMenu}</aside>`;
   }
 
   // ── Page header, stat cards, action row ──────────────────────
@@ -321,7 +325,20 @@
     const title = o.title || L.title;
     // Loading (spec §4.2): a title-size bar, two action blocks and two tab bars; nothing known yet.
     if (o.loading) {
-      const loadCrumb = "";
+      // A loading head whose title is unknown keeps a 2-segment path when the page has one
+      // (`loading.path`); 1 and 2 segment heads otherwise draw none (spec §3).
+      const nPath = typeof o.loading === "object" ? (o.loading.path ?? 0) : 0;
+      const loadSegs = F.FORM_PAGE_FIXTURE.path.slice(0, nPath);
+      const loadCrumb =
+        nPath === 0
+          ? ""
+          : `<nav class="r-ph-crumb" aria-label="路径">${loadSegs
+              .map((c, i) =>
+                i < loadSegs.length - 1
+                  ? `<a href="#">${esc(c.label)}</a>`
+                  : `<span class="r-ink">${esc(c.label)}</span>`,
+              )
+              .join('<span aria-hidden="true">/</span>')}</nav>`;
       // `o.loading` is true (two actions, two tabs) or { actions, tabs } counts.
       const nActions = typeof o.loading === "object" ? (o.loading.actions ?? 0) : 2;
       const nTabs = typeof o.loading === "object" ? (o.loading.tabs ?? 0) : 2;
@@ -539,7 +556,7 @@
   function formPage(o = {}) {
     const P = F.FORM_PAGE_FIXTURE;
     const head = o.loading
-      ? pageHeader({ loading: { actions: 0, tabs: 0 } })
+      ? pageHeader({ loading: { actions: 0, tabs: 0, path: 2 } })
       : pageHeader({ path: true, title: P.title });
     return `<div class="r-app">${sidebar({ active: "agents", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${head}${formSections(o)}</div></div>${actionRow(o)}</main></div>`;
   }

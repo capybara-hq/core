@@ -1303,7 +1303,7 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Side
 - Interaction: §6.11.
 
 <!-- states: sidebar -->
-States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-collapsed`, `more-open`, `filter`, `filter-empty`, `archived`, `empty`, `loading`, `error`, `long-title`, `many-groups`, `guest`, `account-status`, `admin`, `rail`, `rail-medium`, `setup`, `setup-waiting`, `setup-hover`, `setup-focus`, `setup-rail`, `pending`
+States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-collapsed`, `more-open`, `filter`, `filter-empty`, `archived`, `empty`, `loading`, `error`, `long-title`, `many-groups`, `guest`, `account-status`, `account-menu`, `admin`, `rail`, `rail-medium`, `setup`, `setup-waiting`, `setup-hover`, `setup-focus`, `setup-rail`, `pending`
 
 <!-- size-table: sidebar -->
 | Part | State | Property | Value |

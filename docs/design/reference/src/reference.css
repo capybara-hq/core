@@ -11,6 +11,10 @@
 *::after {
   box-sizing: border-box;
 }
+:root {
+  /* The template frames' side pad from 600 up (the product's .cb-template sets it the same). */
+  --cb-content-pad: var(--cb-space-6);
+}
 html,
 body {
   margin: 0;
@@ -550,9 +554,6 @@ textarea {
 }
 .r-sb-org-name {
   font-weight: 600;
-}
-.r-sb-org-meta {
-  display: none;
 }
 .r-sb-context {
   flex: none;
@@ -3050,6 +3051,31 @@ textarea {
   color: var(--cb-muted);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
+}
+/* The account menu open above the account row (spec §6.13): head line, items, foot line. */
+.r-account-menu {
+  inset: auto var(--cb-space-2) calc(var(--cb-row-default) + var(--cb-space-4)) var(--cb-space-2);
+  min-width: 0;
+}
+.r-account-menu > .r-menu-note {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  margin-top: 0;
+  padding: var(--cb-space-1) var(--cb-pad-default-x);
+  border-top: 0;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-account-menu > .r-menu-note-head {
+  border-bottom: 1px solid var(--cb-line-soft);
+  margin-bottom: var(--cb-space-1);
+  padding-bottom: var(--cb-space-2);
+}
+.r-account-menu > .r-menu-item ~ .r-menu-note {
+  border-top: 1px solid var(--cb-line-soft);
+  margin-top: var(--cb-space-1);
+  padding-top: var(--cb-space-2);
 }
 .r-menu-sep {
   height: 1px;
