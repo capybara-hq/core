@@ -1007,9 +1007,7 @@ function DividerView({
     }
     // a manual compaction's other outcomes are quiet notices, never alarming (§6.16.7)
     case "compact-skipped":
-      return (
-        <RunDivider kind="notice" text={t("divider.compactSkipped", { k: e.keepRecentTurns })} />
-      );
+      return <RunDivider kind="notice" text={t("divider.compactSkipped")} />;
     case "compact-failed":
       return <RunDivider kind="notice" text={t("divider.compactFailed", { reason: e.reason })} />;
     case "compact-stopped":

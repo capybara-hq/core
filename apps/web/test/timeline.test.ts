@@ -602,18 +602,18 @@ describe("buildTimeline", () => {
         { kind: "divider", key: "e2", divider: "compacted", summary: "summary", savedTokens: 900 },
       ]);
     });
-    it("nothing to compact: the skipped divider with the kept turns", () => {
-      expect(
-        compactRun(
-          ev(2, "compaction_skipped", {
-            reason: "too_few_turns",
-            keepRecentTurns: 4,
-            turns: 1,
-            step: 0,
-          }),
-          ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
-        ),
-      ).toEqual([{ kind: "divider", key: "e2", divider: "compact-skipped", keepRecentTurns: 4 }]);
+    it("nothing to compact: the skipped divider, an earlier plan's reason too", () => {
+      for (const payload of [
+        { reason: "nothing_to_summarize", turns: 1, step: 0 },
+        { reason: "too_few_turns", keepRecentTurns: 4, turns: 1, step: 0 },
+      ]) {
+        expect(
+          compactRun(
+            ev(2, "compaction_skipped", payload),
+            ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
+          ),
+        ).toEqual([{ kind: "divider", key: "e2", divider: "compact-skipped" }]);
+      }
     });
     it("failed: the failure's first line, from compaction_failed or the run's failure", () => {
       expect(
