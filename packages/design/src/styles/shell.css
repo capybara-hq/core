@@ -623,6 +623,12 @@ a.cb-pageheader-path-seg:hover {
   .cb-pageheader-row {
     flex-wrap: wrap;
   }
+  /* The head's fillers drag only from 600 up: below it they take no room (the server render draws
+     them before the width is known), and their negative margin cancels the gap they bring. */
+  .cb-pageheader-row > .cb-drag-fill,
+  .cb-pageheader-titleless > .cb-drag-fill {
+    flex: 0 0 0;
+  }
   .cb-pageheader-text {
     flex: 1 1 0;
   }
@@ -997,8 +1003,9 @@ a.cb-stat-card:focus-visible {
 
 /* Compact (spec §4.2, maintainer decision 2026-11-22): the PageHeader draws no path row at any
    height, in a browser and in every shell: the floating row's back button and the h1 are enough
-   (medium and expanded have no floating row: the path row is their way up, and stays). A
-   title-less head keeps its actions. */
+   (medium and expanded have no floating row: a path of three segments or more is their way up,
+   and stays; a first-level page draws none at any width, page-header.tsx). A title-less head
+   keeps its actions. */
 @media not all and (min-width: 600px) {
   .cb-pageheader-path {
     display: none;

@@ -547,7 +547,7 @@ export function ConversationPage({
             {!sheet && !pushed && right === "properties" ? propertiesNode : null}
           </div>
           {announce !== undefined ? (
-            <span className="cb-sr-only" role="status" data-part="run-status">
+            <span className="cb-sr-only" role="status" data-part="run-announce">
               {announce}
             </span>
           ) : null}

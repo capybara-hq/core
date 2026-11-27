@@ -19,6 +19,7 @@ import {
 } from "../src/shell/shell-environment-script";
 import { parseCss } from "./css-rules";
 import { insideFrame } from "./support/page";
+import { matchMediaFor } from "./width";
 
 const root = () => document.documentElement;
 const PROPS = [
@@ -339,6 +340,29 @@ describe("the AppShell in a shell (after hydration)", () => {
     root().style.removeProperty("--cb-bg");
   });
 
+  it("from 600 up sends the ground (sidebar) as the background, below it the page (bg)", () => {
+    const setAppearance = vi.fn();
+    install(fakeShell({ capabilities: { "chrome@1": { setAppearance } } }).shell);
+    root().dataset.theme = "light";
+    root().style.setProperty("--cb-bg", "#fdfdfc");
+    root().style.setProperty("--cb-sidebar", "#edece7");
+    const real = window.matchMedia;
+    try {
+      window.matchMedia = matchMediaFor(1280).matchMedia;
+      const wide = renderShell();
+      expect(setAppearance).toHaveBeenLastCalledWith({ scheme: "light", background: "#edece7" });
+      wide.unmount();
+      setAppearance.mockClear();
+      window.matchMedia = matchMediaFor(480).matchMedia;
+      renderShell();
+      expect(setAppearance).toHaveBeenLastCalledWith({ scheme: "light", background: "#fdfdfc" });
+    } finally {
+      window.matchMedia = real;
+      root().style.removeProperty("--cb-bg");
+      root().style.removeProperty("--cb-sidebar");
+    }
+  });
+
   it("adds the seven color tokens only when every one is a plain color", async () => {
     const setAppearance = vi.fn();
     install(fakeShell({ capabilities: { "chrome@1": { setAppearance } } }).shell);
@@ -645,7 +669,19 @@ describe("desktop drag regions (desktop client spec §7.3)", () => {
     }
     expect(desktopRule("cb-shell-float", /left: var\(--cb-float-start\)/)).toBe(true);
     expect(desktopRule("cb-shell-band", /width: max\(var\(--cb-shell-reserve-start\)/)).toBe(true);
-    expect(desktopRule("cb-pageheader-path", /min-height: var\(--cb-shell-row\)/)).toBe(true);
+    // in-paper top rows end with the window's top row: the paper starts space.2 below its edge
+    expect(
+      desktopRule(
+        "cb-pageheader-path",
+        /min-height: max\(0px, calc\(var\(--cb-shell-row\) - var\(--cb-space-2\)\)\)/,
+      ),
+    ).toBe(true);
+    expect(
+      desktopRule(
+        "cb-title-bar",
+        /height: max\(var\(--cb-layout-title-bar\), calc\(var\(--cb-shell-row\) - var\(--cb-space-2\)\)\)/,
+      ),
+    ).toBe(true);
   });
 });
 

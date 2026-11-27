@@ -433,19 +433,10 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     ).toEqual([]);
   });
 
-  it("a hairline under the band closes it where the rail drops, and nowhere else", () => {
+  it("no hairline closes the band where the rail drops: band, rail and gutters are one ground", () => {
     const line =
       ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"]):has(> .cb-sidebar[data-mode="rail"])::after';
-    expect(decl(line, "top", BAND_QUERY)).toBe(
-      "calc(var(--cb-shell-band) + var(--cb-shell-rail-drop) - 1px)",
-    );
-    expect(decl(line, "left", BAND_QUERY)).toBe("0");
-    expect(decl(line, "right", BAND_QUERY)).toBe("0");
-    expect(decl(line, "height", BAND_QUERY)).toBe("1px");
-    // the sidebar's own divider colour, so the rail's divider meets it in a T
-    expect(decl(line, "background", BAND_QUERY)).toBe("var(--cb-line-soft)");
-    expect(decl(line, "pointer-events", BAND_QUERY)).toBe("none");
-    // drawn only inside the style query: no rail drop (browser, full sidebar, banner), no line
+    expect(decl(line, "content", BAND_QUERY)).toBeUndefined();
     expect(decl(line, "content")).toBeUndefined();
   });
 
@@ -967,5 +958,40 @@ describe("the side panel's header", () => {
       expect(b.closest(".cb-drag-fill"), b.outerHTML).toBeNull();
     }
     expect(head.querySelectorAll("button").length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("the paper's top gutter in the desktop shell (layered shell spec §5)", () => {
+  const rules = parseCss(css("shell-environment.css"));
+  const wide = rules.filter((r) => r.at === "(min-width: 600px)");
+
+  it("starts after the start reserve, so the band's sidebar toggle is never under it", () => {
+    expect(
+      wide.find((r) => r.selector === ':root[data-shell="desktop"] .cb-shell-gutter')?.decls.left,
+    ).toBe("var(--cb-shell-column-reserve, 0px)");
+    // and the toggle is a no-drag root as well (a later no-drag region cuts it out of a filler)
+    const roots = rules.filter(
+      (r) =>
+        !r.selector.includes(":has(") &&
+        r.decls["-webkit-app-region"] === "no-drag" &&
+        r.decls["app-region"] === "no-drag",
+    );
+    expect(roots.flatMap((r) => selectors(r.selector).flatMap(subjects))).toContain(
+      ".cb-shell-rail-toggle",
+    );
+  });
+
+  it("over a head without a path row it is as high as the top row, which the head starts below", () => {
+    const tall = wide.find(
+      (r) => r.selector.includes("> .cb-shell-gutter") && r.selector.includes(":has("),
+    );
+    expect(tall?.decls.height).toBe("max(var(--cb-space-2), var(--cb-shell-row))");
+    expect(
+      wide.find(
+        (r) =>
+          r.selector ===
+          ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))',
+      )?.decls["padding-top"],
+    ).toBe("max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)))");
   });
 });

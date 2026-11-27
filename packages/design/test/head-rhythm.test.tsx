@@ -234,7 +234,7 @@ const ALLOWED: Record<string, Record<string, string[]>> = {
     "padding-top": ["max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)))"],
   },
   ':root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path': {
-    "min-height": ["var(--cb-shell-row)"],
+    "min-height": ["max(0px, calc(var(--cb-shell-row) - var(--cb-space-2)))"],
   },
   ".cb-pageheader-description": { margin: ["var(--cb-layout-head-description) 0 0"] },
   ".cb-pageheader-tabs": {

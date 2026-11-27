@@ -109,7 +109,9 @@ controls, every overlay is no-drag. Added:
 
 The gap between the two conversation papers is the panel's resize handle, not a drag region. The
 macOS traffic lights and a Windows caption overlay keep using the shell's reserved start / end insets;
-on Windows the head's actions keep clear of the end reserve.
+on Windows the head's actions keep clear of the end reserve. The background the page reports to
+`chrome@1.setAppearance` (the Windows caption overlay's colour) is the ground (`sidebar`) from 600 up
+and the page (`bg`) below it, the colour at the window's top edge in each class.
 
 ### 6. Removing the StatusBar
 

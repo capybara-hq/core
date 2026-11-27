@@ -1867,8 +1867,8 @@ button.cb-property-row {
    apart and inset by space.2 on top, end and bottom, rounded, with no border and no shadow. The
    panel's start line goes and its resize handle fills the gap between the papers (the accent line
    at the gap's centre). The panel slot keeps no clip of its own (the handle lies outside its box):
-   its panel clips to the rounded corners. A maximised panel lies over the middle column's paper
-   and draws none of its own; a side sheet (below 1280) lies over the one paper. */
+   its panel clips to the rounded corners. A maximised panel lies in the middle column's paper and
+   draws no paper of its own; a side sheet (below 1280) lies over the one paper. */
 @media (min-width: 600px) {
   .cb-conv-page {
     gap: var(--cb-space-2);
@@ -1888,11 +1888,31 @@ button.cb-property-row {
     border-radius: inherit;
     overflow: clip;
   }
+  /* The panel is paper too, in the paper's colour, inline or maximised. */
+  .cb-conv-page .cb-conv-panel > .cb-rpanel {
+    background: var(--cb-bg);
+  }
+  /* Maximised it lies in the middle column's paper under the title bar: no start line, and its
+     bottom corners follow the paper's. */
+  .cb-conv-page .cb-conv-panel[data-full="true"] > .cb-rpanel {
+    border-left: 0;
+    border-radius: 0 0 var(--cb-radius-md) var(--cb-radius-md);
+    overflow: clip;
+  }
   .cb-conv-page .cb-conv-panel > .cb-conv-resize {
     left: calc(-1 * var(--cb-space-2));
   }
   .cb-conv-page .cb-conv-panel > .cb-drag-fill {
     left: 0;
+  }
+}
+/* Two viewport segments (spec §8): the segments place the panes (the hinge is the gap between
+   them), so the papers lie flush on the page with no inset or gap of their own; the `env()` tracks
+   above then line up with the segments. */
+@media (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2) {
+  .cb-conv-page {
+    gap: 0;
+    padding: 0 0 var(--cb-keyboard-inset, 0px);
   }
 }
 .cb-conv-scrim {

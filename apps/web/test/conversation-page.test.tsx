@@ -107,7 +107,7 @@ describe("the conversation page (ConversationPage)", () => {
     expect(screen.getByText("hi")).toBeTruthy();
     // (the title button; the flat title bar's plain copy of the title is drawn beside it)
     expect(container.querySelector('[data-part="title"]')?.textContent).toMatch(/^未命名会话 · /);
-    expect(container.querySelector('[role="status"][data-part="run-status"]')?.textContent).toBe(
+    expect(container.querySelector('[role="status"][data-part="run-announce"]')?.textContent).toBe(
       zh.chat.status.running,
     );
     expect(screen.getByText("hi").closest("[data-entry]")?.getAttribute("data-entry")).toBe("user");
@@ -146,12 +146,12 @@ describe("the conversation page (ConversationPage)", () => {
     expect(bar.textContent).not.toContain("Echo agent");
   });
 
-  it('the run state is announced in [data-part="run-status"], a polite live region', async () => {
+  it('the run state is announced in [data-part="run-announce"], a polite live region', async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
     const { container } = await renderChat("en");
     await screen.findByText("hi");
     const live = container.querySelector(
-      '[data-part="conv-main"] [role="status"][data-part="run-status"]',
+      '[data-part="conv-main"] [role="status"][data-part="run-announce"]',
     ) as HTMLElement;
     expect(live.getAttribute("role")).toBe("status");
     expect(live.textContent).toBe(en.chat.status.idle);
@@ -181,9 +181,9 @@ describe("the conversation page (ConversationPage)", () => {
     const { container } = await renderChat("en");
     await screen.findByText("hello");
     await vi.waitFor(() =>
-      expect(container.querySelector('[role="status"][data-part="run-status"]')?.textContent).toBe(
-        en.chat.status[state],
-      ),
+      expect(
+        container.querySelector('[role="status"][data-part="run-announce"]')?.textContent,
+      ).toBe(en.chat.status[state]),
     );
   });
 
@@ -832,7 +832,7 @@ describe("the conversation page (ConversationPage)", () => {
       const { container } = await renderChat();
       await screen.findByText("hi");
       const status = () =>
-        (container.querySelector('[role="status"][data-part="run-status"]') as HTMLElement)
+        (container.querySelector('[role="status"][data-part="run-announce"]') as HTMLElement)
           .textContent ?? "";
       expect(status()).toContain(en.chat.status.idle);
       fireEvent.change(input(), { target: { value: "next" } });

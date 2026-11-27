@@ -73,7 +73,7 @@ describe("ConversationPage (§5.4)", () => {
     render(<ConversationPage {...page({ announce: "运行中" })} />);
     const status = screen.getByRole("status");
     expect(status.textContent).toBe("运行中");
-    expect(status.getAttribute("data-part")).toBe("run-status");
+    expect(status.getAttribute("data-part")).toBe("run-announce");
     expect(status.classList.contains("cb-sr-only")).toBe(true);
     expect(status.closest('[data-part="conv-main"]')).toBeTruthy();
     expect(screen.getAllByRole("status")).toHaveLength(1);
@@ -1012,14 +1012,35 @@ describe("the conversation's papers (layered shell spec §2)", () => {
     }
   });
 
-  it("the resize handle fills the gap between the papers", () => {
+  it("the resize handle fills the gap between the papers and starts below the top gutter", () => {
     expect(decls(".cb-conv-page .cb-conv-panel > .cb-conv-resize").left).toBe(
       "calc(-1 * var(--cb-space-2))",
     );
+    // the handle spans its panel from the panel's top (inset 0 …); the panel starts below the
+    // page's top padding, which is the gutter's height, so the gutter never lies over it
+    const base = parseCss(css("conversation-page.css")).find(
+      (r) => r.at === null && r.selector === ".cb-conv-resize",
+    )?.decls;
+    expect(base?.inset?.split(" ")[0]).toBe("0");
+    expect(decls(".cb-conv-page").padding?.split(" ")[0]).toBe("var(--cb-space-2)");
+    const gutter = parseCss(css("shell.css")).find(
+      (r) => r.at === "(min-width: 600px)" && r.selector === ".cb-shell-gutter",
+    )?.decls;
+    expect(gutter?.height).toBe("var(--cb-space-2)");
+  });
+
+  it("the panel is paper in the paper's colour", () => {
+    expect(decls(".cb-conv-page .cb-conv-panel > .cb-rpanel").background).toBe("var(--cb-bg)");
   });
 
   it("a maximised panel draws no paper of its own; the shell main draws none on this page", () => {
-    expect(rules.some((r) => /\.cb-conv-panel\[data-full="true"\]/.test(r.selector))).toBe(false);
+    const slot = decls('.cb-conv-page .cb-conv-panel[data-full="true"]');
+    expect(slot.background).toBeUndefined();
+    expect(slot["box-shadow"]).toBeUndefined();
+    const full = decls('.cb-conv-page .cb-conv-panel[data-full="true"] > .cb-rpanel');
+    expect(full["border-left"]).toBe("0");
+    expect(full["border-radius"]).toBe("0 0 var(--cb-radius-md) var(--cb-radius-md)");
+    expect(full["box-shadow"]).toBeUndefined();
     const shell = parseCss(css("shell.css")).find(
       (r) => r.at === "(min-width: 600px)" && r.selector === ".cb-shell-main:has(.cb-conv-page)",
     )?.decls;

@@ -440,7 +440,7 @@ export function PageHeader(p: PageHeaderProps) {
         <div className="cb-pageheader-titleless" data-part="page-header-titleless">
           <h1 className="cb-sr-only">{p.title}</h1>
           {/* Without a path row the filler stands before the actions (the head's drag area). */}
-          {pathNode ?? <DragFill />}
+          {pathNode ?? (form === "compact" ? null : <DragFill />)}
           {actionsNode}
         </div>
       ) : (

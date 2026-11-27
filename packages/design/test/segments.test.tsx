@@ -186,3 +186,28 @@ describe("ListDetail on two segments", () => {
     );
   });
 });
+
+describe("two segments and the paper (layered shell spec §2)", () => {
+  it("the conversation's papers lie flush, so the env() tracks line up with the segments", () => {
+    const page = parseCss(css("conversation-page.css")).find(
+      (r) =>
+        r.at === "(horizontal-viewport-segments: 2), (vertical-viewport-segments: 2)" &&
+        r.selector === ".cb-conv-page",
+    )?.decls;
+    expect(page?.gap).toBe("0");
+    expect(page?.padding).toBe("0 0 var(--cb-keyboard-inset, 0px)");
+    // after the 600-up paper rules, so it wins at any width
+    const src = css("conversation-page.css");
+    expect(
+      src.lastIndexOf("(horizontal-viewport-segments: 2), (vertical-viewport-segments: 2)"),
+    ).toBeGreaterThan(src.indexOf("gap: var(--cb-space-2);"));
+  });
+
+  it("the inbox frame's trailing insets include the paper's end and bottom inset from 600 up", () => {
+    const frame = parseCss(css("templates.css")).find(
+      (r) => r.at === "(min-width: 600px)" && r.selector === ".cb-inbox-frame",
+    )?.decls;
+    expect(frame?.["--cb-segment-trail"]).toBe("calc(var(--cb-content-pad) + var(--cb-space-2))");
+    expect(frame?.["--cb-segment-trail-block"]).toBe("var(--cb-space-2)");
+  });
+});

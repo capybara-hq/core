@@ -193,10 +193,21 @@ function chromeOf(shell: ShellHandle): { setAppearance: (a: unknown) => unknown 
 
 const COLOR = /^(#[0-9a-f]{3,8}|rgba?\([\d.,%\s/]+\))$/i;
 
-/** The page's background token for the scheme (the computed `--cb-bg`, else the built-in one). */
+/** The window width from which the shell lies on the ground (layered shell spec §2). */
+const GROUND_QUERY = "(min-width: 600px)";
+
+/**
+ * The colour at the window's top edge for the scheme: from 600 up the shell's ground (the computed
+ * `--cb-sidebar`), below it the page (`--cb-bg`); else the built-in page background.
+ */
 function backgroundOf(root: HTMLElement, scheme: "dark" | "light"): string {
-  const computed = getComputedStyle(root).getPropertyValue("--cb-bg").trim();
-  return COLOR.test(computed) ? computed : PAGE_BACKGROUND[scheme];
+  const ground = window.matchMedia?.(GROUND_QUERY).matches === true;
+  const style = getComputedStyle(root);
+  for (const property of ground ? ["--cb-sidebar", "--cb-bg"] : ["--cb-bg"]) {
+    const computed = style.getPropertyValue(property).trim();
+    if (COLOR.test(computed)) return computed;
+  }
+  return PAGE_BACKGROUND[scheme];
 }
 
 /** The main color tokens `chrome@1` carries, by their `--cb-*` custom property. */
@@ -291,8 +302,12 @@ export function useShellEnvironment(singleScheme = false): ShellKind | null {
       attributes: true,
       attributeFilter: ["data-theme", "class", "style"],
     });
+    // crossing 600 moves the top edge between the ground and the page
+    const ground = window.matchMedia?.(GROUND_QUERY);
+    ground?.addEventListener?.("change", appearance);
     return () => {
       resend.current = null;
+      ground?.removeEventListener?.("change", appearance);
       observer?.disconnect();
       try {
         off?.();

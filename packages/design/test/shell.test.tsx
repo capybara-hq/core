@@ -1009,3 +1009,29 @@ describe("PageHeader path row and title-row filler (layered shell spec §3)", ()
     expect(fill.nextElementSibling?.getAttribute("data-part")).toBe("page-header-actions");
   });
 });
+
+describe("the head's fillers on compact (layered shell spec §3, compact unchanged)", () => {
+  it("below 600 they take no room, so the title keeps the row's width", () => {
+    const rule = parseCss(css("shell.css")).find(
+      (r) =>
+        r.at === "not all and (min-width: 600px)" &&
+        r.selector.includes(".cb-pageheader-row > .cb-drag-fill"),
+    );
+    expect(rule?.selector).toContain(".cb-pageheader-titleless > .cb-drag-fill");
+    expect(rule?.decls.flex).toBe("0 0 0");
+  });
+
+  it("a hydrated compact titleless head without a path draws no filler", () => {
+    stubWidth(390);
+    zh(
+      <PageHeader
+        path={[{ label: "acme", href: "/" }, { label: "device" }]}
+        title="Device"
+        titleHidden
+        actions={[{ label: "重启", variant: "default", onSelect: () => {} }]}
+      />,
+    );
+    const row = document.querySelector('[data-part="page-header-titleless"]') as HTMLElement;
+    expect(row.querySelector(":scope > .cb-drag-fill")).toBeNull();
+  });
+});

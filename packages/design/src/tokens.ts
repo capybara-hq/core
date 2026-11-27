@@ -98,7 +98,6 @@ export const SIZES = {
     sidebar: 256,
     "sidebar-rail": 48,
     content: 1120,
-    "content-pad": 32,
     chat: 720,
     "action-row": 40,
     gutter: 20,

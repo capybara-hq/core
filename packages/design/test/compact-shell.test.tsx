@@ -268,6 +268,13 @@ describe("back (Decision 19): history, else the last linked path segment, else /
     expect(back().getAttribute("href")).toBe("/agents");
   });
 
+  it("a first-level page (two segments, no path row drawn) still walks its path from the props", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    render(page("/skills", [{ label: "demo", href: "/home" }, { label: "skills" }]));
+    expect(document.querySelector('[data-part="path"]')).toBeNull();
+    expect(back().getAttribute("href")).toBe("/home");
+  });
+
   it("with no linked segment: the home", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     render(page("/x", [{ label: "x" }, { label: "y" }]));

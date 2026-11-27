@@ -38,7 +38,7 @@ const stopButton = (page: Page) =>
   page.getByRole("button", { name: designZh("composer.stop"), exact: true });
 // the page's run state live region (a run row's status carries the same part, without the role)
 const runStatus = (page: Page) =>
-  page.locator('[data-part="conv-main"] [role="status"][data-part="run-status"]');
+  page.locator('[data-part="conv-main"] [role="status"][data-part="run-announce"]');
 
 test("a new conversation is created on the first send only; the title is generated; rename", async ({
   page,
