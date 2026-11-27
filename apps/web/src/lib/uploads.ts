@@ -1,4 +1,5 @@
 import { ApiClientError, apiFetch } from "./api";
+import { sha256Hex } from "./sha256";
 
 /**
  * 对话附件（上传的文件）：登记 → 浏览器直传对象存储（预签名）→ finalize → 发消息时在 `files` 里引用 id。
@@ -142,12 +143,6 @@ export interface UploadedFile {
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/files`;
 
-/** Lower-case hex SHA-256 of the file's bytes (the kernel dedups and verifies by it). */
-export async function sha256Hex(file: Blob): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 /** Registers a composer upload: the kernel checks type and size and returns the presigned form. */
 export const createFile = (
   orgId: string,
@@ -223,7 +218,12 @@ export function uploadToStorage(
 export async function uploadFile(
   orgId: string,
   file: File,
-  opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+  opts: {
+    onProgress?: (fraction: number) => void;
+    signal?: AbortSignal;
+    /** Called with the file id once the kernel registered it (a removal in flight can discard it). */
+    onCreated?: (id: string) => void;
+  } = {},
 ): Promise<UploadedFile> {
   const sha256 = await sha256Hex(file);
   opts.signal?.throwIfAborted();
@@ -232,7 +232,10 @@ export async function uploadFile(
     { name: file.name, contentType: fileContentType(file), size: file.size, sha256 },
     opts.signal,
   );
+  opts.onCreated?.(created.file.id);
   opts.signal?.throwIfAborted();
+  // The kernel already holds these bytes: the file is a draft at once, nothing to store or finalize.
+  if (created.upload === null && created.file.status === "draft") return created.file;
   if (created.upload !== null) {
     await uploadToStorage(created.upload, file, opts);
     opts.signal?.throwIfAborted();

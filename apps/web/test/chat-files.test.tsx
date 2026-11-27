@@ -245,19 +245,59 @@ describe("输入框：上传文件", () => {
     expect(thumb.querySelector("img")?.getAttribute("src")).toBe(`${ATT}/${ID1}/download`);
   });
 
-  it("内核已有这些字节（upload 为 null）：不直传，直接 finalize", async () => {
+  it("内核已有这些字节（upload 为 null，已是 draft）：不直传、不 finalize，直接就绪", async () => {
     const calls = stubApi({
       [`POST ${ATT}`]: () =>
         json(201, {
-          file: { id: ID1, name: "chart.png", contentType: "image/png", size: 4 },
+          file: { id: ID1, name: "chart.png", contentType: "image/png", size: 4, status: "draft" },
           upload: null,
           expiresAt: new Date(Date.now() + 300_000).toISOString(),
         }),
     });
     const { container } = await renderChat();
     await userEvent.setup().upload(fileInput(container), png());
-    await vi.waitFor(() => expect(posted(calls, `${ATT}/${ID1}/finalize`)).toHaveLength(1));
+    await vi.waitFor(() => expect(posted(calls, ATT)).toHaveLength(1));
+    const group = await screen.findByRole("group", { name: en.chat.files });
+    await vi.waitFor(() => expect(within(group).queryByRole("progressbar")).toBeNull());
+    expect(posted(calls, `${ATT}/${ID1}/finalize`)).toHaveLength(0);
     expect(FakeXhr.instances).toHaveLength(0);
+  });
+
+  it("移除已上传的草稿：调用 DELETE /files/:id/draft", async () => {
+    const calls = stubApi({
+      [`DELETE ${ATT}/${ID1}/draft`]: () => new Response(null, { status: 204 }),
+    });
+    const { container } = await renderChat("en");
+    const user = userEvent.setup();
+    await user.upload(fileInput(container), png());
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    act(() => (FakeXhr.instances[0] as FakeXhr).respond(204));
+    const group = screen.getByRole("group", { name: en.chat.files });
+    await vi.waitFor(() => expect(posted(calls, `${ATT}/${ID1}/finalize`)).toHaveLength(1));
+    await vi.waitFor(() => expect(within(group).queryByRole("progressbar")).toBeNull());
+    await user.click(within(group).getByRole("button", { name: "Remove chart.png" }));
+    await vi.waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "DELETE" && c.url === `${ATT}/${ID1}/draft`),
+      ).toHaveLength(1),
+    );
+  });
+
+  it("上传中（已登记）移除：也丢弃内核上的草稿", async () => {
+    const calls = stubApi({
+      [`DELETE ${ATT}/${ID1}/draft`]: () => new Response(null, { status: 204 }),
+    });
+    const { container } = await renderChat("en");
+    const user = userEvent.setup();
+    await user.upload(fileInput(container), png());
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    const group = screen.getByRole("group", { name: en.chat.files });
+    await user.click(within(group).getByRole("button", { name: "Remove chart.png" }));
+    await vi.waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "DELETE" && c.url === `${ATT}/${ID1}/draft`),
+      ).toHaveLength(1),
+    );
   });
 
   it("PUT 直传：请求体是文件本身，带上 headers", async () => {

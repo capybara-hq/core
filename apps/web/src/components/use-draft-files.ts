@@ -70,8 +70,17 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
   const limits = useMemo<UploadLimits>(() => read ?? DEFAULT_LIMITS, [read]);
   // An upload's answer is the attachment: nothing cached changes.
   const { mutateAsync: upload } = useAppMutation({
-    fn: (v: { file: File; signal: AbortSignal; onProgress(p: number): void }) =>
-      uploadFile(orgId, v.file, { signal: v.signal, onProgress: v.onProgress }),
+    fn: (v: {
+      file: File;
+      signal: AbortSignal;
+      onProgress(p: number): void;
+      onCreated(id: string): void;
+    }) =>
+      uploadFile(orgId, v.file, {
+        signal: v.signal,
+        onProgress: v.onProgress,
+        onCreated: v.onCreated,
+      }),
     invalidates: () => [],
   });
   // Drops a draft on the kernel; the answer changes nothing cached.
@@ -85,6 +94,8 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
   const filesRef = useRef<DraftFile[]>([...initial]);
   /** 进行中的上传（移除或卸载时中止）。 */
   const uploads = useRef(new Map<string, AbortController>());
+  /** The file ids the kernel registered for uploads still in flight (a removal discards them). */
+  const created = useRef(new Map<string, string>());
   // New keys never repeat a given-back file's `f<n>`.
   const seq = useRef(initial.reduce((n, f) => Math.max(n, Number(f.key.slice(1)) || 0), 0));
 
@@ -113,7 +124,12 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
       uploads.current.get(key)?.abort();
       const ctrl = new AbortController();
       uploads.current.set(key, ctrl);
-      upload({ file, signal: ctrl.signal, onProgress: (p) => patch(key, { progress: p }) })
+      upload({
+        file,
+        signal: ctrl.signal,
+        onProgress: (p) => patch(key, { progress: p }),
+        onCreated: (id) => created.current.set(key, id),
+      })
         .then(
           (view) => {
             if (!ctrl.signal.aborted) patch(key, { status: "ready", progress: 1, id: view.id });
@@ -176,8 +192,9 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
   const remove = (key: string) => {
     uploads.current.get(key)?.abort();
     uploads.current.delete(key);
-    // A draft that finished uploading is dropped on the kernel too (best effort).
-    const id = filesRef.current.find((f) => f.key === key)?.id;
+    // A draft the kernel registered (finished or in flight) is dropped there too (best effort).
+    const id = filesRef.current.find((f) => f.key === key)?.id ?? created.current.get(key);
+    created.current.delete(key);
     if (id !== undefined) void discard(id);
     update((list) => list.filter((f) => f.key !== key));
   };
