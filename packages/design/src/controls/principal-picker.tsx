@@ -41,7 +41,7 @@ export type PrincipalPickerProps = {
   multiple?: boolean;
   /** Shown, `faint`, while nothing is chosen. */
   placeholder?: string;
-  /** Group the list under 人员 / 智能体 headings. */
+  /** Group the list under "People" / "Agents" headings. */
   groups?: boolean;
   /** Called with the raw text of the search field on every change, and `""` when it closes. */
   onSearch?(query: string): void;
@@ -395,7 +395,7 @@ function Panel({ model, value, multiple, loading, base, label }: ListProps & { m
 
 /**
  * A combobox that picks people and agents (spec §6.70): a field that opens a search field and a
- * list of options with avatars and hint lines, grouped under 人员 / 智能体 when asked, one choice
+ * list of options with avatars and hint lines, grouped under "People" / "Agents" when asked, one choice
  * that closes it or several that keep it open. From 600 up the panel is a `Popover`; on the
  * compact class it is a bottom sheet (a `ClassForms` form: the interaction differs).
  */

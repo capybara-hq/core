@@ -923,7 +923,7 @@ export * from "./shell";
 
 /**
  * A kanban board's columns and cards (spec §6.69; docs/design/reference/src/board.html draws the
- * same copy): 待审批 is a locked column (a gate), 已完成 is empty. `held` is the card the
+ * same copy): the pending-approval column is locked (a gate), the done column is empty. `held` is the card the
  * dragging, over and locked-over blocks hold.
  */
 export const BOARD_FIXTURE = {
@@ -957,7 +957,7 @@ export const BOARD_FIXTURE = {
 
 /**
  * The PrincipalPicker's fixed data (spec §6.70): the options of every block and test. The first
- * option has no hint, so a plain row comes first; 发票核对 is a disabled agent whose hint is the
+ * option has no hint, so a plain row comes first; the invoice-check agent is a disabled agent whose hint is the
  * reason; `search` is the query of the searching block and `active` the option it has active.
  */
 export const PRINCIPAL_PICKER_FIXTURE = {

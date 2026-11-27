@@ -445,7 +445,7 @@ function scanSetup(
           name === "setup"
         ) {
           // 只有 ctx.http.route / ctx.tools.register / ctx.extensionPoints.get|list /
-          // ctx.ui.view|action|query|invalidate|verifyEmbedToken 能被确认，其余写法无法确认
+          // ctx.ui.view|action|query|invalidate|verifyEmbedToken can be confirmed; other spellings cannot
           // (likewise only ctx.hooks.on and ctx.setup.check are confirmable)
           const rule =
             name === "http"

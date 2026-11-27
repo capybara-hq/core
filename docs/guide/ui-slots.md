@@ -64,7 +64,7 @@ A card a tool result opens in the conversation.
 
 ## `org.page`
 
-A full page in the organization navigation.
+A full page in the organization navigation. Only component contributions receive `params` (the page query string); views and embeds do not.
 
 - Version: 1
 - Scope: org

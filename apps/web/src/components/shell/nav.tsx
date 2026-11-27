@@ -268,7 +268,7 @@ export const pluginPageHref = (plugin: string, id: string) =>
 
 /**
  * An extension page of the navigation; `compact` `hidden`: not listed on the compact class;
- * `section`: where it sits (the primary entries after the built-in ones, or 更多).
+ * `section`: where it sits (the primary entries after the built-in ones, or the "More" group).
  */
 export type ExtensionNavItem = {
   id: string;

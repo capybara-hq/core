@@ -190,7 +190,7 @@ describe("PrincipalPicker", () => {
     const input = search();
     const active = () => document.getElementById(input.getAttribute("aria-activedescendant") ?? "");
     fireEvent.keyDown(input, { key: "ArrowUp" });
-    // the last enabled option: 发票核对 is disabled
+    // the last enabled option: the invoice-check agent is disabled
     expect(active()?.textContent).toContain("客服助手");
     fireEvent.keyDown(input, { key: "Home" });
     expect(active()?.textContent).toContain("林远");
