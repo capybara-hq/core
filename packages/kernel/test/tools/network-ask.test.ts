@@ -26,10 +26,12 @@ import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
+import { ESCALATION_RETRY_HINT } from "../../src/sandbox/review/permission-candidate.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { NETWORK_ASK_CANCELLED_NOTE } from "../../src/tools/approvals.service.js";
 import {
   addedToDeviceNote,
+  addressEscalationNote,
   addressLayerNote,
   allowedOnceNote,
   deniedNote,
@@ -129,6 +131,8 @@ interface Device {
   allowed: Set<string>;
   /** The provider's support allows running outside the sandbox (the hello says so). */
   outsideSandbox?: boolean;
+  /** The provider's support reports the open public network (the hello says so). */
+  openPublic?: boolean;
 }
 
 interface Setup {
@@ -190,7 +194,10 @@ async function connect(deviceId: string, credential: string, dev: Device) {
   const machine = new FakeMachine(wsUrl, credential, answer(dev), { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.hello({ outsideSandbox: dev.outsideSandbox === true });
+  machine.hello({
+    outsideSandbox: dev.outsideSandbox === true,
+    ...(dev.openPublic === true && { openPublic: true }),
+  });
   await machine.ready;
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(deviceId))) !== null,
@@ -547,6 +554,53 @@ describe("not asked", () => {
     const evs = await eventsOf(db, s.conversationId);
     const at = (t: string) => evs.findIndex((e) => e.type === t);
     expect(at("network_blocked")).toBeLessThan(at("tool_result"));
+  });
+
+  // one instruction about running outside the sandbox: the address note states only that a
+  // command run outside the sandbox reaches the address (the allowlist network), so the denial
+  // line keeps its retry part and drops the closed-address lead the note already says
+  it("an address note that states only the fact: the denial line keeps just the retry part", async () => {
+    s = await setup({ outsideSandbox: true });
+    s.dev.blocking.set("10.0.0.5", "address");
+    await post([curl(["10.0.0.5"])]);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    const [r] = await results();
+    expect(
+      r?.content.endsWith(
+        `[exit code: 56]\n[sandbox]${ESCALATION_RETRY_HINT}\n\n${addressLayerNote(["10.0.0.5"])}`,
+      ),
+    ).toBe(true);
+    expect(r?.content).not.toContain("The OS sandbox may have blocked");
+  });
+
+  it("an address note that says how to run outside the sandbox replaces the denial line", async () => {
+    s = await setup({ outsideSandbox: true, openPublic: true });
+    s.dev.blocking.set("10.0.0.5", "address");
+    await post([curl(["10.0.0.5"])]);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    const [r] = await results();
+    expect(r?.content.endsWith(`[exit code: 56]\n\n${addressEscalationNote(["10.0.0.5"])}`)).toBe(
+      true,
+    );
+    expect(r?.content).not.toContain("[sandbox]");
+  });
+
+  it("a refusal with no address note keeps the whole denial line", async () => {
+    s = await setup({ outsideSandbox: true });
+    // an org-layer host: not asked, a note naming who adds it (no address note)
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      deviceNetwork: { ceiling: "allowlist" },
+    })}::jsonb WHERE id = ${orgId}`.execute(raw);
+    onTestFinished(async () => {
+      await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);
+    });
+    s.dev.blocking.set("api.foo.com", "org");
+    await post([curl(["api.foo.com"])]);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    const [r] = await results();
+    expect(r?.content).toContain(
+      `[exit code: 56]\n[sandbox] The OS sandbox may have blocked this command's connection: private and local addresses are closed inside the sandbox, and so is any host the sandbox network does not allow.${ESCALATION_RETRY_HINT}\n\n[network] api.foo.com`,
+    );
   });
 
   it("background Bash is not asked", async () => {

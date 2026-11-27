@@ -16,6 +16,7 @@ import {
   addressEscalationHint,
   allowedOnceNote,
   clipKept,
+  denialHintFor,
   deniedNote,
   deviceAskTerms,
   NETWORK_ASK_CLIPPED_NOTE,
@@ -365,6 +366,25 @@ describe("planNetworkAsk", () => {
     ).toEqual([
       `[network] 10.0.0.5, 192.168.3.1 are private or local addresses. Private and local addresses are closed inside the sandbox; only a command run outside the sandbox reaches them, but ${ESCALATION_DEVICE_OFF_WHY}. Continue without them or tell the user.`,
     ]);
+  });
+
+  it("says what its address note covers, which picks the command's sandbox denial line", () => {
+    const address = [{ host: "10.0.0.5", port: 80, layer: "address" as const }];
+    const hint = { full: "\n[sandbox] full", afterAddressFact: "\n[sandbox] retry" };
+    const note = (ctx: Parameters<typeof planNetworkAsk>[2]) =>
+      planNetworkAsk(address, run(), ctx).addressNote;
+    // the note says how to retry escalated, or why that is not possible: no denial line
+    expect(note({ ...attended, escalation: true })).toBe("remedy");
+    expect(note({ ...attended, escalationRefusal: ESCALATION_DEVICE_OFF_WHY })).toBe("remedy");
+    expect(note({ offer: () => OFFER, unattended: unattended("wait") })).toBe("remedy");
+    // the note states only that a command run outside the sandbox reaches it: the retry part
+    expect(note(attended)).toBe("fact");
+    // no address host: no address note, the whole line
+    expect(planNetworkAsk([dev("a.com")], run(), attended)).not.toHaveProperty("addressNote");
+    expect(denialHintFor(hint, "remedy")).toBe("");
+    expect(denialHintFor(hint, "fact")).toBe("\n[sandbox] retry");
+    expect(denialHintFor(hint, undefined)).toBe("\n[sandbox] full");
+    expect(denialHintFor(undefined, undefined)).toBe("");
   });
 
   it("an org-layer host beyond the platform ceiling names the super admin, not the org admins", () => {

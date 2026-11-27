@@ -51,6 +51,7 @@ import { canonicalJson } from "./canonical-json.js";
 import { connectorSetups } from "./connector-setup.js";
 import { type ConnectorAuth, Credentials } from "./credentials.js";
 import { toolKeyIssue } from "./naming.js";
+import type { DenialHint } from "./network-asks.js";
 import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 
 export { BUILTIN_TOOL_NAMES } from "./builtin-names.js";
@@ -183,8 +184,10 @@ export type BuiltinResult =
        * Kernel-internal (never written to the log or sent to the model): the network hosts a
        * foreground command on a device was refused (`Bash`; network ask-to-allow spec §6.2). The
        * pipeline turns it into `network_blocked`, an ask to the device owner or notes.
+       * `denialHint`: the sandbox denial line, left out of the content; the pipeline appends the
+       * form that goes with its notes (`denialHintFor`).
        */
-      networkReport?: { deviceId: string; blocked: NetworkBlockedHost[] };
+      networkReport?: { deviceId: string; blocked: NetworkBlockedHost[]; denialHint?: DenialHint };
       /**
        * Kernel-internal (never written to the log or sent to the model): `gh auth login --web`'s
        * device code an exec printed (`Bash`; auto mode spec §6, P-D13). The pipeline turns it into
