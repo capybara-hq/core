@@ -40,6 +40,7 @@ import {
  * `usage`; a second request while it is queued returns it, an active ordinary run is
  * `conversation.busy`, and eval or other people's conversations are 404. A manual compaction ignores
  * `keepRecentTurns` (maintainer decision 2026-11-28): every turn before the latest is summarized.
+ * It always summarizes the transcript, on a model the in-context gate lists too (ruling R13).
  */
 
 /** What the provider received (step requests; compaction requests apart). */
@@ -185,10 +186,11 @@ describe("manual compaction", () => {
 
     const summaries = ev(events, "compaction_summary").filter((e) => e.runId === runId);
     expect(summaries).toHaveLength(1);
-    // idle compaction spec §9.4: summarized from the conversation's last request
-    expect(summaries[0]?.payload.method).toBe("in_context");
+    // ruling R13: model-fake passes the in-context gate, yet a manual compaction summarizes the
+    // transcript
+    expect(summaries[0]?.payload.method).toBe("transcript");
     expect(capture.compactions).toHaveLength(1);
-    expect(capture.compactions[0]?.system).toEqual(capture.sent.at(-1)?.system);
+    expect(capture.compactions[0]?.system).not.toEqual(capture.sent.at(-1)?.system);
     const usage = ev(events, "usage").filter(
       (e) => e.runId === runId && e.payload.purpose === "compaction",
     );
@@ -199,18 +201,19 @@ describe("manual compaction", () => {
     expect(ev(events, "assistant_message").filter((e) => e.runId === runId)).toEqual([]);
   });
 
-  it("after a finished run, summarizes in context with no re-rendered opener: the next request is the summary, then the new message", async () => {
+  it("after a finished run, keeps the #990 plan on a gated model: every turn before the latest summarized, the latest turn verbatim, then the new message", async () => {
     const { orgId, conv } = await setup();
     await seedTurns(orgId, conv, 6);
+    const before = ev(await eventsOf(db, conv), "user_message");
+    const latest = before.at(-1);
     const runId = await compacted(conv, orgId);
     const events = await eventsOf(db, conv);
     const summary = ev(events, "compaction_summary").find((e) => e.runId === runId);
-    expect(summary?.payload.method).toBe("in_context");
-    // idle compaction spec §9.4: the latest turn's opener was answered before the reference
-    // call's reply, so the summary records no opener to show again
-    expect(summary?.payload.coversUpToSeq).toBeGreaterThan(
-      ev(events, "user_message").at(-1)?.seq ?? Number.POSITIVE_INFINITY,
-    );
+    // ruling R13: the transcript path with the manual plan, never the in-context one
+    expect(summary?.payload.method).toBe("transcript");
+    // the latest turn fits the manual tail budget whole: the summary ends right before it, and
+    // its opener is kept, not re-rendered
+    expect(summary?.payload.coversUpToSeq).toBe((latest?.seq ?? 0) - 1);
     expect(summary?.payload.openingSeqs).toBeUndefined();
 
     capture.reset();
@@ -221,13 +224,15 @@ describe("manual compaction", () => {
     const blocks = Array.isArray(head?.content) ? head.content : [];
     const first = blocks[0]?.type === "text" ? blocks[0].text : "";
     expect(first).toMatch(/^<conversation_summary>/);
-    expect(first).not.toContain("shown again verbatim");
     const userTexts = (request?.messages ?? [])
       .filter((m) => m.role === "user")
       .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
       .flatMap((b) => (b.type === "text" ? [b.text] : []));
-    expect(userTexts.slice(1).filter((t) => !t.startsWith("From "))).toEqual(["echo:after"]);
-    expect(request?.messages.some((m) => m.role === "assistant")).toBe(false);
+    expect(userTexts.slice(1).filter((t) => !t.startsWith("From "))).toEqual([
+      `echo:turn 5 ${"words ".repeat(40)}`,
+      "echo:after",
+    ]);
+    expect(request?.messages.some((m) => m.role === "assistant")).toBe(true);
   });
 
   it("records a compaction with nothing to summarize and still finishes the compact run", async () => {
@@ -309,7 +314,7 @@ describe("manual compaction", () => {
     expect(rest.filter((m) => m.role === "assistant").length).toBeGreaterThan(1);
   });
 
-  it("right after an aborted run whose reply has an unanswered tool call: a summary, every call paired", async () => {
+  it("right after an aborted run whose reply has an unanswered tool call: a transcript summary, every call paired", async () => {
     const { orgId, conv } = await setup();
     await seedTurns(orgId, conv, 5);
     // a step stopped mid-reply: the assistant message keeps its tool call, no result follows
@@ -330,11 +335,17 @@ describe("manual compaction", () => {
     const runId = await compacted(conv, orgId);
     const events = await eventsOf(db, conv);
     const summaries = ev(events, "compaction_summary").filter((e) => e.runId === runId);
-    expect(summaries.map((e) => e.payload.method)).toEqual(["in_context"]);
+    // ruling R13: the transcript path
+    expect(summaries.map((e) => e.payload.method)).toEqual(["transcript"]);
     expect(ev(events, "compaction_failed")).toEqual([]);
     expect(capture.compactions).toHaveLength(1);
-    const request = capture.compactions[0] as ModelRequest;
-    expect(unpairedCalls(request)).toEqual([]);
+    expect(unpairedCalls(capture.compactions[0] as ModelRequest)).toEqual([]);
+    // the aborted reply is in the kept latest turn: the next request still pairs its call
+    capture.reset();
+    await postMessage(owner, orgId, conv, "echo:after");
+    await waitForTerminal(db, conv, 7, 30_000);
+    expect(capture.sent[0]).toBeDefined();
+    expect(unpairedCalls(capture.sent[0] as ModelRequest)).toEqual([]);
   });
 
   it("returns the compact run already queued instead of starting a second one", async () => {

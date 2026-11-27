@@ -1330,6 +1330,11 @@ export interface CompactionOutcome {
  */
 type InContextFallback =
   | InContextSkip
+  /**
+   * `CompactOptions.manual`: a manual compact run keeps the #990 plan on the transcript path
+   * (ruling R13).
+   */
+  | "manual"
   /** `CompactOptions.transcriptOnly` (the reactive path: its last request overflowed). */
   | "transcript_only"
   /** The model is not in the quality-gate table ({@link inContextSummaryAllowed}). */
@@ -1362,7 +1367,8 @@ interface InContextSummary {
 
 /**
  * The in-context summary request of a compaction (idle compaction spec §9.4), or why the
- * compaction summarizes the transcript: the reactive path's `transcriptOnly`, a model the quality
+ * compaction summarizes the transcript: a manual compact run (ruling R13: it keeps the #990 plan),
+ * the reactive path's `transcriptOnly`, a model the quality
  * gate does not list, a compaction model other than the last call's, no live snapshot, or a skip of
  * {@link buildInContextCompactionRequest}. Media come from the step's own media cache (what the
  * next step would send). Never throws.
@@ -1378,6 +1384,9 @@ async function inContextSummary(
   plan: { coversUpToSeq: number },
   opts: CompactOptions,
 ): Promise<InContextSummary | { skip: InContextFallback }> {
+  // ruling R13: only automatic compactions summarize in context; conditioned on `manual`, never
+  // on `force` (the reactive path forces too, and phase 2's idle compact run is not manual)
+  if (opts.manual === true) return { skip: "manual" };
   if (opts.transcriptOnly) return { skip: "transcript_only" };
   if (!inContextSummaryAllowed(ref.provider, info.id)) return { skip: "quality_gate" };
   if (deps.liveSnapshot === undefined) return { skip: "no_snapshot" };
@@ -1407,13 +1416,10 @@ async function inContextSummary(
   }
   // the openers the summary re-renders, and so the ones the settled-point check admits (what is
   // checked is what is re-rendered): only those after the reference call's reply, which the model
-  // has not answered (a turn-start compaction's); a manual compact run's candidates are the latest
-  // message run's, already answered at a settled point, so it re-renders none
+  // has not answered (a turn-start compaction's)
   const opening = unansweredOpeners(
     events,
-    opts.manual === true
-      ? manualOpeningSeqs(events, coversUpToSeq, input.absorbedUpToSeq)
-      : openingSeqs(events, input.runId, coversUpToSeq, input.absorbedUpToSeq),
+    openingSeqs(events, input.runId, coversUpToSeq, input.absorbedUpToSeq),
   );
   // ruling R9: only at a settled point; a run opener is re-rendered after the summary (R9a)
   if (
@@ -1589,8 +1595,8 @@ export async function runCompaction(
   const tailBudget = bounds.target - estimateTokens([], built.system, built.tools);
   // a manual compaction ignores keepRecentTurns and keeps at most about a fifth of the window of
   // the latest turn (spec §4.7, maintainer decision 2026-11-28); the reactive path (`force`
-  // without `manual`) plans like the proactive one. With a model in IN_CONTEXT_SUMMARY_MODELS the
-  // in-context summary below covers everything instead (idle compaction spec §9.4)
+  // without `manual`) plans like the proactive one. A manual compaction always summarizes the
+  // transcript with this plan (ruling R13); an automatic one may summarize in context below
   const manual = opts.manual === true;
   const plan = manual
     ? compactionPlan(events, compaction, manualTailBudget(info.contextWindow, tailBudget), {
@@ -1637,8 +1643,9 @@ export async function runCompaction(
   // the summary call's output cap: the org's effective setting, never above the model's own cap
   // (context compaction spec §4.8)
   const summaryCap = Math.min(compaction.maxOutputTokens, info.maxOutputTokens);
-  // idle compaction spec §9.4: every compaction tries the summary from the conversation's last
-  // request first (its cached prefix); a skip summarizes the transcript exactly as before
+  // idle compaction spec §9.4: an automatic compaction tries the summary from the conversation's
+  // last request first (its cached prefix); a skip (always for a manual one, ruling R13)
+  // summarizes the transcript exactly as before
   const inContext = await inContextSummary(
     deps,
     input,

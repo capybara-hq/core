@@ -1246,12 +1246,11 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
-  it("a manual compaction after a finished run (spec §4.7; idle compaction spec §9.4) summarizes in context up to the compaction point, re-renders no answered opener: the summary then the new message, zero drift", async () => {
+  it("a manual compaction inside the latest turn (spec §4.7, maintainer decision 2026-11-28; ruling R13: on the transcript path, a gated model too): earlier turns and the turn's message summarized, the latest pair kept, zero drift", async () => {
     reset();
     // fake-1 (W 32000): the manual tail budget is a fifth of the window (6400). The tool call's
     // input (≈7.5k tokens) puts the latest pair over it, below the automatic trigger; the call is
-    // to a tool the agent lacks, so its result and the reply stay short. The manual transcript
-    // plan would cut before that pair; the in-context path below covers it too
+    // to a tool the agent lacks, so its result and the reply stay short
     const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
     const conv = await createConv(owner, orgId, agentId);
     let n = 0;
@@ -1278,46 +1277,27 @@ describe("reconstructRequest：基线零漂移", () => {
       (e) =>
         e.type === "assistant_message" && e.payload.content.some((b) => b.type === "tool_call"),
     );
-    const reply = events.findLast((e) => e.type === "assistant_message");
     expect(summary?.type).toBe("compaction_summary");
     if (summary?.type !== "compaction_summary") return;
-    // model-fake passes the in-context quality gate, so the manual compaction summarizes the
-    // conversation's last request (idle compaction spec §9.4, boundary mode "all"): it covers
-    // everything up to the compaction point, the latest pair and reply included, instead of the
-    // manual transcript plan's cut before the pair. The latest message run's opener was answered
-    // before the reference call's reply, so it is not re-rendered (no openingSeqs)
-    expect(summary.payload.method).toBe("in_context");
-    expect(summary.payload.coversUpToSeq).toBeGreaterThan(call?.seq ?? Number.POSITIVE_INFINITY);
-    expect(summary.payload.coversUpToSeq).toBeGreaterThanOrEqual(reply?.seq ?? 0);
-    expect(summary.payload.coversUpToSeq).toBeGreaterThan(message?.seq ?? Number.POSITIVE_INFINITY);
-    expect(summary.payload.openingSeqs).toBeUndefined();
+    // ruling R13: model-fake passes the in-context gate, yet a manual compaction keeps the #990
+    // plan on the transcript path
+    expect(summary.payload.method).toBe("transcript");
+    // the boundary sits inside the latest turn, right before its tool pair; the opener is recorded
+    expect(summary.payload.coversUpToSeq).toBeGreaterThanOrEqual(message?.seq ?? 0);
+    expect(summary.payload.coversUpToSeq).toBeLessThan(call?.seq ?? 0);
+    expect(summary.payload.openingSeqs).toEqual([message?.seq]);
 
     await turn("echo:after");
     const request = sent.at(-1);
     const head = request?.messages[0];
     const blocks = Array.isArray(head?.content) ? head.content : [];
-    expect(blocks[0]).toEqual({
-      type: "text",
-      text: summaryText(summary.payload.text, {
-        openers: 0,
-        keptTail: false,
-        method: "in_context",
-      }),
-    });
-    // the summary, then directly the new message: the answered opener is not shown again
-    const userTexts = (request?.messages ?? [])
-      .filter((m) => m.role === "user")
-      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
-      .flatMap((b) => (b.type === "text" ? [b.text] : []));
-    expect(userTexts.slice(1).filter((t) => !t.startsWith("From "))).toEqual(["echo:after"]);
-    expect(JSON.stringify(request?.messages)).not.toContain("Tally each row.");
-    // the earlier turn and the latest tool pair are only in the summary
+    expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(/^<conversation_summary>/);
+    expect(blocks[0]?.type === "text" && blocks[0].text).toContain(
+      "The message that opened the current turn follows, shown again verbatim; the summary covers it.",
+    );
+    expect(blocks.slice(1).some((b) => b.type === "text" && b.text === ask)).toBe(true);
+    // the earlier turn is only in the summary
     expect(JSON.stringify(request?.messages.slice(1))).not.toContain("echo:first");
-    expect(
-      request?.messages.some(
-        (m) => m.role === "assistant" && m.content.some((b) => b.type === "tool_call"),
-      ),
-    ).toBe(false);
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 

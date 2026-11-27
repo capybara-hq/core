@@ -37,10 +37,15 @@ import { estimateTokens } from "../../src/runtime/context/tokens.js";
 import {
   BUDGET_WRAP_UP_REMINDER,
   type ModelStepDeps,
+  type ModelStepInput,
   RunError,
+  readAllEvents,
+  resolveAgentTools,
+  runCompaction,
   runFinalWrapUp,
   runModelStep,
   type StreamSink,
+  stepToolsOf,
   TOOLS_UNSUPPORTED_REMINDER,
   WRAP_UP_REMINDER,
 } from "../../src/runtime/model-call.js";
@@ -2291,6 +2296,53 @@ describe("runModelStep", () => {
         expect(summary?.payload.method).toBe("transcript");
         expect(h.skips).toEqual(["transcript_only"]);
         expect(await ofType("model_call")).toHaveLength(3);
+      });
+
+      it("a manual compaction on a gated model keeps the #990 plan on the transcript path (ruling R13): skip reason manual, no snapshot read", async () => {
+        let snapshotReads = 0;
+        const h = harness({ beforeSnapshot: () => snapshotReads++ });
+        await cachedStep(h);
+        const latest = (await ofType("user_message")).at(-1)?.seq as number;
+        // what CompactionService.force does for a compact run (`force: true, manual: true`)
+        const compactRunId = randomUUID();
+        await seedRun(compactRunId);
+        const input: ModelStepInput = {
+          source: "web",
+          orgId,
+          conversationId,
+          runId: compactRunId,
+          step: 0,
+          agent: icAgent(),
+          agentVersion: 1,
+          absorbedUpToSeq: await lastSeq(),
+          signal: new AbortController().signal,
+          sink: () => {},
+          agentId,
+          accountId,
+          conversationKind: "chat",
+        };
+        const events = await readAllEvents(eventLog, conversationId);
+        const tools = stepToolsOf(await resolveAgentTools(h.d, input, events), input, h.d);
+        const out = await runCompaction(
+          h.d,
+          input,
+          events,
+          h.d.config.get().runtime,
+          { ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 },
+          tools,
+          { force: true, manual: true },
+        );
+        expect(out.failed).toBe(false);
+        expect(h.skips).toEqual(["manual"]);
+        expect(snapshotReads).toBe(0);
+        const [summary] = await ofType("compaction_summary");
+        expect(out.summarySeq).toBe(summary?.seq);
+        expect(summary?.payload.method).toBe("transcript");
+        // the manual plan: every turn before the latest summarized, the latest turn kept whole
+        expect(summary?.payload.coversUpToSeq).toBe(latest - 1);
+        expect(summary?.payload.openingSeqs).toBeUndefined();
+        const compaction = h.sent.find((r) => r.purpose === "compaction") as ModelRequest;
+        expect(compaction.system).not.toEqual((h.sent[0] as ModelRequest).system);
       });
 
       it("a compaction whose in-context request would not fit summarizes the transcript", async () => {

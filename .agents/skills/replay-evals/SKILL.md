@@ -468,13 +468,13 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   request itself is never replayed (requests rebuild from the logged `compaction_summary` text), so
   its retry note needs no `DriftReason`.
 - The in-context summary (idle compaction spec §9.4, `runtime/context/in-context-compaction.ts`):
-  every compaction first tries a side request that is the conversation's last request rebuilt
+  an automatic compaction first tries a side request that is the conversation's last request rebuilt
   through the zero-drift path (`liveSnapshot` + `reconstructInputs` / `assembleModelRequest`),
   extended with what the next step would add, plus the summary instruction (`toolChoice: "none"`,
   the recorded `cacheTtl`, purpose `compaction`), so the vendor serves the prefix from its cache. It
   runs only for a model in the quality-gate table (`IN_CONTEXT_SUMMARY_MODELS`), the same model as
-  the last call, and never on the reactive path (`transcriptOnly`) or in replays (no
-  `liveSnapshot`); any skip summarizes the transcript (a `debug` line, `context=Compaction`). With
+  the last call, and never for a manual compact run (`manual`, ruling R13: the #990 transcript
+  plan), on the reactive path (`transcriptOnly`) or in replays (no `liveSnapshot`); any skip summarizes the transcript (a `debug` line, `context=Compaction`). With
   boundary mode `all` it covers every event the request includes. `compaction_summary.method`
   (`in_context` / `transcript`, absent = transcript) records the path; it is not model-visible
   except through the summary's framing sentence (`summaryText`), derived from the log, so it needs

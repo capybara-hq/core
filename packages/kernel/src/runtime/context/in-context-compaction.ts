@@ -110,10 +110,10 @@ function referenceReplySeq(events: readonly ConversationEvent[]): number | undef
 
 /**
  * The run openers an in-context summary re-renders after its text (idle compaction spec §9.4):
- * only those of `openers` (`openingSeqs`, or `manualOpeningSeqs` for a manual compaction) after
- * the reference call's reply, which the model has not answered yet (a compaction at a turn's
- * start). An opener before it was answered: the summary covers it and the request does not show
- * it again, so a manual or settled compaction re-renders none. Sorted as given.
+ * only those of `openers` (`openingSeqs`) after the reference call's reply, which the model has
+ * not answered yet (a compaction at a turn's start). An opener before it was answered: the summary
+ * covers it and the request does not show it again, so a settled compaction re-renders none. A
+ * manual compaction never summarizes in context (ruling R13). Sorted as given.
  */
 export function unansweredOpeners(
   events: readonly ConversationEvent[],

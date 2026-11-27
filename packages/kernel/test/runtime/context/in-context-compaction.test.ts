@@ -727,7 +727,7 @@ describe("unansweredOpeners (idle compaction spec §9.4: only unanswered openers
     expect(unansweredOpeners([...events, ev(4, "user_message")], [4])).toEqual([4]);
   });
 
-  it("an opener the reference reply answered (a manual or settled compaction) is dropped", () => {
+  it("an opener the reference reply answered (a settled compaction) is dropped", () => {
     const events = [ev(1, "user_message"), ev(2, "model_call"), ev(3, "assistant_message")];
     expect(unansweredOpeners(events, [1])).toEqual([]);
   });

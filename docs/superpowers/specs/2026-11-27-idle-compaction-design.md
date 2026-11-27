@@ -790,8 +790,8 @@ When it applies: the same model as the last call (a model switch breaks the pref
 guard too); the rebuild has no drift; it fits (last request + reply + instruction +
 `maxOutputTokens` + reserve `<= W`: every sent request already fits `W − O_p − R_p`, compaction spec
 §4.3, and the 20k summary cap is usually below `O_p`, so it usually fits unless the last reply is
-large). Otherwise inline and manual compactions take the transcript path as today; idle compaction
-does not run (§4.3 check 9).
+large). Otherwise inline compactions take the transcript path as today (manual ones always do,
+ruling R13 below); idle compaction does not run (§4.3 check 9).
 
 Interaction with chunked compaction (§4.5): they do not combine. Chunking exists because the
 material exceeds one request; the in-context request is by construction one request the model
@@ -893,13 +893,16 @@ end (phase 2's idle compaction) is a settled point. Only openers after the refer
 compaction inside or after a run re-renders none and the next message follows the summary directly
 (final branch review, 2026-11-28: re-rendering an answered message invited the model to redo it).
 
-Manual compaction (compaction spec §4.7, maintainer decision 2026-11-28) keeps its own plan (every
-turn before the latest summarized): a plan that finds nothing writes `compaction_skipped` and the
-in-context path never runs. With a plan, a gated model still summarizes in context with `"all"`,
-covering everything up to the compaction point. A compact run is started by no message, so its
-opener candidates are the latest message run's (`manualOpeningSeqs`), for both the settled-point
-check and the re-render after the summary: what is checked is what is re-rendered. At a settled point
-the latest run's reply answered them, so a manual in-context summary records no `openingSeqs`.
+Manual compaction (ruling R13, 2026-11-28, reversing the earlier rebase resolution): a manual
+compact run (`CompactOptions.manual`, set with `force` by `CompactionService.force`) always takes
+the transcript path with the plan of compaction spec §4.2 / §4.7 (issue #990) unchanged: every turn
+before the latest summarized, the newest tool pairs of the latest turn kept verbatim within about a
+fifth of the window, the latest message run's openers re-rendered (`manualOpeningSeqs`). Its summary
+records `method: "transcript"`, and the in-context attempt skips with reason `manual` before it
+reads anything. The in-context path applies only to automatic proactive compaction and to phase 2's
+idle compact run, which is a compact run but must not set `manual`; the reactive path stays
+transcript-only (`transcriptOnly`). The condition is the `manual` flag, never `force` (the reactive
+path forces too).
 
 ### 9.5 Plugin gaps (plugins repository)
 
