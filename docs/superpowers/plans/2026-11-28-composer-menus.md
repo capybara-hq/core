@@ -261,3 +261,9 @@ Rebase on main, then: composer top strip and control row per spec §6 / §7 (des
   no third blind pass). ACCEPTED + changesets 92469e2af; origin/main merged (project skills' bare
   names carried into the menu); verify --fast, check:platform-ops, check:web-ui and the changed
   kernel tests pass. Next: push, ready PR, reference-update + visual-update, ci-ok.
+- PR #1000 opened. The first visual-update failed on fidelity (the compact composer menu row with a
+  description is taller than `touch.row`, as drawn): the size table now measures `min-height`.
+  origin/main with the layered shell (#979) merged in 9a0ca7427. Compare rerun in the Linux image is
+  unchanged (anti-aliasing only), fidelity for both components passes, verify --fast passes;
+  reference-update (42069b21c) and visual-update (5c5bcaf3d) ran on the branch. Next: ci-ok, then
+  Phase B once the file library is on main.
