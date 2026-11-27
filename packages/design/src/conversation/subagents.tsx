@@ -44,7 +44,7 @@ export type SubagentFinishStatus =
   | "failed";
 
 /** What a waiting sub-agent waits for (`subagent_waiting.kind`). */
-export type SubagentWaitKind = "approval" | "input" | "connect";
+export type SubagentWaitKind = "approval" | "input" | "connect" | "watch";
 
 export type SubagentRowData = {
   /** The child conversation id (`subagentId`). */

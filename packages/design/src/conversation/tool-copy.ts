@@ -38,8 +38,11 @@ export type ToolNotice = "not_loaded" | "reconciling";
  */
 export type ToolAutoGranted = "directory" | "host" | "outside-sandbox" | "sensitive";
 
-/** What a call waits for from a person (§6.16.9): an approval, an answer or a connection. */
-export type ToolWaiting = "approval" | "input" | "connect";
+/**
+ * What a call waits for (§6.16.9): a person's approval, answer or connection, or `watch`, a
+ * watched wait (`InputRequired.watch`) where the tool watches something and nobody is asked.
+ */
+export type ToolWaiting = "approval" | "input" | "connect" | "watch";
 
 /**
  * The verb categories of the §7 table: search, meta, question and connector rows count with tools;
@@ -126,6 +129,8 @@ const SUMMARY_ORDER: readonly ToolVerbGroup[] = ["command", "task", "tool", "rea
  */
 export function waitingText(what: ToolWaiting, who: string | undefined, locale: Locale): string {
   const m = messages[locale];
+  // a watched wait names no one: the tool is watching, nobody is asked
+  if (what === "watch") return m["tool.waiting.watch"];
   return who === undefined
     ? m[`tool.waiting.${what}` as DesignKey]
     : fmt(m[`tool.waiting.${what}By` as DesignKey], { who });
