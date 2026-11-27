@@ -57,7 +57,9 @@ import {
  * pair's delayed `automation-coalesce` job, and the flush turns the window into one run keyed by
  * its first event. The tests call the dispatcher and the coalescer directly while outbox adds to
  * the maintenance queue fail (`failDispatch`), so owed rows stay to be read; one test runs the
- * real queue end to end and promotes the delayed job instead of waiting for it.
+ * real queue end to end and promotes the delayed job instead of waiting for it. The last
+ * describe is the whole path through the real queues: an automation made over HTTP, a second agent's
+ * tool call emitting through `ctx.triggers.emit`, the coalesced run in the subject conversation.
  */
 
 const PLUGIN = "fake-trigger-source";
@@ -579,5 +581,190 @@ describe("trigger event dispatch", () => {
       20_000,
       "the fire job's claim",
     );
+  });
+});
+
+/** The reporter agent's tool call emits an item event; resolves to the stored event's id. */
+async function emitViaTool(
+  reporter: string,
+  over: {
+    type: string;
+    status: string;
+    summary: string;
+  },
+): Promise<string> {
+  const input = {
+    type: over.type,
+    subject: ITEM,
+    facts: { status: over.status, priority: 2, labels: ["bug"], projectKey: "CORE" },
+    summary: over.summary,
+    dedupeKey: `key-${++seq}`,
+  };
+  await postMessage(owner, orgId, reporter, `tool:${TOOL}:${JSON.stringify(input)}`);
+  const posted = (await eventsOf(db, reporter)).filter((e) => e.type === "user_message").length;
+  await waitForTerminal(db, reporter, posted, 20_000);
+  const result = (await eventsOf(db, reporter)).findLast(
+    (e) => e.type === "tool_result" && e.payload.toolKey === TOOL,
+  );
+  const content = result?.type === "tool_result" ? result.payload.content : "{}";
+  const { eventId } = JSON.parse(content) as { eventId?: string };
+  if (!eventId) throw new Error(`the emit failed: ${content}`);
+  return eventId;
+}
+
+/** Relays the owed dispatch jobs and waits until the events are dispatched. */
+async function dispatched(...eventIds: string[]): Promise<void> {
+  await drainOutbox(k.app, { jobName: "trigger-dispatch" });
+  for (const id of eventIds)
+    await waitFor(async () => (await stateOf(id)) === "dispatched", 20_000, `${id} dispatched`);
+}
+
+/** Closes the window the event opened: its delayed coalesce job runs now. */
+async function closeWindow(automationId: string, firstEventId: string): Promise<void> {
+  await drainOutbox(k.app, { jobName: "automation-coalesce" });
+  const queue = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
+  const jobId = `${coalesceJobId(automationId, ITEM)}-${firstEventId}`;
+  expect(await queue.getJobState(jobId)).toBe("delayed");
+  await (await queue.getJob(jobId))?.promote();
+}
+
+const settledRun = (automationId: string, n: number) =>
+  waitFor(
+    async () => {
+      await drainOutbox(k.app, { jobName: "automation-fire" });
+      const runs = await runsOf(automationId);
+      return runs.length === n &&
+        runs.every((r) => r.status !== "pending" && r.status !== "running")
+        ? runs
+        : null;
+    },
+    30_000,
+    `${n} settled automation runs`,
+  );
+
+type UserMessage = Extract<ConversationEvent, { type: "user_message" }>;
+const userMessages = async (conv: string): Promise<UserMessage[]> =>
+  (await eventsOf(db, conv)).filter((e): e is UserMessage => e.type === "user_message");
+
+describe("event automations end to end", () => {
+  it("two events of a subject coalesce into one run in the subject conversation; a later event joins it", async () => {
+    failDispatch = false;
+    const reporter = await createConv(owner, orgId, await newAgent("Reporter"));
+    const created = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/automations`,
+      payload: {
+        agentId: agentId,
+        name: "Triage",
+        prompt: "echo:triaged",
+        mode: "subject",
+        trigger: {
+          kind: "event",
+          source: PLUGIN,
+          types: ["item.created", "item.updated"],
+          filter: [{ fact: "status", op: "eq", value: "open" }],
+        },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const a = (created.json() as { task: { id: string } }).task;
+
+    // a fact that misses the filter fires nothing
+    const closed = await emitViaTool(reporter, {
+      type: "item.updated",
+      status: "closed",
+      summary: "ITEM-1 was closed.",
+    });
+    await dispatched(closed);
+    expect(
+      await db
+        .selectFrom("automation_event_deliveries")
+        .select("event_id")
+        .where("automation_id", "=", a.id)
+        .execute(),
+    ).toEqual([]);
+    expect(await runsOf(a.id)).toEqual([]);
+
+    // two matching events within one window
+    const e1 = await emitViaTool(reporter, {
+      type: "item.created",
+      status: "open",
+      summary: "ITEM-1 was opened.",
+    });
+    const e2 = await emitViaTool(reporter, {
+      type: "item.updated",
+      status: "open",
+      summary: "ITEM-1 got a label.",
+    });
+    await dispatched(e1, e2);
+    await closeWindow(a.id, e1);
+    const [first] = await settledRun(a.id, 1);
+    expect(first).toMatchObject({ status: "completed", trigger_key: e1 });
+    const conv = first?.conversation_id as string;
+    expect(conv).toBeTruthy();
+
+    // one subject conversation: the automation owner's, with the automation's agent
+    const convs = await db
+      .selectFrom("conversations")
+      .select(["id", "account_id", "agent_id", "subject"])
+      .where("automation_id", "=", a.id)
+      .execute();
+    expect(convs).toHaveLength(1);
+    expect(convs[0]).toMatchObject({
+      id: conv,
+      account_id: ownerId,
+      agent_id: agentId,
+      subject: { source: PLUGIN, kind: "item", id: "ITEM-1" },
+    });
+
+    // the coalesced case: one marked user message listing both events in order
+    const [msg, ...rest] = await userMessages(conv);
+    expect(rest).toEqual([]);
+    expect(msg?.payload.automationEvent).toMatchObject({
+      automationId: a.id,
+      automationRunId: first?.id,
+      source: PLUGIN,
+    });
+    expect(msg?.payload.automationEvent?.events.map((e) => [e.id, e.type])).toEqual([
+      [e1, "item.created"],
+      [e2, "item.updated"],
+    ]);
+    const events = await eventsOf(db, conv);
+    expect(events.some((e) => e.type === "assistant_message")).toBe(true);
+
+    // the kernel run is linked to the automation run and the latest cause
+    const kernelRuns = await db
+      .selectFrom("runs")
+      .select(["automation_run_id", "trigger_event_id"])
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(kernelRuns).toEqual([{ automation_run_id: first?.id, trigger_event_id: e2 }]);
+
+    // a third event after the run lands in the same conversation
+    const e3 = await emitViaTool(reporter, {
+      type: "item.updated",
+      status: "open",
+      summary: "ITEM-1 was reassigned.",
+    });
+    await dispatched(e3);
+    await closeWindow(a.id, e3);
+    const runs = await settledRun(a.id, 2);
+    expect(runs[1]).toMatchObject({ status: "completed", conversation_id: conv, trigger_key: e3 });
+    const msgs = await userMessages(conv);
+    expect(msgs.map((m) => m.payload.automationEvent?.events.map((e) => e.id))).toEqual([
+      [e1, e2],
+      [e3],
+    ]);
+    expect(
+      await db.selectFrom("conversations").select("id").where("automation_id", "=", a.id).execute(),
+    ).toHaveLength(1);
+    const linked = await db
+      .selectFrom("runs")
+      .select(["automation_run_id", "trigger_event_id"])
+      .where("conversation_id", "=", conv)
+      .orderBy("created_at")
+      .execute();
+    expect(linked.map((r) => r.trigger_event_id)).toEqual([e2, e3]);
+    expect(linked.map((r) => r.automation_run_id)).toEqual(runs.map((r) => r.id));
   });
 });
