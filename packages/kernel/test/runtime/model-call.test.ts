@@ -2875,6 +2875,11 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
   type ReadInput = Parameters<Reader["read"]>[0];
   type BaseResult = Awaited<ReturnType<Reader["read"]>>;
   const PATH = "/workspace/a.py";
+  /** These tests stream the path first: no guess, so no candidates are listed. */
+  const noCandidates = {
+    recentPaths: async () => [],
+    normalize: (p: string) => p,
+  };
   const pending = <T>() => {
     let resolve!: (v: T) => void;
     const promise = new Promise<T>((r) => {
@@ -2969,6 +2974,7 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
     const read = pending<BaseResult>();
     const seen: ReadInput[] = [];
     const reader: Reader = {
+      ...noCandidates,
       read: (input) => {
         seen.push(input);
         return read.promise;
@@ -3016,6 +3022,7 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
     const seen: ReadInput[] = [];
     // a provider that ignores its abort: the read never ends
     const reader: Reader = {
+      ...noCandidates,
       read: (input) => {
         seen.push(input);
         return new Promise<never>(() => {});
@@ -3038,6 +3045,7 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
     await say("write it");
     const seen: ReadInput[] = [];
     const reader: Reader = {
+      ...noCandidates,
       read: (input) => {
         seen.push(input);
         return new Promise<never>(() => {});
@@ -3064,6 +3072,7 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
     await say("write it");
     const seen: ReadInput[] = [];
     const reader: Reader = {
+      ...noCandidates,
       read: async (input) => {
         seen.push(input);
         return { text: "old", sha256: "1".repeat(64) };
@@ -3088,6 +3097,7 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
     );
     await say("write it");
     const reader: Reader = {
+      ...noCandidates,
       read: (input) => {
         seen.push(input);
         return seen.length === 1

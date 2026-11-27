@@ -113,14 +113,19 @@ When the path closes, the watcher normalizes it as `readWriteBase` does (synchro
   at once, and the watcher starts the ordinary exact base read of the real path (which, as today,
   usually loses the race with the stream's end).
 
-The verdict is kept in the draft beside the base, so a reconnecting viewer sees the same state. If
-the stream fails before the path closes, there is no verdict and the guess disappears with the
-draft.
+The verdict is kept in the draft on the base (`verdict: "confirmed" | "rejected"`); a rejected
+guess stays in the draft, marked, so a lagging draft copy never brings it back. One merge rule
+(kernel draft and web, the same on both sides): the first base is kept; an exact base replaces a
+guess that is not confirmed (it is only read after a rejection, so a copy still showing the guess
+missed the verdict, as after a reconnect between the two); the same guess takes a verdict it lacks.
+A verdict applies only to a guess without one. If the stream fails before the path closes, there
+is no verdict and the guess disappears with the draft.
 
 ### 4.5 Web
 
-- `DraftTool.base` gains `guess?: { path }` and `verdict?: "confirmed" | "rejected"` (`lib/stream.ts`,
-  `lib/live-drafts.ts`). A rejected verdict removes the base; a confirmed one drops `guess`.
+- `DraftTool.base` gains `guess?: { path }` and `verdict?: "confirmed" | "rejected"`
+  (`lib/run-drafts.ts`, merged by the rule of §4.4 in `lib/stream.ts` and `lib/live-drafts.ts`). A
+  rejected base is never drawn.
 - While a base is a guess (no verdict yet), `streaming-tool-view.ts` draws the same live diff as for
   an exact base, with two differences: the key argument shows the guessed path marked as a guess
   (「推测：src/a.ts」 / "Guess: src/a.ts") until the real path parses and the verdict arrives, and the

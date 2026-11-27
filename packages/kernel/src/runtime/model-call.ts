@@ -178,9 +178,11 @@ const READ_PAGE = 1000;
  * `stream_end` (the step's model stream completed) and `step_end` (the step's `assistant_message`
  * is logged) carry no delta: the run worker's sink writes and then clears the step's live draft on
  * them (spec 2026-11-07 §3.2) and publishes neither. `tool_start` (`callId`, `name`), `tool_input`
- * (`callId`, `text`: a fragment of the call's JSON input) and `tool_base` (`callId`, `text`,
- * `sha256`: the file a streaming `Write` replaces) are display only (streaming tool input spec §4):
- * nothing streamed reaches the log, the model or a hook.
+ * (`callId`, `text`: a fragment of the call's JSON input), `tool_base` (`callId`, `text`,
+ * `sha256`: the file a streaming `Write` replaces; `guess` when it is a guessed candidate, spec
+ * 2026-11-27 §4.4) and `tool_base_verdict` (`callId`, `confirmed`: the path closed on a guess) are
+ * display only (streaming tool input spec §4): nothing streamed reaches the log, the model or a
+ * hook.
  */
 export type StreamSink = (delta: {
   kind:
@@ -189,6 +191,7 @@ export type StreamSink = (delta: {
     | "tool_start"
     | "tool_input"
     | "tool_base"
+    | "tool_base_verdict"
     | "step_reset"
     | "stream_end"
     | "step_end";
@@ -198,6 +201,10 @@ export type StreamSink = (delta: {
   callId?: string;
   name?: string;
   sha256?: string;
+  /** `tool_base`: the base is a guess, the candidate file at `path`. */
+  guess?: { path: string };
+  /** `tool_base_verdict`: whether the path confirmed the guess. */
+  confirmed?: boolean;
 }) => void;
 
 export interface ModelStepDeps {
@@ -2031,7 +2038,7 @@ async function ladder(
         sentAt = Date.now();
         // this attempt's pending base reads end with its stream (a reset, the end, an abort)
         const baseStop = new AbortController();
-        const bases = baseWatcher(deps, input, tools, baseStop.signal);
+        const bases = baseWatcher(deps, input, tools, baseStop.signal, rung.ref);
         let outcome: StreamOutcome;
         try {
           outcome = await consumeModelStream(
@@ -2335,6 +2342,7 @@ function baseWatcher(
   >,
   tools: Pick<StepTools, "list">,
   stop: AbortSignal,
+  model: { provider: string; model: string },
 ): ReturnType<typeof writeBaseWatcher> | undefined {
   const reader = deps.writeBase;
   const kind = input.conversationKind;
@@ -2345,8 +2353,19 @@ function baseWatcher(
     // the resolved tools carry their source (`ResolvedTool`): only the builtin Write reads
     inputViewOf: (name) => writeBaseViewOf(tools.list, name),
     emit: (callId, base) =>
-      sink({ kind: "tool_base", runId, step, callId, text: base.text, sha256: base.sha256 }),
+      sink({
+        kind: "tool_base",
+        runId,
+        step,
+        callId,
+        text: base.text,
+        sha256: base.sha256,
+        ...(base.guess !== undefined && { guess: base.guess }),
+      }),
+    verdict: (callId, confirmed) =>
+      sink({ kind: "tool_base_verdict", runId, step, callId, confirmed }),
     conversationId,
+    model: { provider: model.provider, model: model.model },
     signal: AbortSignal.any([input.signal, stop]),
     log: deps.log,
     ...(deps.writeBaseSettleMs !== undefined && { settleMs: deps.writeBaseSettleMs }),

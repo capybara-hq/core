@@ -65,8 +65,10 @@ export const conversationTopic = (conversationId: string): string => `conv.${con
  *   tells by it whether it has the step's text from the start (the channel outbound only drafts
  *   complete text) and drops what a live draft already covers (spec 2026-11-07 §3.2). Streamed
  *   tool calls (streaming tool input spec §4, display only): `tool_start` (`callId`, `name`),
- *   `tool_input` (`callId`, `text`, `offset` counted per call) and `tool_base` (`callId`, `text`,
- *   `sha256`: the file a streaming `Write` replaces);
+ *   `tool_input` (`callId`, `text`, `offset` counted per call), `tool_base` (`callId`, `text`,
+ *   `sha256`: the file a streaming `Write` replaces; `guess` `{ path }` for a guessed candidate)
+ *   and `tool_base_verdict` (`callId`, `confirmed`: the path closed on a guess, spec 2026-11-27
+ *   §4.4);
  * - `ui`：插件经 `ctx.ui.invalidate` 告知这个会话的某个界面贡献变了（不进日志、不是模型可见内容），
  *   SSE 转发为 `event: ui`，网页据此重新取视图。
  * - `subagent_progress`: after each step of a sub-agent run, on the topic of **every ancestor**
@@ -85,12 +87,21 @@ export type ConversationBusMessage =
       kind: "delta";
       runId: string;
       step: number;
-      delta: "text" | "thinking" | "tool_start" | "tool_input" | "tool_base" | "step_reset";
+      delta:
+        | "text"
+        | "thinking"
+        | "tool_start"
+        | "tool_input"
+        | "tool_base"
+        | "tool_base_verdict"
+        | "step_reset";
       text?: string;
       offset?: number;
       callId?: string;
       name?: string;
       sha256?: string;
+      guess?: { path: string };
+      confirmed?: boolean;
     }
   | { kind: "ui"; plugin: string; contribution: string }
   | { kind: "changed"; what: ConversationChange }
@@ -457,6 +468,28 @@ export class EventLog {
       .limit(1)
       .executeTakeFirst();
     return r && (toEvent(r) as Extract<ConversationEvent, { type: T }>);
+  }
+
+  /**
+   * The paths of the conversation's newest recorded file states (`tool_result.view.file`), one per
+   * path, newest first, at most `limit`: the candidates of a guessed `Write` base (spec 2026-11-27
+   * §4.2). Each path's latest state is what {@link latestFileState} returns for it.
+   */
+  async recentFilePaths(conversationId: string, limit: number): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom("conversation_events")
+      .select([
+        sql<string>`payload->'view'->'file'->>'path'`.as("path"),
+        sql<number>`max(seq)`.as("last"),
+      ])
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "tool_result")
+      .where(sql<boolean>`payload->'view'->'file'->>'path' IS NOT NULL`)
+      .groupBy(sql`payload->'view'->'file'->>'path'`)
+      .orderBy("last", "desc")
+      .limit(limit)
+      .execute();
+    return rows.map((r) => r.path);
   }
 
   /**
