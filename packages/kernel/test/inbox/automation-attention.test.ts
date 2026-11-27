@@ -118,6 +118,7 @@ async function seedRun(taskId: string, missing: string[], scheduledFor = new Dat
       automation_id: taskId,
       org_id: orgId,
       scheduled_for: scheduledFor,
+      trigger_key: scheduledFor.toISOString(),
       status: "completed",
       missing_grants: JSON.stringify(missing),
     })

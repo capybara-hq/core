@@ -90,6 +90,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-client-broken": { provides: [] },
   "fake-client-page": { provides: [] },
   "fake-watch": { provides: [] },
+  "fake-trigger-source": { provides: ["trigger-source@1"] },
 };
 
 let out: string;

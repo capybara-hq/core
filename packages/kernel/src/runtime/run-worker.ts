@@ -1308,10 +1308,16 @@ export class RunWorker {
                   trigger: "subagent" as const,
                   triggerSeq: Number(run.trigger_seq),
                 }),
-                // an automation's message (scheduled tasks spec §6); display only
+                // an automation's message (scheduled tasks spec §6), or an event automation's
+                // (collaboration spec §4.6); display only
                 ...(boundary?.type === "user_message" &&
                   (boundary.payload as { schedule?: unknown }).schedule !== undefined && {
                     trigger: "schedule" as const,
+                  }),
+                ...(boundary?.type === "user_message" &&
+                  (boundary.payload as { automationEvent?: unknown }).automationEvent !==
+                    undefined && {
+                    trigger: "automation_event" as const,
                   }),
               }),
         },

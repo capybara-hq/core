@@ -92,6 +92,7 @@ import {
   automationTargetsQuery,
   chatTargetsQuery,
   conversationAutomationsQuery,
+  eventSourcesQuery,
   grantableToolsQuery,
 } from "./automations";
 import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from "./catalog";
@@ -1362,13 +1363,14 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   {
     pattern: "/settings/automations",
     // Org admins (automations.manage): the settings, every task of the org, and the agents and
-    // members that name them (sections).
+    // members that name them (sections), and the event sources the settings switch.
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "admin")
         ? []
         : [
             q(orgSettingsQuery(orgId)),
             q(automationsQuery(orgId, "all")),
+            q(eventSourcesQuery(orgId)),
             q(agentsQuery(orgId)),
             q(membersQuery(orgId)),
           ],

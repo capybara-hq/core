@@ -149,6 +149,7 @@
   "sandbox/unreachable.test.ts",
   "automations/calendar.test.ts",
   "automations/effective-settings.test.ts",
+  "automations/event-guards.test.ts",
   "automations/tier-grants.test.ts",
   "shares/share-code.test.ts",
   "shares/sharing-settings.test.ts",

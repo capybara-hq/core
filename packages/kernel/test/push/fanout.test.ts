@@ -634,6 +634,7 @@ describe("automation runs", () => {
         automation_id: taskId,
         org_id: orgId,
         scheduled_for: new Date(),
+        trigger_key: new Date().toISOString(),
         fired_at: new Date(),
         conversation_id: conv,
         run_id: runId,

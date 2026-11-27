@@ -22,6 +22,7 @@ import { ModuleRef } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import type { core, z } from "zod";
 import type { KernelAppOptions } from "../app.js";
+import { TRIGGER_EVENTS_BACKEND } from "../automations/events/token.js";
 import { changedPaths, configFields, secretValues, unreachableSecrets } from "../config/fields.js";
 import type { BusSubscriber } from "../ctx/bus.js";
 import {
@@ -32,6 +33,7 @@ import {
   pluginSchemaName,
   queryEnabledPlugins,
   type Route,
+  type TriggersBackend,
 } from "../ctx/create-ctx.js";
 import { EXTENSION_NET_SEAMS, type ExtensionNetSeams } from "../ctx/net.js";
 import type { Keyring } from "../ctx/secrets.js";
@@ -707,11 +709,13 @@ export class ExtensionHost {
      * of use: its module imports the sandbox, devices and tools modules, which import this one (a
      * module cycle otherwise).
      * Absent (a hand-built host) or not found (the CLI): `ctx.deviceAccess` calls are refused.
+     * `TriggerEventsService` (`ctx.triggers`, {@link TRIGGER_EVENTS_BACKEND}) likewise.
      */
     @Optional()
     @Inject(ModuleRef)
     modules?: {
       get(token: typeof DEVICE_ACCESS_BACKEND, opts: { strict: false }): DeviceAccessBackend;
+      get(token: typeof TRIGGER_EVENTS_BACKEND, opts: { strict: false }): TriggersBackend;
     },
     /** Tests only: `ctx.net`'s DNS and dispatcher seams (`EXTENSION_NET_SEAMS`). */
     @Optional() @Inject(EXTENSION_NET_SEAMS) netSeams?: ExtensionNetSeams,
@@ -746,6 +750,13 @@ export class ExtensionHost {
       deviceAccess: () => {
         try {
           return modules?.get(DEVICE_ACCESS_BACKEND, { strict: false });
+        } catch {
+          return undefined;
+        }
+      },
+      triggers: () => {
+        try {
+          return modules?.get(TRIGGER_EVENTS_BACKEND, { strict: false });
         } catch {
           return undefined;
         }

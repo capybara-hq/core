@@ -119,6 +119,8 @@ interface Manifest {
   models: boolean;
   /** permissions.deviceAccess is declared (the services it may use are checked at run time). */
   deviceAccess: boolean;
+  /** permissions.triggers is declared (the event types it may emit are checked at run time). */
+  triggers: boolean;
   /** The literal extension name, when it is one. */
   name: string | undefined;
   setup: Node | undefined;
@@ -168,6 +170,7 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     storage: false,
     models: false,
     deviceAccess: false,
+    triggers: false,
     name: stringValue(
       prop(obj, "name")?.value ? resolve(prop(obj, "name")?.value as Node, decls) : undefined,
     ),
@@ -189,6 +192,7 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     m.models =
       me !== undefined && !(me.type === "ArrayExpression" && (me.elements as Node[]).length === 0);
     m.deviceAccess = prop(pe, "deviceAccess") !== undefined;
+    m.triggers = prop(pe, "triggers") !== undefined;
     for (const t of strings(prop(pe, "tools")?.value as Node | undefined, decls)) m.tools.add(t);
     for (const h of strings(prop(pe, "hooks")?.value as Node | undefined, decls)) m.hooks.add(h);
     for (const h of strings(prop(pe, "policyHooks")?.value as Node | undefined, decls)) {
@@ -436,6 +440,14 @@ function scanSetup(
               "ctx.deviceAccess is used but not declared; list its services in permissions.deviceAccess in the extension manifest",
             );
           }
+        } else if (name === "triggers") {
+          if (!m.triggers) {
+            add(
+              n,
+              "perm-triggers",
+              "ctx.triggers is used but not declared; list the event types it emits in permissions.triggers.emit in the extension manifest",
+            );
+          }
         } else if (
           name === "http" ||
           name === "tools" ||
@@ -517,6 +529,8 @@ function scanFile(
  *   are checked at run time);
  * - perm-device-access: ctx.deviceAccess is used but permissions.deviceAccess is not declared (the
  *   services it may use are checked at run time);
+ * - perm-triggers: ctx.triggers is used but permissions.triggers is not declared (the event types
+ *   it may emit are checked at run time);
  * - perm-reserved: platform access that cannot be confirmed (a destructured ctx, a computed member).
  * 路由路径、工具名、能力 ref、界面 id 须是字符串字面量或本文件的 const；动态的写法报「无法静态确认」，
  * 豁免：`// capybara:allow-dynamic-permission <原因>`（行尾或紧邻上一行，原因必填）。

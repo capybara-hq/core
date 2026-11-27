@@ -357,3 +357,66 @@ describe("permissions.deviceAccess", () => {
     expect(isSensitivePermissionKey("permissions.deviceaccess:browser")).toBe(true);
   });
 });
+
+describe("permissions.triggers", () => {
+  const set = (emit?: string[]) =>
+    buildPermissionSet({
+      provides: [],
+      config: { deployment: [] },
+      tables: [],
+      permissions: emit ? { triggers: { emit } } : {},
+    });
+
+  it("each declared event type is a blocking key; a set without it stays as it was", () => {
+    expect(set(["item.updated", "item.created", "item.created"]).permissions.triggers).toEqual({
+      emit: ["item.created", "item.updated"],
+    });
+    expect(permissionKeys(set(["item.created"]))).toContain("permissions.triggers:item.created");
+    expect(set().permissions).not.toHaveProperty("triggers");
+    expect(blockingKeys(["permissions.triggers:item.created"])).toEqual([
+      "permissions.triggers:item.created",
+    ]);
+  });
+
+  it("an upgrade adding an event type adds a blocking key (re-approval)", () => {
+    const d = diffPermissions(set(["item.created"]), set(["item.created", "item.assigned"]));
+    expect(d).toEqual({ added: ["permissions.triggers:item.assigned"], removed: [] });
+    expect(blockingKeys(d.added)).toEqual(["permissions.triggers:item.assigned"]);
+  });
+
+  it("the keys are valid marketplace permission keys", () => {
+    const keys = permissionKeys(set(["item.created"]));
+    const r = parseMarketplaceManifest({
+      schemaVersion: 1,
+      name: "Enterprise",
+      plugins: [
+        {
+          name: "tracker",
+          summary: { en: "Tracker" },
+          permissions: { keys, sensitive: [] },
+          source: {
+            npm: {
+              package: "@acme/plugin-tracker",
+              version: "1.0.0",
+              integrity: `sha512-${"A".repeat(86)}==`,
+            },
+          },
+        },
+      ],
+    });
+    expect("errors" in r ? r.errors : []).toEqual([]);
+  });
+
+  it("the approval display lists the event types in a group of their own, not sensitive", () => {
+    const groups = permissionGroups(set(["item.created"]));
+    expect(groups.find((g) => g.category === "triggers")).toMatchObject({
+      items: ["item.created"],
+      sensitive: false,
+      entries: [{ value: "item.created", sensitive: false }],
+    });
+    expect(permissionKeyItems(["permissions.triggers:item.created"])).toEqual([
+      { value: "permissions.triggers:item.created", sensitive: false },
+    ]);
+    expect(isSensitivePermissionKey("permissions.triggers:item.created")).toBe(false);
+  });
+});

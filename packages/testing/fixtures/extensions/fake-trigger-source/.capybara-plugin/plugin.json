@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-trigger-source",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: a trigger source (trigger-source@1) whose tool emits item events through ctx.triggers"
+}

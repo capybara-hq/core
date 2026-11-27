@@ -1,5 +1,12 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.49
+
+### Patch Changes
+
+- 92469e2: Adds `ComposerMenu` (anchored above the composer, a bottom sheet on compact) and `ProjectFilePicker`;
+  checkboxes stay square at every size and `Input` takes its line height from the control.
+
 ## 0.2.0-rc.48
 
 ### Patch Changes

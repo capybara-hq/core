@@ -56,6 +56,7 @@
   "sandbox/sandbox-artifacts.dual.test.ts",
   "sandbox/sandbox.dual.test.ts",
   "sandbox/sandbox.service-gates.dual.test.ts",
+  "automations/dispatch.dual.test.ts",
   "automations/scan.dual.test.ts",
   "setup/setup-checks.dual.test.ts",
   "shares/shares.dual.test.ts",

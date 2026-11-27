@@ -401,6 +401,12 @@ describe("declaredPermissions (the org-upload confirm)", () => {
     ]);
   });
 
+  it("emitted event types are a group of their own, not sensitive", () => {
+    expect(declaredPermissions(manifest({ triggers: { emit: ["item.created"] } }))).toEqual([
+      { category: "triggers", items: ["item.created"], sensitive: false },
+    ]);
+  });
+
   it("routes show their access; public and embed routes form their own groups", () => {
     const groups = declaredPermissions(
       manifest({

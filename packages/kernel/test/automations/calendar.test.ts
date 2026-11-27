@@ -8,7 +8,7 @@ import {
   startOfLocalDay,
 } from "../../src/automations/calendar.js";
 import { nextTick } from "../../src/automations/schedule-math.js";
-import type { Automation, AutomationTrigger, TaskRun } from "../../src/automations/types.js";
+import type { Automation, AutomationTrigger, TimedTaskRun } from "../../src/automations/types.js";
 
 const ME = "acct-me";
 const OTHER = "acct-other";
@@ -41,6 +41,7 @@ function task(id: string, over: Partial<Automation> = {}): Automation {
     model: null,
     effort: null,
     deviceId: null,
+    unattendedAsk: null,
     status: "active",
     pauseReason: null,
     pausedBy: null,
@@ -54,12 +55,13 @@ function task(id: string, over: Partial<Automation> = {}): Automation {
   };
 }
 
-function run(taskId: string, scheduledFor: string, over: Partial<TaskRun> = {}): TaskRun {
+function run(taskId: string, scheduledFor: string, over: Partial<TimedTaskRun> = {}): TimedTaskRun {
   return {
     id: `run-${taskId}-${scheduledFor}`,
     taskId,
     orgId: "org",
     scheduledFor: new Date(scheduledFor),
+    triggerKey: new Date(scheduledFor).toISOString(),
     firedAt: new Date(scheduledFor),
     trial: false,
     manual: false,

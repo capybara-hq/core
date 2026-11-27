@@ -10,6 +10,7 @@ import {
   DIAL_IN_KEY_PREFIX,
   type PermissionSet,
   permissionKeys,
+  TRIGGERS_KEY_PREFIX,
   UI_COMPONENT_KEY_PREFIX,
   WARNINGS_KEY_PREFIX,
 } from "./permission-set.js";
@@ -52,7 +53,8 @@ export interface PermissionGroup {
     | "components"
     | "client"
     | "dialIn"
-    | "deviceAccess";
+    | "deviceAccess"
+    | "triggers";
   /**
    * Sensitive category: secrets, public routes, tools, hooks, client components, client code,
    * device services; also
@@ -200,6 +202,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
     ["ui.view:", "ui", "view:"],
     [DIAL_IN_KEY_PREFIX, "dialIn", ""],
     [DEVICE_ACCESS_KEY_PREFIX, "deviceAccess", ""],
+    [TRIGGERS_KEY_PREFIX, "triggers", ""],
   ];
   for (const [prefix, category, itemPrefix] of table) {
     const rest = after(prefix);
@@ -279,6 +282,8 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
     { category: "dialIn", items: p.dialIn ? [p.dialIn.protocol] : [] },
     // long-lived services the extension runs in conversations' devices
     { category: "deviceAccess", items: p.deviceAccess?.services ?? [] },
+    // the event types it emits for the orgs' event automations (not sensitive)
+    { category: "triggers", items: p.triggers?.emit ?? [] },
   ];
   return groups
     .filter((g) => g.items.length > 0)

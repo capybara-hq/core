@@ -13,6 +13,9 @@ export interface AutomationBounds {
   maxTasksPerMemberCap: number;
   maxTasksPerOrgCap: number;
   maxRunsPerHourCap: number;
+  maxEventDepthCap: number;
+  coalesceSecondsCap: number;
+  maxEventRunsPerSubjectPerHourCap: number;
 }
 
 /**
@@ -24,7 +27,10 @@ export type EffectiveAutomationSettings = AutomationsSettings & {
   forbiddenToolsUnreadable: boolean;
 };
 
-/** An org value outside the platform bounds is clamped: the interval up, the counts down. */
+/**
+ * An org value outside the platform bounds is clamped: the interval up, the counts, the event
+ * chain depth and the coalescing window down.
+ */
 export function effectiveAutomationSettings(
   org: AutomationsSettings,
   bounds: AutomationBounds,
@@ -33,11 +39,18 @@ export function effectiveAutomationSettings(
   return {
     ...org,
     forbiddenTools: [...org.forbiddenTools],
+    eventSourcesOff: [...org.eventSourcesOff],
     forbiddenToolsUnreadable,
     minIntervalMinutes: Math.max(org.minIntervalMinutes, bounds.minIntervalFloorMinutes),
     maxTasksPerMember: Math.min(org.maxTasksPerMember, bounds.maxTasksPerMemberCap),
     maxTasksPerOrg: Math.min(org.maxTasksPerOrg, bounds.maxTasksPerOrgCap),
     maxRunsPerHour: Math.min(org.maxRunsPerHour, bounds.maxRunsPerHourCap),
+    maxEventDepth: Math.min(org.maxEventDepth, bounds.maxEventDepthCap),
+    coalesceSeconds: Math.min(org.coalesceSeconds, bounds.coalesceSecondsCap),
+    maxEventRunsPerSubjectPerHour: Math.min(
+      org.maxEventRunsPerSubjectPerHour,
+      bounds.maxEventRunsPerSubjectPerHourCap,
+    ),
   };
 }
 

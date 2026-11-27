@@ -1028,9 +1028,11 @@ describe("scheduled runs use the effective mode like any use", () => {
       VALUES (${taskId}, ${orgId}, ${accountId}, 'agent', 'T', 'p',
         ${JSON.stringify({ kind: "cron", expr: "0 9 * * *", timeZone: "UTC" })}::jsonb, 'new',
         ${deviceId})`.execute(raw);
-    await sql`INSERT INTO capybara.automation_runs (id, automation_id, org_id, scheduled_for, trial,
-        status)
-      VALUES (${taskRunId}, ${taskId}, ${orgId}, now(), false, 'running')`.execute(raw);
+    await sql`INSERT INTO capybara.automation_runs (id, automation_id, org_id, scheduled_for,
+        trigger_key, trial, status)
+      VALUES (${taskRunId}, ${taskId}, ${orgId}, now(), ${taskRunId}, false, 'running')`.execute(
+      raw,
+    );
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
       SELECT ${conversationId}, ${orgId}, a.id, ${accountId}
       FROM capybara.agents a WHERE a.org_id = ${orgId} LIMIT 1`.execute(raw);

@@ -1,4 +1,4 @@
-export const SDK_VERSION = "0.1.0-rc.84";
+export const SDK_VERSION = "0.1.0-rc.85";
 export * from "./agent-template.js";
 export * from "./avatar-presets.js";
 export * from "./bootstrap.js";
@@ -79,6 +79,8 @@ export * from "./theme-readability.js";
 export * from "./theme-tokens.generated.js";
 export * from "./tool.js";
 export * from "./tool-key.js";
+export * from "./trigger-source.js";
+export * from "./triggers.js";
 export * from "./ui.js";
 export * from "./ui-parts.js";
 export * from "./ui-resolve.js";

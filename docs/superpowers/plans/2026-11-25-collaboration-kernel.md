@@ -420,6 +420,22 @@ export function depthExceeded(depth: number, max: number): boolean;     // depth
 
 ## PR C: acceptance, inbox, agents, conversations, lifecycle
 
+
+### Task C0: Serializable trigger cause for queued emits
+
+Added after the PR B final review (2026-11-28): the reliable emit path (emit from a `ctx.queue` job)
+cannot carry `cause.call` (an in-memory call scope), so such events lose depth and the self-trigger
+check. Add `ctx.triggers.causeOf(call: ToolCallContext): Promise<string>` returning an opaque handle
+(kernel-signed or a stored row id bound to org + run, short TTL), and accept `cause: { handle }` in
+`emit`; the kernel re-verifies the run is in the event's org and derives depth as for `cause.call`.
+SDK additive (minor), kernel, tests (handle from another org refused, expired handle refused, depth
+carried through a queued emit). Must land before the collab plugin relies on queued emits.
+
+Also harden the PR B retention sweep (`automations/events/sweep.job.ts`): pick a stale window's id from
+its current pending outbox row (any `coalesceJobIdOfKey(...)-*`) so a dispatcher-opened window is
+not flushed early; back off re-owing a window by its age (stop after 24 h and log); write the
+`trigger_events_settled_idx` predicate with the same `IN` list the sweep queries.
+
 ### Task C1: Personal inbox items and `ctx.inbox`
 
 **Files:**

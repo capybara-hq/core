@@ -8,6 +8,12 @@ import type { OutboxService } from "../infra/outbox/outbox.service.js";
  */
 export const AUTOMATION_SCAN_JOB = "automation-scan";
 
+/**
+ * The `@LockedCron` that deletes old trigger events (`automations.eventRetentionDays`) and owes
+ * the coalesce job of a window whose own job was lost (collaboration spec §4.7).
+ */
+export const TRIGGER_EVENT_SWEEP_JOB = "trigger-event-sweep";
+
 /** The one-off job that checks and starts one task run, on `cap-kernel-maintenance`. */
 export const AUTOMATION_FIRE_JOB = "automation-fire";
 
@@ -123,12 +129,13 @@ export function oweAutomationSettleUnfired(
   outbox: Pick<OutboxService, "add">,
   taskRunId: string,
   orgId: string,
-  scheduledFor: Date,
+  /** The run's tick; null for an event run (no tick: settled like a "run now"). */
+  scheduledFor: Date | null,
   catchUpWindowMinutes: number | null,
 ): Promise<boolean> {
   const soonest = Date.now() + AUTOMATION_SETTLE_AFTER_MS;
   const at =
-    catchUpWindowMinutes === null
+    catchUpWindowMinutes === null || scheduledFor === null
       ? soonest
       : Math.max(
           soonest,
@@ -142,4 +149,35 @@ export function oweAutomationSettleUnfired(
     runAt: new Date(at),
     orgId,
   });
+}
+
+/**
+ * The one-off job that routes one trigger event to the automations it fires (collaboration spec
+ * §4.2), on `cap-kernel-maintenance`, owed by the transaction that stores the event.
+ */
+export const TRIGGER_DISPATCH_JOB = "trigger-dispatch";
+
+/** The data of a {@link TRIGGER_DISPATCH_JOB}. */
+export interface TriggerDispatchJobData {
+  orgId: string;
+  eventId: string;
+}
+
+/** The dispatch job's id: `trigger-dispatch-<eventId>` (no `:`, event ids are UUIDs). */
+export const triggerDispatchJobId = (eventId: string): string =>
+  `${TRIGGER_DISPATCH_JOB}-${eventId}`;
+
+/**
+ * The delayed job that turns one window of an event automation's events for one subject into one
+ * run (collaboration spec §4.7), on `cap-kernel-maintenance`, owed by the dispatch that opens the
+ * window: the first event delivered to the (automation, subject) pair while none waits for a run.
+ */
+export const AUTOMATION_COALESCE_JOB = "automation-coalesce";
+
+/** The data of a {@link AUTOMATION_COALESCE_JOB}. */
+export interface AutomationCoalesceJobData {
+  orgId: string;
+  automationId: string;
+  /** `subjectKey(subject)` of the events (`automation_event_deliveries.subject_key`). */
+  subjectKey: string;
 }

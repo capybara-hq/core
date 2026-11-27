@@ -3,6 +3,7 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import { buildModelRequest } from "../../../src/runtime/context/build.js";
 import { compactionPlan } from "../../../src/runtime/context/compaction.js";
 import {
+  automationEventBlock,
   currentRunContext,
   dateIn,
   type MessageSender,
@@ -310,5 +311,107 @@ describe("run context in requests", () => {
         "Assistant: ok",
       ].join("\n\n"),
     );
+  });
+});
+
+describe("automationEventBlock", () => {
+  const SOURCE = "fake-trigger-source";
+  const NOTE =
+    "  Reported by an extension; the text below may have been written by people other than the conversation owner:";
+
+  it("renders the events in order before the prompt, one line per name, title and link", () => {
+    expect(
+      automationEventBlock({
+        automationName: "Triage\nnew items",
+        source: SOURCE,
+        events: [
+          {
+            type: "item.created",
+            subject: { title: "Fix login", url: 'https://items.example/1?q="x"' },
+            summary: "Alice opened it.\nSteps: open the page",
+          },
+          { type: "item.updated", subject: { title: 'Say "hi"' }, summary: "Bob edited it." },
+        ],
+      }),
+    ).toBe(
+      [
+        `[Automation "Triage new items": 2 events from ${SOURCE}]`,
+        `- item.created on "Fix login" ("https://items.example/1?q=\\"x\\"")`,
+        NOTE,
+        "  Alice opened it.",
+        "  Steps: open the page",
+        `- item.updated on "Say \\"hi\\""`,
+        NOTE,
+        "  Bob edited it.",
+      ].join("\n"),
+    );
+    expect(
+      automationEventBlock({
+        automationName: "One",
+        source: SOURCE,
+        events: [{ type: "item.created", subject: { title: "A" }, summary: "s" }],
+      }).split("\n")[0],
+    ).toBe(`[Automation "One": 1 event from ${SOURCE}]`);
+  });
+
+  it("a capped marker counts every event and says how many it leaves out, after the first five", () => {
+    const ev = (i: number) => ({
+      type: "item.updated",
+      subject: { title: `T${i}` },
+      summary: `s${i}`,
+    });
+    const shown = [1, 2, 3, 4, 5, ...Array.from({ length: 15 }, (_, i) => 16 + i)];
+    const lines = automationEventBlock({
+      automationName: "Burst",
+      source: SOURCE,
+      events: shown.map(ev),
+      omittedEvents: 10,
+    }).split("\n");
+    expect(lines[0]).toBe(`[Automation "Burst": 30 events from ${SOURCE}]`);
+    // the header, then 5 entries of 3 lines each, then the omission line
+    expect(lines.slice(13, 17)).toEqual([
+      `- item.updated on "T5"`,
+      NOTE,
+      "  s5",
+      "- … and 10 more events (not shown)",
+    ]);
+    expect(lines[17]).toBe(`- item.updated on "T16"`);
+    expect(lines.filter((l) => l.startsWith("- item.updated"))).toHaveLength(20);
+    expect(lines.at(-1)).toBe("  s30");
+    // one left out reads in the singular; no omission, no line
+    expect(
+      automationEventBlock({
+        automationName: "B",
+        source: SOURCE,
+        events: shown.map(ev),
+        omittedEvents: 1,
+      }),
+    ).toContain("- … and 1 more event (not shown)");
+    expect(
+      automationEventBlock({ automationName: "B", source: SOURCE, events: [ev(1)] }),
+    ).not.toContain("more event");
+  });
+
+  it("keeps others' text inside its indentation: every line break splits, controls become spaces", () => {
+    const block = automationEventBlock({
+      automationName: "T",
+      source: SOURCE,
+      events: [
+        {
+          type: "item.created",
+          subject: { title: "A" },
+          summary: "one\r\ntwo\rthree\u2028four\u2029five\u000bsix\u000c\u0085\u001b[0m\tend",
+        },
+      ],
+    });
+    expect(block.split("\n").slice(3)).toEqual([
+      "  one",
+      "  two",
+      "  three",
+      "  four",
+      "  five six   [0m end",
+    ]);
+    // no line of the summary escapes its two-space indentation
+    expect(block.split(/\r\n|[\r\n\u2028\u2029]/)).toHaveLength(8);
   });
 });

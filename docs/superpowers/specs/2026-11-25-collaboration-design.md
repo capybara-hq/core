@@ -117,7 +117,11 @@ untouched; events add a second entry point that ends in the same claim and start
 trigger_key)`, where `trigger_key` is the tick time for time triggers and the event id for events.
 Time-only columns (`scheduled_for`, the `missed` skip reason) stay nullable for event runs.
 
-`next_run_at` is null for event automations, so the time scanner never selects them.
+`next_run_at` is null for event automations, so the time scanner never selects them. An event
+automation runs only on its events: "run now" and trial runs are refused for it
+(`automation.run_now_unsupported`), and the web hides both actions. Its `expires_at` is enforced
+as a time automation's is (the org's `defaultExpiryDays` applies when none is given; the
+dispatcher passes an expired one over and the scan ends it, `expired`).
 
 ### 4.2 Emitting events
 
@@ -187,8 +191,10 @@ configured. Person-made event automations keep the org's `unattendedAsk` default
 
 `automation_conversations (org_id, automation_id, subject_kind, subject_id, conversation_id)`,
 unique on the first four. The first fire for a subject creates the conversation
-(`createWithMessage`) and the row; later fires queue into it (`ConversationQueue.add`), so one
-conversation never runs two event runs at once.
+(`conversations.create`, with `conversations.subject` set) and the row in one transaction under
+the automation row lock, so the mapping is atomic and two first fires of one subject make one
+conversation; that fire and every later one queue their message into it (`ConversationQueue.add`),
+so one conversation never runs two event runs at once.
 
 `conversations.subject` jsonb (`{ source, kind, id, title }`, nullable) links a conversation to its
 subject, for the side panel (§6.5) and for the plugin to list an item's conversations through
@@ -206,7 +212,9 @@ An event fire posts a user message with an `automationEvent` marker (beside toda
 marker in `InternalMessageOptions` and the `user_message` event): the automation's name and prompt,
 the event type, the subject title and link, and the plugin's `summary`, in a block the run header
 states is reported by an extension and written by people who are not necessarily the owner. Coalesced
-events (§4.7) are listed in order in one message. The header change carries a `DriftReason`; the
+events (§4.7) are listed in order in one message, at most 20 of them: the first 5 and the latest
+15, with a `- … and <n> more events (not shown)` line between them (`omittedEvents` on the marker);
+every coalesced event still belongs to the run. The header change carries a `DriftReason`; the
 zero-drift fixtures run before and after.
 
 ### 4.7 Guards
@@ -218,10 +226,18 @@ zero-drift fixtures run before and after.
   8) the event is stored, not dispatched, and the owners of the last automation in the chain get an
   inbox notice.
 - **Coalescing:** events for the same (automation, subject) within `automations.coalesceSeconds`
-  (default 30) become one fire: a delayed BullMQ job with the deterministic id
-  `cap-evt-<automationId>-<subjectHash>`; the job reads every undelivered event for the pair.
-- **Rate:** today's `maxRunsPerHour` per person applies; add `maxEventRunsPerSubjectPerHour`
-  (default 12).
+  (default 30) become one fire. Only the delivery that opens a window owes a job: a delayed
+  BullMQ job with the per-window id `<coalesceJobId(automationId, subject)>-<firstEventId>`
+  (`automation-coalesce-<automationId>-<subjectKey>-<firstEventId>`); later events of the window
+  find its deliveries waiting and owe nothing. The job reads every waiting delivery for the pair.
+  A window whose job was lost for good is taken over by the next event of the pair, or by the
+  trigger event sweep, which also deletes settled events after `automations.eventRetentionDays`
+  (platform config, default 30).
+- **Rate:** `maxRunsPerHour` applies per person (the runs of the owner's automations in the last
+  hour, time and event runs together); add `maxEventRunsPerSubjectPerHour` (default 12).
+- **Overlap:** an event run never waits for its automation's previous run (its events would be
+  lost): `new` gives each run its own conversation; `conversation` and `subject` queue it into the
+  conversation, whose queue serializes the runs.
 - **Visibility:** an automation fires only if `visible()` (§4.3) admits its owner.
 - Org admins may switch event automations off per source.
 
