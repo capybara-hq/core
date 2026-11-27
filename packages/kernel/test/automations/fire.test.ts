@@ -16,7 +16,7 @@ import { AutomationFirer } from "../../src/automations/fire.js";
 import { AUTOMATION_SCAN_JOB } from "../../src/automations/job-ids.js";
 import { AutomationScanJob } from "../../src/automations/scan.job.js";
 import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
-import type { Automation, TaskRun } from "../../src/automations/types.js";
+import type { Automation, TaskRun, TimedTaskRun } from "../../src/automations/types.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { ConversationQueue } from "../../src/conversations/queue.service.js";
@@ -179,7 +179,7 @@ async function task(over: Partial<AutomationInsert> = {}): Promise<Automation> {
 async function pendingRun(
   t: Automation,
   over: { scheduledFor?: Date; firedAt?: Date | null; conversationId?: string } = {},
-): Promise<TaskRun> {
+): Promise<TimedTaskRun> {
   const r = await store.insertRun(db, {
     id: randomUUID(),
     taskId: t.id,
@@ -285,7 +285,7 @@ describe("scanning and firing", () => {
     await store.updateTask(db, t.id, { nextRunAt: tick1 });
     await scanner().scanAt(new Date());
     const [r1] = await store.listRuns(db, t.id, 10);
-    expect(r1?.scheduledFor.getTime()).toBe(tick1.getTime());
+    expect(r1?.scheduledFor?.getTime()).toBe(tick1.getTime());
     const done1 = await settled(r1?.id as string);
     expect(done1).toMatchObject({ status: "completed" });
     expect((await taskOf(t.id)).nextRunAt?.getTime()).toBe(tick1.getTime() + FIVE_MIN);
@@ -295,7 +295,7 @@ describe("scanning and firing", () => {
     const runs = await store.listRuns(db, t.id, 10);
     expect(runs).toHaveLength(2);
     const r2 = runs[0] as TaskRun;
-    expect(r2.scheduledFor.getTime()).toBe(tick1.getTime() + FIVE_MIN);
+    expect(r2.scheduledFor?.getTime()).toBe(tick1.getTime() + FIVE_MIN);
     const done2 = await settled(r2.id);
     expect(done2).toMatchObject({ status: "completed" });
 

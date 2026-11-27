@@ -6767,7 +6767,8 @@
       "weekly": "Every {day} at {time}",
       "monthly": "Day {day} of every month at {time}",
       "once": "Once at {at}",
-      "cron": "Cron {expr}"
+      "cron": "Cron {expr}",
+      "event": "On {source} events"
     },
     "withZone": "{when} ({zone})",
     "state": {
@@ -6830,7 +6831,9 @@
         "conversation": "One conversation",
         "conversationHint": "Every run continues the same conversation, which keeps its context.",
         "chat": "An IM chat",
-        "chatHint": "Runs post into a chat with the agent's bot."
+        "chatHint": "Runs post into a chat with the agent's bot.",
+        "subject": "One conversation per item",
+        "subjectHint": "Each item the events are about gets its own conversation, which later events continue."
       },
       "conversation": "Conversation",
       "noConversations": "You have no conversation with this agent yet.",
@@ -6924,7 +6927,9 @@
         "plugin_disabled": "The channel's plugin is turned off in this organization",
         "unsupported_target": "This target is not supported yet",
         "task_deleted": "The task was deleted",
-        "task_paused": "The task was paused"
+        "task_paused": "The task was paused",
+        "not_visible": "The creator can't see the item the event is about",
+        "subject_rate": "The item's hourly run limit was reached"
       },
       "missing": "Refused: {tools}",
       "open": "Open conversation",

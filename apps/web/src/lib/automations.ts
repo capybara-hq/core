@@ -8,11 +8,30 @@ import type { ModelRef } from "./conversations";
  * kernel code.
  */
 
+/** One clause of an event trigger's filter (every clause must match the event's facts). */
+export interface EventFilterClause {
+  fact: string;
+  op: "eq" | "in" | "contains";
+  value: string | number | boolean | string[];
+}
+
+/**
+ * A time trigger, or an event trigger (collaboration spec §4.1): events of `types` from the
+ * extension `source`. An event automation has no zone and no next run time.
+ */
 export type AutomationTrigger =
   | { kind: "cron"; expr: string; timeZone: string }
-  | { kind: "once"; at: string; timeZone: string };
+  | { kind: "once"; at: string; timeZone: string }
+  | { kind: "event"; source: string; types: string[]; filter: EventFilterClause[] };
 
-export type AutomationMode = "new" | "conversation" | "chat";
+/** The time triggers: the ones the schedule editor and the calendar read. */
+export type AutomationTimeTrigger = Exclude<AutomationTrigger, { kind: "event" }>;
+
+/** `subject`: one conversation per event subject (collaboration spec §4.5). */
+export type AutomationMode = "new" | "conversation" | "chat" | "subject";
+
+/** The modes a person sets through the create / patch body (`subject` is not offered yet). */
+export type AutomationInputMode = Exclude<AutomationMode, "subject">;
 
 export interface AutomationChat {
   connectionId: string;
@@ -54,6 +73,8 @@ export const SKIP_REASONS = [
   "unsupported_target",
   "task_deleted",
   "task_paused",
+  "not_visible",
+  "subject_rate",
 ] as const;
 export type TaskRunSkipReason = (typeof SKIP_REASONS)[number];
 
@@ -137,7 +158,8 @@ export interface GrantableTool {
 export interface TaskRun {
   id: string;
   taskId: string;
-  scheduledFor: string;
+  /** The tick; null for an event run. */
+  scheduledFor: string | null;
   firedAt: string | null;
   trial: boolean;
   conversationId: string | null;
@@ -177,7 +199,7 @@ export interface AutomationCreateBody {
   trigger: TriggerInput;
   /** The browser's zone: used only when the account has none. */
   timeZone?: string;
-  mode: AutomationMode;
+  mode: AutomationInputMode;
   conversationId?: string;
   chat?: AutomationChat;
   model?: ModelRef;
@@ -193,7 +215,7 @@ export interface AutomationUpdateBody {
   prompt?: string;
   trigger?: TriggerInput;
   timeZone?: string;
-  mode?: AutomationMode;
+  mode?: AutomationInputMode;
   conversationId?: string | null;
   chat?: AutomationChat | null;
   model?: ModelRef | null;
@@ -431,8 +453,12 @@ function timeOf(minute: string, hour: string): string | null {
   return m === null || h === null ? null : `${pad(h)}:${pad(m)}`;
 }
 
-/** The preset a trigger reads as: one of the simple forms, else `custom` with the cron. */
-export function presetOf(trigger: AutomationTrigger | TriggerInput): AutomationPreset {
+/** A trigger's zone; null for an event trigger (it has none). */
+export const zoneOf = (trigger: AutomationTrigger): string | null =>
+  trigger.kind === "event" ? null : trigger.timeZone;
+
+/** The preset a time trigger reads as: one of the simple forms, else `custom` with the cron. */
+export function presetOf(trigger: AutomationTimeTrigger | TriggerInput): AutomationPreset {
   if (trigger.kind === "once") return { kind: "once", at: trigger.at.slice(0, 16) };
   const expr = trigger.expr.trim();
   const f = expr.split(/\s+/);
@@ -527,9 +553,10 @@ const cronText = (p: AutomationPreset): string => {
 
 /** The words for a schedule (no zone): the message key under `automations.when` and its values. */
 export function automationWords(trigger: AutomationTrigger | TriggerInput): {
-  key: "hourly" | "daily" | "weekdays" | "weekly" | "monthly" | "once" | "cron";
+  key: "hourly" | "daily" | "weekdays" | "weekly" | "monthly" | "once" | "cron" | "event";
   values: Record<string, string | number>;
 } {
+  if (trigger.kind === "event") return { key: "event", values: { source: trigger.source } };
   const p = presetOf(trigger);
   switch (p.kind) {
     case "hourly":

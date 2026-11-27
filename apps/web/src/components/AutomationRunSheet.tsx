@@ -26,7 +26,12 @@ import {
   startOfDay,
   timeIn,
 } from "../lib/automation-calendar";
-import type { CalendarAnswer, CalendarItem, CalendarTask } from "../lib/automations";
+import {
+  type CalendarAnswer,
+  type CalendarItem,
+  type CalendarTask,
+  zoneOf,
+} from "../lib/automations";
 import type { PersonRef } from "../lib/people";
 import { automationCalendarQuery } from "../lib/query/automations";
 import { retryOnMountOf } from "../lib/query/client";
@@ -241,9 +246,9 @@ function ItemDetail({
   const when = formatDateTime(at, "full", timeZone);
   const shown =
     item.kind === "occurrence" && task.jitterSeconds > 0 ? t("about", { time: when }) : when;
-  const taskZone = task.trigger.timeZone;
+  const taskZone = zoneOf(task.trigger);
   const elsewhere =
-    taskZone !== timeZone
+    taskZone !== null && taskZone !== timeZone
       ? t("taskZone", { zone: taskZone, time: formatDateTime(at, "compact", taskZone) })
       : null;
   const rows: { k: ReactNode; v: ReactNode }[] = [];
@@ -316,7 +321,7 @@ function TaskRegion({
   const tf = useTranslations("automations.form.mode");
   const when = useAutomationWords();
   const rows: { k: ReactNode; v: ReactNode }[] = [
-    { k: t("schedule"), v: when(task.trigger, task.trigger.timeZone) },
+    { k: t("schedule"), v: when(task.trigger, zoneOf(task.trigger) ?? undefined) },
     { k: t("agent"), v: agentName(task.agentId) },
     ...(person !== null
       ? [{ k: t("creator"), v: <Person person={person(task.accountId)} size={16} /> }]

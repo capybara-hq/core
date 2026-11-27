@@ -173,16 +173,16 @@ async function seedThread(
 describe("AutomationsService", () => {
   it("creates with the account zone, else the browser zone", async () => {
     const browser = await svc.create(orgId, aliceId, daily(), "Europe/Berlin");
-    expect(browser.trigger.timeZone).toBe("Europe/Berlin");
+    expect(browser.trigger).toMatchObject({ timeZone: "Europe/Berlin" });
     await db
       .updateTable("accounts")
       .set({ time_zone: "Asia/Shanghai" })
       .where("id", "=", aliceId)
       .execute();
     const own = await svc.create(orgId, aliceId, daily(), "Europe/Berlin");
-    expect(own.trigger.timeZone).toBe("Asia/Shanghai");
+    expect(own.trigger).toMatchObject({ timeZone: "Asia/Shanghai" });
     const explicit = await svc.create(orgId, aliceId, daily({ timeZone: "America/New_York" }));
-    expect(explicit.trigger.timeZone).toBe("America/New_York");
+    expect(explicit.trigger).toMatchObject({ timeZone: "America/New_York" });
     // 09:00 Shanghai is 01:00Z; the jitter is added on top
     const tick = nextTick(own.trigger, own.createdAt);
     expect(own.nextRunAt?.getTime()).toBe((tick?.getTime() ?? 0) + own.jitterSeconds * 1000);

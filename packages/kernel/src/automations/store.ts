@@ -3,7 +3,7 @@ import type { Selectable, Updateable } from "kysely";
 import { sql } from "kysely";
 import type { AutomationRunsTable, AutomationsTable, KernelSchemaDb } from "../db/kernel-schema.js";
 import { asPlatform } from "../infra/database/org-scope.js";
-import type { Automation, AutomationGrant, TaskRun, TaskRunStatus } from "./types.js";
+import type { Automation, AutomationGrant, TaskRun, TaskRunStatus, TimedTaskRun } from "./types.js";
 
 /** What a caller supplies to create a task; the counters, pause fields and timestamps default. */
 export type AutomationInsert = Omit<
@@ -22,6 +22,8 @@ export interface TaskRunInsert {
   taskId: string;
   orgId: string;
   scheduledFor: Date;
+  /** Default: the tick as `Date.toISOString()` (a time run). */
+  triggerKey?: string;
   trial: boolean;
   /** A person's "run now" (default false: a tick of the schedule). */
   manual?: boolean;
@@ -31,7 +33,9 @@ export interface TaskRunInsert {
   conversationId?: string | null;
 }
 
-export type TaskRunPatch = Partial<Omit<TaskRun, "id" | "taskId" | "orgId" | "trial" | "manual">>;
+export type TaskRunPatch = Partial<
+  Omit<TaskRun, "id" | "taskId" | "orgId" | "trial" | "manual" | "triggerKey">
+>;
 
 const NON_TERMINAL: TaskRunStatus[] = ["pending", "running"];
 
@@ -67,7 +71,8 @@ const toRun = (r: Selectable<AutomationRunsTable>): TaskRun => ({
   id: r.id,
   taskId: r.automation_id,
   orgId: r.org_id,
-  scheduledFor: date(r.scheduled_for),
+  scheduledFor: dateOrNull(r.scheduled_for),
+  triggerKey: r.trigger_key,
   firedAt: dateOrNull(r.fired_at),
   trial: r.trial,
   manual: r.manual,
@@ -78,6 +83,13 @@ const toRun = (r: Selectable<AutomationRunsTable>): TaskRun => ({
   error: r.error,
   missingGrants: r.missing_grants,
 });
+
+/** A run read back from a row written with a tick (a time run). */
+const toTimedRun = (r: Selectable<AutomationRunsTable>): TimedTaskRun => {
+  const run = toRun(r);
+  if (run.scheduledFor === null) throw new Error(`automation run ${r.id} has no tick`);
+  return { ...run, scheduledFor: run.scheduledFor };
+};
 
 const json = (v: unknown) => (v === null ? null : JSON.stringify(v));
 
@@ -261,10 +273,10 @@ export class AutomationStore {
   }
 
   /**
-   * Inserts a task run; null when a non-trial run for the same tick already exists (the
-   * exactly-once guard, `UNIQUE (automation_id, scheduled_for) WHERE NOT trial`).
+   * Inserts a task run; null when a non-trial run for the same trigger key (a time run's tick)
+   * already exists (the exactly-once guard, `UNIQUE (automation_id, trigger_key) WHERE NOT trial`).
    */
-  async insertRun(t: KernelSchemaDb, run: TaskRunInsert): Promise<TaskRun | null> {
+  async insertRun(t: KernelSchemaDb, run: TaskRunInsert): Promise<TimedTaskRun | null> {
     const row = await t
       .insertInto("automation_runs")
       .values({
@@ -272,6 +284,7 @@ export class AutomationStore {
         automation_id: run.taskId,
         org_id: run.orgId,
         scheduled_for: run.scheduledFor,
+        trigger_key: run.triggerKey ?? run.scheduledFor.toISOString(),
         trial: run.trial,
         manual: run.manual ?? false,
         status: run.status ?? "pending",
@@ -280,11 +293,11 @@ export class AutomationStore {
         conversation_id: run.conversationId ?? null,
       })
       .onConflict((oc) =>
-        oc.columns(["automation_id", "scheduled_for"]).where("trial", "=", false).doNothing(),
+        oc.columns(["automation_id", "trigger_key"]).where("trial", "=", false).doNothing(),
       )
       .returningAll()
       .executeTakeFirst();
-    return row ? toRun(row) : null;
+    return row ? toTimedRun(row) : null;
   }
 
   /** Patches a task run; null when it does not exist. */
@@ -381,7 +394,7 @@ export class AutomationStore {
     from: Date,
     to: Date,
     limit: number,
-  ): Promise<TaskRun[]> {
+  ): Promise<TimedTaskRun[]> {
     if (taskIds.length === 0) return [];
     const rows = await t
       .selectFrom("automation_runs")
@@ -394,7 +407,8 @@ export class AutomationStore {
       .orderBy("id")
       .limit(limit)
       .execute();
-    return rows.map(toRun);
+    // the range admits only runs with a tick
+    return rows.map(toRun).filter((r): r is TimedTaskRun => r.scheduledFor !== null);
   }
 
   async listGrants(t: KernelSchemaDb, taskId: string): Promise<AutomationGrant[]> {

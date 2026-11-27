@@ -43,6 +43,7 @@ import {
   presetValid,
   switchPreset,
   triggerOf,
+  zoneOf,
 } from "../lib/automations";
 import { labelLocale } from "../lib/extension-label";
 import { decodeModel, encodeModel, pickerOptions } from "../lib/models";
@@ -94,18 +95,20 @@ export const emptyDraft = (agentId: string): AutomationDraft => ({
   expires: "",
 });
 
+// an event automation (no schedule, no zone) is not edited here yet: its draft starts from the
+// default schedule, read in UTC
 export const draftOf = (task: Automation): AutomationDraft => ({
   name: task.name,
   agentId: task.agentId,
   prompt: task.prompt,
-  preset: presetOf(task.trigger),
-  timeZone: task.trigger.timeZone,
+  preset: task.trigger.kind === "event" ? { kind: "daily", time: "09:00" } : presetOf(task.trigger),
+  timeZone: zoneOf(task.trigger),
   mode: task.mode,
   conversationId: task.conversationId ?? "",
   chat: task.chat,
   model: task.model === null ? "" : encodeModel(task.model),
   effort: task.effort ?? "",
-  expires: task.expiresAt === null ? "" : dateIn(task.expiresAt, task.trigger.timeZone),
+  expires: task.expiresAt === null ? "" : dateIn(task.expiresAt, zoneOf(task.trigger) ?? "UTC"),
 });
 
 /** Whether the draft can be sent (the kernel checks the rest: cron, interval, target). */
@@ -126,6 +129,8 @@ export function createBodyOf(
   displayZone: string,
 ): AutomationCreateBody {
   const model = d.model === "" ? null : decodeModel(d.model);
+  // the form never offers `subject` (event automations are not created here yet)
+  if (d.mode === "subject") throw new Error("A subject automation is not created from the form");
   return {
     agentId: d.agentId,
     name: d.name.trim(),
@@ -157,7 +162,8 @@ export function patchOf(saved: AutomationDraft, d: AutomationDraft): AutomationU
   if (d.agentId !== saved.agentId) p.agentId = d.agentId;
   if (!sameTrigger(saved.preset, d.preset)) p.trigger = triggerOf(d.preset);
   if (d.timeZone !== null && d.timeZone !== saved.timeZone) p.timeZone = d.timeZone;
-  if (d.mode !== saved.mode) p.mode = d.mode;
+  // `subject` is never offered: a subject automation keeps its mode until another is picked
+  if (d.mode !== saved.mode && d.mode !== "subject") p.mode = d.mode;
   if (d.mode === "conversation" && d.conversationId !== saved.conversationId) {
     p.conversationId = d.conversationId;
   }
@@ -376,10 +382,10 @@ export function AutomationFormSections({
             <Field label={t("zone")}>
               <Select
                 name="timeZone"
-                value={draft.timeZone ?? existing.trigger.timeZone}
+                value={draft.timeZone ?? zoneOf(existing.trigger) ?? "UTC"}
                 disabled={readOnly}
                 onChange={(e) => set("timeZone", e.target.value)}
-                options={timeZoneOptions(existing.trigger.timeZone)}
+                options={timeZoneOptions(zoneOf(existing.trigger) ?? "UTC")}
               />
             </Field>
           )}

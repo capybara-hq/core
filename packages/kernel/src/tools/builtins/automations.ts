@@ -413,6 +413,10 @@ const INT = /^\d{1,2}$/;
 
 /** A trigger in words, its zone included; an unusual cron reads as the expression itself. */
 export function scheduleWords(t: AutomationTrigger): Words {
+  if (t.kind === "event") {
+    const types = t.types.join(", ");
+    return { zh: `${t.source} 事件（${types}）发生时`, en: `on ${t.source} events (${types})` };
+  }
   const zone = t.timeZone;
   if (t.kind === "once") {
     const at = t.at.replace("T", " ").slice(0, 16);
@@ -446,6 +450,7 @@ export function scheduleWords(t: AutomationTrigger): Words {
 
 /** The next fire time in the trigger's zone, `YYYY-MM-DD HH:mm`, or null when there is none. */
 function nextRunWords(t: AutomationTrigger, now: number): string | null {
+  if (t.kind === "event") return null;
   const next = nextTick(t, new Date(now));
   return next === null ? null : localTime(next, t.timeZone).local.slice(0, 16).replace("T", " ");
 }
@@ -858,6 +863,18 @@ export function automationTools(deps: AutomationToolsDeps): BuiltinTool[] {
   const grantKeys = async (taskId: string): Promise<string[]> =>
     uniqueSorted((await deps.store.listGrants(deps.db(), taskId)).map((g) => g.toolKey));
 
+  /**
+   * The zone a task's time trigger is read in: its own, or for an event task (no zone) the
+   * conversation's, as on create.
+   */
+  const zoneOf = (
+    task: Automation,
+    ctx: Pick<CallPolicyContext, "orgId" | "conversationId">,
+  ): Promise<string> =>
+    task.trigger.kind === "event"
+      ? deps.timeZoneOf(ctx.orgId, ctx.conversationId)
+      : Promise.resolve(task.trigger.timeZone);
+
   /** The person's own live task, or null. */
   async function ownTask(orgId: string, accountId: string, id: string) {
     const task = await deps.store.getTask(deps.db(), orgId, id);
@@ -884,7 +901,7 @@ export function automationTools(deps: AutomationToolsDeps): BuiltinTool[] {
     const trigger = triggerOf(input);
     if (trigger !== undefined) {
       const before = scheduleWords(task.trigger);
-      const after = scheduleWords(withZone(trigger, task.trigger.timeZone));
+      const after = scheduleWords(withZone(trigger, await zoneOf(task, ctx)));
       zh.push(`时间 ${before.zh} → ${after.zh}`);
       en.push(`schedule ${before.en} → ${after.en}`);
     }
@@ -989,8 +1006,13 @@ export function automationTools(deps: AutomationToolsDeps): BuiltinTool[] {
       const patch: UpdateTaskInput = {};
       if (input.name !== undefined) patch.name = input.name;
       if (input.prompt !== undefined) patch.prompt = input.prompt;
+      const zone = await zoneOf(task, ctx);
       const trigger = triggerOf(input);
-      if (trigger !== undefined) patch.trigger = trigger;
+      if (trigger !== undefined) {
+        patch.trigger = trigger;
+        // an event task has no zone of its own: a time trigger replacing it takes the conversation's
+        if (task.trigger.kind === "event") patch.timeZone = zone;
+      }
       if (input.mode !== undefined) {
         const target: Target =
           input.mode === "here"
@@ -1005,7 +1027,6 @@ export function automationTools(deps: AutomationToolsDeps): BuiltinTool[] {
         // the chat's agent maps to the service's task agent (the HTTP shape stays flat)
         if (input.chat?.agentId !== undefined) patch.agentId = input.chat.agentId;
       }
-      const zone = task.trigger.timeZone;
       const updated = await call(
         () => deps.updates.apply(svc, ctx.orgId, ctx.accountId, task, patch, input.approvedTools),
         { id: input.id, zone },
@@ -1052,7 +1073,7 @@ export function automationTools(deps: AutomationToolsDeps): BuiltinTool[] {
         const status =
           t.status === "paused" && t.pauseReason !== null ? `paused (${t.pauseReason})` : t.status;
         const next =
-          t.nextRunAt === null
+          t.nextRunAt === null || t.trigger.kind === "event"
             ? "none"
             : localTime(t.nextRunAt, t.trigger.timeZone).local.slice(0, 16).replace("T", " ");
         lines.push(

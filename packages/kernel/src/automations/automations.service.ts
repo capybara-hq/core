@@ -74,6 +74,7 @@ import type {
   AutomationGrant,
   AutomationMode,
   AutomationPauseReason,
+  AutomationTimeTrigger,
   AutomationTrigger,
   TaskRun,
 } from "./types.js";
@@ -455,12 +456,23 @@ export class AutomationsService {
     }
 
     if (patch.trigger !== undefined || patch.timeZone !== undefined) {
-      const zone = patch.timeZone ?? task.trigger.timeZone;
-      const base: TriggerInput =
+      // an event automation has no zone or tick to keep: a time trigger replacing its event
+      // trigger names both (event triggers are not edited here yet)
+      const current = task.trigger.kind === "event" ? null : task.trigger;
+      const zone = patch.timeZone ?? current?.timeZone;
+      const base: TriggerInput | undefined =
         patch.trigger ??
-        (task.trigger.kind === "cron"
-          ? { kind: "cron", expr: task.trigger.expr }
-          : { kind: "once", at: task.trigger.at });
+        (current === null
+          ? undefined
+          : current.kind === "cron"
+            ? { kind: "cron", expr: current.expr }
+            : { kind: "once", at: current.at });
+      if (zone === undefined || base === undefined) {
+        throw new ApiError(
+          "validation_failed",
+          "An event automation takes a new trigger and a time zone together",
+        );
+      }
       const trigger = withZone(base, zone);
       const gap = checkTrigger(trigger, now, settings);
       changes.trigger = trigger;
@@ -758,7 +770,7 @@ export class AutomationsService {
             : {
                 status: r.status as TaskLastRun["status"],
                 skipReason: r.skip_reason,
-                at: new Date(r.fired_at ?? r.scheduled_for),
+                at: runMoment(r.fired_at, r.scheduled_for),
               },
       };
     });
@@ -1024,7 +1036,7 @@ export class AutomationsService {
           needsRole: [],
           needsAdmin: [],
           error: run.error,
-          at: run.fired_at ?? new Date(run.scheduled_for),
+          at: runMoment(run.fired_at, run.scheduled_for),
         });
       }
       const have = granted.get(task.id);
@@ -1071,7 +1083,7 @@ export class AutomationsService {
         needsAdmin,
         // the wire field stays for the web; no network grant is refused by a device now
         error: null,
-        at: run.fired_at ?? new Date(run.scheduled_for),
+        at: runMoment(run.fired_at, run.scheduled_for),
       });
     }
     return out.sort((a, b) => b.at.getTime() - a.at.getTime());
@@ -1516,7 +1528,16 @@ function requiredText(v: string, field: string, max: number): string {
   return s;
 }
 
-function withZone(t: TriggerInput, timeZone: string): AutomationTrigger {
+/**
+ * When a run happened, for lists: its fire time, else its tick. An event run has no tick; it is
+ * recorded when its events are flushed, so the epoch stands in only for a row with neither.
+ */
+function runMoment(firedAt: Date | string | null, scheduledFor: Date | string | null): Date {
+  const v = firedAt ?? scheduledFor;
+  return v === null ? new Date(0) : new Date(v);
+}
+
+function withZone(t: TriggerInput, timeZone: string): AutomationTimeTrigger {
   return t.kind === "cron"
     ? { kind: "cron", expr: t.expr.trim(), timeZone }
     : { kind: "once", at: t.at, timeZone };
@@ -1527,7 +1548,7 @@ function withZone(t: TriggerInput, timeZone: string): AutomationTrigger {
  * the sampled gap (null for once), from which the jitter is derived.
  */
 function checkTrigger(
-  t: AutomationTrigger,
+  t: AutomationTimeTrigger,
   now: Date,
   settings: EffectiveAutomationSettings,
 ): number | null {

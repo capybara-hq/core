@@ -281,7 +281,13 @@ type EventBody =
         model: ModelRef;
         triggerAccountId?: string;
         /** `compact`: a manual compact run, which runs no model step (display only). */
-        trigger?: "message" | "background_task" | "subagent" | "schedule" | "compact";
+        trigger?:
+          | "message"
+          | "background_task"
+          | "subagent"
+          | "schedule"
+          | "compact"
+          | "automation_event";
       };
     }
   | {

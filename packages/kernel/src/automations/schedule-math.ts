@@ -1,6 +1,6 @@
 import { CronTime } from "cron";
 import { isTimeZone } from "../time-zone.js";
-import type { AutomationTrigger } from "./types.js";
+import type { AutomationTimeTrigger, AutomationTrigger } from "./types.js";
 
 /** Spec §5: how many upcoming fire times the minimum-interval check looks at. */
 const GAP_SAMPLE = 50;
@@ -105,8 +105,9 @@ function onceInstant(at: string, timeZone: string): Date | null {
   return new Date(lo * 1000);
 }
 
+/** A person's time trigger is valid (spec §5); event triggers are validated elsewhere. */
 export function validateTrigger(
-  t: AutomationTrigger,
+  t: AutomationTimeTrigger,
   now: Date,
 ): { ok: true } | { ok: false; code: TriggerError } {
   if (!isTimeZone(t.timeZone)) return { ok: false, code: "automation.invalid_time_zone" };
@@ -121,7 +122,10 @@ export function validateTrigger(
   return { ok: true };
 }
 
-/** The first tick strictly after `after` (before jitter); null for a past once task. */
+/**
+ * The first tick strictly after `after` (before jitter); null for a past once task and for an event
+ * trigger (it has no next run time, collaboration spec §4.1).
+ */
 export function nextTick(t: AutomationTrigger, after: Date): Date | null {
   return ticker(t)(after);
 }
@@ -160,6 +164,8 @@ function nextOrNull(search: () => number): number | null {
  * (the gap sample, the catch-up enumeration) reuse one ticker instead of rebuilding per tick.
  */
 function ticker(t: AutomationTrigger): Ticker {
+  // an event automation has no ticks: the time scanner never fires it
+  if (t.kind === "event") return () => null;
   if (t.kind === "once") {
     const at = onceInstant(t.at, t.timeZone);
     return (after) => (at && at.getTime() > after.getTime() ? at : null);
@@ -270,9 +276,12 @@ function localWallClock(at: Date, timeZone: string): number {
   return Math.floor(wallOf(at.getTime(), timeZone) / 60000) * 60000;
 }
 
-/** The smallest gap, in minutes, among the next 50 fire times after `from`; null for once. */
+/**
+ * The smallest gap, in minutes, among the next 50 fire times after `from`; null for once and for
+ * an event trigger (no ticks).
+ */
 export function minGapMinutes(t: AutomationTrigger, from: Date): number | null {
-  if (t.kind === "once") return null;
+  if (t.kind !== "cron") return null;
   const next = ticker(t);
   let prev = next(from);
   let min = Number.POSITIVE_INFINITY;

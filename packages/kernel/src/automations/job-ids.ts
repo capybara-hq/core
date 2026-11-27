@@ -123,12 +123,13 @@ export function oweAutomationSettleUnfired(
   outbox: Pick<OutboxService, "add">,
   taskRunId: string,
   orgId: string,
-  scheduledFor: Date,
+  /** The run's tick; null for an event run (no tick: settled like a "run now"). */
+  scheduledFor: Date | null,
   catchUpWindowMinutes: number | null,
 ): Promise<boolean> {
   const soonest = Date.now() + AUTOMATION_SETTLE_AFTER_MS;
   const at =
-    catchUpWindowMinutes === null
+    catchUpWindowMinutes === null || scheduledFor === null
       ? soonest
       : Math.max(
           soonest,

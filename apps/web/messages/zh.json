@@ -6755,7 +6755,8 @@
       "weekly": "每{day} {time}",
       "monthly": "每月 {day} 日 {time}",
       "once": "一次：{at}",
-      "cron": "Cron {expr}"
+      "cron": "Cron {expr}",
+      "event": "{source} 事件发生时"
     },
     "withZone": "{when}（{zone}）",
     "state": {
@@ -6818,7 +6819,9 @@
         "conversation": "固定的一个会话",
         "conversationHint": "每次运行都接着同一个会话，保留上下文。",
         "chat": "IM 聊天",
-        "chatHint": "运行结果发到与智能体机器人的聊天里。"
+        "chatHint": "运行结果发到与智能体机器人的聊天里。",
+        "subject": "每个事项一个会话",
+        "subjectHint": "事件涉及的每个事项各有一个会话，之后的事件接着在里面运行。"
       },
       "conversation": "会话",
       "noConversations": "你和这个智能体还没有会话。",
@@ -6912,7 +6915,9 @@
         "plugin_disabled": "组织已停用该聊天插件",
         "unsupported_target": "暂不支持这个目标",
         "task_deleted": "任务已删除",
-        "task_paused": "任务已暂停"
+        "task_paused": "任务已暂停",
+        "not_visible": "创建者看不到事件涉及的事项",
+        "subject_rate": "该事项每小时的运行次数已达上限"
       },
       "missing": "被拒绝：{tools}",
       "open": "打开会话",

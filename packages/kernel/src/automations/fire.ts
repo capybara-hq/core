@@ -273,7 +273,13 @@ export class AutomationFirer {
     // a tick whose fire comes this late (workers down for long) is missed, as the scan records a
     // tick it finds outside the window; a person's "run now" still runs
     const lateAfter = settings.catchUpWindowMinutes * 60_000 + AUTOMATION_LATE_FIRE_SLACK_MS;
-    if (!resumed && !run.manual && Date.now() - run.scheduledFor.getTime() > lateAfter) {
+    // an event run has no tick and is never missed (collaboration spec §4.1)
+    if (
+      !resumed &&
+      !run.manual &&
+      run.scheduledFor !== null &&
+      Date.now() - run.scheduledFor.getTime() > lateAfter
+    ) {
       return skip("missed");
     }
     if (!resumed && !settings.enabled) return skip("org_disabled");
@@ -366,15 +372,20 @@ export class AutomationFirer {
   /** Step 2 (see the class). */
   private async start(plan: StartPlan): Promise<void> {
     const { task, run } = plan;
+    const trigger = task.trigger;
+    if (trigger.kind === "event" || run.scheduledFor === null) {
+      // the event fire path posts its own marker (collaboration spec §4.6); not built here yet
+      throw new Error(`automation run ${run.id}: event runs are not started by the time path`);
+    }
     const marker: ScheduleMarker = {
       taskId: task.id,
       taskRunId: run.id,
       scheduledFor: run.scheduledFor.toISOString(),
       trial: run.trial,
       taskName: task.name,
-      localTime: localTimeOf(run.scheduledFor, task.trigger.timeZone),
+      localTime: localTimeOf(run.scheduledFor, trigger.timeZone),
     };
-    const internal = { schedule: marker, timeZoneOverride: task.trigger.timeZone };
+    const internal = { schedule: marker, timeZoneOverride: trigger.timeZone };
     try {
       if (plan.mode === "new") {
         // model and effort are a new-conversation task's only (spec §4): a conversation or chat

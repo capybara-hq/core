@@ -481,7 +481,7 @@ describe("automation tools (spec §11)", () => {
     const [task] = await tasksOf(aliceId);
     expect(task).toMatchObject({ mode: "conversation", conversationId: conv, chat: null });
     // no run_context yet: the org's zone, else UTC
-    expect(task?.trigger.timeZone).toBe("UTC");
+    expect(task?.trigger).toMatchObject({ timeZone: "UTC" });
   });
 
   it("an unattended run cannot create a task", async () => {

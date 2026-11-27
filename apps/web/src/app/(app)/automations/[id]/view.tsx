@@ -402,7 +402,11 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
       compact: "title",
       header: t("columns.scheduledFor"),
       fit: true,
-      cell: (r) => <DateTime value={r.firedAt ?? r.scheduledFor} />,
+      cell: (r) => {
+        // an event run has no tick; it is recorded fired
+        const at = r.firedAt ?? r.scheduledFor;
+        return at === null ? null : <DateTime value={at} />;
+      },
     },
     {
       key: "kind",
