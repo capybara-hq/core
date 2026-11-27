@@ -1804,8 +1804,8 @@ export type FileOrigin = "upload" | "delivered" | "generated";
 export type FileStatus = "uploading" | "draft" | "ready" | "deleted";
 
 /**
- * 0188 (file library spec §1): a file a person sees, owned by an account. `blob_id` is null only
- * while `uploading`; `staging_key` is a migrated `uploading` row's old staging key (null for new
+ * 0188 (file library spec §1): a file a person sees, owned by an account. `blob_id` is null while
+ * `uploading` (and may be once `deleted`); `staging_key` is a migrated `uploading` row's old staging key (null for new
  * rows, which stage at `uploads/<id>`); `agent_id` has no foreign key (a label).
  */
 export interface FilesTable {

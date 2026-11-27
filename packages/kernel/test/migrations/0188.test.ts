@@ -9,12 +9,14 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0188_file_library.sql (file library spec §1, §9): creates `blobs`, `files`, `conversation_files`,
- * extends `file_shares`, and copies chat attachments, delivered artifacts and share snapshots with
- * preserved ids. Migrates to the file before it, seeds old data, applies it, then runs it again
- * (idempotent: row counts unchanged).
+ * 0188_file_library.sql + 0189_file_library_copy.sql (file library spec §1, §9): 0188 creates
+ * `blobs`, `files`, `conversation_files`, extends `file_shares` and defines `file_library_copy`;
+ * 0189 runs it over everything. Migrates to the file before 0188, seeds old data, applies both,
+ * checks the copy, runs both again (idempotent), then simulates old code writing during a rolling
+ * deploy and checks that a catch-up call `file_library_copy(since)` migrates those writes.
  */
 const FILE = "0188_file_library.sql";
+const COPY_FILE = "0189_file_library_copy.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -34,25 +36,37 @@ const UNBOUND = "10000000-0000-4000-8000-000000000002";
 const PENDING = "10000000-0000-4000-8000-000000000003";
 const NOT_SENT_YET = "10000000-0000-4000-8000-000000000004";
 const READ_ATT = "10000000-0000-4000-8000-000000000005";
+const DELETING = "10000000-0000-4000-8000-000000000006";
+const BOUND_FID = "10000000-0000-4000-8000-000000000007";
+const O2_ATT = "10000000-0000-4000-8000-000000000008";
+const NEW_ATT = "10000000-0000-4000-8000-000000000009";
 const V1 = "20000000-0000-4000-8000-000000000001";
 const V2 = "20000000-0000-4000-8000-000000000002";
 const GEN = "20000000-0000-4000-8000-000000000003";
+const BROKEN = "20000000-0000-4000-8000-000000000004";
+const SUB = "20000000-0000-4000-8000-000000000005";
+const DEL = "20000000-0000-4000-8000-000000000006";
+const NEW_ART = "20000000-0000-4000-8000-000000000007";
 const SHARE = "30000000-0000-4000-8000-000000000001";
 const SHARE_UPLOAD = "30000000-0000-4000-8000-000000000002";
 
 const attachment = (
   id: string,
-  account: string,
-  conversation: string | null,
-  status: string,
-  purpose = "chat",
+  o: {
+    org?: string;
+    account?: string;
+    conversation: string | null;
+    status: string;
+    purpose?: string;
+    key?: string;
+  },
 ) =>
   sql`insert into capybara.attachments
     (id, org_id, conversation_id, account_id, name, content_type, size, object_key, status, etag,
      pages, expires_at, purpose, created_at)
-    values (${id}, 'o1', ${conversation}, ${account}, ${`${id}.pdf`}, 'application/pdf', 42,
-      ${`attachments/${id}`}, ${status}, ${`etag-${id}`}, 3,
-      ${conversation === null ? "2026-11-29T00:00:00Z" : null}, ${purpose},
+    values (${id}, ${o.org ?? "o1"}, ${o.conversation}, ${o.account ?? "a1"}, ${`${id}.pdf`},
+      'application/pdf', 42, ${o.key ?? `attachments/${id}`}, ${o.status}, ${`etag-${id}`}, 3,
+      ${o.conversation === null ? "2026-11-29T00:00:00Z" : null}, ${o.purpose ?? "chat"},
       '2026-11-01T00:00:00Z')`.execute(db);
 
 const artifact = (
@@ -60,28 +74,35 @@ const artifact = (
   seq: number,
   id: string,
   sourcePath: string,
-  size: number,
+  size: number | undefined,
+  at: string = `2026-11-02T00:00:0${seq}Z`,
 ) =>
-  sql`insert into capybara.conversation_events (conversation_id, seq, type, run_id, payload, created_at)
+  sql`insert into capybara.conversation_events
+    (conversation_id, seq, type, run_id, payload, created_at)
     values (${conversation}, ${seq}, 'artifact_created', null, ${JSON.stringify({
       artifactId: id,
       name: sourcePath.split("/").pop(),
       contentType: "text/markdown",
-      size,
+      ...(size !== undefined && { size }),
       objectKey: `artifacts/${conversation}/${id}`,
       sourcePath,
       callId: "call1",
       sha256: "a".repeat(64),
-    })}::jsonb, ${`2026-11-02T00:00:0${seq}Z`})`.execute(db);
+    })}::jsonb, ${at})`.execute(db);
 
-const userMessage = (conversation: string, seq: number, ids: string[]) =>
+const userMessage = (
+  conversation: string,
+  seq: number,
+  refs: { id: string; key?: "attachmentId" | "fileId" }[],
+  text = "look",
+) =>
   sql`insert into capybara.conversation_events (conversation_id, seq, type, run_id, payload)
     values (${conversation}, ${seq}, 'user_message', null, ${JSON.stringify({
       content: [
-        { type: "text", text: "look" },
-        ...ids.map((id) => ({
+        { type: "text", text },
+        ...refs.map((r) => ({
           type: "document",
-          source: { kind: "ref", attachmentId: id, mediaType: "application/pdf" },
+          source: { kind: "ref", [r.key ?? "attachmentId"]: r.id, mediaType: "application/pdf" },
         })),
       ],
       authorAccountId: "a1",
@@ -112,46 +133,80 @@ const link = async (conversation: string, id: string) =>
       where conversation_id = ${conversation} and file_id = ${id}`.execute(db)
   ).rows[0];
 
+const linksOf = async (id: string) =>
+  (
+    await sql<{ conversation_id: string }>`select conversation_id from capybara.conversation_files
+      where file_id = ${id} order by conversation_id`.execute(db)
+  ).rows.map((r) => r.conversation_id);
+
+const runFile = async (f: string) => {
+  const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, f), "utf8");
+  await sql.raw(`set search_path to capybara; ${text}`).execute(db);
+};
+
 beforeAll(async () => {
   pg = await startTestPostgres();
   db = createDb(pg.url, 3);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f < FILE) });
-  await sql`insert into capybara.orgs (id, slug, name) values ('o1', 'o1', 'O')`.execute(db);
-  await sql`insert into capybara.accounts (id, display_name) values ('a1', 'A'), ('a2', 'B')`.execute(
+  await sql`insert into capybara.orgs (id, slug, name) values ('o1', 'o1', 'O'), ('o2', 'o2', 'P')`.execute(
     db,
   );
+  await sql`insert into capybara.accounts (id, display_name)
+    values ('a1', 'A'), ('a2', 'B'), ('a3', 'C')`.execute(db);
   await sql`insert into capybara.agents (id, org_id, owner_account_id, visibility, current_version)
-    values ('ag1', 'o1', 'a1', 'org', 1), ('ag2', 'o1', 'a2', 'org', 1)`.execute(db);
+    values ('ag1', 'o1', 'a1', 'org', 1), ('ag2', 'o1', 'a2', 'org', 1),
+      ('ag3', 'o2', 'a3', 'org', 1)`.execute(db);
   await sql`insert into capybara.conversations (id, org_id, agent_id, account_id)
-    values ('c1', 'o1', 'ag1', 'a1'), ('c2', 'o1', 'ag2', 'a2')`.execute(db);
-  // c1: a sent attachment (message seq 2) and one bound by a message still queued (no event)
-  await attachment(BOUND, "a1", "c1", "ready");
-  await attachment(NOT_SENT_YET, "a1", "c1", "ready");
-  await sql`insert into capybara.conversation_events (conversation_id, seq, type, run_id, payload)
-    values ('c1', 1, 'user_message', null, ${JSON.stringify({
-      content: [{ type: "text", text: "hi" }],
-      authorAccountId: "a1",
-    })}::jsonb)`.execute(db);
-  await userMessage("c1", 2, [BOUND]);
-  await userMessage("c1", 3, [BOUND]);
-  // a finalized composer file not sent yet, an upload never finalized, a Read copy (not chat)
-  await attachment(UNBOUND, "a1", null, "ready");
-  await attachment(PENDING, "a1", null, "pending");
-  await attachment(READ_ATT, "a1", "c1", "ready", "read");
-  // c2: two versions of one delivered file, one generated image
-  await artifact("c2", 4, V1, "out/report.md", 10);
-  await artifact("c2", 5, V2, "out/report.md", 20);
-  await artifact("c2", 6, GEN, "generated/cat.png", 30);
+    values ('c1', 'o1', 'ag1', 'a1'), ('c2', 'o1', 'ag2', 'a2'), ('c5', 'o2', 'ag3', 'a3')`.execute(
+    db,
+  );
+  // a sub-agent conversation of c2 (its own account and agent) and a soft-deleted conversation
+  await sql`insert into capybara.conversations
+    (id, org_id, agent_id, account_id, kind, parent_conversation_id, subagent_type)
+    values ('c3', 'o1', 'ag1', 'a1', 'subagent', 'c2', 'helper')`.execute(db);
+  await sql`insert into capybara.conversations (id, org_id, agent_id, account_id, deleted_at)
+    values ('c4', 'o1', 'ag2', 'a2', now())`.execute(db);
+
+  // c1: a sent attachment (first named by a ref at seq 2; seq 1 only mentions its id in text),
+  // one sent under the new `fileId` key, one bound by a message still queued (no event)
+  await attachment(BOUND, { conversation: "c1", status: "ready" });
+  await attachment(BOUND_FID, { conversation: "c1", status: "ready" });
+  await attachment(NOT_SENT_YET, { conversation: "c1", status: "ready" });
+  await userMessage("c1", 1, [], `see ${BOUND}`);
+  await userMessage("c1", 2, [{ id: BOUND }]);
+  await userMessage("c1", 3, [{ id: BOUND }]);
+  await userMessage("c1", 4, [{ id: BOUND_FID, key: "fileId" }]);
+  // a finalized composer file not sent yet, an upload never finalized, a Read copy (not chat), an
+  // attachment being deleted
+  await attachment(UNBOUND, { conversation: null, status: "ready" });
+  await attachment(PENDING, { conversation: null, status: "pending" });
+  await attachment(READ_ATT, { conversation: "c1", status: "ready", purpose: "read" });
+  await attachment(DELETING, { conversation: "c1", status: "deleting" });
+  // another org storing an object under the same key string
+  await attachment(O2_ATT, {
+    org: "o2",
+    account: "a3",
+    conversation: "c5",
+    status: "ready",
+    key: `attachments/${BOUND}`,
+  });
+  // c2: two versions of one delivered file, one generated image, one event missing its size
+  await artifact("c2", 1, V1, "out/report.md", 10);
+  await artifact("c2", 2, V2, "out/report.md", 20);
+  await artifact("c2", 3, GEN, "generated/cat.png", 30);
+  await artifact("c2", 4, BROKEN, "out/broken.md", undefined);
+  await artifact("c3", 1, SUB, "out/sub.md", 40);
+  await artifact("c4", 1, DEL, "out/del.md", 50);
   // shares: one of a delivered version (live snapshot), one of the bound upload (already swept)
   await sql`insert into capybara.file_shares
     (id, org_id, code, conversation_id, file_id, source_path, created_by, audience, name,
-     content_type, size, object_key)
+     content_type, size, object_key, created_at, updated_at)
     values
     (${SHARE}, 'o1', 'code1', 'c2', ${V2}, 'out/report.md', 'a2', 'internal', 'report.md',
-      'text/markdown', 20, ${`shares/${SHARE}/1`}),
+      'text/markdown', 20, ${`shares/${SHARE}/1`}, '2026-11-03T00:00:00Z', '2026-11-03T00:00:00Z'),
     (${SHARE_UPLOAD}, 'o1', 'code2', 'c1', ${BOUND}, null, 'a1', 'external', 'x.pdf',
-      'application/pdf', 42, null)`.execute(db);
-  await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
+      'application/pdf', 42, null, '2026-11-03T00:00:00Z', '2026-11-03T00:00:00Z')`.execute(db);
+  await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= COPY_FILE) });
 });
 
 afterAll(async () => {
@@ -160,7 +215,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-describe("0188_file_library", () => {
+describe("0188_file_library + 0189_file_library_copy", () => {
   it("turns a sent chat attachment into a ready upload referenced by its conversation", async () => {
     const f = await file(BOUND);
     expect(f).toMatchObject({
@@ -185,7 +240,9 @@ describe("0188_file_library", () => {
       blob_org: "o1",
     });
     expect(f?.created_at).toEqual(new Date("2026-11-01T00:00:00Z"));
+    // the first ref, not the earlier text that merely contains the id
     expect(await link("c1", BOUND)).toEqual({ role: "attached", first_seq: "2", org_id: "o1" });
+    expect(await link("c1", BOUND_FID)).toEqual({ role: "attached", first_seq: "4", org_id: "o1" });
     // bound by a queued message not yet in the log: referenced, no seq known
     expect(await link("c1", NOT_SENT_YET)).toEqual({
       role: "attached",
@@ -210,16 +267,28 @@ describe("0188_file_library", () => {
       expires_at: new Date("2026-11-29T00:00:00Z"),
     });
     expect(await file(READ_ATT)).toBeUndefined();
-    const links = await sql`select 1 from capybara.conversation_files
-      where file_id in (${UNBOUND}, ${PENDING})`.execute(db);
-    expect(links.rows).toEqual([]);
+    expect(await file(DELETING)).toBeUndefined();
+    expect(await linksOf(UNBOUND)).toEqual([]);
+    expect(await linksOf(PENDING)).toEqual([]);
+  });
+
+  it("gives each org its own blob for the same key string", async () => {
+    const [mine, theirs] = [await file(BOUND), await file(O2_ATT)];
+    expect(theirs).toMatchObject({
+      org_id: "o2",
+      account_id: "a3",
+      object_key: `attachments/${BOUND}`,
+      blob_org: "o2",
+    });
+    expect(theirs?.blob_id).not.toEqual(mine?.blob_id);
+    expect(await link("c5", O2_ATT)).toEqual({ role: "attached", first_seq: null, org_id: "o2" });
   });
 
   it("turns every delivered version into a file owned by the conversation's owner", async () => {
     for (const [id, origin, size, seq] of [
-      [V1, "delivered", "10", "4"],
-      [V2, "delivered", "20", "5"],
-      [GEN, "generated", "30", "6"],
+      [V1, "delivered", "10", "1"],
+      [V2, "delivered", "20", "2"],
+      [GEN, "generated", "30", "3"],
     ] as const) {
       expect(await file(id)).toMatchObject({
         account_id: "a2",
@@ -239,15 +308,32 @@ describe("0188_file_library", () => {
     }
     expect(await file(V1)).toMatchObject({ source_path: "out/report.md", name: "report.md" });
     expect(await file(GEN)).toMatchObject({ source_path: "generated/cat.png" });
+    expect(await file(BROKEN)).toBeUndefined();
   });
 
-  it("moves a share's snapshot into a blob and links its source file", async () => {
+  it("migrates sub-agent and deleted conversations' deliveries", async () => {
+    expect(await file(SUB)).toMatchObject({
+      account_id: "a1",
+      agent_id: "ag1",
+      source_conversation_id: "c3",
+      origin: "delivered",
+    });
+    expect(await linksOf(SUB)).toEqual(["c3"]);
+    expect(await file(DEL)).toMatchObject({
+      account_id: "a2",
+      source_conversation_id: "c4",
+      status: "ready",
+    });
+    expect(await link("c4", DEL)).toEqual({ role: "delivered", first_seq: "1", org_id: "o1" });
+  });
+
+  it("points a share at a blob of its snapshot and keeps its object key", async () => {
     const r = await sql<Record<string, unknown>>`select s.object_key as share_key, s.source_file_id,
         s.conversation_id, b.object_key, b.size, b.status, b.org_id
       from capybara.file_shares s left join capybara.blobs b on b.id = s.blob_id
       where s.id = ${SHARE}`.execute(db);
     expect(r.rows[0]).toEqual({
-      share_key: null,
+      share_key: `shares/${SHARE}/1`,
       source_file_id: V2,
       conversation_id: "c2",
       object_key: `shares/${SHARE}/1`,
@@ -278,7 +364,11 @@ describe("0188_file_library", () => {
     await expect(
       sql`insert into capybara.files (id, org_id, account_id, name, content_type, size, origin, status)
         values ('bad1', 'o1', 'a1', 'x', 'text/plain', 1, 'upload', 'ready')`.execute(db),
-    ).rejects.toThrow(/check/);
+    ).rejects.toThrow(/files_blob_check/);
+    // a deleted file may have lost its blob
+    await sql`insert into capybara.files (id, org_id, account_id, name, content_type, size, origin, status)
+      values ('gone1', 'o1', 'a1', 'x', 'text/plain', 1, 'upload', 'deleted')`.execute(db);
+    await sql`delete from capybara.files where id = 'gone1'`.execute(db);
     await expect(
       sql`insert into capybara.blobs (id, org_id, sha256, size, object_key, status)
         values ('bad2', 'o1', 'XYZ', 1, 'k', 'ready')`.execute(db),
@@ -290,6 +380,10 @@ describe("0188_file_library", () => {
       sql`insert into capybara.blobs (id, org_id, sha256, size, object_key, status)
         values ('ok2', 'o1', ${sha}, 1, 'blobs/y', 'ready')`.execute(db),
     ).rejects.toThrow(/blobs_org_sha256_key/);
+    await expect(
+      sql`insert into capybara.blobs (id, org_id, size, object_key, status)
+        values ('ok3', 'o1', 1, 'blobs/x', 'ready')`.execute(db),
+    ).rejects.toThrow(/blobs_org_object_key/);
     await sql`delete from capybara.blobs where id = 'ok1'`.execute(db);
   });
 
@@ -308,9 +402,60 @@ describe("0188_file_library", () => {
 
   it("is idempotent", async () => {
     const before = await counts();
-    expect(before).toEqual({ blobs: 7, files: 7, conversation_files: 5, shares_with_blob: 1 });
-    const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
-    await sql.raw(`set search_path to capybara; ${text}`).execute(db);
+    expect(before).toEqual({ blobs: 11, files: 11, conversation_files: 9, shares_with_blob: 1 });
+    await runFile(FILE);
+    await runFile(COPY_FILE);
     expect(await counts()).toEqual(before);
+  });
+
+  it("catches up what old code wrote after the first copy", async () => {
+    // old code binds the draft, finalizes the pending upload, takes a new bound upload, delivers a
+    // new artifact and refreshes the share's snapshot (generation 2)
+    await sql`update capybara.attachments set conversation_id = 'c1', expires_at = null
+      where id = ${UNBOUND}`.execute(db);
+    await userMessage("c1", 5, [{ id: UNBOUND }]);
+    await sql`update capybara.attachments set status = 'ready', size = 50, etag = 'e2'
+      where id = ${PENDING}`.execute(db);
+    await sql`insert into capybara.attachments
+      (id, org_id, conversation_id, account_id, name, content_type, size, object_key, status, purpose)
+      values (${NEW_ATT}, 'o1', 'c1', 'a1', 'n.pdf', 'application/pdf', 7,
+        ${`attachments/${NEW_ATT}`}, 'ready', 'chat')`.execute(db);
+    await userMessage("c1", 6, [{ id: NEW_ATT }]);
+    await artifact("c2", 5, NEW_ART, "out/new.md", 60, new Date().toISOString());
+    await sql`update capybara.file_shares
+      set generation = 2, object_key = ${`shares/${SHARE}/2`}, updated_at = now()
+      where id = ${SHARE}`.execute(db);
+
+    await sql`select capybara.file_library_copy('2026-11-20T00:00:00Z')`.execute(db);
+
+    expect(await file(UNBOUND)).toMatchObject({
+      status: "ready",
+      expires_at: null,
+      source_conversation_id: "c1",
+    });
+    expect(await link("c1", UNBOUND)).toEqual({ role: "attached", first_seq: "5", org_id: "o1" });
+    expect(await file(PENDING)).toMatchObject({
+      status: "draft",
+      staging_key: null,
+      size: "50",
+      object_key: `attachments/${PENDING}`,
+      etag: "e2",
+      blob_status: "ready",
+    });
+    expect(await file(NEW_ATT)).toMatchObject({ status: "ready", source_conversation_id: "c1" });
+    expect(await link("c1", NEW_ATT)).toEqual({ role: "attached", first_seq: "6", org_id: "o1" });
+    expect(await file(NEW_ART)).toMatchObject({
+      account_id: "a2",
+      object_key: `artifacts/c2/${NEW_ART}`,
+    });
+    expect(await link("c2", NEW_ART)).toEqual({ role: "delivered", first_seq: "5", org_id: "o1" });
+    const share = await sql<{ object_key: string }>`select b.object_key from capybara.file_shares s
+      join capybara.blobs b on b.id = s.blob_id where s.id = ${SHARE}`.execute(db);
+    expect(share.rows[0]?.object_key).toBe(`shares/${SHARE}/2`);
+
+    const after = await counts();
+    expect(after).toEqual({ blobs: 15, files: 13, conversation_files: 12, shares_with_blob: 1 });
+    await sql`select capybara.file_library_copy('-infinity')`.execute(db);
+    expect(await counts()).toEqual(after);
   });
 });
