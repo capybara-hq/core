@@ -320,6 +320,46 @@ describe("buildTimeline", () => {
     expect(row).not.toHaveProperty("guard");
   });
 
+  it("a running Platform call names its operation (the tool's first key argument present)", () => {
+    // the kernel's Platform keyArgs: the operation first, so a live row is not just "Platform call"
+    const info = new Map<string, ToolInfo>([
+      [
+        "Platform",
+        {
+          key: "Platform",
+          title: null,
+          kind: "tool",
+          icon: { kind: "name", name: "skills" },
+          sandbox: false,
+          keyArgs: ["operation", "query", "domain"],
+          inputView: null,
+          tool: null,
+          source: { kind: "builtin" },
+        },
+      ],
+    ]);
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        {
+          id: "p1",
+          name: "Platform",
+          input: { action: "call", operation: "conversations.delete", params: { id: "c9" } },
+        },
+        { id: "p2", name: "Platform", input: { action: "browse" } },
+      ]),
+      started(3, "p1", "Platform"),
+    ];
+    const rows = tools(buildTimeline(events, [], info, "zh"))[0]?.rows ?? [];
+    expect(rows[0]?.row).toMatchObject({
+      name: "Platform",
+      status: "running",
+      keyArg: "conversations.delete",
+    });
+    // no operation, query or domain: the action stands in
+    expect(rows[1]?.row).toMatchObject({ status: "pending", keyArg: "browse" });
+  });
+
   it("a Write that could not be diffed (truncated, no hunks) has no +0 −0 and no diff", () => {
     const events = [
       user(1, "go"),
@@ -1131,6 +1171,39 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
     expect(at(events, {}, [{ runId: "r1", step: 1, text: "Done", thinking: "", tools: [] }])).toBe(
       false,
     );
+  });
+
+  it("parallel calls still without a result keep it gone after a sibling's result and an approval", () => {
+    // the step logs seven calls; one waits for an approval, is approved, runs and returns; the
+    // other six are still queued (no `tool_call_started` yet), so a step is live: no planning row
+    const ids = ["c1", "c2", "c3", "c4", "c5", "c6", "c7"];
+    const step = [
+      user(1, "clean up"),
+      runStart(2),
+      calls(
+        3,
+        ids.map((id) => ({ id, name: "Platform", input: { operation: "conversations.delete" } })),
+      ),
+      ev(4, "approval_requested", {
+        step: 0,
+        callId: "c1",
+        approvalId: "ap1",
+        toolKey: "Platform",
+        expiresAt: "x",
+      }),
+      ev(5, "approval_decided", {
+        approvalId: "ap1",
+        callId: "c1",
+        decision: "approved",
+        byAccountId: "a1",
+      }),
+      started(6, "c1", "Platform"),
+      result(7, "c1", "Platform"),
+    ];
+    expect(at(step)).toBe(false);
+    // every call returned, the run goes on: the model plans the next step
+    const done = [...step, ...ids.slice(1).map((id, i) => result(8 + i, id, "Platform"))];
+    expect(at(done)).toBe(true);
   });
 
   it("a retried run shows the line until its first output", () => {

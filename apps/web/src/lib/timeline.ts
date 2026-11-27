@@ -1047,7 +1047,7 @@ export function composerWait(
  * Whether the working line shows (conversation send spec §2.2, review fix 1): never while the run
  * waits for a person (the card is the output); else when this view has a pending send, when the
  * run in progress has no output since it started or since its last settled tool result (and no
- * tool is running), or when a message this tab sent waits for its run ({@link awaitingRun}). An
+ * call the run logged is still without its result: pending, waiting or running), or when a message this tab sent waits for its run ({@link awaitingRun}). An
  * idle conversation, one whose message the kernel could not deliver, and a child conversation
  * that is not running show none.
  */
@@ -1081,6 +1081,11 @@ export function workingLineVisible(
     } else if (OUTPUT.has(e.type)) {
       output = true;
       if (e.type === "tool_call_started") open.add(e.payload.callId);
+      // A call is live from the step that logs it until its result, not only once it starts:
+      // a parallel sibling still queued behind an approval or the command review has no
+      // `tool_call_started` yet, and an earlier sibling's result must not end the step.
+      else if (e.type === "assistant_message")
+        for (const b of e.payload.content) if (b.type === "tool_call") open.add(b.id);
     }
   }
   return open.size === 0 && !output;

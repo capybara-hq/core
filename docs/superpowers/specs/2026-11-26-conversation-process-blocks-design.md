@@ -107,7 +107,10 @@ only where it is still useful (a burst of parallel calls).
   row's capybara, below.
 - **Planning row** (maintainer decision 2026-11-27): while the run is live and no step is (the
   model plans the next one), the rail's last row is the capybara (the working line's animation as
-  the node icon) and its rotating caption; when a step starts, that row becomes the step in place
+  the node icon, drawn 14 × 10, no larger than the other marks) and its rotating caption. "No step
+  is live" means no call the run logged is still without its result (pending, waiting for a
+  person or the review, running) and no step streams: a parallel group with queued calls keeps
+  the planning row away even after a sibling's result or an approval record. When a step starts, that row becomes the step in place
   (same height), and when the model plans again the row is appended at the tail again. There is
   no separate working line under the block: the block stands from the run's start (head and
   planning row; a message this view sent before its run is logged gets such a block after its
