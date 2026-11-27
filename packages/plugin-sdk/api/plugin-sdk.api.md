@@ -273,6 +273,12 @@ export const BUILTIN_TOOL_NAME_RE: RegExp;
 export type BuiltinAvatarPresetId = (typeof BUILTIN_AVATAR_PRESET_IDS)[number];
 
 // @public
+export interface CacheWriteByTtl {
+    tokens: number;
+    ttl: number;
+}
+
+// @public
 export function canonicalThemeValue(group: "color" | "shadow", value: unknown): string | undefined;
 
 // @public
@@ -2140,7 +2146,7 @@ export type HookModelMessage = {
 };
 
 // @public
-export type HookModelRequest = Omit<ModelRequest, "messages"> & {
+export type HookModelRequest = Omit<ModelRequest, "messages" | "cacheTtl"> & {
     messages: HookModelMessage[];
 };
 
@@ -2763,6 +2769,21 @@ export const MOBILE_SHELL_LIMITS: {
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
 
 // @public
+export interface ModelCacheInfo {
+    defaultTtl?: number;
+    guaranteed: boolean;
+    mechanism: ModelCacheMechanism;
+    minTokens?: number;
+    refreshOnHit: boolean;
+    ttlClock: "request_start" | "unknown";
+    ttlIsMinimum: boolean;
+    ttlOptions: number[];
+}
+
+// @public
+export type ModelCacheMechanism = "explicit" | "implicit" | "none";
+
+// @public
 export interface ModelCallOptions {
     config?: unknown;
     orgId?: string;
@@ -2814,11 +2835,11 @@ export interface ModelImageGenerationInfo {
 
 // @public
 export interface ModelInfo {
+    cache?: ModelCacheInfo;
     capabilities: {
         tools: boolean;
         vision: boolean;
         reasoning: boolean;
-        caching: boolean;
         midConversationSystem: boolean;
         documents?: boolean;
     };
@@ -2888,6 +2909,7 @@ export interface ModelProvider {
 
 // @public
 export interface ModelRequest {
+    cacheTtl?: number;
     maxOutputTokens: number;
     messages: ModelMessage[];
     model: string;
@@ -2944,6 +2966,7 @@ export type ModelStreamEvent = {
 // @public
 export interface ModelUsage {
     cacheReadTokens: number;
+    cacheWriteByTtl?: CacheWriteByTtl[];
     cacheWriteTokens: number;
     inputTokens: number;
     outputImages?: number;
@@ -3107,6 +3130,7 @@ export const OPEN_PUBLIC_DENIED_CLASSES: readonly AddressClass[];
 // @public
 export interface OpenExternalCapabilityV1 {
     open(url: string): Promise<void>;
+    readonly returnScheme?: string;
 }
 
 // @public
@@ -4553,7 +4577,7 @@ export const THEME_TOKENS: {
     readonly color: {
         readonly bg: {
             readonly dark: "#0A0A0A";
-            readonly light: "#FAF9F6";
+            readonly light: "#FDFDFC";
         };
         readonly panel: {
             readonly dark: "#111110";
@@ -4564,11 +4588,11 @@ export const THEME_TOKENS: {
             readonly light: "#FCFBF9";
         };
         readonly sidebar: {
-            readonly dark: "#111110";
-            readonly light: "#F3F2EE";
+            readonly dark: "#171716";
+            readonly light: "#EDECE7";
         };
         readonly "sidebar-active": {
-            readonly dark: "#1A1A18";
+            readonly dark: "rgba(255,255,255,0.07)";
             readonly light: "rgba(26,26,24,0.09)";
         };
         readonly raised: {
@@ -4576,12 +4600,12 @@ export const THEME_TOKENS: {
             readonly light: "#FFFFFF";
         };
         readonly selected: {
-            readonly dark: "#1F1F1D";
+            readonly dark: "#21211F";
             readonly light: "rgba(26,26,24,0.07)";
         };
         readonly hover: {
-            readonly dark: "#171716";
-            readonly light: "rgba(26,26,24,0.04)";
+            readonly dark: "rgba(255,255,255,0.04)";
+            readonly light: "rgba(26,26,24,0.045)";
         };
         readonly "line-soft": {
             readonly dark: "#1C1C1A";
@@ -5092,7 +5116,7 @@ export const UI_LIMITS: {
 };
 
 // @public
-export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.user.bubble", "message.assistant", "tool-row", "composer", "composer.box", "composer.options", "composer.send", "properties-panel", "section", "right-panel", "status-bar", "button", "button.primary", "card", "input", "dialog", "code-block", "menu", "segmented", "stat-card", "switch", "switch.knob", "org-avatar", "agent-chip", "image-placeholder"];
+export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.user.bubble", "message.assistant", "tool-row", "composer", "composer.box", "composer.options", "composer.send", "properties-panel", "section", "right-panel", "button", "button.primary", "card", "input", "dialog", "code-block", "menu", "segmented", "stat-card", "switch", "switch.knob", "org-avatar", "agent-chip", "image-placeholder"];
 
 // @public
 export const UI_PARTS: readonly UiPartSpec[];
@@ -5365,6 +5389,9 @@ export function validateAllowHost(h: string): string[];
 export function validateAnswer(form: InputForm, answer: FormAnswer): string[];
 
 // @public
+export function validateCacheWriteByTtl(usage: ModelUsage): string | null;
+
+// @public
 export function validateChannelCard(card: unknown): string[];
 
 // @public
@@ -5393,6 +5420,9 @@ export function validateInputForm(form: InputForm): string[];
 
 // @public
 export function validateMediaBlock(b: unknown): string[];
+
+// @public
+export function validateModelCache(cache: ModelCacheInfo | undefined): string | null;
 
 // @public
 export function validateParams(decl: ModelParameter[], params: Record<string, unknown>): {

@@ -1,7 +1,8 @@
 /*
  * App Shell (spec §4): Sidebar | content column. The content column holds the floating row (below
- * 600), the page (template) and the StatusBar; the ActionRow sits at
- * the template's bottom.
+ * 600) and the page (template); the ActionRow sits at the template's bottom. From 600 up the shell
+ * has two planes: the ground (the sidebar, the gutters) and the paper (the page) lying on it, told
+ * apart by colour alone.
  */
 
 /* 以链接渲染的按钮（Link 组件不能带 data-*） */
@@ -63,7 +64,7 @@
 }
 /* A shell-wide banner (safe mode) is the shell's first row, across both columns; the sidebar and
    the content column share the second row, so the shell keeps the window height and nothing at its
-   bottom (the status bar, the composer) is clipped. The content column keeps the second column
+   bottom (the ActionRow, the composer) is clipped. The content column keeps the second column
    when no sidebar panel is drawn (below 600). */
 .cb-shell[data-banner="true"] {
   display: grid;
@@ -109,6 +110,58 @@
 .cb-sidebar-top > .cb-drag-fill,
 .cb-pageheader-path > .cb-drag-fill {
   margin-left: calc(-1 * var(--cb-space-2));
+}
+.cb-pageheader-row > .cb-drag-fill,
+.cb-pageheader-titleless > .cb-drag-fill {
+  margin-left: calc(-1 * var(--cb-space-3));
+}
+/* The paper's top gutter (DragFill `cb-shell-gutter`): the ground above the paper, from 600 up. */
+.cb-shell-gutter {
+  display: none;
+}
+
+/* The two planes (layered shell spec §2): from 600 up the shell paints the ground and the page is
+   the paper on it, inset by space.2 on top, end and bottom (its start is the sidebar's edge),
+   rounded and clipped, with no border and no shadow: the edge is the colour step alone. The top
+   gutter is an empty filler across the column, under everything drawn later (a desktop shell's
+   drag region; the conversation panel's resize handle starts below it). The conversation page
+   draws its own papers (conversation-page.css). Inside the paper a template pads by space.6. */
+@media (min-width: 600px) {
+  .cb-shell {
+    background: var(--cb-sidebar);
+  }
+  .cb-shell-column {
+    position: relative;
+  }
+  .cb-shell-gutter {
+    display: block;
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    height: var(--cb-space-2);
+  }
+  .cb-shell-main {
+    margin: var(--cb-space-2) var(--cb-space-2) var(--cb-space-2) 0;
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-bg);
+    overflow: clip;
+  }
+  .cb-shell-main:has(.cb-conv-page) {
+    margin: 0;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
+  }
+  /* The title row's filler takes the room the title block leaves, never the title's own: the
+     text keeps its width and shrinks first (the filler's basis is 0). */
+  .cb-pageheader-row > .cb-pageheader-text {
+    flex: 1 1 auto;
+  }
+  /* A loading title has no width of its own: the text block takes the room before the actions
+     again (the filler none), so its 30% bar measures as the reference draws it (spec §4.2). */
+  .cb-pageheader-row:has(> .cb-pageheader-text .cb-pageheader-title-bar) > .cb-drag-fill {
+    flex: 0 0 0;
+  }
 }
 .cb-title-bar > .cb-drag-fill {
   margin-left: calc(-1 * var(--cb-space-1));
@@ -206,10 +259,6 @@
   .cb-shell[data-surface="pushed"] .cb-template .cb-template[data-scroll="one"] {
     margin-top: 0;
     padding-top: 0;
-  }
-  /* The compact class has no StatusBar: the account sheet carries the system status (spec §4). */
-  .cb-shell-column > .cb-statusbar {
-    display: none;
   }
 }
 .cb-floatbar {
@@ -400,16 +449,17 @@
   }
 }
 
-/* Template head: the PageHeader in the content width, fixed above the body. */
+/* Template head: the PageHeader in the content width, fixed above the body. From 600 up the page
+   pads by space.6 inside the paper (its inset already separates it, layered shell spec §2). */
 .cb-template {
-  --cb-content-pad: var(--cb-layout-content-pad);
+  --cb-content-pad: var(--cb-space-6);
 }
 @media not all and (min-width: 600px) {
   .cb-template {
     --cb-content-pad: 16px;
   }
 }
-/* One head for every template (spec §4.3): side padding 32 (16 below 600), top 20, so the head
+/* One head for every template (spec §4.3): side padding 24 (16 below 600), top 20, so the head
    sits at the same x and y on every page. Head rhythm (spec §4.2): the body starts
    layout.head-content below the head, or layout.head-tabs-content below its tab row; the body
    adds no space of its own above its first block, so these are the only head-to-content gaps. */
@@ -577,6 +627,12 @@ a.cb-pageheader-path-seg:hover {
 @media not all and (min-width: 600px) {
   .cb-pageheader-row {
     flex-wrap: wrap;
+  }
+  /* The head's fillers drag only from 600 up: below it they take no room (the server render draws
+     them before the width is known), and their negative margin cancels the gap they bring. */
+  .cb-pageheader-row > .cb-drag-fill,
+  .cb-pageheader-titleless > .cb-drag-fill {
+    flex: 0 0 0;
   }
   .cb-pageheader-text {
     flex: 1 1 0;
@@ -783,7 +839,7 @@ a.cb-stat-card:focus-visible {
   height: 100%;
 }
 
-/* ActionRow (spec §4.4): above the StatusBar, panel-2 ground, soft top line. */
+/* ActionRow (spec §4.4): at the bottom of the page, panel-2 ground, soft top line. */
 /* The ground spans the content area; the row inside it is the content frame (spec §4.4): the
    template's side padding, the one content width and the body's scrollbar gutter, so its right end
    is the content's. Outside a template (the reference set) the padding is the gutter. */
@@ -839,49 +895,6 @@ a.cb-stat-card:focus-visible {
   flex: none;
   align-items: center;
   gap: var(--cb-space-2);
-}
-
-/* StatusBar (spec §4.4): one form, no ground, soft top line; the left part truncates first. */
-.cb-statusbar {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--cb-space-3);
-  height: var(--cb-layout-status-bar);
-  padding: 0 calc(var(--cb-layout-gutter) + var(--cb-inset-right)) 0 var(--cb-layout-gutter);
-  border-top: 1px solid var(--cb-line-soft);
-  color: var(--cb-muted);
-  font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
-  white-space: nowrap;
-}
-.cb-statusbar-left {
-  display: flex;
-  flex: 1;
-  gap: var(--cb-space-3);
-  min-width: 0;
-}
-.cb-statusbar-left > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* The context (`user@org:/chat/<id>`) gives way first: the page status ("第 5 轮 · 已用 18 秒")
-   keeps its words whole and truncates only once the context is down to its ellipsis (spec §4.4). */
-.cb-statusbar-context {
-  flex: 0 1000 auto;
-}
-.cb-statusbar-page {
-  flex: 0 1 auto;
-}
-.cb-statusbar-right {
-  display: flex;
-  font-family: var(--cb-font-code);
-  flex: none;
-  gap: var(--cb-space-3);
-}
-.cb-statusbar-right > [data-tone="fail"] {
-  color: var(--cb-fail);
 }
 
 /* Body before hydration: CSS picks the inline inspector or its toolbar button by window width (the
@@ -993,18 +1006,11 @@ a.cb-stat-card:focus-visible {
   color: var(--cb-ink);
 }
 
-/* A short window (height below 480, spec §4.7; the shell's `data-short`): the StatusBar is hidden
-   whatever the width. The query is the first paint's; the attribute follows it after hydration for
-   plugin CSS. */
-@media (max-height: 479px) {
-  .cb-statusbar {
-    display: none;
-  }
-}
 /* Compact (spec §4.2, maintainer decision 2026-11-22): the PageHeader draws no path row at any
    height, in a browser and in every shell: the floating row's back button and the h1 are enough
-   (medium and expanded have no floating row: the path row is their way up, and stays). A
-   title-less head keeps its actions. */
+   (medium and expanded have no floating row: a path of three segments or more is their way up,
+   and stays; a first-level page draws none at any width, page-header.tsx). A title-less head
+   keeps its actions. */
 @media not all and (min-width: 600px) {
   .cb-pageheader-path {
     display: none;

@@ -71,6 +71,9 @@ import { LibraryFilesController } from "../files/library.controller.js";
 import { LibraryReadModule } from "../files/library-read.module.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";
 import { GitModule } from "../git/git.module.js";
+import { HandoffController } from "../handoff/handoff.controller.js";
+import { HandoffModule } from "../handoff/handoff.module.js";
+import { HandoffTicketsModule } from "../handoff/handoff-tickets.js";
 import { HtmlModule } from "../html/html.module.js";
 import { HtmlDocumentController } from "../html/html-document.controller.js";
 import { AccountAvatarController } from "../identity/account-avatar.controller.js";
@@ -203,6 +206,8 @@ const CONTROLLERS: Type[] = [
   OAuthConnectController,
   OAuthCallbackController,
   SsoController,
+  // a shell's browser handoff redeemed in the person's signed-in browser
+  HandoffController,
   BindController,
   MeIdentitiesController,
   ChannelConnectionsController,
@@ -288,6 +293,9 @@ const CONTROLLERS: Type[] = [
     SharesModule,
     // HTML files rendered as sandboxed documents (the document token and route)
     HtmlModule,
+    // the connect and link starts' handoff tickets (OAuthConnectController, SsoController)
+    HandoffTicketsModule,
+    HandoffModule,
   ],
   controllers: CONTROLLERS,
   providers: [{ provide: APP_GUARD, useClass: AuthGuard }],

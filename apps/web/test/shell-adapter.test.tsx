@@ -298,7 +298,7 @@ describe("the root layout", () => {
       interactiveWidget: "resizes-content",
       themeColor: "#0A0A0A",
     });
-    expect(rootViewport("light", null).themeColor).toBe("#FAF9F6");
+    expect(rootViewport("light", null).themeColor).toBe("#FDFDFC");
     // pinch zoom stays
     expect(viewport).not.toHaveProperty("maximumScale");
     expect(viewport).not.toHaveProperty("userScalable");

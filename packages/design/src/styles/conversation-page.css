@@ -1448,9 +1448,6 @@ button.cb-property-row {
 .cb-rpanel-footer {
   flex: none;
 }
-.cb-rpanel-footer > .cb-statusbar {
-  padding: 0 var(--cb-space-4);
-}
 .cb-rpanel-switch[aria-expanded="true"] {
   background: var(--cb-hover);
   color: var(--cb-ink);
@@ -1475,11 +1472,7 @@ button.cb-property-row {
 }
 /* The on-screen keyboard (spec §4.3): iOS keeps the layout viewport, so the shell measures the
    keyboard's height over its bottom (`--cb-keyboard-inset`, 0 without one) and the page lifts its
-   column by it: the composer stays above the keyboard and the thread above it shrinks. The status
-   bar gives its line to the thread while the keyboard is open. */
-.cb-shell[data-keyboard="open"] .cb-conv-page .cb-statusbar {
-  display: none;
-}
+   column by it: the composer stays above the keyboard and the thread above it shrinks. */
 .cb-conv-main {
   display: flex;
   flex: 1;
@@ -1706,8 +1699,7 @@ button.cb-property-row {
     flex-direction: column;
   }
   .cb-conv-page .cb-conv-cols > .cb-properties {
-    /* the status bar under the columns is part of the page's last segment: it takes its height */
-    flex: 0 0 calc(env(viewport-segment-height 0 1) - var(--cb-layout-status-bar));
+    flex: 0 0 env(viewport-segment-height 0 1);
     box-sizing: border-box;
     min-height: 0;
     margin-top: calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0));
@@ -1869,6 +1861,66 @@ button.cb-property-row {
 .cb-conv-resize:focus-visible::after,
 .cb-conv-resize[data-dragging="true"]::after {
   background: var(--cb-accent);
+}
+/* The two papers (layered shell spec §2): from 600 up the shell main draws no paper on this page
+   (shell.css); the middle column and the inline right panel are papers on the ground, space.2
+   apart and inset by space.2 on top, end and bottom, rounded, with no border and no shadow. The
+   panel's start line goes and its resize handle fills the gap between the papers (the accent line
+   at the gap's centre). The panel slot keeps no clip of its own (the handle lies outside its box):
+   its panel clips to the rounded corners. A maximised panel lies in the middle column's paper and
+   draws no paper of its own; a side sheet (below 1280) lies over the one paper. */
+@media (min-width: 600px) {
+  .cb-conv-page {
+    gap: var(--cb-space-2);
+    padding: var(--cb-space-2) var(--cb-space-2)
+      calc(var(--cb-space-2) + var(--cb-keyboard-inset, 0px)) 0;
+  }
+  .cb-conv-main {
+    /* the page's end padding and the gap come out of this column, not the panel: the panel
+       keeps its width and its clamp (content − chat-min, conversation-page.tsx) */
+    min-width: calc(var(--cb-layout-chat-min) - 2 * var(--cb-space-2));
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-bg);
+    overflow: clip;
+  }
+  .cb-conv-page .cb-conv-panel:not([data-full="true"]) {
+    border-radius: var(--cb-radius-md);
+  }
+  .cb-conv-page .cb-conv-panel:not([data-full="true"]) > .cb-rpanel {
+    border-left: 0;
+    border-radius: inherit;
+    overflow: clip;
+  }
+  /* The panel is paper too, in the paper's colour, inline or maximised. */
+  .cb-conv-page .cb-conv-panel > .cb-rpanel {
+    background: var(--cb-bg);
+  }
+  /* Maximised it lies in the middle column's paper under the title bar: no start line, and its
+     bottom corners follow the paper's. */
+  .cb-conv-page .cb-conv-panel[data-full="true"] > .cb-rpanel {
+    border-left: 0;
+    border-radius: 0 0 var(--cb-radius-md) var(--cb-radius-md);
+    overflow: clip;
+  }
+  .cb-conv-page .cb-conv-panel > .cb-conv-resize {
+    left: calc(-1 * var(--cb-space-2));
+  }
+  .cb-conv-page .cb-conv-panel > .cb-drag-fill {
+    left: 0;
+  }
+}
+/* Two viewport segments (spec §8): the segments place the panes (the hinge is the gap between
+   them), so the papers lie flush on the page with no inset or gap of their own; the `env()` tracks
+   above then line up with the segments. */
+@media (horizontal-viewport-segments: 2), (vertical-viewport-segments: 2) {
+  .cb-conv-page {
+    gap: 0;
+    padding: 0 0 var(--cb-keyboard-inset, 0px);
+  }
+  /* No ground above the papers there, so no top gutter filler over the title bar. */
+  .cb-shell-column:has(.cb-conv-page) > .cb-shell-gutter {
+    display: none;
+  }
 }
 .cb-conv-scrim {
   position: fixed;
@@ -2068,10 +2120,6 @@ button.cb-property-row {
 @media not all and (min-width: 600px) {
   .cb-conv-latest {
     right: calc(var(--cb-space-4) + var(--cb-inset-right));
-  }
-  /* The compact class has no StatusBar (mobile layout spec §4): the page draws its own. */
-  .cb-conv-page .cb-statusbar {
-    display: none;
   }
 }
 /*

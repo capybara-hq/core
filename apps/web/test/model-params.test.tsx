@@ -316,7 +316,6 @@ const caps = (reasoning: boolean) => ({
   tools: true,
   vision: false,
   reasoning,
-  caching: false,
   midConversationSystem: false,
 });
 const MODELS = {

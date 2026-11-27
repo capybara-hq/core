@@ -74,7 +74,6 @@ const stubInfo = (id: string, extra: Partial<ModelInfo> = {}): ModelInfo => ({
     tools: false,
     vision: false,
     reasoning: false,
-    caching: false,
     midConversationSystem: true,
   },
   parameters: [],
@@ -3085,7 +3084,6 @@ describe("streaming Write base reads (streaming tool input spec §4.1)", () => {
       tools: true,
       vision: false,
       reasoning: false,
-      caching: false,
       midConversationSystem: true,
     },
   });

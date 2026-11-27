@@ -17,7 +17,6 @@ export interface ModelCapabilities {
   tools: boolean;
   vision: boolean;
   reasoning: boolean;
-  caching: boolean;
   midConversationSystem?: boolean;
   documents?: boolean;
 }
@@ -26,6 +25,8 @@ export interface AdminModelInfo extends ModelInfo {
   contextWindow: number;
   maxOutputTokens?: number;
   capabilities: ModelCapabilities;
+  /** The model's prompt cache (plugin-sdk `ModelInfo.cache`); absent = no caching. */
+  cache?: { mechanism: "explicit" | "implicit" | "none" };
 }
 
 /** 后台的一个供应商：供应商名即插件名；列模型失败时 `status: "error"`、`models` 为空，不影响其他供应商。 */

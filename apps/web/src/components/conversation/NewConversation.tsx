@@ -33,7 +33,6 @@ import { devicesQuery } from "../../lib/query/devices";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { conversationGroupsQuery } from "../../lib/query/shell";
-import { HOME_PATH } from "../../lib/routes";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { DeviceCreateDialog } from "../DeviceCreateDialog";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
@@ -47,7 +46,6 @@ import {
   type ComposerMessage,
   newClientMessageId,
 } from "./ComposerBar";
-import { useStatusSignature } from "./ConversationView";
 import {
   type FirstMessageAttempt,
   firstMessageControls,
@@ -132,7 +130,6 @@ export function useNewConversationPage(
   const qc = useQueryClient();
   const errorMessage = useErrorMessage();
   const session = useSession();
-  const signature = useStatusSignature(HOME_PATH);
   const agentsQ = agentsQuery(orgId);
   const agentsRead = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) });
   const agents = agentsRead.data?.agents;
@@ -506,7 +503,6 @@ export function useNewConversationPage(
         />
       </Stack>
     ),
-    status: { ...signature, version: session.version ?? "" },
     right: "none",
     onCloseRight: () => {},
   };

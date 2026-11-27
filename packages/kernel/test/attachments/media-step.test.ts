@@ -56,7 +56,6 @@ const info = (id: string, vision: boolean): ModelInfo => ({
     tools: false,
     vision,
     reasoning: false,
-    caching: false,
     midConversationSystem: true,
     documents: vision,
   },

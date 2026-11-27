@@ -175,9 +175,11 @@ describe("size-class widths in the stylesheets", () => {
     expect(decls(compact, ".cb-shell-float")).toContain("display: block;");
   });
 
-  it("a short window hides the status bar on every class", () => {
-    const hidden = media(css("shell.css"), "(max-height: 479px)");
-    expect(decls(hidden, ".cb-statusbar")).toContain("display: none;");
+  it("no class draws a status bar, so a short window has none to hide (layered shell spec §6)", () => {
+    for (const f of ["shell.css", "conversation-page.css", "templates.css"]) {
+      expect(css(f), f).not.toContain("cb-statusbar");
+      expect(css(f), f).not.toContain("--cb-layout-status-bar");
+    }
   });
 
   it("compact draws no path row at any height; medium and expanded keep it (decision 2026-11-22)", () => {

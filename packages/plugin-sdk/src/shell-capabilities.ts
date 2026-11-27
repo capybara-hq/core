@@ -32,6 +32,11 @@ export interface NotifyCapabilityV1 {
 /** `openExternal@1`: open a URL in the system browser. */
 export interface OpenExternalCapabilityV1 {
   open(url: string): Promise<void>;
+  /**
+   * The shell's own URL scheme, the one in its `<scheme>://auth/callback` (optional): a browser
+   * handoff's done page links back into the app through `<scheme>://open?url=…`.
+   */
+  readonly returnScheme?: string;
 }
 
 /** `signIn@1`: sign in through the system browser (desktop client spec §6.5). */

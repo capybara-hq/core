@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
   assertValidDeclarations,
@@ -10,10 +11,13 @@ import {
   type ModelProvider,
   type ModelRequest,
   type ModelStreamEvent,
+  type ModelUsage,
   type ParamValue,
   sanitizeParams,
+  validateCacheWriteByTtl,
   validateEmbedResult,
   validateImageGenerateResult,
+  validateModelCache,
   validateParams,
 } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -41,6 +45,35 @@ interface TargetCommon {
 export type ConformanceTarget = TargetCommon & { plugin: string; provider: ModelProvider };
 
 type Complete = Extract<ModelStreamEvent, { type: "message_complete" }>;
+
+/**
+ * Checks a model's cache declaration with the SDK's `validateModelCache` (null when valid or
+ * absent). `info` is undefined when the provider does not list the model. With `expectCaching`
+ * (the target's `expect.caching`), a model that declares no cache or `mechanism: "none"` is also
+ * a problem.
+ */
+export function checkCacheDeclaration(
+  info: ModelInfo | undefined,
+  expectCaching = false,
+): string | null {
+  if (info === undefined) return "model is not listed";
+  const problem = validateModelCache(info.cache);
+  if (problem !== null) return problem;
+  if (expectCaching && (info.cache === undefined || info.cache.mechanism === "none")) {
+    return 'expect.caching is true but the model declares no prompt cache (cache absent or mechanism "none")';
+  }
+  return null;
+}
+
+/**
+ * Checks the write tiers of a call made with `cacheTtl`: when `usage.cacheWriteByTtl` is present
+ * it may hold only that ttl. Returns the problem, or `null` (also when no tiers are reported).
+ */
+export function checkCacheWriteTiers(usage: ModelUsage, cacheTtl: number): string | null {
+  const other = (usage.cacheWriteByTtl ?? []).find((tier) => tier.ttl !== cacheTtl);
+  if (other === undefined) return null;
+  return `cacheWriteByTtl reports ttl ${other.ttl} for a request with cacheTtl ${cacheTtl}`;
+}
 
 /** The suite's request: `params` defaults to `{}`. */
 type SuiteRequest = Omit<ModelRequest, "params"> & { params?: ModelRequest["params"] };
@@ -258,7 +291,8 @@ export function describeModelProviderConformance(
 
     it("thinking replay", async (ctx) => {
       if (!t.expect.thinking) return ctx.skip();
-      // 最高一档 effort 下推理 token 也计入输出上限：1024 不够（gpt-5-nano 第二轮会 max_tokens），放宽
+      // at the top effort tier reasoning tokens count toward the output limit too: 1024 is not
+      // enough (gpt-5-nano hits max_tokens on the second turn), so raise it
       const over = { ...(await thinkingOver()), maxOutputTokens: 8192 };
       const first = base({
         ...over,
@@ -280,19 +314,49 @@ export function describeModelProviderConformance(
       expect(second.done.stopReason).toBe("end_turn");
     });
 
-    it("caching", async (ctx) => {
-      if (!t.expect.caching) return ctx.skip();
-      const req = base({
+    /**
+     * The caching cases' request: a long stable system prefix marked for caching; a `tag` makes
+     * the prefix distinct from every other request's.
+     */
+    const cachingRequest = (over: Partial<SuiteRequest> = {}, tag = ""): SuiteRequest =>
+      base({
         system: [
           {
-            text: `Stable prefix. ${"Reference material. ".repeat(Math.ceil((t.cachePrefixTokens ?? 5000) / 4))}`,
+            text: `Stable prefix${tag}. ${"Reference material. ".repeat(Math.ceil((t.cachePrefixTokens ?? 5000) / 4))}`,
             cache: true,
           },
         ],
+        ...over,
       });
+
+    it("declares a valid cache", async () => {
+      const info = (await t.provider.listModels()).find((m) => m.id === t.model);
+      expect(checkCacheDeclaration(info, t.expect.caching)).toBeNull();
+    });
+
+    it("caching", async (ctx) => {
+      if (!t.expect.caching) return ctx.skip();
+      const req = cachingRequest();
       await collect(t, req);
       const second = await collect(t, req);
       expect(second.done.usage.cacheReadTokens).toBeGreaterThan(0);
+    });
+
+    it("cache ttl options", async (ctx) => {
+      const info = (await t.provider.listModels()).find((m) => m.id === t.model);
+      const options = info?.cache?.ttlOptions ?? [];
+      if (options.length === 0) return ctx.skip();
+      // each option gets its own prefix (the ttl plus a nonce), so each request writes rather
+      // than reading an entry an earlier request left; a plugin that drops cacheTtl then reports
+      // the wrong tier
+      const nonce = randomUUID();
+      for (const cacheTtl of options) {
+        const req = cachingRequest({ cacheTtl }, ` (ttl ${cacheTtl}, ${nonce})`);
+        const { done } = await collect(t, req);
+        expect(done.stopReason).toBe("end_turn");
+        expect(validateCacheWriteByTtl(done.usage)).toBeNull();
+        expect(checkCacheWriteTiers(done.usage, cacheTtl)).toBeNull();
+      }
     });
 
     it("usage", async () => {
@@ -301,6 +365,7 @@ export function describeModelProviderConformance(
       const u = done.usage;
       expect(u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens).toBeGreaterThan(0);
       expect(u.outputTokens).toBeGreaterThan(0);
+      expect(validateCacheWriteByTtl(u)).toBeNull();
     });
 
     it("mid-conversation system", async () => {

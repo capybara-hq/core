@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { css, parseCss } from "./css-rules";
 
 /**
  * The sidebar's conversation section layout (spec §6.13): jsdom lays nothing out, so these read
@@ -51,5 +52,59 @@ describe("the conversation section", () => {
     expect(panel).toContain("padding: var(--cb-space-8) var(--cb-space-2);");
     // centered like the page style (the base rule), never the compact left alignment
     expect(panel).not.toMatch(/align-items|text-align/);
+  });
+});
+
+describe("the sidebar on the ground (layered shell spec §4)", () => {
+  const rules = parseCss(css("sidebar.css"));
+  const ruleOf = (sel: string, at: string | null = null) =>
+    rules.filter(
+      (r) =>
+        r.at === at &&
+        r.selector
+          .split(",")
+          .map((s) => s.trim())
+          .includes(sel),
+    );
+  const declsOf = (sel: string, at: string | null = null) =>
+    Object.assign({}, ...ruleOf(sel, at).map((r) => r.decls)) as Record<string, string>;
+  const WIDE = "(min-width: 600px)";
+
+  it(".cb-sidebar-foot draws no line above the account row", () => {
+    for (const r of rules.filter((x) => x.selector.includes(".cb-sidebar-foot")))
+      expect(r.decls["border-top"]).toBeUndefined();
+  });
+
+  it("from 600 up the sidebar keeps the ground's colour and draws no end line", () => {
+    const wide = declsOf(".cb-sidebar:not([data-variant])", WIDE);
+    // its own ground is the shell's colour, so it reads as the ground in a shell and alone
+    expect(wide.background).toBeUndefined();
+    expect(wide["border-right"]).toBe("0");
+    expect(declsOf(".cb-sidebar").background).toBe("var(--cb-sidebar)");
+  });
+
+  it("the org switcher draws no frame and no ground; hover paints var(--cb-hover)", () => {
+    const base = declsOf(".cb-sidebar-org");
+    expect(base.border).toBe("0");
+    expect(base.background).toBe("transparent");
+    expect(declsOf('.cb-sidebar-org:not([data-static="true"]):hover').background).toBe(
+      "var(--cb-hover)",
+    );
+  });
+
+  it("the admin block's way back is a dense link: control.dense high, pad-dense-x, radius.sm, small, muted", () => {
+    const back = declsOf(".cb-sidebar-admin-back");
+    expect(back.height).toBe("var(--cb-control-dense)");
+    expect(back.padding).toBe("0 var(--cb-pad-dense-x)");
+    expect(back["border-radius"]).toBe("var(--cb-radius-sm)");
+    expect(back["font-size"]).toBe("var(--cb-type-small-size)");
+    expect(back.color).toBe("var(--cb-muted)");
+    const hover = declsOf(".cb-sidebar-admin-back:hover");
+    expect(hover.background).toBe("var(--cb-hover)");
+    expect(hover.color).toBe("var(--cb-ink)");
+  });
+
+  it("no rule hides the removed org meta and scope lines (they are not rendered)", () => {
+    expect(sidebar).not.toContain(".cb-sidebar-org-meta");
   });
 });

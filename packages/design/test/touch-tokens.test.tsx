@@ -194,7 +194,6 @@ const CODE_SELECTORS: [file: string, selector: string][] = [
   ["conversation-page.css", ".cb-task-command"],
   ["conversation-page.css", ".cb-task-output-detail"],
   ["shell.css", ".cb-pageheader-path"],
-  ["shell.css", ".cb-statusbar-right"],
   ["table.css", '.cb-cell-title-desc[data-mono="true"]'],
   ["display.css", ".cb-copy-code-value"],
   ["templates.css", ".cb-error-detail-raw"],

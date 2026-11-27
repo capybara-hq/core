@@ -33,7 +33,6 @@ const CAPS = {
   tools: true,
   vision: false,
   reasoning: false,
-  caching: false,
   midConversationSystem: false,
 };
 const MODELS = {

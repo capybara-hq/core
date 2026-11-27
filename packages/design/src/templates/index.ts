@@ -3,7 +3,6 @@ export {
   CHAT_MIN,
   ConversationPage,
   type ConversationPageProps,
-  type ConversationStatus,
   clampPanelWidth,
   PANEL_DEFAULT,
   PANEL_MIN,

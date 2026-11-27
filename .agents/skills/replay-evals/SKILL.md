@@ -31,7 +31,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order) when it can differ between the recording
   and a reconstruction (a candidate changes it, or it can't be fetched at reconstruction), and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`,
-  `subagent_changed` (child cases, see "Sub-agents"), `permission_profile_changed` and `device_sandbox_changed` (see "Recorded permission context" below), `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `context_fit` (context compaction spec §4.9), `tool_unmatched` (full-run replay).
+  `subagent_changed` (child cases, see "Sub-agents"), `permission_profile_changed` and `device_sandbox_changed` (see "Recorded permission context" below), `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `context_fit` (context compaction spec §4.9), `run_outcome_note` (see "Run outcome notes" below), `tool_unmatched` (full-run replay).
 - The runtime (request building, the loop, waits) lives in `packages/kernel/src/runtime`. An agent's `instructions` is derived from its
   `instructionFiles` on save.
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
@@ -146,6 +146,19 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   cut-off tool call), up to `MAX_TRUNCATED_STEPS` in a row, then the run ends with `max_output`.
   Case in `reconstruct.test.ts` ("replies cut off at the output limit"). A model-fake reply longer
   than four characters per output token is cut off, so tests that need long replies stay under it.
+- **Run outcome notes** (reliability spec "Run outcome notes", maintainer decision 2026-11-28): every
+  `run_failed` / `run_aborted` of a run that is not a compact run renders as one `role: "system"` note at
+  its position, "The previous run ended before it finished: <reason>." (`runtime/context/run-outcome.ts`;
+  the reason is a neutral category of the abort reason or error code, never the recorded message). A
+  summary that covers it drops it; the compaction transcript carries it as a `System reminder:` line.
+  From the log alone, but new model-visible input over logs that already exist, so
+  `model_call.request.runOutcomeSeqs` records the terminal events a request rendered (absent when none)
+  and reconstruction reports `run_outcome_note` (after `context_fit`) when the rebuild renders another
+  set: a request sent before the notes existed, never a candidate. Cases in `reconstruct.test.ts` ("run
+  outcome notes" and the drift group). The summary's framing also opens with "The earlier part of this
+  conversation was compacted into the summary above and is no longer shown verbatim." (compaction spec
+  §4.2.2): a framing text, rendered for every log, no `DriftReason`. `compaction_skipped` (a manual
+  compaction with nothing to summarize, spec §4.7) is display only, never model-visible.
 - **A watched wait** (browser long waits spec §5.4): what the model reads is the resumed handler's `tool_result`, or
   `WAIT_SKIPPED_TEXT` for one skipped by a message (a logged `tool_result`); `question_asked.watch` and
   `question_answered` outcome `woken` are not model-visible. No `DriftReason`; full-run replay returns the recorded

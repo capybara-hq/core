@@ -131,11 +131,7 @@ describe("the real components at the compact width have no violation", () => {
     window.matchMedia = matchMediaFor(width, 844).matchMedia;
     render(
       <DesignProvider locale="zh">
-        <AppShell
-          sidebar={SIDEBAR}
-          status={{ context: "grant@acme:/", version: "0.1.0" }}
-          pathname="/inbox"
-        >
+        <AppShell sidebar={SIDEBAR} pathname="/inbox">
           <InboxPage
             header={{ path: [{ label: "收件箱" }], title: "收件箱" }}
             list={<p>L</p>}

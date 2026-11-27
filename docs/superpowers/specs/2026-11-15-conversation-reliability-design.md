@@ -124,6 +124,52 @@ run job reaching a terminal run is a no-op and never resurrects it. Keep the dea
 Do not automatically create a new run for the same failed message. Additional unconsumed messages
 can start normally. Document this behavior in the outbox contract.
 
+## Run outcome notes (maintainer decision 2026-11-28, issue #975)
+
+A run that ended `failed` or `aborted` used to leave the model only the replayed partial reply and the
+pairing guard's "Result unknown" results: `run_failed` / `run_aborted` were not model-visible, so the
+next request could not tell a stopped or failed run from a finished one. Request building
+(`runtime/context/build.ts`, `runtime/context/run-outcome.ts`) now renders, at each such terminal
+event's position (right after the run's last event, before the next user turn), one system message:
+
+> The previous run ended before it finished: `<reason>`.
+
+`<reason>` comes from the recorded payload alone, mapped onto neutral categories, never the recorded
+error message (provider text, URLs, secrets stay out):
+
+| Recorded | Reason text |
+|---|---|
+| `run_aborted` by a person (`byAccountId` set) | it was stopped by the user |
+| `run_aborted` `detail: "wait_timeout"` | it was stopped because the dispatching agent's wait for it timed out |
+| `run_aborted` `shutdown_exhausted` | it was interrupted and could not be resumed |
+| any other `run_aborted` | it was stopped |
+| `model.rate_limited`, `model.overloaded` | the model service was overloaded or rate-limited |
+| `model.server`, `run.provider_error` | the model service returned an error |
+| `model.timeout` | the model service did not respond in time |
+| `model.network` | a network error |
+| `model.auth` | the model service rejected the platform's credentials |
+| `model.invalid_request` | the model service rejected the request |
+| `model.context_overflow`, `run.context_too_large` | the conversation no longer fit the model's context window |
+| `model.refusal` | the model declined to respond |
+| `model.unconfigured`, `run.model_unavailable`, `run.provider_unavailable` | the model was unavailable |
+| `run.storage_unavailable` | attachment storage was unavailable |
+| `run.hook_denied` | a platform policy blocked the model request |
+| `run.delivery_failed` | the reply could not be delivered |
+| `run.stalled`, `run.orphaned` | it was interrupted and could not be resumed |
+| any other code | an internal error |
+
+- **Which runs.** Every run's terminal event gets its own note, in its own conversation's log: a
+  sub-agent's run too (the next run a `SendMessage` starts sees how the previous one ended; the
+  parent already reads the child's end from its delivery). A manual compact run's end gets none:
+  the model took no part in it, and its outcome is the summary, the skip or the failure record.
+- **Append-only.** A note sits where its run ended, so it never moves or changes once a request
+  rendered it; a later failure adds its own note at its own place. A summary that covers it drops it
+  (the compaction transcript carries it as a `System reminder:` line, so the summary can mention it).
+- **Replay.** Derived from the log alone; `model_call.request.runOutcomeSeqs` records which terminal
+  events a request rendered (absent when none), and reconstruction reports the `run_outcome_note`
+  `DriftReason` when the rebuild renders another set: a request sent before the notes existed
+  (logs written before this change), never a candidate (nothing about a candidate changes them).
+
 ## Validation and rollout
 
 Before implementation, create an inventory of claim-sensitive writes and lock ordering. Add only

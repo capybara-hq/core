@@ -464,9 +464,8 @@ describe("widths, stat cards and the form without anchors", () => {
       </FormPage>,
     );
     expect(screen.queryByRole("navigation", { name: "页内导航" })).toBeNull();
-    // only the path line is a navigation landmark
-    const navs = screen.queryAllByRole("navigation");
-    expect(navs.map((n) => n.getAttribute("data-part"))).toEqual(["path"]);
+    // no navigation landmark at all: a first-level page draws no path line
+    expect(screen.queryAllByRole("navigation")).toEqual([]);
   });
 });
 
@@ -721,7 +720,6 @@ describe("ConversationPage 跟随最新消息", () => {
           <p key={i}>消息 {i}</p>
         ))}
         composer={<div>c</div>}
-        status={{ context: "", version: "" }}
         right="none"
         onCloseRight={() => {}}
       />
@@ -862,7 +860,6 @@ describe("SetupPage (the guided setup layout)", () => {
     menu: [{ label: "Beta", checked: false, onSelect: vi.fn() }],
   };
   const account = { name: "Grant", menu: [{ label: "退出登录", onSelect: vi.fn() }] };
-  const status = { context: "grant@acme:~/setup", version: "v1.0.0" };
   const steps: design.SetupStep[] = [
     { id: "model", label: "配置模型", state: "done", href: "/admin/extensions" },
     { id: "agent", label: "创建 agent", state: "todo", href: "/agents/new" },
@@ -870,9 +867,9 @@ describe("SetupPage (the guided setup layout)", () => {
   ];
   const sidebar = { org, home: { href: "/" }, steps, activeNav: "home", account };
 
-  it("the shell's geometry: the setup sidebar, the content area, the status bar; no top bar", () => {
+  it("the shell's geometry: the setup sidebar and the content area; no top bar, no status bar", () => {
     zh(
-      <SetupPage sidebar={sidebar} status={status}>
+      <SetupPage sidebar={sidebar}>
         <p>清单</p>
       </SetupPage>,
     );
@@ -883,7 +880,7 @@ describe("SetupPage (the guided setup layout)", () => {
     expect(aside.getAttribute("data-context")).toBe("setup");
     const content = shell.querySelector('[data-part="shell-content"]') as HTMLElement;
     expect(content.querySelector("main")?.textContent).toBe("清单");
-    expect(screen.getByText("grant@acme:~/setup")).toBeTruthy();
+    expect(root.querySelector('[data-part="status-bar"]')).toBeNull();
     // the steps are the navigation; no search, no inbox, no conversations
     const nav = screen.getAllByRole("navigation", { name: "主导航" })[0] as HTMLElement;
     expect(nav.textContent).toContain("配置模型");
@@ -892,7 +889,7 @@ describe("SetupPage (the guided setup layout)", () => {
   });
 
   it("the org opens its menu; the account opens its menu", async () => {
-    zh(<SetupPage sidebar={sidebar} status={status} />);
+    zh(<SetupPage sidebar={sidebar} />);
     const user = userEvent.setup();
     const [orgButton] = screen.getAllByRole("button", { name: "当前组织：Acme，切换组织" });
     if (!orgButton) throw new Error("no org switcher");
@@ -907,14 +904,14 @@ describe("SetupPage (the guided setup layout)", () => {
   });
 
   it("⌘K opens nothing (no command palette in the setup frame)", async () => {
-    zh(<SetupPage sidebar={sidebar} status={status} />);
+    zh(<SetupPage sidebar={sidebar} />);
     await userEvent.keyboard("{Meta>}k{/Meta}");
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("the compact floating row pushes the steps as a page of their own; back closes it", async () => {
     window.history.replaceState(null, "", "/setup");
-    zh(<SetupPage sidebar={sidebar} status={status} />);
+    zh(<SetupPage sidebar={sidebar} />);
     const bar = document.querySelector('[data-part="floating-bar"]') as HTMLElement;
     expect(bar.querySelector('[aria-label^="打开菜单"]')).toBeNull();
     expect(bar.querySelector('[aria-label^="搜索"]')).toBeNull();

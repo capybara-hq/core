@@ -13,6 +13,7 @@ import en from "../../messages/en.json";
 import zh from "../../messages/zh.json";
 import { type Session, SessionContext } from "../../src/components/shell/session";
 import { withProductName } from "../../src/i18n/product";
+import { ExternalAuthProvider } from "../../src/lib/external-auth";
 import { makeQueryClient } from "../../src/lib/query/client";
 import type { Me } from "../../src/lib/session";
 import { Link } from "./navigation";
@@ -94,7 +95,9 @@ export function pageElement(
           {...(clock !== undefined && { clock })}
         >
           <ToastProvider>
-            <SessionContext.Provider value={value}>{ui}</SessionContext.Provider>
+            <SessionContext.Provider value={value}>
+              <ExternalAuthProvider>{ui}</ExternalAuthProvider>
+            </SessionContext.Provider>
           </ToastProvider>
         </DesignProvider>
       </NextIntlClientProvider>

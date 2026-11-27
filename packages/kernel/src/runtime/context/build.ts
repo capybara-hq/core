@@ -36,6 +36,7 @@ import {
   scheduleHeader,
   senderLines,
 } from "./run-context.js";
+import { runOutcomeNotes } from "./run-outcome.js";
 import {
   invokedSkillNames,
   invokedSkillsText,
@@ -74,6 +75,12 @@ export interface ModelCallMeta {
   permissionContext?: PermissionContextMetaV1;
   /** 被放进请求的 `reminder` 事件 seq。 */
   reminderSeqs: number[];
+  /**
+   * The seqs of the `run_failed` / `run_aborted` events whose run outcome note the request renders
+   * (./run-outcome.ts); absent when it renders none. Reconstruction compares it with the rebuild
+   * (`run_outcome_note`).
+   */
+  runOutcomeSeqs?: number[];
   /** 构建时的 `absorbedUpToSeq`（见 {@link BuildModelRequestInput}）；未提供则没有该字段。 */
   absorbedUpToSeq?: number;
   /** 请求的模型参数（即 `ModelRequest.params`）。 */
@@ -847,8 +854,9 @@ export function summaryKeepsTail(
 }
 
 /**
- * The text of the summary's user message (context compaction spec §4.2.2): the summary, then what
- * follows it. `openers` is the number of covered opening messages re-rendered right after this
+ * The text of the summary's user message (context compaction spec §4.2.2): the summary, then a
+ * plain statement that the earlier conversation was compacted into it (maintainer decision
+ * 2026-11-28), then what follows it. `openers` is the number of covered opening messages re-rendered right after this
  * text ({@link summaryOpeners}); `keptTail` says whether newer messages kept verbatim follow
  * ({@link summaryKeepsTail}). Model-facing English, derived from the log alone.
  */
@@ -856,7 +864,9 @@ export function summaryText(
   summary: string,
   framing: { openers: number; keptTail: boolean },
 ): string {
-  const parts: string[] = [];
+  const parts: string[] = [
+    "The earlier part of this conversation was compacted into the summary above and is no longer shown verbatim.",
+  ];
   if (framing.openers > 0) {
     parts.push(
       framing.openers === 1
@@ -904,7 +914,10 @@ export function summaryText(
  *   其他事件不进请求。提供 `absorbedUpToSeq` 时，
  *   尚未被吸收的可吸收事件不进请求，运行中途到达的放在吸收它的调用处（见 BuildModelRequestInput）。
  * An `assistant_message` with `stopReason: "max_tokens"` is followed by a `role: "system"`
- * {@link OUTPUT_TRUNCATED_TEXT} (issue #951).
+ * {@link OUTPUT_TRUNCATED_TEXT} (issue #951). A `run_failed` / `run_aborted` of a run that is not a
+ * compact run is a `role: "system"` run outcome note at its position (`runOutcomeText`, ./run-outcome.ts:
+ * that run ended before it finished, and the neutral category of why; maintainer decision
+ * 2026-11-28); a summary that covers it drops it.
  * 只追加：新事件只会在 messages 末尾追加；唯一的前缀变化来自新的压缩摘要。
  * `step` 与 `agentVersion` 不进请求内容（保证缓存前缀稳定），由调用方写入 `model_call` 事件。
  */
@@ -951,6 +964,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   const permissionHistory = permissionContextHistory(events, summary?.payload.coversUpToSeq);
   const messages: ModelMessage[] = [];
   const reminderSeqs: number[] = [];
+  /** Run outcome notes by terminal event seq, and the ones this request rendered. */
+  const outcomeNotes = runOutcomeNotes(events);
+  const runOutcomeSeqs: number[] = [];
   const absorbed = input.absorbedUpToSeq;
   /** Where a model_call had taken in absorbable events. */
   const absorbedBy = (e: ConversationEvent & { type: "model_call" }) =>
@@ -1318,6 +1334,16 @@ export function buildModelRequest(input: BuildModelRequestInput): {
           messages.push({ role: "user", content: [{ type: "text", text: e.payload.text }] });
         }
         break;
+      // a run that ended before it finished (a compact run excepted): one note where it ended
+      case "run_aborted":
+      case "run_failed": {
+        const note = outcomeNotes.get(e.seq);
+        if (note !== undefined) {
+          messages.push({ role: "system", content: note });
+          runOutcomeSeqs.push(e.seq);
+        }
+        break;
+      }
       case "skills_catalog":
         if (e !== systemSkills) {
           const text = snapshotChangeText(prevSnapshot.get(e.seq), e.payload);
@@ -1342,9 +1368,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       case "artifact_created":
       case "compaction_summary":
       case "compaction_failed":
+      case "compaction_skipped":
       case "run_finished":
-      case "run_aborted":
-      case "run_failed":
       // the permission records are not model-visible: the profile reaches the model only through
       // its recorded permission_context, the review only through the tool result
       case "permission_profile_changed":
@@ -1419,6 +1444,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     systemHash: hashSystem(system),
     ...(permissionHistory.meta !== undefined && { permissionContext: permissionHistory.meta }),
     reminderSeqs,
+    ...(runOutcomeSeqs.length > 0 && { runOutcomeSeqs }),
     ...(absorbed !== undefined && { absorbedUpToSeq: absorbed }),
     params: { ...request.params },
     tools: tools.map((t) => ({ key: t.key, specHash: t.specHash })),

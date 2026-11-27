@@ -217,6 +217,100 @@ it("a service that exits is reported stopped and is never restarted", async () =
   expect(echo.calls).toHaveLength(1);
 });
 
+const request = (supervisor: ServiceSupervisor, body: string) =>
+  serveServiceOp(
+    supervisor,
+    { op: "service.request", name: "browser.browser", body: b64(body), timeoutMs: 5000 },
+    signal(),
+  );
+
+it("a request in the window after a service removed its socket waits for its exit and starts it", async () => {
+  const { supervisor, echo } = await fixture();
+  await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
+  // the service removes its socket and exits a moment later (an idle stop)
+  expect(await request(supervisor, "retire")).toEqual({
+    ok: true,
+    result: { body: b64("echo:retire") },
+  });
+  expect(supervisor.status("browser.browser").state).toBe("running");
+  expect(await request(supervisor, "hello")).toEqual({
+    ok: true,
+    result: { body: b64("echo:hello") },
+  });
+  // the old process exited on its own and a fresh one runs the launched spec again
+  expect(echo.stopped).toBe(0);
+  expect(echo.calls).toHaveLength(2);
+  expect(echo.calls[1]?.argv).toEqual(echo.calls[0]?.argv);
+});
+
+it("an ensure in the window after a service removed its socket starts a fresh one", async () => {
+  const { supervisor, echo } = await fixture();
+  await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
+  await request(supervisor, "retire");
+  expect(
+    await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal()),
+  ).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(echo.stopped).toBe(0);
+  expect(echo.calls).toHaveLength(2);
+  expect(await request(supervisor, "hello")).toEqual({
+    ok: true,
+    result: { body: b64("echo:hello") },
+  });
+});
+
+it("a service that removed its socket but does not exit is stopped after the grace and started again", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "cap-svc-")));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const workspace = join(root, "d", "workspace");
+  await mkdir(workspace, { recursive: true });
+  const echo = echoLauncher();
+  const supervisor = new ServiceSupervisor({
+    deviceDir: join(root, "d"),
+    workspace,
+    launcher: () => echo.launcher,
+    socketAliasRoot: join(root, "a"),
+    exitingGraceMs: 1,
+  });
+  cleanups.push(() => supervisor.stopAll(signal()));
+  await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
+  await request(supervisor, "retire-hold");
+  expect(await request(supervisor, "hello")).toEqual({
+    ok: true,
+    result: { body: b64("echo:hello") },
+  });
+  expect(echo.stopped).toBe(1);
+  expect(echo.calls).toHaveLength(2);
+});
+
+it("a request whose restart fails answers why the service did not start", async () => {
+  const { supervisor, echo } = await fixture();
+  await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
+  const launch = echo.launcher.launch.bind(echo.launcher);
+  echo.launcher.launch = async () => {
+    throw new Error("the sandbox refused the launch");
+  };
+  cleanups.push(async () => {
+    echo.launcher.launch = launch;
+  });
+  await request(supervisor, "retire");
+  expect(await request(supervisor, "hello")).toMatchObject({
+    ok: false,
+    error: { kind: "error", message: "the sandbox refused the launch" },
+  });
+  expect(supervisor.status("browser.browser").state).toBe("stopped");
+});
+
+it("a service stopped by the device is not started again by a request", async () => {
+  const { supervisor, echo } = await fixture();
+  await serveServiceOp(supervisor, { op: "service.ensure", spec: spec() }, signal());
+  await serveServiceOp(supervisor, { op: "service.stop", name: "browser.browser" }, signal());
+  expect(await request(supervisor, "hello")).toMatchObject({
+    ok: false,
+    error: { message: expect.stringMatching(/not running/) },
+  });
+  expect(echo.calls).toHaveLength(1);
+});
+
 it("refuses malformed service bodies with a typed answer", async () => {
   const { supervisor } = await fixture();
   for (const body of [

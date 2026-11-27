@@ -29,12 +29,11 @@ import { DragFill } from "../shell/drag-fill";
 import { useViewportSegments } from "../shell/segments";
 import { useHasShell, useRegisterShellPage } from "../shell/shell-page";
 import { INLINE_RIGHT_AREA_BELOW, useSizeClass } from "../shell/size-class";
-import { StatusBar } from "../shell/status-bar";
 import { useMediaQuery } from "../shell/use-media-query";
 import { useFollowBottom } from "./follow-bottom";
 
-// The conversation page (T7, design spec §5.4): the middle column (title bar, thread, composer,
-// status bar) and one right area: the properties panel inside the middle column, or one right
+// The conversation page (T7, design spec §5.4): the middle column (title bar, thread, composer)
+// and one right area: the properties panel inside the middle column, or one right
 // panel beside it, full height and resizable. Below a 1280 window the right area is a sheet.
 
 /** `layout.panel-min`, `layout.panel`, `layout.chat-min` (tokens.json). */
@@ -70,23 +69,6 @@ function writeWidth(n: number) {
     // Storage may be blocked (private windows); the width then lasts for this page only.
   }
 }
-
-export type ConversationStatus = {
-  /** `<login>@<org slug>:~/chat/<id>` (spec §4.4). */
-  context: string;
-  /**
-   * "第 N 轮 · 已用 <elapsed>"; none on a new conversation. A node, so a page can tick the elapsed
-   * time in a small component instead of re-rendering itself each second.
-   */
-  stats?: ReactNode;
-  /** Run status and "上下文 N%", before the version; none on a new conversation. */
-  right?: string[];
-  /** The run status's colour (the first `right` item): `fail` after a failed run. */
-  tone?: "fail";
-  version: string;
-  /** The viewer's time zone (`UTC+8`), after the version, as on every page (spec §4.4). */
-  timeZone?: string;
-};
 
 export type ConversationPageProps = {
   titleBar: TitleBarProps;
@@ -131,7 +113,12 @@ export type ConversationPageProps = {
    * `send.disabled`).
    */
   composer: ReactNode | ((state: { sendDisabled: boolean }) => ReactNode);
-  status: ConversationStatus;
+  /**
+   * The run state in words (idle / running / waiting / stopped / failed), announced politely: a
+   * visually hidden `role="status"` in the middle column, the page's one live status (the thread
+   * itself announces messages). None on a new conversation.
+   */
+  announce?: string;
   /** Shown when `right` is "properties". */
   properties?: ReactNode;
   /** Shown when `right` is "panel". */
@@ -140,8 +127,8 @@ export type ConversationPageProps = {
   onCloseRight(): void;
   /**
    * The open right panel is maximised inside the page (spec §6.16.18): it takes the content area
-   * under the title bar (the thread, the composer and the properties give way; the app sidebar,
-   * the title bar and the status bar stay), in either layout. Its full-screen button then reads
+   * under the title bar (the thread, the composer and the properties give way; the app sidebar
+   * and the title bar stay), in either layout. Its full-screen button then reads
    * "退出全屏" / "Exit full screen", and Esc asks `onRightFullChange(false)`. Only with
    * `right="panel"`.
    */
@@ -237,7 +224,7 @@ export function ConversationPage({
   working,
   queue,
   composer,
-  status,
+  announce,
   properties,
   panel,
   right,
@@ -299,8 +286,11 @@ export function ConversationPage({
   useEffect(() => {
     const el = root.current;
     if (!el || typeof ResizeObserver === "undefined") return;
+    // the page's border box: from 600 up its padding and the gap between the papers come out of
+    // the middle column (its minimum is chat-min less them, conversation-page.css), so the panel
+    // clamps against the whole page width, as it did before the papers
     const ro = new ResizeObserver((e) => {
-      const w = e[0]?.contentRect.width;
+      const w = e[0]?.borderBoxSize?.[0]?.inlineSize ?? e[0]?.contentRect.width;
       if (w !== undefined) setContent(w);
     });
     ro.observe(el);
@@ -559,15 +549,11 @@ export function ConversationPage({
             )}
             {!sheet && !pushed && right === "properties" ? propertiesNode : null}
           </div>
-          <StatusBar
-            context={status.context}
-            version={status.version}
-            {...(status.timeZone !== undefined ? { timeZone: status.timeZone } : {})}
-            pageStatus={status.stats}
-            system={status.right}
-            {...(status.tone !== undefined ? { systemTone: status.tone } : {})}
-            announceFirst={(status.right?.length ?? 0) > 0}
-          />
+          {announce !== undefined ? (
+            <span className="cb-sr-only" role="status" data-part="run-announce">
+              {announce}
+            </span>
+          ) : null}
         </div>
         {slotted ? (
           <div

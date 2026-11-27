@@ -638,6 +638,10 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const useSuggestion = suggestion
       ? `<button class="r-btn" data-variant="ghost" data-step="dense" data-part="composer-suggestion-use" aria-label="${esc(suggestion.useNamed)}">${icon("corner-down-left", 14)}${esc(suggestion.use)}</button>`
       : "";
+    // the context meter (§6.16.2): a ring right before send; fail past the compaction threshold
+    const meter = o.meter
+      ? `<span class="r-context-meter" role="meter" data-part="composer-context-meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${o.meter}" aria-label="上下文已用 ${o.meter}%" title="上下文已用 ${o.meter}%"${o.meter >= 80 ? ' data-tone="fail"' : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><circle class="r-ring-track" cx="12" cy="12" r="7"/><circle class="r-ring-arc" cx="12" cy="12" r="7" pathLength="100" stroke-dasharray="${o.meter} ${100 - o.meter}" transform="rotate(-90 12 12)"/></svg></span>`
+      : "";
     // phase D: the skill chip sits before the text on its first line
     const line = skill
       ? `<div class="r-composer-line"><span class="r-composer-token"><span>${esc(skill.label)}</span><button class="r-composer-token-remove" aria-label="移除 ${esc(skill.label)}">${icon("x", 12)}</button></span>${textarea}</div>`
@@ -659,7 +663,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         : `<button class="r-btn r-picker" data-variant="ghost" data-part="mode-button"${o.mode === "open" ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}>${icon(P.icon, 14)}${esc(P.label)}${icon("chevron-down", 12)}</button>`;
       return `<div class="r-composer"><label class="r-sr" for="msg">消息</label>${textarea}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${devicePicker({ device: "default" })}${picker(modelText)}<span class="r-grow"></span>${modeButton}${action}</div></div>`;
     }
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}${suggestionHint}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${o.permission ? picker(F.PERMISSION_FIXTURE.items.find((i) => i.id === F.PERMISSION_FIXTURE.selected).label, { open: o.menu === "permission" }) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${useSuggestion}${action}</div></div>`;
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}${suggestionHint}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${o.permission ? picker(F.PERMISSION_FIXTURE.items.find((i) => i.id === F.PERMISSION_FIXTURE.selected).label, { open: o.menu === "permission" }) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${useSuggestion}${meter}${action}</div></div>`;
   }
 
   /**
@@ -1033,7 +1037,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   function subPanelBody() {
     const SP = S.panel;
-    return `<div class="r-panel-body r-subpanel"><div class="r-task"><div class="r-task-label">提示词 · 上级智能体派出</div>${esc(SP.task)}</div><div class="r-tline"><span class="r-tlabel">${esc(SP.meta)}</span></div>${toolGroup(T.expanded.slice(0, 3), { forceGroup: true })}${prose(`<p>${esc(SP.prose)}</p>`)}<div class="r-tline">${spin(16)}<span class="r-tlabel">已使用 Acme 文档: 搜索文件 <span class="r-em">${esc(SP.current)}</span></span></div></div><footer class="r-status r-panel-status"><div class="r-status-left"><span class="r-ellipsis">${esc(SP.footer)}</span></div><div class="r-status-right"><span>上下文 ${esc(SP.context)}</span></div></footer>`;
+    return `<div class="r-panel-body r-subpanel"><div class="r-task"><div class="r-task-label">提示词 · 上级智能体派出</div>${esc(SP.task)}</div><div class="r-tline"><span class="r-tlabel">${esc(SP.meta)}</span></div>${toolGroup(T.expanded.slice(0, 3), { forceGroup: true })}${prose(`<p>${esc(SP.prose)}</p>`)}<div class="r-tline">${spin(16)}<span class="r-tlabel">已使用 Acme 文档: 搜索文件 <span class="r-em">${esc(SP.current)}</span></span></div></div>`;
   }
 
   function filePanelBody(kind) {
@@ -1166,7 +1170,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     switch (o.state) {
       case "context": {
         const X = P.context;
-        return sec("上下文", `${X.ratio}%`, `<div class="r-meter" role="meter" aria-valuenow="${X.ratio}"><span style="width:${X.ratio}%"></span></div><dl class="r-ctx-facts"><div class="r-ctx-row"><dt>模型</dt><dd>${esc(X.model)}</dd></div><div class="r-ctx-row"><dt>设备</dt><dd>${esc(X.device)}</dd></div><div class="r-ctx-row"><dt>连接器</dt><dd>${X.connectors.map(esc).join("、")}</dd></div><div class="r-ctx-row"><dt>上次运行</dt><dd>${X.lastRun.map(esc).join(" · ")}</dd></div></dl>`);
+        return sec("上下文", `${X.ratio}%`, `<div class="r-meter" role="meter" aria-valuenow="${X.ratio}"><span style="width:${X.ratio}%"></span></div><dl class="r-ctx-facts"><div class="r-ctx-row"><dt>模型</dt><dd>${esc(X.model)}</dd></div><div class="r-ctx-row"><dt>设备</dt><dd>${esc(X.device)}</dd></div><div class="r-ctx-row"><dt>连接器</dt><dd>${X.connectors.map(esc).join("、")}</dd></div><div class="r-ctx-row"><dt>轮次</dt><dd data-part="context-rounds">第 3 轮 · 已用 2 分 14 秒</dd></div><div class="r-ctx-row"><dt>上次运行</dt><dd>${X.lastRun.map(esc).join(" · ")}</dd></div></dl>`);
       }
       case "files":
         return sec(
@@ -1198,14 +1202,6 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   // ── Conversation template ──────────────────────────────────────────────
 
-  function convStatus(o = {}) {
-    const X = C.stats;
-    const left = o.new ? "grant@示例组织:/chat" : `${C.path}`;
-    const stats = o.new ? "" : `<span class="r-ellipsis">第 ${X.turns} 轮 · 已用 ${esc(X.elapsed)}</span>`;
-    const right = o.new ? "" : `<span>${o.idle ? "空闲" : esc(X.status)}</span><span>上下文 ${esc(X.context)}</span>`;
-    return `<footer class="r-status" role="status"><div class="r-status-left"><span class="r-ellipsis r-status-context">${esc(left)}</span>${stats}</div><div class="r-status-right">${right}<span>${esc(X.version)}</span></div></footer>`;
-  }
-
   /** The main thread of the template blocks (canvas "Refined" conversation). */
   function thread(kind) {
     if (kind === "subagent")
@@ -1222,14 +1218,14 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       // The new conversation page (agent profile design §4): greeting, agents row, quick actions
       // and the composer without its agent picker (NEW_CONVERSATION, below).
       const body = `<div class="r-conv-new" data-start>${NEW_CONVERSATION.greeting}${NEW_CONVERSATION.row}${composer({ state: "new", noAgent: true, quick: true })}</div>`;
-      return `<div class="r-app">${sidebar({ mode: "full", active: "new", activeConversation: null })}<main class="r-main"><header class="r-titlebar"><span class="r-title" data-untitled>${esc(F.NEW_CONVERSATION_LABEL)}</span></header><div class="r-conv-scroll" data-center>${body}</div>${convStatus({ new: true })}</main></div>`;
+      return `<div class="r-app">${sidebar({ mode: "full", active: "new", activeConversation: null })}<main class="r-main"><header class="r-titlebar"><span class="r-title" data-untitled>${esc(F.NEW_CONVERSATION_LABEL)}</span></header><div class="r-conv-scroll" data-center>${body}</div></main></div>`;
     }
     if (o.state === "loading") {
       // Every part on its way (spec §5.4): a title bar, three thread turns, the composer inert, and
       // the right panel's own loading state.
       const turns = `<div class="r-ucol" data-part="loading-turn"><div class="r-bubble-slot">${skel("100%", "prose")}</div></div><div data-part="loading-turn">${skel("100%", "prose")}</div><div data-part="loading-turn">${skel("70%", "prose")}</div>`;
       const centerL = `<div class="r-conv-center"><div class="r-conv-scroll"><div class="r-thread">${turns}</div></div><div class="r-conv-composer">${composer({ state: "idle" })}</div></div>`;
-      const mainL = `<main class="r-main r-conv-main">${titleBar({ pressed: "files", loading: true })}<div class="r-conv-cols">${centerL}</div>${convStatus({ idle: true })}</main>`;
+      const mainL = `<main class="r-main r-conv-main">${titleBar({ pressed: "files", loading: true })}<div class="r-conv-cols">${centerL}</div></main>`;
       const panelL = `<aside class="r-rpanel" aria-label="右侧面板" aria-busy="true">${panelHeader({ title: "文件", switcher: false, noFullscreen: true })}<div class="r-panel-body"><div class="r-skel-list">${[56, 72, 48, 64].map((w) => `<span class="r-skel" style="width:${w}%"></span>`).join("")}</div></div></aside>`;
       return `<div class="r-app r-conv-app" aria-busy="true">${side}${mainL}${panelL}</div>`;
     }
@@ -1238,7 +1234,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const pressed = o.state === "properties" || o.state === "properties-sheet" ? "properties" : o.state === "file-panel" || o.state === "sheet" ? "files" : undefined;
     const kind = o.state === "subagent-panel" ? "subagent" : o.state === "properties" ? "main" : "file";
     const center = `<div class="r-conv-center"><div class="r-conv-scroll"><div class="r-thread">${thread(kind)}</div></div><div class="r-conv-composer">${composer({ state: running ? "running" : "idle" })}</div></div>`;
-    const main = `<main class="r-main r-conv-main">${titleBar({ pressed })}<div class="r-conv-cols">${center}${props}</div>${convStatus({ idle: o.state === "file-panel" || sheet })}</main>`;
+    const main = `<main class="r-main r-conv-main">${titleBar({ pressed })}<div class="r-conv-cols">${center}${props}</div></main>`;
     let panel = "";
     if (o.state === "file-panel") panel = `<aside class="r-rpanel" aria-label="文件预览">${filePanel("xlsx")}</aside>`;
     if (o.state === "subagent-panel") panel = rightPanel({ state: "subagent" });

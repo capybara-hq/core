@@ -28,7 +28,6 @@ export const UI_PART_NAMES = [
   "properties-panel",
   "section",
   "right-panel",
-  "status-bar",
   "button",
   "button.primary",
   "card",
@@ -246,16 +245,6 @@ export const UI_PARTS: readonly UiPartSpec[] = [
     description: {
       en: "A full-height right pane.",
       zh: "占满高度的右侧窗格。",
-    },
-  },
-  {
-    name: "status-bar",
-    version: 1,
-    owner: ["packages/design/src/shell/status-bar.tsx"],
-    states: [],
-    description: {
-      en: "The status bar.",
-      zh: "状态栏。",
     },
   },
   {

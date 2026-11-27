@@ -15,7 +15,7 @@ const pad = (n: number) => String(n).padStart(2, "0");
 
 /**
  * A duration in the UI language (spec §7, browser review F29): the one formatter for every time a
- * page shows (the status bar's 已用, the run row, a tool's elapsed and finished time, sub-agents,
+ * page shows (the properties panel's elapsed time, the run row, a tool's elapsed and finished time, sub-agents,
  * background tasks), so the same span reads the same everywhere. Below 10 s one decimal ("2.1 秒" /
  * "2.1s"; a `live` timer whole seconds), then whole seconds ("42 秒" / "42s"), minutes and padded
  * seconds ("1 分 09 秒" / "1m 09s"), hours and padded minutes ("1 小时 02 分" / "1h 02m").

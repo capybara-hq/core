@@ -25,17 +25,11 @@ const sidebar = {
   activeNav: "",
   account: { name: "grant", menu: [] },
 };
-const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
 /** The chat surfaces (the home and a conversation) are one level; every other page is pushed. */
 const chatSurface = (pathname: string) => pathname === "/" || pathname.startsWith("/chat/");
 const shell = (pathname: string) => (
   <DesignProvider locale="zh">
-    <AppShell
-      sidebar={sidebar}
-      status={status}
-      pathname={pathname}
-      chatSurface={chatSurface(pathname)}
-    >
+    <AppShell sidebar={sidebar} pathname={pathname} chatSurface={chatSurface(pathname)}>
       <div>内容</div>
     </AppShell>
   </DesignProvider>
@@ -187,7 +181,7 @@ describe("goBack settles on the new route, not on a frame", () => {
 describe("moves on one level never slide", () => {
   const chat = (pathname: string, chatSurface: boolean) => (
     <DesignProvider locale="zh">
-      <AppShell sidebar={sidebar} status={status} pathname={pathname} chatSurface={chatSurface}>
+      <AppShell sidebar={sidebar} pathname={pathname} chatSurface={chatSurface}>
         <div>内容</div>
       </AppShell>
     </DesignProvider>

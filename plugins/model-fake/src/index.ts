@@ -1,7 +1,9 @@
+import * as sdk from "@capybara-hq/plugin-sdk";
 import {
   type ConfigUiHints,
   defineExtension,
   MODEL_PROVIDER_EXTENSION_POINT_V2,
+  type ModelCacheInfo,
   ModelError,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -69,6 +71,31 @@ const DeploymentConfig = z.object({
           .min(0)
           .optional()
           .meta(label("最大参考图数", "Max reference images")),
+        cache: z
+          .union([
+            z.literal("none"),
+            z.object({
+              mechanism: z.enum(["explicit", "implicit", "none"]),
+              ttlOptions: z.array(z.number().int().positive()),
+              defaultTtl: z.number().int().positive().optional(),
+              ttlIsMinimum: z.boolean(),
+              refreshOnHit: z.boolean(),
+              ttlClock: z.enum(["request_start", "unknown"]),
+              minTokens: z.number().int().positive().optional(),
+              guaranteed: z.boolean(),
+            }),
+          ])
+          .superRefine((cache, ctx) => {
+            if (cache === "none") return;
+            // an older host SDK has no validateModelCache: skip the check there
+            const validate: unknown =
+              "validateModelCache" in sdk ? sdk.validateModelCache : undefined;
+            if (typeof validate !== "function") return;
+            const message = (validate as typeof sdk.validateModelCache)(cache as ModelCacheInfo);
+            if (message !== null) ctx.addIssue({ code: "custom", message });
+          })
+          .optional()
+          .meta(label("提示缓存", "Prompt cache")),
         imageSizes: z
           .array(
             z.object({
@@ -94,7 +121,8 @@ const DeploymentConfig = z.object({
  * a URL); otherwise n distinct 1×1 PNGs.
  * Provides model-provider@2: declares three effort levels and `model-fake.style` (`shout` upper-
  * cases the reply).
- * No in-process state: cache hit records live in ctx.kv (TTL 300 seconds).
+ * No in-process state: cache hit records live in ctx.kv (TTL `cacheTtl` or the declared default,
+ * else 300 seconds; a hit re-sets the record when the model declares `refreshOnHit`).
  */
 export default defineExtension({
   name: "model-fake",

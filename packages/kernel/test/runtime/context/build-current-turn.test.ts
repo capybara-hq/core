@@ -16,7 +16,8 @@ import { AGENT, Log, MODEL } from "./fixtures.js";
 const build = (log: Log, model: ModelInfo = MODEL) =>
   buildModelRequest({ events: log.events, agent: AGENT, agentVersion: 1, model, step: 3 });
 
-const BODY = "<conversation_summary>\nThe agent read ledger 1.\n</conversation_summary>\n\n";
+const BODY =
+  "<conversation_summary>\nThe agent read ledger 1.\n</conversation_summary>\n\nThe earlier part of this conversation was compacted into the summary above and is no longer shown verbatim. ";
 /** The post-summary framing (spec §4.2.2) when newer messages kept verbatim follow. */
 const KEPT =
   "are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them. Continue the work from where it left off.";

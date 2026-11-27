@@ -252,24 +252,8 @@
     display: none;
   }
 }
-/* Where the rail drops below the band (only while the rail is shown: the drop length follows the
-   controls alone, so the full sidebar and compact need the rail selector), a hairline under the band across the whole window closes
-   it: the band reads as the window's title bar and the rail's divider meets it in a T (the
-   sidebar's own line colour), instead of the rail's surface stopping short below an open band. */
-@container not style(--cb-shell-rail-drop: 0px) {
-  :root[data-shell="desktop"]
-    .cb-shell:not([data-banner="true"]):has(> .cb-sidebar[data-mode="rail"])::after {
-    content: "";
-    position: absolute;
-    z-index: 1;
-    top: calc(var(--cb-shell-band) + var(--cb-shell-rail-drop) - 1px);
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: var(--cb-line-soft);
-    pointer-events: none;
-  }
-}
+/* Where the rail drops below the band no hairline closes the band: the band, the rail and the
+   gutters are one ground (layered shell spec §2), and a line there would cut across the paper. */
 
 /* The content column's top row: the conversation title bar (and the shared file page's bar,
    outside an AppShell) is as high as the top row and keeps clear of the controls on both ends
@@ -314,6 +298,42 @@
     container: cb-head / inline-size;
     padding-top: max(0px, calc(var(--cb-space-5) - var(--cb-shell-row) * 100000));
   }
+  /* A head without a path row (a first-level page, layered shell spec §3): its title row (or a
+     title-less head's actions) starts below the top row, so the actions keep clear of end
+     controls and the title of start controls past a rail; the window drags by the paper's top
+     gutter and the row's own filler. */
+  :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
+    padding-top: max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)));
+  }
+  /* In-paper top rows end with the window's top row: the paper starts space.2 below its edge. A
+     maximised panel lies under the title bar, so only the inline panel pads below end controls. */
+  :root[data-shell="desktop"] .cb-shell-main .cb-title-bar {
+    height: max(var(--cb-layout-title-bar), calc(var(--cb-shell-row) - var(--cb-space-2)));
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full]) {
+    padding-top: max(0px, calc(var(--cb-shell-row-end) - var(--cb-space-2)));
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-panel > .cb-drag-fill {
+    height: max(0px, calc(var(--cb-shell-row-end, 0px) - var(--cb-space-2)));
+  }
+  /* The paper's top gutter starts after the start reserve that reaches past the sidebar (the band's
+     sidebar toggle past a rail lies there). Over a head without a path row it is as high as the
+     top row, so the empty band above the title drags the window; the head starts below it (its
+     padding above), so no control lies under it. */
+  :root[data-shell="desktop"] .cb-shell-gutter {
+    left: var(--cb-shell-column-reserve, 0px);
+  }
+  :root[data-shell="desktop"]
+    .cb-shell-column:has(
+      .cb-template-head
+        :is(
+          .cb-pageheader > .cb-pageheader-row:not(.cb-pageheader-path + .cb-pageheader-row),
+          .cb-pageheader-titleless > h1 + .cb-drag-fill
+        )
+    )
+    > .cb-shell-gutter {
+    height: max(var(--cb-space-2), var(--cb-shell-row));
+  }
   :root[data-shell="desktop"]
     .cb-shell-main
     .cb-template-head
@@ -327,7 +347,8 @@
     );
   }
   :root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path {
-    min-height: var(--cb-shell-row);
+    /* the paper starts space.2 below the window's top edge: the row ends with the top row */
+    min-height: max(0px, calc(var(--cb-shell-row) - var(--cb-space-2)));
     padding-left: max(
       0px,
       calc(var(--cb-shell-column-reserve) + var(--cb-space-3) - var(--cb-content-pad)),
@@ -336,14 +357,6 @@
         max(var(--cb-space-5), calc(var(--cb-shell-column-reserve) + var(--cb-space-3)))
       )
     );
-  }
-  /* A path of the org slug alone (no page segment: the error page on the home) is not shown in the
-     top row; the row keeps its height and its filler. */
-  :root[data-shell="desktop"]
-    .cb-shell-main
-    .cb-pageheader-path:not(:has(.cb-pageheader-path-sep))
-    > .cb-pageheader-path-seg {
-    max-width: max(0px, calc(100000px - var(--cb-shell-row) * 100000));
   }
   :root[data-shell="desktop"] .cb-shell-main :is(.cb-pageheader-path, .cb-pageheader-titleless) {
     padding-right: max(
@@ -482,7 +495,8 @@
    every mouse event over it whatever is stacked above it, and a control inside one cannot be used,
    so only dedicated empty fillers drag: the flex spacers the templates draw between a top row's
    controls (`.cb-drag-fill`: the sidebar's brand row, the conversation title bar, the page head's
-   path row, the shared file page's bar) and the controls area itself (`.cb-shell-band`, a real
+   path row and title row, the shared file page's bar, and from 600 up the paper's top gutter, the
+   ground above the page) and the controls area itself (`.cb-shell-band`, a real
    element the AppShell draws over the space every row there keeps empty; across the whole window
    while there is a band). Never a container that holds controls (drag-regions.test.tsx). */
 .cb-shell-band {
@@ -599,7 +613,8 @@
   .cb-sidebar-scrim,
   .cb-drawer,
   .cb-drawer-scrim,
-  .cb-conv-pushed
+  .cb-conv-pushed,
+  .cb-shell-rail-toggle
 ) {
   -webkit-app-region: no-drag;
   app-region: no-drag;

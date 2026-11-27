@@ -31,6 +31,7 @@ import { parsePartialJson } from "./partial-json";
 import type { PersonRef } from "./people";
 import { PersonWaits } from "./person-waits";
 import { type DraftBase, type DraftTool, isSettledBase } from "./run-drafts";
+import { skillChipLabel } from "./skills";
 import { inputValue, loggedLiveView, streamingView } from "./streaming-tool-view";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 
@@ -55,9 +56,11 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   terminal event: its model (the last `model_call`, else `run_started`), duration and tokens (its
  *   `usage` events) and how it ended (spec §6.16.23); a run still going has none. A `user_message`
  *   with `retryOf` folds into the failed run of the message it repeats ("Retried") instead of a
- *   second bubble. `compaction_summary` and `model_switched { reason: "unavailable" }` become
- *   dividers, and a manual compact run (`run_started.trigger: "compact"`) is named in its row; its
- *   `compaction_failed` becomes a failed divider (an automatic one stays silent).
+ *   second bubble. `compaction_summary`, `model_switched { reason: "unavailable" }` (the fallback)
+ *   and a person's own `model_switched` (`switched`) become dividers. A manual compact run
+ *   (`run_started.trigger: "compact"`) draws no run row: its outcome is one divider, the summary,
+ *   `compaction_skipped` (nothing to compact), its `compaction_failed` or its run's failure, or a
+ *   stop (an automatic compaction's failure stays silent; maintainer decision 2026-11-28).
  * - Logs written before UI refresh B (no `description`, `view`, title or card) still render: rows
  *   fall back to the tool key and the first string argument, failures to `isError`.
  * - Sub-agents (phase C, Task 21): consecutive `agent` calls form one `subagents` entry, its rows
@@ -70,7 +73,8 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   (`dispatch.kind: "message"`) is a user bubble with its `sender`; a `subagent_delivery` (a
  *   report, a note or the child's end) is a compact `delivery` entry in the parent (a run that
  *   handed back a report logs no finished delivery when it completes, so its end entry comes from
- *   `subagent_finished`, once per run with an older log's delivery); `SendMessage`
+ *   `subagent_finished`, once per run with an older log's delivery; a completion right after its
+ *   own report, nothing drawn between, merges into that report's line); `SendMessage`
  *   and `SubagentHandback` are ordinary tool rows. A child that runs again after an end stays on
  *   its `Agent` call's row: a restart (`subagent_dispatched` carrying the `SendMessage` call's id),
  *   a wake (no dispatch: the list's run started after the last end, or a later run's
@@ -138,6 +142,7 @@ export interface SubagentLive {
       startedAt?: string;
       pendingApprovalIds: string[];
       pendingQuestionIds: string[];
+      watchedQuestionIds?: string[];
     }
   >;
   /**
@@ -276,8 +281,15 @@ export interface ConnectItem {
 
 export type DividerData =
   | { divider: "compacted"; summary: string; savedTokens: number | null }
+  /** A manual compaction found nothing to summarize (`compaction_skipped`). */
+  | { divider: "compact-skipped" }
+  /** A manual compaction failed: its `compaction_failed` reason, or its run's failure. */
   | { divider: "compact-failed"; reason: string }
-  | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null };
+  /** A manual compact run was stopped. */
+  | { divider: "compact-stopped" }
+  | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null }
+  /** A person switched the conversation's model or effort (`model_switched`, reason `user`). */
+  | { divider: "switched"; model: ModelRef | null; effort: string | null };
 
 /** A run's tokens: every `usage` of the run (its step calls and compaction). */
 export interface RunTokens {
@@ -332,7 +344,7 @@ export type RunData = {
   compact?: boolean;
   /**
    * The run's working time: from `run_started` to the terminal event without its waits for a
-   * person (an approval or a question, until answered), the same derivation as the status bar's
+   * person (an approval or a question, until answered), the same derivation as the Turns row's
    * elapsed time ({@link runStats}), so the two agree; null without a start.
    */
   durationMs: number | null;
@@ -467,7 +479,11 @@ export type TimelineEntry =
       subagentId: string;
       /** The sub-agent's task description. */
       name: string;
-      delivery: "report" | "note" | "finished";
+      /**
+       * `report-finished`: a report directly followed by its run's completion, with nothing drawn
+       * between them, merged into one line (its text the report).
+       */
+      delivery: "report" | "note" | "finished" | "report-finished";
       /** `finished` only. */
       status?: DeliveryStatus;
       /** The report, the note, or a finish's final reply or error ("" when it handed back). */
@@ -1127,9 +1143,9 @@ export function buildEventTimeline(
     else c.tool.row.waitingFor = who;
     if (id !== undefined) waitCalls.set(id, c);
   };
-  const waitEnded = (id: string, what: NonNullable<ToolRowData["waiting"]>) => {
+  const waitEnded = (id: string, ...what: NonNullable<ToolRowData["waiting"]>[]) => {
     const c = waitCalls.get(id);
-    if (c && c.tool.row.waiting === what) {
+    if (c && c.tool.row.waiting !== undefined && what.includes(c.tool.row.waiting)) {
       delete c.tool.row.waiting;
       delete c.tool.row.waitingFor;
     }
@@ -1196,7 +1212,7 @@ export function buildEventTimeline(
     e: ConversationEvent,
   ): Pick<RunData, "runId" | "model" | "compact" | "durationMs" | "tokens" | "at"> => {
     const r = e.runId === null ? undefined : runs.get(e.runId);
-    // the run's working time, as the status bar counts it (waits for a person left out)
+    // the run's working time, as the Turns row counts it (waits for a person left out)
     r?.clock?.end(Date.parse(e.createdAt));
     return {
       runId: e.runId,
@@ -1207,6 +1223,9 @@ export function buildEventTimeline(
       at: e.createdAt,
     };
   };
+  /** Whether the event belongs to a manual compact run (`run_started.trigger: "compact"`). */
+  const isCompact = (e: ConversationEvent) =>
+    e.runId !== null && runs.get(e.runId)?.compact === true;
   /** Failed runs by the user seq they would retry. */
   const failedBySeq = new Map<number, number>();
   /** The model the person switched to (the `from` of a fallback). */
@@ -1246,6 +1265,8 @@ export function buildEventTimeline(
   const subagentWaits = new Map<string, Extract<TimelineEntry, { kind: "subagent-wait" }>[]>();
   /** Child runs that handed back a report: the description their end entry is named by. */
   const reported = new Map<string, string>();
+  /** Child run → the entry of its latest report (a completion right after it merges into it). */
+  const reportEntries = new Map<string, Extract<TimelineEntry, { kind: "delivery" }>>();
   /** Child runs (of `reported`) whose end entry is in `out`. */
   const endShown = new Set<string>();
   /** Sub-agent id → its latest dispatch's row and child run. */
@@ -1339,8 +1360,17 @@ export function buildEventTimeline(
         }
         break;
       case "model_switched":
-        if (e.payload.reason === "user") switched = e.payload.model;
-        else {
+        if (e.payload.reason === "user") {
+          switched = e.payload.model;
+          // a person's own switch: one notice line where it applies (the next run on)
+          out.push({
+            kind: "divider",
+            key,
+            divider: "switched",
+            model: e.payload.model,
+            effort: e.payload.effort,
+          });
+        } else {
           out.push({ kind: "divider", key, divider: "fallback", from: switched, to: null });
           if (e.runId !== null) fallbacks.set(e.runId, out.length - 1);
           switched = null;
@@ -1401,7 +1431,7 @@ export function buildEventTimeline(
             authorAccountId: e.payload.authorAccountId,
           };
           if (skill) {
-            entry.skill = { label: `/${skill.name}`, mode: skill.mode };
+            entry.skill = { label: skillChipLabel(skill.name), mode: skill.mode };
             // A fork's content[0] is the lead for the model, not the instructions: those are the
             // sub-agent's task, which its row opens.
             if (skill.mode === "inline") {
@@ -1838,17 +1868,29 @@ export function buildEventTimeline(
         const name = reported.get(e.payload.childRunId);
         if (name !== undefined && !endShown.has(e.payload.childRunId)) {
           endShown.add(e.payload.childRunId);
-          out.push({
-            kind: "delivery",
-            key,
-            subagentId: e.payload.subagentId,
-            name,
-            delivery: "finished",
-            status: subagentStatusOfFinish(
-              e.payload.status as SubagentFinishStatus,
-            ) as DeliveryStatus,
-            text: "",
-          });
+          // completed right after its own report with nothing drawn between: one line for both
+          const last = out.at(-1);
+          if (
+            e.payload.status === "completed" &&
+            last?.kind === "delivery" &&
+            last.delivery === "report" &&
+            last === reportEntries.get(e.payload.childRunId)
+          ) {
+            last.delivery = "report-finished";
+            last.status = "completed";
+          } else {
+            out.push({
+              kind: "delivery",
+              key,
+              subagentId: e.payload.subagentId,
+              name,
+              delivery: "finished",
+              status: subagentStatusOfFinish(
+                e.payload.status as SubagentFinishStatus,
+              ) as DeliveryStatus,
+              text: "",
+            });
+          }
         }
         const s = subagentRows.get(e.payload.subagentId);
         if (!s) break;
@@ -1885,8 +1927,10 @@ export function buildEventTimeline(
           reopen(s, e.payload.childRunId, Number.NaN);
         if (s && row && !s.finished && (deep || s.childRunId === e.payload.childRunId)) {
           row.status = "waiting";
-          row.waiting = e.payload.kind;
-          if (deep) deepWaits.set(top, { id: e.payload.subagentId, kind: e.payload.kind });
+          const waitKind: SubagentWaitKind =
+            e.payload.kind === "input" && e.payload.watch === true ? "watch" : e.payload.kind;
+          row.waiting = waitKind;
+          if (deep) deepWaits.set(top, { id: e.payload.subagentId, kind: waitKind });
           else deepWaits.delete(top);
         }
         const branch = row?.description || row?.agentType || e.payload.subagentId;
@@ -1921,7 +1965,7 @@ export function buildEventTimeline(
           if (endShown.has(p.childRunId)) break;
           endShown.add(p.childRunId);
         }
-        out.push({
+        const entry: Extract<TimelineEntry, { kind: "delivery" }> = {
           kind: "delivery",
           key,
           subagentId: p.subagentId,
@@ -1931,7 +1975,9 @@ export function buildEventTimeline(
             ? { status: subagentStatusOfFinish(p.status) as DeliveryStatus }
             : {}),
           text: p.text,
-        });
+        };
+        out.push(entry);
+        if (p.kind === "report") reportEntries.set(p.childRunId, entry);
         break;
       }
       case "approval_requested":
@@ -1982,7 +2028,10 @@ export function buildEventTimeline(
         break;
       }
       case "question_asked":
-        waitOn(e.runId, e.payload.callId, "input", e.payload.questionId, starterOf(e.runId));
+        // a watched wait asks nobody: its own word, no "waiting for X to answer"
+        if (e.payload.watch === true)
+          waitOn(e.runId, e.payload.callId, "watch", e.payload.questionId);
+        else waitOn(e.runId, e.payload.callId, "input", e.payload.questionId, starterOf(e.runId));
         questions.set(e.payload.questionId, out.length);
         out.push({
           kind: "question",
@@ -1999,7 +2048,7 @@ export function buildEventTimeline(
         });
         break;
       case "question_answered": {
-        waitEnded(e.payload.questionId, "input");
+        waitEnded(e.payload.questionId, "input", "watch");
         const i = questions.get(e.payload.questionId);
         const prev = i === undefined ? undefined : out[i];
         if (i !== undefined && prev?.kind === "question")
@@ -2061,12 +2110,26 @@ export function buildEventTimeline(
       case "compaction_failed":
         // A manual compact run's failure is its outcome (the person clicked "Compact
         // conversation"): a divider says so. An automatic compaction's failure is the step's own
-        // concern (it trims instead) and a manual early skip writes nothing, so both stay silent.
-        if (e.runId !== null && runs.get(e.runId)?.compact === true) {
-          out.push({ kind: "divider", key, divider: "compact-failed", reason: e.payload.reason });
+        // concern (it trims instead), so it stays silent.
+        if (isCompact(e)) {
+          out.push({
+            kind: "divider",
+            key,
+            divider: "compact-failed",
+            reason: firstLine(e.payload.reason),
+          });
         }
         break;
+      case "compaction_skipped":
+        // only a manual compact run writes it: its outcome when there was nothing to summarize
+        out.push({ kind: "divider", key, divider: "compact-skipped" });
+        break;
       case "run_finished":
+        // a compact run draws no run row: its outcome is its divider (summary, skip or failure)
+        if (isCompact(e)) {
+          runData(e);
+          break;
+        }
         out.push({
           kind: "run",
           key,
@@ -2076,6 +2139,11 @@ export function buildEventTimeline(
         });
         break;
       case "run_aborted":
+        if (isCompact(e)) {
+          runData(e);
+          out.push({ kind: "divider", key, divider: "compact-stopped" });
+          break;
+        }
         out.push({
           kind: "run",
           key,
@@ -2086,6 +2154,11 @@ export function buildEventTimeline(
         break;
       case "run_failed": {
         const { code, message } = e.payload.error;
+        if (isCompact(e)) {
+          runData(e);
+          out.push({ kind: "divider", key, divider: "compact-failed", reason: firstLine(message) });
+          break;
+        }
         const denial =
           code === "run.hook_denied" && e.runId !== null ? modelDenials.get(e.runId) : undefined;
         out.push({
@@ -2290,7 +2363,7 @@ export function buildEventTimeline(
   return { entries: withExtras, modelOf, info, locale };
 }
 
-/** Turns, elapsed time and the running state for the status bar. */
+/** Turns, elapsed time and the running state for the properties panel's Turns row. */
 export interface RunStats {
   /** `run_started` count. */
   turns: number;
@@ -2316,13 +2389,13 @@ export interface RunStats {
   waitingFor: "approval" | "input" | null;
 }
 
-/** The running time the status bar shows: worked time, plus the open working stretch. */
+/** The running time the Turns row shows: worked time, plus the open working stretch. */
 export const workedMsAt = (s: RunStats, now: number): number | null =>
   s.startedAt === null ? null : s.workedMs + (s.resumedAt === null ? 0 : now - s.resumedAt);
 
 /**
  * One run's working time: from its start to its end without its waits for a person (an approval,
- * a question; {@link PersonWaits}). The status bar's elapsed time and the run row's duration both
+ * a question; {@link PersonWaits}). The Turns row's elapsed time and the run row's duration both
  * read it, so the two agree.
  */
 class RunClock {

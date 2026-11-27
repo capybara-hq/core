@@ -816,6 +816,15 @@ describe("a call waiting for a person (§6.16.9)", () => {
     );
   });
 
+  it("a watched wait has its own word, not a question to the person", () => {
+    expect(wrap(<ToolRow row={waiting("watch")} />).container.textContent).toContain("正在等待");
+    cleanup();
+    const en = wrap(<ToolRow row={waiting("watch", { waitingFor: "张三" })} />, "en");
+    expect(en.container.textContent).toContain("Waiting");
+    expect(en.container.textContent).not.toContain("answer");
+    expect(en.container.textContent).not.toContain("张三");
+  });
+
   it("someone else to act: the waiting word names them, on the row and the group header", () => {
     const { container } = wrap(
       <ToolRow row={waiting("approval", { waitingFor: "张三" })} now={18_000} />,

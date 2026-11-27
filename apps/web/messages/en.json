@@ -632,6 +632,11 @@
     "sso": {
       "link_expired": "The link has expired. Sign in with the external account again.",
       "session_mismatch": "Your session changed. Sign in again and retry."
+    },
+    "handoff": {
+      "scheme_not_allowed": "This platform does not yet allow this app to authorize in the browser. Contact your platform admin.",
+      "invalid": "This authorization link has expired or was already used. Go back to the app and click Connect again.",
+      "account_mismatch": "This link belongs to {login}. Sign in with that account, or go back to the app and start again."
     }
   },
   "agents": {
@@ -1531,6 +1536,9 @@
       "agent": "Agent skills",
       "project": "Project skills"
     },
+    "skillSourceTag": {
+      "project": "project"
+    },
     "skillTag": {
       "manual": "manual",
       "fork": "sub-agent"
@@ -1638,8 +1646,13 @@
     "divider": {
       "compacted": "Earlier conversation compacted",
       "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
-      "compactFailed": "Compaction failed",
-      "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message"
+      "compactFailed": "Compaction failed: {reason}",
+      "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message",
+      "compactSkipped": "Nothing to compact · the conversation is still short",
+      "compactStopped": "Compaction stopped",
+      "switched": "Switched to {model}",
+      "switchedEffort": "Switched to {model}, effort {effort}",
+      "agentModel": "the agent's model"
     },
     "compactionRun": "Compaction",
     "compacting": "Compacting conversation…",
@@ -1725,7 +1738,8 @@
       "failed": "{name} failed",
       "aborted": "{name} was stopped",
       "show": "Show",
-      "hide": "Hide"
+      "hide": "Hide",
+      "report-finished": "{name} handed back a report and finished"
     },
     "permission": {
       "label": "Permissions",
@@ -2213,7 +2227,6 @@
     "empty": "Nothing to handle.",
     "emptyHint": "Tool calls that need your approval, and skill changes on agents you own, show up here.",
     "pick": "Select an item on the left.",
-    "pendingCount": "{n} pending",
     "inspectorTitle": "Details",
     "conversation": "Conversation",
     "requested": "Requested",
@@ -2851,7 +2864,7 @@
     },
     "keepRecentTurns": {
       "label": "Recent turns kept in full",
-      "help": "How many of the latest user turns the summary leaves untouched (0–20; 4 is the default)."
+      "help": "How many of the latest user turns automatic compaction leaves untouched (0–20; 4 is the default). A manual compaction summarizes every turn before the latest."
     },
     "reserveTokens": {
       "label": "Reserved tokens",
@@ -3318,7 +3331,8 @@
     "unlink": "Unlink",
     "unlinkTitle": "Unlink {name}?",
     "unlinkHint": "Messages from this account in IM will no longer act as you, and you can no longer sign in with it.",
-    "unlinked": "\"{name}\" unlinked."
+    "unlinked": "\"{name}\" unlinked.",
+    "linked": "{platform} linked."
   },
   "loginSources": {
     "section": {
@@ -3909,7 +3923,8 @@
       "subagent_changed": "A sub-agent's definition changed since the recording",
       "permission_profile_changed": "The recorded permission context cannot be reproduced from the snapshot",
       "device_sandbox_changed": "The device sandbox changed between runs",
-      "model_switched": "The candidate model replaces a model switch made in the conversation"
+      "model_switched": "The candidate model replaces a model switch made in the conversation",
+      "run_outcome_note": "The recorded request lacks run outcome notes its log now gives"
     },
     "tabs": {
       "sets": "Eval sets",
@@ -4258,7 +4273,6 @@
       "empty": "Nothing to handle.",
       "emptyHint": "Organizations' requests to the platform, plugins whose permissions need confirming and failed syncs show up here.",
       "pick": "Select an item on the left.",
-      "pendingCount": "{n} pending",
       "inspectorTitle": "Details",
       "truncated": "Only the newest items are shown. Handle some to see the rest.",
       "filtered": "Showing only: {type}",
@@ -7224,6 +7238,35 @@
       "text": "Turn on notifications to hear when something is waiting for you",
       "enable": "Turn on",
       "later": "Not now"
+    }
+  },
+  "externalAuth": {
+    "title": "Finish authorization in your browser",
+    "body": "The authorization page is open in your system browser. Sign in and authorize there, then come back: the result shows here on its own. If the browser did not open, or you want another browser, copy the link (it works once, for 10 minutes).",
+    "copy": "Copy link",
+    "copied": "Link copied.",
+    "copyFailed": "Could not copy the link. Try again.",
+    "done": "Done",
+    "cancel": "Cancel"
+  },
+  "handoff": {
+    "title": "Continue authorization",
+    "opening": "Opening the authorization page…",
+    "invalidTitle": "Authorization link expired",
+    "mismatchTitle": "Not the account that started this",
+    "failedTitle": "Could not continue",
+    "startAgain": "Go back to the app and start again.",
+    "switchAccount": "Sign in with another account",
+    "done": {
+      "connected": "{name} connected",
+      "connectedGeneric": "Connector connected",
+      "linked": "{name} linked",
+      "linkedGeneric": "Sign-in method linked",
+      "failed": "Authorization did not finish",
+      "unknownTitle": "Cannot show the result",
+      "back": "Back to {product}",
+      "closeTabHint": "You can close this tab now.",
+      "backToApp": "Go back to the app to continue."
     }
   }
 }

@@ -396,7 +396,6 @@ describe("AppFrame contexts", () => {
     expect(within(nav).queryByRole("link", { name: /平台目录|^市场/ })).toBeNull();
     expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/");
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
-    expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:/admin/plugins/market"));
   });
 
   it("/admin/*: the 插件 item counts what waits in 待确认 (pending plugins + requests)", async () => {
@@ -424,11 +423,16 @@ describe("AppFrame contexts", () => {
     expect(within(nav).queryByRole("link", { name: "首页" })).toBeNull();
   });
 
-  it("the workspace status bar prompt is <login>@<slug>:~<path>", async () => {
+  it("no status bar: the account menu's foot reads the version and the time zone", async () => {
     resetNavigation("/agents/new");
     renderFrame();
     expect(screen.getByText("page body")).toBeTruthy();
-    expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:~/agents/new"));
+    expect(screen.queryByRole("contentinfo")).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^账户: Grant/ }));
+    const foot = document.querySelector('[data-part="menu-foot"]') as HTMLElement;
+    expect(foot.textContent).toMatch(/^v9\.9\.9 · UTC[+-−]?\d*/);
+    await user.keyboard("{Escape}");
     // the old footer item 设置 is gone; 组织设置 is in the 更多 flyout
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(nav).queryByRole("link", { name: "设置" })).toBeNull();

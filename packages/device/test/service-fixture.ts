@@ -1,3 +1,4 @@
+import { unlinkSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import {
   DEVICE_SERVICE_SOCKET_ENV,
@@ -74,7 +75,9 @@ export function echoLauncher() {
 
 /**
  * The echo service itself, listening on `socketPath` in this process: a `request` is answered
- * with `echo:<body>` (`hang` is never answered); on a `stream`, `burst:<n>` sends n messages,
+ * with `echo:<body>` (`hang` is never answered; `retire` and `retire-hold` remove the socket and
+ * stop listening before the answer, as a stopping service does, and `retire` then exits a moment
+ * later while `retire-hold` stays alive until it is stopped); on a `stream`, `burst:<n>` sends n messages,
  * `big:<n>` one message of n bytes, anything else is echoed. `exit` ends it like a process exit.
  */
 export async function listenEcho(
@@ -98,6 +101,14 @@ export async function listenEcho(
           continue;
         }
         if (kind === "request") {
+          if (text(m) === "retire" || text(m) === "retire-hold") {
+            unlinkSync(socketPath);
+            closeServer();
+            conn.end(encodeServiceMessage(bytes(`echo:${text(m)}`)));
+            // the process ends a moment after its socket is gone: the window a request can hit
+            if (text(m) === "retire") setTimeout(() => svc.exit(0), 50);
+            continue;
+          }
           if (text(m) !== "hang") conn.end(encodeServiceMessage(bytes(`echo:${text(m)}`)));
           continue;
         }
@@ -121,16 +132,23 @@ export async function listenEcho(
     resolveExit = r;
   });
   let done = false;
-  return {
+  let listening = true;
+  const closeServer = () => {
+    if (!listening) return;
+    listening = false;
+    server.close();
+  };
+  const svc = {
     exited,
     exit(code: number | null) {
       if (done) return;
       done = true;
-      server.close();
+      closeServer();
       for (const c of conns) c.destroy();
       resolveExit({ code });
     },
   };
+  return svc;
 }
 
 export { bytes, text };

@@ -50,11 +50,9 @@ const sidebar: Omit<SidebarProps, "onOpenCommands"> = {
   account: { name: "Ada", menu: [] },
 };
 
-const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
-
 const shell = (extra: Partial<React.ComponentProps<typeof AppShell>> = {}) => (
   <DesignProvider locale="zh">
-    <AppShell sidebar={sidebar} status={status} commands={[]} {...extra} />
+    <AppShell sidebar={sidebar} commands={[]} {...extra} />
   </DesignProvider>
 );
 const shellEl = (c: HTMLElement) => c.querySelector('[data-cap-part~="shell"]') as HTMLElement;

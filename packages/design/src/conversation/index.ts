@@ -48,6 +48,7 @@ export {
   shortDeviceLabel,
   shortModelLabel,
 } from "./composer-options";
+export { ContextMeter } from "./context-meter";
 export {
   cutDiffLine,
   DIFF_LINE_MAX_CHARS,

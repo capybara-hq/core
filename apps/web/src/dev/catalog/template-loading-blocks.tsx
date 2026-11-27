@@ -114,7 +114,11 @@ function detailBlocks(): ReactNode {
         </DetailPage>
       </RefBlock>
       <RefBlock id="template-detail-loading" width={W} height={H}>
-        <DetailPage header={loadingHeader(PATH, 2)} tabs={TABS} loading={{ facts: true }} />
+        <DetailPage
+          header={loadingHeader(PATH.slice(0, 2), 2)}
+          tabs={TABS}
+          loading={{ facts: true }}
+        />
       </RefBlock>
       {/* A tab with a known static structure: facts, actions and a table (spec §5.2). */}
       <RefBlock id="template-detail-content" width={W} height={H}>
@@ -141,7 +145,7 @@ function detailBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="template-detail-loading-content" width={W} height={H}>
         <DetailPage
-          header={loadingHeader(PATH, 2)}
+          header={loadingHeader(PATH.slice(0, 2), 2)}
           tabs={TABS}
           loading={{
             content: [

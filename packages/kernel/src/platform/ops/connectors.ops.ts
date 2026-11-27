@@ -812,8 +812,10 @@ export class ConnectorsOperations implements OnModuleInit {
         example: { connectorId: EXAMPLE_ID },
         authz: { orgAction: "connectors.use" },
         mirrors: ["POST /api/v1/orgs/:orgId/connectors/:connectorId/connect"],
-        // the web card starts the flow from the person's session and returns to the conversation
-        omits: ["returnTo"],
+        // the web card starts the flow from the person's session and returns to the conversation;
+        // `handoff` is a shell's browser handoff; the Platform card starts the flow in the person's
+        // web session
+        omits: ["returnTo", "handoff"],
         confirm: "read",
         errors: [
           { code: "connector.not_found", next: "Check the connector id with connectors.list." },

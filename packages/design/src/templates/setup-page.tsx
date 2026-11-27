@@ -17,7 +17,6 @@ export type SetupPageProps = {
     /** The admin console entry (super admins). */
     adminHref?: string;
   };
-  status: AppShellProps["status"];
   /** Draw as the rail of the medium class (the reference set and the catalog). */
   reference?: AppShellProps["reference"];
   /** A shell-wide notice row (safe mode's banner), as {@link AppShellProps.banner}. */
@@ -30,18 +29,11 @@ export type SetupPageProps = {
 
 /**
  * T13 Setup: the guided setup layout (web-SSR spec §4), drawn by the app frame while the current
- * org cannot run yet. The shell's geometry (sidebar | content area | status bar, the same rail;
+ * org cannot run yet. The shell's geometry (sidebar | content area, the same rail;
  * below 600 the steps button leads the floating row) with the setup sidebar: the setup home and the steps are its navigation; no search, no
  * inbox, no conversations, no command palette. The page brings its own template and page head.
  */
-export function SetupPage({
-  sidebar,
-  status,
-  reference,
-  banner,
-  singleScheme,
-  children,
-}: SetupPageProps) {
+export function SetupPage({ sidebar, reference, banner, singleScheme, children }: SetupPageProps) {
   const { org, home, steps, adminHref, ...rest } = sidebar;
   return (
     <div className="cb-setup" data-template="SetupPage">
@@ -56,7 +48,6 @@ export function SetupPage({
             ...(adminHref !== undefined ? { adminHref } : {}),
           },
         }}
-        status={status}
         {...(reference !== undefined ? { reference } : {})}
         {...(banner !== undefined ? { banner } : {})}
         {...(singleScheme !== undefined ? { singleScheme } : {})}

@@ -193,10 +193,26 @@ function chromeOf(shell: ShellHandle): { setAppearance: (a: unknown) => unknown 
 
 const COLOR = /^(#[0-9a-f]{3,8}|rgba?\([\d.,%\s/]+\))$/i;
 
-/** The page's background token for the scheme (the computed `--cb-bg`, else the built-in one). */
+/** The window width from which the shell lies on the ground (layered shell spec §2). */
+const GROUND_QUERY = "(min-width: 600px)";
+/** Two viewport segments: the papers lie flush on the window there (conversation-page.css). */
+const SEGMENTS_QUERY = "(horizontal-viewport-segments: 2), (vertical-viewport-segments: 2)";
+
+/**
+ * The colour at the window's top edge for the scheme: from 600 up the shell's ground (the computed
+ * `--cb-sidebar`), below it and on two viewport segments the page (`--cb-bg`); else the built-in
+ * page background.
+ */
 function backgroundOf(root: HTMLElement, scheme: "dark" | "light"): string {
-  const computed = getComputedStyle(root).getPropertyValue("--cb-bg").trim();
-  return COLOR.test(computed) ? computed : PAGE_BACKGROUND[scheme];
+  const ground =
+    window.matchMedia?.(GROUND_QUERY).matches === true &&
+    window.matchMedia?.(SEGMENTS_QUERY).matches !== true;
+  const style = getComputedStyle(root);
+  for (const property of ground ? ["--cb-sidebar", "--cb-bg"] : ["--cb-bg"]) {
+    const computed = style.getPropertyValue(property).trim();
+    if (COLOR.test(computed)) return computed;
+  }
+  return PAGE_BACKGROUND[scheme];
 }
 
 /** The main color tokens `chrome@1` carries, by their `--cb-*` custom property. */
@@ -291,8 +307,12 @@ export function useShellEnvironment(singleScheme = false): ShellKind | null {
       attributes: true,
       attributeFilter: ["data-theme", "class", "style"],
     });
+    // crossing 600 or a fold's segments moves the top edge between the ground and the page
+    const queries = [GROUND_QUERY, SEGMENTS_QUERY].map((q) => window.matchMedia?.(q));
+    for (const m of queries) m?.addEventListener?.("change", appearance);
     return () => {
       resend.current = null;
+      for (const m of queries) m?.removeEventListener?.("change", appearance);
       observer?.disconnect();
       try {
         off?.();
