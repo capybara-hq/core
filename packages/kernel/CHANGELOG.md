@@ -1,5 +1,21 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.102
+
+### Patch Changes
+
+- 3aad176: A model step cut off at the output token limit no longer ends the run as completed: request
+  building tells the model right after the cut-off reply that it was truncated and an unfinished
+  tool call did not run, and the run gets another step. After three truncated steps in a row the run
+  ends with the new reason `max_output`; the web shows runs that ended at a limit with a warning
+  instead of "Done" (#951).
+- 06a0200: Pin the todo bootstrap plugin to 0.1.0-rc.15, which records the pinned card's badge (`card.badge`,
+  plugins#293) so a finished process block head keeps its "待办 n/m" summary after a reload (#928), and
+  device-local to 0.1.0-rc.13 (the version that commit lists), and the plugins marketplace commit with the compose sandbox image build context to ff7f845.
+- 803bcc4: A `Read` under a permission profile is recorded as a read: `allow.read` inside the workspace and the
+  tmp root (never `allow.workspace-write` / `allow.tmp-write`), no write finding for a git hook or a
+  path outside, and credential and device-file reads state that they read.
+
 ## 0.1.0-rc.101
 
 ### Patch Changes
