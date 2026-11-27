@@ -6757,7 +6757,7 @@
       "monthly": "每月 {day} 日 {time}",
       "once": "一次：{at}",
       "cron": "Cron {expr}",
-      "event": "{source} 事件发生时"
+      "event": "{source} 事件（{types}）发生时"
     },
     "withZone": "{when}（{zone}）",
     "state": {
@@ -6789,8 +6789,39 @@
       "noAgents": "没有可用的智能体，请先创建一个。",
       "prompt": "提示",
       "promptHelp": "每次运行时作为一条消息发给智能体。提示不代表授权：工具仍需审批。",
-      "schedule": "时间",
-      "scheduleHint": "任务什么时候运行。",
+      "schedule": "触发",
+      "scheduleHint": "任务什么时候运行：按时间，或在事件发生时。",
+      "triggerKind": "触发方式",
+      "kind": {
+        "time": "定时",
+        "event": "事件"
+      },
+      "eventSource": "事件来源",
+      "pickEventSource": "选择来源",
+      "noEventSources": "本组织没有启用会产生事件的扩展。",
+      "eventTypes": "事件",
+      "filter": "筛选条件",
+      "filterHint": "只有事实符合每一行的事件才会触发运行。",
+      "filterEmpty": "没有筛选：选中的每个事件都会触发运行。",
+      "addFilter": "添加条件",
+      "filterFact": "事实",
+      "filterOp": "运算",
+      "filterValue": "值",
+      "filterListPlaceholder": "多个值用逗号分隔",
+      "op": {
+        "eq": "等于",
+        "in": "属于",
+        "contains": "包含"
+      },
+      "yes": "是",
+      "no": "否",
+      "unattendedAsk": "运行中需要回答时",
+      "unattendedAskHelp": "无人值守的运行需要你回答或审批时怎么办；不选则按组织的设置。",
+      "orgDefault": "跟随组织设置",
+      "ask": {
+        "fail": "拒绝并继续",
+        "wait": "等我回答"
+      },
       "preset": "重复",
       "presets": {
         "hourly": "每小时",
@@ -6821,7 +6852,7 @@
         "conversationHint": "每次运行都接着同一个会话，保留上下文。",
         "chat": "IM 聊天",
         "chatHint": "运行结果发到与智能体机器人的聊天里。",
-        "subject": "每个事项一个会话",
+        "subject": "每个事项一条会话",
         "subjectHint": "事件涉及的每个事项各有一个会话，之后的事件接着在里面运行。"
       },
       "conversation": "会话",
@@ -7056,6 +7087,16 @@
     "forbiddenTools": "工具键",
     "forbiddenHelp": "每行一个工具键，例如 Bash 或 mcp__github__create_issue。",
     "forbiddenUnreadable": "组织的禁用工具列表无法读取：自动化的无人值守运行会失败，也不能为自动化批准工具。请检查下方的列表并保存来修复。",
+    "events": "事件触发的自动化",
+    "eventsHint": "由事件触发的自动化的限制，以及哪些事件来源可以触发它们。",
+    "maxEventDepth": "事件链最大深度",
+    "maxEventDepthHelp": "由事件触发的运行再引发的事件，深度加一；超过后事件只记录，不再触发任何运行。",
+    "coalesceSeconds": "合并窗口（秒）",
+    "coalesceHelp": "同一事项在此窗口内的多个事件只触发一次运行。",
+    "maxEventRunsPerSubjectPerHour": "每个事项每小时运行次数",
+    "maxEventRunsHelp": "一个自动化对同一事项每小时最多触发这么多次运行。",
+    "eventSources": "事件来源",
+    "eventSourcesHelp": "未勾选的来源不会触发本组织的任何自动化。",
     "saveRepair": "保存列表",
     "invalid": "请输入不小于 1 的整数。",
     "save": "保存",

@@ -123,6 +123,7 @@ export const keys = {
       automationGrants: (id: string): readonly unknown[] => [...all, "automation", id, "grants"],
       /** The chats a `chat` task of mine can post into. */
       automationChatTargets: (): readonly unknown[] => [...all, "automations", "chatTargets"],
+      automationEventSources: (): readonly unknown[] => [...all, "automations", "eventSources"],
       /** An agent's tools as a task's grant picker offers them. */
       automationGrantable: (agentId: string): readonly unknown[] => [
         ...all,

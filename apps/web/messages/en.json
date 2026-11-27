@@ -6769,7 +6769,7 @@
       "monthly": "Day {day} of every month at {time}",
       "once": "Once at {at}",
       "cron": "Cron {expr}",
-      "event": "On {source} events"
+      "event": "On {source} events ({types})"
     },
     "withZone": "{when} ({zone})",
     "state": {
@@ -6801,8 +6801,39 @@
       "noAgents": "No agent you can use. Create an agent first.",
       "prompt": "Prompt",
       "promptHelp": "Sent to the agent as a message on every run. It is never consent: tools still need approval.",
-      "schedule": "Schedule",
-      "scheduleHint": "When the task runs.",
+      "schedule": "Trigger",
+      "scheduleHint": "When the task runs: on a schedule, or when events happen.",
+      "triggerKind": "Starts",
+      "kind": {
+        "time": "On a schedule",
+        "event": "When events happen"
+      },
+      "eventSource": "Event source",
+      "pickEventSource": "Choose a source",
+      "noEventSources": "No extension that emits events is turned on in this organization.",
+      "eventTypes": "Events",
+      "filter": "Filter",
+      "filterHint": "Only events whose facts match every row start a run.",
+      "filterEmpty": "No filter: every selected event starts a run.",
+      "addFilter": "Add filter",
+      "filterFact": "Fact",
+      "filterOp": "Operator",
+      "filterValue": "Value",
+      "filterListPlaceholder": "one, two, three",
+      "op": {
+        "eq": "is",
+        "in": "is one of",
+        "contains": "includes"
+      },
+      "yes": "Yes",
+      "no": "No",
+      "unattendedAsk": "When a run needs an answer",
+      "unattendedAskHelp": "What an unattended run does when it needs your answer or approval. Without a choice the organization's setting applies.",
+      "orgDefault": "Organization default",
+      "ask": {
+        "fail": "Refuse and go on",
+        "wait": "Wait for me"
+      },
       "preset": "Repeat",
       "presets": {
         "hourly": "Every hour",
@@ -7068,6 +7099,16 @@
     "forbiddenTools": "Tool keys",
     "forbiddenHelp": "One tool key per line, for example Bash or mcp__github__create_issue.",
     "forbiddenUnreadable": "This organization's forbidden tool list could not be read: unattended scheduled runs fail and no tool can be approved for an automation. Check the list below and save it to fix this.",
+    "events": "Event automations",
+    "eventsHint": "Limits for automations that start from events, and which event sources may start them.",
+    "maxEventDepth": "Longest chain of events",
+    "maxEventDepthHelp": "An event caused by a run that an event started counts one deeper; past this depth it is stored but starts nothing.",
+    "coalesceSeconds": "Coalescing window (seconds)",
+    "coalesceHelp": "Events about the same item within this window start one run.",
+    "maxEventRunsPerSubjectPerHour": "Runs per item per hour",
+    "maxEventRunsHelp": "One automation starts at most this many runs for one item per hour.",
+    "eventSources": "Event sources",
+    "eventSourcesHelp": "Unchecked sources start no automation of this organization.",
     "saveRepair": "Save the list",
     "invalid": "Enter a whole number of at least 1.",
     "save": "Save",

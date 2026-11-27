@@ -2,6 +2,7 @@
 
 import {
   Callout,
+  CheckList,
   type Column,
   DataTable,
   Field,
@@ -11,11 +12,12 @@ import {
   SettingsPage,
   Stack,
   SwitchField,
+  Text,
   Textarea,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   type AutomationColumnKey,
@@ -36,13 +38,14 @@ import {
   type AutomationsSettings,
   splitToolKeys,
 } from "../../../../lib/automations";
+import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import {
   type OrgSettingsPatch,
   type OrgSettingsResponse,
   updateOrgSettings,
 } from "../../../../lib/org-settings";
 import { agentsQuery } from "../../../../lib/query/agents";
-import { automationsQuery } from "../../../../lib/query/automations";
+import { automationsQuery, eventSourcesQuery } from "../../../../lib/query/automations";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { useMemberNames } from "../../../../lib/query/member-names";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -78,7 +81,13 @@ const COUNTS = [
   "catchUpWindowMinutes",
   "pauseAfterFailures",
 ] as const;
-type CountKey = (typeof COUNTS)[number];
+/** The event automation numbers: their own section, with the kernel's upper bounds. */
+const EVENT_COUNTS = ["maxEventDepth", "coalesceSeconds", "maxEventRunsPerSubjectPerHour"] as const;
+const COUNT_MAX: Partial<Record<CountKey, number>> = {
+  maxEventDepth: 1000,
+  coalesceSeconds: 86_400,
+};
+type CountKey = (typeof COUNTS)[number] | (typeof EVENT_COUNTS)[number];
 
 type Draft = Partial<{
   enabled: boolean;
@@ -86,14 +95,20 @@ type Draft = Partial<{
   counts: Partial<Record<CountKey, string>>;
   expiry: string;
   forbidden: string;
+  /** The event sources turned off, as the full list. */
+  off: string[];
 }>;
 
-/** A whole number of at least 1 (null otherwise). */
-const count = (s: string): number | null =>
-  /^\d{1,7}$/.test(s.trim()) && Number(s) >= 1 ? Number(s) : null;
+/** A whole number of at least 1, and at most `max` when given (null otherwise). */
+const count = (s: string, max = Number.POSITIVE_INFINITY): number | null =>
+  /^\d{1,7}$/.test(s.trim()) && Number(s) >= 1 && Number(s) <= max ? Number(s) : null;
 
 const sameList = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((v, i) => v === b[i]);
+
+/** The same names, in any order. */
+const sameSet = (a: readonly string[], b: readonly string[]) =>
+  sameList([...a].sort(), [...b].sort());
 
 function AutomationSettings({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
@@ -138,6 +153,7 @@ function AutomationSettings({ orgId }: { orgId: string }) {
               description: t("generalHint"),
             },
             { fields: 7, title: t("limits"), description: t("limitsHint") },
+            { fields: 4, title: t("events"), description: t("eventsHint") },
             {
               fields: [{ control: "textarea", rows: 4, help: true }],
               title: t("forbidden"),
@@ -155,13 +171,15 @@ function AutomationSettings({ orgId }: { orgId: string }) {
   const enabled = draft.enabled ?? saved.enabled;
   const ask = draft.unattendedAsk ?? saved.unattendedAsk;
   const countText = (k: CountKey) => draft.counts?.[k] ?? String(saved[k]);
+  const countOf = (k: CountKey) => count(countText(k), COUNT_MAX[k]);
+  const off = draft.off ?? saved.eventSourcesOff;
   const expiryText =
     draft.expiry ?? (saved.defaultExpiryDays === null ? "" : String(saved.defaultExpiryDays));
   // the stored list cannot be read (it reads []): the notice's save sends the list shown to repair it
   const unreadable = saved.forbiddenToolsUnreadable === true;
   const forbiddenText = draft.forbidden ?? saved.forbiddenTools.join("\n");
   const forbidden = splitToolKeys(forbiddenText);
-  const invalid = new Set<string>(COUNTS.filter((k) => count(countText(k)) === null));
+  const invalid = new Set<string>([...COUNTS, ...EVENT_COUNTS].filter((k) => countOf(k) === null));
   const expiry = expiryText.trim() === "" ? null : count(expiryText);
   if (expiryText.trim() !== "" && expiry === null) invalid.add("defaultExpiryDays");
   // Only the changed fields go in the PATCH
@@ -169,11 +187,12 @@ function AutomationSettings({ orgId }: { orgId: string }) {
     ...(enabled !== saved.enabled ? { enabled } : {}),
     ...(ask !== saved.unattendedAsk ? { unattendedAsk: ask } : {}),
     ...Object.fromEntries(
-      COUNTS.flatMap((k) => {
-        const n = count(countText(k));
+      [...COUNTS, ...EVENT_COUNTS].flatMap((k) => {
+        const n = countOf(k);
         return n !== null && n !== saved[k] ? [[k, n]] : [];
       }),
     ),
+    ...(!sameSet(off, saved.eventSourcesOff) ? { eventSourcesOff: off } : {}),
     ...(!invalid.has("defaultExpiryDays") && expiry !== saved.defaultExpiryDays
       ? { defaultExpiryDays: expiry }
       : {}),
@@ -286,6 +305,36 @@ function AutomationSettings({ orgId }: { orgId: string }) {
           </Field>
         </Stack>
       </FormSection>
+      <FormSection id="automations-events" title={t("events")} description={t("eventsHint")}>
+        <Stack gap={12}>
+          {EVENT_COUNTS.map((k) => (
+            <Field
+              key={k}
+              label={t(k)}
+              help={t(
+                k === "maxEventDepth"
+                  ? "maxEventDepthHelp"
+                  : k === "coalesceSeconds"
+                    ? "coalesceHelp"
+                    : "maxEventRunsHelp",
+              )}
+              {...(invalid.has(k) ? { error: t("invalid") } : {})}
+            >
+              <Input
+                name={k}
+                inputMode="numeric"
+                value={countText(k)}
+                onChange={(e) => setCount(k, e.target.value)}
+              />
+            </Field>
+          ))}
+          <EventSourcesOff
+            orgId={orgId}
+            off={off}
+            onChange={(next) => setDraft((d) => ({ ...d, off: next }))}
+          />
+        </Stack>
+      </FormSection>
       <FormSection
         id="automations-forbidden"
         title={t("forbidden")}
@@ -302,6 +351,48 @@ function AutomationSettings({ orgId }: { orgId: string }) {
       </FormSection>
       <AllTasks orgId={orgId} />
     </SettingsPage>
+  );
+}
+
+/**
+ * The event sources of the org, each checked while it may start automations. A source the org
+ * switched off is no longer listed by the kernel: it stays as a row by its name until it is
+ * checked again.
+ */
+function EventSourcesOff({
+  orgId,
+  off,
+  onChange,
+}: {
+  orgId: string;
+  off: string[];
+  onChange(next: string[]): void;
+}) {
+  const t = useTranslations("automationSettings");
+  const locale = labelLocale(useLocale());
+  const q = eventSourcesQuery(orgId);
+  const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  const sources = read.data?.items ?? [];
+  const rows = [
+    ...sources.map((s) => ({
+      id: s.source,
+      title: extensionLabel({ name: s.source, displayName: s.name }, locale),
+    })),
+    ...off.filter((n) => !sources.some((s) => s.source === n)).map((n) => ({ id: n, title: n })),
+  ];
+  if (rows.length === 0) return null;
+  return (
+    <Stack gap={8}>
+      <Text variant="small" tone="muted">
+        {t("eventSourcesHelp")}
+      </Text>
+      <CheckList
+        label={t("eventSources")}
+        title={t("eventSources")}
+        rows={rows.map((r) => ({ ...r, checked: !off.includes(r.id) }))}
+        onCheck={(id, on) => onChange(on ? off.filter((n) => n !== id) : [...off, id])}
+      />
+    </Stack>
   );
 }
 

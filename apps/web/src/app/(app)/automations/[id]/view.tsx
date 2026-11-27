@@ -12,6 +12,7 @@ import {
   FormSection,
   StatusMark,
   Text,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
@@ -186,6 +187,7 @@ function AutomationForm({
   const errorMessage = useErrorMessage();
   const names = useMemberNames(orgId);
   const actions = useAutomationActions(orgId);
+  const zone = useTimeZone();
   const saved = draftOf(task);
   const [draft, setDraft] = useState<AutomationDraft>(saved);
   const [error, setError] = useState<string | null>(null);
@@ -199,7 +201,7 @@ function AutomationForm({
     ...inboxChangeKeys(orgId),
   ];
   const save = useAppMutation({
-    fn: () => updateAutomation(orgId, task.id, patchOf(saved, draft)),
+    fn: () => updateAutomation(orgId, task.id, patchOf(saved, draft, zone ?? "UTC")),
     invalidates: () => touched,
   });
   const grantsQ = automationGrantsQuery(orgId, task.id);

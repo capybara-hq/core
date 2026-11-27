@@ -162,6 +162,7 @@ const common = {
       },
     ],
   }),
+  [`GET ${BASE}/event-sources`]: ok({ items: [] }),
   [`GET ${BASE}/grantable-tools?agentId=ag1`]: ok({ items: TOOLS }),
   [`GET ${BASE}/grantable-tools?agentId=ag2`]: ok({ items: TOOLS }),
   [`GET ${ORG}/settings`]: ok({

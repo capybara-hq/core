@@ -2,12 +2,14 @@
 
 import {
   Button,
+  CheckList,
   Field,
   FormSection,
   Input,
   ItemList,
   LinkButton,
   RadioGroup,
+  Repeater,
   Select,
   Stack,
   Text,
@@ -31,21 +33,36 @@ import {
   type AutomationUpdateBody,
   type ChatTarget,
   chatKey,
+  clauseOf,
   connectionOf,
   dateIn,
+  type EventDraft,
+  type EventFilterClause,
+  type EventSource,
+  emptyEventDraft,
   endOfDayIn,
+  eventBodyOf,
+  eventDraftOf,
+  eventDraftValid,
+  type FilterableFact,
+  type FilterRowDraft,
+  filterableFacts,
   type GrantableTool,
   HOURLY_MINUTES,
   MONTH_DAYS,
+  newRowKey,
+  opsOf,
   PRESET_KINDS,
   type PresetKind,
   presetOf,
   presetValid,
+  selectableTypes,
   switchPreset,
   triggerOf,
+  type UnattendedAsk,
   zoneOf,
 } from "../lib/automations";
-import { labelLocale } from "../lib/extension-label";
+import { extensionLabel, labelLocale } from "../lib/extension-label";
 import { decodeModel, encodeModel, pickerOptions } from "../lib/models";
 import {
   allowHostProblem,
@@ -56,6 +73,7 @@ import {
 import {
   automationTargetsQuery,
   chatTargetsQuery,
+  eventSourcesQuery,
   grantableToolsQuery,
 } from "../lib/query/automations";
 import { retryOnMountOf } from "../lib/query/client";
@@ -66,7 +84,13 @@ export interface AutomationDraft {
   name: string;
   agentId: string;
   prompt: string;
+  /** What starts a run: the clock (the preset) or events (the event part). */
+  triggerKind: "time" | "event";
   preset: AutomationPreset;
+  /** The event trigger; used when `triggerKind` is `event`. */
+  event: EventDraft;
+  /** What a question in an unattended run does; "" = the org's default. */
+  unattendedAsk: "" | UnattendedAsk;
   /** The task's own zone (an existing task only). */
   timeZone: string | null;
   mode: AutomationMode;
@@ -85,7 +109,10 @@ export const emptyDraft = (agentId: string): AutomationDraft => ({
   name: "",
   agentId,
   prompt: "",
+  triggerKind: "time",
   preset: { kind: "daily", time: "09:00" },
+  event: emptyEventDraft(),
+  unattendedAsk: "",
   timeZone: null,
   mode: "new",
   conversationId: "",
@@ -95,13 +122,16 @@ export const emptyDraft = (agentId: string): AutomationDraft => ({
   expires: "",
 });
 
-// an event automation (no schedule, no zone) is not edited here yet: its draft starts from the
-// default schedule, read in UTC
+// an event automation has no schedule or zone: its time part starts from the default schedule,
+// read in UTC (it matters only if the person switches the trigger to a schedule)
 export const draftOf = (task: Automation): AutomationDraft => ({
   name: task.name,
   agentId: task.agentId,
   prompt: task.prompt,
+  triggerKind: task.trigger.kind === "event" ? "event" : "time",
   preset: task.trigger.kind === "event" ? { kind: "daily", time: "09:00" } : presetOf(task.trigger),
+  event: task.trigger.kind === "event" ? eventDraftOf(task.trigger) : emptyEventDraft(),
+  unattendedAsk: task.unattendedAsk ?? "",
   timeZone: zoneOf(task.trigger),
   mode: task.mode,
   conversationId: task.conversationId ?? "",
@@ -116,7 +146,9 @@ export const draftValid = (d: AutomationDraft): boolean =>
   d.name.trim() !== "" &&
   d.prompt.trim() !== "" &&
   d.agentId !== "" &&
-  presetValid(d.preset) &&
+  (d.triggerKind === "event" ? eventDraftValid(d.event) : presetValid(d.preset)) &&
+  // `subject` needs events, `chat` needs the clock
+  (d.triggerKind === "event" ? d.mode !== "chat" : d.mode !== "subject") &&
   (d.mode !== "conversation" || d.conversationId !== "") &&
   (d.mode !== "chat" || d.chat !== null);
 
@@ -129,22 +161,23 @@ export function createBodyOf(
   displayZone: string,
 ): AutomationCreateBody {
   const model = d.model === "" ? null : decodeModel(d.model);
-  // the form never offers `subject` (event automations are not created here yet)
-  if (d.mode === "subject") throw new Error("A subject automation is not created from the form");
+  const event = d.triggerKind === "event";
   return {
     agentId: d.agentId,
     name: d.name.trim(),
     prompt: d.prompt.trim(),
-    trigger: triggerOf(d.preset),
-    ...(timeZone !== undefined ? { timeZone } : {}),
+    trigger: event ? eventBodyOf(d.event) : triggerOf(d.preset),
+    // an event automation has no zone
+    ...(timeZone !== undefined && !event ? { timeZone } : {}),
     mode: d.mode,
+    ...(d.unattendedAsk !== "" ? { unattendedAsk: d.unattendedAsk } : {}),
     ...(d.mode === "conversation" ? { conversationId: d.conversationId } : {}),
     ...(d.mode === "chat" && d.chat !== null ? { chat: d.chat } : {}),
     // model and effort: a new-conversation task's only (another runs with its conversation's)
     ...(d.mode === "new" && model !== null ? { model } : {}),
     ...(d.mode === "new" && d.effort !== "" ? { effort: d.effort as AutomationEffort } : {}),
-    // an end date is a recurring task's (a one-off one has none)
-    ...(d.expires !== "" && d.preset.kind !== "once"
+    // an end date is a recurring task's (a one-off one has none, nor does an event one here)
+    ...(d.expires !== "" && !event && d.preset.kind !== "once"
       ? { expiresAt: endOfDayIn(d.expires, displayZone) }
       : {}),
     ...(grants.length > 0 ? { grants: grants.map((toolKey) => ({ toolKey })) } : {}),
@@ -154,16 +187,39 @@ export function createBodyOf(
 const sameTrigger = (a: AutomationPreset, b: AutomationPreset) =>
   JSON.stringify(triggerOf(a)) === JSON.stringify(triggerOf(b));
 
-/** The patch of what changed between the saved task and the draft (empty: nothing). */
-export function patchOf(saved: AutomationDraft, d: AutomationDraft): AutomationUpdateBody {
+/**
+ * The patch of what changed between the saved task and the draft (empty: nothing). `fallbackZone`: the zone
+ * an event automation takes when its trigger becomes a schedule (the kernel wants both together).
+ */
+export function patchOf(
+  saved: AutomationDraft,
+  d: AutomationDraft,
+  fallbackZone = "UTC",
+): AutomationUpdateBody {
   const p: AutomationUpdateBody = {};
   if (d.name.trim() !== saved.name) p.name = d.name.trim();
   if (d.prompt.trim() !== saved.prompt) p.prompt = d.prompt.trim();
   if (d.agentId !== saved.agentId) p.agentId = d.agentId;
-  if (!sameTrigger(saved.preset, d.preset)) p.trigger = triggerOf(d.preset);
-  if (d.timeZone !== null && d.timeZone !== saved.timeZone) p.timeZone = d.timeZone;
-  // `subject` is never offered: a subject automation keeps its mode until another is picked
-  if (d.mode !== saved.mode && d.mode !== "subject") p.mode = d.mode;
+  if (d.triggerKind === "event") {
+    const body = eventBodyOf(d.event);
+    if (
+      saved.triggerKind !== "event" ||
+      JSON.stringify(body) !== JSON.stringify(eventBodyOf(saved.event))
+    ) {
+      p.trigger = body;
+    }
+  } else if (saved.triggerKind === "event") {
+    // from events to a schedule: the new trigger and its zone go together
+    p.trigger = triggerOf(d.preset);
+    p.timeZone = d.timeZone ?? fallbackZone;
+  } else {
+    if (!sameTrigger(saved.preset, d.preset)) p.trigger = triggerOf(d.preset);
+    if (d.timeZone !== null && d.timeZone !== saved.timeZone) p.timeZone = d.timeZone;
+  }
+  if (d.unattendedAsk !== saved.unattendedAsk) {
+    p.unattendedAsk = d.unattendedAsk === "" ? null : d.unattendedAsk;
+  }
+  if (d.mode !== saved.mode) p.mode = d.mode;
   if (d.mode === "conversation" && d.conversationId !== saved.conversationId) {
     p.conversationId = d.conversationId;
   }
@@ -177,7 +233,7 @@ export function patchOf(saved: AutomationDraft, d: AutomationDraft): AutomationU
       p.effort = d.effort === "" ? null : (d.effort as AutomationEffort);
     }
   }
-  if (d.expires !== saved.expires && d.preset.kind !== "once") {
+  if (d.expires !== saved.expires && d.triggerKind === "time" && d.preset.kind !== "once") {
     const zone = d.timeZone ?? saved.timeZone ?? "UTC";
     p.expiresAt = d.expires === "" ? null : endOfDayIn(d.expires, zone);
   }
@@ -254,9 +310,26 @@ export function AutomationFormSections({
     retryOnMount: retryOnMountOf(targetsQ.queryKey),
   }).data?.items;
   const offerChat = draft.chat !== null || (targets?.length ?? 0) > 0;
-  const modes: AutomationMode[] = ["new", "conversation", ...(offerChat ? ["chat" as const] : [])];
+  const isEvent = draft.triggerKind === "event";
+  // `subject` needs events and `chat` needs the clock
+  const modes: AutomationMode[] = [
+    "new",
+    "conversation",
+    ...(isEvent ? ["subject" as const] : offerChat ? ["chat" as const] : []),
+  ];
+  const setKind = (kind: "time" | "event") =>
+    setDraft((d) => ({
+      ...d,
+      triggerKind: kind,
+      // a mode the new trigger cannot have falls back to a new conversation per run
+      ...(kind === "event" && d.mode === "chat"
+        ? { mode: "new" as const, chat: null }
+        : kind === "time" && d.mode === "subject"
+          ? { mode: "new" as const }
+          : {}),
+    }));
   // A chat task's agent is its connection's
-  const agentFixed = draft.mode === "chat";
+  const agentFixed = draft.mode === "chat" && !isEvent;
   return (
     <>
       <FormSection id="basic" title={t("basic")} description={t("basicHint")}>
@@ -297,118 +370,140 @@ export function AutomationFormSections({
       </FormSection>
       <FormSection id="schedule" title={t("schedule")} description={t("scheduleHint")}>
         <Stack gap={12}>
-          <Field label={t("preset")}>
-            <Select
-              value={p.kind}
+          <RadioGroup
+            label={t("triggerKind")}
+            value={draft.triggerKind}
+            disabled={readOnly}
+            onChange={(v) => setKind(v as "time" | "event")}
+            options={[
+              { value: "time", label: t("kind.time") },
+              { value: "event", label: t("kind.event") },
+            ]}
+          />
+          {isEvent && (
+            <EventTriggerFields
+              orgId={orgId}
+              event={draft.event}
               disabled={readOnly}
-              onChange={(e) => setPreset(switchPreset(p, e.target.value as PresetKind))}
-              options={PRESET_KINDS.map((k) => ({ value: k, label: t(`presets.${k}`) }))}
+              onChange={(f) => setDraft((d) => ({ ...d, event: f(d.event) }))}
             />
-          </Field>
-          {p.kind === "hourly" && (
-            <Field label={t("minute")}>
-              <Select
-                value={String(p.minute)}
-                disabled={readOnly}
-                onChange={(e) => setPreset({ kind: "hourly", minute: Number(e.target.value) })}
-                options={HOURLY_MINUTES.map((m) => ({
-                  value: String(m),
-                  label: `:${String(m).padStart(2, "0")}`,
-                }))}
-              />
-            </Field>
           )}
-          {p.kind === "weekly" && (
-            <Field label={t("weekday")}>
-              <Select
-                value={String(p.day)}
-                disabled={readOnly}
-                onChange={(e) => setPreset({ ...p, day: Number(e.target.value) })}
-                options={[1, 2, 3, 4, 5, 6, 0].map((d) => ({
-                  value: String(d),
-                  label: tw(`weekday.${d}` as "weekday.0"),
-                }))}
-              />
-            </Field>
-          )}
-          {p.kind === "monthly" && (
-            <Field label={t("dayOfMonth")}>
-              <Select
-                value={String(p.day)}
-                disabled={readOnly}
-                onChange={(e) => setPreset({ ...p, day: Number(e.target.value) })}
-                options={Array.from({ length: MONTH_DAYS }, (_, i) => ({
-                  value: String(i + 1),
-                  label: String(i + 1),
-                }))}
-              />
-            </Field>
-          )}
-          {"time" in p && (
-            <Field label={t("time")}>
-              <Input
-                type="time"
-                value={p.time}
-                disabled={readOnly}
-                onChange={(e) => setPreset({ ...p, time: e.target.value })}
-              />
-            </Field>
-          )}
-          {p.kind === "once" && (
-            <Field label={t("at")} required>
-              <Input
-                type="datetime-local"
-                value={p.at}
-                disabled={readOnly}
-                onChange={(e) => setPreset({ kind: "once", at: e.target.value })}
-              />
-            </Field>
-          )}
-          {p.kind === "custom" && (
-            <Field label={t("cron")} required help={t("cronHelp")}>
-              <Input
-                value={p.expr}
-                maxLength={200}
-                disabled={readOnly}
-                onChange={(e) => setPreset({ kind: "custom", expr: e.target.value })}
-              />
-            </Field>
-          )}
-          {existing === undefined ? (
-            <Text variant="small" tone="muted">
-              {t("zoneCreate", { zone: createZone ?? zone ?? "UTC" })}
-            </Text>
-          ) : (
-            <Field label={t("zone")}>
-              <Select
-                name="timeZone"
-                value={draft.timeZone ?? zoneOf(existing.trigger) ?? "UTC"}
-                disabled={readOnly}
-                onChange={(e) => set("timeZone", e.target.value)}
-                options={timeZoneOptions(zoneOf(existing.trigger) ?? "UTC")}
-              />
-            </Field>
-          )}
-          {p.kind !== "once" && (
-            <Text variant="small" tone="muted">
-              {t("jitter")}
-            </Text>
-          )}
-          {p.kind !== "once" && minIntervalMinutes !== undefined && (
-            <Text variant="small" tone="muted">
-              {t("minInterval", { n: minIntervalMinutes })}
-            </Text>
-          )}
-          {p.kind !== "once" && (
-            <Field label={t("expires")} optional help={t("expiresHelp")}>
-              <Input
-                type="date"
-                name="expires"
-                value={draft.expires}
-                disabled={readOnly}
-                onChange={(e) => set("expires", e.target.value)}
-              />
-            </Field>
+          {!isEvent && (
+            <>
+              <Field label={t("preset")}>
+                <Select
+                  value={p.kind}
+                  disabled={readOnly}
+                  onChange={(e) => setPreset(switchPreset(p, e.target.value as PresetKind))}
+                  options={PRESET_KINDS.map((k) => ({ value: k, label: t(`presets.${k}`) }))}
+                />
+              </Field>
+              {p.kind === "hourly" && (
+                <Field label={t("minute")}>
+                  <Select
+                    value={String(p.minute)}
+                    disabled={readOnly}
+                    onChange={(e) => setPreset({ kind: "hourly", minute: Number(e.target.value) })}
+                    options={HOURLY_MINUTES.map((m) => ({
+                      value: String(m),
+                      label: `:${String(m).padStart(2, "0")}`,
+                    }))}
+                  />
+                </Field>
+              )}
+              {p.kind === "weekly" && (
+                <Field label={t("weekday")}>
+                  <Select
+                    value={String(p.day)}
+                    disabled={readOnly}
+                    onChange={(e) => setPreset({ ...p, day: Number(e.target.value) })}
+                    options={[1, 2, 3, 4, 5, 6, 0].map((d) => ({
+                      value: String(d),
+                      label: tw(`weekday.${d}` as "weekday.0"),
+                    }))}
+                  />
+                </Field>
+              )}
+              {p.kind === "monthly" && (
+                <Field label={t("dayOfMonth")}>
+                  <Select
+                    value={String(p.day)}
+                    disabled={readOnly}
+                    onChange={(e) => setPreset({ ...p, day: Number(e.target.value) })}
+                    options={Array.from({ length: MONTH_DAYS }, (_, i) => ({
+                      value: String(i + 1),
+                      label: String(i + 1),
+                    }))}
+                  />
+                </Field>
+              )}
+              {"time" in p && (
+                <Field label={t("time")}>
+                  <Input
+                    type="time"
+                    value={p.time}
+                    disabled={readOnly}
+                    onChange={(e) => setPreset({ ...p, time: e.target.value })}
+                  />
+                </Field>
+              )}
+              {p.kind === "once" && (
+                <Field label={t("at")} required>
+                  <Input
+                    type="datetime-local"
+                    value={p.at}
+                    disabled={readOnly}
+                    onChange={(e) => setPreset({ kind: "once", at: e.target.value })}
+                  />
+                </Field>
+              )}
+              {p.kind === "custom" && (
+                <Field label={t("cron")} required help={t("cronHelp")}>
+                  <Input
+                    value={p.expr}
+                    maxLength={200}
+                    disabled={readOnly}
+                    onChange={(e) => setPreset({ kind: "custom", expr: e.target.value })}
+                  />
+                </Field>
+              )}
+              {existing === undefined || zoneOf(existing.trigger) === null ? (
+                <Text variant="small" tone="muted">
+                  {t("zoneCreate", { zone: createZone ?? zone ?? "UTC" })}
+                </Text>
+              ) : (
+                <Field label={t("zone")}>
+                  <Select
+                    name="timeZone"
+                    value={draft.timeZone ?? zoneOf(existing.trigger) ?? "UTC"}
+                    disabled={readOnly}
+                    onChange={(e) => set("timeZone", e.target.value)}
+                    options={timeZoneOptions(zoneOf(existing.trigger) ?? "UTC")}
+                  />
+                </Field>
+              )}
+              {p.kind !== "once" && (
+                <Text variant="small" tone="muted">
+                  {t("jitter")}
+                </Text>
+              )}
+              {p.kind !== "once" && minIntervalMinutes !== undefined && (
+                <Text variant="small" tone="muted">
+                  {t("minInterval", { n: minIntervalMinutes })}
+                </Text>
+              )}
+              {p.kind !== "once" && (
+                <Field label={t("expires")} optional help={t("expiresHelp")}>
+                  <Input
+                    type="date"
+                    name="expires"
+                    value={draft.expires}
+                    disabled={readOnly}
+                    onChange={(e) => set("expires", e.target.value)}
+                  />
+                </Field>
+              )}
+            </>
           )}
         </Stack>
       </FormSection>
@@ -450,7 +545,20 @@ export function AutomationFormSections({
               }
             />
           )}
-          {!offerChat && !readOnly && targets !== undefined && (
+          <Field label={t("unattendedAsk")} help={t("unattendedAskHelp")}>
+            <Select
+              name="unattendedAsk"
+              value={draft.unattendedAsk}
+              disabled={readOnly}
+              onChange={(e) => set("unattendedAsk", e.target.value as "" | UnattendedAsk)}
+              options={[
+                { value: "", label: t("orgDefault") },
+                { value: "fail", label: t("ask.fail") },
+                { value: "wait", label: t("ask.wait") },
+              ]}
+            />
+          </Field>
+          {!offerChat && !isEvent && !readOnly && targets !== undefined && (
             <Text variant="small" tone="muted">
               {t("noChats")}
             </Text>
@@ -485,6 +593,200 @@ export function AutomationFormSections({
         </FormSection>
       )}
     </>
+  );
+}
+
+/**
+ * The event trigger (collaboration spec §4.1, §4.3): the source (a trigger source that serves the
+ * org), its event types (not the directed ones) and a filter of rows built from the selected
+ * types' filterable facts. The sources load when the trigger is events.
+ */
+function EventTriggerFields({
+  orgId,
+  event,
+  disabled,
+  onChange,
+}: {
+  orgId: string;
+  event: EventDraft;
+  disabled: boolean;
+  onChange(f: (e: EventDraft) => EventDraft): void;
+}) {
+  const t = useTranslations("automations.form");
+  const locale = labelLocale(useLocale());
+  const q = eventSourcesQuery(orgId);
+  const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  const sources = read.data?.items;
+  const source = sources?.find((x) => x.source === event.source);
+  const sourceOptions = (sources ?? []).map((x) => ({
+    value: x.source,
+    label: extensionLabel({ name: x.source, displayName: x.name }, locale),
+  }));
+  if (event.source !== "" && !sourceOptions.some((o) => o.value === event.source)) {
+    sourceOptions.push({ value: event.source, label: event.source });
+  }
+  const types = selectableTypes(source);
+  const facts = filterableFacts(source, event.types);
+  const noSources = sources !== undefined && sources.length === 0;
+  const pickTypes = (id: string, on: boolean) =>
+    onChange((e) => {
+      const next = on ? [...e.types.filter((x) => x !== id), id] : e.types.filter((x) => x !== id);
+      // a row stays while its fact is still filterable on every selected type, as the same type
+      const kept = filterableFacts(source, next);
+      return {
+        ...e,
+        types: next,
+        filter: e.filter.filter((r) =>
+          kept.some((f) => f.fact === r.fact && f.type === r.factType),
+        ),
+      };
+    });
+  return (
+    <Stack gap={12}>
+      <Field
+        label={t("eventSource")}
+        required
+        {...(noSources ? { error: t("noEventSources") } : {})}
+      >
+        <Select
+          value={event.source}
+          disabled={disabled || sourceOptions.length === 0}
+          placeholder={t("pickEventSource")}
+          onChange={(e) => onChange(() => ({ source: e.target.value, types: [], filter: [] }))}
+          options={sourceOptions}
+        />
+      </Field>
+      {source !== undefined && (
+        <CheckList
+          label={t("eventTypes")}
+          title={t("eventTypes")}
+          disabled={disabled}
+          rows={types.map((e) => ({
+            id: e.type,
+            title: extensionLabel({ name: e.type, displayName: e.name }, locale),
+            description: e.type,
+            checked: event.types.includes(e.type),
+          }))}
+          onCheck={pickTypes}
+        />
+      )}
+      {source !== undefined && event.types.length > 0 && (
+        <FilterRows rows={event.filter} facts={facts} disabled={disabled} onChange={onChange} />
+      )}
+    </Stack>
+  );
+}
+
+/** The filter rows: a fact, an operator that fits its type and a value (all must match). */
+function FilterRows({
+  rows,
+  facts,
+  disabled,
+  onChange,
+}: {
+  rows: FilterRowDraft[];
+  facts: FilterableFact[];
+  disabled: boolean;
+  onChange(f: (e: EventDraft) => EventDraft): void;
+}) {
+  const t = useTranslations("automations.form");
+  const locale = labelLocale(useLocale());
+  const setRow = (key: string, f: (r: FilterRowDraft) => FilterRowDraft) =>
+    onChange((e) => ({ ...e, filter: e.filter.map((r) => (r.key === key ? f(r) : r)) }));
+  const rowFor = (fact: FilterableFact): FilterRowDraft => ({
+    key: newRowKey(),
+    fact: fact.fact,
+    factType: fact.type,
+    op: opsOf(fact.type)[0] ?? "eq",
+    value: fact.type === "boolean" ? "true" : "",
+  });
+  const factName = (fact: string) => {
+    const f = facts.find((x) => x.fact === fact);
+    return f === undefined ? fact : extensionLabel({ name: fact, displayName: f.name }, locale);
+  };
+  const first = facts[0];
+  return (
+    <Stack gap={8}>
+      <Text variant="small" tone="muted">
+        {t("filterHint")}
+      </Text>
+      <Repeater
+        variant="rows"
+        label={t("filter")}
+        addLabel={t("addFilter")}
+        empty={t("filterEmpty")}
+        disabled={disabled || (first === undefined && rows.length === 0)}
+        items={rows.map((r) => ({
+          key: r.key,
+          title: factName(r.fact),
+          invalid: clauseOf(r) === null,
+          body: (
+            <Stack direction="row" gap={8} align="end">
+              <Select
+                aria-label={t("filterFact")}
+                value={r.fact}
+                disabled={disabled}
+                onChange={(e) => {
+                  const f = facts.find((x) => x.fact === e.target.value);
+                  if (f !== undefined) setRow(r.key, () => ({ ...rowFor(f), key: r.key }));
+                }}
+                options={[
+                  ...facts.map((f) => ({
+                    value: f.fact,
+                    label: extensionLabel({ name: f.fact, displayName: f.name }, locale),
+                  })),
+                  ...(facts.some((f) => f.fact === r.fact)
+                    ? []
+                    : [{ value: r.fact, label: r.fact }]),
+                ]}
+              />
+              <Select
+                aria-label={t("filterOp")}
+                value={r.op}
+                disabled={disabled}
+                onChange={(e) =>
+                  setRow(r.key, (x) => ({ ...x, op: e.target.value as EventFilterClause["op"] }))
+                }
+                options={opsOf(r.factType).map((op) => ({ value: op, label: t(`op.${op}`) }))}
+              />
+              {r.factType === "boolean" ? (
+                <Select
+                  aria-label={t("filterValue")}
+                  value={r.value}
+                  disabled={disabled}
+                  onChange={(e) => setRow(r.key, (x) => ({ ...x, value: e.target.value }))}
+                  options={[
+                    { value: "true", label: t("yes") },
+                    { value: "false", label: t("no") },
+                  ]}
+                />
+              ) : (
+                <Input
+                  aria-label={t("filterValue")}
+                  value={r.value}
+                  maxLength={500}
+                  disabled={disabled}
+                  placeholder={r.op === "in" ? t("filterListPlaceholder") : ""}
+                  onChange={(e) => setRow(r.key, (x) => ({ ...x, value: e.target.value }))}
+                />
+              )}
+            </Stack>
+          ),
+        }))}
+        onAdd={() => {
+          if (first !== undefined)
+            onChange((e) => ({ ...e, filter: [...e.filter, rowFor(first)] }));
+        }}
+        onRemove={(key) => {
+          let before: FilterRowDraft[] = [];
+          onChange((e) => {
+            before = e.filter;
+            return { ...e, filter: e.filter.filter((r) => r.key !== key) };
+          });
+          return () => onChange((e) => ({ ...e, filter: before }));
+        }}
+      />
+    </Stack>
   );
 }
 
