@@ -613,6 +613,22 @@ describe("ContextSection", () => {
     expect(screen.getByText("不使用沙箱").getAttribute("data-tone")).toBe("fail");
   });
 
+  it("rounds row renders with part context-rounds before the last run", () => {
+    wrap(
+      <ContextSection
+        ratio={10}
+        model="m"
+        connectors={[]}
+        rounds="第 3 轮 · 已用 12k"
+        lastRun={["27 秒"]}
+      />,
+    );
+    const value = document.querySelector('[data-part="context-rounds"]');
+    expect(value?.textContent).toBe("第 3 轮 · 已用 12k");
+    expect(value?.previousElementSibling?.textContent).toBe("轮次");
+    expect(rows().map((r) => r[0])).toEqual(["模型", "轮次", "上次运行"]);
+  });
+
   it("a total row (tokens with sub-agents) only when given", () => {
     const { unmount } = wrap(
       <ContextSection ratio={10} model="m" connectors={[]} total="1,234 token（含子智能体）" />,

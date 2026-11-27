@@ -129,7 +129,7 @@ reload and without losing state (the URL hash keeps the right area, §5.4).
 
 Width decides the class; height only trims chrome. A window **shorter than 480 px** (a phone in
 landscape, the iPhone Duo at its shortest reported height, 368) sets `data-short` on the shell:
-the StatusBar hides and the PageHeader drops its path row on compact only (the floating back
+the PageHeader drops its path row on compact only (the floating back
 button keeps the way up, §4.1; medium and expanded have no floating back, and a phone in landscape
 at 844 × 390 is expanded, so they keep the path row: maintainer to confirm: R26). There is no
 bottom navigation to trim any more (decided 2026-11-21). This is not orientation: a short desktop
@@ -165,7 +165,7 @@ person's toggle).
 | Sidebar content (org switcher, more, account) | The **drawer** and its **account sheet** (§4.2); no Me page (retired 2026-11-21) | Rail popovers, as today's rail | As today |
 | Right area (conversation) | A full-screen page pushed over the conversation (§5.4) | A side sheet with a follow-finger dismiss | Inline from 1280, a side sheet below (§3.3) |
 | Drawer menu bar | Replaced by **floating buttons** over the content; no top bar row (§4.1, decided 2026-11-21) | None (the rail holds the menu) | None |
-| StatusBar | Hidden (its system status moves to the account sheet) | Shown | Shown |
+| StatusBar | None (removed on every class 2026-11-28; the system status, version and time zone are in the account sheet and the account menu) | None | None |
 | ActionRow | Sticky at the bottom, above the safe area: the primary a full-width line, the other actions side by side above it, on every ActionRow, forms included (maintainer to confirm: R16) | As today | As today |
 
 On a touch screen, at every class, management entries are absent from the navigation (§4.6) and
@@ -230,7 +230,7 @@ edge (§7.4) or choosing an entry. Its width is the window less 56, at most 320 
    conversation** button (to `/`).
 
 The **account sheet** is a bottom sheet: the org switcher, 个人设置 / Personal settings
-(`/account/…`), the theme, the system status (the StatusBar's content), the PWA install how-to on
+(`/account/…`), the theme, the system status (the former StatusBar's content), the PWA install how-to on
 iOS, 「切换平台」 / "Switch platform" in the mobile app (`profiles@1`, mobile app spec §5.2) and
 sign out.
 
@@ -521,7 +521,7 @@ Other pages get the automated compact rule set only.
   `--cb-keyboard-inset` the same way.
 - **iOS 100vh**: already solved (`100dvh` on the shell, PR #121); no `vh` for full-height boxes
   in new design CSS (the check of §11.4 flags `100vh`).
-- The StatusBar hides while the keyboard is open; the floating composer rides above the keyboard
+- The floating composer rides above the keyboard
   and the floating buttons stay (decided 2026-11-21: there is no bottom navigation to hide).
 
 ### 7.2 Streaming output and scroll pinning

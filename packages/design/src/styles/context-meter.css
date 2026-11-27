@@ -1,0 +1,54 @@
+/* The composer's context meter (layered shell spec §6): a ring in a control.dense square right
+   before send / stop. Track `line`, arc `muted`, `fail` when over the compaction threshold. */
+.cb-context-meter {
+  display: block;
+  flex: none;
+  align-self: center;
+  width: var(--cb-control-dense);
+  height: var(--cb-control-dense);
+  border-radius: var(--cb-radius-sm);
+}
+.cb-context-meter-track {
+  stroke: var(--cb-line);
+}
+.cb-context-meter-arc {
+  stroke: var(--cb-muted);
+  stroke-linecap: butt;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+.cb-context-meter[data-tone="fail"] .cb-context-meter-arc {
+  stroke: var(--cb-fail);
+}
+
+/* In the composer's grid the ring takes the cell before send / stop: a fourth track exists only
+   while the ring does, so a composer without one keeps its columns. */
+.cb-composer:has(.cb-composer-box > .cb-context-meter) {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+.cb-composer-box > .cb-context-meter {
+  grid-row: 4;
+  grid-column: 3;
+}
+.cb-composer-box > .cb-context-meter + .cb-send,
+.cb-composer-box > .cb-context-meter + .cb-stop {
+  grid-column: 4;
+}
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-composer:has(.cb-composer-box > .cb-context-meter) {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .cb-composer-box:has(> .cb-context-meter) {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+  }
+  .cb-composer-box > .cb-context-meter {
+    grid-row: 1;
+    grid-column: 3;
+    align-self: end;
+    margin-block-end: calc((var(--cb-touch-composer) - var(--cb-control-dense)) / 2 - 1px);
+  }
+  .cb-composer-box > .cb-context-meter + .cb-send.cb-btn,
+  .cb-composer-box > .cb-context-meter + .cb-stop.cb-btn {
+    grid-column: 4;
+  }
+}
