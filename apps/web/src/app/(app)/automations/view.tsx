@@ -11,6 +11,7 @@ import {
   DeleteAutomationDialog,
   useAutomationActions,
   useAutomationWords,
+  useEventSourceName,
 } from "../../../components/AutomationParts";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
@@ -141,7 +142,8 @@ function AutomationList({
   // Agent names are display only: the id shows when they can't be read.
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
-  const columns = automationColumns(t, when, agentName).map((c) => {
+  const sourceName = useEventSourceName(orgId, tasks);
+  const columns = automationColumns(t, when, agentName, sourceName).map((c) => {
     const compact = COMPACT[c.key];
     return compact === undefined ? c : { ...c, compact };
   });

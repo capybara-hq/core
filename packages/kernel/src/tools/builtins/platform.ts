@@ -553,6 +553,8 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       ...(card !== null && { file: card }),
       // its result is shown once to the run's person: only they may consent to it
       ...(op.revealsOnce !== undefined && { personOnly: true as const }),
+      // it changes what the person consents to: only they decide, never their profile
+      ...(op.personOnly === true && { personOnly: true as const, personDecides: true as const }),
     };
   }
 

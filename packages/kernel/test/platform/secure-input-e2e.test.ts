@@ -19,6 +19,7 @@ import { PERSON_INPUTS_EXPIRED_TEXT } from "../../src/tools/builtins/platform.js
 import {
   APPROVAL_CANCELLED_TEXT,
   leakedOnCardText,
+  PERSON_DECIDES_UNATTENDED_TEXT,
   PERSON_FIELDS_ROLE_TEXT,
   PERSON_FIELDS_UNATTENDED_TEXT,
   PERSON_ONLY_ROLE_TEXT,
@@ -141,6 +142,26 @@ const fileProbe = defineOperation({
   },
 }) as PlatformOperation;
 
+const CONSENT_OP = "platform.consent-probe";
+
+/** Test only: a change of what the person consents to (`personOnly`, like acceptance-set). */
+const consentProbe = defineOperation({
+  id: CONSENT_OP,
+  description: "Test only: changes what the person consents to.",
+  input: z.object({ mode: z.string() }).strict(),
+  example: { mode: "auto" },
+  authz: { orgAction: "agents.use" },
+  mirrors: [],
+  confirm: "personal",
+  rememberable: false,
+  personOnly: true,
+  summary: () => ({ zh: "修改同意范围", en: "Change consent" }),
+  run: async (input) => {
+    seen.push({ op: CONSENT_OP, value: input.mode });
+    return { changed: true };
+  },
+}) as PlatformOperation;
+
 let pgc: TestContainer;
 let rd: TestContainer;
 let db: KernelSchemaDb;
@@ -186,7 +207,7 @@ beforeAll(async () => {
       ],
     },
   );
-  k.app.get(PlatformOperations).register([probe, fileProbe]);
+  k.app.get(PlatformOperations).register([probe, fileProbe, consentProbe]);
   ownerId = (
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "Owner" })
   ).id;
@@ -781,6 +802,46 @@ describe("results shown once to the run's person", () => {
     await settled(convId);
     expect(await approvalsOf(convId)).toEqual([]);
     expect((await lastResult(convId))?.content).toContain(PERSON_ONLY_ROLE_TEXT);
+  });
+});
+
+describe("changes of what the person consents to (personOnly operations)", () => {
+  it("acceptance-set is one", () => {
+    expect(k.app.get(PlatformOperations).get("automations.acceptance-set")?.personOnly).toBe(true);
+  });
+
+  it.each(["full-access", "approve-for-me"] as const)(
+    "the %s profile does not decide the ask: the person does",
+    async (profile) => {
+      // the review model would allow anything it were asked
+      scriptRules([
+        {
+          when: { systemIncludes: TOOL_REVIEW_SYSTEM_PROMPT },
+          reply: { text: JSON.stringify({ decision: "allow", reason: "Fine." }) },
+        },
+      ]);
+      const before = seen.length;
+      const convId = await conversation(profile);
+      await postMessage(owner, orgId, convId, callText(CONSENT_OP, { mode: "auto" }));
+      const ask = await pending(convId, "tool");
+      scriptRules([]);
+      expect(ask.requested_for).toBe(ownerId);
+      expect(await decisionsOf(convId)).toEqual([]);
+      expect(seen.slice(before)).toEqual([]);
+      expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
+      await settled(convId);
+      expect(seen.slice(before)).toEqual([{ op: CONSENT_OP, value: "auto" }]);
+    },
+  );
+
+  it("is refused in an unattended run", async () => {
+    const before = seen.length;
+    const evs = await unattendedCall("consent change unattended", CONSENT_OP, { mode: "auto" });
+    expect(ofType(evs, "approval_requested")).toEqual([]);
+    expect(ofType(evs, "tool_result").at(-1)?.payload.content).toContain(
+      PERSON_DECIDES_UNATTENDED_TEXT,
+    );
+    expect(seen.slice(before)).toEqual([]);
   });
 });
 

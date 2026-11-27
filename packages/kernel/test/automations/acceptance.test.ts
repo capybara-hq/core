@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { TriggerEvent, TriggerSubject } from "@capybara-hq/plugin-sdk";
+import type { TriggerEvent, TriggerSource, TriggerSubject } from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -8,15 +8,18 @@ import {
 } from "@capybara-hq/testing";
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { AcceptanceService } from "../../src/automations/events/acceptance.js";
 import { EventCoalescer } from "../../src/automations/events/coalesce.js";
 import { TriggerDispatcher } from "../../src/automations/events/dispatcher.js";
 import { subjectKey } from "../../src/automations/events/guards.js";
+import { TriggerEventSweepJob } from "../../src/automations/events/sweep.job.js";
 import { AutomationFirer } from "../../src/automations/fire.js";
 import { AUTOMATION_SCAN_JOB, TRIGGER_EVENT_SWEEP_JOB } from "../../src/automations/job-ids.js";
 import { unattendedRunOf } from "../../src/automations/unattended.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ExtensionPointDefaults } from "../../src/extensions/point-defaults.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
@@ -159,6 +162,44 @@ async function assign(over: Partial<TriggerEvent> = {}): Promise<string> {
     ...over,
   });
   return r.eventId;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+/** The fake source's provider object, as the kernel gets it. */
+async function sourceImpl(): Promise<TriggerSource> {
+  const { providers } = await k.app
+    .get(ExtensionPointDefaults)
+    .providersFor<TriggerSource>(orgId, "trigger-source");
+  const impl = providers.find((p) => p.extension === PLUGIN)?.impl;
+  if (!impl) throw new Error("fake-trigger-source does not serve the org");
+  return impl;
+}
+
+const sweeper = () => k.app.get(TriggerEventSweepJob);
+
+/** A directed event as a dispatch that passed it over left it: pending, stored `ageMs` ago. */
+async function pendingDirected(ageMs: number): Promise<string> {
+  const id = randomUUID();
+  await db
+    .insertInto("trigger_events")
+    .values({
+      id,
+      org_id: orgId,
+      plugin: PLUGIN,
+      type: "item.assigned",
+      subject: JSON.stringify(ITEM),
+      facts: JSON.stringify({ status: "open" }),
+      summary: "Assigned before.",
+      dedupe_key: id,
+      audience: JSON.stringify({ accountId: ownerId, agentId }),
+      state: "pending",
+      created_at: new Date(Date.now() - ageMs),
+    })
+    .execute();
+  return id;
 }
 
 const dispatch = (eventId: string) =>
@@ -327,11 +368,37 @@ describe("directed events: auto", () => {
       url: `/api/v1/orgs/${orgId}/automations/${a?.id}/pause`,
     });
     expect(paused.statusCode, paused.body).toBe(200);
+    const route = vi.spyOn(k.app.get(AcceptanceService), "route");
     const e = await assign({ subject: OTHER });
     await dispatch(e);
+    await expect(route.mock.results[0]?.value).resolves.toBe("paused");
     expect(await stateOf(e)).toBe("dispatched");
     expect(await deliveriesOf(a?.id as string)).toHaveLength(1);
     expect(await acceptanceAutomations()).toHaveLength(1);
+  });
+
+  it("acceptance automations use up none of the person's own limits", async () => {
+    const limited = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { automations: { maxTasksPerMember: 1, maxTasksPerOrg: 1 } },
+    });
+    expect(limited.statusCode, limited.body).toBe(200);
+    await dispatch(await assign());
+    expect(await acceptanceAutomations()).toHaveLength(1);
+    const own = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/automations`,
+      payload: {
+        agentId,
+        name: "Daily",
+        prompt: "Summarize.",
+        mode: "new",
+        trigger: { kind: "cron", expr: "0 9 * * *" },
+        timeZone: "UTC",
+      },
+    });
+    expect(own.statusCode, own.body).toBe(201);
   });
 
   it("acceptance runs ask the person (wait), never fail", async () => {
@@ -472,6 +539,34 @@ describe("directed events: confirm and off", () => {
     expect(await inboxItemsOf(memberId)).toEqual([]);
   });
 
+  it("retention keeps an event while its offer is open", async () => {
+    await setRule(owner, "confirm");
+    const e = await assign();
+    await dispatch(e);
+    const later = new Date(Date.now() + 31 * 86_400_000);
+    await sweeper().sweepAt(later);
+    expect(await stateOf(e)).toBe("dispatched");
+    const [offer] = await offers();
+    expect((await offerAction(owner, offer?.id as string, "decline")).statusCode).toBe(204);
+    await sweeper().sweepAt(later);
+    expect(
+      await db.selectFrom("trigger_events").select("id").where("id", "=", e).execute(),
+    ).toEqual([]);
+    expect(await offers()).toEqual([]);
+  });
+
+  it("a source whose visible() fails while accepting leaves the offer open (offer_unavailable)", async () => {
+    await setRule(owner, "confirm");
+    await dispatch(await assign());
+    const [offer] = await offers();
+    vi.spyOn(await sourceImpl(), "visible").mockRejectedValue(new Error("the source is down"));
+    const res = await offerAction(owner, offer?.id as string, "accept");
+    expect(res.statusCode).toBe(409);
+    expect(codeOf(res)).toBe("automation.offer_unavailable");
+    expect((await offers())[0]?.state).toBe("open");
+    expect(await acceptanceAutomations()).toEqual([]);
+  });
+
   it("off fires nothing", async () => {
     await setRule(owner, "off");
     const e = await assign();
@@ -534,6 +629,63 @@ describe("directed events: guards and isolation", () => {
     expect(await stateOf(e)).toBe("undelivered");
     expect(await acceptanceAutomations()).toEqual([]);
     expect(await offers()).toEqual([]);
+  });
+
+  it("an audience that is not a member, or is a guest, is undelivered", async () => {
+    const outsider = (
+      await accountsFor(db).createLocal({ login: "outsider", password: PW, displayName: "X" })
+    ).id;
+    const e1 = await assign({ audience: { accountId: outsider, agentId } });
+    await dispatch(e1);
+    expect(await stateOf(e1)).toBe("undelivered");
+    await db
+      .updateTable("memberships")
+      .set({ role: "guest" })
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", memberId)
+      .execute();
+    const e2 = await assign({ audience: { accountId: memberId, agentId } });
+    await dispatch(e2);
+    expect(await stateOf(e2)).toBe("undelivered");
+    expect(await acceptanceAutomations()).toEqual([]);
+    expect(await offers()).toEqual([]);
+  });
+
+  it("an org with automations switched off delivers nothing", async () => {
+    const off = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { automations: { enabled: false } },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    const e = await assign();
+    await dispatch(e);
+    expect(await stateOf(e)).toBe("undelivered");
+    expect(await acceptanceAutomations()).toEqual([]);
+  });
+
+  it("the sweep owes a dispatch again for a directed event a dispatch passed over", async () => {
+    const stale = await pendingDirected(20 * 60_000);
+    const fresh = await pendingDirected(60_000);
+    const owedFor = async (id: string) =>
+      db
+        .selectFrom("outbox")
+        .select(["job_id", "data"])
+        .where("job_name", "=", "trigger-dispatch")
+        .where(sql<boolean>`data->>'eventId' = ${id}`)
+        .execute();
+    const now = new Date();
+    expect((await sweeper().sweepAt(now)).redispatched).toBe(1);
+    const owed = await owedFor(stale);
+    expect(owed).toHaveLength(1);
+    expect(owed[0]?.job_id).toMatch(new RegExp(`^trigger-dispatch-${stale}-sweep-`));
+    expect(owed[0]?.data).toEqual({ orgId, eventId: stale });
+    expect(await owedFor(fresh)).toEqual([]);
+    // its row still pending in the outbox: not owed twice
+    expect((await sweeper().sweepAt(new Date(now.getTime() + 60_000))).redispatched).toBe(0);
+    // the owed job routes it
+    await dispatch(stale);
+    expect(await stateOf(stale)).toBe("dispatched");
   });
 
   it("a subject the source does not show the person is undelivered", async () => {

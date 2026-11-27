@@ -71,10 +71,11 @@ export interface AutomationOfferView {
 }
 
 /**
- * What routing a directed event did: `skipped` when its own audience agent caused it
+ * What routing a directed event did: `paused` when the rule is `auto` but the person's acceptance
+ * automation is paused or ended (nothing runs); `skipped` when its own audience agent caused it
  * (self-trigger) or another dispatch of it settled it first.
  */
-export type RouteOutcome = "fired" | "offered" | "off" | "undelivered" | "skipped";
+export type RouteOutcome = "fired" | "offered" | "off" | "paused" | "undelivered" | "skipped";
 
 /** The most open offers one inbox read returns. */
 export const OFFERS_LIST_MAX = 100;
@@ -222,12 +223,23 @@ export class AcceptanceService {
       ev.plugin,
       directedTypes(ctx.declared),
     );
-    await deliverEvent({ db, outbox: this.outbox, log: this.log }, ev, [automationId], {
-      decl: ctx.decl,
-      cause: ctx.cause,
-      coalesceSeconds: ctx.settings.coalesceSeconds,
-    });
+    const added = await deliverEvent(
+      { db, outbox: this.outbox, log: this.log },
+      ev,
+      [automationId],
+      { decl: ctx.decl, cause: ctx.cause, coalesceSeconds: ctx.settings.coalesceSeconds },
+    );
     await this.settle(orgId, ev.id, "dispatched");
+    if (added === 0) {
+      // the event row is held and the cause checked: only a paused or ended automation takes none
+      // TODO(collaboration C4): fire `run.lifecycle` `offer_declined` with `reason: "paused"` here
+      this.log.info("directed trigger event: the person's acceptance automation is paused", {
+        orgId,
+        eventId: ev.id,
+        automationId,
+      });
+      return "paused";
+    }
     return "fired";
   }
 
@@ -643,14 +655,28 @@ export class AcceptanceService {
       );
     }
     const ms = this.config.get().tools.timeoutMs;
-    const seen = await withDeadline(offer.source, "visible()", ms, () =>
-      source.impl.visible({
+    let seen: string[];
+    try {
+      seen = await withDeadline(offer.source, "visible()", ms, () =>
+        source.impl.visible({
+          orgId,
+          accountIds: [accountId],
+          subject: ev.subject,
+          config: source.config,
+        }),
+      );
+    } catch (err) {
+      // a source that times out or fails cannot confirm the person still sees the item
+      this.log.warn("trigger source visible() failed while accepting an offer", {
         orgId,
-        accountIds: [accountId],
-        subject: ev.subject,
-        config: source.config,
-      }),
-    );
+        offerId,
+        plugin: offer.source,
+        err,
+      });
+      throw offerUnavailable(
+        `${offer.source} did not confirm that you can still see this item; try again later`,
+      );
+    }
     if (!seen.includes(accountId))
       throw offerUnavailable(`${offer.source} no longer shows you this item`);
     return this.acceptIn(

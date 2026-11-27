@@ -62,10 +62,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS automations_acceptance_uq
   ON automations (org_id, account_id, agent_id, (trigger->>'source'))
   WHERE origin = 'acceptance' AND deleted_at IS NULL;
 
+-- the trigger event sweep's look for directed events still pending (a dispatch passed them over)
+CREATE INDEX IF NOT EXISTS trigger_events_pending_directed_idx
+  ON trigger_events (created_at) WHERE state = 'pending' AND audience IS NOT NULL;
+
 -- Directed events stored before this file were left `pending` by the dispatcher (it had no
 -- acceptance routing yet), and their dispatch job is done: owe each its `trigger-dispatch` job
 -- again through the outbox (the relay delivers it to the maintenance queue), with an id of its
--- own so a kept job of the first dispatch does not swallow it. The job routes them now.
+-- own so a kept job of the first dispatch does not swallow it. The job routes them now. The
+-- names are the kernel's constants: queue `MAINTENANCE_QUEUE_NAME`
+-- (runtime/maintenance-queue.ts), job `TRIGGER_DISPATCH_JOB`, id `triggerDispatchJobId(id)` plus a
+-- suffix and data `TriggerDispatchJobData` (automations/job-ids.ts). Events a worker from before
+-- this release passes over during a rolling deploy are owed again by the trigger event sweep.
 INSERT INTO outbox (queue, job_name, job_id, data, org_id)
 SELECT 'cap-kernel-maintenance', 'trigger-dispatch', 'trigger-dispatch-' || id || '-acceptance',
   jsonb_build_object('orgId', org_id, 'eventId', id), org_id

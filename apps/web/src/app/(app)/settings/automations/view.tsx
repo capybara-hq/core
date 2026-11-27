@@ -25,6 +25,7 @@ import {
   DeleteAutomationDialog,
   useAutomationActions,
   useAutomationWords,
+  useEventSourceName,
 } from "../../../../components/AutomationParts";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -447,7 +448,8 @@ function AllTasks({ orgId }: { orgId: string }) {
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
   const refs = names.kind === "ready" ? names.refs : {};
-  const base = automationColumns(ts, when, agentName).map((c) => ({
+  const sourceName = useEventSourceName(orgId, tasks.data?.items);
+  const base = automationColumns(ts, when, agentName, sourceName).map((c) => ({
     ...c,
     compact: COMPACT[c.key],
   }));

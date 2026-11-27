@@ -159,6 +159,14 @@ export interface PlatformOperation<I = unknown> {
    */
   revealsOnce?: "initial_password" | "invitation_link";
   /**
+   * The write changes what the person the run works for consents to (which work runs as them,
+   * collaboration spec §4.4): only that person decides it. The call always asks them (never a
+   * grant, an `allow` or a role escalation), the conversation's profile never decides that ask
+   * (no review model, no full access), and it is refused in an unattended run
+   * (`CallPolicy.personOnly` with `personDecides`).
+   */
+  personOnly?: true;
+  /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.
    * `agents.update` is `personal` only on a private agent the actor owns and `org` otherwise, so a
    * remembered grant never carries over to a shared agent. Only for writes, never returns `read`;

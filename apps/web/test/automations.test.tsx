@@ -222,6 +222,30 @@ describe("/automations (my automations)", () => {
     expect(browser).toEqual([]);
   });
 
+  it("an acceptance automation names the source whose work it accepts", async () => {
+    const accepting = {
+      ...common,
+      [`GET ${BASE}`]: ok({
+        items: [
+          task({
+            id: "s3",
+            name: "Collab · Helper",
+            origin: "acceptance",
+            mode: "subject",
+            nextRunAt: null,
+            trigger: { kind: "event", source: "collab", types: ["item.assigned"], filter: [] },
+          }),
+        ],
+      }),
+      [`GET ${BASE}/event-sources`]: ok({
+        items: [{ source: "collab", name: { zh: "协作", en: "Collab Tracker" }, events: [] }],
+      }),
+    };
+    stubApi(accepting);
+    await renderRouteWithCache("/automations?view=list", accepting);
+    expect(await screen.findByText("Accepts work from Collab Tracker")).toBeTruthy();
+  });
+
   it("zh: the schedule in words and the 自动化 title", async () => {
     stubApi(routes);
     await renderRouteWithCache("/automations?view=list", routes, { locale: "zh" });

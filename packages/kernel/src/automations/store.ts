@@ -286,6 +286,9 @@ export class AutomationStore {
       .select((eb) => eb.fn.countAll<string>().as("n"))
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
+      // acceptance automations are the kernel's (collaboration spec §4.4): they use up none of the
+      // person's or the org's own limits
+      .where("origin", "=", "person")
       .where("status", "in", ["active", "paused"]);
     if (accountId !== undefined) q = q.where("account_id", "=", accountId);
     const row = await q.executeTakeFirstOrThrow();

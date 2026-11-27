@@ -15,7 +15,10 @@ import { readAutomationSettings } from "../effective-settings.js";
 import {
   AUTOMATION_COALESCE_JOB,
   type AutomationCoalesceJobData,
+  TRIGGER_DISPATCH_JOB,
   TRIGGER_EVENT_SWEEP_JOB,
+  type TriggerDispatchJobData,
+  triggerDispatchJobId,
 } from "../job-ids.js";
 import { COALESCE_STALE_MS, coalesceJobIdOfKey } from "./guards.js";
 
@@ -34,6 +37,14 @@ const DELETE_BATCH = 500;
 const MAX_BATCHES = 40;
 /** Waiting windows looked at per sweep. */
 const MAX_WINDOWS = 1000;
+/**
+ * A directed event still `pending` this long after it was stored was passed over by a dispatch
+ * job (a worker from before acceptance routing, during a rolling deploy): the sweep owes it a
+ * dispatch job again.
+ */
+export const PENDING_DIRECTED_STALE_MS = 10 * 60_000;
+/** Stale pending directed events looked at per sweep. */
+const MAX_PENDING_DIRECTED = 1000;
 
 /** A window of an (automation, subject) pair whose deliveries still wait for a run. */
 interface WaitingWindow {
@@ -70,7 +81,8 @@ export function reoweDecision(
  * The trigger event sweep (collaboration spec §4.7), every five minutes across replicas:
  *
  * - **Retention.** A trigger event settled (`dispatched`, `undelivered`, `depth_stopped`) more than
- *   `automations.eventRetentionDays` ago, none of whose deliveries still waits for a run, is
+ *   `automations.eventRetentionDays` ago, none of whose deliveries still waits for a run and with
+ *   no open work offer, is
  *   deleted with its deliveries (the foreign key cascades), in batches of {@link DELETE_BATCH}, one
  *   transaction each. A `pending` event (its dispatch has not settled it) stays. A
  *   run keeps its `trigger_key` and a kernel run its `trigger_event_id` (neither has a foreign
@@ -87,6 +99,11 @@ export function reoweDecision(
  *   The age is the newest window's, never the oldest's: an old window given up on does not stop a
  *   newer window of the pair that lost its job from being owed one (its flush takes both). The
  *   flush is idempotent, so a duplicate finds nothing waiting.
+ * - **Pending directed events.** A directed event still `pending` more than
+ *   {@link PENDING_DIRECTED_STALE_MS} after it was stored (a dispatch job of a worker from before
+ *   acceptance routing passed it over) is owed its dispatch job again
+ *   (`trigger-dispatch-<eventId>-sweep-<minute>`) unless one is pending in the outbox, backing off
+ *   by its age as a lost window does and giving up after {@link WINDOW_GIVE_UP_MS}.
  * - **Cause handles.** Expired `trigger_cause_handles` (`ctx.triggers.causeOf`) are deleted.
  * - **Inbox items.** An inbox item resolved, or past its expiry, more than `inbox.retentionDays`
  *   ago is deleted (an open item past its expiry already left the inbox).
@@ -111,11 +128,16 @@ export class TriggerEventSweepJob {
 
   /**
    * One sweep as of `now` (tests pass their own): how many events it deleted, windows it owed,
-   * cause handles and inbox items it deleted.
+   * cause handles and inbox items it deleted, and stale pending directed events it owed a
+   * dispatch again.
    */
-  async sweepAt(
-    now: Date,
-  ): Promise<{ deleted: number; owed: number; handles: number; inboxItems: number }> {
+  async sweepAt(now: Date): Promise<{
+    deleted: number;
+    owed: number;
+    handles: number;
+    inboxItems: number;
+    redispatched: number;
+  }> {
     const cfg = this.config.get();
     const days = cfg.automations.eventRetentionDays;
     const deleted = await this.inBatches((b) =>
@@ -147,7 +169,13 @@ export class TriggerEventSweepJob {
     );
     if (inboxItems > 0)
       this.log.info("old inbox items deleted", { deleted: inboxItems, retentionDays: inboxDays });
-    return { deleted, owed, handles, inboxItems };
+    let redispatched = 0;
+    for (const e of await this.stalePendingDirected(now)) {
+      const decision = reoweDecision(now.getTime() - e.createdAt.getTime(), now.getTime());
+      if (decision !== "owe") continue;
+      if (await withOrgScope(e.orgId, () => this.oweDispatch(e.orgId, e.id, now))) redispatched++;
+    }
+    return { deleted, owed, handles, inboxItems, redispatched };
   }
 
   /** Runs `batch` (one transaction each) until it deletes fewer than a full batch; the total. */
@@ -212,6 +240,10 @@ export class TriggerEventSweepJob {
               SELECT 1 FROM capybara.automation_event_deliveries d
               WHERE d.event_id = e.id AND d.automation_run_id IS NULL
             )
+            AND NOT EXISTS (
+              SELECT 1 FROM capybara.automation_offers o
+              WHERE o.event_id = e.id AND o.state = 'open'
+            )
           ORDER BY e.created_at
           LIMIT ${limit}
           FOR UPDATE SKIP LOCKED
@@ -275,6 +307,61 @@ export class TriggerEventSweepJob {
       });
     }
     return out;
+  }
+
+  /**
+   * Directed events still `pending` more than {@link PENDING_DIRECTED_STALE_MS} after they were
+   * stored and less than {@link WINDOW_GIVE_UP_MS} plus one sweep, oldest first.
+   */
+  private async stalePendingDirected(
+    now: Date,
+  ): Promise<{ orgId: string; id: string; createdAt: Date }[]> {
+    const older = new Date(now.getTime() - PENDING_DIRECTED_STALE_MS);
+    const since = new Date(now.getTime() - WINDOW_GIVE_UP_MS - SWEEP_EVERY_MS);
+    const rows = await asPlatform("deployment-wide stale directed trigger event sweep", () =>
+      sql<{ org_id: string; id: string; created_at: Date }>`
+        SELECT org_id, id, created_at FROM capybara.trigger_events
+        WHERE state = 'pending' AND audience IS NOT NULL
+          AND created_at < ${older} AND created_at >= ${since}
+        ORDER BY created_at
+        LIMIT ${MAX_PENDING_DIRECTED}`.execute(this.kdb.db),
+    );
+    return rows.rows.map((r) => ({
+      orgId: r.org_id,
+      id: r.id,
+      createdAt: new Date(r.created_at),
+    }));
+  }
+
+  /**
+   * Owes the event's dispatch job again unless a dispatch row of it is still pending in the
+   * outbox; true when it owed one.
+   */
+  @Transactional()
+  private async oweDispatch(orgId: string, eventId: string, now: Date): Promise<boolean> {
+    const prefix = triggerDispatchJobId(eventId);
+    const pending = await this.kdb.db
+      .selectFrom("outbox")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("queue", "=", MAINTENANCE_QUEUE_NAME)
+      .where("job_name", "=", TRIGGER_DISPATCH_JOB)
+      .where(sql<boolean>`starts_with(job_id, ${prefix})`)
+      .where("dead_at", "is", null)
+      .limit(1)
+      .executeTakeFirst();
+    if (pending !== undefined) return false;
+    this.log.warn("directed trigger event still pending; the sweep owes its dispatch again", {
+      orgId,
+      eventId,
+    });
+    return this.outbox.add<TriggerDispatchJobData>({
+      queue: MAINTENANCE_QUEUE_NAME,
+      name: TRIGGER_DISPATCH_JOB,
+      jobId: `${prefix}-sweep-${Math.floor(now.getTime() / 60_000)}`,
+      data: { orgId, eventId },
+      orgId,
+    });
   }
 
   /**

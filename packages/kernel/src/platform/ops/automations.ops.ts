@@ -205,6 +205,8 @@ export class AutomationsOperations implements OnModuleInit {
         confirm: "personal",
         // a remembered approval would let an unattended run widen what work runs as the person
         rememberable: false,
+        // consent is the person's own act: never decided by their profile, refused unattended
+        personOnly: true,
         errors: [
           {
             code: "automation.event_source_unavailable",
