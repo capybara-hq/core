@@ -13,6 +13,7 @@ import {
   type RailRow,
   RailSection,
   RailStep,
+  RailText,
   ToolGroup,
   type ToolRowData,
 } from "../src/index";
@@ -188,7 +189,7 @@ describe("ProcessBlock rail", () => {
     const Wrapper = () => (
       <>
         <RailStep icon="dot">b</RailStep>
-        <RailStep icon="spinner">c</RailStep>
+        <RailStep icon={{ name: "terminal" }}>c</RailStep>
       </>
     );
     const { container } = wrap(
@@ -211,6 +212,17 @@ describe("ProcessBlock rail", () => {
     expect(sels).toContain(".cb-rail-step:not(:last-of-type)");
   });
 
+  it("the fold row's chevron stands in the rail's icon column, on its text's line", () => {
+    const rules = parseCss(css("conversation.css"));
+    const gutter = rules.find((x) => x.selector === ".cb-process-fold > .cb-rail-gutter");
+    // a step's gutter (20 wide, row.dense high), centred on the row instead of its top
+    expect(gutter?.decls["align-self"]).toBe("center");
+    expect(gutter?.decls.height).toBeUndefined();
+    const fold = rules.find((x) => x.selector === ".cb-process-fold");
+    expect(fold?.decls["grid-template-columns"]).toBe("20px minmax(0, 1fr)");
+    expect(fold?.decls["column-gap"]).toBe("var(--cb-space-2)");
+  });
+
   it("rail steps sit space.1 apart by padding", () => {
     const r = parseCss(css("conversation.css")).find(
       (x) => x.selector === ".cb-rail-step:not(:last-of-type)",
@@ -218,22 +230,139 @@ describe("ProcessBlock rail", () => {
     expect(r?.decls["padding-bottom"]).toBe("var(--cb-space-1)");
   });
 
-  it("a step draws its icon in the gutter: kind icon, image, dot, spinner, hand", () => {
+  it("a step draws its icon in the gutter: kind icon, image, dot; never a spinner", () => {
     const { container } = wrap(
       <ProcessBlock {...base({ open: true })}>
         <RailStep icon={{ name: "terminal" }}>a</RailStep>
         <RailStep icon={{ src: "https://x.test/i.png" }}>b</RailStep>
         <RailStep icon="dot">c</RailStep>
-        <RailStep icon="spinner">d</RailStep>
-        <RailStep icon="hand">e</RailStep>
       </ProcessBlock>,
     );
     const gutters = [...container.querySelectorAll('[data-part="rail-gutter"]')];
     expect(gutters[0]?.querySelector('[data-icon="terminal"]')).not.toBeNull();
     expect(gutters[1]?.querySelector("img")?.getAttribute("src")).toBe("https://x.test/i.png");
     expect(gutters[2]?.querySelector('[data-part="rail-dot"]')).not.toBeNull();
-    expect(gutters[3]?.querySelector('[data-part="spinner"]')).not.toBeNull();
-    expect(gutters[4]?.querySelector('[data-icon="hand"]')).not.toBeNull();
+    expect(container.querySelector('[data-part="rail-gutter"] [data-part="spinner"]')).toBeNull();
+  });
+
+  it("a live parallel command group: spinners only in the head and on each running row", () => {
+    const rows: ToolRowData[] = [
+      {
+        id: "a",
+        kind: "command",
+        name: "Bash",
+        description: "检查依赖",
+        status: "running",
+        startedAt: 0,
+      },
+      {
+        id: "b",
+        kind: "command",
+        name: "Bash",
+        description: "运行测试",
+        status: "pending",
+        startedAt: 1_000,
+      },
+    ];
+    const { container } = wrap(
+      <ProcessBlock {...base({ state: "running", open: true, current: "检查依赖 等 2 个命令" })}>
+        <RailStep icon={{ name: "terminal" }}>
+          <ToolGroup inRail rows={rows} now={4_000} />
+        </RailStep>
+      </ProcessBlock>,
+    );
+    const spinners = [...container.querySelectorAll('[data-part="spinner"]')];
+    // the head's, then one per running row; none in the gutter or the group header
+    expect(spinners).toHaveLength(3);
+    expect(head(container).querySelectorAll('[data-part="spinner"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-part="tool-row"] [data-part="spinner"]')).toHaveLength(
+      2,
+    );
+    const gutter = container.querySelector('[data-part="rail-gutter"]') as HTMLElement;
+    expect(gutter.querySelector('[data-icon="terminal"]')).not.toBeNull();
+    expect(container.textContent).toContain("正在运行 2 个命令 · 已完成 0 个");
+    // every running row shows its time from its start, a queued one too
+    const times = [...container.querySelectorAll('[data-part="tool-row"] .cb-tool-end')].map(
+      (e) => e.textContent,
+    );
+    expect(times).toEqual(["4 秒", "3 秒"]);
+  });
+
+  it("the planning row ends the rail, the head names no step, and it stands before any step", () => {
+    const { container } = wrap(
+      <ProcessBlock
+        {...base({
+          state: "running",
+          open: true,
+          current: "读取 a.md",
+          planning: true,
+          children: undefined,
+        })}
+      />,
+    );
+    const rail = container.querySelector('[data-part="process-rail"]') as HTMLElement;
+    expect(rail.querySelector('[data-part="rail-planning"]')).not.toBeNull();
+    expect(head(container).textContent).not.toContain("读取 a.md");
+    expect(head(container).textContent).toContain("正在运行");
+    // the capybara is the rail's only animated node: no spinner beside it
+    expect(rail.querySelector('[data-part="spinner"]')).toBeNull();
+    expect(rail.querySelector('[data-part="working-mark"]')).not.toBeNull();
+  });
+
+  it("the planning row is the last rail row and takes the last edge (windowed rows)", () => {
+    const rows: RailRow[] = ["a", "b"].map((k) => ({
+      key: k,
+      render: () => <RailStep icon={{ name: "terminal" }}>{k}</RailStep>,
+    }));
+    const { container, rerender } = wrap(
+      <ProcessBlock
+        {...base({ state: "running", open: true, rows, planning: true, children: undefined })}
+      />,
+    );
+    const list = () => [...container.querySelectorAll('[data-part="rail-list"] > [data-edge]')];
+    expect(list().map((e) => e.getAttribute("data-part"))).toEqual([
+      "rail-step",
+      "rail-step",
+      "rail-planning",
+    ]);
+    expect(list().at(-1)?.getAttribute("data-edge")).toBe("last");
+    // the next step starts: it stands where the planning row stood
+    const next = [
+      ...rows,
+      { key: "c", render: () => <RailStep icon={{ name: "lightbulb" }}>c</RailStep> },
+    ];
+    rerender(
+      <DesignProvider locale="zh">
+        <ProcessBlock
+          {...base({ state: "running", open: true, rows: next, children: undefined })}
+        />
+      </DesignProvider>,
+    );
+    expect(container.querySelector('[data-part="rail-planning"]')).toBeNull();
+    expect(list().at(-1)?.textContent).toBe("c");
+    expect(list().at(-1)?.getAttribute("data-edge")).toBe("last");
+  });
+
+  it("narration renders its Markdown compactly: code and bold, no raw marks", () => {
+    const { container } = wrap(
+      <ProcessBlock {...base({ open: true })}>
+        <RailStep icon="dot">
+          <RailText>{"core `29e091ba1`、plugins `7f2d874` 都**已发布**"}</RailText>
+        </RailStep>
+      </ProcessBlock>,
+    );
+    const say = container.querySelector('[data-part="rail-text"]') as HTMLElement;
+    expect([...say.querySelectorAll("code")].map((c) => c.textContent)).toEqual([
+      "29e091ba1",
+      "7f2d874",
+    ]);
+    expect(say.querySelector("strong")?.textContent).toBe("已发布");
+    expect(say.textContent).not.toMatch(/[`*]/);
+  });
+
+  it("a finished block draws no planning row", () => {
+    const { container } = wrap(<ProcessBlock {...base({ open: true, planning: true })} />);
+    expect(container.querySelector('[data-part="rail-planning"]')).toBeNull();
   });
 
   it("pinned content sits under the head, before the rail", () => {

@@ -661,11 +661,11 @@ describe("the conversation page (ConversationPage)", () => {
       expect(bubbles("next")).toHaveLength(1);
     });
 
-    it("the working line shows from the send until the first output, again after a tool result, and goes at the run's end", async () => {
+    it("the planning row shows from the send until the first output, again after a tool result, and goes at the run's end", async () => {
       const d = deferredSend();
       const { container } = await renderChat();
       await screen.findByText("hi");
-      const line = () => container.querySelector('[data-part="working-line"]');
+      const line = () => container.querySelector('[data-part="rail-planning"]');
       // an old message without a run, not sent from this tab: no line
       expect(line()).toBeNull();
       act(() => FakeEventSource.instances[0]?.emit("event", runStarted(2)));
@@ -683,8 +683,13 @@ describe("the conversation page (ConversationPage)", () => {
       act(() => es.emit("event", userMsg(4, "next", { clientMessageId: d.cmid() })));
       act(() => es.emit("event", runStarted(5, "r2")));
       expect(line()).not.toBeNull();
-      // after the line, the thread's last output: exactly one line
-      expect(container.querySelectorAll('[data-part="working-line"]')).toHaveLength(1);
+      // exactly one, the last row of the run's block, which stands before its first step; no
+      // separate indicator area under the thread
+      expect(container.querySelectorAll('[data-part="rail-planning"]')).toHaveLength(1);
+      const block = line()?.closest('[data-part="process-block"]') as HTMLElement;
+      expect(block).not.toBeNull();
+      expect(block.querySelectorAll('[data-part="rail-step"]')).toHaveLength(0);
+      expect(container.querySelector('[data-part="working-line"]')).toBeNull();
       act(() =>
         es.emit(
           "event",
@@ -712,6 +717,10 @@ describe("the conversation page (ConversationPage)", () => {
         ),
       );
       expect(line()).toBeNull();
+      // the live step stands where the planning row stood: the rail's last row
+      const rail = container.querySelector('[data-part="rail-list"]') as HTMLElement;
+      expect(rail.lastElementChild?.getAttribute("data-part")).toBe("rail-step");
+      expect(rail.lastElementChild?.getAttribute("data-edge")).toMatch(/last|only/);
       act(() =>
         es.emit(
           "event",
@@ -724,6 +733,10 @@ describe("the conversation page (ConversationPage)", () => {
         ),
       );
       expect(line()).not.toBeNull();
+      // planning again: the capybara row is appended at the rail's tail
+      const tail = container.querySelector('[data-part="rail-list"]')?.lastElementChild;
+      expect(tail?.getAttribute("data-part")).toBe("rail-planning");
+      expect(tail?.getAttribute("data-edge")).toBe("last");
       act(() =>
         es.emit("event", ev(9, "run_finished", { reason: "end_turn", consumedUpToSeq: 4 }, "r2")),
       );
@@ -763,14 +776,14 @@ describe("the conversation page (ConversationPage)", () => {
       expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
       expect(input().getAttribute("placeholder")).toBe(en.chat.runningHint);
       expect(status()).toContain(en.chat.status.running);
-      expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+      expect(container.querySelector('[data-part="rail-planning"]')).not.toBeNull();
       // the log has the message, its run has not started: still running, all three agree
       await vi.waitFor(() => expect(posts(d.calls, `${BASE}/messages`)).toHaveLength(1));
       const event = userMsg(2, "next", { clientMessageId: d.cmid() });
       await act(async () => d.answer(json(202, { event })));
       expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
       expect(status()).toContain(en.chat.status.running);
-      expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+      expect(container.querySelector('[data-part="rail-planning"]')).not.toBeNull();
     });
 
     it("a paused leftover queue does not hold a message: it waits for its run (run input D1)", async () => {
@@ -788,7 +801,7 @@ describe("the conversation page (ConversationPage)", () => {
       await screen.findByText("hi");
       await userEvent.setup().type(input(), "next{Enter}");
       await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
-      expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+      expect(container.querySelector('[data-part="rail-planning"]')).not.toBeNull();
       expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
     });
 
@@ -808,12 +821,12 @@ describe("the conversation page (ConversationPage)", () => {
         fireEvent.change(input(), { target: { value: "next" } });
         fireEvent.keyDown(input(), { key: "Enter" });
         await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
-        expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+        expect(container.querySelector('[data-part="rail-planning"]')).not.toBeNull();
         act(() => vi.advanceTimersByTime(59_000));
-        expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+        expect(container.querySelector('[data-part="rail-planning"]')).not.toBeNull();
         // no run_started 60 s after the send: the timer re-renders and the line goes
         act(() => vi.advanceTimersByTime(1_100));
-        expect(container.querySelector('[data-part="working-line"]')).toBeNull();
+        expect(container.querySelector('[data-part="rail-planning"]')).toBeNull();
         expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
       } finally {
         vi.useRealTimers();
@@ -835,7 +848,7 @@ describe("the conversation page (ConversationPage)", () => {
       await screen.findByText("hi");
       await userEvent.setup().type(input(), "next{Enter}");
       await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
-      expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+      expect(container.querySelector('[data-part="rail-planning"]')).not.toBeNull();
       expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
     });
 
@@ -856,7 +869,7 @@ describe("the conversation page (ConversationPage)", () => {
         FakeEventSource.instances[0]?.emit("event", userMsg(2, "next", { clientMessageId: cmid })),
       );
       await vi.waitFor(() => expect(input()).toHaveProperty("value", "next"));
-      expect(container.querySelector('[data-part="working-line"]')).toBeNull();
+      expect(container.querySelector('[data-part="rail-planning"]')).toBeNull();
       expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
     });
 
@@ -1632,7 +1645,7 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     expect(screen.getByText("start", { selector: '[data-part="bubble-body"]' })).toBeTruthy();
     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${C9}/stream?after=1`]);
     // the first message was sent from this tab: the working line carries over the navigation
-    expect(document.querySelector('[data-part="working-line"]')).not.toBeNull();
+    expect(document.querySelector('[data-part="rail-planning"]')).not.toBeNull();
     await new Promise((r) => setTimeout(r, 20));
     const reads = calls.filter((x) => x.method === "GET").map((x) => x.url.split("?")[0]);
     for (const path of [C9, `${C9}/events`, `${C9}/queue`, `${C9}/files`, `${C9}/device`])

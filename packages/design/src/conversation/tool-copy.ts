@@ -152,8 +152,13 @@ export function summaryParts(rows: readonly SummaryRow[], locale: Locale): Summa
         { text: fmt(m["tool.doneCount"], { n: done }), tone: "faint" },
       ];
     }
+    // the running verb counts the group's calls of the running call's kind, done or not:
+    // "正在运行 2 个命令 · 已完成 1 个" (§6.16.8)
+    const g = verbGroup(running.kind);
+    const n = rows.filter((r) => verbGroup(r.kind) === g).length;
+    const key = (n === 1 ? `tool.running.${g}1` : `tool.running.${g}`) as DesignKey;
     return [
-      { text: m[`tool.running.${verbGroup(running.kind)}` as DesignKey] },
+      { text: fmt(m[key], { n }) },
       { text: fmt(m["tool.doneCount"], { n: done }), tone: "faint" },
     ];
   }

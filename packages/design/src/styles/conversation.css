@@ -320,7 +320,6 @@ button.cb-tool-line:focus-visible {
   font-family: var(--cb-font-prose);
   font-size: var(--cb-type-prose-size);
   line-height: var(--cb-type-prose-line);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 /* Inside a process rail the rail is the rule: no left border, prose-small text. */
@@ -329,6 +328,51 @@ button.cb-tool-line:focus-visible {
   border-left: 0;
   font-size: var(--cb-type-prose-small-size);
   line-height: var(--cb-type-prose-small-line);
+}
+/* The thinking and narration texts are rendered Markdown at the body's own size: blocks closer together and
+   headings no larger than the text, so it stays the secondary tier under the answer. */
+.cb-thinking-body .cb-md > * + *,
+.cb-thinking-tail .cb-md > * + *,
+.cb-rail-say .cb-md > * + * {
+  margin-top: var(--cb-space-2);
+}
+.cb-thinking-body .cb-md .cb-md-h,
+.cb-thinking-tail .cb-md .cb-md-h,
+.cb-rail-say .cb-md .cb-md-h {
+  font-size: inherit;
+  line-height: inherit;
+}
+.cb-thinking-body .cb-md > * + .cb-md-h,
+.cb-thinking-tail .cb-md > * + .cb-md-h,
+.cb-rail-say .cb-md > * + .cb-md-h {
+  margin-top: var(--cb-space-2);
+}
+.cb-thinking-body .cb-md-code,
+.cb-thinking-tail .cb-md-code,
+.cb-rail-say .cb-md-code {
+  font-family: var(--cb-font-code);
+  font-size: var(--cb-type-small-size);
+}
+/* A live thinking text (§6.16.5): its last three lines in prose-small muted, the newest at the
+   bottom; once older lines are cut, the top line fades out. */
+.cb-thinking-tail {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: calc(3 * var(--cb-type-prose-small-line));
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+  overflow-wrap: anywhere;
+}
+.cb-thinking-tail > * {
+  flex: none;
+}
+.cb-thinking-tail[data-clipped="true"] {
+  -webkit-mask-image: linear-gradient(transparent, black var(--cb-type-prose-small-line));
+  mask-image: linear-gradient(transparent, black var(--cb-type-prose-small-line));
 }
 
 /* ── User bubble ── */
@@ -2569,9 +2613,20 @@ button.cb-file-card:focus-visible {
   border-radius: var(--cb-radius-pill);
   background: var(--cb-bg);
 }
-.cb-rail-gutter > .cb-accent-word,
-.cb-rail-gutter > .cb-conv-spin {
-  color: var(--cb-accent);
+/* The planning row (§6.16.8a): the capybara (28 wide) stands centred on the rail's 20 px icon
+   column, its ground hiding the rule behind it; the caption is the row's text. */
+.cb-rail-planning > .cb-rail-gutter > .cb-working-mark,
+.cb-rail-planning > .cb-rail-gutter > .cb-working-mark-img {
+  justify-self: center;
+  width: 28px;
+  height: var(--cb-space-5);
+  margin: 0 -4px;
+  border-radius: 0;
+  background: var(--cb-bg);
+}
+.cb-rail-planning > .cb-rail-gutter > .cb-working-mark-img {
+  width: auto;
+  max-width: 28px;
 }
 .cb-rail-dot {
   width: 5px;
@@ -2620,8 +2675,10 @@ button.cb-file-card:focus-visible {
   outline: 1px solid var(--cb-accent);
   outline-offset: 2px;
 }
+/* The fold's chevron stands in the rail's icon column: the same 20 wide, row.dense high gutter
+   as a step's, centred on the row's text (a touch-high row too). */
 .cb-process-fold > .cb-rail-gutter {
-  height: auto;
+  align-self: center;
 }
 /* The rail's list (#925): each row carries its true place on the rule (`data-edge`), so a
    windowed list whose first mounted row is not the rail's first still draws the rule right; the

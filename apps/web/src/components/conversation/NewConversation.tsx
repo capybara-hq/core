@@ -60,6 +60,7 @@ import {
 } from "./first-message-attempt";
 import { PendingBubbles, usePendingSends } from "./PendingBubbles";
 import { PROFILE_KEY, usePermissionChoice } from "./PermissionPicker";
+import { PlanningBlock } from "./Thread";
 import type { SendResult } from "./useConversation";
 import { useDeviceChoice, useSelection } from "./useSelection";
 
@@ -363,7 +364,15 @@ export function useNewConversationPage(
       panels: [],
     },
     ...(sent
-      ? { thread: <PendingBubbles items={pending.shown} />, working: true }
+      ? {
+          // the first message's block stands at once: its head and the planning row (spec §1.3)
+          thread: (
+            <>
+              <PendingBubbles items={pending.shown} />
+              <PlanningBlock />
+            </>
+          ),
+        }
       : {
           newConversation: {
             // a plugin may replace the hero (client extensions spec §6.2); Greeting is the default

@@ -1472,6 +1472,7 @@
       "subagent": "Sub-agent",
       "subagentTools": "{n, plural, one {# tool} other {# tools}}",
       "openSubagent": "Open",
+      "moreCommands": "{first} and {more, plural, one {# more command} other {# more commands}}",
       "kind": {
         "thinking": "Thinking",
         "terminal": "Command",

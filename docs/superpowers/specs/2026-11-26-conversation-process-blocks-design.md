@@ -74,7 +74,10 @@ only where it is still useful (a burst of parallel calls).
 ### 1.3 Anatomy
 
 - **Head** (one tool line, `row.dense`, never wraps, ellipsis before the status words):
-  - Running: `spinner` (accent) + "正在运行 · <current step label>" / "Running · <label>" + the
+  - Running: `spinner` (accent) + "正在运行 · <current step label>" / "Running · <label>" (a
+    command by its description when it has one, never the raw command line; several commands
+    running side by side: "<first description> 等 n 个命令" / "<first> and n−1 more commands";
+    while the planning row stands, no label: "正在运行" / "Running") + the
     elapsed time at the end (`faint`, tabular): the run's working time from its `run_started`
     (waits for a person left out, as the status bar and the finished head count it), on the run's
     latest block only.
@@ -93,6 +96,27 @@ only where it is still useful (a burst of parallel calls).
   rule that runs from the first to the last icon; the line itself no longer repeats the icon.
   Narration rows have a 5 px `line-strong` dot in the gutter and their text in `prose-small`
   `muted`. Thinking and tool rows expand in place exactly as today (thinking text, IN / OUT, diff).
+- **Spinners** (maintainer decision 2026-11-27): only in two places: (a) the head while the run
+  is live; (b) each of several concurrent sibling items (each running command of a parallel
+  group), to tell running from done. A rail node always shows the step's kind icon (lightbulb,
+  terminal, file, …) and never turns into a spinner; a single live step has no spinner of its
+  own and states its status in words: "正在思考 · 6 秒" / "Thinking · 6s", a running tool line
+  its label and its time. A parallel group's title is text only: "正在运行 2 个命令 · 已完成 0 个"
+  / "Running 2 commands · 0 done", "已运行 2 个命令" once done; every running row shows its time
+  from its start (a queued call from when it was logged). The one animated node is the planning
+  row's capybara, below.
+- **Planning row** (maintainer decision 2026-11-27): while the run is live and no step is (the
+  model plans the next one), the rail's last row is the capybara (the working line's animation as
+  the node icon) and its rotating caption; when a step starts, that row becomes the step in place
+  (same height), and when the model plans again the row is appended at the tail again. There is
+  no separate working line under the block: the block stands from the run's start (head and
+  planning row; a message this view sent before its run is logged gets such a block after its
+  bubble), and the row goes when the run ends, as the block collapses. It is the rail's last edge.
+- **Thinking**: live, "正在思考 · N 秒" with the text's last three lines (rendered Markdown,
+  `prose-small` `muted`, the top line fading); ended, "思考了 N 秒" collapsed, opening the whole
+  text as rendered Markdown. Narration is rendered Markdown at the same compact style.
+- **Command rows**: "Bash <description>" only; the command and the exit code are in the
+  expanded detail; a non-zero exit code is named on the row in `fail`.
 - **Default state**: open while running or waiting; collapsed when the run finishes. While
   running, the rail shows only the last four steps; earlier ones fold into a "前 N 步" /
   "N earlier steps" row that opens them.
@@ -128,8 +152,9 @@ By kind (`ToolKind` plus the non-tool rows), lucide, 14 px on lines, 11 px in ch
 | Sub-agent | `agent` | yes |
 | Model fallback / compaction (rail rows) | `refresh` / `archive` | yes |
 
-Icons are `faint`; a live row's icon becomes the `spinner` (`accent`), a row waiting for a person
-shows `hand` in `accent`. The error dot (§2.4) stays the only failure mark. The two new icons go
+Icons are `faint`; a live or waiting row keeps its kind icon (§1.3 Spinners: the head spins, a
+live row says its state in words; superseded 2026-11-27: a live row's icon used to become the
+`spinner` and a waiting one the `hand`). The error dot (§2.4) stays the only failure mark. The two new icons go
 through `gen:icons` from `lucide-static`. The kernel's tool info gives the web each tool's icon
 (`ToolInfo.icon`, §8): a builtin by key and kind, an extension tool its catalog item's icon when it
 has one.

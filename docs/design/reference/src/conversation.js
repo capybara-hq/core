@@ -127,12 +127,19 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   /** The row's meta (§6.16.9): the status words after the label, never shrunk or cut. */
   function toolMeta(t) {
     if (t.status !== "done" && t.status !== "failed") return "";
+    // a non-zero exit is named in fail; a zero one only in the detail (§6.16.9)
+    const exit =
+      t.exitCode !== undefined && t.exitCode !== 0
+        ? `<span class="r-fail-word" data-part="exit-code"> · 退出码 ${t.exitCode}</span>`
+        : "";
     const words = [
       ...(t.outsideSandbox ? ["在沙箱外运行"] : []),
       ...(t.autoGranted ? [`已自动批准：${CROSSING[t.autoGranted]}`] : []),
       ...(t.approvedBy ? [t.approvedBy === "auto" ? "已自动批准" : "审查模型已批准"] : []),
     ];
-    return words.length ? `<span class="r-tmeta r-muted">${words.map((w) => ` · ${esc(w)}`).join("")}</span>` : "";
+    return words.length || exit
+      ? `<span class="r-tmeta r-muted">${exit}${words.map((w) => ` · ${esc(w)}`).join("")}</span>`
+      : "";
   }
 
   function toolDetail(t, o = {}) {
@@ -147,6 +154,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     if (input) parts.push(io("IN", input));
     if (t.output) {
       const foot = [];
+      if (t.exitCode !== undefined) foot.push(`<span data-part="tool-exit">退出码 ${t.exitCode}</span>`);
       if (t.outputBytes) {
         foot.push(`<span>输出 ${Math.round(t.outputBytes / 1024)} KB，已显示前 4 KB</span>`);
         foot.push(`<button class="r-linkbtn">${esc(K.viewAll)}</button>`);
@@ -214,7 +222,10 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   function groupSummary(rows) {
     const running = rows.find((r) => r.status === "running");
     if (running) {
-      const what = { command: "正在运行命令", tool: "正在使用工具", read: "正在读取文件", edit: "正在修改文件" }[KIND_GROUP[running.kind]];
+      // the running verb counts the group's calls of the running call's kind (§7)
+      const g = KIND_GROUP[running.kind];
+      const n = rows.filter((r) => KIND_GROUP[r.kind] === g).length;
+      const what = { command: `正在运行 ${n} 个命令`, tool: `正在使用 ${n} 个工具`, read: `正在读取 ${n} 个文件`, edit: `正在修改 ${n} 个文件` }[g];
       const done = rows.filter((r) => r.status !== "running").length;
       return `${spin(16)}<span class="r-tlabel">${what}<span class="r-faint"> · 已完成 ${done} 个</span></span>`;
     }
@@ -305,8 +316,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   function thinking(o) {
     const PR = F.PROSE_FIXTURE;
+    // live (§6.16.5): no spinner; the text's last three lines as rendered Markdown, the top fading
     if (o.state === "live")
-      return `<div class="r-tline">${spin(16)}<span class="r-tlabel">正在思考<span class="r-faint"> · 4 秒</span></span></div><div class="r-think">${esc(PR.thinking.slice(0, 22))}<span class="r-cursor" aria-hidden="true"></span></div>`;
+      return `<div class="r-tline"><span class="r-tlabel">正在思考<span class="r-faint"> · 6 秒</span></span></div><div class="r-think-tail" data-part="thinking-tail">${markdown(PR.thinkingLive)}<span class="r-cursor" aria-hidden="true"></span></div>`;
     const open = o.state === "expanded" || o.state === "in-rail";
     const head = `<div class="r-tline" role="button" aria-expanded="${open}"><span class="r-tlabel">思考了 ${PR.thinkingSeconds} 秒</span>${chev(open)}</div>`;
     const rail = o.state === "in-rail" ? ' data-in-rail="true"' : "";
@@ -1288,6 +1300,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         "expanded-images": [T.images[0], { open: true }],
         "hook-denied": [T.hookDenied[0], { open: true }],
         waiting: [T.waiting[0], {}],
+        "exit-code": [T.exitCode[0], {}],
         "auto-granted": [T.autoGranted[0], {}],
         "auto-approved": [T.autoApproved[0], {}],
         "review-approved": [T.reviewApproved[0], {}],
