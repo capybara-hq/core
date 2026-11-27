@@ -279,7 +279,7 @@ export interface ConnectItem {
 export type DividerData =
   | { divider: "compacted"; summary: string; savedTokens: number | null }
   /** A manual compaction found nothing to summarize (`compaction_skipped`). */
-  | { divider: "compact-skipped"; keepRecentTurns: number }
+  | { divider: "compact-skipped" }
   /** A manual compaction failed: its `compaction_failed` reason, or its run's failure. */
   | { divider: "compact-failed"; reason: string }
   /** A manual compact run was stopped. */
@@ -2114,12 +2114,7 @@ export function buildEventTimeline(
         break;
       case "compaction_skipped":
         // only a manual compact run writes it: its outcome when there was nothing to summarize
-        out.push({
-          kind: "divider",
-          key,
-          divider: "compact-skipped",
-          keepRecentTurns: e.payload.keepRecentTurns,
-        });
+        out.push({ kind: "divider", key, divider: "compact-skipped" });
         break;
       case "run_finished":
         // a compact run draws no run row: its outcome is its divider (summary, skip or failure)

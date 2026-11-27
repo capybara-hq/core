@@ -14,11 +14,13 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createAgent,
   createConv,
   createOrgWithProviders,
   eventsOf,
+  MODEL_LOOPER,
   PW,
   postMessage,
   type Req,
@@ -34,8 +36,12 @@ import {
  * Manual compaction (context compaction spec §4.7): `POST .../compact` starts a compact run
  * (`run_started.trigger: "compact"`, no model step) that writes one `compaction_summary` and its
  * `usage`; a second request while it is queued returns it, an active ordinary run is
- * `conversation.busy`, and eval or other people's conversations are 404.
+ * `conversation.busy`, and eval or other people's conversations are 404. A manual compaction ignores
+ * `keepRecentTurns` (maintainer decision 2026-11-28): every turn before the latest is summarized.
  */
+
+/** What the provider received (step requests; compaction requests apart). */
+const capture = captureProviderRequests();
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -55,6 +61,7 @@ const HOOKS_PROBE = fileURLToPath(
 );
 
 beforeAll(async () => {
+  capture.install();
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
@@ -62,12 +69,18 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
-      { roles: ["api", "worker"], extensions: [MODEL_FAKE, HOOKS_PROBE] },
+      {
+        roles: ["api", "worker"],
+        extensions: [MODEL_FAKE, MODEL_LOOPER, HOOKS_PROBE],
+        // a looper turn is a tool loop of this many steps (then the wrap-up)
+        runtime: { maxSteps: 6 },
+      },
     ),
   );
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
 });
 afterAll(async () => {
+  capture.restore();
   await k?.close();
   await runQueue?.close();
   redis?.disconnect();
@@ -173,12 +186,62 @@ describe("manual compaction", () => {
     );
     const events = (await eventsOf(db, conv)).filter((e) => e.runId === runId);
     expect(ev(events, "compaction_skipped").map((e) => e.payload)).toEqual([
-      { reason: "too_few_turns", keepRecentTurns: 4, turns: 1, step: 0 },
+      { reason: "nothing_to_summarize", turns: 1, step: 0 },
     ]);
     expect(ev(events, "compaction_summary")).toEqual([]);
     expect(ev(events, "compaction_failed")).toEqual([]);
     expect(ev(events, "usage")).toEqual([]);
     expect(ev(events, "run_finished").map((e) => e.payload.reason)).toEqual(["completed"]);
+  });
+
+  it("summarizes every turn before the latest in an agentic conversation, whatever keepRecentTurns says, and the next request starts from the summary", async () => {
+    const orgId = await createOrgWithProviders(k, owner);
+    const agentId = await createAgent(owner, orgId, { provider: "model-looper", model: "loop-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    // three user turns (fewer than keepRecentTurns 4), each a tool loop of several pairs
+    for (let i = 0; i < 3; i++) {
+      await postMessage(owner, orgId, conv, "loop:1");
+      await waitForTerminal(db, conv, i + 1, 30_000);
+    }
+    const before = await eventsOf(db, conv);
+    const messages = ev(before, "user_message");
+    expect(messages).toHaveLength(3);
+    expect(
+      ev(before, "tool_result").filter((e) => e.seq > (messages[2]?.seq ?? 0)).length,
+    ).toBeGreaterThan(1);
+
+    const res = await compact(conv, orgId);
+    expect(res.statusCode, res.body).toBe(202);
+    const { runId } = res.json() as { runId: string };
+    await waitForTerminal(db, conv, 4, 30_000);
+    const events = await eventsOf(db, conv);
+    expect(ev(events, "compaction_skipped")).toEqual([]);
+    const summaries = ev(events, "compaction_summary").filter((e) => e.runId === runId);
+    expect(summaries).toHaveLength(1);
+    // the latest turn fits the manual tail budget whole: the summary ends right before it
+    expect(summaries[0]?.payload.coversUpToSeq).toBe((messages[2]?.seq ?? 0) - 1);
+    expect(summaries[0]?.payload.openingSeqs).toBeUndefined();
+
+    capture.reset();
+    await postMessage(owner, orgId, conv, "after");
+    await waitForTerminal(db, conv, 5, 30_000);
+    const request = capture.sent[0];
+    const call = ev(await eventsOf(db, conv), "model_call").at(-1);
+    expect(call?.payload.request.summarySeq).toBe(summaries[0]?.seq);
+    const head = request?.messages[0];
+    const text = Array.isArray(head?.content)
+      ? head.content.map((b) => (b.type === "text" ? b.text : "")).join("")
+      : "";
+    expect(text).toMatch(/^<conversation_summary>/);
+    // after the summary: the latest turn verbatim (its message and tool pairs), then the new message
+    const rest = (request?.messages ?? []).slice(1).filter((m) => m.role !== "system");
+    const userTexts = rest
+      .filter((m) => m.role === "user")
+      .map((m) => (Array.isArray(m.content) ? m.content : []))
+      .flatMap((c) => c.flatMap((b) => (b.type === "text" ? [b.text] : [])));
+    expect(userTexts.filter((t) => t === "loop:1")).toHaveLength(1);
+    expect(userTexts.at(-1)).toBe("after");
+    expect(rest.filter((m) => m.role === "assistant").length).toBeGreaterThan(1);
   });
 
   it("returns the compact run already queued instead of starting a second one", async () => {

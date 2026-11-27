@@ -1631,7 +1631,7 @@
       "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
       "compactFailed": "Compaction failed: {reason}",
       "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message",
-      "compactSkipped": "Nothing to compact · the conversation has no more than {k} turns; the latest {k} are kept as they are",
+      "compactSkipped": "Nothing to compact · the conversation is still short",
       "compactStopped": "Compaction stopped",
       "switched": "Switched to {model}",
       "switchedEffort": "Switched to {model}, effort {effort}",
@@ -2848,7 +2848,7 @@
     },
     "keepRecentTurns": {
       "label": "Recent turns kept in full",
-      "help": "How many of the latest user turns the summary leaves untouched (0–20; 4 is the default)."
+      "help": "How many of the latest user turns automatic compaction leaves untouched (0–20; 4 is the default). A manual compaction summarizes every turn before the latest."
     },
     "reserveTokens": {
       "label": "Reserved tokens",

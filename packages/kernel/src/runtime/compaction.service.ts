@@ -46,7 +46,9 @@ export interface ForcedCompaction {
  * The manual compaction a compact run executes (context compaction spec §4.7). It prepares the same
  * environment a model step has (the events, the effective definition's tools, the org's compaction
  * settings) and calls the shared {@link runCompaction} with `force: true`: the trigger,
- * `enabled: false` and the failure backoff are bypassed, the compaction plan is still required.
+ * `enabled: false` and the failure backoff are bypassed, the compaction plan is still required, with
+ * the manual rule (`manual: true`: every turn before the latest summarized, about a fifth of the
+ * window of the latest turn kept; maintainer decision 2026-11-28).
  *
  * The run writes only its outcome, with `step: 0`: `compaction_summary` / `compaction_failed` + the
  * summary calls' `usage`, or `compaction_skipped` when there is nothing to summarize (maintainer

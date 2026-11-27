@@ -381,7 +381,7 @@ describe("a manual compaction's outcome and other dividers", () => {
             ev(
               3,
               "compaction_skipped",
-              { reason: "too_few_turns", keepRecentTurns: 4, turns: 1, step: 0 },
+              { reason: "nothing_to_summarize", turns: 1, step: 0 },
               "cr1",
             ),
             ev(4, "run_finished", { reason: "completed", consumedUpToSeq: 1 }, "cr1"),
@@ -391,9 +391,7 @@ describe("a manual compaction's outcome and other dividers", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     expect(
-      await screen.findByText(
-        "Nothing to compact · the conversation has no more than 4 turns; the latest 4 are kept as they are",
-      ),
+      await screen.findByText("Nothing to compact · the conversation is still short"),
     ).toBeTruthy();
     expect(screen.queryByText(/^Compaction · /)).toBeNull();
   });
