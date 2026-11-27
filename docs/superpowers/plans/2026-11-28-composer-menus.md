@@ -233,3 +233,13 @@ Rebase on main, then: composer top strip and control row per spec §6 / §7 (des
   composition events, stale @ picks filtered locally, skill plugin in description, English comments).
 - Next: Opus re-review of the Task 1 trust boundary (in parallel with Task 2 kernel send), review
   Task 2, wave 3 (Task 6), Task 7.
+- Opus re-review of the Task 1 trust boundary: holds; minors fixed in d9dc624ee (narrowed check before
+  starting the device, claimBrowse re-checks the stored roots, statAll cap, no absolute path in
+  device.project_path_too_broad, tests).
+- Task 2 committed 0051e2895; review fixes ef896cf54 (decision: a send to a stopped device starts it,
+  Review Focus 4 reworded; request signal into statAll; reconstruct fixture without the record mock,
+  51/51 zero drift; root paths refused; command review reads typed text + project file lines only).
+- Task 6 committed 5fd7b8ddb; review found a severe bug (bubble chip click downloads
+  /attachments/project:...) plus moderates (no_project copy, marks lost on new-conversation remount,
+  retry drops projectFiles, stale filter/dir fetches); fixes dispatched.
+- Next: Task 6 fixes, then Task 7 (compare, blind image review, ACCEPTED, changesets, verify, PR).
