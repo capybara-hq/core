@@ -64,7 +64,10 @@ test("上传 PNG（＋ 按钮）：进度后就绪、随消息发送；时间线
   const user = page.locator('[data-entry="user"]').filter({ hasText: "media:" });
   const thumb = user.getByRole("button", { name: "red.png" }).locator("img");
   await expect(thumb).toBeVisible();
-  await expect(thumb).toHaveAttribute("src", /\/api\/v1\/orgs\/[^/]+\/files\/[^/]+\/download$/);
+  await expect(thumb).toHaveAttribute(
+    "src",
+    /\/api\/v1\/orgs\/[^/]+\/files\/[^/]+\/download\?inline=1$/,
+  );
   await expect
     .poll(() => thumb.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth))
     .toBe(32);

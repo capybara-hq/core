@@ -45,7 +45,7 @@ const PRECHECK_CODES = new Set(["file.type_not_allowed", "file.too_large"]);
 
 const codeOf = (e: unknown) => (e instanceof ApiClientError ? e.code : undefined);
 
-/** The file ids an error names (`details[].fileId` of the kernel's `file.not_found` / `not_ready`). */
+/** The file ids an error names (`details[].fileId` of `file.not_found` / `not_ready`). */
 function failedIds(e: unknown): Set<string> {
   if (!(e instanceof ApiClientError)) return new Set();
   return new Set(

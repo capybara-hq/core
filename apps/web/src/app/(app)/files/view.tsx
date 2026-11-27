@@ -78,7 +78,10 @@ const TABS: readonly (LibraryOrigin | "")[] = ["", "delivered", "generated", "up
 /** How long the search waits after typing stops before it reads (as the admin lists do). */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** The list's time groups (today / this week / earlier): yesterday and the days before it fall in this week. */
+/**
+ * The list's time groups (today / this week / earlier): yesterday and the days before it fall in
+ * this week.
+ */
 const GROUPS = ["today", "week", "older"] as const;
 type Group = (typeof GROUPS)[number];
 
@@ -92,11 +95,11 @@ function iconOf(f: LibraryFileView): IconName {
 /**
  * `/files` (Files): the person's file library (file library spec §6, §8), LibraryPage: the head's
  * tabs pick the origin, the search and the agent and type filters narrow the list (all in the
- * address), the list is grouped by time (today / this week / earlier) with the usage under it, and the open
- * file (`#item=<id>`) shows its preview and details beside the list (a side sheet or its own
- * screen where two panes do not fit: the template decides). Upload, share, download and delete
- * (confirmed). Members up (guests have no library). From the query cache (the layout prefetched
- * the list for the address's filters and the usage on a first load).
+ * address), the list is grouped by time (today / this week / earlier) with the usage under it, and
+ * the open file (`#item=<id>`) shows its preview and details beside the list (a side sheet or its
+ * own screen where two panes do not fit: the template decides). Upload, share, download and delete
+ * (confirmed). Members up (guests have no library). From the query cache (the layout prefetched the
+ * list for the address's filters and the usage on a first load).
  */
 export default function FilesView({ initial }: { initial: FilesUrl }) {
   const ws = useWorkspace({ min: "member" });

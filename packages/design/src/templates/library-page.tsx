@@ -60,20 +60,21 @@ export type LibraryLoading = boolean | { rows?: number };
 
 export type LibraryPageProps = {
   /**
-   * The head: `path`, `title`, the origin views as `tabs` (all / delivered by agents / my uploads, each with
-   * `onSelect`; `activeTab`) and the `search`. From 600 the head draws the tabs and the search in
-   * its tab row; below 600 the tabs are a full-width Segmented and the search an icon that expands.
+   * The head: `path`, `title`, the origin views as `tabs` (all / delivered by agents / my uploads,
+   * each with `onSelect`; `activeTab`) and the `search`. From 600 the head draws the tabs and the
+   * search in its tab row; below 600 the tabs are a full-width Segmented and the search an icon
+   * that expands.
    */
   header: PageHeaderProps;
   /** The head's actions (the upload, `variant: "primary"`): added after `header.actions`. */
   actions?: HeaderAction[];
-  /** Field filters (the agent and type Selects): a row above the panes from 600, the Filter sheet below. */
+  /** Field filters (agent and type Selects): a row above the panes from 600, else a sheet. */
   filters?: ReactNode;
   /** How many `filters` are active: the count on the compact Filter button. */
   filterCount?: number;
   /** One `small` `muted` line under the list (the storage used), already localized. */
   usage?: string;
-  /** The list: a `ListDetailList`, usually with `groups` (today / this week / earlier) and `current`. */
+  /** The list: a `ListDetailList`, usually with time `groups` and `current`. */
   list: ReactNode;
   /**
    * The selected file's content (the preview frame and its details), or `null` with nothing
