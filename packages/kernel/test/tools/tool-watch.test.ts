@@ -215,7 +215,7 @@ describe("watched input waits", () => {
 
   it("a deadline past approvalTimeoutHours is clamped to it", async () => {
     const { q } = await parked("clamp1", { deadlineMs: 48 * 3_600_000 });
-    const hours = (q.expires_at.getTime() - q.created_at.getTime()) / 3_600_000;
+    const hours = (new Date(q.expires_at).getTime() - new Date(q.created_at).getTime()) / 3_600_000;
     expect(hours).toBeCloseTo(24, 1);
   });
 

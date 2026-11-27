@@ -432,7 +432,10 @@ describe("AskUserQuestion 端到端", () => {
     await waitForTerminal(db, convId, 1);
     expect(memState().askCalls).toEqual([
       { input: { rounds: 1 }, resume: null },
-      { input: { rounds: 1 }, resume: { state: { n: 1 }, answer: { color: "blue" } } },
+      {
+        input: { rounds: 1 },
+        resume: { state: { n: 1 }, answer: { color: "blue" }, outcome: "answered" },
+      },
     ]);
     const evs = await eventsOf(db, convId);
     expect(ofType(evs, "tool_result").map((e) => e.payload.content)).toEqual([
