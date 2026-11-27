@@ -429,7 +429,14 @@ export class LiveConfig {
 }
 
 /** The ctx members that are a plain property when allowed and a denying getter otherwise. */
-type GatedKey = "secrets" | "storage" | "models" | "dialIn" | "devices" | "deviceAccess";
+type GatedKey =
+  | "secrets"
+  | "storage"
+  | "models"
+  | "dialIn"
+  | "devices"
+  | "deviceAccess"
+  | "triggers";
 
 /**
  * Builds the namespaced ctx for one extension from its permission manifest, and returns its
@@ -1177,6 +1184,8 @@ export function createExtensionContext(
   gated("dialIn", dialInApi);
   gated("devices", devicesApi, `provides ${DEVICE_PROVIDER_EXTENSION_POINT}`);
   gated("deviceAccess", deviceAccessApi);
+  // TODO(collaboration B3): replace with the real backend; until then a declared permission is not served
+  gated("triggers", undefined);
   return ctx as KernelExtensionContext;
 }
 

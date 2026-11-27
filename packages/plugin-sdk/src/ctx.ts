@@ -20,6 +20,7 @@ import type { ExtensionNet } from "./net.js";
 import type { SetupCheckDefinition } from "./setup-check.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolCallContext, ToolHandler, ToolSpec, ToolWatcher } from "./tool.js";
+import type { TriggersCtx } from "./triggers.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
 
 /** Logger interface. */
@@ -420,6 +421,11 @@ export interface ExtensionContext {
    * see {@link DeviceAccessCtx}).
    */
   deviceAccess: DeviceAccessCtx;
+  /**
+   * Emits events automations can react to (requires `permissions.triggers`, see
+   * {@link TriggersCtx}).
+   */
+  triggers: TriggersCtx;
   provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
   /**
    * The lifecycle signal of this plugin instance: aborted when the instance is revoked (disabled,
