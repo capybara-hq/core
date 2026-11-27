@@ -834,6 +834,31 @@ of 20; Anthropic and OpenAI also miss recall and the constraint). Decision: **`"
 in-context summary covers everything up to the compaction point and keeps no verbatim tail. The
 transcript path keeps the plan's tail as before.
 
+"all" quality gate (2026-11-28, Task 8b, same harness with `CAPYBARA_TEST_COMPACTION_EVAL_MODE=all`):
+the in-context request with `boundary: { mode: "all" }` against the transcript request over the
+same span (the plan with `keepRecentTurns: 0`: every event, no kept tail), same 20 conversations,
+summary cap 20,000, one retry with the retry note for an answer cut off at the cap in both forms,
+summaries read with the production `extractSummary`. Recall counts all 12 codewords:
+
+| model | recall (in-context / transcript) | constraint kept (in-context / transcript) | cut off (first / after retry) | no closed `<summary>` (in-context / transcript) | in-context used |
+|---|---|---|---|---|---|
+| Anthropic `claude-haiku-5-5` | 51.3% / 78.8% | 13/20 / 20/20 | 0/0, 0/0 | 7 / 0 | no |
+| Anthropic `claude-sonnet-5-5` | 88.8% / 73.8% | 20/20 / 20/20 | 0/0, 0/0 | 0 / 0 | **yes** |
+| OpenAI `gpt-5-nano` | 20.0% / 19.6% | 10/20 / 8/20 | 0/0, 0/0 | 15 / 20 | no |
+| DeepSeek `deepseek-flash` | 90.4% / 87.5% | 20/20 / 20/20 | 0/0, transcript 1/0 | 0 / 0 | **yes** |
+| Qwen `qwen3.8-flash` | 85.0% / 90.0% | 17/20 / 20/20 | 0/0, 0/0 | 4 / 0 (one a tool call) | no |
+
+The rule (ruling): the in-context summary only where its recall ≥ transcript recall − 0.05 and the
+constraint is kept in ≥ 19/20; otherwise the transcript path for that family. Haiku and Sonnet
+disagree, so Anthropic is decided per model id. In-context summary models (`IN_CONTEXT_SUMMARY_MODELS`,
+by model id on any provider): `claude-sonnet-*` and `deepseek-*`; every other model (other
+`claude-*`, `gpt-*`, `qwen*`, the rest) takes the transcript path. Haiku's seven failures are all one
+shape: an `<analysis>` block never closed, followed by a closed `<summary>` block, which
+`extractSummary` drops with the unclosed scratchpad; read with "the last closed `<summary>` wins",
+Haiku's in-context form scores 81.7% / 20/20 and would qualify. That parser change is a separate
+decision, not taken here. Phase 2: idle compaction only pays off on families where the in-context
+summary is used.
+
 Quality gate (ruling R8, 2026-11-28): the in-context path runs only for model families whose
 in-context summaries passed the quality eval; every other model takes the transcript path. The
 checked-in table is `IN_CONTEXT_SUMMARY_MODELS` in `runtime/context/in-context-compaction.ts`
@@ -842,6 +867,8 @@ model no entry matches skips with reason `quality_gate`. This table and that one
 
 | provider | model | evidence |
 |---|---|---|
+| any | `claude-sonnet-*` | "all" quality gate above: 88.8% / 73.8% recall, constraint 20/20 |
+| any | `deepseek-*` | "all" quality gate above: 90.4% / 87.5% recall, constraint 20/20 |
 | `model-fake` | any | scripted test model; summary quality not measured |
 
 ### 9.5 Plugin gaps (plugins repository)
@@ -967,6 +994,10 @@ Still open (recommended answers):
   recall in-context / transcript 68.1/81.9%, 21.3/38.8%, 90.0/88.8%, 91.9/86.9%; constraint kept
   16/20, 10/20, 20/20, 20/20 (transcript 20, 12, 20, 17). The in-context summary covers everything
   up to the compaction point and keeps no verbatim tail (table in §9.4).
+  "all" quality gate 2026-11-28 (Task 8b, table in §9.4): the in-context summary is used only for
+  model ids `claude-sonnet-*` and `deepseek-*` (recall ≥ transcript − 0.05 and constraint ≥ 19/20);
+  Haiku, `gpt-*` and `qwen*` take the transcript path. Phase 2: idle compaction only pays off on
+  families where the in-context summary is used.
 - **Q12. Unverified vendor facts (§9.1). Closed 2026-11-28 (task P0), with two items left
   unverified.**
   - OpenAI `prompt_cache_options` on Chat Completions: accepted on 5.6+ (usage then has no TTL split),
