@@ -16,7 +16,16 @@ import { AGENT, Log, MODEL } from "./fixtures.js";
 const build = (log: Log, model: ModelInfo = MODEL) =>
   buildModelRequest({ events: log.events, agent: AGENT, agentVersion: 1, model, step: 3 });
 
-const SUMMARY = "<conversation_summary>\nThe agent read ledger 1.\n</conversation_summary>";
+const BODY = "<conversation_summary>\nThe agent read ledger 1.\n</conversation_summary>\n\n";
+/** The post-summary framing (spec §4.2.2) when newer messages kept verbatim follow. */
+const KEPT =
+  "are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them. Continue the work from where it left off.";
+/** The summary's text with one re-rendered opening message after it. */
+const SUMMARY = `${BODY}The message that opened the current turn follows, shown again verbatim; the summary covers it. The messages after those ${KEPT}`;
+/** With several re-rendered opening messages. */
+const SUMMARY_SEVERAL = `${BODY}The messages that opened the current turn follow, shown again verbatim; the summary covers them. The messages after those ${KEPT}`;
+/** Without re-rendered opening messages. */
+const SUMMARY_NO_OPENERS = `${BODY}The messages after this summary ${KEPT}`;
 
 /** A tool step: the assistant's call, then its result. */
 function step(log: Log, n: number): { call: ConversationEvent; result: ConversationEvent } {
@@ -91,7 +100,7 @@ describe("buildModelRequest: a summary inside the latest user turn", () => {
     const { request } = build(log);
     expect(request.messages[0]).toEqual({
       role: "user",
-      content: [{ type: "text", text: SUMMARY }],
+      content: [{ type: "text", text: SUMMARY_NO_OPENERS }],
     });
     expect(request.messages[1]?.role).toBe("assistant");
   });
@@ -106,7 +115,7 @@ describe("buildModelRequest: a summary inside the latest user turn", () => {
     log.summary(first.result.seq, "The agent read ledger 1.", [a.seq, b.seq]);
     const head = build(log).request.messages[0];
     expect(head?.content).toEqual([
-      { type: "text", text: SUMMARY },
+      { type: "text", text: SUMMARY_SEVERAL },
       { type: "text", text: "audit the ledgers" },
       { type: "text", text: "and the invoices" },
     ]);

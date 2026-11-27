@@ -183,7 +183,7 @@ describe("buildModelRequest", () => {
       content: [
         {
           type: "text",
-          text: "<conversation_summary>\nThey asked two questions.\n</conversation_summary>",
+          text: "<conversation_summary>\nThey asked two questions.\n</conversation_summary>\n\nThe messages after this summary are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them. Continue the work from where it left off.",
         },
       ],
     });
@@ -198,6 +198,37 @@ describe("buildModelRequest", () => {
     expect(meta.summarySeq).toBe(sum.seq);
     expect(meta.fromSeq).toBe(covered + 1);
     expect(meta.toSeq).toBe(log.events.at(-1)?.seq);
+  });
+
+  it("after a summary that kept no messages: only the line to continue the work follows it", () => {
+    const log = new Log();
+    log.turn(1);
+    log.turn(2);
+    log.summary(log.events.at(-1)?.seq ?? 0, "They asked two questions.");
+    log.user("question 3");
+    const first = build(log).request.messages[0];
+    expect(first).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<conversation_summary>\nThey asked two questions.\n</conversation_summary>\n\nContinue the work from where it left off.",
+        },
+      ],
+    });
+  });
+
+  it("the summary's framing depends only on events older than the summary (append-only)", () => {
+    const log = new Log();
+    log.turn(1);
+    const covered = log.events.at(-1)?.seq ?? 0;
+    log.turn(2);
+    log.summary(covered, "They asked a question.");
+    const before = build(log).request.messages[0];
+    log.user("question 3");
+    log.assistant("answer 3");
+    log.user("question 4");
+    expect(build(log).request.messages[0]).toEqual(before);
   });
 
   it("uses only the latest summary", () => {
