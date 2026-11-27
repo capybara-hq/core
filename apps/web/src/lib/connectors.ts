@@ -465,7 +465,8 @@ export const renderConnectorPrompt = (
     body: JSON.stringify({ arguments: args }),
   });
 
-export const listConnectorResources = (orgId: string) =>
+/** The resources the caller can reference; `query` (trimmed, non-empty) filters on the kernel. */
+export const listConnectorResources = (orgId: string, query = "") =>
   apiFetch<{ resources: ConnectorResource[]; unavailable: ConnectorUnavailable[] }>(
-    `${base(orgId)}/resources`,
+    `${base(orgId)}/resources${query === "" ? "" : `?query=${encodeURIComponent(query)}`}`,
   );

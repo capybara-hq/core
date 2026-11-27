@@ -1761,6 +1761,18 @@
       "summary": "“{text}”，{profile}，设备 {device}。",
       "summaryNoDevice": "“{text}”，{profile}，无设备。",
       "changed": "之后你改了选择：现在发送会是一个新的请求，“重试原消息”则按原样再次发送。"
+    },
+    "composerMenu": {
+      "add": "添加",
+      "upload": "上传文件",
+      "resources": "连接器资源",
+      "abilities": "能力",
+      "skills": "技能",
+      "connectors": "连接器",
+      "needsConfig": "待配置",
+      "noMatch": "没有匹配项",
+      "noResources": "没有匹配的资源",
+      "search": "搜索"
     }
   },
   "ui": {

@@ -1773,6 +1773,18 @@
       "summary": "“{text}” with {profile} on {device}.",
       "summaryNoDevice": "“{text}” with {profile}, without a device.",
       "changed": "Your choices changed since: sending now starts a new request, and Retry original sends it as it was."
+    },
+    "composerMenu": {
+      "add": "Add",
+      "upload": "Upload files",
+      "resources": "Connector resources",
+      "abilities": "Abilities",
+      "skills": "Skills",
+      "connectors": "Connectors",
+      "needsConfig": "Needs setup",
+      "noMatch": "Nothing matches",
+      "noResources": "No matching resources",
+      "search": "Search"
     }
   },
   "ui": {

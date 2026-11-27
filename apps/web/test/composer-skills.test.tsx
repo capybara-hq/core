@@ -159,7 +159,18 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
   });
 }
 
-const input = () => screen.getByRole("textbox", { name: en.chat.inputLabel, hidden: true });
+const input = () => screen.getByRole("combobox", { name: en.chat.inputLabel, hidden: true });
+/** The composer menu anchored above the composer (spec 2026-11-28 composer menus §1). */
+const menu = async () => {
+  await screen.findByRole("listbox");
+  return document.querySelector('[data-part="composer-menu"]') as HTMLElement;
+};
+const headingsOf = (el: HTMLElement) =>
+  [...el.querySelectorAll('[data-part="composer-menu-label"]')].map((h) => h.textContent);
+const optionTexts = (el: HTMLElement) =>
+  within(el)
+    .getAllByRole("option")
+    .map((o) => o.textContent);
 const posts = (calls: Call[], path: string) =>
   calls.filter((c) => c.method === "POST" && c.url.split("?")[0] === path);
 const sentMessage = (c: Call) => {
@@ -192,33 +203,28 @@ describe("the / menu", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
-    const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText("/fix-issue");
-    const headings = [...dialog.querySelectorAll("[cmdk-group-heading]")].map((h) => h.textContent);
+    const dialog = await menu();
+    await within(dialog).findByText("fix-issue");
     // one heading per source (project root §4.6): the library's, then the plugins'
-    expect(headings).toEqual([
+    expect(headingsOf(dialog)).toEqual([
       en.chat.skillSource.platform,
       en.chat.skillSource.plugin,
       "Docs",
       en.chat.commandsGroup,
     ]);
-    const options = within(dialog)
-      .getAllByRole("option")
-      .map((o) => o.textContent);
-    expect(options).toEqual([
-      "/fix-issue[issue-number]Fix a GitHub issue",
-      `/release-check${en.chat.skillTag.manual}Run the release checks`,
-      `/review[path]${en.chat.skillTag.fork}Review in a sub-agent`,
-      "/brainstormingThink before buildingsuperpowers",
-      "/docs:summarizeSummarize a topic",
+    // names without a leading `/` (spec §3), the argument hint, then the tags and description
+    expect(optionTexts(dialog)).toEqual([
+      "fix-issue[issue-number]Fix a GitHub issue",
+      `release-check${en.chat.skillTag.manual} · Run the release checks`,
+      `review[path]${en.chat.skillTag.fork} · Review in a sub-agent`,
+      "brainstormingThink before building",
+      // a prompt leads with its connector's mark (no icon here: the initial)
+      "DsummarizeSummarize a topic",
       // the built-in command closes the `/` menu, after the agent's skills and prompts
-      `/compact${en.chat.compactCommandHint}`,
+      `compact${en.chat.compactCommandHint}`,
     ]);
-    // the plugin a skill came from is its secondary label (spec §3.2)
-    const brainstorming = within(dialog).getAllByRole("option")[3] as HTMLElement;
-    expect(brainstorming.querySelector('[data-part="palette-source"]')?.textContent).toBe(
-      "superpowers",
-    );
+    // the textarea stays the combobox driving the list
+    expect(input().getAttribute("aria-expanded")).toBe("true");
     // loaded for the conversation's agent, with the conversation (its trial drafts)
     expect(calls.some((c) => c.url === `${INVOCABLE}?conversationId=c1`)).toBe(true);
   });
@@ -229,22 +235,13 @@ describe("the / menu", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
-    const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText("/fix-issue");
-    const query = within(dialog).getByRole("combobox");
-    await user.type(query, "fix");
-    expect(
-      within(dialog)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["/fix-issue[issue-number]Fix a GitHub issue"]);
-    await user.clear(query);
-    await user.type(query, "superpowers:brain");
-    expect(
-      within(dialog)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["/brainstormingThink before buildingsuperpowers"]);
+    await within(await menu()).findByText("fix-issue");
+    // the query is the composer text after the trigger (no search box of its own)
+    await user.type(input(), "fix");
+    expect(optionTexts(await menu())).toEqual(["fix-issue[issue-number]Fix a GitHub issue"]);
+    await user.clear(input());
+    await user.type(input(), "/superpowers:brain");
+    expect(optionTexts(await menu())).toEqual(["brainstormingThink before building"]);
   });
 
   it("picking a skill shows the chip; the text after it is sent as its arguments", async () => {
@@ -256,7 +253,7 @@ describe("the / menu", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
-    await user.click(await screen.findByRole("option", { name: /^\/fix-issue/ }));
+    await user.click(await screen.findByRole("option", { name: /^fix-issue/ }));
     expect(input()).toHaveProperty("value", "");
     expect(document.querySelector('[data-part="composer-token"]')?.textContent).toContain(
       "/fix-issue",
@@ -285,11 +282,11 @@ describe("the / menu", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
-    await user.click(await screen.findByRole("option", { name: /^\/release-check/ }));
+    await user.click(await screen.findByRole("option", { name: /^release-check/ }));
     await user.type(input(), "{Backspace}");
     expect(document.querySelector('[data-part="composer-token"]')).toBeNull();
     await user.type(input(), "/");
-    await user.click(await screen.findByRole("option", { name: /^\/release-check/ }));
+    await user.click(await screen.findByRole("option", { name: /^release-check/ }));
     await user.click(screen.getByRole("button", { name: en.chat.send }));
     expect(sentMessage(posts(calls, `${BASE}/messages`)[0] as Call)).toEqual({
       text: "",
@@ -323,7 +320,7 @@ describe("a lone /", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     await userEvent.setup().type(input(), "/");
-    const dialog = await screen.findByRole("dialog");
+    const dialog = await menu();
     expect(await within(dialog).findByText(en.chat.noInvocable)).toBeTruthy();
     // The owner of the agent can edit it: the next step is its skills section
     const link = within(dialog).getByRole("link", { name: en.chat.noInvocableAction });
@@ -359,7 +356,7 @@ describe("a lone /", () => {
       });
       await screen.findByText("hi");
       await userEvent.setup().type(input(), "/");
-      const dialog = await screen.findByRole("dialog");
+      const dialog = await menu();
       expect(await within(dialog).findByText(m.noInvocableReadOnly)).toBeTruthy();
       expect(within(dialog).queryByRole("link")).toBeNull();
     },
@@ -496,7 +493,7 @@ describe("an invocation while running", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
-    await user.click(await screen.findByRole("option", { name: /^\/fix-issue/ }));
+    await user.click(await screen.findByRole("option", { name: /^fix-issue/ }));
     await user.type(input(), "9{Enter}");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     expect(sentMessage(posts(calls, `${BASE}/messages`)[0] as Call)).toEqual({
@@ -735,7 +732,7 @@ describe("a new conversation", () => {
     expect(input()).toHaveProperty("disabled", false);
     const user = userEvent.setup();
     await user.type(input(), "/");
-    await user.click(await screen.findByRole("option", { name: /^\/fix-issue/ }));
+    await user.click(await screen.findByRole("option", { name: /^fix-issue/ }));
     await user.type(input(), "123{Enter}");
     await vi.waitFor(() =>
       expect(posts(calls, `${ORG}/conversations/first-message`)).toHaveLength(1),

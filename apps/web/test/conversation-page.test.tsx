@@ -73,7 +73,7 @@ function sidebarRefreshes() {
   const groups = JSON.stringify(keys.org("o1").conversationGroupsAll());
   return () => spy.mock.calls.filter(([f]) => JSON.stringify(f?.queryKey) === groups).length;
 }
-const input = (m = en) => screen.getByRole("textbox", { name: m.chat.inputLabel, hidden: true });
+const input = (m = en) => screen.getByRole("combobox", { name: m.chat.inputLabel, hidden: true });
 const posts = (calls: Call[], path: string) =>
   calls.filter((c) => c.method === "POST" && c.url.split("?")[0] === path);
 
@@ -1828,15 +1828,18 @@ describe("composer: / prompts and @ resources", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
-    expect(input()).toHaveProperty("value", "");
-    // the label, then the description (phase D palette items)
-    const option = await screen.findByRole("option", {
-      name: "/docs:summarizeSummarize a topic",
-    });
+    // the trigger stays in the text: what follows it is the menu's query
+    expect(input()).toHaveProperty("value", "/");
+    // the prompt's name (no leading `/`), its description as the row's description
+    const option = await screen.findByRole("option", { name: "summarize" });
+    expect(option.textContent).toContain("Summarize a topic");
+    // an unavailable connector says why with its badge
     expect(
-      screen.getByRole("option", { name: `Mail · ${en.chat.connectorUnavailable.not_connected}` }),
+      screen.getByRole("option", { name: `Mail ${en.chat.connectorUnavailable.not_connected}` }),
     ).toBeTruthy();
     await user.click(option);
+    // the pick takes the trigger out of the text
+    expect(input()).toHaveProperty("value", "");
     const dialog = await screen.findByRole("dialog", { name: "/docs:summarize" });
     await user.type(within(dialog).getByLabelText(/topic/), "cats");
     await user.click(within(dialog).getByRole("button", { name: en.chat.insertPrompt }));
@@ -1873,8 +1876,10 @@ describe("composer: / prompts and @ resources", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "read @");
+    expect(input()).toHaveProperty("value", "read @");
+    await user.click(await screen.findByRole("option", { name: "Handbook" }));
+    // the pick takes the trigger out of the text
     expect(input()).toHaveProperty("value", "read ");
-    await user.click(await screen.findByRole("option", { name: "Handbook · docs://handbook" }));
     expect(screen.getByText("@Handbook")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: en.chat.send }));
     expect(bodyOf(posts(calls, `${BASE}/messages`)[0])).toMatchObject({

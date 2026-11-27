@@ -4,9 +4,12 @@ import {
   AttachmentStrip,
   type AttachmentStripItem,
   Button,
-  type CommandGroup,
-  CommandPalette,
   ComposerBox,
+  ComposerMenu,
+  type ComposerMenuGroup,
+  type ComposerMenuItem,
+  type ComposerMenuKind,
+  type ComposerMenuProps,
   Dialog,
   Field,
   FileDrop,
@@ -14,10 +17,11 @@ import {
   isTouchPointer,
   type PickerProps,
   Stack,
+  useComposerMenu,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocale, useTranslations } from "next-intl";
 import {
   type ChangeEvent,
   type KeyboardEvent,
@@ -34,7 +38,9 @@ import { acceptAttribute, fileContentType } from "../../lib/attachments";
 import {
   type ConnectorPrompt,
   type ConnectorResource,
+  type ConnectorSummary,
   type ConnectorUnavailable,
+  connectorDescriptionOf,
   renderConnectorPrompt,
 } from "../../lib/connectors";
 import type { MessageInput } from "../../lib/conversations";
@@ -42,6 +48,7 @@ import { focusWhenPossible } from "../../lib/deferred-focus";
 import {
   connectorPromptsQuery,
   connectorResourcesQuery,
+  connectorsQuery,
   invocableSkillsQuery,
 } from "../../lib/query/conversation";
 import { useAppMutation } from "../../lib/query/mutation";
@@ -93,7 +100,32 @@ const draftKey = (
 export const promptCommand = (p: Pick<ConnectorPrompt, "connectorSlug" | "name">) =>
   `/${p.connectorSlug}:${p.name}`;
 
-type Palette = "prompts" | "resources" | null;
+/**
+ * The open composer menu (spec 2026-11-28 composer menus §1–§4): its kind; where its trigger
+ * (`/` or `@`) stands in the text and where the query typed after it ends (the caret at the last
+ * edit), or `at: null` for a menu opened without a trigger (＋, or Skills over a draft with text),
+ * whose query is `q` (the compact sheet's search field); and what an `@` menu lists.
+ */
+type MenuState = {
+  kind: ComposerMenuKind;
+  at: number | null;
+  end: number;
+  q: string;
+  scope?: "resources" | { connectorId: string };
+};
+
+/** How long the `@` query rests before the kernel is asked (each text is its own cache entry). */
+const RESOURCE_SEARCH_DELAY_MS = 200;
+
+/** `value`, once it has not changed for `ms`. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(id);
+  }, [value, ms]);
+  return settled;
+}
 
 /** What the composer sends: the message without the switch (the caller adds model / effort). */
 export type ComposerMessage = Pick<
@@ -190,10 +222,15 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
  * nothing happens while an IME is composing.
  *
  * Carried over from the old composer: each draft keeps one `clientMessageId` until it is sent or
- * changed (the kernel dedupes retries); `/` in an empty composer lists the agent's skills, then
- * the connectors' prompts, and `@` after a space their resources; files come from ＋, drop or
- * paste, upload at once and block sending while uploading or failed; a send that fails keeps the
- * draft.
+ * changed (the kernel dedupes retries); files come from ＋, drop or paste, upload at once and
+ * block sending while uploading or failed; a send that fails keeps the draft.
+ *
+ * Menus (composer menus spec §1–§4): one `ComposerMenu` anchored to the composer, the textarea its
+ * combobox. ＋ lists what can be added or used (upload, connector resources, skills, the usable
+ * connectors); `/` in an empty composer lists the agent's skills, the connectors' prompts and the
+ * commands last; `@` at the start or after whitespace (never mid-word, never from an IME
+ * composition) searches the connectors' resources on the kernel. The trigger stays in the text and
+ * what follows it is the query; a pick takes both out, Esc closes and keeps the text.
  *
  * Skills (phase D spec §3): picking one shows its chip, and the text after it is the arguments
  * (Backspace at the start or the chip's × removes it and keeps the text). A draft typed as
@@ -281,6 +318,7 @@ export function ComposerBar({
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
+  const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [text, setText] = useState(initialDraft?.text ?? "");
@@ -294,9 +332,8 @@ export function ComposerBar({
   const skillsQ = invocableSkillsQuery(orgId, agentId ?? "", conversationId);
   // Read when the menu opens or a typed `/name` is sent (`loadSkills`), or prefetched with the page.
   const skills = useQuery({ ...skillsQ, enabled: false }).data;
-  // The menus' lists, read when a menu opens (`openPalette`).
+  // The `/` menu's prompts, read when it opens (`openMenu`).
   const prompts = useQuery({ ...connectorPromptsQuery(orgId), enabled: false }).data;
-  const resources = useQuery({ ...connectorResourcesQuery(orgId), enabled: false }).data;
   // The rendered text goes into the input: nothing cached changes.
   const { mutateAsync: renderPrompt } = useAppMutation({
     fn: (v: { p: ConnectorPrompt; values: Record<string, string> }) =>
@@ -322,14 +359,15 @@ export function ComposerBar({
     drafts.add(list);
   };
 
-  const [palette, setPalette] = useState<Palette>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [argsFor, setArgsFor] = useState<ConnectorPrompt | null>(null);
   const [args, setArgs] = useState<Record<string, string>>({});
   const [rendering, setRendering] = useState(false);
   const draft = useRef<{ key: string; id: string } | undefined>(initialDraft?.id);
   /** A typed `/name` is being resolved (the skills read): a second ↵ waits for it. */
   const resolving = useRef(false);
-  const trigger = useRef<{ char: string; pos: number; picked: boolean } | null>(null);
+  /** The last key was an IME's: the edit it makes never opens a menu (its ↵ never picks). */
+  const composing = useRef(false);
 
   // A new agent (a new conversation's picker) has other skills: its chip and list go.
   // (a change, not the mount: a given-back draft keeps its chip)
@@ -500,6 +538,8 @@ export function ComposerBar({
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // the edit this key makes is an IME's while it composes (its text never opens a menu)
+    composing.current = e.nativeEvent.isComposing || e.keyCode === 229;
     // The one undo step of a fill: only while the text is still what the fill put there.
     const undo = undoFill.current;
     if (undo !== null && isUndoKey(e)) {
@@ -516,30 +556,88 @@ export function ComposerBar({
     void submit();
   }
 
-  function openPalette(which: Exclude<Palette, null>, pos: number) {
-    trigger.current = { char: which === "prompts" ? "/" : "@", pos, picked: false };
-    setPalette(which);
-    const failed = (e: unknown) => toast.error(errorMessage(e));
-    if (which === "prompts") {
+  /** Opens a menu and reads what it lists (the `@` menu's resources follow its query). */
+  function openMenu(next: MenuState) {
+    setMenu(next);
+    if (next.kind === "slash") {
       void loadSkills(true);
-      qc.fetchQuery(connectorPromptsQuery(orgId)).catch(failed);
-    } else qc.fetchQuery(connectorResourcesQuery(orgId)).catch(failed);
+      qc.fetchQuery(connectorPromptsQuery(orgId)).catch((e) => toast.error(errorMessage(e)));
+    }
+  }
+
+  /** The text without the open menu's trigger and query (what a pick leaves). */
+  const withoutTrigger = (): string =>
+    menu !== null && menu.at !== null ? text.slice(0, menu.at) + text.slice(menu.end) : text;
+
+  /** The textarea takes the focus again (a click moved it), never on a touch device (keyboard). */
+  const refocus = () => {
+    if (!isTouchPointer()) focusText();
+  };
+
+  /** ＋ (or the footer's `/`): the `/` menu, its trigger typed into an empty draft. */
+  function openSlash() {
+    const base = withoutTrigger();
+    if (base === "" && skill === null) {
+      setText("/");
+      openMenu({ kind: "slash", at: 0, end: 1, q: "" });
+    } else {
+      // over a draft the picked skill's chip takes the text as its arguments
+      setText(base);
+      openMenu({ kind: "slash", at: null, end: 0, q: "" });
+    }
+    refocus();
+  }
+
+  /** ＋ (or the footer's `@`): the `@` menu, its trigger typed at the end of the draft. */
+  function openAt(scope?: MenuState["scope"]) {
+    const base = withoutTrigger();
+    const next = base === "" || /\s$/.test(base) ? `${base}@` : `${base} @`;
+    setText(next);
+    openMenu({
+      kind: "at",
+      at: next.length - 1,
+      end: next.length,
+      q: "",
+      ...(scope !== undefined ? { scope } : {}),
+    });
+    refocus();
   }
 
   function onChange(next: string, el?: HTMLTextAreaElement | null) {
     // An edit after a fill: ⌘Z is the browser's own again.
     undoFill.current = null;
     const caret = el?.selectionStart ?? next.length;
-    if (text === "" && next === "/" && skill === null) {
-      openPalette("prompts", 0);
+    // a menu with a trigger follows the text after it, and goes when the trigger does
+    if (menu !== null && menu.at !== null) {
+      const query = next.slice(menu.at + 1, caret);
+      const gone =
+        next[menu.at] !== (menu.kind === "slash" ? "/" : "@") ||
+        caret <= menu.at ||
+        query.includes("\n") ||
+        // `/name args`: past the name the text is the skill's arguments, not a search
+        (menu.kind === "slash" && /\s/.test(query)) ||
+        // `@ `: an address or plain text, not a pick
+        (menu.kind === "at" && /^\s/.test(query));
+      setMenu(gone ? null : { ...menu, end: caret });
+      setText(next);
       return;
     }
-    const typed = next.length === text.length + 1 && next[caret - 1] === "@";
-    if (typed && (caret === 1 || /\s/.test(next[caret - 2] ?? ""))) {
-      setText(next.slice(0, caret - 1) + next.slice(caret));
-      openPalette("resources", caret - 1);
-      return;
+    const typed = next.length === text.length + 1 ? next[caret - 1] : undefined;
+    if (!composing.current) {
+      if (text === "" && next === "/" && skill === null) {
+        setText(next);
+        openMenu({ kind: "slash", at: 0, end: 1, q: "" });
+        return;
+      }
+      // `@` at the start or after whitespace; `a@b` is an address
+      if (typed === "@" && (caret === 1 || /\s/.test(next[caret - 2] ?? ""))) {
+        setText(next);
+        openMenu({ kind: "at", at: caret - 1, end: caret, q: "" });
+        return;
+      }
     }
+    // a menu opened without a trigger (＋) goes with any edit
+    if (menu !== null) setMenu(null);
     setText(next);
   }
 
@@ -577,136 +675,306 @@ export function ComposerBar({
     ]);
   }
 
+  /** A pick: the trigger and its query leave the text, the menu closes. */
   const picked = () => {
-    if (trigger.current) trigger.current.picked = true;
+    setText(withoutTrigger());
+    setMenu(null);
   };
 
-  const unavailableGroup = (list: ConnectorUnavailable[] | undefined): CommandGroup[] =>
+  // What the menus list. The connectors give the ＋ menu its rows and every row of a connector
+  // its icon; the `@` menu's resources are searched on the kernel as the query rests.
+  const query = menu === null ? "" : menu.at !== null ? text.slice(menu.at + 1, menu.end) : menu.q;
+  const connectorList = useQuery({ ...connectorsQuery(orgId), enabled: menu !== null }).data
+    ?.connectors;
+  const atQuery = menu?.kind === "at" ? query.trim() : "";
+  const searched = useDebounced(atQuery, RESOURCE_SEARCH_DELAY_MS);
+  const resourcesQ = useQuery({
+    ...connectorResourcesQuery(orgId, searched),
+    enabled: menu?.kind === "at",
+    placeholderData: keepPreviousData,
+  });
+  const resources = resourcesQ.data;
+  const connectorById = new Map<string, ConnectorSummary>(
+    (connectorList ?? []).map((c) => [c.id, c]),
+  );
+  /** A connector's mark: its plugin's icon, else its initial. */
+  const markOf = (connectorId: string, name: string): NonNullable<ComposerMenuItem["mark"]> => {
+    const icon = connectorById.get(connectorId)?.icon;
+    return { text: name, ...(icon ? { image: icon } : {}) };
+  };
+
+  const unavailableGroup = (list: ConnectorUnavailable[] | undefined): ComposerMenuGroup[] =>
     list && list.length > 0
       ? [
           {
+            id: "unavailable",
             label: t("unavailableConnectors"),
             items: list.map((u) => ({
-              id: `unavailable:${u.connectorId}`,
-              label: `${u.connectorName} · ${t(`connectorUnavailable.${u.reason}`)}`,
-              onSelect: () =>
+              id: u.connectorId,
+              label: u.connectorName,
+              mark: markOf(u.connectorId, u.connectorName),
+              badge: t(`connectorUnavailable.${u.reason}`),
+              onSelect: () => {
+                setMenu(null);
                 toast.error(
                   t(`connectorUnavailableHint.${u.reason}`, { connector: u.connectorName }),
-                ),
+                );
+              },
             })),
           },
         ]
       : [];
 
   const byConnector = <T extends { connectorId: string; connectorName: string }>(items: T[]) => {
-    const groups = new Map<string, { label: string; items: T[] }>();
+    const groups = new Map<string, { id: string; label: string; items: T[] }>();
     for (const it of items) {
-      const g = groups.get(it.connectorId) ?? { label: it.connectorName, items: [] };
+      const g = groups.get(it.connectorId) ?? {
+        id: it.connectorId,
+        label: it.connectorName,
+        items: [],
+      };
       g.items.push(it);
       groups.set(it.connectorId, g);
     }
     return [...groups.values()];
   };
 
-  const skillItem = (sk: InvocableSkill) => ({
-    id: `skill:${sk.id}`,
-    label: `/${sk.name}`,
-    ...(sk.argumentHint !== undefined ? { hint: sk.argumentHint } : {}),
-    ...(sk.manual || sk.fork
-      ? {
-          tags: [
-            ...(sk.manual ? [t("skillTag.manual")] : []),
-            ...(sk.fork ? [t("skillTag.fork")] : []),
-          ],
-        }
-      : {}),
-    ...(sk.plugin !== undefined ? { search: `${sk.plugin}:${sk.name}`, source: sk.plugin } : {}),
-    ...(sk.description !== "" ? { description: sk.description } : {}),
-    onSelect: () => {
-      picked();
-      setSkill(sk);
-    },
-  });
-  // One menu, a heading per source (project root §4.6): the conversation's project first, then
-  // the agent's own, the library's and the plugins'.
-  const skillGroups: CommandGroup[] = SKILL_SOURCES.flatMap((source) => {
-    const items = (skills ?? []).filter((sk) => sk.source === source);
-    return items.length === 0
+  const skillItem = (sk: InvocableSkill): ComposerMenuItem => {
+    const tags = [
+      ...(sk.manual ? [t("skillTag.manual")] : []),
+      ...(sk.fork ? [t("skillTag.fork")] : []),
+    ];
+    const description = [...tags, ...(sk.description !== "" ? [sk.description] : [])].join(" · ");
+    return {
+      id: sk.id,
+      label: sk.name,
+      icon: "skills",
+      ...(sk.argumentHint !== undefined ? { hint: sk.argumentHint } : {}),
+      ...(description !== "" ? { description } : {}),
+      ...(sk.plugin !== undefined ? { keywords: [`${sk.plugin}:${sk.name}`] } : {}),
+      onSelect: () => {
+        picked();
+        setSkill(sk);
+      },
+    };
+  };
+
+  /** The `/` menu: skills by source, connector prompts by connector, unavailable connectors. */
+  const slashContent = (): ComposerMenuGroup[] => [
+    // a heading per source (project root §4.6): the conversation's project first, then the
+    // agent's own, the library's and the plugins'
+    ...SKILL_SOURCES.flatMap((source) => {
+      const items = (skills ?? []).filter((sk) => sk.source === source);
+      return items.length === 0
+        ? []
+        : [
+            {
+              id: `skills-${source}`,
+              label: t(`skillSource.${source}`),
+              items: items.map(skillItem),
+            },
+          ];
+    }),
+    ...byConnector(prompts?.prompts ?? []).map((g) => ({
+      id: `prompts-${g.id}`,
+      label: g.label,
+      items: g.items.map(
+        (p): ComposerMenuItem => ({
+          id: p.name,
+          label: p.name,
+          mark: markOf(p.connectorId, p.connectorName),
+          keywords: [`${p.connectorSlug}:${p.name}`, ...(p.title ? [p.title] : [])],
+          ...(p.description ? { description: p.description } : {}),
+          onSelect: () => {
+            picked();
+            pickPrompt(p);
+          },
+        }),
+      ),
+    })),
+    ...unavailableGroup(prompts?.unavailable),
+  ];
+
+  /** The `@` menu: the kernel's matches grouped by connector (one connector's when scoped). */
+  const atContent = (scope: MenuState["scope"]): ComposerMenuGroup[] => {
+    const only = typeof scope === "object" ? scope.connectorId : undefined;
+    const list = (resources?.resources ?? []).filter(
+      (r) => only === undefined || r.connectorId === only,
+    );
+    return [
+      ...byConnector(list).map((g) => ({
+        id: `resources-${g.id}`,
+        label: g.label,
+        items: g.items.map(
+          (r): ComposerMenuItem => ({
+            id: r.uri,
+            label: r.name,
+            description: r.uri,
+            mark: markOf(r.connectorId, r.connectorName),
+            onSelect: () => {
+              picked();
+              attach(r);
+            },
+          }),
+        ),
+      })),
+      ...unavailableGroup(
+        resources?.unavailable.filter((u) => only === undefined || u.connectorId === only),
+      ),
+    ];
+  };
+
+  /** The ＋ menu (spec §2): Add, Abilities, then one row per usable connector. */
+  const plusContent = (): ComposerMenuGroup[] => {
+    const usable = (connectorList ?? []).filter((c) => c.status === "active");
+    return [
+      {
+        id: "add",
+        label: t("composerMenu.add"),
+        items: [
+          {
+            id: "upload",
+            label: t("composerMenu.upload"),
+            icon: "upload",
+            ...(drafts.limits.available
+              ? {}
+              : { disabled: true, description: t("filesUnavailable") }),
+            onSelect: () => {
+              setMenu(null);
+              fileInput.current?.click();
+            },
+          },
+          // the file library row joins with the file library, project files with their picker
+          {
+            id: "resources",
+            label: t("composerMenu.resources"),
+            icon: "connector",
+            onSelect: () => openAt("resources"),
+          },
+        ],
+      },
+      {
+        id: "abilities",
+        label: t("composerMenu.abilities"),
+        items: [
+          {
+            id: "skills",
+            label: t("composerMenu.skills"),
+            icon: "skills",
+            onSelect: openSlash,
+          },
+        ],
+      },
+      {
+        id: "connectors",
+        label: t("composerMenu.connectors"),
+        items: usable.map((c): ComposerMenuItem => {
+          const description = connectorDescriptionOf(c, locale);
+          const waiting = c.setup === "needs_config";
+          return {
+            id: c.id,
+            label: c.name,
+            mark: { text: c.name, ...(c.icon ? { image: c.icon } : {}) },
+            ...(description !== null ? { description } : {}),
+            ...(waiting ? { disabled: true, badge: t("composerMenu.needsConfig") } : {}),
+            onSelect: () => openAt({ connectorId: c.id }),
+          };
+        }),
+      },
+    ];
+  };
+
+  const contentGroups: ComposerMenuGroup[] =
+    menu === null
       ? []
-      : [{ label: t(`skillSource.${source}`), items: items.map(skillItem) }];
-  });
-  const contentGroups: CommandGroup[] =
-    palette === "prompts"
-      ? [
-          ...skillGroups,
-          ...byConnector(prompts?.prompts ?? []).map((g) => ({
-            label: g.label,
-            items: g.items.map((p) => ({
-              id: `prompt:${p.connectorId}:${p.name}`,
-              label: promptCommand(p),
-              search: p.name,
-              ...(p.description ? { description: p.description } : {}),
-              onSelect: () => {
-                picked();
-                pickPrompt(p);
-              },
-            })),
-          })),
-          ...unavailableGroup(prompts?.unavailable),
-        ]
-      : palette === "resources"
-        ? [
-            ...byConnector(resources?.resources ?? []).map((g) => ({
-              label: g.label,
-              items: g.items.map((r) => ({
-                id: `resource:${r.connectorId}:${r.uri}`,
-                label: `${r.name} · ${r.uri}`,
-                onSelect: () => {
-                  picked();
-                  attach(r);
-                },
-              })),
-            })),
-            ...unavailableGroup(resources?.unavailable),
-          ]
-        : [];
+      : menu.kind === "slash"
+        ? slashContent()
+        : menu.kind === "at"
+          ? atContent(menu.scope)
+          : plusContent();
 
   // The built-in /compact command (context compaction spec §4.10) is always in the `/` menu, after
-  // what the agent offers (a command never takes the first Enter meant for a skill). It is not part
-  // of the `@` palette (there it would sit above the resources and start a compaction). With
-  // nothing invocable the "no skills selected" guidance (spec §5 rule 11) stands below the list,
-  // next to the command; `/compact` is also still typed and parsed.
-  const commandGroup: CommandGroup | null =
-    palette === "prompts" && onCompact !== undefined
+  // what the agent offers (a command never takes the first Enter meant for a skill: the groups
+  // keep their order whatever the query). It is not part of the `@` menu. With nothing invocable
+  // the "no skills selected" guidance (spec §5 rule 11) stands below the list, next to the
+  // command; `/compact` is also still typed and parsed.
+  const commandGroup: ComposerMenuGroup | null =
+    menu?.kind === "slash" && onCompact !== undefined
       ? {
+          id: "commands",
           label: t("commandsGroup"),
           items: [
             {
-              id: "command:compact",
-              label: "/compact",
+              id: "compact",
+              label: "compact",
+              icon: "terminal",
               description: t("compactCommandHint"),
               onSelect: () => {
-                picked();
+                const rest = withoutTrigger();
+                setMenu(null);
                 if (running) {
+                  setText(rest);
                   toast.error(t("compactBusy"));
                   return;
                 }
-                void runCompact(text);
+                setText(rest);
+                void runCompact(rest);
               },
             },
           ],
         }
       : null;
-  const groups: CommandGroup[] =
+  const groups: ComposerMenuGroup[] =
     commandGroup !== null ? [...contentGroups, commandGroup] : contentGroups;
-  // Nothing to invoke (a skill or a prompt) but the command is offered: the guidance stands under
-  // the list instead of replacing it.
-  const notice =
-    palette === "prompts" && commandGroup !== null && contentGroups.length === 0
-      ? skillsHref !== undefined
-        ? { text: t("noInvocable"), action: { label: t("noInvocableAction"), href: skillsHref } }
-        : { text: t("noInvocableReadOnly") }
-      : undefined;
+  // Nothing to invoke (a skill or a prompt): the guidance stands under the list (next to the
+  // command when there is one, else as the empty line with the link under it).
+  const noInvocable = menu?.kind === "slash" && contentGroups.length === 0;
+  const guidance = skillsHref !== undefined ? t("noInvocable") : t("noInvocableReadOnly");
+  const guidanceAction =
+    skillsHref !== undefined ? { label: t("noInvocableAction"), href: skillsHref } : undefined;
+  const menuProps: ComposerMenuProps | null =
+    menu === null
+      ? null
+      : {
+          kind: menu.kind,
+          groups,
+          query,
+          // the `@` menu's rows are the kernel's matches already
+          filter: menu.kind !== "at",
+          loading:
+            menu.kind === "at" &&
+            (resourcesQ.isFetching || searched !== atQuery) &&
+            !resourcesQ.isError,
+          empty:
+            menu.kind === "at" && resourcesQ.isError
+              ? errorMessage(resourcesQ.error)
+              : noInvocable && commandGroup === null
+                ? guidance
+                : menu.kind === "at"
+                  ? t("composerMenu.noResources")
+                  : t("composerMenu.noMatch"),
+          ...(noInvocable
+            ? commandGroup !== null
+              ? {
+                  notice: { text: guidance, ...(guidanceAction ? { action: guidanceAction } : {}) },
+                }
+              : guidanceAction
+                ? { notice: { action: guidanceAction } }
+                : {}
+            : {}),
+          onClose: () => setMenu(null),
+          onSwitch: (kind) => (kind === "at" ? openAt() : openSlash()),
+          onQueryChange: (q) => {
+            if (menu.at === null) {
+              setMenu({ ...menu, q });
+              return;
+            }
+            setText(text.slice(0, menu.at + 1) + q + text.slice(menu.end));
+            setMenu({ ...menu, end: menu.at + 1 + q.length });
+          },
+          searchLabel: t("composerMenu.search"),
+        };
+  const menuController = useComposerMenu(menuProps);
 
   const missingArgs =
     argsFor?.arguments.filter((a) => a.required && (args[a.name] ?? "").trim() === "") ?? [];
@@ -822,11 +1090,23 @@ export function ComposerBar({
             ),
           }
         : {})}
+      // ＋ opens the ＋ menu (its upload row is the file picker) and closes it again
       onAttach={() => {
-        if (!drafts.limits.available) toast.error(t("filesUnavailable"));
-        else fileInput.current?.click();
+        if (menu?.kind === "plus") {
+          setMenu(null);
+          return;
+        }
+        openMenu({ kind: "plus", at: null, end: 0, q: "" });
+        refocus();
       }}
-      attachDisabled={!drafts.limits.available}
+      attachOpen={menu?.kind === "plus"}
+      menu={{
+        ...(menuProps !== null
+          ? { node: <ComposerMenu {...menuProps} controller={menuController} /> }
+          : {}),
+        combobox: menuController.combobox,
+        onKeyDown: menuController.onKeyDown,
+      }}
       pickers={pickers}
       // one mode button before send holds the profile and the effort (from 640 up)
       {...(pickers.permission !== undefined
@@ -883,29 +1163,6 @@ export function ComposerBar({
           e.target.value = "";
           if (picked.length > 0) addFiles(picked);
         }}
-      />
-      <CommandPalette
-        open={palette !== null}
-        onOpenChange={(open) => {
-          if (open) return;
-          setPalette(null);
-          const tr = trigger.current;
-          trigger.current = null;
-          // Nothing picked: the trigger character goes back where it was typed.
-          if (tr && !tr.picked) {
-            setText((cur) => cur.slice(0, tr.pos) + tr.char + cur.slice(tr.pos));
-          }
-        }}
-        groups={groups}
-        {...(notice !== undefined ? { notice } : {})}
-        {...(palette === "prompts" && groups.length === 0
-          ? skillsHref !== undefined
-            ? {
-                emptyText: t("noInvocable"),
-                emptyAction: { label: t("noInvocableAction"), href: skillsHref },
-              }
-            : { emptyText: t("noInvocableReadOnly") }
-          : {})}
       />
       <Dialog
         open={argsFor !== null}

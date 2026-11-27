@@ -77,7 +77,7 @@ describe("leftover queued messages (run input spec 2026-11-07 D3)", () => {
     });
     await renderChatRoute();
     await screen.findByText("first queued");
-    const input = screen.getByRole("textbox", { name: "Message", hidden: true });
+    const input = screen.getByRole("combobox", { name: "Message", hidden: true });
     await userEvent.setup().type(input, "third{Enter}");
     await vi.waitFor(() =>
       expect(calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`)).toHaveLength(

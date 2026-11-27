@@ -426,12 +426,14 @@ export const keys = {
         "connectorMyPolicies",
         connectorId,
       ],
-      /** The connectors' prompts (`/` menu) or resources (`@` menu). */
-      connectorItems: (kind: "prompts" | "resources"): readonly unknown[] => [
-        ...all,
-        "connectorItems",
-        kind,
-      ],
+      /**
+       * The connectors' prompts (`/` menu) or resources (`@` menu; one entry per search text, all
+       * under the `resources` prefix).
+       */
+      connectorItems: (kind: "prompts" | "resources", query?: string): readonly unknown[] =>
+        query === undefined
+          ? [...all, "connectorItems", kind]
+          : [...all, "connectorItems", kind, query],
       /** The extensions' UI contributions (enabled and loaded). */
       contributions: (): readonly unknown[] => [...all, "contributions"],
       /** The org's UI arrangement listing (every arrangeable slot, with the hidden ones). */
