@@ -25,6 +25,7 @@ import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import { seedChatAttachment } from "../helpers/legacy-attachments.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -395,39 +396,9 @@ describe("artifact download URL as JSON (as=url)", () => {
   });
 });
 
-/** Uploads a chat attachment through the presigned flow and finalizes it; returns its id. */
+/** A ready chat attachment of the owner (the rows the send path still binds); returns its id. */
 async function upload(name: string, contentType: string, bytes: Buffer): Promise<string> {
-  const created = await owner({
-    method: "POST",
-    url: `/api/v1/orgs/${orgId}/attachments`,
-    payload: { name, contentType, size: bytes.byteLength },
-  });
-  expect(created.statusCode, created.body).toBe(201);
-  const c = created.json() as {
-    id: string;
-    upload: {
-      method: "PUT" | "POST";
-      url: string;
-      headers: Record<string, string>;
-      fields?: Record<string, string>;
-    };
-  };
-  let up: Response;
-  if (c.upload.method === "PUT") {
-    up = await fetch(c.upload.url, { method: "PUT", headers: c.upload.headers, body: bytes });
-  } else {
-    const form = new FormData();
-    for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, v);
-    form.append("file", new Blob([new Uint8Array(bytes)], { type: contentType }));
-    up = await fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
-  }
-  expect(up.status, await up.clone().text()).toBeLessThan(300);
-  const fin = await owner({
-    method: "POST",
-    url: `/api/v1/orgs/${orgId}/attachments/${c.id}/finalize`,
-  });
-  expect(fin.statusCode, fin.body).toBe(200);
-  return c.id;
+  return seedChatAttachment(k.app, orgId, ownerId, { name, contentType, bytes });
 }
 
 /** Stores an object and writes an attachment row directly (for rows the routes never produce). */

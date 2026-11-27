@@ -70,6 +70,7 @@ import { TOOL_WATCH_TIMINGS } from "../../src/tools/tool-watch-queue.js";
 import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { seedChatAttachment } from "../helpers/legacy-attachments.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -416,38 +417,9 @@ async function catalogItem(name: string): Promise<string> {
   return id;
 }
 
-/** 建、传、finalize 一个附件，返回 id。 */
+/** A ready chat attachment of the owner (the rows the send path still binds); returns its id. */
 async function attach(name: string, bytes: Buffer, contentType = "image/png"): Promise<string> {
-  const created = await owner({
-    method: "POST",
-    url: `/api/v1/orgs/${orgId}/attachments`,
-    payload: { name, contentType, size: bytes.length },
-  });
-  expect(created.statusCode, created.body).toBe(201);
-  const c = created.json() as {
-    id: string;
-    upload: { method: string; url: string; headers: Record<string, string> };
-  } & { upload: { fields?: Record<string, string> } };
-  let up: Response;
-  if (c.upload.method === "PUT") {
-    up = await fetch(c.upload.url, {
-      method: "PUT",
-      headers: c.upload.headers,
-      body: Buffer.from(bytes),
-    });
-  } else {
-    const form = new FormData();
-    for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, v);
-    form.append("file", new Blob([Buffer.from(bytes)], { type: contentType }));
-    up = await fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
-  }
-  expect(up.status).toBeLessThan(300);
-  const f = await owner({
-    method: "POST",
-    url: `/api/v1/orgs/${orgId}/attachments/${c.id}/finalize`,
-  });
-  expect(f.statusCode, f.body).toBe(200);
-  return c.id;
+  return seedChatAttachment(k.app, orgId, ownerId, { name, contentType, bytes });
 }
 
 async function postWithFiles(convId: string, text: string, files: string[]): Promise<void> {

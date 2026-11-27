@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +38,7 @@ import {
 } from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { mirrorFileAsChatAttachment } from "../helpers/legacy-attachments.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { sandboxServiceFor } from "../helpers/sandbox.js";
@@ -192,15 +194,18 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     if (root) await rm(root, { recursive: true, force: true });
   });
 
-  /** 预签名直传一个附件并 finalize，返回 id（建、finalize 分别打在两个副本上）。 */
+  /** Uploads a file through `/files` (create and finalize on different replicas); returns its id. */
   async function uploadAttachment(name: string, contentType: string, bytes: Buffer) {
-    const c = await at(0, "POST", `${base}/attachments`, {
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const c = await at(0, "POST", `${base}/files`, {
       name,
       contentType,
       size: bytes.length,
+      sha256,
+      purpose: "library",
     });
     expect(c.status, JSON.stringify(c.json)).toBe(201);
-    const id = c.json.id as string;
+    const id = (c.json.file as { id: string }).id;
     const up = c.json.upload as {
       method: "PUT" | "POST";
       url: string;
@@ -217,8 +222,10 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
       res = await fetch(up.url, { method: "POST", headers: up.headers, body: form });
     }
     expect(res.status, await res.clone().text()).toBeLessThan(300);
-    const f = await at(1, "POST", `${base}/attachments/${id}/finalize`);
+    const f = await at(1, "POST", `${base}/files/${id}/finalize`, { sha256, purpose: "library" });
     expect(f.status, JSON.stringify(f.json)).toBe(200);
+    // the send path still binds chat attachments: the same id, bytes and owner as one
+    await mirrorFileAsChatAttachment(db, id);
     return id;
   }
 

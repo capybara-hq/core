@@ -1,83 +1,27 @@
-import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
-import { Controller, Get, HttpCode, Inject, Param, Post, Res } from "@nestjs/common";
+import { Controller, Get, Inject, Param, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
+import { ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import {
-  ATTACHMENT_DOWNLOAD_CACHE_SECONDS,
-  type AttachmentLimits,
-  AttachmentsService,
-  type AttachmentView,
-  type CreatedAttachment,
-} from "./attachments.service.js";
+import { ATTACHMENT_DOWNLOAD_CACHE_SECONDS, AttachmentsService } from "./attachments.service.js";
 import { DOWNLOAD_AS } from "./conversations.schemas.js";
-
-const CreateBody = z
-  .object({
-    name: z
-      .string()
-      .min(1)
-      .max(MEDIA_NAME_MAX_CHARS)
-      .refine((s) => !hasControlChars(s), "name must not contain control characters"),
-    contentType: z.string().min(1).max(200),
-    size: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-  })
-  .strict();
-
-class AttachmentCreateBodyDto extends createZodDto(CreateBody, "AttachmentCreateBody") {}
 
 // Not strict: the web adds a cache-busting `retry=1` when it reloads a failed image.
 const DownloadQuery = z.object({ as: DOWNLOAD_AS.optional() });
 class AttachmentDownloadQueryDto extends createZodDto(DownloadQuery, "AttachmentDownloadQuery") {}
 
 /**
- * 对话附件（`/api/v1/orgs/:orgId/attachments`，`agents.use`，只接受人类用户）：
- * 1. `POST /` 登记并取预签名上传（`upload.method` 为 `POST` 时按 multipart 表单：先放 `fields`，最后放 `file`）；
- * 2. 浏览器直传对象存储；
- * 3. `POST /:id/finalize` 核对大小与类型；
- * 4. 发消息时在 `files` 里引用 id。
- * Download: `GET /:id/download` redirects (302) to the presigned URL (`Cache-Control: private,
- * max-age=60`); `?as=url` answers `{ url }` with that address instead. Limits: `GET /limits` (types,
- * per-file size, files per message, the media budget per request, whether storage is available; for the
- * web's pre-checks; needs no object store). Without an object store the other routes answer 503
- * `storage.unavailable`.
+ * Attachment downloads (`/api/v1/orgs/:orgId/attachments`, `agents.use`, people only): `GET
+ * /:id/download` redirects (302) to the presigned URL (`Cache-Control: private, max-age=60`) of a
+ * chat attachment or a `read` copy (an image a tool showed the agent); `?as=url` answers `{ url }`
+ * with that address instead. Without an object store it answers 503 `storage.unavailable`. A
+ * person's uploads go through the file library (`/files`).
  */
 @Controller("api/v1/orgs/:orgId/attachments")
 export class AttachmentsController {
   constructor(@Inject(AttachmentsService) private readonly attachments: AttachmentsService) {}
-
-  @Get("limits")
-  @OrgAction("agents.use")
-  limits(@CurrentPrincipal() principal: Principal): AttachmentLimits {
-    requireUser(principal);
-    return this.attachments.limits();
-  }
-
-  @Post()
-  @OrgAction("agents.use")
-  async create(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @ZBody(AttachmentCreateBodyDto) body: z.infer<typeof CreateBody>,
-  ): Promise<CreatedAttachment> {
-    const p = requireUser(principal);
-    return this.attachments.create(org.orgId, p.account.id, body);
-  }
-
-  @Post(":id/finalize")
-  @HttpCode(200)
-  @OrgAction("agents.use")
-  async finalize(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @Param("id") id: string,
-  ): Promise<AttachmentView> {
-    const p = requireUser(principal);
-    return this.attachments.finalize(org.orgId, p.account.id, id);
-  }
 
   @Get(":id/download")
   @OrgAction("agents.use")

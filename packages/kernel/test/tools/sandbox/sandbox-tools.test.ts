@@ -39,6 +39,7 @@ import {
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
+import { seedChatAttachment } from "../../helpers/legacy-attachments.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
@@ -988,29 +989,16 @@ describe("sandbox tools", () => {
     bytes: Buffer,
     n: number,
   ): Promise<void> {
-    const created = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: { name, contentType: "text/csv", size: bytes.length },
-    });
-    expect(created.statusCode, created.body).toBe(201);
-    const c = created.json() as {
-      id: string;
-      upload: { method: string; url: string; headers: Record<string, string>; fields?: object };
+    const me = (await owner({ method: "GET", url: "/api/v1/me" })).json() as {
+      account: { id: string };
     };
-    const form = new FormData();
-    for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, String(v));
-    form.append("file", new Blob([new Uint8Array(bytes)], { type: "text/csv" }));
-    const up =
-      c.upload.method === "PUT"
-        ? await fetch(c.upload.url, { method: "PUT", headers: c.upload.headers, body: bytes })
-        : await fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
-    expect(up.status).toBeLessThan(300);
-    const fin = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/attachments/${c.id}/finalize`,
-    });
-    expect(fin.statusCode, fin.body).toBe(200);
+    const c = {
+      id: await seedChatAttachment(k.app, orgId, me.account.id, {
+        name,
+        contentType: "text/csv",
+        bytes,
+      }),
+    };
     const sent = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,

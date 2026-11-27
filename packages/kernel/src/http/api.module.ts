@@ -67,6 +67,8 @@ import { TrajectoryController } from "../evals/trajectory.controller.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { ExtensionPointDefaultsController } from "../extensions/point-defaults.controller.js";
 import { FilesModule } from "../files/files.module.js";
+import { LibraryFilesController } from "../files/library.controller.js";
+import { LibraryFilesModule } from "../files/library.module.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";
 import { GitModule } from "../git/git.module.js";
 import { HtmlModule } from "../html/html.module.js";
@@ -184,6 +186,7 @@ const CONTROLLERS: Type[] = [
   DevicesController,
   SchedulesController,
   AttachmentsController,
+  LibraryFilesController,
   SkillsController,
   SkillChangesController,
   AgentSkillsController,
@@ -270,6 +273,8 @@ const CONTROLLERS: Type[] = [
     ChannelsModule,
     EvalsModule,
     FilesModule,
+    // the person's files: uploads, drafts, blobs
+    LibraryFilesModule,
     UiModule,
     InboxModule,
     ThemesModule,

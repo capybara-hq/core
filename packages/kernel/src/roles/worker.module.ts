@@ -25,6 +25,8 @@ import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { PluginsReconcileJob } from "../extensions/lifecycle.js";
 import { LifecycleHookWorkersModule } from "../extensions/lifecycle-hooks.js";
+import { FileDraftCleanupJob } from "../files/draft-cleanup.job.js";
+import { LibraryFilesModule } from "../files/library.module.js";
 import { AccountAvatarCleanupJob } from "../identity/account-avatars.service.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { InitialPasswordCleanupJob } from "../identity/initial-passwords.job.js";
@@ -96,6 +98,8 @@ export class WorkerModule {
         TitlesModule,
         PromptSuggestionsModule,
         AttachmentsModule,
+        // the hourly cleanup of expired uploads and drafts
+        LibraryFilesModule,
         IdentityModule,
         StorageModule,
         SandboxModule,
@@ -118,6 +122,8 @@ export class WorkerModule {
         // the one repair of a run nobody runs (transactional outbox spec §8.3)
         RunOrphanCheck,
         AttachmentCleanupJob,
+        // expired uploads and composer drafts of the file library (file library spec §3)
+        FileDraftCleanupJob,
         StoragePurgeJob,
         SandboxSweepJobs,
         LegacySandboxCleanupJob,

@@ -209,25 +209,32 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Confirms a staged plugin review (reached by the link card of the staged plugin), a trust decision by the person",
   },
   // channels
+  // files (the upload routes; the library's read routes come with their operations)
+  {
+    route: "GET /api/v1/orgs/:orgId/files/limits",
+    category: "internal",
+    reason:
+      "The composer's size check for a person's file into a conversation; an agent gets files by file reference, not by uploading",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/files",
+    category: "internal",
+    reason:
+      "Registers a person's file into a conversation from the composer or the Files page; an agent gets files by file reference (fileId)",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/files/:id/finalize",
+    category: "internal",
+    reason:
+      "Finishes a person's file into a conversation from the composer or the Files page; an agent gets files by file reference (fileId)",
+  },
+  {
+    route: "DELETE /api/v1/orgs/:orgId/files/:id/draft",
+    category: "internal",
+    reason:
+      "Drops a person's file into a conversation that the composer removed before sending; an agent never holds a draft",
+  },
   // attachments
-  {
-    route: "GET /api/v1/orgs/:orgId/attachments/limits",
-    category: "internal",
-    reason:
-      "The composer's size check for a person's file into a conversation; an agent gets files by file reference, not by attaching",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/attachments",
-    category: "internal",
-    reason:
-      "Registers a person's file into a conversation from the composer; an agent gets files by file reference (fileId), not through attachments",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/attachments/:id/finalize",
-    category: "internal",
-    reason:
-      "Finishes a person's file into a conversation from the composer; an agent gets files by file reference (fileId), not through attachments",
-  },
   {
     route: "GET /api/v1/orgs/:orgId/attachments/:id/download",
     category: "transport",

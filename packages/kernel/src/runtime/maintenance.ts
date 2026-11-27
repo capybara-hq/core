@@ -15,6 +15,14 @@ import {
   CONVERSATION_NOTICE_JOB,
   type ConversationNoticeJobData,
 } from "../device-access/conversation-notices.js";
+import {
+  BLOB_DELETE_JOB,
+  type BlobDeleteData,
+  BlobObjects,
+  BlobObjectsModule,
+  FILE_STAGING_DELETE_JOB,
+  type FileStagingDeleteData,
+} from "../files/blob-objects.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { runJob } from "../infra/queue/run-job.js";
@@ -93,7 +101,8 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link DirectorySync}, `run-stop` → {@link Offboarding.stopRun}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
- * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}, `share-object-delete` → {@link ShareObjects}, `platform-icon-delete` →
+ * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}, `share-object-delete` → {@link ShareObjects}, `blob-delete` and `file-staging-delete` →
+ * {@link BlobObjects}, `platform-icon-delete` →
  * {@link PlatformIconObjects}, `device-conversation-notice` → {@link ConversationNoticeDelivery}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
@@ -128,6 +137,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(SandboxOperationReconcileJob)
     private readonly operations: Pick<SandboxOperationReconcileJob, "reconcile" | "revoke">,
     @Inject(ShareObjects) private readonly shareObjects: Pick<ShareObjects, "deleteObject">,
+    @Inject(BlobObjects)
+    private readonly blobObjects: Pick<BlobObjects, "deleteBlob" | "deleteStaging">,
     @Inject(PlatformIconObjects)
     private readonly platformIcons: Pick<PlatformIconObjects, "deleteObject">,
     @Inject(ConversationNoticeDelivery)
@@ -238,6 +249,13 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case SHARE_OBJECT_DELETE_JOB:
         await this.shareObjects.deleteObject(job.data as ShareObjectDeleteData);
         return;
+      // a blob nothing points at any more, or an upload's unused staging object (file library §3)
+      case BLOB_DELETE_JOB:
+        await this.blobObjects.deleteBlob(job.data as BlobDeleteData);
+        return;
+      case FILE_STAGING_DELETE_JOB:
+        await this.blobObjects.deleteStaging(job.data as FileStagingDeleteData);
+        return;
       // a platform icon object no row names any more, or an upload's orphan check (§10.2.1)
       case PLATFORM_ICON_DELETE_JOB:
         await this.platformIcons.deleteObject(job.data as PlatformIconDeleteData);
@@ -292,6 +310,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     ScheduledTaskFireModule,
     // the share snapshot deletion
     ShareObjectsModule,
+    // the file library's blob and staging object deletions
+    BlobObjectsModule,
     // the platform icon object deletion
     PlatformIconObjectsModule,
     // a deleted conversation's notice to its device's services

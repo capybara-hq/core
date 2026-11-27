@@ -10,7 +10,6 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_ATTACHMENT_EXTENSIONS } from "../../src/config/schema.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { TITLE_PROMPT } from "../../src/conversations/titles.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -23,6 +22,7 @@ import { attachmentsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import { seedChatAttachment } from "../helpers/legacy-attachments.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
@@ -139,57 +139,21 @@ beforeEach(async () => {
   other = await session(k, "other");
 });
 
-interface Created {
-  id: string;
-  upload: {
-    method: "PUT" | "POST";
-    url: string;
-    headers: Record<string, string>;
-    fields?: Record<string, string>;
-  };
-  expiresAt: string;
-}
-
-async function create(
-  req: Req,
-  body: { name: string; contentType: string; size: number },
-): Promise<Created> {
-  const res = await req({
-    method: "POST",
-    url: `/api/v1/orgs/${orgId}/attachments`,
-    payload: body,
-  });
-  expect(res.statusCode, res.body).toBe(201);
-  return res.json() as Created;
-}
-
-/** 按返回的预签名表单直传存储（POST：先放 fields，最后放 file）。 */
-async function upload(c: Created, bytes: Uint8Array, contentType: string): Promise<Response> {
-  if (c.upload.method === "PUT") {
-    return fetch(c.upload.url, {
-      method: "PUT",
-      headers: c.upload.headers,
-      body: Buffer.from(bytes),
-    });
-  }
-  const form = new FormData();
-  for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, v);
-  form.append("file", new Blob([Buffer.from(bytes)], { type: contentType }));
-  return fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
-}
-
-const finalize = (req: Req, id: string) =>
-  req({ method: "POST", url: `/api/v1/orgs/${orgId}/attachments/${id}/finalize` });
-
-/** 建、传、finalize 一个附件，返回 id。 */
+/**
+ * A ready, unbound chat attachment as one existed before the file library (its object at
+ * `attachments/<id>`): no route creates them any more, but the send path still binds them until it
+ * attaches library files. The uploader is `req`'s account.
+ */
 async function ready(req: Req, name: string, contentType: string, bytes: Buffer): Promise<string> {
-  const c = await create(req, { name, contentType, size: bytes.length });
-  const up = await upload(c, bytes, contentType);
-  expect(up.status, await up.clone().text()).toBeLessThan(300);
-  const f = await finalize(req, c.id);
-  expect(f.statusCode, f.body).toBe(200);
-  expect(f.json()).toEqual({ id: c.id, name, contentType, size: bytes.length });
-  return c.id;
+  const me = (await req({ method: "GET", url: "/api/v1/me" })).json() as {
+    account: { id: string };
+  };
+  return seedChatAttachment(k.app, orgId, me.account.id, {
+    name,
+    contentType,
+    bytes,
+    pages: contentType === "application/pdf" ? 2 : null,
+  });
 }
 
 const post = (req: Req, convId: string, payload: Record<string, unknown>) =>
@@ -316,33 +280,6 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     expect(texts).toEqual(["x", '[Attachment "gone.png" is no longer available.]']);
   });
 
-  it("finalize 之后经同一预签名表单重传（大小相同、内容不同）：etag 不符，模型与下载都按不再可用处理", async () => {
-    const convId = await conversationWith("see-1");
-    const c = await create(owner, { name: "re.png", contentType: "image/png", size: PNG.length });
-    expect(Date.parse(c.expiresAt) - Date.now()).toBeLessThanOrEqual(300_000);
-    expect(Date.parse(c.expiresAt) - Date.now()).toBeGreaterThan(240_000);
-    expect((await upload(c, PNG, "image/png")).status).toBeLessThan(300);
-    expect((await finalize(owner, c.id)).statusCode).toBe(200);
-    const evil = Buffer.from(PNG);
-    evil[evil.length - 1] = (evil[evil.length - 1] as number) ^ 0xff;
-    expect((await upload(c, evil, "image/png")).status).toBeLessThan(300);
-
-    expect((await post(owner, convId, { text: "x", files: [c.id] })).statusCode).toBe(202);
-    await waitForTerminal(db, convId);
-    const req = agentRequests()[0] as ModelRequest;
-    expect(JSON.stringify(req)).not.toContain(evil.toString("base64"));
-    expect(userBlocks(req).map((b) => (b.type === "text" ? b.text : b.type))).toEqual([
-      "x",
-      '[Attachment "re.png" is no longer available.]',
-    ]);
-    const dl = await owner({
-      method: "GET",
-      url: `/api/v1/orgs/${orgId}/attachments/${c.id}/download`,
-    });
-    expect(dl.statusCode).toBe(404);
-    expect(dl.json().error.code).toBe("attachment.not_found");
-  });
-
   it("finalize 之后对象被换成别的大小：不发字节，按不再可用处理", async () => {
     const convId = await conversationWith("see-1");
     const img = await ready(owner, "swap.png", "image/png", PNG);
@@ -362,125 +299,9 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
   });
 });
 
-describe("校验", () => {
-  it("GET /attachments/limits：组织成员可读上限；非成员 → 404", async () => {
-    const res = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/attachments/limits` });
-    expect(res.statusCode, res.body).toBe(200);
-    expect(res.json()).toEqual({
-      types: [
-        "image/png",
-        "image/jpeg",
-        "image/gif",
-        "image/webp",
-        "application/pdf",
-        "text/plain",
-        "text/markdown",
-        "text/csv",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "application/zip",
-        "application/json",
-      ],
-      extensions: [...DEFAULT_ATTACHMENT_EXTENSIONS],
-      maxBytes: 20_971_520,
-      imageMaxBytes: 5_242_880,
-      maxPerMessage: 10,
-      requestMediaBytes: 20_971_520,
-      available: true,
-    });
-    const other2 = await other({ method: "GET", url: `/api/v1/orgs/${orgId}/attachments/limits` });
-    expect(other2.statusCode).toBe(200);
-    const stranger = await createOrgWithProviders(k, other, "Elsewhere");
-    const denied = await owner({
-      method: "GET",
-      url: `/api/v1/orgs/${stranger}/attachments/limits`,
-    });
-    expect(denied.statusCode).toBe(404);
-  });
-
-  it("类型不在允许列表 → 415；超出大小 → 413；名字非法 → 400", async () => {
-    const url = `/api/v1/orgs/${orgId}/attachments`;
-    // The older binary formats are not in the default accept list; a deployment may add them.
-    const bad = await owner({
-      method: "POST",
-      url,
-      payload: { name: "a.xls", contentType: "application/vnd.ms-excel", size: 10 },
-    });
-    expect(bad.statusCode).toBe(415);
-    expect(bad.json().error.code).toBe("attachment.type_not_allowed");
-    const big = await owner({
-      method: "POST",
-      url,
-      payload: { name: "a.pdf", contentType: "application/pdf", size: 20 * 1024 * 1024 + 1 },
-    });
-    expect(big.statusCode).toBe(413);
-    expect(big.json().error.code).toBe("attachment.too_large");
-    // 图片还受 MEDIA_LIMITS.imageBytes（5 MiB）限制
-    const bigImg = await owner({
-      method: "POST",
-      url,
-      payload: { name: "a.png", contentType: "image/png", size: 5 * 1024 * 1024 + 1 },
-    });
-    expect(bigImg.statusCode).toBe(413);
-    const ctl = await owner({
-      method: "POST",
-      url,
-      payload: { name: "a\u0007.png", contentType: "image/png", size: 10 },
-    });
-    expect(ctl.statusCode).toBe(400);
-  });
-
-  it("finalize：没上传 → 409 not_ready；大小与声明不符 → 拒绝；内容不是声明的类型 → 415", async () => {
-    const c = await create(owner, { name: "a.png", contentType: "image/png", size: PNG.length });
-    const early = await finalize(owner, c.id);
-    expect(early.statusCode).toBe(409);
-    expect(early.json().error.code).toBe("attachment.not_ready");
-
-    // 上传比声明小的文件：存储接受（只限上限），finalize 发现不符
-    const small = await upload(c, PNG.subarray(0, PNG.length - 4), "image/png");
-    expect(small.status).toBeLessThan(300);
-    const mismatch = await finalize(owner, c.id);
-    expect(mismatch.statusCode).toBe(409);
-    expect(mismatch.json().error.code).toBe("attachment.not_ready");
-
-    // 比声明大：存储直接拒绝
-    const c2 = await create(owner, { name: "b.png", contentType: "image/png", size: 10 });
-    const big = await upload(c2, PNG, "image/png");
-    expect(big.status).toBeGreaterThanOrEqual(400);
-
-    // 字节不是 PNG
-    const fake = Buffer.from("definitely not a png");
-    const c3 = await create(owner, { name: "c.png", contentType: "image/png", size: fake.length });
-    expect((await upload(c3, fake, "image/png")).status).toBeLessThan(300);
-    const sniff = await finalize(owner, c3.id);
-    expect(sniff.statusCode).toBe(415);
-    expect(sniff.json().error.code).toBe("attachment.type_not_allowed");
-  });
-
-  it("finalize 只有上传者能做；别人 → 404", async () => {
-    const c = await create(owner, { name: "a.png", contentType: "image/png", size: PNG.length });
-    await upload(c, PNG, "image/png");
-    const r = await finalize(other, c.id);
-    expect(r.statusCode).toBe(404);
-    expect(r.json().error.code).toBe("attachment.not_found");
-  });
-
-  it("消息引用：pending → 409；别人的 → 404；已用于别的对话 → 404；超过 10 个 → 400", async () => {
+describe("消息引用（旧的对话附件）", () => {
+  it("别人的 → 404；已用于别的对话 → 404；超过 10 个 → 400", async () => {
     const convId = await conversationWith("see-1");
-    const pending = await create(owner, {
-      name: "p.png",
-      contentType: "image/png",
-      size: PNG.length,
-    });
-    const r1 = await post(owner, convId, { text: "x", files: [pending.id] });
-    expect(r1.statusCode).toBe(409);
-    expect(r1.json().error.code).toBe("attachment.not_ready");
-    // 细节里带出问题附件的 id：网页据此把对应条目标为出错
-    expect(r1.json().error.details).toEqual([
-      expect.objectContaining({ path: "files", attachmentId: pending.id }),
-    ]);
-
     const theirs = await ready(other, "o.png", "image/png", PNG);
     const r2 = await post(owner, convId, { text: "x", files: [theirs] });
     expect(r2.statusCode).toBe(404);
@@ -717,42 +538,6 @@ describe("openForConversation（沙箱同步用）", () => {
   });
 });
 
-describe("待上传配额", () => {
-  it("同一账号在组织里已有 50 个未 finalize 的附件 → 429 attachment.too_many_pending", async () => {
-    await db
-      .insertInto("attachments")
-      .values(
-        Array.from({ length: 50 }, (_, i) => ({
-          id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
-          org_id: orgId,
-          account_id: ownerId,
-          name: `p${i}.png`,
-          content_type: "image/png",
-          size: 1,
-          object_key: `attachments/p${i}`,
-          status: "pending",
-          expires_at: sql<Date>`now() + interval '1 hour'`,
-        })),
-      )
-      .execute();
-    const body = { name: "a.png", contentType: "image/png", size: PNG.length };
-    const res = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: body,
-    });
-    expect(res.statusCode, res.body).toBe(429);
-    expect(res.json().error.code).toBe("attachment.too_many_pending");
-    // 别的账号不受影响
-    const ok = await other({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: body,
-    });
-    expect(ok.statusCode, ok.body).toBe(201);
-  });
-});
-
 describe("createFromBytes (a Platform write's file)", () => {
   const svc = () => k.app.get(AttachmentsService);
   const rowOf = (id: string) =>
@@ -861,38 +646,44 @@ describe("createFromBytes (a Platform write's file)", () => {
 });
 
 describe("清理", () => {
-  it("超过 24 小时未绑定的附件（pending / ready）连同对象被删除；已绑定的保留", async () => {
-    const stale = await ready(owner, "old.png", "image/png", PNG);
-    const pending = await create(owner, {
-      name: "p.png",
-      contentType: "image/png",
-      size: PNG.length,
-    });
-    await upload(pending, PNG, "image/png");
-    const bound = await ready(owner, "kept.png", "image/png", PNG);
-    const convId = await conversationWith("see-1");
-    expect((await post(owner, convId, { text: "x", files: [bound] })).statusCode).toBe(202);
-    const fresh = await ready(owner, "new.png", "image/png", PNG);
+  it("expired unused avatar uploads go with their objects; chat rows are the file library's and stay", async () => {
+    const stale = await k.app
+      .get(AttachmentsService)
+      .createFromBytes(orgId, ownerId, "agent-avatar", {
+        name: "old.png",
+        contentType: "image/png",
+        bytes: new Uint8Array(PNG),
+      });
+    const chat = await ready(owner, "draft.png", "image/png", PNG);
+    const fresh = await k.app
+      .get(AttachmentsService)
+      .createFromBytes(orgId, ownerId, "agent-avatar", {
+        name: "new.png",
+        contentType: "image/png",
+        bytes: new Uint8Array(PNG),
+      });
     await db
       .updateTable("attachments")
-      .set({
-        created_at: sql<Date>`now() - interval '25 hours'`,
-        expires_at: sql<Date>`now() - interval '1 hour'`,
-      })
-      .where("id", "in", [stale, pending.id, bound])
+      .set({ expires_at: sql<Date>`now() - interval '1 hour'` })
+      .where("id", "in", [stale.id, chat])
       .execute();
 
-    expect(await k.app.get(AttachmentsService).deleteExpired()).toBe(2);
+    expect(await k.app.get(AttachmentsService).deleteExpired()).toBe(1);
     const left = await db.selectFrom("attachments").select("id").execute();
-    expect(left.map((r) => r.id).sort()).toEqual([bound, fresh].sort());
+    expect(left.map((r) => r.id).sort()).toEqual([chat, fresh.id].sort());
     const store = k.app.get(StorageService).kernel(orgId);
-    expect(await store.head(`attachments/${stale}`)).toBeNull();
-    expect(await store.head(`attachments/${pending.id}`)).toBeNull();
-    expect(await store.head(`attachments/${bound}`)).not.toBeNull();
+    expect(await store.head(`agent-avatars/${stale.id}`)).toBeNull();
+    expect(await store.head(`attachments/${chat}`)).not.toBeNull();
   });
 
   it("删对象失败：行保持 deleting、对象还在；下次运行重试成功", async () => {
-    const id = await ready(owner, "old.png", "image/png", PNG);
+    const { id } = await k.app
+      .get(AttachmentsService)
+      .createFromBytes(orgId, ownerId, "agent-avatar", {
+        name: "old.png",
+        contentType: "image/png",
+        bytes: new Uint8Array(PNG),
+      });
     await db
       .updateTable("attachments")
       .set({ expires_at: sql<Date>`now() - interval '1 hour'` })
@@ -923,12 +714,13 @@ describe("清理", () => {
       .where("id", "=", id)
       .executeTakeFirst();
     expect(row?.status).toBe("deleting");
-    expect(await k.app.get(StorageService).kernel(orgId).head(`attachments/${id}`)).not.toBeNull();
+    const key = `agent-avatars/${id}`;
+    expect(await k.app.get(StorageService).kernel(orgId).head(key)).not.toBeNull();
 
     expect(await svc.deleteExpired()).toBe(1);
     expect(
       await db.selectFrom("attachments").select("id").where("id", "=", id).executeTakeFirst(),
     ).toBeUndefined();
-    expect(await k.app.get(StorageService).kernel(orgId).head(`attachments/${id}`)).toBeNull();
+    expect(await k.app.get(StorageService).kernel(orgId).head(key)).toBeNull();
   });
 });

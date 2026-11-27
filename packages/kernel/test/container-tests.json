@@ -32,6 +32,7 @@
   "extensions/lifecycle.dual.test.ts",
   "extensions/m7-segment2.dual.test.ts",
   "extensions/permission-client.test.ts",
+  "files/finalize.dual.test.ts",
   "git/gateway.test.ts",
   "dial-in/gateway.dual.test.ts",
   "dial-in/streams.dual.test.ts",

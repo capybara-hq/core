@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { MEDIA_LIMITS, type PresignedUpload } from "@capybara-hq/plugin-sdk";
+import type { PresignedUpload } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AttachmentPurpose } from "../db/kernel-schema.js";
@@ -18,7 +18,7 @@ import type { MediaBytes, MediaInfo } from "../runtime/context/build.js";
 import { StorageService } from "../storage/storage.service.js";
 import { ConversationAccess } from "./access.js";
 import type { LogContentBlock } from "./events.js";
-import { acceptedContent, isImageContentType, isMediaContentType } from "./media-types.js";
+import { isImageContentType, isMediaContentType } from "./media-types.js";
 import {
   fitImageForModel,
   MODEL_IMAGE_CACHE_SECONDS,
@@ -33,8 +33,6 @@ export const ATTACHMENT_UPLOAD_TTL_SECONDS = 300;
 export const ATTACHMENT_DOWNLOAD_TTL_SECONDS = 300;
 /** 下载 302 的 `Cache-Control: private, max-age=…`（秒）：同一页面里缩略图可复用跳转地址。 */
 export const ATTACHMENT_DOWNLOAD_CACHE_SECONDS = 60;
-/** 同一账号在一个组织里最多的未 finalize 附件数（超过 → 429 `attachment.too_many_pending`）。 */
-export const MAX_PENDING_ATTACHMENTS = 50;
 
 /** 技能包 zip 的内容类型（上传时一律按它签名，finalize 时核对 zip 文件头）。 */
 export const SKILL_PACKAGE_CONTENT_TYPE = "application/zip";
@@ -80,6 +78,9 @@ const READ_PURGE_TREE_LEVELS = 16;
 /** finalize 时读取开头多少字节核对文件签名。 */
 const SNIFF_BYTES = 1024;
 
+/** The purposes registered through {@link AttachmentsService.create} (a presigned upload). */
+export type UploadPurpose = "agent-avatar" | "skill-package";
+
 /** {@link AttachmentsService.storeRead}'s result: the bound copy, or refused by the cap. */
 export type StoreReadResult =
   | { ok: true; attachmentId: string; size: number }
@@ -91,24 +92,6 @@ export interface AttachmentView {
   name: string;
   contentType: string;
   size: number;
-}
-
-/** 附件上限（`GET /attachments/limits`）：网页据此在上传前预检。 */
-export interface AttachmentLimits {
-  /** 允许的内容类型。 */
-  types: string[];
-  /** 与 `types` 并列的允许扩展名（小写、不带点）。 */
-  extensions: string[];
-  /** 非图片的单个上限（字节）。 */
-  maxBytes: number;
-  /** 图片的单个上限（字节，另受 `MEDIA_LIMITS.imageBytes` 限制）。 */
-  imageMaxBytes: number;
-  /** 单条消息最多附件数。 */
-  maxPerMessage: number;
-  /** 单次模型请求里媒体原始字节的预算（网页据此在发送前提醒总大小）。 */
-  requestMediaBytes: number;
-  /** 部署是否配置了对象存储；为 false 时上传不可用。 */
-  available: boolean;
 }
 
 /** {@link AttachmentsService.openForConversation} 的结果。 */
@@ -249,40 +232,18 @@ export class AttachmentsService {
     @Inject(CacheService) private readonly cache: Pick<CacheService, "get" | "set">,
   ) {}
 
-  /** 单个附件的大小上限：配置的 `maxBytes`，图片再受 `MEDIA_LIMITS.imageBytes` 限制。 */
-  private limitFor(contentType: string): number {
-    const { maxBytes } = this.config.get().attachments;
-    return Math.min(
-      maxBytes,
-      isImageContentType(contentType) ? MEDIA_LIMITS.imageBytes : MEDIA_LIMITS.documentBytes,
-    );
-  }
-
-  /** 当前配置下的上限（不需要对象存储）。 */
-  limits(): AttachmentLimits {
-    const cfg = this.config.get().attachments;
-    return {
-      types: [...cfg.allowedTypes],
-      extensions: [...cfg.allowedExtensions],
-      maxBytes: Math.min(cfg.maxBytes, MEDIA_LIMITS.documentBytes),
-      imageMaxBytes: Math.min(cfg.maxBytes, MEDIA_LIMITS.imageBytes),
-      maxPerMessage: cfg.maxPerMessage,
-      requestMediaBytes: cfg.requestMediaBytes,
-      available: this.storage.available,
-    };
-  }
-
   /**
-   * 登记一个附件（`pending`）并返回预签名上传：存储端按声明的大小与类型限制上传。
-   * 类型不在 `attachments.allowedTypes` → `attachment.type_not_allowed`；超过上限 → `attachment.too_large`；
-   * 该账号在组织里已有 {@link MAX_PENDING_ATTACHMENTS} 个未 finalize 的附件 → `attachment.too_many_pending`
-   * （软上限：并发登记可能略超）；没有对象存储 → `storage.unavailable`。
+   * Registers an agent avatar or skill package upload (`pending`) and returns its presigned form;
+   * the store enforces the declared size and type. A type or size the purpose does not take →
+   * `attachment.type_not_allowed` / `attachment.too_large`; too many unfinished uploads of the
+   * purpose → `attachment.too_many_pending` (a soft cap); no object store → `storage.unavailable`.
+   * A person's files go through the file library (`LibraryFilesService`), never here.
    */
   async create(
     orgId: string,
     accountId: string,
     input: { name: string; contentType: string; size: number },
-    purpose: AttachmentPurpose = "chat",
+    purpose: UploadPurpose,
   ): Promise<CreatedAttachment> {
     this.storage.assertAvailable();
     const { contentType, ttlHours } = await this.admit(orgId, accountId, purpose, input, false);
@@ -324,31 +285,23 @@ export class AttachmentsService {
   private async admit(
     orgId: string,
     accountId: string,
-    purpose: AttachmentPurpose,
+    purpose: UploadPurpose,
     input: { contentType: string; size: number },
     countStored: boolean,
   ): Promise<{ contentType: string; ttlHours: number }> {
-    const cfg = this.config.get().attachments;
     const contentType = normalizeContentType(input.contentType);
     const skill = purpose === "skill-package";
-    const avatar = purpose === "agent-avatar";
     if (
       skill
         ? contentType !== SKILL_PACKAGE_CONTENT_TYPE
-        : avatar
-          ? !(AGENT_AVATAR_CONTENT_TYPES as readonly string[]).includes(contentType)
-          : !cfg.allowedTypes.includes(contentType)
+        : !(AGENT_AVATAR_CONTENT_TYPES as readonly string[]).includes(contentType)
     ) {
       throw new ApiError(
         "attachment.type_not_allowed",
         `Attachment type ${JSON.stringify(contentType)} is not allowed`,
       );
     }
-    const limit = skill
-      ? SKILL_PACKAGE_UPLOAD_MAX_BYTES
-      : avatar
-        ? AGENT_AVATAR_MAX_BYTES
-        : this.limitFor(contentType);
+    const limit = skill ? SKILL_PACKAGE_UPLOAD_MAX_BYTES : AGENT_AVATAR_MAX_BYTES;
     if (input.size > limit) {
       throw new ApiError(
         "attachment.too_large",
@@ -374,22 +327,14 @@ export class AttachmentsService {
           : eb("status", "=", "pending"),
       )
       .executeTakeFirst();
-    const maxPending = skill
-      ? MAX_PENDING_SKILL_PACKAGES
-      : avatar
-        ? MAX_PENDING_AGENT_AVATARS
-        : MAX_PENDING_ATTACHMENTS;
+    const maxPending = skill ? MAX_PENDING_SKILL_PACKAGES : MAX_PENDING_AGENT_AVATARS;
     if (Number(pending?.n ?? 0) >= maxPending) {
       throw new ApiError(
         "attachment.too_many_pending",
         `Too many unfinished uploads (at most ${maxPending}); finish or wait for them first`,
       );
     }
-    const ttlHours = skill
-      ? SKILL_PACKAGE_TTL_HOURS
-      : avatar
-        ? AGENT_AVATAR_TTL_HOURS
-        : cfg.unboundTtlHours;
+    const ttlHours = skill ? SKILL_PACKAGE_TTL_HOURS : AGENT_AVATAR_TTL_HOURS;
     return { contentType, ttlHours };
   }
 
@@ -517,8 +462,9 @@ export class AttachmentsService {
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .where("status", "in", ["pending", "ready"])
-      // read copies are the kernel's own (storeRead binds them); nobody finalizes them
-      .where("purpose", "<>", "read")
+      // read copies are the kernel's own (storeRead binds them); a person's files are finalized
+      // by the file library
+      .where("purpose", "in", ["agent-avatar", "skill-package"])
       .executeTakeFirst();
     if (!row) throw notFound();
     const view: AttachmentView = {
@@ -721,6 +667,10 @@ export class AttachmentsService {
   }
 
   /**
+   * Kept only until the send path attaches through the file library
+   * (`LibraryFilesService.attachForMessage`): it binds chat attachment rows, which no route
+   * creates any more.
+   *
    * 发消息时在调用方事务里绑定附件（行锁），返回写进 user_message 的媒体块（`ref`，按 ids 顺序）：
    * - 超过 `attachments.maxPerMessage`、或同一个 id 出现多次 → `validation_failed`；
    * - 不存在、不是发送者上传的、已绑定到别的会话、未绑定且已过期 → `attachment.not_found`；
@@ -1362,6 +1312,8 @@ export class AttachmentsService {
               .selectFrom("attachments")
               .select("id")
               .where("conversation_id", "is", null)
+              // chat rows are the file library's now (a migrated draft's object is a blob's)
+              .where("purpose", "<>", "chat")
               .where("expires_at", "<", sql<Date>`now()`)
               .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
               .orderBy("expires_at")

@@ -211,6 +211,10 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       { error: () => {}, warn: (...a: unknown[]) => void warned.push(a) },
       { reconcile: async () => {}, revoke: async () => {} },
       { deleteObject: async (d) => void calls.push(["share-object-delete", d]) },
+      {
+        deleteBlob: async (d) => void calls.push(["blob-delete", d]),
+        deleteStaging: async (d) => void calls.push(["file-staging-delete", d]),
+      },
       { deleteObject: async (d) => void calls.push(["platform-icon-delete", d]) },
       {
         attempt: async (orgId, noticeId, opts) => {
@@ -238,6 +242,9 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     await processor.process(job("sched-settle", { taskRunId: "tr1", check: 2 }));
     const shareObject = { orgId: "o", shareId: "s1", generation: 1, objectKey: "shares/s1/1" };
     await processor.process(job("share-object-delete", shareObject));
+    await processor.process(job("blob-delete", { orgId: "o", blobId: "b1" }));
+    const staging = { orgId: "o", fileId: "f1", objectKey: "uploads/f1" };
+    await processor.process(job("file-staging-delete", staging));
     const iconObject = { purpose: "app", objectKey: `platform-icons/app-${"a".repeat(64)}.png` };
     await processor.process(job("platform-icon-delete", iconObject));
     await processor.process(job("device-conversation-notice", { orgId: "o", noticeId: "n1" }));
@@ -263,6 +270,8 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["sched-fire", "tr1"],
       ["sched-settle", { taskRunId: "tr1", check: 2 }],
       ["share-object-delete", shareObject],
+      ["blob-delete", { orgId: "o", blobId: "b1" }],
+      ["file-staging-delete", staging],
       ["platform-icon-delete", iconObject],
       // the prompt attempt runs on a short device budget
       ["conversation-notice", "o", "n1", 5_000],

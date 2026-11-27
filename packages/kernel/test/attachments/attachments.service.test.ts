@@ -11,6 +11,7 @@ import {
   isImageContentType,
   isMediaContentType,
 } from "../../src/conversations/media-types.js";
+import { LibraryFilesService } from "../../src/files/library-files.service.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import { attachmentsFor } from "../helpers/conversations.js";
 
@@ -32,7 +33,12 @@ describe("AttachmentsService", () => {
     });
     const orgId = "00000000-0000-4000-8000-000000000001";
     for (const p of [
-      svc.create(orgId, "acc", { name: "a.png", contentType: "image/png", size: 1 }),
+      svc.create(
+        orgId,
+        "acc",
+        { name: "a.png", contentType: "image/png", size: 1 },
+        "agent-avatar",
+      ),
       svc.finalize(orgId, "acc", "id"),
       svc.downloadUrl(orgId, "acc", "id"),
     ]) {
@@ -41,20 +47,24 @@ describe("AttachmentsService", () => {
     expect(await svc.deleteExpired()).toBe(0);
   });
 
-  it("limits：允许的类型、单个上限（图片另受 MEDIA_LIMITS 限制）与每条条数；没有存储也能读", () => {
+  it("file upload limits: the accepted types, one file's limit (images also bound by MEDIA_LIMITS) and files per message; readable without storage", () => {
     const mk = (attachments: Record<string, unknown>) =>
-      attachmentsFor({
-        storage: new PrefixedStorage({ provider: () => undefined, plugins: async () => [] }),
-        config: () =>
-          KernelConfigSchema.parse({
-            db: { url: "postgres://x" },
-            redis: { url: "redis://x" },
-            masterKey: Buffer.alloc(32, 7).toString("base64"),
-            attachments,
-          }),
-        canAccessConversation: async () => true,
-        log: { info() {}, warn() {} },
-      });
+      new LibraryFilesService(
+        {} as never,
+        {} as never,
+        new PrefixedStorage({ provider: () => undefined, plugins: async () => [] }),
+        {
+          get: () =>
+            KernelConfigSchema.parse({
+              db: { url: "postgres://x" },
+              redis: { url: "redis://x" },
+              masterKey: Buffer.alloc(32, 7).toString("base64"),
+              attachments,
+            }),
+        },
+        {} as never,
+        {} as never,
+      );
     expect(mk({}).limits()).toEqual({
       types: [
         "image/png",

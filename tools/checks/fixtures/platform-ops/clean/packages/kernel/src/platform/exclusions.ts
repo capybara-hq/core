@@ -10,18 +10,23 @@ export const PLATFORM_EXCLUSIONS = [
     reason: "Serves the web's own refresh.",
   },
   {
-    route: "GET /api/v1/orgs/:orgId/attachments/limits",
+    route: "GET /api/v1/orgs/:orgId/files/limits",
     category: "internal",
     reason: "The composer's size check for a person's file into a conversation.",
   },
   {
-    route: "POST /api/v1/orgs/:orgId/attachments",
+    route: "POST /api/v1/orgs/:orgId/files",
     category: "internal",
     reason: "Registers a person's file into a conversation; an agent gets files by reference.",
   },
   {
-    route: "POST /api/v1/orgs/:orgId/attachments/:id/finalize",
+    route: "POST /api/v1/orgs/:orgId/files/:id/finalize",
     category: "internal",
     reason: "Finishes a person's file into a conversation.",
+  },
+  {
+    route: "DELETE /api/v1/orgs/:orgId/files/:id/draft",
+    category: "internal",
+    reason: "Drops a person's file into a conversation before it is sent.",
   },
 ];

@@ -32,8 +32,10 @@ export const PLATFORM_EXCLUSIONS = [
     category: "transport",
     reason: "Takes bytes.",
   },
-  // platform-op-upload: an attachment route is internal and names a person's file into a conversation
-  { route: "POST /api/v1/orgs/:orgId/attachments", category: "transport", reason: "Creates a presigned upload" },
+  // platform-op-upload: a file upload route is internal and names a person's file into a conversation
+  { route: "POST /api/v1/orgs/:orgId/files", category: "transport", reason: "Creates a presigned upload" },
+  // platform-op-upload: the attachment routes are exempt no more ("upload" is no reason there either)
+  { route: "POST /api/v1/orgs/:orgId/attachments", category: "internal", reason: "Registers a person's file into a conversation as an upload" },
   // platform-op-literal: route is not a literal
   { route: ROUTE, category: "internal", reason: "Dynamic." },
 ];

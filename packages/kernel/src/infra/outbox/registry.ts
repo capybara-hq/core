@@ -51,6 +51,24 @@ export const OUTBOX_JOBS = {
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
     opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
   },
+  // `files/blob-objects.ts` BLOB_DELETE_JOB: owed with a blob turned `deleting` (an upload dropped
+  // before use whose own blob nothing else points at; the blob sweep), under `blobDeleteJobId`
+  "blob-delete": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Deletes the object and row only of a blob still in deleting status that no file or share points at; deleting a missing object is a no-op",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
+  // `files/blob-objects.ts` FILE_STAGING_DELETE_JOB: owed by a finalize that reused another blob, a
+  // discard and the draft cleanup, under `fileStagingDeleteJobId`
+  "file-staging-delete": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Deletes the file's own staging key only when the file is no longer uploading and no blob names that key; deleting a missing object is a no-op",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
   // `themes/platform-icon-objects.ts` PLATFORM_ICON_DELETE_JOB: owed by an icon upload (its own
   // object's delayed orphan check), a replace and a clear (the object the row stopped naming)
   "platform-icon-delete": {
