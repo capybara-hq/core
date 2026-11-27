@@ -566,18 +566,18 @@ describe("AgentDetail (§6.16.28, level 2)", () => {
     expect(rule(".cb-amap-foot > .cb-btn")).toMatch(/flex: 1;/);
   });
 
-  it("the task and background sections are collapsible", async () => {
+  it("the prompt and background sections are collapsible", async () => {
     wrap(detail());
     const toggle = (name: RegExp) => screen.getByRole("button", { name });
     // Collapsed at first; the tool calls are open.
-    expect(toggle(/^任务/).getAttribute("aria-expanded")).toBe("false");
+    expect(toggle(/^提示词/).getAttribute("aria-expanded")).toBe("false");
     expect(toggle(/^后台任务/).getAttribute("aria-expanded")).toBe("false");
     expect(toggle(/^工具调用/).getAttribute("aria-expanded")).toBe("true");
     expect(screen.queryByText(D.task)).toBeNull();
     expect(screen.queryByText("同步 ERP 付款流水")).toBeNull();
 
-    await userEvent.click(toggle(/^任务/));
-    expect(toggle(/^任务/).getAttribute("aria-expanded")).toBe("true");
+    await userEvent.click(toggle(/^提示词/));
+    expect(toggle(/^提示词/).getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText(D.task)).toBeTruthy();
 
     await userEvent.click(toggle(/^后台任务/));
@@ -587,8 +587,18 @@ describe("AgentDetail (§6.16.28, level 2)", () => {
 
     await userEvent.click(toggle(/^工具调用/));
     expect(screen.queryByText("运行核对脚本")).toBeNull();
-    await userEvent.click(toggle(/^任务/));
+    await userEvent.click(toggle(/^提示词/));
     expect(screen.queryByText(D.task)).toBeNull();
+  });
+
+  it("an empty background section says there is none when opened", async () => {
+    wrap(detail({ background: [] }));
+    await userEvent.click(screen.getByRole("button", { name: /^后台任务/ }));
+    const bg = screen.getByRole("region", { name: "后台任务 0" });
+    expect(within(bg).getByText("暂无后台任务")).toBeTruthy();
+    expect(bg.querySelector('[data-part="empty-state"]')?.getAttribute("data-size")).toBe(
+      "compact",
+    );
   });
 
   it("titles the portal dialog with the agent's description", () => {

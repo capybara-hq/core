@@ -272,7 +272,14 @@ export function RailStep({ icon, children }: RailStepProps): JSX.Element {
         <Icon name="hand" size={14} />
       </span>
     );
-  } else mark = <ProcessMark icon={icon} size={14} />;
+  } else {
+    // in a span like the other marks: its ground disc hides the rule behind the icon
+    mark = (
+      <span className="cb-rail-mark" data-part="rail-mark">
+        <ProcessMark icon={icon} size={14} />
+      </span>
+    );
+  }
   return (
     <div className="cb-rail-step" data-part="rail-step" {...row}>
       <span className="cb-rail-gutter" data-part="rail-gutter" aria-hidden="true">

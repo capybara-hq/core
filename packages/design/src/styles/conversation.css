@@ -2561,6 +2561,8 @@ button.cb-file-card:focus-visible {
   height: var(--cb-row-dense);
   color: var(--cb-faint);
 }
+/* Every mark but the dot sits on a ground disc as wide as the gutter, centred on the rule, so the
+   rule stops at the icon instead of running through it (the gutter is above the rule). */
 .cb-rail-gutter > span:not(.cb-rail-dot) {
   display: grid;
   place-items: center;

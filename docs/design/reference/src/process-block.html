@@ -32,7 +32,8 @@
 .p-step:last-of-type::before { bottom: calc(100% - var(--cb-row-dense) / 2); }
 .p-step:not(:last-of-type) { padding-bottom: var(--cb-space-1); }
 .p-gut { position: relative; z-index: 1; display: grid; place-items: center; align-self: start; width: 20px; height: var(--cb-row-dense); color: var(--cb-faint); }
-.p-gut > .p-acc, .p-gut > svg { background: var(--cb-bg); }
+/* every mark but the dot on a 20 px ground disc centred on the rule: the rule never shows through an icon */
+.p-gut > .p-acc, .p-gut > svg { box-sizing: content-box; padding: 3px; border-radius: var(--cb-radius-pill); background: var(--cb-bg); }
 .p-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--cb-line-strong); }
 .p-body { min-width: 0; }
 .p-name { color: var(--cb-muted); font-weight: 600; }

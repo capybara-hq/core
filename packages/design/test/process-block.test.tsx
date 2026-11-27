@@ -236,6 +236,31 @@ describe("ProcessBlock rail", () => {
     expect(gutters[4]?.querySelector('[data-icon="hand"]')).not.toBeNull();
   });
 
+  it("every mark but the dot sits on a ground disc that hides the rule behind it", () => {
+    const { container } = wrap(
+      <ProcessBlock {...base({ open: true })}>
+        <RailStep icon={{ name: "terminal" }}>a</RailStep>
+        <RailStep icon={{ src: "https://x.test/i.png" }}>b</RailStep>
+        <RailStep icon="dot">c</RailStep>
+        <RailStep icon="spinner">d</RailStep>
+        <RailStep icon="hand">e</RailStep>
+      </ProcessBlock>,
+    );
+    // the gutter's only child is a span (the disc), never a bare icon the rule shows through
+    const marks = [...container.querySelectorAll('[data-part="rail-gutter"]')].map(
+      (g) => g.firstElementChild,
+    );
+    expect(marks.map((m) => m?.tagName)).toEqual(["SPAN", "SPAN", "SPAN", "SPAN", "SPAN"]);
+    expect(marks[0]?.getAttribute("data-part")).toBe("rail-mark");
+    expect(marks[1]?.getAttribute("data-part")).toBe("rail-mark");
+    const rules = parseCss(css("conversation.css"));
+    const disc = rules.find((x) => x.selector === ".cb-rail-gutter > span:not(.cb-rail-dot)");
+    expect(disc?.decls.width).toBe("20px");
+    expect(disc?.decls.background).toBe("var(--cb-bg)");
+    const gutter = rules.find((x) => x.selector === ".cb-rail-gutter");
+    expect(gutter?.decls["z-index"]).toBe("1");
+  });
+
   it("pinned content sits under the head, before the rail", () => {
     const { container } = wrap(
       <ProcessBlock {...base({ open: true, pinned: <div data-testid="pin">待办卡</div> })} />,

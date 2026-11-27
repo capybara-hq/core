@@ -256,7 +256,7 @@ describe("SubagentTask", () => {
       <SubagentTask text="列出目录树" agent="研究助手" model="opus 5.5" tools="只读工具" />,
     );
     const task = container.querySelector('[data-part="subagent-task"]');
-    expect(task?.textContent).toContain("任务 · 上级智能体派出");
+    expect(task?.textContent).toContain("提示词 · 上级智能体派出");
     expect(task?.textContent).toContain("列出目录树");
     expect(screen.getByText("研究助手 · 子智能体 · opus 5.5 · 只读工具")).toBeTruthy();
   });
