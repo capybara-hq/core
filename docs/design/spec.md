@@ -4481,7 +4481,6 @@ States: `closed`, `open`, `searching`, `grouped`, `multi`, `disabled-option`, `e
 | principal-picker-empty | empty | color | color.muted |
 | principal-picker-empty | empty | font-size | type.small |
 | principal-picker-loading | loading | color | color.muted |
-| principal-picker | compact | height | control.default |
 | principal-picker-search | compact | height | control.dense |
 | principal-picker-search | compact | border-top-left-radius | radius.sm |
 | principal-picker-option | compact | height | row.default |
