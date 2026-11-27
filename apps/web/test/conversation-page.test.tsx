@@ -155,8 +155,6 @@ describe("the conversation page (ConversationPage)", () => {
     ) as HTMLElement;
     expect(live.getAttribute("role")).toBe("status");
     expect(live.textContent).toBe(en.chat.status.idle);
-    // nothing of the old status bar: no prompt, version or time zone in the page
-    expect(container.querySelector('[data-part="status-bar"]')).toBeNull();
   });
 
   it.each([

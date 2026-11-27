@@ -63,12 +63,6 @@ const page = (over: Partial<ConversationPageProps> = {}): ConversationPageProps 
 });
 
 describe("ConversationPage (§5.4)", () => {
-  it("draws no status bar", () => {
-    wrap(<ConversationPage {...page({ announce: "运行中" })} />);
-    expect(document.querySelector('[data-part="status-bar"]')).toBeNull();
-    expect(document.querySelector(".cb-statusbar")).toBeNull();
-  });
-
   it("announces the run state once, in a polite status inside the middle column", () => {
     render(<ConversationPage {...page({ announce: "运行中" })} />);
     const status = screen.getByRole("status");

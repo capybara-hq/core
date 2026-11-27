@@ -17,7 +17,7 @@ const noop = () => {};
 /** Spec §4: the App Shell layers on their own (the template routes show them together). */
 export function ShellSection() {
   return (
-    <Section title="系统布局 App Shell" note="侧栏 | 内容区：页头、内容、操作行、状态栏">
+    <Section title="系统布局 App Shell" note="侧栏 | 内容区：页头、内容、操作行">
       <Grid columns={1} gap={16}>
         <PageHeader
           path={[

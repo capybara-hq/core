@@ -354,6 +354,16 @@ describe("the AppShell in a shell (after hydration)", () => {
       wide.unmount();
       setAppearance.mockClear();
       window.matchMedia = matchMediaFor(480).matchMedia;
+      const narrow = renderShell();
+      expect(setAppearance).toHaveBeenLastCalledWith({ scheme: "light", background: "#fdfdfc" });
+      narrow.unmount();
+      setAppearance.mockClear();
+      // two viewport segments: the papers lie flush, the top edge is the page
+      const at1280 = matchMediaFor(1280).matchMedia;
+      window.matchMedia = ((q: string) =>
+        q.includes("viewport-segments")
+          ? { ...at1280(q), matches: true }
+          : at1280(q)) as typeof window.matchMedia;
       renderShell();
       expect(setAppearance).toHaveBeenLastCalledWith({ scheme: "light", background: "#fdfdfc" });
     } finally {

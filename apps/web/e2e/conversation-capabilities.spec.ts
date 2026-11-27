@@ -36,7 +36,7 @@ async function newChat(page: Page, agentId: string) {
 // exact: a stopped run's row is named "… 已停止 …" too
 const stopButton = (page: Page) =>
   page.getByRole("button", { name: designZh("composer.stop"), exact: true });
-// the page's run state live region (a run row's status carries the same part, without the role)
+// the page's run state live region (visually hidden, polite)
 const runStatus = (page: Page) =>
   page.locator('[data-part="conv-main"] [role="status"][data-part="run-announce"]');
 

@@ -1317,7 +1317,7 @@ const en: Record<DesignKey, string> = {
   "props.device": "Device",
   "props.lastRun": "Last run",
   "props.total": "Total",
-  "props.rounds": "Rounds",
+  "props.rounds": "Turns",
   "props.hint": "About {name}",
   "composer.message": "Message",
   "composer.attach": "Attach files",

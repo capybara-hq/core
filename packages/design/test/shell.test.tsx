@@ -967,6 +967,20 @@ describe("PageHeader path row and title-row filler (layered shell spec §3)", ()
     }
   });
 
+  it("an object page loading its name (two-segment parent path, loading.title) keeps the path row", () => {
+    stubWidth(1280);
+    zh(<PageHeader path={two} title="" loading={{ title: true }} />);
+    expect(document.querySelector('[data-part="path"]')).toBeTruthy();
+    cleanup();
+    // loaded with a two-segment path it is a first-level page: no path row
+    zh(<PageHeader path={two} title="Agents" />);
+    expect(document.querySelector('[data-part="path"]')).toBeNull();
+    cleanup();
+    // a one-segment path stays first level while its title loads
+    zh(<PageHeader path={[{ label: "acme" }]} title="" loading={{ title: true }} />);
+    expect(document.querySelector('[data-part="path"]')).toBeNull();
+  });
+
   it("3 segments render the path", () => {
     stubWidth(1280);
     zh(<PageHeader path={three} title="研究助手" />);

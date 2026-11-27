@@ -661,7 +661,7 @@ function sidebarBlocks(): ReactNode {
   );
 }
 
-// ── Page header, stat cards, status bar, action row ──────────────────────
+// ── Page header, stat cards, action row ──────────────────────────────────
 
 const L = LIST_PAGE_FIXTURE;
 const F = FORM_PAGE_FIXTURE;

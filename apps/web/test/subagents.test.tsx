@@ -657,7 +657,6 @@ describe("sub-agents on the conversation page", () => {
     await childPanelWith(() =>
       expect(meta().textContent).toBe("Waiting for approval · 6s · Context 50%"),
     );
-    expect(panel().querySelector('[data-part="status-bar"]')).toBeNull();
   });
 
   it("an org agent's name in the task line links to the agent", async () => {

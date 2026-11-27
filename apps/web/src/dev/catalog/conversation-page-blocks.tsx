@@ -619,8 +619,8 @@ function composerBlocks(): ReactNode {
         </Block>
       ))}
       {([43, 86] as const).map((pct) => (
-        <Block key={pct} id={pct > 80 ? "composer-context-meter-over" : "composer-context-meter"}>
-          <ComposerBox {...composerProps("idle")} context={{ pct, over: pct > 80 }} />
+        <Block key={pct} id={pct >= 80 ? "composer-context-meter-over" : "composer-context-meter"}>
+          <ComposerBox {...composerProps("idle")} context={{ pct, over: pct >= 80 }} />
         </Block>
       ))}
       {/* the prompt suggestion as the placeholder, with the touch button drawn (spec §6.16.2) */}

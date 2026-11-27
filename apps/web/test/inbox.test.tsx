@@ -926,7 +926,7 @@ describe("the inbox from the cache", () => {
     expect(approve.disabled).toBe(true);
     // the head shows no pending count while the inbox loads (not "0")
     const count = () => document.querySelector('[data-part="page-header"] .cb-pageheader-count');
-    expect(count()?.textContent ?? "").not.toBe("0");
+    expect(count()).toBeNull();
     await act(async () => release());
     expect(await screen.findAllByText("Fixture [tool_a]")).not.toHaveLength(0);
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
