@@ -3,8 +3,10 @@
 // the service's state directory). It listens on $CAPYBARA_SERVICE_SOCKET, writes `started` into
 // $CAPYBARA_SERVICE_STATE, answers a `request` connection with its body unchanged and echoes every
 // message of a `stream` connection. The kernel's roll check is answered busy while a file `busy`
-// exists in the state directory (its content is the reason), else echoed like any request.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+// exists in the state directory (its content is the reason), else echoed like any request. The
+// kernel's conversation-deleted notice is appended as one line to `notices.log` in the state
+// directory, then echoed.
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 
@@ -44,6 +46,8 @@ const server = createServer((conn) => {
           conn.end(frame(Buffer.from(JSON.stringify({ busy: true, reason }))));
           return;
         }
+        if (msg.toString("utf8").includes('"conversation-deleted"'))
+          appendFileSync(join(state, "notices.log"), `${msg.toString("utf8")}\n`);
         conn.end(frame(msg));
         return;
       }

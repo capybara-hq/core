@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   DEVICE_SERVICE_FILES_DIGEST_VECTOR,
   DEVICE_SERVICE_MAX_MESSAGE,
+  DEVICE_SERVICE_RESTORE_MAX_AGE_MS,
   DEVICE_SERVICE_ROLL_CHECK,
   DEVICE_SERVICE_SOCKET_ENV,
   DEVICE_SERVICE_STATE_ENV,
   deviceServiceFilesDigest,
+  encodeConversationDeleted,
   encodeServiceMessage,
   encodeViewerContext,
   isRollCheck,
+  parseConversationDeleted,
   parseRollCheck,
   parseViewerContext,
   SERVICE_CONNECTION_KINDS,
@@ -152,5 +155,41 @@ describe("roll check", () => {
     });
     for (const other of ['{"busy":false}', '{"busy":"yes"}', '{"ok":false}', "Unknown", "null"])
       expect(parseRollCheck(other)).toEqual({ busy: false });
+  });
+});
+
+describe("conversation-deleted notice", () => {
+  it("round-trips the kernel's body", () => {
+    const body = encodeConversationDeleted("c-1");
+    expect(text(body)).toBe('{"capybara":"conversation-deleted","conversationId":"c-1"}');
+    expect(parseConversationDeleted(body)).toEqual({
+      capybara: "conversation-deleted",
+      conversationId: "c-1",
+    });
+    expect(parseConversationDeleted(text(body))).toEqual(parseConversationDeleted(body));
+  });
+
+  it("reads anything else as null and never throws", () => {
+    for (const other of [
+      DEVICE_SERVICE_ROLL_CHECK,
+      "not json",
+      "[]",
+      "null",
+      '{"capybara":"conversation-deleted"}',
+      '{"capybara":"conversation-deleted","conversationId":""}',
+      '{"capybara":"conversation-deleted","conversationId":7}',
+      '{"kind":"conversation-deleted","conversationId":"c"}',
+    ])
+      expect(parseConversationDeleted(other)).toBeNull();
+    expect(parseConversationDeleted(new Uint8Array([0xff, 0xfe]))).toBeNull();
+    expect(isRollCheck(encodeConversationDeleted("c"))).toBe(false);
+  });
+
+  it("refuses an empty id when encoding", () => {
+    expect(() => encodeConversationDeleted("")).toThrow(TypeError);
+  });
+
+  it("names a ten-minute restore window", () => {
+    expect(DEVICE_SERVICE_RESTORE_MAX_AGE_MS).toBe(600_000);
   });
 });

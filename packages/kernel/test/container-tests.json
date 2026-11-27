@@ -22,6 +22,7 @@
   "conversations/compact.dual.test.ts",
   "conversations/queue.dual.test.ts",
   "conversations/titles.dual.test.ts",
+  "device-access/conversation-notices.test.ts",
   "device-access/viewer.dual.test.ts",
   "evals/m6-segment1.dual.test.ts",
   "evals/runs.dual.test.ts",

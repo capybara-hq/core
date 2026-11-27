@@ -451,6 +451,15 @@ export const OUTBOX_JOBS = {
       removeOnFail: { age: 86_400 },
     },
   },
+  // `device-access/conversation-notices.ts` CONVERSATION_NOTICE_JOB: owed by a conversation's
+  // deletion with its notice row, under `conversationNoticeJobId` (close tabs on delete §4.1)
+  "device-conversation-notice": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "the attempt claims the notice row (a lease) and the service's handling is idempotent; a delivered notice deleted its row, so a repeat finds none",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 1, removeOnComplete: true, removeOnFail: true },
+  },
   // `extensions/lifecycle-hooks.ts` LIFECYCLE_JOB: owed by the transaction that removes a member,
   // deletes an agent or deletes an org, once per subscribing plugin, under `lifecycleJobId`
   // (memory plugin spec §6.3)

@@ -16,6 +16,10 @@ import { AttachmentCleanupJob } from "../conversations/attachments.service.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { PromptSuggestionsModule } from "../conversations/prompt-suggestions.js";
 import { TitlesModule } from "../conversations/titles.js";
+import {
+  ConversationNoticeSweepJob,
+  ConversationNoticesModule,
+} from "../device-access/conversation-notice-delivery.js";
 import { LegacySandboxCleanupJob } from "../devices/legacy-cleanup.job.js";
 import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
@@ -107,6 +111,8 @@ export class WorkerModule {
         ScheduledTaskFireModule,
         // the share snapshots the daily share sweep frees
         ShareObjectsModule,
+        // the owed conversation notices the sweep delivers
+        ConversationNoticesModule,
       ],
       providers: [
         // the one repair of a run nobody runs (transactional outbox spec §8.3)
@@ -116,6 +122,8 @@ export class WorkerModule {
         SandboxSweepJobs,
         LegacySandboxCleanupJob,
         BackgroundTaskPollJob,
+        // owed conversation notices to devices' services (close tabs on delete design §4.3)
+        ConversationNoticeSweepJob,
         // legacy retirement (permission runtime cutover 8.5): bounded, retryable; the sandbox
         // service's inline gate holds without it
         RetireLegacyTasksJob,

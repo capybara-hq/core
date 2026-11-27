@@ -12,6 +12,7 @@ import { QueueModule } from "../infra/queue/queue.module.js";
 import { runJob } from "../infra/queue/run-job.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { deployedSnapshot } from "./deployed-snapshots.js";
 import { ExtensionsModule } from "./extensions.module.js";
 import { deepFreeze, errMsg, type LifecycleHook } from "./hooks.js";
 import { ExtensionHost } from "./host.js";
@@ -66,31 +67,7 @@ export async function queryLifecycleSubscribers(
     .select("s.plugin")
     .distinct()
     .where(sql<boolean>`s.permissions -> 'permissions' -> 'hooks' ? ${mount}`)
-    .where((eb) =>
-      eb.or([
-        eb.exists(
-          eb
-            .selectFrom("extension_installs as i")
-            .select(sql`1`.as("one"))
-            .whereRef("i.name", "=", "s.plugin")
-            .whereRef("i.version", "=", "s.version")
-            .where("i.desired_state", "=", "enabled"),
-        ),
-        eb.exists(
-          eb
-            .selectFrom("extension_replica_status as r")
-            .select(sql`1`.as("one"))
-            .whereRef("r.plugin", "=", "s.plugin")
-            .where("r.state", "<>", "unloaded")
-            .where((r) =>
-              r.or([
-                r("r.version", "=", r.ref("s.version")),
-                r("r.serving_version", "=", r.ref("s.version")),
-              ]),
-            ),
-        ),
-      ]),
-    )
+    .where(deployedSnapshot)
     .orderBy("s.plugin")
     .execute();
   return rows.map((r) => r.plugin);

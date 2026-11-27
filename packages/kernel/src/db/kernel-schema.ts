@@ -1437,6 +1437,30 @@ export interface DeviceProjectsTable {
   created_at: Ts;
 }
 
+/**
+ * 0187: a notice owed to a device's services about a conversation (close tabs on delete design
+ * §4.1): written by the deleting transaction, deleted once delivered.
+ */
+export interface DeviceConversationNoticesTable {
+  id: string;
+  org_id: string;
+  device_id: string;
+  conversation_id: string;
+  kind: "conversation_deleted";
+  created_at: Ts;
+  attempts: ColumnType<number, number | undefined, number>;
+  next_attempt_at: Ts;
+  /** The lease of the attempt under way; null or past: free. */
+  claimed_until: TsNullable;
+  /** The token of the attempt holding the lease (release and delete act only under it). */
+  claim_token: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Consecutive failed attempts (the backoff). */
+  failures: ColumnType<number, number | undefined, number>;
+  /** The service ids (`<extension>.<name>`) that answered the notice. */
+  acked_services: ColumnType<string[], string[] | undefined, string[]>;
+  last_failure: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
 /** 0088_environments.sql, renamed in 0105: the device a member's new conversations use by default. */
 export interface DeviceDefaultsTable {
   org_id: string;
@@ -2001,6 +2025,7 @@ export interface KernelDatabase {
   device_defaults: DeviceDefaultsTable;
   device_machines: DeviceMachinesTable;
   device_projects: DeviceProjectsTable;
+  device_conversation_notices: DeviceConversationNoticesTable;
   background_tasks: BackgroundTasksTable;
   scheduled_tasks: ScheduledTasksTable;
   scheduled_task_runs: ScheduledTaskRunsTable;

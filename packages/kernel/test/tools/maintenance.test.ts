@@ -212,6 +212,12 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       { reconcile: async () => {}, revoke: async () => {} },
       { deleteObject: async (d) => void calls.push(["share-object-delete", d]) },
       { deleteObject: async (d) => void calls.push(["platform-icon-delete", d]) },
+      {
+        attempt: async (orgId, noticeId, opts) => {
+          calls.push(["conversation-notice", orgId, noticeId, opts?.timeoutMs]);
+          return "delivered";
+        },
+      },
     );
     const job = (name: string, data: unknown) => ({ name, data, id: `${name}-1` }) as never;
     await processor.process(job("wait-timeout", { waitId: "w" }), "tok");
@@ -234,6 +240,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     await processor.process(job("share-object-delete", shareObject));
     const iconObject = { purpose: "app", objectKey: `platform-icons/app-${"a".repeat(64)}.png` };
     await processor.process(job("platform-icon-delete", iconObject));
+    await processor.process(job("device-conversation-notice", { orgId: "o", noticeId: "n1" }));
     await processor.process(job("sandbox-suspend-idle", {}));
     // an unknown name fails (BullMQ retries it, a newer replica knows it), never completes unrun
     await expect(processor.process(job("no-such-job", {}))).rejects.toThrow(
@@ -257,6 +264,8 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["sched-settle", { taskRunId: "tr1", check: 2 }],
       ["share-object-delete", shareObject],
       ["platform-icon-delete", iconObject],
+      // the prompt attempt runs on a short device budget
+      ["conversation-notice", "o", "n1", 5_000],
       ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([]);

@@ -25,6 +25,10 @@
  * ({@link parseViewerContext}); a later message of the same shape comes from the panel and is
  * never context. Providers and the device program pass the viewer context through like any
  * stream message.
+ *
+ * **Kernel requests.** Besides the extension's own requests (`ctx.deviceAccess.request`), the
+ * kernel sends two request bodies of its own: the roll check ({@link DEVICE_SERVICE_ROLL_CHECK})
+ * and the conversation-deleted notice ({@link encodeConversationDeleted}).
  */
 
 /**
@@ -73,6 +77,66 @@ export function parseRollCheck(body: Uint8Array | string): DeviceServiceRollChec
     // not JSON: not busy
   }
   return { busy: false };
+}
+
+/**
+ * How long a service may restore state it saved (after a restart, or when its device resumes):
+ * state saved longer ago than this is not restored. The kernel keeps a
+ * {@link encodeConversationDeleted} notice owed for at least this long after the deletion while
+ * the service is not running, so a service that restores within it still learns of the deletion.
+ */
+export const DEVICE_SERVICE_RESTORE_MAX_AGE_MS = 10 * 60_000;
+
+/**
+ * The kernel's notice that a conversation was deleted: a request body the kernel sends every
+ * running service of an extension on the deleted conversation's device, at least once, soon after
+ * the deletion (a device that is offline gets it when it is back; a service that is stopped gets
+ * it when it runs again within {@link DEVICE_SERVICE_RESTORE_MAX_AGE_MS}). The kernel builds it
+ * from the deleted conversation's id. It arrives on a **request** connection only: a stream
+ * message of this shape is a viewer's (panel) input and never the notice, so a service parses it
+ * only on request connections. As with the roll check, the extension's own requests
+ * (`ctx.deviceAccess.request`) reach the same connection kind: a body of this shape sent by the
+ * extension is the extension's to answer for. The service forgets what it keeps for that
+ * conversation and for the conversations whose tree root it is (closes their pages, drops their
+ * state; never shared data such as a browser profile) and answers with any message: the kernel
+ * reads no more than that it answered. Handling it twice must be harmless. A service that does
+ * not know it ignores it, as any unknown body.
+ */
+export interface DeviceServiceConversationDeleted {
+  capybara: "conversation-deleted";
+  conversationId: string;
+}
+
+/** The body of the kernel's conversation-deleted notice (UTF-8 JSON; the provider frames it). */
+export function encodeConversationDeleted(conversationId: string): Uint8Array {
+  if (typeof conversationId !== "string" || conversationId === "")
+    throw new TypeError("encodeConversationDeleted needs a conversation id");
+  return new TextEncoder().encode(
+    JSON.stringify({ capybara: "conversation-deleted", conversationId }),
+  );
+}
+
+/**
+ * Reads a request body as the kernel's conversation-deleted notice: `capybara` is
+ * `"conversation-deleted"` and `conversationId` a non-empty string. Null for anything else (not
+ * UTF-8, not JSON, another shape, the roll check); never throws.
+ */
+export function parseConversationDeleted(
+  body: Uint8Array | string,
+): DeviceServiceConversationDeleted | null {
+  let msg: unknown;
+  try {
+    const text =
+      typeof body === "string" ? body : new TextDecoder("utf-8", { fatal: true }).decode(body);
+    msg = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof msg !== "object" || msg === null || Array.isArray(msg)) return null;
+  const { capybara, conversationId } = msg as Record<string, unknown>;
+  if (capybara !== "conversation-deleted") return null;
+  if (typeof conversationId !== "string" || conversationId === "") return null;
+  return { capybara: "conversation-deleted", conversationId };
 }
 
 /** Names the unix socket path the service listens on. */

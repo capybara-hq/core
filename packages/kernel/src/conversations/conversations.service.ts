@@ -8,6 +8,7 @@ import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { AgentAvatar, AgentAvatarView } from "../agents/profile.js";
 import { unbindConversation } from "../channels/threads.js";
 import type { TitleSource } from "../db/kernel-schema.js";
+import { oweConversationDeletedNotice } from "../device-access/conversation-notices.js";
 import {
   ConversationDevices,
   type NewConversationDevice,
@@ -971,6 +972,14 @@ export class ConversationsService {
     // its shares stop with it and their snapshots are owed for deletion (file sharing spec §9);
     // a share being created waits on the row lock above (`FOR SHARE`) and then finds it deleted
     await revokeSharesIn(this.db.db, this.outbox, { conversationId }, "conversation_deleted");
+    // the device's services (the browser's tabs) forget the conversation: the notice is owed here
+    // and delivered by the worker, an offline device's once it is back (close tabs on delete §4)
+    if (subject.deviceId)
+      await oweConversationDeletedNotice(this.db.db, this.outbox, {
+        orgId,
+        deviceId: subject.deviceId,
+        conversationId,
+      });
   }
 
   /** 读会话：非所有者、或 agent 已对所有者不可用 → `conversation.not_found`。 */
