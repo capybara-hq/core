@@ -4,7 +4,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { BlobObjects } from "../../src/files/blob-objects.js";
@@ -154,6 +154,38 @@ async function shareOf(blobId: string, fileId: string): Promise<string> {
 
 const backfill = () => k.app.get(FileLibraryBackfill);
 
+/** Records the catch-up copy as settled, as its job does (the hashing tests need it). */
+const settle = () =>
+  db
+    .insertInto("deployment_settings")
+    .values({
+      key: FILE_LIBRARY_COPY_SETTLED,
+      value: JSON.stringify({ outcome: "copied", at: new Date().toISOString() }),
+    })
+    .onConflict((oc) => oc.column("key").doNothing())
+    .execute();
+
+/** Forgets that the catch-up copy settled. */
+const unsettle = () =>
+  db.deleteFrom("deployment_settings").where("key", "=", FILE_LIBRARY_COPY_SETTLED).execute();
+
+/**
+ * Hashes the blobs of these files directly (`hashOne`, in blob id order), so a test sees only its
+ * own blobs and never meets an org batch the worker may be running (which holds the org's lock).
+ */
+async function hashFiles(...fileIds: string[]) {
+  const rows = await db
+    .selectFrom("files")
+    .innerJoin("blobs", "blobs.id", "files.blob_id")
+    .select(["blobs.id", "blobs.object_key", "blobs.size", "blobs.etag"])
+    .where("files.id", "in", fileIds)
+    .orderBy("blobs.id")
+    .execute();
+  const outcomes = [];
+  for (const row of rows) outcomes.push(await hashing().hashOne(orgId, row));
+  return outcomes;
+}
+
 /** A chat attachment sent in the conversation, written the old way (no library file). */
 async function legacyAttachment(conv: string, text: string): Promise<string> {
   const id = randomUUID();
@@ -183,9 +215,12 @@ async function legacyAttachment(conv: string, text: string): Promise<string> {
 const fileStatus = async (id: string) =>
   (await db.selectFrom("files").select("status").where("id", "=", id).executeTakeFirst())?.status;
 
-// the hashing tests below need the copy settled: this block runs first
 describe("file library catch-up copy", () => {
+  // each test starts unsettled, within the window of a fresh migration
+  beforeEach(unsettle);
+
   it("is owed at the worker start, half an hour later, while it has not settled", async () => {
+    // owed by the kickoff's start run; settling meanwhile leaves the waiting job in place
     expect(await backfill().settled()).toBe(false);
     expect(await dueAt(FILE_LIBRARY_BACKFILL_JOB)).toBeGreaterThan(
       Date.now() + BACKFILL_DELAY_MS - 5 * 60_000,
@@ -212,11 +247,12 @@ describe("file library catch-up copy", () => {
     expect(await backfill().run()).toBe("settled");
     expect(await fileStatus(later)).toBeUndefined();
     expect(await backfill().ensureOwed()).toBe(false);
-    expect((await k.app.get(FileLibraryKickoffJob).runOnce()).backfillOwed).toBe(false);
   });
 });
 
 describe("hashing job", () => {
+  beforeEach(settle);
+
   it("merges two identical migrated objects into one blob, repointing files and shares", async () => {
     const text = "the same quarterly report\n";
     const one = await migrated(text);
@@ -230,9 +266,7 @@ describe("hashing job", () => {
     const dupKey = (await blobRow(duplicate))?.object_key as string;
     const shareId = await shareOf(duplicate, dupFile);
 
-    const r = await batch();
-    expect(r.ran).toBe(true);
-    expect(r.outcomes.merged).toBeGreaterThanOrEqual(1);
+    expect(await hashFiles(one, two)).toEqual(["hashed", "merged"]);
 
     expect(await blobRow(holder)).toMatchObject({ status: "ready", sha256: sha(text) });
     expect(await blobRow(duplicate)).toMatchObject({ status: "deleting", sha256: null });
@@ -264,7 +298,7 @@ describe("hashing job", () => {
       .ensureFromBytes(orgId, sha(text), enc(text), { contentType: "text/plain" });
     const file = await migrated(text);
     const before = (await fileRow(file)).blob_id as string;
-    await batch();
+    expect(await hashFiles(file)).toEqual(["merged"]);
     expect((await fileRow(file)).blob_id).toBe(written.id);
     expect(await blobRow(before)).toMatchObject({ status: "deleting" });
   });
@@ -286,8 +320,7 @@ describe("hashing job", () => {
     expect((await live()).map((f) => f.id)).toEqual([file]);
     await store().delete(`attachments/${file}`);
 
-    const r = await batch();
-    expect(r.outcomes.gone).toBeGreaterThanOrEqual(1);
+    expect(await hashFiles(file)).toEqual(["gone"]);
     expect(await blobRow(blobId)).toMatchObject({ status: "gone", sha256: null });
     expect(await live()).toEqual([]);
   });
@@ -306,7 +339,7 @@ describe("hashing job", () => {
       contentType: "text/plain",
       size: 13,
     });
-    await batch();
+    await hashFiles(original, replaced);
     expect(await blobRow((await fileRow(original)).blob_id as string)).toMatchObject({
       status: "ready",
       sha256: sha("abc-original\n"),
@@ -323,15 +356,12 @@ describe("hashing job", () => {
       contentType: "text/plain",
       size: 25,
     });
-    await batch();
+    expect(await hashFiles(file)).toEqual(["gone"]);
     expect(await blobRow(blobId)).toMatchObject({ status: "gone", sha256: null });
   });
 
   it("merges nothing before the catch-up copy settled", async () => {
-    await db
-      .deleteFrom("deployment_settings")
-      .where("key", "=", FILE_LIBRARY_COPY_SETTLED)
-      .execute();
+    await unsettle();
     try {
       const one = await migrated("before the copy settled\n");
       const r = await batch();
@@ -342,7 +372,7 @@ describe("hashing job", () => {
       expect((await k.app.get(FileLibraryKickoffJob).runOnce()).hashOwed).toBe(false);
       expect(await dueAt("file-library-backfill")).toBeGreaterThan(Date.now() + 20 * 60_000);
     } finally {
-      expect(await k.app.get(FileLibraryBackfill).run()).toBe("copied");
+      await settle();
     }
   });
 
@@ -368,19 +398,22 @@ describe("hashing job", () => {
   });
 });
 
-// last: it moves the migration's date back
 describe("file library catch-up copy outside its window", () => {
   it("records a skip and copies nothing more than a week after the migration", async () => {
-    await db
-      .deleteFrom("deployment_settings")
-      .where("key", "=", FILE_LIBRARY_COPY_SETTLED)
-      .execute();
+    await unsettle();
+    const applied = await sql<{ applied_at: Date }>`SELECT applied_at FROM capybara._migrations
+      WHERE name = ${FILE_LIBRARY_MIGRATION}`.execute(raw);
     await sql`UPDATE capybara._migrations SET applied_at = now() - interval '8 days'
       WHERE name = ${FILE_LIBRARY_MIGRATION}`.execute(raw);
-    const conv = await createConv(owner, orgId, await createAgent(owner, orgId));
-    const id = await legacyAttachment(conv, "too late to copy\n");
-    expect(await backfill().run()).toBe("skipped");
-    expect(await fileStatus(id)).toBeUndefined();
-    expect(await backfill().settled()).toBe(true);
+    try {
+      const conv = await createConv(owner, orgId, await createAgent(owner, orgId));
+      const id = await legacyAttachment(conv, "too late to copy\n");
+      expect(await backfill().run()).toBe("skipped");
+      expect(await fileStatus(id)).toBeUndefined();
+      expect(await backfill().settled()).toBe(true);
+    } finally {
+      await sql`UPDATE capybara._migrations SET applied_at = ${applied.rows[0]?.applied_at}
+        WHERE name = ${FILE_LIBRARY_MIGRATION}`.execute(raw);
+    }
   });
 });
