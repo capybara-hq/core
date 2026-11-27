@@ -60,7 +60,13 @@ export const OUTBOX_JOBS = {
     idempotent:
       "Deletes the object and row only of a blob still in deleting status that no file or share points at; deleting a missing object is a no-op",
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
-    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+    // removed on failure too: the blob sweep owes a stale deletion again under the same id
+    opts: {
+      attempts: 10,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
   },
   // `files/hash-job.ts` FILE_LIBRARY_HASH_JOB: the hashing dispatcher, owed by the hourly kickoff
   // under its own name as id

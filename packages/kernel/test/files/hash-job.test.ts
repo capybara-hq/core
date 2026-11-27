@@ -315,6 +315,18 @@ describe("hashing job", () => {
     expect(await blobRow(other)).toMatchObject({ status: "gone", sha256: null });
   });
 
+  it("marks a blob gone when its object's size differs and no etag was recorded", async () => {
+    const file = await migrated("size only check\n");
+    const blobId = (await fileRow(file)).blob_id as string;
+    await db.updateTable("blobs").set({ etag: null }).where("id", "=", blobId).execute();
+    await store().put(`attachments/${file}`, enc("longer bytes than before\n"), {
+      contentType: "text/plain",
+      size: 25,
+    });
+    await batch();
+    expect(await blobRow(blobId)).toMatchObject({ status: "gone", sha256: null });
+  });
+
   it("merges nothing before the catch-up copy settled", async () => {
     await db
       .deleteFrom("deployment_settings")

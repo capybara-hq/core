@@ -38,6 +38,9 @@ export const HASH_BATCH = 50;
  */
 export const MERGE_DELETE_DELAY_MS = 60 * 60_000;
 
+/** The longest the read of one blob may take (ms); a store that stalls longer is tried later. */
+export const HASH_READ_TIMEOUT_MS = 10 * 60_000;
+
 /** The lock of one org's hashing (no `:`): one batch chain per org at a time. */
 const orgLockKey = (orgId: string) => `file-library-hash-${orgId}`;
 
@@ -115,13 +118,15 @@ export class FileLibraryHashJob {
   /** Whether any org has a blob to hash (the kickoff's test). */
   anyUnhashed(): Promise<boolean> {
     return asPlatform("file library hashing: whether any blob is unhashed", async () => {
-      // org-filter: deployment-wide existence check of the hashing kickoff
+      // deployment-wide existence check of the hashing kickoff; deleted orgs are left to the purge
       const row = await this.db
         .selectFrom("blobs")
-        .select("id")
-        .where("sha256", "is", null)
-        .where("status", "=", "ready")
-        .where("dedup_after", "<=", sql<Date>`now()`)
+        .innerJoin("orgs", "orgs.id", "blobs.org_id")
+        .select("blobs.id")
+        .where("orgs.deleted_at", "is", null)
+        .where("blobs.sha256", "is", null)
+        .where("blobs.status", "=", "ready")
+        .where("blobs.dedup_after", "<=", sql<Date>`now()`)
         .limit(1)
         .executeTakeFirst();
       return row !== undefined;
@@ -195,7 +200,7 @@ export class FileLibraryHashJob {
         if (handle.lost.aborted) return result;
         let outcome: HashOutcome | "failed";
         try {
-          outcome = await this.hashOne(data.orgId, row);
+          outcome = await this.hashOne(data.orgId, row, handle.lost);
         } catch (err) {
           // transient (storage, a short read): a later pass tries it again
           this.log.warn("cannot hash a file library blob; will retry later", {
@@ -243,9 +248,12 @@ export class FileLibraryHashJob {
   }
 
   /** Hashes one blob and settles the outcome (see the class comment). Throws on transient errors. */
-  async hashOne(orgId: string, row: UnhashedBlob): Promise<HashOutcome> {
+  async hashOne(orgId: string, row: UnhashedBlob, stop?: AbortSignal): Promise<HashOutcome> {
     const recorded = { size: Number(row.size), etag: row.etag };
-    const got = await this.storage.kernel(orgId).get(row.object_key);
+    // a lost org lock or a stuck store ends the read (the blob is tried again on a later pass)
+    const timeout = AbortSignal.timeout(HASH_READ_TIMEOUT_MS);
+    const signal = stop ? AbortSignal.any([stop, timeout]) : timeout;
+    const got = await this.storage.kernel(orgId).get(row.object_key, { signal });
     if (!got) return this.markGone(orgId, row.id);
     if (!blobContentMatches(recorded, got.head)) {
       // replaced after it was recorded (a staging object written again): reads treat it as gone
@@ -257,12 +265,14 @@ export class FileLibraryHashJob {
     const reader = got.body.getReader();
     try {
       for (;;) {
+        signal.throwIfAborted();
         const { done, value } = await reader.read();
         if (done) break;
         hash.update(value);
         read += value.byteLength;
       }
     } finally {
+      if (signal.aborted) await reader.cancel().catch(() => {});
       reader.releaseLock();
     }
     if (read !== recorded.size) {
@@ -290,6 +300,16 @@ export class FileLibraryHashJob {
   private async settleHash(orgId: string, blobId: string, sha256: string): Promise<HashOutcome> {
     const trx = this.db.db;
     await this.hashLock.lock(orgId, sha256);
+    // the rows a merge moves, locked file rows first and then the blob, the order every other
+    // writer of a file and its blob takes (a release, a delete), so the two never deadlock
+    await trx
+      .selectFrom("files")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("blob_id", "=", blobId)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
     const own = await trx
       .selectFrom("blobs")
       .select(["id", "object_key", "etag", "size", "status", "sha256"])

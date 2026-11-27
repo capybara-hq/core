@@ -6,6 +6,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { BlobSweepJob } from "../../src/files/blob-sweep.job.js";
+import { BlobsService } from "../../src/files/blobs.service.js";
+import {
+  FILE_LIBRARY_COPY_SETTLED,
+  FileLibraryBackfill,
+} from "../../src/files/library-backfill.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { accountsFor } from "../helpers/identity.js";
 import { blobKeyOf, markFileDeleted, seedLibraryFile } from "../helpers/library-files.js";
@@ -51,6 +56,8 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   orgId = await createOrgWithProviders(k, await session(k, "owner"));
+  // the catch-up copy settled (the seeded blobs below are unhashed, as migrated ones are)
+  expect(await k.app.get(FileLibraryBackfill).run()).toBe("copied");
 });
 
 afterAll(async () => {
@@ -226,5 +233,69 @@ describe("blob sweep", () => {
       await sweep();
     });
     expect(await blobRow(blobId)).toEqual({ status: "ready" });
+  });
+
+  it("leaves unhashed blobs alone until the catch-up copy settled", async () => {
+    const { blobId } = await orphanBlob("migrated, copy pending", "3 days");
+    const hashed = await orphanBlob("hashed, copy pending", "3 days");
+    await db
+      .updateTable("blobs")
+      .set({ sha256: "a".repeat(64) })
+      .where("id", "=", hashed.blobId)
+      .execute();
+    await db
+      .deleteFrom("deployment_settings")
+      .where("key", "=", FILE_LIBRARY_COPY_SETTLED)
+      .execute();
+    try {
+      await sweep();
+      expect(await blobRow(blobId)).toEqual({ status: "ready" });
+      await deleted(hashed.blobId, hashed.key);
+    } finally {
+      expect(await k.app.get(FileLibraryBackfill).run()).toBe("copied");
+    }
+    await sweep();
+    expect((await blobRow(blobId))?.status).not.toBe("ready");
+  });
+
+  it("restores a stale deleting blob a file still points at, readable again", async () => {
+    const { fileId, blobId } = await seeded("stuck deleting");
+    await ageBlob(blobId, "3 days");
+    // as file_library_copy can leave it: deleting, yet referenced (the deletion job refused it)
+    await db.updateTable("blobs").set({ status: "deleting" }).where("id", "=", blobId).execute();
+    const r = await sweep();
+    expect(r.deletingRestored).toBeGreaterThanOrEqual(1);
+    expect(await blobRow(blobId)).toEqual({ status: "ready" });
+    const blob = await db
+      .selectFrom("blobs")
+      .select(["id", "object_key", "size", "etag"])
+      .where("id", "=", blobId)
+      .executeTakeFirstOrThrow();
+    const opened = await k.app.get(BlobsService).open(orgId, {
+      id: blob.id,
+      objectKey: blob.object_key,
+      size: Number(blob.size),
+      etag: blob.etag,
+    });
+    expect(await new Response(opened?.body).text()).toBe("stuck deleting");
+    expect(await blobOf(fileId)).toBe(blobId);
+  });
+
+  it("marks a stale deleting blob gone when a file points at it but its object is gone", async () => {
+    const { fileId, blobId } = await seeded("deleted under a reference");
+    await store().delete(await blobKeyOf(db, fileId));
+    await ageBlob(blobId, "3 days");
+    await db.updateTable("blobs").set({ status: "deleting" }).where("id", "=", blobId).execute();
+    await sweep();
+    expect(await blobRow(blobId)).toEqual({ status: "gone" });
+  });
+
+  it("owes the deletion of a stale unreferenced deleting blob again, and the worker deletes it", async () => {
+    const { blobId, key } = await orphanBlob("deletion lost", "3 days");
+    // its deletion job ran out of attempts (removed); nothing else owes it
+    await db.updateTable("blobs").set({ status: "deleting" }).where("id", "=", blobId).execute();
+    const r = await sweep();
+    expect(r.deletionsReowed).toBeGreaterThanOrEqual(1);
+    await deleted(blobId, key);
   });
 });

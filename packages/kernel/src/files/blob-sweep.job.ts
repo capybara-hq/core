@@ -12,7 +12,10 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { revokeSharesIn } from "../shares/revoke.js";
+import { StorageService } from "../storage/storage.service.js";
 import { oweBlobDelete } from "./blob-objects.js";
+import { blobContentMatches } from "./blobs.service.js";
+import { FileLibraryBackfill } from "./library-backfill.js";
 
 /** The daily blob sweep's name (scheduler key and lock; no `:`). */
 export const BLOB_SWEEP_JOB = "blob-sweep";
@@ -25,6 +28,13 @@ export const UNREFERENCED_AFTER_HOURS = 24;
 
 /** A `pending` blob with no file is abandoned once it is older than this (hours). */
 export const PENDING_AFTER_HOURS = 1;
+
+/**
+ * A `deleting` blob older than this (hours) is reconciled: its deletion is owed again when nothing
+ * refers to it, it is restored when something does (well past a merge's deferred deletion and the
+ * deletion job's retries).
+ */
+export const STALE_DELETING_AFTER_HOURS = 24;
 
 /** Rows per batch (one transaction per batch). */
 const BATCH = 200;
@@ -39,12 +49,18 @@ export interface BlobSweepResult {
   blobsReleased: number;
   /** Abandoned `pending` blobs that became `deleting`. */
   pendingReleased: number;
+  /** Stale `deleting` blobs nothing refers to whose deletion was owed again. */
+  deletionsReowed: number;
+  /** Stale `deleting` blobs something still refers to, back to `ready` (or `gone`). */
+  deletingRestored: number;
 }
 
 /** Which blobs a release pass takes: their statuses and the age they must have reached. */
 interface ReleaseKind {
   statuses: readonly BlobStatus[];
   olderThanHours: number;
+  /** Only blobs with a sha256 (while the catch-up copy has not settled; see the class comment). */
+  hashedOnly?: boolean;
 }
 
 const UNREFERENCED: ReleaseKind = {
@@ -92,7 +108,15 @@ function unreferenced(orgId: string) {
  *    share refers to become `deleting`, their deletion owed (`blob-delete-<id>`) in the same
  *    transaction;
  * 3. `pending` blobs older than {@link PENDING_AFTER_HOURS} with no file (a kernel write that never
- *    settled) likewise.
+ *    settled) likewise;
+ * 4. `deleting` blobs older than {@link STALE_DELETING_AFTER_HOURS} are reconciled: one nothing
+ *    refers to has its deletion owed again (the job may have run out of attempts); one something
+ *    refers to (only `file_library_copy` inserts a reference without `BlobsService.lockReady`, and
+ *    the deletion job refuses a referenced blob before touching its bytes) is restored: `ready`
+ *    when its object is still the recorded bytes, else `gone`.
+ *
+ * Until the catch-up copy settled ({@link FileLibraryBackfill.settled}) step 2 leaves unhashed
+ * (migrated) blobs alone: the copy may still point new files or shares at them.
  *
  * A claim locks its candidates `FOR UPDATE SKIP LOCKED` (a blob another transaction is pointing a
  * reference at holds `FOR SHARE` through `BlobsService.lockReady` and is skipped), then sets
@@ -109,6 +133,8 @@ export class BlobSweepJob {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
+    @Inject(FileLibraryBackfill) private readonly backfill: Pick<FileLibraryBackfill, "settled">,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
@@ -116,20 +142,29 @@ export class BlobSweepJob {
   @LockedCron(BLOB_SWEEP_CRON, { name: BLOB_SWEEP_JOB })
   async sweep(signal?: AbortSignal): Promise<void> {
     const r = await this.runOnce(signal);
-    if (r.filesDeleted + r.blobsReleased + r.pendingReleased > 0) {
+    if (Object.values(r).some((n) => n > 0)) {
       this.log.info("blob sweep done", { ...r });
     }
   }
 
   /** One sweep without the tick lock (the cron body; tests call it directly). */
   async runOnce(signal?: AbortSignal): Promise<BlobSweepResult> {
-    const r: BlobSweepResult = { filesDeleted: 0, blobsReleased: 0, pendingReleased: 0 };
+    const r: BlobSweepResult = {
+      filesDeleted: 0,
+      blobsReleased: 0,
+      pendingReleased: 0,
+      deletionsReowed: 0,
+      deletingRestored: 0,
+    };
+    const unreferencedKind: ReleaseKind = (await this.backfill.settled())
+      ? UNREFERENCED
+      : { ...UNREFERENCED, hashedOnly: true };
     let after: string | null = null;
     while (!signal?.aborted) {
       const orgs = await this.orgPage(after);
       for (const orgId of orgs) {
         if (signal?.aborted) return r;
-        await withOrgScope(orgId, () => this.sweepOrg(orgId, r, signal));
+        await withOrgScope(orgId, () => this.sweepOrg(orgId, unreferencedKind, r, signal));
       }
       if (orgs.length < ORG_PAGE) break;
       after = orgs.at(-1) as string;
@@ -152,16 +187,29 @@ export class BlobSweepJob {
     });
   }
 
-  /** The three steps for one org (in its scope). */
-  private async sweepOrg(orgId: string, r: BlobSweepResult, signal?: AbortSignal): Promise<void> {
+  /** The four steps for one org (in its scope). */
+  private async sweepOrg(
+    orgId: string,
+    unreferencedKind: ReleaseKind,
+    r: BlobSweepResult,
+    signal?: AbortSignal,
+  ): Promise<void> {
     for (;;) {
       if (signal?.aborted) return;
       const n = await this.deleteExpiredFiles(orgId);
       r.filesDeleted += n;
       if (n < BATCH) break;
     }
-    r.blobsReleased += await this.releaseAll(orgId, UNREFERENCED, signal);
+    r.blobsReleased += await this.releaseAll(orgId, unreferencedKind, signal);
     r.pendingReleased += await this.releaseAll(orgId, ABANDONED, signal);
+    let after: string | null = null;
+    while (!signal?.aborted) {
+      const batch = await this.reconcileDeleting(orgId, after);
+      r.deletionsReowed += batch.reowed;
+      r.deletingRestored += batch.restored;
+      if (batch.last === null) break;
+      after = batch.last;
+    }
   }
 
   /** Step 2 or 3 for one org, batch by batch along the blob ids. */
@@ -236,6 +284,7 @@ export class BlobSweepJob {
       .where("status", "in", [...kind.statuses])
       .where("created_at", "<", old)
       .where(unreferenced(orgId))
+      .$if(kind.hashedOnly === true, (q) => q.where("sha256", "is not", null))
       .$if(after !== null, (q) => q.where("id", ">", after as string))
       .orderBy("id")
       .limit(BATCH)
@@ -256,6 +305,7 @@ export class BlobSweepJob {
       )
       .where("status", "in", [...kind.statuses])
       .where(unreferenced(orgId))
+      .$if(kind.hashedOnly === true, (q) => q.where("sha256", "is not", null))
       .returning("id")
       .execute();
     for (const b of released) await oweBlobDelete(this.outbox, orgId, b.id);
@@ -263,5 +313,92 @@ export class BlobSweepJob {
       released: released.length,
       last: candidates.length < BATCH ? null : (candidates.at(-1) as { id: string }).id,
     };
+  }
+
+  /**
+   * Step 4, one batch of up to {@link BATCH} stale `deleting` blobs after `after`: the objects of
+   * the referenced ones are checked first (outside any transaction), then one transaction locks the
+   * batch `FOR UPDATE SKIP LOCKED`, checks the references again in a statement of its own, restores
+   * the referenced ones and owes the deletion of the others again (deduplicated while it is owed).
+   */
+  private async reconcileDeleting(
+    orgId: string,
+    after: string | null,
+  ): Promise<{ reowed: number; restored: number; last: string | null }> {
+    const old = sql<Date>`now() - make_interval(hours => ${STALE_DELETING_AFTER_HOURS})`;
+    const rows = await this.db
+      .selectFrom("blobs")
+      .select(["id", "object_key", "size", "etag"])
+      .select((eb) => eb.not(unreferenced(orgId)(eb)).as("referenced"))
+      .where("org_id", "=", orgId)
+      .where("status", "=", "deleting")
+      .where("created_at", "<", old)
+      .$if(after !== null, (q) => q.where("id", ">", after as string))
+      .orderBy("id")
+      .limit(BATCH)
+      .execute();
+    if (rows.length === 0) return { reowed: 0, restored: 0, last: null };
+    const intact = new Set<string>();
+    for (const b of rows) {
+      if (!b.referenced) continue;
+      const head = await this.storage.kernel(orgId).head(b.object_key);
+      if (head && blobContentMatches({ size: Number(b.size), etag: b.etag }, head))
+        intact.add(b.id);
+    }
+    const done = await this.settleDeleting(
+      orgId,
+      rows.map((b) => b.id),
+      intact,
+    );
+    return { ...done, last: rows.length < BATCH ? null : (rows.at(-1) as { id: string }).id };
+  }
+
+  /** The transaction of {@link reconcileDeleting}. */
+  @Transactional()
+  async settleDeleting(
+    orgId: string,
+    ids: readonly string[],
+    intact: ReadonlySet<string>,
+  ): Promise<{ reowed: number; restored: number }> {
+    const trx = this.db.db;
+    const locked = await trx
+      .selectFrom("blobs")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("id", "in", [...ids])
+      .where("status", "=", "deleting")
+      .forUpdate()
+      .skipLocked()
+      .execute();
+    if (locked.length === 0) return { reowed: 0, restored: 0 };
+    // a statement of its own: sees every reference committed before the rows were locked
+    const free = await trx
+      .selectFrom("blobs")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where(
+        "id",
+        "in",
+        locked.map((b) => b.id),
+      )
+      .where(unreferenced(orgId))
+      .execute();
+    const freeIds = new Set(free.map((b) => b.id));
+    for (const id of freeIds) await oweBlobDelete(this.outbox, orgId, id);
+    let restored = 0;
+    for (const { id } of locked) {
+      if (freeIds.has(id)) continue;
+      // referenced: the deletion job refuses it before touching its bytes; a missing or changed
+      // object (a deletion that raced the reference) is `gone`, as reads would treat it
+      await trx
+        .updateTable("blobs")
+        .set({ status: intact.has(id) ? "ready" : "gone" })
+        .where("id", "=", id)
+        .where("org_id", "=", orgId)
+        .where("status", "=", "deleting")
+        .execute();
+      restored += 1;
+    }
+    return { reowed: freeIds.size, restored };
   }
 }
