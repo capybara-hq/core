@@ -6,7 +6,6 @@ import { withOrgScope } from "../infra/database/org-scope.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
-import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -52,7 +51,6 @@ export class ShareSweepJob {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
@@ -109,7 +107,7 @@ export class ShareSweepJob {
   /** One batch of step 1 (the creator's access is checked again in the `UPDATE`). */
   @Transactional()
   async revokeBatch(shareIds: readonly string[]): Promise<number> {
-    return revokeSharesIn(this.db.db, this.outbox, { shareIds }, "creator_lost_access");
+    return revokeSharesIn(this.db.db, { shareIds }, "creator_lost_access");
   }
 
   /** Step 2: lets go of the blobs of shares expired or revoked more than a week ago. */

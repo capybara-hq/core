@@ -1038,14 +1038,7 @@ describe("shares of library files", () => {
     // what deleting a file does in its transaction (the Files page's DELETE)
     const n = await db
       .transaction()
-      .execute((trx) =>
-        revokeSharesIn(
-          trx,
-          { add: async () => true },
-          { orgId, fileIds: [lib, artifactId] },
-          "file_deleted",
-        ),
-      );
+      .execute((trx) => revokeSharesIn(trx, { orgId, fileIds: [lib, artifactId] }, "file_deleted"));
     expect(n).toBe(2);
     for (const s of [libShare, convShare]) {
       expect(await shareRow(s.id)).toMatchObject({
@@ -1119,12 +1112,7 @@ describe("shares of library files", () => {
         10_000,
         "the create waiting for the file row",
       );
-      await revokeSharesIn(
-        trx,
-        { add: async () => true },
-        { orgId, fileIds: [id] },
-        "file_deleted",
-      );
+      await revokeSharesIn(trx, { orgId, fileIds: [id] }, "file_deleted");
     });
     const r = await (pending as ReturnType<Req>);
     expect(r.statusCode, r.body).toBe(410);

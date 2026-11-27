@@ -973,7 +973,7 @@ export class ConversationsService {
     await unbindConversation(this.db.db, conversationId);
     // its shares stop with it and their snapshots are owed for deletion (file sharing spec §9);
     // a share being created waits on the row lock above (`FOR SHARE`) and then finds it deleted
-    await revokeSharesIn(this.db.db, this.outbox, { conversationId }, "conversation_deleted");
+    await revokeSharesIn(this.db.db, { conversationId }, "conversation_deleted");
     // the device's services (the browser's tabs) forget the conversation: the notice is owed here
     // and delivered by the worker, an offline device's once it is back (close tabs on delete §4)
     if (subject.deviceId)

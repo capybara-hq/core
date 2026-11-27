@@ -1005,7 +1005,14 @@ export class LibraryFilesService {
           first_seq: firstSeq ?? null,
         })),
       )
-      .onConflict((oc) => oc.columns(["conversation_id", "file_id"]).doNothing())
+      // a file the conversation delivered and the person now sends into it becomes `attached`
+      // (FetchAttachment copies only those); a repeated attachment keeps its first reference
+      .onConflict((oc) =>
+        oc
+          .columns(["conversation_id", "file_id"])
+          .doUpdateSet({ role: "attached" })
+          .where("conversation_files.role", "=", "delivered"),
+      )
       .execute();
     return blocks;
   }
@@ -1037,7 +1044,7 @@ export class LibraryFilesService {
       .where("id", "=", fileId)
       .where("org_id", "=", orgId)
       .execute();
-    await revokeSharesIn(trx, this.outbox, { orgId, fileIds: [fileId] }, "file_deleted");
+    await revokeSharesIn(trx, { orgId, fileIds: [fileId] }, "file_deleted");
     const refs = await trx
       .selectFrom("conversation_files")
       .select("conversation_id")

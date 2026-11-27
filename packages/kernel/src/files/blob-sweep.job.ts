@@ -256,7 +256,7 @@ export class BlobSweepJob {
       .execute();
     if (claimed.length === 0) return 0;
     const ids = claimed.map((r) => r.id);
-    await revokeSharesIn(trx, this.outbox, { orgId, fileIds: ids }, "file_deleted");
+    await revokeSharesIn(trx, { orgId, fileIds: ids }, "file_deleted");
     const rows = await trx
       .deleteFrom("files")
       .where("org_id", "=", orgId)

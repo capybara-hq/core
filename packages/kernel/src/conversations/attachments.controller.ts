@@ -15,7 +15,7 @@ class AttachmentDownloadQueryDto extends createZodDto(DownloadQuery, "Attachment
 /**
  * Attachment downloads (`/api/v1/orgs/:orgId/attachments`, `agents.use`, people only): `GET
  * /:id/download` redirects (302) to the presigned URL (`Cache-Control: private, max-age=60`) of a
- * chat attachment or a `read` copy (an image a tool showed the agent); `?as=url` answers `{ url }`
+ * `read` copy (an image a tool showed the agent); `?as=url` answers `{ url }`
  * with that address instead. Without an object store it answers 503 `storage.unavailable`. A
  * person's uploads go through the file library (`/files`).
  */

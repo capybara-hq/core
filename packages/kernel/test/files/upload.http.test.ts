@@ -22,6 +22,7 @@ import {
 import { BlobsService } from "../../src/files/blobs.service.js";
 import { FileDraftCleanupJob } from "../../src/files/draft-cleanup.job.js";
 import { LibraryFilesService } from "../../src/files/library-files.service.js";
+import { ReferencedFiles } from "../../src/files/referenced-files.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { createLogger } from "../../src/log.js";
@@ -684,6 +685,36 @@ describe("attaching files to a message", () => {
     );
     expect(refs).toHaveLength(2);
     expect((await fileRow(img)).source_conversation_id).toBe(conv1);
+  });
+
+  it("a file the conversation delivered, sent into it by the person, becomes attached (FetchAttachment lists it)", async () => {
+    const agentId = await createAgent(owner, orgId);
+    const conv = await createConv(owner, orgId, agentId);
+    const txt = await ready(owner, "out.txt", "text/plain", TEXT, "library");
+    await db
+      .insertInto("conversation_files")
+      .values({
+        conversation_id: conv,
+        file_id: txt,
+        org_id: orgId,
+        role: "delivered",
+        first_seq: 2,
+      })
+      .execute();
+    const listed = () => k.app.get(ReferencedFiles).listForConversation(orgId, conv);
+    expect(await listed()).toEqual([]);
+    expect(await attach(conv, ownerId, [txt], 7)).toHaveLength(1);
+    expect(
+      await db
+        .selectFrom("conversation_files")
+        .select(["role", "first_seq"])
+        .where("conversation_id", "=", conv)
+        .where("file_id", "=", txt)
+        .execute(),
+    ).toEqual([{ role: "attached", first_seq: "2" }]);
+    expect((await listed()).map((f) => [f.id, f.name, f.available])).toEqual([
+      [txt, "out.txt", true],
+    ]);
   });
 
   it("refuses another account's, an uploading, an expired or a deleted file; too many or duplicates", async () => {

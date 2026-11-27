@@ -1,6 +1,5 @@
 import { type ExpressionBuilder, sql } from "kysely";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
-import type { OutboxService } from "../infra/outbox/outbox.service.js";
 import { creatorStillHasAccess } from "./liveness.js";
 
 /** The reasons of the revokes the kernel makes on its own (file sharing spec §9, file library §6). */
@@ -29,11 +28,9 @@ export type LifecycleRevokeTarget =
  *
  * No deletion is owed: a share points at a blob (file library spec §1), which the blob sweep frees
  * once no file or live share needs it; the share sweep stops pointing at it after the retention.
- * `outbox` is kept in the signature for the callers' transaction wiring; nothing is added to it.
  */
 export async function revokeSharesIn(
   db: KernelSchemaDb,
-  _outbox: Pick<OutboxService, "add">,
   where: LifecycleRevokeTarget,
   reason: LifecycleRevokeReason,
 ): Promise<number> {

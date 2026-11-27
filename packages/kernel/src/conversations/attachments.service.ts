@@ -147,16 +147,14 @@ export const normalizeContentType = (ct: string): string =>
 
 /**
  * The object key: the attachment id only (the user's file name never goes into a key), under one
- * prefix per purpose.
+ * prefix per purpose this service still writes (legacy `chat` rows are the file library's).
  */
-const objectKey = (id: string, purpose: AttachmentPurpose = "chat") =>
-  purpose === "chat"
-    ? `attachments/${id}`
-    : purpose === "agent-avatar"
-      ? `agent-avatars/${id}`
-      : purpose === "read"
-        ? `read-images/${id}`
-        : `skill-packages/${id}`;
+const objectKey = (id: string, purpose: UploadPurpose | "read") =>
+  purpose === "agent-avatar"
+    ? `agent-avatars/${id}`
+    : purpose === "read"
+      ? `read-images/${id}`
+      : `skill-packages/${id}`;
 
 const startsWith = (b: Uint8Array, sig: readonly number[], at = 0) =>
   sig.every((x, i) => b[at + i] === x);

@@ -377,8 +377,10 @@ web. Removed: `attachment.not_found`'s "already used in another conversation" ca
   upload's file row before the presign. Owed object deletions go through the outbox with
   deterministic ids (`blob-delete-<id>`, staging deletions). `blob-sweep` and `file-draft-cleanup`
   are `@LockedCron` under `WorkerModule`; the hashing job is a BullMQ job with a deterministic id and
-  no `:` in names. Concurrent finalizes resolve through the `(org_id, sha256)` unique index, not a
-  lock. No process state.
+  no `:` in names. Concurrent writes of the same bytes (finalizes, deliveries, hashing merges) are
+  serialized by a transaction-scoped lock per org and hash (`BlobHashLock`) around the step that
+  decides which blob holds the hash; the `(org_id, sha256)` unique index is the backstop. No
+  process state.
 - **Org scope / RLS.** Three new tables with `org_id`, each with its `org_scope` policy in the same
   migration; every query runs under the org scope; the sweep and the hashing job run per org through
   `runJob`.
@@ -389,8 +391,8 @@ web. Removed: `attachment.not_found`'s "already used in another conversation" ca
   refs resolve; the content block's key is renamed with a parse alias, no model-visible text changes,
   no `DriftReason`; zero-drift fixture tests before and after.
 - **Object storage.** Key prefixes added by the kernel (`blobs/`, `uploads/` under `kernel/<org>/`);
-  presigned upload size still enforced by the store; a presigned form never targets a blob key; no
-  user file name in a key.
+  presigned upload size still enforced by the store; a presigned upload only writes a staging key;
+  finalize copies the verified bytes to a kernel-owned blob key; no user file name in a key.
 - **File sharing.** "A share is a snapshot" holds: a share refers to an immutable blob instead of a
   copy; switches, expiry and HTML rules unchanged.
 - **Web UI / Mobile.** New page from a design template and components, reads `defineQuery`, writes
