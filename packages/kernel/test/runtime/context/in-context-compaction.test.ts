@@ -586,16 +586,23 @@ describe("inContextSummaryAllowed (the quality gate, idle compaction spec §9.4)
     expect(inContextSummaryAllowed("two", "family-b-max", table)).toBe(false);
   });
 
-  it("allows claude-sonnet-* and deepseek-* by model id under any provider", () => {
+  it("allows claude-sonnet-*, deepseek-flash* and qwen4-max* by model id under any provider", () => {
     for (const provider of ["anthropic", "openai-compatible", "bedrock"]) {
       expect(inContextSummaryAllowed(provider, "claude-sonnet-5-5")).toBe(true);
       expect(inContextSummaryAllowed(provider, "deepseek-flash")).toBe(true);
-      expect(inContextSummaryAllowed(provider, "deepseek-v4")).toBe(true);
+      expect(inContextSummaryAllowed(provider, "qwen4-max")).toBe(true);
     }
   });
 
   it("refuses the models whose in-context summaries failed or were not measured", () => {
-    for (const model of ["claude-haiku-5-5", "gpt-5-nano", "qwen3.8-flash", "my-claude-sonnet"]) {
+    for (const model of [
+      "claude-haiku-5-5",
+      "gpt-5-nano",
+      "gpt-6.2-astra",
+      "qwen3.8-flash",
+      "deepseek-v4-pro",
+      "my-claude-sonnet",
+    ]) {
       expect(inContextSummaryAllowed("anthropic", model)).toBe(false);
       expect(inContextSummaryAllowed("openai-compatible", model)).toBe(false);
     }

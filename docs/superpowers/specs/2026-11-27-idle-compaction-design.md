@@ -879,7 +879,8 @@ model no entry matches skips with reason `quality_gate`. This table and that one
 | provider | model | evidence |
 |---|---|---|
 | any | `claude-sonnet-*` | "all" quality gate above: 88.8% / 73.8% recall, constraint 20/20 |
-| any | `deepseek-*` | "all" quality gate above: 90.4% / 87.5% recall, constraint 20/20 |
+| any | `deepseek-flash*` | "all" quality gate above: 90.4% / 87.5% recall, constraint 20/20 (`deepseek-v4-pro` failed) |
+| any | `qwen4-max*` | "all" quality gate above: 98.3% / 97.1% recall, constraint 20/20 |
 | `model-fake` | any | scripted test model; summary quality not measured |
 
 Settled point (ruling R9, 2026-11-28): the in-context path runs only at a settled point, where
@@ -1011,9 +1012,9 @@ Still open (recommended answers):
   recall in-context / transcript 68.1/81.9%, 21.3/38.8%, 90.0/88.8%, 91.9/86.9%; constraint kept
   16/20, 10/20, 20/20, 20/20 (transcript 20, 12, 20, 17). The in-context summary covers everything
   up to the compaction point and keeps no verbatim tail (table in §9.4).
-  "all" quality gate 2026-11-28 (Task 8b, table in §9.4): the in-context summary is used only for
-  model ids `claude-sonnet-*` and `deepseek-*` (recall ≥ transcript − 0.05 and constraint ≥ 19/20);
-  Haiku, `gpt-*` and `qwen*` take the transcript path. Phase 2: idle compaction only pays off on
+  "all" quality gate 2026-11-28 (Tasks 8b and 8c, table in §9.4): the in-context summary is used
+  only for model ids `claude-sonnet-*`, `deepseek-flash*` and `qwen4-max*` (recall ≥ transcript −
+  0.05 and constraint ≥ 19/20); every other model, `gpt-*` included, takes the transcript path. Phase 2: idle compaction only pays off on
   families where the in-context summary is used.
 - **Q12. Unverified vendor facts (§9.1). Closed 2026-11-28 (task P0), with two items left
   unverified.**

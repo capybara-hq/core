@@ -51,8 +51,13 @@ export const IN_CONTEXT_SUMMARY_MODELS: readonly InContextSummaryModel[] = [
       "all quality gate 2026-11-28: claude-sonnet-5-5 recall 88.8% vs 73.8%, constraint 20/20",
   },
   {
-    model: /^deepseek-/,
+    // deepseek-v4-pro failed the same gate (59.6% vs 80.4%), so only the flash line is listed.
+    model: /^deepseek-flash/,
     evidence: "all quality gate 2026-11-28: deepseek-flash 90.4% vs 87.5%, constraint 20/20",
+  },
+  {
+    model: /^qwen4-max/,
+    evidence: "all quality gate 2026-11-28: qwen4-max recall 98.3% vs 97.1%, constraint 20/20",
   },
 ];
 
