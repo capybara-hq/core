@@ -5,6 +5,8 @@ import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { navigateBrowser } from "./browser";
 import { type ConnectorAuth, connectConnector } from "./connectors";
+import { useExternalAuth } from "./external-auth";
+import { handoffRequest, isHttpUrl, useBrowserHandoff } from "./handoff";
 import { useErrorMessage } from "./use-error-message";
 
 /** 内核回调页放在回跳 URL `oauth_error` 里的原因码（界面只显示自己的译文，不回显任何服务器文本）。 */
@@ -50,22 +52,15 @@ export function currentReturnPath(): string {
   return `${pathname}${parseConnectResult(search).cleanedSearch}`;
 }
 
-/** 授权地址只接受 http(s)（防止被诱导跳到 javascript: 等地址）。 */
-const isHttpUrl = (u: string): boolean => {
-  try {
-    const p = new URL(u).protocol;
-    return p === "https:" || p === "http:";
-  } catch {
-    return false;
-  }
-};
-
 /** 授权码流连接器（个人凭据）走 OAuth 授权，其余认证方式填 token。 */
 export const isOAuthCodeConnector = (auth: ConnectorAuth): boolean => auth.type === "oauth_code";
 
 /**
- * 发起 OAuth 连接：请求授权地址（带回到当前页的 returnTo），再整页跳转过去
- * （内核写的浏览器绑定 Cookie 只在整页导航的回跳里随请求带回，不能用 fetch 完成）。
+ * Starts OAuth for a connector with the current page as `returnTo`. In a browser the page then
+ * navigates to the authorization address (the binding cookie the kernel set comes back only on a
+ * full-page navigation's callback, never through fetch). In a shell with `openExternal@1` it asks
+ * for a browser handoff instead, opens it in the system browser and waits in the external
+ * authorization dialog (spec 2026-11-28-shell-external-authorization-design.md §4).
  */
 export function useStartConnect(orgId: string): {
   start(connectorId: string): Promise<void>;
@@ -74,28 +69,43 @@ export function useStartConnect(orgId: string): {
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const t = useTranslations("connect.result");
+  const handoff = useBrowserHandoff();
+  const externalAuth = useExternalAuth();
   const [starting, setStarting] = useState(false);
   const start = useCallback(
     async (connectorId: string) => {
       setStarting(true);
       try {
-        const { authorizationUrl } = await connectConnector(
+        const answer = await connectConnector(
           orgId,
           connectorId,
           currentReturnPath(),
+          ...(handoff === undefined ? [] : [handoffRequest(handoff)]),
         );
-        if (!isHttpUrl(authorizationUrl)) {
+        if ("handoffUrl" in answer) {
+          if (handoff === undefined || !isHttpUrl(answer.handoffUrl)) {
+            toast.error(t("unknown"));
+            return;
+          }
+          // the click's own work: the shell opens the browser only from event-driven code
+          externalAuth.open(answer.handoffUrl, { kind: "connector", orgId, connectorId });
+          void handoff.openExternal(answer.handoffUrl).catch(() => {
+            // refused or failed: the dialog's Copy link still gets the person there
+          });
+          return;
+        }
+        if (!isHttpUrl(answer.authorizationUrl)) {
           toast.error(t("unknown"));
           return;
         }
-        navigateBrowser(authorizationUrl);
+        navigateBrowser(answer.authorizationUrl);
       } catch (e) {
         toast.error(errorMessage(e));
       } finally {
         setStarting(false);
       }
     },
-    [orgId, toast, errorMessage, t],
+    [orgId, toast, errorMessage, t, handoff, externalAuth],
   );
   return { start, starting };
 }

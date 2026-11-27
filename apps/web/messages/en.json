@@ -623,6 +623,11 @@
     "sso": {
       "link_expired": "The link has expired. Sign in with the external account again.",
       "session_mismatch": "Your session changed. Sign in again and retry."
+    },
+    "handoff": {
+      "scheme_not_allowed": "This platform does not yet allow this app to authorize in the browser. Contact your platform admin.",
+      "invalid": "This authorization link has expired or was already used. Go back to the app and click Connect again.",
+      "account_mismatch": "This link belongs to {login}. Sign in with that account, or go back to the app and start again."
     }
   },
   "agents": {
@@ -3318,7 +3323,8 @@
     "unlink": "Unlink",
     "unlinkTitle": "Unlink {name}?",
     "unlinkHint": "Messages from this account in IM will no longer act as you, and you can no longer sign in with it.",
-    "unlinked": "\"{name}\" unlinked."
+    "unlinked": "\"{name}\" unlinked.",
+    "linked": "{platform} linked."
   },
   "loginSources": {
     "section": {
@@ -7225,6 +7231,35 @@
       "text": "Turn on notifications to hear when something is waiting for you",
       "enable": "Turn on",
       "later": "Not now"
+    }
+  },
+  "externalAuth": {
+    "title": "Finish authorization in your browser",
+    "body": "The authorization page is open in your system browser. Sign in and authorize there, then come back: the result shows here on its own. If the browser did not open, or you want another browser, copy the link (it works once, for 10 minutes).",
+    "copy": "Copy link",
+    "copied": "Link copied.",
+    "copyFailed": "Could not copy the link. Try again.",
+    "done": "Done",
+    "cancel": "Cancel"
+  },
+  "handoff": {
+    "title": "Continue authorization",
+    "opening": "Opening the authorization page…",
+    "invalidTitle": "Authorization link expired",
+    "mismatchTitle": "Not the account that started this",
+    "failedTitle": "Could not continue",
+    "startAgain": "Go back to the app and start again.",
+    "switchAccount": "Sign in with another account",
+    "done": {
+      "connected": "{name} connected",
+      "connectedGeneric": "Connector connected",
+      "linked": "{name} linked",
+      "linkedGeneric": "Sign-in method linked",
+      "failed": "Authorization did not finish",
+      "unknownTitle": "Cannot show the result",
+      "back": "Back to {product}",
+      "closeTabHint": "You can close this tab now.",
+      "backToApp": "Go back to the app to continue."
     }
   }
 }

@@ -29,12 +29,14 @@ export interface AuthorizeAppBody {
 }
 
 /**
- * What the web reads from `GET /api/v1/meta`: the platform's name and its uploaded icons' versioned
- * URLs (`/api/v1/platform/icon/<purpose>?v=<sha256>`; null = the web's default for that purpose).
+ * What the web reads from `GET /api/v1/meta`: the platform's name, its uploaded icons' versioned
+ * URLs (`/api/v1/platform/icon/<purpose>?v=<sha256>`; null = the web's default for that purpose)
+ * and the native apps' URL schemes a browser handoff may link back to (`<scheme>://open?url=`).
  */
 export interface PlatformMeta {
   name: string | null;
   icons: { app: string | null; maskable: string | null; favicon: string | null };
+  appSchemes: string[];
 }
 
 /** The request the app described in the page's query, or null when a parameter is missing or wrong. */

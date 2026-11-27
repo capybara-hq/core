@@ -5,6 +5,7 @@ import {
 import { Controller, Get, Header, Inject } from "@nestjs/common";
 import { z } from "zod";
 import { DialInHandlers } from "../dial-in/handlers.js";
+import { appSchemes } from "../handoff/app-schemes.js";
 import { Public } from "../identity/principal.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { PushProviderHost } from "../push/provider-host.js";
@@ -34,6 +35,11 @@ export const MetaResponseSchema = z.object({
   }),
   /** The redirect URIs app sign-in accepts (`auth.appRedirectUris`); [] while appSignIn is off. */
   appRedirectUris: z.array(z.string()),
+  /**
+   * The shell schemes a browser handoff's done page may link back to: those whose
+   * `<scheme>://auth/callback` is in `auth.appRedirectUris`; [] while appSignIn is off.
+   */
+  appSchemes: z.array(z.string()),
 });
 export type MetaResponse = z.infer<typeof MetaResponseSchema>;
 
@@ -94,6 +100,7 @@ export class MetaController {
       },
       // Not secret: an app that finds its own URI missing says so before opening the browser.
       appRedirectUris: appSignIn ? [...config.auth.appRedirectUris] : [],
+      appSchemes: appSchemes(config),
     };
   }
 

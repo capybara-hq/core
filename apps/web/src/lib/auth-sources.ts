@@ -85,14 +85,24 @@ export const redeemLink = (body: { ticket: string; login: string; password: stri
 /**
  * Starts linking an external account to the signed-in person (the linked accounts page): a POST,
  * so no other site can start it; the browser then navigates to the returned `location` (the
- * identity provider, or back to `returnTo` with `?error=<code>`).
+ * identity provider, or back to `returnTo` with `?error=<code>`). With `handoff` (a shell's browser
+ * handoff) the kernel answers a single-use `handoffUrl` for the system browser instead, or the
+ * same `location` when the method is not available.
  */
-export const startLink = (plugin: string, returnTo: string) => {
-  const body: { intent: "link"; returnTo: string } = { intent: "link", returnTo };
-  return apiFetch<{ location: string }>(`/api/v1/auth/sso/${encodeURIComponent(plugin)}/start`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+export const startLink = (
+  plugin: string,
+  returnTo: string,
+  handoff?: { returnScheme?: string },
+) => {
+  const body: { intent: "link"; returnTo: string; handoff?: { returnScheme?: string } } = {
+    intent: "link",
+    returnTo,
+    ...(handoff === undefined ? {} : { handoff }),
+  };
+  return apiFetch<{ location: string } | { handoffUrl: string }>(
+    `/api/v1/auth/sso/${encodeURIComponent(plugin)}/start`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 };
 
 /** 发起第三方登录的地址（整页跳转；内核 302 到身份源，回调后回到 `returnTo`）。 */

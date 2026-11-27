@@ -3127,6 +3127,7 @@ export const OPEN_PUBLIC_DENIED_CLASSES: readonly AddressClass[];
 // @public
 export interface OpenExternalCapabilityV1 {
     open(url: string): Promise<void>;
+    readonly returnScheme?: string;
 }
 
 // @public
