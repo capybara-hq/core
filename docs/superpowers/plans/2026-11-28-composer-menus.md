@@ -214,3 +214,14 @@ Rebase on main, then: composer top strip and control row per spec §6 / §7 (des
 | 5 web menus | 3 | ComposerBar, connectors query, web messages, skill | normal | 2 | batch W2 |
 | 6 web project files | 1, 2, 4, 5 | ComposerBar, devices query, timeline, web messages | normal | 3 | batch W3 |
 | 7 acceptance + PR | all | compare, accepted, changesets | – | 4 | controller |
+
+## Progress
+
+- 2026-11-28 wave 1 fixes: the Task 3 review findings are fixed in 98dc79465 (touch: no focus return; Enter with no
+  choosable row closes the menu; hover does not scroll; Esc closes once; Backspace with a selection;
+  footer hints not tab stops; a space right after `@` closes the menu). The Task 1 trust-boundary fix
+  (browse read roots narrowed to the project path; a project root above the ceiling is refused) was
+  uncommitted in the worktree when this entry was written, owned by agent a689d6f534205b402. The
+  duplicate worktree feat-composer-menus-design is removed.
+- Next: commit the Task 1 fix, re-review it alone on the most capable model, then wave 2 (Tasks 2, 4
+  and 5 in parallel), wave 3 (Task 6), then Task 7.
