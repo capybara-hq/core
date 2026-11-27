@@ -449,6 +449,66 @@ describe("trigger event dispatch", () => {
     expect((await deliveriesOf(a.id)).map((d) => d.event_id)).toEqual([ok]);
   });
 
+  it("a depth stop posts one inbox item to the owner of the chain's last automation", async () => {
+    const last = await automation({ name: "Nightly triage" });
+    const conv = await createConv(owner, orgId, agentId);
+    const automationRunId = randomUUID();
+    await db
+      .insertInto("automation_runs")
+      .values({
+        id: automationRunId,
+        automation_id: last.id,
+        org_id: orgId,
+        scheduled_for: null,
+        trigger_key: randomUUID(),
+        status: "completed",
+      })
+      .execute();
+    const runId = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: conv,
+        execution_id: randomUUID(),
+        trigger_account_id: ownerId,
+        status: "completed",
+        agent_version: 1,
+        trigger_seq: 0,
+        automation_run_id: automationRunId,
+      })
+      .execute();
+    const deep = async () => {
+      const e = await emit();
+      await db
+        .updateTable("trigger_events")
+        .set({ depth: 9, cause_run_id: runId, cause_account_id: ownerId })
+        .where("id", "=", e)
+        .execute();
+      await dispatch(e);
+      expect(await stateOf(e)).toBe("depth_stopped");
+    };
+    await deep();
+    await deep();
+    const items = await db
+      .selectFrom("inbox_items")
+      .select(["org_id", "account_id", "source", "plugin", "kind", "title", "link", "state"])
+      .execute();
+    // one open item per automation however often the chain hits the limit
+    expect(items).toEqual([
+      {
+        org_id: orgId,
+        account_id: ownerId,
+        source: "kernel",
+        plugin: null,
+        kind: "automation_depth_stopped",
+        title: "Nightly triage",
+        link: `/automations/${last.id}`,
+        state: "open",
+      },
+    ]);
+  });
+
   it("provider gone: no fire, no retry", async () => {
     const a = await automation();
     const e = await emit();

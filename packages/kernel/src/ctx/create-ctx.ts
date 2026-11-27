@@ -19,6 +19,9 @@ import {
   type FilePreviewProvider,
   type HookHandler,
   type HttpAccess,
+  type InboxCtx,
+  InboxError,
+  type InboxPost,
   type Logger,
   OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
@@ -59,6 +62,7 @@ import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enable
 import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.js";
 import { RegistrationLedger } from "../extensions/ledger.js";
 import { audit } from "../identity/audit.js";
+import type { InboxItemsService } from "../inbox/inbox-items.service.js";
 import { withOrgScope } from "../infra/database/org-scope.js";
 import type { LockService } from "../infra/lock/lock.service.js";
 import type { ModelEmbeddings } from "../models/embeddings.js";
@@ -152,6 +156,12 @@ export interface KernelDeps {
    * `ctx.triggers.emit` rejects.
    */
   triggers?: () => TriggersBackend | undefined;
+  /**
+   * What `ctx.inbox` calls through (`InboxItemsService`), found at the time of use like
+   * `deviceAccess`. Absent, or resolving to undefined (a ctx built alone in a test, the CLI):
+   * `ctx.inbox` calls reject.
+   */
+  inbox?: () => InboxBackend | undefined;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
@@ -170,6 +180,9 @@ export type DeviceAccessBackend = Pick<
 
 /** What `ctx.triggers` calls through (`TriggerEventsService`). */
 export type TriggersBackend = Pick<TriggerEventsService, "emit">;
+
+/** What `ctx.inbox` calls through (`InboxItemsService`). */
+export type InboxBackend = Pick<InboxItemsService, "post" | "resolveForPlugin">;
 
 /**
  * A plain-data copy of an emitted event, taken once at the ctx boundary (check-then-use): every
@@ -482,7 +495,8 @@ type GatedKey =
   | "dialIn"
   | "devices"
   | "deviceAccess"
-  | "triggers";
+  | "triggers"
+  | "inbox";
 
 /**
  * Builds the namespaced ctx for one extension from its permission manifest, and returns its
@@ -499,7 +513,8 @@ type GatedKey =
  *   an extension that provides `device-provider@1`, `reportChanged` only for a live device bound to
  *   this extension (through `deps.devices`; another device throws `ExtensionPermissionError`);
  *   `triggers` only with `permissions.triggers`, each emit only of a declared event type, stored
- *   in the event's org scope (through `deps.triggers`);
+ *   in the event's org scope (through `deps.triggers`); `inbox` only with `permissions.inbox`,
+ *   posting and resolving only as this extension, in the item's org scope (through `deps.inbox`);
  *   `http.route`
  *   only the method + path declared in `permissions.http` (the record carries the declared access and
  *   its mount, see {@link Route}); `tools.register` only names declared in
@@ -758,6 +773,41 @@ export function createExtensionContext(
           },
         } satisfies TriggersCtx;
       })()
+    : undefined;
+  // ctx.inbox: only with permissions.inbox; items are posted and resolved as this extension (the
+  // kernel checks the link is one of its own pages), in the item's org scope, from a plain-data
+  // copy read once (what is checked is what is stored)
+  const inboxApi: InboxCtx | undefined = perms.inbox
+    ? ({
+        post: async (p) => {
+          const b = deps.inbox?.();
+          if (!b) throw new Error("The inbox is not available in this process.");
+          let snap: InboxPost;
+          try {
+            snap = structuredClone(p);
+          } catch (err) {
+            throw new InboxError("invalid_item", "the item must be plain data", { cause: err });
+          }
+          if (
+            typeof snap !== "object" ||
+            snap === null ||
+            typeof snap.orgId !== "string" ||
+            snap.orgId === ""
+          )
+            throw new InboxError("invalid_item", "invalid inbox item: missing_org_id");
+          const orgId = snap.orgId;
+          return withOrgScope(orgId, () => b.post({ kind: "plugin", plugin: name }, snap));
+        },
+        resolve: async (args) => {
+          const b = deps.inbox?.();
+          if (!b) throw new Error("The inbox is not available in this process.");
+          const orgId = (args as { orgId?: unknown } | null)?.orgId;
+          const itemId = (args as { itemId?: unknown } | null)?.itemId;
+          if (typeof orgId !== "string" || orgId === "" || typeof itemId !== "string")
+            throw new InboxError("not_found", "inbox item not found");
+          await withOrgScope(orgId, () => b.resolveForPlugin(name, orgId, itemId));
+        },
+      } satisfies InboxCtx)
     : undefined;
   // "METHOD path" -> the access the manifest declares for it (the approved manifest)
   const declaredRoutes = new Map<string, HttpAccess>(
@@ -1232,7 +1282,7 @@ export function createExtensionContext(
       return closing;
     },
   };
-  // secrets / storage / models / dialIn / devices / deviceAccess / triggers: a plain property when declared; otherwise a
+  // secrets / storage / models / dialIn / devices / deviceAccess / triggers / inbox: a plain property when declared; otherwise a
   // non-enumerable getter that throws, so spreading or printing ctx triggers no denial and no audit
   const gated = (key: GatedKey, api: unknown, item = `permissions.${key}`): void => {
     if (api) {
@@ -1252,6 +1302,7 @@ export function createExtensionContext(
   gated("devices", devicesApi, `provides ${DEVICE_PROVIDER_EXTENSION_POINT}`);
   gated("deviceAccess", deviceAccessApi);
   gated("triggers", triggersApi);
+  gated("inbox", inboxApi);
   return ctx as KernelExtensionContext;
 }
 

@@ -22,6 +22,9 @@ export const conversationEventId = (conversationId: string, seq: number): string
 /** The event id of an automation run's settle (`automation-<taskRunId>`). */
 export const automationRunEventId = (taskRunId: string): string => `automation-${taskRunId}`;
 
+/** The event id of a personal inbox item's post (`inbox-<itemId>`). */
+export const inboxItemEventId = (itemId: string): string => `inbox-${itemId}`;
+
 /** One fanout per event: `push-fanout-<eventId>`. */
 export const pushFanoutJobId = (eventId: string): string => `push-fanout-${eventId}`;
 
@@ -34,7 +37,8 @@ export type PushFanoutData = {
   eventId: string;
   source:
     | { kind: "conversation"; conversationId: string; seq: number }
-    | { kind: "automation"; taskRunId: string };
+    | { kind: "automation"; taskRunId: string }
+    | { kind: "inbox"; itemId: string };
 };
 
 /**

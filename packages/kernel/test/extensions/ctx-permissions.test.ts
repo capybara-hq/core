@@ -298,6 +298,62 @@ describe("ctx.triggers (permissions.triggers)", () => {
   });
 });
 
+describe("ctx.inbox (permissions.inbox)", () => {
+  const item = { orgId: "o1", accountId: "a1", kind: "item.assigned", title: "Assigned" };
+
+  it("without permissions.inbox ctx.inbox throws ExtensionPermissionError and audits", async () => {
+    const ctx = createExtensionContext(deps, mf(), {});
+    expect(() => ctx.inbox).toThrow(ExtensionPermissionError);
+    expect(Object.keys(ctx)).not.toContain("inbox");
+    await ctx.close();
+    expect((await denials())[0]?.detail).toMatchObject({ item: "permissions.inbox" });
+  });
+
+  it("posts and resolves as this extension, from a plain copy, in the item's org scope", async () => {
+    const seen: { op: string; source?: unknown; args: unknown; scope: unknown }[] = [];
+    const inbox = () => ({
+      post: async (source: unknown, p: unknown) => {
+        seen.push({ op: "post", source, args: p, scope: currentScope() });
+        return { itemId: "i1" };
+      },
+      resolveForPlugin: async (plugin: string, orgId: string, itemId: string) => {
+        seen.push({ op: "resolve", args: { plugin, orgId, itemId }, scope: currentScope() });
+      },
+    });
+    const ctx = createExtensionContext(
+      { ...deps, inbox } as never,
+      mf({ permissions: { inbox: true } }),
+      {},
+    );
+    expect(await ctx.inbox.post(item)).toEqual({ itemId: "i1" });
+    await ctx.inbox.resolve({ orgId: "o1", itemId: "i1" });
+    expect(seen).toEqual([
+      {
+        op: "post",
+        source: { kind: "plugin", plugin: "perm-test" },
+        args: item,
+        scope: { kind: "org", orgId: "o1" },
+      },
+      {
+        op: "resolve",
+        args: { plugin: "perm-test", orgId: "o1", itemId: "i1" },
+        scope: { kind: "org", orgId: "o1" },
+      },
+    ]);
+    expect(seen[0]?.args).not.toBe(item);
+    await expect(ctx.inbox.post({ ...item, orgId: "" })).rejects.toMatchObject({
+      code: "invalid_item",
+    });
+    await ctx.close();
+  });
+
+  it("without a backend (a ctx built alone, the CLI) post rejects", async () => {
+    const ctx = createExtensionContext(deps, mf({ permissions: { inbox: true } }), {});
+    await expect(ctx.inbox.post(item)).rejects.toThrow("not available");
+    await ctx.close();
+  });
+});
+
 describe("ctx 按权限清单构造", () => {
   it("未声明 secrets：访问抛 ExtensionPermissionError 并写审计（每个插件每项只记一次）", async () => {
     const ctx = createExtensionContext(deps, mf(), {});

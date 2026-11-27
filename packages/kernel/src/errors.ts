@@ -273,6 +273,13 @@ export const ERROR_CODES = {
   "catalog.request_not_found": 404,
   /** No open org notice with that id for an admin of the org (inbox). */
   "inbox.notice_not_found": 404,
+  /**
+   * No open, unexpired personal inbox item of the caller in this org with that id (another
+   * person's item, an org admin's included, is not found either).
+   */
+  "inbox.item_not_found": 404,
+  /** The inbox item has no action with that id. */
+  "inbox.action_not_found": 404,
   "catalog.request_decided": 409,
   /** A pending request of the same kind for the same item or entry exists (spec §5.1 rule 5). */
   "catalog.request_pending": 409,

@@ -77,6 +77,12 @@ export interface ExtensionPermissions {
    * each matching {@link TRIGGER_TYPE_RE}). An emit of another type is refused.
    */
   triggers?: { emit: string[] };
+  /**
+   * `ctx.inbox`: personal inbox items for the members of orgs that enabled the extension, each
+   * linking only to the extension's own pages, with buttons that call its UI actions as the
+   * person who clicks.
+   */
+  inbox?: boolean;
 }
 
 /** The most services `permissions.deviceAccess.services` may list. */
@@ -133,6 +139,7 @@ const KEYS = new Set([
   "dialIn",
   "deviceAccess",
   "triggers",
+  "inbox",
 ]);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
@@ -170,7 +177,7 @@ export function validatePermissions(
   for (const k of Object.keys(p)) {
     if (!KEYS.has(k)) errs.push(`unknown permissions key "${k}"`);
   }
-  for (const k of ["secrets", "storage", "client"]) {
+  for (const k of ["secrets", "storage", "client", "inbox"]) {
     if (p[k] !== undefined && typeof p[k] !== "boolean") {
       errs.push(`permissions.${k} must be a boolean`);
     }

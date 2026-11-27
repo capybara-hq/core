@@ -1526,3 +1526,139 @@ describe("requesters who left", () => {
     ).toBeNull();
   });
 });
+
+describe("personal inbox items", () => {
+  const pluginItem = (over: Record<string, unknown> = {}) => ({
+    id: "i1",
+    source: "plugin",
+    plugin: "tracker",
+    pluginName: { zh: "项目", en: "Projects" },
+    kind: "item.assigned",
+    title: "CAP-12 was assigned to you",
+    body: "Export reports as PDF",
+    link: "/p/tracker/items?key=CAP-12",
+    actions: [
+      { id: "accept", label: { zh: "接受", en: "Accept" }, style: "primary" },
+      { id: "reassign", label: { zh: "转派", en: "Reassign" } },
+    ],
+    expiresAt: "2026-11-30T12:00:00.000Z",
+    createdAt: T,
+    ...over,
+  });
+  const listed = (items: ReturnType<typeof pluginItem>[]) => ({
+    items: items.map((i) => ({ type: "item", id: i.id, createdAt: i.createdAt, item: i })),
+    truncated: false,
+  });
+
+  it.each(LOCALES)(
+    "shows the item under its plugin's name; a button runs its action and closes it (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      let open = true;
+      const { calls } = await renderInbox(
+        {
+          [LIST]: () => json(200, listed(open ? [pluginItem()] : [])),
+          "POST /api/v1/orgs/o1/inbox/items/i1/actions/accept": () => {
+            open = false;
+            return json(200, { toast: { zh: "已接受", en: "Accepted" } });
+          },
+        },
+        { locale },
+      );
+      const table = await screen.findByRole("list", { name: m.inbox.listLabel });
+      const name = within(table).getByText("CAP-12 was assigned to you", {
+        selector: '[data-part="list-title"]',
+      });
+      expect((name.closest("li") as HTMLElement).textContent).toContain(
+        locale === "zh" ? "项目" : "Projects",
+      );
+      expect(await screen.findByText("Export reports as PDF")).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: locale === "zh" ? "转派" : "Reassign" }),
+      ).toBeTruthy();
+      expect(screen.getByRole("button", { name: m.inbox.item.dismiss })).toBeTruthy();
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: locale === "zh" ? "接受" : "Accept" }));
+      expect(await screen.findByText(locale === "zh" ? "已接受" : "Accepted")).toBeTruthy();
+      expect(calls[0]).toMatchObject({
+        method: "POST",
+        url: "/api/v1/orgs/o1/inbox/items/i1/actions/accept",
+      });
+      expect(bodyOf(calls[0])).toEqual({ locale });
+      expect(await screen.findByText(m.inbox.empty)).toBeTruthy();
+    },
+  );
+
+  it("dismiss closes it without pressing a button", async () => {
+    let open = true;
+    const { calls } = await renderInbox({
+      [LIST]: () => json(200, listed(open ? [pluginItem()] : [])),
+      "POST /api/v1/orgs/o1/inbox/items/i1/dismiss": () => {
+        open = false;
+        return noContent();
+      },
+    });
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("button", { name: en.inbox.item.dismiss }));
+    expect(await screen.findByText(en.inbox.item.dismissed)).toBeTruthy();
+    expect(calls.map((c) => `${c.method} ${c.url}`)[0]).toBe(
+      "POST /api/v1/orgs/o1/inbox/items/i1/dismiss",
+    );
+  });
+
+  it.each(LOCALES)(
+    "a platform item reads its kind's own copy and opens its link (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      await renderInbox(
+        {
+          [LIST]: () =>
+            json(
+              200,
+              listed([
+                pluginItem({
+                  source: "kernel",
+                  plugin: null,
+                  pluginName: null,
+                  kind: "automation_depth_stopped",
+                  title: "Nightly triage",
+                  body: "An English fallback the web does not show.",
+                  link: "/automations/a1",
+                  actions: [],
+                }),
+              ]),
+            ),
+        },
+        { locale },
+      );
+      const table = await screen.findByRole("list", { name: m.inbox.listLabel });
+      const row = within(table)
+        .getByText("Nightly triage", { selector: '[data-part="list-title"]' })
+        .closest("li") as HTMLElement;
+      expect(row.textContent).toContain(
+        `${m.inbox.item.platform} · ${m.inbox.item.kinds.automation_depth_stopped.label}`,
+      );
+      expect(
+        await screen.findByText(m.inbox.item.kinds.automation_depth_stopped.hint),
+      ).toBeTruthy();
+      expect(screen.queryByText("An English fallback the web does not show.")).toBeNull();
+      await userEvent.setup().click(screen.getByRole("button", { name: m.inbox.item.open }));
+      expect(router.push).toHaveBeenCalledWith("/automations/a1");
+    },
+  );
+
+  it("a failed click shows the error copy and reads the inbox again", async () => {
+    const { calls } = await renderInbox({
+      [LIST]: () => json(200, listed([pluginItem()])),
+      "POST /api/v1/orgs/o1/inbox/items/i1/actions/accept": () =>
+        json(404, { error: { code: "inbox.item_not_found", message: "Inbox item not found" } }),
+    });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Accept" }));
+    expect(await screen.findByText(en.errors.inbox.item_not_found)).toBeTruthy();
+    await waitFor(() =>
+      expect(calls.map((c) => `${c.method} ${c.url}`)).toContain("GET /api/v1/orgs/o1/inbox"),
+    );
+  });
+});

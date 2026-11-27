@@ -8,6 +8,7 @@ import type { DevicesCtx, DialInChannel } from "./dial-in.js";
 import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
 import type { RouteCaller } from "./http-access.js";
+import type { InboxCtx } from "./inbox.js";
 import type {
   ImageAspectRatio,
   ImageMediaType,
@@ -426,6 +427,11 @@ export interface ExtensionContext {
    * {@link TriggersCtx}).
    */
   triggers: TriggersCtx;
+  /**
+   * Posts personal inbox items and resolves them (requires `permissions.inbox`, see
+   * {@link InboxCtx}).
+   */
+  inbox: InboxCtx;
   provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
   /**
    * The lifecycle signal of this plugin instance: aborted when the instance is revoked (disabled,

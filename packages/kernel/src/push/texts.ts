@@ -12,6 +12,7 @@ const PUSH_TEXTS: Record<PushTextKey, { en: string; zh: string }> = {
   subagentFinished: { en: "a sub-agent finished", zh: "子智能体已完成" },
   automationRan: { en: "your automation ran", zh: "你的自动化已运行" },
   automationFailed: { en: "your automation failed", zh: "你的自动化运行失败" },
+  inboxItem: { en: "a new item in your inbox", zh: "收件箱有新事项" },
 };
 
 /** Every push text key. */
@@ -24,18 +25,24 @@ export function pushText(key: PushTextKey, locale: "zh" | "en"): string {
 
 /** An event's push as the fanout resolved it (`recipients.ts`), with the event id. */
 export interface ResolvedPush {
-  /** `conv-<conversationId>-<seq>` or `automation-<taskRunId>`: the message's collapse id. */
+  /**
+   * `conv-<conversationId>-<seq>`, `automation-<taskRunId>` or `inbox-<itemId>`: the message's
+   * collapse id.
+   */
   eventId: string;
   orgId: string;
   accountIds: string[];
   category: PushCategory;
   /** In-app path with `?org=` (plan decision 8). */
   path: string;
-  /** The root conversation id, or `automation-<taskId>`. */
+  /** The root conversation id, `automation-<taskId>`, or `inbox` for an inbox item. */
   threadId: string;
-  /** The agent's display name (the task's name for an automation). */
-  title: string;
-  /** Shown only with `push.previews: "titles"`. */
+  /**
+   * The agent's display name (the task's name for an automation, the plugin's display name or
+   * `Capybara` for an inbox item; a localized name is shown in the registration's locale).
+   */
+  title: string | { zh: string; en: string };
+  /** Shown only with `push.previews: "titles"` (an inbox item's title). */
   conversationTitle: string | null;
   text: PushTextKey;
 }
@@ -64,7 +71,7 @@ export function renderPushMessage(
   const lead = previews === "titles" && r.conversationTitle ? r.conversationTitle : null;
   const body = lead === null ? sentence : `${lead}${locale === "zh" ? "：" : ": "}${sentence}`;
   return {
-    title: cut(r.title, PUSH_LIMITS.titleChars),
+    title: cut(typeof r.title === "string" ? r.title : r.title[locale], PUSH_LIMITS.titleChars),
     body: cut(body, PUSH_LIMITS.bodyChars),
     path: r.path,
     threadId: r.threadId,

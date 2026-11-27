@@ -17,6 +17,7 @@ import { ApiModule } from "./http/api.module.js";
 import { ErrorFilterModule } from "./http/error-filter.module.js";
 import { PluginRouteAccessModule } from "./http/plugin-route-access.js";
 import { IdentityModule } from "./identity/identity.module.js";
+import { InboxItemsModule } from "./inbox/inbox-items.service.js";
 import { CacheModule } from "./infra/cache/cache.module.js";
 import { ConfigModule } from "./infra/config/config.module.js";
 import { DatabaseModule } from "./infra/database/database.module.js";
@@ -133,6 +134,8 @@ export class KernelModule {
         ExtensionDeviceAccessModule,
         // ctx.triggers: the events extensions emit (the host finds it at the time of use)
         TriggerEventsModule,
+        // ctx.inbox: personal inbox items extensions post (the host finds it at the time of use)
+        InboxItemsModule,
         // the Platform tool's operation registry and actor facts
         PlatformModule,
         // its operations (skills, agents, ...), registered at start on every role

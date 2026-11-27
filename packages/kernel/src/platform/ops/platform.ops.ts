@@ -51,6 +51,7 @@ const PUSH_CATEGORY_NAMES: Record<PushCategory, { zh: string; en: string }> = {
   replies: { zh: "智能体回复", en: "Agent replies" },
   tasks: { zh: "任务状态", en: "Task status" },
   automations: { zh: "自动化", en: "Automations" },
+  inbox: { zh: "收件箱", en: "Inbox" },
 };
 
 /**
@@ -276,7 +277,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.push-preferences",
         description:
-          "Read your own push notification switches for your mobile app: waiting (approvals, questions and connect requests waiting for you), replies (an agent's run in your conversation finished or failed), tasks (background tasks and sub-agents finished) and automations (your automation ran or failed). Each is true unless you switched it off; they apply in every org.",
+          "Read your own push notification switches for your mobile app: waiting (approvals, questions and connect requests waiting for you), replies (an agent's run in your conversation finished or failed), tasks (background tasks and sub-agents finished), automations (your automation ran or failed) and inbox (a new personal item in your inbox, from the platform or a plugin). Each is true unless you switched it off; they apply in every org.",
         input: EMPTY,
         example: {},
         // any signed-in person may call the route; every run's actor is a member of this org
@@ -288,7 +289,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.set-push-preferences",
         description:
-          "Switch your own push notification categories on or off; give only the ones to change (waiting, replies, tasks, automations: true or false), the others keep their values. They apply to every device of yours that receives push, in every org.",
+          "Switch your own push notification categories on or off; give only the ones to change (waiting, replies, tasks, automations, inbox: true or false), the others keep their values. They apply to every device of yours that receives push, in every org.",
         input: PushPreferencesPatchSchema,
         example: { replies: false },
         authz: { orgAction: "agents.use" },
@@ -297,7 +298,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
         errors: [
           {
             code: "validation_failed",
-            next: "Give at least one of waiting, replies, tasks, automations, each true or false.",
+            next: "Give at least one of waiting, replies, tasks, automations, inbox, each true or false.",
           },
         ],
         summary: async (input) => {

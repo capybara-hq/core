@@ -420,3 +420,40 @@ describe("permissions.triggers", () => {
     expect(isSensitivePermissionKey("permissions.triggers:item.created")).toBe(false);
   });
 });
+
+describe("permissions.inbox", () => {
+  const set = (inbox?: boolean) =>
+    buildPermissionSet({
+      provides: [],
+      config: { deployment: [] },
+      tables: [],
+      permissions: inbox === undefined ? {} : { inbox },
+    });
+
+  it("is one blocking key when declared; a set without it stays as it was", () => {
+    expect(set(true).permissions.inbox).toBe(true);
+    expect(permissionKeys(set(true))).toContain("permissions.inbox");
+    expect(set().permissions).not.toHaveProperty("inbox");
+    expect(set(false).permissions).not.toHaveProperty("inbox");
+    expect(blockingKeys(["permissions.inbox"])).toEqual(["permissions.inbox"]);
+  });
+
+  it("an upgrade declaring it adds a blocking key (re-approval)", () => {
+    const d = diffPermissions(set(), set(true));
+    expect(d).toEqual({ added: ["permissions.inbox"], removed: [] });
+    expect(blockingKeys(d.added)).toEqual(["permissions.inbox"]);
+  });
+
+  it("the approval display lists it in a group of its own, not sensitive", () => {
+    expect(permissionGroups(set(true)).find((g) => g.category === "inbox")).toEqual({
+      category: "inbox",
+      items: ["personal inbox items"],
+      sensitive: false,
+      entries: [{ value: "personal inbox items", sensitive: false }],
+    });
+    expect(permissionKeyItems(["permissions.inbox"])).toEqual([
+      { value: "permissions.inbox", sensitive: false },
+    ]);
+    expect(isSensitivePermissionKey("permissions.inbox")).toBe(false);
+  });
+});

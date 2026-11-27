@@ -1730,6 +1730,7 @@ export interface ExtensionContext {
     http: {
         route(method: "GET" | "POST" | "PUT" | "DELETE", path: string, handler: (req: Request, caller: RouteCaller) => Promise<Response>): void;
     };
+    inbox: InboxCtx;
     kv: {
         get(key: string): Promise<string | null>;
         set(key: string, value: string, opts: {
@@ -1899,6 +1900,7 @@ export interface ExtensionPermissions {
     };
     hooks?: HookMountPoint[];
     http?: HttpPermission[];
+    inbox?: boolean;
     models?: {
         purpose: string;
         kind: "chat" | "embedding" | "image_generation";
@@ -2406,6 +2408,76 @@ export interface InboundSender {
     locale?: string;
     tenantId: string;
     timeZone?: string;
+}
+
+// @public
+export const INBOX_ACTIONS_MAX = 3;
+
+// @public
+export const INBOX_ID_RE: RegExp;
+
+// @public
+export const INBOX_KIND_RE: RegExp;
+
+// @public
+export const INBOX_LIMITS: {
+    readonly titleChars: 200;
+    readonly bodyChars: 2000;
+    readonly linkChars: 512;
+    readonly kindChars: 64;
+    readonly labelChars: 40;
+    readonly idChars: 64;
+    readonly dedupeKeyChars: 200;
+    readonly payloadBytes: 2000;
+    readonly defaultExpirySeconds: number;
+    readonly maxExpirySeconds: number;
+};
+
+// @public
+export interface InboxAction {
+    id: string;
+    label: LocalizedName;
+    style?: "primary" | "danger";
+    uiAction: {
+        contribution: string;
+        actionId: string;
+        payload?: unknown;
+    };
+}
+
+// @public
+export interface InboxCtx {
+    post(p: InboxPost): Promise<{
+        itemId: string;
+    }>;
+    resolve(args: {
+        orgId: string;
+        itemId: string;
+    }): Promise<void>;
+}
+
+// @public
+export class InboxError extends Error {
+    constructor(code: InboxErrorCode, message: string, opts?: {
+        cause?: unknown;
+    });
+    readonly code: InboxErrorCode;
+}
+
+// @public
+export type InboxErrorCode = "invalid_item" | "org_disabled" | "not_found";
+
+// @public
+export interface InboxPost {
+    accountId: string;
+    actions?: InboxAction[];
+    body?: string;
+    dedupeKey?: string;
+    expiresInSeconds?: number;
+    kind: string;
+    link?: string;
+    orgId: string;
+    title: string;
 }
 
 // @public
@@ -5528,6 +5600,9 @@ export function validateGitSource(git: unknown, at?: string): string[];
 
 // @public
 export function validateImageGenerateResult(req: ImageGenerateRequest, info: ModelImageGenerationInfo, res: unknown): string | null;
+
+// @public
+export function validateInboxPost(p: InboxPost, plugin: string): string[];
 
 // @public
 export function validateInputForm(form: InputForm): string[];

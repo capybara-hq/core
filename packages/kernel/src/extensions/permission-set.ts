@@ -75,6 +75,11 @@ export interface PermissionSet {
      * when not declared.
      */
     triggers?: { emit: string[] };
+    /**
+     * Personal inbox items (`permissions.inbox`, collaboration spec §4.9): one blocking key. Absent
+     * when not declared.
+     */
+    inbox?: true;
   };
   /**
    * 安装记录包迁移警告的摘要（`warningsDigest`，Ruling P4）；没有警告或不是安装记录时省略。
@@ -226,6 +231,8 @@ export function buildPermissionSet(input: {
         : {}),
       // only when declared, likewise
       ...(p.triggers ? { triggers: { emit: sortedUnique(p.triggers.emit) } } : {}),
+      // only when declared, likewise
+      ...(p.inbox === true ? { inbox: true as const } : {}),
     },
     ...(input.warningsDigest ? { warningsDigest: input.warningsDigest } : {}),
   };
@@ -237,7 +244,7 @@ export function buildPermissionSet(input: {
  * `permissions.http.<access>:<METHOD> <path>` (`permissions.http.public:POST /events`),
  * `ui.view:tasks`, `ui.embed:board`, `permissions.client`, `ui.component:hud`,
  * `permissions.dialin:capybara-device/6`, `permissions.deviceaccess:browser`,
- * `permissions.triggers:item.created`.
+ * `permissions.triggers:item.created`, `permissions.inbox`.
  * Tolerates old snapshots missing fields (read as empty), so format changes never throw.
  */
 export function permissionKeys(set: PermissionSet): string[] {
@@ -271,6 +278,7 @@ export function permissionKeys(set: PermissionSet): string[] {
   if (p.dialIn?.protocol) keys.push(`${DIAL_IN_KEY_PREFIX}${p.dialIn.protocol}`);
   for (const svc of p.deviceAccess?.services ?? []) keys.push(`${DEVICE_ACCESS_KEY_PREFIX}${svc}`);
   for (const t of p.triggers?.emit ?? []) keys.push(`${TRIGGERS_KEY_PREFIX}${t}`);
+  if (p.inbox === true) keys.push(INBOX_KEY);
   if (s.warningsDigest) keys.push(`${WARNINGS_KEY_PREFIX}${s.warningsDigest}`);
   return sortedUnique(keys);
 }
@@ -307,6 +315,13 @@ export const DEVICE_ACCESS_KEY_PREFIX = "permissions.deviceaccess:";
  * (`PERMISSION_KEY_RE`).
  */
 export const TRIGGERS_KEY_PREFIX = "permissions.triggers:";
+
+/**
+ * Permission key of personal inbox items (`permissions.inbox`): blocking, not sensitive (an item
+ * reaches only members of orgs that enabled the extension, links only to its own pages, and its
+ * buttons call its UI actions as the person who clicks).
+ */
+export const INBOX_KEY = "permissions.inbox";
 
 /** Key prefix of a client component (`ui.component:<id>`): sensitive and blocking. */
 export const UI_COMPONENT_KEY_PREFIX = "ui.component:";

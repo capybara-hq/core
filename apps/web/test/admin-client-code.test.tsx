@@ -401,6 +401,12 @@ describe("declaredPermissions (the org-upload confirm)", () => {
     ]);
   });
 
+  it("personal inbox items are a group of their own, not sensitive", () => {
+    expect(declaredPermissions(manifest({ inbox: true }))).toEqual([
+      { category: "inbox", items: ["personal inbox items"], sensitive: false },
+    ]);
+  });
+
   it("emitted event types are a group of their own, not sensitive", () => {
     expect(declaredPermissions(manifest({ triggers: { emit: ["item.created"] } }))).toEqual([
       { category: "triggers", items: ["item.created"], sensitive: false },

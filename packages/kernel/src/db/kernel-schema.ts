@@ -238,7 +238,7 @@ export interface PushRegistrationsTable {
 /** A person's switch for one push category (migration 0172); an absent row is on. */
 export interface PushPreferencesTable {
   account_id: string;
-  category: "waiting" | "replies" | "tasks" | "automations";
+  category: "waiting" | "replies" | "tasks" | "automations" | "inbox";
   enabled: boolean;
   updated_at: Ts;
 }
@@ -1910,6 +1910,36 @@ export interface TriggerEventsTable {
 
 export type TriggerEventState = "pending" | "dispatched" | "undelivered" | "depth_stopped";
 
+/** One button of an inbox item as stored (`InboxAction` of the SDK). */
+export interface StoredInboxAction {
+  id: string;
+  label: { zh: string; en: string };
+  style?: "primary" | "danger";
+  uiAction: { contribution: string; actionId: string; payload?: unknown };
+}
+
+export type InboxItemState = "open" | "resolved" | "expired";
+
+/** 0190: a personal inbox item (collaboration spec §4.9), for one person in one org. */
+export interface InboxItemsTable {
+  id: string;
+  org_id: string;
+  account_id: string;
+  source: "kernel" | "plugin";
+  /** The posting extension; null for a kernel item. */
+  plugin: NullableText;
+  kind: string;
+  title: string;
+  body: ColumnType<string, string | undefined, string>;
+  link: NullableText;
+  actions: ColumnType<StoredInboxAction[], string | undefined, string>;
+  dedupe_key: NullableText;
+  state: ColumnType<InboxItemState, InboxItemState | undefined, InboxItemState>;
+  expires_at: Ts;
+  created_at: Ts;
+  resolved_at: TsNullable;
+}
+
 /**
  * 0189: an event that reached an automation, and the run that served it (null while it waits:
  * events of one subject coalesce, collaboration spec §4.7).
@@ -2127,6 +2157,7 @@ export interface KernelDatabase {
   automation_runs: AutomationRunsTable;
   automation_grants: AutomationGrantsTable;
   trigger_events: TriggerEventsTable;
+  inbox_items: InboxItemsTable;
   automation_event_deliveries: AutomationEventDeliveriesTable;
   automation_conversations: AutomationConversationsTable;
   file_shares: FileSharesTable;

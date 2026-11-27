@@ -1,8 +1,9 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import type { CatalogRequestView } from "../../catalog/requests.service.js";
-import { InboxNoticeParams } from "../../inbox/inbox.schemas.js";
+import { InboxItemParams, InboxNoticeParams } from "../../inbox/inbox.schemas.js";
 import { type InboxItem, InboxService, type OrgNoticeView } from "../../inbox/inbox.service.js";
+import { InboxItemsService } from "../../inbox/inbox-items.service.js";
 import type { OrgNoticeDetails } from "../../inbox/org-notices.js";
 import {
   type PlatformInboxItem,
@@ -22,6 +23,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 const NoticeInput = z.object({ id: InboxNoticeParams.shape.id }).strict();
 const NOTICE_EXAMPLE = { id: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" };
+
+const ItemInput = z.object({ id: InboxItemParams.shape.id }).strict();
+
+const ITEM_NOT_FOUND: PrecheckResult = {
+  ok: false,
+  code: "inbox.item_not_found",
+  message: "Inbox item not found",
+};
 
 const NOT_FOUND: PrecheckResult = {
   ok: false,
@@ -137,6 +146,19 @@ function orgRow(i: InboxItem) {
               : "Resume the task once the cause is fixed.",
       };
     }
+    case "item": {
+      const it = i.item;
+      return {
+        ...base,
+        name: it.pluginName?.en ?? "Capybara",
+        state: "open",
+        summary: `${it.title}${it.body !== "" ? `: ${it.body}` : ""}`,
+        next:
+          it.actions.length > 0
+            ? "Its buttons are pressed by you on the web, in the inbox; dismiss it with inbox.item-dismiss once read."
+            : "Dismiss it with inbox.item-dismiss once read.",
+      };
+    }
     default: {
       const n = (i as { notice: OrgNoticeView }).notice;
       return {
@@ -236,6 +258,8 @@ export class InboxOperations implements OnModuleInit {
     @Inject(InboxService) private readonly inbox: InboxService,
     @Inject(PlatformInboxService) private readonly platformInbox: PlatformInboxService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(InboxItemsService)
+    private readonly items: Pick<InboxItemsService, "openOf" | "dismiss" | "listOpen">,
   ) {}
 
   /** The org's open notice `id` when the actor is an org admin (else null: not found). */
@@ -290,7 +314,7 @@ export class InboxOperations implements OnModuleInit {
       defineOperation({
         id: "inbox.list",
         description:
-          "List your inbox in this org, newest first, one compact row each (type, what it is about, state, the summary the inbox shows, your next step): tool call approvals waiting for you, and for org admins the skill share requests and proposed skill versions, the members' pending requests and the org's notices; your own decided requests too. Never a call's input. Deciding is done by you on the web; notices can be dismissed with inbox.dismiss-notice. Pages by 50: pass the returned next as params.cursor.",
+          "List your inbox in this org, newest first, one compact row each (type, what it is about, state, the summary the inbox shows, your next step): tool call approvals waiting for you, and for org admins the skill share requests and proposed skill versions, the members' pending requests and the org's notices; your own decided requests and your personal items (type item, from the kernel or a plugin) too. Never a call's input. Deciding is done by you on the web; notices can be dismissed with inbox.dismiss-notice, personal items with inbox.item-dismiss. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { orgAction: "approvals.decide" },
@@ -347,6 +371,40 @@ export class InboxOperations implements OnModuleInit {
         },
         noHandoff:
           "A dismissal: nothing waits for the person afterwards, the sentence only says where approvals are decided.",
+      }),
+      defineOperation({
+        id: "inbox.item-dismiss",
+        description:
+          "Dismiss one of your own personal inbox items (type item in inbox.list) without pressing any of its buttons: it leaves your inbox. Only your own open items; the buttons are pressed by you on the web.",
+        input: ItemInput,
+        example: NOTICE_EXAMPLE,
+        authz: { orgAction: "approvals.decide" },
+        mirrors: ["POST /api/v1/orgs/:orgId/inbox/items/:id/dismiss"],
+        confirm: "personal",
+        errors: [
+          {
+            code: "inbox.item_not_found",
+            next: "None of your open inbox items has that id; list them with inbox.list (type item rows).",
+          },
+        ],
+        precheck: async (input, ctx) =>
+          (await orElse(() => this.items.openOf(ctx.orgId, ctx.actorAccountId, input.id), null)) ===
+          null
+            ? ITEM_NOT_FOUND
+            : { ok: true },
+        summary: async (input, ctx) => {
+          const open = await orElse(() => this.items.listOpen(ctx.orgId, ctx.actorAccountId), []);
+          const it = open.find((x) => x.id === input.id);
+          const name = named(it === undefined ? input.id : it.title);
+          return {
+            zh: `从你的收件箱移除「${name}」`,
+            en: `Dismiss "${name}" from your inbox`,
+          };
+        },
+        run: async (input, ctx) => {
+          await this.items.dismiss(ctx.orgId, ctx.actorAccountId, input.id);
+          return { dismissed: input.id };
+        },
       }),
       defineOperation({
         id: "inbox.platform-list",

@@ -19,7 +19,31 @@ export type InboxItem =
   | { type: "catalog_request_decided"; id: string; createdAt: string; request: CatalogRequest }
   /** My automation that needs me (`id`: `<taskId>:paused` or `<taskId>:grants`). */
   | { type: "automation_attention"; id: string; createdAt: string; attention: AutomationAttention }
+  /** One of my own personal items, from the kernel or a plugin (collaboration spec §4.9). */
+  | { type: "item"; id: string; createdAt: string; item: PersonalInboxItem }
   | { type: OrgNotice["kind"]; id: string; createdAt: string; notice: OrgNotice };
+
+/**
+ * A personal inbox item (kernel `PersonalInboxItemView`): only its person sees it. A button calls
+ * the plugin's action as me when pressed (never named here); dismissing closes it without calling.
+ */
+export interface PersonalInboxItem {
+  id: string;
+  source: "kernel" | "plugin";
+  /** The posting plugin; null for an item of the platform itself. */
+  plugin: string | null;
+  /** The plugin's display name; null for the platform's own items. */
+  pluginName: LocalizedName | null;
+  /** The platform's own kinds (`automation_depth_stopped`) read with their own copy. */
+  kind: string;
+  title: string;
+  body: string;
+  /** An in-app path (a plugin's item opens one of its pages). */
+  link: string | null;
+  actions: { id: string; label: LocalizedName; style?: "primary" | "danger" }[];
+  expiresAt: string;
+  createdAt: string;
+}
 
 /**
  * An automation of mine that needs me (kernel `AutomationAttentionView`, automations spec §8):
@@ -98,7 +122,8 @@ export const isShowable = (i: InboxItem): boolean =>
   i.type === "skill_change" ||
   i.type === "catalog_request" ||
   i.type === "catalog_request_decided" ||
-  i.type === "automation_attention";
+  i.type === "automation_attention" ||
+  i.type === "item";
 
 export interface InboxView {
   items: InboxItem[];
@@ -107,6 +132,25 @@ export interface InboxView {
 
 export const listInbox = (orgId: string) =>
   apiFetch<InboxView>(`/api/v1/orgs/${encodeURIComponent(orgId)}/inbox`);
+
+/** I press a button of my own item: the plugin's action runs as me, then the item closes. */
+export const clickInboxItemAction = (
+  orgId: string,
+  id: string,
+  actionId: string,
+  locale: "zh" | "en",
+) =>
+  apiFetch<{ toast?: LocalizedName }>(
+    `/api/v1/orgs/${encodeURIComponent(orgId)}/inbox/items/${encodeURIComponent(id)}/actions/${encodeURIComponent(actionId)}`,
+    { method: "POST", body: JSON.stringify({ locale }) },
+  );
+
+/** I dismiss my own item without pressing a button (204). */
+export const dismissInboxItem = (orgId: string, id: string) =>
+  apiFetch<void>(
+    `/api/v1/orgs/${encodeURIComponent(orgId)}/inbox/items/${encodeURIComponent(id)}/dismiss`,
+    { method: "POST" },
+  );
 
 /** An org admin dismisses a notice from the inbox (204). */
 export const dismissNotice = (orgId: string, id: string) =>

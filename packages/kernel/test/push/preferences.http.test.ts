@@ -29,7 +29,7 @@ let accounts: AccountsService;
 let alice: Account;
 let bob: Account;
 
-const ALL_ON = { waiting: true, replies: true, tasks: true, automations: true };
+const ALL_ON = { waiting: true, replies: true, tasks: true, automations: true, inbox: true };
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);

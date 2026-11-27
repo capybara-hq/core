@@ -89,6 +89,7 @@ import {
   SsoController,
 } from "../identity/sso.controller.js";
 import { InboxModule } from "../inbox/inbox.module.js";
+import { InboxItemsController } from "../inbox/inbox-items.controller.js";
 import { PlatformInboxController } from "../inbox/platform-inbox.controller.js";
 import { ModelEnablementController } from "../models/enablement.controller.js";
 import { ModelsModule } from "../models/models.module.js";
@@ -192,6 +193,7 @@ const CONTROLLERS: Type[] = [
   AgentSkillsController,
   InvocableSkillsController,
   InboxController,
+  InboxItemsController,
   PlatformInboxController,
   ConversationStreamController,
   ConnectorContentController,

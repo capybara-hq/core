@@ -137,6 +137,8 @@ export interface StaticExtensionManifest {
     deviceAccess?: { services: string[] };
     /** The event types the extension emits for event automations (SDK `triggers`). */
     triggers?: { emit: string[] };
+    /** Personal inbox items for the orgs' members (SDK `inbox`). */
+    inbox?: boolean;
   };
   /** The config fields the extension declares (SDK `StaticConfigField`). */
   config?: { deployment: StaticConfigField[] };
@@ -1761,6 +1763,7 @@ export function declaredPermissions(
     },
     { category: "deviceAccess", items: p.deviceAccess?.services ?? [], sensitive: true },
     { category: "triggers", items: p.triggers?.emit ?? [] },
+    { category: "inbox", items: p.inbox === true ? ["personal inbox items"] : [] },
   ];
   return groups
     .filter((g) => g.items.length > 0)

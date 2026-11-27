@@ -458,7 +458,9 @@
       "already_decided": "该技能改动已被处理。"
     },
     "inbox": {
-      "notice_not_found": "这条通知不存在或已被移除。"
+      "notice_not_found": "这条通知不存在或已被移除。",
+      "item_not_found": "这条收件箱事项已不存在：已被处理、移除或过期。",
+      "action_not_found": "这个事项已不再提供该按钮。"
     },
     "trajectory": {
       "not_found": "没有找到这条运行记录，或你没有查看权限。"
@@ -2344,6 +2346,21 @@
       "titleRejected": "未允许 · {hosts}",
       "hintApproved": "组织现在允许这些域名，再运行一次命令即可。",
       "hintRejected": "你允许这些域名的申请没有通过。"
+    },
+    "item": {
+      "platform": "平台",
+      "source": "来自",
+      "expires": "移出收件箱",
+      "open": "打开",
+      "dismiss": "移除",
+      "dismissed": "已从收件箱移除",
+      "done": "已处理",
+      "kinds": {
+        "automation_depth_stopped": {
+          "label": "自动化链已停止",
+          "hint": "有一个事件未送达：它所在的自动化链达到了本组织允许自动化相互触发的层数上限。请检查这个自动化，避免它不断触发自身。"
+        }
+      }
     }
   },
   "connectors": {
@@ -3152,7 +3169,8 @@
       "components": "界面组件",
       "dialIn": "机器接入（协议）",
       "deviceAccess": "设备服务",
-      "triggers": "发出的事件"
+      "triggers": "发出的事件",
+      "inbox": "个人收件箱事项"
     },
     "configFirstHint": "需在下方填写本组织自己的配置副本，此扩展才能在本组织使用",
     "sync": "立即同步",
@@ -7280,7 +7298,9 @@
       "tasks": "任务状态",
       "tasksHint": "后台任务或子智能体已结束。",
       "automations": "自动化",
-      "automationsHint": "你的自动化已运行或运行失败。"
+      "automationsHint": "你的自动化已运行或运行失败。",
+      "inbox": "收件箱",
+      "inboxHint": "收件箱有新事项，来自平台或插件。"
     },
     "deviceName": {
       "ios": "iOS 设备",

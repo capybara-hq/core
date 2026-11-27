@@ -1,6 +1,8 @@
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { isExtensionEnabled } from "../extensions/enabled.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { pluginDisplayNames } from "../tools/display-names.js";
 import type { PushFanoutData } from "./jobs.js";
 import type { ResolvedPush } from "./texts.js";
 import { pushTriggerOf } from "./triggers.js";
@@ -23,6 +25,8 @@ export type ResolvedRecipients = Omit<ResolvedPush, "eventId">;
  *   automation (that pushes as `automations`);
  * - `tasks`: the root conversation's owner;
  * - `automations`: the task's owner, for a task run `completed` or `failed` of a task not deleted;
+ * - `inbox`: the item's person, while the item is open and unexpired (a plugin item only while
+ *   its plugin is enabled in the org);
  * - eval conversations (a sub-agent under an eval root too) and deleted conversations never push;
  * - an escalated approval whose run is gone pushes nothing (its initiator is unknown).
  *
@@ -35,9 +39,47 @@ export async function resolveRecipients(
   db: KernelSchemaDb,
   source: PushFanoutData["source"],
 ): Promise<ResolvedRecipients | null> {
-  return source.kind === "automation"
-    ? resolveAutomation(db, source.taskRunId)
-    : resolveConversation(db, source.conversationId, source.seq);
+  switch (source.kind) {
+    case "automation":
+      return resolveAutomation(db, source.taskRunId);
+    case "inbox":
+      return resolveInboxItem(db, source.itemId);
+    default:
+      return resolveConversation(db, source.conversationId, source.seq);
+  }
+}
+
+async function resolveInboxItem(
+  db: KernelSchemaDb,
+  itemId: string,
+): Promise<ResolvedRecipients | null> {
+  // org-filter: itemId comes from the kernel-written push fan-out job; this read learns the item's
+  // org, which every later read filters by
+  const item = await db
+    .selectFrom("inbox_items")
+    .select(["org_id", "account_id", "plugin", "title", "state", "expires_at"])
+    .where("id", "=", itemId)
+    .executeTakeFirst();
+  if (!item || item.state !== "open" || item.expires_at.getTime() <= Date.now()) return null;
+  const orgId = item.org_id;
+  if (!(await orgLive(db, orgId))) return null;
+  if (item.plugin !== null && !(await isExtensionEnabled(db, orgId, item.plugin))) return null;
+  const accountIds = await activeMembers(db, orgId, [item.account_id]);
+  if (accountIds.length === 0) return null;
+  const title =
+    item.plugin === null
+      ? "Capybara"
+      : ((await pluginDisplayNames(db, [item.plugin])).get(item.plugin) ?? item.plugin);
+  return {
+    orgId,
+    accountIds,
+    category: "inbox",
+    path: `/inbox?org=${encodeURIComponent(orgId)}#item=${encodeURIComponent(itemId)}`,
+    threadId: "inbox",
+    title,
+    conversationTitle: item.title,
+    text: "inboxItem",
+  };
 }
 
 async function resolveConversation(

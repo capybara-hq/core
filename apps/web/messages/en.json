@@ -458,7 +458,9 @@
       "already_decided": "This skill change has already been handled."
     },
     "inbox": {
-      "notice_not_found": "The notice does not exist or was already dismissed."
+      "notice_not_found": "The notice does not exist or was already dismissed.",
+      "item_not_found": "This inbox item is gone: it was already handled, dismissed or expired.",
+      "action_not_found": "This button is no longer offered on the item."
     },
     "trajectory": {
       "not_found": "Run history not found, or you do not have access to it."
@@ -2356,6 +2358,21 @@
       "titleRejected": "Not allowed · {hosts}",
       "hintApproved": "The organization allows these domains now. Run the command again.",
       "hintRejected": "Your request to allow these domains was not approved."
+    },
+    "item": {
+      "platform": "Platform",
+      "source": "From",
+      "expires": "Leaves the inbox",
+      "open": "Open",
+      "dismiss": "Dismiss",
+      "dismissed": "Removed from your inbox",
+      "done": "Done",
+      "kinds": {
+        "automation_depth_stopped": {
+          "label": "Automation chain stopped",
+          "hint": "An event was not delivered: the chain of automations it came from reached your organization's limit on automations triggering each other. Check this automation so it does not keep triggering itself."
+        }
+      }
     }
   },
   "connectors": {
@@ -3164,7 +3181,8 @@
       "components": "Interface components",
       "dialIn": "Machine connections (protocol)",
       "deviceAccess": "Device services",
-      "triggers": "Events it emits"
+      "triggers": "Events it emits",
+      "inbox": "Personal inbox items"
     },
     "configFirstHint": "This extension won't work in the organization until you fill in the organization's own copy of its configuration below",
     "sync": "Sync now",
@@ -7292,7 +7310,9 @@
       "tasks": "Task status",
       "tasksHint": "A background task or a sub-agent finished.",
       "automations": "Automations",
-      "automationsHint": "One of your automations ran or failed."
+      "automationsHint": "One of your automations ran or failed.",
+      "inbox": "Inbox",
+      "inboxHint": "A new item in your inbox, from the platform or a plugin."
     },
     "deviceName": {
       "ios": "iOS device",

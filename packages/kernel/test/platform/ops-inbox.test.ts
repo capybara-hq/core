@@ -4,11 +4,13 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import { InboxItemsService } from "../../src/inbox/inbox-items.service.js";
 import {
   PLATFORM_INBOX_MAX_ITEMS,
   type PlatformInboxItem,
   PlatformInboxService,
 } from "../../src/inbox/platform-inbox.service.js";
+import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
 import { type ErrorRole, nextStepFor, toToolError } from "../../src/platform/errors.js";
@@ -188,7 +190,7 @@ const expectNoSecrets = (out: unknown) => {
 type Rows = { items: Record<string, unknown>[]; total: number; next: string | null };
 
 describe("registration and who may call", () => {
-  it("registers the inbox, approval and pending reads; only notice dismissals write", () => {
+  it("registers the inbox, approval and pending reads; only dismissals write", () => {
     const ids = ops
       .all()
       .map((o) => o.id)
@@ -197,6 +199,7 @@ describe("registration and who may call", () => {
       "approvals.get",
       "approvals.waiting",
       "inbox.dismiss-notice",
+      "inbox.item-dismiss",
       "inbox.list",
       "inbox.platform-dismiss-notice",
       "inbox.platform-list",
@@ -212,6 +215,7 @@ describe("registration and who may call", () => {
       expect(op(id).confirm, id).toBe("read");
     }
     expect(op("inbox.dismiss-notice").confirm).toBe("org");
+    expect(op("inbox.item-dismiss").confirm).toBe("personal");
     expect(op("inbox.platform-dismiss-notice").confirm).toBe("platform");
   });
 
@@ -360,6 +364,42 @@ describe("the org inbox", () => {
     await run("inbox.dismiss-notice", { id: orgNotice }, adminId, "orgAdmin");
     const out = (await run("inbox.list", {}, adminId, "orgAdmin")) as Rows;
     expect(out.items.map((r) => r.id)).not.toContain(orgNotice);
+  });
+});
+
+describe("personal inbox items", () => {
+  it("inbox.item-dismiss dismisses only the actor's own open item; inbox.list shows it", async () => {
+    const { itemId } = await withOrgScope(orgId, () =>
+      env.k.app
+        .get(InboxItemsService)
+        .post(
+          { kind: "kernel" },
+          { orgId, accountId: memberId, kind: "notice", title: "Read me", body: "Short body" },
+        ),
+    );
+    const listed = (await run("inbox.list", {}, memberId)) as Rows;
+    expect(listed.items).toContainEqual(
+      expect.objectContaining({
+        id: itemId,
+        type: "item",
+        name: "Capybara",
+        summary: "Read me: Short body",
+      }),
+    );
+    // another member, an org admin included, finds nothing
+    expect(await precheck("inbox.item-dismiss", { id: itemId }, adminId)).toMatchObject({
+      ok: false,
+      code: "inbox.item_not_found",
+    });
+    await expect(run("inbox.item-dismiss", { id: itemId }, adminId, "orgAdmin")).rejects.toThrow();
+    expect(await precheck("inbox.item-dismiss", { id: itemId }, memberId)).toEqual({ ok: true });
+    const summary = await op("inbox.item-dismiss").summary?.({ id: itemId }, ctxOf(memberId));
+    expect(summary?.en).toContain("Read me");
+    expect(await run("inbox.item-dismiss", { id: itemId }, memberId)).toEqual({
+      dismissed: itemId,
+    });
+    const after = (await run("inbox.list", {}, memberId)) as Rows;
+    expect(after.items.map((r) => r.id)).not.toContain(itemId);
   });
 });
 

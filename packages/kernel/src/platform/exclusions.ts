@@ -749,6 +749,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Renders an extension UI view for the web app",
   },
   {
+    route: "POST /api/v1/orgs/:orgId/inbox/items/:id/actions/:actionId",
+    category: "human-only",
+    reason:
+      "Clicks a button of the person's own inbox item, which runs a plugin's UI action as that person; an agent never presses it for them (dismissing is an operation)",
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/ui/actions/:plugin/:id",
     category: "transport",
     reason: "Runs an extension UI action from the web app",

@@ -59,6 +59,24 @@ describe("permissionGroups", () => {
     expect(isSensitivePermissionKey("permissions.triggers:item.created")).toBe(false);
   });
 
+  it("personal inbox items (permissions.inbox) form the last group, not sensitive", () => {
+    const groups = permissionGroups({
+      ...base,
+      permissions: {
+        ...base.permissions,
+        triggers: { emit: ["item.created"] },
+        inbox: true,
+      },
+    });
+    expect(groups.map((g) => g.category)).toEqual(["triggers", "inbox"]);
+    expect(groups[1]).toEqual({
+      category: "inbox",
+      sensitive: false,
+      items: ["personal inbox items"],
+      entries: [{ value: "personal inbox items", sensitive: false }],
+    });
+  });
+
   it("a secret field is prefixed like the config group", () => {
     const groups = permissionGroups({
       ...base,

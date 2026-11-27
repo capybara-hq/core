@@ -1,5 +1,6 @@
 import {
   type EventFilter,
+  InboxError,
   matchesFilter,
   type TriggerEventDeclaration,
   type TriggerSource,
@@ -10,6 +11,7 @@ import { conversationAncestors } from "../../conversations/tree.js";
 import type { TriggerEventsTable } from "../../db/kernel-schema.js";
 import { ExtensionsModule } from "../../extensions/extensions.module.js";
 import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
+import { InboxItemsModule, InboxItemsService } from "../../inbox/inbox-items.service.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { TransactionHost } from "../../infra/database/transaction-host.js";
@@ -77,7 +79,9 @@ function filterAllowed(filter: EventFilter, decl: TriggerEventDeclaration): bool
  * §4.7), the `trigger-dispatch` job. In order:
  * - an event no longer `pending` was dispatched before (a retried job): nothing to do;
  * - a directed event (`audience` set) is left `pending` for acceptance routing (PR C);
- * - past the org's `maxEventDepth` the event is `depth_stopped`;
+ * - past the org's `maxEventDepth` the event is `depth_stopped`, and the owner of the chain's last
+ *   automation (the one whose run caused the event) gets a kernel inbox item
+ *   `automation_depth_stopped` linking to it, one open item per automation;
  * - a source the org switched off (`eventSourcesOff`), or one that does not serve the org now (its
  *   extension disabled, unloaded, its config invalid) or no longer declares the type, leaves the
  *   event `undelivered`: no run, no retry. A provider whose status could not be read (a transient
@@ -105,6 +109,7 @@ export class TriggerDispatcher {
     private readonly points: Pick<ExtensionPointDefaults, "providersFor">,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
+    @Inject(InboxItemsService) private readonly inbox: Pick<InboxItemsService, "post">,
   ) {}
 
   /**
@@ -134,13 +139,12 @@ export class TriggerDispatcher {
     }
     const settings = await readAutomationSettings(db, this.config, orgId);
     if (depthExceeded(ev.depth, settings.maxEventDepth)) {
-      // TODO(collaboration C1): the inbox notice to the owners of the chain's last automation
       this.log.warn("trigger event past the org's chain depth; not dispatched", {
         ...ctx,
         depth: ev.depth,
         maxEventDepth: settings.maxEventDepth,
       });
-      await this.setState(orgId, eventId, "depth_stopped");
+      await this.stopForDepth(ev);
       return;
     }
     if (settings.eventSourcesOff.includes(ev.plugin)) {
@@ -301,6 +305,55 @@ export class TriggerDispatcher {
   }
 
   /**
+   * Marks `ev` `depth_stopped` and tells the owner of the chain's last automation (the automation
+   * whose run emitted the event) with a kernel inbox item, in one transaction; nothing when another
+   * dispatch settled the event first. The item links to the automation and is posted once per
+   * automation while open (`dedupeKey`); an owner no longer an active member gets none.
+   */
+  @Transactional()
+  private async stopForDepth(ev: EventRow): Promise<void> {
+    const db = this.kdb.db;
+    const orgId = ev.org_id;
+    const held = await db
+      .updateTable("trigger_events")
+      .set({ state: "depth_stopped" })
+      .where("org_id", "=", orgId)
+      .where("id", "=", ev.id)
+      .where("state", "=", "pending")
+      .returning("id")
+      .executeTakeFirst();
+    if (held === undefined || ev.cause_run_id === null) return;
+    const last = await db
+      .selectFrom("runs")
+      .innerJoin("automation_runs", "automation_runs.id", "runs.automation_run_id")
+      .innerJoin("automations", "automations.id", "automation_runs.automation_id")
+      .select(["automations.id", "automations.account_id", "automations.name"])
+      .where("runs.id", "=", ev.cause_run_id)
+      .where("automation_runs.org_id", "=", orgId)
+      .where("automations.org_id", "=", orgId)
+      .where("automations.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (last === undefined) return;
+    try {
+      await this.inbox.post(
+        { kind: "kernel" },
+        {
+          orgId,
+          accountId: last.account_id,
+          kind: "automation_depth_stopped",
+          title: last.name,
+          body: `An event from ${ev.plugin} (${ev.type}) was not delivered: the chain of automations it came from reached the organization's depth limit.`,
+          link: `/automations/${encodeURIComponent(last.id)}`,
+          dedupeKey: `automation-depth-${last.id}`,
+        },
+      );
+    } catch (err) {
+      if (!(err instanceof InboxError)) throw err;
+      this.log.info("chain depth notice not posted", { orgId, eventId: ev.id, err });
+    }
+  }
+
+  /**
    * The active, unexpired event automations of the org on `plugin` whose types include `type` (one
    * past its `expires_at` gets nothing; the scan ends it).
    */
@@ -359,7 +412,7 @@ export class TriggerDispatcher {
   private async setState(
     orgId: string,
     eventId: string,
-    state: "dispatched" | "undelivered" | "depth_stopped",
+    state: "dispatched" | "undelivered",
   ): Promise<void> {
     await this.kdb.db
       .updateTable("trigger_events")
@@ -376,7 +429,7 @@ export class TriggerDispatcher {
  * event sweep (`@LockedCron`): worker only (imported by `MaintenanceModule` alone).
  */
 @Module({
-  imports: [ExtensionsModule, AutomationStoreModule],
+  imports: [ExtensionsModule, AutomationStoreModule, InboxItemsModule],
   providers: [TriggerDispatcher, EventCoalescer, TriggerEventSweepJob],
   exports: [TriggerDispatcher, EventCoalescer],
 })

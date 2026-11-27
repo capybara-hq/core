@@ -21,19 +21,25 @@ export class PushPreferencesService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
-  /** The four switches of `accountId`. */
+  /** The switches of `accountId`. */
   async get(accountId: string): Promise<PushPreferences> {
     const rows = await this.db
       .selectFrom("push_preferences")
       .select(["category", "enabled"])
       .where("account_id", "=", accountId)
       .execute();
-    const out: PushPreferences = { waiting: true, replies: true, tasks: true, automations: true };
+    const out: PushPreferences = {
+      waiting: true,
+      replies: true,
+      tasks: true,
+      automations: true,
+      inbox: true,
+    };
     for (const r of rows) out[r.category] = r.enabled;
     return out;
   }
 
-  /** Sets the switches given (the others keep their value) and answers all four. */
+  /** Sets the switches given (the others keep their value) and answers them all. */
   @Transactional()
   async set(accountId: string, patch: PushPreferencesPatch): Promise<PushPreferences> {
     const values = PUSH_CATEGORIES.flatMap((category) => {

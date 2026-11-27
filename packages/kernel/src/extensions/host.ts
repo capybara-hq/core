@@ -28,6 +28,7 @@ import type { BusSubscriber } from "../ctx/bus.js";
 import {
   type DeviceAccessBackend,
   type ExtensionPointAccess,
+  type InboxBackend,
   type KernelDeps,
   type KernelExtensionContext,
   pluginSchemaName,
@@ -43,6 +44,7 @@ import { createDb } from "../db/pool.js";
 import { DEVICE_ACCESS_BACKEND } from "../device-access/token.js";
 import { DialInAccess } from "../dial-in/access.js";
 import type { PluginRouteTable } from "../http/plugin-dispatch.js";
+import { INBOX_ITEMS_BACKEND } from "../inbox/token.js";
 import { waitWithin } from "../infra/close-within.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -707,13 +709,15 @@ export class ExtensionHost {
      * of use: its module imports the sandbox, devices and tools modules, which import this one (a
      * module cycle otherwise).
      * Absent (a hand-built host) or not found (the CLI): `ctx.deviceAccess` calls are refused.
-     * `TriggerEventsService` (`ctx.triggers`, {@link TRIGGER_EVENTS_BACKEND}) likewise.
+     * `TriggerEventsService` (`ctx.triggers`, {@link TRIGGER_EVENTS_BACKEND}) and
+     * `InboxItemsService` (`ctx.inbox`, {@link INBOX_ITEMS_BACKEND}) likewise.
      */
     @Optional()
     @Inject(ModuleRef)
     modules?: {
       get(token: typeof DEVICE_ACCESS_BACKEND, opts: { strict: false }): DeviceAccessBackend;
       get(token: typeof TRIGGER_EVENTS_BACKEND, opts: { strict: false }): TriggersBackend;
+      get(token: typeof INBOX_ITEMS_BACKEND, opts: { strict: false }): InboxBackend;
     },
     /** Tests only: `ctx.net`'s DNS and dispatcher seams (`EXTENSION_NET_SEAMS`). */
     @Optional() @Inject(EXTENSION_NET_SEAMS) netSeams?: ExtensionNetSeams,
@@ -755,6 +759,13 @@ export class ExtensionHost {
       triggers: () => {
         try {
           return modules?.get(TRIGGER_EVENTS_BACKEND, { strict: false });
+        } catch {
+          return undefined;
+        }
+      },
+      inbox: () => {
+        try {
+          return modules?.get(INBOX_ITEMS_BACKEND, { strict: false });
         } catch {
           return undefined;
         }

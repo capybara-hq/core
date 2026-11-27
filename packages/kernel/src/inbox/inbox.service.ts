@@ -22,6 +22,11 @@ import {
   ApprovalsService,
   type ApprovalView,
 } from "../tools/approvals.service.js";
+import {
+  INBOX_ITEMS_LIST_MAX,
+  InboxItemsService,
+  type PersonalInboxItemView,
+} from "./inbox-items.service.js";
 import type { OrgNoticeDetails } from "./org-notices.js";
 
 /** The most open org notices one inbox read returns. */
@@ -36,12 +41,13 @@ export type OrgNoticeView = { id: string; createdAt: string } & {
   [K in keyof OrgNoticeDetails]: { kind: K; detail: OrgNoticeDetails[K] };
 }[keyof OrgNoticeDetails];
 
-/** 收件箱一次最多返回的事项数。 */
+/** The most items one inbox read returns. */
 export const INBOX_MAX_ITEMS = 100;
 
 /**
- * 收件箱里的一项（按 `type` 区分，形状稳定）：
- * - `tool_approval`：当前用户能处理的待处理工具调用审批（与 `GET /approvals?status=pending` 同一视图）；
+ * One inbox entry (told apart by `type`, stable shapes):
+ * - `tool_approval`: a pending tool call approval the current user can decide (the same view as
+ *   `GET /approvals?status=pending`);
  * - `skill_change`: pending skill share requests and proposed versions of shared skills, when the
  *   current user is an org admin (`skillChange.kind`; spec §5.4, §5.5);
  * - `catalog_request`: pending `enable` and `network_allowlist` requests from members and pending
@@ -56,7 +62,10 @@ export const INBOX_MAX_ITEMS = 100;
  *   or connections; derived live, gone once the task is resumed or runs clean;
  * - the org notices (`item_shared`, `shared_item_updated`, `upload_confirmed`,
  *   `upload_rejected`; `type` = the notice's kind): for org admins, until one dismisses it
- *   (`POST inbox/notices/:id/dismiss`).
+ *   (`POST inbox/notices/:id/dismiss`);
+ * - `item`: the current user's own open personal items (`inbox_items`, collaboration spec §4.9),
+ *   posted by the kernel or an extension, until they click an action or dismiss it
+ *   (`POST inbox/items/:id/actions/:actionId`, `POST inbox/items/:id/dismiss`) or it expires.
  */
 export type InboxItem =
   | { type: "tool_approval"; id: string; createdAt: string; approval: ApprovalView }
@@ -76,6 +85,7 @@ export type InboxItem =
       createdAt: string;
       attention: AutomationAttentionView;
     }
+  | { type: "item"; id: string; createdAt: string; item: PersonalInboxItemView }
   | {
       type: OrgNoticeView["kind"];
       id: string;
@@ -86,13 +96,13 @@ export type InboxItem =
 /** An automation that needs its creator ({@link AutomationAttention}, dates as ISO strings). */
 export type AutomationAttentionView = Omit<AutomationAttention, "at">;
 
-/** `GET /inbox` 的结果：新的在前，最多 {@link INBOX_MAX_ITEMS} 项；`truncated` 为 true 表示还有更多。 */
+/** What `GET /inbox` answers: newest first, at most {@link INBOX_MAX_ITEMS}; `truncated`: more wait. */
 export interface InboxView {
   items: InboxItem[];
   truncated: boolean;
 }
 
-/** 收件箱（计划取舍 C6）：按类型汇总各来源的待处理事项。无状态，每次实时读 PG。 */
+/** The inbox (plan decision C6): what waits, gathered by type from each source; read live from PG. */
 @Injectable()
 export class InboxService {
   constructor(
@@ -107,16 +117,18 @@ export class InboxService {
     >,
     @Inject(AutomationsService)
     private readonly automations: Pick<AutomationsService, "attentionFor">,
+    @Inject(InboxItemsService) private readonly items: Pick<InboxItemsService, "listOpen">,
   ) {}
 
   async list(orgId: string, accountId: string): Promise<InboxView> {
-    const [approvals, changes, requests, decided, notices, attention] = await Promise.all([
+    const [approvals, changes, requests, decided, notices, attention, items] = await Promise.all([
       this.approvals.list(orgId, accountId, "pending"),
       this.skillChanges.listPending(orgId, accountId),
       this.catalogRequests.listForOrgAdmin(orgId, accountId),
       this.catalogRequests.listDecidedForRequester(orgId, accountId),
       this.notices(orgId, accountId),
       this.automations.attentionFor(orgId, accountId),
+      this.items.listOpen(orgId, accountId),
     ]);
     const all: InboxItem[] = [
       ...approvals.map(
@@ -162,8 +174,9 @@ export class InboxService {
       ...notices.map(
         (n): InboxItem => ({ type: n.kind, id: n.id, createdAt: n.createdAt, notice: n }),
       ),
+      ...items.map((i): InboxItem => ({ type: "item", id: i.id, createdAt: i.createdAt, item: i })),
     ];
-    // 新的在前；同一时刻按 id 定序（结果稳定）
+    // newest first; the id orders items of the same moment (a stable result)
     all.sort((a, b) =>
       a.createdAt !== b.createdAt
         ? a.createdAt < b.createdAt
@@ -175,13 +188,14 @@ export class InboxService {
             ? 1
             : 0,
     );
-    // 各来源自己也有上限：某个来源取满了也算还有更多
+    // each source has its own cap: one read in full counts as more waiting
     const full =
       approvals.length >= APPROVALS_LIST_MAX ||
       changes.length >= SKILL_CHANGES_LIST_MAX ||
       requests.length >= CATALOG_REQUESTS_LIST_MAX ||
       decided.length >= CATALOG_REQUESTS_LIST_MAX ||
-      notices.length >= ORG_NOTICES_LIST_MAX;
+      notices.length >= ORG_NOTICES_LIST_MAX ||
+      items.length >= INBOX_ITEMS_LIST_MAX;
     return {
       items: all.slice(0, INBOX_MAX_ITEMS),
       truncated: full || all.length > INBOX_MAX_ITEMS,
