@@ -243,3 +243,14 @@ Rebase on main, then: composer top strip and control row per spec §6 / §7 (des
   /attachments/project:...) plus moderates (no_project copy, marks lost on new-conversation remount,
   retry drops projectFiles, stale filter/dir fetches); fixes dispatched.
 - Next: Task 6 fixes, then Task 7 (compare, blind image review, ACCEPTED, changesets, verify, PR).
+- Task 6 review fixes c80a70da6 (project chips open nothing, no_project copy, marks survive the
+  new-conversation remount, retry keeps projectFiles and resources, picker reads root on open and
+  drops the old filter on navigation, optional strip size in design).
+- Task 7 in progress: compare run in the Playwright Linux image (commands in the coordinator's
+  report; reference PNGs rendered locally only). Blind review 1: stacked compact sheets in the
+  catalog and picker compact sizes -> 300582bc7 (referenceAnchored, data-mobile-sizes reference
+  blocks, square checkbox at every size, Input line-height: global ~1px baseline shift, so run
+  visual-update). Blind review 2: moderates (disabled primary border/label, empty-state 8px offset,
+  compact sheet top hairline) being fixed by agent a0be250abcd52f9f1.
+- Next: those fixes + compare3 check, ACCEPTED entries, changesets (kernel, capybara, design),
+  verify --fast, push, ready PR (Refs #973), visual-update, ci-ok green.
