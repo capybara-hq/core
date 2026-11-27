@@ -228,6 +228,8 @@ export interface SubagentView {
   usage: UsageTotals;
   pendingApprovalIds: string[];
   pendingQuestionIds: string[];
+  /** The pending questions that are watched waits (`InputRequired.watch`): a subset of the above. */
+  watchedQuestionIds: string[];
 }
 
 const notFound = () => new ApiError("conversation.not_found", "Conversation not found");
@@ -1313,6 +1315,7 @@ export class ConversationsService {
       cache_write_tokens: string;
       approval_ids: string[];
       question_ids: string[];
+      watched_question_ids: string[];
     }>`
       WITH page AS (
         -- the page of children first, so the per-child work below runs for this page only
@@ -1347,7 +1350,11 @@ export class ConversationsService {
           ORDER BY a.created_at, a.id) AS approval_ids,
         ARRAY(SELECT q.id FROM capybara.questions q
           WHERE q.conversation_id = c.id AND q.status = 'pending' AND q.expires_at > now()
-          ORDER BY q.created_at, q.id) AS question_ids
+          ORDER BY q.created_at, q.id) AS question_ids,
+        ARRAY(SELECT q.id FROM capybara.questions q
+          WHERE q.conversation_id = c.id AND q.status = 'pending' AND q.expires_at > now()
+            AND (q.spec->>'watch')::boolean IS TRUE
+          ORDER BY q.created_at, q.id) AS watched_question_ids
       FROM page c
       CROSS JOIN LATERAL (
         SELECT sd.child_run_id FROM capybara.subagent_dispatches sd
@@ -1372,6 +1379,7 @@ export class ConversationsService {
         usage: toUsage(r),
         pendingApprovalIds: r.approval_ids,
         pendingQuestionIds: r.question_ids,
+        watchedQuestionIds: r.watched_question_ids,
       }),
     );
     const next = rows.length > opts.limit ? (subagents.at(-1)?.id ?? null) : null;

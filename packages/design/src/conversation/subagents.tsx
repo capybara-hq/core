@@ -95,6 +95,8 @@ export type SubagentViewLike = {
   finishedAt: string | null;
   pendingApprovalIds: string[];
   pendingQuestionIds: string[];
+  /** The pending questions that are watched waits (a subset of `pendingQuestionIds`). */
+  watchedQuestionIds?: string[];
 };
 
 /** `subagent_progress` data, by `subagentId`. */
@@ -130,15 +132,17 @@ export function subagentRowFromView(v: SubagentViewLike): SubagentRowData {
   return row;
 }
 
-/** What a waiting `SubagentView` waits for: an approval, else an answer, else a connection. */
+/**
+ * What a waiting `SubagentView` waits for: an approval, else an answer (`watch` when every open
+ * question is a watched wait), else a connection.
+ */
 export function subagentWaitKind(
-  v: Pick<SubagentViewLike, "pendingApprovalIds" | "pendingQuestionIds">,
+  v: Pick<SubagentViewLike, "pendingApprovalIds" | "pendingQuestionIds" | "watchedQuestionIds">,
 ): SubagentWaitKind {
-  return v.pendingApprovalIds.length > 0
-    ? "approval"
-    : v.pendingQuestionIds.length > 0
-      ? "input"
-      : "connect";
+  if (v.pendingApprovalIds.length > 0) return "approval";
+  if (v.pendingQuestionIds.length === 0) return "connect";
+  const watched = v.watchedQuestionIds ?? [];
+  return v.pendingQuestionIds.every((id) => watched.includes(id)) ? "watch" : "input";
 }
 
 /**

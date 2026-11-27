@@ -1976,6 +1976,29 @@ describe("Agent call rows across a child's runs (final review)", () => {
       tokens: 7,
     });
   });
+
+  it("reads watch from the live view, an ordinary question stays input", () => {
+    const events = [user(1, "go"), agentCall, dispatched(3, "k1", "run-a")];
+    const view = (watched: string[]) =>
+      new Map([
+        [
+          "ch1",
+          {
+            status: "waiting",
+            pendingApprovalIds: [],
+            pendingQuestionIds: ["q1"],
+            watchedQuestionIds: watched,
+          },
+        ],
+      ]);
+    expect(
+      rowOf(buildTimeline(events, [], new Map(), "en", { views: view(["q1"]) })),
+    ).toMatchObject({ status: "waiting", waiting: "watch" });
+    expect(rowOf(buildTimeline(events, [], new Map(), "en", { views: view([]) }))).toMatchObject({
+      status: "waiting",
+      waiting: "input",
+    });
+  });
 });
 
 describe("a question skipped by a message (reply while a question is pending, spec §11)", () => {

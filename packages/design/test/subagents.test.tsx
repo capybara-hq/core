@@ -356,6 +356,16 @@ describe("phase C shapes (sub-agents spec §14)", () => {
     expect(
       subagentRowFromView(view({ status: "waiting", pendingQuestionIds: ["q_1"] })).waiting,
     ).toBe("input");
+    // every open question a watched wait: its own word; one ordinary question keeps "input"
+    const watched = view({
+      status: "waiting",
+      pendingQuestionIds: ["q_1"],
+      watchedQuestionIds: ["q_1"],
+    });
+    expect(subagentRowFromView(watched).waiting).toBe("watch");
+    expect(subagentRowFromView({ ...watched, pendingQuestionIds: ["q_1", "q_2"] }).waiting).toBe(
+      "input",
+    );
   });
 
   it("progress raises the call count of a running row", () => {

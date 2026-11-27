@@ -140,6 +140,7 @@ export interface SubagentLive {
       startedAt?: string;
       pendingApprovalIds: string[];
       pendingQuestionIds: string[];
+      watchedQuestionIds?: string[];
     }
   >;
   /**
