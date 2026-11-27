@@ -621,6 +621,7 @@ describe("path leases in the sandbox tools", () => {
       accountId: "a",
       agentId: "g",
       conversationId,
+      rootConversationId: conversationId,
       callId: randomUUID(),
       signal: signal(),
     }) as BuiltinCallContext;
@@ -720,7 +721,7 @@ describe("path leases in the sandbox tools", () => {
     const child = {
       ...callCtx(),
       conversationId: randomUUID(),
-      sandboxConversationId: conversationId,
+      rootConversationId: conversationId,
     };
     await tool(s, "Write").run({ file_path: "/workspace/g.txt", content: "x" }, child);
     // the child's call asked for the root's device and used it: one instance, the file is there

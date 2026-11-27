@@ -629,7 +629,7 @@ describe("GenerateImage calls", () => {
     await direct(
       child,
       { prompt: "a cat", reference_images: [att] },
-      { sandboxConversationId: rootConv },
+      { rootConversationId: rootConv },
     );
     expect(seen[0]?.referenceImages).toEqual([{ mediaType: "image/png", data: FAKE_PNG_BASE64 }]);
   });

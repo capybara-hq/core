@@ -271,7 +271,7 @@ describe("the sandbox tools in a bound conversation", () => {
 
   it("a sub-agent's call uses its root conversation's device and holds it as itself", async () => {
     const d = device(usable(PROJECT));
-    await d.tool("Bash").run(bash, { ...ctx, sandboxConversationId: "root-conv" });
+    await d.tool("Bash").run(bash, { ...ctx, rootConversationId: "root-conv" });
     // the stub's evidence working root is fixed here: the real derivation for a child (the
     // holder's root conversation, `workingRootFor`) is test/sandbox/permission-wiring.test.ts
     // (around line 319)
