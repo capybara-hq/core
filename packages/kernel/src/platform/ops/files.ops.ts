@@ -1,12 +1,13 @@
+import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { FileCreateBody, FileIdParams, LibraryListQuery } from "../../files/library.schemas.js";
-import { LibraryFilesService } from "../../files/library-files.service.js";
+import { FileBlobClaimedError, LibraryFilesService } from "../../files/library-files.service.js";
 import { type LibraryFileView, LibraryQuery } from "../../files/library-query.js";
 import { FileRefSchema } from "../file-ref.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { named } from "./summary.js";
+import { named, orElse } from "./summary.js";
 
 const PAGE = 50;
 const FileId = FileIdParams.shape.id;
@@ -29,6 +30,10 @@ const row = (f: LibraryFileView) => ({
   versionCount: f.versions,
   createdAt: f.createdAt,
 });
+
+/** Model-visible: the bytes' blob kept being deleted while the file was added (a transient race). */
+const BLOB_CLAIMED_TEXT =
+  "The stored bytes were being cleaned up while the file was added, and nothing was added; call the operation again.";
 
 /** The link of one file on the Files page. */
 const fileLink = (id: string) => `/files#item=${encodeURIComponent(id)}`;
@@ -120,7 +125,7 @@ export class FilesOperations implements OnModuleInit {
       defineOperation({
         id: "files.add",
         description:
-          "Add a file of this conversation to your files (the Files page) as your own upload: an attachment, a generated image or a delivered file, passed as file: { fileId } (Deliver a device file first). name renames the new entry (default: the file's name). A file that already is one of your files is returned as it is, and so is your file of the same name and bytes: nothing is added twice. Bytes the org already stores are not stored again. Only the types and sizes the composer accepts can be added. The person sees the file on the card. Returns the entry's id, name, size and content type, and added: false when it was already there.",
+          "Add a file of this conversation to your files (the Files page) as your own upload: an attachment, a generated image, an image a tool showed you or a delivered file, passed as file: { fileId } (Deliver a device file first). A file has one owner: a file of another person's files is refused (they add it themselves). name names the new entry (default: the file's name). A file that already is one of your files is returned as it is (with a different name, a renamed entry is added next to it), and so is your file of the same name and bytes: nothing is added twice. Bytes the org already stores are not stored again. Only the types and sizes the composer accepts can be added. The person sees the file on the card. Returns the entry's id, name, size and content type, and added: false when it was already there.",
         input: z
           .object({ file: FileRefSchema, name: FileCreateBody.shape.name.optional() })
           .strict(),
@@ -148,33 +153,59 @@ export class FilesOperations implements OnModuleInit {
             next: "File storage is unavailable; try again later, or tell the person to contact the super admin.",
           },
         ],
+        // the upload's types, signature and per-type size, and one owner per file, are checked
+        // before the card (and again before the run)
         fileRef: (i) => {
           const limits = this.files.limits();
           return {
             ref: i.file,
-            limits: { maxBytes: Math.max(limits.maxBytes, limits.imageMaxBytes) },
+            limits: {
+              maxBytes: Math.max(limits.maxBytes, limits.imageMaxBytes),
+              contentTypes: limits.types,
+              typeMaxBytes: Object.fromEntries(
+                limits.types.map((t) => [t, this.files.limitFor(t)]),
+              ),
+              ownFilesOnly: true,
+            },
           };
         },
-        summary: (i, ctx) => {
+        summary: async (i, ctx) => {
           const f = named(ctx.file?.name ?? "?");
-          return i.name === undefined || i.name === ctx.file?.name
-            ? { zh: `把文件「${f}」加入你的文件`, en: `Add the file "${f}" to your files` }
-            : {
-                zh: `把文件「${f}」以「${named(i.name)}」为名加入你的文件`,
-                en: `Add the file "${f}" to your files as "${named(i.name)}"`,
-              };
+          const own = await orElse(
+            async () => (await this.files.ownerOf(ctx.orgId, i.file.fileId)) === ctx.actorAccountId,
+            false,
+          );
+          const renamed = i.name !== undefined && i.name !== ctx.file?.name;
+          if (own && !renamed) {
+            return {
+              zh: `文件「${f}」已在你的文件中，不会重复添加`,
+              en: `The file "${f}" is already in your files; nothing is added`,
+            };
+          }
+          return renamed
+            ? {
+                zh: `把文件「${f}」以「${named(i.name ?? "")}」为名加入你的文件`,
+                en: `Add the file "${f}" to your files as "${named(i.name ?? "")}"`,
+              }
+            : { zh: `把文件「${f}」加入你的文件`, en: `Add the file "${f}" to your files` };
         },
         run: async (input, ctx) => {
           const f = ctx.file;
           if (f === undefined) throw new Error("files.add: the file is missing");
-          const out = await this.files.addFromBytes(ctx.orgId, ctx.actorAccountId, {
-            referencedId: input.file.fileId,
-            name: input.name ?? f.name,
-            contentType: f.contentType,
-            bytes: f.bytes,
-            sha256: f.sha256,
-            signal: ctx.signal,
-          });
+          const out = await this.files
+            .addFromBytes(ctx.orgId, ctx.actorAccountId, {
+              referencedId: input.file.fileId,
+              name: f.name,
+              ...(input.name !== undefined && { rename: input.name }),
+              contentType: f.contentType,
+              bytes: f.bytes,
+              sha256: f.sha256,
+              signal: ctx.signal,
+            })
+            .catch((e: unknown) => {
+              if (e instanceof FileBlobClaimedError) throw new ToolError(BLOB_CLAIMED_TEXT);
+              throw e;
+            });
           return {
             id: out.id,
             name: out.name,

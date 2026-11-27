@@ -42,6 +42,17 @@ const SNIFF_BYTES = 1024;
 /** How often {@link LibraryFilesService.addFromBytes} ensures a blob a deletion claimed. */
 const ADD_BLOB_ATTEMPTS = 3;
 
+/**
+ * {@link LibraryFilesService.addFromBytes} found the blob of these bytes claimed by a deletion
+ * {@link ADD_BLOB_ATTEMPTS} times in a row (nothing written): a transient race, worth a retry.
+ */
+export class FileBlobClaimedError extends Error {
+  constructor() {
+    super("the stored bytes were being deleted while the file was added");
+    this.name = "FileBlobClaimedError";
+  }
+}
+
 /** Where an upload is made: the composer (a draft until sent) or the Files page (ready at once). */
 export type UploadPurpose = "composer" | "library";
 
@@ -253,7 +264,7 @@ export class LibraryFilesService {
   }
 
   /** One file's size limit: the configured `maxBytes`, an image also `MEDIA_LIMITS.imageBytes`. */
-  private limitFor(contentType: string): number {
+  limitFor(contentType: string): number {
     return Math.min(
       this.config.get().attachments.maxBytes,
       isImageContentType(contentType) ? MEDIA_LIMITS.imageBytes : MEDIA_LIMITS.documentBytes,
@@ -362,40 +373,77 @@ export class LibraryFilesService {
   }
 
   /**
-   * Adds bytes the kernel already holds (a conversation file the `Platform` tool resolved) to the
-   * account's library as an upload, `ready` at once. When `referencedId` already is one of the
-   * account's `ready` files, that file is returned as it is (`existing: true`). Otherwise: no
-   * object store → `storage.unavailable`, the upload's type and size checks, the signature check
-   * of finalize (`file.type_not_allowed`); the account's own `ready` file of the same name, type
-   * and sha256 is returned as it is (`existing: true`; a repeated call adds nothing). Otherwise the bytes go
-   * through {@link BlobsService.ensureFromBytes} (the org's ready blob of this hash, else a new
-   * one written intent first), and the file row is inserted on it behind
-   * {@link BlobsService.lockReady}; a blob a deletion claimed meanwhile is ensured again. No
-   * presigned form is involved.
+   * The owner of a library file of the org that is not deleted, or null (no such file: a `read`
+   * copy, another org's id). A file has one owner (file library spec §2).
+   */
+  async ownerOf(orgId: string, fileId: string): Promise<string | null> {
+    const row = await this.db
+      .selectFrom("files")
+      .select("account_id")
+      .where("id", "=", fileId)
+      .where("org_id", "=", orgId)
+      .where("status", "<>", "deleted")
+      .executeTakeFirst();
+    return row?.account_id ?? null;
+  }
+
+  /**
+   * Adds bytes the kernel already holds (a conversation file the `Platform` tool resolved, never
+   * another account's library file: the caller refuses those) to the account's library as an
+   * upload, `ready` at once.
+   *
+   * - `referencedId` already one of the account's `ready` files: returned as it is
+   *   (`existing: true`), or, with a `rename` other than its name, a new entry on its blob.
+   * - Otherwise: no object store → `storage.unavailable`, the upload's type and size checks, the
+   *   signature check of finalize (`file.type_not_allowed`); the account's own `ready` file of the
+   *   same name, type and sha256 is returned as it is (`existing: true`; a repeated call adds
+   *   nothing). Else the bytes go through {@link BlobsService.ensureFromBytes} (the org's ready
+   *   blob of this hash, else a new one written intent first and settled) and the file row is
+   *   inserted on it behind {@link BlobsService.lockReady}; a blob a deletion claimed meanwhile is
+   *   ensured again, and {@link FileBlobClaimedError} is thrown after
+   *   {@link ADD_BLOB_ATTEMPTS} tries. No presigned form is involved.
    */
   async addFromBytes(
     orgId: string,
     accountId: string,
     input: {
-      /** The id the bytes were referenced by: the account's own ready file of it is returned. */
+      /** The id the bytes were referenced by. */
       referencedId?: string;
+      /** The referenced file's name. */
       name: string;
+      /** The name the new entry takes instead of {@link name}. */
+      rename?: string;
       contentType: string;
       bytes: Uint8Array;
       sha256: string;
       signal?: AbortSignal;
     },
   ): Promise<FileView & { existing: boolean }> {
+    const name = input.rename ?? input.name;
     if (input.referencedId !== undefined) {
       const own = await this.db
         .selectFrom("files")
-        .select(["id", "name", "content_type", "size", "status"])
+        .select(["id", "name", "content_type", "size", "status", "blob_id", "sha256", "pages"])
         .where("id", "=", input.referencedId)
         .where("org_id", "=", orgId)
         .where("account_id", "=", accountId)
         .where("status", "=", "ready")
         .executeTakeFirst();
-      if (own) return { ...viewOf(own), existing: true };
+      if (own && (input.rename === undefined || input.rename === own.name)) {
+        return { ...viewOf(own), existing: true };
+      }
+      if (own?.blob_id) {
+        // a renamed copy of the account's own file: a new entry on the same blob, as `create`
+        // does for bytes the caller already holds
+        const copy = await this.insertReady(orgId, accountId, own.blob_id, {
+          name,
+          contentType: own.content_type,
+          size: Number(own.size),
+          sha256: own.sha256 ?? input.sha256,
+          pages: own.pages,
+        });
+        if (copy !== null) return { ...copy, existing: false };
+      }
     }
     this.storage.assertAvailable();
     const size = input.bytes.byteLength;
@@ -403,6 +451,8 @@ export class LibraryFilesService {
     if (!sniffMatches(contentType, input.bytes.subarray(0, SNIFF_BYTES))) {
       throw new ApiError("file.type_not_allowed", `File content is not ${contentType}`);
     }
+    // two concurrent calls may both miss this and insert one entry each: benign, both are valid
+    // files of the account on the same blob (the person may delete one); no lock is worth it
     const same = await this.db
       .selectFrom("files")
       .select(["id", "name", "content_type", "size", "status"])
@@ -411,29 +461,27 @@ export class LibraryFilesService {
       .where("status", "=", "ready")
       .where("sha256", "=", input.sha256)
       .where("content_type", "=", contentType)
-      .where("name", "=", input.name)
+      .where("name", "=", name)
       .orderBy("created_at", "desc")
       .limit(1)
       .executeTakeFirst();
     if (same) return { ...viewOf(same), existing: true };
     const pages = contentType === "application/pdf" ? countPdfPages(input.bytes) || null : null;
-    for (let attempt = 1; ; attempt++) {
+    for (let attempt = 1; attempt <= ADD_BLOB_ATTEMPTS; attempt++) {
       const blob = await this.blobs.ensureFromBytes(orgId, input.sha256, input.bytes, {
         contentType,
         ...(input.signal !== undefined && { signal: input.signal }),
       });
       const added = await this.insertReady(orgId, accountId, blob.id, {
-        name: input.name,
+        name,
         contentType,
         size,
         sha256: input.sha256,
         pages,
       });
       if (added !== null) return { ...added, existing: false };
-      if (attempt >= ADD_BLOB_ATTEMPTS) {
-        throw new Error(`blob ${blob.id} was claimed by a deletion ${attempt} times`);
-      }
     }
+    throw new FileBlobClaimedError();
   }
 
   /**

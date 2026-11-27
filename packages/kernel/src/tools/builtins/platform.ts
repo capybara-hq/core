@@ -815,6 +815,7 @@ async function fileOf(
     orgId: ctx.orgId,
     conversationId: ctx.conversationId,
     rootConversationId,
+    actorAccountId: ctx.actorAccountId,
     signal: signal ?? ctx.signal,
   });
 }

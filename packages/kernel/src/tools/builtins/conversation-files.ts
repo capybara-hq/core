@@ -15,6 +15,8 @@ export interface ConversationFile {
    * `Read` of a copy that is already the calling conversation's needs no new copy.
    */
   readCopyOf?: string;
+  /** The owner of a library file; absent for a `read` copy. */
+  accountId?: string;
   name: string;
   contentType: string;
   size: number;
@@ -149,6 +151,7 @@ export async function findConversationFile(
       // an upload, or a delivered file sent into this conversation set, is an attachment here
       kind: file.role === "attached" || file.sourcePath === null ? "attachment" : "artifact",
       id,
+      accountId: file.accountId,
       name: file.name,
       contentType: file.contentType,
       size: file.blob.size,
