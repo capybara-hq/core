@@ -135,6 +135,19 @@ describe("the sandbox hint after a denied command", () => {
     );
   });
 
+  it("after an address note, a network denial leaves out the closed-address lead", () => {
+    expect(sandboxDenialHint(tunnel, { escalation: "available" }, true)).toBe(
+      `\n[sandbox]${ESCALATION_RETRY_HINT}`,
+    );
+    expect(sandboxDenialHint(tunnel, { refusal: ESCALATION_DEVICE_OFF_WHY }, true)).toBe(
+      `\n[sandbox] Running it outside the sandbox is not possible here: ${ESCALATION_DEVICE_OFF_WHY}.`,
+    );
+    // only the network lead: another denial keeps its line
+    expect(sandboxDenialHint(write, { escalation: "available" }, true)).toBe(
+      `\n[sandbox] The OS sandbox may have blocked this command.${ESCALATION_RETRY_HINT}`,
+    );
+  });
+
   it("says nothing for an escalated call, a call without escalation facts, or no signal", () => {
     expect(sandboxDenialHint(tunnel, { escalation: "escalated" })).toBe("");
     expect(sandboxDenialHint(tunnel, {})).toBe("");

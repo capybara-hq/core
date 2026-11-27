@@ -26,6 +26,7 @@ import {
   ESCALATION_RETRY_HINT,
   SANDBOX_ESCALATED,
 } from "../../../sandbox/review/permission-candidate.js";
+import type { DenialHint } from "../../network-asks.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
   admissionUnavailableText,
@@ -548,17 +549,22 @@ export const sandboxDenied = (r: ExecResult): boolean => sandboxDenial(r) !== nu
  * sandbox closes, then either the invitation to retry escalated (this device and org allow running
  * outside the sandbox) or why that is not possible here and who can change it (the per-layer
  * escalation refusal). Empty for an escalated call, a call without escalation facts, or no signal.
+ * `afterAddressNote`: the line follows a network note that already says private and local
+ * addresses are closed inside the sandbox, so a network denial's lead is left out.
  */
 export function sandboxDenialHint(
   r: ExecResult,
   escalation: { escalation?: "available" | "escalated"; refusal?: string },
+  afterAddressNote = false,
 ): string {
   if (escalation.escalation !== "available" && escalation.refusal === undefined) return "";
   const kind = sandboxDenial(r);
   if (kind === null) return "";
   const lead =
     kind === "network"
-      ? "\n[sandbox] The OS sandbox may have blocked this command's connection: private and local addresses are closed inside the sandbox, and so is any host the sandbox network does not allow."
+      ? afterAddressNote
+        ? "\n[sandbox]"
+        : "\n[sandbox] The OS sandbox may have blocked this command's connection: private and local addresses are closed inside the sandbox, and so is any host the sandbox network does not allow."
       : "\n[sandbox] The OS sandbox may have blocked this command.";
   return escalation.escalation === "available"
     ? `${lead}${ESCALATION_RETRY_HINT}`
@@ -648,15 +654,22 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
         requested !== undefined && requested > maxMs
           ? `\n[timeout ${requested} ms is over the deployment maximum; it was lowered to ${maxMs} ms.]`
           : "";
+      const facts = {
+        ...(ctx.sandboxEscalation !== undefined && { escalation: ctx.sandboxEscalation }),
+        ...(ctx.sandboxEscalationRefusal !== undefined && {
+          refusal: ctx.sandboxEscalationRefusal,
+        }),
+      };
+      // refused hosts become network notes in the pipeline, which picks the denial line that goes
+      // with them (`denialHintFor`): none after an address note that says how to run outside the
+      // sandbox, so the result carries one instruction about it
+      const reported = blocked.length > 0 && deviceId !== "";
+      const denialHint: DenialHint = {
+        full: sandboxDenialHint(r, facts),
+        afterAddressFact: sandboxDenialHint(r, facts, true),
+      };
       const text =
-        formatExec(r, seconds, clamped, workspace) +
-        lowered +
-        sandboxDenialHint(r, {
-          ...(ctx.sandboxEscalation !== undefined && { escalation: ctx.sandboxEscalation }),
-          ...(ctx.sandboxEscalationRefusal !== undefined && {
-            refusal: ctx.sandboxEscalationRefusal,
-          }),
-        });
+        formatExec(r, seconds, clamped, workspace) + lowered + (reported ? "" : denialHint.full);
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         isError: r.timedOut || r.exitCode === null,
@@ -679,7 +692,7 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
                 `Ran command (exit ${r.exitCode}): ${shown}`,
               ),
         // kernel-internal: the pipeline asks the device owner or writes notes (spec §6.2)
-        ...(blocked.length > 0 && deviceId !== "" && { networkReport: { deviceId, blocked } }),
+        ...(reported && { networkReport: { deviceId, blocked, denialHint } }),
         // kernel-internal: the pipeline writes the display-only `device_code` event (auto mode §6)
         ...(loginCode !== null && { loginCode }),
       };
