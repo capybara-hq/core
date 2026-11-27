@@ -208,6 +208,60 @@ describe("streaming tool rows", () => {
     expect(tool?.row.detail?.live?.preview).toBeUndefined();
   });
 
+  describe("a guessed base (Write content-first spec §4.5)", () => {
+    const base = "# Title\nold line\n\nkeep\nmore\nrest\n";
+    const content = "# Title\nnew line\n\nkeep\nadd";
+    const guessed = { text: base, sha256: "s", guess: { path: "/w/src/g.md" } };
+    const contentFirst = `{"content":${JSON.stringify(content)}`;
+    const rowFor = (input: string, b: DraftTool["base"]) =>
+      rowsOf(
+        timeline(asked, [
+          draft([{ id: "g1", name: "Write", input, ...(b !== undefined ? { base: b } : {}) }]),
+        ]),
+      )[0]?.row;
+
+    it("draws the live diff, no +a −b, and the guessed path marked as a guess", () => {
+      const row = rowFor(contentFirst, guessed);
+      const want = liveWriteDiff(base, content);
+      expect(row?.detail).toEqual({ diff: want.diff, live: { pending: want.pending } });
+      expect(row?.added).toBeUndefined();
+      expect(row?.removed).toBeUndefined();
+      expect(row?.keyArg).toBe("/w/src/g.md");
+      expect(row?.keyArgGuess).toBe(true);
+      // the real path still being written: the guess stays
+      const open = rowFor(`${contentFirst},"file_path":"src/g`, guessed);
+      expect(open).toMatchObject({ keyArg: "/w/src/g.md", keyArgGuess: true });
+    });
+
+    it("once the real path closed, the real path shows without the guess mark", () => {
+      const row = rowFor(`${contentFirst},"file_path":"src/g.md"`, guessed);
+      expect(row?.keyArg).toBe("src/g.md");
+      expect(row?.keyArgGuess).toBeUndefined();
+      expect(row?.added).toBeUndefined();
+    });
+
+    it("confirmed: the ordinary row against a base", () => {
+      const row = rowFor(`${contentFirst},"file_path":"src/g.md"`, {
+        ...guessed,
+        verdict: "confirmed",
+      });
+      const want = liveWriteDiff(base, content);
+      expect(row).toMatchObject({ keyArg: "src/g.md", added: want.added, removed: want.removed });
+      expect(row?.keyArgGuess).toBeUndefined();
+    });
+
+    it("rejected: the writing form, as without a base", () => {
+      const row = rowFor(`${contentFirst},"file_path":"src/other.md"`, {
+        ...guessed,
+        verdict: "rejected",
+      });
+      expect(row?.detail?.live).toEqual({ preview: true });
+      expect(row?.added).toBeUndefined();
+      expect(row?.keyArg).toBe("src/other.md");
+      expect(row?.keyArgGuess).toBeUndefined();
+    });
+  });
+
   it("the logged call replaces the streaming row with the same id", () => {
     const streaming = timeline(asked, [
       draft([{ id: "c1", name: "Write", input: writeText.slice(0, 30) }], "Writing it."),
@@ -672,6 +726,40 @@ describe("a logged Write / Edit keeps its live diff until the result (D8, R13)",
     // the same calls while the run goes on: the open Edit computes one, the done Write none
     rowsOf(timeline(history.slice(0, -1), []));
     expect(loggedLiveStats.runs).toBe(before + 1);
+  });
+
+  it("the logged row keeps only an exact or a confirmed base (a guess is not remembered)", () => {
+    const base = "a\nb\n";
+    const full = { file_path: "g.md", content: "a\nB\n" };
+    const streamed = (id: string, verdict?: "confirmed" | "rejected") =>
+      timeline(asked, [
+        draft([
+          {
+            id,
+            name: "Write",
+            input: JSON.stringify(full).slice(0, -2),
+            base: {
+              text: base,
+              sha256: "sg",
+              guess: { path: "/w/g.md" },
+              ...(verdict !== undefined ? { verdict } : {}),
+            },
+          },
+        ]),
+      ]);
+    const loggedRow = (id: string) =>
+      rowsOf(timeline([...asked, message(3, 1, [{ id, name: "Write", input: full }])], []))[0]?.row;
+    for (const [id, verdict] of [
+      ["gw1", undefined],
+      ["gw2", "rejected"],
+    ] as const) {
+      streamed(id, verdict);
+      expect(loggedRow(id)?.detail?.live).toEqual({ preview: true });
+    }
+    streamed("gw3", "confirmed");
+    const want = liveWriteDiff(base, full.content);
+    expect(loggedRow("gw3")?.detail?.live).toEqual({ pending: want.pending });
+    expect(loggedRow("gw3")).toMatchObject({ added: want.added, removed: want.removed });
   });
 
   it("without a remembered base the logged input gives the writing form", () => {

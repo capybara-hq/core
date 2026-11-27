@@ -9,6 +9,7 @@ import {
   DRAFT_TOOL_INPUT_MAX,
   DRAFT_TTL_SECONDS,
   draftKey,
+  mergeDraftBase,
   RunDrafts,
   streamSink,
 } from "../../src/runtime/run-drafts.js";
@@ -190,6 +191,35 @@ describe("RunDrafts", () => {
     ]);
   });
 
+  it("a guessed base takes its verdict; a rejected guess gives way to the exact base", async () => {
+    const d = draftsOn(redis);
+    d.startTool("r1", 1, "c1", "Write");
+    // a verdict before any base is ignored
+    d.setToolBaseVerdict("r1", 1, "c1", true);
+    d.setToolBase("r1", 1, "c1", { text: "g\n", sha256: "hg", guess: { path: "/w/g.py" } });
+    // a second guess is not taken
+    d.setToolBase("r1", 1, "c1", { text: "x\n", sha256: "hx", guess: { path: "/w/x.py" } });
+    d.setToolBaseVerdict("r1", 1, "c1", false);
+    d.flush("r1", 1);
+    expect((await d.read("r1"))[0]?.tools[0]?.base).toEqual({
+      text: "g\n",
+      sha256: "hg",
+      guess: { path: "/w/g.py" },
+      verdict: "rejected",
+    });
+    d.setToolBase("r1", 1, "c1", { text: "real\n", sha256: "hr" });
+    d.flush("r1", 1);
+    expect((await d.read("r1"))[0]?.tools[0]?.base).toEqual({ text: "real\n", sha256: "hr" });
+
+    d.startTool("r1", 1, "c2", "Write");
+    d.setToolBase("r1", 1, "c2", { text: "g\n", sha256: "hg", guess: { path: "/w/g.py" } });
+    d.setToolBaseVerdict("r1", 1, "c2", true);
+    // a later verdict does not change a confirmed guess
+    d.setToolBaseVerdict("r1", 1, "c2", false);
+    d.flush("r1", 1);
+    expect((await d.read("r1"))[0]?.tools[1]?.base?.verdict).toBe("confirmed");
+  });
+
   it("a Redis failure is logged, never thrown to the run", async () => {
     const broken = new Redis(rd.url, { lazyConnect: true, maxRetriesPerRequest: 0 });
     broken.disconnect();
@@ -228,7 +258,11 @@ describe("streamSink", () => {
         appendToolInput: (runId, step, callId, text) =>
           calls.push(`appendToolInput ${runId}:${step} ${callId} ${text}`),
         setToolBase: (runId, step, callId, base) =>
-          calls.push(`setToolBase ${runId}:${step} ${callId} ${base.sha256}`),
+          calls.push(
+            `setToolBase ${runId}:${step} ${callId} ${base.sha256}${base.guess ? ` guess ${base.guess.path}` : ""}`,
+          ),
+        setToolBaseVerdict: (runId, step, callId, confirmed) =>
+          calls.push(`setToolBaseVerdict ${runId}:${step} ${callId} ${confirmed}`),
       },
       log: quiet,
     });
@@ -332,6 +366,45 @@ describe("streamSink", () => {
     ]);
   });
 
+  it("publishes a guessed base with its path and the verdict on it", () => {
+    const { sink, calls, published } = recorded();
+    sink({ kind: "tool_start", runId: "r", step: 1, callId: "a", name: "Write" });
+    sink({
+      kind: "tool_base",
+      runId: "r",
+      step: 1,
+      callId: "a",
+      text: "old",
+      sha256: "h",
+      guess: { path: "/w/a.py" },
+    });
+    sink({ kind: "tool_base_verdict", runId: "r", step: 1, callId: "a", confirmed: true });
+    expect(published.slice(1)).toEqual([
+      {
+        kind: "delta",
+        runId: "r",
+        step: 1,
+        delta: "tool_base",
+        callId: "a",
+        text: "old",
+        sha256: "h",
+        guess: { path: "/w/a.py" },
+      },
+      {
+        kind: "delta",
+        runId: "r",
+        step: 1,
+        delta: "tool_base_verdict",
+        callId: "a",
+        confirmed: true,
+      },
+    ]);
+    expect(calls.filter((c) => !c.startsWith("publish")).slice(1)).toEqual([
+      "setToolBase r:1 a h guess /w/a.py",
+      "setToolBaseVerdict r:1 a true",
+    ]);
+  });
+
   it("step_reset clears tools", async () => {
     const d = draftsOn(redis);
     const published: ConversationBusMessage[] = [];
@@ -416,5 +489,30 @@ describe("streamSink", () => {
     sink({ kind: "step_end", runId: "r", step: 1 });
     expect(calls).toEqual(["flush r:1", "clear r:1"]);
     expect(published).toEqual([]);
+  });
+});
+
+describe("mergeDraftBase", () => {
+  const guess = { text: "g", sha256: "hg", guess: { path: "/w/g" } };
+  it("keeps the first base; an exact base replaces a guess not confirmed", () => {
+    const exact = { text: "e", sha256: "he" };
+    expect(mergeDraftBase(undefined, guess)).toBe(guess);
+    expect(mergeDraftBase(exact, guess)).toBe(exact);
+    // only read after a rejection: a copy still showing the guess missed the verdict
+    expect(mergeDraftBase(guess, exact)).toBe(exact);
+    const confirmedGuess = { ...guess, verdict: "confirmed" as const };
+    expect(mergeDraftBase(confirmedGuess, exact)).toBe(confirmedGuess);
+    const rejected = { ...guess, verdict: "rejected" as const };
+    expect(mergeDraftBase(rejected, exact)).toBe(exact);
+    // a lagging copy of the guess never brings it back
+    expect(mergeDraftBase(rejected, guess)).toBe(rejected);
+  });
+  it("gives the same guess the verdict it lacks", () => {
+    expect(mergeDraftBase(guess, { ...guess, verdict: "confirmed" })).toEqual({
+      ...guess,
+      verdict: "confirmed",
+    });
+    const confirmed = { ...guess, verdict: "confirmed" as const };
+    expect(mergeDraftBase(confirmed, { ...guess, verdict: "rejected" })).toBe(confirmed);
   });
 });

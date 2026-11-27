@@ -66,6 +66,29 @@ describe("ToolRow streaming (§6.16.9)", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
+  it("marks a guessed key argument with the muted prefix right before it, in both languages", () => {
+    const { container } = wrap(<ToolRow row={write({ keyArgGuess: true })} />);
+    const guess = container.querySelector('[data-part="key-arg-guess"]');
+    expect(guess?.textContent).toBe("推测：");
+    expect(guess?.classList.contains("cb-muted")).toBe(true);
+    expect(guess?.nextElementSibling?.getAttribute("data-part")).toBe("key-arg");
+    expect(container.querySelector('[data-part="tool-label"]')?.textContent).toBe(
+      "Write 推测：reports/report.md",
+    );
+    cleanup();
+    const en = wrap(<ToolRow row={write({ keyArgGuess: true })} />, "en");
+    expect(en.container.querySelector('[data-part="key-arg-guess"]')?.textContent).toBe("Guess: ");
+  });
+
+  it("draws no guess prefix without the flag or without a key argument", () => {
+    const plain = wrap(<ToolRow row={write()} />);
+    expect(plain.container.querySelector('[data-part="key-arg-guess"]')).toBeNull();
+    cleanup();
+    const { keyArg: _, ...noKey } = write({ keyArgGuess: true });
+    const bare = wrap(<ToolRow row={noKey} />);
+    expect(bare.container.querySelector('[data-part="key-arg-guess"]')).toBeNull();
+  });
+
   it("keeps the toggle when it has detail, and opens to the live diff", () => {
     const row = write({
       detail: {

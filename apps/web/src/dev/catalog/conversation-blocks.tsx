@@ -464,6 +464,7 @@ export function toRow(
     ...(t.tooltip ? { tooltip: t.tooltip } : {}),
     ...(t.description ? { description: t.description } : {}),
     ...(t.keyArg ? { keyArg: t.keyArg } : {}),
+    ...(t.keyArgGuess ? { keyArgGuess: true } : {}),
     ...(t.extra ? { extra: t.extra } : {}),
     ...(t.status === "running" ? { startedAt: NOW - 12_000 } : {}),
     ...(t.durationMs !== undefined ? { durationMs: t.durationMs } : {}),
@@ -596,6 +597,7 @@ function toolRowBlocks(): ReactNode {
       <RowBlock id="tool-row-review-approved" row={toRow(pick(T.reviewApproved, 0))} />
       <RowBlock id="tool-row-streaming" row={toRow(pick(T.streaming, 0))} />
       <RowBlock id="tool-row-streaming-input" row={toRow(pick(T.streaming, 1))} />
+      <RowBlock id="tool-row-streaming-guess" row={toRow(pick(T.streaming, 2))} />
     </>
   );
 }

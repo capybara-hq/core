@@ -33,6 +33,11 @@ export type ToolRowData = {
   tooltip?: string;
   /** The key argument preview (first line, cut at {@link KEY_ARG_MAX} with "…"). */
   keyArg?: string;
+  /**
+   * The key argument is a guess the input has not confirmed yet (a streaming `Write` whose
+   * content came before its path): the preview carries the muted `tool.keyArgGuess` prefix (§6.16.9).
+   */
+  keyArgGuess?: boolean;
   /** Extra information after " · " ("42 条", "第 1–120 行"). */
   extra?: string;
   /** A shell row's `description` from the model, shown instead of the key argument. */
@@ -176,6 +181,11 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {preview ? (
         <>
           {" "}
+          {row.keyArgGuess && row.keyArg ? (
+            <span className="cb-muted" data-part="key-arg-guess">
+              {t("tool.keyArgGuess")}
+            </span>
+          ) : null}
           <span data-part="key-arg">{preview}</span>
         </>
       ) : null}

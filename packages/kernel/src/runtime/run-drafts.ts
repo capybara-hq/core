@@ -35,7 +35,42 @@ export interface DraftTool {
   /** The step's {@link DRAFT_TOOL_INPUT_MAX} was reached: later fragments are not in the draft. */
   inputTruncated?: true;
   /** The file a streaming `Write` replaces (streaming tool input spec §4.1). */
-  base?: { text: string; sha256: string };
+  base?: DraftBase;
+}
+
+/**
+ * A streaming `Write`'s base: exact, or a guess (spec 2026-11-27 §4.4) naming the candidate's path
+ * until the path's verdict. A rejected guess stays, marked, so a lagging draft never brings it back.
+ */
+export interface DraftBase {
+  text: string;
+  sha256: string;
+  guess?: { path: string };
+  verdict?: "confirmed" | "rejected";
+}
+
+/**
+ * The base a call keeps when `got` arrives (spec 2026-11-27 §4.4): the first one; an exact base
+ * replaces a guess not confirmed; the same guess takes a verdict it lacks.
+ */
+export function mergeDraftBase(
+  prev: DraftBase | undefined,
+  got: DraftBase | undefined,
+): DraftBase | undefined {
+  if (got === undefined) return prev;
+  if (prev === undefined) return got;
+  // an exact base replaces a guess not confirmed: it is only read after a rejection, so a copy
+  // that still shows the guess missed the verdict
+  if (prev.guess !== undefined && prev.verdict !== "confirmed" && got.guess === undefined)
+    return got;
+  if (
+    prev.verdict === undefined &&
+    got.verdict !== undefined &&
+    prev.sha256 === got.sha256 &&
+    prev.guess?.path === got.guess?.path
+  )
+    return { ...prev, verdict: got.verdict };
+  return prev;
 }
 
 /** What one step of a run has streamed so far. */
@@ -79,7 +114,11 @@ const parseTool = (x: unknown): DraftTool[] => {
   if (x.inputTruncated === true) t.inputTruncated = true;
   const b = x.base;
   if (isRecord(b) && typeof b.text === "string" && typeof b.sha256 === "string") {
-    t.base = { text: b.text, sha256: b.sha256 };
+    const base: DraftBase = { text: b.text, sha256: b.sha256 };
+    if (isRecord(b.guess) && typeof b.guess.path === "string") base.guess = { path: b.guess.path };
+    if (base.guess !== undefined && (b.verdict === "confirmed" || b.verdict === "rejected"))
+      base.verdict = b.verdict;
+    t.base = base;
   }
   return [t];
 };
@@ -163,23 +202,38 @@ export class RunDrafts {
   }
 
   /**
-   * The file a streaming `Write` replaces; kept only within {@link DRAFT_TOOL_INPUT_MAX}, which the
-   * base shares with the input (spec: "input plus base"). Like {@link appendToolInput}, it ignores
-   * a call never started.
+   * The file a streaming `Write` replaces (exact, or a guess); kept by {@link mergeDraftBase} and
+   * only within {@link DRAFT_TOOL_INPUT_MAX}, which bases share with the input (spec: "input plus
+   * base"). Like {@link appendToolInput}, it ignores a call never started.
    */
   setToolBase(
     runId: string,
     step: number,
     callId: string,
-    base: { text: string; sha256: string },
+    base: { text: string; sha256: string; guess?: { path: string } },
   ): void {
     const h = this.heldFor(runId, step);
     const t = h.tools.find((x) => x.id === callId);
-    if (t === undefined || t.base !== undefined) return;
+    if (t === undefined) return;
+    const got: DraftBase = { text: base.text, sha256: base.sha256 };
+    if (base.guess !== undefined) got.guess = { path: base.guess.path };
+    if (mergeDraftBase(t.base, got) !== got) return;
     const bytes = Buffer.byteLength(base.text);
     if (h.toolBytes + bytes > DRAFT_TOOL_INPUT_MAX) return;
-    t.base = { text: base.text, sha256: base.sha256 };
+    t.base = got;
     h.toolBytes += bytes;
+    this.changed(runId, h);
+  }
+
+  /**
+   * The verdict on a call's guessed base (spec 2026-11-27 §4.4): kept on a guess without one; a
+   * call without a guessed base ignores it.
+   */
+  setToolBaseVerdict(runId: string, step: number, callId: string, confirmed: boolean): void {
+    const h = this.heldFor(runId, step);
+    const t = h.tools.find((x) => x.id === callId);
+    if (t?.base?.guess === undefined || t.base.verdict !== undefined) return;
+    t.base = { ...t.base, verdict: confirmed ? "confirmed" : "rejected" };
     this.changed(runId, h);
   }
 
@@ -325,7 +379,13 @@ export interface StreamSinkDeps {
   bus: Pick<ExtensionContext["bus"], "publish">;
   drafts: Pick<
     RunDrafts,
-    "append" | "flush" | "clear" | "startTool" | "appendToolInput" | "setToolBase"
+    | "append"
+    | "flush"
+    | "clear"
+    | "startTool"
+    | "appendToolInput"
+    | "setToolBase"
+    | "setToolBaseVerdict"
   >;
   log: Pick<Logger, "warn">;
 }
@@ -335,7 +395,7 @@ export interface StreamSinkDeps {
  * (`conv.<id>`, shared with `{ kind: "events" }`, so a subscriber on any replica gets them) with
  * `offset`, the characters of that channel (text or thinking) this attempt of the step streamed
  * before the delta, and keeps the step's live draft. Tool calls (streaming tool input spec §4):
- * `tool_start` and `tool_base` carry no offset, `tool_input`'s `offset` is the characters of that
+ * `tool_start`, `tool_base` and `tool_base_verdict` carry no offset, `tool_input`'s `offset` is the characters of that
  * call's input this attempt streamed before the delta. `step_reset` clears the draft and every
  * offset; `stream_end` / `step_end` only flush / clear the draft and are not published. A failed
  * publish is only logged: deltas are drafts, the `assistant_message` in the log is the truth.
@@ -359,7 +419,12 @@ export function streamSink(conversationId: string, deps: StreamSinkDeps): Stream
     }
     const { runId, step } = d;
     const text = d.text ?? "";
-    if (d.kind === "tool_start" || d.kind === "tool_input" || d.kind === "tool_base") {
+    if (
+      d.kind === "tool_start" ||
+      d.kind === "tool_input" ||
+      d.kind === "tool_base" ||
+      d.kind === "tool_base_verdict"
+    ) {
       const callId = d.callId ?? "";
       if (d.kind === "tool_start") {
         const name = d.name ?? "";
@@ -370,10 +435,28 @@ export function streamSink(conversationId: string, deps: StreamSinkDeps): Stream
         at.tools.set(callId, offset + text.length);
         deps.drafts.appendToolInput(runId, step, callId, text);
         void publish({ kind: "delta", runId, step, delta: "tool_input", callId, text, offset });
+      } else if (d.kind === "tool_base_verdict") {
+        const confirmed = d.confirmed === true;
+        deps.drafts.setToolBaseVerdict(runId, step, callId, confirmed);
+        void publish({ kind: "delta", runId, step, delta: "tool_base_verdict", callId, confirmed });
       } else {
         const sha256 = d.sha256 ?? "";
-        deps.drafts.setToolBase(runId, step, callId, { text, sha256 });
-        void publish({ kind: "delta", runId, step, delta: "tool_base", callId, text, sha256 });
+        const guess = d.guess;
+        deps.drafts.setToolBase(runId, step, callId, {
+          text,
+          sha256,
+          ...(guess !== undefined && { guess }),
+        });
+        void publish({
+          kind: "delta",
+          runId,
+          step,
+          delta: "tool_base",
+          callId,
+          text,
+          sha256,
+          ...(guess !== undefined && { guess }),
+        });
       }
       return;
     }

@@ -4,8 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/errors.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import {
+  chooseGuess,
   closedStringProperty,
+  GUESS_PREFIX_LINES,
+  guessLines,
   TopLevelStringProperty,
+  TopLevelStrings,
+  WRITE_BASE_CANDIDATES,
   WRITE_BASE_SETTLE_MS,
   type WriteBase,
   type WriteBaseReader,
@@ -127,19 +132,32 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function watcherWith(read: WriteBaseReader["read"], signal = new AbortController().signal) {
-  const emit = vi.fn<(callId: string, base: WriteBase) => void>();
+function watcherWith(
+  read: WriteBaseReader["read"],
+  signal = new AbortController().signal,
+  recentPaths: WriteBaseReader["recentPaths"] = async () => [],
+) {
+  const emit = vi.fn<(callId: string, base: WriteBase & { guess?: { path: string } }) => void>();
+  const verdict = vi.fn<(callId: string, confirmed: boolean) => void>();
   const warn = vi.fn();
-  const reader = { read: vi.fn(read) };
+  const info = vi.fn();
+  const reader = {
+    read: vi.fn(read),
+    recentPaths: vi.fn(recentPaths),
+    // the test's normalization: absolute paths only, `//` collapsed
+    normalize: (p: string) => (p.startsWith("/") ? p.replace(/\/+/g, "/") : null),
+  };
   const w = writeBaseWatcher({
     reader,
     inputViewOf: (name) => (name === "Write" ? WRITE : name === "Bash" ? undefined : undefined),
     emit,
+    verdict,
     conversationId: "c1",
+    model: { provider: "p", model: "m" },
     signal,
-    log: { warn },
+    log: { warn, info },
   });
-  return { w, emit, warn, reader };
+  return { w, emit, verdict, warn, info, reader };
 }
 
 const flush = () => new Promise<void>((r) => setImmediate(r));
@@ -295,6 +313,208 @@ describe("writeBaseWatcher", () => {
   });
 });
 
+describe("TopLevelStrings", () => {
+  const input = JSON.stringify({ content: 'a\\b "q"\nline2\né', file_path: "/w/a.py" });
+
+  it("orders two properties' openings and closings, also within one fragment", () => {
+    const s = new TopLevelStrings([{ name: "file_path" }, { name: "content" }]);
+    s.feed(input);
+    const c = s.timing("content");
+    const p = s.timing("file_path");
+    expect(c.openedAt).toBeGreaterThan(0);
+    expect(c.openedAt).toBeLessThan(c.closedAt);
+    expect(c.closedAt).toBeLessThan(p.openedAt);
+    expect(s.value("file_path")).toBe("/w/a.py");
+    expect(s.value("content")).toBe('a\\b "q"\nline2\né');
+  });
+
+  it("reads the open value's decoded head at every cut, never a broken escape", () => {
+    const content = 'a\\b "q"\nline2\né😀 end';
+    const json = JSON.stringify({ content, file_path: "/w/a.py" });
+    for (let cut = 0; cut <= json.length; cut++) {
+      const s = new TopLevelStrings([{ name: "content" }]);
+      s.feed(json.slice(0, cut));
+      s.feed("");
+      const head = s.prefix("content");
+      if (head === null) continue;
+      // every head is a prefix of the value, up to a lone high surrogate at its end
+      const trimmed = /[\ud800-\udbff]$/.test(head) ? head.slice(0, -1) : head;
+      expect(content.startsWith(trimmed), `cut ${cut}: ${JSON.stringify(head)}`).toBe(true);
+    }
+  });
+
+  it("keeps only the head of a capped keep-head value, and still sees it close", () => {
+    const s = new TopLevelStrings([{ name: "content", maxChars: 4, overflow: "keep-head" }]);
+    s.feed('{"content":"abcdefgh","x":1}');
+    expect(s.prefix("content")).toBe("abcd");
+    expect(s.value("content")).toBeNull();
+    expect(s.timing("content").closedAt).toBeGreaterThan(0);
+  });
+
+  it("gives nothing for a non-string value", () => {
+    const s = new TopLevelStrings([{ name: "content" }]);
+    s.feed('{"content":12,"y":"z"}');
+    expect(s.prefix("content")).toBeNull();
+    expect(s.timing("content").openedAt).toBe(0);
+  });
+});
+
+describe("guessLines and chooseGuess", () => {
+  it("keeps non-blank trimmed lines, the last one only when complete", () => {
+    expect(guessLines("  a\n\nb \nc", false)).toEqual(["a", "b"]);
+    expect(guessLines("  a\n\nb \nc", true)).toEqual(["a", "b", "c"]);
+  });
+
+  it("picks the clear best candidate at or above the score and margin", () => {
+    const lines = ["a", "b", "c", "d", "e"];
+    const hit = { id: 1, text: "a\nb\nc\nzz\n" }; // 3 / 5 = 0.6
+    const weak = { id: 2, text: "a\n" }; // 0.2
+    expect(chooseGuess(lines, [weak, hit])).toBe(hit);
+    expect(chooseGuess(lines, [{ id: 3, text: "a\nb\n" }])).toBeNull(); // 0.4
+    // two near candidates: no clear winner
+    expect(chooseGuess(lines, [hit, { id: 4, text: "a\nb\nd\n" }])).toBeNull();
+    expect(chooseGuess([], [hit])).toBeNull();
+  });
+});
+
+describe("writeBaseWatcher guess (spec 2026-11-27 §4)", () => {
+  const FILE = Array.from({ length: 12 }, (_, i) => `line ${i}`).join("\n");
+  const OTHER = "something else\nentirely\n";
+  const bases: Record<string, WriteBase> = {
+    "/w/a.py": { text: `${FILE}\nold tail\n`, sha256: "ha" },
+    "/w/b.py": { text: OTHER, sha256: "hb" },
+  };
+  const readBase: WriteBaseReader["read"] = async ({ path }) => bases[path] ?? null;
+  const recent = async () => ["/w/b.py", "/w/a.py"];
+  /** The input with content first, cut in two: the content, then the path. */
+  const contentFirst = (path: string, content = FILE) => {
+    const json = JSON.stringify({ content, file_path: path });
+    const at = json.indexOf(',"file_path"');
+    return [json.slice(0, at), json.slice(at)] as const;
+  };
+
+  it("guesses the matching candidate once the content streamed, then confirms it", async () => {
+    const { w, emit, verdict, reader, info } = watcherWith(readBase, undefined, recent);
+    const [head, tail] = contentFirst("/w/a.py");
+    w.onStart("t1", "Write");
+    w.onInput("t1", head.slice(0, 20));
+    w.onInput("t1", head.slice(20));
+    await flush();
+    expect(reader.recentPaths).toHaveBeenCalledExactlyOnceWith({
+      conversationId: "c1",
+      limit: WRITE_BASE_CANDIDATES,
+    });
+    expect(emit).toHaveBeenCalledExactlyOnceWith("t1", {
+      text: bases["/w/a.py"]?.text,
+      sha256: "ha",
+      guess: { path: "/w/a.py" },
+    });
+    w.onInput("t1", tail);
+    expect(verdict).toHaveBeenCalledExactlyOnceWith("t1", true);
+    await flush();
+    // a confirmed guess starts no second read: two candidates read, nothing else
+    expect(reader.read).toHaveBeenCalledTimes(2);
+    expect(emit).toHaveBeenCalledTimes(1);
+    await w.settle();
+    expect(info).toHaveBeenCalledExactlyOnceWith("write input order", {
+      conversationId: "c1",
+      provider: "p",
+      model: "m",
+      order: "content_first",
+      guess: "confirmed",
+    });
+  });
+
+  it("chooses after GUESS_PREFIX_LINES lines, before the content closes", async () => {
+    const { w, emit } = watcherWith(readBase, undefined, recent);
+    const [head] = contentFirst("/w/a.py");
+    const cut = head.indexOf(`line ${GUESS_PREFIX_LINES}`);
+    w.onStart("t1", "Write");
+    w.onInput("t1", head.slice(0, cut - 4));
+    await flush();
+    expect(emit).not.toHaveBeenCalled();
+    w.onInput("t1", head.slice(cut - 4, cut + 2));
+    await flush();
+    expect(emit).toHaveBeenCalledTimes(1);
+    // later fragments never guess again
+    w.onInput("t1", head.slice(cut + 2));
+    await flush();
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  it("withdraws a guess the path contradicts, then reads the real path", async () => {
+    const { w, emit, verdict, reader, info } = watcherWith(readBase, undefined, recent);
+    const [head, tail] = contentFirst("/w/c.py");
+    w.onStart("t1", "Write");
+    w.onInput("t1", head);
+    await flush();
+    expect(emit).toHaveBeenCalledTimes(1);
+    w.onInput("t1", tail);
+    expect(verdict).toHaveBeenCalledExactlyOnceWith("t1", false);
+    await flush();
+    expect(reader.read).toHaveBeenLastCalledWith(expect.objectContaining({ path: "/w/c.py" }));
+    await w.settle();
+    expect(info.mock.calls[0]?.[1]).toMatchObject({ guess: "rejected" });
+  });
+
+  it("guesses nothing when no candidate matches clearly, and reads the path when it closes", async () => {
+    const { w, emit, verdict, reader, info } = watcherWith(readBase, undefined, recent);
+    const [head, tail] = contentFirst("/w/a.py", "brand\nnew\nfile\n");
+    w.onStart("t1", "Write");
+    w.onInput("t1", head);
+    await flush();
+    expect(emit).not.toHaveBeenCalled();
+    w.onInput("t1", tail);
+    expect(verdict).not.toHaveBeenCalled();
+    await flush();
+    // the exact read of the closed path still runs (here it finds the file)
+    expect(reader.read).toHaveBeenLastCalledWith(expect.objectContaining({ path: "/w/a.py" }));
+    expect(emit).toHaveBeenCalledExactlyOnceWith("t1", bases["/w/a.py"]);
+    await w.settle();
+    expect(info.mock.calls[0]?.[1]).toMatchObject({ order: "content_first", guess: "no_match" });
+  });
+
+  it("never guesses after the path closed while the candidates were being read", async () => {
+    const list = deferred<string[]>();
+    const { w, emit, verdict, info } = watcherWith(readBase, undefined, () => list.promise);
+    const [head, tail] = contentFirst("/w/x.py");
+    w.onStart("t1", "Write");
+    w.onInput("t1", head);
+    w.onInput("t1", tail);
+    list.resolve(["/w/a.py"]);
+    await flush();
+    await flush();
+    expect(emit).not.toHaveBeenCalled();
+    expect(verdict).not.toHaveBeenCalled();
+    await w.settle();
+    expect(info.mock.calls[0]?.[1]).toMatchObject({ guess: "path_first_won" });
+  });
+
+  it("lists no candidates for a path-first call", async () => {
+    const { w, reader, info } = watcherWith(readBase, undefined, recent);
+    w.onStart("t1", "Write");
+    w.onInput("t1", JSON.stringify({ file_path: "/w/a.py", content: FILE }));
+    await flush();
+    expect(reader.recentPaths).not.toHaveBeenCalled();
+    await w.settle();
+    expect(info.mock.calls[0]?.[1]).toMatchObject({ order: "path_first", guess: "none" });
+  });
+
+  it("emits no guess once the signal aborted", async () => {
+    const ac = new AbortController();
+    const list = deferred<string[]>();
+    const { w, emit } = watcherWith(readBase, ac.signal, () => list.promise);
+    const [head] = contentFirst("/w/a.py");
+    w.onStart("t1", "Write");
+    w.onInput("t1", head);
+    ac.abort();
+    list.resolve(["/w/a.py"]);
+    await flush();
+    await flush();
+    expect(emit).not.toHaveBeenCalled();
+  });
+});
+
 const claim: ExecutionClaim = {
   runId: "r1",
   conversationId: "c1",
@@ -337,7 +557,7 @@ function readerDeps(f: Fake) {
   const deps: WriteBaseReadDeps = {
     claim: () => claim,
     runFacts: async () => ({ deviceId: "d1", accountId: "a1" }),
-    eventLog: { latestFileState },
+    eventLog: { latestFileState, recentFilePaths: async () => [] },
     sandbox: { withKernelRead } as never,
     log: { warn, debug },
   };

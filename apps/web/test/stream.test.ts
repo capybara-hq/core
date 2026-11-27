@@ -842,7 +842,7 @@ describe("openConversationStream: live drafts", () => {
 describe("reduceChat: tool drafts", () => {
   const CALL = "call_a";
   const tool = (
-    delta: "tool_start" | "tool_input" | "tool_base",
+    delta: "tool_start" | "tool_input" | "tool_base" | "tool_base_verdict",
     extra: Partial<StreamDelta> = {},
   ) => ({ runId: RUN, step: 0, delta, callId: CALL, ...extra }) as StreamDelta;
   const start = (callId = CALL, name = "Write") => tool("tool_start", { callId, name });
@@ -975,6 +975,76 @@ describe("reduceChat: tool drafts", () => {
     );
     expect(s.drafts[0]?.tools[0]?.base).toEqual({ text: "old", sha256: "h1" });
     expect(reduceChat(s, { kind: "delta", delta: base("x", "h3") })).toBe(s);
+  });
+
+  describe("a guessed base (Write content-first)", () => {
+    const guess = tool("tool_base", { text: "old", sha256: "h1", guess: { path: "/w/a.ts" } });
+    const verdict = (confirmed: boolean) => tool("tool_base_verdict", { confirmed });
+    const guessed = { text: "old", sha256: "h1", guess: { path: "/w/a.ts" } };
+
+    it("keeps the guess, then its verdict once: confirmed", () => {
+      const s = apply(initialChatState, [started(1)], start(), guess);
+      expect(s.drafts[0]?.tools[0]?.base).toEqual(guessed);
+      const c = apply(s, verdict(true));
+      expect(c.drafts[0]?.tools[0]?.base).toEqual({ ...guessed, verdict: "confirmed" });
+      // a second verdict changes nothing
+      expect(reduceChat(c, { kind: "delta", delta: verdict(false) })).toBe(c);
+      // an exact base after a confirmation is ignored
+      const exact = tool("tool_base", { text: "new", sha256: "h2" });
+      expect(reduceChat(c, { kind: "delta", delta: exact })).toBe(c);
+    });
+
+    it("rejected: marked, then the exact base read after it replaces it", () => {
+      const r = apply(initialChatState, [started(1)], start(), guess, verdict(false));
+      expect(r.drafts[0]?.tools[0]?.base).toEqual({ ...guessed, verdict: "rejected" });
+      const exact = apply(r, tool("tool_base", { text: "real", sha256: "h2" }));
+      expect(exact.drafts[0]?.tools[0]?.base).toEqual({ text: "real", sha256: "h2" });
+      // the exact base stays: another base is ignored
+      const again = tool("tool_base", { text: "x", sha256: "h3" });
+      expect(reduceChat(exact, { kind: "delta", delta: again })).toBe(exact);
+    });
+
+    it("a stale draft does not resurrect a rejected guess", () => {
+      const r = apply(initialChatState, [started(1)], start(), guess, verdict(false));
+      const stale = apply(r, {
+        runId: RUN,
+        step: 0,
+        delta: "draft",
+        resync: true,
+        tools: [{ id: CALL, name: "Write", input: "", base: guessed }],
+      });
+      expect(stale.drafts[0]?.tools[0]?.base).toEqual({ ...guessed, verdict: "rejected" });
+    });
+
+    it("a draft carries the verdict to a viewer that missed it", () => {
+      const s = apply(initialChatState, [started(1)], start(), guess);
+      const read = apply(s, {
+        runId: RUN,
+        step: 0,
+        delta: "draft",
+        tools: [{ id: CALL, name: "Write", input: "", base: { ...guessed, verdict: "confirmed" } }],
+      });
+      expect(read.drafts[0]?.tools[0]?.base?.verdict).toBe("confirmed");
+      // and the exact base after a rejection it missed
+      const exact = apply(s, {
+        runId: RUN,
+        step: 0,
+        delta: "draft",
+        resync: true,
+        tools: [{ id: CALL, name: "Write", input: "", base: { text: "real", sha256: "h2" } }],
+      });
+      expect(exact.drafts[0]?.tools[0]?.base).toEqual({ text: "real", sha256: "h2" });
+    });
+
+    it("a verdict without a base, or for an exact base, is dropped", () => {
+      const s = apply(initialChatState, [started(1)], start());
+      expect(reduceChat(s, { kind: "delta", delta: verdict(true) })).toBe(s);
+      // no draft at all: nothing is created
+      const none = apply(initialChatState, [started(1)], verdict(true));
+      expect(none.drafts).toEqual([]);
+      const exact = apply(s, tool("tool_base", { text: "o", sha256: "h" }));
+      expect(reduceChat(exact, { kind: "delta", delta: verdict(false) })).toBe(exact);
+    });
   });
 
   it("step_reset drops the tools with the step", () => {
@@ -1121,6 +1191,93 @@ describe("openConversationStream: tool drafts", () => {
     es.emit("delta", base);
     es.emit("delta", { ...base, text: "other" });
     expect(out.filter((d) => d.delta === "tool_base")).toHaveLength(1);
+  });
+
+  it("a guessed base and its verdict pass through; a lagging frame keeps the rejection", () => {
+    const guess = {
+      runId: RUN,
+      step: 0,
+      delta: "tool_base",
+      callId: "a",
+      text: "old",
+      sha256: "h",
+      guess: { path: "/w/a.ts" },
+    } as const;
+    es.emit("delta", tin("ab", 0));
+    es.emit("delta", guess);
+    es.emit("delta", {
+      runId: RUN,
+      step: 0,
+      delta: "tool_base_verdict",
+      callId: "a",
+      confirmed: false,
+    });
+    expect(shown().drafts[0]?.tools[0]?.base).toEqual({
+      text: "old",
+      sha256: "h",
+      guess: { path: "/w/a.ts" },
+      verdict: "rejected",
+    });
+    // the same guess again (a repeat) is not handed on
+    es.emit("delta", guess);
+    expect(out.filter((d) => d.delta === "tool_base")).toHaveLength(1);
+    // a reconnect's frame that lags (the guess without its verdict) keeps the rejection
+    es.emit("draft", {
+      runId: RUN,
+      step: 0,
+      text: "",
+      thinking: "",
+      tools: [
+        {
+          id: "a",
+          name: "Write",
+          input: "ab",
+          base: { text: "old", sha256: "h", guess: { path: "/w/a.ts" } },
+        },
+      ],
+    });
+    expect(shown().drafts[0]?.tools[0]?.base?.verdict).toBe("rejected");
+    // the exact base read after the rejection replaces it, and is handed on
+    es.emit("delta", {
+      runId: RUN,
+      step: 0,
+      delta: "tool_base",
+      callId: "a",
+      text: "real",
+      sha256: "r",
+    });
+    expect(shown().drafts[0]?.tools[0]?.base).toEqual({ text: "real", sha256: "r" });
+  });
+
+  it("a read brings a guess's verdict the stream missed", async () => {
+    es.emit("delta", tin("ab", 0));
+    es.emit("delta", {
+      runId: RUN,
+      step: 0,
+      delta: "tool_base",
+      callId: "a",
+      text: "old",
+      sha256: "h",
+      guess: { path: "/w/a.ts" },
+    });
+    read.mockResolvedValueOnce([
+      {
+        step: 0,
+        text: "",
+        thinking: "",
+        tools: [
+          {
+            id: "a",
+            name: "Write",
+            input: "abcdefg",
+            base: { text: "old", sha256: "h", guess: { path: "/w/a.ts" }, verdict: "confirmed" },
+          },
+        ],
+      },
+    ]);
+    es.emit("delta", tin("zz", 7));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shown().drafts[0]?.tools[0]?.base?.verdict).toBe("confirmed");
   });
 
   it("a step_reset clears the call's offsets: its input starts over at 0", () => {
