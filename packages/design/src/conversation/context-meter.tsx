@@ -28,7 +28,6 @@ export function ContextMeter({ pct, over }: { pct: number; over?: boolean }): JS
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={value}
-        tabIndex={0}
         viewBox={`0 0 ${BOX} ${BOX}`}
       >
         <circle
