@@ -44,12 +44,10 @@ test("上传 PNG（＋ 按钮）：进度后就绪、随消息发送；时间线
 }) => {
   await openChat(page, "Vision agent");
   const png = await redPng();
-  // ＋ opens the composer's add menu; its upload row opens the hidden file input
+  // + opens the composer's add menu; its upload row opens the hidden file input
   await page.getByRole("button", { name: designZh("composer.attach") }).click();
   const chooser = page.waitForEvent("filechooser");
-  await page
-    .getByRole("option", { name: new RegExp(`^${zh.chat.composerMenu.upload}`) })
-    .click();
+  await page.getByRole("option", { name: new RegExp(`^${zh.chat.composerMenu.upload}`) }).click();
   await (await chooser).setFiles({ name: "red.png", mimeType: "image/png", buffer: png });
   const files = draftFiles(page);
   await expect(files.getByRole("img", { name: "red.png" })).toBeVisible();
