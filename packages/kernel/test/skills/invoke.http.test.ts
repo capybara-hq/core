@@ -33,7 +33,7 @@ import { conversationsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
-import { seedChatAttachment } from "../helpers/legacy-attachments.js";
+import { seedLibraryFile } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -788,7 +788,7 @@ describe("POST …/messages with skill", () => {
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
       "base64",
     );
-    const id = await seedChatAttachment(k.app, orgId, ownerId, {
+    const id = await seedLibraryFile(k.app, orgId, ownerId, {
       name: "a.png",
       contentType: "image/png",
       bytes: png,

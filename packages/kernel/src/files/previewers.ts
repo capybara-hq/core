@@ -12,7 +12,6 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
-import { attachmentContentMatches } from "../conversations/attachments.service.js";
 import { ConversationFiles } from "../conversations/files.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -28,6 +27,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { type ResolvedSkillFile, SkillFiles } from "../skills/skill-files.js";
 import { StorageService } from "../storage/storage.service.js";
 import { callExtension } from "../ui/call-extension.js";
+import { BlobsService } from "./blobs.service.js";
 
 /** Time limit of a previewer's render (UI refresh spec §5.3: 10 s on the conversation page). */
 export const FILE_PREVIEW_TIMEOUT_MS = 10_000;
@@ -57,6 +57,8 @@ interface PreviewerRegistryDeps {
   /** Extensions enabled in the org (queried every time). */
   enabledPlugins(orgId: string): Promise<Set<string>>;
   files: Pick<ConversationFiles, "file">;
+  /** A conversation file's bytes, read through its blob (size and etag checked). */
+  blobs: Pick<BlobsService, "open">;
   /** Skill files: visibility as `GET /skills/:id`, manifest paths only, verified reads. */
   skillFiles: Pick<SkillFiles, "resolve" | "bytes">;
   storage: Pick<StorageService, "kernel">;
@@ -178,6 +180,7 @@ export class PreviewerRegistry {
     @Inject(KernelDb) kdb: Pick<KernelDb, "db">,
     @Inject(ExtensionHost) host: Pick<ExtensionHost, "list" | "enabledPlugins">,
     @Inject(ConversationFiles) files: Pick<ConversationFiles, "file">,
+    @Inject(BlobsService) blobs: Pick<BlobsService, "open">,
     @Inject(SkillFiles) skillFiles: Pick<SkillFiles, "resolve" | "bytes">,
     @Inject(StorageService) storage: Pick<StorageService, "kernel">,
     @Inject(EffectiveConfigs) effective: Pick<EffectiveConfigs, "get">,
@@ -194,6 +197,7 @@ export class PreviewerRegistry {
       host,
       enabledPlugins: (orgId) => host.enabledPlugins(orgId),
       files,
+      blobs,
       skillFiles,
       storage,
       effective,
@@ -376,7 +380,6 @@ export class PreviewerRegistry {
   }): Promise<UiView> {
     const file = await this.d.files.file(t.orgId, t.conversationId, t.accountId, t.fileId);
     const l = await this.viewPreviewer(t.orgId, file, t.plugin, t.id);
-    const store = this.d.storage.kernel(t.orgId);
     return this.renderWith(
       l,
       t,
@@ -388,13 +391,9 @@ export class PreviewerRegistry {
         file: { id: file.id, name: file.name, contentType: file.contentType, size: file.size },
       },
       async (signal) => {
-        const got = await store.get(file.objectKey, { signal });
+        // the file's blob, still the recorded bytes (a replaced object is not the file any more)
+        const got = await this.d.blobs.open(t.orgId, file.blob, { signal });
         if (!got) throw new Error("the file is no longer available");
-        // an attachment replaced since it was checked is not the file any more
-        if (file.recorded && !attachmentContentMatches(file.recorded, got.head)) {
-          await got.body.cancel().catch(() => {});
-          throw new Error("the file is no longer available");
-        }
         return got.body;
       },
     );

@@ -19,6 +19,7 @@ import type { BuiltinCallContext } from "../../src/tools/registry.js";
 import { skillPlugin } from "../catalog/packages.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { migrateLegacyFiles } from "../helpers/library-files.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { greeterPkg } from "../helpers/plugin-packages.js";
 import {
@@ -325,6 +326,8 @@ describe("acceptance: files instead of uploads", () => {
         purpose: "chat",
       })
       .execute();
+    // written as before the file library, then migrated by 0188
+    await migrateLegacyFiles(db);
     await postMessage(
       root,
       orgId,

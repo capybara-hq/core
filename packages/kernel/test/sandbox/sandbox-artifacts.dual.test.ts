@@ -38,7 +38,6 @@ import {
 } from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
-import { mirrorFileAsChatAttachment } from "../helpers/legacy-attachments.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { sandboxServiceFor } from "../helpers/sandbox.js";
@@ -224,8 +223,6 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(res.status, await res.clone().text()).toBeLessThan(300);
     const f = await at(1, "POST", `${base}/files/${id}/finalize`, { sha256, purpose: "library" });
     expect(f.status, JSON.stringify(f.json)).toBe(200);
-    // the send path still binds chat attachments: the same id, bytes and owner as one
-    await mirrorFileAsChatAttachment(db, id);
     return id;
   }
 

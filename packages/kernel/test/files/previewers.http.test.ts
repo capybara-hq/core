@@ -16,6 +16,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import type { PreviewProbeState } from "../fixtures/plugins/preview-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
+import { migrateLegacyFiles } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -108,7 +109,10 @@ beforeEach(async () => {
   delete probe().read;
 });
 
-/** Stores an object and logs its `artifact_created` (as `Deliver` would). */
+/**
+ * Stores an object and logs its `artifact_created` the way `Deliver` did before the file library,
+ * then runs the 0188 copy (a delivery migrated with its id and key).
+ */
 async function deliver(
   name: string,
   bytes: Buffer,
@@ -139,6 +143,7 @@ async function deliver(
       },
     },
   ]);
+  await migrateLegacyFiles(db);
   return artifactId;
 }
 
@@ -205,11 +210,12 @@ describe("file-preview@1", () => {
 
   it("a file over the previewer's maxBytes is not listed; the grant also caps the bytes it reads", async () => {
     await enable();
-    const big = await deliver("big.docx", Buffer.alloc(10), DOCX, 2 * 1024 * 1024);
+    const big = await deliver("big.docx", Buffer.alloc(2 * 1024 * 1024), DOCX);
     expect((await previewers(big)).body.previewers).toEqual([]);
     expect(errCode(await preview(big, "docx"))).toBe("ui.not_found");
-    // the log says small, the object is 2 MiB: read() rejects and the render fails alone
-    const lying = await deliver("lying.docx", Buffer.alloc(2 * 1024 * 1024), DOCX, 100);
+    // the file says small, its blob is 2 MiB: read() rejects and the render fails alone
+    const lying = await deliver("lying.docx", Buffer.alloc(2 * 1024 * 1024), DOCX);
+    await db.updateTable("files").set({ size: 100 }).where("id", "=", lying).execute();
     const r = await preview(lying, "docx");
     expect(r.statusCode).toBe(502);
     expect(errCode(r)).toBe("ui.render_failed");
@@ -349,6 +355,8 @@ describe("file-preview@1", () => {
         status: "ready",
       })
       .execute();
+    // sent before the file library, migrated by 0188
+    await migrateLegacyFiles(db);
     expect((await previewers(id)).body.previewers.map((p) => p.id)).toEqual(["docx", "docx-page"]);
     const r = await preview(id, "docx");
     expect(r.statusCode, r.body).toBe(200);
@@ -395,6 +403,7 @@ describe("file-preview@1", () => {
         etag,
       })
       .execute();
+    await migrateLegacyFiles(db);
     expect((await previewers(id)).status).toBe(200);
     // replaced with other bytes of the same size after finalize
     await put(Buffer.from("PK replaced"));

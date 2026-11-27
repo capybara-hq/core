@@ -33,6 +33,7 @@ import { TOOL_REVIEW_SYSTEM_PROMPT } from "../../src/tools/tool-review.js";
 import { scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { migrateLegacyFiles } from "../helpers/library-files.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -408,6 +409,8 @@ async function attachment(conv: string, bytes: Uint8Array) {
       purpose: "chat",
     })
     .execute();
+  // written as before the file library, then migrated by 0188
+  await migrateLegacyFiles(db);
   return { id, objectKey };
 }
 

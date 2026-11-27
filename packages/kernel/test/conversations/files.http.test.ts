@@ -25,7 +25,7 @@ import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
-import { seedChatAttachment } from "../helpers/legacy-attachments.js";
+import { migrateLegacyFiles, seedLibraryFile } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -139,7 +139,10 @@ async function callTool(conv: string, key: string, input: unknown, n: number): P
   await waitForTerminal(db, conv, n, 30_000);
 }
 
-/** Stores an object and logs its `artifact_created` (as `Deliver` would). */
+/**
+ * Stores an object and logs its `artifact_created` the way `Deliver` did before the file library,
+ * then runs the 0188 copy: a delivery migrated with its id and key.
+ */
 async function deliver(
   conv: string,
   name: string,
@@ -171,6 +174,7 @@ async function deliver(
       },
     },
   ]);
+  await migrateLegacyFiles(db);
   return { artifactId, objectKey };
 }
 
@@ -396,12 +400,16 @@ describe("artifact download URL as JSON (as=url)", () => {
   });
 });
 
-/** A ready chat attachment of the owner (the rows the send path still binds); returns its id. */
+/** A composer upload of the owner, not sent yet (a draft library file); returns its id. */
 async function upload(name: string, contentType: string, bytes: Buffer): Promise<string> {
-  return seedChatAttachment(k.app, orgId, ownerId, { name, contentType, bytes });
+  return seedLibraryFile(k.app, orgId, ownerId, { name, contentType, bytes });
 }
 
-/** Stores an object and writes an attachment row directly (for rows the routes never produce). */
+/**
+ * Stores an object and writes an attachment row directly, as attachments were before the file
+ * library, then runs the 0188 copy (a bound ready chat attachment becomes a file the conversation
+ * refers to, with the same id and key; other rows do not).
+ */
 async function attachRow(
   conv: string | null,
   name: string,
@@ -442,6 +450,7 @@ async function attachRow(
       etag,
     })
     .execute();
+  await migrateLegacyFiles(db);
   return id;
 }
 
@@ -573,13 +582,17 @@ describe("uploaded attachments (file preview: attachments join the conversation'
     const ok = await owner({ method: "GET", url: `${filesUrl(conv)}/${intact}/content` });
     expect(ok.body).toBe("same");
 
-    // the download route (the byte path of the panel, embed and viewer) refuses them too
+    // the conversation's download route (the byte path of the panel, embed and viewer) refuses
+    // them too
     const download = (id: string) =>
-      owner({ method: "GET", url: `/api/v1/orgs/${orgId}/attachments/${id}/download` });
+      owner({
+        method: "GET",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/artifacts/${id}/download`,
+      });
     for (const id of [swapped, resized]) {
       const r = await download(id);
       expect(r.statusCode, id).toBe(404);
-      expect(errCode(r)).toBe("attachment.not_found");
+      expect(errCode(r)).toBe("conversation.artifact_not_found");
     }
     expect((await download(intact)).statusCode).toBe(302);
   });

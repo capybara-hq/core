@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { AgentLookupModule } from "../agents/agent-lookup.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { DevicesModule } from "../devices/devices.module.js";
+import { LibraryReadModule } from "../files/library-read.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { OperationAuthorityModule } from "../sandbox/operation-authority.module.js";
@@ -38,6 +39,8 @@ import { ConversationQueue } from "./queue.service.js";
     EventLogModule,
     ConversationAccessModule,
     AttachmentsModule,
+    // the files messages attach and the conversation's files read (file library)
+    LibraryReadModule,
     AgentLookupModule,
     StorageModule,
     SkillsModule,
@@ -67,6 +70,7 @@ import { ConversationQueue } from "./queue.service.js";
     EventLogModule,
     ConversationAccessModule,
     AttachmentsModule,
+    LibraryReadModule,
     ConversationsService,
     ConversationQueue,
     ConversationOutputs,

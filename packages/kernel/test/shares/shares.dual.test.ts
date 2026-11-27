@@ -24,6 +24,7 @@ import { SharesService } from "../../src/shares/shares.service.js";
 import { SHARE_SWEEP_CRON, SHARE_SWEEP_JOB, ShareSweepJob } from "../../src/shares/sweep.job.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { accountsFor } from "../helpers/identity.js";
+import { migrateLegacyFiles } from "../helpers/library-files.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -116,6 +117,8 @@ async function deliver(text: string): Promise<string> {
       },
     },
   ]);
+  // logged the way deliveries were before the file library, then migrated (0188)
+  await migrateLegacyFiles(db);
   return artifactId;
 }
 

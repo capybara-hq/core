@@ -21,6 +21,7 @@ import { EmbedTokens } from "../../src/ui/embed-token.js";
 import type { PreviewProbeState } from "../fixtures/plugins/preview-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
+import { migrateLegacyFiles } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -164,6 +165,8 @@ async function deliver(name: string, body: Buffer | string, contentType: string)
       },
     },
   ]);
+  // logged the way deliveries were before the file library, then migrated (0188)
+  await migrateLegacyFiles(db);
   return artifactId;
 }
 

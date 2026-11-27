@@ -1,8 +1,8 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
-import { AttachmentsService } from "../conversations/attachments.service.js";
 import { EventLog } from "../conversations/event-log.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ExtensionHost } from "../extensions/host.js";
+import { ConversationMedia } from "../files/conversation-media.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -65,7 +65,8 @@ export class RunSteps {
     @Inject(ToolPipeline) toolPipeline: ToolPipeline,
     @Inject(ExtensionHost) host: ExtensionHost,
     @Inject(SubagentsService) subagents: SubagentsService,
-    @Inject(AttachmentsService) attachments: AttachmentsService,
+    /** The conversation's media: library files it refers to, and `read` copies. */
+    @Inject(ConversationMedia) media: ConversationMedia,
     @Inject(CompactionSettingsService) compactionSettings: CompactionSettingsService,
     @Inject(CompactionProgressService) compactionProgress: CompactionProgressService,
     @Inject(PermissionContextRecorder) permissionContext: PermissionContextRecorder,
@@ -92,9 +93,9 @@ export class RunSteps {
       // phase D: a person's fork invocation dispatches its sub-agent in the run's first prepare
       skillForks: subagents.skillForks,
       media: {
-        info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
+        info: (orgId, conversationId, ids) => media.mediaInfo(orgId, conversationId, ids),
         fetch: (orgId, conversationId, ids, caps) =>
-          attachments.fetchMedia(orgId, conversationId, ids, caps),
+          media.fetchMedia(orgId, conversationId, ids, caps),
       },
       // the request boundary of the recorded permission context (spec B2)
       ...livePermissionContext(permissionContext),

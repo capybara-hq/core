@@ -248,7 +248,7 @@ describe("上传技能包", () => {
       payload: { text: "hi", files: [pending] },
     });
     expect(msg.statusCode).toBe(404);
-    expect(msg.json().error.code).toBe("attachment.not_found");
+    expect(msg.json().error.code).toBe("file.not_found");
     const dl = await admin({
       method: "GET",
       url: `/api/v1/orgs/${orgId}/attachments/${pending}/download`,

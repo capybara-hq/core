@@ -20,6 +20,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import { migrateLegacyFiles } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -157,6 +158,8 @@ async function deliver(name: string, bytes: Buffer | string, contentType = "text
       },
     },
   ]);
+  // logged the way deliveries were before the file library, then migrated (0188)
+  await migrateLegacyFiles(db);
   return artifactId;
 }
 

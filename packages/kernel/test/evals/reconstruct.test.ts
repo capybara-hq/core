@@ -12,9 +12,9 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
-import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { createKv } from "../../src/ctx/kv.js";
@@ -35,6 +35,7 @@ import {
   toEvents,
 } from "../../src/evals/snapshot.js";
 import { buildTrajectory } from "../../src/evals/trajectory.js";
+import { ConversationMedia } from "../../src/files/conversation-media.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { REDIS } from "../../src/infra/tokens.js";
@@ -70,7 +71,12 @@ import { TOOL_WATCH_TIMINGS } from "../../src/tools/tool-watch-queue.js";
 import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
-import { seedChatAttachment } from "../helpers/legacy-attachments.js";
+import {
+  blobKeyOf,
+  markFileDeleted,
+  migrateLegacyFiles,
+  seedLibraryFile,
+} from "../helpers/library-files.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -417,9 +423,9 @@ async function catalogItem(name: string): Promise<string> {
   return id;
 }
 
-/** A ready chat attachment of the owner (the rows the send path still binds); returns its id. */
+/** A composer upload of the owner, not sent yet (a draft library file); returns its id. */
 async function attach(name: string, bytes: Buffer, contentType = "image/png"): Promise<string> {
-  return seedChatAttachment(k.app, orgId, ownerId, { name, contentType, bytes });
+  return seedLibraryFile(k.app, orgId, ownerId, { name, contentType, bytes });
 }
 
 async function postWithFiles(convId: string, text: string, files: string[]): Promise<void> {
@@ -450,10 +456,8 @@ async function modelInfo(provider: string, model: string): Promise<ModelInfo> {
 async function mediaFor(convId: string, snap: CaseSnapshot, seq: number, info: ModelInfo) {
   const ids = snapshotMediaRefs(snap, seq, info);
   if (ids.length === 0) return {};
-  const mediaInfo = await k.app.get(AttachmentsService).mediaInfo(orgId, convId, ids);
-  const media = await k.app
-    .get(AttachmentsService)
-    .fetchMedia(orgId, convId, [...mediaInfo.keys()]);
+  const mediaInfo = await k.app.get(ConversationMedia).mediaInfo(orgId, convId, ids);
+  const media = await k.app.get(ConversationMedia).fetchMedia(orgId, convId, [...mediaInfo.keys()]);
   return { mediaInfo, media };
 }
 
@@ -1487,7 +1491,10 @@ describe("reconstructRequest：基线零漂移", () => {
     await waitForTerminal(db, conv, 3, 30_000);
     // 发送前对象就不在了：记录的就是「不再可用」
     const gone = await attach("gone.png", PNG);
-    await k.app.get(StorageService).kernel(orgId).delete(`attachments/${gone}`);
+    await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .delete(await blobKeyOf(db, gone));
     await postWithFiles(conv, "media: again", [gone]);
     await waitForTerminal(db, conv, 4, 30_000);
 
@@ -1531,7 +1538,10 @@ describe("reconstructRequest：基线零漂移", () => {
     );
 
     // 附件对象被删：带过字节的请求还原时只能给占位，记 media_missing
-    await k.app.get(StorageService).kernel(orgId).delete(`attachments/${keep}`);
+    await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .delete(await blobKeyOf(db, keep));
     const first = modelCalls(toEvents(snap))[0] as ModelCallEvent;
     expect(first.payload.request.media?.map((m) => m.outcome)).toEqual(["bytes"]);
     const out = reconstructRequest(snap, first.seq, {
@@ -1630,6 +1640,52 @@ describe("reconstructRequest：基线零漂移", () => {
     const snap2 = asOldLog(await snapshotOf(conv2));
     expect(JSON.stringify(sent[0])).toContain(`file_id ${img2}`);
     await expectZeroDrift(conv2, snap2);
+  });
+
+  it("a file migrated the 0188 way (old key, same id) resolves with zero drift; deleting the file gives media_missing", async () => {
+    reset();
+    const info = await modelInfo("model-fake", "fake-v");
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const conv = await createConv(owner, orgId, agentId);
+    // an upload finalized before the file library: a ready, unsent chat attachment, then the copy
+    const id = randomUUID();
+    const head = await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .put(`attachments/${id}`, PNG, { contentType: "image/png", size: PNG.length });
+    await db
+      .insertInto("attachments")
+      .values({
+        id,
+        org_id: orgId,
+        account_id: ownerId,
+        name: "migrated.png",
+        content_type: "image/png",
+        size: PNG.length,
+        object_key: `attachments/${id}`,
+        status: "ready",
+        etag: head.etag ?? null,
+        expires_at: sql<Date>`now() + interval '24 hours'`,
+      })
+      .execute();
+    await migrateLegacyFiles(db);
+    expect(await blobKeyOf(db, id)).toBe(`attachments/${id}`);
+    await postWithFiles(conv, "media: look", [id]);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snap = await snapshotOf(conv);
+    const first = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    expect(first.payload.request.media).toEqual([
+      { attachmentId: id, outcome: "bytes", etag: head.etag },
+    ]);
+    await expectZeroDrift(conv, snap);
+
+    // the person deletes the file from the library: the bytes stay, the ref no longer resolves
+    await markFileDeleted(db, id);
+    const media = await mediaFor(conv, snap, first.seq, info);
+    expect(media.mediaInfo?.has(id) ?? false).toBe(false);
+    const out = reconstructRequest(snap, first.seq, { model: info, ...media });
+    expect(out.drift).toEqual(["media_missing"]);
+    expect(JSON.stringify(out.request)).toContain("is no longer available");
   });
 
   it("a Read image on a vision model: the image follows the tool results, zero drift; a deleted object gives media_missing", async () => {

@@ -17,8 +17,7 @@ import type { KernelLogger } from "../log.js";
 import type { MediaBytes, MediaInfo } from "../runtime/context/build.js";
 import { StorageService } from "../storage/storage.service.js";
 import { ConversationAccess } from "./access.js";
-import type { LogContentBlock } from "./events.js";
-import { isImageContentType, isMediaContentType } from "./media-types.js";
+import { isImageContentType } from "./media-types.js";
 import {
   fitImageForModel,
   MODEL_IMAGE_CACHE_SECONDS,
@@ -102,7 +101,7 @@ export interface OpenedAttachment {
   body: ReadableStream<Uint8Array>;
 }
 
-/** A ready `chat` attachment bound to a conversation ({@link AttachmentsService.boundRows}). */
+/** A ready `read` copy bound to a conversation ({@link AttachmentsService.boundRows}). */
 export interface BoundAttachment {
   id: string;
   name: string;
@@ -136,19 +135,15 @@ export interface CreatedAttachment {
 const notFound = () => new ApiError("attachment.not_found", "Attachment not found");
 
 /**
- * The purposes request building reads bytes of: chat attachments and the `read` copies of the
- * builtin Read. Every other lookup (listing, sandbox sync, download, binding) stays `chat` only.
+ * The one purpose conversations read here: the `read` copies of the builtin Read and of tool
+ * result images. A person's files (the `chat` rows the file library migrated) are read through the
+ * library (`ReferencedFiles`), never here.
  */
-const MEDIA_PURPOSES: AttachmentPurpose[] = ["chat", "read"];
+const READ_PURPOSE: AttachmentPurpose = "read";
 
 /** 去掉参数、转小写：`Text/Plain; charset=utf-8` → `text/plain`。 */
 export const normalizeContentType = (ct: string): string =>
   (ct.split(";")[0] ?? "").trim().toLowerCase();
-
-/** A logged image block (the narrowed media type the log carries). */
-type ImageBlock = Extract<LogContentBlock, { type: "image" }>;
-/** A logged document block. */
-type DocumentBlock = Extract<LogContentBlock, { type: "document" }>;
 
 /**
  * The object key: the attachment id only (the user's file name never goes into a key), under one
@@ -213,9 +208,11 @@ async function readAll(body: ReadableStream<Uint8Array>): Promise<Uint8Array> {
 }
 
 /**
- * 对话附件（M5 T3）：登记 → 浏览器按预签名直传对象存储 → finalize 核对 → 发消息时绑定到会话。
- * 字节只在对象存储（`kernel/<orgId>/attachments/<id>`），日志里只有引用；构建模型请求时经 {@link fetchMedia} 取字节。
- * 无进程内状态，可多副本共用。
+ * Uploads that are not a person's files (agent avatars, skill packages: register → the browser
+ * uploads with the presigned form → finalize checks) and the `read` copies of images the agent was
+ * shown (bound to their conversation; request building reads them through {@link fetchMedia}). A
+ * person's files are the file library's (`LibraryFilesService`, `ReferencedFiles`). Bytes live only
+ * in the object store; logs hold refs. No process state.
  */
 @Injectable()
 export class AttachmentsService {
@@ -525,12 +522,11 @@ export class AttachmentsService {
   }
 
   /**
-   * 下载地址（预签名，{@link ATTACHMENT_DOWNLOAD_TTL_SECONDS} 秒）：已绑定的附件要求能访问其会话，
-   * 未绑定的只有上传者；否则 `attachment.not_found`。只有图片与 PDF 以 `inline` 打开，其余一律 `attachment`
-   * （即使存储里的类型被改成 text/html 也不会在页面里渲染）；响应类型按 finalize 核对过的类型返回。
-   * A `read` copy (an image a tool showed the agent) is served the same way to whoever can open its
-   * conversation, so the web can show it on the call's row (tool result images design §4); it is
-   * still never listed (lists and the device's attachments stay `chat` only).
+   * The download address (presigned, {@link ATTACHMENT_DOWNLOAD_TTL_SECONDS} seconds) of a `read`
+   * copy (an image a tool showed the agent), for whoever can open its conversation, so the web can
+   * show it on the call's row (tool result images design §4); anything else →
+   * `attachment.not_found` (a person's files are downloaded through the file library). Only images
+   * and PDFs open `inline`; the response type is the recorded one.
    */
   async downloadUrl(orgId: string, accountId: string, id: string): Promise<string> {
     this.storage.assertAvailable();
@@ -548,7 +544,7 @@ export class AttachmentsService {
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("status", "=", "ready")
-      .where("purpose", "in", ["chat", "read"])
+      .where("purpose", "=", READ_PURPOSE)
       .executeTakeFirst();
     if (!row) throw notFound();
     const allowed =
@@ -571,34 +567,17 @@ export class AttachmentsService {
   }
 
   /**
-   * 绑定在该会话、已 ready 的附件（id 与原始文件名），按上传时间、id 排序（沙箱同步按这个顺序分配文件名）。
+   * The ready `read` copies bound to the conversation in this org (vision-read design §1.1), oldest
+   * first, then id; with `id`, only that one. Nothing here checks who reads them: callers check the
+   * conversation's access first.
    */
-  async listForConversation(
-    orgId: string,
-    conversationId: string,
-  ): Promise<{ id: string; name: string }[]> {
-    return (await this.boundRows(orgId, conversationId)).map((r) => ({ id: r.id, name: r.name }));
-  }
-
-  /**
-   * The ready `chat` attachments bound to the conversation in this org (never another purpose, a
-   * pending or an unbound upload), oldest first by upload time, then id; with `id`, only that one.
-   * Nothing here checks who reads them: callers check the conversation's access first. `purposes`
-   * widens it for a model-facing lookup only (`read` copies; vision-read design §1.1): every
-   * person- or device-facing caller keeps the default.
-   */
-  async boundRows(
-    orgId: string,
-    conversationId: string,
-    id?: string,
-    purposes: readonly ("chat" | "read")[] = ["chat"],
-  ): Promise<BoundAttachment[]> {
+  async boundRows(orgId: string, conversationId: string, id?: string): Promise<BoundAttachment[]> {
     let q = this.db
       .selectFrom("attachments")
       .select(["id", "name", "content_type", "size", "object_key", "etag", "created_at"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
-      .where("purpose", "in", [...purposes])
+      .where("purpose", "=", READ_PURPOSE)
       .where("status", "=", "ready");
     if (id !== undefined) q = q.where("id", "=", id);
     const rows = await q.orderBy("created_at").orderBy("id").execute();
@@ -632,25 +611,21 @@ export class AttachmentsService {
   }
 
   /**
-   * 读取一个绑定在该会话、已 ready 的附件（沙箱同步等内核内部用途）：没有行、未绑定到该会话、对象已不在、
-   * 大小或 etag 与 finalize 时不符 → null。其余错误（存储不可用等）照常抛出。调用方负责读完或取消 `body`。
+   * Opens a ready `read` copy bound to the conversation (the model-facing file lookup): no row, not
+   * bound to it, the object gone, or its size or etag not the recorded one → null. Other errors
+   * (storage unavailable) throw. The caller reads or cancels `body`.
    */
   async openForConversation(
     orgId: string,
     conversationId: string,
     attachmentId: string,
     opts: {
-      /**
-       * Also `read` copies (the model-facing file lookup only, vision-read design §1.1); the
-       * default is `chat` attachments, which is all a person or a device may see.
-       */
-      purposes?: readonly ("chat" | "read")[];
       /** Read at most this many bytes (a range read; a store that ignores it serves the whole). */
       maxBytes?: number;
       signal?: AbortSignal;
     } = {},
   ): Promise<OpenedAttachment | null> {
-    const [row] = await this.boundRows(orgId, conversationId, attachmentId, opts.purposes);
+    const [row] = await this.boundRows(orgId, conversationId, attachmentId);
     if (!row) return null;
     const got = await this.storage.kernel(orgId).get(row.objectKey, {
       ...(opts.signal !== undefined && { signal: opts.signal }),
@@ -666,117 +641,6 @@ export class AttachmentsService {
     return { name: row.name, contentType: row.contentType, size: row.size, body: got.body };
   }
 
-  /**
-   * Kept only until the send path attaches through the file library
-   * (`LibraryFilesService.attachForMessage`): it binds chat attachment rows, which no route
-   * creates any more.
-   *
-   * 发消息时在调用方事务里绑定附件（行锁），返回写进 user_message 的媒体块（`ref`，按 ids 顺序）：
-   * - 超过 `attachments.maxPerMessage`、或同一个 id 出现多次 → `validation_failed`；
-   * - 不存在、不是发送者上传的、已绑定到别的会话、未绑定且已过期 → `attachment.not_found`；
-   * - 还没 finalize → `attachment.not_ready`。
-   * 后两种的 details 为 `[{ path: "files", message, attachmentId }]`，网页据此标出对应条目。
-   * 已绑定到本会话的（重试）照常返回块。
-   */
-  @Transactional({ propagation: "mandatory" })
-  async bindForMessage(
-    orgId: string,
-    conversationId: string,
-    accountId: string,
-    ids: readonly string[],
-  ): Promise<LogContentBlock[]> {
-    const unique = [...new Set(ids)];
-    const max = this.config.get().attachments.maxPerMessage;
-    if (ids.length > max) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "files", message: `At most ${max} files per message` },
-      ]);
-    }
-    if (unique.length !== ids.length) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "files", message: "Each file may appear only once per message" },
-      ]);
-    }
-    if (unique.length === 0) return [];
-    const trx = this.db.db;
-    const rows = await trx
-      .selectFrom("attachments")
-      .select([
-        "id",
-        "account_id",
-        "conversation_id",
-        "name",
-        "content_type",
-        "size",
-        "status",
-        sql<boolean>`expires_at IS NOT NULL AND expires_at <= now()`.as("expired"),
-      ])
-      .where("org_id", "=", orgId)
-      .where("id", "in", unique)
-      // 技能包上传不能当附件发出（当作不存在）
-      .where("purpose", "=", "chat")
-      .orderBy("id")
-      .forUpdate()
-      .execute();
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    const blocks: LogContentBlock[] = [];
-    const toBind: string[] = [];
-    for (const id of unique) {
-      const r = byId.get(id);
-      if (
-        !r ||
-        r.account_id !== accountId ||
-        r.status === "deleting" ||
-        (r.conversation_id !== null && r.conversation_id !== conversationId) ||
-        (r.conversation_id === null && r.expired)
-      ) {
-        const message = `Attachment ${id} not found, expired, or already used in another conversation`;
-        throw new ApiError("attachment.not_found", message, [
-          { path: "files", message, attachmentId: id },
-        ]);
-      }
-      if (r.status !== "ready") {
-        const message = `Attachment ${id} has not been finalized`;
-        throw new ApiError("attachment.not_ready", message, [
-          { path: "files", message, attachmentId: id },
-        ]);
-      }
-      if (r.conversation_id === null) toBind.push(id);
-      const source = { kind: "ref" as const, fileId: id };
-      const size = Number(r.size);
-      // The model reads images, PDFs and text files itself; every other accepted type becomes a
-      // `file` block the model only gets a reference to (the bytes stay in the object store).
-      blocks.push(
-        isImageContentType(r.content_type)
-          ? {
-              type: "image",
-              mediaType: r.content_type as ImageBlock["mediaType"],
-              source,
-              name: r.name,
-              size,
-            }
-          : isMediaContentType(r.content_type)
-            ? {
-                type: "document",
-                mediaType: r.content_type as DocumentBlock["mediaType"],
-                source,
-                name: r.name,
-                size,
-              }
-            : { type: "file", mediaType: r.content_type, source, name: r.name, size },
-      );
-    }
-    if (toBind.length > 0) {
-      await trx
-        .updateTable("attachments")
-        .set({ conversation_id: conversationId, expires_at: null })
-        .where("id", "in", toBind)
-        .where("org_id", "=", orgId)
-        .execute();
-    }
-    return blocks;
-  }
-
   /** 下载 / 取字节时核对 etag：finalize 记下的与当前对象的不一致 → 内容被替换（记 warn）。没有记录时不核对。 */
   private sameContent(
     recorded: string | null,
@@ -789,8 +653,8 @@ export class AttachmentsService {
   }
 
   /**
-   * The recorded facts request building needs about attachments (only ready `chat` or `read` rows
-   * bound to this conversation): size, PDF page count, and the object's unsigned reference
+   * The recorded facts request building needs about `read` copies (only ready rows bound to this
+   * conversation; `ConversationMedia` asks here for the refs that are not library files): size, PDF page count, and the object's unsigned reference
    * (`ObjectStore.uri`, falling back to `capybara://attachments/<id>`). An id with no row is left
    * out; a failed query throws.
    */
@@ -805,7 +669,7 @@ export class AttachmentsService {
       .select(["id", "size", "pages", "etag", "object_key"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
-      .where("purpose", "in", MEDIA_PURPOSES)
+      .where("purpose", "=", READ_PURPOSE)
       .where("status", "=", "ready")
       .where("id", "in", [...ids])
       .execute();
@@ -824,8 +688,7 @@ export class AttachmentsService {
   }
 
   /**
-   * The bytes request building sends, only of ready `chat` or `read` rows bound to this
-   * conversation. Null only when certainly gone: no row, the object missing, or its size or etag
+   * The bytes request building sends, only of ready `read` copies bound to this conversation. Null only when certainly gone: no row, the object missing, or its size or etag
    * not the recorded one (content replaced, logged as a warning). Every other error (storage
    * unavailable, network) throws (Ruling M4) for the caller to treat as retryable, never a
    * placeholder. An id in `caps` is read by range up to that many leading bytes (the `text/*` cap).
@@ -846,7 +709,7 @@ export class AttachmentsService {
       .select(["id", "content_type", "object_key", "size", "etag"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
-      .where("purpose", "in", MEDIA_PURPOSES)
+      .where("purpose", "=", READ_PURPOSE)
       .where("status", "=", "ready")
       .where("id", "in", [...ids])
       .execute();

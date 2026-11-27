@@ -3,9 +3,9 @@ import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { FILE_PREVIEW_MAX_BYTES } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
-import { attachmentContentMatches } from "../conversations/attachments.service.js";
 import { ConversationFiles } from "../conversations/files.js";
 import { ApiError } from "../errors.js";
+import { type BlobRef, BlobsService } from "../files/blobs.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -22,14 +22,13 @@ export interface HtmlTokenResponse {
   expiresIn: number;
 }
 
-/** The object a document is served from, after its live checks. */
-interface DocumentSource {
-  orgId: string;
-  objectKey: string;
-  contentType: string;
-  /** An upload's size and etag recorded at finalize: the object read must still match them. */
-  recorded?: { size: number; etag: string | null } | undefined;
-}
+/**
+ * What a document is served from, after its live checks: a conversation file's blob (read through
+ * `BlobsService`, size and etag checked) or a share's snapshot object.
+ */
+type DocumentSource =
+  | { orgId: string; contentType: string; blob: BlobRef }
+  | { orgId: string; contentType: string; objectKey: string };
 
 /** Every refusal of the document route: one answer, no reason (a token is not an oracle). */
 export const htmlNotFound = () => new ApiError("not_found", "Not found");
@@ -42,7 +41,7 @@ const notPreviewable = (message: string) =>
  * mints a short-lived document token for one version of an HTML file ({@link mint}); the public
  * route serves it ({@link serve}) under the sandbox CSP after re-checking, live, what the token
  * names: the owner can still read the file (`ConversationFiles.file`: membership, active account,
- * conversation and agent not deleted; an upload's object still the one finalize checked), or the
+ * conversation and agent not deleted; the file not deleted and its blob still the recorded bytes), or the
  * share is still live at that generation (`ShareLiveness.byId`). The bytes are streamed by the
  * kernel as stored; never a presigned URL on the app origin. HTML larger than
  * `FILE_PREVIEW_MAX_BYTES` is never rendered.
@@ -54,6 +53,8 @@ export class HtmlDocumentService {
     @Inject(ConversationFiles) private readonly files: Pick<ConversationFiles, "file">,
     @Inject(ShareLiveness) private readonly liveness: Pick<ShareLiveness, "byId">,
     @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
+    /** A conversation file's bytes, through its blob. */
+    @Inject(BlobsService) private readonly blobs: Pick<BlobsService, "open">,
     @Inject(HtmlTokens) private readonly tokens: HtmlTokens,
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: KernelLogger,
   ) {}
@@ -97,12 +98,12 @@ export class HtmlDocumentService {
     if (source === null) throw htmlNotFound();
     // read before the object is opened, so no stream is held across this query
     const allowlist = await readHtmlCdnAllowlist(this.db.db, this.log);
-    const got = await this.storage.kernel(source.orgId).get(source.objectKey);
+    const got =
+      "blob" in source
+        ? await this.blobs.open(source.orgId, source.blob)
+        : await this.storage.kernel(source.orgId).get(source.objectKey);
     if (!got) throw htmlNotFound();
-    if (
-      got.head.size > FILE_PREVIEW_MAX_BYTES ||
-      (source.recorded && !attachmentContentMatches(source.recorded, got.head))
-    ) {
+    if (got.head.size > FILE_PREVIEW_MAX_BYTES) {
       await got.body.cancel().catch(() => {});
       throw htmlNotFound();
     }
@@ -140,11 +141,6 @@ export class HtmlDocumentService {
       throw e;
     }
     if (!isHtmlType(f.name, f.contentType) || f.size > FILE_PREVIEW_MAX_BYTES) return null;
-    return {
-      orgId: claims.orgId,
-      objectKey: f.objectKey,
-      contentType: f.contentType,
-      recorded: f.recorded,
-    };
+    return { orgId: claims.orgId, contentType: f.contentType, blob: f.blob };
   }
 }

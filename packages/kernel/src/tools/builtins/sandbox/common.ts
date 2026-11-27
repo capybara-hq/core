@@ -25,7 +25,6 @@ import type { BackgroundTaskStopper } from "../../../background/stop.js";
 import type { BackgroundTaskStore } from "../../../background/store.js";
 import type { KernelConfig } from "../../../config/schema.js";
 import type { ChildAgent } from "../../../conversations/agent-tree.js";
-import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { EventLog } from "../../../conversations/event-log.js";
 import {
   ANONYMOUS_NO_DEVICE,
@@ -36,6 +35,7 @@ import {
 import { canonicalRoot, workingRootOf } from "../../../devices/working-root.js";
 import { ApiError } from "../../../errors.js";
 import type { FileDeliveries } from "../../../files/deliveries.js";
+import type { ReferencedFiles } from "../../../files/referenced-files.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import {
   ATTACHMENTS_ROOT,
@@ -114,7 +114,8 @@ export interface SandboxToolDeps {
     finisher: Pick<BackgroundTaskFinisher, "finish">;
     stopper: Pick<BackgroundTaskStopper, "stop">;
   };
-  attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
+  /** The files sent into a conversation that `FetchAttachment` copies (file library). */
+  attachments: Pick<ReferencedFiles, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "deployment" | "available">;
   /** `Deliver`'s blobs and delivery transaction (file library spec §4); absent in test stubs. */
   deliveries?: Pick<FileDeliveries, "ensureBlob" | "appendDelivered">;

@@ -132,6 +132,15 @@ describe("FetchAttachment", () => {
     }
   });
 
+  it("accepts the reference of a file's blob, whose last segment is not the file id", async () => {
+    const uri = "s3://capybara/kernel/o/blobs/7d0e1f2a-1111-4222-8333-444455556666";
+    const r = rig({
+      attachments: [{ id: ATT, name: "a.csv", uri } as { id: string; name: string }],
+    });
+    const out = r.text(await r.tool.run({ file: uri }, callCtx()));
+    expect(out).toContain(`Copied a.csv to ${DIR}/a.csv.`);
+  });
+
   it("matches the name exactly, case-sensitively", async () => {
     const r = rig({
       attachments: [

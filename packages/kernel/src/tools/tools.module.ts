@@ -8,6 +8,7 @@ import { ConversationLeakCheckModule } from "../conversations/leak-check.js";
 import { DevicesModule } from "../devices/devices.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { FileDeliveriesModule } from "../files/deliveries.module.js";
+import { LibraryReadModule } from "../files/library-read.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
@@ -70,6 +71,8 @@ import { WatchedWaitsLock } from "./watched-waits-lock.js";
     // the approval decision's leak check of a person's card values
     ConversationLeakCheckModule,
     AttachmentsModule,
+    // the library files a conversation refers to (`Read`, `Deliver`, `FetchAttachment`, file refs)
+    LibraryReadModule,
     ExtensionsModule,
     StorageModule,
     // `Deliver` and `GenerateImage` store files as library files on shared blobs

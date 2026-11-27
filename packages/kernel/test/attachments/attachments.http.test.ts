@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ModelRequest, ObjectStore } from "@capybara-hq/plugin-sdk";
 import {
@@ -9,12 +10,14 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { TITLE_PROMPT } from "../../src/conversations/titles.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
+import { ConversationMedia } from "../../src/files/conversation-media.js";
+import { ReferencedFiles } from "../../src/files/referenced-files.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { PrefixedStorage, StorageService } from "../../src/storage/storage.service.js";
 import type { MediaProvider } from "../fixtures/plugins/model-media/index.js";
@@ -22,7 +25,7 @@ import { attachmentsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
-import { seedChatAttachment } from "../helpers/legacy-attachments.js";
+import { blobKeyOf, markFileDeleted, seedLibraryFile } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
@@ -140,15 +143,14 @@ beforeEach(async () => {
 });
 
 /**
- * A ready, unbound chat attachment as one existed before the file library (its object at
- * `attachments/<id>`): no route creates them any more, but the send path still binds them until it
- * attaches library files. The uploader is `req`'s account.
+ * A composer upload of `req`'s account, finalized and not sent yet (a draft library file on a blob
+ * of its own; `test/files/upload.http.test.ts` covers the upload routes themselves).
  */
 async function ready(req: Req, name: string, contentType: string, bytes: Buffer): Promise<string> {
   const me = (await req({ method: "GET", url: "/api/v1/me" })).json() as {
     account: { id: string };
   };
-  return seedChatAttachment(k.app, orgId, me.account.id, {
+  return seedLibraryFile(k.app, orgId, me.account.id, {
     name,
     contentType,
     bytes,
@@ -271,7 +273,10 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
   it("对象被删掉后，模型收到「不再可用」占位", async () => {
     const convId = await conversationWith("see-1");
     const img = await ready(owner, "gone.png", "image/png", PNG);
-    await k.app.get(StorageService).kernel(orgId).delete(`attachments/${img}`);
+    await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .delete(await blobKeyOf(db, img));
     expect((await post(owner, convId, { text: "x", files: [img] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
     const texts = userBlocks(agentRequests()[0] as ModelRequest).map((b) =>
@@ -287,7 +292,7 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     await k.app
       .get(StorageService)
       .kernel(orgId)
-      .put(`attachments/${img}`, swapped, { contentType: "image/png" });
+      .put(await blobKeyOf(db, img), swapped, { contentType: "image/png" });
     expect((await post(owner, convId, { text: "x", files: [img] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
     const req = agentRequests()[0] as ModelRequest;
@@ -299,69 +304,116 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
   });
 });
 
-describe("消息引用（旧的对话附件）", () => {
-  it("别人的 → 404；已用于别的对话 → 404；超过 10 个 → 400", async () => {
+describe("message files (library files)", () => {
+  it("another account's → 404 file.not_found; more than 10 → 400; a duplicate id → 400", async () => {
     const convId = await conversationWith("see-1");
     const theirs = await ready(other, "o.png", "image/png", PNG);
     const r2 = await post(owner, convId, { text: "x", files: [theirs] });
     expect(r2.statusCode).toBe(404);
-    expect(r2.json().error.code).toBe("attachment.not_found");
+    expect(r2.json().error.code).toBe("file.not_found");
     expect(r2.json().error.details).toEqual([
-      expect.objectContaining({ path: "files", attachmentId: theirs }),
+      expect.objectContaining({ path: "files", fileId: theirs }),
     ]);
-
-    const mine = await ready(owner, "m.png", "image/png", PNG);
-    expect((await post(owner, convId, { text: "x", files: [mine] })).statusCode).toBe(202);
-    const conv2 = await conversationWith("see-1");
-    const r3 = await post(owner, conv2, { text: "x", files: [mine] });
-    expect(r3.statusCode).toBe(404);
-    expect(r3.json().error.code).toBe("attachment.not_found");
 
     const fresh = await ready(owner, "f.png", "image/png", PNG);
     const many = Array.from({ length: 11 }, () => fresh);
-    const r4 = await post(owner, conv2, { text: "x", files: many });
+    const r4 = await post(owner, convId, { text: "x", files: many });
     expect(r4.statusCode).toBe(400);
-    // 同一条消息里重复的 id → 400
-    const dup = await post(owner, conv2, { text: "x", files: [fresh, fresh] });
+    // the same id twice in one message → 400
+    const dup = await post(owner, convId, { text: "x", files: [fresh, fresh] });
     expect(dup.statusCode).toBe(400);
     expect(dup.json().error.code).toBe("validation_failed");
-    // 失败的消息没有写进日志
-    expect((await eventsOf(db, conv2)).filter((e) => e.type === "user_message")).toHaveLength(0);
+    // a refused message is not logged
+    expect((await eventsOf(db, convId)).filter((e) => e.type === "user_message")).toHaveLength(0);
+  });
+
+  it("one file sent in two conversations: both refer to it and both model requests carry its bytes", async () => {
+    const first = await conversationWith("see-1");
+    const second = await conversationWith("see-1");
+    const img = await ready(owner, "cat.png", "image/png", PNG);
+    expect((await post(owner, first, { text: "one", files: [img] })).statusCode).toBe(202);
+    await waitForTerminal(db, first);
+    expect((await post(owner, second, { text: "two", files: [img] })).statusCode).toBe(202);
+    await waitForTerminal(db, second);
+
+    const image = {
+      type: "image",
+      mediaType: "image/png",
+      name: "cat.png",
+      source: { kind: "base64", data: PNG.toString("base64") },
+    };
+    const reqs = agentRequests();
+    expect(reqs).toHaveLength(2);
+    expect(userBlocks(reqs[0] as ModelRequest)).toEqual([{ type: "text", text: "one" }, image]);
+    expect(userBlocks(reqs[1] as ModelRequest)).toEqual([{ type: "text", text: "two" }, image]);
+    // one file, ready, referred to by both conversations
+    const file = await db
+      .selectFrom("files")
+      .select(["status", "expires_at", "source_conversation_id"])
+      .where("id", "=", img)
+      .executeTakeFirstOrThrow();
+    expect(file).toEqual({ status: "ready", expires_at: null, source_conversation_id: first });
+    const refs = await db
+      .selectFrom("conversation_files")
+      .select(["conversation_id", "role"])
+      .where("file_id", "=", img)
+      .orderBy("created_at")
+      .execute();
+    expect(refs.map((r) => [r.conversation_id, r.role]).sort()).toEqual(
+      [
+        [first, "attached"],
+        [second, "attached"],
+      ].sort(),
+    );
+    // each conversation lists it among its files
+    for (const conv of [first, second]) {
+      const listed = await owner({
+        method: "GET",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/files`,
+      });
+      expect(listed.statusCode, listed.body).toBe(200);
+      expect((listed.json() as { files: { id: string }[] }).files.map((f) => f.id)).toEqual([img]);
+    }
   });
 });
 
-describe("下载", () => {
-  it("对话所有者 302 到预签名地址；别的成员 → 404；绑定前只有上传者可下载", async () => {
+describe("downloads", () => {
+  it("a sent file downloads through its conversation: the owner gets a 302, another member 404; the attachments route never serves it", async () => {
     const id = await ready(owner, "cat.png", "image/png", PNG);
-    const url = `/api/v1/orgs/${orgId}/attachments/${id}/download`;
-    expect((await other({ method: "GET", url })).statusCode).toBe(404);
-    const pre = await owner({ method: "GET", url });
-    expect(pre.statusCode).toBe(302);
-
     const convId = await conversationWith("see-1");
     expect((await post(owner, convId, { text: "x", files: [id] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
+    const url = `/api/v1/orgs/${orgId}/conversations/${convId}/artifacts/${id}/download`;
     const res = await owner({ method: "GET", url });
-    expect(res.statusCode).toBe(302);
+    expect(res.statusCode, res.body).toBe(302);
     const got = await fetch(res.headers.location as string);
     expect(got.status).toBe(200);
     expect(Buffer.from(await got.arrayBuffer()).equals(PNG)).toBe(true);
     const denied = await other({ method: "GET", url });
     expect(denied.statusCode).toBe(404);
-    expect(denied.json().error.code).toBe("attachment.not_found");
+    expect(denied.json().error.code).toBe("conversation.not_found");
+    // a person's file is never resolved through `attachments`
+    const legacy = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/attachments/${id}/download`,
+    });
+    expect(legacy.statusCode).toBe(404);
+    expect(legacy.json().error.code).toBe("attachment.not_found");
   });
 
-  it("图片与 PDF inline、其余一律 attachment；类型按核对过的值返回；302 可缓存 60 秒", async () => {
+  it("only bitmaps open inline; the type is the recorded one", async () => {
     const img = await ready(owner, "猫 1.png", "image/png", PNG);
     const pdf = await ready(owner, "spec.pdf", "application/pdf", PDF);
     const txt = await ready(owner, "notes.txt", "text/plain", TEXT);
+    const convId = await conversationWith("see-1");
+    expect((await post(owner, convId, { text: "x", files: [img, pdf, txt] })).statusCode).toBe(202);
+    await waitForTerminal(db, convId);
     const open = async (id: string) => {
       const res = await owner({
         method: "GET",
-        url: `/api/v1/orgs/${orgId}/attachments/${id}/download`,
+        url: `/api/v1/orgs/${orgId}/conversations/${convId}/artifacts/${id}/download?inline=1`,
       });
       expect(res.statusCode).toBe(302);
-      expect(res.headers["cache-control"]).toBe("private, max-age=60");
       const got = await fetch(res.headers.location as string);
       expect(got.status).toBe(200);
       return {
@@ -373,27 +425,26 @@ describe("下载", () => {
     expect(a.cd).toMatch(/^inline;/);
     expect(a.cd).toContain(`filename*=UTF-8''${encodeURIComponent("猫 1.png")}`);
     expect(a.ct).toBe("image/png");
-    expect((await open(pdf)).cd).toMatch(/^inline;/);
+    expect((await open(pdf)).cd).toMatch(/^attachment;/);
     const t = await open(txt);
     expect(t.cd).toMatch(/^attachment;/);
     expect(t.ct).toBe("text/plain");
   });
-
-  it("已绑定的附件：不是上传者、但能访问其会话的人可以下载", async () => {
-    const id = await ready(owner, "cat.png", "image/png", PNG);
-    const convId = await conversationWith("see-1");
-    expect((await post(owner, convId, { text: "x", files: [id] })).statusCode).toBe(202);
-    // 会话只对所有者可见：把上传者改成另一个成员，模拟「上传者 ≠ 能访问会话的人」
-    await db.updateTable("attachments").set({ account_id: otherId }).where("id", "=", id).execute();
-    const url = `/api/v1/orgs/${orgId}/attachments/${id}/download`;
-    expect((await owner({ method: "GET", url })).statusCode).toBe(302);
-    expect((await other({ method: "GET", url })).statusCode).toBe(404);
-  });
 });
+
+/** A `read` copy (an image a tool showed the agent) in a new conversation of the owner. */
+async function readCopy(): Promise<string> {
+  const convId = await conversationWith("see-1");
+  const r = await k.app
+    .get(AttachmentsService)
+    .storeRead(orgId, convId, ownerId, { name: "shot.png", contentType: "image/png", data: PNG });
+  if (!r.ok) throw new Error("expected the read copy to be stored");
+  return r.attachmentId;
+}
 
 describe("the download URL as JSON (as=url)", () => {
   it("returns the 302's presigned location under the same checks; never cached", async () => {
-    const id = await ready(owner, "notes.txt", "text/plain", TEXT);
+    const id = await readCopy();
     const url = `/api/v1/orgs/${orgId}/attachments/${id}/download?as=url`;
     const res = await owner({ method: "GET", url });
     expect(res.statusCode, res.body).toBe(200);
@@ -402,8 +453,8 @@ describe("the download URL as JSON (as=url)", () => {
     // a cookie-free URL: fetched with no session, it serves the bytes with the 302's disposition
     const got = await fetch(presigned);
     expect(got.status).toBe(200);
-    expect(Buffer.from(await got.arrayBuffer()).equals(TEXT)).toBe(true);
-    expect(got.headers.get("content-disposition")).toMatch(/^attachment;.*notes\.txt/);
+    expect(Buffer.from(await got.arrayBuffer()).equals(PNG)).toBe(true);
+    expect(got.headers.get("content-disposition")).toMatch(/^inline;.*shot\.png/);
     // no session: 401; another member: the same 404 as the redirect
     const anonymous = await asUser(k.http, cookieJar())({ method: "GET", url });
     expect(anonymous.statusCode).toBe(401);
@@ -416,11 +467,12 @@ describe("the download URL as JSON (as=url)", () => {
   });
 
   it("ignores the web's cache-busting retry param: it still redirects, and combines with as=url", async () => {
-    const id = await ready(owner, "notes.txt", "text/plain", TEXT);
+    const id = await readCopy();
     const base = `/api/v1/orgs/${orgId}/attachments/${id}/download`;
     const retried = await owner({ method: "GET", url: `${base}?retry=1` });
     expect(retried.statusCode, retried.body).toBe(302);
     expect(retried.headers.location).toBeTruthy();
+    expect(retried.headers["cache-control"]).toBe("private, max-age=60");
     const asUrl = await owner({ method: "GET", url: `${base}?retry=1&as=url` });
     expect(asUrl.statusCode, asUrl.body).toBe(200);
     expect(typeof (asUrl.json() as { url: string }).url).toBe("string");
@@ -472,11 +524,10 @@ describe("大文本附件（§5.2：引用，不截断）", () => {
 
     // the service still honours a byte cap (the runtime no longer asks for one: an over-cap text is
     // a reference, never a truncated inline)
-    const got = await k.app
-      .get(AttachmentsService)
-      .fetchMedia(orgId, convId, [id], new Map([[id, 1000]]));
+    const media = k.app.get(ConversationMedia);
+    const got = await media.fetchMedia(orgId, convId, [id], new Map([[id, 1000]]));
     expect(got.get(id)?.data.byteLength).toBe(1000);
-    const info = await k.app.get(AttachmentsService).mediaInfo(orgId, convId, [id]);
+    const info = await media.mediaInfo(orgId, convId, [id]);
     expect(info.get(id)).toMatchObject({ size: big.length, pages: null });
     expect(typeof info.get(id)?.etag).toBe("string");
     // the unsigned reference: the fake store has no `uri`, so the kernel's fallback
@@ -490,51 +541,53 @@ describe("大文本附件（§5.2：引用，不截断）", () => {
     expect(line).not.toContain("a,b");
 
     // a provider that ignores a range read: `fetchMedia` still keeps only the first bytes
-    const real = k.app.get(ExtensionHost).list("object-store")[0]?.impl as ObjectStore;
-    const noRange: ObjectStore = {
-      ...real,
-      head: (key) => real.head(key),
-      get: (key) => real.get(key),
-    };
-    const svc = attachmentsFor({
-      db,
-      storage: new PrefixedStorage({ provider: () => noRange, plugins: async () => [] }),
-      config: () => k.app.get(KernelConfigService).get(),
-      canAccessConversation: async () => true,
-      log: { info() {}, warn() {} },
+    const storage = k.app.get(StorageService);
+    const kernel = storage.kernel.bind(storage);
+    const spy = vi.spyOn(storage, "kernel").mockImplementation((org) => {
+      const store = kernel(org);
+      return { ...store, get: (key) => store.get(key) };
     });
-    const whole = await svc.fetchMedia(orgId, convId, [id], new Map([[id, 1000]]));
-    expect(whole.get(id)?.data.byteLength).toBe(1000);
+    try {
+      const whole = await media.fetchMedia(orgId, convId, [id], new Map([[id, 1000]]));
+      expect(whole.get(id)?.data.byteLength).toBe(1000);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
-describe("openForConversation（沙箱同步用）", () => {
-  it("只返回绑定在该会话、已 ready、内容未被替换的附件", async () => {
+describe("the device's copy of a sent file (ReferencedFiles.openForConversation)", () => {
+  it("opens only a file sent into that conversation whose bytes are still the recorded ones", async () => {
+    const files = k.app.get(ReferencedFiles);
     const id = await ready(owner, "notes.txt", "text/plain", TEXT);
     const convId = await conversationWith("see-1");
-    // 未绑定 → null
-    expect(await k.app.get(AttachmentsService).openForConversation(orgId, convId, id)).toBeNull();
+    // not sent yet → null
+    expect(await files.openForConversation(orgId, convId, id)).toBeNull();
     expect((await post(owner, convId, { text: "x", files: [id] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
-    const got = await k.app.get(AttachmentsService).openForConversation(orgId, convId, id);
+    const got = await files.openForConversation(orgId, convId, id);
     expect(got).toMatchObject({ name: "notes.txt", contentType: "text/plain", size: TEXT.length });
     expect(Buffer.from(await new Response(got?.body).arrayBuffer()).equals(TEXT)).toBe(true);
-    // 别的会话、别的组织、不存在的 id → null
+    expect((await files.listForConversation(orgId, convId)).map((f) => f.id)).toEqual([id]);
+    // another conversation, another org, an unknown id → null
     const conv2 = await conversationWith("see-1");
-    expect(await k.app.get(AttachmentsService).openForConversation(orgId, conv2, id)).toBeNull();
+    expect(await files.openForConversation(orgId, conv2, id)).toBeNull();
     const org2 = await createOrgWithProviders(k, owner, "Other org");
-    expect(await k.app.get(AttachmentsService).openForConversation(org2, convId, id)).toBeNull();
+    expect(await files.openForConversation(org2, convId, id)).toBeNull();
     expect(
-      await k.app
-        .get(AttachmentsService)
-        .openForConversation(orgId, convId, "00000000-0000-4000-8000-000000000000"),
+      await files.openForConversation(orgId, convId, "00000000-0000-4000-8000-000000000000"),
     ).toBeNull();
-    // 内容被替换（etag 不符）→ null
+    // the bytes replaced (another etag) → null
     await k.app
       .get(StorageService)
       .kernel(orgId)
-      .put(`attachments/${id}`, Buffer.from("name,qty\npear,9\n"), { contentType: "text/plain" });
-    expect(await k.app.get(AttachmentsService).openForConversation(orgId, convId, id)).toBeNull();
+      .put(await blobKeyOf(db, id), Buffer.from("name,qty\npear,9\n"), {
+        contentType: "text/plain",
+      });
+    expect(await files.openForConversation(orgId, convId, id)).toBeNull();
+    // a deleted file is out of the list
+    await markFileDeleted(db, id);
+    expect(await files.listForConversation(orgId, convId)).toEqual([]);
   });
 });
 
@@ -654,7 +707,25 @@ describe("清理", () => {
         contentType: "image/png",
         bytes: new Uint8Array(PNG),
       });
-    const chat = await ready(owner, "draft.png", "image/png", PNG);
+    // a chat attachment row left by the 0188 copy (its object is now a blob's)
+    const chat = randomUUID();
+    await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .put(`attachments/${chat}`, PNG, { contentType: "image/png", size: PNG.length });
+    await db
+      .insertInto("attachments")
+      .values({
+        id: chat,
+        org_id: orgId,
+        account_id: ownerId,
+        name: "draft.png",
+        content_type: "image/png",
+        size: PNG.length,
+        object_key: `attachments/${chat}`,
+        status: "ready",
+      })
+      .execute();
     const fresh = await k.app
       .get(AttachmentsService)
       .createFromBytes(orgId, ownerId, "agent-avatar", {

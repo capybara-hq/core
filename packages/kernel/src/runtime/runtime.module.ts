@@ -10,6 +10,7 @@ import { PromptSuggestionsModule } from "../conversations/prompt-suggestions.js"
 import { TitlesModule } from "../conversations/titles.js";
 import { DevicesModule } from "../devices/devices.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { LibraryReadModule } from "../files/library-read.module.js";
 import { GitModule } from "../git/git.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { LockService } from "../infra/lock/lock.service.js";
@@ -63,6 +64,8 @@ import { WriteBaseService } from "./write-base.service.js";
     EventLogModule,
     ConversationAccessModule,
     AttachmentsModule,
+    // the run's media (`ConversationMedia`): library files the conversation refers to
+    LibraryReadModule,
     ExtensionsModule,
     IdentityModule,
     SkillsModule,

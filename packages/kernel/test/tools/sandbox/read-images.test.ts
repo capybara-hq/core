@@ -18,6 +18,8 @@ import type { RunReplayResult } from "../../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../../src/evals/sets.service.js";
 import { type CaseSnapshot, takeSnapshot, toEvents } from "../../../src/evals/snapshot.js";
+import { ConversationMedia } from "../../../src/files/conversation-media.js";
+import { ReferencedFiles } from "../../../src/files/referenced-files.js";
 import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
 import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { RunQueue } from "../../../src/runtime/run-queue.js";
@@ -39,6 +41,7 @@ import type { BuiltinTool } from "../../../src/tools/registry.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
+import { migrateLegacyFiles, seedAttachedFile } from "../../helpers/library-files.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { captureProviderRequests } from "../../helpers/provider-capture.js";
@@ -271,35 +274,14 @@ async function read(conv: string, input: Record<string, unknown>, n = 1) {
 }
 
 /** A ready `chat` attachment of `conv`. */
+/** A file the owner sent into the conversation (a library file it refers to). */
 async function attachment(
   conv: string,
   bytes: Uint8Array,
   name = "pasted.png",
   contentType = "image/png",
 ) {
-  const id = randomUUID();
-  const objectKey = `attachments/${id}`;
-  await k.app.get(StorageService).kernel(orgId).put(objectKey, bytes, {
-    contentType,
-    size: bytes.byteLength,
-  });
-  await db
-    .insertInto("attachments")
-    .values({
-      id,
-      org_id: orgId,
-      conversation_id: conv,
-      account_id: ownerId,
-      name,
-      content_type: contentType,
-      size: bytes.byteLength,
-      object_key: objectKey,
-      status: "ready",
-      etag: null,
-      purpose: "chat",
-    })
-    .execute();
-  return id;
+  return seedAttachedFile(k.app, orgId, conv, ownerId, { name, contentType, bytes });
 }
 
 const readRows = (conv?: string) => {
@@ -372,7 +354,7 @@ async function snapshotOf(conv: string, runId?: string): Promise<CaseSnapshot> {
 async function expectZeroDrift(conv: string, snap: CaseSnapshot, sent: ModelRequest[]) {
   const calls = ofType(toEvents(snap) as ConversationEvent[], "model_call") as ModelCallEvent[];
   expect(calls).toHaveLength(sent.length);
-  const attachments = k.app.get(AttachmentsService);
+  const attachments = k.app.get(ConversationMedia);
   for (const [i, c] of calls.entries()) {
     const info = await modelInfo(c.payload.provider, c.payload.model);
     const ids = snapshotMediaRefs(snap, c.seq, info);
@@ -762,7 +744,7 @@ describe("Read in a sub-agent", () => {
     const info = await modelInfo("model-fake", "fake-v");
     for (const c of ofType(toEvents(snap) as ConversationEvent[], "model_call")) {
       const ids = snapshotMediaRefs(snap, c.seq, info);
-      const attachments = k.app.get(AttachmentsService);
+      const attachments = k.app.get(ConversationMedia);
       const mediaInfo = await attachments.mediaInfo(orgId, child, ids);
       const media = await attachments.fetchMedia(orgId, child, [...mediaInfo.keys()]);
       const out = reconstructRequest(snap, c.seq, {
@@ -884,11 +866,11 @@ describe("Read: large files by file_id are read only up to the limit", () => {
     const conv = await createConv(owner, orgId, viewerId);
     const id = await attachment(conv, textOf(size), "big.log", "text/plain");
     // the stored body served in 1 MiB chunks, counting what is pulled
-    const svc = k.app.get(AttachmentsService);
-    const original = svc.openForConversation.bind(svc);
+    const svc = k.app.get(ReferencedFiles);
+    const original = svc.open.bind(svc);
     let pulled = 0;
     let cancelled = false;
-    vi.spyOn(svc, "openForConversation").mockImplementation(async (...args) => {
+    vi.spyOn(svc, "open").mockImplementation(async (...args) => {
       const opened = await original(...args);
       if (opened === null) return null;
       const bytes = new Uint8Array(await new Response(opened.body).arrayBuffer());
@@ -943,6 +925,8 @@ describe("Read: large files by file_id are read only up to the limit", () => {
         },
       },
     ]);
+    // a delivery logged before the file library, migrated by 0188
+    await migrateLegacyFiles(db);
     const storage = k.app.get(StorageService);
     const kernel = storage.kernel.bind(storage);
     const ranges: unknown[] = [];
@@ -985,10 +969,10 @@ describe("Read copies are model-visible handles", () => {
     const gen = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
     expect(gen.payload.toolKey).toBe("GenerateImage");
     expect(gen.payload.isError, gen.payload.content).toBe(false);
-    // person- and device-facing lookups stay chat-only
-    const svc = k.app.get(AttachmentsService);
-    expect((await svc.listForConversation(orgId, conv)).map((a) => a.id)).toEqual([att]);
-    expect(await svc.openForConversation(orgId, conv, copy)).toBeNull();
+    // the device's list holds only the files sent into the conversation
+    const files = k.app.get(ReferencedFiles);
+    expect((await files.listForConversation(orgId, conv)).map((a) => a.id)).toEqual([att]);
+    expect(await files.openForConversation(orgId, conv, copy)).toBeNull();
   });
 });
 

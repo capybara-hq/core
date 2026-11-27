@@ -27,6 +27,7 @@ import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import { migrateLegacyFiles } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { drainOutbox } from "../helpers/outbox.js";
@@ -164,6 +165,8 @@ async function deliver(name: string, text: string, sourcePath = `/workspace/${na
       },
     },
   ]);
+  // logged the way deliveries were before the file library, then migrated (0188)
+  await migrateLegacyFiles(db);
   return { artifactId, objectKey };
 }
 
@@ -190,6 +193,7 @@ async function attach(name: string, text: string): Promise<string> {
       etag,
     })
     .execute();
+  await migrateLegacyFiles(db);
   return id;
 }
 

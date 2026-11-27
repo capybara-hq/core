@@ -8,8 +8,8 @@ import {
   normalizeContentType,
   sniffMatches,
 } from "../conversations/attachments.service.js";
+import { ReferencedFiles } from "../files/referenced-files.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { StorageService } from "../storage/storage.service.js";
 import { findConversationFile } from "../tools/builtins/conversation-files.js";
 
 /**
@@ -163,7 +163,8 @@ export class FileRefs {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
-    @Inject(StorageService) private readonly storage: StorageService,
+    /** The library files the conversation set refers to (file library spec §2). */
+    @Inject(ReferencedFiles) private readonly files: ReferencedFiles,
   ) {}
 
   async resolve(ref: FileRef, limits: FileLimits, ctx: FileRefContext): Promise<ResolvedFile> {
@@ -181,7 +182,7 @@ export class FileRefs {
   private async conversationFile(id: string, limits: FileLimits, ctx: FileRefContext) {
     const db = this.db.db;
     const file = await findConversationFile(
-      { db, attachments: this.attachments, storage: this.storage },
+      { db, attachments: this.attachments, files: this.files },
       {
         orgId: ctx.orgId,
         conversationId: ctx.conversationId,

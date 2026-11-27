@@ -1,11 +1,9 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { sql } from "kysely";
 import { ApiError } from "../errors.js";
-import { KernelDb } from "../infra/database/kernel-db.js";
+import { isLive, type ReferencedFile, ReferencedFiles } from "../files/referenced-files.js";
 import { StorageService } from "../storage/storage.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { ConversationAccess } from "./access.js";
-import type { EventPayload } from "./events.js";
 
 /** 产物下载跳转的预签名有效期（秒）。 */
 export const ARTIFACT_DOWNLOAD_TTL_SECONDS = 300;
@@ -68,26 +66,28 @@ async function readPrefix(body: ReadableStream<Uint8Array>, max: number): Promis
 }
 
 /**
- * 产物（M5 T8 / T11）：agent 经 `Deliver` 交付的文件。先按会话流的规则判定会话可见
- * （不可见 → `conversation.not_found`），再只在这个会话的日志里找 `artifact_created`
- * （没有 → `conversation.artifact_not_found`）。
+ * A conversation's files by id (M5 T8 / T11; file library spec §2): any file the conversation
+ * refers to (a delivery or an upload sent in it). The conversation must be visible by the event
+ * stream's rule (else `conversation.not_found`); the file must be one the conversation refers to,
+ * not deleted, its blob readable (else `conversation.artifact_not_found`). Bytes are read through
+ * the file's blob (size and etag checked), never an event's `objectKey`.
  *
- * - 下载：302 到预签名地址，默认 `attachment`（带交付时的文件名与类型）；`inline` 只对位图生效
- *   （网页的缩略图），其余类型即使要求 inline 也仍是 `attachment`。
- * - 文本预览：`text/*` 等文本类，按 Range 读开头 {@link ARTIFACT_PREVIEW_MAX_BYTES} 字节、
- *   至多 {@link ARTIFACT_PREVIEW_MAX_LINES} 行，以 JSON 字符串返回（网页按纯文本显示）；
- *   其他类型、或读到的开头里有 NUL 字节（其实是二进制）→ `conversation.artifact_not_previewable`。
- *
- * 查找走 `conversation_events` 的主键 `(conversation_id, seq)` 前缀，在 SQL 里按 `type` 与
- * `payload->>'artifactId'` 过滤、`LIMIT 1`（只扫这一个会话的事件，不在 JS 里扫日志；不加迁移）。
+ * - Download: a 302 to a presigned address, `attachment` by default (with the file's name and
+ *   type); `inline` only takes effect for bitmaps (the web's thumbnails).
+ * - Text preview: `text/*` and the text formats, the first {@link ARTIFACT_PREVIEW_MAX_BYTES} bytes
+ *   by range, at most {@link ARTIFACT_PREVIEW_MAX_LINES} lines, as a JSON string (shown as plain
+ *   text); other types, or NUL bytes in the head (binary after all) →
+ *   `conversation.artifact_not_previewable`.
  */
 @Injectable()
 export class ConversationArtifacts {
   constructor(
-    @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
-    /** 会话可见性（与会话 SSE 流同一判定）。 */
+    /** Conversation visibility (the same rule as the conversation's SSE stream). */
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
+    /** The files the conversation refers to, and their bytes. */
+    @Inject(ReferencedFiles)
+    private readonly files: Pick<ReferencedFiles, "references" | "open" | "head">,
   ) {}
 
   private async find(
@@ -95,22 +95,15 @@ export class ConversationArtifacts {
     conversationId: string,
     viewerAccountId: string,
     artifactId: string,
-  ): Promise<EventPayload<"artifact_created">> {
+  ): Promise<ReferencedFile> {
     if (!UUID_RE.test(conversationId)) throw conversationNotFound();
     if (!(await this.access.isAccessible(orgId, conversationId, viewerAccountId))) {
       throw conversationNotFound();
     }
     if (!UUID_RE.test(artifactId)) throw artifactNotFound();
-    const row = await this.db
-      .selectFrom("conversation_events")
-      .select("payload")
-      .where("conversation_id", "=", conversationId)
-      .where("type", "=", "artifact_created")
-      .where(sql<string>`payload->>'artifactId'`, "=", artifactId)
-      .limit(1)
-      .executeTakeFirst();
-    if (!row) throw artifactNotFound();
-    return row.payload as EventPayload<"artifact_created">;
+    const [f] = await this.files.references(orgId, [conversationId], { ids: [artifactId] });
+    if (!f || !isLive(f)) throw artifactNotFound();
+    return f;
   }
 
   async downloadUrl(
@@ -121,10 +114,9 @@ export class ConversationArtifacts {
     opts: { inline?: boolean } = {},
   ): Promise<{ url: string; name: string }> {
     const a = await this.find(orgId, conversationId, viewerAccountId, artifactId);
-    const store = this.storage.kernel(orgId);
-    if (!(await store.head(a.objectKey))) throw artifactNotFound();
+    if (!(await this.files.head(orgId, a))) throw artifactNotFound();
     const inline = opts.inline === true && isInlineArtifactType(a.contentType);
-    const url = await store.presignGet(a.objectKey, {
+    const url = await this.storage.kernel(orgId).presignGet(a.blob.objectKey, {
       ttlSeconds: ARTIFACT_DOWNLOAD_TTL_SECONDS,
       downloadName: a.name,
       disposition: inline ? "inline" : "attachment",
@@ -146,9 +138,9 @@ export class ConversationArtifacts {
         "Only text artifacts have a preview",
       );
     }
-    const got = await this.storage
-      .kernel(orgId)
-      .get(a.objectKey, { range: { start: 0, end: ARTIFACT_PREVIEW_MAX_BYTES - 1 } });
+    const got = await this.files.open(orgId, a, {
+      range: { start: 0, end: ARTIFACT_PREVIEW_MAX_BYTES - 1 },
+    });
     if (!got) throw artifactNotFound();
     const bytes = await readPrefix(got.body, ARTIFACT_PREVIEW_MAX_BYTES);
     // 类型说是文本、内容却是二进制（有 NUL）：不给预览，界面显示「不能预览」
