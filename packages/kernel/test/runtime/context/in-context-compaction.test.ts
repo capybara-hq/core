@@ -19,6 +19,7 @@ import {
   inContextInstruction,
   inContextSummaryAllowed,
   unansweredAfterReply,
+  unansweredOpeners,
   withInContextRetryNote,
 } from "../../../src/runtime/context/in-context-compaction.js";
 import { UNKNOWN_RESULT_TEXT } from "../../../src/runtime/context/pairing.js";
@@ -689,5 +690,29 @@ describe("unansweredAfterReply (ruling R9: the in-context path runs only at a se
 
   it("a reference call without a reply: everything after the call counts", () => {
     expect(unansweredAfterReply([user(1), ev(2, "model_call"), result(3)], settled)).toBe(true);
+  });
+});
+
+describe("unansweredOpeners (idle compaction spec §9.4: only unanswered openers are re-rendered)", () => {
+  const ev = (seq: number, type: string): ConversationEvent =>
+    ({ seq, type, payload: {}, runId: RUN, conversationId: CONV, createdAt: new Date(AT) }) as never;
+
+  it("a turn-start compaction keeps the opener after the reference reply", () => {
+    const events = [ev(1, "user_message"), ev(2, "model_call"), ev(3, "assistant_message")];
+    expect(unansweredOpeners([...events, ev(4, "user_message")], [4])).toEqual([4]);
+  });
+
+  it("an opener the reference reply answered (a manual or settled compaction) is dropped", () => {
+    const events = [ev(1, "user_message"), ev(2, "model_call"), ev(3, "assistant_message")];
+    expect(unansweredOpeners(events, [1])).toEqual([]);
+  });
+
+  it("a reference call without a reply: openers after the call stay, earlier ones go", () => {
+    const events = [ev(1, "user_message"), ev(2, "model_call"), ev(3, "user_message")];
+    expect(unansweredOpeners(events, [1, 3])).toEqual([3]);
+  });
+
+  it("no step call in the log: every opener stays", () => {
+    expect(unansweredOpeners([ev(1, "user_message")], [1])).toEqual([1]);
   });
 });

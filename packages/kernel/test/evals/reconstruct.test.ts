@@ -1119,8 +1119,9 @@ describe("reconstructRequest：基线零漂移", () => {
       );
       expect(summaries.map((e) => e.payload.method)).toEqual(["in_context"]);
       const summary = summaries[0] as Extract<ConversationEvent, { type: "compaction_summary" }>;
-      // boundary mode all: the summary covers the run's opening message, re-rendered after it
-      expect(summary.payload.openingSeqs).toHaveLength(1);
+      // boundary mode all at a settled point inside the run (after step 1's reply): the summary
+      // covers the run's opening message, which that reply answered, so it is not re-rendered
+      expect(summary.payload.openingSeqs).toBeUndefined();
       const compaction = compactions[0] as ModelRequest;
       expect(compactions).toHaveLength(1);
       const calls = modelCalls(events);
@@ -1130,7 +1131,7 @@ describe("reconstructRequest：基线零漂移", () => {
         (e) => e.type === "usage" && e.payload.purpose === "compaction",
       ) as Extract<ConversationEvent, { type: "usage" }>;
       expect(usage.payload.cacheReadTokens).toBeGreaterThan(0);
-      // the framing after an in-context summary with no kept tail: the opener line and the close
+      // the framing after an in-context summary with no kept tail and no opener: only the close
       const after = calls.filter((c) => c.seq > summary.seq);
       expect(after.length).toBeGreaterThanOrEqual(2);
       for (const c of after) expect(c.payload.request.summarySeq).toBe(summary.seq);
@@ -1139,7 +1140,7 @@ describe("reconstructRequest：基线零漂移", () => {
       expect(blocks[0]).toEqual({
         type: "text",
         text: summaryText(summary.payload.text, {
-          openers: 1,
+          openers: 0,
           keptTail: false,
           method: "in_context",
         }),
@@ -1245,7 +1246,7 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
-  it("a manual compaction (spec §4.7, maintainer decision 2026-11-28) summarizes in context up to the compaction point, the latest turn's opener re-rendered, zero drift", async () => {
+  it("a manual compaction after a finished run (spec §4.7; idle compaction spec §9.4) summarizes in context up to the compaction point, re-renders no answered opener: the summary then the new message, zero drift", async () => {
     reset();
     // fake-1 (W 32000): the manual tail budget is a fifth of the window (6400). The tool call's
     // input (≈7.5k tokens) puts the latest pair over it, below the automatic trigger; the call is
@@ -1283,22 +1284,33 @@ describe("reconstructRequest：基线零漂移", () => {
     // model-fake passes the in-context quality gate, so the manual compaction summarizes the
     // conversation's last request (idle compaction spec §9.4, boundary mode "all"): it covers
     // everything up to the compaction point, the latest pair and reply included, instead of the
-    // manual transcript plan's cut before the pair; the opener the manual path computes (the
-    // latest message run's) is recorded and re-rendered
+    // manual transcript plan's cut before the pair. The latest message run's opener was answered
+    // before the reference call's reply, so it is not re-rendered (no openingSeqs)
     expect(summary.payload.method).toBe("in_context");
     expect(summary.payload.coversUpToSeq).toBeGreaterThan(call?.seq ?? Number.POSITIVE_INFINITY);
     expect(summary.payload.coversUpToSeq).toBeGreaterThanOrEqual(reply?.seq ?? 0);
-    expect(summary.payload.openingSeqs).toEqual([message?.seq]);
+    expect(summary.payload.coversUpToSeq).toBeGreaterThan(message?.seq ?? Number.POSITIVE_INFINITY);
+    expect(summary.payload.openingSeqs).toBeUndefined();
 
     await turn("echo:after");
     const request = sent.at(-1);
     const head = request?.messages[0];
     const blocks = Array.isArray(head?.content) ? head.content : [];
-    expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(/^<conversation_summary>/);
-    expect(blocks[0]?.type === "text" && blocks[0].text).toContain(
-      "The message that opened the current turn follows, shown again verbatim; the summary covers it.",
-    );
-    expect(blocks.slice(1).some((b) => b.type === "text" && b.text === ask)).toBe(true);
+    expect(blocks[0]).toEqual({
+      type: "text",
+      text: summaryText(summary.payload.text, {
+        openers: 0,
+        keptTail: false,
+        method: "in_context",
+      }),
+    });
+    // the summary, then directly the new message: the answered opener is not shown again
+    const userTexts = (request?.messages ?? [])
+      .filter((m) => m.role === "user")
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .flatMap((b) => (b.type === "text" ? [b.text] : []));
+    expect(userTexts.slice(1).filter((t) => !t.startsWith("From "))).toEqual(["echo:after"]);
+    expect(JSON.stringify(request?.messages)).not.toContain("Tally each row.");
     // the earlier turn and the latest tool pair are only in the summary
     expect(JSON.stringify(request?.messages.slice(1))).not.toContain("echo:first");
     expect(

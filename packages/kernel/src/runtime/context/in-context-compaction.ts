@@ -95,6 +95,35 @@ export function inContextCoversUpToSeq(
 }
 
 /**
+ * The seq after which input in an in-context summary is unanswered: the reply to the
+ * conversation's latest step `model_call` (the call itself when it has no reply). Undefined when
+ * the log has no step call.
+ */
+function referenceReplySeq(events: readonly ConversationEvent[]): number | undefined {
+  const call = latestModelCall(events);
+  if (call === undefined) return undefined;
+  const replies = events
+    .filter((e) => e.type === "assistant_message" && e.seq > call.seq)
+    .map((e) => e.seq);
+  return replies.length > 0 ? Math.min(...replies) : call.seq;
+}
+
+/**
+ * The run openers an in-context summary re-renders after its text (idle compaction spec §9.4):
+ * only those of `openers` (`openingSeqs`, or `manualOpeningSeqs` for a manual compaction) after
+ * the reference call's reply, which the model has not answered yet (a compaction at a turn's
+ * start). An opener before it was answered: the summary covers it and the request does not show
+ * it again, so a manual or settled compaction re-renders none. Sorted as given.
+ */
+export function unansweredOpeners(
+  events: readonly ConversationEvent[],
+  openers: readonly number[],
+): number[] {
+  const after = referenceReplySeq(events);
+  return after === undefined ? [...openers] : openers.filter((seq) => seq > after);
+}
+
+/**
  * Whether input the model has not answered follows the reference reply (ruling R9): a tool result,
  * or an absorbed message or interjection (`isAbsorbable`), after the reply to the conversation's
  * latest step `model_call` (after the call itself when it has no reply) and within what the
@@ -107,12 +136,8 @@ export function unansweredAfterReply(
   events: readonly ConversationEvent[],
   at: { coversUpToSeq: number; absorbedUpToSeq: number; openers: readonly number[] },
 ): boolean {
-  const call = latestModelCall(events);
-  if (call === undefined) return false;
-  const replies = events
-    .filter((e) => e.type === "assistant_message" && e.seq > call.seq)
-    .map((e) => e.seq);
-  const after = replies.length > 0 ? Math.min(...replies) : call.seq;
+  const after = referenceReplySeq(events);
+  if (after === undefined) return false;
   const openers = new Set(at.openers);
   return events.some(
     (e) =>

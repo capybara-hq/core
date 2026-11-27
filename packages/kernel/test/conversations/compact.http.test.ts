@@ -199,6 +199,37 @@ describe("manual compaction", () => {
     expect(ev(events, "assistant_message").filter((e) => e.runId === runId)).toEqual([]);
   });
 
+  it("after a finished run, summarizes in context with no re-rendered opener: the next request is the summary, then the new message", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const runId = await compacted(conv, orgId);
+    const events = await eventsOf(db, conv);
+    const summary = ev(events, "compaction_summary").find((e) => e.runId === runId);
+    expect(summary?.payload.method).toBe("in_context");
+    // idle compaction spec §9.4: the latest turn's opener was answered before the reference
+    // call's reply, so the summary records no opener to show again
+    expect(summary?.payload.coversUpToSeq).toBeGreaterThan(
+      ev(events, "user_message").at(-1)?.seq ?? Number.POSITIVE_INFINITY,
+    );
+    expect(summary?.payload.openingSeqs).toBeUndefined();
+
+    capture.reset();
+    await postMessage(owner, orgId, conv, "echo:after");
+    await waitForTerminal(db, conv, 8, 30_000);
+    const request = capture.sent[0];
+    const head = request?.messages[0];
+    const blocks = Array.isArray(head?.content) ? head.content : [];
+    const first = blocks[0]?.type === "text" ? blocks[0].text : "";
+    expect(first).toMatch(/^<conversation_summary>/);
+    expect(first).not.toContain("shown again verbatim");
+    const userTexts = (request?.messages ?? [])
+      .filter((m) => m.role === "user")
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .flatMap((b) => (b.type === "text" ? [b.text] : []));
+    expect(userTexts.slice(1).filter((t) => !t.startsWith("From "))).toEqual(["echo:after"]);
+    expect(request?.messages.some((m) => m.role === "assistant")).toBe(false);
+  });
+
   it("records a compaction with nothing to summarize and still finishes the compact run", async () => {
     const { orgId, conv } = await setup();
     await seedTurns(orgId, conv, 1);

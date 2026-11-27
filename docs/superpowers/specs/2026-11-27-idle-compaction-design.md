@@ -887,14 +887,19 @@ Settled point (ruling R9, 2026-11-28): the in-context path runs only at a settle
 nothing unanswered (a tool result, an absorbed message or interjection) follows the last reply
 except the run openers re-rendered verbatim after the summary (`openingSeqs`, ruling R9a); anywhere
 else the compaction skips with reason `pending_input` to the transcript path. A compaction at run
-end (phase 2's idle compaction) is a settled point.
+end (phase 2's idle compaction) is a settled point. Only openers after the reference call's reply
+(unanswered: a compaction at a turn's start) are re-rendered and recorded in `openingSeqs`
+(`unansweredOpeners`); an opener that reply answered is only in the summary, so a settled
+compaction inside or after a run re-renders none and the next message follows the summary directly
+(final branch review, 2026-11-28: re-rendering an answered message invited the model to redo it).
 
 Manual compaction (compaction spec §4.7, maintainer decision 2026-11-28) keeps its own plan (every
 turn before the latest summarized): a plan that finds nothing writes `compaction_skipped` and the
 in-context path never runs. With a plan, a gated model still summarizes in context with `"all"`,
 covering everything up to the compaction point. A compact run is started by no message, so its
-openers are the latest message run's (`manualOpeningSeqs`), for both the settled-point check and
-the re-render after the summary: what is checked is what is re-rendered.
+opener candidates are the latest message run's (`manualOpeningSeqs`), for both the settled-point
+check and the re-render after the summary: what is checked is what is re-rendered. At a settled point
+the latest run's reply answered them, so a manual in-context summary records no `openingSeqs`.
 
 ### 9.5 Plugin gaps (plugins repository)
 

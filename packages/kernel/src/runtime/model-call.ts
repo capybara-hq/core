@@ -81,6 +81,7 @@ import {
   inContextSummaryAllowed,
   latestModelCall,
   unansweredAfterReply,
+  unansweredOpeners,
   withInContextRetryNote,
 } from "./context/in-context-compaction.js";
 import { guardToolPairs } from "./context/pairing.js";
@@ -1356,7 +1357,7 @@ interface InContextSummary {
   retryRequest: ModelRequest;
   /** What the summary covers (boundary mode `all`: every event the request includes). */
   coversUpToSeq: number;
-  /** The run openers re-rendered after the summary (`openingSeqs` for `coversUpToSeq`). */
+  /** The unanswered run openers re-rendered after the summary ({@link unansweredOpeners}). */
   opening: number[];
 }
 
@@ -1406,11 +1407,15 @@ async function inContextSummary(
     coversUpToSeq = plan.coversUpToSeq;
   }
   // the openers the summary re-renders, and so the ones the settled-point check admits (what is
-  // checked is what is re-rendered); a manual compact run's are the latest message run's
-  const opening =
+  // checked is what is re-rendered): only those after the reference call's reply, which the model
+  // has not answered (a turn-start compaction's); a manual compact run's candidates are the latest
+  // message run's, already answered at a settled point, so it re-renders none
+  const opening = unansweredOpeners(
+    events,
     opts.manual === true
       ? manualOpeningSeqs(events, coversUpToSeq, input.absorbedUpToSeq)
-      : openingSeqs(events, input.runId, coversUpToSeq, input.absorbedUpToSeq);
+      : openingSeqs(events, input.runId, coversUpToSeq, input.absorbedUpToSeq),
+  );
   // ruling R9: only at a settled point; a run opener is re-rendered after the summary (R9a)
   if (
     unansweredAfterReply(events, {
@@ -1583,7 +1588,8 @@ export async function runCompaction(
   const tailBudget = bounds.target - estimateTokens([], built.system, built.tools);
   // a manual compaction ignores keepRecentTurns and keeps at most about a fifth of the window of
   // the latest turn (spec §4.7, maintainer decision 2026-11-28); the reactive path (`force`
-  // without `manual`) plans like the proactive one
+  // without `manual`) plans like the proactive one. With a model in IN_CONTEXT_SUMMARY_MODELS the
+  // in-context summary below covers everything instead (idle compaction spec §9.4)
   const manual = opts.manual === true;
   const plan = manual
     ? compactionPlan(events, compaction, manualTailBudget(info.contextWindow, tailBudget), {
