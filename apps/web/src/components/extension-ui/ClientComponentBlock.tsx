@@ -1,6 +1,6 @@
 "use client";
 
-import { EmptyState, LoadFailed, SkeletonBars, useToast } from "@capybara-hq/design";
+import { EmptyState, LoadFailed, SkeletonBars, Text, useToast } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
@@ -391,21 +391,29 @@ export function ComponentHost({
   );
 
   // Component queries: once one runs, the org UI stream's `event: ui` frames with `queries` for
-  // this contribution (and a reconnect, which may have missed some) read its queries again.
+  // this contribution read its queries again, and so do the stream's first open (a change between
+  // the first read and the subscription) and every reconnect (which may have missed some). A
+  // stream that ended (session revoked, the browser gave up) says live refresh stopped, as an org
+  // view does.
   const [listening, setListening] = useState(false);
+  const [liveLost, setLiveLost] = useState(false);
   const queried = useCallback(() => setListening(true), []);
   // ssr-exempt: live updates after first paint (the UI stream)
   useEffect(() => {
     if (!listening || orgId === null) return;
+    setLiveLost(false);
     const all = () =>
       void qc.invalidateQueries({ queryKey: keys.org(orgId).pluginQueries(plugin, id) });
     return openUiStream(orgId, {
       onUi: (r) => {
         if (r.queries === true && r.plugin === plugin && r.contribution === id) all();
       },
+      onOpen: all,
       onReconnect: all,
+      onError: () => setLiveLost(true),
     });
   }, [listening, orgId, plugin, id, qc]);
+  const tPage = useTranslations("pluginPage");
   const queryScope = useMemo<QueryScope>(
     () => ({
       orgId,
@@ -420,9 +428,15 @@ export function ComponentHost({
   );
 
   // Page params and navigation (plugin full pages spec §5): `{ params }` on this page only.
+  // The params the next `{ params }` starts from: the page's, or the last navigation's until the
+  // page's next params arrive (two quick calls must not drop the first one's change).
   const pageParams = args.params ?? NO_PARAMS;
   const paramsRef = useRef(pageParams);
-  paramsRef.current = pageParams;
+  const seenParams = useRef(pageParams);
+  if (seenParams.current !== pageParams) {
+    seenParams.current = pageParams;
+    paramsRef.current = pageParams;
+  }
   const navigate = useCallback(
     (to: NavigateTarget) => {
       const page = (pid: string, params: Record<string, string>) =>
@@ -432,7 +446,9 @@ export function ComponentHost({
         if (slot !== "org.page") {
           throw new Error("navigate({ params }) works only on a plugin page (slot org.page)");
         }
-        const url = page(id, applyParamChanges(paramsRef.current, to.params));
+        const next = capPageParams(applyParamChanges(paramsRef.current, to.params));
+        paramsRef.current = next;
+        const url = page(id, next);
         if (to.replace) router.replace(url, { scroll: false });
         else router.push(url, { scroll: false });
         return;
@@ -480,6 +496,11 @@ export function ComponentHost({
   return (
     <HostContext.Provider value={ctx}>
       <QueryScopeContext.Provider value={queryScope}>
+        {liveLost && (
+          <Text variant="small" tone="warn">
+            {tPage("liveLost")}
+          </Text>
+        )}
         {templateGuard ? <TemplateGuard where={uiKey(plugin, id)}>{body}</TemplateGuard> : body}
       </QueryScopeContext.Provider>
     </HostContext.Provider>

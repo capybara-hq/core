@@ -110,6 +110,15 @@ function Board() {
       <button type="button" onClick={() => navigate({ params: { col: "x" }, replace: true })}>
         replace
       </button>
+      <button
+        type="button"
+        onClick={() => {
+          navigate({ params: { a: "1" } });
+          navigate({ params: { b: "2" } });
+        }}
+      >
+        twice
+      </button>
       <button type="button" onClick={() => navigate({ conversation: "c1" })}>
         to chat
       </button>
@@ -272,8 +281,9 @@ describe("page params and navigation", () => {
     expect(screen.getByTestId("params").textContent).toBe('{"col":"todo","q":"x"}');
     act(() => screen.getByRole("button", { name: "to done" }).click());
     expect(router.push).toHaveBeenCalledWith(`/p/${PLUGIN}/board?col=done`, { scroll: false });
+    // the second call starts from the first one's params (col=done, no q)
     act(() => screen.getByRole("button", { name: "replace" }).click());
-    expect(router.replace).toHaveBeenCalledWith(`/p/${PLUGIN}/board?col=x&q=x`, {
+    expect(router.replace).toHaveBeenCalledWith(`/p/${PLUGIN}/board?col=x`, {
       scroll: false,
     });
     page.address({ col: "done" });
@@ -287,6 +297,21 @@ describe("page params and navigation", () => {
         { col: "done" },
       ]),
     );
+  });
+
+  it("two quick navigations keep both changes (the second starts from the first)", async () => {
+    const page = renderBoard(Board as ComponentType<never>, { params: { col: "todo" } });
+    await flush();
+    act(() => screen.getByRole("button", { name: "twice" }).click());
+    expect(router.push.mock.calls.map((c) => c[0])).toEqual([
+      `/p/${PLUGIN}/board?col=todo&a=1`,
+      `/p/${PLUGIN}/board?col=todo&a=1&b=2`,
+    ]);
+    // the page's next params win again once they arrive
+    page.address({ col: "done" });
+    await flush();
+    act(() => screen.getByRole("button", { name: "to done" }).click());
+    expect(router.push).toHaveBeenLastCalledWith(`/p/${PLUGIN}/board?col=done`, { scroll: false });
   });
 
   it("browser back restores params", async () => {
@@ -406,6 +431,14 @@ describe("component queries", () => {
     expect(queries("items")).toHaveLength(1);
     const es = FakeEventSource.instances.find((e) => e.url === `${ORG}/ui/stream`);
     expect(es).toBeDefined();
+    // the stream's first open reads once more (a change between the first read and the
+    // subscription is not lost)
+    itemsAnswer = () => json(200, { data: { items: [{ id: "a", title: "Alpha1" }] } });
+    await act(async () => {
+      es?.emit("open");
+    });
+    await waitFor(() => expect(screen.getByTestId("q-items").textContent).toContain("Alpha1"));
+    calls.length = 0;
     itemsAnswer = () => json(200, { data: { items: [{ id: "a", title: "Alpha2" }] } });
     // another contribution's frame, or one without `queries`, reads nothing
     await act(async () => {
@@ -413,16 +446,23 @@ describe("component queries", () => {
       es?.emit("ui", { plugin: PLUGIN, contribution: "board" });
     });
     await flush();
-    expect(queries("items")).toHaveLength(1);
+    expect(queries("items")).toHaveLength(0);
     await act(async () => {
       es?.emit("ui", { plugin: PLUGIN, contribution: "board", queries: true });
     });
     await waitFor(() => expect(screen.getByTestId("q-items").textContent).toContain("Alpha2"));
-    expect(queries("items")).toHaveLength(2);
+    expect(queries("items")).toHaveLength(1);
     itemsAnswer = () => json(200, { data: { items: [{ id: "a", title: "Alpha3" }] } });
     fireEvent.click(screen.getByRole("button", { name: "move" }));
     await waitFor(() => expect(screen.getByTestId("q-items").textContent).toContain("Alpha3"));
-    expect(queries("items")).toHaveLength(3);
+    expect(queries("items")).toHaveLength(2);
+    // the stream ended: the content stays, with the line saying live refresh stopped
+    expect(screen.queryByText(en.pluginPage.liveLost)).toBeNull();
+    await act(async () => {
+      es?.giveUp();
+    });
+    expect(screen.getByText(en.pluginPage.liveLost)).toBeTruthy();
+    expect(screen.getByTestId("q-items").textContent).toContain("Alpha3");
   });
 
   it("deep link without access shows the no-access state and calls no query", async () => {

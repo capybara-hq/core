@@ -452,7 +452,15 @@ type TemplateProps = {
   header: Header;
   tabs?: { items?: { href?: unknown }[] };
   nav?: { items?: { href?: unknown }[] }[];
+  empty?: unknown;
 };
+
+/** An empty state given as props (`{ text, action? }`) with its action's link checked. */
+function emptyLinks<T>(empty: T, where: string): T {
+  if (typeof empty !== "object" || empty === null || !("action" in empty)) return empty;
+  const action = (empty as { action?: unknown }).action;
+  return action === undefined ? empty : ({ ...empty, action: linkOf(action, where) } as T);
+}
 
 /**
  * A forwarded page template: the design template with the host's crumbs before the plugin's path,
@@ -475,6 +483,7 @@ function hostTemplate(Template: ComponentType<never>, name: string): ComponentTy
     if (props.tabs !== undefined && Array.isArray(props.tabs?.items)) {
       out.tabs = { ...props.tabs, items: props.tabs.items.map((t) => linkOf(t, name)) };
     }
+    if (props.empty !== undefined) out.empty = emptyLinks(props.empty, name);
     if (Array.isArray(props.nav)) {
       out.nav = props.nav.map((g) =>
         Array.isArray(g.items) ? { ...g, items: g.items.map((i) => linkOf(i, name)) } : g,
@@ -516,10 +525,15 @@ export const HOST_DESIGN: Record<string, ComponentType<never>> = {
   FormSection,
   Icon,
   Input,
-  ItemList: withLinks<{ rows?: unknown[] }>(
+  ItemList: withLinks<{ rows?: unknown[]; empty?: unknown }>(
     ItemList as unknown as ComponentType<never>,
     "ItemList",
-    (p) => (Array.isArray(p.rows) ? { ...p, rows: p.rows.map((r) => linkOf(r, "ItemList")) } : p),
+    (p) => {
+      const out = { ...p };
+      if (Array.isArray(p.rows)) out.rows = p.rows.map((r) => linkOf(r, "ItemList"));
+      if (p.empty !== undefined) out.empty = emptyLinks(p.empty, "ItemList");
+      return out;
+    },
   ),
   ItemListItem: withLinks<object>(
     ItemListItem as unknown as ComponentType<never>,
@@ -546,7 +560,9 @@ export const HOST_DESIGN: Record<string, ComponentType<never>> = {
   Spinner,
   Stack,
   Switch,
-  Tabs,
+  Tabs: withLinks<{ items?: unknown[] }>(Tabs as unknown as ComponentType<never>, "Tabs", (p) =>
+    Array.isArray(p.items) ? { ...p, items: p.items.map((i) => linkOf(i, "Tabs")) } : p,
+  ),
   Text,
   Textarea,
   Tooltip,

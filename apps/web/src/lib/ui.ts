@@ -370,6 +370,8 @@ export function openUiStream(
   orgId: string | null,
   handlers: {
     onUi(r: UiRefresh): void;
+    /** The first successful open (a caller that read before subscribing reads once more). */
+    onOpen?(): void;
     onReconnect?(): void;
     onError?(e: { code?: string }): void;
   },
@@ -380,6 +382,7 @@ export function openUiStream(
   es.addEventListener("open", () => {
     if (closed) return;
     if (opened) handlers.onReconnect?.();
+    else handlers.onOpen?.();
     opened = true;
   });
   es.addEventListener("ui", (e) => {
