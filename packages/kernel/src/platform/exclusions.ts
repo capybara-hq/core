@@ -755,6 +755,18 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Clicks a button of the person's own inbox item, which runs a plugin's UI action as that person; an agent never presses it for them (dismissing is an operation)",
   },
   {
+    route: "POST /api/v1/orgs/:orgId/automations/offers/:id/accept",
+    category: "human-only",
+    reason:
+      "Accepts work an extension assigned to the person and their agent, so the agent runs it as that person: consent is the person's own act, never an agent's (collaboration spec §4.4)",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/automations/offers/:id/decline",
+    category: "human-only",
+    reason:
+      "Declines work offered to the person, which tells the person who assigned it: the person's own answer to the offer, never an agent's (collaboration spec §4.4)",
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/ui/actions/:plugin/:id",
     category: "transport",
     reason: "Runs an extension UI action from the web app",

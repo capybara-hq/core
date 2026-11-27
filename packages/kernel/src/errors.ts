@@ -615,6 +615,17 @@ export const ERROR_CODES = {
   "automation.forbidden": 403,
   /** "Run now" and trial runs: an event automation runs only on its events (no run now, no trial). */
   "automation.run_now_unsupported": 409,
+  /** An acceptance automation's trigger, agent and target are the kernel's (collaboration §4.4). */
+  "automation.acceptance_fixed": 400,
+  /** A work offer that is not the caller's, or does not exist. */
+  "automation.offer_not_found": 404,
+  /** A work offer already accepted, declined or expired. */
+  "automation.offer_closed": 409,
+  /**
+   * A work offer that cannot be accepted now: the source no longer serves the org or shows the
+   * item, the agent cannot be used, automations are off, or the acceptance automation is paused.
+   */
+  "automation.offer_unavailable": 409,
   "skill.not_found": 404,
   /** The skill's file routes: no such version of the skill, or no such path in that version. */
   "skill.file_not_found": 404,

@@ -1958,6 +1958,34 @@ export interface InboxItemsTable {
   resolved_at: TsNullable;
 }
 
+export type AcceptanceMode = "auto" | "confirm" | "off";
+
+/** 0192: a person's acceptance rule for one trigger source's directed events (collaboration §4.4). */
+export interface AutomationAcceptanceTable {
+  org_id: string;
+  account_id: string;
+  source: string;
+  mode: AcceptanceMode;
+  updated_at: Ts;
+}
+
+export type AutomationOfferState = "open" | "accepted" | "declined" | "expired";
+
+/** 0192: work offered to a person under a `confirm` rule (collaboration spec §4.4). */
+export interface AutomationOffersTable {
+  id: string;
+  org_id: string;
+  account_id: string;
+  event_id: string;
+  source: string;
+  agent_id: string;
+  automation_id: NullableText;
+  inbox_item_id: NullableText;
+  state: ColumnType<AutomationOfferState, AutomationOfferState | undefined, AutomationOfferState>;
+  created_at: Ts;
+  decided_at: TsNullable;
+}
+
 /**
  * 0189: an event that reached an automation, and the run that served it (null while it waits:
  * events of one subject coalesce, collaboration spec §4.7).
@@ -2177,6 +2205,8 @@ export interface KernelDatabase {
   trigger_events: TriggerEventsTable;
   trigger_cause_handles: TriggerCauseHandlesTable;
   inbox_items: InboxItemsTable;
+  automation_acceptance: AutomationAcceptanceTable;
+  automation_offers: AutomationOffersTable;
   automation_event_deliveries: AutomationEventDeliveriesTable;
   automation_conversations: AutomationConversationsTable;
   file_shares: FileSharesTable;

@@ -1,6 +1,8 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import {
+  AutomationAcceptanceBody,
+  AutomationAcceptanceQuery,
   AutomationCalendarQuery,
   AutomationChatTargetsQuery,
   AutomationCreateBody,
@@ -23,6 +25,7 @@ import {
   type AutomationListItem,
   AutomationsService,
 } from "../../automations/automations.service.js";
+import { AcceptanceService } from "../../automations/events/acceptance.js";
 import type { Automation, TaskRun } from "../../automations/types.js";
 import { defineOperation, type OperationContext } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
@@ -93,6 +96,7 @@ export class AutomationsOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(AutomationsService) private readonly tasks: AutomationsService,
+    @Inject(AcceptanceService) private readonly acceptance: AcceptanceService,
   ) {}
 
   /** The caller as the service expects (it reads the live role itself). */
@@ -177,6 +181,47 @@ export class AutomationsOperations implements OnModuleInit {
             })),
           };
         },
+      }),
+      defineOperation({
+        id: "automations.acceptance-get",
+        description:
+          "Your acceptance rules: for each event source that assigns work to a person and their agent (directed events), what happens when it assigns you work. mode auto runs it at once through your acceptance automation for that source and agent (it asks you before anything outside its approved tools), confirm puts a work offer in your inbox for you to accept or decline, off runs nothing; null means you follow the organization's default (directedDefault).",
+        input: AutomationAcceptanceQuery,
+        example: {},
+        authz: { orgAction: "automations.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/automations/acceptance"],
+        confirm: "read",
+        errors: [],
+        run: async (_input, ctx) => this.acceptance.rules(ctx.orgId, ctx.actorAccountId),
+      }),
+      defineOperation({
+        id: "automations.acceptance-set",
+        description:
+          "Change your acceptance rules: each { source, mode } sets what happens when that event source assigns you work (auto, confirm or off; see automations.acceptance-get), and mode null removes your rule so the organization's default applies. Only sources listed by automations.acceptance-get can take a rule. Returns your rules after the change.",
+        input: AutomationAcceptanceBody,
+        example: { rules: [{ source: "collab", mode: "confirm" }] },
+        authz: { orgAction: "automations.use" },
+        mirrors: ["PUT /api/v1/orgs/:orgId/automations/acceptance"],
+        confirm: "personal",
+        // a remembered approval would let an unattended run widen what work runs as the person
+        rememberable: false,
+        errors: [
+          {
+            code: "automation.event_source_unavailable",
+            next: "Use a source listed by automations.acceptance-get: it must be an enabled extension that assigns work, not switched off in the automation settings.",
+          },
+        ],
+        summary: async (i) => {
+          const words = i.rules.map(
+            (r) => `${named(r.source)}: ${r.mode === null ? "default" : r.mode}`,
+          );
+          return {
+            zh: `修改接受工作的规则（${words.join("，")}）`,
+            en: `Change how you accept work (${words.join(", ")})`,
+          };
+        },
+        run: async (input, ctx) =>
+          this.acceptance.setRules(ctx.orgId, ctx.actorAccountId, input.rules),
       }),
       defineOperation({
         id: "automations.event-sources",

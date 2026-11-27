@@ -5,6 +5,11 @@ import {
   AutomationsService,
 } from "../automations/automations.service.js";
 import {
+  AcceptanceService,
+  type AutomationOfferView,
+  OFFERS_LIST_MAX,
+} from "../automations/events/acceptance.js";
+import {
   CATALOG_REQUESTS_LIST_MAX,
   CatalogRequestsService,
   type CatalogRequestView,
@@ -65,7 +70,11 @@ export const INBOX_MAX_ITEMS = 100;
  *   (`POST inbox/notices/:id/dismiss`);
  * - `item`: the current user's own open personal items (`inbox_items`, collaboration spec §4.9),
  *   posted by the kernel or an extension, until they click an action or dismiss it
- *   (`POST inbox/items/:id/actions/:actionId`, `POST inbox/items/:id/dismiss`) or it expires.
+ *   (`POST inbox/items/:id/actions/:actionId`, `POST inbox/items/:id/dismiss`) or it expires;
+ *   a work offer's push-carrying item (kernel kind `automation_offer`) is shown as the offer;
+ * - `automation_offer`: work an extension assigned to the current user and their agent, waiting
+ *   for them under a `confirm` acceptance rule (collaboration spec §4.4), until they accept or
+ *   decline it (`POST automations/offers/:id/accept|decline`) or it expires (seven days).
  */
 export type InboxItem =
   | { type: "tool_approval"; id: string; createdAt: string; approval: ApprovalView }
@@ -86,6 +95,7 @@ export type InboxItem =
       attention: AutomationAttentionView;
     }
   | { type: "item"; id: string; createdAt: string; item: PersonalInboxItemView }
+  | { type: "automation_offer"; id: string; createdAt: string; offer: AutomationOfferView }
   | {
       type: OrgNoticeView["kind"];
       id: string;
@@ -118,18 +128,23 @@ export class InboxService {
     @Inject(AutomationsService)
     private readonly automations: Pick<AutomationsService, "attentionFor">,
     @Inject(InboxItemsService) private readonly items: Pick<InboxItemsService, "listOpen">,
+    @Inject(AcceptanceService) private readonly acceptance: Pick<AcceptanceService, "openOffers">,
   ) {}
 
   async list(orgId: string, accountId: string): Promise<InboxView> {
-    const [approvals, changes, requests, decided, notices, attention, items] = await Promise.all([
-      this.approvals.list(orgId, accountId, "pending"),
-      this.skillChanges.listPending(orgId, accountId),
-      this.catalogRequests.listForOrgAdmin(orgId, accountId),
-      this.catalogRequests.listDecidedForRequester(orgId, accountId),
-      this.notices(orgId, accountId),
-      this.automations.attentionFor(orgId, accountId),
-      this.items.listOpen(orgId, accountId),
-    ]);
+    const [approvals, changes, requests, decided, notices, attention, allItems, offers] =
+      await Promise.all([
+        this.approvals.list(orgId, accountId, "pending"),
+        this.skillChanges.listPending(orgId, accountId),
+        this.catalogRequests.listForOrgAdmin(orgId, accountId),
+        this.catalogRequests.listDecidedForRequester(orgId, accountId),
+        this.notices(orgId, accountId),
+        this.automations.attentionFor(orgId, accountId),
+        this.items.listOpen(orgId, accountId),
+        this.acceptance.openOffers(orgId, accountId),
+      ]);
+    // an offer's own item carries its push; the inbox shows the offer (with accept and decline)
+    const items = allItems.filter((i) => !(i.source === "kernel" && i.kind === "automation_offer"));
     const all: InboxItem[] = [
       ...approvals.map(
         (a): InboxItem => ({
@@ -175,6 +190,14 @@ export class InboxService {
         (n): InboxItem => ({ type: n.kind, id: n.id, createdAt: n.createdAt, notice: n }),
       ),
       ...items.map((i): InboxItem => ({ type: "item", id: i.id, createdAt: i.createdAt, item: i })),
+      ...offers.map(
+        (o): InboxItem => ({
+          type: "automation_offer",
+          id: o.id,
+          createdAt: o.createdAt,
+          offer: o,
+        }),
+      ),
     ];
     // newest first; the id orders items of the same moment (a stable result)
     all.sort((a, b) =>
@@ -195,7 +218,8 @@ export class InboxService {
       requests.length >= CATALOG_REQUESTS_LIST_MAX ||
       decided.length >= CATALOG_REQUESTS_LIST_MAX ||
       notices.length >= ORG_NOTICES_LIST_MAX ||
-      items.length >= INBOX_ITEMS_LIST_MAX;
+      allItems.length >= INBOX_ITEMS_LIST_MAX ||
+      offers.length >= OFFERS_LIST_MAX;
     return {
       items: all.slice(0, INBOX_MAX_ITEMS),
       truncated: full || all.length > INBOX_MAX_ITEMS,

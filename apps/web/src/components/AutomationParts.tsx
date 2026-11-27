@@ -167,7 +167,17 @@ export function automationColumns(
   agentName: (id: string) => string,
 ): (Column<AutomationListItem> & { key: AutomationColumnKey })[] {
   return [
-    { key: "name", header: t("columns.name"), cell: (s) => <CellTitle title={s.name} /> },
+    {
+      key: "name",
+      header: t("columns.name"),
+      // an acceptance automation says which source's work it accepts (collaboration spec §4.4)
+      cell: (s) =>
+        s.origin === "acceptance" && s.trigger.kind === "event" ? (
+          <CellTitle title={s.name} description={t("acceptsWork", { source: s.trigger.source })} />
+        ) : (
+          <CellTitle title={s.name} />
+        ),
+    },
     { key: "agent", header: t("columns.agent"), cell: (s) => agentName(s.agentId) },
     {
       key: "schedule",

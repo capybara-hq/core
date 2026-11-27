@@ -605,7 +605,11 @@
       "event_source_unavailable": "That event source is not available in this organization.",
       "event_type_unknown": "That event type is not declared by the source, or it is only for assignments.",
       "filter_invalid": "The event filter refers to an unknown or unfilterable fact, or its value does not fit.",
-      "run_now_unsupported": "Event automations run when their events arrive; they cannot be run now or tried."
+      "run_now_unsupported": "Event automations run when their events arrive; they cannot be run now or tried.",
+      "acceptance_fixed": "This automation accepts work assigned to you, so its trigger, agent and target are fixed. Change your acceptance rule for the source instead.",
+      "offer_not_found": "This work offer doesn't exist or isn't yours.",
+      "offer_closed": "This work offer was already accepted, declined or has expired.",
+      "offer_unavailable": "This work can't be accepted now: the source, the item or the agent is no longer available to you, or your automation that accepts it is paused."
     },
     "deployment": {
       "setting_readonly": "This setting is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
@@ -2371,10 +2375,26 @@
         "automation_depth_stopped": {
           "label": "Automation chain stopped",
           "hint": "An event was not delivered: the chain of automations it came from reached your organization's limit on automations triggering each other. Check this automation so it does not keep triggering itself."
+        },
+        "automation_offer_declined": {
+          "label": "Work declined",
+          "hint": "Work you assigned was declined. The source shows it as not accepted; assign it to someone else if it still needs doing."
         }
       },
       "confirmTitle": "{action}?",
       "confirmHint": "This runs “{action}” for “{title}” as you. Type the button’s name to confirm."
+    },
+    "offer": {
+      "label": "Work offered",
+      "source": "From",
+      "agent": "Agent",
+      "item": "Item",
+      "expires": "Expires",
+      "accept": "Accept",
+      "decline": "Decline",
+      "accepted": "Accepted: your agent is on it",
+      "declined": "Declined: whoever assigned it is told",
+      "hint": "{source} assigned this to you and {agent}. Accept to let {agent} work on it as you, or decline it."
     }
   },
   "connectors": {
@@ -2729,7 +2749,8 @@
       "audit": "Audit log",
       "shares": "Shares",
       "myShares": "My shares",
-      "notifications": "Notifications"
+      "notifications": "Notifications",
+      "acceptWork": "Accepting work"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -4587,7 +4608,10 @@
         "toolGrantRevoked": "Revoked a remembered approval",
         "trajectoryViewed": "Viewed a trajectory",
         "pushRegistered": "Turned on notifications on a device",
-        "pushUnregistered": "Removed a notification device"
+        "pushUnregistered": "Removed a notification device",
+        "automationAcceptanceChanged": "Changed how they accept work",
+        "automationOfferAccepted": "Accepted offered work",
+        "automationOfferDeclined": "Declined offered work"
       }
     },
     "accounts": {
@@ -7123,7 +7147,8 @@
         "loadFailed": "Failed to load.",
         "retry": "Retry"
       }
-    }
+    },
+    "acceptsWork": "Accepts work from {source}"
   },
   "automationSettings": {
     "title": "Automations",
@@ -7171,7 +7196,16 @@
     "saved": "Settings saved",
     "tasks": "All tasks",
     "tasksHint": "Every automation in the organization. You can pause, resume or delete them; only their creators edit them.",
-    "tasksEmpty": "No automations in the organization"
+    "tasksEmpty": "No automations in the organization",
+    "directedDefault": "When work is assigned to a member",
+    "directed": {
+      "auto": "Run it at once",
+      "autoHint": "The member's agent starts on the work, asking the member before anything outside its approved tools.",
+      "confirm": "Ask the member first",
+      "confirmHint": "The work waits in the member's inbox until they accept or decline it.",
+      "off": "Don't run it",
+      "offHint": "Nothing runs; the source shows the work as not accepted."
+    }
   },
   "inboxAutomation": {
     "label": "Automation",
@@ -7356,6 +7390,24 @@
       "back": "Back to {product}",
       "closeTabHint": "You can close this tab now.",
       "backToApp": "Go back to the app to continue."
+    }
+  },
+  "acceptance": {
+    "title": "Accepting work",
+    "description": "What happens when a source in this organization assigns work to you and one of your agents.",
+    "section": "Sources that assign work",
+    "sectionHint": "Your choice for each source. Work always runs as you, with your agent, within the tools you approved.",
+    "empty": "No source in this organization assigns work.",
+    "saved": "Saved",
+    "mode": {
+      "default": "Organization default ({mode})",
+      "defaultHint": "Follow the organization's choice, and change with it.",
+      "auto": "Run it at once",
+      "autoHint": "Your agent starts on work from {source} through your automation for it, and asks you before anything outside its approved tools.",
+      "confirm": "Ask me first",
+      "confirmHint": "Work from {source} waits in your inbox until you accept or decline it.",
+      "off": "Never",
+      "offHint": "Nothing runs; {source} shows the work as not accepted."
     }
   }
 }

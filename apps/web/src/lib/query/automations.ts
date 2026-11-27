@@ -1,5 +1,6 @@
 import {
   type CalendarParams,
+  getAcceptanceRules,
   getAutomation,
   getAutomationCalendar,
   listAutomationGrants,
@@ -97,4 +98,12 @@ export const eventSourcesQuery = (orgId: string) =>
     key: keys.org(orgId).automationEventSources(),
     fn: () => listEventSources(orgId),
     freshness: "orgConfig",
+  });
+
+/** My acceptance rules for the sources that assign me work (`/account/automations`). */
+export const acceptanceRulesQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).acceptanceRules(),
+    fn: () => getAcceptanceRules(orgId),
+    freshness: "live",
   });

@@ -47,6 +47,7 @@ import {
 } from "./calendar.js";
 import { type EffectiveAutomationSettings, readAutomationSettings } from "./effective-settings.js";
 import {
+  acceptanceFixed,
   automationDisabled,
   automationForbidden,
   automationNotFound,
@@ -455,6 +456,17 @@ export class AutomationsService {
     const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "automations.use");
     const t = this.db.db;
     const task = await this.lockOwn(orgId, accountId, role, id);
+    if (
+      task.origin === "acceptance" &&
+      (patch.trigger !== undefined ||
+        patch.timeZone !== undefined ||
+        patch.agentId !== undefined ||
+        patch.mode !== undefined ||
+        patch.conversationId !== undefined ||
+        patch.chat !== undefined)
+    ) {
+      throw acceptanceFixed();
+    }
     const settings = await readAutomationSettings(t, this.config, orgId);
     const now = new Date();
     const changes: AutomationPatch = {};

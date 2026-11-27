@@ -21,6 +21,8 @@ export type InboxItem =
   | { type: "automation_attention"; id: string; createdAt: string; attention: AutomationAttention }
   /** One of my own personal items, from the kernel or a plugin (collaboration spec §4.9). */
   | { type: "item"; id: string; createdAt: string; item: PersonalInboxItem }
+  /** Work a source assigned to me and my agent, waiting for me to accept or decline it. */
+  | { type: "automation_offer"; id: string; createdAt: string; offer: AutomationOffer }
   | { type: OrgNotice["kind"]; id: string; createdAt: string; notice: OrgNotice };
 
 /**
@@ -43,6 +45,24 @@ export interface PersonalInboxItem {
   actions: { id: string; label: LocalizedName; style?: "primary" | "danger" }[];
   expiresAt: string;
   createdAt: string;
+}
+
+/**
+ * Work a source assigned to me and my agent, offered because my acceptance rule for it is
+ * `confirm` (kernel `AutomationOfferView`, collaboration spec §4.4): accepting lets the agent work
+ * on it as me; declining tells whoever assigned it. It expires after seven days.
+ */
+export interface AutomationOffer {
+  id: string;
+  source: string;
+  sourceName: LocalizedName;
+  agent: { id: string; name: string };
+  eventType: string;
+  subject: { kind: string; id: string; title: string; url?: string };
+  /** What happened, as the source reports it. */
+  summary: string;
+  createdAt: string;
+  expiresAt: string;
 }
 
 /**
@@ -123,7 +143,8 @@ export const isShowable = (i: InboxItem): boolean =>
   i.type === "catalog_request" ||
   i.type === "catalog_request_decided" ||
   i.type === "automation_attention" ||
-  i.type === "item";
+  i.type === "item" ||
+  i.type === "automation_offer";
 
 export interface InboxView {
   items: InboxItem[];

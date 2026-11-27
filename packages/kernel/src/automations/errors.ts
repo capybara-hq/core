@@ -41,3 +41,13 @@ export const runNowUnsupported = () =>
 /** A filter clause on a missing, unfilterable or mistyped fact. */
 export const filterInvalid = (message: string) =>
   new ApiError("automation.filter_invalid", message);
+
+/**
+ * An edit of an acceptance automation's trigger, agent or target: the kernel keeps them as the
+ * person's acceptance rule made them (collaboration spec §4.4).
+ */
+export const acceptanceFixed = () =>
+  new ApiError(
+    "automation.acceptance_fixed",
+    "This automation accepts work assigned to you and your agent, so its trigger, agent and target are fixed; change its name, prompt, approved tools or unattended setting, pause it, or change your acceptance rule for the source",
+  );

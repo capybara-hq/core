@@ -42,6 +42,7 @@ function task(id: string, over: Partial<Automation> = {}): Automation {
     effort: null,
     deviceId: null,
     unattendedAsk: null,
+    origin: "person",
     status: "active",
     pauseReason: null,
     pausedBy: null,

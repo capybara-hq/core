@@ -72,7 +72,7 @@ export function reoweDecision(
  * - **Retention.** A trigger event settled (`dispatched`, `undelivered`, `depth_stopped`) more than
  *   `automations.eventRetentionDays` ago, none of whose deliveries still waits for a run, is
  *   deleted with its deliveries (the foreign key cascades), in batches of {@link DELETE_BATCH}, one
- *   transaction each. A `pending` event (a directed one waiting for acceptance routing) stays. A
+ *   transaction each. A `pending` event (its dispatch has not settled it) stays. A
  *   run keeps its `trigger_key` and a kernel run its `trigger_event_id` (neither has a foreign
  *   key); a chain whose event is gone restarts at depth 0.
  * - **Lost windows.** The dispatcher owes one coalesce job per window, from the delivery that opens

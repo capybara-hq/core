@@ -564,12 +564,22 @@ describe("trigger event dispatch", () => {
     expect(await owed("automation-coalesce")).toEqual([]);
   });
 
-  it("a directed event is left pending for acceptance routing", async () => {
+  it("a directed event never reaches an automation a person made, nor an undirected one an acceptance automation", async () => {
     const a = await automation({ types: ["item.assigned"] });
     const e = await emit({ type: "item.assigned", audience: { accountId: ownerId, agentId } });
     await dispatch(e);
-    expect(await stateOf(e)).toBe("pending");
+    // routed by the acceptance rule (default auto): the acceptance automation takes it
+    expect(await stateOf(e)).toBe("dispatched");
     expect(await deliveriesOf(a.id)).toEqual([]);
+    const accepting = await db
+      .selectFrom("automations")
+      .select("id")
+      .where("origin", "=", "acceptance")
+      .executeTakeFirstOrThrow();
+    expect((await deliveriesOf(accepting.id)).map((d) => d.event_id)).toEqual([e]);
+    const plain = await emit({ type: "item.assigned" });
+    await dispatch(plain);
+    expect((await deliveriesOf(accepting.id)).map((d) => d.event_id)).toEqual([e]);
   });
 
   it("a filter on a fact the source does not declare never matches", async () => {

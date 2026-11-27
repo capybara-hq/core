@@ -59,6 +59,8 @@ export const ACCOUNT_HOME = "/account/profile";
 /** The personal settings' navigation (`/account/*`): one group. */
 export function useAccountNav(): NavGroup[] {
   const t = useTranslations("connections.nav");
+  const session = useContext(SessionContext);
+  const member = session !== null && roleAtLeast(myRole(session.me), "member");
   return [
     {
       group: t("groupPersonal"),
@@ -69,6 +71,10 @@ export function useAccountNav(): NavGroup[] {
         { id: "grants", label: t("grants"), href: "/account/grants" },
         { id: "identities", label: t("identities"), href: "/account/identities" },
         { id: "notifications", label: t("notifications"), href: "/account/notifications" },
+        // the current org's acceptance rules (collaboration spec §4.4): members up
+        ...(member
+          ? [{ id: "automations", label: t("acceptWork"), href: "/account/automations" }]
+          : []),
         { id: "myShares", label: t("myShares"), href: "/account/shares" },
       ],
     },

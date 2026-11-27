@@ -36,6 +36,15 @@ export type AutomationMode = "new" | "conversation" | "chat" | "subject";
 /** What a question asked in an unattended run does (`null` on an automation: the org's default). */
 export type UnattendedAsk = "fail" | "wait";
 
+/**
+ * Who made an automation: its owner, or the platform from the owner's acceptance rule for a
+ * source that assigns work (it accepts that source's work for its agent, collaboration spec §4.4).
+ */
+export type AutomationOrigin = "person" | "acceptance";
+
+/** What work a source assigns to me does: run it, offer it in my inbox, or nothing. */
+export type AcceptanceMode = "auto" | "confirm" | "off";
+
 export interface AutomationChat {
   connectionId: string;
   chatId: string;
@@ -102,6 +111,7 @@ export interface Automation {
   deviceId: string | null;
   /** Null: the org's default. */
   unattendedAsk: UnattendedAsk | null;
+  origin: AutomationOrigin;
   status: AutomationStatus;
   pauseReason: AutomationPauseReason | null;
   pausedBy: string | null;
@@ -258,6 +268,11 @@ export interface AutomationsSettings {
   coalesceSeconds: number;
   /** Event automations: up to this many runs of one automation for one subject per hour. */
   maxEventRunsPerSubjectPerHour: number;
+  /**
+   * What a directed event (work assigned to a member and their agent) does for a member who set no
+   * acceptance rule for its source.
+   */
+  directedDefault: AcceptanceMode;
   /** The trigger sources (extension names) whose events fire no automation of the org. */
   eventSourcesOff: string[];
   forbiddenTools: string[];
@@ -282,6 +297,7 @@ export const AUTOMATION_SETTINGS_DEFAULTS: AutomationsSettings = {
   maxEventDepth: 8,
   coalesceSeconds: 30,
   maxEventRunsPerSubjectPerHour: 12,
+  directedDefault: "auto",
   eventSourcesOff: [],
   forbiddenTools: [],
 };
@@ -328,6 +344,44 @@ export interface EventSource {
 /** The trigger sources of the org with their event declarations (the event trigger's pickers). */
 export const listEventSources = (orgId: string) =>
   apiFetch<{ items: EventSource[] }>(`${base(orgId)}/event-sources`);
+
+/** My rule for one source that assigns work (`GET …/automations/acceptance`). */
+export interface AcceptanceRule {
+  source: string;
+  name: { zh: string; en: string };
+  /** Null: I follow the org's default. */
+  mode: AcceptanceMode | null;
+}
+
+export interface AcceptanceRules {
+  items: AcceptanceRule[];
+  /** The org's default for a source I set no rule for. */
+  directedDefault: AcceptanceMode;
+}
+
+/** My acceptance rules, one per source that assigns work. */
+export const getAcceptanceRules = (orgId: string) =>
+  apiFetch<AcceptanceRules>(`${base(orgId)}/acceptance`);
+
+/** Sets (or, with `mode: null`, removes) my rules; answers them all. */
+export const putAcceptanceRules = (
+  orgId: string,
+  rules: { source: string; mode: AcceptanceMode | null }[],
+) =>
+  apiFetch<AcceptanceRules>(`${base(orgId)}/acceptance`, {
+    method: "PUT",
+    body: JSON.stringify({ rules }),
+  });
+
+/** I accept work offered to me: my acceptance automation for the source runs it. */
+export const acceptAutomationOffer = (orgId: string, id: string) =>
+  apiFetch<{ automationId: string }>(`${base(orgId)}/offers/${enc(id)}/accept`, {
+    method: "POST",
+  });
+
+/** I decline work offered to me (204): whoever assigned it is told. */
+export const declineAutomationOffer = (orgId: string, id: string) =>
+  apiFetch<void>(`${base(orgId)}/offers/${enc(id)}/decline`, { method: "POST" });
 
 /** An agent's tools, each grantable in advance or why not. */
 export const listGrantableTools = (orgId: string, agentId: string) =>

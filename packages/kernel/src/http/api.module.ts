@@ -20,6 +20,7 @@ import {
   AgentSaveAsTemplateController,
   AgentTemplatesController,
 } from "../agents/templates.controller.js";
+import { AcceptanceController } from "../automations/acceptance.controller.js";
 import { AutomationsController } from "../automations/automations.controller.js";
 import { AutomationsModule } from "../automations/automations.module.js";
 import { BackgroundController } from "../background/background.controller.js";
@@ -187,6 +188,7 @@ const CONTROLLERS: Type[] = [
   BackgroundController,
   DevicesController,
   AutomationsController,
+  AcceptanceController,
   AttachmentsController,
   SkillsController,
   SkillChangesController,
