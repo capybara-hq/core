@@ -64,6 +64,12 @@ describe("validateModelCache", () => {
     expect(validateModelCache({ ...ANTHROPIC, ttlOptions: [300, 300] })).toMatch(/ttlOptions/);
   });
 
+  it("requires a defaultTtl when ttlOptions is non-empty", () => {
+    const { defaultTtl: _, ...noDefault } = ANTHROPIC;
+    expect(validateModelCache(noDefault)).toMatch(/cache\.defaultTtl/);
+    expect(validateModelCache({ ...DEEPSEEK })).toBeNull();
+  });
+
   it("rejects a defaultTtl outside the options", () => {
     expect(validateModelCache({ ...ANTHROPIC, defaultTtl: 600 })).toMatch(/defaultTtl/);
   });

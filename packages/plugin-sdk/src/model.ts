@@ -70,11 +70,19 @@ export interface ModelCacheInfo {
    * OpenAI 5.6+, [300] Bailian); empty when the service decides alone. Ascending and unique.
    */
   ttlOptions: number[];
-  /** The lifetime a request that names none gets (OpenAI 5.6+: 1800). */
+  /**
+   * The lifetime a request that names none gets (OpenAI 5.6+: 1800). Required, and one of
+   * `ttlOptions`, when `ttlOptions` is non-empty.
+   */
   defaultTtl?: number;
   /** OpenAI: the lifetime is a floor, entries may live longer; Anthropic / Bailian: exact. */
   ttlIsMinimum: boolean;
-  /** A read restarts the lifetime (Anthropic, Bailian, OpenAI 30m; not OpenAI 12h). */
+  /**
+   * True only if a hit restarts the lifetime of every tier the kernel may select. The kernel
+   * selects only `defaultTtl` or the smallest option of at least 1800 s, so OpenAI GPT-5.6+
+   * declares true (its 30m tier refreshes on a hit; its 12h tier does not, and the kernel never
+   * selects 43200). Anthropic and Bailian declare true. When unconfirmed, declare false.
+   */
   refreshOnHit: boolean;
   /** When the lifetime starts counting; Anthropic: the request's start. */
   ttlClock: "request_start" | "unknown";
@@ -89,9 +97,9 @@ const isPositiveInt = (n: unknown): n is number =>
 
 /**
  * Checks a model's cache declaration: positive integer TTLs, `ttlOptions` ascending and unique,
- * `defaultTtl` among the options when options exist, `none` with no options and no guarantee, a
- * guarantee only with a known lifetime, `minTokens` a positive integer. Returns the first problem
- * (naming the field), or `null` when valid.
+ * `defaultTtl` present and among the options when options exist, `none` with no options and no
+ * guarantee, a guarantee only with a known lifetime, `minTokens` a positive integer. Returns the
+ * first problem (naming the field), or `null` when valid.
  */
 export function validateModelCache(cache: ModelCacheInfo | undefined): string | null {
   if (cache === undefined) return null;
@@ -129,6 +137,9 @@ export function validateModelCache(cache: ModelCacheInfo | undefined): string | 
   if (cache.mechanism === "none") {
     if (cache.ttlOptions.length > 0) return 'cache.mechanism "none" takes no ttlOptions';
     if (cache.guaranteed) return 'cache.guaranteed must be false with mechanism "none"';
+  }
+  if (cache.ttlOptions.length > 0 && cache.defaultTtl === undefined) {
+    return "cache.defaultTtl is required when cache.ttlOptions is non-empty";
   }
   if (cache.guaranteed && cache.ttlOptions.length === 0 && cache.defaultTtl === undefined) {
     return "cache.guaranteed needs a known lifetime (ttlOptions or defaultTtl)";
@@ -418,9 +429,9 @@ export interface ModelRequest {
    */
   purpose?: ModelCallPurpose;
   /**
-   * The prompt cache lifetime to ask for: seconds, one of the model's `ttlOptions`; a plugin of a
-   * model without options ignores it; the plugin maps it to the vendor's field. Absent = the
-   * model's default.
+   * The prompt cache lifetime to ask for: seconds, one of the model's `ttlOptions` (the kernel
+   * only ever sends one of them); a plugin of a model without options ignores it; the plugin maps
+   * it to the vendor's field. Absent = the model's default.
    */
   cacheTtl?: number;
 }
