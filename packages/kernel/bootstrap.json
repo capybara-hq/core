@@ -98,8 +98,8 @@
       "name": "device-local",
       "source": "npm",
       "npm": "@capybara-hq/plugin-device-local",
-      "version": "0.1.0-rc.12",
-      "integrity": "sha512-ncQmaRGa48fNjFD5rHQL94yEzBKv0pTS+4vy1uoK9SMWqSJw4/NUfVHs18Li0N2X92yRUystyuGHuJ0/oD4HPA==",
+      "version": "0.1.0-rc.13",
+      "integrity": "sha512-gZOI8bmP5sfADZkEbB1nuPf+32qVFNJm92RyiFuLhiNNluLWN5ABy4DJehvjFy6bgs+J5Jhu88byfDt0EIrlww==",
       "required": false,
       "scope": "all"
     },
