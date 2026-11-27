@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent, ToolInfo } from "../src/lib/conversations";
-import { groupProcess, type ProcessEntry, type ThreadEntry } from "../src/lib/process";
+import {
+  groupProcess,
+  type ProcessEntry,
+  parseTaskList,
+  railItems,
+  sectionRail,
+  type ThreadEntry,
+} from "../src/lib/process";
 import { buildTimeline, type TimelineDraft, type TimelineEntry } from "../src/lib/timeline";
 
 // Log fixtures: the same helpers as timeline.test.ts.
@@ -486,18 +493,15 @@ describe("groupProcess", () => {
       answer(9, "Report ready."),
       runFinished(10),
     ];
+    // the device code's call is still running: it waits for the person, outside the block
+    const live = build(events.slice(0, 7));
+    expect(kinds(live)).toEqual(["user", "process", "device-code", "pending", "files", "card"]);
+    expect(block(live).state).toBe("waiting");
+
+    // its call ended (the code was used): it folds into the rail like a decided approval
     const out = build(events);
-    expect(kinds(out)).toEqual([
-      "user",
-      "process",
-      "device-code",
-      "pending",
-      "files",
-      "card",
-      "prose",
-      "run",
-    ]);
-    expect(kinds(block(out).steps)).toEqual(["tools"]);
+    expect(kinds(out)).toEqual(["user", "process", "pending", "files", "card", "prose", "run"]);
+    expect(kinds(block(out).steps)).toEqual(["tools", "decided"]);
   });
 
   it("pinned keeps the latest per view", () => {
@@ -676,5 +680,198 @@ describe("groupProcess", () => {
     const ended = build([...head, runFinished(7)]);
     expect(kinds(ended)).toEqual(["user", "process", "prose", "run"]);
     expect(kinds(block(ended).steps)).toEqual(["tools", "decided"]);
+  });
+
+  it("a sub-agent's wait stays outside while it waits and folds once it ended", () => {
+    const agent = {
+      id: "k1",
+      name: "Agent",
+      input: { description: "Scan docs", prompt: "Do it", subagent_type: "general-purpose" },
+    };
+    const head = [
+      user(1, "go"),
+      runStarted(2),
+      calls(3, [agent]),
+      ev(4, "subagent_dispatched", {
+        step: 0,
+        callId: "k1",
+        subagentId: "ch1",
+        childRunId: "run-ch1",
+        agentType: "general-purpose",
+        description: "Scan docs",
+        resumed: false,
+        model: { provider: "p", model: "m" },
+      }),
+      ev(5, "subagent_waiting", {
+        subagentId: "ch1",
+        childRunId: "run-ch1",
+        kind: "approval",
+        approvalId: "ap1",
+        toolKey: "Bash",
+      }),
+    ];
+    const waiting = build(head);
+    const wait = waiting.find((e) => e.kind === "subagent-wait");
+    expect(wait).toMatchObject({ kind: "subagent-wait", subagent: { id: "ch1" } });
+    expect(wait !== undefined && "ended" in wait).toBe(false);
+
+    // the child finished (its approval decided, its work done): the wait is a rail row
+    const ended = build([
+      ...head,
+      ev(6, "subagent_finished", {
+        subagentId: "ch1",
+        childRunId: "run-ch1",
+        status: "completed",
+        toolCalls: 1,
+        durationMs: 10,
+      }),
+      result(7, "k1", "Agent"),
+      answer(8, "Scanned."),
+      runFinished(9),
+    ]);
+    expect(kinds(ended)).toEqual(["user", "process", "prose", "run"]);
+    const steps = block(ended).steps;
+    expect(kinds(steps)).toEqual(["subagent", "decided"]);
+    expect(steps[1]).toMatchObject({ entry: { kind: "subagent-wait", ended: true } });
+  });
+
+  it("an earlier wait of the same sub-agent ended when a later one came", () => {
+    const wait = (seq: number, approvalId: string) =>
+      ev(seq, "subagent_waiting", {
+        subagentId: "ch1",
+        childRunId: "run-ch1",
+        kind: "approval",
+        approvalId,
+        toolKey: "Bash",
+      });
+    const events = [
+      user(1, "go"),
+      runStarted(2),
+      calls(3, [{ id: "k1", name: "Agent", input: { description: "d", prompt: "p" } }]),
+      ev(4, "subagent_dispatched", {
+        step: 0,
+        callId: "k1",
+        subagentId: "ch1",
+        childRunId: "run-ch1",
+        agentType: "general-purpose",
+        description: "d",
+        resumed: false,
+        model: { provider: "p", model: "m" },
+      }),
+      wait(5, "ap1"),
+      wait(6, "ap2"),
+    ];
+    const waits = buildTimeline(events, [], INFO, "en").filter((e) => e.kind === "subagent-wait");
+    expect(waits.map((w) => w.kind === "subagent-wait" && w.ended === true)).toEqual([true, false]);
+  });
+});
+
+describe("rail sections by task list item (#924)", () => {
+  const list = (...items: [string, "done" | "doing" | "open"][]) =>
+    [
+      "Todos:",
+      "",
+      ...items.map(([label, st]) =>
+        st === "done"
+          ? `- [x] ${label}`
+          : st === "doing"
+            ? `- [ ] **${label}** (in progress)`
+            : `- [ ] ${label}`,
+      ),
+    ].join("\n");
+  // each call its own model step (one rail row each)
+  const stepCall = (seq: number, c: { id: string; name: string; input: unknown }) =>
+    ev(seq, "assistant_message", {
+      step: seq,
+      stopReason: "tool_use",
+      content: [{ type: "tool_call", ...c }],
+    });
+  const todo = (seq: number, id: string, text: string) => [
+    stepCall(seq, { id, name: "plugin__todo__write", input: {} }),
+    result(seq + 1, id, "plugin__todo__write", {
+      card: { plugin: "todo", view: "tasks", placement: "pinned", key: id, text },
+    }),
+  ];
+  const work = (seq: number, id: string) => [stepCall(seq, bash(id)), result(seq + 1, id, "Bash")];
+  const sectionsOf = (b: ProcessEntry) =>
+    sectionRail(railItems(b, () => true).items, b.taskLists).map((s) => ({
+      task: s.task,
+      steps: s.items.length,
+    }));
+
+  it("parses a Markdown task list, emphasis and the in-progress suffix removed", () => {
+    expect(parseTaskList(list(["Read", "done"], ["Write", "doing"], ["Ship", "open"]))).toEqual([
+      { label: "Read", done: true },
+      { label: "Write", done: false },
+      { label: "Ship", done: false },
+    ]);
+    expect(parseTaskList("no list here")).toBeNull();
+    expect(parseTaskList(undefined)).toBeNull();
+  });
+
+  it("each step goes under the item current when it ran; done items are done", () => {
+    const events = [
+      user(1, "go"),
+      runStarted(2),
+      ...work(3, "w0"),
+      ...todo(5, "t1", list(["Read", "doing"], ["Write", "open"])),
+      ...work(7, "w1"),
+      ...work(9, "w2"),
+      // the step that marks Read done ran under Read
+      ...todo(11, "t2", list(["Read", "done"], ["Write", "doing"])),
+      ...work(13, "w3"),
+      ...todo(15, "t3", list(["Read", "done"], ["Write", "done"])),
+      answer(17, "Done."),
+      runFinished(18),
+    ];
+    const b = block(build(events));
+    expect(b.taskLists.cards.map((c) => c.cardKey)).toEqual(["t1", "t2", "t3"]);
+    expect(sectionsOf(b)).toEqual([
+      // before the first list: no item
+      { task: null, steps: 2 },
+      { task: { index: 0, label: "Read", done: true }, steps: 3 },
+      { task: { index: 1, label: "Write", done: true }, steps: 2 },
+    ]);
+  });
+
+  it("a running item is not done; a block with no list is one section", () => {
+    const running = block(
+      build([
+        user(1, "go"),
+        runStarted(2),
+        ...todo(3, "t1", list(["Read", "doing"], ["Write", "open"])),
+        ...work(5, "w1"),
+      ]),
+    );
+    expect(sectionsOf(running).map((s) => s.task)).toEqual([
+      null,
+      { index: 0, label: "Read", done: false },
+    ]);
+
+    const plain = block(build([user(1, "go"), runStarted(2), ...work(3, "w1"), ...work(5, "w2")]));
+    expect(sectionsOf(plain)).toEqual([{ task: null, steps: 2 }]);
+  });
+
+  it("a block split by a queued message starts under the run's current item", () => {
+    const events = [
+      user(1, "go"),
+      runStarted(2),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m", request: req(1) }),
+      ...todo(4, "t1", list(["Read", "doing"], ["Write", "open"])),
+      user(6, "and one more"),
+      ev(7, "model_call", { step: 1, provider: "p", model: "m", request: req(6) }),
+      ...work(8, "w1"),
+      ...todo(10, "t2", list(["Read", "done"], ["Write", "done"])),
+      answer(12, "Done."),
+      runFinished(13),
+    ];
+    const out = build(events);
+    const second = block(out, 1);
+    expect(second.taskLists.cards.map((c) => c.cardKey)).toEqual(["t1", "t2"]);
+    expect(sectionsOf(second)).toEqual([
+      { task: { index: 0, label: "Read", done: true }, steps: 2 },
+    ]);
+    // the earlier block sees the run's latest list too: its Read section is done
+    expect(block(out, 0).taskLists.latest?.cardKey).toBe("t2");
   });
 });

@@ -175,6 +175,14 @@ export {
   type RailStepProps,
   RailText,
 } from "./process-block";
+export {
+  RAIL_VIRTUAL_MIN,
+  type RailEdge,
+  RailList,
+  type RailRow,
+  RailSection,
+  type RailSectionProps,
+} from "./process-rail";
 export { Cursor, Prose, type ProseProps, Spinner } from "./prose";
 export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
 export {

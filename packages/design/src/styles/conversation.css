@@ -2623,6 +2623,88 @@ button.cb-file-card:focus-visible {
 .cb-process-fold > .cb-rail-gutter {
   height: auto;
 }
+/* The rail's list (#925): each row carries its true place on the rule (`data-edge`), so a
+   windowed list whose first mounted row is not the rail's first still draws the rule right; the
+   spacers standing for unmounted rows carry the rule through. */
+.cb-rail-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-rail-step[data-edge]::before {
+  display: block;
+  top: 0;
+  bottom: 0;
+}
+.cb-rail-step[data-edge="first"]::before {
+  top: calc(var(--cb-row-dense) / 2);
+}
+.cb-rail-step[data-edge="last"]::before {
+  bottom: calc(100% - var(--cb-row-dense) / 2);
+}
+.cb-rail-step[data-edge="only"]::before {
+  display: none;
+}
+.cb-rail-step[data-edge] {
+  padding-bottom: var(--cb-space-1);
+}
+.cb-rail-step[data-edge="last"],
+.cb-rail-step[data-edge="only"] {
+  padding-bottom: 0;
+}
+.cb-rail-spacer {
+  position: relative;
+  flex: none;
+}
+.cb-rail-spacer::before {
+  content: "";
+  position: absolute;
+  left: 9.5px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--cb-line);
+}
+/* A section header (#924): the task list item the steps under it ran for, a toggle on the rail. */
+.cb-rail-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  width: 100%;
+  min-height: var(--cb-row-dense);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-align: left;
+  cursor: pointer;
+}
+.cb-rail-section-head:hover {
+  color: var(--cb-ink);
+}
+.cb-rail-section-head:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-rail-section-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+  font-weight: 600;
+}
+.cb-rail-section-count {
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ── Pending actions (spec §4): things that need the person, not blocking the run ── */
 
@@ -2721,7 +2803,8 @@ button.cb-file-card:focus-visible {
   .cb-process-head .cb-tool-label {
     flex: 1 1 auto;
   }
-  .cb-process-fold {
+  .cb-process-fold,
+  .cb-rail-section-head {
     min-height: var(--cb-touch-hit);
   }
   .cb-pending-action {
