@@ -288,10 +288,11 @@ textarea {
   color: var(--cb-faint);
   cursor: default;
 }
+/* spec §6.1: a disabled primary keeps a `line` border, the `selected` ground, `disabled` text. */
 .r-btn[data-variant="primary"]:disabled {
-  border-color: transparent;
+  border-color: var(--cb-line);
   background: var(--cb-selected);
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
   font-weight: 400;
 }
 .r-btn[data-state~="loading"] {
@@ -8002,7 +8003,6 @@ span.r-scal-daynum {
 /* Compact: the bottom sheet's anatomy (§6.59), the search field over the sheet's grouped rows. */
 .r-cmm-sheet {
   max-height: 85%;
-  border-top: 0;
 }
 .r-cmm-sheet-head {
   position: relative;
@@ -8272,7 +8272,6 @@ span.r-scal-daynum {
 /* Compact: the Dialog's bottom sheet (§6.59); the count over the full-width buttons, 「引用」 first. */
 .r-pfp-sheet {
   max-height: 85%;
-  border-top: 0;
 }
 .r-pfp-sheet-body {
   min-height: 0;
