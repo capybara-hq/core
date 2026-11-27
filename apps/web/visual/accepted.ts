@@ -218,6 +218,11 @@ export const ACCEPTED: string[] = [
   // the action sheet at rest (spec §6.61; responsive system phase 0): block and size table in place;
   // the reference PNG waits for the reference-update workflow
   "action-sheet",
+  // plugin full pages (design spec §6.69 Board, §6.70 PrincipalPicker): blocks and size tables in
+  // place; the reference PNGs and the side-by-side review wait for the reference-update and
+  // visual-update / compare workflows
+  "board",
+  "principal-picker",
 ];
 
 /**

@@ -17,7 +17,7 @@ import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
 import { orgSettingsQuery } from "../../lib/query/settings";
 import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
-import { type UiCompactForm, type UiContributionItem, uiLocale } from "../../lib/ui";
+import { ICON_OF, type UiCompactForm, type UiContributionItem, uiLocale } from "../../lib/ui";
 import { ADMIN_PAGES, type AdminExtensionPage, type AdminPageId } from "../admin-nav";
 import { useOfferedContributions } from "../extension-ui/ClientComponentBlock";
 
@@ -276,6 +276,8 @@ export type ExtensionNavItem = {
   href: string;
   compact: UiCompactForm;
   section: "primary" | "more";
+  /** The contribution's own icon as a design icon (`puzzle`, the default, is `extension`). */
+  icon: IconName;
 };
 
 /**
@@ -356,6 +358,7 @@ function extensionItems(
       href: pluginPageHref(p.plugin, p.id),
       compact: p.compact ?? "kept",
       section: sections[i] ?? "more",
+      icon: ICON_OF[p.icon] ?? "extension",
     };
   });
 }
@@ -552,18 +555,21 @@ export function useDrawerNav(
       .filter((n) => n.drawer === "section")
       .map((n) => ({ id: n.id as "agents" | "automations", ...item(n) })),
   ];
-  const page = (x: ExtensionNavItem) => ({
+  const page = (x: ExtensionNavItem, icon: IconName) => ({
     id: `ext:${x.id}`,
     label: x.label,
     href: x.href,
-    icon: "extension" as const,
+    icon,
   });
   const shown = shownOnCompact(extensions);
   const more: DrawerNav["more"] = [
     ...visible.filter((n) => n.drawer === "more").map((n) => ({ id: n.id, ...item(n) })),
-    ...shown.filter((x) => x.section === "more").map(page),
+    ...shown.filter((x) => x.section === "more").map((x) => page(x, "extension")),
   ];
-  const primaryExtensions = shown.filter((x) => x.section === "primary").map(page);
+  // a primary entry carries its own icon among the built-in ones; the More group keeps one icon
+  const primaryExtensions = shown
+    .filter((x) => x.section === "primary")
+    .map((x) => page(x, x.icon));
   return {
     sections,
     ...(primaryExtensions.length > 0 ? { primaryExtensions } : {}),

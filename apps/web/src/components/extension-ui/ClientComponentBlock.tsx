@@ -50,7 +50,7 @@ import {
 import { useClientHostControls, useClientRegistry } from "../client-ext/registry";
 import { BlockBoundary } from "../conversation/BlockBoundary";
 import { targetKey, useExtensionViews, type ViewTarget } from "./ExtensionViewTab";
-import { TemplateGuard } from "./template-guard";
+import { HostNoticeProvider, TemplateGuard } from "./template-guard";
 
 /**
  * The slot args a component is rendered with (its slot's scope args, client extensions spec §5.2):
@@ -291,7 +291,10 @@ export function ComponentHost({
   args: ComponentArgs;
   render: Render;
   hostProps: Record<string, unknown>;
-  /** A `frame: "page"` component: it must render exactly one forwarded page template. */
+  /**
+   * A `frame: "page"` component: it must render exactly one forwarded page template (any other
+   * component none), and the host's live-refresh line goes into that template's head.
+   */
   templateGuard?: boolean;
 }) {
   const { plugin, id, slot } = c;
@@ -392,7 +395,8 @@ export function ComponentHost({
 
   // Component queries: once one runs, the org UI stream's `event: ui` frames with `queries` for
   // this contribution read its queries again, and so do the stream's first open (a change between
-  // the first read and the subscription) and every reconnect (which may have missed some). A
+  // the first read and the subscription; only queries answered before the subscription started)
+  // and every reconnect (which may have missed some). A
   // stream that ended (session revoked, the browser gave up) says live refresh stopped, as an org
   // view does.
   const [listening, setListening] = useState(false);
@@ -402,13 +406,22 @@ export function ComponentHost({
   useEffect(() => {
     if (!listening || orgId === null) return;
     setLiveLost(false);
-    const all = () =>
-      void qc.invalidateQueries({ queryKey: keys.org(orgId).pluginQueries(plugin, id) });
+    const queryKey = keys.org(orgId).pluginQueries(plugin, id);
+    const all = () => void qc.invalidateQueries({ queryKey });
+    // the first open reads only what was read before the subscription started: a query answered
+    // after that (a page load's first read) is not fetched a second time, nor is one still in
+    // flight cancelled and sent again
+    const started = Date.now();
+    const stale = () =>
+      void qc.invalidateQueries(
+        { queryKey, predicate: (q) => q.state.dataUpdatedAt < started },
+        { cancelRefetch: false },
+      );
     return openUiStream(orgId, {
       onUi: (r) => {
         if (r.queries === true && r.plugin === plugin && r.contribution === id) all();
       },
-      onOpen: all,
+      onOpen: stale,
       onReconnect: all,
       onError: () => setLiveLost(true),
     });
@@ -493,15 +506,27 @@ export function ComponentHost({
     [plugin, id, slot, scopeArgs, api],
   );
   const body = createElement(render, { ...hostProps, plugin, contribution: id, slot });
+  const liveLostLine = liveLost ? (
+    <Text variant="small" tone="warn">
+      {tPage("liveLost")}
+    </Text>
+  ) : null;
   return (
     <HostContext.Provider value={ctx}>
       <QueryScopeContext.Provider value={queryScope}>
-        {liveLost && (
-          <Text variant="small" tone="warn">
-            {tPage("liveLost")}
-          </Text>
+        {templateGuard ? (
+          // a page-frame component draws its whole page: the line goes into its template's head
+          <HostNoticeProvider value={liveLostLine}>
+            <TemplateGuard where={uiKey(plugin, id)}>{body}</TemplateGuard>
+          </HostNoticeProvider>
+        ) : (
+          <>
+            {liveLostLine}
+            <TemplateGuard where={uiKey(plugin, id)} expected={0}>
+              {body}
+            </TemplateGuard>
+          </>
         )}
-        {templateGuard ? <TemplateGuard where={uiKey(plugin, id)}>{body}</TemplateGuard> : body}
       </QueryScopeContext.Provider>
     </HostContext.Provider>
   );

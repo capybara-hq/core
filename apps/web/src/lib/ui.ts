@@ -1,3 +1,4 @@
+import type { IconName } from "@capybara-hq/design";
 import { ApiClientError, apiFetch } from "./api";
 import type { FormAnswer, InputForm } from "./conversations";
 import type { UiSlotId } from "./ui-slots.generated";
@@ -23,6 +24,21 @@ export type UiIcon =
   | "message-square"
   | "globe"
   | "puzzle";
+
+/** A contribution's icon (SDK `UI_ICONS`) as a design icon. */
+export const ICON_OF: Record<UiIcon, IconName> = {
+  "list-checks": "list-checks",
+  "layout-grid": "extension",
+  file: "file",
+  chart: "trending-up",
+  calendar: "extension",
+  users: "user",
+  bot: "agent",
+  book: "skills",
+  "message-square": "channel",
+  globe: "globe",
+  puzzle: "extension",
+};
 
 /** An open target: a panel of the same extension, scrolled to the item with this `id`. */
 export interface UiOpen {

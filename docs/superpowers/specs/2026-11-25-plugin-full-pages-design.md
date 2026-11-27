@@ -127,12 +127,19 @@ view block payloads keep 2 000.
   same page with new params, another page of the same plugin, or a conversation the viewer can
   open. No other targets.
 - *As built:* params are capped at 2 048 UTF-8 bytes of keys plus values; `navigate({ params })` is a
-  server round trip; plugin `href`s are normalized (own `/p/<plugin>/…` and conversations only;
-  `DataTable` `empty.action` is a `ReactNode` and cannot be); the host counts forwarded templates and
-  throws unless exactly one is mounted. `SelectProps.density` is now the design's
+  server round trip; plugin `href`s go through `safeHref` (apps/web/src/lib/page-params.ts): it
+  keeps same-origin paths (`/x`), `?…` / `#…` of this page and absolute http(s) URLs, and drops
+  values with control characters, `//host` and `/\host`, and every other scheme (`javascript:`,
+  `data:`, `mailto:`, …) with a warning. Wrapped (`HOST_DESIGN`): the four templates (header path,
+  actions and their menus, header tabs, `tabs.items`, `nav[].items`, `empty.action`), `DataTable`
+  `rowMenu`, `EmptyState` `action`, `ItemList` rows and `empty.action`, `ItemListItem`, `Menu`
+  items (submenus too) and `Tabs` items; `Button` takes no `href`. `DataTable` `empty.action` is a
+  `ReactNode` and cannot be checked. The host counts forwarded templates and throws unless exactly
+  one is mounted (a host-framed component: unless none is); the host's query names `safe-ui` and
+  `org` never reach a plugin's params. `SelectProps.density` is now the design's
   `"dense" | "default" | "prominent"` (the old `comfortable | compact` never worked).
 - Inbox items (collaboration spec §4.9) a plugin posts may only link to `/p/<that plugin>/…`;
-  the kernel refuses other links.
+  the kernel refuses other links. *As built:* not enforced yet, pending kernel task C1.
 
 ## 6. Board
 

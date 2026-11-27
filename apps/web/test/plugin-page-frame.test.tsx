@@ -7,6 +7,8 @@
 // fixture's client bundle (`packages/testing/fixtures/extensions/fake-client-page`), written
 // against the host's implementation of `@capybara-hq/plugin-client` (`PLUGIN_CLIENT`), as the
 // bundle's import resolves in the browser.
+
+import type { QueryClient } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { type ComponentType, type ReactNode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +19,7 @@ import { PLUGIN_CLIENT } from "../src/components/client-ext/host-api";
 import type { ClientExtensionsResponse } from "../src/lib/client-extensions";
 import { pageParamsOf } from "../src/lib/page-params";
 import { contributionsQuery } from "../src/lib/query/conversation";
+import { keys } from "../src/lib/query/keys";
 import { meQuery, readinessQuery } from "../src/lib/query/shell";
 import type { Me } from "../src/lib/session";
 import type { UiContributionItem } from "../src/lib/ui";
@@ -161,10 +164,16 @@ const view = (params: Record<string, string>) => (
 
 function renderBoard(
   render: ComponentType<never>,
-  o: { params?: Record<string, string>; me?: Me; items?: UiContributionItem[] } = {},
+  o: {
+    params?: Record<string, string>;
+    me?: Me;
+    items?: UiContributionItem[];
+    seed?: (client: QueryClient) => void;
+  } = {},
 ) {
   ClientHost.load = vi.fn(async () => moduleOf(render));
   const client = testQueryClient();
+  o.seed?.(client);
   const me = o.me ?? ME;
   client.setQueryData(meQuery().queryKey, me);
   client.setQueryData(readinessQuery("o1").queryKey, READY);
@@ -172,6 +181,7 @@ function renderBoard(
   const r = renderPage(view(o.params ?? {}), { client, me });
   return {
     ...r,
+    client,
     /** The address changed (a navigation, Back): Next renders the page with its new params. */
     address: (params: Record<string, string>) =>
       r.rerender(pageElement(view(params), { client, me })),
@@ -269,6 +279,30 @@ describe("frame page", () => {
     await waitFor(() =>
       expect(reports()).toEqual([
         expect.objectContaining({ message: expect.stringMatching(/rendered 0/) }),
+      ]),
+    );
+  });
+});
+
+describe("frame host", () => {
+  it("a host-framed component that renders a page template throws in tests: no nested page", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { frame: _frame, ...hosted } = BOARD;
+    const Nested = () => <ListPage header={{ title: "Nested" }} />;
+    renderBoard(Nested as ComponentType<never>, { items: [hosted] });
+    await flush();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Board");
+    // the host's page stays; the plugin's template is gone with the failure line in its place
+    expect(document.querySelectorAll('[data-template="DetailPage"]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-template="ListPage"]')).toHaveLength(0);
+    await waitFor(() =>
+      expect(reports()).toEqual([
+        expect.objectContaining({
+          contribution: "board",
+          kind: "render",
+          message: expect.stringMatching(/frame: "host".*no page template.*rendered 1/),
+        }),
       ]),
     );
   });
@@ -381,6 +415,29 @@ describe("page params and navigation", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('dropped "big"'));
     expect(pageParamsOf({ a: ["1", "2"], b: undefined })).toEqual({ a: "1" });
   });
+
+  it("the host's own query names never reach the plugin's params", async () => {
+    expect(pageParamsOf(new URLSearchParams("safe-ui=0&col=todo&org=o2"))).toEqual({ col: "todo" });
+    expect(pageParamsOf({ "safe-ui": "1", org: "o2", q: "x" })).toEqual({ q: "x" });
+    // nor can a plugin navigate to them
+    function Sneaky() {
+      const navigate = pc.useNavigate() as (to: unknown) => void;
+      return (
+        <ListPage header={{ title: "Sneaky" }}>
+          <button
+            type="button"
+            onClick={() => navigate({ params: { "safe-ui": "0", org: "o2", col: "x" } })}
+          >
+            sneak
+          </button>
+        </ListPage>
+      );
+    }
+    renderBoard(Sneaky as ComponentType<never>);
+    await flush();
+    act(() => screen.getByRole("button", { name: "sneak" }).click());
+    expect(router.push).toHaveBeenLastCalledWith(`/p/${PLUGIN}/board?col=x`, { scroll: false });
+  });
 });
 
 describe("component queries", () => {
@@ -435,13 +492,13 @@ describe("component queries", () => {
     expect(queries("items")).toHaveLength(1);
     const es = FakeEventSource.instances.find((e) => e.url === `${ORG}/ui/stream`);
     expect(es).toBeDefined();
-    // the stream's first open reads once more (a change between the first read and the
-    // subscription is not lost)
-    itemsAnswer = () => json(200, { data: { items: [{ id: "a", title: "Alpha1" }] } });
+    // the stream's first open: the query was answered after the subscription started, so the
+    // page load does not read it twice
     await act(async () => {
       es?.emit("open");
     });
-    await waitFor(() => expect(screen.getByTestId("q-items").textContent).toContain("Alpha1"));
+    await flush();
+    expect(queries("items")).toHaveLength(1);
     calls.length = 0;
     itemsAnswer = () => json(200, { data: { items: [{ id: "a", title: "Alpha2" }] } });
     // another contribution's frame, or one without `queries`, reads nothing
@@ -467,6 +524,80 @@ describe("component queries", () => {
     });
     expect(screen.getByText(en.pluginPage.liveLost)).toBeTruthy();
     expect(screen.getByTestId("q-items").textContent).toContain("Alpha3");
+  });
+
+  it("the first open reads again a query answered before the subscription started", async () => {
+    // a query that stays fresh for a minute: the cached answer is not read again on mount
+    const Cached = () => {
+      const q = pc.usePluginQuery("items", undefined, { staleMs: 60_000 }) as {
+        data: Items | undefined;
+      };
+      return (
+        <ListPage header={{ title: "Cached" }}>
+          <p data-testid="cached">{q.data?.items.map((i) => i.title).join(",") ?? ""}</p>
+        </ListPage>
+      );
+    };
+    // learn the query's key from a first render
+    const first = renderBoard(Cached as ComponentType<never>);
+    await flush();
+    await waitFor(() => expect(screen.getByTestId("cached").textContent).toBe("Alpha"));
+    const [entry] = first.client
+      .getQueryCache()
+      .findAll({ queryKey: keys.org("o1").pluginQueries(PLUGIN, "board") });
+    expect(entry).toBeDefined();
+    cleanup();
+    FakeEventSource.instances = [];
+    calls.length = 0;
+    // an answer cached before this page subscribed
+    renderBoard(Cached as ComponentType<never>, {
+      seed: (client) =>
+        client.setQueryData(
+          entry?.queryKey ?? [],
+          { items: [{ id: "a", title: "Old" }] },
+          { updatedAt: Date.now() - 10_000 },
+        ),
+    });
+    await flush();
+    expect(screen.getByTestId("cached").textContent).toBe("Old");
+    expect(queries("items")).toHaveLength(0);
+    const es = FakeEventSource.instances.find((e) => e.url === `${ORG}/ui/stream`);
+    expect(es).toBeDefined();
+    await act(async () => {
+      es?.emit("open");
+    });
+    await waitFor(() => expect(screen.getByTestId("cached").textContent).toBe("Alpha"));
+    expect(queries("items")).toHaveLength(1);
+  });
+
+  it("a page-frame component's live-refresh line sits in its template's head", async () => {
+    renderBoard(Board as ComponentType<never>);
+    await flush();
+    await waitFor(() => expect(screen.getByTestId("q-items").textContent).toContain("Alpha"));
+    const es = FakeEventSource.instances.find((e) => e.url === `${ORG}/ui/stream`);
+    await act(async () => {
+      es?.giveUp();
+    });
+    const line = screen.getByText(en.pluginPage.liveLost);
+    const template = document.querySelector('[data-template="ListPage"]');
+    expect(template?.contains(line)).toBe(true);
+    // nothing stray beside the template
+    expect(document.querySelectorAll('[data-template="ListPage"]')).toHaveLength(1);
+  });
+
+  it("a host-framed component keeps its live-refresh line inside the host's page", async () => {
+    const { frame: _frame, ...hosted } = BOARD;
+    const Plain = () => <QueryLine name="items" />;
+    renderBoard(Plain as ComponentType<never>, { items: [hosted] });
+    await flush();
+    await waitFor(() => expect(screen.getByTestId("q-items").textContent).toContain("Alpha"));
+    const es = FakeEventSource.instances.find((e) => e.url === `${ORG}/ui/stream`);
+    await act(async () => {
+      es?.giveUp();
+    });
+    const line = screen.getByText(en.pluginPage.liveLost);
+    expect(document.querySelector('[data-template="DetailPage"]')?.contains(line)).toBe(true);
+    expect(screen.getByTestId("q-items").textContent).toContain("Alpha");
   });
 
   it("deep link without access shows the no-access state and calls no query", async () => {

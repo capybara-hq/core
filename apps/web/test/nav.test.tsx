@@ -226,6 +226,7 @@ describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 
       href: "/p/acme/board",
       compact: "kept" as const,
       section: "more" as const,
+      icon: "extension" as const,
     },
     {
       id: "acme/wide",
@@ -233,6 +234,7 @@ describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 
       href: "/p/acme/wide",
       compact: "hidden" as const,
       section: "more" as const,
+      icon: "extension" as const,
     },
   ];
   function drawer(level: NavLevel, pending = { count: 0, more: false }) {

@@ -1,12 +1,21 @@
 "use client";
 
-import { Field, FormSection, Select, SettingsPage, Stack, useToast } from "@capybara-hq/design";
+import {
+  EmptyState,
+  Field,
+  FormSection,
+  Select,
+  SettingsPage,
+  Stack,
+  useToast,
+} from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
+import { pageSections } from "../../../../components/shell/nav";
 import { usePagePath } from "../../../../components/shell/path";
 import {
   NAV_PRIMARY_MAX,
@@ -26,10 +35,11 @@ import NotFound from "../../not-found";
 
 /**
  * `/settings/navigation` (SettingsPage, group Organization; org admins): the org's plugin pages
- * (slot `org.page`), each with a primary / more choice (plugin full pages spec §9). A page with
- * no saved choice shows what its plugin suggests; only the pages changed here (and the choices
- * already saved) are written, so a suggestion keeps applying until an admin chooses. At most 3
- * pages in primary. From the query cache (the layout prefetched both reads on a first load).
+ * (slot `org.page`), each with a primary / more choice (plugin full pages spec §9). The page
+ * shows what the sidebar shows (`pageSections`): a page with no saved choice follows its plugin's
+ * suggestion while a primary slot is free; only the pages changed here (and the choices already
+ * saved) are written, so a suggestion keeps applying until an admin chooses. At most 3 saved or
+ * changed pages in primary. From the query cache (the layout prefetched both reads on a first load).
  */
 export default function NavigationSettingsView() {
   const ws = useWorkspace({ min: "admin" });
@@ -93,30 +103,42 @@ function NavigationSettings({ orgId }: { orgId: string }) {
     );
   }
   const lang = uiLocale(locale);
-  const saved = new Map(
-    (read.data.settings.navigation?.pluginPages ?? []).map((e) => [e.contribution, e.section]),
-  );
+  const savedSetting = read.data.settings.navigation ?? undefined;
   const keyOf = (p: { plugin: string; id: string }) => `${p.plugin}/${p.id}`;
-  const wanted = (p: (typeof pages)[number]): Section =>
-    draft[keyOf(p)] ?? saved.get(keyOf(p)) ?? p.nav ?? "more";
-  const primaryCount = pages.filter((p) => wanted(p) === "primary").length;
-  const tooMany = primaryCount > NAV_PRIMARY_MAX;
-  const changed = Object.entries(draft).filter(([k, v]) => {
-    const p = pages.find((x) => keyOf(x) === k);
-    return p !== undefined && v !== (saved.get(k) ?? p.nav ?? "more");
+  const listed = new Set(pages.map(keyOf));
+  // the saved choices of pages still listed (a stale one for a removed page would count toward
+  // the limit unseen)
+  const saved = new Map(
+    (savedSetting?.pluginPages ?? [])
+      .filter((e) => listed.has(e.contribution))
+      .map((e) => [e.contribution, e.section]),
+  );
+  // what the sidebar shows now: the baseline a change is measured against
+  const baseline = new Map(
+    pageSections(pages, savedSetting).map((s, i) => [keyOf(pages[i] as UiContributionItem), s]),
+  );
+  // the explicit choices once saved: the saved ones, the drafts replacing or joining them
+  const explicit = new Map(saved);
+  for (const [k, v] of Object.entries(draft)) if (listed.has(k)) explicit.set(k, v);
+  // a page without an explicit choice follows its suggestion while a primary slot is free, as the
+  // sidebar will after the save
+  const projected = pageSections(pages, {
+    pluginPages: [...explicit].map(([contribution, section]) => ({ contribution, section })),
   });
-  const unsaved = changed.length;
+  const wanted = (p: (typeof pages)[number]): Section =>
+    explicit.get(keyOf(p)) ?? projected[pages.indexOf(p)] ?? "more";
+  // only explicit primaries count toward the limit: suggestions fill what is left
+  const primaryCount = [...explicit.values()].filter((v) => v === "primary").length;
+  const tooMany = primaryCount > NAV_PRIMARY_MAX;
+  const unsaved = Object.entries(draft).filter(
+    ([k, v]) => listed.has(k) && v !== (saved.get(k) ?? baseline.get(k)),
+  ).length;
 
   async function save() {
     if (tooMany) return;
-    // the saved choices of pages still listed stay (a stale one for a removed page would count
-    // toward the limit unseen), the changed ones replace or join
-    const listed = new Set(pages.map(keyOf));
-    const next = new Map([...saved].filter(([k]) => listed.has(k)));
-    for (const [k, v] of changed) next.set(k, v);
     try {
       await update.mutateAsync({
-        pluginPages: [...next].map(([contribution, section]) => ({ contribution, section })),
+        pluginPages: [...explicit].map(([contribution, section]) => ({ contribution, section })),
       });
       setDraft({});
       toast.success(t("saved"));
@@ -155,7 +177,7 @@ function NavigationSettings({ orgId }: { orgId: string }) {
     >
       <FormSection id="navigation-pages" title={t("section")} description={t("sectionHint")}>
         {pages.length === 0 ? (
-          <p>{t("empty")}</p>
+          <EmptyState size="panel" text={t("empty")} hint={t("emptyHint")} />
         ) : (
           <Stack gap={12}>
             {pages.map((p) => (
@@ -165,7 +187,7 @@ function NavigationSettings({ orgId }: { orgId: string }) {
                 {...(p.nav !== undefined && !saved.has(keyOf(p))
                   ? { help: t("suggested", { section: sectionLabel(p.nav) }) }
                   : {})}
-                {...(tooMany && wanted(p) === "primary" ? { error: t("limit") } : {})}
+                {...(tooMany && explicit.get(keyOf(p)) === "primary" ? { error: t("limit") } : {})}
               >
                 <Select
                   name={keyOf(p)}

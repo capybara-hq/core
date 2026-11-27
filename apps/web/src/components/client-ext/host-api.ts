@@ -67,7 +67,7 @@ import { CLIENT_API_VERSION } from "../../lib/client-host/api.generated";
 import { isParamRecord, safeHref } from "../../lib/page-params";
 import { meQuery } from "../../lib/query/shell";
 import type { UiActionRequest, UiView } from "../../lib/ui";
-import { useTemplateMark } from "../extension-ui/template-guard";
+import { useHostNotice, useTemplateMark } from "../extension-ui/template-guard";
 import { useResolvedTheme } from "../theme-root";
 import { UiViewRenderer } from "../ui-view/UiViewRenderer";
 import type { CapybaraEvent } from "./events";
@@ -464,13 +464,14 @@ function emptyLinks<T>(empty: T, where: string): T {
 
 /**
  * A forwarded page template: the design template with the host's crumbs before the plugin's path,
- * its links checked, counted by the page frame's template guard (plugin full pages spec §2). A
+ * the host's notice in its head (`header.notice`), its links checked, counted by the page frame's template guard (plugin full pages spec §2). A
  * missing `header` is a host error naming the template, not a TypeError inside it.
  */
 function hostTemplate(Template: ComponentType<never>, name: string): ComponentType<TemplateProps> {
   const Hosted = (props: TemplateProps) => {
     useTemplateMark();
     const crumbs = useContext(PageCrumbsContext);
+    const notice = useHostNotice();
     if (typeof props.header !== "object" || props.header === null) {
       throw new Error(
         `${name}: \`header\` is required ({ title, path?, ... }); the host puts its own crumbs ` +
@@ -478,7 +479,12 @@ function hostTemplate(Template: ComponentType<never>, name: string): ComponentTy
       );
     }
     const own = headerLinks(props.header, name);
-    const header = { ...own, path: [...crumbs, ...(own.path ?? [])] };
+    // the host's notice (live refresh stopped) sits in the template's head, inside the page
+    const header = {
+      ...own,
+      path: [...crumbs, ...(own.path ?? [])],
+      ...(notice !== null && notice !== undefined && notice !== false && { notice }),
+    };
     const out: TemplateProps = { ...props, header };
     if (props.tabs !== undefined && Array.isArray(props.tabs?.items)) {
       out.tabs = { ...props.tabs, items: props.tabs.items.map((t) => linkOf(t, name)) };

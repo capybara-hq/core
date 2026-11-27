@@ -76,8 +76,9 @@ export interface UiContribution {
    */
   frame?: UiPageFrame;
   /**
-   * `org.page` component only. `"primary"` (default): listed in the primary navigation;
-   * `"more"`: listed under the navigation's more entry.
+   * `org.page` component only, a suggestion an org admin's saved choice beats. `"more"`
+   * (default): listed under the navigation's more entry; `"primary"`: listed in the primary
+   * navigation (at most 3 plugin pages there).
    */
   nav?: UiPageNav;
 }
