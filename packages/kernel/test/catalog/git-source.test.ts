@@ -131,6 +131,29 @@ describe("resolveGitCommit", () => {
     expect(await resolveGitCommit({ url, ref: "refs/tags/v2" }, opts())).toBe(annotated);
   });
 
+  it("retries a transient 502 from the git server", async () => {
+    const main = await srv.commit("flaky", { "a.txt": "x" });
+    srv.failNext(502, "error code: 502");
+    expect(
+      await resolveGitCommit(
+        { url: srv.url("flaky") },
+        opts({ retry: { attempts: 3, backoffMs: 0 } }),
+      ),
+    ).toBe(main);
+  });
+
+  it("names the repository and the status when the git server keeps failing", async () => {
+    await srv.commit("down", { "a.txt": "x" });
+    srv.failNext(502, "error code: 502");
+    const e = await resolveGitCommit(
+      { url: srv.url("down") },
+      opts({ retry: { attempts: 1, backoffMs: 0 } }),
+    ).catch((x) => x);
+    expect(e).toBeInstanceOf(GitSourceError);
+    expect(e.message).toContain(srv.url("down"));
+    expect(e.message).toContain("502");
+  });
+
   it("takes a 40-hex ref as the commit without asking the server", async () => {
     srv.requests.length = 0;
     const sha = "ABCDEF0123456789abcdef0123456789ABCDEF01";
