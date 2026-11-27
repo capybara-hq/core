@@ -220,7 +220,7 @@ describe("Board", () => {
       "refused",
     );
     // entering the refused column is said while holding, not only on the drop
-    expect(live().textContent).toBe("「已完成」第 1 项 不能移到「已完成」，已放回。");
+    expect(live().textContent).toBe("「已完成」第 1 项 不能移到这里");
     key(held, " ");
     expect(p.onMove).not.toHaveBeenCalled();
     expect(columnOf(cardEl(container, "t1"))).toBe("todo");

@@ -613,7 +613,7 @@ function WideBoard<C extends BoardCard>(p: FormProps<C> & { instructionsId: stri
     const column = columnById(next.columnId);
     const parts = [fill(t("board.position"), position(next.columnId, next.index))];
     if (refusedAt(next.cardId, next.columnId, next.origin.columnId)) {
-      parts.push(fill(t("board.refused"), { column: column?.title ?? "" }));
+      parts.push(t("board.refusedHere"));
     } else if (column?.locked && next.columnId !== next.origin.columnId) {
       parts.push(fill(t("board.locked"), { column: column.title }));
       if (column.hint) parts.push(column.hint);
