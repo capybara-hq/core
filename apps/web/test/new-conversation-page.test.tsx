@@ -459,6 +459,43 @@ describe("the device picker (environments design §4.1)", () => {
     });
   });
 
+  it("a first message with a library file reads the library again on the next @", async () => {
+    resetNavigation("/");
+    const LIBRARY = `${ORG}/files`;
+    const libraryFile = {
+      id: "lf1",
+      name: "report.pdf",
+      contentType: "application/pdf",
+      size: 1024,
+      origin: "upload",
+      agentId: null,
+      sourceConversation: null,
+      versions: 1,
+      createdAt: "2026-11-01T08:00:00Z",
+      previewable: null,
+    };
+    const calls = stubApi({
+      [`POST ${ORG}/conversations/first-message`]: createdAt,
+      [`GET ${LIBRARY}`]: () => json(200, { files: [libraryFile], next: null }),
+      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
+      [`GET ${ORG}/connectors/resources`]: () => json(200, { resources: [], unavailable: [] }),
+    });
+    const libraryReads = () =>
+      calls.filter((c) => c.method === "GET" && c.url.split("?")[0] === LIBRARY);
+    await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    await user.click(await screen.findByRole("option", { name: /report\.pdf/ }));
+    expect(libraryReads()).toHaveLength(1);
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
+      message: { text: "go", files: ["lf1"] },
+    });
+    await user.type(input(), "@");
+    await vi.waitFor(() => expect(libraryReads()).toHaveLength(2));
+  });
+
   it("picker defaults to the last used device", async () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });

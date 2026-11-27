@@ -620,6 +620,34 @@ describe("the @ menu's library files", () => {
     expect(uploadsOrDiscards(calls)).toEqual([]);
   });
 
+  it("the heading stays Recent files while @rep waits for its answer, then Matching files", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const calls = api({
+      [`GET ${LIBRARY}`]: async (c) => {
+        if (new URL(c.url, "http://x").searchParams.get("q") === "rep") await held;
+        return librarySearch(LIBRARY_FILES)(c);
+      },
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    await within(await menu()).findByText("report.pdf");
+    expect(headingsOf(await menu())[0]).toBe(en.chat.composerMenu.recentFiles);
+    typeAtEnd("r", "e", "p");
+    await vi.waitFor(() => expect(libraryReads(calls)).toContain(`${LIBRARY}?q=rep&limit=8`));
+    // the rows are still the empty query's: so is the heading
+    expect(headingsOf(await menu())[0]).toBe(en.chat.composerMenu.recentFiles);
+    release();
+    await vi.waitFor(async () =>
+      expect(headingsOf(await menu())[0]).toBe(en.chat.composerMenu.matchingFiles),
+    );
+    expect(labelsOf(await menu())[0]).toBe("report.pdf");
+  });
+
   it("a file already in the draft is not added twice; removing one discards nothing", async () => {
     const calls = api({ [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES) });
     await renderChatRoute();

@@ -883,8 +883,11 @@ export function ComposerBar({
     placeholderData: keepPreviousData,
   });
   // The query the shown files answer (placeholder rows are an earlier query's): it names the group.
-  const filesFor = useRef("");
-  if (filesQ.data !== undefined && !filesQ.isPlaceholderData) filesFor.current = searched;
+  const [filesFor, setFilesFor] = useState("");
+  const filesSettled = filesQ.data !== undefined && !filesQ.isPlaceholderData;
+  useEffect(() => {
+    if (filesSettled) setFilesFor(searched);
+  }, [filesSettled, searched]);
   const timeZone = useTimeZone();
   // The rows are an earlier query's (the query has not rested yet, or its answer is on its way):
   // the menu filters them by the query itself, so ↵ never attaches a row the query no longer
@@ -1020,8 +1023,7 @@ export function ComposerBar({
     return [
       {
         id: "files",
-        label:
-          filesFor.current === "" ? t("composerMenu.recentFiles") : t("composerMenu.matchingFiles"),
+        label: filesFor === "" ? t("composerMenu.recentFiles") : t("composerMenu.matchingFiles"),
         items: list.map(
           (f): ComposerMenuItem => ({
             id: f.id,
@@ -1252,22 +1254,14 @@ export function ComposerBar({
                         : "composerMenu.noResources",
                     )
                   : t("composerMenu.noMatch"),
-          // a source that failed never hides the other: its failure is said under the list
+          // one source failed and the other did not (both failing is the empty line above): the
+          // failure is said under the rows of the one that answered
           ...(menu.kind === "at" && !everyFailed && (libraryFailed || resourcesFailed)
             ? {
                 notice: {
-                  text: [
-                    ...(libraryFailed
-                      ? [t("composerMenu.libraryFailed", { reason: errorMessage(filesQ.error) })]
-                      : []),
-                    ...(resourcesFailed
-                      ? [
-                          t("composerMenu.resourcesFailed", {
-                            reason: errorMessage(resourcesQ.error),
-                          }),
-                        ]
-                      : []),
-                  ].join(" "),
+                  text: libraryFailed
+                    ? t("composerMenu.libraryFailed", { reason: errorMessage(filesQ.error) })
+                    : t("composerMenu.resourcesFailed", { reason: errorMessage(resourcesQ.error) }),
                 },
               }
             : {}),
