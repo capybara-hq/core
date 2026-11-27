@@ -522,19 +522,21 @@ and manual compaction cheaper on its own.
 
 #### Provider landscape
 
-Checked against the vendors' official documentation on 2026-11-27 (each fact cites its source;
-"unverified" marks what the official pages do not state). Prices are relative to the model's input
-price.
+Checked against the vendors' official documentation on 2026-11-27 and re-verified on 2026-11-28
+(task P0: official pages read in full, plus live probes with raw HTTP; each fact cites its source;
+"unverified" marks what neither the official pages nor a probe settled). Prices are relative to the
+model's input price.
 
 | Vendor / our plugin | Mechanism | Lifetime | Hit refreshes | Chosen per request | Qualifies (≥ 30 min)? |
 |---|---|---|---|---|---|
 | Anthropic (`anthropic`) | explicit `cache_control` breakpoints (≤ 4, a top-level automatic one counts) | 5 min default, or 1 h | yes, from the request's start | `cache_control.ttl: "1h"` | only with `1h` (`longTtl` on) |
 | OpenAI, GPT-5.6 and later (`openai`, Responses) | implicit by default (automatic breakpoint at the latest message); explicit breakpoints optional | `prompt_cache_options.ttl` `30m` (default) or `12h`, a **minimum** | 30m: kept ≥ 30 min after a read; 12h: a read does not restart it | `prompt_cache_options.ttl` | **yes**, the default `30m` |
-| OpenAI, earlier models | automatic prefix caching | `prompt_cache_retention` `in_memory` (about 5–10 min idle, at most 1 h) or `24h` (often about 30 min, at most 24 h) | in_memory counts idle time; 24h unverified | `prompt_cache_retention` | no (a range, no guarantee) |
-| DeepSeek (`deepseek`, openai-compatible `deepseek`) | automatic disk cache, best-effort | cleared hours to days after last use | unverified | no | no (best-effort, no lifetime) |
-| Bailian explicit (`bailian`) | `cache_control: {type: "ephemeral"}` (≤ 4, 20-block lookback) | 5 min fixed; Qwen4 `5m` or `1h` | yes, each hit restarts it | general models: no; Qwen4: `prompt_cache_options.ttl` | Qwen4 `1h` only (`longTtl` on; endpoint unverified) |
-| Bailian implicit (openai-compatible `qwen`) | automatic prefix, not guaranteed | no fixed lifetime, cleared periodically | unverified | no | no (no lifetime) |
-| Ark implicit (`ark`, openai-compatible `ark`) | automatic on supported models, not guaranteed; `prompt_cache_key` only for routing affinity | no fixed lifetime, capacity eviction | unverified | no | no (no lifetime) |
+| OpenAI, earlier models | automatic prefix caching | `prompt_cache_retention` `in_memory` (about 5–10 min idle, at most 1 h) or `24h` (often about 30 min, at most 24 h) | in_memory counts idle time; 24h unverified (the page states no refresh rule) | `prompt_cache_retention` | no (a range, no guarantee) |
+| DeepSeek (`deepseek`, openai-compatible `deepseek`) | automatic disk cache, best-effort | cleared hours to days after last use | not stated (no switch, no configurable lifetime) | no | no (best-effort, no lifetime) |
+| Bailian explicit (`bailian`) | `cache_control: {type: "ephemeral"}` (≤ 4, 20-block lookback) | 5 min fixed; Qwen4 `5m` or `1h` | yes, each hit restarts it | general models: no; Qwen4: `prompt_cache_options.ttl` | Qwen4 `1h` only (`longTtl` on; works on the native `multimodal-generation` endpoint, verified live) |
+| Bailian explicit on the compatible-mode endpoint (openai-compatible `qwen`, `cacheFields: "dashscope"` since plugins#304) | `cache_control` markers on the last system block and the last message block | 5 min, restarted by each hit | yes | no | no (5 min) |
+| Bailian implicit (a request without markers; no plugin sends one) | automatic prefix, not guaranteed | no fixed lifetime, cleared periodically | not stated | no | no (no lifetime) |
+| Ark implicit (`ark`, openai-compatible `ark`) | automatic on supported models, not guaranteed; `prompt_cache_key` only for routing affinity | no fixed lifetime, capacity eviction | not stated | no | no (no lifetime) |
 | Ark explicit (Responses API only; our plugin uses Chat) | `caching.type=enabled`, session or prefix | `expire_at`, 3 days default, 7 max | no | `expire_at` | not applicable (Responses only; our plugin uses Chat) |
 
 Sources and details:
@@ -546,7 +548,9 @@ Sources and details:
   **start** of the request that read or wrote the entry; a request that reads a 5-minute entry
   restarts its 5 minutes even if it asked for `1h`; 1 h entries must come before 5 min entries.
   Minimum cacheable length 512–4096 tokens depending on the model; shorter prompts are silently not
-  cached. Writes 1.25× (5 min) or 2× (1 h), reads 0.1× (lower on some newer models). Usage reports
+  cached; the per-model minimums are listed in the [Anthropic minimums](#anthropic-minimum-cacheable-length)
+  below. Writes 1.25× (5 min) or 2× (1 h), reads 0.1× (0.05× on Opus 5.5 and Sonnet 5.5, 0.025× on
+  Fable and Mythos 5.1 / 5.2). Usage reports
   `cache_read_input_tokens`, `cache_creation_input_tokens` and the split
   `cache_creation.ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`. No response field
   states an expiry.
@@ -558,16 +562,47 @@ Sources and details:
   entry for at least another 30 minutes; a read does not restart the 12h clock. Reads 0.1× (0.05× on
   some models), writes 1.25× (30m) or 2.5× (12h); minimum 1024 tokens. Earlier models cache
   automatically with `prompt_cache_retention` `in_memory` or `24h` and no write surcharge. Usage
-  reports `input_tokens_details.cached_tokens`, `cache_write_tokens` and, on 5.6+,
-  `cache_write_tokens_details.ttl_30m_tokens` / `ttl_12h_tokens`. Unverified: whether
-  `prompt_cache_options` works on Chat Completions (the page names Responses), whether the 24h tier
-  refreshes on a hit, the 24h tier's price.
+  reports `usage.input_tokens_details.cached_tokens`, `cache_write_tokens` and, on 5.6+,
+  `cache_write_tokens_details.ttl_30m_tokens` / `ttl_12h_tokens` (the counts do not overlap and sum
+  to `cache_write_tokens`; `cached_tokens` excludes tokens charged as writes). The page documents
+  `prompt_cache_options` for Responses only and names no complete model list.
+  Verified live (2026-11-28, raw HTTP; `gpt-5.6-luna`, `gpt-5.6-sol`; request shape
+  `POST /v1/responses {store: false, instructions: <~5.8k tokens>, input, max_output_tokens: 16}`):
+  - With **no** cache option the first request already writes at the 30m tier
+    (`cache_write_tokens` 5811 = `ttl_30m_tokens` 5811, `ttl_12h_tokens` 0, `cached_tokens` 0), the
+    second reads (`cached_tokens` 5803, `cache_write_tokens` 8 for the new tail). So the implicit
+    default is a 30m write, billed at the write rate.
+  - `prompt_cache_options: {ttl: "12h"}` writes `ttl_12h_tokens` (5812) and a second request reads
+    it (`cached_tokens` 5804); `{ttl: "30m", mode: "implicit"}` is accepted.
+  - **Chat Completions accepts `prompt_cache_options` on 5.6+** (`gpt-5.6-luna`: 200, usage has
+    `cache_write_tokens` 5810 and `cached_tokens` but **no** `cache_write_tokens_details`), and
+    **rejects it on `gpt-5.5`** (400 "prompt_cache_options is not supported on this model"). An
+    option must therefore only be sent for 5.6+ ids.
+  - Model ids the account lists: `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-6-astra`,
+    `gpt-6-luna`, `gpt-6-sol`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6.2-astra`, `gpt-6.2-sol` (and
+    `-healthcare` variants); `gpt-5.5`, `gpt-5.4*`, `gpt-5.3-codex`, `gpt-5.2*`, `gpt-5.1`, `gpt-5*`
+    are earlier (GPT-5.6 has no bare `gpt-5.6` id). "5.6 and later" is therefore the numeric prefix
+    `gpt-<major>[.<minor>]` ≥ 5.6, a dated suffix not counting (`gpt-5.4-2026-03-05` is 5.4).
+  - Prices ([pricing](https://developers.openai.com/api/docs/pricing), short context, per 1M tokens):
+    30m write / 12h write `gpt-5.6-sol` $5.00 / $10.00, `gpt-5.6-terra` $2.50 / $5.00,
+    `gpt-5.6-luna` $0.25 / $0.50 (long context twice that): the 1.25× / 2.5× ratios of the caching
+    guide.
+  - Still unverified: whether the 24h `prompt_cache_retention` tier refreshes on a hit (the guide
+    states no rule for it) and its price (neither the guide nor the pricing page lists a surcharge
+    or a price for it).
 - **DeepSeek** ([context caching](https://api-docs.deepseek.com/guides/kv_cache),
   [pricing](https://api-docs.deepseek.com/quick_start/pricing)): on for everyone, no request
   option; prefix units saved at request boundaries; entries usually cleared "a few hours to a few
   days" after last use; best-effort. Hits cost about 2–3.3% of a miss; no write surcharge, no
-  storage fee. Usage `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`. Unverified: minimum
-  length and unit size, any configurable lifetime.
+  storage fee. Usage `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`. The page states **no**
+  minimum length, no unit size ("fixed token intervals", no number), no isolation rule and no switch
+  or setting for the lifetime. Measured live (2026-11-28, `deepseek-flash` via the DeepSeek API,
+  `POST /chat/completions` with a system message of N lines then a short user message, repeated 6 s
+  later): no hit at prompt sizes 57, 105, 153 and 249 tokens; first hit at a 262-token prompt
+  (`prompt_cache_hit_tokens` 128); every hit a multiple of 128 (128 at 262–377, 256 at 423 and 489,
+  768 at 969, 1792 at 1929, 3712 at 3866). So the unit is **128 tokens** and nothing smaller than
+  about 256 tokens caches; the old "64 token" figure is not supported. This is a measurement, not a
+  documented guarantee.
 - **Bailian** ([context cache](https://help.aliyun.com/zh/model-studio/context-cache),
   [Qwen4 explicit cache](https://help.aliyun.com/en/model-studio/explicit-cache-qwen4)): implicit
   cache automatic, not guaranteed, no fixed lifetime, minimum 1024 (512 for GLM / MiniMax), hits
@@ -575,16 +610,79 @@ Sources and details:
   it, minimum 1024, at most 4 markers, 20-block lookback, writes 1.25×, hits 0.1×. **Explicit and
   implicit caching are mutually exclusive within one request.** Qwen4 adds `prompt_cache_options`
   `{mode, ttl}` with `5m` or `1h` (a hit renews by the current request's TTL and keeps the later
-  expiry), writes about 1.25× / 2×, and a TTL split in usage. Unverified: whether Qwen4's
-  `prompt_cache_options` applies to the DashScope native `generation` endpoint our plugin uses
-  (the page lists Chat Completions, Responses and the Anthropic-compatible API).
+  expiry), writes about 1.25× / 2×, and a TTL split in usage. The Qwen4 page documents the option
+  for Chat Completions (usage `prompt_tokens_details.cache_creation.ephemeral_5m_input_tokens` /
+  `ephemeral_1h_input_tokens`), Responses (`cache_write_tokens_details.ttl_5m_tokens` /
+  `ttl_1h_tokens`) and the Anthropic-compatible API (`cache_control.ttl`); it does not mention the
+  native endpoint. Verified live (2026-11-28, `qwen4-max`, raw HTTP to
+  `https://<workspace>.cn-beijing.maas.aliyuncs.com`, system prompt of ~4.6k tokens with a
+  `cache_control: {type: "ephemeral"}` marker):
+  - `qwen4-max` is **only served by `/api/v1/services/aigc/multimodal-generation/generation`**; the
+    `text-generation` path answers 400 "url error" for it (with and without the option).
+  - On the native endpoint the option goes in **`parameters.prompt_cache_options: {ttl: "1h"}`**:
+    the write is reported as `usage.prompt_tokens_details.cache_creation.ephemeral_1h_input_tokens`
+    4588 (and `ephemeral_5m_input_tokens` 0); a second request reads it (`cached_tokens` 4888). The
+    same option at the **top level** of the body is accepted but ignored (a 5-minute write,
+    `ephemeral_5m_input_tokens` 4588), so a wrong placement fails silently.
+  - `cache_control: {type: "ephemeral", ttl: "1h"}` on the marker also works (a 1h write, a hit on
+    the second request): the marker-level form is the simplest mapping for the plugin.
+  - A request without the option (5m) or with `ttl: "5m"` that hits a 1h entry reads it and writes
+    nothing new (`cache_creation` all 0); the entry's expiry is not shortened by the hit in any way
+    these probes could show (not tested over an hour).
+  - Usage field names on the native endpoint: `usage.prompt_tokens_details.cached_tokens`,
+    `cache_type` (`"ephemeral"`), `cache_creation_input_tokens`, `cache_write_tokens`,
+    `cache_creation.ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`. `input_tokens`
+    includes cached and written tokens (the plugin already subtracts both).
+  - The explicit 5-minute cache restarts on a hit, live: `qwen-plus` on `text-generation`, prefix A
+    written at 0 s, hit at 171 s, hit again at 362 s (190 s after the refresh, 362 s after the
+    write): `cached_tokens` 4577; control prefix B written at 0 s and never hit: miss at 362 s
+    (`cache_creation_input_tokens` 4727, `cached_tokens` 0).
+  - openai-compatible `qwen` dialect (compatible-mode, `cache_control` markers on the last system
+    block and the last message, plugins#304): **an explicit 5-minute cache, confirmed**. `qwen-plus`
+    #1 `cache_creation_input_tokens` 4888 (`cache_type` `ephemeral`,
+    `cache_creation.ephemeral_5m_input_tokens` 4888), #2 `cached_tokens` 4879 with 9 new written;
+    `qwen3.8-flash` the same (5069 read of 5084). Two requests without markers on `qwen-plus` both
+    reported `cached_tokens` 0, so the implicit cache did not hit there (the dialect's old
+    "implicit" description no longer applies).
 - **Ark** ([context cache](https://docs.volcengine.com/docs/ark/context-cache)): implicit cache on
   supported models, cannot be turned off, not guaranteed, no fixed lifetime (capacity and
-  eviction), minimum 1024 by default (128–8960 on some models); `prompt_cache_key` is a routing hint
-  only. Explicit cache only on the Responses API, `expire_at` default 3 days after creation, at most
-  7, use does not extend it, billed per hour of storage. Unverified: hit and storage prices; the
-  older Context API's TTL range ([context API](https://docs.volcengine.com/docs/82379/1529329): a
-  search summary says default 86400 s, 3600–604800, reset on use; the page body was not read).
+  eviction), minimum 1024 by default (128–8960 on some models, listed by model id: 128 for
+  `deepseek-v4-1-flash-261017` and `-economy-261017`; 256 for `deepseek-v4-1-flash-260910` and
+  `kimi-k3-1-pro-261024`; 2048 for `doubao-seed-2-1-turbo-260628`, `glm-5-2-260617`,
+  `deepseek-v4-pro-ga-260813` and `deepseek-v4-flash-ga-260731`; 8960 for `glm-5-3-flash-260828`);
+  `prompt_cache_key` is a routing hint only; no separate storage fee for the implicit cache. Live
+  (2026-11-28, `deepseek-v4-flash-ga-260731`, Chat API): no hit at 1107 and 1447 tokens, a hit of
+  2048 at 3827 tokens, matching the 2048 threshold. Explicit cache only on the Responses API,
+  `expire_at` default 3 days after creation, at most 7, use does not extend it, billed per natural
+  hour of storage. Prices ([model pricing](https://docs.volcengine.com/docs/ark/model-pricing),
+  online inference standard tier, CNY per 1M tokens): cache hit `deepseek-v4-pro` 0.30,
+  `deepseek-v4-flash` 0.10, `doubao-seed-2.1-pro` 1.20, `-lite` 0.16, `-turbo` 0.60; explicit cache
+  storage 0.017 per 1M tokens per hour on all of them. The older Context API
+  ([create](https://docs.volcengine.com/docs/82379/1346559), page updated 2025-03-05): `ttl` default
+  86400 s, range 3600–604800 s (1 h to 7 days), the countdown restarts on each use, `mode`
+  `session` (default) or `common_prefix`; it is a separate legacy API our plugin does not use.
+
+#### Anthropic minimum cacheable length
+
+([prompt caching, "Cache limitations"](https://platform.claude.com/docs/en/build-with-claude/prompt-caching);
+the page names models, not always the API id; ids below are as `GET /v1/models` lists them for our
+test account on 2026-11-28.) The anthropic plugin's own default list is `claude-opus-5-5`,
+`claude-sonnet-5-5`, `claude-haiku-5-5` (all 512); the model list is otherwise the deployment's
+configured ids.
+
+| `minTokens` | Model ids |
+|---|---|
+| 512 | `claude-fable-5-2`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` (and the Mythos 5 / 5.1 / 5.2 ids) |
+| 1024 | `claude-opus-4-8`, `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-sonnet-4-5`, `claude-opus-4-1`, `claude-opus-4`, `claude-sonnet-4` |
+| 2048 | `claude-opus-4-7`, Mythos Preview |
+| 4096 | `claude-opus-4-6`, `claude-opus-4-5-20251101`, `claude-haiku-4-5-20251001` |
+
+An id not in the table gets 4096 (the largest, so a prompt below it is never assumed cached).
+Verified live (2026-11-28, `POST /v1/messages`, `cache_control` on the system block): `claude-haiku-5-5`
+no write at 496 input tokens, a 530-token write at the next size; `claude-opus-5-5` none at 485,
+write 518; `claude-sonnet-5-5` none at 507, write 542 (all consistent with 512);
+`claude-haiku-4-5-20251001` none at 992, write 4100. The `1h` tier on `claude-haiku-5-5`: write
+`cache_creation.ephemeral_1h_input_tokens` 1402, a second request `cache_read_input_tokens` 1402.
 
 **No vendor returns an expiry.** Ark's `expire_at` is a request parameter (and unused by us);
 everything else reports only how many tokens were read or written (some split by TTL tier). So the
@@ -592,12 +690,12 @@ kernel derives expiry itself (§9.3).
 
 Idle compaction (phase 2) therefore applies only to requests with a lifetime of 30 minutes or
 more: **Anthropic** with the `1h` tier, **OpenAI GPT-5.6+** with its default `30m` tier (a
-minimum), and **Bailian Qwen4** with `1h` (if its option works on the endpoint our plugin uses:
-unverified). With `promptCache.longTtl` off (the default), Anthropic and Bailian send their 5-minute
+minimum), and **Bailian Qwen4** with `1h` (works on the native `multimodal-generation` endpoint,
+verified). With `promptCache.longTtl` off (the default), Anthropic and Bailian send their 5-minute
 defaults and do not qualify; OpenAI 5.6+ qualifies by default. Earlier OpenAI models default to
 `in_memory` (about 5–10 minutes) or `24h` retention that is "often about 30 minutes" with no
 guarantee, and do not qualify. DeepSeek, Bailian implicit and Ark implicit have no lifetime to time
-against; Ark explicit is Responses-only. All of them still benefit from the in-context summary
+against (the openai-compatible `qwen` dialect is an explicit 5-minute cache and does not qualify); Ark explicit is Responses-only. All of them still benefit from the in-context summary
 (§9.4) whenever their cache happens to hit.
 
 
@@ -733,12 +831,17 @@ Still open, waiting on the phase 1 SDK contract (tracked in the plugins reposito
    `cache_creation.ephemeral_5m/1h_input_tokens` split (`cacheWriteByTtl`); no per-model minimum
    length declared.
 3. **openai**: sends no `prompt_cache_options` / `prompt_cache_retention`; does not read
-   `cache_write_tokens_details` (`cacheWriteByTtl`); must declare GPT-5.6+ as `guaranteed`,
-   `defaultTtl: 1800`, `ttlIsMinimum: true`.
-4. **bailian**: no `1h` option (Qwen4 has one; whether it works on the DashScope native endpoint is
-   unverified); does not read Qwen4's TTL split.
-5. **openai-compatible `qwen` dialect**: implicit only (sends no marker), so no lifetime; it reads
-   `cache_creation_input_tokens`, which implicit caching never reports.
+   `cache_write_tokens_details` (`cacheWriteByTtl`); must declare GPT-5.6+ (numeric id prefix
+   `gpt-<major>[.<minor>]` ≥ 5.6, §9.1) as `guaranteed`, `defaultTtl: 1800`, `ttlIsMinimum: true`,
+   `minTokens` 1024; send `prompt_cache_options` only for those ids (`gpt-5.5` answers 400).
+4. **bailian**: no `1h` option (Qwen4 has one and it works on the native `multimodal-generation`
+   endpoint, §9.1: `cache_control.ttl: "1h"` on the marker, or `parameters.prompt_cache_options`,
+   never the body's top level, which is silently ignored); does not read Qwen4's TTL split
+   (`usage.prompt_tokens_details.cache_creation.ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`).
+5. **openai-compatible `qwen` dialect**: since plugins#304 an explicit 5-minute cache (markers on the
+   last system block and the last message; confirmed live, §9.1), so it declares explicit, `5m` only,
+   hit-refreshed, `minTokens` 1024, and is not eligible for idle compaction; it reads
+   `cache_creation_input_tokens` correctly. Its `ephemeral_5m` split can feed `cacheWriteByTtl`.
 6. DeepSeek and Ark report no cache writes (`cacheWriteTokens` 0): a vendor limit, not a plugin bug.
 
 ## 10. Rollout
@@ -830,10 +933,27 @@ Still open (recommended answers):
   marked point" reliably enough to keep the kept tail. Recommend deciding in the phase 1 plan with
   an eval over recorded long conversations; if it cannot, the in-context summary covers everything
   and keeps no verbatim tail.
-- **Q12. Unverified vendor facts (§9.1).** Re-check before phase 1 ships: OpenAI
-  `prompt_cache_options` on Chat Completions and the 24h tier's refresh and price; Qwen4
-  `prompt_cache_options` on the DashScope native endpoint; DeepSeek's minimum length; Ark's prices
-  and the Context API TTL.
+- **Q12. Unverified vendor facts (§9.1). Closed 2026-11-28 (task P0), with two items left
+  unverified.**
+  - OpenAI `prompt_cache_options` on Chat Completions: accepted on 5.6+ (usage then has no TTL split),
+    rejected with 400 on `gpt-5.5`; our Responses mapping is unaffected.
+  - OpenAI 24h `prompt_cache_retention` tier: refresh on a hit and price stay **unverified** (neither
+    the guide nor the pricing page states them); earlier models do not qualify regardless.
+  - Qwen4 `prompt_cache_options` on the DashScope native endpoint: works, on `multimodal-generation`
+    only (`qwen4-max` is not served by `text-generation`), as `parameters.prompt_cache_options` or
+    `cache_control.ttl`; usage `prompt_tokens_details.cache_creation.ephemeral_5m/1h_input_tokens`.
+  - Explicit Bailian 5-minute cache restarts on a hit: confirmed live (hit at 362 s on an entry read at
+    171 s).
+  - openai-compatible `qwen` dialect: an explicit 5-minute cache, confirmed on the compatible-mode
+    endpoint (second request reads, `cache_creation.ephemeral_5m_input_tokens` reported).
+  - DeepSeek: no documented minimum or unit; measured unit 128 tokens, first hit at a 262-token prompt
+    (declare `minTokens` 256); no configurable lifetime.
+  - Ark: implicit-cache hit prices and the 0.017 CNY / 1M tokens / hour explicit storage price recorded;
+    per-model minimums confirmed against the page and one live probe (2048 on
+    `deepseek-v4-flash-ga-260731`); the Context API `ttl` is 3600–604800 s, default 86400, reset on use.
+  - Anthropic per-model `minTokens` table recorded (§9.1), confirmed live at the 512 boundary.
+  - Still unverified: the OpenAI 24h tier's refresh and price; whether a Qwen4 hit renews a 1h entry
+    over a full hour (documented, not probed).
 
 ## AGENTS.md rules touched
 
