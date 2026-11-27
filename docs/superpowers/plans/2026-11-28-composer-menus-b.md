@@ -115,3 +115,5 @@ except the catalog).
 ## Progress
 
 - 2026-11-28: plan written; wave 1 (B1, B2) dispatched.
+- 2026-11-28: B1 d6c940aa0, B2 0dc9c313d, B3 3df656899 committed; review fixes committed: B2
+  9aba7cd30, B1 68c8454aa, B3 61cb95782. Next: review of the fix commits, then B4.
