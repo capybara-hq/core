@@ -422,6 +422,19 @@ describe("the native strip (nav@1)", () => {
     expect(state?.account).toEqual({ name: "长".repeat(64), initial: "长" });
   });
 
+  it("the frozen schedules id opens /automations and is current there", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const fake = fakeNav();
+    const onNavigate = vi.fn();
+    const view = render(shell(fake.nav, "/", { onNavigate }));
+    act(() => fake.select("schedules"));
+    expect(onNavigate).toHaveBeenLastCalledWith("/automations", { transition: "none" });
+    view.rerender(shell(fake.nav, "/automations", { onNavigate }));
+    expect(fake.nav.set).toHaveBeenLastCalledWith(
+      expect.objectContaining({ current: "schedules" }),
+    );
+  });
+
   it("a native tap plays a selection haptic and navigates without a slide", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const fake = fakeNav();

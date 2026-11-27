@@ -122,8 +122,8 @@ migrations rewrite stored data once where they can.
 ### Scheduled tasks are renamed to automations (migration 0188)
 
 Migration 0188 renames the scheduled task tables (to `automations`, `automation_runs` and
-`automation_grants`) and rewrites the stored values that name the feature. It cannot be rolled back
-with old replicas running: old code looks for the old table names. Stop the old `api`, `worker` and
+`automation_grants`) and rewrites the stored values that name the feature. It cannot run beside
+old replicas: old code looks for the old table names. Stop the old `api`, `worker` and
 `gateway` replicas before migrating, then start the new ones.
 
 - **Rename the kernel config group `schedules.*` to `automations.*` before starting the new
@@ -131,7 +131,9 @@ with old replicas running: old code looks for the old table names. Stop the old 
   field names), in the config file and in Nacos. The config schema is strict and refuses the old
   key, so a kernel that still has it does not start.
 - **Jobs already queued are dropped.** `sched-fire` and `sched-settle` jobs in Redis are for the
-  old queue names; the next scan tick finds the due automations again and recovers them.
+  old queue names. The ticks those jobs carried are lost; their pending runs are settled when the
+  automation next fires. A `once` automation has no next tick, so its run may stay pending (delete
+  or re-create such automations if needed).
 - **API names changed** (no compatibility routes): the routes `/schedules` are `/automations`, and
   the builtin tools `Schedule*` are `Automation*`. Update clients, agents that name these tools in
   their allow lists, and anything that calls the old routes.

@@ -15,4 +15,5 @@ deployment that sets `CAPYBARA_SCHEDULES__*` must rename those variables to
 `CAPYBARA_AUTOMATIONS__*`, and rename the `schedules` group in its config file and in Nacos too:
 the kernel refuses to start while the old key is present. Stop old replicas before migrating
 (0188 cannot run beside them); `sched-fire` and `sched-settle` jobs already in Redis are dropped
-and the next scan tick recovers them. See the upgrade guide.
+and the ticks they carried are lost (pending runs settle when the automation next fires; a `once`
+automation may stay pending). See the upgrade guide.
