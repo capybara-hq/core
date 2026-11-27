@@ -35,7 +35,7 @@ export type ToolRowData = {
   keyArg?: string;
   /**
    * The key argument is a guess the input has not confirmed yet (a streaming `Write` whose
-   * content came before its path): the preview carries the muted 「推测：」 prefix (§6.16.9).
+   * content came before its path): the preview carries the muted `tool.keyArgGuess` prefix (§6.16.9).
    */
   keyArgGuess?: boolean;
   /** Extra information after " · " ("42 条", "第 1–120 行"). */

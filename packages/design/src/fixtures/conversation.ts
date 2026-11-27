@@ -230,7 +230,7 @@ export type FixtureTool = {
   description?: string;
   /** Key arguments, shown in body color. */
   keyArg?: string;
-  /** The key argument is a guess not confirmed yet (the muted 「推测：」 prefix, §6.16.9). */
+  /** The key argument is a guess not confirmed yet (the muted `tool.keyArgGuess` prefix, §6.16.9). */
   keyArgGuess?: boolean;
   /** Extra info after the key arguments (faint). */
   extra?: string;
