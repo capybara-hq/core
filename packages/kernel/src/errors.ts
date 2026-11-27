@@ -368,6 +368,12 @@ export const ERROR_CODES = {
   "conversation.queue_item_not_found": 404,
   /** A sub-agent's conversation takes no messages from people (sub-agents spec §6.1). */
   "conversation.read_only": 409,
+  /**
+   * A referenced project file is not there to reference (composer menus §5): the conversation has
+   * no device project, the path leaves it, or the device reports no file there;
+   * `details: [{ path?, reason? }]`.
+   */
+  "conversation.project_file_unavailable": 422,
   "run.not_active": 409,
   /** A run that is not one of the conversation's (the live draft route, spec 2026-11-07 §3.2). */
   "run.not_found": 404,
@@ -536,6 +542,13 @@ export const ERROR_CODES = {
   "device.project_path_unreadable": 422,
   /** The device provider refused the project's directory (its reason is the message and details). */
   "device.project_refused": 422,
+  /**
+   * A path relative to a device project that leaves it (composer menus §5): absolute, `..` above
+   * the root, a backslash or a control character; `details: [{ path }]`.
+   */
+  "device.path_outside_project": 422,
+  /** The device's provider cannot list its directories for its owner (no `list` / owner browse). */
+  "device.list_unsupported": 409,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
   "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */

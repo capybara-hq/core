@@ -189,6 +189,7 @@ describe("devices", () => {
       "devices.delete",
       "devices.get",
       "devices.list",
+      "devices.list-project-files",
       "devices.list-projects",
       "devices.project-candidates",
       "devices.remove-project",
@@ -399,6 +400,16 @@ describe("devices", () => {
       candidates: [],
       supported: false,
     });
+    // listing a project's files is a read; a provider without list cannot list them
+    expect(await classOf("devices.list-project-files", { deviceId, name: "app" }, ctx)).toBe(
+      "read",
+    );
+    await expect(
+      run("devices.list-project-files", { deviceId, name: "app", path: "src" }, ctx),
+    ).rejects.toThrow(/list/);
+    await expect(
+      run("devices.list-project-files", { deviceId, name: "app", path: "../x" }, ctx),
+    ).rejects.toThrow(/project root/);
     expect(await classOf("devices.add-project", { deviceId, path: "app" }, ctx)).toBe("personal");
     const s = await op("devices.add-project").summary?.(
       op("devices.add-project").input.parse({ deviceId, path: "app", name: "App" }),
@@ -423,6 +434,9 @@ describe("devices", () => {
     await expect(run("devices.list-projects", { deviceId }, ctxOf(memberId))).rejects.toThrow(
       /devices\.list/,
     );
+    await expect(
+      run("devices.list-project-files", { deviceId, name: "app" }, ctxOf(memberId)),
+    ).rejects.toThrow(/devices\.list/);
   });
 });
 

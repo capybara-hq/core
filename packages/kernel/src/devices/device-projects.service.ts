@@ -52,7 +52,7 @@ export const MAX_DEVICE_PROJECTS = 100;
  * owner browse scope (`SandboxService.withBrowse`: owner-authenticated, no conversation, no Full
  * consent, its roots from the owner's browsing ceiling).
  */
-interface ProjectReader {
+export interface ProjectReader {
   /** The workspace root: the last known one. */
   workspace: string;
   list?: (
@@ -65,7 +65,7 @@ interface ProjectReader {
 }
 
 /** The owner browse route's reader: the browse scope's stat / list / scan only. */
-function browseReader(b: SandboxBrowse, workspace: string): ProjectReader {
+export function browseReader(b: SandboxBrowse, workspace: string): ProjectReader {
   return {
     workspace,
     list: (path, limit, signal) => b.list(path, { limit, signal }),
@@ -553,7 +553,7 @@ function resolve(scope: Scope, workspace: string, relative: string): string {
  * provider; a malformed device answer becomes `device.projects_unavailable` (the program's fault).
  * Undefined for anything else.
  */
-function passThrough(e: unknown): unknown {
+export function passThrough(e: unknown): unknown {
   if (isSandboxGoneError(e) || isFileSystemGoneError(e) || e instanceof ApiError) return e;
   if (e instanceof SandboxProviderUnreachableError) return e;
   if (e instanceof DeviceProtocolError) {
@@ -570,7 +570,7 @@ function passThrough(e: unknown): unknown {
  * lease): 503 `device.projects_unavailable`. Only a `ToolError`'s message (the relay's, written for
  * people) is passed on; a provider's own error text is not.
  */
-function unavailable(e: unknown): ApiError {
+export function unavailable(e: unknown): ApiError {
   return new ApiError(
     "device.projects_unavailable",
     e instanceof ToolError
@@ -594,7 +594,7 @@ const pathMissing = (path: string): ApiError =>
  * missing path `device.project_path_missing`, and a `stat` that fails too means the device could
  * not be asked (503 `device.projects_unavailable`).
  */
-async function listFailure(
+export async function listFailure(
   e: unknown,
   r: ProjectReader,
   path: string,

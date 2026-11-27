@@ -44,6 +44,7 @@
   "conversations/prompt-suggestion-request.test.ts",
   "ctx/device-provider-check.test.ts",
   "devices/label.test.ts",
+  "devices/project-paths.test.ts",
   "devices/sandbox-state.test.ts",
   "dial-in/envelope.test.ts",
   "evals/diff.test.ts",

@@ -1,5 +1,6 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import { DeviceProjectFilesService } from "../../devices/device-project-files.service.js";
 import { DeviceProjectsService } from "../../devices/device-projects.service.js";
 import { DevicesService, type DeviceView } from "../../devices/devices.service.js";
 import {
@@ -8,6 +9,7 @@ import {
   DeviceNetworkBody,
   DeviceParams,
   DeviceProjectAddBody,
+  DeviceProjectFilesQuery,
   DeviceProjectParams,
 } from "../../devices/dto.js";
 import { deviceLabel } from "../../devices/label.js";
@@ -82,6 +84,7 @@ export class DevicesOperations implements OnModuleInit {
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(DevicesService) private readonly devices: DevicesService,
     @Inject(DeviceProjectsService) private readonly projects: DeviceProjectsService,
+    @Inject(DeviceProjectFilesService) private readonly projectFiles: DeviceProjectFilesService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
 
@@ -507,6 +510,54 @@ export class DevicesOperations implements OnModuleInit {
         ],
         run: (input, ctx) =>
           this.projects.candidates(ctx.orgId, ctx.actorAccountId, input.deviceId),
+      }),
+      defineOperation({
+        id: "devices.list-project-files",
+        description:
+          "List one directory of a project on one of your devices: its folders, then its files, by name (at most 200; truncated says more exist). path is relative to the project root (empty or absent for the root), never absolute and never above the root; q keeps the names containing it. Names only, never file contents. Takes the id from devices.list and the name from devices.list-projects.",
+        input: DeviceId.extend({ name: DeviceProjectParams.shape.name })
+          .extend(DeviceProjectFilesQuery.shape)
+          .strict(),
+        example: {
+          deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20",
+          name: "capybara",
+          path: "src",
+        },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/devices/:id/projects/:name/files"],
+        renames: { deviceId: "id" },
+        confirm: "read",
+        errors: [
+          {
+            code: "device.not_found",
+            next: "Check the id with devices.list: you only see your own devices.",
+          },
+          {
+            code: "device.project_not_found",
+            next: "Check the project name with devices.list-projects.",
+          },
+          {
+            code: "device.path_outside_project",
+            next: "Pass a path relative to the project root that stays inside it (no leading /, no .. above the root).",
+          },
+          {
+            code: "device.project_path_missing",
+            next: "List the parent directory to find the right path.",
+          },
+          {
+            code: "device.list_unsupported",
+            next: "This device's provider cannot list files: ask the person for the path instead.",
+          },
+          {
+            code: "device.offline",
+            next: "The machine serving it is offline: ask the person to connect that machine again, then call again.",
+          },
+        ],
+        run: (input, ctx) =>
+          this.projectFiles.list(ctx.orgId, ctx.actorAccountId, input.deviceId, input.name, {
+            ...(input.path !== undefined && { path: input.path }),
+            ...(input.q !== undefined && { q: input.q }),
+          }),
       }),
       defineOperation({
         id: "devices.add-project",
