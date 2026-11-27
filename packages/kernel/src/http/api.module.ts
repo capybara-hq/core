@@ -20,6 +20,8 @@ import {
   AgentSaveAsTemplateController,
   AgentTemplatesController,
 } from "../agents/templates.controller.js";
+import { AutomationsController } from "../automations/automations.controller.js";
+import { AutomationsModule } from "../automations/automations.module.js";
 import { BackgroundController } from "../background/background.controller.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
@@ -105,8 +107,6 @@ import { PushController } from "../push/push.controller.js";
 import { PushModule } from "../push/push.module.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
-import { SchedulesController } from "../schedules/schedules.controller.js";
-import { SchedulesModule } from "../schedules/schedules.module.js";
 import { SetupModule } from "../setup/setup.module.js";
 import { SetupChecksController } from "../setup/setup-checks.controller.js";
 import { SetupGuidesController } from "../setup/setup-guides.controller.js";
@@ -187,7 +187,7 @@ const CONTROLLERS: Type[] = [
   PermissionProfilesController,
   BackgroundController,
   DevicesController,
-  SchedulesController,
+  AutomationsController,
   AttachmentsController,
   LibraryFilesController,
   SkillsController,
@@ -285,8 +285,8 @@ const CONTROLLERS: Type[] = [
     ThemesModule,
     ClientModule,
     SetupModule,
-    // scheduled tasks (the controller comes with the HTTP routes)
-    SchedulesModule,
+    // automations (the controller comes with the HTTP routes)
+    AutomationsModule,
     // the git gateway (run tickets; the gateway route comes with it)
     GitModule,
     // file sharing (shares of conversation files)

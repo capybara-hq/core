@@ -161,7 +161,7 @@ async function deliver(name: string, text: string, sourcePath = `/workspace/${na
       },
     },
   ]);
-  // logged the way deliveries were before the file library, then migrated (0188)
+  // logged the way deliveries were before the file library, then migrated (0189)
   await migrateLegacyFiles(db);
   return { artifactId, objectKey };
 }

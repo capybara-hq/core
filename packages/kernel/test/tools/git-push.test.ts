@@ -4,6 +4,8 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
+import type { UnattendedRun } from "../../src/automations/unattended.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -12,8 +14,6 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
-import type { UnattendedRun } from "../../src/schedules/unattended.js";
 import {
   type ApprovalRecord,
   type ApprovalsService,
@@ -29,7 +29,7 @@ import { approvalsFor, configFrom } from "../helpers/tools.js";
 
 /**
  * Git push policy and asks (sandbox git credentials spec §7): `decideGitPush` over the org's
- * default, the member's standing allow, run grants and scheduled task grants; approvals of kind
+ * default, the member's standing allow, run grants and automation grants; approvals of kind
  * `git` (the display-only `approval_requested.git`, `once` as a run grant, `always` as the
  * member's `git_push:<owner>/<repo>` policy, expiry, skip, the person who may decide) and a trial
  * run's 「这次允许」 kept as a task grant.
@@ -43,7 +43,7 @@ let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let eventLog: EventLog;
 let approvals: ApprovalsService;
-const store = new ScheduledTaskStore();
+const store = new AutomationStore();
 
 const base = KernelConfigSchema.parse({
   db: { url: "postgres://x/y" },
@@ -97,7 +97,7 @@ async function insertRun(
 ) {
   const conversationId = opts.conversationId ?? (await newConversation());
   await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version,
-      trigger_account_id, trigger_seq, budget_run_id, scheduled_task_run_id)
+      trigger_account_id, trigger_seq, budget_run_id, automation_run_id)
     VALUES (${id}, ${conversationId}, ${opts.status ?? "waiting"}, 1, ${seed.accountId}, 0,
       ${opts.budgetRunId ?? null}, ${opts.taskRunId ?? null})`.execute(raw);
 }
@@ -380,7 +380,7 @@ describe("unattended runs", () => {
   let taskId: string;
   let taskRunId: string;
 
-  const taskRow = (): ScheduledTaskInsert => ({
+  const taskRow = (): AutomationInsert => ({
     id: taskId,
     orgId: seed.orgId,
     accountId: seed.accountId,

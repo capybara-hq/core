@@ -86,7 +86,7 @@ describe("decide", () => {
   });
 
   it("a fixed ask: a spec that requires user interaction, or the R3 list (the schedule writes)", () => {
-    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["ScheduleCreate", "ScheduleUpdate"]);
+    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["AutomationCreate", "AutomationUpdate"]);
     const tool = (annotations?: { requiresUserInteraction?: boolean }, key = "plugin__probe__t") =>
       ({
         key,
@@ -104,9 +104,9 @@ describe("decide", () => {
     expect(isFixedAsk(tool({ requiresUserInteraction: false }))).toBe(false);
     expect(isFixedAsk(tool())).toBe(false);
     // a task an agent creates or widens is always approved by a person, private agents included
-    expect(isFixedAsk(tool(undefined, "ScheduleCreate"))).toBe(true);
-    expect(isFixedAsk(tool(undefined, "ScheduleUpdate"))).toBe(true);
-    expect(isFixedAsk(tool(undefined, "ScheduleList"))).toBe(false);
+    expect(isFixedAsk(tool(undefined, "AutomationCreate"))).toBe(true);
+    expect(isFixedAsk(tool(undefined, "AutomationUpdate"))).toBe(true);
+    expect(isFixedAsk(tool(undefined, "AutomationList"))).toBe(false);
   });
 });
 

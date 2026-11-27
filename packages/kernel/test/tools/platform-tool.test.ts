@@ -324,7 +324,7 @@ describe("browse, search, describe, read", () => {
       "channels",
       "org-settings",
       "devices",
-      "schedules",
+      "automations",
       "setup",
       "themes",
       "ui",

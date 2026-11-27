@@ -1,6 +1,13 @@
 import { OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Job, Worker } from "bullmq";
+import { AutomationFireModule, AutomationFirer } from "../automations/fire.js";
+import {
+  AUTOMATION_FIRE_JOB,
+  AUTOMATION_SETTLE_JOB,
+  type AutomationFireJobData,
+  type AutomationSettleJobData,
+} from "../automations/job-ids.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { BG_WAKE_JOB, type BgWakeJobData } from "../background/wake-rules.js";
 import { OWNED_PLUGIN_CLEANUP_JOB, type OwnedPluginCleanupData } from "../catalog/job-ids.js";
@@ -59,13 +66,6 @@ import { SandboxOperationReconcileJob } from "../sandbox/operation-reconcile.job
 import { PERMISSION_APPROVAL_RECHECK } from "../sandbox/permission-transitions.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
-import { ScheduledTaskFireModule, ScheduledTaskFirer } from "../schedules/fire.js";
-import {
-  SCHED_FIRE_JOB,
-  SCHED_SETTLE_JOB,
-  type SchedFireJobData,
-  type SchedSettleJobData,
-} from "../schedules/job-ids.js";
 import {
   SHARE_OBJECT_DELETE_JOB,
   type ShareObjectDeleteData,
@@ -111,7 +111,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link DirectorySync}, `run-stop` → {@link Offboarding.stopRun}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
- * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}, `share-object-delete` → {@link ShareObjects}, `blob-delete`, `file-staging-delete` and `file-release` →
+ * {@link OwnedPluginCleanup}, `automation-fire` and `automation-settle` → {@link AutomationFirer}, `share-object-delete` → {@link ShareObjects}, `blob-delete`, `file-staging-delete` and `file-release` →
  * {@link BlobObjects}, `file-library-hash`, `file-library-hash-org` → {@link FileLibraryHashJob},
  * `file-library-backfill` → {@link FileLibraryBackfill}, `platform-icon-delete` →
  * {@link PlatformIconObjects}, `device-conversation-notice` → {@link ConversationNoticeDelivery}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
@@ -141,8 +141,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(Offboarding) private readonly offboarding: Pick<Offboarding, "stopRun">,
     @Inject(RunQueue) private readonly runs: Pick<RunQueue, "ensureRun">,
     @Inject(OwnedPluginCleanup) private readonly ownedCleanup: Pick<OwnedPluginCleanup, "run">,
-    @Inject(ScheduledTaskFirer)
-    private readonly scheduledTasks: Pick<ScheduledTaskFirer, "fire" | "settle">,
+    @Inject(AutomationFirer)
+    private readonly automations: Pick<AutomationFirer, "fire" | "settle">,
     @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
     @Inject(SandboxOperationReconcileJob)
@@ -251,13 +251,13 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case OWNED_PLUGIN_CLEANUP_JOB:
         await this.ownedCleanup.run((job.data as OwnedPluginCleanupData).itemId);
         return;
-      // one task run of a scheduled task (scheduled tasks spec §6)
-      case SCHED_FIRE_JOB:
-        await this.scheduledTasks.fire((job.data as SchedFireJobData).taskRunId);
+      // one task run of an automation (scheduled tasks spec §6)
+      case AUTOMATION_FIRE_JOB:
+        await this.automations.fire((job.data as AutomationFireJobData).taskRunId);
         return;
       // a task run's settle check, claimed or unfired (ruling R26)
-      case SCHED_SETTLE_JOB:
-        await this.scheduledTasks.settle(job.data as SchedSettleJobData);
+      case AUTOMATION_SETTLE_JOB:
+        await this.automations.settle(job.data as AutomationSettleJobData);
         return;
       // a share snapshot a refresh or revoke stopped using (file sharing spec §2)
       case SHARE_OBJECT_DELETE_JOB:
@@ -334,8 +334,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     OrgsModule,
     // the removed org plugins' cleanup job (worker-only through this module)
     OwnedPluginCleanupModule,
-    // the scheduled task fire job and the scanner (worker-only through this module)
-    ScheduledTaskFireModule,
+    // the automation fire job and the scanner (worker-only through this module)
+    AutomationFireModule,
     // the share snapshot deletion
     ShareObjectsModule,
     // the file library's blob and staging object deletions

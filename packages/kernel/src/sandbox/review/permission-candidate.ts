@@ -127,7 +127,7 @@ export const ESCALATION_JUSTIFICATION_MISSING_TEXT =
   'This Bash call asked to run outside the sandbox (sandbox: "escalated") without a justification, so it did not run. Retry with justification: one sentence saying why this command must run outside the sandbox, or call Bash without sandbox to run it in the sandbox.';
 /** Why an escalation cannot be reviewed: an unattended run (no one can approve it). */
 export const ESCALATION_UNATTENDED_WHY =
-  "this is an unattended run (a scheduled task) where no one can approve running outside the sandbox";
+  "this is an unattended run (an automation) where no one can approve running outside the sandbox";
 /**
  * The device's own words appended to a refusal that cites its report: its description (what the
  * device may do now) and its change hint (who changes that and how), each without a final period,

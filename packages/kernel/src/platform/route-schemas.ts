@@ -9,6 +9,7 @@ import { OUTBOX_DEAD_ROUTES } from "../admin/outbox-dead.schemas.js";
 import { OVERVIEW_ROUTES } from "../admin/overview.schemas.js";
 import { AGENT_ROUTES } from "../agents/agents.schemas.js";
 import { AGENT_TEMPLATE_ROUTES } from "../agents/templates.schemas.js";
+import { AUTOMATION_ROUTES } from "../automations/automations.schemas.js";
 import { BACKGROUND_ROUTES } from "../background/background.schemas.js";
 import { ADMIN_CATALOG_ROUTES } from "../catalog/admin-catalog.schemas.js";
 import { APPEARANCE_ROUTES } from "../catalog/appearance.schemas.js";
@@ -29,7 +30,6 @@ import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
 import { ORG_MODEL_ROUTES } from "../models/org-models.schemas.js";
 import { ORG_ROUTES, ORG_SETTINGS_ROUTES } from "../orgs/orgs.schemas.js";
 import { PUSH_ROUTES } from "../push/push.schemas.js";
-import { SCHEDULE_ROUTES } from "../schedules/schedules.schemas.js";
 import { SETUP_CHECK_ROUTES } from "../setup/setup-checks.schemas.js";
 import { SETUP_GUIDE_ROUTES } from "../setup/setup-guides.schemas.js";
 import { SHARE_ROUTES } from "../shares/shares.schemas.js";
@@ -107,8 +107,8 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...UI_ROUTES,
   // every org's agents and connectors (admin agents and connectors spec §4)
   ...ADMIN_ITEM_ROUTES,
-  // scheduled tasks (scheduled tasks spec §10)
-  ...SCHEDULE_ROUTES,
+  // automations (scheduled tasks spec §10)
+  ...AUTOMATION_ROUTES,
   // the admin overview and the platform-level audit log (admin overview spec §5.2)
   ...OVERVIEW_ROUTES,
   ...AUDIT_ROUTES,

@@ -14,6 +14,7 @@ import {
   onTestFinished,
 } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
+import { AutomationStore } from "../../src/automations/store.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
@@ -27,7 +28,6 @@ import { RunExecution } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { ESCALATION_RETRY_HINT } from "../../src/sandbox/review/permission-candidate.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { NETWORK_ASK_CANCELLED_NOTE } from "../../src/tools/approvals.service.js";
 import {
   addedToDeviceNote,
@@ -674,7 +674,7 @@ describe("sub-agents and unattended runs", () => {
     s.dev.blocking.set("files.example.com", "device");
     // the provider reports api.foo.com at the org's layer (the org's list does not name it)
     s.dev.blocking.set("api.foo.com", "org");
-    const store = new ScheduledTaskStore();
+    const store = new AutomationStore();
     const taskId = randomUUID();
     const taskRunId = randomUUID();
     const runId = randomUUID();
@@ -706,7 +706,7 @@ describe("sub-agents and unattended runs", () => {
       status: "running",
     });
     await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version,
-        trigger_account_id, trigger_seq, scheduled_task_run_id)
+        trigger_account_id, trigger_seq, automation_run_id)
       VALUES (${runId}, ${s.conversationId}, 'running', 1, ${s.accountId}, 0, ${taskRunId})`.execute(
       raw,
     );
@@ -765,7 +765,7 @@ describe("sub-agents and unattended runs", () => {
     ).toBe(true);
     expect(await asks()).toEqual([]);
     const row = await db
-      .selectFrom("scheduled_task_runs")
+      .selectFrom("automation_runs")
       .select("missing_grants")
       .where("id", "=", taskRunId)
       .executeTakeFirstOrThrow();

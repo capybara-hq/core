@@ -403,9 +403,9 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
-  // `schedules/job-ids.ts` SCHED_FIRE_JOB: owed by the transaction that writes a pending task run
-  // (the scan's tick, a person's "run now"), under `schedFireJobId` (spec §8.1)
-  "sched-fire": {
+  // `automations/job-ids.ts` AUTOMATION_FIRE_JOB: owed by the transaction that writes a pending task run
+  // (the scan's tick, a person's "run now"), under `automationFireJobId` (spec §8.1)
+  "automation-fire": {
     queue: "cap-kernel-maintenance",
     idempotent:
       "a fire acts only on a pending task run, under its row lock; a retried start reuses what the first one made",
@@ -418,11 +418,11 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
-  // `schedules/job-ids.ts` SCHED_SETTLE_JOB: the claimed check, owed by the fire job's claim (the
-  // transaction that writes `fired_at`) with `runAt` 10 min on, under `schedSettleJobId` (a run
+  // `automations/job-ids.ts` AUTOMATION_SETTLE_JOB: the claimed check, owed by the fire job's claim (the
+  // transaction that writes `fired_at`) with `runAt` 10 min on, under `automationSettleJobId` (a run
   // still in flight owes the next check an hour on); the unfired check, owed with the task run
-  // (scan tick, "run now") under `schedSettleUnfiredJobId` (ruling R26)
-  "sched-settle": {
+  // (scan tick, "run now") under `automationSettleUnfiredJobId` (ruling R26)
+  "automation-settle": {
     queue: "cap-kernel-maintenance",
     idempotent:
       "a check acts only on a task run still pending (claimed for the claimed check, unclaimed for the unfired one), under the task and run row locks, so a run claimed, started, ended or skipped since is left as it is",

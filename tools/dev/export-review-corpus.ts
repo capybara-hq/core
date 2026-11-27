@@ -20,7 +20,7 @@ interface Row {
   command: string;
   owner_account_id: string;
   trigger_account_id: string | null;
-  scheduled_task_run_id: string | null;
+  automation_run_id: string | null;
 }
 
 interface Args {
@@ -96,7 +96,7 @@ async function main(): Promise<void> {
         block->'input'->>'command' AS command,
         c.account_id AS owner_account_id,
         r.trigger_account_id AS trigger_account_id,
-        r.scheduled_task_run_id AS scheduled_task_run_id
+        r.automation_run_id AS automation_run_id
       FROM capybara.conversation_events e
       JOIN capybara.conversations c ON c.id = e.conversation_id
       LEFT JOIN capybara.runs r ON r.id = e.run_id
@@ -112,10 +112,10 @@ async function main(): Promise<void> {
     const lines: string[] = [];
     for (const row of result.rows) {
       if (typeof row.command !== "string" || row.command.length === 0) continue;
-      // A run a person started on their own conversation is attended; a scheduled task run (or one
+      // A run a person started on their own conversation is attended; an automation run (or one
       // inherited from it) is not.
       const attended =
-        row.scheduled_task_run_id === null &&
+        row.automation_run_id === null &&
         (row.trigger_account_id === null || row.trigger_account_id === row.owner_account_id);
       lines.push(
         JSON.stringify({

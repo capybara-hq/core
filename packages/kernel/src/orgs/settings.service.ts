@@ -151,12 +151,12 @@ const isForbiddenToolEntry = (v: unknown): v is string =>
   typeof v === "string" && v.length >= 1 && v.length <= 200;
 
 /**
- * Org settings of scheduled tasks (spec §9); every field reads leniently (invalid = default,
+ * Org settings of automations (spec §9); every field reads leniently (invalid = default,
  * except `forbiddenTools`, which keeps its valid entries). A stored `forbiddenTools` that is not a
  * list (or a group that is not an object) reads as `[]` here, for display; enforcement checks
  * {@link invalidStoredForbiddenTools} and fails unattended runs instead (never wider).
  */
-export const ScheduledTasksSettingsSchema = z.object({
+export const AutomationsSettingsSchema = z.object({
   enabled: z.boolean().default(true).catch(true),
   minIntervalMinutes: posInt(1_000_000, 60),
   maxTasksPerMember: posInt(1_000_000, 20),
@@ -176,13 +176,13 @@ export const ScheduledTasksSettingsSchema = z.object({
     .catch([]),
 });
 
-export type ScheduledTasksSettings = z.infer<typeof ScheduledTasksSettingsSchema>;
+export type AutomationsSettings = z.infer<typeof AutomationsSettingsSchema>;
 
 /**
  * The PATCH form: a partial merge into the group (fields left out keep their stored value; see
  * `OrgSettingsService.update`). A field given replaces that field whole, `forbiddenTools` too.
  */
-export const ScheduledTasksPatchSchema = z
+export const AutomationsPatchSchema = z
   .object({
     enabled: z.boolean(),
     minIntervalMinutes: z.number().int().min(1).max(1_000_000),
@@ -247,10 +247,8 @@ export const OrgSettingsSchema = z.object({
   uiArrangement: UiArrangementSchema.optional().catch(undefined),
   /** The org's git gateway switch and host sources; absent = on, sources chosen by default. */
   gitGateway: GitGatewaySettingSchema.optional().catch({ ...GIT_GATEWAY_INVALID }),
-  /** Scheduled tasks (spec §9); the platform bounds clamp it, see `effectiveScheduleSettings`. */
-  scheduledTasks: ScheduledTasksSettingsSchema.prefault({}).catch(
-    ScheduledTasksSettingsSchema.parse({}),
-  ),
+  /** Automations (spec §9); the platform bounds clamp it, see `effectiveAutomationSettings`. */
+  automations: AutomationsSettingsSchema.prefault({}).catch(AutomationsSettingsSchema.parse({})),
   /**
    * Conversation compaction overrides (context compaction spec §4.8): every field given wins, the
    * rest follow the platform; absent (or an invalid stored value) follows the platform entirely.
@@ -272,12 +270,12 @@ export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
 
 /**
  * The settings as the responses carry them: {@link OrgSettings} plus
- * `scheduledTasks.forbiddenToolsUnreadable: true` when the stored list cannot be read
+ * `automations.forbiddenToolsUnreadable: true` when the stored list cannot be read
  * ({@link invalidStoredForbiddenTools}; `forbiddenTools` then reads `[]`), so the settings page
  * says so and saves the list. Never stored.
  */
 export type OrgSettingsView = OrgSettings & {
-  scheduledTasks: OrgSettings["scheduledTasks"] & { forbiddenToolsUnreadable?: true };
+  automations: OrgSettings["automations"] & { forbiddenToolsUnreadable?: true };
 };
 
 /** {@link OrgSettingsView} of `settings`, flagged from the stored value `raw`. */
@@ -285,7 +283,7 @@ const viewOf = (settings: OrgSettings, raw: unknown): OrgSettingsView =>
   invalidStoredForbiddenTools(raw)
     ? {
         ...settings,
-        scheduledTasks: { ...settings.scheduledTasks, forbiddenToolsUnreadable: true },
+        automations: { ...settings.automations, forbiddenToolsUnreadable: true },
       }
     : settings;
 
@@ -326,8 +324,8 @@ export const OrgSettingsPatchSchema = z
      * null removes a slot's entry (it follows the platform again). `platform.page` is refused.
      */
     uiArrangement: OrgUiArrangementPatchSchema.optional(),
-    /** Fields to change in the scheduled-tasks group; the rest keep their value. */
-    scheduledTasks: ScheduledTasksPatchSchema.optional(),
+    /** Fields to change in the automations group; the rest keep their value. */
+    automations: AutomationsPatchSchema.optional(),
     /**
      * Conversation compaction overrides (context compaction spec §4.8): a partial object merges
      * into the stored fields (absent fields keep their value); null clears the whole override
@@ -475,13 +473,13 @@ export function invalidStoredSandboxToolPolicy(raw: unknown): boolean {
 }
 
 /**
- * Whether the stored scheduled-task `forbiddenTools` cannot be read: the group or the field is
+ * Whether the stored automation `forbiddenTools` cannot be read: the group or the field is
  * present but not an object / a list. Unattended runs of such an org fail
  * ({@link FORBIDDEN_TOOLS_UNREADABLE_ERROR}) rather than run with nothing forbidden. Invalid
  * entries inside a list are dropped instead (the valid ones stay forbidden).
  */
 export function invalidStoredForbiddenTools(raw: unknown): boolean {
-  const group = asObject(raw).scheduledTasks;
+  const group = asObject(raw).automations;
   if (group === undefined) return false;
   if (group === null || typeof group !== "object" || Array.isArray(group)) return true;
   const v = (group as Record<string, unknown>).forbiddenTools;
@@ -490,11 +488,11 @@ export function invalidStoredForbiddenTools(raw: unknown): boolean {
 
 /** The refusal of an unattended run of an org whose `forbiddenTools` cannot be read. */
 export const FORBIDDEN_TOOLS_UNREADABLE_ERROR =
-  "The organization's forbidden tool list for scheduled tasks is unreadable, so this scheduled run cannot continue; an org admin must save the list again in the organization's scheduled task settings.";
+  "The organization's forbidden tool list for automations is unreadable, so this scheduled run cannot continue; an org admin must save the list again in the organization's automation settings.";
 
 /** The refusal of a new task grant while the org's `forbiddenTools` cannot be read. */
 export const FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR =
-  "The organization's forbidden tool list for scheduled tasks is unreadable, so no tool can be approved for a task now; an org admin must save the list again in the organization's scheduled task settings.";
+  "The organization's forbidden tool list for automations is unreadable, so no tool can be approved for a task now; an org admin must save the list again in the organization's automation settings.";
 
 /**
  * Logs (through `log`, at the caller's level) the security settings a stored value reads narrower
@@ -510,7 +508,7 @@ export function logUnreadableSecuritySettings(
   }
   if (invalidStoredForbiddenTools(raw)) {
     log(
-      "org settings: stored scheduledTasks.forbiddenTools is unreadable; unattended runs fail until an org admin saves it again",
+      "org settings: stored automations.forbiddenTools is unreadable; unattended runs fail until an org admin saves it again",
       { orgId },
     );
   }
@@ -952,15 +950,13 @@ export class OrgSettingsService {
     const arrangementPatch = patch.uiArrangement;
     const compactionPatch = patch.compaction;
     delete changes.uiArrangement;
-    delete changes.scheduledTasks;
+    delete changes.automations;
     delete changes.compaction;
     const after: OrgSettings = { ...before, ...changes };
-    if (patch.scheduledTasks !== undefined) {
-      after.scheduledTasks = ScheduledTasksSettingsSchema.parse({
-        ...before.scheduledTasks,
-        ...Object.fromEntries(
-          Object.entries(patch.scheduledTasks).filter(([, v]) => v !== undefined),
-        ),
+    if (patch.automations !== undefined) {
+      after.automations = AutomationsSettingsSchema.parse({
+        ...before.automations,
+        ...Object.fromEntries(Object.entries(patch.automations).filter(([, v]) => v !== undefined)),
       });
     }
     if (compactionPatch !== undefined) {
@@ -994,7 +990,7 @@ export class OrgSettingsService {
     if (after.promptSuggestions === undefined) delete after.promptSuggestions;
     // saving an unreadable security setting writes it even when it equals what it read as
     const repairs =
-      (invalidStoredForbiddenTools(stored) && patch.scheduledTasks?.forbiddenTools !== undefined) ||
+      (invalidStoredForbiddenTools(stored) && patch.automations?.forbiddenTools !== undefined) ||
       (invalidStoredSandboxToolPolicy(stored) && patch.sandboxToolPolicy !== undefined);
     if (!repairs && sameSettings(before, after)) return viewOf(before, stored);
     // Lock order: the org row (orgLock above), then the theme's catalog item and its row FOR
@@ -1015,7 +1011,7 @@ export class OrgSettingsService {
       timeZone: _oldZone,
       theme: _oldTheme,
       uiArrangement: _oldArrangement,
-      scheduledTasks: _oldScheduled,
+      automations: _oldAutomations,
       compaction: _oldCompaction,
       externalSharing: _oldExternalSharing,
       promptSuggestions: _oldPromptSuggestions,
@@ -1025,10 +1021,10 @@ export class OrgSettingsService {
     keepOrgLegacyKeysInStep(written, stored);
     // An unreadable forbiddenTools reads as [] for display only: a write that does not replace the
     // list keeps it unreadable (never healed to "nothing forbidden"); saving the list fixes it
-    if (invalidStoredForbiddenTools(stored) && patch.scheduledTasks?.forbiddenTools === undefined) {
-      const group = asObject(stored.scheduledTasks);
-      written.scheduledTasks = {
-        ...after.scheduledTasks,
+    if (invalidStoredForbiddenTools(stored) && patch.automations?.forbiddenTools === undefined) {
+      const group = asObject(stored.automations);
+      written.automations = {
+        ...after.automations,
         forbiddenTools: group.forbiddenTools ?? null,
       };
     }

@@ -925,7 +925,7 @@ describe("Read: large files by file_id are read only up to the limit", () => {
         },
       },
     ]);
-    // a delivery logged before the file library, migrated by 0188
+    // a delivery logged before the file library, migrated by 0189
     await migrateLegacyFiles(db);
     const storage = k.app.get(StorageService);
     const kernel = storage.kernel.bind(storage);

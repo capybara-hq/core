@@ -328,7 +328,7 @@ async function withSealDropped<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Runs a scheduled task (unattended) whose scripted model makes one Platform call; its events. */
+/** Runs an automation (unattended) whose scripted model makes one Platform call; its events. */
 async function unattendedCall(
   prompt: string,
   operation = OP,
@@ -351,7 +351,7 @@ async function unattendedCall(
   ]);
   const task = await owner({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/schedules`,
+    url: `/api/v1/orgs/${orgId}/automations`,
     payload: {
       agentId: scripted,
       name: "Probe",
@@ -365,7 +365,7 @@ async function unattendedCall(
   const taskId = (task.json() as { task: { id: string } }).task.id;
   const run = await owner({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/schedules/${taskId}/run`,
+    url: `/api/v1/orgs/${orgId}/automations/${taskId}/run`,
     payload: {},
   });
   expect(run.statusCode, run.body).toBe(202);
@@ -373,7 +373,7 @@ async function unattendedCall(
   const done = await waitFor(
     async () => {
       const r = await db
-        .selectFrom("scheduled_task_runs")
+        .selectFrom("automation_runs")
         .select(["status", "conversation_id"])
         .where("id", "=", runId)
         .executeTakeFirst();
@@ -409,7 +409,7 @@ async function attachment(conv: string, bytes: Uint8Array) {
       purpose: "chat",
     })
     .execute();
-  // written as before the file library, then migrated by 0188
+  // written as before the file library, then migrated by 0189
   await migrateLegacyFiles(db);
   return { id, objectKey };
 }

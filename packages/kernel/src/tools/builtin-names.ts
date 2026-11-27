@@ -30,11 +30,11 @@ export const BUILTIN = {
   GenerateImage: "GenerateImage",
   Platform: "Platform",
   CurrentTime: "CurrentTime",
-  ScheduleCreate: "ScheduleCreate",
-  ScheduleUpdate: "ScheduleUpdate",
-  ScheduleList: "ScheduleList",
-  ScheduleTargets: "ScheduleTargets",
-  ScheduleDelete: "ScheduleDelete",
+  AutomationCreate: "AutomationCreate",
+  AutomationUpdate: "AutomationUpdate",
+  AutomationList: "AutomationList",
+  AutomationTargets: "AutomationTargets",
+  AutomationDelete: "AutomationDelete",
 } as const;
 
 export type BuiltinName = (typeof BUILTIN)[keyof typeof BUILTIN];
@@ -84,16 +84,16 @@ export const SANDBOX_ASK_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 ]);
 
 /**
- * The builtins that manage the person's scheduled tasks (scheduled tasks spec §11): create and
+ * The builtins that manage the person's automations (scheduled tasks spec §11): create and
  * update are fixed asks ({@link R3_FIXED_ASK_TOOL_KEYS}), list, targets and delete only read or
  * narrow.
  */
-export const SCHEDULE_TOOL_NAMES: readonly BuiltinName[] = [
-  BUILTIN.ScheduleCreate,
-  BUILTIN.ScheduleUpdate,
-  BUILTIN.ScheduleList,
-  BUILTIN.ScheduleTargets,
-  BUILTIN.ScheduleDelete,
+export const AUTOMATION_TOOL_NAMES: readonly BuiltinName[] = [
+  BUILTIN.AutomationCreate,
+  BUILTIN.AutomationUpdate,
+  BUILTIN.AutomationList,
+  BUILTIN.AutomationTargets,
+  BUILTIN.AutomationDelete,
 ];
 
 /**
@@ -104,8 +104,8 @@ export const SCHEDULE_TOOL_NAMES: readonly BuiltinName[] = [
  * `SendMessage` and `SubagentHandback` are added by the registry ({@link SUBAGENT_MESSAGE_TOOLS}).
  * `Platform` calls the platform's own operations as the run's person (Platform tool spec).
  * `CurrentTime` reads the clock (the run context carries only the date). `GenerateImage` makes
- * images with the org's `image` purpose model (image generation spec §5.3). The schedule tools
- * manage the person's scheduled tasks ({@link SCHEDULE_TOOL_NAMES}).
+ * images with the org's `image` purpose model (image generation spec §5.3). The automation tools
+ * manage the person's automations ({@link AUTOMATION_TOOL_NAMES}).
  */
 export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.AskUserQuestion,
@@ -120,7 +120,7 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.GenerateImage,
   BUILTIN.Platform,
   BUILTIN.CurrentTime,
-  ...SCHEDULE_TOOL_NAMES,
+  ...AUTOMATION_TOOL_NAMES,
 ];
 
 /** The builtin that loads a skill (added by the registry when the log has a skills catalog). */
@@ -147,31 +147,31 @@ export const SUBAGENT_MESSAGE_TOOLS: ReadonlySet<string> = new Set<string>([
 /**
 /**
  * Tool keys on the spec 3.6 R3 fixed list ("allowed is not confirmed"): their policy is at least
- * `ask` and remembered grants never let them through. `ScheduleCreate` and `ScheduleUpdate` set
+ * `ask` and remembered grants never let them through. `AutomationCreate` and `AutomationUpdate` set
  * what a task runs unattended, so a person approves every task an agent creates or widens
  * (scheduled tasks spec §11), never covered by a task grant and refused in an unattended run in
  * `fail` mode. Connector and extension tools express the same rule with
  * `annotations.requiresUserInteraction`.
  */
 export const R3_FIXED_ASK_TOOL_KEYS: ReadonlySet<string> = new Set<string>([
-  BUILTIN.ScheduleCreate,
-  BUILTIN.ScheduleUpdate,
+  BUILTIN.AutomationCreate,
+  BUILTIN.AutomationUpdate,
 ]);
 
 /**
  * Tools a sub-agent never gets (sub-agents spec §5.3, §5.5): `AskUserQuestion` (the person does
- * not see the child), `Deliver` (delivering files is the parent's job) and the schedule tools (a
+ * not see the child), `Deliver` (delivering files is the parent's job) and the automation tools (a
  * person manages tasks from the conversation they see, never from a child). `Agent` is removed
  * only from a child at `subagents.maxDepth` (agent map spec §4.1, `effectiveDefinition`).
  */
 export const CHILD_REMOVED_TOOLS = [
   BUILTIN.AskUserQuestion,
   BUILTIN.Deliver,
-  BUILTIN.ScheduleCreate,
-  BUILTIN.ScheduleUpdate,
-  BUILTIN.ScheduleList,
-  BUILTIN.ScheduleTargets,
-  BUILTIN.ScheduleDelete,
+  BUILTIN.AutomationCreate,
+  BUILTIN.AutomationUpdate,
+  BUILTIN.AutomationList,
+  BUILTIN.AutomationTargets,
+  BUILTIN.AutomationDelete,
 ] as const;
 
 /**
@@ -213,11 +213,11 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.GenerateImage]: "tool",
   [BUILTIN.Platform]: "tool",
   [BUILTIN.CurrentTime]: "tool",
-  [BUILTIN.ScheduleCreate]: "tool",
-  [BUILTIN.ScheduleUpdate]: "tool",
-  [BUILTIN.ScheduleList]: "tool",
-  [BUILTIN.ScheduleTargets]: "tool",
-  [BUILTIN.ScheduleDelete]: "tool",
+  [BUILTIN.AutomationCreate]: "tool",
+  [BUILTIN.AutomationUpdate]: "tool",
+  [BUILTIN.AutomationList]: "tool",
+  [BUILTIN.AutomationTargets]: "tool",
+  [BUILTIN.AutomationDelete]: "tool",
 };
 
 /**

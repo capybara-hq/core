@@ -1,4 +1,5 @@
 import { type DynamicModule, Module } from "@nestjs/common";
+import { AutomationFireModule } from "../automations/fire.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { BackgroundTaskPollJob } from "../background/poll.job.js";
 import { RetireLegacyTasksJob } from "../background/retire-legacy-tasks.job.js";
@@ -47,7 +48,6 @@ import { RuntimeModule } from "../runtime/runtime.module.js";
 import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxSweepJobs } from "../sandbox/jobs.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
-import { ScheduledTaskFireModule } from "../schedules/fire.js";
 import { ShareObjectsModule } from "../shares/share-objects.js";
 import { ShareSweepJob } from "../shares/sweep.job.js";
 import { StoragePurgeJob } from "../storage/purge.js";
@@ -116,8 +116,8 @@ export class WorkerModule {
         OrgLockModule,
         ExtensionsModule,
         ChannelsModule,
-        // the scheduled task scanner (`@LockedCron`) and the fire job's body
-        ScheduledTaskFireModule,
+        // the automation scanner (`@LockedCron`) and the fire job's body
+        AutomationFireModule,
         // the legacy share snapshot deletions the maintenance processor still runs
         ShareObjectsModule,
         // the owed conversation notices the sweep delivers

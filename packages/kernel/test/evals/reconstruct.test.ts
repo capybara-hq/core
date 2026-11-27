@@ -15,6 +15,8 @@ import {
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
+import { AutomationFirer } from "../../src/automations/fire.js";
+import { AutomationStore } from "../../src/automations/store.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { createKv } from "../../src/ctx/kv.js";
@@ -56,8 +58,6 @@ import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
-import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { catalogLineChars, SkillsCatalogService } from "../../src/skills/catalog.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { allowedOnceNote } from "../../src/tools/network-asks.js";
@@ -3154,12 +3154,12 @@ describe("reconstructRequest: the command review (auto mode spec §5.4–§5.5)"
   });
 });
 
-describe("reconstructRequest: scheduled tasks", () => {
-  const store = new ScheduledTaskStore();
+describe("reconstructRequest: automations", () => {
+  const store = new AutomationStore();
   const task = (
     agentId: string,
-    over: Partial<Parameters<ScheduledTaskStore["insertTask"]>[1]>,
-  ): Parameters<ScheduledTaskStore["insertTask"]>[1] => ({
+    over: Partial<Parameters<AutomationStore["insertTask"]>[1]>,
+  ): Parameters<AutomationStore["insertTask"]>[1] => ({
     id: randomUUID(),
     orgId,
     accountId: ownerId,
@@ -3189,7 +3189,7 @@ describe("reconstructRequest: scheduled tasks", () => {
       trial: false,
     });
     if (!run) throw new Error("tick taken");
-    await k.app.get(ScheduledTaskFirer).fire(run.id);
+    await k.app.get(AutomationFirer).fire(run.id);
     return run.id;
   };
 
@@ -3249,7 +3249,7 @@ describe("reconstructRequest: scheduled tasks", () => {
     const row = await db
       .selectFrom("conversations")
       .select("id")
-      .where("scheduled_task_id", "=", t.id)
+      .where("automation_id", "=", t.id)
       .where("create_request_id", "=", runId)
       .executeTakeFirstOrThrow();
     await waitForTerminal(db, row.id, 1, 30_000);

@@ -8,7 +8,7 @@ import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache } from "./support/query";
 import { ME, testQueryClient } from "./support/render";
 
-// `/schedules` reads the remembered view's cookie on the server: none here.
+// `/automations` reads the remembered view's cookie on the server: none here.
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -78,7 +78,7 @@ describe("compact routes before their data", () => {
     "/chat/c1",
     "/skills",
     "/connectors",
-    "/schedules",
+    "/automations",
     "/files",
   ])("%s shows a skeleton and some text, not a blank area", async (path) => {
     resetNavigation(path);

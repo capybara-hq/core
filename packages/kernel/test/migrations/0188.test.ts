@@ -9,14 +9,12 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0188_file_library.sql + 0189_file_library_copy.sql (file library spec §1, §9): 0188 creates
- * `blobs`, `files`, `conversation_files`, extends `file_shares` and defines `file_library_copy`;
- * 0189 runs it over everything. Migrates to the file before 0188, seeds old data, applies both,
- * checks the copy, runs both again (idempotent), then simulates old code writing during a rolling
- * deploy and checks that a catch-up call `file_library_copy(since)` migrates those writes.
+ * 0188_automations_rename.sql (collaboration spec §4.1): scheduled tasks become automations. Seeds
+ * a database migrated to the file before it with a task, its run and grant, the rows that link to
+ * them and every stored value that names the feature, then runs 0188: tables, columns, indexes and
+ * constraints carry the new names, stored values read the new names, and the event log is untouched.
  */
-const FILE = "0188_file_library.sql";
-const COPY_FILE = "0189_file_library_copy.sql";
+const FILE = "0188_automations_rename.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -31,182 +29,150 @@ const copyMigrations = (pred: (f: string) => boolean) => {
   return dir;
 };
 
-const BOUND = "10000000-0000-4000-8000-000000000001";
-const UNBOUND = "10000000-0000-4000-8000-000000000002";
-const PENDING = "10000000-0000-4000-8000-000000000003";
-const NOT_SENT_YET = "10000000-0000-4000-8000-000000000004";
-const READ_ATT = "10000000-0000-4000-8000-000000000005";
-const DELETING = "10000000-0000-4000-8000-000000000006";
-const BOUND_FID = "10000000-0000-4000-8000-000000000007";
-const O2_ATT = "10000000-0000-4000-8000-000000000008";
-const NEW_ATT = "10000000-0000-4000-8000-000000000009";
-const V1 = "20000000-0000-4000-8000-000000000001";
-const V2 = "20000000-0000-4000-8000-000000000002";
-const GEN = "20000000-0000-4000-8000-000000000003";
-const BROKEN = "20000000-0000-4000-8000-000000000004";
-const SUB = "20000000-0000-4000-8000-000000000005";
-const DEL = "20000000-0000-4000-8000-000000000006";
-const NEW_ART = "20000000-0000-4000-8000-000000000007";
-const SHARE = "30000000-0000-4000-8000-000000000001";
-const SHARE_UPLOAD = "30000000-0000-4000-8000-000000000002";
+const tableExists = async (name: string) =>
+  (
+    await sql<{ n: number }>`select count(*)::int as n from information_schema.tables
+      where table_schema = 'capybara' and table_name = ${name}`.execute(db)
+  ).rows[0]?.n === 1;
 
-const attachment = (
-  id: string,
-  o: {
-    org?: string;
-    account?: string;
-    conversation: string | null;
-    status: string;
-    purpose?: string;
-    key?: string;
+const col = async (table: string, name: string) =>
+  (
+    await sql<{ n: number }>`select count(*)::int as n from information_schema.columns
+      where table_schema = 'capybara' and table_name = ${table} and column_name = ${name}`.execute(
+      db,
+    )
+  ).rows[0]?.n === 1;
+
+const indexExists = async (name: string) =>
+  (
+    await sql<{ n: number }>`select count(*)::int as n from pg_indexes
+      where schemaname = 'capybara' and indexname = ${name}`.execute(db)
+  ).rows[0]?.n === 1;
+
+const constraintsOf = async (table: string) =>
+  (
+    await sql<{ conname: string }>`select c.conname from pg_constraint c
+      join pg_class t on t.oid = c.conrelid
+      join pg_namespace n on n.oid = t.relnamespace
+      where n.nspname = 'capybara' and t.relname = ${table} order by c.conname`.execute(db)
+  ).rows.map((r) => r.conname);
+
+const policyExists = async (table: string, policy: string) =>
+  (
+    await sql<{ n: number }>`select count(*)::int as n from pg_policies
+      where schemaname = 'capybara' and tablename = ${table} and policyname = ${policy}`.execute(db)
+  ).rows[0]?.n === 1;
+
+const one = async <T>(q: ReturnType<typeof sql<T>>) => (await q.execute(db)).rows[0];
+
+const DEFINITION = {
+  instructions: "Use ScheduleCreate wisely.",
+  disabledTools: [
+    { kind: "builtin", name: "ScheduleDelete" },
+    { kind: "builtin", name: "Bash" },
+    { kind: "plugin", plugin: "p", tools: ["ScheduleCreate"] },
+  ],
+  toolPolicies: { ScheduleCreate: "deny", Bash: "ask" },
+  subagents: {
+    inline: [
+      {
+        name: "helper",
+        description: "d",
+        instructions: "i",
+        tools: ["ScheduleList", "Read"],
+        disallowedTools: ["ScheduleUpdate"],
+        toolPolicies: { ScheduleTargets: "ask" },
+      },
+    ],
   },
-) =>
-  sql`insert into capybara.attachments
-    (id, org_id, conversation_id, account_id, name, content_type, size, object_key, status, etag,
-     pages, expires_at, purpose, created_at)
-    values (${id}, ${o.org ?? "o1"}, ${o.conversation}, ${o.account ?? "a1"}, ${`${id}.pdf`},
-      'application/pdf', 42, ${o.key ?? `attachments/${id}`}, ${o.status}, ${`etag-${id}`}, 3,
-      ${o.conversation === null ? "2026-11-29T00:00:00Z" : null}, ${o.purpose ?? "chat"},
-      '2026-11-01T00:00:00Z')`.execute(db);
-
-const artifact = (
-  conversation: string,
-  seq: number,
-  id: string,
-  sourcePath: string,
-  size: number | undefined,
-  at: string = `2026-11-02T00:00:0${seq}Z`,
-) =>
-  sql`insert into capybara.conversation_events
-    (conversation_id, seq, type, run_id, payload, created_at)
-    values (${conversation}, ${seq}, 'artifact_created', null, ${JSON.stringify({
-      artifactId: id,
-      name: sourcePath.split("/").pop(),
-      contentType: "text/markdown",
-      ...(size !== undefined && { size }),
-      objectKey: `artifacts/${conversation}/${id}`,
-      sourcePath,
-      callId: "call1",
-      sha256: "a".repeat(64),
-    })}::jsonb, ${at})`.execute(db);
-
-const userMessage = (
-  conversation: string,
-  seq: number,
-  refs: { id: string; key?: "attachmentId" | "fileId" }[],
-  text = "look",
-) =>
-  sql`insert into capybara.conversation_events (conversation_id, seq, type, run_id, payload)
-    values (${conversation}, ${seq}, 'user_message', null, ${JSON.stringify({
-      content: [
-        { type: "text", text },
-        ...refs.map((r) => ({
-          type: "document",
-          source: { kind: "ref", [r.key ?? "attachmentId"]: r.id, mediaType: "application/pdf" },
-        })),
-      ],
-      authorAccountId: "a1",
-    })}::jsonb)`.execute(db);
-
-const counts = async () => {
-  const r = await sql<{ t: string; n: string }>`
-    select 'blobs' as t, count(*) as n from capybara.blobs
-    union all select 'files', count(*) from capybara.files
-    union all select 'conversation_files', count(*) from capybara.conversation_files
-    union all select 'shares_with_blob', count(*) from capybara.file_shares where blob_id is not null
-  `.execute(db);
-  return Object.fromEntries(r.rows.map((x) => [x.t, Number(x.n)]));
-};
-
-const file = async (id: string) =>
-  (
-    await sql<Record<string, unknown>>`select f.*, b.object_key, b.size as blob_size, b.etag,
-        b.sha256, b.status as blob_status, b.org_id as blob_org
-      from capybara.files f left join capybara.blobs b on b.id = f.blob_id
-      where f.id = ${id}`.execute(db)
-  ).rows[0];
-
-const link = async (conversation: string, id: string) =>
-  (
-    await sql<{ role: string; first_seq: string | null; org_id: string }>`select role, first_seq,
-      org_id from capybara.conversation_files
-      where conversation_id = ${conversation} and file_id = ${id}`.execute(db)
-  ).rows[0];
-
-const linksOf = async (id: string) =>
-  (
-    await sql<{ conversation_id: string }>`select conversation_id from capybara.conversation_files
-      where file_id = ${id} order by conversation_id`.execute(db)
-  ).rows.map((r) => r.conversation_id);
-
-const runFile = async (f: string) => {
-  const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, f), "utf8");
-  await sql.raw(`set search_path to capybara; ${text}`).execute(db);
 };
 
 beforeAll(async () => {
   pg = await startTestPostgres();
   db = createDb(pg.url, 3);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f < FILE) });
-  await sql`insert into capybara.orgs (id, slug, name) values ('o1', 'o1', 'O'), ('o2', 'o2', 'P')`.execute(
-    db,
-  );
-  await sql`insert into capybara.accounts (id, display_name)
-    values ('a1', 'A'), ('a2', 'B'), ('a3', 'C')`.execute(db);
+  await sql`insert into capybara.accounts (id, display_name) values ('a1', 'A')`.execute(db);
+  await sql`insert into capybara.orgs (id, slug, name, settings) values ('o1', 'o1', 'O',
+    ${JSON.stringify({
+      theme: { id: null },
+      scheduledTasks: { enabled: true, forbiddenTools: ["ScheduleCreate", "Bash", "ScheduleList"] },
+    })}::jsonb)`.execute(db);
+  await sql`insert into capybara.orgs (id, slug, name) values ('o2', 'o2', 'O2')`.execute(db);
   await sql`insert into capybara.agents (id, org_id, owner_account_id, visibility, current_version)
-    values ('ag1', 'o1', 'a1', 'org', 1), ('ag2', 'o1', 'a2', 'org', 1),
-      ('ag3', 'o2', 'a3', 'org', 1)`.execute(db);
-  await sql`insert into capybara.conversations (id, org_id, agent_id, account_id)
-    values ('c1', 'o1', 'ag1', 'a1'), ('c2', 'o1', 'ag2', 'a2'), ('c5', 'o2', 'ag3', 'a3')`.execute(
+    values ('ag1', 'o1', 'a1', 'org', 1)`.execute(db);
+  await sql`insert into capybara.agent_versions (agent_id, version, definition, created_by)
+    values ('ag1', 1, ${JSON.stringify(DEFINITION)}::jsonb, 'a1')`.execute(db);
+  await sql`insert into capybara.conversations (id, org_id, agent_id, account_id, scheduled_task_id)
+    values ('c1', 'o1', 'ag1', 'a1', 't1')`.execute(db);
+  await sql`insert into capybara.runs (id, conversation_id, status, agent_version, trigger_account_id,
+      trigger_seq, scheduled_task_run_id)
+    values ('r1', 'c1', 'completed', 1, 'a1', 1, 'tr1')`.execute(db);
+  await sql`insert into capybara.scheduled_tasks (id, org_id, account_id, agent_id, name, prompt,
+      trigger, mode, next_run_at)
+    values ('t1', 'o1', 'a1', 'ag1', 'T', 'P',
+      '{"kind":"cron","expr":"0 9 * * *","timeZone":"UTC"}'::jsonb, 'new', now())`.execute(db);
+  await sql`insert into capybara.scheduled_task_runs (id, task_id, org_id, scheduled_for)
+    values ('tr1', 't1', 'o1', '2026-11-11T09:00:00Z')`.execute(db);
+  await sql`insert into capybara.scheduled_task_grants (task_id, tool_key, spec_hash)
+    values ('t1', 'ScheduleUpdate', 'h1'), ('t1', 'Bash', 'h2')`.execute(db);
+  await sql`insert into capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
+    values ('o1', 'a1', 'ag1', 'ScheduleCreate', 'h')`.execute(db);
+  await sql`insert into capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
+    values ('c1', 'ScheduleDelete', 'h')`.execute(db);
+  // a grant whose new key already exists for the same owner stays as it is (the primary key)
+  await sql`insert into capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
+    values ('c1', 'ScheduleList', 'old'), ('c1', 'AutomationList', 'new')`.execute(db);
+  await sql`insert into capybara.approvals (id, org_id, conversation_id, run_id, call_id, tool_key,
+      requested_for, expires_at, spec_hash, status)
+    values ('ap1', 'o1', 'c1', 'r1', 'call1', 'ScheduleCreate', 'a1', now() + interval '1 day', 'h',
+        'pending'),
+      ('ap2', 'o1', 'c1', 'r1', 'call2', 'ScheduleCreate', 'a1', now() + interval '1 day', 'h',
+        'approved')`.execute(db);
+  await sql`insert into capybara.questions (id, org_id, conversation_id, run_id, call_id, spec,
+      expires_at, status)
+    values ('q1', 'o1', 'c1', 'r1', 'call3', '{"toolKey":"ScheduleUpdate","x":1}'::jsonb,
+        now() + interval '1 day', 'pending'),
+      ('q2', 'o1', 'c1', 'r1', 'call4', '{"toolKey":"ScheduleUpdate"}'::jsonb,
+        now() + interval '1 day', 'answered')`.execute(db);
+  await sql`insert into capybara.agent_templates (id, org_id, name, current_version)
+    values ('at1', 'o1', 'tpl', 1)`.execute(db);
+  await sql`insert into capybara.agent_template_versions (template_id, version, definition)
+    values ('at1', 1, ${JSON.stringify({ name: "tpl", tools: ["ScheduleList", "Read"] })}::jsonb)`.execute(
     db,
   );
-  // a sub-agent conversation of c2 (its own account and agent) and a soft-deleted conversation
-  await sql`insert into capybara.conversations
-    (id, org_id, agent_id, account_id, kind, parent_conversation_id, subagent_type)
-    values ('c3', 'o1', 'ag1', 'a1', 'subagent', 'c2', 'helper')`.execute(db);
-  await sql`insert into capybara.conversations (id, org_id, agent_id, account_id, deleted_at)
-    values ('c4', 'o1', 'ag2', 'a2', now())`.execute(db);
-
-  // c1: a sent attachment (first named by a ref at seq 2; seq 1 only mentions its id in text),
-  // one sent under the new `fileId` key, one bound by a message still queued (no event)
-  await attachment(BOUND, { conversation: "c1", status: "ready" });
-  await attachment(BOUND_FID, { conversation: "c1", status: "ready" });
-  await attachment(NOT_SENT_YET, { conversation: "c1", status: "ready" });
-  await userMessage("c1", 1, [], `see ${BOUND}`);
-  await userMessage("c1", 2, [{ id: BOUND }]);
-  await userMessage("c1", 3, [{ id: BOUND }]);
-  await userMessage("c1", 4, [{ id: BOUND_FID, key: "fileId" }]);
-  // a finalized composer file not sent yet, an upload never finalized, a Read copy (not chat), an
-  // attachment being deleted
-  await attachment(UNBOUND, { conversation: null, status: "ready" });
-  await attachment(PENDING, { conversation: null, status: "pending" });
-  await attachment(READ_ATT, { conversation: "c1", status: "ready", purpose: "read" });
-  await attachment(DELETING, { conversation: "c1", status: "deleting" });
-  // another org storing an object under the same key string
-  await attachment(O2_ATT, {
-    org: "o2",
-    account: "a3",
-    conversation: "c5",
-    status: "ready",
-    key: `attachments/${BOUND}`,
-  });
-  // c2: two versions of one delivered file, one generated image, one event missing its size
-  await artifact("c2", 1, V1, "out/report.md", 10);
-  await artifact("c2", 2, V2, "out/report.md", 20);
-  await artifact("c2", 3, GEN, "generated/cat.png", 30);
-  await artifact("c2", 4, BROKEN, "out/broken.md", undefined);
-  await artifact("c3", 1, SUB, "out/sub.md", 40);
-  await artifact("c4", 1, DEL, "out/del.md", 50);
-  // shares: one of a delivered version (live snapshot), one of the bound upload (already swept)
-  await sql`insert into capybara.file_shares
-    (id, org_id, code, conversation_id, file_id, source_path, created_by, audience, name,
-     content_type, size, object_key, created_at, updated_at)
+  await sql`insert into capybara.platform_agent_templates (id, name, current_version)
+    values ('pt1', 'ptpl', 1)`.execute(db);
+  await sql`insert into capybara.platform_agent_template_versions (template_id, version, definition)
+    values ('pt1', 1, ${JSON.stringify({
+      name: "ptpl",
+      disallowedTools: ["ScheduleDelete"],
+      toolPolicies: { ScheduleCreate: "ask" },
+    })}::jsonb)`.execute(db);
+  await sql`insert into capybara.push_preferences (account_id, category, enabled)
+    values ('a1', 'schedules', false), ('a1', 'tasks', true)`.execute(db);
+  await sql`insert into capybara.audit_events (actor_account_id, org_id, action, target, detail)
+    values ('a1', 'o1', 'schedule.created', 't1', '{}'::jsonb),
+      ('a1', 'o1', 'schedule.grants_changed', 't1', '{}'::jsonb),
+      ('a1', 'o1', 'agent.created', 'ag1', '{}'::jsonb)`.execute(db);
+  await sql`insert into capybara.outbox (queue, job_name, job_id, data, org_id)
     values
-    (${SHARE}, 'o1', 'code1', 'c2', ${V2}, 'out/report.md', 'a2', 'internal', 'report.md',
-      'text/markdown', 20, ${`shares/${SHARE}/1`}, '2026-11-03T00:00:00Z', '2026-11-03T00:00:00Z'),
-    (${SHARE_UPLOAD}, 'o1', 'code2', 'c1', ${BOUND}, null, 'a1', 'external', 'x.pdf',
-      'application/pdf', 42, null, '2026-11-03T00:00:00Z', '2026-11-03T00:00:00Z')`.execute(db);
-  await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= COPY_FILE) });
+      ('cap-kernel-maintenance', 'sched-fire', 'sched-fire-tr1', '{"taskRunId":"tr1"}'::jsonb, 'o1'),
+      ('cap-kernel-maintenance', 'sched-settle', 'sched-settle-tr1-unfired',
+        '{"taskRunId":"tr1","unfired":true}'::jsonb, 'o1'),
+      ('cap-push-deliver', 'push-fanout', 'push-fanout-sched-tr1',
+        '{"eventId":"sched-tr1","source":{"kind":"schedule","taskRunId":"tr1"}}'::jsonb, 'o1'),
+      ('cap-push-deliver', 'push-deliver', 'push-sched-tr1-reg1',
+        '{"eventId":"sched-tr1","registrationId":"reg1","accountId":"a1","message":{}}'::jsonb, 'o1'),
+      ('cap-push-deliver', 'push-fanout', 'push-fanout-conv-c1-3',
+        '{"eventId":"conv-c1-3","source":{"kind":"conversation","conversationId":"c1","seq":3}}'::jsonb,
+        'o1')`.execute(db);
+  // the event log keeps the frozen marker names
+  await sql`insert into capybara.conversation_events (conversation_id, seq, type, payload)
+    values ('c1', 1, 'user_message',
+      '{"text":"P","schedule":{"taskId":"t1","taskRunId":"tr1"},"tool":"ScheduleCreate"}'::jsonb)`.execute(
+    db,
+  );
+  await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
 });
 
 afterAll(async () => {
@@ -215,256 +181,253 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-describe("0188_file_library + 0189_file_library_copy", () => {
-  it("turns a sent chat attachment into a ready upload referenced by its conversation", async () => {
-    const f = await file(BOUND);
-    expect(f).toMatchObject({
-      org_id: "o1",
-      account_id: "a1",
-      name: `${BOUND}.pdf`,
-      content_type: "application/pdf",
-      size: "42",
-      pages: 3,
-      origin: "upload",
-      status: "ready",
-      agent_id: null,
-      source_conversation_id: "c1",
-      source_path: null,
-      staging_key: null,
-      // the model-visible reference stays this blob's even after a later merge
-      ref_key: `attachments/${BOUND}`,
-      ref_etag: `etag-${BOUND}`,
-      expires_at: null,
-      object_key: `attachments/${BOUND}`,
-      blob_size: "42",
-      etag: `etag-${BOUND}`,
-      sha256: null,
-      blob_status: "ready",
-      blob_org: "o1",
-    });
-    expect(f?.created_at).toEqual(new Date("2026-11-01T00:00:00Z"));
-    // the first ref, not the earlier text that merely contains the id
-    expect(await link("c1", BOUND)).toEqual({ role: "attached", first_seq: "2", org_id: "o1" });
-    expect(await link("c1", BOUND_FID)).toEqual({ role: "attached", first_seq: "4", org_id: "o1" });
-    // bound by a queued message not yet in the log: referenced, no seq known
-    expect(await link("c1", NOT_SENT_YET)).toEqual({
-      role: "attached",
-      first_seq: null,
-      org_id: "o1",
-    });
+describe("0188_automations_rename", () => {
+  it("renames the tables, their link columns and the columns that point at them", async () => {
+    expect(await tableExists("automations")).toBe(true);
+    expect(await tableExists("automation_runs")).toBe(true);
+    expect(await tableExists("automation_grants")).toBe(true);
+    expect(await tableExists("scheduled_tasks")).toBe(false);
+    expect(await tableExists("scheduled_task_runs")).toBe(false);
+    expect(await tableExists("scheduled_task_grants")).toBe(false);
+    expect(await col("automation_runs", "automation_id")).toBe(true);
+    expect(await col("automation_runs", "task_id")).toBe(false);
+    expect(await col("automation_grants", "automation_id")).toBe(true);
+    expect(await col("runs", "automation_run_id")).toBe(true);
+    expect(await col("runs", "scheduled_task_run_id")).toBe(false);
+    expect(await col("conversations", "automation_id")).toBe(true);
+    expect(await col("conversations", "scheduled_task_id")).toBe(false);
+    // the queue marker column carries the frozen marker and keeps its name
+    expect(await col("conversation_queue", "schedule")).toBe(true);
+    // rows survive with their links
+    expect(
+      await one(sql<{ automation_id: string }>`select automation_id from capybara.automation_runs`),
+    ).toEqual({ automation_id: "t1" });
+    expect(
+      await one(sql<{ automation_id: string }>`select automation_id from capybara.conversations`),
+    ).toEqual({ automation_id: "t1" });
+    expect(
+      await one(sql<{ automation_run_id: string }>`select automation_run_id from capybara.runs`),
+    ).toEqual({ automation_run_id: "tr1" });
   });
 
-  it("turns unsent and unfinished chat uploads into draft and uploading files", async () => {
-    expect(await file(UNBOUND)).toMatchObject({
-      status: "draft",
-      origin: "upload",
-      source_conversation_id: null,
-      expires_at: new Date("2026-11-29T00:00:00Z"),
-      object_key: `attachments/${UNBOUND}`,
-      blob_status: "ready",
-    });
-    expect(await file(PENDING)).toMatchObject({
-      status: "uploading",
-      blob_id: null,
-      staging_key: `attachments/${PENDING}`,
-      ref_key: null,
-      ref_etag: null,
-      expires_at: new Date("2026-11-29T00:00:00Z"),
-    });
-    expect(await file(READ_ATT)).toBeUndefined();
-    expect(await file(DELETING)).toBeUndefined();
-    expect(await linksOf(UNBOUND)).toEqual([]);
-    expect(await linksOf(PENDING)).toEqual([]);
-  });
-
-  it("gives each org its own blob for the same key string", async () => {
-    const [mine, theirs] = [await file(BOUND), await file(O2_ATT)];
-    expect(theirs).toMatchObject({
-      org_id: "o2",
-      account_id: "a3",
-      object_key: `attachments/${BOUND}`,
-      blob_org: "o2",
-    });
-    expect(theirs?.blob_id).not.toEqual(mine?.blob_id);
-    expect(await link("c5", O2_ATT)).toEqual({ role: "attached", first_seq: null, org_id: "o2" });
-  });
-
-  it("turns every delivered version into a file owned by the conversation's owner", async () => {
-    for (const [id, origin, size, seq] of [
-      [V1, "delivered", "10", "1"],
-      [V2, "delivered", "20", "2"],
-      [GEN, "generated", "30", "3"],
-    ] as const) {
-      expect(await file(id)).toMatchObject({
-        account_id: "a2",
-        agent_id: "ag2",
-        origin,
-        status: "ready",
-        size,
-        content_type: "text/markdown",
-        source_conversation_id: "c2",
-        object_key: `artifacts/c2/${id}`,
-        ref_key: `artifacts/c2/${id}`,
-        ref_etag: null,
-        blob_size: size,
-        etag: null,
-        sha256: null,
-        blob_status: "ready",
-      });
-      expect(await link("c2", id)).toEqual({ role: "delivered", first_seq: seq, org_id: "o1" });
+  it("renames the indexes and constraints", async () => {
+    for (const name of [
+      "automations_pkey",
+      "automations_due_idx",
+      "automations_account_idx",
+      "automation_runs_pkey",
+      "automation_runs_tick_uq",
+      "automation_runs_pending_idx",
+      "automation_runs_automation_idx",
+      "automation_runs_fired_idx",
+      "automation_grants_pkey",
+      "conversations_automation_idx",
+    ]) {
+      expect(await indexExists(name), name).toBe(true);
     }
-    expect(await file(V1)).toMatchObject({ source_path: "out/report.md", name: "report.md" });
-    expect(await file(GEN)).toMatchObject({ source_path: "generated/cat.png" });
-    expect(await file(BROKEN)).toBeUndefined();
+    expect(await indexExists("scheduled_task_runs_tick_uq")).toBe(false);
+    expect(await indexExists("conversations_scheduled_task_idx")).toBe(false);
+    expect(await constraintsOf("automations")).toEqual([
+      "automations_mode_check",
+      "automations_org_id_fkey",
+      "automations_pause_reason_check",
+      "automations_pkey",
+      "automations_status_check",
+    ]);
+    expect(await constraintsOf("automation_runs")).toEqual([
+      "automation_runs_automation_id_fkey",
+      "automation_runs_org_id_fkey",
+      "automation_runs_pkey",
+      "automation_runs_skip_reason_check",
+      "automation_runs_status_check",
+    ]);
+    expect(await constraintsOf("automation_grants")).toEqual([
+      "automation_grants_automation_id_fkey",
+      "automation_grants_pkey",
+    ]);
   });
 
-  it("migrates sub-agent and deleted conversations' deliveries", async () => {
-    expect(await file(SUB)).toMatchObject({
-      account_id: "a1",
-      agent_id: "ag1",
-      source_conversation_id: "c3",
-      origin: "delivered",
-    });
-    expect(await linksOf(SUB)).toEqual(["c3"]);
-    expect(await file(DEL)).toMatchObject({
-      account_id: "a2",
-      source_conversation_id: "c4",
-      status: "ready",
-    });
-    expect(await link("c4", DEL)).toEqual({ role: "delivered", first_seq: "1", org_id: "o1" });
+  it("keeps the RLS policies on the renamed tables that have org_id", async () => {
+    expect(await policyExists("automations", "org_scope")).toBe(true);
+    expect(await policyExists("automation_runs", "org_scope")).toBe(true);
+    // a child table without org_id gets no policy (RLS spec §6), like before the rename
+    expect(await col("automation_grants", "org_id")).toBe(false);
   });
 
-  it("points a share at a blob of its snapshot and keeps its object key", async () => {
-    const r = await sql<Record<string, unknown>>`select s.object_key as share_key, s.source_file_id,
-        s.conversation_id, b.object_key, b.size, b.status, b.org_id
-      from capybara.file_shares s left join capybara.blobs b on b.id = s.blob_id
-      where s.id = ${SHARE}`.execute(db);
-    expect(r.rows[0]).toEqual({
-      share_key: `shares/${SHARE}/1`,
-      source_file_id: V2,
-      conversation_id: "c2",
-      object_key: `shares/${SHARE}/1`,
-      size: "20",
-      status: "ready",
-      org_id: "o1",
-    });
-    const swept = await sql<Record<string, unknown>>`select blob_id, source_file_id
-      from capybara.file_shares where id = ${SHARE_UPLOAD}`.execute(db);
-    expect(swept.rows[0]).toEqual({ blob_id: null, source_file_id: null });
-  });
-
-  it("lets library shares have no conversation and be revoked for a deleted file", async () => {
-    await sql`insert into capybara.file_shares
-      (id, org_id, code, conversation_id, file_id, created_by, audience, name, content_type, size,
-       revoked_at, revoke_reason)
-      values ('30000000-0000-4000-8000-0000000000ff', 'o1', 'code3', null, ${UNBOUND}, 'a1',
-        'internal', 'x', 'text/plain', 1, now(), 'file_deleted')`.execute(db);
+  it("rewrites the push category, its CHECK and the stored rows", async () => {
+    const rows = (
+      await sql<{
+        category: string;
+        enabled: boolean;
+      }>`select category, enabled from capybara.push_preferences order by category`.execute(db)
+    ).rows;
+    expect(rows).toEqual([
+      { category: "automations", enabled: false },
+      { category: "tasks", enabled: true },
+    ]);
     await expect(
-      sql`update capybara.file_shares set revoke_reason = 'nope'
-        where id = '30000000-0000-4000-8000-0000000000ff'`.execute(db),
-    ).rejects.toThrow(/file_shares_revoke_reason_check/);
-    await sql`delete from capybara.file_shares
-      where id = '30000000-0000-4000-8000-0000000000ff'`.execute(db);
-  });
-
-  it("enforces the file and blob invariants", async () => {
-    await expect(
-      sql`insert into capybara.files (id, org_id, account_id, name, content_type, size, origin, status)
-        values ('bad1', 'o1', 'a1', 'x', 'text/plain', 1, 'upload', 'ready')`.execute(db),
-    ).rejects.toThrow(/files_blob_check/);
-    // a deleted file may have lost its blob
-    await sql`insert into capybara.files (id, org_id, account_id, name, content_type, size, origin, status)
-      values ('gone1', 'o1', 'a1', 'x', 'text/plain', 1, 'upload', 'deleted')`.execute(db);
-    await sql`delete from capybara.files where id = 'gone1'`.execute(db);
-    await expect(
-      sql`insert into capybara.blobs (id, org_id, sha256, size, object_key, status)
-        values ('bad2', 'o1', 'XYZ', 1, 'k', 'ready')`.execute(db),
+      sql`insert into capybara.push_preferences (account_id, category, enabled)
+        values ('a1', 'schedules', true)`.execute(db),
     ).rejects.toThrow(/check/);
-    const sha = "b".repeat(64);
-    await sql`insert into capybara.blobs (id, org_id, sha256, size, object_key, status)
-      values ('ok1', 'o1', ${sha}, 1, 'blobs/x', 'ready')`.execute(db);
-    await expect(
-      sql`insert into capybara.blobs (id, org_id, sha256, size, object_key, status)
-        values ('ok2', 'o1', ${sha}, 1, 'blobs/y', 'ready')`.execute(db),
-    ).rejects.toThrow(/blobs_org_sha256_key/);
-    await expect(
-      sql`insert into capybara.blobs (id, org_id, size, object_key, status)
-        values ('ok3', 'o1', 1, 'blobs/x', 'ready')`.execute(db),
-    ).rejects.toThrow(/blobs_org_object_key/);
-    await sql`delete from capybara.blobs where id = 'ok1'`.execute(db);
   });
 
-  it("ships the org_scope policy on the three new tables", async () => {
-    const r = await sql<{ tablename: string; qual: string; with_check: string }>`
-      select tablename, qual, with_check from pg_policies
-      where schemaname = 'capybara' and policyname = 'org_scope'
-        and tablename in ('blobs', 'files', 'conversation_files')
-      order by tablename`.execute(db);
-    expect(r.rows.map((x) => x.tablename)).toEqual(["blobs", "conversation_files", "files"]);
-    for (const row of r.rows) {
-      expect(row.qual).toMatch(/rls_admits\(org_id\)/);
-      expect(row.with_check).toMatch(/rls_admits\(org_id\)/);
-    }
+  it("moves the org settings group to `automations` with the tool keys renamed", async () => {
+    const o1 = await one(sql<{ settings: Record<string, unknown> }>`select settings
+      from capybara.orgs where id = 'o1'`);
+    expect(o1?.settings).toEqual({
+      theme: { id: null },
+      automations: {
+        enabled: true,
+        forbiddenTools: ["AutomationCreate", "Bash", "AutomationList"],
+      },
+    });
+    const o2 = await one(sql<{ settings: Record<string, unknown> }>`select settings
+      from capybara.orgs where id = 'o2'`);
+    expect(o2?.settings).toEqual({});
   });
 
-  it("is idempotent", async () => {
-    const before = await counts();
-    expect(before).toEqual({ blobs: 11, files: 11, conversation_files: 9, shares_with_blob: 1 });
-    await runFile(FILE);
-    await runFile(COPY_FILE);
-    expect(await counts()).toEqual(before);
+  it("renames the audit actions", async () => {
+    const rows = (
+      await sql<{
+        action: string;
+      }>`select action from capybara.audit_events order by action`.execute(db)
+    ).rows.map((r) => r.action);
+    expect(rows).toEqual(["agent.created", "automation.created", "automation.grants_changed"]);
   });
 
-  it("catches up what old code wrote after the first copy", async () => {
-    // old code binds the draft, finalizes the pending upload, takes a new bound upload, delivers a
-    // new artifact and refreshes the share's snapshot (generation 2)
-    await sql`update capybara.attachments set conversation_id = 'c1', expires_at = null
-      where id = ${UNBOUND}`.execute(db);
-    await userMessage("c1", 5, [{ id: UNBOUND }]);
-    await sql`update capybara.attachments set status = 'ready', size = 50, etag = 'e2'
-      where id = ${PENDING}`.execute(db);
-    await sql`insert into capybara.attachments
-      (id, org_id, conversation_id, account_id, name, content_type, size, object_key, status, purpose)
-      values (${NEW_ATT}, 'o1', 'c1', 'a1', 'n.pdf', 'application/pdf', 7,
-        ${`attachments/${NEW_ATT}`}, 'ready', 'chat')`.execute(db);
-    await userMessage("c1", 6, [{ id: NEW_ATT }]);
-    await artifact("c2", 5, NEW_ART, "out/new.md", 60, new Date().toISOString());
-    await sql`update capybara.file_shares
-      set generation = 2, object_key = ${`shares/${SHARE}/2`}, updated_at = now()
-      where id = ${SHARE}`.execute(db);
-
-    await sql`select capybara.file_library_copy('2026-11-20T00:00:00Z')`.execute(db);
-
-    expect(await file(UNBOUND)).toMatchObject({
-      status: "ready",
-      expires_at: null,
-      source_conversation_id: "c1",
+  it("renames the tool keys in grants and agent definitions", async () => {
+    const grants = (
+      await sql<{ tool_key: string }>`select tool_key from capybara.automation_grants
+        order by tool_key`.execute(db)
+    ).rows.map((r) => r.tool_key);
+    expect(grants).toEqual(["AutomationUpdate", "Bash"]);
+    expect(await one(sql`select tool_key from capybara.tool_grants`)).toEqual({
+      tool_key: "AutomationCreate",
     });
-    expect(await link("c1", UNBOUND)).toEqual({ role: "attached", first_seq: "5", org_id: "o1" });
-    expect(await file(PENDING)).toMatchObject({
-      status: "draft",
-      staging_key: null,
-      size: "50",
-      ref_key: `attachments/${PENDING}`,
-      ref_etag: "e2",
-      object_key: `attachments/${PENDING}`,
-      etag: "e2",
-      blob_status: "ready",
+    expect(
+      (
+        await sql<{ tool_key: string; spec_hash: string }>`select tool_key, spec_hash
+          from capybara.conversation_tool_grants order by tool_key, spec_hash`.execute(db)
+      ).rows,
+    ).toEqual([
+      { tool_key: "AutomationDelete", spec_hash: "h" },
+      { tool_key: "AutomationList", spec_hash: "new" },
+      // the new key already existed: the old grant stays as it is
+      { tool_key: "ScheduleList", spec_hash: "old" },
+    ]);
+    expect(
+      (
+        await sql<{ id: string; tool_key: string }>`select id, tool_key from capybara.approvals
+          order by id`.execute(db)
+      ).rows,
+    ).toEqual([
+      { id: "ap1", tool_key: "AutomationCreate" },
+      // a decided approval is history
+      { id: "ap2", tool_key: "ScheduleCreate" },
+    ]);
+    expect(
+      (
+        await sql<{ id: string; spec: unknown }>`select id, spec from capybara.questions
+          order by id`.execute(db)
+      ).rows,
+    ).toEqual([
+      { id: "q1", spec: { toolKey: "AutomationUpdate", x: 1 } },
+      { id: "q2", spec: { toolKey: "ScheduleUpdate" } },
+    ]);
+    expect(await one(sql`select definition from capybara.agent_template_versions`)).toEqual({
+      definition: { name: "tpl", tools: ["AutomationList", "Read"] },
     });
-    expect(await file(NEW_ATT)).toMatchObject({ status: "ready", source_conversation_id: "c1" });
-    expect(await link("c1", NEW_ATT)).toEqual({ role: "attached", first_seq: "6", org_id: "o1" });
-    expect(await file(NEW_ART)).toMatchObject({
-      account_id: "a2",
-      object_key: `artifacts/c2/${NEW_ART}`,
+    expect(
+      await one(sql`select definition from capybara.platform_agent_template_versions`),
+    ).toEqual({
+      definition: {
+        name: "ptpl",
+        disallowedTools: ["AutomationDelete"],
+        toolPolicies: { AutomationCreate: "ask" },
+      },
     });
-    expect(await link("c2", NEW_ART)).toEqual({ role: "delivered", first_seq: "5", org_id: "o1" });
-    const share = await sql<{ object_key: string }>`select b.object_key from capybara.file_shares s
-      join capybara.blobs b on b.id = s.blob_id where s.id = ${SHARE}`.execute(db);
-    expect(share.rows[0]?.object_key).toBe(`shares/${SHARE}/2`);
+    const def = await one(sql<{ definition: unknown }>`select definition
+      from capybara.agent_versions`);
+    expect(def?.definition).toEqual({
+      // prose is never rewritten
+      instructions: "Use ScheduleCreate wisely.",
+      disabledTools: [
+        { kind: "builtin", name: "AutomationDelete" },
+        { kind: "builtin", name: "Bash" },
+        // an extension's tool of the same name is not a builtin
+        { kind: "plugin", plugin: "p", tools: ["ScheduleCreate"] },
+      ],
+      toolPolicies: { AutomationCreate: "deny", Bash: "ask" },
+      subagents: {
+        inline: [
+          {
+            name: "helper",
+            description: "d",
+            instructions: "i",
+            tools: ["AutomationList", "Read"],
+            disallowedTools: ["AutomationUpdate"],
+            toolPolicies: { AutomationTargets: "ask" },
+          },
+        ],
+      },
+    });
+  });
 
-    const after = await counts();
-    expect(after).toEqual({ blobs: 15, files: 13, conversation_files: 12, shares_with_blob: 1 });
-    await sql`select capybara.file_library_copy('-infinity')`.execute(db);
-    expect(await counts()).toEqual(after);
+  it("renames pending outbox jobs, their ids and the push source", async () => {
+    const rows = (
+      await sql<{
+        job_name: string;
+        job_id: string;
+        data: unknown;
+      }>`select job_name, job_id, data from capybara.outbox order by id`.execute(db)
+    ).rows;
+    expect(rows).toEqual([
+      { job_name: "automation-fire", job_id: "automation-fire-tr1", data: { taskRunId: "tr1" } },
+      {
+        job_name: "automation-settle",
+        job_id: "automation-settle-tr1-unfired",
+        data: { taskRunId: "tr1", unfired: true },
+      },
+      {
+        job_name: "push-fanout",
+        job_id: "push-fanout-automation-tr1",
+        data: { eventId: "automation-tr1", source: { kind: "automation", taskRunId: "tr1" } },
+      },
+      {
+        job_name: "push-deliver",
+        job_id: "push-automation-tr1-reg1",
+        data: { eventId: "automation-tr1", registrationId: "reg1", accountId: "a1", message: {} },
+      },
+      {
+        job_name: "push-fanout",
+        job_id: "push-fanout-conv-c1-3",
+        data: {
+          eventId: "conv-c1-3",
+          source: { kind: "conversation", conversationId: "c1", seq: 3 },
+        },
+      },
+    ]);
+  });
+
+  it("never rewrites the event log", async () => {
+    expect(await one(sql`select payload from capybara.conversation_events`)).toEqual({
+      payload: { text: "P", schedule: { taskId: "t1", taskRunId: "tr1" }, tool: "ScheduleCreate" },
+    });
+  });
+
+  it("0188 is idempotent", async () => {
+    const snapshot = async () => ({
+      settings: (await one(sql`select settings from capybara.orgs where id = 'o1'`)) as unknown,
+      outbox: (
+        await sql`select job_name, job_id, data from capybara.outbox order by id`.execute(db)
+      ).rows,
+      def: (await one(sql`select definition from capybara.agent_versions`)) as unknown,
+      audit: (await sql`select action from capybara.audit_events order by action`.execute(db)).rows,
+      constraints: await constraintsOf("automation_runs"),
+    });
+    const before = await snapshot();
+    const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
+    await sql.raw(`set search_path to capybara; ${text}`).execute(db);
+    expect(await snapshot()).toEqual(before);
   });
 });

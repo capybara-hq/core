@@ -145,7 +145,7 @@ export async function insertThread(
 
 /**
  * The live conversation of a thread, or a new one bound to it, inside the caller's transaction
- * (a scheduled task posting into a chat, scheduled tasks spec §6): the live thread row's
+ * (an automation posting into a chat, scheduled tasks spec §6): the live thread row's
  * conversation when there is one; otherwise `create()`'s conversation, bound with
  * {@link insertThread} and given the chat as its delivery target (`channel_deliveries`), as an
  * inbound message would. When a concurrent inbound bound the thread first, the empty conversation

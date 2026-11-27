@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AutomationStoreModule } from "../automations/store.module.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { ConversationApprovalProfileModule } from "../conversations/approval-profile.js";
@@ -25,14 +26,13 @@ import { OperationAuthorityModule } from "../sandbox/operation-authority.module.
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { PermissionCallGrantsModule } from "../sandbox/permission-call-grants.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
-import { ScheduledTaskStoreModule } from "../schedules/store.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { AdminConnectors } from "./admin-connectors.js";
 import { ApprovalsService } from "./approvals.service.js";
 import { Breaker } from "./breaker.js";
+import { AutomationToolsPort, AutomationUpdates } from "./builtins/automations.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
-import { ScheduleToolsPort, ScheduleUpdates } from "./builtins/schedules.js";
 import { WebPages } from "./builtins/web/page-cache.js";
 import { ConnectorAccountPolicies } from "./connector-account-policies.js";
 import { ConnectorContent } from "./connector-content.js";
@@ -106,8 +106,8 @@ import { WatchedWaitsLock } from "./watched-waits-lock.js";
     // ConnectorToolsProcessor)
     ConnectorToolsQueueModule,
     ToolWatchQueueModule,
-    // a trial run's approvals become its scheduled task's grants (scheduled tasks spec §7)
-    ScheduledTaskStoreModule,
+    // a trial run's approvals become its automation's grants (scheduled tasks spec §7)
+    AutomationStoreModule,
     // connector credentials (also the git gateway's, without importing this module)
     CredentialsModule,
   ],
@@ -117,10 +117,10 @@ import { WatchedWaitsLock } from "./watched-waits-lock.js";
     BuiltinTools,
     // a Platform write's file reference (a conversation file)
     FileRefs,
-    // `ScheduleUpdate`'s write in one transaction (scheduled tasks spec §11)
-    ScheduleUpdates,
-    // where `SchedulesModule` binds the task service for the schedule tools (no provider cycle)
-    ScheduleToolsPort,
+    // `AutomationUpdate`'s write in one transaction (scheduled tasks spec §11)
+    AutomationUpdates,
+    // where `AutomationsModule` binds the task service for the automation tools (no provider cycle)
+    AutomationToolsPort,
     WebPages,
     ToolRegistry,
     ApprovalsService,
@@ -142,7 +142,7 @@ import { WatchedWaitsLock } from "./watched-waits-lock.js";
   ],
   exports: [
     PermissionApprovalJobs,
-    ScheduleToolsPort,
+    AutomationToolsPort,
     CredentialsModule,
     ToolOutputs,
     BuiltinTools,

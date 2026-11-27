@@ -114,7 +114,7 @@ export type MessageContext = Pick<EventPayload<"user_message">, "sender" | "time
  * - `sender`: the account's display name and org role at send time; the org's anonymous guest
  *   account (`org_anonymous_accounts`) is `{ name: <senderName, else "Anonymous guest">, role:
  *   "guest", anonymous: true }`. Names are sanitised; an empty one leaves `sender` out.
- * - `timeZone`: the override (`timeZoneOverride`, when valid: a scheduled task's zone, scheduled
+ * - `timeZone`: the override (`timeZoneOverride`, when valid: an automation's zone, scheduled
  *   tasks spec §6), else what the IM platform gave for the sender (`im`, when valid), else the
  *   account's setting, else the browser's (when valid), else the org default, else UTC. The
  *   anonymous guest account has no setting of its own, so it gets the IM value or the org default.
@@ -134,7 +134,7 @@ export async function readMessageContext(
     browser?: BrowserContext | undefined;
     /** An IM message: what the platform gave for the sender (maintainer decision 2026-11-08). */
     im?: ImSenderContext | undefined;
-    /** A zone that beats every other source (a scheduled task's zone); internal callers only. */
+    /** A zone that beats every other source (an automation's zone); internal callers only. */
     timeZoneOverride?: string | undefined;
   },
 ): Promise<MessageContext> {

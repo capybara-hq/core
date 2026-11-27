@@ -95,7 +95,7 @@ describe("account tables at 390", () => {
     const calls = stubApi({
       "GET /api/v1/me/push-registrations": () => json(200, { items: [REG] }),
       "GET /api/v1/me/push-preferences": () =>
-        json(200, { waiting: true, replies: true, tasks: true, schedules: true }),
+        json(200, { waiting: true, replies: true, tasks: true, automations: true }),
       "DELETE /api/v1/me/push-registrations/r2": () => noContent(),
     });
     await renderRouteWithCache("/account/notifications", lastStubRoutes(), {

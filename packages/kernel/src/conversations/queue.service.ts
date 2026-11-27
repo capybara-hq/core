@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { releaseQueuedTaskRunIn } from "../automations/run-tracker.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
-import { releaseQueuedTaskRunIn } from "../schedules/run-tracker.js";
 import { notInvocable, type RenderedInvocation } from "../skills/invoke.js";
 import {
   ConversationsService,
@@ -116,7 +116,7 @@ export class ConversationQueue {
    * credentials. The same `clientMessageId` again returns the queued item (`created: false`), or,
    * when it was already sent, the sent `user_message` with `item: null`. Then `ensureRun`: on an
    * idle conversation the item goes out at once. `internal` (kernel callers only, never HTTP): a
-   * scheduled task's marker and zone, stored with the item and written with its `user_message`
+   * automation's marker and zone, stored with the item and written with its `user_message`
    * (scheduled tasks spec §6).
    */
   async add(
@@ -261,7 +261,7 @@ export class ConversationQueue {
 
   /**
    * Changes a queued item's text (its resources and files stay as queued). A skill invocation's
-   * text is its arguments: the skill is rendered again with them now. A scheduled task's item
+   * text is its arguments: the skill is rendered again with them now. An automation's item
    * becomes the person's message: its schedule marker (and the task's zone) is dropped, so the run
    * it triggers is attended (scheduled tasks spec §7).
    */
@@ -310,7 +310,7 @@ export class ConversationQueue {
       .forUpdate()
       .executeTakeFirst();
     if (!cur) throw itemNotFound();
-    // a person's words now: the task's run for this item will not happen (scheduled tasks §6)
+    // a person's words now: the task's run for this item will not happen (automations §6)
     await releaseQueuedTaskRunIn(t, cur.schedule);
     const skill = cur.skill as QueuedSkill | null;
     checkText(
@@ -364,7 +364,7 @@ export class ConversationQueue {
       .returning(["id", "schedule"])
       .executeTakeFirst();
     if (!gone) throw itemNotFound();
-    // a task's queued message deleted by a person: its run is skipped (scheduled tasks §6)
+    // a task's queued message deleted by a person: its run is skipped (automations §6)
     await releaseQueuedTaskRunIn(t, gone.schedule);
     await unpauseIfEmpty(t, conversationId);
     // the wakes an unpause releases for the tree are owed with it (transactional outbox spec §6)
@@ -375,7 +375,7 @@ export class ConversationQueue {
    * Sends a queued item now: it leaves the queue and is posted as a user message in the same
    * transaction (an interjection when a run is active; the items before it keep their place).
    * Racing the dispatcher, exactly one of them takes the item; the loser sees it gone (404). A
-   * scheduled task's item is sent as the person's message, without its schedule marker
+   * automation's item is sent as the person's message, without its schedule marker
    * (scheduled tasks spec §7).
    */
   async sendNow(

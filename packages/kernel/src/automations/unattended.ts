@@ -1,0 +1,252 @@
+import { sql } from "kysely";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { readAutomationSettings } from "./effective-settings.js";
+
+/**
+ * The automation run a kernel run serves (scheduled tasks spec §4, §7), or null for an attended
+ * run: `runs.automation_run_id`, set on the run a task's message triggered and inherited by the
+ * runs descending from it without a person (sub-agent runs, wake runs). A run whose task run row is
+ * gone is treated as attended.
+ */
+export async function unattendedTaskRunOf(
+  db: KernelSchemaDb,
+  runId: string,
+): Promise<{ taskRunId: string; taskId: string; trial: boolean } | null> {
+  const row = await db
+    .selectFrom("runs as r")
+    .innerJoin("automation_runs as tr", "tr.id", "r.automation_run_id")
+    .select(["tr.id", "tr.automation_id", "tr.trial"])
+    .where("r.id", "=", runId)
+    .executeTakeFirst();
+  return row ? { taskRunId: row.id, taskId: row.automation_id, trial: row.trial } : null;
+}
+
+/**
+ * The `automation_run_id` a new run whose boundary (`runs.trigger_seq`) is event `seq` of
+ * `conversationId` gets (scheduled tasks spec §4), read in the caller's transaction:
+ * - a `user_message`: its schedule marker's task run; a sub-agent's task or `SendMessage` message
+ *   (`dispatch`): what its parent run has; a person's message: null;
+ * - a `background_task_finished`: what the run that launched the task has;
+ * - a `subagent_delivery`: what the child run that delivered it has (it inherited from its parent);
+ * - anything else, or no such event: null.
+ */
+export async function automationRunAt(
+  t: KernelSchemaDb,
+  conversationId: string,
+  seq: number | string,
+): Promise<string | null> {
+  const ev = await t
+    .selectFrom("conversation_events")
+    .select(["type", "payload"])
+    .where("conversation_id", "=", conversationId)
+    .where("seq", "=", String(seq))
+    .executeTakeFirst();
+  if (!ev) return null;
+  const p = ev.payload as {
+    schedule?: { taskRunId?: unknown };
+    dispatch?: { parentRunId?: unknown };
+    taskId?: unknown;
+    childRunId?: unknown;
+  };
+  let runId: string | undefined;
+  if (ev.type === "user_message") {
+    if (typeof p.schedule?.taskRunId === "string") return p.schedule.taskRunId;
+    if (typeof p.dispatch?.parentRunId === "string") runId = p.dispatch.parentRunId;
+  } else if (ev.type === "background_task_finished" && typeof p.taskId === "string") {
+    // org-filter: the task id is the kernel-written event payload, scoped by its conversation_id
+    const task = await t
+      .selectFrom("background_tasks")
+      .select("run_id")
+      .where("id", "=", p.taskId)
+      .where("conversation_id", "=", conversationId)
+      .executeTakeFirst();
+    runId = task?.run_id;
+  } else if (ev.type === "subagent_delivery" && typeof p.childRunId === "string") {
+    runId = p.childRunId;
+  }
+  if (runId === undefined) return null;
+  const run = await t
+    .selectFrom("runs")
+    .select("automation_run_id")
+    .where("id", "=", runId)
+    .executeTakeFirst();
+  return run?.automation_run_id ?? null;
+}
+
+/** The tool result of an ask outside the task's grants in an unattended run, `fail` mode (§7). */
+export const UNATTENDED_ASK_ERROR = (tool: string) =>
+  `This scheduled run cannot ask for approval; the task's owner can add ${tool} to the task's approved tools.`;
+
+/**
+ * The Platform operations that change an agent's skills: an unattended run never calls them
+ * without a person (spec §7), even where a private agent's owner would not be asked. Each is a
+ * fixed ask there, outside every grant.
+ */
+export const UNATTENDED_SKILL_OPERATIONS: ReadonlySet<string> = new Set<string>([
+  "agents.register-skill",
+  "agents.delete-skill",
+  "agents.share-skill",
+]);
+
+/** Whether a call's policy key (`Platform:<operation>`) is one of {@link UNATTENDED_SKILL_OPERATIONS}. */
+export function changesAgentSkills(policyKey: string): boolean {
+  const prefix = "Platform:";
+  return (
+    policyKey.startsWith(prefix) && UNATTENDED_SKILL_OPERATIONS.has(policyKey.slice(prefix.length))
+  );
+}
+
+/**
+ * The result of a fixed ask (R3, `requiresUserInteraction`, a skill change unattended, a per-call
+ * policy that never remembers) in an unattended run, `fail` mode: no grant can ever cover it, so
+ * it is not a missing grant either.
+ */
+export const UNATTENDED_FIXED_ASK_ERROR = (tool: string) =>
+  `${tool} always needs a person's approval, which a scheduled run cannot ask for; state what you wanted to do in your final answer.`;
+
+/** The result of `AskUserQuestion` (or any other input request) in an unattended run, `fail` mode. */
+export const UNATTENDED_QUESTION_ERROR =
+  "No one is present in this scheduled run; decide with the information you have, or state the open question in your final answer.";
+
+/** The result of a call that needs the creator's personal connection, unattended, `fail` mode. */
+export const UNATTENDED_CONNECTION_ERROR = (connector: string) =>
+  `This scheduled run cannot ask the user to connect ${connector}; the task's owner can connect it before the next run.`;
+
+/** The note on a connector call whose elicitation was declined in an unattended run (`fail`). */
+export const UNATTENDED_ELICITATION_NOTE =
+  "[The app asked for user input, but no one is present in this scheduled run, so the request was declined. Decide with the information you have, or state the open question in your final answer.]";
+
+/** The `missing_grants` entry of a personal connector the creator has not connected (§7). */
+export const connectionGrantKey = (connectorSlug: string) => `connection:${connectorSlug}`;
+
+/** The `missing_grants` entry of a refused network host (network ask-to-allow spec §8.1, §8.3). */
+export const networkGrantKey = (host: string) => `network:${host}`;
+
+/**
+ * What the tool policy knows of the automation run a kernel run serves (`PolicyContext`): the
+ * task (its grants), the task run (its `missing_grants`), whether it is a trial run (attended), and
+ * the org's `unattendedAsk` and `forbiddenTools`, read live.
+ */
+export interface UnattendedRun {
+  taskId: string;
+  taskRunId: string;
+  trial: boolean;
+  unattendedAsk: "fail" | "wait";
+  forbiddenTools: string[];
+  /** The org's stored `forbiddenTools` cannot be read: every tool call of the run is refused. */
+  forbiddenToolsUnreadable?: boolean;
+}
+
+/** An unattended run that is not a trial run: the §7 rules apply. */
+export const unattendedRules = (u: UnattendedRun | null | undefined): u is UnattendedRun =>
+  u !== null && u !== undefined && !u.trial;
+
+/** In `fail` mode, an unattended run never waits for a person (§7). */
+export const unattendedFails = (u: UnattendedRun | null | undefined): boolean =>
+  unattendedRules(u) && u.unattendedAsk === "fail";
+
+/**
+ * Whether the task's creator joined the run (automations rulings, Task 7 and Task 8): the run's
+ * conversation holds a `user_message` after the run's boundary (`trigger_seq`) that the creator
+ * wrote (no schedule marker, no sub-agent dispatch, `authorAccountId` = the task's account) and
+ * that the run already absorbed (at or below the `absorbedUpToSeq` of its latest model call). The
+ * rest of such a run is attended. Another person's message (someone replying in a group thread the
+ * task posted into) does not make it attended: the task's grants are the creator's, and only the
+ * creator is the one asked.
+ */
+async function personJoined(db: KernelSchemaDb, runId: string): Promise<boolean> {
+  const row = await db
+    .selectFrom("runs as r")
+    .innerJoin("automation_runs as tr", "tr.id", "r.automation_run_id")
+    .innerJoin("automations as st", "st.id", "tr.automation_id")
+    .select(
+      sql<boolean>`EXISTS (
+        SELECT 1 FROM capybara.conversation_events u
+        WHERE u.conversation_id = r.conversation_id
+          AND u.type = 'user_message'
+          AND u.seq > r.trigger_seq
+          AND NOT (u.payload ? 'schedule')
+          AND NOT (u.payload ? 'dispatch')
+          AND u.payload->>'authorAccountId' = st.account_id
+          AND u.seq <= (
+            SELECT COALESCE((m.payload->'request'->>'absorbedUpToSeq')::bigint, m.seq)
+            FROM capybara.conversation_events m
+            WHERE m.conversation_id = r.conversation_id AND m.run_id = r.id
+              AND m.type = 'model_call'
+            ORDER BY m.seq DESC
+            LIMIT 1
+          )
+      )`.as("joined"),
+    )
+    .where("r.id", "=", runId)
+    .executeTakeFirst();
+  return row?.joined === true;
+}
+
+/**
+ * The automation context of a run's tool calls (`PolicyContext.unattended`), or null when the
+ * run is attended: it serves no task run, or a person's message joined it ({@link personJoined}).
+ * A trial run is returned with `trial: true` (attended; its approvals become task grants).
+ */
+export async function unattendedRunOf(
+  db: KernelSchemaDb,
+  config: Pick<KernelConfigService, "get">,
+  orgId: string,
+  runId: string,
+): Promise<UnattendedRun | null> {
+  const run = await unattendedTaskRunOf(db, runId);
+  if (run === null) return null;
+  if (!run.trial && (await personJoined(db, runId))) return null;
+  const s = await readAutomationSettings(db, config, orgId);
+  return {
+    ...run,
+    unattendedAsk: s.unattendedAsk,
+    forbiddenTools: s.forbiddenTools,
+    forbiddenToolsUnreadable: s.forbiddenToolsUnreadable,
+  };
+}
+
+/**
+ * The automation whose grants a run's actions use (spec §7; network ask-to-allow spec §8.1),
+ * or null: the run serves a task run that is no trial run and no person joined
+ * ({@link personJoined}): the same rule as {@link unattendedRules} on {@link unattendedRunOf},
+ * without the org's settings. `accountId`: the task's creator; `orgId`: the task's org.
+ */
+export async function taskGrantsRunOf(
+  db: KernelSchemaDb,
+  runId: string,
+): Promise<{ taskId: string; accountId: string; orgId: string } | null> {
+  const run = await unattendedTaskRunOf(db, runId);
+  if (run === null || run.trial) return null;
+  if (await personJoined(db, runId)) return null;
+  // org-filter: the task id is read from the kernel run's own automation_run_id, never input
+  const task = await db
+    .selectFrom("automations")
+    .select(["id", "account_id", "org_id"])
+    .where("id", "=", run.taskId)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  return task ? { taskId: task.id, accountId: task.account_id, orgId: task.org_id } : null;
+}
+
+/**
+ * Appends a key to a task run's `missing_grants` (a tool key, or `connection:<slug>`), once: one
+ * atomic update, so parallel calls of a run and of its sub-agents never lose or repeat a key.
+ */
+// org-filter: callers pass the task run id of the kernel run's own unattended context
+// (PolicyContext.unattended, from runs.automation_run_id), never a caller-supplied id
+export async function appendMissingGrant(
+  db: KernelSchemaDb,
+  taskRunId: string,
+  key: string,
+): Promise<void> {
+  await db
+    .updateTable("automation_runs")
+    .set({
+      missing_grants: sql<string>`CASE WHEN missing_grants ? ${key} THEN missing_grants
+        ELSE missing_grants || jsonb_build_array(${key}::text) END`,
+    })
+    .where("id", "=", taskRunId)
+    .execute();
+}

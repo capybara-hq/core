@@ -122,7 +122,7 @@ describe("the drawer from the menu button", () => {
     expect(sections.map((s) => s.getAttribute("data-nav-section"))).toEqual([
       "inbox",
       "agents",
-      "schedules",
+      "automations",
     ]);
     expect(sections[0]?.querySelector('[data-part="navrow-badge"]')?.textContent).toBe("3");
     expect(within(panel).getByRole("link", { name: "全部会话" }).getAttribute("href")).toBe(

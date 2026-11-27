@@ -318,7 +318,7 @@ export class LiveDrafts {
     this.steps.delete(key);
   }
 
-  /** Schedules the next draft read while a channel holds deltas past a gap (none left: done). */
+  /** Automations the next draft read while a channel holds deltas past a gap (none left: done). */
   private readAgain(runId: string, step: number, s: StepDraft): void {
     if (!holdsGap(s)) {
       s.attempts = 0;

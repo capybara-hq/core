@@ -1256,18 +1256,29 @@ it.runIf(process.platform === "darwin")(
 );
 
 it("an agent operation can neither read nor write the device services' profile, code and installs", async () => {
+  // the machine-wide install cache (plugins#311) sits outside the device directory
   const f = await fixture({
-    serviceRoots: (dir) => [join(dir, "svc"), join(dir, "svc-files"), join(dir, "svc-install")],
+    serviceRoots: (dir) => [
+      join(dir, "svc"),
+      join(dir, "svc-files"),
+      join(dir, "svc-install"),
+      join(dir, "home-cache", ".install-cache"),
+    ],
   });
   const svc = join(f.dir, "svc");
   const code = join(f.dir, "svc-files");
   const install = join(f.dir, "svc-install");
+  const cache = join(f.dir, "home-cache", ".install-cache");
   // machine reach: everything off the deny list is readable, and both directories are write
   // roots here (the owner ceiling allows them), so only the grant's denies keep them out
   const scope = {
     ...f.scope,
     operationId: "svc-op",
-    filesystem: { kind: "scoped" as const, projectRoot: f.dir, writeRoots: [svc, code, install] },
+    filesystem: {
+      kind: "scoped" as const,
+      projectRoot: f.dir,
+      writeRoots: [svc, code, install, cache],
+    },
   };
   const op = await f.backend
     .forExecution({ operationId: "svc-op", orgNetwork: { kind: "open-public", hosts: [] } })
@@ -1281,8 +1292,19 @@ it("an agent operation can neither read nor write the device services' profile, 
   await expect(
     op.writeFile(join(install, "browser.browser", "chrome"), Buffer.from("evil"), signal),
   ).rejects.toThrow(/outside this operation scope/);
+  await expect(
+    op.readFile(join(cache, "scope", "browser.browser", "manifests", "k"), {
+      maxBytes: 10,
+      signal,
+    }),
+  ).rejects.toThrow(/outside this operation scope/);
+  await expect(
+    op.writeFile(join(cache, "scope", "browser.browser", "x"), Buffer.from("evil"), signal),
+  ).rejects.toThrow(/outside this operation scope/);
   // a sandboxed exec's grant denies both (the worker turns each into read and write denies)
   await op.exec({ command: "true", timeoutMs: 1000, maxOutputBytes: 1000, signal });
   const request = f.launched.at(-1) as import("../src/exec/operation-worker.js").MacWorkerRequest;
-  expect(request.grant.deniedReadRoots).toEqual(expect.arrayContaining([svc, code, install]));
+  expect(request.grant.deniedReadRoots).toEqual(
+    expect.arrayContaining([svc, code, install, cache]),
+  );
 });

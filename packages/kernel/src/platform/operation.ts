@@ -346,9 +346,9 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
       "Your own cloud devices (the workspaces your conversations run in): list, read, create, rename, narrow the sandbox network, delete, wipe the files.",
   },
   {
-    id: "schedules",
+    id: "automations",
     description:
-      "Your scheduled tasks (an agent runs a prompt on a schedule, as you, unattended): list, read, create, edit, pause, resume, delete, run now or as a trial, run history, and the tools approved for a task.",
+      "Your automations (an agent runs a prompt on a schedule, as you, unattended): list, read, create, edit, pause, resume, delete, run now or as a trial, run history, and the tools approved for a task.",
   },
   {
     id: "setup",

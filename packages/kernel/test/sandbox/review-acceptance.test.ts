@@ -58,7 +58,7 @@ import {
  * 3. a background `git clone` (reviewed before launch, read with `TaskOutput`);
  * 4. `gh pr create` on a local device (review allows `allow.gh`; the owner's machine runs it);
  * 5. `gh auth login` on a cloud device (one `device_code` event, no token);
- * 6. a scheduled task hitting an `ask` command — in `review-pipeline.test.ts` (the scheduled task
+ * 6. an automation hitting an `ask` command — in `review-pipeline.test.ts` (the automation
  *    machinery lives there).
  */
 

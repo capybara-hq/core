@@ -80,7 +80,7 @@ interface UnhashedBlob {
 
 /**
  * The hashing of migrated blobs (file library spec §9 step 2): every blob the kernel writes gets
- * its sha256 when it settles, so the blobs with none are those 0188/0189 (and the catch-up copy)
+ * its sha256 when it settles, so the blobs with none are those 0189/0190 (and the catch-up copy)
  * migrated. Resumable and multi-replica safe:
  *
  * - the dispatcher job `file-library-hash` (deterministic id) owes one batch job per org that has

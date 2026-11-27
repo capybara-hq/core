@@ -13,6 +13,16 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { ModelRef } from "../agents/definition.js";
+import type {
+  AutomationChat,
+  AutomationMode,
+  AutomationPauseReason,
+  AutomationStatus,
+  AutomationTrigger,
+  ScheduleMarker,
+  TaskRunSkipReason,
+  TaskRunStatus,
+} from "../automations/types.js";
 import type { AccountAvatar } from "../identity/account-avatar.js";
 import type { DeviceNetwork } from "../sandbox/modes.js";
 import type { StartingExecutionGrants } from "../sandbox/operation-authority-types.js";
@@ -25,16 +35,6 @@ import type {
 } from "../sandbox/permission-call-types.js";
 import type { PermissionConfigProjection } from "../sandbox/permission-config-publication.js";
 import type { PermissionRuntimeIdentity } from "../sandbox/permission-runtime-reports.js";
-import type {
-  ScheduleChat,
-  ScheduleMarker,
-  ScheduleMode,
-  SchedulePauseReason,
-  ScheduleStatus,
-  ScheduleTrigger,
-  TaskRunSkipReason,
-  TaskRunStatus,
-} from "../schedules/types.js";
 
 /** 带默认值的时间戳列：插入可省略，读出为 Date。 */
 type Ts = ColumnType<Date, Date | string | undefined, Date | string>;
@@ -232,7 +232,7 @@ export interface PushRegistrationsTable {
 /** A person's switch for one push category (migration 0172); an absent row is on. */
 export interface PushPreferencesTable {
   account_id: string;
-  category: "waiting" | "replies" | "tasks" | "schedules";
+  category: "waiting" | "replies" | "tasks" | "automations";
   enabled: boolean;
   updated_at: Ts;
 }
@@ -503,8 +503,8 @@ export interface ConversationsTable {
   subagent_depth: ColumnType<number, number | undefined, number>;
   /** 0088, renamed in 0105: the device the conversation runs in; null = not chosen yet. */
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0113: the scheduled task that created it (`new` mode); null otherwise. */
-  scheduled_task_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0113, renamed in 0188: the automation that created it (`new` mode); null otherwise. */
+  automation_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
    * 0124: where the conversation comes from, set at creation and never changed. Required on insert
    * (the column's `web` default is not relied on: a forgotten source must not read as web).
@@ -564,7 +564,7 @@ export interface ConversationQueueTable {
   /** 0062: the `user_message.skill` record of a queued skill invocation, or null. */
   skill: ColumnType<unknown, string | null | undefined, string | null>;
   /**
-   * 0113: the schedule marker of a scheduled task's message, plus the task's zone (`timeZone`, the
+   * 0113: the schedule marker of an automation's message, plus the task's zone (`timeZone`, the
    * message's zone override; not copied into the logged marker); null for a person's message.
    */
   schedule: ColumnType<
@@ -634,10 +634,10 @@ export interface RunsTable {
    */
   budget_run_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
-   * 0113: the scheduled task run this run serves (set on the run the task's message triggers and
+   * 0113, renamed in 0188: the automation run this run serves (set on the run the task's message triggers and
    * inherited by its unattended descendants); null = a person's run.
    */
-  scheduled_task_run_id: ColumnType<string | null, string | null | undefined, string | null>;
+  automation_run_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
    * 0132: a manual compaction run (context compaction spec §4.7): it calls the shared compaction
    * execution with `force: true` instead of the agent loop, and writes no model step.
@@ -1736,26 +1736,26 @@ export interface ModelUsageTable {
 type NullableText = ColumnType<string | null, string | null | undefined, string | null>;
 type NullableTs = ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 
-/** 0113: a scheduled task (scheduled tasks spec §4). */
-export interface ScheduledTasksTable {
+/** 0113 (renamed in 0188 from the scheduled tasks table): an automation (scheduled tasks spec §4). */
+export interface AutomationsTable {
   id: string;
   org_id: string;
   account_id: string;
   agent_id: string;
   name: string;
   prompt: string;
-  trigger: ColumnType<ScheduleTrigger, string, string>;
-  mode: ScheduleMode;
+  trigger: ColumnType<AutomationTrigger, string, string>;
+  mode: AutomationMode;
   conversation_id: NullableText;
-  chat: ColumnType<ScheduleChat | null, string | null | undefined, string | null>;
+  chat: ColumnType<AutomationChat | null, string | null | undefined, string | null>;
   model: ColumnType<ModelRef | null, string | null | undefined, string | null>;
   effort: NullableText;
   device_id: NullableText;
-  status: ColumnType<ScheduleStatus, ScheduleStatus | undefined, ScheduleStatus>;
+  status: ColumnType<AutomationStatus, AutomationStatus | undefined, AutomationStatus>;
   pause_reason: ColumnType<
-    SchedulePauseReason | null,
-    SchedulePauseReason | null | undefined,
-    SchedulePauseReason | null
+    AutomationPauseReason | null,
+    AutomationPauseReason | null | undefined,
+    AutomationPauseReason | null
   >;
   paused_by: NullableText;
   next_run_at: NullableTs;
@@ -1774,14 +1774,14 @@ export type FileShareRevokeReason =
   | "conversation_deleted"
   | "member_offboarded"
   | "creator_lost_access"
-  /** 0188: the library file the share was made from was deleted. */
+  /** 0189: the library file the share was made from was deleted. */
   | "file_deleted";
 
-/** 0188: a blob's state; `gone` = the hashing job found its object missing. */
+/** 0189: a blob's state; `gone` = the hashing job found its object missing. */
 export type BlobStatus = "pending" | "ready" | "deleting" | "gone";
 
 /**
- * 0188 (file library spec §1): the bytes, content-addressed per org. `object_key` is relative to
+ * 0189 (file library spec §1): the bytes, content-addressed per org. `object_key` is relative to
  * `kernel/<org>/`; `sha256` is null only for a migrated blob not hashed yet.
  */
 export interface BlobsTable {
@@ -1798,13 +1798,13 @@ export interface BlobsTable {
   created_at: Ts;
 }
 
-/** 0188: where a library file came from. */
+/** 0189: where a library file came from. */
 export type FileOrigin = "upload" | "delivered" | "generated";
-/** 0188: `uploading` (presigned, not finalized), `draft` (finalized, not sent), `ready`, `deleted`. */
+/** 0189: `uploading` (presigned, not finalized), `draft` (finalized, not sent), `ready`, `deleted`. */
 export type FileStatus = "uploading" | "draft" | "ready" | "deleted";
 
 /**
- * 0188 (file library spec §1): a file a person sees, owned by an account. `blob_id` is null while
+ * 0189 (file library spec §1): a file a person sees, owned by an account. `blob_id` is null while
  * `uploading` (and may be once `deleted`); `staging_key` is a migrated `uploading` row's old staging key (null for new
  * rows, which stage at `uploads/<id>`); `agent_id` has no foreign key (a label).
  */
@@ -1843,7 +1843,7 @@ export interface FilesTable {
   deleted_at: NullableTs;
 }
 
-/** 0188: which conversation refers to which file; `first_seq` the event that first referred to it. */
+/** 0189: which conversation refers to which file; `first_seq` the event that first referred to it. */
 export interface ConversationFilesTable {
   conversation_id: string;
   file_id: string;
@@ -1872,7 +1872,7 @@ export interface FileSharesTable {
   id: string;
   org_id: string;
   code: string;
-  /** 0188: null for a share made from the library (no conversation). */
+  /** 0189: null for a share made from the library (no conversation). */
   conversation_id: NullableText;
   file_id: string;
   source_path: NullableText;
@@ -1895,16 +1895,17 @@ export interface FileSharesTable {
   last_opened_at: NullableTs;
   created_at: Ts;
   updated_at: Ts;
-  /** 0188: the blob holding the snapshot (replaces `object_key`). */
+  /** 0189: the blob holding the snapshot (replaces `object_key`). */
   blob_id: NullableText;
-  /** 0188: the library file the share was made from, when it still exists. */
+  /** 0189: the library file the share was made from, when it still exists. */
   source_file_id: NullableText;
 }
 
-/** 0113: one tick (or trial run) of a scheduled task; unique per (task, tick) when not trial. */
-export interface ScheduledTaskRunsTable {
+/** 0113 (renamed in 0188 from the scheduled task runs table): one tick (or trial run) of an automation; unique per (task, tick) when not trial. */
+export interface AutomationRunsTable {
   id: string;
-  task_id: string;
+  /** 0188: renamed from `task_id`. */
+  automation_id: string;
   org_id: string;
   scheduled_for: Date | string;
   fired_at: NullableTs;
@@ -1923,9 +1924,10 @@ export interface ScheduledTaskRunsTable {
   missing_grants: ColumnType<string[], string | undefined, string>;
 }
 
-/** 0113: a scheduled task's remembered grants (same shape as `conversation_tool_grants`). */
-export interface ScheduledTaskGrantsTable {
-  task_id: string;
+/** 0113 (renamed in 0188 from the scheduled task grants table): an automation's remembered grants (same shape as `conversation_tool_grants`). */
+export interface AutomationGrantsTable {
+  /** 0188: renamed from `task_id`. */
+  automation_id: string;
   tool_key: string;
   spec_hash: string;
   connector_id: string | null;
@@ -2111,9 +2113,9 @@ export interface KernelDatabase {
   device_projects: DeviceProjectsTable;
   device_conversation_notices: DeviceConversationNoticesTable;
   background_tasks: BackgroundTasksTable;
-  scheduled_tasks: ScheduledTasksTable;
-  scheduled_task_runs: ScheduledTaskRunsTable;
-  scheduled_task_grants: ScheduledTaskGrantsTable;
+  automations: AutomationsTable;
+  automation_runs: AutomationRunsTable;
+  automation_grants: AutomationGrantsTable;
   file_shares: FileSharesTable;
   blobs: BlobsTable;
   files: FilesTable;

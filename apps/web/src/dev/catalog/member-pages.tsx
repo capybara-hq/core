@@ -5,26 +5,27 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import AccountProfileView from "../../app/(app)/account/profile/view";
 import AgentsView from "../../app/(app)/agents/view";
+import AutomationsView from "../../app/(app)/automations/view";
 import ConnectorsView from "../../app/(app)/connectors/view";
 import ConversationsView from "../../app/(app)/conversations/view";
 import FilesView from "../../app/(app)/files/view";
 import InboxView from "../../app/(app)/inbox/view";
-import SchedulesView from "../../app/(app)/schedules/view";
 import SkillsView from "../../app/(app)/skills/view";
 import { type Session, SessionContext } from "../../components/shell/session";
 import type { Agent } from "../../lib/agents";
+import type { AutomationListItem } from "../../lib/automations";
 import type { ConnectorSummary } from "../../lib/connectors";
 import type { Conversation, ConversationListRow } from "../../lib/conversations";
 import type { InboxItem } from "../../lib/inbox";
 import type { LibraryFileView } from "../../lib/library-files";
 import { agentsQuery, agentTemplatesQuery } from "../../lib/query/agents";
 import { authSourcesQuery } from "../../lib/query/auth";
+import { automationsQuery } from "../../lib/query/automations";
 import { orgComponentsQuery } from "../../lib/query/components";
 import { connectorsQuery } from "../../lib/query/conversation";
 import { inboxQuery } from "../../lib/query/inbox";
 import { libraryFilesQuery, libraryUsageQuery } from "../../lib/query/library";
 import { membersQuery } from "../../lib/query/members";
-import { schedulesQuery } from "../../lib/query/schedules";
 import { orgSettingsQuery } from "../../lib/query/settings";
 import {
   conversationGroupsQuery,
@@ -33,7 +34,6 @@ import {
   readinessQuery,
 } from "../../lib/query/shell";
 import { skillsQuery } from "../../lib/query/skills";
-import type { ScheduledTaskListItem } from "../../lib/schedules";
 import type { Me } from "../../lib/session";
 import type { SkillSummary } from "../../lib/skills";
 import { COMMANDS } from "./fixtures";
@@ -41,7 +41,7 @@ import type { MemberPage } from "./routes";
 import { sidebarProps } from "./shell-fixture";
 
 /**
- * `/dev/ui/pages/member-<page>`: the member pages (agents, skills, connectors, schedules'
+ * `/dev/ui/pages/member-<page>`: the member pages (agents, skills, connectors, automations'
  * list, files, conversations, inbox, account profile) drawn from a seeded query cache in the workspace
  * shell (no kernel), for the responsive matrix (`visual/responsive.spec.ts`). A member role, so
  * the compact rows, the actions of each row and the page's own primary show as a person sees them.
@@ -139,7 +139,7 @@ const TASKS: [string, string, string, string][] = [
   ["s3", "工单回顾", "ag3", "0 9 * * 2"],
 ];
 
-export const SCHEDULES: ScheduledTaskListItem[] = TASKS.map(([id, name, agentId, expr]) => ({
+export const AUTOMATIONS: AutomationListItem[] = TASKS.map(([id, name, agentId, expr]) => ({
   id,
   name,
   agentId,
@@ -226,7 +226,7 @@ const INBOX_ITEMS: InboxItem[] = [
     },
   },
   {
-    type: "schedule_attention",
+    type: "automation_attention",
     id: "s2:paused",
     createdAt: T,
     attention: {
@@ -307,9 +307,9 @@ export function seeded(): QueryClient {
   qc.setQueryData(skillsQuery(ORG).queryKey, { skills: SKILLS });
   qc.setQueryData(connectorsQuery(ORG).queryKey, { connectors: CONNECTORS });
   qc.setQueryData(orgSettingsQuery(ORG).queryKey, {
-    settings: { scheduledTasks: { enabled: true, minIntervalMinutes: 60 } },
+    settings: { automations: { enabled: true, minIntervalMinutes: 60 } },
   });
-  qc.setQueryData(schedulesQuery(ORG).queryKey, { items: SCHEDULES });
+  qc.setQueryData(automationsQuery(ORG).queryKey, { items: AUTOMATIONS });
   qc.setQueryData(conversationListQuery(ORG).queryKey, {
     conversations: CONVERSATIONS,
     next: null,
@@ -341,8 +341,10 @@ function Page({ page }: { page: MemberPage }) {
       return <SkillsView />;
     case "connectors":
       return <ConnectorsView />;
-    case "schedules":
-      return <SchedulesView initial={{ view: "list", range: "week", date: null, scope: "mine" }} />;
+    case "automations":
+      return (
+        <AutomationsView initial={{ view: "list", range: "week", date: null, scope: "mine" }} />
+      );
     case "files":
       return <FilesView initial={{ origin: "", agent: "", type: "", q: "" }} />;
     case "conversations":

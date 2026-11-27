@@ -172,7 +172,7 @@ threads. `name` is model-controlled: show it, never interpret it. Never put an u
 | object missing or storage unavailable | link line, advance (`warn`) |
 | non-retryable `too_large` | link line, advance (`info`) |
 | non-retryable `rejected`, or non-retryable with no reason (the SDK counts that as `rejected`) | link line, advance; the redacted message goes to the connection's `last_error`. Map a missing upload permission or scope to `rejected`, not `auth`, so text keeps flowing |
-| non-retryable `auth` / `target_gone` | as for text: stop the round, `last_error` for `auth`, scheduled task paused |
+| non-retryable `auth` / `target_gone` | as for text: stop the round, `last_error` for `auth`, automation paused |
 | retryable or any other error | rethrown: BullMQ backoff with `retryAfterMs`; after the last attempt the next event resumes from `last_seq` |
 | the link line itself fails non-retryably | the event's poison counting (3 failures, then skipped) |
 
@@ -195,9 +195,9 @@ threads. `name` is model-controlled: show it, never interpret it. Never put an u
 
 The kernel treats other exceptions as retryable (a limited number of times). Use `isChannelSendError` to check (duck typing, not `instanceof`). The error message carries only the step and the platform error code, **not tokens, request headers or response bodies** (`cause` may attach the original error, but the original error itself must not contain credentials either).
 
-### Scheduled tasks in a chat (spec `2026-11-11-scheduled-tasks-design.md` §8)
+### Automations in a chat (spec `2026-11-11-scheduled-tasks-design.md` §8, the feature's original design)
 
-A `chat` task posts into an IM chat as its creator. **A DM** reuses the creator's live DM thread
+A `chat` automation posts into an IM chat as its creator. **A DM** reuses the creator's live DM thread
 (`channel_threads`, key `dm:<externalId>`) or, after `/new` or with no live thread, creates a
 conversation and binds it there (`findOrBindThread`), then queues the prompt in it. **A group**
 needs a channel with `features.threads` (else the run is skipped, `unsupported_target`) and a
@@ -209,10 +209,10 @@ binding still pending, so idempotent) sets `target.threadId` = that message's id
 creator), so a reply in that thread continues the run's conversation, for the creator only (thread
 rows are per account). The bind is written before the lease check, so a retry never posts a second
 root. **A delivery that fails for good** with `ChannelSendError` `target_gone` or `auth`, for a run
-serving a scheduled task (`runs.scheduled_task_run_id`), pauses that task with `target_gone`
+serving an automation (`runs.automation_run_id`), pauses it with `target_gone`
 (`pauseFor` in `outbound.ts`); there is no automatic resume after credentials are rotated: the
 creator resumes it. Nothing changes for channel extensions: these are ordinary `send` calls whose
-target gains a `threadId` after the first. Tests: `packages/kernel/test/schedules/channel-delivery.test.ts`.
+target gains a `threadId` after the first. Tests: `packages/kernel/test/automations/channel-delivery.test.ts`.
 
 ### Sub-agents' approvals and questions in a channel thread (phase C)
 

@@ -712,7 +712,7 @@ describe("清理", () => {
         contentType: "image/png",
         bytes: new Uint8Array(PNG),
       });
-    // a chat attachment row left by the 0188 copy (its object is now a blob's)
+    // a chat attachment row left by the 0189 copy (its object is now a blob's)
     const chat = randomUUID();
     await k.app
       .get(StorageService)

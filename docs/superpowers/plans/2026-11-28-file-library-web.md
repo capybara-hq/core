@@ -97,7 +97,7 @@ Design (spec §6 sizes; reference mockup structure only, never its styles):
   strip from it if supported; otherwise link only and note it), share, download, delete with a
   confirm dialog. Empty and filtered-empty states.
 - Nav: `{ id: "files", key: "files", href: "/files", audience: "member", icon: "file", section:
-  "primary" }` after schedules; `activeNavOf` maps `/files`; no drawer section (the drawer's union is
+  "primary" }` after automations (renamed from schedules on main); `activeNavOf` maps `/files`; no drawer section (the drawer's union is
   closed; it appears in the drawer's primary list as other non-section entries do — check
   `useDrawerNav` and keep it out of `drawer: "section"`).
 - `APP_PAGES`, `ROUTE_TABLE` entry (`/files`, member-gated, prefetch `libraryFilesQuery` default

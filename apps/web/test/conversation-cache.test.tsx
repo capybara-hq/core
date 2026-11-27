@@ -793,7 +793,7 @@ describe("owner permission read boundaries through the actual route", () => {
       "o1",
       "c1",
       [],
-      CONV("c1", { scheduledTaskId: "schedule-1" }).conversation,
+      CONV("c1", { automationId: "schedule-1" }).conversation,
       "a1",
     );
     const read = queries.find((q) => q.queryKey?.at(-1) === "permissions");

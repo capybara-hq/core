@@ -124,7 +124,7 @@ const store = () => k.app.get(StorageService).kernel(orgId);
 
 /**
  * Stores an object and logs its `artifact_created` the way `Deliver` did before the file library,
- * then runs the 0188 copy (a delivery migrated with its id and key).
+ * then runs the 0189 copy (a delivery migrated with its id and key).
  */
 async function deliver(
   name: string,
@@ -155,7 +155,7 @@ async function deliver(
 
 /**
  * Stores an object and writes a ready chat attachment row bound to the conversation, as before the
- * file library, then runs the 0188 copy (a file the conversation refers to, same id and key).
+ * file library, then runs the 0189 copy (a file the conversation refers to, same id and key).
  */
 async function attach(name: string, bytes: Buffer): Promise<{ id: string; objectKey: string }> {
   const id = randomUUID();

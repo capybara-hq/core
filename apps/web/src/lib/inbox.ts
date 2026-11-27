@@ -3,8 +3,8 @@ type LocalizedName = { zh: string; en: string };
 
 import { apiFetch } from "./api";
 import type { Approval } from "./approvals";
+import type { AutomationPauseReason } from "./automations";
 import type { CatalogRequest } from "./catalog";
-import type { SchedulePauseReason } from "./schedules";
 import type { SkillChange } from "./skills";
 
 /**
@@ -17,19 +17,19 @@ export type InboxItem =
   | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequest }
   /** My own request in this org, approved or rejected (with the reason); `createdAt`: decided. */
   | { type: "catalog_request_decided"; id: string; createdAt: string; request: CatalogRequest }
-  /** My scheduled task that needs me (`id`: `<taskId>:paused` or `<taskId>:grants`). */
-  | { type: "schedule_attention"; id: string; createdAt: string; attention: ScheduleAttention }
+  /** My automation that needs me (`id`: `<taskId>:paused` or `<taskId>:grants`). */
+  | { type: "automation_attention"; id: string; createdAt: string; attention: AutomationAttention }
   | { type: OrgNotice["kind"]; id: string; createdAt: string; notice: OrgNotice };
 
 /**
- * A scheduled task of mine that needs me (kernel `ScheduleAttentionView`, scheduled tasks spec §8):
+ * An automation of mine that needs me (kernel `AutomationAttentionView`, automations spec §8):
  * paused for any reason but my own pause, or its latest run was refused tools (`missing_grants`).
  */
-export interface ScheduleAttention {
+export interface AutomationAttention {
   taskId: string;
   name: string;
   /** `failed`: its latest run failed (`error`); `missing_grants`: tools refused; else paused. */
-  reason: SchedulePauseReason | "missing_grants" | "failed";
+  reason: AutomationPauseReason | "missing_grants" | "failed";
   /** Who paused it (an admin's pause names the admin); else null. */
   pausedBy: { id: string; name: string; avatarUrl: string | null } | null;
   /**
@@ -98,7 +98,7 @@ export const isShowable = (i: InboxItem): boolean =>
   i.type === "skill_change" ||
   i.type === "catalog_request" ||
   i.type === "catalog_request_decided" ||
-  i.type === "schedule_attention";
+  i.type === "automation_attention";
 
 export interface InboxView {
   items: InboxItem[];

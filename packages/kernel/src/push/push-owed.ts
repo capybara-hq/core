@@ -4,12 +4,12 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { type OutboxJob, OutboxService } from "../infra/outbox/outbox.service.js";
 import {
+  automationRunEventId,
   conversationEventId,
   PUSH_FANOUT_JOB,
   PUSH_QUEUE,
   type PushFanoutData,
   pushFanoutJobId,
-  scheduleRunEventId,
 } from "./jobs.js";
 import { PushHostModule, PushProviderHost } from "./provider-host.js";
 import { pushTriggerOf } from "./triggers.js";
@@ -58,14 +58,14 @@ export class PushOwed {
   }
 
   /**
-   * The fanout of a scheduled task run's settle (completed or failed), in the caller's
+   * The fanout of an automation run's settle (completed or failed), in the caller's
    * transaction.
    */
   @Transactional({ propagation: "mandatory" })
-  async oweScheduleRun(taskRunId: string, orgId: string): Promise<void> {
+  async oweAutomationRun(taskRunId: string, orgId: string): Promise<void> {
     if (!this.host.any()) return;
     await this.outbox.add(
-      fanoutJob(scheduleRunEventId(taskRunId), orgId, { kind: "schedule", taskRunId }),
+      fanoutJob(automationRunEventId(taskRunId), orgId, { kind: "automation", taskRunId }),
     );
   }
 }
@@ -85,7 +85,7 @@ function fanoutJob(
 }
 
 /**
- * {@link PushOwed}: infra and the extension registry only, so the event log and the scheduled task
+ * {@link PushOwed}: infra and the extension registry only, so the event log and the automation
  * run tracker import it without a cycle.
  */
 @Module({ imports: [PushHostModule], providers: [PushOwed], exports: [PushOwed] })

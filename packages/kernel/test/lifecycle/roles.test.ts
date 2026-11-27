@@ -242,6 +242,7 @@ describe("role modules", () => {
     expect(jobHosts).toEqual([
       "AccountAvatarCleanupJob",
       "AttachmentCleanupJob",
+      "AutomationScanJob",
       "BackgroundTaskPollJob",
       "BlobSweepJob",
       "CatalogJobs",
@@ -259,7 +260,6 @@ describe("role modules", () => {
       "RetireLegacyTasksJob",
       "RunOrphanCheck",
       "SandboxSweepJobs",
-      "ScheduledTaskScanJob",
       "ShareSweepJob",
       "StoragePurgeJob",
       "ToolJobs",

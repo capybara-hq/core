@@ -1,6 +1,10 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import {
+  type AutomationAttention,
+  AutomationsService,
+} from "../automations/automations.service.js";
+import {
   CATALOG_REQUESTS_LIST_MAX,
   CatalogRequestsService,
   type CatalogRequestView,
@@ -8,10 +12,6 @@ import {
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { roleAtLeast } from "../orgs/roles.js";
-import {
-  type ScheduleAttention,
-  ScheduledTasksService,
-} from "../schedules/scheduled-tasks.service.js";
 import {
   SKILL_CHANGES_LIST_MAX,
   SkillChangesService,
@@ -51,7 +51,7 @@ export const INBOX_MAX_ITEMS = 100;
  *   (M6 T26, C22; plugin scope spec §5.1);
  * - `catalog_request_decided`: the current user's own requests in this org that were approved or
  *   rejected (with the reason), until dismissed (`POST catalog-requests/:id/dismiss`);
- * - `schedule_attention`: the current user's own scheduled task that needs them (spec §8): paused
+ * - `automation_attention`: the current user's own automation that needs them (spec §8): paused
  *   for any reason but their own pause, its latest run failed, or its latest run was refused tools
  *   or connections; derived live, gone once the task is resumed or runs clean;
  * - the org notices (`item_shared`, `shared_item_updated`, `upload_confirmed`,
@@ -70,11 +70,11 @@ export type InboxItem =
       request: CatalogRequestView;
     }
   | {
-      type: "schedule_attention";
+      type: "automation_attention";
       /** `<taskId>:paused`, `<taskId>:failed` or `<taskId>:grants`. */
       id: string;
       createdAt: string;
-      attention: ScheduleAttentionView;
+      attention: AutomationAttentionView;
     }
   | {
       type: OrgNoticeView["kind"];
@@ -83,8 +83,8 @@ export type InboxItem =
       notice: OrgNoticeView;
     };
 
-/** A scheduled task that needs its creator ({@link ScheduleAttention}, dates as ISO strings). */
-export type ScheduleAttentionView = Omit<ScheduleAttention, "at">;
+/** An automation that needs its creator ({@link AutomationAttention}, dates as ISO strings). */
+export type AutomationAttentionView = Omit<AutomationAttention, "at">;
 
 /** `GET /inbox` 的结果：新的在前，最多 {@link INBOX_MAX_ITEMS} 项；`truncated` 为 true 表示还有更多。 */
 export interface InboxView {
@@ -105,8 +105,8 @@ export class InboxService {
       CatalogRequestsService,
       "listForOrgAdmin" | "listDecidedForRequester"
     >,
-    @Inject(ScheduledTasksService)
-    private readonly schedules: Pick<ScheduledTasksService, "attentionFor">,
+    @Inject(AutomationsService)
+    private readonly automations: Pick<AutomationsService, "attentionFor">,
   ) {}
 
   async list(orgId: string, accountId: string): Promise<InboxView> {
@@ -116,7 +116,7 @@ export class InboxService {
       this.catalogRequests.listForOrgAdmin(orgId, accountId),
       this.catalogRequests.listDecidedForRequester(orgId, accountId),
       this.notices(orgId, accountId),
-      this.schedules.attentionFor(orgId, accountId),
+      this.automations.attentionFor(orgId, accountId),
     ]);
     const all: InboxItem[] = [
       ...approvals.map(
@@ -153,7 +153,7 @@ export class InboxService {
       ),
       ...attention.map(
         ({ at, ...view }): InboxItem => ({
-          type: "schedule_attention",
+          type: "automation_attention",
           id: `${view.taskId}:${view.reason === "missing_grants" ? "grants" : view.reason === "failed" ? "failed" : "paused"}`,
           createdAt: at.toISOString(),
           attention: view,

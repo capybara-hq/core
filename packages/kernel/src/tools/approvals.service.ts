@@ -9,6 +9,19 @@ import {
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { normalizeStoredDefinition } from "../agents/definition.js";
+import { readAutomationSettings } from "../automations/effective-settings.js";
+import {
+  GIT_GRANT_SPEC_HASH,
+  gitGrantRefusal,
+  gitPushGrantKey,
+  grantRefusalOf,
+  NETWORK_GRANT_PREFIX,
+  NETWORK_GRANT_SPEC_HASH,
+  networkGrantRefusal,
+  normalizeGitRepo,
+} from "../automations/grant-rules.js";
+import { AutomationStore } from "../automations/store.js";
+import { unattendedTaskRunOf } from "../automations/unattended.js";
 import { EventLog } from "../conversations/event-log.js";
 import {
   COMMAND_ASK_TEXT_MAX_CHARS,
@@ -56,19 +69,6 @@ import type {
 } from "../sandbox/permission-call-types.js";
 import { isSessionGrantableRule } from "../sandbox/review/types.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
-import { readScheduleSettings } from "../schedules/effective-settings.js";
-import {
-  GIT_GRANT_SPEC_HASH,
-  gitGrantRefusal,
-  gitPushGrantKey,
-  grantRefusalOf,
-  NETWORK_GRANT_PREFIX,
-  NETWORK_GRANT_SPEC_HASH,
-  networkGrantRefusal,
-  normalizeGitRepo,
-} from "../schedules/grant-rules.js";
-import { ScheduledTaskStore } from "../schedules/store.js";
-import { unattendedTaskRunOf } from "../schedules/unattended.js";
 import { gitPushPolicyName, personalAuth } from "./connector-account-policies.js";
 import { pluginDisplayNames } from "./display-names.js";
 import type { ApprovalPolicySource } from "./pipeline.js";
@@ -715,8 +715,8 @@ export class ApprovalsService {
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn" | "notify">,
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(ScheduledTaskStore)
-    private readonly schedules: Pick<ScheduledTaskStore, "addGrant">,
+    @Inject(AutomationStore)
+    private readonly automations: Pick<AutomationStore, "addGrant">,
     /** A trial approval is kept only for a tool the task may hold as a grant (its agent's tools). */
     @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, "forAgent">,
     /** One decision of a network ask at a time, across replicas. */
@@ -2136,7 +2136,7 @@ export class ApprovalsService {
   }
 
   /**
-   * A trial run of a scheduled task (scheduled tasks spec §7): an approval its creator granted, in
+   * A trial run of an automation (scheduled tasks spec §7): an approval its creator granted, in
    * any scope, is also added to the task's grants with the approved definition's hash, so its
    * unattended runs do not ask again. Kept only by the rule `addGrants` applies
    * (`grantRefusalOf`, against the task agent's tools now): never a role-escalated approval
@@ -2153,7 +2153,7 @@ export class ApprovalsService {
     const served = await unattendedTaskRunOf(t, a.runId);
     if (served === null || !served.trial) return;
     const task = await t
-      .selectFrom("scheduled_tasks as s")
+      .selectFrom("automations as s")
       .innerJoin("agents as ag", "ag.id", "s.agent_id")
       .leftJoin("agent_versions as v", (j) =>
         j.onRef("v.agent_id", "=", "ag.id").onRef("v.version", "=", "ag.current_version"),
@@ -2180,13 +2180,13 @@ export class ApprovalsService {
       source: await conversationSourceOf(t, a.conversationId),
     });
     const tool = tools.find((x) => x.key === a.toolKey);
-    const { forbiddenTools } = await readScheduleSettings(t, this.config, a.orgId);
+    const { forbiddenTools } = await readAutomationSettings(t, this.config, a.orgId);
     const why = grantRefusalOf(a.toolKey, tool, {
       role: member.role,
       forbiddenTools,
     });
     if (why !== null) return;
-    await this.schedules.addGrant(t, served.taskId, {
+    await this.automations.addGrant(t, served.taskId, {
       toolKey: a.toolKey,
       specHash: a.specHash,
       connectorId: a.connectorId,
@@ -2194,7 +2194,7 @@ export class ApprovalsService {
   }
 
   /**
-   * A trial run of a scheduled task (network ask-to-allow spec §8.1): the hosts its creator allowed
+   * A trial run of an automation (network ask-to-allow spec §8.1): the hosts its creator allowed
    * for this run (「这次允许」) on a network ask about one of their devices become the task's
    * `network:<host>` grants, each only when `networkGrantRefusal` allows it (exact host, within the
    * org's effective egress, the device takes remote grants). Never for an ask another account
@@ -2212,7 +2212,7 @@ export class ApprovalsService {
     const served = await unattendedTaskRunOf(t, a.runId);
     if (served === null || !served.trial) return;
     const task = await t
-      .selectFrom("scheduled_tasks")
+      .selectFrom("automations")
       .select("account_id")
       .where("id", "=", served.taskId)
       .where("org_id", "=", a.orgId)
@@ -2224,7 +2224,7 @@ export class ApprovalsService {
       if (networkGrantRefusal(host, { limits }) !== null) {
         continue;
       }
-      await this.schedules.addGrant(t, served.taskId, {
+      await this.automations.addGrant(t, served.taskId, {
         toolKey: `${NETWORK_GRANT_PREFIX}${host}`,
         specHash: NETWORK_GRANT_SPEC_HASH,
         connectorId: null,
@@ -2263,7 +2263,7 @@ export class ApprovalsService {
   }
 
   /**
-   * A trial run of a scheduled task (sandbox git credentials spec §7): a push its creator allowed
+   * A trial run of an automation (sandbox git credentials spec §7): a push its creator allowed
    * for this run (「这次允许」) becomes the task's `git:push:<owner>/<repo>` grant, when
    * `gitGrantRefusal` allows it (the org does not forbid it). Never for an ask another account
    * decided or one asked of someone else. In the decision's transaction.
@@ -2276,7 +2276,7 @@ export class ApprovalsService {
     const served = await unattendedTaskRunOf(t, a.runId);
     if (served === null || !served.trial) return;
     const task = await t
-      .selectFrom("scheduled_tasks")
+      .selectFrom("automations")
       .select("account_id")
       .where("id", "=", served.taskId)
       .where("org_id", "=", a.orgId)
@@ -2284,9 +2284,9 @@ export class ApprovalsService {
       .executeTakeFirst();
     if (task?.account_id !== decidedBy) return;
     const key = gitPushGrantKey(a.git.repo);
-    const { forbiddenTools } = await readScheduleSettings(t, this.config, a.orgId);
+    const { forbiddenTools } = await readAutomationSettings(t, this.config, a.orgId);
     if (gitGrantRefusal(key, { forbiddenTools }) !== null) return;
-    await this.schedules.addGrant(t, served.taskId, {
+    await this.automations.addGrant(t, served.taskId, {
       toolKey: key,
       specHash: GIT_GRANT_SPEC_HASH,
       connectorId: null,

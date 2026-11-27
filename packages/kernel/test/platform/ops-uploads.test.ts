@@ -327,7 +327,7 @@ describe("acceptance: files instead of uploads", () => {
         purpose: "chat",
       })
       .execute();
-    // written as before the file library, then migrated by 0188
+    // written as before the file library, then migrated by 0189
     await migrateLegacyFiles(db);
     await postMessage(
       root,

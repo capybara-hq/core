@@ -1,8 +1,8 @@
 import { sql } from "kysely";
 import { type ModelRef, normalizeStoredDefinition } from "../agents/definition.js";
+import type { ScheduleMarker } from "../automations/types.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { ScheduleMarker } from "../schedules/types.js";
 import {
   type InvocationRecord,
   type RenderedInvocation,
@@ -42,7 +42,7 @@ export interface QueuedSkill {
 }
 
 /**
- * A scheduled task's queued message (scheduled tasks spec §6), stored in
+ * An automation's queued message (scheduled tasks spec §6), stored in
  * `conversation_queue.schedule`: the marker the `user_message` carries and the task's zone, which
  * becomes the message's `timeZone` (the top-priority override of `readMessageContext`).
  */
@@ -254,7 +254,7 @@ export async function appendQueuedIn(
       payload: { ...next, byAccountId: r.account_id, reason: "user" },
     });
   }
-  // run context spec §3.4: no browser values were stored with a leftover row; a scheduled task's
+  // run context spec §3.4: no browser values were stored with a leftover row; an automation's
   // item stored its task's zone, which wins (scheduled tasks spec §6)
   // org-filter: reads the org of the conversation the caller holds the row lock of
   const org = await t

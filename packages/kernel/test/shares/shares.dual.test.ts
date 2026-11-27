@@ -115,7 +115,7 @@ async function deliver(text: string): Promise<string> {
       },
     },
   ]);
-  // logged the way deliveries were before the file library, then migrated (0188)
+  // logged the way deliveries were before the file library, then migrated (0189)
   await migrateLegacyFiles(db);
   return artifactId;
 }
@@ -201,7 +201,7 @@ describe("shares on two replicas", () => {
     // a generation's snapshot owed for deletion before the deploy
     await store(a).put(`shares/${id}/7`, Buffer.from("old"), { contentType: "text/plain" });
     const data = { orgId, shareId: id, generation: 7, objectKey: `shares/${id}/7` };
-    // a snapshot 0188 made a blob (keeping its key), still owed by a row from before the deploy
+    // a snapshot 0189 made a blob (keeping its key), still owed by a row from before the deploy
     await store(a).put(`shares/${id}/1`, Buffer.from("kept"), { contentType: "text/plain" });
     await db
       .insertInto("blobs")

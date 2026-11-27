@@ -301,7 +301,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.agents, "/agents"],
       [zh.nav.skills, "/skills"],
       [zh.nav.connectors, "/connectors"],
-      [zh.nav.schedules, "/schedules"],
+      [zh.nav.automations, "/automations"],
       [zh.nav.files, "/files"],
     ]);
     // the inbox is the brand row's icon button

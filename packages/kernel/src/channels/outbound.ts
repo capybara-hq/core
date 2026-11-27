@@ -11,6 +11,7 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import { DelayedError, type Job, UnrecoverableError, type Worker } from "bullmq";
 import { sql } from "kysely";
+import { AutomationsService } from "../automations/automations.service.js";
 import { productName } from "../config/product-name.js";
 import {
   type ConversationBusMessage,
@@ -33,7 +34,6 @@ import {
   type Lease,
 } from "../runtime/conversation-lock.js";
 import type { StreamBus } from "../runtime/stream.js";
-import { ScheduledTasksService } from "../schedules/scheduled-tasks.service.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { type ToolInfo, toolInfo } from "../tools/info.js";
 import { QuestionsService } from "../tools/questions.service.js";
@@ -340,8 +340,8 @@ export class ChannelOutbound {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn" | "info">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Pauses the task of a scheduled run whose chat is gone (scheduled tasks spec §8). */
-    @Inject(ScheduledTasksService)
-    private readonly schedules: Pick<ScheduledTasksService, "pauseFor">,
+    @Inject(AutomationsService)
+    private readonly automations: Pick<AutomationsService, "pauseFor">,
     /** The blobs of conversation files sent into the chat (channel file delivery spec §4.2). */
     @Inject(BlobsService) blobs: Pick<BlobsService, "open">,
   ) {
@@ -498,8 +498,8 @@ export class ChannelOutbound {
     }
     if (outcome.error) await this.recordError(outcome.error.connectionId, outcome.error.message);
     if (outcome.gone) {
-      await this.pauseScheduledTaskIn(conversationId, outcome.gone.runId).catch((err) =>
-        this.log.warn("cannot pause the scheduled task of a gone chat", { conversationId, err }),
+      await this.pauseAutomationIn(conversationId, outcome.gone.runId).catch((err) =>
+        this.log.warn("cannot pause the automation of a gone chat", { conversationId, err }),
       );
     }
     switch (outcome.kind) {
@@ -655,25 +655,25 @@ export class ChannelOutbound {
   /**
    * A delivery failed for good because the chat is gone or the connection's credentials are
    * (`ChannelSendError` `target_gone` / `auth`): when the run being delivered serves a scheduled
-   * task run (`runs.scheduled_task_run_id`), its task pauses with `target_gone` (spec §8), so later
+   * task run (`runs.automation_run_id`), its task pauses with `target_gone` (spec §8), so later
    * ticks do not keep running into the same chat. `runId` is the run of the event being delivered;
    * without one (a streaming draft), the conversation's latest run. A person's run pauses nothing.
    */
   @Transactional()
-  async pauseScheduledTaskIn(conversationId: string, runId: string | null): Promise<void> {
+  async pauseAutomationIn(conversationId: string, runId: string | null): Promise<void> {
     let q = this.kdb
       .selectFrom("runs as r")
-      .innerJoin("scheduled_task_runs as tr", "tr.id", "r.scheduled_task_run_id")
-      .select(["tr.task_id", "r.scheduled_task_run_id"])
+      .innerJoin("automation_runs as tr", "tr.id", "r.automation_run_id")
+      .select(["tr.automation_id", "r.automation_run_id"])
       .where("r.conversation_id", "=", conversationId);
     q = runId !== null ? q.where("r.id", "=", runId) : q.orderBy("r.created_at", "desc").limit(1);
     const row = await q.executeTakeFirst();
     if (!row) return;
-    await this.schedules.pauseFor(this.kdb.db, row.task_id, "target_gone", null);
-    this.log.info("scheduled task paused: its chat is gone", {
+    await this.automations.pauseFor(this.kdb.db, row.automation_id, "target_gone", null);
+    this.log.info("automation paused: its chat is gone", {
       conversationId,
-      taskId: row.task_id,
-      taskRunId: row.scheduled_task_run_id,
+      taskId: row.automation_id,
+      taskRunId: row.automation_run_id,
     });
   }
 }
@@ -694,7 +694,7 @@ type DeliveryOutcome = (
   | { kind: "changed" }
 ) & {
   error?: { connectionId: string; message: string };
-  /** The chat is gone (`target_gone` / `auth`): the run whose event failed (scheduled tasks §8). */
+  /** The chat is gone (`target_gone` / `auth`): the run whose event failed (automations §8). */
   gone?: { runId: string | null };
 };
 
@@ -738,7 +738,7 @@ class Delivery {
   private persisted = 0;
   /** 正在投递的事件（不可重试失败按它计数）。 */
   private handling: number | undefined;
-  /** The run of the event being delivered (a gone chat pauses its scheduled task). */
+  /** The run of the event being delivered (a gone chat pauses its automation). */
   private handlingRun: string | null = null;
   /**
    * A scheduled group run's thread is still to bind (`pending_thread_account_id` set): the first
@@ -896,7 +896,7 @@ class Delivery {
       if (isChannelSendError(err) && !err.retryable) {
         const message = this.redact(errMsg(err));
         // Ruling A22：机器人被移出群 / 会话不存在 → 停止本轮，不计毒事件（不是连接的问题，不记 last_error）
-        // either also pauses the scheduled task of the run being delivered (scheduled tasks §8)
+        // either also pauses the automation of the run being delivered (automations §8)
         const gone = { runId: this.handlingRun };
         if (err.reason === "target_gone") {
           this.d.log.warn("channel delivery target is gone", {

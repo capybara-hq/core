@@ -30,8 +30,8 @@ export type NavLevel = "guest" | "member" | "admin";
 
 /**
  * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
- * `primary` items follow New conversation (智能体, 技能, 连接器, 定时任务, 文件; there is no home page: the new
- * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the 更多
+ * `primary` items follow New conversation (Agents, Skills, Connectors, Devices, Automations, Files; there is no home page: the new
+ * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the More
  * flyout (then the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
  * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
  * console is the entry above the account row, for super admins. `drawer` places an item in the
@@ -77,11 +77,11 @@ const NAV: readonly {
     section: "primary",
     drawer: "more",
   },
-  // Scheduled tasks: a member's own tasks (guests can't create them, spec §10)
+  // Automations: a member's own tasks (guests can't create them, spec §10)
   {
-    id: "schedules",
-    key: "schedules",
-    href: "/schedules",
+    id: "automations",
+    key: "automations",
+    href: "/automations",
     audience: "member",
     icon: "clock",
     section: "primary",
@@ -225,7 +225,7 @@ export function activeNavOf(pathname: string): string {
   if (under(pathname, "/extensions")) return "extensions";
   if (under(pathname, "/connectors")) return "connectors";
   if (under(pathname, "/devices")) return "devices";
-  if (under(pathname, "/schedules")) return "schedules";
+  if (under(pathname, "/automations")) return "automations";
   if (under(pathname, "/files")) return "files";
   return "";
 }
@@ -483,7 +483,7 @@ export type DrawerNav = Pick<
 /**
  * The compact drawer's navigation (design spec §6.53; mobile touch plan Task 28) from the same
  * `NAV` data and role levels as the sidebar: the sections Inbox (with the pending count), Agents
- * and Scheduled tasks, and the "Skills, connectors, devices…" level with Skills, Connectors, Devices
+ * and Automations, and the "Skills, connectors, devices…" level with Skills, Connectors, Devices
  * and the org's extension pages (those not hidden on compact). The management items (Plugins,
  * Extensions, Channels, Evals & runs, Organization settings, the admin console) never enter it: on touch they are managed on a computer.
  */
@@ -513,7 +513,7 @@ export function useDrawerNav(
     },
     ...visible
       .filter((n) => n.drawer === "section")
-      .map((n) => ({ id: n.id as "agents" | "schedules", ...item(n) })),
+      .map((n) => ({ id: n.id as "agents" | "automations", ...item(n) })),
   ];
   const more: DrawerNav["more"] = [
     ...visible.filter((n) => n.drawer === "more").map((n) => ({ id: n.id, ...item(n) })),

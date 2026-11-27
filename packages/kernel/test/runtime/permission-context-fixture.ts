@@ -308,7 +308,7 @@ export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: Con
     .set({
       device_id: seed.device === false ? null : deviceId,
       permission_profile: seed.profile ?? "request-approval",
-      scheduled_task_id: taskId,
+      automation_id: taskId,
     })
     .where("id", "=", s.conversationId)
     .execute();
@@ -345,7 +345,7 @@ export async function seedTask(
 ): Promise<string> {
   const taskId = randomUUID();
   await db
-    .insertInto("scheduled_tasks")
+    .insertInto("automations")
     .values({
       id: taskId,
       org_id: s.orgId,
@@ -359,18 +359,18 @@ export async function seedTask(
     .execute();
   for (const host of grants)
     await db
-      .insertInto("scheduled_task_grants")
-      .values({ task_id: taskId, tool_key: `network:${host}`, spec_hash: "h" })
+      .insertInto("automation_grants")
+      .values({ automation_id: taskId, tool_key: `network:${host}`, spec_hash: "h" })
       .execute();
   return taskId;
 }
 
-/** A scheduled task run of `taskId` (not a trial): its id goes on the run it serves. */
+/** An automation run of `taskId` (not a trial): its id goes on the run it serves. */
 export async function seedTaskRun(db: Db, orgId: string, taskId: string): Promise<string> {
   const id = randomUUID();
   await db
-    .insertInto("scheduled_task_runs")
-    .values({ id, task_id: taskId, org_id: orgId, scheduled_for: new Date() })
+    .insertInto("automation_runs")
+    .values({ id, automation_id: taskId, org_id: orgId, scheduled_for: new Date() })
     .execute();
   return id;
 }
@@ -381,7 +381,7 @@ export async function startRun(
   raw: Kysely<unknown>,
   conversationId: string,
   accountId: string,
-  scheduledTaskRunId: string | null = null,
+  automationRunId: string | null = null,
 ) {
   // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
   const db = kernelDb(raw as Kysely<any>);
@@ -395,7 +395,7 @@ export async function startRun(
       status: "running",
       agent_version: 1,
       trigger_seq: 0,
-      scheduled_task_run_id: scheduledTaskRunId,
+      automation_run_id: automationRunId,
     })
     .execute();
   const claim = await k.app.get(RunExecution).claim(conversationId, runId, randomUUID());

@@ -571,7 +571,7 @@ describe("queued files keep their chip metadata (attachments-on-demand)", () => 
         etag: "e1",
       })
       .execute();
-    // written as before the file library, then migrated by 0188
+    // written as before the file library, then migrated by 0189
     await migrateLegacyFiles(db);
     // the app's own queue (one transaction host with its conversations service)
     const { item } = await k.app.get(ConversationQueue).add(orgId, conv, ownerId, {

@@ -22,7 +22,7 @@ export function finishRun(
   a: FinishRunArgs,
 ): Promise<number | null> {
   const h = handlesFor(db as never);
-  // no scheduled task follows these runs: the tracker is a no-op here
+  // no automation follows these runs: the tracker is a no-op here
   return new RunFinish(
     h.db,
     eventLog,

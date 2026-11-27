@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { effectiveAutomationSettings } from "../../src/automations/effective-settings.js";
 import {
   invalidStoredForbiddenTools,
   invalidStoredSandboxToolPolicy,
   logUnreadableSecuritySettings,
   parseOrgSettings,
 } from "../../src/orgs/settings.service.js";
-import { effectiveScheduleSettings } from "../../src/schedules/effective-settings.js";
 
 /**
  * Org security settings read narrow (design review 2026-11-16, org-settings-heal-on-read): an
@@ -40,26 +40,26 @@ describe("forbiddenTools", () => {
   it("absent, a list, or a list with bad entries is readable", () => {
     expect(invalidStoredForbiddenTools({})).toBe(false);
     expect(invalidStoredForbiddenTools(null)).toBe(false);
-    expect(invalidStoredForbiddenTools({ scheduledTasks: {} })).toBe(false);
-    expect(invalidStoredForbiddenTools({ scheduledTasks: { forbiddenTools: [] } })).toBe(false);
+    expect(invalidStoredForbiddenTools({ automations: {} })).toBe(false);
+    expect(invalidStoredForbiddenTools({ automations: { forbiddenTools: [] } })).toBe(false);
     expect(
-      invalidStoredForbiddenTools({ scheduledTasks: { forbiddenTools: ["Bash", 7, null] } }),
+      invalidStoredForbiddenTools({ automations: { forbiddenTools: ["Bash", 7, null] } }),
     ).toBe(false);
   });
 
   it.each([[7], ["Bash"], [null], [{ Bash: true }], [true]])(
     "a stored non-list %j is unreadable (display reads [])",
     (v) => {
-      const raw = { scheduledTasks: { forbiddenTools: v } };
+      const raw = { automations: { forbiddenTools: v } };
       expect(invalidStoredForbiddenTools(raw)).toBe(true);
-      expect(parseOrgSettings(raw).scheduledTasks.forbiddenTools).toEqual([]);
+      expect(parseOrgSettings(raw).automations.forbiddenTools).toEqual([]);
     },
   );
 
   it.each([["junk"], [7], [null], [["Bash"]]])(
-    "a stored scheduledTasks group %j that is not an object is unreadable",
+    "a stored automations group %j that is not an object is unreadable",
     (v) => {
-      expect(invalidStoredForbiddenTools({ scheduledTasks: v })).toBe(true);
+      expect(invalidStoredForbiddenTools({ automations: v })).toBe(true);
     },
   );
 
@@ -70,9 +70,9 @@ describe("forbiddenTools", () => {
       maxTasksPerOrgCap: 2000,
       maxRunsPerHourCap: 600,
     };
-    const org = parseOrgSettings({}).scheduledTasks;
-    expect(effectiveScheduleSettings(org, bounds).forbiddenToolsUnreadable).toBe(false);
-    expect(effectiveScheduleSettings(org, bounds, true).forbiddenToolsUnreadable).toBe(true);
+    const org = parseOrgSettings({}).automations;
+    expect(effectiveAutomationSettings(org, bounds).forbiddenToolsUnreadable).toBe(false);
+    expect(effectiveAutomationSettings(org, bounds, true).forbiddenToolsUnreadable).toBe(true);
   });
 });
 
@@ -81,7 +81,7 @@ describe("logUnreadableSecuritySettings", () => {
     const { out, log } = warnings();
     logUnreadableSecuritySettings(log, "org-1", {
       sandboxToolPolicy: "deny",
-      scheduledTasks: { forbiddenTools: "Bash" },
+      automations: { forbiddenTools: "Bash" },
     });
     expect(out).toEqual([
       [expect.stringContaining("sandboxToolPolicy"), { orgId: "org-1" }],
@@ -93,7 +93,7 @@ describe("logUnreadableSecuritySettings", () => {
     const { out, log } = warnings();
     logUnreadableSecuritySettings(log, "org-1", {
       sandboxToolPolicy: "allow",
-      scheduledTasks: { forbiddenTools: ["Bash"] },
+      automations: { forbiddenTools: ["Bash"] },
     });
     expect(out).toEqual([]);
   });
