@@ -40,6 +40,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Mobile sizes (spec §2.5): the value pads space.3 from the border, as the Select's does. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-pp-value {
+    padding-left: var(--cb-space-3);
+  }
+}
 .cb-pp-more {
   flex: none;
   color: var(--cb-muted);
@@ -155,9 +161,13 @@
   padding: 0;
 }
 
-/* Drawn in place (the reference blocks and /dev/ui): the panel hangs under the field. */
+/* Drawn in place (the reference blocks and /dev/ui): the panel hangs under the field, the field
+   the frame's width (a button in a block is only as wide as its content; the live picker's
+   root is a flex row for the same reason). */
 .cb-pp-frame {
   position: relative;
+  display: flex;
+  flex-direction: column;
   width: 320px;
 }
 .cb-pp-frame-panel {
@@ -170,6 +180,8 @@
   animation: none;
 }
 .cb-pp-frame-page {
+  display: flex;
+  flex-direction: column;
   padding: var(--cb-space-4);
 }
 

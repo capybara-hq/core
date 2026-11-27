@@ -7914,6 +7914,10 @@ span.r-scal-daynum {
   gap: var(--cb-space-2);
   height: var(--cb-row-default);
   min-width: 0;
+  /* the title is body (§6.69); the older todo board's .r-board-head above sets micro muted */
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
 }
 .r-board-title {
   overflow: hidden;
@@ -8016,10 +8020,19 @@ span.r-scal-daynum {
   flex-direction: column;
   gap: var(--cb-space-3);
 }
+/* The field: the Select's (§6.2), its value space.2 from the border (the r-input's padding),
+   space.3 under the mobile sizes (§2.5); the field is the frame's width. */
+.r-pp-frame,
+.r-pp-sheet-page {
+  display: flex;
+  flex-direction: column;
+}
 .r-pp-value {
   align-items: center;
   gap: var(--cb-space-2);
-  padding-left: var(--cb-space-2);
+}
+[data-mobile-sizes] .r-select-field {
+  padding: 0 var(--cb-space-3);
 }
 .r-pp-label {
   display: flex;
@@ -8053,9 +8066,6 @@ span.r-scal-daynum {
   min-height: 0;
   padding: var(--cb-space-1);
 }
-.r-sh-body .r-pp-panel {
-  padding: 0;
-}
 .r-pp-search {
   flex: none;
   box-sizing: border-box;
@@ -8071,6 +8081,10 @@ span.r-scal-daynum {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   outline: none;
+}
+/* Text typed into is at least 16px under the mobile sizes (spec §2.5, §4.3; base.css). */
+[data-mobile-sizes] .r-pp-search {
+  font-size: max(16px, 1em);
 }
 .r-pp-search::placeholder {
   color: var(--cb-faint);
@@ -8143,6 +8157,11 @@ span.r-scal-daynum {
 }
 .r-pp-sheet-page {
   padding: var(--cb-space-4);
+}
+/* Compact: the BottomSheet's own head and body (§6.59, the r-cmm-sheet pieces); the panel
+   inside has no padding of its own. */
+.r-cmm-sheet-body .r-pp-panel {
+  padding: 0;
 }
 
 /* ── Composer menus (§6.16.30): ＋, / and @ anchored above the composer ── */
