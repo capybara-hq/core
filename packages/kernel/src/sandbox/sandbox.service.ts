@@ -1582,13 +1582,16 @@ export class SandboxService {
    * use takes (the exclusive lease creates or resumes the instance through the retirement gate,
    * the B-11 reconcile marker, `maxRunningSandboxes` and fencing), and the lease
    * is left at once. No conversation holds it and nothing runs in it; what the start caused is
-   * not marked seen, so each conversation's next use still learns of it.
+   * not marked seen, so each conversation's next use still learns of it. `narrow` is the browse's
+   * own (see {@link withBrowse}), checked before the start, so a browse the narrowed scope refuses
+   * (`device.project_outside_mode`) never starts the device.
    */
   async ensureRunningForOwner(
     ctx: { orgId: string; deviceId: string; accountId: string },
     signal: AbortSignal,
+    narrow?: { readRoots: readonly string[] },
   ): Promise<void> {
-    await this.authority.resolveBrowse(ctx, signal);
+    await this.authority.resolveBrowse(ctx, signal, narrow);
     const p = await this.require(ctx.deviceId, ctx.orgId);
     const use: SandboxUseContext = {
       orgId: ctx.orgId,

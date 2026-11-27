@@ -23,6 +23,12 @@ import {
 import { joinProjectPath, projectRelativePath } from "./project-paths.js";
 import { clipped } from "./project-rules.js";
 
+/**
+ * The most project files one message references (composer menus §5); `statAll` checks no more.
+ * Defined here (conversations re-export it) so the devices module needs no conversations import.
+ */
+export const MAX_PROJECT_FILES = 10;
+
 /** The most entries one listing answers (composer menus §5). */
 export const MAX_PROJECT_FILE_ENTRIES = 200;
 
@@ -207,7 +213,9 @@ export class DeviceProjectFilesService {
    * normalized first ({@link projectRelativePath}; one that leaves the project is refused with
    * `device.path_outside_project` before the device is asked); `missing` holds the normalized
    * paths. The browse scope is rooted at `projectPath`, which must be absolute and normalized
-   * (an internal error otherwise). The device codes of {@link list} pass on as they are.
+   * (an internal error otherwise), and at most {@link MAX_PROJECT_FILES} paths are checked (more
+   * is an internal error: the send route bounds them first). The device codes of {@link list}
+   * pass on as they are.
    */
   async statAll(
     ctx: { orgId: string; accountId: string; deviceId: string },
@@ -217,6 +225,11 @@ export class DeviceProjectFilesService {
   ): Promise<{ missing: string[] }> {
     // refuses a project path that is not absolute and normalized (a kernel bug, never the person's)
     joinProjectPath(projectPath, "");
+    if (paths.length > MAX_PROJECT_FILES) {
+      throw new Error(
+        `statAll: ${paths.length} paths, more than the ${MAX_PROJECT_FILES} one message references`,
+      );
+    }
     const rels = paths.map((p) => projectRelativePath(p));
     if (rels.length === 0) return { missing: [] };
     return this.onDevice(
@@ -272,7 +285,8 @@ export class DeviceProjectFilesService {
   /**
    * Runs `fn` in the owner browse of the device (`ensureRunningForOwner` first, so a stopped device
    * is started for its owner), its scope rooted at `root` (the project path; narrowed from the
-   * owner's ceiling, never wider, `device.project_outside_mode` when they do not meet), mapped
+   * owner's ceiling, never wider, `device.project_outside_mode` when they do not meet, checked
+   * before the device is started), mapped
    * like the projects routes: kernel refusals stay, a provider
    * without owner browsing is `device.list_unsupported`, an offline machine `device.offline`, an
    * unreachable provider and anything else `device.projects_unavailable`, never a 500.
@@ -286,10 +300,9 @@ export class DeviceProjectFilesService {
     fn: (b: SandboxBrowse, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     try {
-      await this.sandbox.ensureRunningForOwner({ orgId, deviceId, accountId }, signal);
-      return await this.sandbox.withBrowse({ orgId, deviceId, accountId }, fn, signal, {
-        readRoots: [root],
-      });
+      const narrow = { readRoots: [root] };
+      await this.sandbox.ensureRunningForOwner({ orgId, deviceId, accountId }, signal, narrow);
+      return await this.sandbox.withBrowse({ orgId, deviceId, accountId }, fn, signal, narrow);
     } catch (e) {
       // the owner and org ceilings permitting no browsing: this device offers no listing here
       if (e instanceof ApiError && e.code === "device.projects_unsupported")

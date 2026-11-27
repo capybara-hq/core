@@ -12,11 +12,13 @@ import { createDb } from "../../src/db/pool.js";
 import {
   DeviceProjectFilesService,
   MAX_PROJECT_FILE_ENTRIES,
+  MAX_PROJECT_FILES,
 } from "../../src/devices/device-project-files.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { deviceLeaseKey } from "../../src/dial-in/keys.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -251,6 +253,7 @@ describe("device project files", () => {
     const sandbox = k.app.get(SandboxService);
     const starts = vi.spyOn(sandbox, "ensureRunningForOwner");
     const browses = vi.spyOn(sandbox, "withBrowse");
+    const resolves = vi.spyOn(k.app.get(SandboxOperationAuthority), "resolveBrowse");
     const res = await d.req({ method: "GET", url: filesUrl(d.deviceId, "app") });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual({
@@ -267,7 +270,10 @@ describe("device project files", () => {
     });
     // started for its owner, then browsed as its owner, in a scope rooted at the project root
     const who = { orgId, deviceId: d.deviceId, accountId: d.accountId };
-    expect(starts).toHaveBeenCalledWith(who, expect.anything());
+    expect(starts).toHaveBeenCalledWith(who, expect.anything(), { readRoots: [ROOT] });
+    // every check narrows to the project: the start, the browse, its admission and its claim
+    expect(resolves.mock.calls.length).toBeGreaterThanOrEqual(4);
+    for (const call of resolves.mock.calls) expect(call[2]).toEqual({ readRoots: [ROOT] });
     expect(browses).toHaveBeenCalledWith(who, expect.any(Function), expect.anything(), {
       readRoots: [ROOT],
     });
@@ -511,16 +517,43 @@ describe("device project files", () => {
     expect(reqsOf(machine, "list").length).toBeGreaterThan(0);
   });
 
-  it("a project outside the owner's browse ceiling is refused, the device never asked", async () => {
+  it("a project outside the owner's browse ceiling is refused, the device never started or asked", async () => {
     const d = await owned();
     const machine = await connect(d);
     await db
       .insertInto("device_projects")
       .values({ device_id: d.deviceId, name: "far", path: OUTSIDE, created_by: d.accountId })
       .execute();
+    // the lifecycle entry that starts (or resumes) the device's instance
+    const enters = vi.spyOn(
+      k.app.get(SandboxService) as unknown as { enter: (...a: unknown[]) => unknown },
+      "enter",
+    );
     const res = await d.req({ method: "GET", url: filesUrl(d.deviceId, "far") });
     expect(res.statusCode, res.body).toBe(422);
     expect(errCode(res)).toBe("device.project_outside_mode");
+    expect(res.body).not.toContain(OUTSIDE);
+    const who = { orgId, accountId: d.accountId, deviceId: d.deviceId };
+    await expect(files.statAll(who, OUTSIDE, ["a.ts"])).rejects.toMatchObject({
+      code: "device.project_outside_mode",
+    });
+    expect(enters).not.toHaveBeenCalled();
+    expect(reqsOf(machine, "list")).toEqual([]);
+    expect(reqsOf(machine, "stat")).toEqual([]);
+    expect(machine.frames.some((f) => f.type === "req" && f.op === "resume")).toBe(false);
+  });
+
+  it("a stored project path that is not normalized is a generic 500 without the path", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    const odd = `${HOME}/x/../hidden-project`;
+    await db
+      .insertInto("device_projects")
+      .values({ device_id: d.deviceId, name: "odd", path: odd, created_by: d.accountId })
+      .execute();
+    const res = await d.req({ method: "GET", url: filesUrl(d.deviceId, "odd") });
+    expect(res.statusCode, res.body).toBe(500);
+    expect(res.body).not.toContain("hidden-project");
     expect(reqsOf(machine, "list")).toEqual([]);
   });
 
@@ -581,6 +614,18 @@ describe("device project files", () => {
     ).toEqual(new Set([JSON.stringify([ROOT])]));
     // the project path is the kernel's own: one not normalized is an internal error
     await expect(files.statAll(who, `${ROOT}/`, ["alpha.ts"])).rejects.not.toHaveProperty("code");
+    // more paths than one message references is an internal error, the device never asked
+    const statsBefore = reqsOf(machine, "stat").length;
+    const many = Array.from({ length: MAX_PROJECT_FILES + 1 }, (_, i) => `f${i}.ts`);
+    await expect(files.statAll(who, ROOT, many)).rejects.not.toHaveProperty("code");
+    expect(reqsOf(machine, "stat")).toHaveLength(statsBefore);
+    expect(
+      await files.statAll(
+        who,
+        ROOT,
+        many.slice(0, MAX_PROJECT_FILES).map(() => "alpha.ts"),
+      ),
+    ).toEqual({ missing: [] });
     // another person never stats someone else's device
     const other = await owned();
     await expect(

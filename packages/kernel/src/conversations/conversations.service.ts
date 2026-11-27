@@ -328,8 +328,7 @@ export interface ResolvedExtra {
   projectRoot?: string;
 }
 
-/** The most project files one message references (composer menus §5). */
-export const MAX_PROJECT_FILES = 10;
+export { MAX_PROJECT_FILES } from "../devices/device-project-files.service.js";
 
 /** Where a message's project files are checked: the conversation's device and bound project. */
 export interface ProjectFilesTarget {

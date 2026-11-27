@@ -269,7 +269,7 @@ export class DeviceProjectsService {
     const path = trimSlash(
       posix.normalize(posix.join(early, input.path === "" ? "." : input.path)),
     );
-    if (aboveHome(path, scope.home)) throw tooBroad(path);
+    if (aboveHome(path, scope.home)) throw tooBroad(input.name);
     const resolved = await this.onDevice(
       orgId,
       accountId,
@@ -277,7 +277,7 @@ export class DeviceProjectsService {
       scope,
       signal,
       async (r, sig) => {
-        const path = resolve(scope, r.workspace, input.path);
+        const path = resolve(scope, r.workspace, input.path, input.name);
         const name = input.name ?? posix.basename(path);
         if (!isDeviceProjectName(name)) throw nameInvalid(name);
         const list = r.list;
@@ -537,13 +537,14 @@ const trimSlash = (path: string): string =>
 /**
  * The absolute path of `relative` against the scope's base (the home its provider reported, else
  * the instance's `workspace`), normalized; refused when the result is not a valid device path or
- * lies above the owner's home. Where a project may lie below that is the provider's rule.
+ * lies above the owner's home (named by `name`, the project's, when given). Where a project may
+ * lie below that is the provider's rule.
  */
-function resolve(scope: Scope, workspace: string, relative: string): string {
+function resolve(scope: Scope, workspace: string, relative: string, name?: string): string {
   const base = baseOf(scope, workspace);
   const path = trimSlash(posix.normalize(posix.join(base, relative === "" ? "." : relative)));
   if (validateSandboxPathShape(path).length > 0) throw outsideMode(path);
-  if (aboveHome(path, scope.home)) throw tooBroad(path);
+  if (aboveHome(path, scope.home)) throw tooBroad(name);
   return path;
 }
 
