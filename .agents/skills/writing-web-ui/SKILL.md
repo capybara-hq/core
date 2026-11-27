@@ -76,7 +76,7 @@ itself `/** @clientOnly … */`. Details: [tools/checks/README.md](../../../tool
 | Login, initialization, accept invitation | `AuthPage` | No Shell |
 | 404 / 403 / under maintenance | `StatusPage` | Single, centered |
 | New org, empty environment | `OnboardingPage` | Single, centered checklist |
-| The workspace while the org has no model or no agent | `SetupPage` | The shell's geometry with the setup sidebar (`context.kind: "setup"`: 开始之前 and the steps as navigation) + content area + status bar; the page brings its own template; drawn by `AppFrame` (`components/shell/setup.tsx`), never by a page (web-order spec §3.8, web-SSR spec §4) |
+| The workspace while the org has no model or no agent | `SetupPage` | The shell's geometry with the setup sidebar (`context.kind: "setup"`: 开始之前 and the steps as navigation) + content area; the page brings its own template; drawn by `AppFrame` (`components/shell/setup.tsx`), never by a page (web-order spec §3.8, web-SSR spec §4) |
 
 ### The web order: contexts and frames (spec `docs/superpowers/specs/2026-10-31-web-order-design.md`)
 
