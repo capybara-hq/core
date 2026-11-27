@@ -105,6 +105,8 @@ export interface Automation {
   effort: string | null;
   /** Null = the default pick for new conversations. */
   deviceId: string | null;
+  /** What a question in an unattended run does; null = the org's default. */
+  unattendedAsk: AutomationUnattendedAsk | null;
   status: AutomationStatus;
   pauseReason: AutomationPauseReason | null;
   /** The account that paused the task (creator or admin); null when not paused by a person. */

@@ -24,3 +24,13 @@ event is `depth_stopped`; a source in `eventSourcesOff` or one not serving the o
 `undelivered`. New org settings `maxEventDepth`, `coalesceSeconds`,
 `maxEventRunsPerSubjectPerHour`, `eventSourcesOff`, clamped by the kernel config caps
 `automations.maxEventDepthCap`, `coalesceSecondsCap`, `maxEventRunsPerSubjectPerHourCap`.
+
+Create and edit event automations: `trigger: { kind: "event", source, types, filter }` on the
+automations API, the Platform operations and the `AutomationCreate` tool, checked against the org's
+trigger sources (`automation.event_source_unavailable`, `automation.event_type_unknown`,
+`automation.filter_invalid`; filters use filterable facts of the selected types with a value of the
+fact's type). An event automation has no next run time and no time zone; mode `subject` needs an
+event trigger and `chat` a time one (on PATCH too). `unattendedAsk` (`fail`, `wait` or null for the
+org's default) is a field of create and update. New route `GET …/automations/event-sources` and
+Platform operation `automations.event-sources` list the sources that serve the org with their event
+declarations. Resuming a paused event automation no longer fails for lack of a next run time.

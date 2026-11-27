@@ -137,6 +137,65 @@ const RUN_AT_SCHEMA = {
     "Pass cron or runAt, not both.",
 } as const;
 
+const CREATE_MODE_SCHEMA = {
+  type: "string",
+  enum: ["new", "here", "chat", "subject"],
+  description:
+    '"new": every run starts a new conversation with this agent. "here": every run posts the ' +
+    "prompt into this conversation (in an IM direct chat: the chat's current conversation), " +
+    'e.g. for "check this again at 3 pm". "chat": every run posts into the IM chat named by ' +
+    'chat. "subject": one conversation per event subject, reused for later events of the same ' +
+    'subject; only with an event trigger, which cannot use "chat".',
+} as const;
+
+const EVENT_TRIGGER_SCHEMA = {
+  type: "object",
+  description:
+    "Run when events happen instead of on a schedule. Pass trigger, or cron, or runAt: exactly one.",
+  properties: {
+    kind: { type: "string", enum: ["event"] },
+    source: {
+      type: "string",
+      minLength: 1,
+      maxLength: 214,
+      description:
+        "The extension that emits the events, as the Platform operation automations.event-sources lists it.",
+    },
+    types: {
+      type: "array",
+      minItems: 1,
+      maxItems: 64,
+      items: { type: "string", minLength: 1, maxLength: 100 },
+      description: 'Event types of that source, e.g. ["item.created"].',
+    },
+    filter: {
+      type: "array",
+      maxItems: 20,
+      description:
+        "Optional: keep only events whose facts match every clause. Filter only on filterable facts.",
+      items: {
+        type: "object",
+        properties: {
+          fact: { type: "string", minLength: 1, maxLength: 100 },
+          op: {
+            type: "string",
+            enum: ["eq", "in", "contains"],
+            description:
+              "eq: the fact equals a scalar; in: a string fact is one of a list of strings; contains: a string[] fact contains a string.",
+          },
+          value: {
+            description: "A string, number or boolean, or a list of strings for in.",
+          },
+        },
+        required: ["fact", "op", "value"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["kind", "source", "types"],
+  additionalProperties: false,
+} as const;
+
 const MODE_SCHEMA = {
   type: "string",
   enum: ["new", "here", "chat"],
@@ -184,8 +243,9 @@ const CHAT_SCHEMA = {
 const CREATE_SPEC: ToolSpec = {
   name: BUILTIN.AutomationCreate,
   description:
-    "Create an automation for the user: this agent runs the prompt on a schedule (cron) or " +
-    "once at a time (runAt), in the user's time zone, acting as the user. Each run starts a new " +
+    "Create an automation for the user: this agent runs the prompt on a schedule (cron), " +
+    "once at a time (runAt), in the user's time zone, or when events happen (trigger: an event " +
+    "source, types and an optional filter on their facts), acting as the user. Each run starts a new " +
     "conversation, posts into this conversation, or posts into an IM chat the user names with " +
     'chat. Use it when the user asks for something recurring or later ("every weekday at 9 ' +
     'send me a brief", "remind me at 3 pm"). Every call asks the user to approve the whole task ' +
@@ -210,12 +270,20 @@ const CREATE_SPEC: ToolSpec = {
       },
       cron: CRON_SCHEMA,
       runAt: RUN_AT_SCHEMA,
-      mode: MODE_SCHEMA,
+      trigger: EVENT_TRIGGER_SCHEMA,
+      mode: CREATE_MODE_SCHEMA,
       chat: {
         ...CHAT_SCHEMA,
         description: 'For mode "chat": the IM chat every run posts into.',
       },
       approvedTools: TOOL_KEYS_SCHEMA,
+      unattendedAsk: {
+        type: "string",
+        enum: ["fail", "wait"],
+        description:
+          "What a question asked in an unattended run does: fail the call, or wait for the user. " +
+          "Omit to follow the organization's default.",
+      },
     },
     required: ["name", "prompt", "mode"],
     additionalProperties: false,
@@ -304,15 +372,43 @@ const Chat = z
   .strict();
 type ChatInput = z.infer<typeof Chat>;
 
+const EventTrigger = z
+  .object({
+    kind: z.literal("event"),
+    source: z.string().min(1).max(214),
+    types: z.array(z.string().min(1).max(100)).min(1).max(64),
+    filter: z
+      .array(
+        z
+          .object({
+            fact: z.string().min(1).max(100),
+            op: z.enum(["eq", "in", "contains"]),
+            value: z.union([
+              z.string().max(500),
+              z.number(),
+              z.boolean(),
+              z.array(z.string().max(500)).max(100),
+            ]),
+          })
+          .strict(),
+      )
+      .max(20)
+      .optional(),
+  })
+  .strict();
+type EventTriggerInput = z.infer<typeof EventTrigger>;
+
 const CreateInput = z
   .object({
     name: z.string().min(1).max(NAME_MAX),
     prompt: z.string().min(1).max(PROMPT_MAX),
     cron: z.string().min(1).max(100).optional(),
     runAt: z.string().min(1).max(40).optional(),
-    mode: Mode,
+    trigger: EventTrigger.optional(),
+    mode: z.enum(["new", "here", "chat", "subject"]),
     chat: Chat.optional(),
     approvedTools: ToolKeys.optional(),
+    unattendedAsk: z.enum(["fail", "wait"]).optional(),
   })
   .strict();
 type CreateInput = z.infer<typeof CreateInput>;
@@ -336,15 +432,16 @@ const IdInput = z.object({ id: z.string().min(1).max(100) }).strict();
 // ---- model-facing texts (English, actionable) ----
 
 const INVALID_CREATE_TEXT =
-  "Invalid input; pass name, prompt, mode (new, here or chat), exactly one of cron or runAt, " +
-  "chat with mode chat (connectionId, chatId, chatType, agentId), and optionally approvedTools " +
-  "as an array of tool keys.";
+  "Invalid input; pass name, prompt, mode (new, here, chat or subject), exactly one of cron, runAt " +
+  "or trigger (an event trigger: kind event, source, types, optional filter), chat with mode chat " +
+  "(connectionId, chatId, chatType, agentId), and optionally approvedTools as an array of tool keys " +
+  "and unattendedAsk (fail or wait).";
 const INVALID_UPDATE_TEXT =
   "Invalid input; pass the task id and the fields to change (name, prompt, cron or runAt, mode, " +
   "chat, approvedTools).";
 const INVALID_ID_TEXT = "Invalid input; pass the task id from AutomationList.";
 const ONE_TRIGGER_TEXT =
-  "Pass exactly one of cron (a repeating schedule) or runAt (a single run), not both and not neither.";
+  "Pass exactly one of cron (a repeating schedule), runAt (a single run) or trigger (run on events), not several and not none.";
 const BOTH_TRIGGERS_TEXT =
   "Pass at most one of cron or runAt: cron makes the task repeat, runAt makes it run once.";
 const NOTHING_TO_UPDATE_TEXT =
@@ -391,6 +488,12 @@ export function automationErrorText(e: ApiError, ctx: { id?: string; zone?: stri
       return `${m}. Ask the user to set their time zone in their profile, then retry.`;
     case "automation.target_invalid":
       return `${m}. Fix the target and retry, or use mode "new" to start a new conversation for every run instead.`;
+    case "automation.event_source_unavailable":
+      return `${m}. Ask the user which source to use, or use a schedule (cron or runAt) instead.`;
+    case "automation.event_type_unknown":
+      return `${m}. Pass event types of that source only, and do not use directed types.`;
+    case "automation.filter_invalid":
+      return `${m}. Filter only on filterable facts of every selected event type, with a value of the fact's type (eq: a scalar, in: strings on a string fact, contains: a string on a string[] fact), or drop the filter.`;
     case "automation.grant_not_allowed":
       return `${m}. Remove it from approvedTools and call again.`;
     case "forbidden":
@@ -459,10 +562,14 @@ function nextRunWords(t: AutomationTrigger, now: number): string | null {
 export type Target =
   | { mode: "new" }
   | { mode: "conversation"; conversationId: string }
-  | { mode: "chat"; chat: AutomationChat; connectionName: string };
+  | { mode: "chat"; chat: AutomationChat; connectionName: string }
+  | { mode: "subject" };
 
 function targetWords(t: Target, currentConversationId?: string): Words {
   if (t.mode === "new") return { zh: "每次运行新建对话", en: "a new conversation for every run" };
+  if (t.mode === "subject") {
+    return { zh: "每个事项一条会话", en: "one conversation per event subject" };
+  }
   if (t.mode === "chat") {
     const n = clip(t.connectionName, 60);
     return t.chat.chatType === "group"
@@ -472,6 +579,16 @@ function targetWords(t: Target, currentConversationId?: string): Words {
   return t.conversationId === currentConversationId
     ? { zh: "当前对话", en: "this conversation" }
     : { zh: `对话 ${t.conversationId}`, en: `conversation ${t.conversationId}` };
+}
+
+/** An event filter as `fact op value` clauses (the same text in both languages); null when empty. */
+function filterWords(
+  filter: readonly { fact: string; op: string; value: unknown }[],
+): string | null {
+  if (filter.length === 0) return null;
+  return filter
+    .map((c) => `${clip(c.fact, 60)} ${c.op} ${clip(JSON.stringify(c.value), 120)}`)
+    .join(" AND ");
 }
 
 function toolsWords(keys: readonly string[]): Words {
@@ -557,7 +674,9 @@ const targetFields = (
     ? { mode: "chat", chat: t.chat }
     : t.mode === "conversation"
       ? { mode: "conversation", conversationId: t.conversationId }
-      : { mode: "new" };
+      : t.mode === "subject"
+        ? { mode: "subject" }
+        : { mode: "new" };
 
 const sameTarget = (a: Target, b: Target): boolean =>
   a.mode === b.mode &&
@@ -570,16 +689,31 @@ const sameTarget = (a: Target, b: Target): boolean =>
 
 const uniqueSorted = (keys: readonly string[]): string[] => [...new Set(keys)].sort();
 
-/** cron / runAt as the service's trigger; undefined when neither is given. */
-function triggerOf(i: { cron?: string | undefined; runAt?: string | undefined }) {
+/** cron / runAt / an event trigger as the service's trigger; undefined when none is given. */
+function triggerOf(i: {
+  cron?: string | undefined;
+  runAt?: string | undefined;
+  trigger?: EventTriggerInput | undefined;
+}): TriggerInput | undefined {
+  if (i.trigger !== undefined) {
+    const { filter, ...rest } = i.trigger;
+    return { ...rest, ...(filter !== undefined && { filter }) };
+  }
   if (i.cron !== undefined) return { kind: "cron", expr: i.cron.trim() } satisfies TriggerInput;
   if (i.runAt !== undefined) return { kind: "once", at: i.runAt.trim() } satisfies TriggerInput;
   return undefined;
 }
 
+/** How many of cron, runAt and trigger are given (exactly one is valid). */
+const triggerCount = (i: {
+  cron?: string | undefined;
+  runAt?: string | undefined;
+  trigger?: EventTriggerInput | undefined;
+}): number => [i.cron, i.runAt, i.trigger].filter((v) => v !== undefined).length;
+
 /** `chat` against the mode on create, as a refusal; null when they agree. */
 function createChatError(i: {
-  mode: z.infer<typeof Mode>;
+  mode: z.infer<typeof CreateInput>["mode"];
   chat?: ChatInput | undefined;
 }): ToolError | null {
   if (i.mode !== "chat" && i.chat !== undefined) return new ToolError(CHAT_ONLY_TEXT);
@@ -597,9 +731,11 @@ function updateChatError(i: {
 }
 
 const withZone = (t: TriggerInput, timeZone: string): AutomationTrigger =>
-  t.kind === "cron"
-    ? { kind: "cron", expr: t.expr, timeZone }
-    : { kind: "once", at: t.at, timeZone };
+  t.kind === "event"
+    ? { kind: "event", source: t.source, types: t.types, filter: t.filter ?? [] }
+    : t.kind === "cron"
+      ? { kind: "cron", expr: t.expr, timeZone }
+      : { kind: "once", at: t.at, timeZone };
 
 /** A card as stored on the approval (the same clipping at ask time and at run time). */
 const cardOf = (w: Words): Words => ({ zh: clip(w.zh, 1000), en: clip(w.en, 1000) });
@@ -759,7 +895,9 @@ export function automationTools(deps: AutomationToolsDeps): BuiltinTool[] {
         ? await hereTarget(deps.db(), ctx.orgId, ctx.accountId, ctx.conversationId)
         : input.mode === "chat"
           ? await chatTargetOf(deps.db(), ctx.orgId, normalizedChat(input.chat as ChatInput))
-          : { mode: "new" };
+          : input.mode === "subject"
+            ? { mode: "subject" }
+            : { mode: "new" };
     return {
       trigger,
       zone,
@@ -778,14 +916,16 @@ export function automationTools(deps: AutomationToolsDeps): BuiltinTool[] {
     const when = scheduleWords(withZone(p.trigger as TriggerInput, p.zone));
     const where = targetWords(p.target, conversationId);
     const tools = toolsWords(p.tools);
+    const filter = filterWords(input.trigger?.filter ?? []);
+    const ask = input.unattendedAsk;
     const name = clip(input.name, NAME_MAX);
     const agent =
       p.agentId === runAgentId
         ? { zh: "", en: "" }
         : { zh: `；以智能体 ${p.agentId} 运行`, en: `; runs as agent ${p.agentId}` };
     return {
-      zh: `创建自动化「${name}」：${when.zh}；运行位置：${where.zh}${agent.zh}；预先批准的工具：${tools.zh}`,
-      en: `Create the automation "${name}": ${when.en}; runs in ${where.en}${agent.en}; approved tools: ${tools.en}`,
+      zh: `创建自动化「${name}」：${when.zh}${filter === null ? "" : `；筛选：${filter}`}；运行位置：${where.zh}${agent.zh}；预先批准的工具：${tools.zh}${ask === undefined ? "" : `；无人值守时的提问：${ask === "fail" ? "直接失败" : "等待回答"}`}`,
+      en: `Create the automation "${name}": ${when.en}${filter === null ? "" : `; filter: ${filter}`}; runs in ${where.en}${agent.en}; approved tools: ${tools.en}${ask === undefined ? "" : `; a question in an unattended run ${ask === "fail" ? "fails the call" : "waits for the user"}`}`,
     };
   }
 
@@ -797,9 +937,7 @@ export function automationTools(deps: AutomationToolsDeps): BuiltinTool[] {
       const key = BUILTIN.AutomationCreate;
       const parsed = CreateInput.safeParse(raw);
       if (!parsed.success) return deny(key, INVALID_CREATE_TEXT);
-      if ((parsed.data.cron === undefined) === (parsed.data.runAt === undefined)) {
-        return deny(key, ONE_TRIGGER_TEXT);
-      }
+      if (triggerCount(parsed.data) !== 1) return deny(key, ONE_TRIGGER_TEXT);
       const bad = createChatError(parsed.data);
       if (bad !== null) return deny(key, bad.message);
       const p = await createPlan(parsed.data, ctx);
@@ -813,7 +951,7 @@ export function automationTools(deps: AutomationToolsDeps): BuiltinTool[] {
       if (bad !== null) throw bad;
       const svc = await service();
       const p = await createPlan(input, ctx);
-      if (p.trigger === undefined || (input.cron !== undefined && input.runAt !== undefined)) {
+      if (p.trigger === undefined || triggerCount(input) !== 1) {
         throw new ToolError(ONE_TRIGGER_TEXT);
       }
       // the zone and target are recomputed now: they must be the ones the person approved
@@ -833,6 +971,7 @@ export function automationTools(deps: AutomationToolsDeps): BuiltinTool[] {
             timeZone: p.zone,
             ...targetFields(p.target),
             grants: p.tools.map((toolKey) => ({ toolKey })),
+            ...(input.unattendedAsk !== undefined && { unattendedAsk: input.unattendedAsk }),
           }),
         { zone: p.zone },
       );

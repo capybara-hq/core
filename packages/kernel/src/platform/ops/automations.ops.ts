@@ -4,6 +4,7 @@ import {
   AutomationCalendarQuery,
   AutomationChatTargetsQuery,
   AutomationCreateBody,
+  AutomationEventSourcesQuery,
   AutomationGrantableQuery,
   AutomationGrantParams,
   AutomationGrantsBody,
@@ -28,6 +29,18 @@ import { PlatformOperations } from "../registry.js";
 import { named, orElse } from "./summary.js";
 
 const ListQuery = AutomationListQuery;
+type CreateTrigger = z.infer<typeof AutomationCreateBody>["trigger"];
+
+/** A trigger in words for the approval card (the person's strings are neutralized). */
+function triggerWords(t: CreateTrigger): { zh: string; en: string } {
+  if (t.kind === "cron") return { zh: `cron ${named(t.expr)}`, en: `cron ${named(t.expr)}` };
+  if (t.kind === "once") return { zh: `一次性 ${named(t.at)}`, en: `once at ${named(t.at)}` };
+  const types = t.types.map(named).join(", ");
+  return {
+    zh: `${named(t.source)} 的事件 ${types}`,
+    en: `events ${types} from ${named(t.source)}`,
+  };
+}
 const CreateBody = AutomationCreateBody;
 const UpdateBody = AutomationUpdateBody;
 const RunBody = AutomationRunBody;
@@ -166,6 +179,18 @@ export class AutomationsOperations implements OnModuleInit {
         },
       }),
       defineOperation({
+        id: "automations.event-sources",
+        description:
+          'The event sources an automation can trigger on: each { source, name, events } for an extension that emits trigger events and is on in this org (and not switched off in the automation settings). Each event is { type, name, directed, facts }: facts maps a name to { type (string, number, boolean or string[]), name, filterable }. Use source, type names and filterable facts in automations.create\'s trigger { kind: "event", source, types, filter }; directed types cannot trigger an automation.',
+        input: AutomationEventSourcesQuery,
+        example: {},
+        authz: { orgAction: "automations.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/automations/event-sources"],
+        confirm: "read",
+        errors: [],
+        run: async (_input, ctx) => ({ items: await this.tasks.eventSources(ctx.orgId) }),
+      }),
+      defineOperation({
         id: "automations.chat-targets",
         description:
           "The IM chats you can point a chat-mode automation at: your direct chats with each active channel connection's bot (one you have messaged before), and the groups you have talked in when the channel has threads. Each gives { connectionId, chatId, chatType } for automations.create, and the connection's agentId, which the task must use.",
@@ -221,7 +246,7 @@ export class AutomationsOperations implements OnModuleInit {
       defineOperation({
         id: "automations.create",
         description:
-          "Create an automation: an agent runs the prompt on a 5-field cron (or once at a local date-time) as you, unattended. The task's time zone is yours; timeZone is only the fallback when you have none set. mode: new (a conversation per run), conversation (post into one conversation) or chat (an IM chat). model ({ provider, model } like an agent definition's), effort and deviceId are for mode new only; a conversation or chat task runs with that conversation's model. Without expiresAt a cron task ends after the org's default expiry, when the org sets one. grants pre-approve tools the unattended run may use.",
+          "Create an automation: an agent runs the prompt as you, unattended, on a 5-field cron, once at a local date-time, or when events happen: trigger { kind: \"event\", source, types, filter? } with a source, types and filterable facts from automations.event-sources (filter is a list of { fact, op: eq | in | contains, value }; eq takes a scalar of the fact's type, in a list of strings for a string fact, contains a string for a string[] fact). A time trigger uses your time zone; timeZone is only the fallback when you have none set; an event trigger has none. mode: new (a conversation per run), conversation (post into one conversation), chat (an IM chat; time triggers only) or subject (one conversation per event subject; event triggers only). unattendedAsk (fail | wait) sets what a question in an unattended run does; null follows the org's default. model ({ provider, model } like an agent definition's), effort and deviceId are for mode new only; a conversation or chat task runs with that conversation's model. Without expiresAt a cron task ends after the org's default expiry, when the org sets one. grants pre-approve tools the unattended run may use.",
         input: CreateBody,
         example: {
           agentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20",
@@ -249,7 +274,19 @@ export class AutomationsOperations implements OnModuleInit {
           },
           {
             code: "automation.target_invalid",
-            next: "Fix the target named in the message (conversation, chat or device) and call again.",
+            next: "Fix the target named in the message (conversation, chat or device) and call again. Mode subject needs an event trigger; mode chat needs a time trigger.",
+          },
+          {
+            code: "automation.event_source_unavailable",
+            next: "Pick a source from automations.event-sources: it must be enabled in this org and not switched off in the automation settings.",
+          },
+          {
+            code: "automation.event_type_unknown",
+            next: "Use event type names the source declares in automations.event-sources; directed types cannot trigger an automation.",
+          },
+          {
+            code: "automation.filter_invalid",
+            next: "Filter only on filterable facts the selected event types all declare, with a value of the fact's type (eq: scalar, in: strings on a string fact, contains: a string on a string[] fact).",
           },
           {
             code: "automation.grant_not_allowed",
@@ -257,8 +294,8 @@ export class AutomationsOperations implements OnModuleInit {
           },
         ],
         summary: (i) => ({
-          zh: `创建自动化「${named(i.name)}」（${i.trigger.kind === "cron" ? `cron ${named(i.trigger.expr)}` : `一次性 ${named(i.trigger.at)}`}），之后无人值守地以你的身份运行`,
-          en: `Create automation "${named(i.name)}" (${i.trigger.kind === "cron" ? `cron ${named(i.trigger.expr)}` : `once at ${named(i.trigger.at)}`}), then run unattended as you`,
+          zh: `创建自动化「${named(i.name)}」（${triggerWords(i.trigger).zh}），之后无人值守地以你的身份运行`,
+          en: `Create automation "${named(i.name)}" (${triggerWords(i.trigger).en}), then run unattended as you`,
         }),
         run: async (input, ctx) => {
           const { input: create, browserTimeZone } = createInputOf(input);
@@ -270,7 +307,7 @@ export class AutomationsOperations implements OnModuleInit {
       defineOperation({
         id: "automations.update",
         description:
-          "Change one of your own automations (name, prompt, schedule, time zone, target, model, effort, device, expiry; null clears an optional field, and a null expiry on a cron task takes the org's default expiry when set). model, effort and deviceId are for mode new only; switching to another mode clears them. Only the creator can; an org admin can pause it instead. Takes the id from automations.list.",
+          "Change one of your own automations (name, prompt, trigger (a schedule or an event trigger, as automations.create takes it), time zone, target, mode, unattendedAsk, model, effort, device, expiry; null clears an optional field, and a null expiry on a cron task takes the org's default expiry when set). model, effort and deviceId are for mode new only; switching to another mode clears them. Only the creator can; an org admin can pause it instead. Takes the id from automations.list.",
         input: UpdateBody.extend({ automationId: Id }).strict(),
         example: { automationId: EXAMPLE_ID, prompt: "Summarize the last two days." },
         authz: { orgAction: "automations.use" },
@@ -289,7 +326,19 @@ export class AutomationsOperations implements OnModuleInit {
           },
           {
             code: "automation.target_invalid",
-            next: "Fix the target named in the message and call again.",
+            next: "Fix the target named in the message and call again. Mode subject needs an event trigger; mode chat needs a time trigger; switching trigger kind may need a new mode.",
+          },
+          {
+            code: "automation.event_source_unavailable",
+            next: "Pick a source from automations.event-sources.",
+          },
+          {
+            code: "automation.event_type_unknown",
+            next: "Use event type names the source declares in automations.event-sources.",
+          },
+          {
+            code: "automation.filter_invalid",
+            next: "Filter only on filterable facts of the selected types, with a value of the fact's type.",
           },
         ],
         summary: async (i, ctx) => {

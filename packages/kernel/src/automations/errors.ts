@@ -19,3 +19,15 @@ export const targetInvalid = (message: string) =>
 
 export const grantNotAllowed = (message: string) =>
   new ApiError("automation.grant_not_allowed", message);
+
+/** The event source is not an enabled trigger source of the org (or the org switched it off). */
+export const eventSourceUnavailable = (message: string) =>
+  new ApiError("automation.event_source_unavailable", message);
+
+/** An event type the source does not declare (or one that is directed). */
+export const eventTypeUnknown = (message: string) =>
+  new ApiError("automation.event_type_unknown", message);
+
+/** A filter clause on a missing, unfilterable or mistyped fact. */
+export const filterInvalid = (message: string) =>
+  new ApiError("automation.filter_invalid", message);

@@ -572,6 +572,12 @@ export const ERROR_CODES = {
   "automation.target_invalid": 400,
   /** A tool the creator cannot pre-approve for the task (spec §7). */
   "automation.grant_not_allowed": 400,
+  /** An event trigger names a source that is not an enabled trigger source of the org. */
+  "automation.event_source_unavailable": 400,
+  /** An event trigger names an event type its source does not declare (or a directed one). */
+  "automation.event_type_unknown": 400,
+  /** An event trigger's filter names a missing or unfilterable fact, or mistypes a value. */
+  "automation.filter_invalid": 400,
   /** An org admin may pause, resume and delete another person's task, never edit it. */
   "automation.forbidden": 403,
   "skill.not_found": 404,

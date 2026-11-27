@@ -11,7 +11,7 @@ import {
  * Test fake of a `trigger-source@1` provider (collaboration spec §4.2, §4.3). It declares the
  * event types `item.created`, `item.updated` and `item.assigned` (directed) in
  * `permissions.triggers.emit`, each with the filterable facts `status` (string), `priority`
- * (number), `labels` (string[]) and `projectKey` (string).
+ * (number), `labels` (string[]) and `projectKey` (string), and the unfilterable fact `internalNote`.
  * - The tool `emit_item_event` emits its input as the event through `ctx.triggers.emit`, with the
  *   call's org (unless the input names another `orgId`) and `cause: { call }`; it returns
  *   `{ eventId, duplicate }` as JSON, or `{ error: <TriggerError code> }` for a refused emit.
@@ -44,6 +44,8 @@ const FACTS: TriggerEventDeclaration["facts"] = {
   priority: { type: "number", name: { zh: "优先级", en: "Priority" }, filterable: true },
   labels: { type: "string[]", name: { zh: "标签", en: "Labels" }, filterable: true },
   projectKey: { type: "string", name: { zh: "项目", en: "Project" }, filterable: true },
+  // declared but not filterable: an automation's filter may not name it
+  internalNote: { type: "string", name: { zh: "内部备注", en: "Internal note" }, filterable: false },
 };
 
 // capybara:allow-module-state a read-only constant list

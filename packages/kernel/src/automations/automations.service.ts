@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { CHANNEL_EXTENSION_POINT, type Channel } from "@capybara-hq/plugin-sdk";
+import {
+  CHANNEL_EXTENSION_POINT,
+  type Channel,
+  type EventFilter,
+  type LocalizedName,
+  type TriggerEventDeclaration,
+  type TriggerSource,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { AgentLookup, type AgentView } from "../agents/agent-lookup.js";
 import type { ModelRef } from "../agents/definition.js";
@@ -8,6 +15,8 @@ import { readMessageContext } from "../conversations/message-context.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsByOrg, isExtensionEnabled } from "../extensions/enabled.js";
+import { ExtensionDisplayNames } from "../extensions/display-name.js";
+import { ExtensionPointDefaults } from "../extensions/point-defaults.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
@@ -41,9 +50,13 @@ import {
   automationDisabled,
   automationForbidden,
   automationNotFound,
+  eventSourceUnavailable,
+  eventTypeUnknown,
+  filterInvalid,
   grantNotAllowed,
   targetInvalid,
 } from "./errors.js";
+import { validateFilter } from "./events/guards.js";
 import {
   GIT_GRANT_SPEC_HASH,
   GIT_PUSH_GRANT,
@@ -76,6 +89,7 @@ import type {
   AutomationPauseReason,
   AutomationTimeTrigger,
   AutomationTrigger,
+  AutomationUnattendedAsk,
   TaskRun,
 } from "./types.js";
 
@@ -87,8 +101,24 @@ export {
   networkGrantRefusal,
 };
 
-/** When a task fires, before the zone is fixed (spec §5). */
-export type TriggerInput = { kind: "cron"; expr: string } | { kind: "once"; at: string };
+/**
+ * When a task fires, before the zone is fixed (spec §5); or on events of `types` from the
+ * extension `source` that match `filter` (absent: every event of the types).
+ */
+export type TriggerInput =
+  | { kind: "cron"; expr: string }
+  | { kind: "once"; at: string }
+  | { kind: "event"; source: string; types: string[]; filter?: EventFilter };
+
+/** An event trigger input. */
+type EventTriggerInput = Extract<TriggerInput, { kind: "event" }>;
+
+/** One trigger source that serves an org, as the automation form offers it. */
+export interface EventSourceView {
+  source: string;
+  name: LocalizedName;
+  events: TriggerEventDeclaration[];
+}
 
 /** An automation that needs its creator's attention (spec §8): the inbox item's payload. */
 export interface AutomationAttention {
@@ -156,6 +186,8 @@ export interface CreateTaskInput {
    */
   expiresAt?: Date | null;
   grants?: GrantInput[];
+  /** What a question in an unattended run does; absent or null: the org's default. */
+  unattendedAsk?: AutomationUnattendedAsk | null;
 }
 
 /**
@@ -175,6 +207,7 @@ export interface UpdateTaskInput {
   effort?: string | null;
   deviceId?: string | null;
   expiresAt?: Date | null;
+  unattendedAsk?: AutomationUnattendedAsk | null;
 }
 
 /**
@@ -297,6 +330,11 @@ export class AutomationsService {
     /** Network grants: the org's sandbox-mode network (network ask-to-allow spec §8.1). */
     @Inject(SandboxService)
     private readonly sandbox: Pick<SandboxService, "ceilingLimits" | "devicePolicy">,
+    /** Event automations: the trigger sources that serve an org (`trigger-source@1`). */
+    @Inject(ExtensionPointDefaults)
+    private readonly points: Pick<ExtensionPointDefaults, "providersFor">,
+    @Inject(ExtensionDisplayNames)
+    private readonly displayNames: Pick<ExtensionDisplayNames, "many">,
   ) {}
 
   @Transactional()
@@ -326,19 +364,27 @@ export class AutomationsService {
     const name = requiredText(input.name, "name", NAME_MAX);
     const prompt = requiredText(input.prompt, "prompt", PROMPT_MAX);
     const agent = await this.agents.get(orgId, input.agentId, accountId);
-    const timeZone =
-      input.timeZone ??
-      (
-        await readMessageContext(t, {
-          orgId,
-          accountId,
-          ...(browserTimeZone !== undefined && { browser: { timeZone: browserTimeZone } }),
-        })
-      ).timeZone ??
-      "UTC";
     const now = new Date();
-    const trigger = withZone(input.trigger, timeZone);
-    const gap = checkTrigger(trigger, now, settings);
+    let trigger: AutomationTrigger;
+    let gap: number | null = null;
+    if (input.trigger.kind === "event") {
+      trigger = await this.checkEventTrigger(orgId, input.trigger, settings);
+    } else {
+      const timeZone =
+        input.timeZone ??
+        (
+          await readMessageContext(t, {
+            orgId,
+            accountId,
+            ...(browserTimeZone !== undefined && { browser: { timeZone: browserTimeZone } }),
+          })
+        ).timeZone ??
+        "UTC";
+      const timed = withZone(input.trigger, timeZone);
+      gap = checkTrigger(timed, now, settings);
+      trigger = timed;
+    }
+    checkModeFits(input.mode, trigger);
     const target = {
       mode: input.mode,
       conversationId: input.conversationId ?? null,
@@ -373,6 +419,7 @@ export class AutomationsService {
       trigger,
       ...target,
       ...pick,
+      unattendedAsk: input.unattendedAsk ?? null,
       status: "active",
       nextRunAt: fireAt(trigger, now, jitter),
       jitterSeconds: jitter,
@@ -455,9 +502,14 @@ export class AutomationsService {
       Object.assign(changes, target);
     }
 
-    if (patch.trigger !== undefined || patch.timeZone !== undefined) {
+    if (patch.trigger?.kind === "event") {
+      // an event automation has no zone, tick or jitter: the next run time is cleared
+      changes.trigger = await this.checkEventTrigger(orgId, patch.trigger, settings);
+      changes.jitterSeconds = 0;
+      changes.nextRunAt = null;
+    } else if (patch.trigger !== undefined || patch.timeZone !== undefined) {
       // an event automation has no zone or tick to keep: a time trigger replacing its event
-      // trigger names both (event triggers are not edited here yet)
+      // trigger names both
       const current = task.trigger.kind === "event" ? null : task.trigger;
       const zone = patch.timeZone ?? current?.timeZone;
       const base: TriggerInput | undefined =
@@ -481,6 +533,11 @@ export class AutomationsService {
         changes.nextRunAt = fireAt(trigger, now, changes.jitterSeconds);
       }
     }
+    // the mode and the trigger after the patch must fit (subject needs events, chat needs time)
+    if (patch.trigger !== undefined || patch.mode !== undefined) {
+      checkModeFits(target.mode, changes.trigger ?? task.trigger);
+    }
+    if (patch.unattendedAsk !== undefined) changes.unattendedAsk = patch.unattendedAsk;
     // model, effort and device: `new` mode only (leaving it clears them), checked when they or
     // the agent change
     const pick =
@@ -561,8 +618,10 @@ export class AutomationsService {
     const settings = await readAutomationSettings(this.db.db, this.config, orgId);
     if (!settings.enabled) throw automationDisabled();
     const now = new Date();
-    const next = fireAt(task.trigger, now, task.jitterSeconds);
-    if (next === null) {
+    // an event automation has no next run time
+    const next =
+      task.trigger.kind === "event" ? null : fireAt(task.trigger, now, task.jitterSeconds);
+    if (next === null && task.trigger.kind !== "event") {
       throw new ApiError("automation.once_in_past", "The task's time has passed; set a new time");
     }
     const resumed = await this.store.updateTask(this.db.db, task.id, {
@@ -781,6 +840,67 @@ export class AutomationsService {
    * whose extension is enabled in it, their DM threads (archived included) and, on a channel with
    * threads, the groups they have a thread in. Members up (`automations.use`, the route's).
    */
+  /**
+   * The trigger sources that serve the org now (`trigger-source@1` providers enabled in it with a
+   * valid config) and the org has not switched off (`eventSourcesOff`), each with its extension's
+   * display name and event declarations: what the automation form builds its event picker and
+   * filter rows from.
+   */
+  async eventSources(orgId: string): Promise<EventSourceView[]> {
+    const settings = await readAutomationSettings(this.db.db, this.config, orgId);
+    const { providers } = await this.points.providersFor<TriggerSource>(orgId, "trigger-source");
+    const on = providers.filter((p) => !settings.eventSourcesOff.includes(p.extension));
+    const names = await this.displayNames.many(on.map((p) => p.extension));
+    return on.map((p) => ({
+      source: p.extension,
+      name: names.get(p.extension) ?? { zh: p.extension, en: p.extension },
+      events: p.impl.events(),
+    }));
+  }
+
+  /**
+   * An event trigger as stored: the source must serve the org and not be switched off
+   * (`automation.event_source_unavailable`), every type must be declared by it and not directed
+   * (`automation.event_type_unknown`: a directed event wakes one agent through acceptance, never
+   * through an automation), and the filter must fit the selected types' facts
+   * (`automation.filter_invalid`).
+   */
+  private async checkEventTrigger(
+    orgId: string,
+    input: EventTriggerInput,
+    settings: EffectiveAutomationSettings,
+  ): Promise<AutomationTrigger> {
+    const source = input.source.trim();
+    const { providers } = await this.points.providersFor<TriggerSource>(orgId, "trigger-source");
+    const provider = providers.find((p) => p.extension === source);
+    if (provider === undefined || settings.eventSourcesOff.includes(source)) {
+      throw eventSourceUnavailable(
+        `${source} is not an event source of this organization (it must be an enabled extension that provides trigger events, and not switched off in the automation settings)`,
+      );
+    }
+    const declared = provider.impl.events();
+    const types = [...new Set(input.types.map((x) => x.trim()))];
+    const decls: TriggerEventDeclaration[] = [];
+    for (const type of types) {
+      const d = declared.find((e) => e.type === type);
+      if (d === undefined) {
+        throw eventTypeUnknown(
+          `${source} declares no event type "${type}"; it declares: ${declared.map((e) => e.type).join(", ") || "none"}`,
+        );
+      }
+      if (d.directed) {
+        throw eventTypeUnknown(
+          `Event type "${type}" is directed at one agent and cannot trigger an automation`,
+        );
+      }
+      decls.push(d);
+    }
+    const filter = input.filter ?? [];
+    const problems = validateFilter(filter, decls);
+    if (problems.length > 0) throw filterInvalid(problems.join("; "));
+    return { kind: "event", source, types, filter };
+  }
+
   async chatTargets(orgId: string, accountId: string): Promise<ChatTarget[]> {
     await this.liveRole(orgId, accountId);
     const rows = await this.db.db
@@ -1273,6 +1393,11 @@ export class AutomationsService {
     if (mode === "new" && (conversationId !== null || chat !== null)) {
       throw targetInvalid("A task that starts new conversations takes no conversation or chat");
     }
+    if (mode === "subject" && (conversationId !== null || chat !== null)) {
+      throw targetInvalid(
+        "A task that opens a conversation per subject takes no conversation or chat",
+      );
+    }
     if (mode === "conversation" && (conversationId === null || chat !== null)) {
       throw targetInvalid("A conversation task needs a conversation id and no chat");
     }
@@ -1548,7 +1673,28 @@ function runMoment(
   return new Date(firedAt ?? scheduledFor ?? createdAt);
 }
 
-function withZone(t: TriggerInput, timeZone: string): AutomationTimeTrigger {
+/**
+ * The mode must fit the trigger: `subject` (one conversation per event subject) needs an event
+ * trigger, and an event automation does not post into an IM chat yet (`chat` is a time
+ * automation's mode).
+ */
+function checkModeFits(mode: AutomationMode, trigger: AutomationTrigger): void {
+  if (mode === "subject" && trigger.kind !== "event") {
+    throw targetInvalid(
+      "Mode subject (one conversation per event subject) needs an event trigger; use new, conversation or chat with a schedule",
+    );
+  }
+  if (mode === "chat" && trigger.kind === "event") {
+    throw targetInvalid(
+      "An event automation cannot post into an IM chat yet; use mode new, conversation or subject",
+    );
+  }
+}
+
+function withZone(
+  t: Exclude<TriggerInput, { kind: "event" }>,
+  timeZone: string,
+): AutomationTimeTrigger {
   return t.kind === "cron"
     ? { kind: "cron", expr: t.expr.trim(), timeZone }
     : { kind: "once", at: t.at, timeZone };

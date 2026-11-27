@@ -8,8 +8,8 @@ import type { Automation, AutomationGrant, TaskRun, TaskRunStatus, TimedTaskRun 
 /** What a caller supplies to create a task; the counters, pause fields and timestamps default. */
 export type AutomationInsert = Omit<
   Automation,
-  "pauseReason" | "pausedBy" | "consecutiveFailures" | "createdAt" | "updatedAt"
->;
+  "pauseReason" | "pausedBy" | "consecutiveFailures" | "createdAt" | "updatedAt" | "unattendedAsk"
+> & { unattendedAsk?: Automation["unattendedAsk"] };
 
 /** The fields a task update may change (`updated_at` is always refreshed). */
 export type AutomationPatch = Partial<
@@ -75,6 +75,7 @@ const toTask = (r: Selectable<AutomationsTable>): Automation => ({
   model: r.model,
   effort: r.effort,
   deviceId: r.device_id,
+  unattendedAsk: r.unattended_ask,
   status: r.status,
   pauseReason: r.pause_reason,
   pausedBy: r.paused_by,
@@ -125,6 +126,7 @@ function taskColumns(p: AutomationPatch): Updateable<AutomationsTable> {
   if (p.model !== undefined) c.model = json(p.model);
   if (p.effort !== undefined) c.effort = p.effort;
   if (p.deviceId !== undefined) c.device_id = p.deviceId;
+  if (p.unattendedAsk !== undefined) c.unattended_ask = p.unattendedAsk;
   if (p.status !== undefined) c.status = p.status;
   if (p.pauseReason !== undefined) c.pause_reason = p.pauseReason;
   if (p.pausedBy !== undefined) c.paused_by = p.pausedBy;
@@ -159,6 +161,7 @@ export class AutomationStore {
         model: json(task.model),
         effort: task.effort,
         device_id: task.deviceId,
+        unattended_ask: task.unattendedAsk ?? null,
         status: task.status,
         next_run_at: task.nextRunAt,
         jitter_seconds: task.jitterSeconds,

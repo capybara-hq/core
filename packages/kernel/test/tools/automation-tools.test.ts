@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { ToolError } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeExtensionEntry,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
@@ -71,7 +76,10 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
-      { roles: ["api", "worker"], extensions: [MODEL_FAKE] },
+      {
+        roles: ["api", "worker"],
+        extensions: [MODEL_FAKE, fakeExtensionEntry("fake-trigger-source")],
+      },
     ),
   );
 });
@@ -269,6 +277,70 @@ describe("automation tools (spec §11)", () => {
     });
     expect(await grantsOf(task?.id ?? "")).toEqual(["CurrentTime"]);
     expect(result?.content).toContain(`id ${task?.id}`);
+  });
+
+  it("AutomationCreate takes an event trigger: the card shows its filter, mode subject, unattendedAsk", async () => {
+    await enableExtensions(raw, orgId, "fake-trigger-source");
+    const conv = await createConv(alice, orgId, agentId);
+    const input = {
+      name: "Triage",
+      prompt: "Triage the item.",
+      trigger: {
+        kind: "event",
+        source: "fake-trigger-source",
+        types: ["item.created"],
+        filter: [{ fact: "status", op: "eq", value: "open" }],
+      },
+      mode: "subject",
+      unattendedAsk: "wait",
+    };
+    const p = await policyOf("AutomationCreate", input, aliceId, conv);
+    expect(p).toMatchObject({ policy: "ask", remember: false });
+    expect(p.summary?.en).toContain("on fake-trigger-source events (item.created)");
+    expect(p.summary?.en).toContain('filter: status eq "open"');
+    expect(p.summary?.en).toContain("one conversation per event subject");
+    expect(p.summary?.en).toContain("waits for the user");
+    expect(p.summary?.zh).toContain("每个事项一条会话");
+    const r = await tool("AutomationCreate").run(input, callCtx(aliceId, conv));
+    expect(textOf(r)).toContain('Created automation "Triage"');
+    const [task] = await tasksOf(aliceId);
+    expect(task).toMatchObject({
+      mode: "subject",
+      nextRunAt: null,
+      unattendedAsk: "wait",
+      trigger: { kind: "event", source: "fake-trigger-source", types: ["item.created"] },
+    });
+  });
+
+  it("AutomationCreate needs exactly one of cron, runAt and trigger, and says why a bad filter fails", async () => {
+    await enableExtensions(raw, orgId, "fake-trigger-source");
+    const conv = await createConv(alice, orgId, agentId);
+    const event = { kind: "event", source: "fake-trigger-source", types: ["item.created"] };
+    const both = { name: "N", prompt: "p", cron: "0 9 * * *", trigger: event, mode: "new" };
+    expect(await policyOf("AutomationCreate", both, aliceId, conv)).toMatchObject({
+      policy: "deny",
+      denyReason: expect.stringContaining("exactly one of cron"),
+    });
+    const filtered = {
+      name: "N",
+      prompt: "p",
+      trigger: { ...event, filter: [{ fact: "internalNote", op: "eq", value: "x" }] },
+      mode: "new",
+    };
+    const msg = await refusal(tool("AutomationCreate").run(filtered, callCtx(aliceId, conv)));
+    expect(msg).toContain("cannot be filtered on");
+    expect(msg).toContain("filterable facts");
+    // chat mode is a time automation's
+    const chat = {
+      name: "N",
+      prompt: "p",
+      trigger: event,
+      mode: "chat",
+      chat: { connectionId: "c", chatId: "x" },
+    };
+    expect(await refusal(tool("AutomationCreate").run(chat, callCtx(aliceId, conv)))).toContain(
+      "cannot post into an IM chat",
+    );
   });
 
   it("here in an IM DM creates a chat task", async () => {
