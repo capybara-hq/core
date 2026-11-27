@@ -139,7 +139,17 @@ function usePicker(p: PrincipalPickerProps): Model {
       p.onSearch?.("");
     }
   };
-  if (p.disabled === true && open) setOpen(false);
+  // disabling closes it (and resets the search) in an effect, never during render
+  const disabled = p.disabled === true;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only the flip to disabled matters
+  useEffect(() => {
+    if (!disabled) return;
+    setOpenState(false);
+    if (query !== "") {
+      setQueryState("");
+      p.onSearch?.("");
+    }
+  }, [disabled]);
 
   const choose = (id: string) => {
     const option = p.options.find((o) => o.id === id);
@@ -182,7 +192,7 @@ function usePicker(p: PrincipalPickerProps): Model {
     }
   };
   return {
-    open,
+    open: open && !disabled,
     setOpen,
     query,
     setQuery,
@@ -240,7 +250,7 @@ type ListProps = {
   label: string;
 };
 
-export function optionDomId(base: string, id: string, ids: string[]): string {
+function optionDomId(base: string, id: string, ids: string[]): string {
   return `${base}-o${ids.indexOf(id)}`;
 }
 

@@ -263,4 +263,44 @@ describe("PrincipalPicker", () => {
       "true",
     );
   });
+
+  it("calls onSearch with an empty query when it closes with text typed", async () => {
+    const user = userEvent.setup();
+    const onSearch = vi.fn();
+    mount({ onSearch });
+    await open(user);
+    await user.type(search(), "gr");
+    fireEvent.keyDown(search(), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(onSearch).toHaveBeenLastCalledWith("");
+    await open(user);
+    expect((search() as HTMLInputElement).value).toBe("");
+  });
+
+  it("disabling an open picker closes it and resets the search", async () => {
+    const user = userEvent.setup();
+    const onSearch = vi.fn();
+    const ui = (disabled: boolean) => (
+      <DesignProvider locale="zh">
+        <PrincipalPicker {...props({ onSearch, disabled })} />
+      </DesignProvider>
+    );
+    const { rerender } = render(ui(false));
+    await open(user);
+    await user.type(search(), "gr");
+    rerender(ui(true));
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(onSearch).toHaveBeenLastCalledWith("");
+    rerender(ui(false));
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("Escape closes the compact sheet", async () => {
+    const user = userEvent.setup();
+    renderAtClass(390, <PrincipalPicker {...props()} />);
+    await user.click(trigger());
+    const sheet = await screen.findByRole("dialog", { name: F.label });
+    fireEvent.keyDown(within(sheet).getByRole("combobox"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
 });
