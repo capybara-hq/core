@@ -2146,7 +2146,7 @@ export type HookModelMessage = {
 };
 
 // @public
-export type HookModelRequest = Omit<ModelRequest, "messages"> & {
+export type HookModelRequest = Omit<ModelRequest, "messages" | "cacheTtl"> & {
     messages: HookModelMessage[];
 };
 
