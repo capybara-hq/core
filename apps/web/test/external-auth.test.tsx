@@ -1,18 +1,21 @@
-// Shell external authorization (spec 2026-11-28 §4): in a shell with openExternal@1, 「连接」 and
-// 「绑定」 ask the kernel for a browser handoff, open it in the system browser and wait in a
-// dialog that refreshes on focus and closes on its own once the connector is connected (or the
-// login method linked). Without the capability the page navigates as before.
-import { act, cleanup, screen, within } from "@testing-library/react";
+// Shell external authorization (spec 2026-11-28 §4): in a shell with openExternal@1, Connect and
+// Link ask the kernel for a browser handoff, open it in the system browser and wait in a dialog
+// that refreshes on focus and closes on its own once the connector is connected (or the login
+// method linked). Without the capability the page navigates as before.
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import zh from "../messages/zh.json";
 import IdentitiesView from "../src/app/(app)/account/identities/view";
 import { ConnectCard } from "../src/components/ConnectCard";
+import { ApiClientError } from "../src/lib/api";
 import { navigateBrowser } from "../src/lib/browser";
 import { keys } from "../src/lib/query/keys";
+import { useErrorMessage } from "../src/lib/use-error-message";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { ME, renderPage, testQueryClient } from "./support/render";
+import { ME, pageElement, renderPage, testQueryClient } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
@@ -75,7 +78,36 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(window, "capybaraShell");
+  Reflect.deleteProperty(document, "visibilityState");
 });
+
+const setVisibility = (state: "visible" | "hidden") => {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+};
+
+/** Renders the card, clicks Connect and waits for the dialog and its first refresh. */
+async function openConnectDialog(status: () => "connected" | "missing" = () => "missing") {
+  inShell();
+  const calls = stubApi({
+    [CONNECTOR]: () => json(200, { connector: oauthApp(status()) }),
+    [CONNECT]: () => json(200, { handoffUrl: HANDOFF_URL }),
+  });
+  const user = userEvent.setup();
+  renderPage(<ConnectCard orgId="o1" item={item} />);
+  await user.click(screen.getByRole("button", { name: en.connect.action }));
+  const d = await dialog();
+  await vi.waitFor(() => expect(connectorGets(calls)).toBeGreaterThanOrEqual(2));
+  return { calls, user, d };
+}
+
+/** Lets pending fetches settle (no fixed sleep: a few macrotask turns). */
+const settle = () =>
+  act(async () => {
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  });
 
 describe("connector authorization in a shell", () => {
   it("connect in a shell asks for a handoff and opens the browser", async () => {
@@ -159,6 +191,68 @@ describe("connector authorization in a shell", () => {
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith(AUTH_URL));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ returnTo: "/en/chat/c1" });
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("becoming visible refreshes; becoming hidden does not", async () => {
+    const { calls } = await openConnectDialog();
+    await settle();
+    const before = connectorGets(calls);
+    setVisibility("hidden");
+    await settle();
+    expect(connectorGets(calls)).toBe(before);
+    setVisibility("visible");
+    await vi.waitFor(() => expect(connectorGets(calls)).toBeGreaterThan(before));
+  });
+
+  it("done refreshes and closes; focus afterwards fetches nothing more", async () => {
+    const { calls, user, d } = await openConnectDialog();
+    await settle();
+    const before = connectorGets(calls);
+    await user.click(within(d).getByRole("button", { name: en.externalAuth.done }));
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: en.externalAuth.title })).toBeNull(),
+    );
+    await vi.waitFor(() => expect(connectorGets(calls)).toBeGreaterThan(before));
+    await settle();
+    const after = connectorGets(calls);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await settle();
+    expect(connectorGets(calls)).toBe(after);
+  });
+
+  it("cancel closes; focus afterwards fetches nothing more", async () => {
+    const { calls, user, d } = await openConnectDialog();
+    await user.click(within(d).getByRole("button", { name: en.externalAuth.cancel }));
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: en.externalAuth.title })).toBeNull(),
+    );
+    await settle();
+    const after = connectorGets(calls);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await settle();
+    expect(connectorGets(calls)).toBe(after);
+  });
+
+  it("a failed copy says so", async () => {
+    const { user, d } = await openConnectDialog();
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("denied"));
+    await user.click(within(d).getByRole("button", { name: en.externalAuth.copy }));
+    expect(await screen.findByText(en.externalAuth.copyFailed)).toBeTruthy();
+  });
+
+  it("a connector connected at open (a reconnect) stays open until Done", async () => {
+    const { calls } = await openConnectDialog(() => "connected");
+    const before = connectorGets(calls);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await vi.waitFor(() => expect(connectorGets(calls)).toBeGreaterThan(before));
+    await settle();
+    expect(screen.getByRole("dialog", { name: en.externalAuth.title })).toBeTruthy();
   });
 
   it("a non-http handoff URL shows the unknown error and opens nothing", async () => {
@@ -253,5 +347,82 @@ describe("login method linking in a shell", () => {
     );
     expect(open).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a second tenant of a plugin already linked closes the dialog", async () => {
+    inShell();
+    const row = (tenant: string) => ({
+      source: `slack:${tenant}`,
+      externalId: "U1",
+      email: null,
+      emailVerified: false,
+      displayName: "Grant",
+      avatarUrl: null,
+      createdAt: T,
+      label: SLACK.label,
+      channel: true,
+      login: "on",
+    });
+    let rows = [row("T1")];
+    const calls = stubApi({
+      "GET /api/v1/me/identities": () => json(200, { identities: rows, linkable: [SLACK] }),
+      [START]: () => json(200, { handoffUrl: HANDOFF_URL }),
+    });
+    renderIdentities();
+    await userEvent.setup().click(await linkButton());
+    await dialog();
+    await settle();
+    // the snapshot already holds T1: a changed list without a new sign-in keeps the dialog open
+    rows = [{ ...row("T1"), displayName: "Grant W" }];
+    const gets = calls.filter((c) => c.url.endsWith("/me/identities")).length;
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.url.endsWith("/me/identities")).length).toBeGreaterThan(gets),
+    );
+    expect(await screen.findByText("Grant W")).toBeTruthy();
+    await settle();
+    expect(screen.getByRole("dialog", { name: en.externalAuth.title })).toBeTruthy();
+    rows = [row("T1"), row("T2")];
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(
+      await screen.findByText(en.identities.linked.replace("{platform}", "Slack")),
+    ).toBeTruthy();
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: en.externalAuth.title })).toBeNull(),
+    );
+  });
+});
+
+function ErrorProbe({ error }: { error: unknown }) {
+  return <p>{useErrorMessage()(error)}</p>;
+}
+
+describe("handoff error copy", () => {
+  const MSGS = { en, zh } as const;
+  it.each(["en", "zh"] as const)("the three handoff errors read their own copy (%s)", (locale) => {
+    const h = MSGS[locale].errors.handoff;
+    const cases: [ApiClientError, string][] = [
+      [new ApiClientError(400, "handoff.scheme_not_allowed", "x"), h.scheme_not_allowed],
+      [new ApiClientError(410, "handoff.invalid", "x"), h.invalid],
+      [
+        new ApiClientError(
+          403,
+          "handoff.account_mismatch",
+          "x",
+          [],
+          [{ displayName: "Alice Wong", email: "alice@corp.example" }],
+        ),
+        h.account_mismatch.replace("{login}", "alice@corp.example"),
+      ],
+    ];
+    for (const [error, text] of cases) {
+      render(pageElement(<ErrorProbe error={error} />, { locale }));
+      expect(screen.getByText(text)).toBeTruthy();
+      cleanup();
+    }
   });
 });

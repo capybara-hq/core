@@ -15,11 +15,10 @@ import {
 } from "react";
 import { ExternalAuthDialog } from "../components/ExternalAuthDialog";
 import { labelLocale } from "./extension-label";
-import { splitSource } from "./identities";
+import { type LinkedIdentity, splitSource } from "./identities";
 import { identitiesQuery } from "./query/account";
 import { connectorQuery } from "./query/conversation";
 import { keys } from "./query/keys";
-import { meQuery } from "./query/shell";
 
 /**
  * Waiting for an authorization that finishes in the system browser (spec
@@ -27,15 +26,17 @@ import { meQuery } from "./query/shell";
  * `useExternalAuth().open(url, target)` after opening the browser; the provider (mounted once in
  * the app frame) shows {@link ExternalAuthDialog} and, while it is open, invalidates the target's
  * queries on open and whenever the window regains focus or becomes visible. Once the connector is
- * connected (or the login method linked), having been seen unconnected since the dialog opened, the
- * dialog closes with the success toast. The deep link back into the app reloads the page with the
- * result parameters instead, which the result toasts cover.
+ * connected (or a new identity of the login method linked) since the dialog opened, the dialog
+ * closes with the success toast. The done page's deep link (`<scheme>://open?url=`, built by
+ * `appDeepLink` in `./handoff`) makes the shell load the original page with the result parameters
+ * instead: that reload drops the dialog, and the result toasts (`useConnectResultToast`, the
+ * identities page's `?error=`) cover it.
  */
 
 /** What an external authorization is for: a connector's OAuth or linking a login method. */
 export type ExternalAuthTarget =
   | { kind: "connector"; orgId: string; connectorId: string }
-  | { kind: "identity-link"; plugin: string };
+  | { kind: "identity-link"; accountId: string; plugin: string };
 
 interface ExternalAuth {
   open(url: string, target: ExternalAuthTarget): void;
@@ -75,19 +76,15 @@ function Waiting({ pending, onClose }: { pending: Pending; onClose(): void }) {
   const toast = useToast();
   const qc = useQueryClient();
   const { target } = pending;
-  // the identities key needs the account id; read only for a link
-  const me = useQuery({ ...meQuery(), enabled: target.kind === "identity-link" }).data;
-  const accountId = me?.account.id;
-
   const refresh = useCallback(() => {
     if (target.kind === "connector") {
       const k = keys.org(target.orgId);
       void qc.invalidateQueries({ queryKey: k.connector(target.connectorId) });
       void qc.invalidateQueries({ queryKey: k.connectors() });
-    } else if (accountId !== undefined) {
-      void qc.invalidateQueries({ queryKey: keys.account(accountId).identities() });
+    } else {
+      void qc.invalidateQueries({ queryKey: keys.account(target.accountId).identities() });
     }
-  }, [qc, target, accountId]);
+  }, [qc, target]);
 
   useEffect(() => {
     refresh();
@@ -124,14 +121,18 @@ function Waiting({ pending, onClose }: { pending: Pending; onClose(): void }) {
       />
       {target.kind === "connector" ? (
         <ConnectorWatch orgId={target.orgId} connectorId={target.connectorId} onDone={onClose} />
-      ) : accountId !== undefined ? (
-        <LinkWatch accountId={accountId} plugin={target.plugin} onDone={onClose} />
-      ) : null}
+      ) : (
+        <LinkWatch accountId={target.accountId} plugin={target.plugin} onDone={onClose} />
+      )}
     </>
   );
 }
 
-/** Closes with the success toast once the connector turns connected. */
+/**
+ * Closes with the success toast once the connector turns connected, having been seen missing since
+ * the dialog opened. The detail carries no credential timestamp, so a reconnect (connected at
+ * open) cannot be told from no change: it never closes on its own and the dialog's Done covers it.
+ */
 function ConnectorWatch({
   orgId,
   connectorId,
@@ -156,7 +157,19 @@ function ConnectorWatch({
   return null;
 }
 
-/** Closes with the success toast once the login method appears among the linked identities. */
+/** The identities of `plugin` that sign in, by source and external id. */
+const signInKeys = (identities: readonly LinkedIdentity[], plugin: string): Set<string> =>
+  new Set(
+    identities
+      .filter((x) => splitSource(x.source).plugin === plugin && x.login === "on")
+      .map((x) => `${x.source}\u0000${x.externalId}`),
+  );
+
+/**
+ * Closes with the success toast once an identity of the login method signs in that did not when the
+ * dialog opened (the first list it sees is the snapshot): a new link, a second tenant of a plugin
+ * already linked, or an IM-bound row whose sign-in was turned on.
+ */
 function LinkWatch({
   accountId,
   plugin,
@@ -170,19 +183,24 @@ function LinkWatch({
   const locale = labelLocale(useLocale());
   const toast = useToast();
   const data = useQuery(identitiesQuery(accountId)).data;
-  const linked = data?.identities.find(
-    (x) => splitSource(x.source).plugin === plugin && x.login === "on",
-  );
-  const linkedLabel = linked?.label[locale];
-  const seenUnlinked = useRef(false);
+  const snapshot = useRef<Set<string> | null>(null);
   useEffect(() => {
     if (data === undefined) return;
-    if (linkedLabel === undefined) seenUnlinked.current = true;
-    else if (seenUnlinked.current) {
-      seenUnlinked.current = false;
-      toast.success(t("linked", { platform: linkedLabel }));
-      onDone();
+    if (snapshot.current === null) {
+      snapshot.current = signInKeys(data.identities, plugin);
+      return;
     }
-  }, [data, linkedLabel, toast, t, onDone]);
+    const before = snapshot.current;
+    const added = data.identities.find(
+      (x) =>
+        splitSource(x.source).plugin === plugin &&
+        x.login === "on" &&
+        !before.has(`${x.source}\u0000${x.externalId}`),
+    );
+    if (added === undefined) return;
+    snapshot.current = signInKeys(data.identities, plugin);
+    toast.success(t("linked", { platform: added.label[locale] }));
+    onDone();
+  }, [data, plugin, locale, toast, t, onDone]);
   return null;
 }

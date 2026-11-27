@@ -98,7 +98,7 @@ function Identities({
         toast.error(t("linkError.unknown"));
         return null;
       }
-      externalAuth.open(r.handoffUrl, { kind: "identity-link", plugin });
+      externalAuth.open(r.handoffUrl, { kind: "identity-link", accountId, plugin });
       void handoff.openExternal(r.handoffUrl).catch(() => {
         // refused or failed: the dialog's Copy link still gets the person there
       });
