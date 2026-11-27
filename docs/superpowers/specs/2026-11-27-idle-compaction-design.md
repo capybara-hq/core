@@ -834,7 +834,7 @@ of 20; Anthropic and OpenAI also miss recall and the constraint). Decision: **`"
 in-context summary covers everything up to the compaction point and keeps no verbatim tail. The
 transcript path keeps the plan's tail as before.
 
-"all" quality gate (2026-11-28, Task 8b, same harness with `CAPYBARA_TEST_COMPACTION_EVAL_MODE=all`):
+"all" quality gate (2026-11-28, Tasks 8b and 8c, same harness with `CAPYBARA_TEST_COMPACTION_EVAL_MODE=all`):
 the in-context request with `boundary: { mode: "all" }` against the transcript request over the
 same span (the plan with `keepRecentTurns: 0`: every event, no kept tail), same 20 conversations,
 summary cap 20,000, one retry with the retry note for an answer cut off at the cap in both forms,
@@ -842,22 +842,33 @@ summaries read with the production `extractSummary`. Recall counts all 12 codewo
 
 | model | recall (in-context / transcript) | constraint kept (in-context / transcript) | cut off (first / after retry) | no closed `<summary>` (in-context / transcript) | in-context used |
 |---|---|---|---|---|---|
-| Anthropic `claude-haiku-5-5` | 51.3% / 78.8% | 13/20 / 20/20 | 0/0, 0/0 | 7 / 0 | no |
+| Anthropic `claude-haiku-5-5` (8c rerun, fixed parser) | 65.8% / 81.3% | 17/20 / 20/20 | 0/0, 0/0 | 3 / 0 (all three refusals) | no |
 | Anthropic `claude-sonnet-5-5` | 88.8% / 73.8% | 20/20 / 20/20 | 0/0, 0/0 | 0 / 0 | **yes** |
 | OpenAI `gpt-5-nano` | 20.0% / 19.6% | 10/20 / 8/20 | 0/0, 0/0 | 15 / 20 | no |
 | DeepSeek `deepseek-flash` | 90.4% / 87.5% | 20/20 / 20/20 | 0/0, transcript 1/0 | 0 / 0 | **yes** |
 | Qwen `qwen3.8-flash` | 85.0% / 90.0% | 17/20 / 20/20 | 0/0, 0/0 | 4 / 0 (one a tool call) | no |
+| OpenAI `gpt-6.2-astra` (Responses API; 4 of 20 seeds, credits ran out) | 93.8% / 100.0% | 4/4 / 4/4 | 0/0, 0/0 | 0 / 0 | no (not decided) |
+| DeepSeek `deepseek-v4-pro` | 59.6% / 80.4% | 19/20 / 20/20 | 0/0, 0/0 | 1 / 0 | no |
+| Qwen `qwen4-max` | 98.3% / 97.1% | 20/20 / 20/20 | 0/0, 0/0 | 0 / 0 | **yes** |
 
 The rule (ruling): the in-context summary only where its recall ≥ transcript recall − 0.05 and the
-constraint is kept in ≥ 19/20; otherwise the transcript path for that family. Haiku and Sonnet
-disagree, so Anthropic is decided per model id. In-context summary models (`IN_CONTEXT_SUMMARY_MODELS`,
-by model id on any provider): `claude-sonnet-*` and `deepseek-*`; every other model (other
-`claude-*`, `gpt-*`, `qwen*`, the rest) takes the transcript path. Haiku's seven failures are all one
-shape: an `<analysis>` block never closed, followed by a closed `<summary>` block, which
-`extractSummary` drops with the unclosed scratchpad; read with "the last closed `<summary>` wins",
-Haiku's in-context form scores 81.7% / 20/20 and would qualify. That parser change is a separate
-decision, not taken here. Phase 2: idle compaction only pays off on families where the in-context
-summary is used.
+constraint is kept in ≥ 19/20; otherwise the transcript path. Results differ inside a family
+(Haiku and Sonnet, `deepseek-flash` and `deepseek-v4-pro`, `qwen3.8-flash` and `qwen4-max`), so
+the gate is decided per measured model line, never generalized to a family. In-context summary
+models (`IN_CONTEXT_SUMMARY_MODELS`, by model id on any provider): `claude-sonnet-*`,
+`deepseek-flash*` and `qwen4-max*`; every other model (other `claude-*`, every `gpt-*`, other
+`deepseek-*`, other `qwen*`, the rest) takes the transcript path. Haiku was rerun (Task 8c) after
+`extractSummary` learned to read a closed `<summary>` that ends a complete answer after an unclosed
+`<analysis>` (8b's seven empty summaries were that shape); it still fails on recall (65.8%
+against 76.3% needed; 72.1% even without its three answers stopped with stop reason `refusal`,
+which also cost the three constraints). `deepseek-v4-pro` keeps the user facts but drops most
+tool-result and assistant-text facts in the in-context form. `gpt-6.2-astra`, the largest GPT-5.6+
+model the key lists, ran through the Responses API (it refuses function tools on Chat Completions
+with its default effort); the account's credits ran out after 4 seeds, so it is undecided and stays
+on the transcript path until it is gated in full. Phase 2: idle compaction only pays off on
+families where the in-context summary is used, and GPT-5.6+ is the only family whose default
+(`30m`) cache qualifies for idle compaction without the long tier, so whether an OpenAI model is in
+this table decides whether phase 2 does anything by default; today none is.
 
 Quality gate (ruling R8, 2026-11-28): the in-context path runs only for model families whose
 in-context summaries passed the quality eval; every other model takes the transcript path. The
