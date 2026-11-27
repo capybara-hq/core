@@ -1,8 +1,16 @@
 /**
  * Pages reachable without signing in. `/s` is a share link (file sharing design §6): the page
- * itself sends a visitor of an internal link to sign in.
+ * itself sends a visitor of an internal link to sign in. `/handoff` is a shell's browser handoff
+ * (shell external authorization spec §2, §3): the ticket page's layout sends a signed-out visitor
+ * to sign in, and the done page only shows a result.
  */
-export const PUBLIC_PREFIXES = ["/login", "/setup", "/invite", "/bind", "/s"] as const;
+export const PUBLIC_PREFIXES = ["/login", "/setup", "/invite", "/bind", "/s", "/handoff"] as const;
+
+/**
+ * Whether a page path (no query) is a browser handoff page `/handoff/<ticket>` (or its done page):
+ * the ticket is in the address, so the page sends no referrer.
+ */
+export const isHandoffPath = (path: string): boolean => path.startsWith("/handoff/");
 
 /** Whether a page path (no query) is a share page `/s/<code>`. */
 export const isSharePath = (path: string): boolean => path.startsWith("/s/");

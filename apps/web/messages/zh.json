@@ -7226,5 +7226,25 @@
     "copyFailed": "无法复制链接，请重试。",
     "done": "完成了",
     "cancel": "取消"
+  },
+  "handoff": {
+    "title": "继续授权",
+    "opening": "正在打开授权页…",
+    "invalidTitle": "授权链接已失效",
+    "mismatchTitle": "不是发起授权的账号",
+    "failedTitle": "无法继续授权",
+    "startAgain": "回到应用里重新发起授权。",
+    "switchAccount": "换个账号登录",
+    "done": {
+      "connected": "已连接 {name}",
+      "connectedGeneric": "连接器已连接",
+      "linked": "已绑定 {name}",
+      "linkedGeneric": "登录方式已绑定",
+      "failed": "授权没有完成",
+      "unknownTitle": "无法显示授权结果",
+      "back": "回到 {product}",
+      "closeTabHint": "现在可以关闭这个标签页。",
+      "backToApp": "回到应用里继续。"
+    }
   }
 }

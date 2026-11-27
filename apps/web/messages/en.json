@@ -7238,5 +7238,25 @@
     "copyFailed": "Could not copy the link. Try again.",
     "done": "Done",
     "cancel": "Cancel"
+  },
+  "handoff": {
+    "title": "Continue authorization",
+    "opening": "Opening the authorization page…",
+    "invalidTitle": "Authorization link expired",
+    "mismatchTitle": "Not the account that started this",
+    "failedTitle": "Could not continue",
+    "startAgain": "Go back to the app and start again.",
+    "switchAccount": "Sign in with another account",
+    "done": {
+      "connected": "{name} connected",
+      "connectedGeneric": "Connector connected",
+      "linked": "{name} linked",
+      "linkedGeneric": "Sign-in method linked",
+      "failed": "Authorization did not finish",
+      "unknownTitle": "Cannot show the result",
+      "back": "Back to {product}",
+      "closeTabHint": "You can close this tab now.",
+      "backToApp": "Go back to the app to continue."
+    }
   }
 }
