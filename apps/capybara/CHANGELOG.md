@@ -1,5 +1,32 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.127
+
+### Patch Changes
+
+- f060da3: Conversation page polish: a sub-agent's input is labelled 提示词 / Prompt (no longer 任务, which
+  reads as a background task) in its panel and in the agent map's detail, and the agent map detail's
+  后台任务 section says 暂无后台任务 / No background tasks when opened with none.
+- 3aad176: A model step cut off at the output token limit no longer ends the run as completed: request
+  building tells the model right after the cut-off reply that it was truncated and an unfinished
+  tool call did not run, and the run gets another step. After three truncated steps in a row the run
+  ends with the new reason `max_output`; the web shows runs that ended at a limit with a warning
+  instead of "Done" (#951).
+- 06a0200: Pin the todo bootstrap plugin to 0.1.0-rc.15, which records the pinned card's badge (`card.badge`,
+  plugins#293) so a finished process block head keeps its "待办 n/m" summary after a reload (#928), and
+  device-local to 0.1.0-rc.13 (the version that commit lists), and the plugins marketplace commit with the compose sandbox image build context to ff7f845.
+- 3c190bc: The conversation's process block reads calmly while a run is live: spinners only in the block's
+  head and on each of several concurrent command rows, rail nodes keep their kind icon, a parallel
+  command group says "Running 2 commands · 0 done", the head names commands by their description,
+  live thinking shows its last three lines as rendered Markdown and collapses when it ends,
+  narration renders its Markdown, Bash rows show only their description (the command and exit code
+  move into the detail, a non-zero exit stays on the row), the planning capybara is the rail's last
+  row instead of a line under the block, and the fold row's chevron lines up with the rail.
+- Updated dependencies [3aad176]
+- Updated dependencies [06a0200]
+- Updated dependencies [803bcc4]
+  - @capybara-hq/kernel@0.1.0-rc.102
+
 ## 0.1.0-rc.126
 
 ### Patch Changes
