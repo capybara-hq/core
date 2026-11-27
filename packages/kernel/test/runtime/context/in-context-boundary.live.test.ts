@@ -537,10 +537,11 @@ interface CaseResult {
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
 const loose = (s: string) => norm(s).replace(/[`'"*_]/g, "");
 const cutOff = (a: Answer) => /max_tokens|length/.test(a.stop);
+/** A closed summary `extractSummary` reads: outside any analysis, or one that ends the answer. */
 const closedSummary = (a: Answer) =>
   /<summary>[\s\S]*?<\/summary>/i.test(
     a.text.replace(/<analysis>[\s\S]*?(?:<\/analysis>|$)/gi, ""),
-  );
+  ) || /<summary>(?:(?!<summary>)[\s\S])*?<\/summary>\s*$/i.test(a.text);
 
 /** Codewords a summary must keep: the head ones (marked) or every one ("all"). */
 const expected = (f: EvalFixture) =>
