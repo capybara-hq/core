@@ -463,7 +463,7 @@ The chat-first compact shell (maintainer decisions 2026-11-21, mobile layout spe
 
 ### 4.7 Short windows and safe areas
 
-- **A short window** is one shorter than 480 px (a phone in landscape; the iPhone Duo outer display at its shortest, 368). Width decides the class and height only trims chrome: the shell sets `data-short`, and then the shell trims its remaining chrome (the PageHeader's path row is gone on compact at every height, §4.2, maintainer decision 2026-11-22; medium and expanded, such as 844 × 390, keep it on pages of three segments or more). A short desktop window gets the same.
+- **A short window** is one shorter than 480 px (a phone in landscape; the iPhone Duo outer display at its shortest, 368). Width decides the class; the shell sets `data-short`, which no longer trims anything since the status bar went (the PageHeader's path row is gone on compact at every height, §4.2, maintainer decision 2026-11-22; medium and expanded, such as 844 × 390, keep it on pages of three segments or more). A short desktop window gets the same.
 - **Safe areas.** With `viewport-fit=cover` the shell pads by the OS insets: the floating row and the drawer by the top inset, the drawer, the sticky ActionRow and the floating composer by the bottom inset (the home indicator), both sides by the left and right insets in landscape (inside a native shell the band already holds the top inset, so the floating row adds only its `space.2`). One set of properties, `--cb-inset-top|right|bottom|left` = `max(env(safe-area-inset-*), var(--cb-shell-inset-*, 0px))`, combines the OS insets with a native shell's own chrome; nothing hardcodes a device's inset. The heights in this spec (`touch.float`, `layout.drawer`) are without the inset.
 
 ---
