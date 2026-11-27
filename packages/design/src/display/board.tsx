@@ -5,7 +5,8 @@ import {
   type DragOverEvent,
   DragOverlay,
   type DragStartEvent,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useDroppable,
   useSensor,
   useSensors,
@@ -73,6 +74,15 @@ type Lanes<C> = Map<string, C[]>;
 type Over = "true" | "refused" | undefined;
 
 const COLUMN_DROP = "cb-board-column:";
+/**
+ * When a press becomes a drag (spec §6.69): a mouse after 6 px, so a click still opens the card;
+ * a finger only after a 250 ms press that stays within 5 px, so a swipe still scrolls the columns
+ * (a touch screen at medium or expanded width scrolls the board sideways).
+ */
+export const BOARD_ACTIVATION = {
+  mouse: { distance: 6 },
+  touch: { delay: 250, tolerance: 5 },
+} as const;
 /** The library's own announcements stay silent: the board speaks through its one live region. */
 const SILENT = {
   onDragStart: () => undefined,
@@ -555,7 +565,10 @@ function WideBoard<C extends BoardCard>(p: FormProps<C> & { instructionsId: stri
   const [focusId, setFocusId] = useState<string | null>(null);
   const elements = useRef(new Map<string, HTMLElement>());
   const focusNext = useRef<string | null>(null);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: BOARD_ACTIVATION.mouse }),
+    useSensor(TouchSensor, { activationConstraint: BOARD_ACTIVATION.touch }),
+  );
 
   const lanes = arrange(columns, cards, [committed, held]);
   const register = useCallback((id: string, el: HTMLElement | null) => {
@@ -599,7 +612,9 @@ function WideBoard<C extends BoardCard>(p: FormProps<C> & { instructionsId: stri
   const sayOver = (next: Held) => {
     const column = columnById(next.columnId);
     const parts = [fill(t("board.position"), position(next.columnId, next.index))];
-    if (column?.locked && next.columnId !== next.origin.columnId) {
+    if (refusedAt(next.cardId, next.columnId, next.origin.columnId)) {
+      parts.push(fill(t("board.refused"), { column: column?.title ?? "" }));
+    } else if (column?.locked && next.columnId !== next.origin.columnId) {
       parts.push(fill(t("board.locked"), { column: column.title }));
       if (column.hint) parts.push(column.hint);
     }

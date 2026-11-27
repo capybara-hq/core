@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { userEvent } from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { BOARD_ACTIVATION } from "../src/display/board";
 import { BOARD_FIXTURE as F } from "../src/fixtures/index";
 import { Board, type BoardCard, type BoardProps, DesignProvider } from "../src/index";
 import { renderAtClass } from "./width";
@@ -218,6 +219,8 @@ describe("Board", () => {
     expect((held.closest('[data-part="board-column"]') as HTMLElement).dataset.over).toBe(
       "refused",
     );
+    // entering the refused column is said while holding, not only on the drop
+    expect(live().textContent).toBe("「已完成」第 1 项 不能移到「已完成」，已放回。");
     key(held, " ");
     expect(p.onMove).not.toHaveBeenCalled();
     expect(columnOf(cardEl(container, "t1"))).toBe("todo");
@@ -255,6 +258,39 @@ describe("Board", () => {
   it("wide: every card is a drag handle (pointer drag)", () => {
     const { container } = board();
     expect(container.querySelectorAll("[data-drag-handle]")).toHaveLength(CARDS.length);
+  });
+
+  it("a mouse drags after 6 px; a finger only after a press, so a swipe scrolls", () => {
+    expect(BOARD_ACTIVATION).toEqual({
+      mouse: { distance: 6 },
+      touch: { delay: 250, tolerance: 5 },
+    });
+    const { container } = board();
+    const surface = () => container.querySelector('[data-part="board"]') as HTMLElement;
+    const t1 = cardEl(container, "t1");
+    // a mouse: past 6 px the card is held
+    fireEvent.mouseDown(t1, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(document, { clientX: 14, clientY: 10 });
+    expect(surface().dataset.dragging).toBeUndefined();
+    fireEvent.mouseMove(document, { clientX: 30, clientY: 10 });
+    expect(surface().dataset.dragging).toBe("pointer");
+    fireEvent.mouseUp(document, { clientX: 30, clientY: 10 });
+    // a swipe: the finger moves at once, no drag starts
+    fireEvent.touchStart(cardEl(container, "t1"), { touches: [{ clientX: 10, clientY: 10 }] });
+    // (touch events stay on the element the touch started on)
+    fireEvent.touchMove(cardEl(container, "t1"), { touches: [{ clientX: 60, clientY: 10 }] });
+    fireEvent.touchEnd(cardEl(container, "t1"), { touches: [] });
+    expect(surface().dataset.dragging).toBeUndefined();
+    // a press held 250 ms in place: the card is held
+    vi.useFakeTimers();
+    try {
+      fireEvent.touchStart(cardEl(container, "t1"), { touches: [{ clientX: 10, clientY: 10 }] });
+      act(() => vi.advanceTimersByTime(250));
+      expect(surface().dataset.dragging).toBe("pointer");
+      fireEvent.touchEnd(cardEl(container, "t1"), { touches: [] });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("compact: no drag handles, Move to menu lists other columns", async () => {
