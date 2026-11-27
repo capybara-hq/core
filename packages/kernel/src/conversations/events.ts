@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 import {
+  CARD_BADGE_MAX,
   CARD_TEXT_MAX,
   CONTEXT_LIMITS,
   type ContentBlock,
@@ -1485,6 +1486,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           placement: z.enum(["pinned", "process"]).optional(),
           /** Only with `placement: "pinned"`; at most `CARD_TEXT_MAX` characters. */
           text: z.string().min(1).max(CARD_TEXT_MAX).optional(),
+          /** Only with `placement: "pinned"`: its view's badge, at most `CARD_BADGE_MAX`. */
+          badge: z.string().min(1).max(CARD_BADGE_MAX).optional(),
         })
         .optional(),
       /**

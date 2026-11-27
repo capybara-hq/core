@@ -196,6 +196,9 @@ export interface ToolDisplay {
 /** The most characters of `ToolResult.card.text`. */
 export const CARD_TEXT_MAX = 2000;
 
+/** The most characters of `ToolResult.card.badge` (as `UiView.badge`). */
+export const CARD_BADGE_MAX = 32;
+
 export interface ToolResult {
   content: ToolContent[];
   isError?: boolean;
@@ -213,12 +216,16 @@ export interface ToolResult {
    * of the run wins); `process` only inside the process block, after its call.
    * `text` is the card's Markdown text for surfaces that cannot draw the view (IM channels, the
    * pinned card of a channel's progress card), at most {@link CARD_TEXT_MAX} characters.
+   * `badge` (pinned only) is the card's state in a few characters, the same as its view's
+   * `UiView.badge` (e.g. "3/5"), at most {@link CARD_BADGE_MAX} characters: a finished run's
+   * process head shows it after the view's title without reading the view again.
    */
   card?: {
     view: string;
     key?: string;
     placement?: "output" | "pinned" | "process";
     text?: string;
+    badge?: string;
   };
 }
 
