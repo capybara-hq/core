@@ -889,6 +889,13 @@ except the run openers re-rendered verbatim after the summary (`openingSeqs`, ru
 else the compaction skips with reason `pending_input` to the transcript path. A compaction at run
 end (phase 2's idle compaction) is a settled point.
 
+Manual compaction (compaction spec §4.7, maintainer decision 2026-11-28) keeps its own plan (every
+turn before the latest summarized): a plan that finds nothing writes `compaction_skipped` and the
+in-context path never runs. With a plan, a gated model still summarizes in context with `"all"`,
+covering everything up to the compaction point. A compact run is started by no message, so its
+openers are the latest message run's (`manualOpeningSeqs`), for both the settled-point check and
+the re-render after the summary: what is checked is what is re-rendered.
+
 ### 9.5 Plugin gaps (plugins repository)
 
 Already fixed by capybara-hq/plugins#304 (being merged):
