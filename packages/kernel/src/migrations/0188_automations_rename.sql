@@ -14,8 +14,13 @@
 -- Logs and recordings are never rewritten (as in 0063): the event log keeps its frozen names
 -- (`user_message.schedule`, `run_started.trigger = 'schedule'`), and so does the
 -- `conversation_queue.schedule` column that carries the frozen marker. Decided approvals and
--- answered questions are history and stay. Jobs already handed to Redis are not rewritten
--- (pre-release: none is expected to survive an upgrade). `automation_grants` has no `org_id`, so,
+-- answered questions are history and stay. Not migrated (pre-0.1.0, no compatibility layer):
+-- - pending push deliveries keep `message.threadId` `schedule-<taskId>` (it only groups
+--   notifications on the device);
+-- - jobs already handed to Redis under the old names, and pending Platform-tool approvals that name
+--   a `schedules.*` operation;
+-- - deployment config: a deployment renames its `schedules.*` config (env `CAPYBARA_SCHEDULES__*`,
+--   config file or Nacos) to `automations.*` itself. `automation_grants` has no `org_id`, so,
 -- like `scheduled_task_grants` before it, it gets no RLS policy (RLS spec §6, child tables); the
 -- `org_scope` policies of 0182 follow their tables through the rename and are stated again under
 -- the new names. Idempotent: a second run matches nothing it could change.

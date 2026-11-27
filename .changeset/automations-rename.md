@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/capybara": patch
+"@capybara-hq/kernel": patch
 ---
 
 Scheduled tasks are renamed to automations in the kernel, with no change in behavior. Migration

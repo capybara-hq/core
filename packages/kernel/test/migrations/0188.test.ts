@@ -119,6 +119,35 @@ beforeAll(async () => {
     values ('o1', 'a1', 'ag1', 'ScheduleCreate', 'h')`.execute(db);
   await sql`insert into capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
     values ('c1', 'ScheduleDelete', 'h')`.execute(db);
+  // a grant whose new key already exists for the same owner stays as it is (the primary key)
+  await sql`insert into capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
+    values ('c1', 'ScheduleList', 'old'), ('c1', 'AutomationList', 'new')`.execute(db);
+  await sql`insert into capybara.approvals (id, org_id, conversation_id, run_id, call_id, tool_key,
+      requested_for, expires_at, spec_hash, status)
+    values ('ap1', 'o1', 'c1', 'r1', 'call1', 'ScheduleCreate', 'a1', now() + interval '1 day', 'h',
+        'pending'),
+      ('ap2', 'o1', 'c1', 'r1', 'call2', 'ScheduleCreate', 'a1', now() + interval '1 day', 'h',
+        'approved')`.execute(db);
+  await sql`insert into capybara.questions (id, org_id, conversation_id, run_id, call_id, spec,
+      expires_at, status)
+    values ('q1', 'o1', 'c1', 'r1', 'call3', '{"toolKey":"ScheduleUpdate","x":1}'::jsonb,
+        now() + interval '1 day', 'pending'),
+      ('q2', 'o1', 'c1', 'r1', 'call4', '{"toolKey":"ScheduleUpdate"}'::jsonb,
+        now() + interval '1 day', 'answered')`.execute(db);
+  await sql`insert into capybara.agent_templates (id, org_id, name, current_version)
+    values ('at1', 'o1', 'tpl', 1)`.execute(db);
+  await sql`insert into capybara.agent_template_versions (template_id, version, definition)
+    values ('at1', 1, ${JSON.stringify({ name: "tpl", tools: ["ScheduleList", "Read"] })}::jsonb)`.execute(
+    db,
+  );
+  await sql`insert into capybara.platform_agent_templates (id, name, current_version)
+    values ('pt1', 'ptpl', 1)`.execute(db);
+  await sql`insert into capybara.platform_agent_template_versions (template_id, version, definition)
+    values ('pt1', 1, ${JSON.stringify({
+      name: "ptpl",
+      disallowedTools: ["ScheduleDelete"],
+      toolPolicies: { ScheduleCreate: "ask" },
+    })}::jsonb)`.execute(db);
   await sql`insert into capybara.push_preferences (account_id, category, enabled)
     values ('a1', 'schedules', false), ('a1', 'tasks', true)`.execute(db);
   await sql`insert into capybara.audit_events (actor_account_id, org_id, action, target, detail)
@@ -275,8 +304,47 @@ describe("0188_automations_rename", () => {
     expect(await one(sql`select tool_key from capybara.tool_grants`)).toEqual({
       tool_key: "AutomationCreate",
     });
-    expect(await one(sql`select tool_key from capybara.conversation_tool_grants`)).toEqual({
-      tool_key: "AutomationDelete",
+    expect(
+      (
+        await sql<{ tool_key: string; spec_hash: string }>`select tool_key, spec_hash
+          from capybara.conversation_tool_grants order by tool_key, spec_hash`.execute(db)
+      ).rows,
+    ).toEqual([
+      { tool_key: "AutomationDelete", spec_hash: "h" },
+      { tool_key: "AutomationList", spec_hash: "new" },
+      // the new key already existed: the old grant stays as it is
+      { tool_key: "ScheduleList", spec_hash: "old" },
+    ]);
+    expect(
+      (
+        await sql<{ id: string; tool_key: string }>`select id, tool_key from capybara.approvals
+          order by id`.execute(db)
+      ).rows,
+    ).toEqual([
+      { id: "ap1", tool_key: "AutomationCreate" },
+      // a decided approval is history
+      { id: "ap2", tool_key: "ScheduleCreate" },
+    ]);
+    expect(
+      (
+        await sql<{ id: string; spec: unknown }>`select id, spec from capybara.questions
+          order by id`.execute(db)
+      ).rows,
+    ).toEqual([
+      { id: "q1", spec: { toolKey: "AutomationUpdate", x: 1 } },
+      { id: "q2", spec: { toolKey: "ScheduleUpdate" } },
+    ]);
+    expect(await one(sql`select definition from capybara.agent_template_versions`)).toEqual({
+      definition: { name: "tpl", tools: ["AutomationList", "Read"] },
+    });
+    expect(
+      await one(sql`select definition from capybara.platform_agent_template_versions`),
+    ).toEqual({
+      definition: {
+        name: "ptpl",
+        disallowedTools: ["AutomationDelete"],
+        toolPolicies: { AutomationCreate: "ask" },
+      },
     });
     const def = await one(sql<{ definition: unknown }>`select definition
       from capybara.agent_versions`);
