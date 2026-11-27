@@ -15,7 +15,6 @@ const info = (id: string, extra: Partial<ModelInfo> = {}): ModelInfo => ({
     tools: false,
     vision: false,
     reasoning: false,
-    caching: false,
     midConversationSystem: false,
   },
   parameters: [],

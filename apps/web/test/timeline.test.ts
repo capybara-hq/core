@@ -577,20 +577,73 @@ describe("buildTimeline", () => {
     expect(out.some((e) => e.kind === "user")).toBe(false);
   });
 
-  it("a manual compact run's row names itself and its failure is a failed divider", () => {
-    const events = [
-      ev(1, "run_started", {
-        agentVersion: 1,
-        model: { provider: "p", model: "m" },
-        trigger: "compact",
-      }),
-      ev(2, "compaction_failed", { attempt: 1, reason: "provider 500" }),
-      ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
-    ];
-    expect(buildTimeline(events, [], new Map(), "en")).toMatchObject([
-      { kind: "divider", key: "e2", divider: "compact-failed", reason: "provider 500" },
-      { kind: "run", status: "ok", compact: true },
-    ]);
+  describe("a manual compact run draws no run row, only its outcome (maintainer decision 2026-11-28)", () => {
+    const compactRun = (...rest: ReturnType<typeof ev>[]) =>
+      buildTimeline(
+        [
+          ev(1, "run_started", {
+            agentVersion: 1,
+            model: { provider: "p", model: "m" },
+            trigger: "compact",
+          }),
+          ...rest,
+        ],
+        [],
+        new Map(),
+        "en",
+      );
+    it("compacted: the summary divider alone", () => {
+      expect(
+        compactRun(
+          ev(2, "compaction_summary", { coversUpToSeq: 1, text: "summary", savedTokens: 900 }),
+          ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
+        ),
+      ).toEqual([
+        { kind: "divider", key: "e2", divider: "compacted", summary: "summary", savedTokens: 900 },
+      ]);
+    });
+    it("nothing to compact: the skipped divider, an earlier plan's reason too", () => {
+      for (const payload of [
+        { reason: "nothing_to_summarize", turns: 1, step: 0 },
+        { reason: "too_few_turns", keepRecentTurns: 4, turns: 1, step: 0 },
+      ]) {
+        expect(
+          compactRun(
+            ev(2, "compaction_skipped", payload),
+            ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
+          ),
+        ).toEqual([{ kind: "divider", key: "e2", divider: "compact-skipped" }]);
+      }
+    });
+    it("failed: the failure's first line, from compaction_failed or the run's failure", () => {
+      expect(
+        compactRun(
+          ev(2, "compaction_failed", { attempt: 1, reason: "provider 500\ndetails" }),
+          ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 0 }),
+        ),
+      ).toEqual([
+        { kind: "divider", key: "e2", divider: "compact-failed", reason: "provider 500" },
+      ]);
+      expect(
+        compactRun(
+          ev(2, "run_failed", {
+            error: { code: "run.internal", message: "The run failed unexpectedly" },
+          }),
+        ),
+      ).toEqual([
+        {
+          kind: "divider",
+          key: "e2",
+          divider: "compact-failed",
+          reason: "The run failed unexpectedly",
+        },
+      ]);
+    });
+    it("stopped: a quiet stopped divider", () => {
+      expect(compactRun(ev(2, "run_aborted", { byAccountId: "a1", reason: "user" }))).toEqual([
+        { kind: "divider", key: "e2", divider: "compact-stopped" },
+      ]);
+    });
   });
 
   it("a run that ended at a limit keeps it on its row; a completed run has none (issue #951)", () => {
@@ -724,6 +777,43 @@ describe("buildTimeline", () => {
     expect(done.at(-1)).toEqual({ kind: "skill-report", key: "e6", text: "REPORT" });
   });
 
+  it("a person's model switch is a divider where it applies; the fallback keeps its own", () => {
+    const events = [
+      user(1, "hi"),
+      ev(
+        2,
+        "model_switched",
+        {
+          model: { provider: "p", model: "big" },
+          effort: "high",
+          byAccountId: "a1",
+          reason: "user",
+        },
+        null,
+      ),
+      user(3, "again"),
+      ev(
+        4,
+        "model_switched",
+        { model: null, effort: null, byAccountId: "a1", reason: "user" },
+        null,
+      ),
+      user(5, "back"),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(out.filter((e) => e.kind === "divider")).toEqual([
+      {
+        kind: "divider",
+        key: "e2",
+        divider: "switched",
+        model: { provider: "p", model: "big" },
+        effort: "high",
+      },
+      { kind: "divider", key: "e4", divider: "switched", model: null, effort: null },
+    ]);
+    expect(kinds(out)).toEqual(["user", "divider", "user", "divider", "user"]);
+  });
+
   it("a fallback to the agent's model is a divider naming both models", () => {
     const events = [
       ev(
@@ -742,7 +832,7 @@ describe("buildTimeline", () => {
       ev(4, "run_started", { agentVersion: 1, model: { provider: "p", model: "small" } }, "r2"),
     ];
     const out = buildTimeline(events, [], new Map(), "en");
-    expect(out[1]).toMatchObject({
+    expect(out.find((e) => e.kind === "divider" && e.divider === "fallback")).toMatchObject({
       divider: "fallback",
       from: { model: "big" },
       to: { model: "small" },
@@ -1501,24 +1591,31 @@ describe("background sub-agents (agent map spec §5, §9.4)", () => {
       );
     const report = delivery(2, { kind: "report", text: "Docs are fine." });
     const end = { kind: "delivery", delivery: "finished", name: "Scan docs", text: "" };
+    // (a message between the report and the end keeps them two lines: see the merge test below)
     // new log: the completed run that handed back writes no finished delivery
-    const fresh = buildTimeline([user(1, "go"), report, finished(3)], [], new Map(), "en");
-    expect(kinds(fresh)).toEqual(["user", "delivery", "delivery"]);
-    expect(fresh[2]).toMatchObject({ ...end, subagentId: "ch1", status: "completed" });
+    const fresh = buildTimeline(
+      [user(1, "go"), report, user(3, "thanks"), finished(4)],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(kinds(fresh)).toEqual(["user", "delivery", "user", "delivery"]);
+    expect(fresh[3]).toMatchObject({ ...end, subagentId: "ch1", status: "completed" });
     // old log: subagent_finished, then the handed-back delivery: one end entry
     const old = buildTimeline(
       [
         user(1, "go"),
         report,
-        finished(3),
-        delivery(4, { kind: "finished", status: "completed", handedBack: true }),
+        user(3, "thanks"),
+        finished(4),
+        delivery(5, { kind: "finished", status: "completed", handedBack: true }),
       ],
       [],
       new Map(),
       "en",
     );
-    expect(kinds(old)).toEqual(["user", "delivery", "delivery"]);
-    expect(old[2]).toMatchObject({ ...end, status: "completed" });
+    expect(kinds(old)).toEqual(["user", "delivery", "user", "delivery"]);
+    expect(old[3]).toMatchObject({ ...end, status: "completed" });
     // a failure after a handback still delivers (handedBack): one end entry, failed
     const failed = buildTimeline(
       [
@@ -1545,6 +1642,46 @@ describe("background sub-agents (agent map spec §5, §9.4)", () => {
       "en",
     );
     expect(kinds(plain)).toEqual(["user", "delivery"]);
+  });
+
+  it("a completion right after its own report merges into one line (maintainer decision 2026-11-28)", () => {
+    const report = ev(
+      2,
+      "subagent_delivery",
+      {
+        subagentId: "ch1",
+        childRunId: "run-ch1",
+        description: "Scan docs",
+        triggerAccountId: "a1",
+        kind: "report",
+        text: "Docs are fine.",
+      },
+      null,
+    );
+    const finished = ev(
+      3,
+      "subagent_finished",
+      {
+        subagentId: "ch1",
+        childRunId: "run-ch1",
+        callId: "c1",
+        status: "completed",
+        toolCalls: 2,
+        durationMs: 10,
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      },
+      null,
+    );
+    const out = buildTimeline([user(1, "go"), report, finished], [], new Map(), "en");
+    expect(kinds(out)).toEqual(["user", "delivery"]);
+    expect(out[1]).toMatchObject({
+      kind: "delivery",
+      key: "e2",
+      name: "Scan docs",
+      delivery: "report-finished",
+      status: "completed",
+      text: "Docs are fine.",
+    });
   });
 
   it("SendMessage and SubagentHandback are ordinary tool rows", () => {
@@ -1837,6 +1974,29 @@ describe("Agent call rows across a child's runs (final review)", () => {
     expect(rowOf(buildTimeline(after, [], new Map(), "en"))).toMatchObject({
       status: "completed",
       tokens: 7,
+    });
+  });
+
+  it("reads watch from the live view, an ordinary question stays input", () => {
+    const events = [user(1, "go"), agentCall, dispatched(3, "k1", "run-a")];
+    const view = (watched: string[]) =>
+      new Map([
+        [
+          "ch1",
+          {
+            status: "waiting",
+            pendingApprovalIds: [],
+            pendingQuestionIds: ["q1"],
+            watchedQuestionIds: watched,
+          },
+        ],
+      ]);
+    expect(
+      rowOf(buildTimeline(events, [], new Map(), "en", { views: view(["q1"]) })),
+    ).toMatchObject({ status: "waiting", waiting: "watch" });
+    expect(rowOf(buildTimeline(events, [], new Map(), "en", { views: view([]) }))).toMatchObject({
+      status: "waiting",
+      waiting: "input",
     });
   });
 });

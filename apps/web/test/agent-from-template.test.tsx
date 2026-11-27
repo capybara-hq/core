@@ -49,7 +49,7 @@ const MEMBER: Me = {
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
 };
 
-const CAPS = { tools: true, vision: false, reasoning: false, caching: false };
+const CAPS = { tools: true, vision: false, reasoning: false };
 const MODELS = {
   providers: [
     {

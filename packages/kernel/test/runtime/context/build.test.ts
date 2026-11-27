@@ -13,6 +13,7 @@ import {
   readImageWindow,
   TEXT_INLINE_MAX_CHARS,
 } from "../../../src/runtime/context/build.js";
+import { guardToolPairs } from "../../../src/runtime/context/pairing.js";
 import { AGENT, Log, MODEL } from "./fixtures.js";
 
 const build = (log: Log, step = 0) =>
@@ -183,7 +184,7 @@ describe("buildModelRequest", () => {
       content: [
         {
           type: "text",
-          text: "<conversation_summary>\nThey asked two questions.\n</conversation_summary>\n\nThe messages after this summary are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them. Continue the work from where it left off.",
+          text: "<conversation_summary>\nThey asked two questions.\n</conversation_summary>\n\nThe earlier part of this conversation was compacted into the summary above and is no longer shown verbatim. The messages after this summary are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them. Continue the work from where it left off.",
         },
       ],
     });
@@ -212,7 +213,7 @@ describe("buildModelRequest", () => {
       content: [
         {
           type: "text",
-          text: "<conversation_summary>\nThey asked two questions.\n</conversation_summary>\n\nContinue the work from where it left off.",
+          text: "<conversation_summary>\nThey asked two questions.\n</conversation_summary>\n\nThe earlier part of this conversation was compacted into the summary above and is no longer shown verbatim. Continue the work from where it left off.",
         },
       ],
     });
@@ -936,5 +937,132 @@ describe("images from Read (vision-read design §1.4)", () => {
         text: `[Attached image "attachment" — this model cannot view images. If Read is available to you, Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
       },
     ]);
+  });
+
+  describe("run outcome notes (maintainer decision 2026-11-28)", () => {
+    const failed = (log: Log, code: string, runId = "run-1") =>
+      log.add(
+        { type: "run_failed", payload: { error: { code, message: "raw https://x" } } },
+        runId,
+      );
+    const aborted = (
+      log: Log,
+      payload: {
+        byAccountId: string | null;
+        reason: "user" | "shutdown_exhausted";
+        detail?: "wait_timeout";
+      },
+      runId = "run-1",
+    ) => log.add({ type: "run_aborted", payload }, runId);
+    const systemTexts = (r: ModelRequest) =>
+      r.messages.flatMap((m) => (m.role === "system" ? [m.content as string] : []));
+
+    it("a stopped run is followed by one note at its terminal event, before the next turn", () => {
+      const log = new Log();
+      log.user("q1");
+      log.runStarted();
+      log.assistant("partial", "aborted");
+      const end = aborted(log, { byAccountId: "acc-1", reason: "user" });
+      log.user("q2");
+      const { request, meta } = build(log);
+      expect(request.messages).toEqual([
+        { role: "user", content: [{ type: "text", text: "q1" }] },
+        { role: "assistant", content: [{ type: "text", text: "partial" }] },
+        {
+          role: "system",
+          content: "The previous run ended before it finished: it was stopped by the user.",
+        },
+        { role: "user", content: [{ type: "text", text: "q2" }] },
+      ]);
+      expect(meta.runOutcomeSeqs).toEqual([end.seq]);
+    });
+
+    it("words each reason neutrally, never with the recorded message", () => {
+      const note = (add: (log: Log) => void) => {
+        const log = new Log();
+        log.user("q");
+        add(log);
+        return systemTexts(build(log).request);
+      };
+      const prefix = "The previous run ended before it finished: ";
+      expect(note((l) => failed(l, "model.network"))).toEqual([`${prefix}a network error.`]);
+      expect(note((l) => failed(l, "model.server"))).toEqual([
+        `${prefix}the model service returned an error.`,
+      ]);
+      expect(note((l) => failed(l, "model.rate_limited"))).toEqual([
+        `${prefix}the model service was overloaded or rate-limited.`,
+      ]);
+      expect(note((l) => failed(l, "run.context_too_large"))).toEqual([
+        `${prefix}the conversation no longer fit the model's context window.`,
+      ]);
+      expect(note((l) => failed(l, "run.whatever"))).toEqual([`${prefix}an internal error.`]);
+      expect(note((l) => aborted(l, { byAccountId: null, reason: "user" }))).toEqual([
+        `${prefix}it was stopped.`,
+      ]);
+      expect(
+        note((l) => aborted(l, { byAccountId: null, reason: "user", detail: "wait_timeout" })),
+      ).toEqual([`${prefix}it was stopped because the dispatching agent's wait for it timed out.`]);
+      expect(note((l) => aborted(l, { byAccountId: null, reason: "shutdown_exhausted" }))).toEqual([
+        `${prefix}it was interrupted and could not be resumed.`,
+      ]);
+      expect(JSON.stringify(note((l) => failed(l, "model.server")))).not.toContain("https://x");
+    });
+
+    it("every ended run keeps its own note in place: later events only append", () => {
+      const log = new Log();
+      log.user("q1");
+      const first = failed(log, "model.timeout");
+      log.user("q2");
+      const before = build(log);
+      const second = aborted(log, { byAccountId: "acc-1", reason: "user" }, "run-2");
+      log.user("q3");
+      const after = build(log);
+      expect(after.request.messages.slice(0, before.request.messages.length)).toEqual(
+        before.request.messages,
+      );
+      expect(after.meta.runOutcomeSeqs).toEqual([first.seq, second.seq]);
+      expect(systemTexts(after.request)).toHaveLength(2);
+    });
+
+    it("a compact run's end has no note; a summary that covers a note drops it", () => {
+      const log = new Log();
+      log.user("q1");
+      log.add(
+        {
+          type: "run_started",
+          payload: {
+            agentVersion: 1,
+            model: { provider: "model-fake", model: "fake-1" },
+            triggerAccountId: "acc-1",
+            trigger: "compact",
+          },
+        },
+        "run-c",
+      );
+      aborted(log, { byAccountId: "acc-1", reason: "user" }, "run-c");
+      const { request, meta } = build(log);
+      expect(systemTexts(request)).toEqual([]);
+      expect(meta).not.toHaveProperty("runOutcomeSeqs");
+
+      const covered = new Log();
+      covered.user("q1");
+      const end = failed(covered, "model.timeout");
+      covered.summary(end.seq, "One question, the run failed.");
+      covered.user("q2");
+      expect(systemTexts(build(covered).request)).toEqual([]);
+      expect(build(covered).meta).not.toHaveProperty("runOutcomeSeqs");
+    });
+
+    it("a missing tool result still comes right after its call, then the note", () => {
+      const log = new Log();
+      log.user("q1");
+      log.assistant([{ type: "tool_call", id: "c1", name: "Bash", input: {} }], "tool_use");
+      aborted(log, { byAccountId: "acc-1", reason: "user" });
+      log.user("q2");
+      // the pairing guard (run by request assembly) answers the call before the note
+      const guarded = guardToolPairs(build(log).request.messages);
+      expect(guarded.map((m) => m.role)).toEqual(["user", "assistant", "user", "system", "user"]);
+      expect(guarded[2]?.content).toMatchObject([{ type: "tool_result", callId: "c1" }]);
+    });
   });
 });

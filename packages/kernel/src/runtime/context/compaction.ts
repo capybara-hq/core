@@ -7,6 +7,7 @@ import { latestSummary } from "./build.js";
 import { planningBounds } from "./fit.js";
 import { UNKNOWN_RESULT_TEXT } from "./pairing.js";
 import { scheduleHeader, senderTranscriptLabel } from "./run-context.js";
+import { runOutcomeNotes } from "./run-outcome.js";
 import { estimateTokens } from "./tokens.js";
 import { toolsChangedText } from "./tool-changes.js";
 
@@ -150,6 +151,27 @@ export function shouldCompact(
   return estimate >= Math.min(settings.threshold * window, target);
 }
 
+/** The user turns since the latest summary (all of them without one): `events` in any order. */
+export function turnsSinceSummary(events: readonly ConversationEvent[]): number {
+  const floor = latestSummary([...events])?.payload.coversUpToSeq ?? Number.NEGATIVE_INFINITY;
+  return events.filter((e) => e.type === "user_message" && e.seq > floor).length;
+}
+
+/**
+ * The share of the model's context window a manual compaction keeps verbatim at most (context
+ * compaction spec §4.7, maintainer decision 2026-11-28).
+ */
+export const MANUAL_TAIL_SHARE = 0.2;
+
+/**
+ * The kept tail's budget of a manual compaction (spec §4.7, maintainer decision 2026-11-28): about
+ * {@link MANUAL_TAIL_SHARE} of the model's context window, never more than the tail budget every
+ * compaction has (`tailBudget`, the planning target minus the system prompt and tool definitions).
+ */
+export function manualTailBudget(contextWindow: number, tailBudget: number): number {
+  return Math.min(tailBudget, Math.floor(contextWindow * MANUAL_TAIL_SHARE));
+}
+
 /**
  * The compaction plan: keep the most recent `settings.keepRecentTurns` turns verbatim (a maximum,
  * not a rule) and transcribe everything older that the previous summary does not cover yet (that
@@ -164,11 +186,17 @@ export function shouldCompact(
  * right after the summary (build.ts). A latest turn without a tool pair is kept whole (the hard fit
  * guard handles the rest). `coversUpToSeq` is the largest seq before the first kept event. Returns
  * null when there is nothing to summarize.
+ *
+ * `opts.manual` (a manual compact run, spec §4.7, maintainer decision 2026-11-28) ignores
+ * `keepRecentTurns`: the kept tail starts at the latest user turn, and inside it the same cut at
+ * tool-pair boundaries keeps only what fits `budget` (the caller passes {@link manualTailBudget}),
+ * never less than the latest tool pair.
  */
 export function compactionPlan(
   events: ConversationEvent[],
   settings: CompactionSettings,
   budget: number,
+  opts: { manual?: boolean } = {},
 ): { coversUpToSeq: number; transcript: string } | null {
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const prev = latestSummary(sorted);
@@ -180,37 +208,36 @@ export function compactionPlan(
     if (e.type === "user_message") userIdx.push(i);
   });
   const atPair = pairBoundaries(candidate);
-  const tail = tailTokens(candidate);
-  const keep = settings.keepRecentTurns;
+  // run outcome notes (./run-outcome.ts), read from the whole log: a run's start may be older
+  const notes = runOutcomeNotes(sorted);
+  const tail = tailTokens(candidate, notes);
   let boundary: number;
-  if (keep <= 0) boundary = candidate.length;
-  else if (userIdx.length < keep) boundary = 0;
-  else boundary = userIdx[userIdx.length - keep] as number;
-  boundary = keepToolPairs(atPair, userIdx, boundary);
-
-  if (boundary < candidate.length && (tail[boundary] as number) > budget) {
-    // size-aware tail: drop earlier kept turns until the rest fits the budget
-    for (const start of userIdx) {
-      if (start <= boundary) continue;
-      boundary = keepToolPairs(atPair, userIdx, start);
-      if ((tail[boundary] as number) <= budget) break;
+  if (opts.manual === true) {
+    // every turn before the latest user turn is summarized; without a user message since the
+    // last summary the whole range is the (continuing) latest turn
+    boundary = keepToolPairs(atPair, userIdx, userIdx.at(-1) ?? 0);
+    if (boundary < candidate.length && (tail[boundary] as number) > budget) {
+      boundary = cutInsideTurn(candidate, atPair, tail, boundary, budget);
     }
-    // the latest user turn alone is over the budget: cut inside it at a tool-pair boundary,
-    // oldest first, never past the latest tool pair (spec §4.2, revision 2026-11-15)
-    if ((tail[boundary] as number) > budget) {
-      let limit = -1;
-      for (let i = candidate.length - 1; i > boundary && limit < 0; i--) {
-        const e = candidate[i] as ConversationEvent;
-        if (e.type === "assistant_message" && e.payload.content.some((b) => b.type === "tool_call"))
-          limit = i;
+  } else {
+    const keep = settings.keepRecentTurns;
+    if (keep <= 0) boundary = candidate.length;
+    else if (userIdx.length < keep) boundary = 0;
+    else boundary = userIdx[userIdx.length - keep] as number;
+    boundary = keepToolPairs(atPair, userIdx, boundary);
+
+    if (boundary < candidate.length && (tail[boundary] as number) > budget) {
+      // size-aware tail: drop earlier kept turns until the rest fits the budget
+      for (const start of userIdx) {
+        if (start <= boundary) continue;
+        boundary = keepToolPairs(atPair, userIdx, start);
+        if ((tail[boundary] as number) <= budget) break;
       }
-      let chosen = boundary;
-      for (let j = boundary + 1; j <= limit; j++) {
-        if (!atPair[j]) continue;
-        chosen = j;
-        if ((tail[j] as number) <= budget) break;
+      // the latest user turn alone is over the budget: cut inside it (spec §4.2, revision
+      // 2026-11-15)
+      if ((tail[boundary] as number) > budget) {
+        boundary = cutInsideTurn(candidate, atPair, tail, boundary, budget);
       }
-      boundary = chosen;
     }
   }
 
@@ -223,7 +250,7 @@ export function compactionPlan(
   }
   const lines: string[] = [];
   for (const e of covered) {
-    const line = transcriptLine(e);
+    const line = transcriptLine(e, notes);
     if (line) lines.push(line);
     if (e.type !== "assistant_message") continue;
     for (const b of e.payload.content) {
@@ -287,14 +314,39 @@ export function openingSeqs(
 }
 
 /**
+ * The opening messages a manual compaction's summary re-renders (context compaction spec §4.7,
+ * maintainer decision 2026-11-28): a compact run is started by no message, so its own run has none;
+ * the turn it cuts into is the one the latest run a message started (trigger `message` or
+ * `schedule`) opened, and {@link openingSeqs} of that run decides which of its opening messages the
+ * summary covers. None when no such run is in the log.
+ */
+export function manualOpeningSeqs(
+  events: readonly ConversationEvent[],
+  coversUpToSeq: number,
+  absorbedUpToSeq: number,
+): number[] {
+  const start = events
+    .filter(
+      (e) =>
+        e.type === "run_started" &&
+        (e.payload.trigger === undefined ||
+          e.payload.trigger === "message" ||
+          e.payload.trigger === "schedule"),
+    )
+    .reduce<ConversationEvent | null>((a, e) => (a === null || e.seq > a.seq ? e : a), null);
+  if (start?.runId == null) return [];
+  return openingSeqs(events, start.runId, coversUpToSeq, absorbedUpToSeq);
+}
+
+/**
  * Estimated input tokens of the kept tail from each index (`out[i]` for the events from `i` on,
  * `out[length]` = 0): the events rendered as the transcript renders them, then estimated with the
  * request estimator.
  */
-function tailTokens(candidate: ConversationEvent[]): number[] {
+function tailTokens(candidate: ConversationEvent[], notes: ReadonlyMap<number, string>): number[] {
   const out = new Array<number>(candidate.length + 1).fill(0);
   for (let i = candidate.length - 1; i >= 0; i--) {
-    const line = transcriptLine(candidate[i] as ConversationEvent);
+    const line = transcriptLine(candidate[i] as ConversationEvent, notes);
     const own = line
       ? estimateTokens([{ role: "user", content: [{ type: "text", text: line }] }], [])
       : 0;
@@ -353,7 +405,35 @@ function keepToolPairs(atPair: boolean[], userIdx: number[], boundary: number): 
   return 0;
 }
 
-function transcriptLine(e: ConversationEvent): string | null {
+/**
+ * The cut inside the latest user turn (context compaction spec §4.2, revision 2026-11-15): from
+ * `boundary`, the first tool-pair boundary, oldest first, whose tail fits `budget`, never past the
+ * latest tool pair (the latest assistant message with tool calls). A turn without a tool pair after
+ * `boundary` keeps `boundary`.
+ */
+function cutInsideTurn(
+  candidate: ConversationEvent[],
+  atPair: boolean[],
+  tail: number[],
+  boundary: number,
+  budget: number,
+): number {
+  let limit = -1;
+  for (let i = candidate.length - 1; i > boundary && limit < 0; i--) {
+    const e = candidate[i] as ConversationEvent;
+    if (e.type === "assistant_message" && e.payload.content.some((b) => b.type === "tool_call"))
+      limit = i;
+  }
+  let chosen = boundary;
+  for (let j = boundary + 1; j <= limit; j++) {
+    if (!atPair[j]) continue;
+    chosen = j;
+    if ((tail[j] as number) <= budget) break;
+  }
+  return chosen;
+}
+
+function transcriptLine(e: ConversationEvent, notes: ReadonlyMap<number, string>): string | null {
   switch (e.type) {
     case "user_message": {
       const body = renderBlocks(e.payload.content);
@@ -389,6 +469,13 @@ function transcriptLine(e: ConversationEvent): string | null {
     // so the summary never carries the project's instructions in a paraphrase
     // run_context is left out: its current values follow the summary anyway (build.ts), and
     // stale names should not be summarised as current
+    // a run that ended before it finished is a system message of the request (build.ts); a compact
+    // run's end has no note
+    case "run_aborted":
+    case "run_failed": {
+      const note = notes.get(e.seq);
+      return note === undefined ? null : `System reminder: ${note}`;
+    }
     case "tool_result":
       return `Tool result ${e.payload.toolKey}${e.payload.isError ? " (error)" : ""}: ${e.payload.content}`;
     // Every other event type is left out of the transcript: not model-visible, or re-rendered
@@ -420,9 +507,8 @@ function transcriptLine(e: ConversationEvent): string | null {
     case "subagent_finished":
     case "compaction_summary":
     case "compaction_failed":
+    case "compaction_skipped":
     case "run_finished":
-    case "run_aborted":
-    case "run_failed":
     // permission_context, like device_paths, follows the summary (the latest covered ones again,
     // build.ts); the profile change and the review record are not model-visible
     case "permission_context":

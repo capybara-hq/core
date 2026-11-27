@@ -36,7 +36,6 @@ const provider: ModelProvider = {
           tools: false,
           vision: false,
           reasoning: false,
-          caching: false,
           midConversationSystem: false,
         },
         parameters: [],

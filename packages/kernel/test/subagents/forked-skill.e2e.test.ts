@@ -478,6 +478,8 @@ describe("forked skills (phase D Task 6)", () => {
     const req = sent().filter((r) => !isChild(r))[0];
     expect(req?.messages.map((m) => texts(m.content))).toEqual([
       [LEAD("general-purpose", "now"), `${HEADER}\n\n${AGENT_STOPPED_WITH_RUN_TEXT}`],
+      // the stopped run's outcome note (maintainer decision 2026-11-28), before the next turn
+      ["The previous run ended before it finished: it was stopped by the user."],
       ["and now?"],
     ]);
   });
