@@ -542,7 +542,8 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
    * Cacheable system prefix: the first appearance counts as a cache write, a repeat as a cache read
    * (hit records live in kv with `req.cacheTtl ?? defaultTtl` seconds; a model without a cache
    * counts nothing).
-   * `cachedChars` 为前缀字符数，从 inputTokens 中扣除（inputTokens 只算未缓存部分）。
+   * `cachedChars` is the prefix length in characters, deducted from inputTokens (inputTokens counts
+   * only the uncached part).
    */
   async function cacheUsage(
     req: ModelRequest,

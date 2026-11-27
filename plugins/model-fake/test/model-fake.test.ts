@@ -466,6 +466,34 @@ describe("model-fake", () => {
   });
 });
 
+describe("model-fake cache config", () => {
+  const cache = {
+    mechanism: "explicit",
+    ttlOptions: [300],
+    defaultTtl: 300,
+    ttlIsMinimum: false,
+    refreshOnHit: true,
+    ttlClock: "request_start",
+    guaranteed: true,
+  };
+  it("accepts a valid cache and rejects an invalid declaration", () => {
+    const deployment = plugin.config?.deployment;
+    const parse = (c: unknown) => deployment?.safeParse({ models: [{ id: "m", cache: c }] });
+    expect(parse(cache)?.success).toBe(true);
+    expect(parse("none")?.success).toBe(true);
+    expect(parse({ ...cache, defaultTtl: 60 })?.success).toBe(false);
+  });
+
+  it("honors a cacheTtl outside the declared ttlOptions as given", async () => {
+    const kv = memKv();
+    const p = createFakeProvider({ kv, sleep: noSleep });
+    const r = req("echo:a", { system: [{ text: "x".repeat(40), cache: true }], cacheTtl: 42 });
+    const u = complete(await run(p, r)).usage;
+    expect(u.cacheWriteByTtl).toEqual([{ ttl: 42, tokens: u.cacheWriteTokens }]);
+    expect(kv.ttls).toEqual([42]);
+  });
+});
+
 describe("model-fake kinds and embeddings", () => {
   const embedProvider = () =>
     createFakeProvider({
