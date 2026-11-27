@@ -1,5 +1,9 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.124
+
+No changes in this release.
+
 ## 0.1.0-rc.123
 
 No changes in this release.

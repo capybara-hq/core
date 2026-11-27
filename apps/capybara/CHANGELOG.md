@@ -1,5 +1,39 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.124
+
+### Patch Changes
+
+- 77170f1: Marketplace manifest, archive and git downloads retry transient failures (a connection error or HTTP
+  502 / 503 / 504, three tries with backoff) and their errors name the URL, the upstream status and, for
+  a connection failure, the `net.httpsProxy` setting (core#886).
+- 00a3e35: A sandboxed `Bash` result blocked at the address layer now carries one instruction about running
+  outside the sandbox: the kernel's private-address network note replaces the trailing `[sandbox]`
+  line when it says how to retry escalated (or why that is not possible), and the line keeps only its
+  retry part when the note states just the fact; without a network note the line is unchanged.
+  `Grep` and `Glob` also skip `.cache` directories while walking (a docker device's HOME is the
+  workspace); a path passed explicitly is still searched.
+- 47275d2: Bootstrap pins device-docker 0.1.0-rc.34 (plugins 1f142e1): an instance's egress proxy is replaced
+  when its image id differs from the configured image's, so a rebuilt image under the same tag reaches
+  existing instances on resume or next use.
+- af68d0f: Pin the model provider bootstrap plugins that stream tool call input (anthropic 0.1.0-rc.11, openai
+  0.1.0-rc.13, openai-compatible 0.1.0-rc.13, ark 0.1.0-rc.13, deepseek 0.1.0-rc.12, bailian 0.1.0-rc.12:
+  `tool_call_start` / `tool_call_delta`, plugins#279), todo 0.1.0-rc.14 (pinned card, plugins#280) and the
+  plugins marketplace commit with the compose sandbox image build context to 8a89f4b.
+- 7dbb9b4: `ToolResult.card.badge` (pinned cards only, at most `CARD_BADGE_MAX` = 32 characters): the card's state as its view's badge, recorded on `tool_result.card` (display only). A finished process head shows the pinned summary ("Todos 3/5") after a reload from it, without reading the card's view. A running process head now times the run from `run_started` (its working time, waits for a person left out, as the status bar counts it) on the run's latest block only.
+- d5675a5: The process block's rail is sectioned by the todo item that was current when each step ran (a
+  done item's section starts closed), long rails mount only the rows near the viewport instead of
+  paging 200 steps at a time, and a used or expired device code and an ended sub-agent wait fold
+  into the rail as one line instead of staying below the block.
+- 27547aa: Streaming tool rows show no key argument until the tool's path has parsed (a Write that streams its content first no longer shows the content), the process head follows a streaming call's label, and an Edit that is still writing `old_string` shows its size only.
+- Updated dependencies [523c1fb]
+- Updated dependencies [77170f1]
+- Updated dependencies [00a3e35]
+- Updated dependencies [47275d2]
+- Updated dependencies [af68d0f]
+- Updated dependencies [7dbb9b4]
+  - @capybara-hq/kernel@0.1.0-rc.99
+
 ## 0.1.0-rc.123
 
 ### Patch Changes
