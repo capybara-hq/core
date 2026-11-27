@@ -206,9 +206,9 @@ describe("ProcessBlock rail", () => {
     // the edges come from CSS on the rail's own children; the fold row (a button) is not counted
     expect(rail.querySelector(":scope > .cb-rail-step:first-of-type")).toBe(steps[0]);
     expect(rail.querySelector(":scope > .cb-rail-step:last-of-type")).toBe(steps[2]);
-    const sels = parseCss(css("conversation.css")).map((r) => r.selector);
+    const sels = parseCss(css("conversation.css")).flatMap((r) => r.selector.split(/,\s*/));
     expect(sels).toContain(".cb-rail-step:first-of-type::before");
-    expect(sels).toContain(".cb-rail-step:last-of-type::before");
+    expect(sels).toContain(".cb-rail-step:last-of-type::after");
     expect(sels).toContain(".cb-rail-step:not(:last-of-type)");
   });
 
@@ -221,6 +221,27 @@ describe("ProcessBlock rail", () => {
     const fold = rules.find((x) => x.selector === ".cb-process-fold");
     expect(fold?.decls["grid-template-columns"]).toBe("20px minmax(0, 1fr)");
     expect(fold?.decls["column-gap"]).toBe("var(--cb-space-2)");
+  });
+
+  it("the rule breaks around each mark: segments above and below it, 4px clear", () => {
+    const rules = parseCss(css("conversation.css"));
+    // every rule with exactly this selector, merged in order
+    const of = (sel: string): Record<string, string> =>
+      Object.assign({}, ...rules.filter((r) => r.selector === sel).map((r) => r.decls));
+    expect(of(".cb-rail-step::before").height).toBe(
+      "calc(var(--cb-row-dense) / 2 - var(--cb-rail-clear))",
+    );
+    expect(of(".cb-rail-step::after")?.top).toBe(
+      "calc(var(--cb-row-dense) / 2 + var(--cb-rail-clear))",
+    );
+    // half the mark plus 4px: a 14 icon, the 5 dot, the 20 high capybara
+    expect(of(".cb-rail-step")?.["--cb-rail-clear"]).toBe("calc(7px + 4px)");
+    expect(of(".cb-rail-step:has(> .cb-rail-gutter > .cb-rail-dot)")?.["--cb-rail-clear"]).toBe(
+      "calc(2.5px + 4px)",
+    );
+    expect(of(".cb-rail-step.cb-rail-planning")?.["--cb-rail-clear"]).toBe("calc(10px + 4px)");
+    // no ground behind a mark knocks the rule out
+    expect(of(".cb-rail-gutter > span:not(.cb-rail-dot)")?.background).toBeUndefined();
   });
 
   it("rail steps sit space.1 apart by padding", () => {
@@ -567,14 +588,15 @@ describe("ProcessBlock rail list (#924, #925)", () => {
 
   it("the edge rules follow data-edge after the child-position rules", () => {
     const rules = parseCss(css("conversation.css"));
-    const at = (sel: string) => rules.findIndex((r) => r.selector === sel);
+    const at = (sel: string) => rules.findIndex((r) => r.selector.split(/,\s*/).includes(sel));
     expect(at('.cb-rail-step[data-edge="first"]::before')).toBeGreaterThan(
       at(".cb-rail-step:first-of-type::before"),
     );
-    expect(at('.cb-rail-step[data-edge="last"]::before')).toBeGreaterThan(
-      at(".cb-rail-step:last-of-type::before"),
+    expect(at('.cb-rail-step[data-edge="last"]::after')).toBeGreaterThan(
+      at(".cb-rail-step:last-of-type::after"),
     );
     expect(rules[at('.cb-rail-step[data-edge="only"]::before')]?.decls.display).toBe("none");
+    expect(rules[at('.cb-rail-step[data-edge="only"]::after')]?.decls.display).toBe("none");
     // a spacer carries the rule through the rows it stands for
     expect(rules.find((r) => r.selector === ".cb-rail-spacer::before")?.decls.width).toBe("1px");
   });

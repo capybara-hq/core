@@ -2571,24 +2571,39 @@ button.cb-file-card:focus-visible {
   grid-template-columns: 20px minmax(0, 1fr);
   column-gap: var(--cb-space-2);
 }
-/* The rule runs from the first icon to the last: it starts at the first icon's centre and ends at
-   the last icon's centre (half a dense row down). */
-.cb-rail-step::before {
+/* The rule runs from the first icon to the last in segments that break around each mark: every
+   row draws its segment above its mark (::before, from its top) and below it (::after, to its
+   bottom, through the gap to the next row), each stopping 4px short of the mark
+   (`--cb-rail-clear`: half the mark's height plus 4px; the mark sits centred in the first dense
+   row). The first row has no segment above, the last none below. Drawn segments, never a ground
+   behind the mark, so the break holds on any background (hover, selected, dark). */
+.cb-rail-step {
+  --cb-rail-clear: calc(7px + 4px);
+}
+.cb-rail-step:has(> .cb-rail-gutter > .cb-rail-dot) {
+  --cb-rail-clear: calc(2.5px + 4px);
+}
+.cb-rail-step.cb-rail-planning {
+  --cb-rail-clear: calc(10px + 4px);
+}
+.cb-rail-step::before,
+.cb-rail-step::after {
   content: "";
   position: absolute;
   left: 9.5px;
-  top: 0;
-  bottom: 0;
   width: 1px;
   background: var(--cb-line);
 }
-.cb-rail-step:first-of-type::before {
-  top: calc(var(--cb-row-dense) / 2);
+.cb-rail-step::before {
+  top: 0;
+  height: calc(var(--cb-row-dense) / 2 - var(--cb-rail-clear));
 }
-.cb-rail-step:last-of-type::before {
-  bottom: calc(100% - var(--cb-row-dense) / 2);
+.cb-rail-step::after {
+  top: calc(var(--cb-row-dense) / 2 + var(--cb-rail-clear));
+  bottom: 0;
 }
-.cb-rail-step:only-of-type::before {
+.cb-rail-step:first-of-type::before,
+.cb-rail-step:last-of-type::after {
   display: none;
 }
 /* Steps sit space.1 apart; the padding (not a gap) keeps the rule continuous. */
@@ -2610,19 +2625,15 @@ button.cb-file-card:focus-visible {
   place-items: center;
   width: 20px;
   height: 20px;
-  border-radius: var(--cb-radius-pill);
-  background: var(--cb-bg);
 }
 /* The planning row (§6.16.8a): the capybara (28 wide) stands centred on the rail's 20 px icon
-   column, its ground hiding the rule behind it; the caption is the row's text. */
+   column, the rule breaking around it like any mark; the caption is the row's text. */
 .cb-rail-planning > .cb-rail-gutter > .cb-working-mark,
 .cb-rail-planning > .cb-rail-gutter > .cb-working-mark-img {
   justify-self: center;
   width: 28px;
   height: var(--cb-space-5);
   margin: 0 -4px;
-  border-radius: 0;
-  background: var(--cb-bg);
 }
 .cb-rail-planning > .cb-rail-gutter > .cb-working-mark-img {
   width: auto;
@@ -2688,18 +2699,14 @@ button.cb-file-card:focus-visible {
   flex-direction: column;
   min-width: 0;
 }
-.cb-rail-step[data-edge]::before {
+.cb-rail-step[data-edge]::before,
+.cb-rail-step[data-edge]::after {
   display: block;
-  top: 0;
-  bottom: 0;
 }
-.cb-rail-step[data-edge="first"]::before {
-  top: calc(var(--cb-row-dense) / 2);
-}
-.cb-rail-step[data-edge="last"]::before {
-  bottom: calc(100% - var(--cb-row-dense) / 2);
-}
-.cb-rail-step[data-edge="only"]::before {
+.cb-rail-step[data-edge="first"]::before,
+.cb-rail-step[data-edge="last"]::after,
+.cb-rail-step[data-edge="only"]::before,
+.cb-rail-step[data-edge="only"]::after {
   display: none;
 }
 .cb-rail-step[data-edge] {
