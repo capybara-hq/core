@@ -22,6 +22,7 @@ import { BoxScope } from "../layout/box";
 import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
 import { isTouchPointer } from "../shell/pointer";
+import { useSizeClass } from "../shell/size-class";
 import type { ComposerMenuCombobox } from "./composer-menu";
 import { ComposerOptions } from "./composer-options";
 import { type ComposerPlace, ComposerPlaceStrip } from "./composer-place";
@@ -422,6 +423,11 @@ const TOKEN_KINDS: TokenLikeKind[] = [
   "high-entropy",
 ];
 
+/** The mode menu without its effort segments (the effort is chosen elsewhere). */
+function withoutEffort({ effort: _effort, ...rest }: ModeMenuProps): ModeMenuProps {
+  return rest;
+}
+
 /** The composer's chip (§6.16.2, state `skill`). */
 export type ComposerToken = { label: string; hint?: string; onRemove(): void };
 
@@ -499,6 +505,8 @@ export function ComposerBox({
   // render, so the server render and hydration agree.
   const [touch, setTouch] = useState(false);
   useEffect(() => setTouch(isTouchPointer()), []);
+  // the size class by window width (null on the server and before hydration)
+  const compact = useSizeClass() === "compact";
   // The token paste warning (setup guides v2 spec §12.1): raised by a paste holding token-like
   // text or by a send whose draft holds some; a guard against a slip, never a block. The draft is
   // scanned here in the browser only: nothing is logged or sent anywhere.
@@ -685,9 +693,13 @@ export function ComposerBox({
       {...(place ? { nameOnly: true } : {})}
     />
   );
-  const modeButton = mode ? (
+  // Compact with the top strip: the effort moves into the model's sheet (the settings chip), so
+  // the mode menu holds the profiles alone (§6.16.2 compact).
+  const effortInSheet = place !== undefined && compact && pickers.effort !== undefined;
+  const shownMode = mode && effortInSheet ? withoutEffort(mode) : mode;
+  const modeButton = shownMode ? (
     <span className="cb-composer-mode" data-part="composer-mode">
-      <ModeMenu {...mode} {...(place ? { named: true } : {})} />
+      <ModeMenu {...shownMode} {...(place ? { named: true } : {})} />
     </span>
   ) : null;
   return (

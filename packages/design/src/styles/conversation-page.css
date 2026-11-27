@@ -2457,13 +2457,22 @@ button.cb-property-row {
   .cb-composer[data-place="true"] .cb-composer-mode {
     display: contents;
   }
+  /* capped at 11em, the model's name then cut with an ellipsis (the reference's chip, equal) */
   .cb-composer-settings > .cb-composer-options.cb-btn {
     display: inline-flex;
+    max-width: 11em;
     min-height: var(--cb-touch-hit);
     padding: 0 var(--cb-space-3);
     border: 1px solid var(--cb-float-line);
     border-radius: var(--cb-radius-pill);
     background: var(--cb-float-ground);
+  }
+  /* the agent picker (no page passes it) gets its own row under the pill: row 3 is the strip's */
+  .cb-composer[data-place="true"] .cb-composer-bar > .cb-picker.cb-btn {
+    grid-row: 7;
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin: var(--cb-space-2) 0 0;
   }
   .cb-composer[data-place="true"] .cb-composer-bar > .cb-composer-suggestion-use.cb-btn {
     grid-row: 5;

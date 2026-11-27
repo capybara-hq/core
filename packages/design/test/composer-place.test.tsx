@@ -13,11 +13,15 @@ import {
   type PickerProps,
 } from "../src/index";
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
+import { matchMediaFor } from "./width";
 
 // The composer's top strip (spec §6.16.2 "Top strip", composer menus spec §6, §7): device then
 // project above the text, the control row's place layout, the medium and compact forms.
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "zh") =>
   render(<DesignProvider locale={locale}>{ui}</DesignProvider>);
@@ -300,5 +304,111 @@ describe("the medium and compact forms", () => {
       (h) => h.textContent,
     );
     expect(headings).toEqual(["Device", "Project"]);
+  });
+});
+
+describe("review fixes", () => {
+  it("moves through the projects with the arrow keys without picking or closing", async () => {
+    const user = userEvent.setup();
+    const place: ComposerPlace = { device: devicePicker(), project: projectPicker() };
+    wrap(<ComposerBox {...props({ place })} />);
+    await user.click(within(strip()).getByRole("button", { name: /^运行位置/ }));
+    const sheet = screen.getByRole("dialog", { name: "运行位置" });
+    const projects = within(sheet).getByRole("group", { name: "项目" });
+    const free = within(projects).getByRole("radio", { name: "自由模式" });
+    free.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(
+      within(projects).getByRole("radio", { name: "capybara-core" }),
+    );
+    expect(place.project?.onPick).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "运行位置" })).toBe(sheet);
+    // Enter picks the focused project and closes the sheet
+    await user.keyboard("{Enter}");
+    expect(place.project?.onPick).toHaveBeenCalledWith("core");
+    expect(screen.queryByRole("dialog", { name: "运行位置" })).toBeNull();
+  });
+
+  it("draws the chip as static text when the device is locked and the project disabled", () => {
+    wrap(
+      <ComposerBox
+        {...props({
+          place: {
+            device: devicePicker({ locked: { hint: "发送第一条消息后不能再换设备" } }),
+            project: projectPicker({ disabled: true }),
+          },
+        })}
+      />,
+    );
+    const chip = strip().querySelector('[data-part="composer-place-chip"]') as HTMLElement;
+    expect(chip.tagName).toBe("SPAN");
+  });
+
+  it("keeps the agent picker off the strip's row in the touch form", () => {
+    expect(css).toMatch(
+      /\.cb-composer\[data-place="true"\] \.cb-composer-bar > \.cb-picker\.cb-btn \{\s*grid-row: 7;/,
+    );
+    expect(css).toMatch(
+      /\.cb-composer-settings > \.cb-composer-options\.cb-btn \{[^}]*max-width: 11em;/,
+    );
+  });
+
+  it("moves the effort out of the mode menu below 600, into the model's sheet", async () => {
+    vi.stubGlobal("matchMedia", matchMediaFor(390).matchMedia);
+    const user = userEvent.setup();
+    wrap(<ComposerBox {...props()} />);
+    const button = screen.getByRole("button", { name: /^权限/ });
+    expect(button.getAttribute("aria-label")).toBe("权限: 帮我批准");
+    await user.click(button);
+    const menu = screen.getByRole("menu");
+    expect(within(menu).queryByRole("group", { name: "思考档位" })).toBeNull();
+  });
+
+  it("keeps the effort in the mode menu from 600 up", async () => {
+    vi.stubGlobal("matchMedia", matchMediaFor(1000).matchMedia);
+    const user = userEvent.setup();
+    wrap(<ComposerBox {...props()} />);
+    await user.click(screen.getByRole("button", { name: /^权限/ }));
+    expect(within(screen.getByRole("menu")).getByRole("group", { name: "思考档位" })).toBeTruthy();
+  });
+
+  it("joins both locked hints in the static chip's tooltip", () => {
+    wrap(
+      <ComposerBox
+        {...props({
+          place: {
+            device: devicePicker({ locked: { hint: "不能换设备" } }),
+            project: projectPicker({ locked: { hint: "不能换项目" } }),
+          },
+        })}
+      />,
+    );
+    const chip = strip().querySelector('[data-part="composer-place-chip"]') as HTMLElement;
+    expect(chip.getAttribute("title")).toBe(
+      "开发沙盒 / billing-reconciliation-service: 不能换设备: 不能换项目",
+    );
+  });
+
+  it("keeps a locked project's warning reachable on the compact chip", async () => {
+    const user = userEvent.setup();
+    const onInspect = vi.fn();
+    wrap(
+      <ComposerBox
+        {...props({
+          place: {
+            device: devicePicker({ locked: { hint: "不能换设备" } }),
+            project: projectPicker({
+              locked: { hint: "不能换项目", warning: { label: "项目不可用", onInspect } },
+            }),
+          },
+        })}
+      />,
+    );
+    const chip = strip().querySelector('[data-part="composer-place-chip"]') as HTMLElement;
+    expect(chip.tagName).toBe("BUTTON");
+    expect(within(chip).getByText("项目不可用")).toBeTruthy();
+    await user.click(chip);
+    expect(onInspect).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

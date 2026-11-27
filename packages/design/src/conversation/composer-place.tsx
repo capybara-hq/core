@@ -1,5 +1,5 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type JSX, type ReactNode, useState } from "react";
+import { type JSX, type KeyboardEvent, type ReactNode, useState } from "react";
 import { Button } from "../controls/button";
 import { Icon } from "../icons/icon";
 import { BottomSheetContent, BottomSheetFrame, SheetOptionList } from "../overlays/bottom-sheet";
@@ -115,14 +115,42 @@ export function ComposerPlaceChip({
       </BottomSheetFrame>
     );
   }
-  const changeable = !device.locked || (project !== undefined && !project.locked);
+  // a locked or disabled picker cannot change: with none left to change the chip is static text
+  const can = (p?: PickerProps) => p !== undefined && !p.locked && p.disabled !== true;
+  const changeable = can(device) || can(project);
   if (!changeable) {
+    const title = [
+      full.join(" / "),
+      ...[device.locked?.hint, project?.locked?.hint].filter((h): h is string => Boolean(h)),
+    ].join(": ");
+    // A locked picker's warning (a project that is no longer there) stays reachable on a phone:
+    // the chip shows its mark and opens what the warning inspects.
+    const warning = device.locked?.warning ?? project?.locked?.warning;
+    if (warning) {
+      return (
+        <Button
+          variant="ghost"
+          className="cb-composer-place-chip"
+          part="composer-place-chip"
+          data-locked="true"
+          aria-label={`${name} · ${warning.label}`}
+          title={title}
+          onClick={warning.onInspect}
+        >
+          <ChipValue device={device} {...(project ? { project } : {})} />
+          <span className="cb-picker-warning" data-part="place-warning">
+            <Icon name="circle-alert" size={12} />
+            {warning.label}
+          </span>
+        </Button>
+      );
+    }
     return (
       <span
         className="cb-composer-place-chip"
         data-part="composer-place-chip"
         data-locked="true"
-        title={[full.join(" / "), device.locked?.hint].filter(Boolean).join(": ")}
+        title={title}
       >
         <ChipValue device={device} {...(project ? { project } : {})} />
       </span>
@@ -137,9 +165,6 @@ export function ComposerPlaceChip({
           part="composer-place-chip"
           aria-label={name}
           title={full.join(" / ")}
-          disabled={
-            device.disabled === true && (project === undefined || project.disabled === true)
-          }
         >
           {device.icon ? <Icon name={device.icon} size={12} /> : null}
           <ChipValue device={device} {...(project ? { project } : {})} />
@@ -191,6 +216,31 @@ function PlaceSheetBody({
 }
 
 /**
+ * The arrow keys move the focus between a group's radios without picking (a radio's own arrows
+ * would check the next one, and a project pick closes the sheet); Enter picks the focused one.
+ * Space and a tap pick through the radio's change, as everywhere else.
+ */
+function moveWithoutPicking(e: KeyboardEvent<HTMLElement>, onPick: (id: string) => void): void {
+  const target = e.target;
+  if (e.nativeEvent.isComposing) return;
+  if (!(target instanceof HTMLInputElement) || target.type !== "radio") return;
+  const radios = [
+    ...e.currentTarget.querySelectorAll<HTMLInputElement>('input[type="radio"]:not(:disabled)'),
+  ];
+  const at = radios.indexOf(target);
+  if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+    e.preventDefault();
+    radios[at + 1]?.focus();
+  } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+    e.preventDefault();
+    radios[at - 1]?.focus();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    onPick(target.value);
+  }
+}
+
+/**
  * One picker in the place sheet: its groups as single-choice option lists under a heading (the
  * picker's title, then each further group's label), its notice, action and note; a locked picker
  * is its value read-only with the hint.
@@ -209,7 +259,12 @@ function PlaceGroup({
   onAction(action: PickerProps["action"]): void;
 }): JSX.Element {
   return (
-    <section className="cb-place-group" data-part="place-group" data-group={group}>
+    <section
+      className="cb-place-group"
+      data-part="place-group"
+      data-group={group}
+      onKeyDownCapture={(e) => moveWithoutPicking(e, onPick)}
+    >
       {picker.notice ? (
         <p className="cb-options-sheet-note" data-part="place-notice">
           {picker.notice}

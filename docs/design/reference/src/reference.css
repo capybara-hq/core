@@ -8464,7 +8464,7 @@ span.r-scal-daynum {
 }
 .r-options-chip {
   flex: none;
-  max-width: 50%;
+  max-width: 11em;
 }
 .r-place-value {
   flex: none;
@@ -8473,7 +8473,8 @@ span.r-scal-daynum {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.r-place-value[data-project] {
+.r-place-value[data-project],
+.r-options-chip > .r-place-value {
   flex: 0 1 auto;
   max-width: none;
 }
