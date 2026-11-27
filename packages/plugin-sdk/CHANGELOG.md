@@ -1,5 +1,14 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.82
+
+### Patch Changes
+
+- 7dbb9b4: `ToolResult.card.badge` (pinned cards only, at most `CARD_BADGE_MAX` = 32 characters): the card's state as its view's badge, recorded on `tool_result.card` (display only). A finished process head shows the pinned summary ("Todos 3/5") after a reload from it, without reading the card's view. A running process head now times the run from `run_started` (its working time, waits for a person left out, as the status bar counts it) on the run's latest block only.
+- e5f20e2: Add `questionChoiceButtons` and `questionBody` for channel plugins to render a question form's
+  `choices` as buttons and its `body` as text. `questionRenderableInline` is true for a form with
+  `choices`, and `renderCardAsText` writes the body and the pending choices (core#867, plugins#241).
+
 ## 0.1.0-rc.81
 
 ### Minor Changes
