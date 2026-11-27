@@ -692,6 +692,105 @@ describe("the @ menu's library files", () => {
     expect(libraryReads(calls)).toEqual([]);
   });
 
+  it("a library file sent is read again: the next @ shows the library afresh", async () => {
+    const calls = api({
+      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
+      [`POST ${BASE}/messages`]: send,
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "see @");
+    await user.click(await screen.findByRole("option", { name: /report\.pdf/ }));
+    await user.type(input(), "{Enter}");
+    await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
+    expect(libraryReads(calls)).toEqual([`${LIBRARY}?limit=8`]);
+    await user.type(input(), "@");
+    await within(await menu()).findByText("report.pdf");
+    await vi.waitFor(() =>
+      expect(libraryReads(calls)).toEqual([`${LIBRARY}?limit=8`, `${LIBRARY}?limit=8`]),
+    );
+  });
+
+  it("a failed send gives a library file back; neither its failure, removal nor unmount discards it", async () => {
+    const calls = api({
+      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
+      [`POST ${BASE}/messages`]: () =>
+        json(404, {
+          error: {
+            code: "file.not_found",
+            message: "gone",
+            details: [{ path: "files", message: "gone", fileId: "lf1" }],
+          },
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    for (const name of [/report\.pdf/, /notes\.md/]) {
+      await user.type(input(), "@");
+      await user.click(await screen.findByRole("option", { name }));
+    }
+    await user.type(input(), "see{Enter}");
+    await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
+    // given back with the failure marked on the file the kernel named
+    const back = await screen.findByRole("group", { name: en.chat.files });
+    expect((await within(back).findByRole("alert")).textContent).toBe(en.errors.file.not_found);
+    expect(within(back).getByText("notes.md")).toBeTruthy();
+    await user.click(within(back).getByRole("button", { name: /report\.pdf/ }));
+    expect(within(back).queryByText("report.pdf")).toBeNull();
+    cleanup();
+    expect(uploadsOrDiscards(calls)).toEqual([]);
+  });
+
+  it("without storage the files are listed disabled, saying why", async () => {
+    api({
+      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
+      [`GET ${LIBRARY}/limits`]: () =>
+        json(200, {
+          types: ["application/pdf"],
+          maxBytes: 1_000_000,
+          imageMaxBytes: 1_000_000,
+          extensions: [],
+          maxPerMessage: 10,
+          requestMediaBytes: 10_000_000,
+          available: false,
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    const el = await menu();
+    await within(el).findByText("report.pdf");
+    await vi.waitFor(() => {
+      const row = within(el).getByRole("option", { name: /report\.pdf/ });
+      expect(row.getAttribute("aria-disabled")).toBe("true");
+      expect(row.textContent).toContain(en.chat.filesUnavailable);
+    });
+    await user.click(within(el).getByRole("option", { name: /report\.pdf/ }));
+    expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull();
+  });
+
+  it("failed resources keep the files and say so under them", async () => {
+    api({
+      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
+      [`GET ${RESOURCES}`]: () =>
+        json(500, { error: { code: "internal", message: "boom", requestId: "r1" } }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.type(input(), "@");
+    const el = await menu();
+    await within(el).findByText("report.pdf");
+    expect(headingsOf(el)).toEqual([en.chat.composerMenu.recentFiles]);
+    await vi.waitFor(() =>
+      expect(el.textContent).toContain(en.chat.composerMenu.resourcesFailed.split("{reason}")[0]),
+    );
+    expect(el.textContent).not.toContain(en.chat.composerMenu.libraryFailed.split("{reason}")[0]);
+  });
+
   it("a failed library read keeps the resources and says so under them", async () => {
     api({
       [`GET ${LIBRARY}`]: () =>

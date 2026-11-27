@@ -166,12 +166,13 @@ export function useNewConversationPage(
   // The answer seeds the new conversation's cache; the sidebar's groups are read again without
   // the navigation waiting for them (they show the new conversation when they land).
   const create = useAppMutation({
-    fn: async (v: { orgId: string; serializedBody: string; sentAt: number }) => {
+    fn: async (v: { orgId: string; serializedBody: string; sentAt: number; files: boolean }) => {
       const r = await submitFirstMessage(v.orgId, v.serializedBody);
       seedNewConversation(qc, v.orgId, r.conversation, r, v.sentAt);
       return r;
     },
-    invalidates: () => [],
+    // sent files are in the person's library now (the `@` menu's recent files)
+    invalidates: (v) => (v.files ? [keys.org(v.orgId).filesAll()] : []),
   });
   const devicesQ = devicesQuery(orgId);
   const devices = useQuery({
@@ -234,6 +235,7 @@ export function useNewConversationPage(
       const { conversation } = await create.mutateAsync({
         orgId: attempt.orgId,
         serializedBody: attempt.serializedBody,
+        files: (attempt.message.files?.length ?? 0) > 0,
         // this tab's clock at the send: the working line's backstop counts from it
         sentAt: Date.now(),
       });

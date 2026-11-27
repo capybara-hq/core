@@ -1822,6 +1822,7 @@
       "noFiles": "No matching files",
       "noFilesOrResources": "No matching files or resources",
       "libraryFailed": "The file library could not be read: {reason}",
+      "resourcesFailed": "Connector resources could not be read: {reason}",
       "resources": "Connector resources",
       "projectFiles": "Project files",
       "projectFilesHint": "Reference files of the project {project} without uploading them",
