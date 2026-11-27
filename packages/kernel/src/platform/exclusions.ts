@@ -209,24 +209,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Confirms a staged plugin review (reached by the link card of the staged plugin), a trust decision by the person",
   },
   // channels
-  // files (the upload routes; list, details, usage and delete are operations)
+  // files (the composer's upload helpers; list, details, usage, add and delete are operations)
   {
     route: "GET /api/v1/orgs/:orgId/files/limits",
     category: "internal",
     reason:
       "The composer's size check for a person's file into a conversation; an agent gets files by file reference, not by uploading",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/files",
-    category: "internal",
-    reason:
-      "Registers a person's file into a conversation from the composer or the Files page; an agent gets files by file reference (fileId)",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/files/:id/finalize",
-    category: "internal",
-    reason:
-      "Finishes a person's file into a conversation from the composer or the Files page; an agent gets files by file reference (fileId)",
   },
   {
     route: "DELETE /api/v1/orgs/:orgId/files/:id/draft",

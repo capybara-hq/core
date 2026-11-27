@@ -19,7 +19,7 @@ import type { BuiltinCallContext } from "../../src/tools/registry.js";
 import { skillPlugin } from "../catalog/packages.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
-import { migrateLegacyFiles } from "../helpers/library-files.js";
+import { migrateLegacyFiles, seedLibraryFile } from "../helpers/library-files.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { greeterPkg } from "../helpers/plugin-packages.js";
 import {
@@ -495,5 +495,143 @@ describe("the other upload operations on fixture packages", () => {
     );
     expect(out).toMatchObject({ kind: "skill", name: "notes", version: skill.current_version + 1 });
     await viaAgent("component.version_uploaded", "plugins.update-skill");
+  });
+});
+
+describe("files.add: a conversation file into the person's files", () => {
+  let otherId: string;
+
+  beforeAll(async () => {
+    otherId = (
+      await accountsFor(db).createLocal({ login: "other", password: PW, displayName: "Other" })
+    ).id;
+  });
+
+  /** Delivers `bytes` into a new conversation of root's (as `Deliver` stores them). */
+  async function delivered(name: string, contentType: string, bytes: Uint8Array) {
+    const conv = await createConv(root, orgId, agentId);
+    await postMessage(root, orgId, conv, "hello");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const runRow = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .executeTakeFirstOrThrow();
+    const [out] = await storeArtifacts(
+      { deliveries: k.app.get(FileDeliveries), eventLog: k.app.get(EventLog) },
+      {
+        orgId,
+        accountId: rootId,
+        agentId,
+        conversationId: conv,
+        rootConversationId: conv,
+        runId: runRow.id,
+        callId: `call-${randomUUID().slice(0, 8)}`,
+        signal: new AbortController().signal,
+      } as unknown as BuiltinCallContext,
+      [{ name, contentType, data: bytes, sourcePath: `/workspace/out/${name}` }],
+    );
+    return { conv, fileId: out?.artifactId as string };
+  }
+
+  const fileRow = (id: string) =>
+    db
+      .selectFrom("files")
+      .select(["account_id", "blob_id", "origin", "status", "name", "upload_purpose"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+  const blobCount = async () =>
+    Number(
+      (
+        await db
+          .selectFrom("blobs")
+          .select((eb) => eb.fn.countAll<string>().as("n"))
+          .where("org_id", "=", orgId)
+          .executeTakeFirstOrThrow()
+      ).n,
+    );
+
+  it("another person's file of this conversation becomes the person's upload on the same blob", async () => {
+    const bytes = new TextEncoder().encode(`shared notes ${randomUUID()}\n`);
+    const { conv, fileId } = await delivered("notes.txt", "text/plain", bytes);
+    // the file in this conversation belongs to someone else (a colleague's file)
+    await db.updateTable("files").set({ account_id: otherId }).where("id", "=", fileId).execute();
+    const theirs = await fileRow(fileId);
+    const blobs = await blobCount();
+
+    const { file, summary, result } = await confirmed(conv, 2, "files.add", {
+      file: { fileId },
+    });
+    expect(result?.isError, result?.content).toBe(false);
+    expect(file).toMatchObject({ name: "notes.txt", sha256: sha256(bytes) });
+    expect(summary?.en).toBe('Add the file "notes.txt" to your files');
+    const out = JSON.parse(result?.content ?? "{}") as { id: string; added: boolean };
+    expect(out.added).toBe(true);
+    expect(out.id).not.toBe(fileId);
+    expect(await fileRow(out.id)).toEqual({
+      account_id: rootId,
+      blob_id: theirs.blob_id,
+      origin: "upload",
+      status: "ready",
+      name: "notes.txt",
+      upload_purpose: "library",
+    });
+    // the org already held the bytes: no new object
+    expect(await blobCount()).toBe(blobs);
+
+    // the same bytes and name again add nothing
+    const again = (await op("files.add").run(
+      { file: { fileId } },
+      { ...ctxOf(fileOf("notes.txt", "text/plain", bytes)), conversationId: conv },
+    )) as { id: string; added: boolean };
+    expect(again).toMatchObject({ id: out.id, added: false });
+  });
+
+  it("a file that already is one of the person's files is returned as it is", async () => {
+    const bytes = new TextEncoder().encode(`report ${randomUUID()}\n`);
+    const { conv, fileId } = await delivered("report.txt", "text/plain", bytes);
+    const before = await db.selectFrom("files").select("id").execute();
+    const out = await op("files.add").run(
+      { file: { fileId }, name: "renamed.txt" },
+      { ...ctxOf(fileOf("report.txt", "text/plain", bytes)), conversationId: conv },
+    );
+    expect(out).toEqual({
+      id: fileId,
+      name: "report.txt",
+      size: bytes.byteLength,
+      contentType: "text/plain",
+      added: false,
+    });
+    expect((await db.selectFrom("files").select("id").execute()).length).toBe(before.length);
+  });
+
+  it("a file of another conversation or another account is refused before the card", async () => {
+    const theirs = await seedLibraryFile(
+      k.app,
+      orgId,
+      otherId,
+      { name: "secret.txt", contentType: "text/plain", bytes: new TextEncoder().encode("x") },
+      { status: "ready" },
+    );
+    const elsewhere = await delivered("elsewhere.txt", "text/plain", new TextEncoder().encode("y"));
+    const conv = await createConv(root, orgId, agentId);
+    for (const [i, fileId] of [theirs, elsewhere.fileId].entries()) {
+      await postMessage(root, orgId, conv, callText("files.add", { file: { fileId } }));
+      await waitForTerminal(db, conv, i + 1, 30_000);
+      const result = await lastResult(conv);
+      expect(result?.isError).toBe(true);
+      expect(result?.content).toContain(`File ${fileId} is not a file of this conversation.`);
+    }
+    expect(ofType(await eventsOf(db, conv), "approval_requested")).toEqual([]);
+  });
+
+  it("a type the uploads do not accept is refused", async () => {
+    await expect(
+      run(
+        "files.add",
+        { file: { fileId: randomUUID() } },
+        fileOf("tool.exe", "application/octet-stream", new Uint8Array([0x4d, 0x5a, 0, 1])),
+      ),
+    ).rejects.toMatchObject({ code: "file.type_not_allowed" });
   });
 });

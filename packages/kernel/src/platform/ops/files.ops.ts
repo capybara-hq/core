@@ -1,9 +1,12 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
-import { FileIdParams, LibraryListQuery } from "../../files/library.schemas.js";
+import { FileCreateBody, FileIdParams, LibraryListQuery } from "../../files/library.schemas.js";
+import { LibraryFilesService } from "../../files/library-files.service.js";
 import { type LibraryFileView, LibraryQuery } from "../../files/library-query.js";
+import { FileRefSchema } from "../file-ref.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
+import { named } from "./summary.js";
 
 const PAGE = 50;
 const FileId = FileIdParams.shape.id;
@@ -27,17 +30,22 @@ const row = (f: LibraryFileView) => ({
   createdAt: f.createdAt,
 });
 
+/** The link of one file on the Files page. */
+const fileLink = (id: string) => `/files#item=${encodeURIComponent(id)}`;
+
 /**
  * File library operations of the `Platform` tool (file library spec §6, §8): the person's own
  * files, as the Files page shows them. Bytes, previews and the HTML document stay with the web
  * (`transport` exclusions); deleting a file is confirmed by the person on the Files page, so
- * `files.delete` only checks the file and hands them the link.
+ * `files.delete` only checks the file and hands them the link. `files.add` is the upload routes
+ * with a file reference in place of the bytes (platform web parity spec §5).
  */
 @Injectable()
 export class FilesOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(LibraryQuery) private readonly library: LibraryQuery,
+    @Inject(LibraryFilesService) private readonly files: LibraryFilesService,
   ) {}
 
   onModuleInit(): void {
@@ -110,6 +118,83 @@ export class FilesOperations implements OnModuleInit {
         run: async (_input, ctx) => this.library.usage(ctx.orgId, ctx.actorAccountId),
       }),
       defineOperation({
+        id: "files.add",
+        description:
+          "Add a file of this conversation to your files (the Files page) as your own upload: an attachment, a generated image or a delivered file, passed as file: { fileId } (Deliver a device file first). name renames the new entry (default: the file's name). A file that already is one of your files is returned as it is, and so is your file of the same name and bytes: nothing is added twice. Bytes the org already stores are not stored again. Only the types and sizes the composer accepts can be added. The person sees the file on the card. Returns the entry's id, name, size and content type, and added: false when it was already there.",
+        input: z
+          .object({ file: FileRefSchema, name: FileCreateBody.shape.name.optional() })
+          .strict(),
+        example: { file: { fileId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" } },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["POST /api/v1/orgs/:orgId/files", "POST /api/v1/orgs/:orgId/files/:id/finalize"],
+        // the upload registration's fields come from the referenced file (its type, size and
+        // sha256, a library upload); the kernel adds the bytes it holds, so there is no upload to
+        // finalize and no id to pass
+        omits: ["contentType", "size", "sha256", "purpose", "id"],
+        extras: ["file"],
+        loosens: { name: "optional: the referenced file's name is the default" },
+        confirm: "personal",
+        errors: [
+          {
+            code: "file.type_not_allowed",
+            next: "This type of file cannot be added to the Files page (or its bytes are not of its type); tell the person, or convert it to an accepted type, deliver it and retry.",
+          },
+          {
+            code: "file.too_large",
+            next: "The file is over the upload limit; tell the person, or make it smaller, deliver it and retry.",
+          },
+          {
+            code: "storage.unavailable",
+            next: "File storage is unavailable; try again later, or tell the person to contact the super admin.",
+          },
+        ],
+        fileRef: (i) => {
+          const limits = this.files.limits();
+          return {
+            ref: i.file,
+            limits: { maxBytes: Math.max(limits.maxBytes, limits.imageMaxBytes) },
+          };
+        },
+        summary: (i, ctx) => {
+          const f = named(ctx.file?.name ?? "?");
+          return i.name === undefined || i.name === ctx.file?.name
+            ? { zh: `把文件「${f}」加入你的文件`, en: `Add the file "${f}" to your files` }
+            : {
+                zh: `把文件「${f}」以「${named(i.name)}」为名加入你的文件`,
+                en: `Add the file "${f}" to your files as "${named(i.name)}"`,
+              };
+        },
+        run: async (input, ctx) => {
+          const f = ctx.file;
+          if (f === undefined) throw new Error("files.add: the file is missing");
+          const out = await this.files.addFromBytes(ctx.orgId, ctx.actorAccountId, {
+            referencedId: input.file.fileId,
+            name: input.name ?? f.name,
+            contentType: f.contentType,
+            bytes: f.bytes,
+            sha256: f.sha256,
+            signal: ctx.signal,
+          });
+          return {
+            id: out.id,
+            name: out.name,
+            size: out.size,
+            contentType: out.contentType,
+            added: !out.existing,
+          };
+        },
+        handoff: (_input, result) => {
+          const id = (result as { id?: unknown } | null)?.id;
+          return typeof id === "string"
+            ? {
+                kind: "handoff",
+                title: { zh: "在文件页查看这个文件", en: "View this file on the Files page" },
+                target: { type: "link", url: fileLink(id) },
+              }
+            : null;
+        },
+      }),
+      defineOperation({
         id: "files.delete",
         description:
           "Ask to delete one of your files: nothing is deleted here; this checks the file and hands the person a link to the Files page to confirm the deletion there (its shared links stop working, and conversations show it as no longer available). Takes the id from files.list.",
@@ -140,7 +225,7 @@ export class FilesOperations implements OnModuleInit {
             zh: "在文件页确认删除这个文件",
             en: "Confirm deleting this file on the Files page",
           },
-          target: { type: "link", url: `/files#item=${encodeURIComponent(input.fileId)}` },
+          target: { type: "link", url: fileLink(input.fileId) },
         }),
       }),
     ]);

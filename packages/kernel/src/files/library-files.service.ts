@@ -39,6 +39,8 @@ export const MAX_PENDING_FILES = 50;
 const CLEANUP_BATCH = 100;
 /** How many leading bytes finalize checks against the declared type's signature. */
 const SNIFF_BYTES = 1024;
+/** How often {@link LibraryFilesService.addFromBytes} ensures a blob a deletion claimed. */
+const ADD_BLOB_ATTEMPTS = 3;
 
 /** Where an upload is made: the composer (a draft until sent) or the Files page (ready at once). */
 export type UploadPurpose = "composer" | "library";
@@ -224,7 +226,10 @@ export class LibraryFilesService {
     private readonly storage: Pick<StorageService, "available" | "assertAvailable" | "kernel">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(BlobsService)
-    private readonly blobs: Pick<BlobsService, "writeVerified" | "settle" | "lockReady">,
+    private readonly blobs: Pick<
+      BlobsService,
+      "writeVerified" | "settle" | "lockReady" | "ensureFromBytes"
+    >,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     /** The `files` change of the conversations that referred to a deleted file. */
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "publishChanged">,
@@ -320,20 +325,7 @@ export class LibraryFilesService {
     accountId: string,
     input: { contentType: string; size: number },
   ): Promise<string> {
-    const contentType = normalizeContentType(input.contentType);
-    if (!this.config.get().attachments.allowedTypes.includes(contentType)) {
-      throw new ApiError(
-        "file.type_not_allowed",
-        `File type ${JSON.stringify(contentType)} is not allowed`,
-      );
-    }
-    const limit = this.limitFor(contentType);
-    if (input.size > limit) {
-      throw new ApiError(
-        "file.too_large",
-        `File is ${input.size} bytes, over the limit of ${limit} bytes`,
-      );
-    }
+    const contentType = this.admitType(input);
     const pending = await this.db
       .selectFrom("files")
       .select((eb) => eb.fn.countAll<string>().as("n"))
@@ -348,6 +340,137 @@ export class LibraryFilesService {
       );
     }
     return contentType;
+  }
+
+  /** The type and size checks of an upload; returns the normalized content type. */
+  private admitType(input: { contentType: string; size: number }): string {
+    const contentType = normalizeContentType(input.contentType);
+    if (!this.config.get().attachments.allowedTypes.includes(contentType)) {
+      throw new ApiError(
+        "file.type_not_allowed",
+        `File type ${JSON.stringify(contentType)} is not allowed`,
+      );
+    }
+    const limit = this.limitFor(contentType);
+    if (input.size > limit) {
+      throw new ApiError(
+        "file.too_large",
+        `File is ${input.size} bytes, over the limit of ${limit} bytes`,
+      );
+    }
+    return contentType;
+  }
+
+  /**
+   * Adds bytes the kernel already holds (a conversation file the `Platform` tool resolved) to the
+   * account's library as an upload, `ready` at once. When `referencedId` already is one of the
+   * account's `ready` files, that file is returned as it is (`existing: true`). Otherwise: no
+   * object store → `storage.unavailable`, the upload's type and size checks, the signature check
+   * of finalize (`file.type_not_allowed`); the account's own `ready` file of the same name, type
+   * and sha256 is returned as it is (`existing: true`; a repeated call adds nothing). Otherwise the bytes go
+   * through {@link BlobsService.ensureFromBytes} (the org's ready blob of this hash, else a new
+   * one written intent first), and the file row is inserted on it behind
+   * {@link BlobsService.lockReady}; a blob a deletion claimed meanwhile is ensured again. No
+   * presigned form is involved.
+   */
+  async addFromBytes(
+    orgId: string,
+    accountId: string,
+    input: {
+      /** The id the bytes were referenced by: the account's own ready file of it is returned. */
+      referencedId?: string;
+      name: string;
+      contentType: string;
+      bytes: Uint8Array;
+      sha256: string;
+      signal?: AbortSignal;
+    },
+  ): Promise<FileView & { existing: boolean }> {
+    if (input.referencedId !== undefined) {
+      const own = await this.db
+        .selectFrom("files")
+        .select(["id", "name", "content_type", "size", "status"])
+        .where("id", "=", input.referencedId)
+        .where("org_id", "=", orgId)
+        .where("account_id", "=", accountId)
+        .where("status", "=", "ready")
+        .executeTakeFirst();
+      if (own) return { ...viewOf(own), existing: true };
+    }
+    this.storage.assertAvailable();
+    const size = input.bytes.byteLength;
+    const contentType = this.admitType({ contentType: input.contentType, size });
+    if (!sniffMatches(contentType, input.bytes.subarray(0, SNIFF_BYTES))) {
+      throw new ApiError("file.type_not_allowed", `File content is not ${contentType}`);
+    }
+    const same = await this.db
+      .selectFrom("files")
+      .select(["id", "name", "content_type", "size", "status"])
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("status", "=", "ready")
+      .where("sha256", "=", input.sha256)
+      .where("content_type", "=", contentType)
+      .where("name", "=", input.name)
+      .orderBy("created_at", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (same) return { ...viewOf(same), existing: true };
+    const pages = contentType === "application/pdf" ? countPdfPages(input.bytes) || null : null;
+    for (let attempt = 1; ; attempt++) {
+      const blob = await this.blobs.ensureFromBytes(orgId, input.sha256, input.bytes, {
+        contentType,
+        ...(input.signal !== undefined && { signal: input.signal }),
+      });
+      const added = await this.insertReady(orgId, accountId, blob.id, {
+        name: input.name,
+        contentType,
+        size,
+        sha256: input.sha256,
+        pages,
+      });
+      if (added !== null) return { ...added, existing: false };
+      if (attempt >= ADD_BLOB_ATTEMPTS) {
+        throw new Error(`blob ${blob.id} was claimed by a deletion ${attempt} times`);
+      }
+    }
+  }
+
+  /**
+   * The transaction of {@link addFromBytes}: the blob locked ready, then a `ready` upload file of
+   * the account on it. Null when a deletion claimed the blob (nothing written).
+   */
+  @Transactional()
+  private async insertReady(
+    orgId: string,
+    accountId: string,
+    blobId: string,
+    f: { name: string; contentType: string; size: number; sha256: string; pages: number | null },
+  ): Promise<FileView | null> {
+    const blob = await this.blobs.lockReady(orgId, blobId);
+    if (!blob) return null;
+    const id = randomUUID();
+    await this.db.db
+      .insertInto("files")
+      .values({
+        id,
+        org_id: orgId,
+        account_id: accountId,
+        blob_id: blob.id,
+        ref_key: blob.objectKey,
+        ref_etag: blob.etag,
+        name: f.name,
+        content_type: f.contentType,
+        size: f.size,
+        pages: f.pages,
+        origin: "upload",
+        status: "ready",
+        sha256: f.sha256,
+        upload_purpose: "library",
+        expires_at: null,
+      })
+      .execute();
+    return { id, name: f.name, contentType: f.contentType, size: f.size, status: "ready" };
   }
 
   /**

@@ -289,7 +289,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "files",
     description:
-      "Your file library (uploads and the files agents delivered to you): list, read, storage usage, and asking to delete one (the person confirms on the Files page).",
+      "Your file library (uploads and the files agents delivered to you): list, read, storage usage, adding a file of this conversation, and asking to delete one (the person confirms on the Files page).",
   },
   {
     id: "orgs",

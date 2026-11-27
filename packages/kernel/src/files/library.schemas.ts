@@ -49,6 +49,8 @@ export const FileIdParams = z.object({ id: z.string().min(1).max(100) });
 /** The library routes a Platform operation mirrors (file library spec §6). */
 export const FILE_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/files", query: LibraryListQuery },
+  { route: "POST /api/v1/orgs/:orgId/files", body: FileCreateBody },
+  { route: "POST /api/v1/orgs/:orgId/files/:id/finalize", params: FileIdParams },
   { route: "GET /api/v1/orgs/:orgId/files/usage" },
   { route: "GET /api/v1/orgs/:orgId/files/:id", params: FileIdParams },
   { route: "DELETE /api/v1/orgs/:orgId/files/:id", params: FileIdParams },
