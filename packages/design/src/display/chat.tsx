@@ -46,8 +46,6 @@ export function TimelineItem({ mark, children }: TimelineItemProps) {
   );
 }
 
-const fill = (tpl: string, n: number | string) => tpl.replace("{n}", String(n));
-
 export type ToolCallStatus = "running" | "done" | "error" | "cancelled";
 
 export type ToolCallRowLabels = {
@@ -148,7 +146,7 @@ export type IoBlockLabels = DetailViewportLabels;
 export type IoBlockProps = {
   label: "IN" | "OUT";
   text: string;
-  /** The expand control's names (default: the design copy 「展开」 / 「收起」). */
+  /** The expand control's names (default: the design copy, Expand / Collapse). */
   labels?: IoBlockLabels | undefined;
 };
 

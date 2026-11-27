@@ -42,8 +42,8 @@ export type DetailViewportLabels = { expand?: string; collapse?: string };
 /**
  * The tool detail viewport (§6.16.9 "Detail viewport"): one scroll box of a tool's detail (a diff,
  * an output, the IN command or inputs, a prompt), at most `layout.tool-detail` high. When its
- * content overflows, an expand icon button in its top corner (「展开」 / "Expand", then 「收起」 /
- * "Collapse", `aria-expanded`) grows it to the tall cap (70% of the viewport height), where it
+ * content overflows, an expand icon button in its top corner ("Expand", then "Collapse",
+ * `aria-expanded`) grows it to the tall cap (70% of the viewport height), where it
  * still scrolls. `live` follows the tail in both heights.
  */
 export function DetailViewport({
