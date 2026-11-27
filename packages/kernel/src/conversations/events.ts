@@ -1126,6 +1126,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           permissionContext: PermissionContextMetaV1Schema.optional(),
           reminderSeqs: z.array(seqNo),
           /**
+           * The `run_failed` / `run_aborted` events whose run outcome note the request rendered
+           * (`runtime/context/run-outcome.ts`, maintainer decision 2026-11-28), in seq order; absent
+           * when it rendered none. Reconstruction reports `run_outcome_note` when the rebuild
+           * renders another set (a request sent before the note existed).
+           */
+          runOutcomeSeqs: z.array(seqNo).optional(),
+          /**
            * The request's output cap: `min(model cap, maxOutputTokens knob ??
            * runtime.maxOutputTokens)`, clamped by the hard fit guard.
            */
@@ -2028,6 +2035,24 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       attempt: count,
       reason: z.string(),
       /** The step the compaction ran in, as on `compaction_summary`. */
+      step: count,
+    }),
+  ),
+  /**
+   * A manual compaction (a compact run, context compaction spec §4.7) found nothing to summarize:
+   * the kept tail (the latest `keepRecentTurns` user turns) already holds every user turn since
+   * the last summary (`turns`). Display only, never model-visible; written once per compact run
+   * (maintainer decision 2026-11-28). An automatic compaction's skip writes nothing.
+   */
+  ev(
+    "compaction_skipped",
+    z.object({
+      reason: z.enum(["too_few_turns"]),
+      /** The effective `keepRecentTurns` setting the plan used. */
+      keepRecentTurns: count,
+      /** The user turns since the last summary (all of them without one). */
+      turns: count,
+      /** The step the compaction ran in (0 for a manual compact run). */
       step: count,
     }),
   ),

@@ -54,9 +54,11 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   terminal event: its model (the last `model_call`, else `run_started`), duration and tokens (its
  *   `usage` events) and how it ended (spec §6.16.23); a run still going has none. A `user_message`
  *   with `retryOf` folds into the failed run of the message it repeats ("Retried") instead of a
- *   second bubble. `compaction_summary` and `model_switched { reason: "unavailable" }` become
- *   dividers, and a manual compact run (`run_started.trigger: "compact"`) is named in its row; its
- *   `compaction_failed` becomes a failed divider (an automatic one stays silent).
+ *   second bubble. `compaction_summary`, `model_switched { reason: "unavailable" }` (the fallback)
+ *   and a person's own `model_switched` (`switched`) become dividers. A manual compact run
+ *   (`run_started.trigger: "compact"`) draws no run row: its outcome is one divider, the summary,
+ *   `compaction_skipped` (nothing to compact), its `compaction_failed` or its run's failure, or a
+ *   stop (an automatic compaction's failure stays silent; maintainer decision 2026-11-28).
  * - Logs written before UI refresh B (no `description`, `view`, title or card) still render: rows
  *   fall back to the tool key and the first string argument, failures to `isError`.
  * - Sub-agents (phase C, Task 21): consecutive `agent` calls form one `subagents` entry, its rows
@@ -69,7 +71,8 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   (`dispatch.kind: "message"`) is a user bubble with its `sender`; a `subagent_delivery` (a
  *   report, a note or the child's end) is a compact `delivery` entry in the parent (a run that
  *   handed back a report logs no finished delivery when it completes, so its end entry comes from
- *   `subagent_finished`, once per run with an older log's delivery); `SendMessage`
+ *   `subagent_finished`, once per run with an older log's delivery; a completion right after its
+ *   own report, nothing drawn between, merges into that report's line); `SendMessage`
  *   and `SubagentHandback` are ordinary tool rows. A child that runs again after an end stays on
  *   its `Agent` call's row: a restart (`subagent_dispatched` carrying the `SendMessage` call's id),
  *   a wake (no dispatch: the list's run started after the last end, or a later run's
@@ -275,8 +278,15 @@ export interface ConnectItem {
 
 export type DividerData =
   | { divider: "compacted"; summary: string; savedTokens: number | null }
+  /** A manual compaction found nothing to summarize (`compaction_skipped`). */
+  | { divider: "compact-skipped"; keepRecentTurns: number }
+  /** A manual compaction failed: its `compaction_failed` reason, or its run's failure. */
   | { divider: "compact-failed"; reason: string }
-  | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null };
+  /** A manual compact run was stopped. */
+  | { divider: "compact-stopped" }
+  | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null }
+  /** A person switched the conversation's model or effort (`model_switched`, reason `user`). */
+  | { divider: "switched"; model: ModelRef | null; effort: string | null };
 
 /** A run's tokens: every `usage` of the run (its step calls and compaction). */
 export interface RunTokens {
@@ -466,7 +476,11 @@ export type TimelineEntry =
       subagentId: string;
       /** The sub-agent's task description. */
       name: string;
-      delivery: "report" | "note" | "finished";
+      /**
+       * `report-finished`: a report directly followed by its run's completion, with nothing drawn
+       * between them, merged into one line (its text the report).
+       */
+      delivery: "report" | "note" | "finished" | "report-finished";
       /** `finished` only. */
       status?: DeliveryStatus;
       /** The report, the note, or a finish's final reply or error ("" when it handed back). */
@@ -1206,6 +1220,9 @@ export function buildEventTimeline(
       at: e.createdAt,
     };
   };
+  /** Whether the event belongs to a manual compact run (`run_started.trigger: "compact"`). */
+  const isCompact = (e: ConversationEvent) =>
+    e.runId !== null && runs.get(e.runId)?.compact === true;
   /** Failed runs by the user seq they would retry. */
   const failedBySeq = new Map<number, number>();
   /** The model the person switched to (the `from` of a fallback). */
@@ -1245,6 +1262,8 @@ export function buildEventTimeline(
   const subagentWaits = new Map<string, Extract<TimelineEntry, { kind: "subagent-wait" }>[]>();
   /** Child runs that handed back a report: the description their end entry is named by. */
   const reported = new Map<string, string>();
+  /** Child run → the entry of its latest report (a completion right after it merges into it). */
+  const reportEntries = new Map<string, Extract<TimelineEntry, { kind: "delivery" }>>();
   /** Child runs (of `reported`) whose end entry is in `out`. */
   const endShown = new Set<string>();
   /** Sub-agent id → its latest dispatch's row and child run. */
@@ -1338,8 +1357,17 @@ export function buildEventTimeline(
         }
         break;
       case "model_switched":
-        if (e.payload.reason === "user") switched = e.payload.model;
-        else {
+        if (e.payload.reason === "user") {
+          switched = e.payload.model;
+          // a person's own switch: one notice line where it applies (the next run on)
+          out.push({
+            kind: "divider",
+            key,
+            divider: "switched",
+            model: e.payload.model,
+            effort: e.payload.effort,
+          });
+        } else {
           out.push({ kind: "divider", key, divider: "fallback", from: switched, to: null });
           if (e.runId !== null) fallbacks.set(e.runId, out.length - 1);
           switched = null;
@@ -1837,17 +1865,29 @@ export function buildEventTimeline(
         const name = reported.get(e.payload.childRunId);
         if (name !== undefined && !endShown.has(e.payload.childRunId)) {
           endShown.add(e.payload.childRunId);
-          out.push({
-            kind: "delivery",
-            key,
-            subagentId: e.payload.subagentId,
-            name,
-            delivery: "finished",
-            status: subagentStatusOfFinish(
-              e.payload.status as SubagentFinishStatus,
-            ) as DeliveryStatus,
-            text: "",
-          });
+          // completed right after its own report with nothing drawn between: one line for both
+          const last = out.at(-1);
+          if (
+            e.payload.status === "completed" &&
+            last?.kind === "delivery" &&
+            last.delivery === "report" &&
+            last === reportEntries.get(e.payload.childRunId)
+          ) {
+            last.delivery = "report-finished";
+            last.status = "completed";
+          } else {
+            out.push({
+              kind: "delivery",
+              key,
+              subagentId: e.payload.subagentId,
+              name,
+              delivery: "finished",
+              status: subagentStatusOfFinish(
+                e.payload.status as SubagentFinishStatus,
+              ) as DeliveryStatus,
+              text: "",
+            });
+          }
         }
         const s = subagentRows.get(e.payload.subagentId);
         if (!s) break;
@@ -1920,7 +1960,7 @@ export function buildEventTimeline(
           if (endShown.has(p.childRunId)) break;
           endShown.add(p.childRunId);
         }
-        out.push({
+        const entry: Extract<TimelineEntry, { kind: "delivery" }> = {
           kind: "delivery",
           key,
           subagentId: p.subagentId,
@@ -1930,7 +1970,9 @@ export function buildEventTimeline(
             ? { status: subagentStatusOfFinish(p.status) as DeliveryStatus }
             : {}),
           text: p.text,
-        });
+        };
+        out.push(entry);
+        if (p.kind === "report") reportEntries.set(p.childRunId, entry);
         break;
       }
       case "approval_requested":
@@ -2060,12 +2102,31 @@ export function buildEventTimeline(
       case "compaction_failed":
         // A manual compact run's failure is its outcome (the person clicked "Compact
         // conversation"): a divider says so. An automatic compaction's failure is the step's own
-        // concern (it trims instead) and a manual early skip writes nothing, so both stay silent.
-        if (e.runId !== null && runs.get(e.runId)?.compact === true) {
-          out.push({ kind: "divider", key, divider: "compact-failed", reason: e.payload.reason });
+        // concern (it trims instead), so it stays silent.
+        if (isCompact(e)) {
+          out.push({
+            kind: "divider",
+            key,
+            divider: "compact-failed",
+            reason: firstLine(e.payload.reason),
+          });
         }
         break;
+      case "compaction_skipped":
+        // only a manual compact run writes it: its outcome when there was nothing to summarize
+        out.push({
+          kind: "divider",
+          key,
+          divider: "compact-skipped",
+          keepRecentTurns: e.payload.keepRecentTurns,
+        });
+        break;
       case "run_finished":
+        // a compact run draws no run row: its outcome is its divider (summary, skip or failure)
+        if (isCompact(e)) {
+          runData(e);
+          break;
+        }
         out.push({
           kind: "run",
           key,
@@ -2075,6 +2136,11 @@ export function buildEventTimeline(
         });
         break;
       case "run_aborted":
+        if (isCompact(e)) {
+          runData(e);
+          out.push({ kind: "divider", key, divider: "compact-stopped" });
+          break;
+        }
         out.push({
           kind: "run",
           key,
@@ -2085,6 +2151,11 @@ export function buildEventTimeline(
         break;
       case "run_failed": {
         const { code, message } = e.payload.error;
+        if (isCompact(e)) {
+          runData(e);
+          out.push({ kind: "divider", key, divider: "compact-failed", reason: firstLine(message) });
+          break;
+        }
         const denial =
           code === "run.hook_denied" && e.runId !== null ? modelDenials.get(e.runId) : undefined;
         out.push({

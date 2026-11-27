@@ -13,6 +13,7 @@ import {
   extractSummary,
   shouldCompact,
   summarySavedTokens,
+  turnsSinceSummary,
 } from "../../../src/runtime/context/compaction.js";
 import { UNKNOWN_RESULT_TEXT } from "../../../src/runtime/context/pairing.js";
 import { estimateTokens } from "../../../src/runtime/context/tokens.js";
@@ -77,6 +78,43 @@ describe("compactionPlan", () => {
     log.runStarted();
     for (let i = 1; i <= 4; i++) log.turn(i);
     expect(compactionPlan(log.events, settings(), NO_LIMIT)).toBeNull();
+  });
+
+  it("carries a run outcome note as a system line; a compact run's end has none", () => {
+    const log = new Log();
+    log.turn(1);
+    log.add({ type: "run_failed", payload: { error: { code: "model.network", message: "raw" } } });
+    log.add(
+      {
+        type: "run_started",
+        payload: {
+          agentVersion: 1,
+          model: { provider: "model-fake", model: "fake-1" },
+          triggerAccountId: "acc-1",
+          trigger: "compact",
+        },
+      },
+      "run-c",
+    );
+    log.add({ type: "run_aborted", payload: { byAccountId: "acc-1", reason: "user" } }, "run-c");
+    for (let i = 2; i <= 5; i++) log.turn(i);
+    const plan = compactionPlan(log.events, settings(), NO_LIMIT);
+    expect(plan?.transcript).toContain(
+      "System reminder: The previous run ended before it finished: a network error.",
+    );
+    expect(plan?.transcript).not.toContain("stopped");
+    expect(plan?.transcript).not.toContain("raw");
+  });
+
+  it("counts the user turns since the latest summary (turnsSinceSummary)", () => {
+    const log = new Log();
+    log.turn(1);
+    expect(turnsSinceSummary(log.events)).toBe(1);
+    log.turn(2);
+    log.summary(log.events.at(-1)?.seq ?? 0, "two questions");
+    expect(turnsSinceSummary(log.events)).toBe(0);
+    log.turn(3);
+    expect(turnsSinceSummary(log.events)).toBe(1);
   });
 
   it("builds on the previous summary and skips what it already covers", () => {

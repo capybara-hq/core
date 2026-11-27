@@ -48,8 +48,9 @@ export interface ForcedCompaction {
  * settings) and calls the shared {@link runCompaction} with `force: true`: the trigger,
  * `enabled: false` and the failure backoff are bypassed, the compaction plan is still required.
  *
- * The run writes only `compaction_summary` / `compaction_failed` + the summary calls' `usage`, with
- * `step: 0`; no user message and no model step.
+ * The run writes only its outcome, with `step: 0`: `compaction_summary` / `compaction_failed` + the
+ * summary calls' `usage`, or `compaction_skipped` when there is nothing to summarize (maintainer
+ * decision 2026-11-28); no user message and no model step.
  */
 @Injectable()
 export class CompactionService {
@@ -93,9 +94,7 @@ export class CompactionService {
       this.config.get().runtime,
       compaction,
       tools,
-      {
-        force: true,
-      },
+      { force: true, manual: true },
     );
     return { summarySeq: out.summarySeq, failed: out.failed };
   }

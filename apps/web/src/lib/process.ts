@@ -360,7 +360,8 @@ export function groupProcess(
           const { kind: _kind, key: _key, ...divider } = e;
           addStep(e, { kind: "note", key: e.key, note: e.divider, divider });
         } else {
-          if (e.divider === "compact-failed") close("ended");
+          // a compaction's outcome or a person's switch stands between runs: it ends the block
+          if (e.divider !== "fallback" && e.divider !== "compacted") close("ended");
           out.push(e);
         }
         break;

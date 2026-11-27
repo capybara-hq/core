@@ -83,6 +83,7 @@ describe("eval drift labels (final review m5)", () => {
     "media_missing",
     "media_changed",
     "context_fit",
+    "run_outcome_note",
     "tool_unmatched",
   ];
   it.each(["zh", "en"])("%s labels every drift reason", (locale) => {

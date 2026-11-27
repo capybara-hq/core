@@ -89,6 +89,7 @@ Adopt Claude Code's structured summary prompt (2.1.183), not the current free-fo
 
 The summary's user message ends, after `</conversation_summary>`, with a short model-facing paragraph (revision 2026-11-27, issue #956):
 
+- Always first (maintainer decision 2026-11-28, issue #975): "The earlier part of this conversation was compacted into the summary above and is no longer shown verbatim." — the plain statement of what the summary is; before it the framing never said so.
 - When the summary re-renders opening messages (§4.2, `openingSeqs`): "The message that opened the current turn follows, shown again verbatim; the summary covers it." (plural form for several).
 - When messages from before the summary stay verbatim after it (a user, assistant or absorbed message, reminder or forked skill report logged after `coversUpToSeq` and before the summary event: the kept tail, or a message logged while the summary call ran): "The messages after this summary (after those, when openers precede) are the most recent ones in the conversation, kept verbatim. The summary was written without seeing them, so something it says is still pending may already have happened in them."
 - Always: "Continue the work from where it left off."
@@ -148,6 +149,7 @@ Applied to every request after compaction and before sending:
 - Endpoint: `POST /api/v1/orgs/:orgId/conversations/:id/compact` (member+ with conversation access; 404 for eval conversations).
 - Body: optional `clientRequestId` for idempotency. If a compact run is already queued/running, return it (`202 { runId }`). If an ordinary run is active, return `409 conversation.busy`; the UI disables the action while running.
 - Execution: a compact run (`run_started.trigger: "compact"`, trigger account = caller) takes the conversation lock and calls the shared compaction service with `force: true`; it writes only `compaction_summary`/`compaction_failed` + usage, emits progress, and finishes. No user message, no model step.
+- **Its outcome is always recorded** (maintainer decision 2026-11-28, issue #975). A plan with nothing to summarize (every user turn since the last summary is in the kept tail of `keepRecentTurns` turns; seen on prod with a one-turn conversation, whose compact run used to end `completed` with nothing in the log and a "✓ 完成" row) writes `compaction_skipped { reason: "too_few_turns", keepRecentTurns, turns, step: 0 }` (idem `compaction_skipped:<runId>`; display only, not model-visible, listed in `build.ts` and the transcript's exhaustive switch as such), and the run still finishes `completed`. A summary model that cannot be resolved, or attachment storage that is down, writes `compaction_failed` with the fixed reason `the model is unavailable` / `attachment storage is unavailable` (counted by the backoff like any failure). The automatic and reactive paths keep their silent skips: no event per step. The web draws one divider per compact run and no run row (design spec §6.16.7, §6.16.23).
 - The effective definition and `Wc` are the model the next run would use (the conversation's selection, including `model_switched`); tools and media resolve as for a step; the compact run's events carry `step: 0`.
 - The run appears in the timeline/trajectory as a compact run; step consumers skip runs with no model step.
 - Manual compaction is allowed even when automatic compaction is disabled (explicit user action); the hard guard still applies.
@@ -183,7 +185,7 @@ UI: a "Conversation compaction" section on the platform settings page and the or
 - Title-menu entry "Compact conversation" (the existing `TitleBar` menu; **no new action/icon slot**, so no design-system change and no visual baseline regeneration) and a `/compact` built-in command in the composer (parsed before skill lookup; no arguments; a command-menu entry).
 - Both call the compact endpoint; progress comes from the SSE `compaction` event.
 - Disabled while a run is active; hidden for eval conversations.
-- The compacting row shows spinner + elapsed, `i/N` when chunked; on completion the existing "Earlier conversation compacted · saved N" divider appears, using the summary event's `savedTokens`.
+- The compacting row shows spinner + elapsed, `i/N` when chunked; on completion the existing "Earlier conversation compacted · saved N" divider appears, using the summary event's `savedTokens`. A compact run draws no run row; nothing to compact, a failure and a stop are one quiet divider each (design spec §6.16.7, maintainer decision 2026-11-28).
 - i18n zh/en; `check:web-ui`; no new styles outside design components.
 
 ### 4.11 Failure matrix

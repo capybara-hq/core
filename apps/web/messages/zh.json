@@ -1629,8 +1629,13 @@
     "divider": {
       "compacted": "较早的会话已压缩",
       "compactedSaved": "较早的会话已压缩 · 节省 {n} tokens",
-      "compactFailed": "压缩失败",
-      "fallback": "所选模型 {from} 已不可用，本条起改用智能体的模型 {to}"
+      "compactFailed": "压缩失败：{reason}",
+      "fallback": "所选模型 {from} 已不可用，本条起改用智能体的模型 {to}",
+      "compactSkipped": "无需压缩 · 对话未超过 {k} 轮，最近 {k} 轮会原样保留",
+      "compactStopped": "已停止压缩",
+      "switched": "已切换到 {model}",
+      "switchedEffort": "已切换到 {model}，推理强度 {effort}",
+      "agentModel": "智能体的模型"
     },
     "compactionRun": "压缩",
     "compacting": "正在压缩会话…",
@@ -1704,7 +1709,8 @@
       "failed": "{name} 失败",
       "aborted": "{name} 已停止",
       "show": "查看",
-      "hide": "收起"
+      "hide": "收起",
+      "report-finished": "{name} 交回报告并已完成"
     },
     "permission": {
       "label": "权限",
@@ -3888,7 +3894,8 @@
       "subagent_changed": "子智能体的定义与记录时不同",
       "permission_profile_changed": "记录的权限上下文无法从快照还原",
       "device_sandbox_changed": "设备沙箱在两次运行之间发生了变化",
-      "model_switched": "候选模型替换了会话中切换的模型"
+      "model_switched": "候选模型替换了会话中切换的模型",
+      "run_outcome_note": "记录的请求缺少日志现在会给出的运行结束说明"
     },
     "tabs": {
       "sets": "评测集",
