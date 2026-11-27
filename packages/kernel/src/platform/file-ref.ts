@@ -9,7 +9,6 @@ import {
   sniffMatches,
 } from "../conversations/attachments.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { rootConversationOf } from "../runtime/subagents/child.js";
 import { StorageService } from "../storage/storage.service.js";
 import { findConversationFile } from "../tools/builtins/conversation-files.js";
 
@@ -77,6 +76,8 @@ export interface FileCardDetail {
 export interface FileRefContext {
   orgId: string;
   conversationId: string;
+  /** The root of the conversation tree, from the call's context. */
+  rootConversationId: string;
   signal: AbortSignal;
 }
 
@@ -179,13 +180,12 @@ export class FileRefs {
 
   private async conversationFile(id: string, limits: FileLimits, ctx: FileRefContext) {
     const db = this.db.db;
-    const rootConversationId = await rootConversationOf(db, ctx.conversationId);
     const file = await findConversationFile(
       { db, attachments: this.attachments, storage: this.storage },
       {
         orgId: ctx.orgId,
         conversationId: ctx.conversationId,
-        rootConversationId,
+        rootConversationId: ctx.rootConversationId,
         id,
         // one byte past the limit tells a file that grew from one that fits
         maxBytes: limits.maxBytes + 1,

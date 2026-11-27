@@ -6,7 +6,7 @@ import { inflateSync } from "node:zlib";
 import { GIT_MARKETPLACE_USERNAME_DEFAULT, GIT_USERNAME_RE } from "@capybara-hq/plugin-sdk";
 import git, { type GitHttpRequest, type GitHttpResponse, type HttpClient } from "isomorphic-git";
 import { NetDeniedError, type NetPolicy } from "../net/public-address.js";
-import { NetBodyTooLargeError, safeFetch } from "../net/safe-fetch.js";
+import { describeFetchError, NetBodyTooLargeError, safeFetch } from "../net/safe-fetch.js";
 import {
   type MarketplaceNetCode,
   marketplaceNetCode,
@@ -75,6 +75,8 @@ export type GitOptions = {
   maxBytes: number;
   /** Where the temp object store is created (default the OS temp dir); tests only. */
   tempRoot?: string;
+  /** Retry of transient failures (connection errors, HTTP 502 / 503 / 504); tests shorten it. */
+  retry?: { attempts?: number; backoffMs?: number };
 };
 
 export type GitSourceErrorCode =
@@ -210,7 +212,8 @@ function startOp(loc: GitLocation, o: GitOptions): Op {
         target.href,
         { method, headers, ...(body !== undefined && { body }), signal },
         o.net,
-        { maxBytes: o.maxBytes },
+        // both git requests only read (`info/refs`, `git-upload-pack`) and the body is a Buffer
+        { maxBytes: o.maxBytes, retry: o.retry ?? {} },
       );
       const stream = res.body;
       async function* chunks(): AsyncGenerator<Uint8Array> {
@@ -262,8 +265,14 @@ function mapError(e: unknown, op: Op, o: GitOptions, what: string): unknown {
   const cause = (e as { cause?: unknown })?.cause;
   if (cause instanceof NetDeniedError) return mapError(cause, op, o, what);
   const status = (e as { data?: { statusCode?: unknown } })?.data?.statusCode;
-  if (typeof status === "number") return failed(`${what}: the git server answered ${status}`, e);
-  return failed(`${what}: ${errMsg(e)}`, e);
+  if (typeof status === "number") {
+    const text = (e as { data?: { statusMessage?: unknown } }).data?.statusMessage;
+    return failed(
+      `${what}: the git server answered ${status}${typeof text === "string" && text !== "" ? ` ${text}` : ""}`,
+      e,
+    );
+  }
+  return failed(`${what}: ${describeFetchError(e)}`, e);
 }
 
 /**

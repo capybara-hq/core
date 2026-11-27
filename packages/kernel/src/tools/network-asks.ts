@@ -357,6 +357,37 @@ export interface NetworkPlan {
   notes: string[];
   /** `missing_grants` keys of an unattended run (`network:<host>`). */
   missingGrants: string[];
+  /**
+   * Whether `notes` hold a private-address note ({@link addressEscalationNote} or
+   * {@link addressLayerNote}) and what it says about running outside the sandbox: `remedy` when it
+   * also says how (retry escalated) or why that is not possible here, `fact` when it only says
+   * that a command run outside the sandbox reaches the address. Absent: no address note.
+   */
+  addressNote?: "remedy" | "fact";
+}
+
+/**
+ * The two forms of the `Bash` tool's sandbox denial line for a command whose refused hosts become
+ * network notes (kernel-internal, `BuiltinResult.networkReport.denialHint`): `full` when no note
+ * covers a private address, `afterAddressFact` (without the closed-address lead the note already
+ * states) after an address note of kind `fact`.
+ */
+export interface DenialHint {
+  full: string;
+  afterAddressFact: string;
+}
+
+/**
+ * The sandbox denial line a command result keeps beside its network notes: one instruction about
+ * running outside the sandbox, never two. An address note that says how (or why not) replaces the
+ * line; one that states only the fact keeps the line's retry part; without one the line is whole.
+ */
+export function denialHintFor(
+  hint: DenialHint | undefined,
+  addressNote: NetworkPlan["addressNote"],
+): string {
+  if (hint === undefined || addressNote === "remedy") return "";
+  return addressNote === "fact" ? hint.afterAddressFact : hint.full;
 }
 
 /** Hosts in first-seen order, deduplicated, lower-cased, trailing dot dropped. */
@@ -469,16 +500,20 @@ export function planNetworkAsk(
   notes.push(...unavailable);
   if (org.length > 0) notes.push(orgLayerNote(org));
   if (platform.length > 0) notes.push(platformCeilingNote(platform));
-  if (address.length > 0)
-    notes.push(
-      ctx.escalation === true && ctx.unattended == null
-        ? addressEscalationNote(address)
-        : addressLayerNote(
-            address,
-            ctx.unattended != null ? ESCALATION_UNATTENDED_WHY : ctx.escalationRefusal,
-          ),
-    );
-  return { ask, ...(ask.length > 0 && offer !== null && { offer }), notes, missingGrants };
+  let addressNote: NetworkPlan["addressNote"];
+  if (address.length > 0) {
+    const why = ctx.unattended != null ? ESCALATION_UNATTENDED_WHY : ctx.escalationRefusal;
+    const escalate = ctx.escalation === true && ctx.unattended == null;
+    notes.push(escalate ? addressEscalationNote(address) : addressLayerNote(address, why));
+    addressNote = escalate || why !== undefined ? "remedy" : "fact";
+  }
+  return {
+    ask,
+    ...(ask.length > 0 && offer !== null && { offer }),
+    notes,
+    missingGrants,
+    ...(addressNote !== undefined && { addressNote }),
+  };
 }
 
 /**

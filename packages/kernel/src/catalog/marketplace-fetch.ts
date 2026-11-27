@@ -3,7 +3,7 @@ import { type MarketplaceManifest, parseMarketplaceManifest } from "@capybara-hq
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
 import { type LookupFn, NetDeniedError, type NetPolicy } from "../net/public-address.js";
-import { safeFetch } from "../net/safe-fetch.js";
+import { describeFetchError, safeFetch } from "../net/safe-fetch.js";
 import { isLoopback, readCapped } from "../packages/npm.js";
 
 /**
@@ -95,6 +95,8 @@ export interface MarketplaceFetchOptions {
   net: NetPolicy;
   /** Tests only: replaces the DNS lookup. */
   lookup?: LookupFn;
+  /** Retry of transient failures (connection errors, HTTP 502 / 503 / 504); tests shorten it. */
+  retry?: { attempts?: number; backoffMs?: number };
   signal: AbortSignal;
 }
 
@@ -143,6 +145,7 @@ export async function fetchMarketplaceManifest(
   try {
     res = await safeFetch(target.href, { headers, signal }, o.net, {
       ...(o.lookup !== undefined && { lookup: o.lookup }),
+      retry: o.retry ?? {},
     });
   } catch (e) {
     if (e instanceof NetDeniedError) {
@@ -152,7 +155,9 @@ export async function fetchMarketplaceManifest(
         ...(code !== undefined && { code, host: e.host }),
       });
     }
-    throw new MarketplaceFetchError(`cannot fetch the marketplace: ${errMsg(e)}`, { cause: e });
+    throw new MarketplaceFetchError(`cannot fetch the marketplace: ${describeFetchError(e)}`, {
+      cause: e,
+    });
   }
   if (res.status === 304) {
     await res.body?.cancel().catch(() => {});
@@ -160,7 +165,9 @@ export async function fetchMarketplaceManifest(
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
-    throw new MarketplaceFetchError(`the marketplace responded with HTTP ${res.status}`);
+    throw new MarketplaceFetchError(
+      `the marketplace responded with HTTP ${res.status}${res.statusText !== "" ? ` ${res.statusText}` : ""}${res.status >= 500 ? " (the upstream host failed; try again later)" : ""}`,
+    );
   }
   let raw: Buffer;
   try {
@@ -215,6 +222,7 @@ export async function fetchMarketplaceArchive(
     timeoutMs: number;
     net: NetPolicy;
     lookup?: LookupFn;
+    retry?: { attempts?: number; backoffMs?: number };
     signal?: AbortSignal;
   },
 ): Promise<{ bytes: Uint8Array; integrity: string }> {
@@ -229,6 +237,7 @@ export async function fetchMarketplaceArchive(
   try {
     res = await safeFetch(new URL(archive.url).href, { signal }, o.net, {
       ...(o.lookup !== undefined && { lookup: o.lookup }),
+      retry: o.retry ?? {},
     });
   } catch (e) {
     if (e instanceof NetDeniedError) {
@@ -237,11 +246,11 @@ export async function fetchMarketplaceArchive(
         throw new ApiError(code, `Archive download refused: ${e.message}`, [{ host: e.host }]);
       }
     }
-    throw failed(`cannot fetch the archive: ${errMsg(e)}`);
+    throw failed(`cannot fetch the archive ${archive.url}: ${describeFetchError(e)}`);
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
-    throw failed(`the archive URL responded with HTTP ${res.status}`);
+    throw failed(`the archive URL ${archive.url} responded with HTTP ${res.status}`);
   }
   const tooLarge = new ApiError(
     "extension.package_too_large",

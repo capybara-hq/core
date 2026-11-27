@@ -265,6 +265,7 @@ describe("acceptance: files instead of uploads", () => {
         accountId: rootId,
         agentId,
         conversationId: conv,
+        rootConversationId: conv,
         runId: runRow.id,
         callId: `call-${randomUUID().slice(0, 8)}`,
         signal: new AbortController().signal,

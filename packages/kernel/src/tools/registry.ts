@@ -51,6 +51,7 @@ import { canonicalJson } from "./canonical-json.js";
 import { connectorSetups } from "./connector-setup.js";
 import { type ConnectorAuth, Credentials } from "./credentials.js";
 import { toolKeyIssue } from "./naming.js";
+import type { DenialHint } from "./network-asks.js";
 import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 
 export { BUILTIN_TOOL_NAMES } from "./builtin-names.js";
@@ -92,12 +93,6 @@ export interface BuiltinCallContext extends ToolCallContext {
    * only by `sandbox.limits.maxCommandSeconds` and the tool timeouts.
    */
   runDeadline?: number;
-  /**
-   * The conversation whose sandbox this call uses (sub-agents spec §10.1, agent map spec §6): the
-   * root conversation for a sub-agent's call at any depth, the conversation itself otherwise (the
-   * default when absent).
-   */
-  sandboxConversationId?: string;
   /**
    * The working root the command review judged this call against (project root spec §4.3): a
    * sandbox tool runs there instead of reading the working root again, so it executes exactly what
@@ -183,8 +178,10 @@ export type BuiltinResult =
        * Kernel-internal (never written to the log or sent to the model): the network hosts a
        * foreground command on a device was refused (`Bash`; network ask-to-allow spec §6.2). The
        * pipeline turns it into `network_blocked`, an ask to the device owner or notes.
+       * `denialHint`: the sandbox denial line, left out of the content; the pipeline appends the
+       * form that goes with its notes (`denialHintFor`).
        */
-      networkReport?: { deviceId: string; blocked: NetworkBlockedHost[] };
+      networkReport?: { deviceId: string; blocked: NetworkBlockedHost[]; denialHint?: DenialHint };
       /**
        * Kernel-internal (never written to the log or sent to the model): `gh auth login --web`'s
        * device code an exec printed (`Bash`; auto mode spec §6, P-D13). The pipeline turns it into
@@ -237,6 +234,8 @@ export interface CallPolicyContext {
   accountId: string;
   agentId: string;
   conversationId: string;
+  /** The root of the conversation tree; absent outside the pipeline (then the conversation itself). */
+  rootConversationId?: string;
   /** Null outside a run (a builtin called directly). */
   runId: string | null;
   /** The tool call being decided (a call id is unique within its run). Absent outside the pipeline. */

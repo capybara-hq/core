@@ -29,7 +29,8 @@ const SPEC: ToolSpec = {
     'locate files by name, e.g. pattern "**/*.py" for all Python files. The pattern is matched ' +
     "against paths relative to path (default: the workspace directory): * matches within one directory, ** " +
     "matches across directories, ? matches one character, {a,b} matches either. Returns absolute " +
-    "paths sorted by name, up to 1000. Skips .git and node_modules directories and, where the " +
+    "paths sorted by name, up to 1000. Skips version control (.git, .hg, .svn, .jj), " +
+    "node_modules and .cache directories and, where the " +
     "device supports it, files ignored by .gitignore, .ignore or .rgignore files; to list files " +
     "inside a skipped directory, pass that directory as path. To search file contents, use Grep. " +
     "In auto mode paths may be anywhere on the machine.",

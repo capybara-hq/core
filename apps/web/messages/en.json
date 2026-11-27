@@ -1580,7 +1580,9 @@
     "deviceCode": {
       "title": "Sign in to GitHub",
       "body": "Open GitHub and enter this one-time code to finish signing in. The sign-in runs inside this device; the token never leaves it.",
-      "codeLabel": "One-time code"
+      "codeLabel": "One-time code",
+      "used": "Used",
+      "expired": "Expired"
     },
     "toolLines": "lines {from}–{to}",
     "pickModel": "Switch model",
@@ -5920,7 +5922,8 @@
     },
     "contextTotal": "{n} tokens incl. sub-agents",
     "background": "Background tasks",
-    "startingGrant": "Running work keeps the permissions it started with; a permission change applies to new operations. Revoked device or organization access can still stop it."
+    "startingGrant": "Running work keeps the permissions it started with; a permission change applies to new operations. Revoked device or organization access can still stop it.",
+    "connectEnded": "Sub-agent {name} no longer waits for a connection."
   },
   "background": {
     "inBackground": "In background",

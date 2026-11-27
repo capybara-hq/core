@@ -140,8 +140,11 @@ import {
   addressEscalationHint,
   blockedEventHosts,
   clipKept,
+  type DenialHint,
+  denialHintFor,
   deviceAskTerms,
   NETWORK_ASK_KEPT_MAX_BYTES,
+  type NetworkPlan,
   networkBlockedIdemKey,
   planNetworkAsk,
   serviceAskedNote,
@@ -1083,6 +1086,16 @@ function networkReportOf(
   return blocked.length === 0 ? undefined : { deviceId: r.deviceId, blocked };
 }
 
+/** A builtin result's kernel-internal sandbox denial line (`BuiltinResult.networkReport.denialHint`). */
+function denialHintOf(result: unknown): DenialHint | undefined {
+  const h = (result as { networkReport?: { denialHint?: unknown } } | null)?.networkReport
+    ?.denialHint as { full?: unknown; afterAddressFact?: unknown } | undefined;
+  if (h === undefined || typeof h.full !== "string" || typeof h.afterAddressFact !== "string") {
+    return undefined;
+  }
+  return { full: h.full, afterAddressFact: h.afterAddressFact };
+}
+
 /**
  * A kernel-internal device code (see `BuiltinResult.loginCode` and `KeptToolResult.loginCode`):
  * the shape is checked again here so a malformed value never reaches the log (the event schema
@@ -1583,6 +1596,7 @@ export class ToolPipeline {
         accountId: ctx.accountId,
         agentId: ctx.agentId,
         conversationId: ctx.conversationId,
+        rootConversationId: ctx.parent?.rootConversationId ?? ctx.conversationId,
         runId: ctx.runId,
         callId: call.id,
         rawInput: call.input,
@@ -2111,6 +2125,12 @@ export class ToolPipeline {
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? networkReportOf(outcome.result)
         : undefined;
+    // the denial line `Bash` left out of its content: appended here in the form that goes with
+    // the network notes (`denialHintFor`), after the output (and its truncation line)
+    const denialHint =
+      outcome.kind === "result" && tool.source.kind === "builtin"
+        ? denialHintOf(outcome.result)
+        : undefined;
     // a device service's refusals reported in the call scope (browser use spec §7.1), any source:
     // asked as "always" only, the call runs again once approved
     // a report about another device than the conversation's is ignored: only the device the call
@@ -2154,6 +2174,7 @@ export class ToolPipeline {
           // carried into the kept result so a resumed run writes the event too (it was written
           // with `network_blocked` below when the ask was created)
           ...(loginCode !== undefined && { loginCode }),
+          ...(denialHint !== undefined && { denialHint }),
         },
         reviewedRoots.escalation,
         reviewedRoots.escalationRefusal,
@@ -2178,8 +2199,11 @@ export class ToolPipeline {
         return handled.wait;
       }
       if (handled.event !== null) pre.push(handled.event);
-      content = withNetworkNotes(content, handled.notes);
-    }
+      content = withNetworkNotes(
+        content + denialHintFor(denialHint, handled.addressNote),
+        handled.notes,
+      );
+    } else content += denialHintFor(denialHint, undefined);
     await this.writeResult(
       ctx,
       call.id,
@@ -3081,7 +3105,12 @@ export class ToolPipeline {
     report: { deviceId: string; blocked: NetworkBlockedHost[] },
     pre: readonly AppendEvent[],
     callAudit: CallAudit,
-    result: NetworkAskDetail["result"] & { text: string; review?: ReviewRecord },
+    result: NetworkAskDetail["result"] & {
+      text: string;
+      review?: ReviewRecord;
+      /** The command's sandbox denial line (`denialHintFor`), kept with the plan's notes. */
+      denialHint?: DenialHint;
+    },
     /** Admission's verdict for this call: `available` when it may run outside the sandbox. */
     escalation?: "available" | "escalated",
     /** Why this call could not run outside the sandbox here (absent when it could). */
@@ -3093,7 +3122,12 @@ export class ToolPipeline {
     service?: { name: string; attempt: number; url: string | null },
   ): Promise<
     | { kind: "wait"; wait: WaitingFor; content: string }
-    | { kind: "write"; event: AppendEvent | null; notes: string[] }
+    | {
+        kind: "write";
+        event: AppendEvent | null;
+        notes: string[];
+        addressNote?: NetworkPlan["addressNote"];
+      }
   > {
     const hosts = blockedEventHosts(report.blocked);
     if (hosts.length === 0) return { kind: "write", event: null, notes: [] };
@@ -3136,8 +3170,9 @@ export class ToolPipeline {
       }
     }
     const offer = plan.offer;
+    const addressNote = plan.addressNote;
     if (plan.ask.length === 0 || offer === undefined)
-      return { kind: "write", event, notes: plan.notes };
+      return { kind: "write", event, notes: plan.notes, addressNote };
     // one ask per call: a service call that ran again after its ask is not asked again; only a
     // would-be ask is replaced, the plan's other notes (a host on the list, not yet applied) stay
     if (
@@ -3148,6 +3183,7 @@ export class ToolPipeline {
         kind: "write",
         event,
         notes: [...plan.notes, serviceAskedNote(plan.ask.map((h) => h.host))],
+        addressNote,
       };
     }
     // the device's owner is the only person who may decide (spec §5.2)
@@ -3158,7 +3194,7 @@ export class ToolPipeline {
       .where("org_id", "=", ctx.orgId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (owner === undefined) return { kind: "write", event, notes: plan.notes };
+    if (owner === undefined) return { kind: "write", event, notes: plan.notes, addressNote };
 
     let { content, outputId } = result;
     if (Buffer.byteLength(content, "utf8") > NETWORK_ASK_KEPT_MAX_BYTES && outputId === undefined) {
@@ -3177,10 +3213,13 @@ export class ToolPipeline {
       content = spilled.content;
       outputId = spilled.outputId;
     }
-    const { text: _text, ...rest } = result;
+    const { text: _text, denialHint, ...rest } = result;
     const kept: NetworkAskDetail["result"] = {
       ...rest,
-      content: withNetworkNotes(clipKept(content), plan.notes),
+      content: withNetworkNotes(
+        clipKept(content) + denialHintFor(denialHint, addressNote),
+        plan.notes,
+      ),
       ...(outputId !== undefined && { outputId }),
     };
     // the command ran: the call's display-only events (a `device_code`) and network_blocked with
@@ -3537,9 +3576,6 @@ export class ToolPipeline {
         reviewed?.escalationRefusal !== undefined && {
           sandboxEscalationRefusal: reviewed.escalationRefusal,
         }),
-      // a sub-agent works in its root conversation's sandbox (spec §10.1, at every depth)
-      ...(tool.source.kind === "builtin" &&
-        ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { parentRunId: ctx.parent.runId }),
       ...(tool.source.kind === "builtin" &&

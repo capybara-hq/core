@@ -82,7 +82,7 @@ describe("listFilesCommand", () => {
     expect(c).toContain("then rg --no-config --hidden --glob='!.git'");
     expect(c).toContain("--files --null -- .;");
     expect(c).toContain(
-      "else find . \\( -name '.git' -o -name '.hg' -o -name '.svn' -o -name '.jj' -o -name 'node_modules' \\) -prune -o -type f -print0; fi",
+      "else find . \\( -name '.git' -o -name '.hg' -o -name '.svn' -o -name '.jj' -o -name 'node_modules' -o -name '.cache' \\) -prune -o -type f -print0; fi",
     );
   });
 });
@@ -112,6 +112,7 @@ describe("on a real tree", () => {
     put(".github/ci.yml", "needle: true\n");
     put("node_modules/pkg/index.js", "needle\n");
     put(".git/config", "needle\n");
+    put(".cache/pip/http/entry", "needle\n");
     put("bin.dat", "needle\u0000binary");
     // a tool PATH holding only what the commands need, with and without rg
     noRg = join(root, "bin-no-rg");
@@ -138,7 +139,7 @@ describe("on a real tree", () => {
   for (const c of cases) {
     describe(c.name, () => {
       it.skipIf(c.skip)(
-        "Grep skips .git, node_modules and binary files, but searches hidden files",
+        "Grep skips .git, node_modules, .cache and binary files, but searches hidden files",
         () => {
           const r = run(grepCommand(base), repo, c.path());
           expect(r.status).toBe(0);
@@ -164,6 +165,11 @@ describe("on a real tree", () => {
         expect(parseFileList(r.stdout, "/w")).toEqual(["/w/pkg/index.js"]);
       });
 
+      it.skipIf(c.skip)("Grep searches .cache when it is passed explicitly", () => {
+        const r = run(grepCommand(base), join(repo, ".cache"), c.path());
+        expect(parseFileList(r.stdout, "/w")).toEqual(["/w/pip/http/entry"]);
+      });
+
       it.skipIf(c.skip)("Glob lists files outside the skipped directories", () => {
         const r = run(listFilesCommand(), repo, c.path());
         expect(
@@ -174,6 +180,8 @@ describe("on a real tree", () => {
         ).toEqual(["./.github/ci.yml", "./bin.dat", "./src/a.ts"]);
         const inside = run(listFilesCommand(), join(repo, "node_modules"), c.path());
         expect(inside.stdout.split("\u0000").filter((n) => n !== "")).toEqual(["./pkg/index.js"]);
+        const cache = run(listFilesCommand(), join(repo, ".cache"), c.path());
+        expect(cache.stdout.split("\u0000").filter((n) => n !== "")).toEqual(["./pip/http/entry"]);
       });
     });
   }
