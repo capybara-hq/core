@@ -1,26 +1,28 @@
 # Idle compaction
 
-Status: design, for maintainer review (2026-11-27). Issue #955. Builds on the context compaction
-design (`2026-11-14-context-compaction-design.md`, cited as "compaction spec §n"), whose §2 and §6
-listed background precomputation as a non-goal / deferred item; this spec takes it up in a form
-that keeps compaction synchronous and in the event log.
+Status: design, for maintainer review (2026-11-27; revised the same day with the maintainer's
+decisions, recorded in §12). Issue #955. Builds on the context compaction design
+(`2026-11-14-context-compaction-design.md`, cited as "compaction spec §n"), whose §2 and §6 listed
+background precomputation as a non-goal / deferred item; this spec takes it up in a form that keeps
+compaction synchronous and in the event log.
 
-## 1. Why
+## 1. Why, and the core rule
 
 A long chat conversation often crosses the compaction line during its last step: the final
 assistant reply and tool results land after the step-boundary check (compaction spec §4.1), so the
 conversation is over the line when the run ends. The person's next message then waits for the
 summary request (tens of seconds; longer when it is chunked, §4.5) before the agent starts
-answering. The person was away anyway; the wait could have happened while they were gone.
+answering. And if the person returns after the provider's prompt cache has expired, that next
+request also re-reads the whole large context at full price, only to compact it.
 
-Claude Code (2.1.332) does this: it arms a timer at every turn end and, when the session has been
-idle for most of the prompt cache's lifetime, compacts in the background. Its motive is twofold:
+Claude Code (2.1.332) arms a timer at every turn end and, when the session has been idle for most
+of the prompt cache's lifetime, compacts in the background. Its motive is twofold:
 
-1. **Latency.** The returning person does not wait for a compaction.
-2. **Cache cost.** Its summary request reuses the conversation's cached prefix, so summarizing just
+1. **Cache cost.** Its summary request reuses the conversation's cached prefix, so summarizing just
    before the cache expires is cheap, and the returning person avoids a full-price re-read of a
    large context followed by an immediate compaction. It therefore fires at 90% of the cache
    lifetime and only with the 1-hour cache, not the 5-minute one.
+2. **Latency.** The returning person does not wait for a compaction.
 
 What Claude Code does, for reference (reverse-engineered; not a contract):
 
@@ -38,66 +40,96 @@ What Claude Code does, for reference (reverse-engineered; not a contract):
 - Telemetry on each fire's outcome and on "return after idle" (over 30 min idle, over 100k
   context) to measure the value.
 
-**Capybara today gets only the latency benefit.** Our summary request transcribes events into text
-and may be chunked (compaction spec §4.5); it shares no prefix with the conversation's requests, so
-it hits no provider's prompt cache, whatever the provider caches. Cache behavior is also per
-provider and per model, so Claude Code's "90% of a 1-hour cache" cannot be hard-coded in the
-kernel. Hence two phases (maintainer direction, 2026-11-27):
+**Core rule (maintainer decision, 2026-11-27): idle compaction exists only to beat a cache
+expiry, and only for caches that live at least 30 minutes.**
 
-- **Phase 1 (build first):** a fixed idle delay, set by the platform and overridable per org.
-  Latency benefit only.
-- **Phase 2 (designed here, built later):** model providers declare per-model cache behavior
-  (mechanism, lifetime options, refresh rules); the request names its lifetime tier; the kernel
-  derives the expiry from the last request that read or wrote the cache (no vendor reports one);
-  the summary request learns to continue the conversation's request so it reuses the cached
-  prefix; where both hold, idle compaction fires before the cache expires, otherwise it keeps the
-  fixed delay (§9).
+- The only trigger is "before the cache expires": fire at `t0 + 0.9 × L`, where `t0` is the start
+  of the conversation's last request that read or wrote the cache and `L` that request's cache
+  lifetime, and never later than 30 s before the expiry (§4.4, §9.3).
+- `L < 30 min` (a 5-minute cache) never gets idle compaction: it would fire minutes after every
+  turn, for no gain a returning person would notice.
+- There is **no fixed-delay, latency-only mode.** Without a warm cache, compacting while idle only
+  moves a full-price summary earlier and pays it even when nobody returns.
+- Two prerequisites, therefore built first:
+  1. **Cache declaration and kernel-derived expiry** (§9.2–§9.3): the kernel must know the lifetime
+     a request actually used. No vendor reports an expiry, so the kernel derives it.
+  2. **An in-context summary that reuses the cached prefix** (§9.4): today's summary request
+     (`buildCompactionRequest`) replaces the system prompt, sends `tools: []` and a transcript, so
+     it shares no prefix with any provider's cache; compacting "before expiry" with it saves
+     nothing.
+
+**Precondition in practice.** The kernel sends each model's default cache lifetime unless an admin
+turns on the long tier (`promptCache.longTtl`, default **off**, §6.1). The defaults of the
+explicit-cache vendors we use are 5 minutes (Anthropic, Bailian), so with the default settings
+**no Anthropic or Bailian request has a cache of 30 minutes or more, and idle compaction does not
+run for them**; it runs where an admin turns on the long cache tier. Re-checked exception: OpenAI
+GPT-5.6 and later default to the `30m` tier (a minimum lifetime) when the request names none, so
+those models qualify without `longTtl` once the openai plugin declares it; earlier OpenAI models
+default to `in_memory` (about 5–10 minutes idle) or `24h` retention that is "often about 30
+minutes" with no guarantee, and do not qualify (§9.1). `idleEnabled` defaults to on, so idle
+compaction starts wherever this precondition holds.
+
+**Phases (maintainer decision Q8):**
+
+| Phase | Content | Behavior change |
+|---|---|---|
+| 1 | SDK cache declaration, `ModelRequest.cacheTtl`, `ModelUsage.cacheWriteByTtl`, `promptCache.longTtl`, kernel-derived expiry (§9.2–§9.3); the in-context summary for every compaction (§9.4); provider plugins declare (§9.5) | cheaper summaries where the cache is warm; correct cache-write costs; long tier available |
+| 2 | idle compaction (§3–§8) | background compaction before a ≥ 30 min cache expires |
+
+Phase 2 depends on phase 1 and is built after it.
 
 ## 2. Goals and non-goals
 
 Goals:
 
-1. A person returning to a long idle chat conversation does not wait for a compaction the kernel
-   could have done while they were away.
-2. Bounded cost: idle compaction runs only on conversations large enough for it to matter, at most
-   once per finished run, never on conversations nobody started by hand.
+1. A person returning to a long idle chat conversation neither waits for a compaction nor pays a
+   full-price re-read the kernel could have avoided while the cache was warm.
+2. Bounded cost: idle compaction runs only where the summary is cheap (warm cache, prefix reused),
+   only on large conversations, at most once per finished run, never on conversations nobody
+   started by hand.
 3. Multi-replica safe, in the event log, replayable, with no new model-visible input.
 4. Platform default, org override, personal opt-out.
-5. Phase 2 has a clear, provider-neutral contract that does not change phase 1's shape.
+5. Provider-neutral: cache behavior comes from per-model declarations, never hard-coded.
 
 Non-goals:
 
+- **A fixed-delay or latency-only mode** (maintainer decision; §1).
+- **Idle compaction on caches under 30 minutes**, or on implicit / best-effort caches with no
+  lifetime (DeepSeek, Bailian implicit, Ark implicit).
 - **Precompute and swap** (Claude Code's mode b). See §5.6: the event log makes it unnecessary.
 - **A new compaction algorithm.** Idle compaction is the existing compaction (plan, summary
-  template, chunked fallback, fit guard) started at another moment.
+  template, fit guard) with the in-context request of §9.4, started at another moment.
 - **Compaction of sub-agent and eval conversations.** They take no compaction today (compaction
   spec §4.7; `ForceCompactionInput.conversationKind: "chat"`), and they gain none.
-- **Phase 2's cache timing and cache-reusing summary in phase 1.**
 - **Presence or typing signals.** The kernel has no "person is reading / typing" signal; a new
   message preempts an idle compaction instead (§5.5).
+- **Vendor-side stored caches** (Ark explicit cache, cached-content APIs billed per hour).
 
 Anti-goals: an idle compaction that delays a person's message more than an inline one would; a
-summary held outside the event log; a second timer mechanism beside BullMQ.
+summary held outside the event log; a second timer mechanism beside BullMQ; a job enqueued for
+every run whether or not it can ever fire.
 
 ## 3. Chosen approach
 
-**Idle compaction = an automatic compact run**, started by a delayed job owed at run finish.
+**Idle compaction = an automatic compact run**, started by a delayed job that is owed at run
+finish only when cheap arm-time checks pass.
 
 ```
 run finishes (chat, eligible trigger + outcome)
-  └─ same transaction: outbox row idle-compact-<runId>, runAt = finish + delay
+  └─ arm-time checks (settings, last request's cache ≥ 30 min, size, outcome) fail ─▶ nothing owed
+  └─ pass ─▶ same transaction: outbox row idle-compact-<runId>, runAt = t0 + 0.9 × L
        └─ job fires (worker, runJob, org scope)
-            ├─ obsolete / guards fail ─▶ log the outcome, done (no event written)
-            └─ eligible ─▶ start an idle compact run (conversation row lock, re-check)
-                 └─ run worker: the manual compact path (CompactionService.force)
+            ├─ fire-time re-checks fail ─▶ log the outcome, done (no event written)
+            └─ pass ─▶ start an idle compact run (conversation row lock, re-check)
+                 └─ run worker: the compact path with the in-context summary (§9.4)
                       ├─ compaction_summary + usage ─▶ run_finished
                       └─ a person's message arrives ─▶ aborted (superseded); the message's run follows
 ```
 
 It reuses everything manual compaction (compaction spec §4.7) already has: the `runs.compact` run
 path in the run worker, mutual exclusion with ordinary runs through the run claim, progress (§4.6),
-the summary's usage and hooks, abort without a partial summary. What it adds is the job that decides
-*whether* and *when*, the checks the manual path skips (enabled, size, backoff), and preemption.
+the summary's usage and hooks, abort without a partial summary. What it adds is the arm-time filter,
+the job that re-checks *whether*, the cache-derived *when*, and preemption.
 
 Rejected:
 
@@ -106,61 +138,85 @@ Rejected:
   coverage (`coversUpToSeq`) could then fall behind or interleave with a running step. The run
   claim already solves this.
 - **C. A periodic sweep over idle conversations** (`@LockedInterval` scanning for conversations
-  idle for N minutes). Works without arming, but scans every org's conversations each tick, needs
-  an index on "last activity", and fires late by up to a tick. One delayed job per finished run is
-  cheaper and exact.
+  whose cache is about to expire). Works without arming, but scans every org's conversations each
+  tick and fires late by up to a tick, which can miss a cache expiry. A delayed job owed only when
+  it can fire is cheaper and exact.
 - **D. Precompute and swap** (§5.6).
+- **E. A fixed idle delay** (the first draft's phase 1). Rejected by the maintainer: without a
+  cache benefit it only moves a full-price summary earlier.
 
 ## 4. Trigger and guards
 
-### 4.1 Arming
+### 4.1 Size threshold
 
-A run arms idle compaction when, in its finish transaction (`RunFinish.finishIn`):
+`idleMinTokens(W) = max(idleMinTokensFloor, idleMinWindowRatio × W)`, defaults
+`max(200000, 0.3 × W)`, where `W` is the context window of the conversation's model. The size
+compared is the next request's estimate (arm time: the last call's actual input plus its output,
+§4.2; fire time: the calibrated estimate, §4.3).
 
-- the conversation is `kind = 'chat'` (not sub-agent, not eval);
-- the run's `run_started.trigger` is `message` (a person's message), `background_task` or
-  `subagent` (wakes continuing a conversation a person started); **not** `schedule` (a scheduled
-  task's conversation is often never read again: compacting it is cost without a reader) and not
-  `compact` (manual or idle);
-- the outcome is `completed`, `max_steps`, `max_duration` or `max_output`; **not** `budget` (the
-  run stopped to save money; do not spend more), `failed`, `aborted` (the person stopped it, or the
-  org is going), nor a suspended run (not terminal: waiting on a person);
-- the effective settings have `enabled` and `idleEnabled` true (read in the transaction; a later
-  change is re-read when the job fires).
+What this means per window (trigger line from compaction spec §4.1, `min(0.8 W, W − O_p − R_p)`
+with the defaults `O = 32k`, `R = 8k`):
 
-Arming is one outbox row (`OutboxService.add`, writing-kernel-api "Owed work"):
+| Window `W` | Idle threshold | Inline trigger line | Idle compaction |
+|---|---|---|---|
+| 128k | 200k | ≈ 88k | never (threshold above the window) |
+| 200k | 200k | 160k | never (the inline trigger at about 0.8 W comes first; an estimate cannot reach 200k) |
+| 256k | 200k | ≈ 205k | almost never (only between 200k and ≈ 205k) |
+| 400k | 200k | 320k | 200k–320k |
+| 1M | 300k | 800k | 300k–800k |
 
-- queue `cap-kernel-maintenance` (one consumer, `MaintenanceProcessor`, dispatches by name; no new
-  queue) or a dedicated `cap-idle-compaction` queue if the builder finds the maintenance queue's
-  concurrency unsuitable (§11, Q6);
-- name `idle-compaction`, job id `idle-compact-<runId>` (no `:`; one per finished run, so owing it
-  twice is a no-op);
-- data `{ orgId, conversationId, runId, armedSeq }`, where `armedSeq` is the conversation's highest
-  event seq written by the finish transaction (the `run_finished` event);
-- `runAt = now + idleDelayMinutes`; `orgId` set, so an org's deletion removes the pending row.
+**This is intentional and matches Claude Code**, whose 200k floor never fires for sessions with a
+200k window. Below 200k, a full-price re-read or an inline compaction is cheap enough not to be
+worth a background call; idle compaction is for large-window models carrying a large context.
+
+Both numbers are settings with these defaults (§6.1), not constants: a deployment on cheap models
+may lower the floor, an org may raise it; the defaults encode the maintainer's rule.
+
+### 4.2 Arming: cheap checks at run end, nothing owed when they fail
+
+At run finish (`RunFinish.finishIn`), before owing anything, the kernel checks facts it already
+holds in memory or in the rows the finish reads; if any fails, **no job is owed at all**:
+
+1. **Kind and trigger.** `kind = 'chat'` (not sub-agent, not eval); `run_started.trigger` is
+   `message`, `background_task` or `subagent` (wakes continuing a conversation a person started);
+   not `schedule` (a scheduled task's conversation is often never read again) and not `compact`.
+2. **Outcome.** `completed`, `max_steps`, `max_duration` or `max_output`; not `budget` (the run
+   stopped to save money), `failed`, `aborted`, nor a suspended run (not terminal).
+3. **Settings.** Effective `enabled` and `idleEnabled` (platform + org) and the owner's preference
+   not off (§6.3).
+4. **Cache lifetime.** The run's last request that read or wrote the cache (§9.3) exists, its model
+   declares `mechanism: "explicit"` or an implicit mechanism with a declared lifetime floor, and its
+   lifetime `L` (the recorded `cacheTtl`, else the model's `defaultTtl`) is **≥ 1800 s**.
+5. **Size.** The last call's actual input (`inputTokens + cacheReadTokens + cacheWriteTokens`) plus
+   its output tokens is `≥ idleMinTokens(W)`.
+
+When all pass, one outbox row (`OutboxService.add`, writing-kernel-api "Owed work") in the same
+transaction:
+
+- queue `cap-kernel-maintenance` (one consumer, `MaintenanceProcessor`, concurrency 5, dispatches
+  by name; decision Q6), name `idle-compaction`, job id `idle-compact-<runId>` (no `:`; one per
+  finished run, so owing it twice is a no-op);
+- data `{ orgId, conversationId, runId, armedSeq, cacheCallSeq, expiresAt }`: `armedSeq` is the
+  conversation's highest seq written by the finish (the `run_finished` event), `cacheCallSeq` the
+  `model_call` the expiry was derived from, `expiresAt` that expiry;
+- `runAt = min(t0 + 0.9 × L, expiresAt − 30 s)` (§9.3); `orgId` set, so an org's deletion removes
+  the pending row.
 
 Why the outbox and not an `afterCommit` hint (prompt suggestions enqueue as a hint): losing one
-idle compaction is harmless, but this is *delayed* work, and the outbox's relay is already the
-only sanctioned way to give BullMQ a future job (`kc-enqueue-via-outbox`); a hint would need a new
-`KC_EXCEPTIONS` entry and still a delayed `add`. The row is small and deleted on delivery.
+idle compaction is harmless, but this is *delayed* work, and the outbox relay is the sanctioned way
+to give BullMQ a future job (`kc-enqueue-via-outbox`); a hint would need a new `KC_EXCEPTIONS` entry
+and still a delayed `add`.
 
 Registry entry (`OUTBOX_JOBS`): `idempotent`: "the job re-reads the conversation and starts at most
 one idle compact run under the conversation row lock, only while the conversation's latest seq is
 still `armedSeq`; a duplicate delivery finds the seq advanced (by the first delivery's run) or an
-active compact run and does nothing"; `opts`: `attempts: 3`, short backoff, `removeOnComplete:
+active compact run and does nothing"; `opts`: `attempts: 2`, short backoff, `removeOnComplete:
 true`.
 
-### 4.2 Re-arm and cancel
+The arm-time checks are a pure function (`idleArmDecision(...)`) over the run's facts, the settings
+and the model declaration; the finish only calls it.
 
-There is no cancellation. Every finished run owes its own job; an earlier job that fires after a
-later run finds the conversation's latest seq above its `armedSeq` and ends as `obsolete`. Any
-event appended after the arming run (a new message, a queued message, a model switch, a permission
-profile change, an earlier idle compaction's own run) makes the job obsolete: the conversation was
-touched, and the later run (if any) arms its own job. A job per finished run is cheap (one indexed
-read when it fires); cancelling BullMQ delayed jobs from the run path would add a Redis call to a
-hot transaction path for no gain.
-
-### 4.3 Guards when the job fires
+### 4.3 Re-checks when the job fires
 
 The job runs inside `runJob` (org scope from `orgId`), on the worker role, and checks in this order;
 the first failing check ends it with that outcome (§7) and writes no event:
@@ -170,38 +226,39 @@ the first failing check ends it with that outcome (§7) and writes no event:
 | 1 | org live; conversation live, `kind = 'chat'`; agent not deleted | `gone` |
 | 2 | latest event seq of the conversation `== armedSeq` | `obsolete` |
 | 3 | no active run (queued, running, suspended); no unconsumed message; queue head empty | `busy` |
-| 4 | effective `enabled` and `idleEnabled` (live, platform + org); conversation owner's preference not off (§6.3) | `disabled` |
-| 5 | the job is not stale: `now - finishedAt <= idleDelay + IDLE_MAX_LATENESS` (6 h) | `stale` |
-| 6 | the latest compaction record after the latest summary is not a `compaction_failed` (respect the failure backoff: an idle retry of a failing compaction is cost without progress) | `backoff` |
-| 7 | the effective definition's model is enabled for the org and resolvable | `no_model` |
-| 8 | size: the calibrated estimate of the next step's request `>= min(idleMinTokens, triggerLine)` | `small` |
-| 9 | growth: the part the plan would summarize (not yet covered by a summary) is `>= IDLE_MIN_GROWTH_TOKENS` (20k, or a quarter of `idleMinTokens`, whichever is smaller) and the compaction plan is non-empty | `small` |
+| 4 | effective `enabled` and `idleEnabled` (live); owner's preference not off | `disabled` |
+| 5 | the cache is still warm: `now < expiresAt − 30 s` (the job is not late: worker backlog, outage) | `expired` |
+| 6 | the latest compaction record after the latest summary is not a `compaction_failed` (respect the failure backoff) | `backoff` |
+| 7 | the effective definition's model is enabled for the org, resolvable, and the same model as the `cacheCallSeq` call (a switch breaks the prefix) | `no_model` |
+| 8 | size: the calibrated estimate of the next request `>= idleMinTokens(W)`, and the part the plan would summarize (not yet covered by a summary) `>= IDLE_MIN_GROWTH_TOKENS` (20k) with a non-empty plan | `small` |
+| 9 | the in-context summary applies (§9.4: no drift in the rebuild, it fits the window) | `no_prefix` |
 
 Then it starts the run (§5.1); a refusal there (a message arrived in between) is `obsolete` / `busy`.
 
-Notes on the guards:
+Notes:
 
-- **Staleness (5)** replaces Claude Code's "timer late by more than 60 s / cache lapsed". Phase 1
-  has no cache to lapse, so lateness costs nothing except when the worker was down for hours and
-  a backlog of jobs would compact many conversations at once on restart; 6 h bounds that. Phase 2
-  re-adds a cache-lapse check for the cache-timed mode (§9.6).
-- **Size (8).** `triggerLine = min(threshold * W, W - O_p - R_p)` from compaction spec §4.1 (the
-  same `planningBounds`; `shouldCompact` without the hard-line shortcut). A conversation over the
-  trigger line would compact on the next step anyway: idle compaction only moves that cost earlier
-  (and spends it even if the person never returns, §8.2). Below the line, `idleMinTokens` (default
-  100k, like Claude Code's floor) picks conversations whose next request is large enough that a
-  smaller context matters. The estimate is built as `CompactionService.force` builds it: the
-  effective definition (the next run's agent version and model selection, including
-  `model_switched`), its tools, the calibrated estimator.
-- **Growth (9)** stops a conversation that was just compacted (summary + a short tail) from being
-  compacted again for a few tokens.
+- **Cache warm (5)** is Claude Code's "cache lapsed / timer late" guard. A late job compacting a
+  cold cache would pay full price, which is exactly what the core rule forbids, so it ends.
+- **In-context only (9).** Idle compaction never falls back to the transcript request: that request
+  reuses no cache, so it would be the full-price background summary the core rule rules out. The
+  inline and manual compactions keep their transcript fallback.
+- **Growth (8)** stops a conversation that was just compacted from being compacted again for a few
+  tokens.
 - **No rate-limit guard.** The kernel has no provider rate-limit signal; a provider error fails the
   compaction like any other (`compaction_failed`, which then blocks later idle attempts through
-  guard 6 until a summary succeeds).
+  check 6 until a summary succeeds).
 
-The guards 1–9 are a pure function over the conversation facts, the settings and the estimate
-(`idleCompactionDecision(...)`), unit-tested on its own; reading the facts and the estimate is the
-job's.
+The re-checks are a pure function too (`idleFireDecision(...)`), unit-tested on its own.
+
+### 4.4 Re-arm and cancel
+
+There is no cancellation. Every finished run that passes §4.2 owes its own job; an earlier job that
+fires after a later run finds the conversation's latest seq above its `armedSeq` and ends as
+`obsolete`. Any event appended after the arming run (a new message, a queued message, a model
+switch, a permission profile change) makes the job obsolete; the later run, if it passes §4.2, arms
+its own. Each later request that hits the cache refreshes it (`refreshOnHit`), so the newer job's
+`runAt` is also the right one. Cancelling BullMQ delayed jobs from the run path would add a Redis
+call to a hot transaction path for no gain.
 
 ## 5. Job and run lifecycle
 
@@ -211,21 +268,22 @@ job's.
 (`runtime/run-queue.ts`), in one `@Transactional({ propagation: "requires_new" })` method under the
 conversation row lock (the lock `ensureRun` takes):
 
-- re-check guards 1–3 under the lock (latest seq still `armedSeq`, no active run, no unconsumed
+- re-check checks 1–3 under the lock (latest seq still `armedSeq`, no active run, no unconsumed
   message); a refusal returns null, never throws (the job is not an API call);
 - insert the run row as `startCompaction` does (`compact: true`, `trigger_seq = consumed_seq`, the
   deterministic run job id via `jobIdFor`, owed through the outbox), with `compact_origin = 'idle'`
-  (a new column, §5.7) and `trigger_account_id` = the conversation's owner (`conversations.account_id`):
-  usage, hooks and audit attribute the calls to the person whose conversation it is;
-- the run worker takes the compact path unchanged (`CompactionService.force`, `step: 0`, `force:
-  true` because the job already decided; the plan is still required, so an empty plan writes
-  nothing and the run finishes `completed` with no summary).
+  (a new column, §5.7) and `trigger_account_id` = the conversation's owner
+  (`conversations.account_id`): usage, hooks and audit attribute the calls to the person whose
+  conversation it is;
+- the run worker takes the compact path (`CompactionService.force`, `step: 0`) with the in-context
+  request required (`method: "in_context"`; if it no longer applies when the run starts, the run
+  writes nothing and finishes `completed`).
 
 `run_started` carries `trigger: "compact"` (unchanged, so every reader that skips compact runs:
 channels' progress, prompt suggestions, eval planning, keeps working) plus a new optional
 `compactOrigin: "idle"` (absent = manual), display only (§6.4, §8).
 
-### 5.2 Race with a new message: preemption
+### 5.2 Race with a new message: preemption (decision Q3)
 
 Idle compaction must never make the person wait longer than an inline compaction would. Today a
 message that arrives during an active run waits for the run to end (`ensureRunIn`: "an active run
@@ -242,9 +300,8 @@ run.**
   writes `run_aborted`, no partial summary; the run's finish then calls `ensureRun`, which starts
   the message's run. A queued, not yet claimed idle run is finished as aborted directly in the same
   transaction (nothing to stop).
-- The message's run compacts inline if it needs to (it would have anyway). The summary calls
-  already made are billed and recorded (`usage`, compaction spec §4.5): the waste is bounded to one
-  partly done compaction, only when the person returns during the minute or so it runs.
+- The message's run compacts inline if it needs to (it would have anyway; the cache is still warm,
+  so its in-context summary is cheap too). The summary call already made is billed and recorded.
 - If the abort arrives after the `compaction_summary` was written (the `writing` phase), the summary
   stands: it is a valid summary in the log, the run ends aborted, and the next step uses it.
 - A **manual** compact request while an idle compact run is active returns the idle run's id (the
@@ -253,30 +310,19 @@ run.**
 - Background wakes (`background_task`, sub-agent deliveries) are input like a message: they
   preempt too. A scheduled task's message into a chat conversation also preempts.
 
-Alternative considered: let an idle run finish when the conversation is over the trigger line (the
-message's step would compact anyway). Saves the wasted call in that case but makes the person wait
-on a summary whose progress they may not see (a channel conversation shows none); rejected for
-simplicity and the anti-goal. Open question Q3.
-
 ### 5.3 Fire timing
 
-Phase 1: `runAt = finishedAt + idleDelayMinutes` (default 10 min, §6.1). The delay is measured
-from the run's end, not from the last message seen: the person's attention starts when the reply
-arrives.
-
-Why 10 minutes: long enough that a person still reading the reply or typing the next message is
-rarely preempted; short enough that most "back after a coffee / meeting" returns find the summary
-ready. Without a cache benefit, a later fire only loses returns (more people come back before it).
-Claude Code's ~54 minutes follows from its cache lifetime, which phase 1 does not have.
+`runAt = min(t0 + 0.9 × L, expiresAt − 30 s)`, with `L ≥ 30 min`, so the job fires 27 minutes or
+more after the last cache-touching request started (27 min for OpenAI's `30m`, 54 min for a 1-hour
+tier). The derivation (`t0`, `L`, refresh rules) is §9.3.
 
 ### 5.4 Abort, shutdown, failure
 
 - Shutdown or a lost lease during an idle compact run: as for a manual one (`interrupted`, the job
-  goes back to another replica, which re-runs the compaction; the summary's idempotency keys are
-  the run id and ordinal, compaction spec §4.4).
+  goes back to another replica, which re-runs the compaction if the cache is still warm; the
+  summary's idempotency keys are the run id and ordinal, compaction spec §4.4).
 - A failed compaction writes `compaction_failed` and the run finishes `completed`, exactly as a
-  manual one; guard 6 blocks idle attempts until a summary succeeds (the next step's own trigger
-  follows its own backoff).
+  manual one; check 6 blocks idle attempts until a summary succeeds.
 - Org deletion: the outbox row goes with the org; a run already started is aborted by the existing
   org-deletion path (`org_deleted`).
 
@@ -284,9 +330,8 @@ Claude Code's ~54 minutes follows from its cache lifetime, which phase 1 does no
 
 Claude Code refuses when the user interacted within 60 s because its compaction shares the
 process with the person's input. In Capybara the guard is structural: any input appends an event
-(the job is then obsolete) or arrives during the run (it preempts it). Reading the page without
-typing is not observable and does not need to be: compaction does not change what the page shows
-besides the divider.
+(the job is then obsolete) or arrives during the run (it preempts it). And the job fires 27 minutes
+or more after the last request started.
 
 ### 5.6 Precompute and swap (Claude Code mode b): not needed
 
@@ -308,7 +353,7 @@ In Capybara:
 
 Decision: no precompute; the idle compact run writes the summary directly.
 
-### 5.7 Data changes
+### 5.7 Data changes (phase 2)
 
 - Migration `NNNN_idle_compaction.sql`: `ALTER TABLE runs ADD COLUMN IF NOT EXISTS compact_origin
   text NULL` with a check (`'manual' | 'idle'`, null for ordinary runs; existing compact runs read
@@ -316,33 +361,41 @@ Decision: no precompute; the idle compact run writes the summary directly.
   builder confirms against `check:org-filter`.
 - Events (`conversations/events.ts`): `run_started.compactOrigin?: "manual" | "idle"`;
   `run_aborted.reason` gains `"superseded"`. Additive; old logs parse.
-- No change to `compaction_summary`, `compaction_failed` or `usage`.
+- Phase 1's event changes are in §9 (`model_call.request.cacheTtl`, `compaction_summary.method`).
 
 ## 6. Settings and UI
 
 ### 6.1 Platform and org
 
-Three fields join `COMPACTION_FIELDS` (`identity/settings.ts`), flat so the existing field-by-field
-`effectiveCompactionSettings` merge, the org "follow platform" state and the `null`-clears patch
-semantics carry over unchanged:
+Idle compaction fields join `COMPACTION_FIELDS` (`identity/settings.ts`), flat so the existing
+field-by-field `effectiveCompactionSettings` merge, the org "follow platform" state and the
+`null`-clears patch semantics carry over unchanged:
 
 | Field | Default | Range | Meaning |
 |---|---|---|---|
-| `idleEnabled` | `true` (Q1) | boolean | compact idle conversations in the background |
-| `idleDelayMinutes` | 10 | 1–1440 | idle time after a run ends before the background compaction |
-| `idleMinTokens` | 100000 | 10000–2000000 | smallest next-request estimate worth compacting below the trigger line |
+| `idleEnabled` | `true` (Q1) | boolean | compact idle conversations before a ≥ 30 min cache expires |
+| `idleMinTokensFloor` | 200000 | 50000–2000000 | the size floor of §4.1 |
+| `idleMinWindowRatio` | 0.3 | 0.1–0.9 | the share of the window of §4.1 |
 
-`enabled: false` (automatic compaction off) also turns idle compaction off: it is automatic
-compaction. Manual compaction stays available whatever these say.
+There is no delay field: the timing comes from the cache (§5.3). `enabled: false` (automatic
+compaction off) also turns idle compaction off. Manual compaction stays available whatever these
+say.
 
-Phase 2 adds two platform/org fields: `idleTiming: "fixed" | "cache"` (default `cache`, §9.6) and
-`promptCache.longTtl` (default off, §9.3).
+Phase 1 adds a separate platform / org group, `promptCache`:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `promptCache.longTtl` | `false` (Q10) | chat requests ask for the model's shortest cache tier of at least 30 minutes (Anthropic `1h`, Qwen4 `1h`; OpenAI 5.6+ `30m` is already the default) instead of its default; every cache write then costs the long tier's price |
+
+`promptCache` lives in `DeploymentSettings` and org settings like `compaction` (org > platform >
+built-in), read per request by request building, recorded per request as `cacheTtl` (§9.2). It is
+the precondition for idle compaction on Anthropic and Bailian models (§1).
 
 ### 6.2 Platform tool parity
 
 No new route. The fields join existing shared schemas (`COMPACTION_SETTINGS`,
-`COMPACTION_SETTINGS_PATCH`, `DEPLOYMENT_SETTINGS_PATCH.compaction`, the org settings patch), which
-the existing Platform operations (`admin.settings` / `admin.update-settings`, `org-settings.get` /
+`COMPACTION_SETTINGS_PATCH`, `DEPLOYMENT_SETTINGS_PATCH`, the org settings patch), which the
+existing Platform operations (`admin.settings` / `admin.update-settings`, `org-settings.get` /
 `org-settings.update`) are built from; `platform-parity.test.ts` covers them through the shared
 schema. Same for the personal preference (§6.3), which joins `PreferencesSchema` behind the
 existing `GET` / `PUT /api/v1/me/preferences` operations. `pnpm check:platform-ops` must stay green;
@@ -350,34 +403,40 @@ no exclusion is added.
 
 ### 6.3 Personal opt-out
 
-`PreferencesSchema` gains `idleCompaction: "off" | null` (null = follow the org). Checked at guard
-4 against the conversation's owner. A person who wants every detail kept verbatim until they come
-back, or who does not want background model calls in their name, turns it off in their account
-preferences ("Account" page, a switch in the existing preferences form). It is a narrowing only:
-a person cannot turn idle compaction on where the org has it off.
+`PreferencesSchema` gains `idleCompaction: "off" | null` (null = follow the org). Checked at arm
+time and at fire time against the conversation's owner. A person who wants every detail kept
+verbatim until they come back, or who does not want background model calls in their name, turns it
+off in their account preferences (a switch in the existing preferences form). It is a narrowing
+only: a person cannot turn idle compaction on where the org has it off.
 
-A per-conversation switch is not proposed (Q4).
+No per-conversation switch (decision Q4).
 
 ### 6.4 UI
 
 - **Settings pages.** The existing "Conversation compaction" section on the platform settings page
-  and the org settings page (design components only, `check:web-ui`) gains the three fields; the
-  delay and min-tokens fields are disabled while `idleEnabled` is off. zh / en:
-  - `compaction.idleEnabled`: "空闲时在后台压缩" / "Compact idle conversations in the background";
-    hint "对话停下一段时间后，在后台提前压缩，下次发消息时不必等待压缩。会在没人回来的对话上产生模型
-    调用费用。" / "After a conversation has been idle for a while, compact it in the background so
-    the next message does not wait for it. Spends model calls even on conversations nobody returns
-    to."
-  - `compaction.idleDelayMinutes`: "空闲多久后压缩（分钟）" / "Idle time before compacting
-    (minutes)"; help "1–1,440，默认 10。"
-  - `compaction.idleMinTokens`: "后台压缩的最小上下文" / "Smallest context to compact in the
-    background"; help "下一次请求预计不少于这么多 token（或已到触发阈值）时才压缩（10,000–2,000,000，
-    默认 100,000）。"
+  and the org settings page (design components only, `check:web-ui`) gains the three fields (the
+  two size fields disabled while `idleEnabled` is off); a new "Prompt cache" section holds
+  `longTtl`. zh / en:
+  - `compaction.idleEnabled`: "缓存过期前在后台压缩" / "Compact idle conversations before the cache
+    expires"; hint "对话空闲时，在模型的提示缓存过期前用缓存压缩，下次发消息时不必等待压缩，也不必全价重读
+    长上下文。只对缓存至少 30 分钟的模型生效（大多数模型需要开启长缓存）。" / "While a conversation is
+    idle, compact it from the prompt cache before the cache expires, so the next message neither
+    waits for a compaction nor re-reads the long context at full price. Only for models whose cache
+    lasts 30 minutes or more (most need the long cache tier)."
+  - `compaction.idleMinTokensFloor`: "后台压缩的最小上下文" / "Smallest context to compact in the
+    background"; help "上下文不少于这个数和窗口比例两者中较大者时才压缩（默认 200,000）。"
+  - `compaction.idleMinWindowRatio`: "按窗口比例的最小上下文" / "Smallest context as a share of the
+    window"; help "默认 0.3：1M 窗口的模型从 300,000 起。"
+  - `promptCache.longTtl`: "长提示缓存" / "Long prompt cache"; hint "请求改用模型至少 30 分钟的缓存档
+    （如 1 小时），缓存写入按长档计价（Anthropic 约为输入价的 2 倍，而 5 分钟档约 1.25 倍）。开启后空闲压缩
+    才会在这些模型上运行。" / "Requests use the model's cache tier of at least 30 minutes (such as 1
+    hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price
+    instead of 1.25×). Idle compaction runs on these models only with this on."
 - **Account preferences.** "空闲时压缩我的对话" / "Compact my conversations while I'm away", with
   the org state shown when the org has it off ("组织已关闭").
 - **Conversation page.** An idle compaction is quiet:
-  - While it runs and the page is open, the existing compacting row (§4.6 of the compaction spec)
-    shows, labelled "正在后台压缩会话…" / "Compacting in the background…".
+  - While it runs and the page is open, the existing compacting row (compaction spec §4.6) shows,
+    labelled "正在后台压缩会话…" / "Compacting in the background…".
   - When it is done, the existing divider reads "较早的会话已在空闲时压缩 · 节省 {n} tokens" /
     "Earlier conversation compacted while idle · saved {n} tokens" (the variant is chosen from the
     run's `run_started.compactOrigin`; the timeline already groups events by run).
@@ -392,44 +451,45 @@ A per-conversation switch is not proposed (Q4).
 There is no metrics backend in the kernel; outcomes are structured log lines plus what the event
 log already holds.
 
+- **Arm decision**: not logged per run (hot path); the arm-skip reason is a `debug` line.
 - **Job outcome**: one `info` log per job, `context=IdleCompaction`, `outcome` in `started | gone |
-  obsolete | busy | disabled | stale | backoff | no_model | small`, with `orgId`, `conversationId`,
-  `runId`, the estimate and the lateness.
-- **Run outcome**: from the log: `compaction_summary` (with `savedTokens`) or `compaction_failed`,
-  or `run_aborted.reason: "superseded"` (preempted), all in runs with `compactOrigin: "idle"`.
+  obsolete | busy | disabled | expired | backoff | no_model | small | no_prefix`, with `orgId`,
+  `conversationId`, `runId`, the estimate, `L`, and the lateness against `runAt`.
+- **Run outcome**: from the log: `compaction_summary` (with `savedTokens`, `method`) or
+  `compaction_failed`, or `run_aborted.reason: "superseded"`, all in runs with
+  `compactOrigin: "idle"`; usage shows the cache reads.
 - **Return after idle** (the value measure): when a run starts on a conversation whose previous
-  run ended more than 30 min earlier and whose next request estimate was over 100k at that end, log
-  `idle_return` with the gap, whether an idle summary was written in between, and the step's
-  inline compaction time if one ran (0 when the idle summary made it unnecessary). Together with
-  usage (purpose `compaction`, joined to the run's origin) this answers "how often does the person
-  come back, and what did idle compaction cost per avoided wait".
-- **Admin**: the super admin's usage views may later split compaction usage by origin; not in
-  phase 1 (Q5).
+  run ended more than 30 min earlier and whose context at that end was at least `idleMinTokens(W)`,
+  log `idle_return` with the gap, the cache lifetime then in use, whether an idle summary was
+  written in between, and the step's inline compaction time if one ran. This also shows the
+  opportunities the 30-minute rule leaves out (conversations on 5-minute caches).
+- **Admin**: the super admin's usage views may later split compaction usage by origin (decision
+  Q5: later).
 
 ## 8. Usage, hooks, cost, replay
 
 ### 8.1 Usage and hooks
 
-The summary calls are ordinary compaction calls: `model.request` fires per call with the existing
-compaction fields (a policy hook may deny and fails closed: `compaction_failed`), `usage` events
-with purpose `compaction`, `model_usage` rows, `usage.report` delivered through the outbox. The
-trigger account is the conversation's owner. No hook payload change and no SDK change in phase 1.
+The summary calls are ordinary compaction calls: `model.request` fires with the existing compaction
+fields (a policy hook may deny and fails closed: `compaction_failed`), `usage` events with purpose
+`compaction`, `model_usage` rows, `usage.report` delivered through the outbox. The trigger account
+is the conversation's owner. No hook payload change.
 
-### 8.2 Cost of conversations nobody returns to
+### 8.2 Cost
 
-An idle compaction on a conversation the person never returns to is pure cost: about one read of
-the summarized history (at most the compaction model's window per chunk) plus up to
-`maxOutputTokens` (20k) of output. Bounds:
-
-- at most one idle compaction per finished run, and only after runs a person or their wakes
-  started (§4.1); scheduled-task runs never arm;
-- only above `min(idleMinTokens, triggerLine)` and with real growth since the last summary;
-- never retried after a failure (guard 6); never after a `budget` stop;
-- above the trigger line the cost was already owed by the next message; only conversations that
-  are abandoned pay extra;
-- the platform and each org can turn it off or raise `idleMinTokens`; a person can opt out.
-
-The rollout (§10) measures the return rate before the default stays on.
+- **An idle compaction** costs one in-context summary call: the conversation's prefix at the
+  cache-read price (about 0.1× of input or less on the qualifying vendors) plus up to
+  `maxOutputTokens` (20k) of output. On a conversation the person never returns to, that is the
+  whole extra cost.
+- **What it saves** on a return: the full-price re-read of a cold large context and, when over the
+  line, a full-price inline summary.
+- **The long tier is the bigger lever**: with `promptCache.longTtl` on, every cache write of every
+  chat request costs the long tier's price (Anthropic 2× instead of 1.25× of input). That is why it
+  is off by default and an admin's choice per platform / org.
+- Bounds: at most one idle compaction per finished run that passed the arm checks; only for
+  person-started runs and their wakes; only on large contexts of large-window models (§4.1); never
+  on a cold cache; never retried after a failure; never after a `budget` stop; platform, org and
+  person can turn it off.
 
 ### 8.3 Replay
 
@@ -444,44 +504,35 @@ The rollout (§10) measures the return rate before the default stays on.
 - Full-run replay does not reproduce idle compactions (it replays runs, not idle time); a candidate
   model compacts inline where it needs to, as today.
 
-## 9. Phase 2: cache-aware idle compaction (designed now, built later)
+## 9. Phase 1: provider cache contract and the in-context summary
 
-### 9.1 What it is for
-
-Two benefits phase 1 leaves on the table:
-
-1. **A cheap summary.** If the summary request reuses the conversation's cached prefix, its input
-   is billed at the cache-read price (about a tenth of the input price or less at the explicit-cache
-   vendors below) instead of full price.
-2. **Timing against the cache.** If the kernel knows when the conversation's cache expires, it can
-   compact before that, so the summary is cheap *and* the returning person's first request reads a
-   small context instead of re-reading a large one at full price.
+### 9.1 Why both, and why first
 
 **A cache declaration alone buys nothing.** Today's summary request
 (`runtime/context/compaction.ts` `buildCompactionRequest`) replaces the system prompt with the
 compaction instruction (`cache: false`), sends `tools: []` and one user message holding a transcript
 of the events (chunked when large, compaction spec §4.5). It shares **no prefix** with any of the
 conversation's requests, so no provider can serve it from cache, whatever the provider caches and
-however precisely the kernel knows the expiry. 9.3 (a summary request that continues the
-conversation's request byte for byte) is the prerequisite for 9.4 (timing); 9.2 (declarations) is
-the prerequisite for both.
+however precisely the kernel knows the expiry. Conversely, a prefix-reusing summary without a known
+expiry cannot be timed. Idle compaction needs both; the in-context summary also makes every inline
+and manual compaction cheaper on its own.
 
-### 9.2 Provider landscape
+#### Provider landscape
 
 Checked against the vendors' official documentation on 2026-11-27 (each fact cites its source;
 "unverified" marks what the official pages do not state). Prices are relative to the model's input
 price.
 
-| Vendor / our plugin | Mechanism | Lifetime | Hit refreshes | Chosen per request | Fire before expiry? |
+| Vendor / our plugin | Mechanism | Lifetime | Hit refreshes | Chosen per request | Qualifies (≥ 30 min)? |
 |---|---|---|---|---|---|
-| Anthropic (`anthropic`) | explicit `cache_control` breakpoints (≤ 4, a top-level automatic one counts) | 5 min default, or 1 h | yes, from the request's start | `cache_control.ttl: "1h"` | **yes** |
-| OpenAI, GPT-5.6 and later (`openai`, Responses) | implicit by default (automatic breakpoint at the latest message); explicit breakpoints optional | `prompt_cache_options.ttl` `30m` (default) or `12h`, a **minimum** | 30m: kept ≥ 30 min after a read; 12h: a read does not restart it | `prompt_cache_options.ttl` | **yes** (30m tier) |
-| OpenAI, earlier models | automatic prefix caching | `prompt_cache_retention` `in_memory` (about 5–10 min idle, at most 1 h) or `24h` (often about 30 min, at most 24 h) | in_memory counts idle time; 24h unverified | `prompt_cache_retention` | weak (a range, not a time) |
-| DeepSeek (`deepseek`, openai-compatible `deepseek`) | automatic disk cache, best-effort | cleared hours to days after last use | unverified | no | no need (and no guarantee) |
-| Bailian explicit (`bailian`) | `cache_control: {type: "ephemeral"}` (≤ 4, 20-block lookback) | 5 min fixed; Qwen4 `5m` or `1h` | yes, each hit restarts it | general models: no; Qwen4: `prompt_cache_options.ttl` | **yes** (5 min; Qwen4 1 h) |
-| Bailian implicit (openai-compatible `qwen`) | automatic prefix, not guaranteed | no fixed lifetime, cleared periodically | unverified | no | no |
-| Ark implicit (`ark`, openai-compatible `ark`) | automatic on supported models, not guaranteed; `prompt_cache_key` only for routing affinity | no fixed lifetime, capacity eviction | unverified | no | no |
-| Ark explicit (Responses API only; our plugin uses Chat) | `caching.type=enabled`, session or prefix | `expire_at`, 3 days default, 7 max | no | `expire_at` | not applicable (days; Chat API cannot use it) |
+| Anthropic (`anthropic`) | explicit `cache_control` breakpoints (≤ 4, a top-level automatic one counts) | 5 min default, or 1 h | yes, from the request's start | `cache_control.ttl: "1h"` | only with `1h` (`longTtl` on) |
+| OpenAI, GPT-5.6 and later (`openai`, Responses) | implicit by default (automatic breakpoint at the latest message); explicit breakpoints optional | `prompt_cache_options.ttl` `30m` (default) or `12h`, a **minimum** | 30m: kept ≥ 30 min after a read; 12h: a read does not restart it | `prompt_cache_options.ttl` | **yes**, the default `30m` |
+| OpenAI, earlier models | automatic prefix caching | `prompt_cache_retention` `in_memory` (about 5–10 min idle, at most 1 h) or `24h` (often about 30 min, at most 24 h) | in_memory counts idle time; 24h unverified | `prompt_cache_retention` | no (a range, no guarantee) |
+| DeepSeek (`deepseek`, openai-compatible `deepseek`) | automatic disk cache, best-effort | cleared hours to days after last use | unverified | no | no (best-effort, no lifetime) |
+| Bailian explicit (`bailian`) | `cache_control: {type: "ephemeral"}` (≤ 4, 20-block lookback) | 5 min fixed; Qwen4 `5m` or `1h` | yes, each hit restarts it | general models: no; Qwen4: `prompt_cache_options.ttl` | Qwen4 `1h` only (`longTtl` on; endpoint unverified) |
+| Bailian implicit (openai-compatible `qwen`) | automatic prefix, not guaranteed | no fixed lifetime, cleared periodically | unverified | no | no (no lifetime) |
+| Ark implicit (`ark`, openai-compatible `ark`) | automatic on supported models, not guaranteed; `prompt_cache_key` only for routing affinity | no fixed lifetime, capacity eviction | unverified | no | no (no lifetime) |
+| Ark explicit (Responses API only; our plugin uses Chat) | `caching.type=enabled`, session or prefix | `expire_at`, 3 days default, 7 max | no | `expire_at` | not applicable (Responses only; our plugin uses Chat) |
 
 Sources and details:
 
@@ -534,15 +585,20 @@ Sources and details:
 
 **No vendor returns an expiry.** Ark's `expire_at` is a request parameter (and unused by us);
 everything else reports only how many tokens were read or written (some split by TTL tier). So the
-kernel derives expiry itself (9.4).
+kernel derives expiry itself (§9.3).
 
-Phase 2c (cache-timed firing) applies only to the first group: **Anthropic** (5 min / 1 h),
-**OpenAI GPT-5.6+** at the 30m tier, **Bailian explicit** (5 min; Qwen4 1 h). DeepSeek needs none
-(its cache outlives any idle delay, best-effort); Bailian implicit and Ark implicit have no lifetime
-to time against; Ark explicit is Responses-only. For all of these the fixed delay stays, and 2b's
-in-context summary still benefits whenever their cache happens to hit.
+Idle compaction (phase 2) therefore applies only to requests with a lifetime of 30 minutes or
+more: **Anthropic** with the `1h` tier, **OpenAI GPT-5.6+** with its default `30m` tier (a
+minimum), and **Bailian Qwen4** with `1h` (if its option works on the endpoint our plugin uses:
+unverified). With `promptCache.longTtl` off (the default), Anthropic and Bailian send their 5-minute
+defaults and do not qualify; OpenAI 5.6+ qualifies by default. Earlier OpenAI models default to
+`in_memory` (about 5–10 minutes) or `24h` retention that is "often about 30 minutes" with no
+guarantee, and do not qualify. DeepSeek, Bailian implicit and Ark implicit have no lifetime to time
+against; Ark explicit is Responses-only. All of them still benefit from the in-context summary
+(§9.4) whenever their cache happens to hit.
 
-### 9.3 Contract changes (model-provider@2, public SDK API)
+
+### 9.2 Contract changes (model-provider@2, public SDK API)
 
 In `packages/plugin-sdk/src/model.ts`. Before 0.1.0, changed directly, no compatibility layer
 (AGENTS.md "Before 0.1.0").
@@ -552,12 +608,12 @@ In `packages/plugin-sdk/src/model.ts`. Before 0.1.0, changed directly, no compat
   ```ts
   cache?: {
     /** explicit: the plugin places breakpoints and the lifetime is known; implicit: the service
-     *  caches on its own, best-effort; none: no prompt caching. */
+     *  caches on its own (best-effort unless it declares a lifetime floor); none: no caching. */
     mechanism: "explicit" | "implicit" | "none";
     /** Lifetimes a request can choose, in seconds ([300, 3600] Anthropic / Qwen4, [1800, 43200]
-     *  OpenAI 5.6+, [300] Bailian); empty for implicit. */
+     *  OpenAI 5.6+, [300] Bailian); empty when the service decides alone. */
     ttlOptions: number[];
-    /** The option used when the request names none. */
+    /** The lifetime a request that names none gets (OpenAI 5.6+: 1800). */
     defaultTtl?: number;
     /** OpenAI: the lifetime is a floor, entries may live longer; Anthropic / Bailian: exact. */
     ttlIsMinimum: boolean;
@@ -567,53 +623,51 @@ In `packages/plugin-sdk/src/model.ts`. Before 0.1.0, changed directly, no compat
     ttlClock: "request_start" | "unknown";
     /** Below this many prompt tokens nothing is cached. */
     minTokens?: number;
-    /** A hit on an unchanged prefix within the lifetime is expected (explicit), not best-effort. */
+    /** A hit on an unchanged prefix within the lifetime is expected, not best-effort. */
     guaranteed: boolean;
   };
   ```
 
-  Absent or `mechanism: "none"` = no caching; `implicit` = may hit, never timed against. What the
-  kernel used `caching` for today reads `mechanism !== "none"`.
+  Absent or `mechanism: "none"` = no caching. A model qualifies for idle compaction only with
+  `guaranteed: true` (explicit, or implicit with a declared floor such as OpenAI 5.6+) and a
+  lifetime ≥ 30 min in use. What the kernel used `caching` for today reads `mechanism !== "none"`.
 - **Request-level TTL**: `ModelRequest.cacheTtl?: number` (seconds, one of the model's
-  `ttlOptions`; a plugin of an `implicit` / `none` model ignores it; an unknown value is a request
-  validation error in the kernel, never sent). The plugin maps it to the vendor's field
-  (`cache_control.ttl`, `prompt_cache_options.ttl`). It is recorded in `model_call.request` (a
-  transport option, not model-visible content: no `DriftReason`; a replay may send it unchanged).
+  `ttlOptions`; a plugin of a model without options ignores it; an unknown value is a kernel
+  request-building error, never sent). The plugin maps it to the vendor's field
+  (`cache_control.ttl`, `prompt_cache_options.ttl`). The kernel sets it from `promptCache.longTtl`
+  (§6.1): off → absent (the model's default); on → the smallest option ≥ 1800 s, if any. Recorded
+  in `model_call.request` (a transport option, not model-visible content: no `DriftReason`; a
+  replay may send it unchanged).
 - **Per-TTL write breakdown**: `ModelUsage.cacheWriteByTtl?: { ttl: number; tokens: number }[]`
   (optional; sums to `cacheWriteTokens`), from `ephemeral_5m/1h_input_tokens`,
-  `ttl_30m/12h_tokens`, Qwen4's split. Usage and cost reports price writes by tier with it (a 1 h
-  write costs more than a 5 min one).
-- There is **no** "actual TTL / expiry" usage field: no vendor reports one.
-- Who picks the TTL: the kernel sends the model's `defaultTtl` unless a platform / org setting asks
-  for the longer tier for chat conversations (`promptCache.longTtl`, off by default; it raises
-  every write's price, so it is an admin's choice; Q10). The kernel never creates vendor-side
-  stored caches (Ark explicit, cached-content APIs billed per hour).
+  `ttl_30m/12h_tokens`, Qwen4's split. Usage and cost reports price writes by tier with it.
+- There is **no** "actual TTL / expiry" usage field: no vendor reports one (§9.3).
 
 Public API: `pnpm gen:sdk-api` plus a changeset bumping `@capybara-hq/plugin-sdk` (`check:sdk-api`,
 `check:api-changeset`). The conformance suite checks the declaration (positive integer TTLs,
-`defaultTtl` in `ttlOptions`, `implicit` / `none` with no options) and that a reported
+`defaultTtl` in `ttlOptions` when options exist, `none` with no options) and that a reported
 `cacheWriteByTtl` sums to `cacheWriteTokens`.
 
-### 9.4 Deriving the expiry
+### 9.3 Deriving the expiry
 
 Per conversation, the kernel derives from the log the **last request that read or wrote the
 cache**: the latest `model_call` whose `usage` has `cacheReadTokens + cacheWriteTokens > 0`, on a
-model with `mechanism: "explicit"` (or an implicit model with a declared TTL floor, such as OpenAI
-5.6+ in implicit mode). Its recorded `cacheTtl` (else the model's `defaultTtl`) is `L`, and its
-start time `t0` (the attempt's start; `model_call` gains an optional `startedAt` if its event time
-is not the start).
+model whose declaration is `guaranteed`. Its lifetime `L` is the recorded `cacheTtl`, else the
+model's `defaultTtl`; its start `t0` is the attempt's start (`model_call` gains an optional
+`startedAt` if its event time is not the start).
 
 - `refreshOnHit: true`: `expiresAt = t0 + L` from that last request (Anthropic counts from the
-  request's start, `ttlClock: "request_start"`; with `"unknown"` the kernel takes the request's end,
-  which is later, then subtracts a margin, below).
+  request's start, `ttlClock: "request_start"`; with `"unknown"` the kernel takes the request's end
+  as `t0`, the later and safer reading only if the vendor counts from the end, and keeps the margin).
 - `refreshOnHit: false` (OpenAI 12h): `expiresAt = t0 + L` from the request that **wrote** the
   entry (the latest with `cacheWriteTokens > 0`), not the last read.
 - `ttlIsMinimum: true`: `expiresAt` is a lower bound, so firing before it is safe.
-- Margin: fire at `t0 + 0.9 * L`, never later than `expiresAt - 30 s`.
+- Fire time: `t0 + 0.9 × L`, never later than `expiresAt − 30 s`.
 
-Nothing new is stored outside the log; the derivation reads recorded fields only.
+Nothing is stored outside the log; the derivation reads recorded fields only, at arm time from the
+run's own calls, at fire time from the log.
 
-### 9.5 A summary request that continues the conversation's request ("in-context summary")
+### 9.4 The in-context summary (reusing the cached prefix)
 
 The request:
 
@@ -625,17 +679,18 @@ The request:
   instruction (the Claude Code template, worded for "the conversation above");
 - `toolChoice: "none"` (the tools stay declared because removing them changes the prefix); a tool
   call in the reply fails the attempt;
-- the same model, the same `cacheTtl` as the last request (a different tier can split the entry:
+- the same model and the same `cacheTtl` as the last request (a different tier can split the entry:
   Anthropic requires 1 h entries before 5 min ones).
 
-Only the appended message is new, so the vendor serves everything before it from the cache when the
-cache is alive. **This is what makes 9.4 worth anything.**
+Only the appended message is new, so the vendor serves everything before it from the cache while
+the cache is alive.
 
 When it applies: the same model as the last call (a model switch breaks the prefix, Claude Code's
-guard too); the rebuild has no drift (else fall back); it fits (last request + reply + instruction +
-`maxOutputTokens` + reserve `<= W`: every sent request already fits `W - O_p - R_p`, compaction
-spec §4.3, and the 20k summary cap is usually below `O_p`, so it usually fits unless the last reply
-is large). Otherwise the transcript path as today.
+guard too); the rebuild has no drift; it fits (last request + reply + instruction +
+`maxOutputTokens` + reserve `<= W`: every sent request already fits `W − O_p − R_p`, compaction spec
+§4.3, and the 20k summary cap is usually below `O_p`, so it usually fits unless the last reply is
+large). Otherwise inline and manual compactions take the transcript path as today; idle compaction
+does not run (§4.3 check 9).
 
 Interaction with chunked compaction (§4.5): they do not combine. Chunking exists because the
 material exceeds one request; the in-context request is by construction one request the model
@@ -644,7 +699,7 @@ already accepted. A history too large for one request has no single cached prefi
 Coverage stays the plan's (`coversUpToSeq`, `openingSeqs`): the model sees the kept tail too, and
 the instruction marks the last event the summary covers, so the kept turns are not folded into the
 summary. If the model cannot be held to the mark, the summary covers everything and the tail is
-empty (a phase 2 plan decision, measured with an eval, Q9).
+empty (decided in the phase 1 plan with an eval, Q9).
 
 Append-only history and replay: the summary request is a side request, not a step; it appends
 nothing to the history the model sees and never changes an earlier request's bytes. Its output is
@@ -655,76 +710,47 @@ model-visible, no `DriftReason`). The in-context request sees what the transcrip
 unaffected because the summary comes from the log. `model.request` fires with purpose `compaction`
 as today; usage shows the cache reads, which is how the benefit is measured.
 
-It is useful for **every** compaction (inline, manual, idle), not only idle: a compaction right
-after a step finds a warm cache. It also helps the fixed delay alone: DeepSeek's long best-effort
-cache is usually still warm after 10 minutes.
+It applies to **every** compaction (inline, manual, idle): a compaction right after a step finds a
+warm cache on any vendor that cached the prefix, including best-effort ones such as DeepSeek.
 
-### 9.6 Fire timing against the cache
+### 9.5 Plugin gaps (plugins repository)
 
-At arming (and re-checked at fire), when the model is in the 9.2 first group, the in-context
-summary applies (9.5) and the expiry is derivable (9.4):
+Already fixed by capybara-hq/plugins#304 (being merged):
 
-- `runAt = min(finishedAt + idleDelay, t0 + 0.9 * L)`, but never earlier than
-  `finishedAt + IDLE_MIN_DELAY` (3 min);
-- if `t0 + 0.9 * L` falls before that floor (the cache will be gone before it is polite to
-  compact), the fixed delay, and the summary pays full price.
+- **bailian**: the history now carries a cache marker (before, only the last cached system block
+  did, and because explicit and implicit caching are mutually exclusive per request, the history
+  got neither).
+- **ark**: the `caching` flag no longer depends on the `deepseek-` id prefix.
+- `prompt_cache_key` is sent where the vendor supports it.
 
-So a long cache (1 h, OpenAI 30m) is alive at the fixed delay and the summary is cheap with no
-change in timing; a short one (5 min) brings the fire forward to about 4.5 minutes. Whether to do
-that for 5-minute caches (it compacts while some people are still reading) is Q11; Claude Code
-does not time against its 5-minute cache.
+Still open, waiting on the phase 1 SDK contract (tracked in the plugins repository):
 
-The job data gains `{ timing: "cache" | "fixed", expiresAt? }`. A new guard: a cache-timed job that
-starts after `expiresAt` (worker backlog) proceeds as a fixed-delay one if the fixed delay has
-passed, else re-owes itself for the fixed delay.
-
-`idleTiming: "fixed" | "cache"` (platform + org, default `cache`): `fixed` keeps phase 1 timing.
-
-### 9.7 Plugin gaps (plugins repository, tracked separately)
-
-From reading the plugins' code against the documents above; each needs its own issue in
-`capybara-hq/plugins`:
-
-1. **bailian**: marks only the last cached **system** block; the history carries no marker, and
-   because explicit and implicit caching are mutually exclusive per request, the history gets
-   neither. A long conversation is cached only up to its system prompt, so a prefix-reusing summary
-   would not hit. Needs a breakpoint at the end of the history (append-only safe, as the anthropic
-   plugin's top-level automatic breakpoint is) within the 20-block lookback; no 1 h option (Qwen4
-   has one, endpoint support unverified).
-2. **anthropic**: no 1 h option (always 5 min); does not read the
-   `cache_creation.ephemeral_5m/1h_input_tokens` split; no per-model minimum length declared.
-3. **openai**: sends none of `prompt_cache_options`, `prompt_cache_retention`, `prompt_cache_key`;
-   does not read `cache_write_tokens_details`.
-4. **openai-compatible `qwen` dialect**: implicit only (sends no marker), so no deterministic
-   lifetime; it reads `cache_creation_input_tokens`, which implicit caching never reports.
-5. **ark**: `caching` is true only for ids starting with `deepseek-`, which is outdated: the
-   official page lists implicit caching on doubao-seed, kimi and glm models too, with per-model
-   minimums; it should follow the model list's context-cache capability. No `prompt_cache_key`.
+1. **All model plugins**: declare `ModelInfo.cache` per model and map `ModelRequest.cacheTtl`.
+2. **anthropic**: no `1h` option yet (always 5 min); does not read the
+   `cache_creation.ephemeral_5m/1h_input_tokens` split (`cacheWriteByTtl`); no per-model minimum
+   length declared.
+3. **openai**: sends no `prompt_cache_options` / `prompt_cache_retention`; does not read
+   `cache_write_tokens_details` (`cacheWriteByTtl`); must declare GPT-5.6+ as `guaranteed`,
+   `defaultTtl: 1800`, `ttlIsMinimum: true`.
+4. **bailian**: no `1h` option (Qwen4 has one; whether it works on the DashScope native endpoint is
+   unverified); does not read Qwen4's TTL split.
+5. **openai-compatible `qwen` dialect**: implicit only (sends no marker), so no lifetime; it reads
+   `cache_creation_input_tokens`, which implicit caching never reports.
 6. DeepSeek and Ark report no cache writes (`cacheWriteTokens` 0): a vendor limit, not a plugin bug.
-
-### 9.8 Phase boundaries (recommended)
-
-| Phase | Content | Behavior change |
-|---|---|---|
-| 1 | idle job, guards, idle compact run, preemption, settings, personal opt-out, UI, logs | idle compaction at a fixed delay |
-| 2a | SDK cache declaration, `ModelRequest.cacheTtl`, `ModelUsage.cacheWriteByTtl`; plugin declarations and the 9.7 fixes | none for timing; correct cache costs, bailian history caching |
-| 2b | in-context summary for all compactions, `compaction_summary.method` | cheaper, faster summaries where the cache is warm |
-| 2c | expiry derivation (9.4), cache-timed fire (9.6), `idleTiming`, `promptCache.longTtl` | idle compaction before expiry for the first group |
-
-2a is cheap and gives data (hit rates, tiers). 2b is the real cost win and applies everywhere. 2c
-matters mainly for 5-minute caches (long ones are alive at the fixed delay anyway) and should wait
-for phase 1's `idle_return` logs.
 
 ## 10. Rollout
 
-1. Phase 1 lands with `idleEnabled` default `true` (Q1) behind the existing compaction settings;
-   the release notes call out the cost (§8.2) and the switches.
-2. On prod, read the `IdleCompaction` and `idle_return` logs for two weeks: fire outcomes,
-   preemption rate, return rate, the inline compactions avoided.
-3. Adjust the default delay and `idleMinTokens` from the data; decide 2a–2c.
+1. Phase 1: SDK contract and changeset, kernel request TTL and expiry derivation, the in-context
+   summary for every compaction, `promptCache.longTtl` (off); the plugins declare and map (§9.5).
+   Measure the cache reads of summaries.
+2. Phase 2: idle compaction with `idleEnabled` on (Q1). It runs at once for OpenAI 5.6+ models and
+   wherever an admin turns on the long tier; the release notes say so and state the long tier's
+   price.
+3. Read the `IdleCompaction` and `idle_return` logs on prod for two weeks: fire outcomes, preemption
+   rate, return rate, summaries' cache reads; adjust the size defaults.
 
-The change affects images only through the kernel: a changeset on `@capybara-hq/capybara` (and
-`@capybara-hq/kernel` as the release process requires); phase 2a adds the SDK changeset.
+Kernel changes ship in the images: a changeset on `@capybara-hq/capybara` (and the kernel package
+as the release process requires); phase 1 adds the `@capybara-hq/plugin-sdk` changeset.
 
 ## 11. Tests
 
@@ -732,95 +758,102 @@ Per the test portfolio: unit tests need no database (and join `packages/kernel/t
 in the same change), integration tests are one app per file (the default), dual-replica tests join
 `packages/kernel/test/container-tests.json`.
 
-Unit (`unit-tests.json`):
+Phase 1:
 
-- `idleCompactionDecision`: each guard 1–9 and its outcome, the order, the trigger-line vs
-  `idleMinTokens` minimum, the growth floor, staleness.
-- Arming predicate: kind, trigger (`schedule` / `compact` excluded), outcome (`budget`, `failed`,
-  `aborted`, suspended excluded), settings off.
-- Settings: the three fields' defaults, ranges, merge (org over platform, `null` clears), strict
-  patches; `PreferencesSchema.idleCompaction`.
-- Phase 2 (when built): expiry derivation (recorded `cacheTtl` over `defaultTtl`, refresh on hit
-  vs from the write, `ttlIsMinimum`, the margin), fire time (the minimum with the fixed delay, the
-  3-minute floor, fallback), in-context applicability (model switch, drift, fit), the in-context
-  request's prefix equals the recorded request byte for byte (system, tools, history,
-  `toolChoice: "none"`), SDK declaration validation in the conformance suite.
+- Unit: expiry derivation (recorded `cacheTtl` over `defaultTtl`, refresh on hit vs from the write,
+  `ttlIsMinimum`, `ttlClock`, the margin); `cacheTtl` selection from `longTtl` (smallest option
+  ≥ 1800 s, none, OpenAI default); in-context applicability (model switch, drift, fit); the
+  in-context request equals the recorded request byte for byte in `system`, `tools` and history,
+  with `toolChoice: "none"` and one appended message; `promptCache` settings merge and ranges.
+- SDK: conformance checks of the declaration and `cacheWriteByTtl`; `gen:sdk-api` report.
+- Integration: an inline compaction after a cached step uses `method: "in_context"` (model-fake
+  reporting cache reads), a model switch falls back to the transcript path; `model_call.request`
+  records `cacheTtl`; zero-drift `reconstruct.test.ts` cases with `cacheTtl` and an in-context
+  summary.
 
-Integration (default project; prefer extending existing files over new ≤5-test files):
+Phase 2:
 
-- Run finish owes the outbox row (with `OUTBOX_DISPATCH_FAILS`: queue, name, job id, data,
-  `org_id`, `run_at`), then `drainOutbox` → an idle compact run → `compaction_summary`, usage
-  purpose `compaction`, `model.request` hook fired, `run_started.compactOrigin: "idle"`, trigger
-  account = owner.
-- Obsolete: a message after the arming run → no run. Busy / disabled (platform, org, personal) /
-  small / backoff / sub-agent / eval / schedule run → no run, no event.
-- Preemption: a message during a running idle compact run (model-fake holding the summary call) →
-  `run_aborted.reason: "superseded"`, no summary, then the message's run starts and compacts
-  inline if over the line; a queued idle run aborted before claim; a manual compact request returns
-  the idle run's id.
-- HTTP: platform and org settings patches with the new fields (ranges, follow-platform), `PUT
-  /me/preferences` with `idleCompaction`; `platform-parity.test.ts` stays green.
-- Replay: the two `reconstruct.test.ts` cases (§8.3); eval planning skips an idle compact run.
-- Web: settings sections, account preference, the divider variant and the background compacting
-  row (`renderRouteWithCache`), i18n keys in zh and en, `check:web-ui`.
+- Unit: `idleArmDecision` (kind, trigger, outcome, settings, personal preference, `L < 1800`, size
+  per the §4.1 table including 128k / 200k never and 1M at 300k); `idleFireDecision` (each check
+  and its order, `expired` at `expiresAt − 30 s`, `no_prefix`); the size threshold formula; the new
+  settings' defaults, ranges and merge; `PreferencesSchema.idleCompaction`.
+- Integration (default project; prefer extending existing files over new ≤ 5-test files):
+  - a run on a model-fake declared with a 1 h cache and a large context owes the outbox row (with
+    `OUTBOX_DISPATCH_FAILS`: queue, name, job id, data, `org_id`, `run_at = t0 + 0.9 × L`); then
+    `drainOutbox` → an idle compact run → `compaction_summary` with `method: "in_context"`, usage
+    purpose `compaction`, `model.request` fired, `run_started.compactOrigin: "idle"`, trigger
+    account = owner;
+  - nothing owed: a 5-minute cache, `longTtl` off on a 5-minute default model, a small context, a
+    `schedule` run, a `budget` stop, settings or preference off, a sub-agent or eval conversation;
+  - fire-time: obsolete after a message, busy, expired (a late job), model switched, plan empty;
+  - preemption: a message during a running idle compact run (model-fake holding the summary call)
+    → `run_aborted.reason: "superseded"`, no summary, then the message's run; a queued idle run
+    aborted before claim; a manual compact request returns the idle run's id;
+  - HTTP: platform and org settings patches with the new fields, `PUT /me/preferences` with
+    `idleCompaction`; `platform-parity.test.ts` stays green;
+  - replay: the two `reconstruct.test.ts` cases (§8.3); eval planning skips an idle compact run;
+  - web: the settings sections, the account preference, the divider variant and the background
+    compacting row (`renderRouteWithCache`), i18n keys in zh and en, `check:web-ui`.
+- Container (`container-tests.json`, only what one replica cannot show): a duplicated delivery of
+  the same idle job on two workers starts one run; a message accepted on replica A preempts the idle
+  compact run on replica B.
 
-Container (`container-tests.json`, only what one replica cannot show):
+## 12. Decisions and open questions
 
-- Two workers: a duplicated delivery of the same idle job starts one run.
-- A message accepted on replica A preempts the idle compact run on replica B (cross-replica abort).
+Decided by the maintainer (2026-11-27):
 
-## 12. Open questions (with recommended answers)
+- **Core rule:** idle compaction only before the expiry of a cache of at least 30 minutes; no
+  fixed-delay mode, no `idleDelayMinutes`; fire at `t0 + 0.9 × L`, at least 30 s before expiry;
+  depends on phase 1 (§1, §4, §9).
+- **Q1:** `idleEnabled` default on, effective only where the precondition holds (a ≥ 30 min cache
+  in use; with `longTtl` off that is OpenAI 5.6+ only).
+- **Size:** `idleMinTokens = max(200k, 30% × W)`, as settings with these defaults (§4.1).
+- **Arm-time filtering:** the cheap checks run at run end and nothing is owed when they fail;
+  fire-time re-checks stay (§4.2, §4.3).
+- **Q2** (the fixed delay default): moot under the core rule.
+- **Q3:** a new message always preempts an idle compact run (§5.2).
+- **Q4:** no per-conversation switch.
+- **Q5:** usage split by compaction origin in admin views: later.
+- **Q6:** the job runs on `cap-kernel-maintenance`.
+- **Q7:** `background_task` / `subagent` wakes arm; `schedule` does not.
+- **Q8:** cache declaration with kernel-derived expiry and the in-context summary first (phase 1),
+  idle compaction after (phase 2).
+- **Q10:** `promptCache.longTtl` default off.
+- **Q11:** 5-minute caches never get idle compaction.
 
-1. **Default on or off?** Recommend **on** (Claude Code defaults on; the cost is bounded by §8.2
-   and above the trigger line was owed anyway), with the rollout measurement (§10). If the
-   maintainer prefers caution on cost, ship default off and turn it on after the data.
-2. **Delay default.** Recommend **10 minutes**; revisit from `idle_return` data.
-3. **Preempt always, or let an over-the-line idle run finish?** Recommend **preempt always**
-   (§5.2): simpler, never longer than inline, waste bounded.
-4. **Per-conversation switch?** Recommend **no** in phase 1 (personal + org + platform are enough;
-   a per-conversation flag needs a new route and title-menu entry).
-5. **Usage split by origin in admin views?** Recommend **later**: phase 1 logs suffice to decide.
-6. **Queue.** Recommend `cap-kernel-maintenance` (one consumer, concurrency 5) with a named job:
-   the job only reads, estimates and starts a run (the summary itself runs on the run queue), so
-   it is short; a dedicated queue only if measurements show it delaying other maintenance work.
-7. **Arming for `background_task` / `subagent` wakes.** Recommend **yes** (they continue a
-   conversation a person reads); **no** for `schedule`.
-8. **Phase 2 ordering.** Recommend 2a soon (cheap; fixes cache costs and bailian's history
-   caching), 2b next (benefits all compactions), 2c only after the `idle_return` data (§9.8).
-9. **In-context summary boundary (§9.5).** Whether the model can be held to "summarize up to the
-   marked point" reliably enough to keep the kept tail; decide in the phase 2 plan with an eval.
-10. **Longer cache tier (`promptCache.longTtl`, §9.3).** Recommend **off** by default: a 1 h /
-    12 h write costs more on every request (Anthropic 2× vs 1.25×, OpenAI 12h 2.5×), and long
-    caches matter less once the in-context summary exists; an admin turns it on for orgs with long,
-    interrupted conversations.
-11. **Bring the fire forward for 5-minute caches (§9.6)?** Recommend **yes, with the 3-minute
-    floor**, measured: it is the only case where timing changes the price; turn the floor or
-    `idleTiming: fixed` up if preemptions rise.
-12. **Unverified vendor facts (§9.2).** Re-check before 2a ships: OpenAI `prompt_cache_options` on
-    Chat Completions and the 24h tier's refresh and price; Qwen4 `prompt_cache_options` on the
-    DashScope native endpoint; DeepSeek's minimum length; Ark's prices and Context API TTL.
+Still open (recommended answers):
+
+- **Q9. In-context summary boundary (§9.4).** Whether the model can be held to "summarize up to the
+  marked point" reliably enough to keep the kept tail. Recommend deciding in the phase 1 plan with
+  an eval over recorded long conversations; if it cannot, the in-context summary covers everything
+  and keeps no verbatim tail.
+- **Q12. Unverified vendor facts (§9.1).** Re-check before phase 1 ships: OpenAI
+  `prompt_cache_options` on Chat Completions and the 24h tier's refresh and price; Qwen4
+  `prompt_cache_options` on the DashScope native endpoint; DeepSeek's minimum length; Ark's prices
+  and the Context API TTL.
 
 ## AGENTS.md rules touched
 
 - **Multi-replica discipline:** a new delayed job (`idle-compaction`, id `idle-compact-<runId>`, no
-  `:`) owed through the outbox in the run-finish transaction, BullMQ as the timer, consumed under
-  `WorkerModule` inside `runJob` (org scope from `orgId`); no in-process timer; the idle compact run
+  `:`) owed through the outbox in the run-finish transaction only when the arm checks pass, BullMQ
+  as the timer, consumed under `WorkerModule` inside `runJob` (org scope from `orgId`); no
+  in-process timer; the expiry is derived from the log, never kept in memory; the idle compact run
   is started under the conversation row lock and excluded from ordinary runs by the run claim;
-  preemption uses the existing cross-replica abort channel (§4.1, §5.1, §5.2).
+  preemption uses the existing cross-replica abort channel (§4.2, §5.1, §5.2, §9.3).
 - **Runtime and replay:** idle compaction writes an ordinary `compaction_summary`; no new
-  model-visible input, no `DriftReason`; `run_started.compactOrigin` and `run_aborted.reason:
-  "superseded"` are not model-visible; phase 2's `compaction_summary.method` and the recorded
-  `model_call.request.cacheTtl` likewise; the in-context summary is a side request that never
-  changes the history's bytes (§8.3, §9.3, §9.5).
+  model-visible input, no `DriftReason`; `run_started.compactOrigin`, `run_aborted.reason:
+  "superseded"`, `compaction_summary.method` and `model_call.request.cacheTtl` are not
+  model-visible; the in-context summary is a side request that never changes the history's bytes
+  (§8.3, §9.2, §9.4).
+- **Model providers:** model-provider@2 replaces `capabilities.caching` with a per-model `cache`
+  declaration and gains `ModelRequest.cacheTtl` and `ModelUsage.cacheWriteByTtl`; no expiry field
+  (no vendor reports one, the kernel derives it); public SDK API: `gen:sdk-api` plus a changeset
+  (§9.2, §9.3).
 - **Migrations:** one additive column `runs.compact_origin` (§5.7).
-- **Config / settings:** three compaction fields (platform default, org override) and a personal
-  preference; phase 2 one more (§6).
+- **Config / settings:** three compaction fields and the `promptCache.longTtl` group (platform
+  default, org override) and a personal preference (§6).
 - **Platform tool:** no new route; the fields join the shared schemas the existing operations are
   built from (§6.2).
-- **Web UI / language:** settings fields, an account preference, a divider variant, i18n zh / en
-  with 智能体 / 平台 (§6.4).
-- **Model providers (phase 2):** model-provider@2 replaces `capabilities.caching` with a per-model
-  `cache` declaration and gains `ModelRequest.cacheTtl` and `ModelUsage.cacheWriteByTtl`; no
-  expiry field (no vendor reports one, the kernel derives it from the log); public SDK API:
-  `gen:sdk-api` plus a changeset (§9.3, §9.4).
+- **Web UI / language:** settings fields, a prompt cache section, an account preference, a divider
+  variant, i18n zh / en with 智能体 / 平台 (§6.4).
 - **Tests:** new unit and container tests join their checked-in lists in the same change (§11).
