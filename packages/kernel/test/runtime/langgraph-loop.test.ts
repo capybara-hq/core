@@ -28,6 +28,10 @@ import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import type { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.service.js";
+import {
+  MAX_TRUNCATED_STEPS,
+  OUTPUT_TRUNCATED_TEXT,
+} from "../../src/runtime/context/output-truncated.js";
 import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { LoopContext } from "../../src/runtime/loop.js";
 import type { StreamSink } from "../../src/runtime/model-call.js";
@@ -439,6 +443,51 @@ describe("LangGraphLoop", () => {
       // 先查截止时间（R33）：超时结束时不吸收任何消息
     ).toEqual({ kind: "max_duration", consumedUpToSeq: 0 });
     expect(calls).toHaveLength(0);
+  });
+
+  it("a step cut off at the output limit gets another step, told so right after the cut-off reply", async () => {
+    script = (n) =>
+      n === 1
+        ? { text: "half a rep", stopReason: "max_tokens" }
+        : { text: "rest", stopReason: "end_turn" };
+    const seq = await say("write the report");
+    const out = await new LangGraphLoop(saver, deps).run(loopCtx());
+    expect(out).toEqual({ kind: "completed", consumedUpToSeq: seq });
+    expect(calls).toHaveLength(2);
+    const tail = (calls[1] as ModelRequest).messages.slice(-2);
+    expect(tail).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "half a rep" }] },
+      { role: "system", content: OUTPUT_TRUNCATED_TEXT },
+    ]);
+    const evs = await eventsOf(db, conversationId);
+    expect(
+      evs.flatMap((e) =>
+        e.type === "assistant_message" ? [[e.payload.step, e.payload.stopReason]] : [],
+      ),
+    ).toEqual([
+      [1, "max_tokens"],
+      [2, "end_turn"],
+    ]);
+    // no tool step runs for a truncated reply
+    expect(evs.some((e) => e.type === "tool_result")).toBe(false);
+  });
+
+  it("ends with max_output after MAX_TRUNCATED_STEPS truncated steps in a row; another stop resets the count", async () => {
+    const stops: StopReason[] = [
+      "max_tokens",
+      "max_tokens",
+      "tool_use",
+      "max_tokens",
+      "max_tokens",
+    ];
+    script = (n) => ({
+      text: "",
+      stopReason: stops[n - 1] ?? "max_tokens",
+    });
+    const seq = await say("go");
+    const out = await new LangGraphLoop(saver, deps).run(loopCtx());
+    expect(out).toEqual({ kind: "max_output", consumedUpToSeq: seq });
+    expect(calls).toHaveLength(2 + 1 + MAX_TRUNCATED_STEPS);
   });
 });
 

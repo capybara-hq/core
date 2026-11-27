@@ -620,6 +620,17 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
           },
         ]
       : [];
+    if (e.status === "ok" && e.limit !== undefined)
+      return (
+        <RunRow
+          status="warning"
+          {...(label !== undefined ? { label } : {})}
+          parts={parts}
+          statusText={t(`run.limit.${e.limit}`)}
+          facts={facts}
+          links={links}
+        />
+      );
     if (e.status === "ok")
       return (
         <RunRow

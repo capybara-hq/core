@@ -278,7 +278,7 @@ function latestText(entries: readonly TimelineEntry[]): string {
 }
 
 /** Run ends on a limit: `limit` ("已达上限"), as the stream shows their `subagent_finished`. */
-const LIMIT_ENDS = new Set(["max_steps", "max_duration", "budget"]);
+const LIMIT_ENDS = new Set(["max_steps", "max_duration", "budget", "max_output"]);
 
 /** What an agent's own log says of its status. */
 export type LogWord =

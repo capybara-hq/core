@@ -42,6 +42,10 @@ import type { KernelLogger } from "../../src/log.js";
 import { type MediaInfo, TEXT_INLINE_MAX_CHARS } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { devicePathsText } from "../../src/runtime/context/device-paths.js";
+import {
+  MAX_TRUNCATED_STEPS,
+  OUTPUT_TRUNCATED_TEXT,
+} from "../../src/runtime/context/output-truncated.js";
 import { permissionContextText } from "../../src/runtime/context/permission-profile.js";
 import { MORE_SKILLS_HEADER } from "../../src/runtime/context/skills.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
@@ -2397,12 +2401,13 @@ describe("reconstructRequest：基线零漂移", () => {
     try {
       const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
       const conv = await createConv(owner, orgId, agentId);
-      // The fake model's reply to long:6000 is capped at 16384 characters (~4k tokens): the
+      // The fake model's reply to long:1900 is 15992 characters (~4k tokens), just under its
+      // 16384-character output cap (a cut-off reply would get another step, issue #951): the
       // seventh request carries six of them (~24.6k), over the 23904 target and below the hard
       // line, so the hard fit guard trims instead of compacting
       const LONG = 6;
       for (let i = 1; i <= LONG; i++) {
-        await postMessage(owner, orgId, conv, "long:6000");
+        await postMessage(owner, orgId, conv, "long:1900");
         await waitForTerminal(db, conv, i, 30_000);
       }
       await postMessage(owner, orgId, conv, "echo:after");
@@ -2484,11 +2489,13 @@ describe("reconstructRequest：基线零漂移", () => {
         await postMessage(owner, orgId, conv, text);
         await waitForTerminal(db, conv, ++n, 30_000);
       };
-      await turn("long:6000");
-      await turn("long:6000");
-      await turn("long:6000");
-      await turn("x".repeat(90_000));
-      await turn("y".repeat(20_000));
+      await turn("long:1900");
+      await turn("long:1900");
+      await turn("long:1900");
+      // media: makes the fake model's reply short (an echo of these turns would pass its output
+      // cap, and a cut-off reply gets another step, issue #951)
+      await turn(`media:${"x".repeat(90_000)}`);
+      await turn(`media:${"y".repeat(20_000)}`);
 
       const events = await eventsOf(db, conv);
       const calls = modelCalls(events);
@@ -2533,6 +2540,36 @@ describe("reconstructRequest：基线零漂移", () => {
         .where("key", "=", "compaction")
         .execute();
     }
+  });
+});
+
+describe("reconstructRequest: replies cut off at the output limit (issue #951)", () => {
+  it("each truncated reply is followed by the truncation note; the run ends with max_output; zero drift", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { modelParams: { maxOutputTokens: 100 } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    // ~4 400 characters against a 400-character cap: every step is cut off
+    await postMessage(owner, orgId, conv, "long:500");
+    await waitForTerminal(db, conv, 1, 30_000);
+
+    const events = await eventsOf(db, conv);
+    expect(
+      events.flatMap((e) => (e.type === "assistant_message" ? [e.payload.stopReason] : [])),
+    ).toEqual(Array(MAX_TRUNCATED_STEPS).fill("max_tokens"));
+    const finished = events.find((e) => e.type === "run_finished");
+    expect(finished?.type === "run_finished" && finished.payload.reason).toBe("max_output");
+    const calls = modelCalls(events);
+    expect(calls).toHaveLength(MAX_TRUNCATED_STEPS);
+
+    // what the provider received for the last step: a note after each earlier cut-off reply
+    const last = sent.at(-1) as ModelRequest;
+    expect(
+      last.messages.filter((m) => m.role === "system" && m.content === OUTPUT_TRUNCATED_TEXT),
+    ).toHaveLength(MAX_TRUNCATED_STEPS - 1);
+    await expectZeroDrift(conv, await snapshotOf(conv));
   });
 });
 

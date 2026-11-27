@@ -550,6 +550,22 @@ describe("buildTimeline", () => {
     ]);
   });
 
+  it("a run that ended at a limit keeps it on its row; a completed run has none (issue #951)", () => {
+    const run = (reason: string) =>
+      buildTimeline(
+        [
+          ev(1, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),
+          ev(2, "run_finished", { reason, consumedUpToSeq: 0 }),
+        ],
+        [],
+        new Map(),
+        "en",
+      );
+    expect(run("max_output")).toMatchObject([{ kind: "run", status: "ok", limit: "max_output" }]);
+    expect(run("max_steps")).toMatchObject([{ kind: "run", status: "ok", limit: "max_steps" }]);
+    expect(run("completed")[0]).not.toHaveProperty("limit");
+  });
+
   it("an automatic compaction's failure writes no divider and leaves the run row unnamed", () => {
     const events = [
       ev(1, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),

@@ -851,7 +851,9 @@ export async function replayRun(
             type: "run_finished",
             payload: {
               reason:
-                outcome.kind === "max_steps" || outcome.kind === "max_duration"
+                outcome.kind === "max_steps" ||
+                outcome.kind === "max_duration" ||
+                outcome.kind === "max_output"
                   ? outcome.kind
                   : "completed",
               consumedUpToSeq:

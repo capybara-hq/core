@@ -240,6 +240,10 @@ export function agentResultText(r: {
     case "budget":
       text = reply;
       break;
+    case "max_output":
+      text = reply === "" ? "The sub-agent's replies kept reaching the output token limit." : reply;
+      isError = false;
+      break;
     case "aborted":
       text =
         r.abortedBy === "parent" ? AGENT_STOPPED_WITH_RUN_TEXT : "The user stopped this sub-agent.";

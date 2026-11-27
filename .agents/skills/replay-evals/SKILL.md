@@ -139,6 +139,13 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   (`attachmentReferenceText`, with the object URI and `FetchAttachment`) — never bytes, never a truncated inline,
   recorded as outcome `reference`. No new model-visible input is logged, so no `DriftReason`. Case in
   `reconstruct.test.ts` ("a text attachment over the inline cap …").
+- **A reply cut off at the output token limit** (issue #951): an `assistant_message` with `stopReason:
+  "max_tokens"` is followed in the request by the `role: "system"` `OUTPUT_TRUNCATED_TEXT`
+  (`runtime/context/output-truncated.ts`), derived from the logged stop reason alone, so no event
+  and no `DriftReason`. The loop gives the model another step (no tools node: providers drop a
+  cut-off tool call), up to `MAX_TRUNCATED_STEPS` in a row, then the run ends with `max_output`.
+  Case in `reconstruct.test.ts` ("replies cut off at the output limit"). A model-fake reply longer
+  than four characters per output token is cut off, so tests that need long replies stay under it.
 - **A watched wait** (browser long waits spec §5.4): what the model reads is the resumed handler's `tool_result`, or
   `WAIT_SKIPPED_TEXT` for one skipped by a message (a logged `tool_result`); `question_asked.watch` and
   `question_answered` outcome `woken` are not model-visible. No `DriftReason`; full-run replay returns the recorded

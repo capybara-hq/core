@@ -24,6 +24,8 @@ export function subagentStatusText(
       return "stopped at the time limit; the reply may be partial";
     case "budget":
       return "stopped: token budget used up";
+    case "max_output":
+      return "stopped: its replies kept reaching the output token limit; the reply may be partial";
     case "aborted":
       return opts.abortedBy === "parent" ? "stopped with this run" : "stopped by the user";
     case "timed_out":
