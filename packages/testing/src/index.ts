@@ -239,6 +239,7 @@ export {
 export {
   type ConformanceTarget,
   checkCacheDeclaration,
+  checkCacheWriteTiers,
   checkDeclaredParameters,
   checkToolStream,
   describeModelProviderConformance,
