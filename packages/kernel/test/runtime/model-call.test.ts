@@ -27,8 +27,10 @@ import { createLogger } from "../../src/log.js";
 import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.service.js";
 import type { MediaBytes, MediaInfo } from "../../src/runtime/context/build.js";
 import {
+  compactionPlan,
   compactionRequestOverhead,
   compactionRetryNote,
+  summarySavedTokens,
 } from "../../src/runtime/context/compaction.js";
 import { inContextInstruction } from "../../src/runtime/context/in-context-compaction.js";
 import { estimateTokens } from "../../src/runtime/context/tokens.js";
@@ -2059,6 +2061,8 @@ describe("runModelStep", () => {
         sent: ModelRequest[];
         /** The reasons of the `in-context summary skipped` debug lines. */
         skips: string[];
+        /** The messages of the `warn` lines with `context=Compaction`. */
+        warns: string[];
         d: ModelStepDeps;
       }
 
@@ -2067,15 +2071,31 @@ describe("runModelStep", () => {
        * provider wrapper that records requests; `overflowOnce` fails the first step request of
        * step `overflowOnce` with `context_overflow`.
        */
-      const harness = (opts: { overflowOnce?: number; hooks?: ModelStepDeps["hooks"] } = {}) => {
+      const harness = (
+        opts: {
+          overflowOnce?: number;
+          hooks?: ModelStepDeps["hooks"];
+          /** Runs before the live snapshot is read; a throw fails the snapshot. */
+          beforeSnapshot?: () => void;
+        } = {},
+      ) => {
         const sent: ModelRequest[] = [];
         const skips: string[] = [];
+        const warns: string[] = [];
         let overflowed = false;
         const log = createLogger("debug", {
           write: (line) => {
-            const rec = JSON.parse(line) as { msg?: string; reason?: string; context?: string };
+            const rec = JSON.parse(line) as {
+              msg?: string;
+              reason?: string;
+              context?: string;
+              level?: string | number;
+            };
             if (rec.msg === "in-context summary skipped" && rec.context === "Compaction") {
               skips.push(rec.reason ?? "");
+            }
+            if ((rec.level === "warn" || rec.level === 40) && rec.context === "Compaction") {
+              warns.push(rec.msg ?? "");
             }
           },
         });
@@ -2087,8 +2107,10 @@ describe("runModelStep", () => {
           },
           log,
           ...(opts.hooks !== undefined && { hooks: opts.hooks }),
-          liveSnapshot: (o, c, r, a, events) =>
-            liveSnapshot(db, { orgId: o, conversationId: c, runId: r, agentId: a, events }),
+          liveSnapshot: async (o, c, r, a, events) => {
+            opts.beforeSnapshot?.();
+            return liveSnapshot(db, { orgId: o, conversationId: c, runId: r, agentId: a, events });
+          },
           registry: {
             resolve: async (...args: Parameters<ModelStepDeps["registry"]["resolve"]>) => {
               const got = await deps.registry.resolve(...args);
@@ -2117,10 +2139,22 @@ describe("runModelStep", () => {
             },
           },
         };
-        return { sent, skips, d } satisfies Harness;
+        return { sent, skips, warns, d } satisfies Harness;
       };
 
-      const icStep = (d: ModelStepDeps, n: number, agent = icAgent()) =>
+      /** The latest seq in the log below `seq`. */
+      const lastSeqBefore = async (seq: number | undefined) =>
+        Math.max(...(await all()).filter((e) => e.seq < (seq ?? 0)).map((e) => e.seq));
+
+      /** The latest seq in the log: what a step starting now absorbs. */
+      const lastSeq = async () => Math.max(...(await all()).map((e) => e.seq));
+
+      const icStep = async (
+        d: ModelStepDeps,
+        n: number,
+        agent = icAgent(),
+        opts: { absorbedUpToSeq?: number; signal?: AbortSignal } = {},
+      ) =>
         runModelStep(d, {
           source: "web",
           orgId,
@@ -2129,8 +2163,8 @@ describe("runModelStep", () => {
           step: n,
           agent,
           agentVersion: 1,
-          absorbedUpToSeq: ALL_ABSORBED,
-          signal: new AbortController().signal,
+          absorbedUpToSeq: opts.absorbedUpToSeq ?? (await lastSeq()),
+          signal: opts.signal ?? new AbortController().signal,
           sink: () => {},
           agentId,
           accountId,
@@ -2155,6 +2189,29 @@ describe("runModelStep", () => {
         expect(await ofType("compaction_summary")).toEqual([]);
       };
 
+      /**
+       * A new run opened by `text`, as a person's message starts one: the message, then the run's
+       * `run_started` (its step 1 re-renders the message after a summary: `openingSeqs`).
+       */
+      const nextTurn = async (text: string) => {
+        runId = randomUUID();
+        await seedRun(runId);
+        await say(text);
+        await eventLog.append(conversationId, [
+          {
+            type: "run_started",
+            runId,
+            payload: {
+              agentVersion: 1,
+              model: { provider: "model-fake", model: "fake-1" },
+              triggerAccountId: accountId,
+              trigger: "message",
+            },
+          },
+        ]);
+        return (await ofType("user_message")).at(-1)?.seq as number;
+      };
+
       /** A low threshold: the next step compacts proactively. */
       const compactNext = { threshold: 0.01 };
       const compactionUsage = async () =>
@@ -2164,23 +2221,29 @@ describe("runModelStep", () => {
         return last?.role === "user" ? last.content.at(-1) : undefined;
       };
 
-      it("an inline compaction after a cached step summarizes from the last request: cache read, method in_context", async () => {
+      it("a turn-start compaction whose only input after the last reply is the run opener summarizes in context: cache read", async () => {
         const h = harness();
         await cachedStep(h);
-        await say("echo:second");
+        const opener = await nextTurn("echo:second");
         await withSettings(compactNext, async () => {
-          await icStep(h.d, 2);
+          await icStep(h.d, 1);
         });
         expect(h.skips).toEqual([]);
         const [summary] = await ofType("compaction_summary");
         expect(summary?.payload.method).toBe("in_context");
-        // boundary mode all: everything the request held is covered (the last event, the message)
-        const second = (await all()).find(
-          (e) =>
-            e.type === "user_message" &&
-            e.payload.content.some((b) => b.type === "text" && b.text === "echo:second"),
+        // boundary mode all: everything the request held is covered, the opener re-rendered
+        // (ruling R9a: it is not lost, so it is not unanswered input)
+        expect(summary?.payload.coversUpToSeq).toBe(await lastSeqBefore(summary?.seq));
+        expect(summary?.payload.openingSeqs).toEqual([opener]);
+        // review M4: what was saved is estimated from the covered range, not the plan's transcript
+        const covered = compactionPlan(
+          (await all()).filter((e) => e.seq <= (summary?.payload.coversUpToSeq ?? 0)),
+          { ...COMPACTION_SETTINGS.parse({}), keepRecentTurns: 0 },
+          Number.POSITIVE_INFINITY,
         );
-        expect(summary?.payload.coversUpToSeq).toBe(second?.seq);
+        expect(summary?.payload.savedTokens).toBe(
+          summarySavedTokens(covered?.transcript ?? "", summary?.payload.text ?? ""),
+        );
         const usage = await compactionUsage();
         expect(usage).toHaveLength(1);
         expect(usage[0]?.payload.cacheReadTokens).toBeGreaterThan(0);
@@ -2233,44 +2296,119 @@ describe("runModelStep", () => {
         expect(await ofType("model_call")).toHaveLength(3);
       });
 
-      it("a hard-line compaction whose request would not fit summarizes the transcript", async () => {
+      it("a compaction whose in-context request would not fit summarizes the transcript", async () => {
         const h = harness();
         await cachedStep(h);
-        // ~30k tokens more: the next request is over fake-1's 32k window minus its output cap
-        const bulk = Array.from({ length: 190 }, (_, i) => [
-          {
-            type: "user_message" as const,
-            payload: {
-              content: [{ type: "text" as const, text: filler(100 + i) }],
-              authorAccountId: accountId,
-            },
-          },
-          {
-            type: "assistant_message" as const,
-            runId: "old-run",
-            payload: {
-              step: 1,
-              content: [{ type: "text" as const, text: filler(100 + i) }],
-              stopReason: "end_turn" as const,
-            },
-          },
-        ]).flat();
-        await eventLog.append(conversationId, bulk);
-        await say("echo:second");
-        await withSettings({ enabled: false }, async () => {
-          await icStep(h.d, 2);
+        // a ~21k-token opener: the step request still fits fake-1's 32k window, the in-context
+        // request with the 4096-token summary cap does not fit below the 8000-token reserve (a
+        // tool directive keeps the step's reply short)
+        await nextTurn(`tool:ReadToolOutput:${JSON.stringify({ id: "x".repeat(84_000) })}`);
+        await withSettings(compactNext, async () => {
+          await icStep(h.d, 1);
         });
         const [summary] = await ofType("compaction_summary");
         expect(summary?.payload.method).toBe("transcript");
         expect(h.skips).toEqual(["too_large"]);
       });
 
+      it("ruling R9: a mid-run compaction with a tool result the model has not read summarizes the transcript", async () => {
+        const h = harness();
+        await seedRun(runId);
+        for (let i = 0; i < 4; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say('tool:ReadToolOutput:{"id":"x"}');
+        await withSettings({ enabled: false }, async () => {
+          await icStep(h.d, 1);
+        });
+        const call = (await ofType("assistant_message"))
+          .at(-1)
+          ?.payload.content.find((b) => b.type === "tool_call");
+        expect(call?.type).toBe("tool_call");
+        await eventLog.append(conversationId, [
+          {
+            type: "tool_result",
+            runId,
+            payload: {
+              step: 1,
+              callId: call?.type === "tool_call" ? call.id : "",
+              toolKey: "ReadToolOutput",
+              content: "the output",
+              isError: false,
+            },
+          },
+        ]);
+        await withSettings(compactNext, async () => {
+          await icStep(h.d, 2);
+        });
+        const [summary] = await ofType("compaction_summary");
+        expect(summary?.payload.method).toBe("transcript");
+        expect(h.skips).toEqual(["pending_input"]);
+      });
+
+      it("review M1: an event after a message the step does not absorb stays out of the in-context request", async () => {
+        const h = harness();
+        await cachedStep(h);
+        const opener = await nextTurn("echo:second");
+        await say("echo:late message");
+        await answer("late reply");
+        await withSettings(compactNext, async () => {
+          await icStep(h.d, 1, icAgent(), { absorbedUpToSeq: opener + 1 });
+        });
+        expect(h.skips).toEqual([]);
+        const [summary] = await ofType("compaction_summary");
+        expect(summary?.payload.method).toBe("in_context");
+        expect(summary?.payload.coversUpToSeq).toBe(opener + 1);
+        const compaction = h.sent.find((r) => r.purpose === "compaction") as ModelRequest;
+        const texts = compaction.messages.flatMap((m) =>
+          typeof m.content === "string"
+            ? [m.content]
+            : m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])),
+        );
+        expect(texts).not.toContain("late reply");
+        expect(texts).not.toContain("late message");
+      });
+
+      it("review M3: a live snapshot that fails summarizes the transcript and logs a warning", async () => {
+        const h = harness({
+          beforeSnapshot: () => {
+            throw new Error("snapshot read failed");
+          },
+        });
+        await cachedStep(h);
+        await nextTurn("echo:second");
+        await withSettings(compactNext, async () => {
+          await icStep(h.d, 1);
+        });
+        const [summary] = await ofType("compaction_summary");
+        expect(summary?.payload.method).toBe("transcript");
+        expect(h.skips).toEqual(["snapshot_failed"]);
+        expect(h.warns).toContain("in-context summary snapshot failed");
+      });
+
+      it("review M6: an abort during the in-context preparation sends no summary call", async () => {
+        const ac = new AbortController();
+        const h = harness({ beforeSnapshot: () => ac.abort() });
+        await cachedStep(h);
+        await nextTurn("echo:second");
+        const sentBefore = h.sent.length;
+        let r: Awaited<ReturnType<typeof icStep>> | undefined;
+        await withSettings(compactNext, async () => {
+          r = await icStep(h.d, 1, icAgent(), { signal: ac.signal });
+        });
+        expect(r).toMatchObject({ aborted: true });
+        expect(h.sent.slice(sentBefore)).toEqual([]);
+        expect(await ofType("compaction_summary")).toEqual([]);
+        expect(await ofType("compaction_failed")).toEqual([]);
+      });
+
       it("a summary cut off once is asked again with the retry note, then stored as in_context", async () => {
         const h = harness();
         await cachedStep(h, ["compact-cutoff:once"]);
-        await say("echo:second");
+        await nextTurn("echo:second");
         await withSettings(compactNext, async () => {
-          await icStep(h.d, 2);
+          await icStep(h.d, 1);
         });
         const calls = h.sent.filter((r) => r.purpose === "compaction");
         expect(calls).toHaveLength(2);
@@ -2286,9 +2424,9 @@ describe("runModelStep", () => {
       it("a summary cut off twice fails the compaction with the cut-off reason", async () => {
         const h = harness();
         await cachedStep(h, ["compact-cutoff:always"]);
-        await say("echo:second");
+        await nextTurn("echo:second");
         await withSettings(compactNext, async () => {
-          await icStep(h.d, 2);
+          await icStep(h.d, 1);
         });
         expect(h.sent.filter((r) => r.purpose === "compaction")).toHaveLength(2);
         expect(await ofType("compaction_summary")).toEqual([]);
@@ -2300,9 +2438,9 @@ describe("runModelStep", () => {
       it("a summary reply that calls a tool fails the compaction", async () => {
         const h = harness();
         await cachedStep(h, ['compact-tool:ReadToolOutput:{"id":"x"}']);
-        await say("echo:second");
+        await nextTurn("echo:second");
         await withSettings(compactNext, async () => {
-          await icStep(h.d, 2);
+          await icStep(h.d, 1);
         });
         expect(await ofType("compaction_summary")).toEqual([]);
         expect((await ofType("compaction_failed")).map((f) => f.payload.reason)).toEqual([
@@ -2314,21 +2452,17 @@ describe("runModelStep", () => {
       it("a non-retryable error on the summary call fails the compaction; the next attempt follows the backoff", async () => {
         const h = harness();
         await cachedStep(h, ["compact-fail:invalid_request"]);
-        await say("echo:second");
+        await nextTurn("echo:second");
         await withSettings(compactNext, async () => {
-          await icStep(h.d, 2);
+          await icStep(h.d, 1);
           expect((await ofType("compaction_failed")).map((f) => f.payload)).toEqual([
-            { attempt: 1, step: 2, reason: "Scripted invalid_request failure" },
+            { attempt: 1, step: 1, reason: "Scripted invalid_request failure" },
           ]);
           // attempt 1 failed: the backoff waits for two new user turns
-          await say("echo:third");
-          runId = randomUUID();
-          await seedRun(runId);
+          await nextTurn("echo:third");
           await icStep(h.d, 1);
           expect(await ofType("compaction_failed")).toHaveLength(1);
-          await say("echo:fourth");
-          runId = randomUUID();
-          await seedRun(runId);
+          await nextTurn("echo:fourth");
           await icStep(h.d, 1);
         });
         expect((await ofType("compaction_failed")).map((f) => f.payload.attempt)).toEqual([1, 2]);
@@ -2352,9 +2486,9 @@ describe("runModelStep", () => {
         };
         const h = harness({ hooks });
         await cachedStep(h);
-        await say("echo:second");
+        await nextTurn("echo:second");
         await withSettings(compactNext, async () => {
-          await icStep(h.d, 2);
+          await icStep(h.d, 1);
         });
         expect(h.skips).toEqual([]);
         expect((await ofType("compaction_failed")).map((f) => f.payload.reason)).toEqual([

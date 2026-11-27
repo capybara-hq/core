@@ -871,6 +871,12 @@ model no entry matches skips with reason `quality_gate`. This table and that one
 | any | `deepseek-*` | "all" quality gate above: 90.4% / 87.5% recall, constraint 20/20 |
 | `model-fake` | any | scripted test model; summary quality not measured |
 
+Settled point (ruling R9, 2026-11-28): the in-context path runs only at a settled point, where
+nothing unanswered (a tool result, an absorbed message or interjection) follows the last reply
+except the run openers re-rendered verbatim after the summary (`openingSeqs`, ruling R9a); anywhere
+else the compaction skips with reason `pending_input` to the transcript path. A compaction at run
+end (phase 2's idle compaction) is a settled point.
+
 ### 9.5 Plugin gaps (plugins repository)
 
 Already fixed by capybara-hq/plugins#304 (being merged):

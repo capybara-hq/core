@@ -18,6 +18,8 @@ import {
   inContextCoversUpToSeq,
   inContextInstruction,
   inContextSummaryAllowed,
+  unansweredAfterReply,
+  withInContextRetryNote,
 } from "../../../src/runtime/context/in-context-compaction.js";
 import { UNKNOWN_RESULT_TEXT } from "../../../src/runtime/context/pairing.js";
 import { assembleModelRequest } from "../../../src/runtime/model-call.js";
@@ -439,6 +441,18 @@ describe("buildInContextCompactionRequest", () => {
     const { messages: _b, ...restFirst } = first.request;
     expect(restRetry).toEqual(restFirst);
   });
+
+  it("the runtime's retry form (the note appended to a copy) equals the builder's retry request", () => {
+    for (const r of [finishedRun(), midRun()]) {
+      const first = built(r);
+      const before = structuredClone(first.request);
+      expect(withInContextRetryNote(first.request, SUMMARY_CAP)).toEqual(
+        built(r, { retry: true }).request,
+      );
+      // the first request is left as it was
+      expect(first.request).toEqual(before);
+    }
+  });
 });
 
 describe("buildInContextCompactionRequest: a marked boundary", () => {
@@ -572,6 +586,21 @@ describe("inContextSummaryAllowed (the quality gate, idle compaction spec §9.4)
     expect(inContextSummaryAllowed("two", "family-b-max", table)).toBe(false);
   });
 
+  it("allows claude-sonnet-* and deepseek-* by model id under any provider", () => {
+    for (const provider of ["anthropic", "openai-compatible", "bedrock"]) {
+      expect(inContextSummaryAllowed(provider, "claude-sonnet-5-5")).toBe(true);
+      expect(inContextSummaryAllowed(provider, "deepseek-flash")).toBe(true);
+      expect(inContextSummaryAllowed(provider, "deepseek-v4")).toBe(true);
+    }
+  });
+
+  it("refuses the models whose in-context summaries failed or were not measured", () => {
+    for (const model of ["claude-haiku-5-5", "gpt-5-nano", "qwen3.8-flash", "my-claude-sonnet"]) {
+      expect(inContextSummaryAllowed("anthropic", model)).toBe(false);
+      expect(inContextSummaryAllowed("openai-compatible", model)).toBe(false);
+    }
+  });
+
   it("every entry carries its evidence", () => {
     for (const entry of IN_CONTEXT_SUMMARY_MODELS) expect(entry.evidence.length).toBeGreaterThan(0);
   });
@@ -597,5 +626,61 @@ describe("inContextCoversUpToSeq (boundary mode all)", () => {
 
   it("reads the events in seq order", () => {
     expect(inContextCoversUpToSeq([user(3), ev(1, "run_started"), ev(2, "model_call")], 2)).toBe(2);
+  });
+});
+
+describe("unansweredAfterReply (ruling R9: the in-context path runs only at a settled point)", () => {
+  const ev = (seq: number, type: string, payload: unknown = {}): ConversationEvent =>
+    ({ seq, type, payload, runId: RUN, conversationId: CONV, createdAt: new Date(AT) }) as never;
+  const user = (seq: number) =>
+    ev(seq, "user_message", { content: [{ type: "text", text: "hi" }], authorAccountId: "a" });
+  const result = (seq: number) =>
+    ev(seq, "tool_result", {
+      step: 1,
+      callId: "c1",
+      toolKey: "Read",
+      content: "x",
+      isError: false,
+    });
+  const settled = { coversUpToSeq: 100, absorbedUpToSeq: 100, openers: [] as number[] };
+
+  it("nothing after the reference reply: settled", () => {
+    const events = [user(1), ev(2, "model_call"), ev(3, "assistant_message"), ev(4, "usage")];
+    expect(unansweredAfterReply(events, settled)).toBe(false);
+  });
+
+  it("a tool result after the reference reply is unanswered", () => {
+    const events = [user(1), ev(2, "model_call"), ev(3, "assistant_message"), result(4)];
+    expect(unansweredAfterReply(events, settled)).toBe(true);
+  });
+
+  it("an absorbed message or interjection after the reference reply is unanswered", () => {
+    const base = [user(1), ev(2, "model_call"), ev(3, "assistant_message")];
+    expect(unansweredAfterReply([...base, user(4)], settled)).toBe(true);
+    expect(unansweredAfterReply([...base, ev(4, "background_task_finished")], settled)).toBe(true);
+    expect(unansweredAfterReply([...base, ev(4, "subagent_delivery")], settled)).toBe(true);
+  });
+
+  it("ruling R9a: a run opener the summary re-renders verbatim does not count", () => {
+    const events = [user(1), ev(2, "model_call"), ev(3, "assistant_message"), user(4), user(5)];
+    expect(unansweredAfterReply(events, { ...settled, openers: [4, 5] })).toBe(false);
+    expect(unansweredAfterReply(events, { ...settled, openers: [4] })).toBe(true);
+  });
+
+  it("only what the summary covers counts: a later or unabsorbed message stays in the tail", () => {
+    const events = [user(1), ev(2, "model_call"), ev(3, "assistant_message"), user(4), result(5)];
+    expect(unansweredAfterReply(events, { ...settled, coversUpToSeq: 3 })).toBe(false);
+    expect(unansweredAfterReply(events.slice(0, 4), { ...settled, absorbedUpToSeq: 3 })).toBe(
+      false,
+    );
+  });
+
+  it("what came before the reference reply does not count", () => {
+    const events = [user(1), result(2), ev(3, "model_call"), ev(4, "assistant_message")];
+    expect(unansweredAfterReply(events, settled)).toBe(false);
+  });
+
+  it("a reference call without a reply: everything after the call counts", () => {
+    expect(unansweredAfterReply([user(1), ev(2, "model_call"), result(3)], settled)).toBe(true);
   });
 });

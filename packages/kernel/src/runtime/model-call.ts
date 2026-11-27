@@ -80,6 +80,8 @@ import {
   inContextCoversUpToSeq,
   inContextSummaryAllowed,
   latestModelCall,
+  unansweredAfterReply,
+  withInContextRetryNote,
 } from "./context/in-context-compaction.js";
 import { guardToolPairs } from "./context/pairing.js";
 import { hasProjectSkills, overlongProjectSkills } from "./context/project-root.js";
@@ -1340,7 +1342,12 @@ type InContextFallback =
   /** The builder threw (a bug: it never throws for a snapshot's content). */
   | "build_failed"
   /** Boundary mode `all` would cover less than the plan: a covered message is not absorbed. */
-  | "covers_unabsorbed";
+  | "covers_unabsorbed"
+  /**
+   * Input the model has not answered follows the last reply (ruling R9, {@link
+   * unansweredAfterReply}): a tool result, or an absorbed message other than a run opener.
+   */
+  | "pending_input";
 
 /** The in-context summary call of one compaction. */
 interface InContextSummary {
@@ -1349,6 +1356,8 @@ interface InContextSummary {
   retryRequest: ModelRequest;
   /** What the summary covers (boundary mode `all`: every event the request includes). */
   coversUpToSeq: number;
+  /** The run openers re-rendered after the summary (`openingSeqs` for `coversUpToSeq`). */
+  opening: number[];
 }
 
 /**
@@ -1374,9 +1383,14 @@ async function inContextSummary(
   if (deps.liveSnapshot === undefined) return { skip: "no_snapshot" };
   const call = latestModelCall(events);
   if (call === undefined) return { skip: "no_model_call" };
+  // The compaction's ref (provider + configured model name) against the last call's recorded one;
+  // the builder compares the resolved `info.id` again. The two can differ only for an alias the
+  // registry resolves to another id: either mismatch skips to the transcript, so it fails safe.
   if (call.payload.provider !== ref.provider || call.payload.model !== ref.model) {
     return { skip: "model_mismatch" };
   }
+  // cheap checks before the snapshot read (the builder repeats this one)
+  if (call.payload.request.fit !== undefined) return { skip: "fit_plan" };
   if (input.agentId === undefined || call.runId === null) return { skip: "no_agent" };
 
   let boundary: InContextBoundary;
@@ -1391,6 +1405,25 @@ async function inContextSummary(
     boundary = { mode: "marked", firstKeptSeq: kept.seq };
     coversUpToSeq = plan.coversUpToSeq;
   }
+  // the openers the summary re-renders, and so the ones the settled-point check admits (what is
+  // checked is what is re-rendered); a manual compact run's are the latest message run's
+  const opening =
+    opts.manual === true
+      ? manualOpeningSeqs(events, coversUpToSeq, input.absorbedUpToSeq)
+      : openingSeqs(events, input.runId, coversUpToSeq, input.absorbedUpToSeq);
+  // ruling R9: only at a settled point; a run opener is re-rendered after the summary (R9a)
+  if (
+    unansweredAfterReply(events, {
+      coversUpToSeq,
+      absorbedUpToSeq: input.absorbedUpToSeq,
+      openers: opening,
+    })
+  ) {
+    return { skip: "pending_input" };
+  }
+  // review M1: the request holds only what the summary covers, so no event after an unabsorbed
+  // message is both summarized and kept in the tail
+  const included = events.filter((e) => e.seq <= coversUpToSeq);
 
   let snapshot: CaseSnapshot;
   try {
@@ -1402,30 +1435,35 @@ async function inContextSummary(
       events,
     );
   } catch (err) {
-    deps.log.debug?.("in-context summary snapshot failed", {
+    deps.log.warn("in-context summary snapshot failed", {
       context: "Compaction",
       conversationId: input.conversationId,
-      err,
+      error: err instanceof Error ? err.message : String(err),
     });
     return { skip: "snapshot_failed" };
   }
-  const common = {
-    snapshot,
-    events,
-    absorbedUpToSeq: input.absorbedUpToSeq,
-    model: info,
-    mediaInfo: tools.media.info,
-    media: tools.media.bytes,
-    reserveTokens: settings.reserveTokens,
-    summaryCap: settings.summaryCap,
-    boundary,
-  };
   try {
-    const first = buildInContextCompactionRequest({ ...common, retry: false });
-    if ("skip" in first) return first;
-    const again = buildInContextCompactionRequest({ ...common, retry: true });
-    if ("skip" in again) return again;
-    return { request: first.request, retryRequest: again.request, coversUpToSeq };
+    const built = buildInContextCompactionRequest({
+      snapshot,
+      events: included,
+      absorbedUpToSeq: input.absorbedUpToSeq,
+      model: info,
+      mediaInfo: tools.media.info,
+      media: tools.media.bytes,
+      reserveTokens: settings.reserveTokens,
+      summaryCap: settings.summaryCap,
+      boundary,
+      retry: false,
+    });
+    if ("skip" in built) return built;
+    return {
+      request: built.request,
+      // review M2: built once; the retry form only appends the note (the fit check above did not
+      // count its few tokens, which the reserve absorbs)
+      retryRequest: withInContextRetryNote(built.request, settings.summaryCap),
+      coversUpToSeq,
+      opening,
+    };
   } catch (err) {
     deps.log.warn("in-context summary request failed to build", {
       context: "Compaction",
@@ -1613,12 +1651,19 @@ export async function runCompaction(
       reason: inContext.skip,
     });
   }
+  // review M6: the preparation awaited the snapshot read; an abort meanwhile sends no call
+  if (signal.aborted) {
+    deps.compactionProgress?.clear(runId);
+    throw new StepAborted();
+  }
   const coversUpToSeq = ic?.coversUpToSeq ?? plan.coversUpToSeq;
   // decided now and recorded in the summary (spec §4.2): the request never depends on later events;
   // a manual compact run is started by no message: the turn it cuts into is the latest message run's
-  const opening = manual
-    ? manualOpeningSeqs(events, coversUpToSeq, input.absorbedUpToSeq)
-    : openingSeqs(events, input.runId, coversUpToSeq, input.absorbedUpToSeq);
+  const opening =
+    ic?.opening ??
+    (manual
+      ? manualOpeningSeqs(events, coversUpToSeq, input.absorbedUpToSeq)
+      : openingSeqs(events, input.runId, coversUpToSeq, input.absorbedUpToSeq));
   // the payload's attempt drives the backoff; the keys use the compaction's ordinal in the step
   const attemptNo = consecutiveCompactionFailures(events) + 1;
   const ordinal = compactionOrdinal(events, runId, step);
@@ -1930,6 +1975,16 @@ export async function runCompaction(
   if (failure !== null) {
     deps.log.warn("compaction failed", { conversationId, reason: failure });
   }
+  // review M4: an in-context summary (boundary mode all) covers more than the plan's transcript:
+  // what it saved is estimated from the transcript of everything it covers
+  const savedFrom =
+    ic === null
+      ? plan.transcript
+      : (compactionPlan(
+          events.filter((e) => e.seq <= coversUpToSeq),
+          { ...compaction, keepRecentTurns: 0 },
+          Number.POSITIVE_INFINITY,
+        )?.transcript ?? plan.transcript);
   const event: AppendEvent =
     failure === null
       ? {
@@ -1944,7 +1999,7 @@ export async function runCompaction(
             ...(opening.length > 0 && { openingSeqs: opening }),
             // what compaction saved: the estimated transcript input minus the stored summary
             // output (context compaction spec §4.9)
-            savedTokens: summarySavedTokens(plan.transcript, summary),
+            savedTokens: summarySavedTokens(savedFrom, summary),
             method: ic !== null ? "in_context" : "transcript",
             step,
           },

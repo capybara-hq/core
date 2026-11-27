@@ -45,6 +45,15 @@ export const IN_CONTEXT_SUMMARY_MODELS: readonly InContextSummaryModel[] = [
     model: /^/,
     evidence: "scripted test model; summary quality not measured",
   },
+  {
+    model: /^claude-sonnet-/,
+    evidence:
+      "all quality gate 2026-11-28: claude-sonnet-5-5 recall 88.8% vs 73.8%, constraint 20/20",
+  },
+  {
+    model: /^deepseek-/,
+    evidence: "all quality gate 2026-11-28: deepseek-flash 90.4% vs 87.5%, constraint 20/20",
+  },
 ];
 
 /**
@@ -78,6 +87,56 @@ export function inContextCoversUpToSeq(
     covered = e.seq;
   }
   return covered;
+}
+
+/**
+ * Whether input the model has not answered follows the reference reply (ruling R9): a tool result,
+ * or an absorbed message or interjection (`isAbsorbable`), after the reply to the conversation's
+ * latest step `model_call` (after the call itself when it has no reply) and within what the
+ * summary covers (`coversUpToSeq`, absorbed up to `absorbedUpToSeq`). The run openers the summary
+ * re-renders verbatim (`openers`, `openingSeqs`) are not lost, so they do not count (ruling R9a).
+ * The in-context path runs only at such a settled point; anywhere else the compaction summarizes
+ * the transcript.
+ */
+export function unansweredAfterReply(
+  events: readonly ConversationEvent[],
+  at: { coversUpToSeq: number; absorbedUpToSeq: number; openers: readonly number[] },
+): boolean {
+  const call = latestModelCall(events);
+  if (call === undefined) return false;
+  const replies = events
+    .filter((e) => e.type === "assistant_message" && e.seq > call.seq)
+    .map((e) => e.seq);
+  const after = replies.length > 0 ? Math.min(...replies) : call.seq;
+  const openers = new Set(at.openers);
+  return events.some(
+    (e) =>
+      e.seq > after &&
+      e.seq <= at.coversUpToSeq &&
+      !openers.has(e.seq) &&
+      (e.type === "tool_result" || (isAbsorbable(e) && e.seq <= at.absorbedUpToSeq)),
+  );
+}
+
+/**
+ * The retry form of an in-context summary request: a copy with {@link compactionRetryNote} as one
+ * more text block of the trailing user message, which carries the instruction (the request
+ * {@link buildInContextCompactionRequest} returns with `retry: true`). `request` is left as it was.
+ */
+export function withInContextRetryNote(request: ModelRequest, summaryCap: number): ModelRequest {
+  const last = request.messages.at(-1);
+  if (last?.role !== "user")
+    throw new Error("an in-context summary request ends with a user message");
+  return {
+    ...request,
+    messages: [
+      ...request.messages.slice(0, -1),
+      {
+        role: "user",
+        content: [...last.content, { type: "text", text: compactionRetryNote(summaryCap) }],
+      },
+    ],
+  };
 }
 
 /** Where the summary stops. */
@@ -270,7 +329,8 @@ export function buildInContextCompactionRequest(input: {
     if (err instanceof ApiError) return { skip: "drift" };
     throw err;
   }
-  const { request, mediaTokens } = extended;
+  const { mediaTokens } = extended;
+  let request = extended.request;
   const n = reference.messages.length;
   if (
     request.model !== reference.model ||
@@ -295,25 +355,21 @@ export function buildInContextCompactionRequest(input: {
     if (anchor === null) return { skip: "boundary_ambiguous" };
   }
 
-  const blocks: ContentBlock[] = [
-    { type: "text", text: inContextInstruction(anchor) },
-    ...(input.retry
-      ? [{ type: "text" as const, text: compactionRetryNote(input.summaryCap) }]
-      : []),
-  ];
+  const instruction: ContentBlock = { type: "text", text: inContextInstruction(anchor) };
   const last = request.messages.at(-1);
   if (last?.role === "user") {
     request.messages[request.messages.length - 1] = {
       role: "user",
-      content: [...last.content, ...blocks],
+      content: [...last.content, instruction],
     };
   } else {
-    request.messages.push({ role: "user", content: blocks });
+    request.messages.push({ role: "user", content: [instruction] });
   }
   if (request.tools.length > 0) request.toolChoice = "none";
   else delete request.toolChoice;
   request.maxOutputTokens = input.summaryCap;
   request.purpose = "compaction";
+  if (input.retry) request = withInContextRetryNote(request, input.summaryCap);
 
   const estimate = estimateTokens(request.messages, request.system, request.tools, mediaTokens);
   if (estimate + input.summaryCap > model.contextWindow - input.reserveTokens) {
