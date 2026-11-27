@@ -115,8 +115,8 @@ export function Menu({
   trigger: ReactElement<Record<string, unknown>>;
   items: MenuItem[];
   /**
-   * A line above the first item (the account menu's system status): `small`, `muted`, not a
-   * menu item and not focusable; a separator follows it.
+   * A line above the first item (the account menu's system status): a Radix menu label, `small`,
+   * `muted`, not a menu item and not focusable; a separator follows it.
    */
   head?: ReactNode;
   /** A line below the last item (the account menu's version · time zone), like `head`. */
@@ -186,9 +186,9 @@ export function Menu({
         >
           {head !== undefined && head !== null ? (
             <>
-              <div className="cb-menu-note" data-part="menu-head">
+              <RM.Label className="cb-menu-note" data-part="menu-head">
                 {head}
-              </div>
+              </RM.Label>
               <RM.Separator className="cb-menu-sep" />
             </>
           ) : null}
@@ -196,9 +196,9 @@ export function Menu({
           {foot !== undefined && foot !== null ? (
             <>
               <RM.Separator className="cb-menu-sep" />
-              <div className="cb-menu-note" data-part="menu-foot">
+              <RM.Label className="cb-menu-note" data-part="menu-foot">
                 {foot}
-              </div>
+              </RM.Label>
             </>
           ) : null}
         </RM.Content>

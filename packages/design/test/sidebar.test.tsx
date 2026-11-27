@@ -338,7 +338,7 @@ describe("Sidebar navigation (work context)", () => {
         })}
       />,
     );
-    // one block: the shield, 管理后台 and the dense way back at its end; no scope line
+    // one block: the shield, the Admin console label and the dense way back at its end; no scope line
     const blocks = document.querySelectorAll('[data-part="context-block"]');
     expect(blocks).toHaveLength(1);
     const block = blocks[0] as HTMLElement;
@@ -479,6 +479,19 @@ describe("Sidebar account status and footnote", () => {
     const m = await screen.findByRole("menu");
     expect(m.querySelector('[data-part="menu-head"]')).toBeNull();
     expect(m.querySelector('[data-part="menu-foot"]')).toBeNull();
+  });
+
+  it("a static account row (no menu yet) carries the status in its accessible text", () => {
+    zh(
+      <Sidebar
+        {...props({
+          account: { name: "grant", menu: [], status: { text: "连接已断开", tone: "fail" } },
+        })}
+      />,
+    );
+    const row = document.querySelector('[data-part="account"]') as HTMLElement;
+    expect(row.querySelector('.cb-sidebar-dot[data-tone="fail"]')).toBeTruthy();
+    expect(row.querySelector(".cb-sr-only")?.textContent).toBe(" · 连接已断开");
   });
 
   it("the rail's account row carries the dot too", () => {

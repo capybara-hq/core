@@ -729,8 +729,8 @@ export function OrgSwitcher({
 
 /**
  * The admin context's block (layered shell spec §4): static, the shield in the accent tint. The
- * full sidebar draws one row: the shield, 管理后台 and the way back to the workspace as a dense link
- * at its end. The rail keeps the shield, with the back button under it.
+ * full sidebar draws one row: the shield, the Admin console label and the way back to the
+ * workspace as a dense link at its end. The rail keeps the shield, with the back button under it.
  */
 function AdminBlock({
   back,
@@ -1223,6 +1223,10 @@ function Account({
       />
       {rail ? null : <span className="cb-sidebar-label">{text}</span>}
       {dot}
+      {/* the static row has no aria-label: the status joins its accessible text */}
+      {status && account.menu.length === 0 ? (
+        <span className="cb-sr-only"> · {status.text}</span>
+      ) : null}
     </>
   );
   // Without menu items (the session is loading) nothing opens, so it is not a button.
