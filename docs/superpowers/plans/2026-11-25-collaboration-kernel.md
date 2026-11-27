@@ -23,7 +23,9 @@ are the plugin plan, written after PR C's interfaces are merged).
 ## Global Constraints
 
 - Before 0.1.0: rename directly, no compatibility shims; applied migrations 0001–0184 stay
-  untouched. New migrations start at `0185`.
+  untouched. New migrations take the next free numbers at execution time, in plan order (when
+  written: `0188` rename, `0189` events, `0190` inbox items, `0191` acceptance); rename the file and
+  its test if main took a number meanwhile.
 - The event log's stored names are not renamed: `user_message.schedule`, `ScheduleMarkerSchema`,
   `run_started.trigger: "schedule"`, `execution: "scheduled"` (spec §4.6).
 - Every new kernel table with `org_id` ships `CREATE POLICY org_scope … USING (rls_admits(org_id))`
@@ -81,21 +83,21 @@ Name map (use everywhere outside the frozen event-log names):
 | Platform ops `schedules.*`, group `schedules` | `automations.*`, group `automations` (label 自动化 / Automations) |
 | web `/schedules`, `/settings/schedules`, i18n `schedules.*`, `scheduleSettings.*`, `inboxSchedule.*` | `/automations`, `/settings/automations`, `automations.*`, `automationSettings.*`, `inboxAutomation.*` |
 
-### Task A1: Migration 0185 renames tables and rewrites stored values
+### Task A1: Migration 0188 renames tables and rewrites stored values
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0185_automations_rename.sql`
+- Create: `packages/kernel/src/migrations/0188_automations_rename.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts` (tables at ~1696/1777/1799, columns 506/640, map 1985-1987, push category 235)
-- Test: `packages/kernel/test/migrations/0185.test.ts`
+- Test: `packages/kernel/test/migrations/0188.test.ts`
 
 **Interfaces:**
 - Produces: tables and columns per the name map; Kysely `AutomationsTable`, `AutomationRunsTable`,
   `AutomationGrantsTable`.
 
-- [ ] **Step 1: Write the failing test** `0185.test.ts`: seed a pre-0185 database (migrate to 0184,
+- [ ] **Step 1: Write the failing test** `0188.test.ts`: seed a pre-0188 database (migrate to 0184,
   insert a task, run, grant, a `push_preferences` row with category `schedules`, an org settings
   row with key `scheduledTasks`, an audit row `schedule.created`, an org `forbiddenTools` list and an
-  agent definition holding `ScheduleCreate`, a pending outbox row `sched-fire`), migrate to 0185,
+  agent definition holding `ScheduleCreate`, a pending outbox row `sched-fire`), migrate to 0188,
   assert:
 
 ```ts
@@ -112,8 +114,8 @@ expect(await policyExists("automations", "org_scope")).toBe(true);
 expect(await policyExists("automation_grants", "org_scope")).toBe(true);
 ```
 
-- [ ] **Step 2: Run, verify it fails:** `pnpm exec vitest run packages/kernel/test/migrations/0185.test.ts` → FAIL (no migration).
-- [ ] **Step 3: Write `0185_automations_rename.sql`**: `ALTER TABLE IF EXISTS … RENAME TO`, column
+- [ ] **Step 2: Run, verify it fails:** `pnpm exec vitest run packages/kernel/test/migrations/0188.test.ts` → FAIL (no migration).
+- [ ] **Step 3: Write `0188_automations_rename.sql`**: `ALTER TABLE IF EXISTS … RENAME TO`, column
   renames, explicit renames of every index and CHECK constraint the subagent map lists
   (`scheduled_tasks_*_check`, `scheduled_task_runs_skip_reason_check`, `*_idx`, `*_tick_uq`,
   `conversations_scheduled_task_idx`), rewrite the push CHECK and rows, the settings key, audit
@@ -121,8 +123,8 @@ expect(await policyExists("automation_grants", "org_scope")).toBe(true);
   agent definitions (pattern of `0063_tool_keys_claude_code.sql`, whose header rule "logs are never
   rewritten" this file repeats), pending outbox names and job ids; add `org_scope` on
   `automation_grants` if 0182 missed it. Update `kernel-schema.ts`.
-- [ ] **Step 4: Run test → PASS.** Add `migrations/0185.test.ts` to no list (integration default).
-- [ ] **Step 5: Commit** `refactor(kernel): rename scheduled task tables to automations (0185)`.
+- [ ] **Step 4: Run test → PASS.** Add `migrations/0188.test.ts` to no list (integration default).
+- [ ] **Step 5: Commit** `refactor(kernel): rename scheduled task tables to automations (0188)`.
 
 ### Task A2: Kernel code, tools, routes, Platform ops, config, settings
 
@@ -163,7 +165,7 @@ expect(await policyExists("automation_grants", "org_scope")).toBe(true);
 ### Task A4: Terms guard, docs, skills, changeset
 
 **Files:**
-- Modify: `tools/checks/src/terms.ts` (`OLD_REFERENCES` entry `scheduled-tasks` matching `scheduled_task(s|_runs|_grants|_run_id|_id)`, `Schedule(Create|Update|List|Targets|Delete)`, `CAPYBARA_SCHEDULES__`, `schedule_attention`; `OLD_ROUTES` `/schedules`; `OLD_CONFIG_KEYS` `schedules`; `allowedIn`: migrations 0113/0122/0128/0172/0182/0185, `test/migrations/0113.test.ts`, `0185.test.ts`, `docs/superpowers/**`, `CHANGELOG.md`, `.changeset/**`)
+- Modify: `tools/checks/src/terms.ts` (`OLD_REFERENCES` entry `scheduled-tasks` matching `scheduled_task(s|_runs|_grants|_run_id|_id)`, `Schedule(Create|Update|List|Targets|Delete)`, `CAPYBARA_SCHEDULES__`, `schedule_attention`; `OLD_ROUTES` `/schedules`; `OLD_CONFIG_KEYS` `schedules`; `allowedIn`: migrations 0113/0122/0128/0172/0182/0188, `test/migrations/0113.test.ts`, `0188.test.ts`, `docs/superpowers/**`, `CHANGELOG.md`, `.changeset/**`)
 - Create: red fixture lines under `tools/checks/fixtures/terms/` for the new entry
 - Modify: `.agents/skills/{writing-kernel-api,replay-evals,writing-tools,writing-channels}/SKILL.md`, `docs/guide/sandbox.md`, `docs/design/spec.md`
 - Create: `.changeset/automations-rename.md` (`@capybara-hq/capybara`: patch)
@@ -251,12 +253,12 @@ test("permissions.triggers validates type names", () => {
 - [ ] **Step 4:** tests PASS; `pnpm check:agent-docs && pnpm check:sdk-api` → PASS.
 - [ ] **Step 5: Commit** `feat(plugin-sdk): event triggers and the trigger-source extension point`.
 
-### Task B2: Migration 0186 and the event schema
+### Task B2: Migration 0189 and the event schema
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0186_event_automations.sql`
+- Create: `packages/kernel/src/migrations/0189_event_automations.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts`, `packages/kernel/src/conversations/events.ts`, `packages/kernel/src/automations/types.ts`
-- Test: `packages/kernel/test/migrations/0186.test.ts`
+- Test: `packages/kernel/test/migrations/0189.test.ts`
 
 **Interfaces:**
 - Produces (SQL):
@@ -271,10 +273,10 @@ test("permissions.triggers validates type names", () => {
 - Produces (TS, `automations/types.ts`): `Trigger` union gains `{ kind: "event"; source: string; types: string[]; filter: EventFilter }`; `AutomationMode` gains `"subject"`; `TaskRunSkipReason` gains `"not_visible" | "subject_rate"`.
 - Produces (`events.ts`): `AutomationEventMarkerSchema = z.object({ automationId, automationRunId, automationName: z.string(), events: z.array(z.object({ id, type, subject: z.object({ kind, id, title, url: z.string().optional() }), summary: z.string() })).min(1) })`; `user_message.automationEvent: AutomationEventMarkerSchema.optional()`; `run_started.trigger` enum adds `"automation_event"`.
 
-- [ ] **Step 1:** failing `0186.test.ts`: after migrate, an old time run has `trigger_key = scheduled_for` text; inserting two event runs with the same `(automation_id, trigger_key)` raises unique violation; policies exist on `trigger_events`, `automation_event_deliveries`, `automation_conversations`.
+- [ ] **Step 1:** failing `0189.test.ts`: after migrate, an old time run has `trigger_key = scheduled_for` text; inserting two event runs with the same `(automation_id, trigger_key)` raises unique violation; policies exist on `trigger_events`, `automation_event_deliveries`, `automation_conversations`.
 - [ ] **Step 2:** FAIL → **Step 3:** write SQL + types; `AutomationStore.insertRun` conflict target becomes `(automation_id, trigger_key) WHERE trial = false` and time runs pass `triggerKey: scheduledFor.toISOString()`.
-- [ ] **Step 4:** `0186.test.ts` and `test/automations/fire.test.ts` PASS.
-- [ ] **Step 5: Commit** `feat(kernel): event automation tables (0186)`.
+- [ ] **Step 4:** `0189.test.ts` and `test/automations/fire.test.ts` PASS.
+- [ ] **Step 5: Commit** `feat(kernel): event automation tables (0189)`.
 
 ### Task B3: `ctx.triggers.emit`
 
@@ -421,7 +423,7 @@ export function depthExceeded(depth: number, max: number): boolean;     // depth
 ### Task C1: Personal inbox items and `ctx.inbox`
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0187_inbox_items.sql` (`inbox_items (id uuid pk, org_id, account_id, source text check in ('kernel','plugin'), plugin text null, kind text, title text, body text, link text null, actions jsonb not null default '[]', state text check in ('open','resolved','expired') default 'open', expires_at timestamptz, created_at, resolved_at)`, index `(org_id, account_id) WHERE state='open'`, `org_scope` policy; `push_preferences` category CHECK adds `'inbox'`)
+- Create: `packages/kernel/src/migrations/0190_inbox_items.sql` (`inbox_items (id uuid pk, org_id, account_id, source text check in ('kernel','plugin'), plugin text null, kind text, title text, body text, link text null, actions jsonb not null default '[]', state text check in ('open','resolved','expired') default 'open', expires_at timestamptz, created_at, resolved_at)`, index `(org_id, account_id) WHERE state='open'`, `org_scope` policy; `push_preferences` category CHECK adds `'inbox'`)
 - Create: `packages/kernel/src/inbox/inbox-items.service.ts`, `inbox/inbox-items.controller.ts` (`POST api/v1/orgs/:orgId/inbox/items/:id/actions/:actionId`, `POST …/items/:id/dismiss`)
 - Modify: `inbox/inbox.service.ts` (`InboxItem` variant `{ type: "item"; … }`), `push/{jobs.ts,triggers.ts,push.schemas.ts}` (source `{ kind: "inbox", itemId }`, category `inbox`), SDK `ctx.ts` + new `packages/plugin-sdk/src/inbox.ts`, `permissions.ts` (`inbox?: true`), kernel `create-ctx.ts`, `permission-set.ts`, `permission-view.ts`, plugin-tools check + fixture, Platform ops (`inbox.item-action`, `inbox.item-dismiss` as operations; `handoff` none, `noHandoff` reason), web inbox view + i18n
 - Modify: `automations/events/dispatcher.ts` (depth stop posts a kernel item `kind: "automation_depth_stopped"` to the owners of matched automations)
@@ -446,7 +448,7 @@ export const INBOX_ACTIONS_MAX = 3;
 ### Task C2: Directed events, acceptance rules and offers
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0188_automation_acceptance.sql` (`automation_acceptance (org_id, account_id, source text, mode text check in ('auto','confirm','off'), updated_at)`, pk `(org_id, account_id, source)`; `automation_offers (id uuid pk, org_id, account_id, automation_id null, event_id, agent_id, state text check in ('open','accepted','declined','expired'), created_at, decided_at)`; `org_scope` on both)
+- Create: `packages/kernel/src/migrations/0191_automation_acceptance.sql` (`automation_acceptance (org_id, account_id, source text, mode text check in ('auto','confirm','off'), updated_at)`, pk `(org_id, account_id, source)`; `automation_offers (id uuid pk, org_id, account_id, automation_id null, event_id, agent_id, state text check in ('open','accepted','declined','expired'), created_at, decided_at)`; `org_scope` on both)
 - Create: `packages/kernel/src/automations/events/acceptance.ts`, `automations/acceptance.controller.ts` (`GET/PUT api/v1/orgs/:orgId/automations/acceptance` for the caller's rules; `POST api/v1/orgs/:orgId/automations/offers/:id/accept|decline`)
 - Modify: `events/dispatcher.ts` (directed branch), `orgs/settings.service.ts` (`automations.directedDefault: "auto" | "confirm" | "off"`, default `"auto"`), `inbox/inbox.service.ts` (variant `automation_offer`), push trigger, Platform ops (`automations.acceptance-get/set`, `automations.offer-accept/decline`), web: settings page `/settings/automations` section "接受工作", inbox offer card, automations list badge for `origin = acceptance`; i18n
 - Test: `packages/kernel/test/automations/acceptance.test.ts`
