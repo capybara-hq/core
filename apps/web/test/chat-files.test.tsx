@@ -242,7 +242,7 @@ describe("输入框：上传文件", () => {
     await vi.waitFor(() => expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull());
     const log = screen.getByRole("log");
     const thumb = await within(log).findByRole("button", { name: "chart.png" });
-    expect(thumb.querySelector("img")?.getAttribute("src")).toBe(`${ATT}/${ID1}/download`);
+    expect(thumb.querySelector("img")?.getAttribute("src")).toBe(`${ATT}/${ID1}/download?inline=1`);
   });
 
   it("内核已有这些字节（upload 为 null，已是 draft）：不直传、不 finalize，直接就绪", async () => {
@@ -648,6 +648,41 @@ describe("输入框：上传文件（修正轮 1）", () => {
 });
 
 describe("时间线：消息附件", () => {
+  it("a tool row's image is a read copy: it loads from the attachments route", async () => {
+    const KEY = "plugin__browser__browser_screenshot";
+    stubApi({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, [{ type: "text", text: "hi" }]),
+            ev(2, "assistant_message", {
+              step: 0,
+              stopReason: "tool_use",
+              content: [{ type: "tool_call", id: "k1", name: KEY, input: {} }],
+            }),
+            ev(3, "tool_result", {
+              step: 0,
+              callId: "k1",
+              toolKey: KEY,
+              content: "Screenshot.",
+              isError: false,
+              contentTypes: ["text", "image"],
+              media: [{ attachmentId: ID1, name: "shot.jpg", mediaType: "image/jpeg", size: 100 }],
+            }),
+          ],
+        }),
+    });
+    await renderChat("en");
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("button", { name: /browser_screenshot/ }));
+    await vi.waitFor(() =>
+      expect(document.querySelector("[role=log] img")?.getAttribute("src")).toBe(
+        `/api/v1/orgs/o1/attachments/${ID1}/download`,
+      ),
+    );
+  });
+
   it("an image shows as a thumbnail, other files as file cards", async () => {
     stubApi({
       [`GET ${BASE}/events`]: () =>
@@ -674,7 +709,7 @@ describe("时间线：消息附件", () => {
     await renderChat("en");
     const log = screen.getByRole("log");
     const thumb = within(log).getByRole("button", { name: "chart.png" });
-    expect(thumb.querySelector("img")?.getAttribute("src")).toBe(`${ATT}/${ID1}/download`);
+    expect(thumb.querySelector("img")?.getAttribute("src")).toBe(`${ATT}/${ID1}/download?inline=1`);
     const card = within(log).getByRole("button", { name: /report\.pdf/ });
     expect(within(card).getByText("PDF")).toBeTruthy();
     // 文本仍只显示用户输入
@@ -759,7 +794,7 @@ describe("时间线：消息附件", () => {
     await user.keyboard("{ArrowLeft}");
     expect(within(viewer).getByText("1 / 2")).toBeTruthy();
     expect(within(viewer).getByRole("img", { name: "one.png" }).getAttribute("src")).toBe(
-      `${ATT}/${ID1}/download`,
+      `${ATT}/${ID1}/download?inline=1`,
     );
   });
 
@@ -836,12 +871,12 @@ describe("时间线：登录过期后的附件（修正轮 1）", () => {
       screen.getByRole("button", { name: "chart.png" }).querySelector("img") as HTMLImageElement;
     fireEvent.error(img());
     await vi.waitFor(() =>
-      expect(img().getAttribute("src")).toBe(`${ATT}/${ID1}/download?retry=1`),
+      expect(img().getAttribute("src")).toBe(`${ATT}/${ID1}/download?inline=1&retry=1`),
     );
     expect(calls.filter((c) => c.url === "/api/v1/auth/refresh")).toHaveLength(1);
     fireEvent.error(img());
     await new Promise((r) => setTimeout(r, 20));
-    expect(img().getAttribute("src")).toBe(`${ATT}/${ID1}/download?retry=1`);
+    expect(img().getAttribute("src")).toBe(`${ATT}/${ID1}/download?inline=1&retry=1`);
     expect(calls.filter((c) => c.url === "/api/v1/me")).toHaveLength(2);
   });
 

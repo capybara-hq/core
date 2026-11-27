@@ -182,6 +182,13 @@ export const discardDraft = (orgId: string, id: string) =>
 export const fileDownloadUrl = (orgId: string, id: string, opts: { inline?: boolean } = {}) =>
   `${base(orgId)}/${encodeURIComponent(id)}/download${opts.inline ? "?inline=1" : ""}`;
 
+/**
+ * A `read` copy's download address: an image a tool showed the agent (a tool result's media) is an
+ * attachment of the kernel, not a library file.
+ */
+export const attachmentDownloadUrl = (orgId: string, id: string) =>
+  `/api/v1/orgs/${encodeURIComponent(orgId)}/attachments/${encodeURIComponent(id)}/download`;
+
 /** 直传失败（网络 / CORS / 存储拒绝 / 过期）的客户端错误码。 */
 export const UPLOAD_FAILED = "file.upload_failed";
 
