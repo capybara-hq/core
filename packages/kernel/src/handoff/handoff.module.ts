@@ -1,6 +1,5 @@
 import { Module } from "@nestjs/common";
 import { IdentityModule } from "../identity/identity.module.js";
-import { OrgLockModule } from "../orgs/org-lock.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { HandoffService } from "./handoff.service.js";
 import { HandoffTicketsModule } from "./handoff-tickets.js";
@@ -11,7 +10,7 @@ import { HandoffTicketsModule } from "./handoff-tickets.js";
  * person's signed-in browser. The tickets themselves are `HandoffTicketsModule`'s.
  */
 @Module({
-  imports: [IdentityModule, ToolsModule, OrgLockModule, HandoffTicketsModule],
+  imports: [IdentityModule, ToolsModule, HandoffTicketsModule],
   providers: [HandoffService],
   exports: [HandoffService],
 })

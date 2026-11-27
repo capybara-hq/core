@@ -47,7 +47,8 @@ export const ERROR_CODES = {
   "handoff.invalid": 410,
   /**
    * The browser is signed in as another account than the one that started the handoff (the
-   * ticket is spent); details `[{ displayName, email }]` of the ticket's account.
+   * ticket is spent); details `[{ login, displayName, email }]` of the ticket's account (`login`
+   * its local login, null without one; `email` null when unset).
    */
   "handoff.account_mismatch": 403,
   "token.not_found": 404,

@@ -259,7 +259,7 @@ describe("connector redeem", () => {
     expect(res.json()).toMatchObject({
       error: {
         code: "handoff.account_mismatch",
-        details: [{ displayName: "Olive", email: "olive@example.com" }],
+        details: [{ login: "owner", displayName: "Olive", email: "olive@example.com" }],
       },
     });
     // no flow started for the session's account, no binding cookie
@@ -271,14 +271,16 @@ describe("connector redeem", () => {
     expect(errCode(own)).toBe("handoff.invalid");
   });
 
+  // Every org role (guest and up) has connectors.use, so losing it means leaving the org: the
+  // redeem answers as the start's org guard does, without disclosing the org (no role-lowered case).
   it("a member who lost connectors.use is refused", async () => {
     const connectorId = await installDcr();
     const bob = await newMember("bob");
     const ticket = await connectHandoff(connectorId, { returnScheme: "capybara" }, bob.req);
     await db.deleteFrom("memberships").where("account_id", "=", bob.id).execute();
     const res = await redeem(ticket, bob.req);
-    expect(res.statusCode, res.body).toBe(403);
-    expect(errCode(res)).toBe("forbidden");
+    expect(res.statusCode, res.body).toBe(404);
+    expect(errCode(res)).toBe("org.not_found");
     expect(await redis.keys("capk:oauth-state:*")).toEqual([]);
     expect(setCookies(res).map((c) => c.name)).not.toContain("cap_oauth");
   });
@@ -430,5 +432,26 @@ describe("redeem refusals", () => {
     const [key2] = await redis.keys("capk:handoff:*");
     await redis.set(key2 as string, "not json");
     expect(errCode(await redeem(other))).toBe("handoff.invalid");
+    // a record whose return page is not a site path, or whose scheme is not a plain scheme
+    for (const patch of [{ returnTo: "//evil.example" }, { returnScheme: "java script" }]) {
+      const t = await linkHandoff();
+      const [k3] = await redis.keys("capk:handoff:*");
+      const rec = JSON.parse((await redis.get(k3 as string)) as string);
+      await redis.set(k3 as string, JSON.stringify({ ...rec, ...patch }));
+      expect(errCode(await redeem(t))).toBe("handoff.invalid");
+    }
+  });
+
+  it("a scheme no longer allowed at redeem → handoff.scheme_not_allowed, no flow", async () => {
+    // stands for a super admin removing the scheme from auth.appRedirectUris after the start
+    const ticket = await linkHandoff();
+    const [key] = await redis.keys("capk:handoff:*");
+    const rec = JSON.parse((await redis.get(key as string)) as string);
+    await redis.set(key as string, JSON.stringify({ ...rec, returnScheme: "capy-old" }));
+    const res = await redeem(ticket);
+    expect(res.statusCode, res.body).toBe(400);
+    expect(errCode(res)).toBe("handoff.scheme_not_allowed");
+    expect(setCookies(res).map((c) => c.name)).not.toContain("cap_sso");
+    expect(await redis.keys("capk:sso-state:*")).toEqual([]);
   });
 });

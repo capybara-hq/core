@@ -4,7 +4,8 @@ import type { Redis } from "ioredis";
 import { z } from "zod";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { REDIS } from "../infra/tokens.js";
-import { publicUrlRequired } from "../tools/oauth/flow-paths.js";
+import { isSafeReturnPath, publicUrlRequired } from "../tools/oauth/flow-paths.js";
+import { APP_SCHEME_RE } from "./app-schemes.js";
 import { HANDOFF_PAGE_PATH, type HandoffRecord } from "./handoff-paths.js";
 
 export { HANDOFF_DONE_PATH, type HandoffRecord, handoffDonePath } from "./handoff-paths.js";
@@ -19,21 +20,23 @@ const TICKET_RE = /^cap_ho_[A-Za-z0-9_-]{43}$/;
  * What a stored record must look like to be redeemed: a value that does not parse (another
  * writer, a format from another version) is treated as no ticket, never trusted as written.
  */
+const ReturnTo = z.string().refine(isSafeReturnPath);
+const ReturnScheme = z.string().regex(APP_SCHEME_RE).optional();
 const HandoffRecordSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("connector"),
     accountId: z.string().min(1),
     orgId: z.string().min(1),
     connectorId: z.string().min(1),
-    returnTo: z.string(),
-    returnScheme: z.string().optional(),
+    returnTo: ReturnTo,
+    returnScheme: ReturnScheme,
   }),
   z.object({
     kind: z.literal("identity-link"),
     accountId: z.string().min(1),
     plugin: z.string().min(1),
-    returnTo: z.string(),
-    returnScheme: z.string().optional(),
+    returnTo: ReturnTo,
+    returnScheme: ReturnScheme,
   }),
 ]);
 

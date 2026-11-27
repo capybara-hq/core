@@ -52,14 +52,14 @@ export class HandoffController {
   ): Promise<HandoffRedeemResponse> {
     const p = requireUser(principal);
     reply.header("cache-control", "no-store");
-    const out = await this.handoffs.redeem(body.ticket, p.account.id, {
+    const out = await this.handoffs.redeem(body.ticket, p, {
       oauth: req.cookies[OAUTH_BINDING_COOKIE],
       sso: req.cookies[SSO_BINDING_COOKIE],
     });
-    if (out.cookie.name === "cap_oauth") {
-      setOAuthBindingCookie(reply, out.cookie.value, this.config.get());
+    if (out.binding.flow === "oauth") {
+      setOAuthBindingCookie(reply, out.binding.value, this.config.get());
     } else {
-      setSsoBindingCookie(reply, out.cookie.value, this.sso.cookieSecure());
+      setSsoBindingCookie(reply, out.binding.value, this.sso.cookieSecure());
     }
     return { location: out.location };
   }
