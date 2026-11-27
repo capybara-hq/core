@@ -456,7 +456,10 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       '"read" for how-to documentation (plugin format, skills, extension points).',
     // the fixed domain list, the same on every replica and in every org
     inputSchema: platformInputSchema(PLATFORM_DOMAINS.map((d) => d.id)),
-    keyArgs: ["action", "operation", "domain"],
+    // The row shows the first key argument present: the operation a call or describe names (a
+    // running row reads "Platform conversations.delete"), a search's query, a browsed domain;
+    // else the action (the first string input).
+    keyArgs: ["operation", "query", "domain"],
   };
   const facts = (ctx: CallPolicyContext) => deps.actor.facts(ctx);
 

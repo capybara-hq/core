@@ -2584,7 +2584,7 @@ button.cb-file-card:focus-visible {
   --cb-rail-clear: calc(2.5px + 4px);
 }
 .cb-rail-step.cb-rail-planning {
-  --cb-rail-clear: calc(10px + 4px);
+  --cb-rail-clear: calc(5px + 4px);
 }
 .cb-rail-step::before,
 .cb-rail-step::after {
@@ -2626,18 +2626,23 @@ button.cb-file-card:focus-visible {
   width: 20px;
   height: 20px;
 }
-/* The planning row (§6.16.8a): the capybara (28 wide) stands centred on the rail's 20 px icon
-   column, the rule breaking around it like any mark; the caption is the row's text. */
-.cb-rail-planning > .cb-rail-gutter > .cb-working-mark,
-.cb-rail-planning > .cb-rail-gutter > .cb-working-mark-img {
-  justify-self: center;
-  width: 28px;
-  height: var(--cb-space-5);
-  margin: 0 -4px;
+/* The planning row (§6.16.8a): the capybara at one CSS pixel per art pixel (14 × 10, crisp on
+   any DPR), inside the rail's 20 px icon column like the 16 px icons, the rule breaking around it
+   like any mark; the caption is the row's text. A theme's mark gets the same box: 10 high, at most
+   16 wide, its aspect kept. The standalone working line keeps its 28 × 20 capybara. */
+.cb-rail-planning > .cb-rail-gutter > .cb-working-mark {
+  width: 14px;
+  height: 10px;
+}
+.cb-rail-planning > .cb-rail-gutter > .cb-working-mark > svg {
+  display: block;
+  width: 14px;
+  height: 10px;
 }
 .cb-rail-planning > .cb-rail-gutter > .cb-working-mark-img {
   width: auto;
-  max-width: 28px;
+  height: 10px;
+  max-width: 16px;
 }
 .cb-rail-dot {
   width: 5px;
