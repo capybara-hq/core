@@ -34,6 +34,11 @@ import { issueOwnerReport } from "./owner-report.js";
 import type { PolicyStore } from "./policy-store.js";
 import { recordProjectRoot, reportedSharedProjectRoots } from "./project-roots.js";
 import { policySummary, type StagedOwnerPolicy } from "./server-ops.js";
+import {
+  defaultInstallCacheRoot,
+  InstallCache,
+  installCacheScope,
+} from "./services/install-cache.js";
 import { macServiceLauncher } from "./services/mac-launcher.js";
 import {
   ServiceSupervisor,
@@ -204,6 +209,11 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
   const roots = mode === "docker" ? { ...DEFAULT_SANDBOX_ROOTS } : hostRoots;
   const handle: SandboxHandle = { id: cred.deviceId };
   const guard = new RootGuard(resolve(cred.dir), hostRoots);
+  // what services install once (a browser), shared by this OS user's devices of the deployment
+  const installCache = new InstallCache({
+    root: defaultInstallCacheRoot(home),
+    scope: installCacheScope(cred.url),
+  });
   const readOwnerCeiling = () =>
     readStrictOwnerCeiling({ stateDir, stateRoot, deviceId: cred.deviceId, dir: cred.dir, home });
 
@@ -285,12 +295,13 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       onOperationEnded: (operationId) => running.endOperation(operationId),
       // the project directories this connection used, for the ones it shares with another
       onProjectAdmitted: (projectRoot) => recordProjectRoot(stateDir, projectRoot),
-      // the services' profiles (cookies), code and installs: never read or written by an agent
-      // operation
+      // the services' profiles (cookies), code and installs (the device's own and the machine-wide
+      // cache): never read or written by an agent operation
       serviceRoots: [
         serviceRoot(resolve(cred.dir)),
         serviceCodeRoot(resolve(cred.dir)),
         serviceInstallRoot(resolve(cred.dir)),
+        installCache.root,
       ],
     };
     const deps = o.backendDependencies ?? {};
@@ -373,6 +384,7 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     deviceDir: resolve(cred.dir),
     workspace: hostRoots.workspace,
     launcher: () => (mode === "os" && platform === "darwin" ? serviceLauncher : undefined),
+    installCache,
   });
 
   const binder = new InstanceBinder({
