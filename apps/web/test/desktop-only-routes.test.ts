@@ -41,6 +41,7 @@ describe("desktopOnly routes", () => {
     "/inbox",
     "/agents",
     "/schedules",
+    "/files",
     "/skills",
     "/connectors",
     "/devices",

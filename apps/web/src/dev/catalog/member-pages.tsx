@@ -7,6 +7,7 @@ import AccountProfileView from "../../app/(app)/account/profile/view";
 import AgentsView from "../../app/(app)/agents/view";
 import ConnectorsView from "../../app/(app)/connectors/view";
 import ConversationsView from "../../app/(app)/conversations/view";
+import FilesView from "../../app/(app)/files/view";
 import InboxView from "../../app/(app)/inbox/view";
 import SchedulesView from "../../app/(app)/schedules/view";
 import SkillsView from "../../app/(app)/skills/view";
@@ -15,11 +16,13 @@ import type { Agent } from "../../lib/agents";
 import type { ConnectorSummary } from "../../lib/connectors";
 import type { Conversation, ConversationListRow } from "../../lib/conversations";
 import type { InboxItem } from "../../lib/inbox";
+import type { LibraryFileView } from "../../lib/library-files";
 import { agentsQuery, agentTemplatesQuery } from "../../lib/query/agents";
 import { authSourcesQuery } from "../../lib/query/auth";
 import { orgComponentsQuery } from "../../lib/query/components";
 import { connectorsQuery } from "../../lib/query/conversation";
 import { inboxQuery } from "../../lib/query/inbox";
+import { libraryFilesQuery, libraryUsageQuery } from "../../lib/query/library";
 import { membersQuery } from "../../lib/query/members";
 import { schedulesQuery } from "../../lib/query/schedules";
 import { orgSettingsQuery } from "../../lib/query/settings";
@@ -39,7 +42,7 @@ import { sidebarProps } from "./shell-fixture";
 
 /**
  * `/dev/ui/pages/member-<page>`: the member pages (agents, skills, connectors, schedules'
- * list, conversations, inbox, account profile) drawn from a seeded query cache in the workspace
+ * list, files, conversations, inbox, account profile) drawn from a seeded query cache in the workspace
  * shell (no kernel), for the responsive matrix (`visual/responsive.spec.ts`). A member role, so
  * the compact rows, the actions of each row and the page's own primary show as a person sees them.
  */
@@ -239,6 +242,41 @@ const INBOX_ITEMS: InboxItem[] = [
   },
 ];
 
+const libraryFile = (
+  id: string,
+  name: string,
+  contentType: string,
+  size: number,
+  at: string,
+  agentId: string | null,
+): LibraryFileView => ({
+  id,
+  name,
+  contentType,
+  size,
+  origin: agentId === null ? "upload" : "delivered",
+  agentId,
+  sourceConversation:
+    agentId === null ? null : { id: "cv1", title: TITLES[0]?.[2] ?? null, deleted: false },
+  versions: 1,
+  createdAt: at,
+  previewable: contentType.startsWith("image/")
+    ? "image"
+    : contentType.startsWith("text/")
+      ? "text"
+      : null,
+});
+
+const day = (n: number) => new Date(Date.parse(RECENT) - n * 86_400_000).toISOString();
+
+const LIBRARY: LibraryFileView[] = [
+  libraryFile("fl1", "Competitor pricing brief.pdf", "application/pdf", 2_400_000, RECENT, "ag1"),
+  libraryFile("fl2", "Funnel chart.png", "image/png", 312_000, RECENT, "ag2"),
+  libraryFile("fl3", "Interview notes.md", "text/markdown", 18_000, day(2), null),
+  libraryFile("fl4", "Store sales.xlsx", "application/vnd.ms-excel", 1_100_000, day(3), "ag2"),
+  libraryFile("fl5", "Supplier agreement.docx", "application/msword", 204_000, day(20), null),
+];
+
 /** The layout's session (no kernel behind it: nothing reloads or switches). */
 const SESSION: Session = {
   me: ME,
@@ -287,6 +325,11 @@ export function seeded(): QueryClient {
     next: null,
   });
   qc.setQueryData(inboxQuery(ORG).queryKey, { items: INBOX_ITEMS, truncated: false });
+  qc.setQueryData(libraryFilesQuery(ORG).queryKey, { files: LIBRARY, next: null });
+  qc.setQueryData(libraryUsageQuery(ORG).queryKey, {
+    bytes: LIBRARY.reduce((n, f) => n + f.size, 0),
+    files: LIBRARY.length,
+  });
   return qc;
 }
 
@@ -300,6 +343,8 @@ function Page({ page }: { page: MemberPage }) {
       return <ConnectorsView />;
     case "schedules":
       return <SchedulesView initial={{ view: "list", range: "week", date: null, scope: "mine" }} />;
+    case "files":
+      return <FilesView initial={{ origin: "", agent: "", type: "", q: "" }} />;
     case "conversations":
       return <ConversationsView />;
     case "inbox":

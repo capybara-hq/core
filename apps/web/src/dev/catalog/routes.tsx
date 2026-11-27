@@ -45,6 +45,7 @@ export const PAGE_ROUTES = [
   "pages/member-skills",
   "pages/member-connectors",
   "pages/member-schedules",
+  "pages/member-files",
   "pages/member-conversations",
   "pages/member-inbox",
   "pages/member-profile",

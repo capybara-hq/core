@@ -23,6 +23,7 @@ import { chosenDeviceId, type DeviceList } from "../devices";
 import type { EvalSetDetail } from "../evals";
 import { pointsOf } from "../extension-capabilities";
 import { labelLocale } from "../extension-label";
+import { filesUrlOf, libraryFilterOf } from "../files-url";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
@@ -109,6 +110,7 @@ import {
 } from "./evals";
 import { setupRequestQuery } from "./from-template";
 import { inboxQuery, skillChangeQuery } from "./inbox";
+import { libraryFilesQuery, libraryUsageQuery } from "./library";
 import { membersQuery } from "./members";
 import { permissionPreviewQuery } from "./permissions";
 import { pushPreferencesQuery, pushRegistrationsQuery } from "./push";
@@ -1066,6 +1068,20 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
               q(extensionPointDefaultsQuery(orgId)),
               q(orgFilePreviewersQuery(orgId)),
             ],
+  },
+  {
+    pattern: "/files",
+    // Members up (guests have no library): the list for the address's filters, the usage and the
+    // agents (the agent filter, the rows' agent names). The open file is the hash, which the
+    // server never sees: its details are read after mount.
+    queries: ({ orgId, me, search }) =>
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [
+            q(libraryFilesQuery(orgId, libraryFilterOf(filesUrlOf(search)))),
+            q(libraryUsageQuery(orgId)),
+            q(agentsQuery(orgId)),
+          ],
   },
   {
     pattern: "/inbox",

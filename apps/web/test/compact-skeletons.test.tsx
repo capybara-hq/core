@@ -79,6 +79,7 @@ describe("compact routes before their data", () => {
     "/skills",
     "/connectors",
     "/schedules",
+    "/files",
   ])("%s shows a skeleton and some text, not a blank area", async (path) => {
     resetNavigation(path);
     await holdAll(path);
