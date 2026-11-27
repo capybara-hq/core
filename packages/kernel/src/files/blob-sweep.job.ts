@@ -11,6 +11,7 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { revokeSharesIn } from "../shares/revoke.js";
 import { oweBlobDelete } from "./blob-objects.js";
 
 /** The daily blob sweep's name (scheduler key and lock; no `:`). */
@@ -182,30 +183,34 @@ export class BlobSweepJob {
 
   /**
    * Step 1, one batch: deletes up to {@link BATCH} `deleted` files past the retention (rows another
-   * transaction holds are skipped; the condition is checked again on the locked rows).
+   * transaction holds are skipped; the condition is checked again on the locked rows). Their shares
+   * are revoked (`file_deleted`) in the same transaction, before the rows go and with them the
+   * shares' `source_file_id` (defense in depth: deleting the file already revoked them).
    */
   @Transactional()
   async deleteExpiredFiles(orgId: string): Promise<number> {
     const trx = this.db.db;
     const days = this.config.get().files.deletedRetentionDays;
     const cutoff = sql<Date>`now() - make_interval(days => ${days})`;
-    const rows = await trx
-      .deleteFrom("files")
+    const claimed = await trx
+      .selectFrom("files")
+      .select("id")
       .where("org_id", "=", orgId)
       .where("status", "=", "deleted")
       .where("deleted_at", "<", cutoff)
-      .where("id", "in", (eb) =>
-        eb
-          .selectFrom("files as f")
-          .select("f.id")
-          .where("f.org_id", "=", orgId)
-          .where("f.status", "=", "deleted")
-          .where("f.deleted_at", "<", cutoff)
-          .orderBy("f.deleted_at")
-          .limit(BATCH)
-          .forUpdate()
-          .skipLocked(),
-      )
+      .orderBy("deleted_at")
+      .limit(BATCH)
+      .forUpdate()
+      .skipLocked()
+      .execute();
+    if (claimed.length === 0) return 0;
+    const ids = claimed.map((r) => r.id);
+    await revokeSharesIn(trx, this.outbox, { orgId, fileIds: ids }, "file_deleted");
+    const rows = await trx
+      .deleteFrom("files")
+      .where("org_id", "=", orgId)
+      .where("id", "in", ids)
+      .where("status", "=", "deleted")
       .returning("id")
       .execute();
     return rows.length;

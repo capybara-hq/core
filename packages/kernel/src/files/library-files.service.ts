@@ -866,7 +866,7 @@ export class LibraryFilesService {
       .where("id", "=", fileId)
       .where("org_id", "=", orgId)
       .execute();
-    await revokeSharesIn(trx, this.outbox, { fileIds: [fileId] }, "file_deleted");
+    await revokeSharesIn(trx, this.outbox, { orgId, fileIds: [fileId] }, "file_deleted");
     const refs = await trx
       .selectFrom("conversation_files")
       .select("conversation_id")

@@ -17,7 +17,7 @@ export type LifecycleRevokeTarget =
   /** The daily sweep's batch (with `creator_lost_access`). */
   | { shareIds: readonly string[] }
   /** The shares made from these library files (with `file_deleted`, in the deleting transaction). */
-  | { fileIds: readonly string[] };
+  | { orgId: string; fileIds: readonly string[] };
 
 /**
  * In the caller's transaction: marks the matching unrevoked rows revoked with `reason` (no
@@ -53,7 +53,9 @@ export async function revokeSharesIn(
     q = q.where("id", "in", [...where.shareIds]);
   } else if ("fileIds" in where) {
     const ids = [...where.fileIds];
-    q = q.where((eb) => eb.or([eb("source_file_id", "in", ids), eb("file_id", "in", ids)]));
+    q = q
+      .where("org_id", "=", where.orgId)
+      .where((eb) => eb.or([eb("source_file_id", "in", ids), eb("file_id", "in", ids)]));
   } else {
     q = q.where("org_id", "=", where.orgId).where("created_by", "=", where.createdBy);
   }

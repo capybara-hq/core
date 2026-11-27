@@ -74,8 +74,10 @@ export const creatorStillHasAccess = (eb: ExpressionBuilder<KernelDatabase, "fil
 
 /**
  * Whether the share's bytes may still be served (file library spec §6): it points at a blob of its
- * org that is `ready`, and the library file it was made from (when it still names one) is not
- * deleted and is still its creator's. `object_key` is never read: it stays only for old replicas
+ * org that is `ready`, and the library file it was made from is not deleted and is still its
+ * creator's. Only a conversation's share may name no file (`source_file_id` is set null when the
+ * file row is purged; the conversation checks still hold it); a library share whose file row is
+ * gone never serves again, whether or not its revoke landed. `object_key` is never read: it stays only for old replicas
  * during a rolling deploy.
  */
 export const shareSourceOk = (eb: ExpressionBuilder<KernelDatabase, "file_shares">) =>
@@ -89,7 +91,10 @@ export const shareSourceOk = (eb: ExpressionBuilder<KernelDatabase, "file_shares
         .where("blobs.status", "=", "ready"),
     ),
     eb.or([
-      eb("file_shares.source_file_id", "is", null),
+      eb.and([
+        eb("file_shares.source_file_id", "is", null),
+        eb("file_shares.conversation_id", "is not", null),
+      ]),
       eb.exists(
         eb
           .selectFrom("files")

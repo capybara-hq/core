@@ -315,7 +315,9 @@ export class SharesService {
         throw conversationNotFound();
       }
     }
-    if (!(await this.lockFile(s.orgId, s.accountId, s.file.id))) throw fileUnavailable();
+    if (!(await this.lockFile(s.orgId, s.accountId, s.file.id, s.file.blob.id))) {
+      throw fileUnavailable();
+    }
     const blob = await this.blobs.lockReady(s.orgId, s.file.blob.id);
     if (blob === null) throw fileUnavailable();
     await this.db
@@ -442,7 +444,9 @@ export class SharesService {
       .forUpdate()
       .executeTakeFirst();
     if (!row) return false;
-    if (!(await this.lockFile(at.orgId, at.accountId, next.id))) throw fileUnavailable();
+    if (!(await this.lockFile(at.orgId, at.accountId, next.id, next.blob.id))) {
+      throw fileUnavailable();
+    }
     const blob = await this.blobs.lockReady(at.orgId, next.blob.id);
     if (blob === null) throw fileUnavailable();
     await this.db
@@ -679,20 +683,24 @@ export class SharesService {
         shareSourceOk(eb as unknown as ExpressionBuilder<KernelDatabase, "file_shares">).as(
           "source_ok",
         ),
-        // a newer ready version of the snapshot's file, the creator's (refresh offered): the order
-        // {@link nextVersion} uses
+        // a newer ready version of the snapshot's file, the creator's (refresh offered): the group
+        // and order {@link nextVersion} uses, including its fallback when the current file row is
+        // gone (the share's conversation, versions made after the share last moved)
         sql<boolean>`file_shares.source_path IS NOT NULL AND EXISTS (
-          SELECT 1 FROM capybara.files cur
-          JOIN capybara.files later
-            ON later.org_id = cur.org_id
-           AND later.source_conversation_id = cur.source_conversation_id
-           AND later.source_path = file_shares.source_path
-          WHERE cur.id = coalesce(file_shares.source_file_id, file_shares.file_id)
-            AND cur.org_id = file_shares.org_id
+          SELECT 1 FROM capybara.files later
+          LEFT JOIN capybara.files cur
+            ON cur.org_id = file_shares.org_id
+           AND cur.id = coalesce(file_shares.source_file_id, file_shares.file_id)
+          WHERE later.org_id = file_shares.org_id
             AND later.account_id = file_shares.created_by
             AND later.status = 'ready'
             AND later.origin <> 'upload'
-            AND (later.created_at, later.id) > (cur.created_at, cur.id)
+            AND later.source_path = file_shares.source_path
+            AND later.source_conversation_id = CASE WHEN cur.id IS NOT NULL
+              THEN cur.source_conversation_id ELSE file_shares.conversation_id END
+            AND CASE WHEN cur.id IS NOT NULL
+              THEN (later.created_at, later.id) > (cur.created_at, cur.id)
+              ELSE later.created_at > file_shares.updated_at END
         )`.as("newer_delivery"),
       ])
       .where("file_shares.org_id", "=", orgId)
@@ -789,10 +797,17 @@ export class SharesService {
   }
 
   /**
-   * In the caller's transaction: locks the file row `FOR SHARE` while it is the account's and
-   * `ready` (a delete waits for the caller, then revokes what it wrote); false otherwise.
+   * In the caller's transaction: locks the file row `FOR SHARE` while it is the account's, `ready`
+   * and still on `blobId` (the blob the caller then locks; a hashing merge that moved the file
+   * meanwhile refuses), so a delete waits for the caller, then revokes what it wrote; false
+   * otherwise.
    */
-  private async lockFile(orgId: string, accountId: string, fileId: string): Promise<boolean> {
+  private async lockFile(
+    orgId: string,
+    accountId: string,
+    fileId: string,
+    blobId: string,
+  ): Promise<boolean> {
     const row = await this.db
       .selectFrom("files")
       .select("id")
@@ -800,6 +815,7 @@ export class SharesService {
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .where("status", "=", "ready")
+      .where("blob_id", "=", blobId)
       .forShare()
       .executeTakeFirst();
     return row !== undefined;

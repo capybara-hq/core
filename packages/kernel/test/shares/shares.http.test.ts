@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { BlobSweepJob } from "../../src/files/blob-sweep.job.js";
 import { createLogger } from "../../src/log.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
@@ -45,6 +46,7 @@ import {
   session,
   startKernel,
   type TestKernel,
+  waitFor,
 } from "../helpers/runs.js";
 
 /**
@@ -1021,7 +1023,7 @@ describe("shares of library files", () => {
         revokeSharesIn(
           trx,
           { add: async () => true },
-          { fileIds: [lib, artifactId] },
+          { orgId, fileIds: [lib, artifactId] },
           "file_deleted",
         ),
       );
@@ -1039,6 +1041,76 @@ describe("shares of library files", () => {
     // another file's share is untouched
     expect(await opens(otherShare.code)).toBe(true);
     expect((await shareRow(otherShare.id)).revoked_at).toBeNull();
+  });
+
+  it("a library share whose deleted file row is purged stays dead, revoked or not; the blob sweep revokes it", async () => {
+    // the row purged without a revoke: source_file_id goes null, the link must not come back
+    const lost = await libraryFile("lost.txt", "lost");
+    const lostShare = await shareFile(lost);
+    await markFileDeleted(db, lost);
+    await db.deleteFrom("files").where("id", "=", lost).execute();
+    expect(await shareRow(lostShare.id)).toMatchObject({ source_file_id: null, revoked_at: null });
+    expect(await opens(lostShare.code)).toBe(false);
+    expect((await openContent(lostShare.code)).statusCode).toBe(404);
+    const mine = await alice({ method: "GET", url: `/api/v1/orgs/${orgId}/shares` });
+    expect(
+      (mine.json() as { shares: ShareView[] }).shares.find((x) => x.id === lostShare.id),
+    ).toMatchObject({ state: "suspended", newerVersion: false });
+
+    // the blob sweep's purge revokes the shares of the rows it deletes, in the same transaction
+    const old = await libraryFile("old.txt", "old");
+    const oldShare = await shareFile(old);
+    await sql`UPDATE capybara.files SET status = 'deleted', deleted_at = now() - interval '400 days'
+      WHERE id = ${old}`.execute(raw);
+    await k.app.get(BlobSweepJob).runOnce();
+    expect(await db.selectFrom("files").select("id").where("id", "=", old).execute()).toEqual([]);
+    expect(await shareRow(oldShare.id)).toMatchObject({
+      source_file_id: null,
+      revoke_reason: "file_deleted",
+    });
+    expect(await opens(oldShare.code)).toBe(false);
+  });
+
+  it("a create racing the file's deletion leaves no live share: it waits for the delete, then refuses", async () => {
+    const id = await libraryFile("race.txt", "race");
+    let settled = false;
+    let pending: ReturnType<Req> | undefined;
+    await db.transaction().execute(async (trx) => {
+      await trx
+        .updateTable("files")
+        .set({ status: "deleted", deleted_at: sql<Date>`now()` })
+        .where("id", "=", id)
+        .execute();
+      pending = alice({
+        method: "POST",
+        url: fileSharesUrl(id),
+        payload: { audience: "internal", expiresInDays: null },
+      });
+      void pending.then(() => {
+        settled = true;
+      });
+      // the create blocks on the file row the delete holds
+      await waitFor(
+        async () => {
+          if (settled) throw new Error("the create did not wait for the file row");
+          const r = await sql<{ n: number }>`select count(*)::int as n from pg_stat_activity
+            where wait_event_type = 'Lock' and query ilike '%files%for share%'`.execute(raw);
+          return (r.rows[0]?.n ?? 0) > 0;
+        },
+        10_000,
+        "the create waiting for the file row",
+      );
+      await revokeSharesIn(
+        trx,
+        { add: async () => true },
+        { orgId, fileIds: [id] },
+        "file_deleted",
+      );
+    });
+    const r = await (pending as ReturnType<Req>);
+    expect(r.statusCode, r.body).toBe(410);
+    expect(errCode(r)).toBe("share.file_unavailable");
+    expect(await db.selectFrom("file_shares").select("id").execute()).toEqual([]);
   });
 
   it("update to latest repoints a library share of a delivered file at the newer version", async () => {
