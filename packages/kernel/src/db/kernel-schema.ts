@@ -1773,7 +1773,72 @@ export type FileShareRevokeReason =
   | "admin"
   | "conversation_deleted"
   | "member_offboarded"
-  | "creator_lost_access";
+  | "creator_lost_access"
+  /** 0188: the library file the share was made from was deleted. */
+  | "file_deleted";
+
+/** 0188: a blob's state; `gone` = the hashing job found its object missing. */
+export type BlobStatus = "pending" | "ready" | "deleting" | "gone";
+
+/**
+ * 0188 (file library spec §1): the bytes, content-addressed per org. `object_key` is relative to
+ * `kernel/<org>/`; `sha256` is null only for a migrated blob not hashed yet.
+ */
+export interface BlobsTable {
+  id: string;
+  org_id: string;
+  sha256: NullableText;
+  /** bigint: pg returns it as a string. */
+  size: Int8;
+  etag: NullableText;
+  object_key: string;
+  status: BlobStatus;
+  /** From when another account's upload may resolve to this blob. */
+  dedup_after: Ts;
+  created_at: Ts;
+}
+
+/** 0188: where a library file came from. */
+export type FileOrigin = "upload" | "delivered" | "generated";
+/** 0188: `uploading` (presigned, not finalized), `draft` (finalized, not sent), `ready`, `deleted`. */
+export type FileStatus = "uploading" | "draft" | "ready" | "deleted";
+
+/**
+ * 0188 (file library spec §1): a file a person sees, owned by an account. `blob_id` is null only
+ * while `uploading`; `staging_key` is a migrated `uploading` row's old staging key (null for new
+ * rows, which stage at `uploads/<id>`); `agent_id` has no foreign key (a label).
+ */
+export interface FilesTable {
+  id: string;
+  org_id: string;
+  account_id: string;
+  blob_id: NullableText;
+  name: string;
+  content_type: string;
+  /** bigint: pg returns it as a string. */
+  size: Int8;
+  pages: ColumnType<number | null, number | null | undefined, number | null>;
+  origin: FileOrigin;
+  status: FileStatus;
+  agent_id: NullableText;
+  source_conversation_id: NullableText;
+  source_path: NullableText;
+  staging_key: NullableText;
+  expires_at: NullableTs;
+  created_at: Ts;
+  deleted_at: NullableTs;
+}
+
+/** 0188: which conversation refers to which file; `first_seq` the event that first referred to it. */
+export interface ConversationFilesTable {
+  conversation_id: string;
+  file_id: string;
+  org_id: string;
+  role: "attached" | "delivered";
+  /** bigint: pg returns it as a string; null when not known (migrated rows). */
+  first_seq: ColumnType<string | null, number | string | null | undefined, number | string | null>;
+  created_at: Ts;
+}
 
 /** 0164: the platform icon of one purpose (mobile layout spec §10.2.1); no row: the default. */
 export interface PlatformIconsTable {
@@ -1793,7 +1858,8 @@ export interface FileSharesTable {
   id: string;
   org_id: string;
   code: string;
-  conversation_id: string;
+  /** 0188: null for a share made from the library (no conversation). */
+  conversation_id: NullableText;
   file_id: string;
   source_path: NullableText;
   created_by: string;
@@ -1815,6 +1881,10 @@ export interface FileSharesTable {
   last_opened_at: NullableTs;
   created_at: Ts;
   updated_at: Ts;
+  /** 0188: the blob holding the snapshot (replaces `object_key`). */
+  blob_id: NullableText;
+  /** 0188: the library file the share was made from, when it still exists. */
+  source_file_id: NullableText;
 }
 
 /** 0113: one tick (or trial run) of a scheduled task; unique per (task, tick) when not trial. */
@@ -2031,6 +2101,9 @@ export interface KernelDatabase {
   scheduled_task_runs: ScheduledTaskRunsTable;
   scheduled_task_grants: ScheduledTaskGrantsTable;
   file_shares: FileSharesTable;
+  blobs: BlobsTable;
+  files: FilesTable;
+  conversation_files: ConversationFilesTable;
   platform_icons: PlatformIconsTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
