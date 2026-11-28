@@ -9,12 +9,12 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0191_trigger_cause_handles.sql (collaboration spec §4.2, §4.7): the cause handle table with its
+ * 0193_trigger_cause_handles.sql (collaboration spec §4.2, §4.7): the cause handle table with its
  * `org_scope` policy, the settled trigger event index rebuilt with the sweep's `IN` predicate, and
  * the inbox retention indexes. Seeds a database migrated to the file before it with a settled
- * event, then runs 0191.
+ * event, then runs 0193.
  */
-const FILE = "0191_trigger_cause_handles.sql";
+const FILE = "0193_trigger_cause_handles.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -53,7 +53,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-describe("0191_trigger_cause_handles", () => {
+describe("0193_trigger_cause_handles", () => {
   it("stores a handle bound to an org, a plugin and a run, removed with its org", async () => {
     await sql`insert into capybara.trigger_cause_handles (id, org_id, plugin, run_id, depth, expires_at)
       values ('h1', 'o1', 'tracker', 'r1', 0, now() + interval '1 day')`.execute(db);
