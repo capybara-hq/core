@@ -283,23 +283,28 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
           } catch (error) {
             err(`Owner report unavailable: ${(error as Error).message}`);
           }
-          policyCheck = setInterval(() => {
-            void (async () => {
-              await device.owner.reconcile(AbortSignal.timeout(30_000));
-              if (!served.ready() || sock.readyState !== WebSocket.OPEN) return;
-              const next = report_(device);
-              const json = JSON.stringify(next);
-              if (json === sent) return;
-              sent = json;
-              if (!served.event({ type: "policy", ...next }))
-                err(
-                  "The owner report does not fit the connection's frame capacity; the deployment " +
-                    "learns the change at the next connection.",
-                );
-            })().catch((error: unknown) =>
-              err(`Owner ceiling reconciliation failed: ${String(error)}`),
-            );
-          }, policyCheckMs);
+          // one check at a time: a reconcile slower than the interval is never stacked behind
+          // another (each one goes through the device's operation journal)
+          policyCheck = setInterval(
+            oneAtATime(async () => {
+              try {
+                await device.owner.reconcile(AbortSignal.timeout(30_000));
+                if (!served.ready() || sock.readyState !== WebSocket.OPEN) return;
+                const next = report_(device);
+                const json = JSON.stringify(next);
+                if (json === sent) return;
+                sent = json;
+                if (!served.event({ type: "policy", ...next }))
+                  err(
+                    "The owner report does not fit the connection's frame capacity; the deployment " +
+                      "learns the change at the next connection.",
+                  );
+              } catch (error) {
+                err(`Owner ceiling reconciliation failed: ${String(error)}`);
+              }
+            }),
+            policyCheckMs,
+          );
         })();
       });
       sock.on("unexpected-response", (_req, res) => {
@@ -426,6 +431,23 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
 }
 
 /** The owner report and policy summary an owner change event carries. */
+/**
+ * `task` as a timer callback that never overlaps itself: a call while the previous run is still
+ * pending is skipped, not queued. `task` reports its own failures; a rejection only ends the run.
+ */
+export function oneAtATime(task: () => Promise<void>): () => void {
+  let running = false;
+  return () => {
+    if (running) return;
+    running = true;
+    void task()
+      .catch(() => {})
+      .finally(() => {
+        running = false;
+      });
+  };
+}
+
 function report_(device: StagedDevice) {
   return {
     policy: device.policySummary(),
