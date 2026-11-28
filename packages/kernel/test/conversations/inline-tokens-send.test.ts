@@ -642,6 +642,8 @@ describe("resource tokens", () => {
     });
     expect(res.statusCode, res.body).toBe(409);
     expect(errOf(res)?.code).toBe("connector.resources_disabled");
+    // the refusal names the connector, so the composer marks its resource tokens
+    expect(errOf(res)?.details).toEqual([{ connectorId: c }]);
     expect(await userMessages(conv)).toHaveLength(0);
   });
 });

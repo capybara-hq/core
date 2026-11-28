@@ -197,8 +197,9 @@ const TOKEN_KIND_MAX: Partial<Record<MessageToken["type"], number>> = {
 };
 
 /**
- * The token rules: one U+FFFC per token, the per-kind caps. A project file path that leaves the project is counted by its raw text here and refused
- * with `device.path_outside_project` when the message resolves it, before anything is written.
+ * The token rules: one U+FFFC per token, the per-kind caps. A project file path that leaves the
+ * project is counted by its raw text here and refused with `device.path_outside_project` when the
+ * message resolves it, before anything is written.
  */
 function tokenRules(b: RuleBody & { tokens?: MessageToken[] | undefined }, ctx: z.RefinementCtx) {
   const tokens = b.tokens ?? [];

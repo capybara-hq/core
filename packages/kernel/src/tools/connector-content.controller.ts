@@ -59,7 +59,7 @@ export class ConnectorContentController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @ZQuery(ConnectorResourcesQuery) q: z.infer<typeof ResourcesQuery>,
-  ): Promise<{ resources: ConnectorResourceView[]; unavailable: ConnectorUnavailable[] }> {
+  ): Promise<{ resources: ConnectorResourceView[] }> {
     const p = requireUser(principal);
     return this.content.listResources(org.orgId, p.account.id, {
       connectorId: q.connectorId,

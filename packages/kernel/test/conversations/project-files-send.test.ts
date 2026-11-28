@@ -305,6 +305,19 @@ describe("project file tokens on send", () => {
     expect(await userMessages(conv)).toEqual([]);
   });
 
+  it("a long missing path is named whole in the details (the composer matches it)", async () => {
+    const d = await owned();
+    await connect(d);
+    const conv = await conversation(d);
+    const long = `${"deep/".repeat(60)}gone.ts`;
+    const res = await send(d, conv, withFiles("hi", long));
+    expect(res.statusCode, res.body).toBe(422);
+    expect(errOf(res)).toMatchObject({
+      code: "conversation.project_file_unavailable",
+      details: [{ path: long }],
+    });
+  });
+
   it("a path leaving the project is refused before the device is asked", async () => {
     const d = await owned();
     const machine = await connect(d);

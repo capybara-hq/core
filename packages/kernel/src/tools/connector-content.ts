@@ -345,15 +345,16 @@ export class ConnectorContent {
    * One connector's resources the sender can use (the `@` menu's second level, composer inline
    * tokens spec §5): one session on that connector with the sender's credential, UI templates and
    * empty resources hidden, at most {@link MAX_CONNECTOR_RESOURCES}; `query` filters by name, URI
-   * or description substring (case insensitive). A connector that is not active or whose
-   * `read_resource` is off → `connector.resources_disabled`; a missing credential or a failed
-   * connection is thrown (`credential.missing`, `connector.connect_failed`).
+   * or description substring (case insensitive). A connector that is not live and active →
+   * `connector.not_found`; one whose `read_resource` is off → `connector.resources_disabled`; a
+   * missing credential or a failed connection is thrown (`credential.missing`,
+   * `connector.connect_failed`).
    */
   async listResources(
     orgId: string,
     accountId: string,
     opts: { connectorId: string; query?: string },
-  ): Promise<{ resources: ConnectorResourceView[]; unavailable: ConnectorUnavailable[] }> {
+  ): Promise<{ resources: ConnectorResourceView[] }> {
     const q = opts.query?.trim().toLowerCase() ?? "";
     const view = (
       app: ConnectorRow,
@@ -377,8 +378,8 @@ export class ConnectorContent {
         "Reading resources is disabled for this connector",
       );
     }
-    // A failing connector throws credential.missing / connector.connect_failed here instead of
-    // filling `unavailable`: the caller asked about this one connector only.
+    // A failing connector throws credential.missing / connector.connect_failed: the caller asked
+    // about this one connector only.
     const items = await this.withSession(
       orgId,
       app,
@@ -391,7 +392,6 @@ export class ConnectorContent {
         .filter((r) => listableResource(r) && matches(r))
         .slice(0, MAX_CONNECTOR_RESOURCES)
         .map((r) => view(app, r)),
-      unavailable: [],
     };
   }
 
@@ -415,8 +415,15 @@ export class ConnectorContent {
     readOffered?: ReadonlySet<string>,
   ): Promise<ReadResource[]> {
     const apps = new Map<string, ConnectorRow>();
-    for (const id of new Set(refs.map((r) => r.connectorId)))
-      apps.set(id, await this.connectorRow(orgId, id));
+    for (const id of new Set(refs.map((r) => r.connectorId))) {
+      // the refusal names the connector, so the sender's composer can mark its tokens
+      const app = await this.connectorRow(orgId, id).catch((e: unknown) => {
+        throw e instanceof ApiError && e.code === "connector.not_found"
+          ? new ApiError("connector.not_found", e.message, [{ connectorId: id }])
+          : e;
+      });
+      apps.set(id, app);
+    }
     const enabled = await this.resourcesEnabled([...apps.keys()]);
     for (const id of apps.keys()) {
       if (!enabled.has(id) || (readOffered !== undefined && !readOffered.has(id))) {
@@ -425,6 +432,7 @@ export class ConnectorContent {
           readOffered !== undefined && enabled.has(id)
             ? "This agent cannot read resources of this connector"
             : "Reading resources is turned off for this connector",
+          [{ connectorId: id }],
         );
       }
     }
@@ -456,7 +464,9 @@ export class ConnectorContent {
           return { name: listed?.name ?? ref.uri, text, empty };
         });
         if (!got)
-          throw new ApiError("connector.not_found", "This connector does not provide resources");
+          throw new ApiError("connector.not_found", "This connector does not provide resources", [
+            { connectorId: ref.connectorId, uri: ref.uri },
+          ]);
         if (got === "ui_template") throw unreadable(ref, "ui_template");
         if (got.empty) throw unreadable(ref, "empty");
         let body = got.text;
@@ -472,22 +482,5 @@ export class ConnectorContent {
         };
       }),
     );
-  }
-
-  /**
-   * The `@` resources of a message sent with the old `attachments` field: {@link readResources},
-   * then one text block per resource ({@link resourceBlockText}) and its metadata, in request
-   * order.
-   */
-  async resolveAttachments(
-    orgId: string,
-    accountId: string,
-    refs: { connectorId: string; uri: string }[],
-  ): Promise<{ blocks: { type: "text"; text: string }[]; attachments: AttachmentMeta[] }> {
-    const read = await this.readResources(orgId, accountId, refs);
-    return {
-      blocks: read.map((r) => ({ type: "text" as const, text: resourceBlockText(r) })),
-      attachments: read.map(attachmentMeta),
-    };
   }
 }

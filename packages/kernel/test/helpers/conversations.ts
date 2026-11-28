@@ -13,7 +13,6 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import {
   ConversationsService,
-  type ResolvedExtra,
   type RunControl,
 } from "../../src/conversations/conversations.service.js";
 import { type EventBus, EventLog } from "../../src/conversations/event-log.js";
@@ -104,7 +103,7 @@ const noRuns: RunControl = {
 };
 
 /**
- * A conversations service over test doubles: what is left out refuses (`resolveAttachments`,
+ * A conversations service over test doubles: what is left out refuses (`readResources`,
  * `bindFiles`, `invoker`, the model `providers`) or does nothing (`runs`); conversations are
  * created unbound (no device).
  */
@@ -114,11 +113,6 @@ export function conversationsFor(
     eventLog: EventLog;
     agents: Pick<AgentLookup, "get">;
     runs?: RunControl;
-    resolveAttachments?: (
-      orgId: string,
-      accountId: string,
-      refs: { connectorId: string; uri: string }[],
-    ) => Promise<ResolvedExtra>;
     bindFiles?: (
       orgId: string,
       conversationId: string,
@@ -143,10 +137,7 @@ export function conversationsFor(
     { isAccessible: async () => true },
     d.runs ?? noRuns,
     { resolve: refuse("providers") },
-    {
-      resolveAttachments: d.resolveAttachments ?? refuse("resolveAttachments"),
-      readResources: refuse("readResources"),
-    },
+    { readResources: refuse("readResources") },
     {
       attachForMessage: d.bindFiles ?? refuse("bindFiles"),
       labelsFor: async () => new Map(),

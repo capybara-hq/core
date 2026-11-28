@@ -585,8 +585,8 @@ describe("queued files keep their chip metadata (attachments-on-demand)", () => 
   });
 });
 
-describe("@ resources are read at queue time (decision 15)", () => {
-  it("reads once with the sender's credentials when queued; the sent message carries them", async () => {
+describe("a leftover item with @ resources (queued by an older version)", () => {
+  it("keeps its resources through an edit and sends them as stored, reading nothing", async () => {
     const conv = await createConv(owner, orgId, agentId);
     // Pause the queue so nothing dispatches behind the test's back: a stopped run pauses it only
     // when it holds an item at that moment. With an empty queue the worker's ensureRun after the
@@ -598,56 +598,40 @@ describe("@ resources are read at queue time (decision 15)", () => {
     await waitForEvent(db, conv, (e) => e.type === "run_aborted", 20_000, "run_aborted");
     expect((await queueOf(conv)).paused).toBe(true);
 
-    const reads: { orgId: string; accountId: string }[] = [];
     const eventLog = eventLogFor(db, { publish: async () => {} });
+    // `readResources` refuses here: a leftover's resources were read when it was queued
     const conversations = conversationsFor(handlesFor(db), {
       eventLog,
       agents: { get: async () => ({}) } as never,
-      resolveAttachments: async (o, a, refs) => {
-        reads.push({ orgId: o, accountId: a });
-        return {
-          blocks: refs.map((r) => ({ type: "text" as const, text: `<resource ${r.uri}>` })),
-          attachments: refs.map((r) => ({
-            appId: r.connectorId,
-            appName: "Docs",
-            uri: r.uri,
-            name: "Spec",
-          })),
-        };
-      },
     });
     const queue = queueFor(handlesFor(db), { eventLog, conversations });
     const connectorId = randomUUID();
     const { item } = await queue.add(orgId, conv, ownerId, {
       text: "summarize",
       clientMessageId: "with-resource",
-      attachments: [{ connectorId, uri: "docs://spec" }],
     });
-    expect(reads).toEqual([{ orgId, accountId: ownerId }]);
-    expect(item).toMatchObject({
+    // the row as an older version wrote it: the resource's body after the text, its metadata
+    await db
+      .updateTable("conversation_queue")
+      .set({
+        content: JSON.stringify([{ type: "text", text: "<resource docs://spec>" }]),
+        attachments: JSON.stringify([
+          { appId: connectorId, appName: "Docs", uri: "docs://spec", name: "Spec" },
+        ]),
+      })
+      .where("id", "=", item?.id as string)
+      .execute();
+    expect((await queueOf(conv)).items.find((x) => x.id === item?.id)).toMatchObject({
       text: "summarize",
       attachments: [{ connectorId, name: "Spec", uri: "docs://spec" }],
     });
-    // editing changes only the text; nothing is read again
+    // editing changes only the text
     await queue.edit(orgId, conv, ownerId, item?.id as string, "summarize briefly");
     // an edit cannot drop the text a resource needs
     await expect(queue.edit(orgId, conv, ownerId, item?.id as string, "")).rejects.toMatchObject({
       code: "validation_failed",
     });
-    // a full queue answers 409 before reading any resource (review M6); two items are queued
-    for (let i = 2; i < QUEUE_MAX_ITEMS; i++) {
-      await queue.add(orgId, conv, ownerId, { text: `echo:${i}`, clientMessageId: `fill-${i}` });
-    }
-    await expect(
-      queue.add(orgId, conv, ownerId, {
-        text: "one more",
-        clientMessageId: "over",
-        attachments: [{ connectorId, uri: "docs://other" }],
-      }),
-    ).rejects.toMatchObject({ code: "conversation.queue_full" });
-    expect(reads).toHaveLength(1);
     const event = await queue.sendNow(orgId, conv, ownerId, item?.id as string);
-    expect(reads).toHaveLength(1);
     expect(event.payload).toMatchObject({
       content: [
         { type: "text", text: "summarize briefly" },

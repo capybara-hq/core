@@ -466,7 +466,6 @@ describe("prompts 与 resources", () => {
           mimeType: "text/markdown",
         },
       ],
-      unavailable: [],
     });
   });
 

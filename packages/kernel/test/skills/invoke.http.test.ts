@@ -22,14 +22,11 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { KERNEL_ROOT_LOGGER } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
 import { parseSlashCommand, SkillInvoker } from "../../src/skills/invoke.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { setFakeSandboxFault } from "../fixtures/plugins/device-fake/index.js";
-import { conversationsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -738,46 +735,6 @@ describe("POST …/messages with skill", () => {
     expect((await send(c3, { text: "", skill: { name: "lone" } })).statusCode).toBe(202);
     expect(firstText((await userMessages(c3))[0]).endsWith("</skill_invocation>")).toBe(true);
     await waitForTerminal(db, c3, 1, 30_000);
-  });
-
-  it("puts the invocation first, then the @ resources, then the files", async () => {
-    const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
-    const agentId = await createAgent([s.id]);
-    const conv = await createConv(owner, orgId, agentId);
-    const svc = conversationsFor(
-      { db: k.app.get(KernelDb), txHost: k.app.get(TransactionHost) },
-      {
-        eventLog: k.app.get(EventLog),
-        agents: agentsService(),
-        resolveAttachments: async (_o, _a, refs) => ({
-          blocks: refs.map((r) => ({ type: "text" as const, text: `resource ${r.uri}` })),
-          attachments: refs.map((r) => ({
-            appId: r.connectorId,
-            appName: "c",
-            uri: r.uri,
-            name: "n",
-          })),
-        }),
-        bindFiles: async (_o, _c, _a, ids) =>
-          ids.map((id) => ({ type: "text" as const, text: `file ${id}` })),
-        invoker: k.app.get(SkillInvoker),
-      },
-    );
-    const connectorId = randomUUID();
-    const fileId = randomUUID();
-    const e = await svc.postUserMessage(orgId, conv, ownerId, {
-      text: "7",
-      skill: { name: "fix-issue" },
-      attachments: [{ connectorId, uri: "res://a" }],
-      files: [fileId],
-    });
-    expect(e.type).toBe("user_message");
-    const content = (e as UserMessage).payload.content;
-    expect(content.map((b) => (b.type === "text" ? b.text : b.type))).toEqual([
-      expect.stringMatching(/^The user invoked the skill "fix-issue" with \/fix-issue 7\./),
-      "resource res://a",
-      `file ${fileId}`,
-    ]);
   });
 
   it("files are bound after the invocation text (HTTP)", async () => {

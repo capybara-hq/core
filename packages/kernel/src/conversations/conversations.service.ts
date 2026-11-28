@@ -337,12 +337,6 @@ export interface RunControl {
   ): Promise<number>;
 }
 
-/** 消息附件引用（连接器 + 资源 URI）。 */
-export interface AttachmentRef {
-  connectorId: string;
-  uri: string;
-}
-
 /**
  * Resolved `@` resources and referenced project files: the blocks after the user text (the
  * resources' bodies, then one text block per project file) and their metadata. A message with
@@ -364,7 +358,7 @@ export interface ResolvedExtra {
   fileTokenIds?: string[];
   /** The label of each file (file tokens and uploads), numbered across them (spec §3.2). */
   fileLabels?: Map<string, string>;
-  /** 写进 user_message 的附件元数据：事件 payload 字段名仍为 `appId` / `appName`（C27）。 */
+  /** The resources' metadata in the user_message (payload fields `appId` / `appName`, C27). */
   attachments: { appId: string; appName: string; uri: string; name: string }[];
   /** The referenced project files (normalized paths), in block order; absent: none. */
   projectFiles?: { path: string }[];
@@ -591,11 +585,6 @@ export interface UserMessageInput {
    * connectors, connector resources, library files, project files and conversations.
    */
   tokens?: MessageToken[];
-  /**
-   * `@` resources resolved without tokens: the queue's internal path only (a queued message's
-   * resources, read when it is queued); the HTTP body names resources as tokens.
-   */
-  attachments?: AttachmentRef[];
   files?: string[];
   /** Switch the conversation's model from the next run (the agent's own model = back to it). */
   model?: ModelRef;
@@ -703,7 +692,7 @@ export class ConversationsService {
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     /** Reads `@` resources with the sender's credentials. */
     @Inject(ConnectorContent)
-    private readonly content: Pick<ConnectorContent, "resolveAttachments" | "readResources">,
+    private readonly content: Pick<ConnectorContent, "readResources">,
     /** Attaches the sender's library files to the conversation in the message's transaction. */
     @Inject(LibraryFilesService)
     private readonly libraryFiles: Pick<
@@ -2147,15 +2136,11 @@ export class ConversationsService {
     );
   }
 
-  /**
-   * Resolves what a message references before it is written: its tokens ({@link resolveTokens}),
-   * or, without tokens, the `@` resources the queue passes (read with the sender's credentials
-   * when a message is queued, decision 15; nothing when there are none).
-   */
+  /** Resolves what a message's tokens reference before it is written ({@link resolveTokens}). */
   async resolveExtra(
     orgId: string,
     accountId: string,
-    input: Pick<UserMessageInput, "text" | "tokens" | "files" | "skill" | "attachments">,
+    input: Pick<UserMessageInput, "text" | "tokens" | "files" | "skill">,
     target?: ProjectFilesTarget,
     /** Where the agent's tools are resolved; required when the tokens name connectors or resources. */
     agentContext?: MessageAgentContext,
@@ -2163,10 +2148,7 @@ export class ConversationsService {
     if (input.tokens !== undefined) {
       return this.resolveTokens(orgId, accountId, input, input.tokens, target, agentContext);
     }
-    const refs = input.attachments ?? [];
-    return refs.length === 0
-      ? { blocks: [], attachments: [] }
-      : this.content.resolveAttachments(orgId, accountId, refs);
+    return { blocks: [], attachments: [] };
   }
 
   /**
@@ -2553,7 +2535,8 @@ export class ConversationsService {
     if (missing.length > 0) {
       throw projectFileUnavailable(
         `${clipped(missing[0] as string)} is not a file in the project ${project.name}; pick it again`,
-        missing.map((path) => ({ path: clipped(path) })),
+        // the whole normalized path, so the composer can mark the token it came from
+        missing.map((path) => ({ path })),
       );
     }
     return { paths, root: project.path };
@@ -2630,9 +2613,10 @@ export class ConversationsService {
   }
 
   /**
-   * 中止会话当前的运行（queued / running / waiting）：返回 runId；没有 → `run.not_active`。
-   * 等人处理的运行没有 worker：直接取消等待并写终态。其余经 Redis 广播，运行所在的任意副本都会收到；
-   * 运行已是孤儿（没有任何 worker 在执行）时直接写终态。
+   * Aborts the conversation's current run (queued / running / waiting): returns its runId; none →
+   * `run.not_active`. A run waiting for a person has no worker: its wait is cancelled and its end
+   * written here. Any other is broadcast through Redis, reaching whichever replica runs it; an
+   * orphaned run (no worker executing it) gets its end written directly.
    *
    * A root conversation's stop stops everything below it too (agent map spec §6, changed in
    * acceptance 2026-11-13: after a person stops, the conversation stays stopped). In order:
