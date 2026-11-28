@@ -104,7 +104,7 @@ describe("UserBubble (§6.16.6)", () => {
     expect(screen.getByTestId("img")).toBeTruthy();
     expect(container.querySelector('[data-part="bubble"]')).toBeNull();
     cleanup();
-    const withSkill = render(<UserBubble skill="/fix-issue" />);
+    const withSkill = render(<UserBubble text="" skill="/fix-issue" />);
     expect(withSkill.container.querySelector('[data-part="bubble"]')).not.toBeNull();
   });
 
@@ -291,7 +291,7 @@ describe("UserBubble (§6.16.6)", () => {
   });
 
   it("skill without arguments: only the chip", () => {
-    const { container } = wrap(<UserBubble skill="/release-check" />);
+    const { container } = wrap(<UserBubble text="" skill="/release-check" />);
     expect(container.querySelector('[data-part="bubble"]')?.textContent).toBe("/release-check");
   });
 
