@@ -212,7 +212,6 @@ function userBubbleBlocks(): ReactNode {
       </Block>
       <Block id="user-bubble-skill-tokens">
         <UserBubble
-          text=""
           skill={BUBBLE_TOKENS_FIXTURE.skill.label}
           segments={BUBBLE_TOKENS_FIXTURE.skill.arguments}
         />
