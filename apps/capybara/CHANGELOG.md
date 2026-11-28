@@ -1,5 +1,12 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.139
+
+### Patch Changes
+
+- 0cd9067: The process block's planning row draws the capybara at 21 × 15 (1.5 CSS px per art pixel),
+  between the 28 × 20 that was too big and the 14 × 10 that was too small beside the rail's icons.
+
 ## 0.1.0-rc.138
 
 ### Patch Changes
