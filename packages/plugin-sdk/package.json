@@ -45,6 +45,7 @@
   },
   "files": [
     "dist",
+    "api",
     "schemas",
     "agent-docs",
     "README.md",

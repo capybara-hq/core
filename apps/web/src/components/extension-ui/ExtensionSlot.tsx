@@ -315,9 +315,12 @@ function ComponentPanel({
   host: SlotHost["conversation.panel"];
 }) {
   const found = useClientComponent(c);
+  const t = useTranslations("clientExtensions");
   return (
     <RightPanel
       title={title}
+      // a component that renders nothing here gets the panel's empty state, not a blank pane
+      emptyText={t("componentEmpty")}
       {...(host.switcher ? { switcher: host.switcher } : {})}
       onClose={host.onClose}
       {...(found.status === "ready" ? { onFullscreen: host.onFullscreen } : {})}
@@ -425,10 +428,12 @@ function SectionSlot({
               c={c}
               args={{ orgId: args.orgId, conversationId: args.conversationId }}
               hostProps={{ conversationId: args.conversationId }}
+              // the section is drawn only while the component renders something: a component
+              // that returns null (outside the conversations it serves) leaves no titled frame
               frame={(block) => (
-                <div data-extension-section={uiKey(c.plugin, c.id)}>
-                  <PropertySection title={c.title[locale]}>{block}</PropertySection>
-                </div>
+                <PropertySection title={c.title[locale]} hideWhenEmpty>
+                  {block}
+                </PropertySection>
               )}
             />
           ) : (

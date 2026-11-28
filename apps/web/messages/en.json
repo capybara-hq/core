@@ -6934,6 +6934,7 @@
     "changed": "New plugin interface code is ready. Reload the page to use it.",
     "reload": "Reload",
     "componentFailed": "Its interface code did not load or failed. Reload the page to try again; if it keeps failing, reload in safe mode.",
+    "componentEmpty": "Nothing to show in this conversation.",
     "componentOff": "This plugin interface is not available right now.",
     "componentOffHint": "Plugin interface code is off: in safe mode, when the super admin turns it off, or after it failed in this browser session."
   },
