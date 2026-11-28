@@ -3365,6 +3365,7 @@
     "review": {
       "network": "Declared only; the platform does not enforce it",
       "clientItem": "Runs plugin code in the browser",
+      "loopbackItem": "Local ports on the device (loopback)",
       "added": "Added permissions",
       "removed": "Removed permissions",
       "none": "No permissions declared.",
@@ -3385,7 +3386,8 @@
         "context": "adds text to the model's context in conversations of organizations that enable it",
         "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again",
         "push_provider": "delivers push notifications with the platform's credentials",
-        "device_access": "runs its own long-lived services in conversations' devices"
+        "device_access": "runs its own long-lived services in conversations' devices",
+        "device_loopback_ports": "its device services may be granted local ports of the person's own device"
       },
       "warnings": "Migration warnings",
       "warningsHint": "Extension migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",

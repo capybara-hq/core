@@ -3353,6 +3353,7 @@
     "review": {
       "network": "声明，平台不拦截",
       "clientItem": "在浏览器中运行插件代码",
+      "loopbackItem": "设备上的本地端口（回环）",
       "added": "新增的权限",
       "removed": "减少的权限",
       "none": "没有声明任何权限。",
@@ -3373,7 +3374,8 @@
         "context": "在启用它的组织的对话中，向模型上下文加入文本",
         "migration_warnings": "迁移警告变了（见下方迁移警告），须重新批准",
         "push_provider": "用平台的凭据发送推送通知",
-        "device_access": "在会话的设备里运行自己的常驻服务"
+        "device_access": "在会话的设备里运行自己的常驻服务",
+        "device_loopback_ports": "其设备服务可被授权访问本人设备上的本地端口"
       },
       "warnings": "迁移警告",
       "warningsHint": "扩展迁移只能做增量变更：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",

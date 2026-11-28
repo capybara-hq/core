@@ -356,6 +356,82 @@ describe("permissions.deviceAccess", () => {
     ]);
     expect(isSensitivePermissionKey("permissions.deviceaccess:browser")).toBe(true);
   });
+
+  const withLoopback = (loopbackPorts?: boolean) =>
+    buildPermissionSet({
+      provides: [],
+      config: { deployment: [] },
+      tables: [],
+      permissions: {
+        deviceAccess: {
+          services: ["browser"],
+          ...(loopbackPorts !== undefined && { loopbackPorts }),
+        },
+      },
+    });
+
+  it("loopbackPorts is a blocking key recorded only when declared", () => {
+    expect(withLoopback(true).permissions.deviceAccess).toEqual({
+      services: ["browser"],
+      loopbackPorts: true,
+    });
+    expect(permissionKeys(withLoopback(true))).toContain("permissions.deviceaccess.loopbackports");
+    // false or absent: the set (and its keys) stay as they were
+    expect(withLoopback(false).permissions.deviceAccess).toEqual({ services: ["browser"] });
+    expect(permissionKeys(withLoopback(false))).toEqual(permissionKeys(set(["browser"])));
+    expect(permissionKeys(withLoopback())).not.toContain("permissions.deviceaccess.loopbackports");
+  });
+
+  it("an upgrade adding loopbackPorts needs approval again", () => {
+    const d = diffPermissions(withLoopback(), withLoopback(true));
+    expect(d).toEqual({ added: ["permissions.deviceaccess.loopbackports"], removed: [] });
+    expect(blockingKeys(d.added)).toEqual(["permissions.deviceaccess.loopbackports"]);
+    // the key is a valid marketplace permission key
+    const keys = permissionKeys(withLoopback(true));
+    const r = parseMarketplaceManifest({
+      schemaVersion: 1,
+      name: "Enterprise",
+      plugins: [
+        {
+          name: "browser",
+          summary: { en: "Browser" },
+          permissions: { keys, sensitive: keys },
+          source: {
+            npm: {
+              package: "@acme/plugin-browser",
+              version: "1.0.0",
+              integrity: `sha512-${"A".repeat(86)}==`,
+            },
+          },
+        },
+      ],
+    });
+    expect("errors" in r ? r.errors : []).toEqual([]);
+  });
+
+  it("the approval display shows loopbackPorts declared at install as a sensitive item", () => {
+    const groups = permissionGroups(withLoopback(true));
+    expect(groups.find((g) => g.category === "deviceAccess")).toMatchObject({
+      items: ["browser", "local ports on the device (loopback)"],
+      sensitive: true,
+      entries: [
+        { value: "browser", sensitive: true, reason: "device_access" },
+        {
+          value: "local ports on the device (loopback)",
+          sensitive: true,
+          reason: "device_loopback_ports",
+        },
+      ],
+    });
+    expect(permissionKeyItems(["permissions.deviceaccess.loopbackports"])).toEqual([
+      {
+        value: "permissions.deviceaccess.loopbackports",
+        sensitive: true,
+        reason: "device_loopback_ports",
+      },
+    ]);
+    expect(isSensitivePermissionKey("permissions.deviceaccess.loopbackports")).toBe(true);
+  });
 });
 
 describe("permissions.triggers", () => {
