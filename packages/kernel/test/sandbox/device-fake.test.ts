@@ -152,7 +152,7 @@ describe("device-fake", () => {
     );
   });
 
-  it("中止的 exec 杀掉正在跑的命令；已中止的 signal 让调用立即失败", async () => {
+  it("an aborted exec kills the running command; an already aborted signal fails the call at once", async () => {
     const p = createFakeSandbox(root);
     const h = await mk(p, "cap-y");
     const ac = new AbortController();
@@ -165,12 +165,11 @@ describe("device-fake", () => {
       actor,
     });
     let pid = 0;
-    for (let i = 0; i < 100 && pid === 0; i++) {
-      await new Promise((r) => setTimeout(r, 20));
+    await until(async () => {
       const f = await p.readFile(h, "/workspace/pid", { maxBytes: 100, signal: sig() });
       pid = f ? Number(new TextDecoder().decode(f.data).trim()) : 0;
-    }
-    expect(pid).toBeGreaterThan(0);
+      return pid > 0;
+    });
     ac.abort();
     const r = await pending;
     expect(r.exitCode).toBeNull();

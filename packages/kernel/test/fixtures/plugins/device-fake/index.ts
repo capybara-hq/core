@@ -1237,14 +1237,23 @@ export function createFakeSandbox(
         child.stderr.on("data", (c: Buffer) => {
           err = take(err, c);
         });
-        const kill = () => {
-          killed = true;
+        const killGroup = () => {
           try {
             if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
           } catch {
-            // 已退出
+            // already gone
           }
         };
+        const kill = () => {
+          killed = true;
+          killGroup();
+        };
+        // A group kill that lands while the shell is forking can miss the new child (macOS), which
+        // then holds the output pipes open until it ends. Once the killed shell has exited, kill
+        // the group again: the child keeps the group id, so this reaches it.
+        child.once("exit", (_code, signal) => {
+          if (killed || signal === "SIGKILL") killGroup();
+        });
         const pidFile = child.pid === undefined ? undefined : join(procsDir(h), String(child.pid));
         if (pidFile) {
           mkdirSync(dirname(pidFile), { recursive: true });
