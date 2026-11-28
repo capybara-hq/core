@@ -405,6 +405,17 @@ export function isThemeAssetPath(v: unknown): v is string {
 }
 
 /**
+ * Values a theme scheme takes for tokens it leaves out but whose built-in value only suits the
+ * built-in palette. `field` (the ground of a form control) is white in the built-in light scheme
+ * because the built-in cards are grey: a scheme that recolours `panel` without naming `field`
+ * keeps clear fields, so its controls show its own card through, as they did before `field`
+ * existed. A theme that wants filled fields names `field` itself.
+ */
+export function themeSchemeFallbacks(overridden: ReadonlySet<string>): Record<string, string> {
+  return overridden.has("panel") && !overridden.has("field") ? { field: "rgba(0,0,0,0)" } : {};
+}
+
+/**
  * Each scheme the theme defines, merged onto the current built-in values (for swatches, the
  * readability check and anything else that needs full values). A stored theme is read leniently:
  * an override whose token name the built-in tokens no longer know (renamed in core), that is not
@@ -420,15 +431,19 @@ export function mergeThemeSchemes(
     const over: unknown = (schemes as Record<string, unknown>)[scheme];
     if (over === null || typeof over !== "object") continue;
     const m = builtIn(scheme);
+    const colors = new Set<string>();
     for (const group of ["color", "shadow"] as const) {
       const values: unknown = (over as Record<string, unknown>)[group];
       if (values === null || typeof values !== "object") continue;
       for (const [name, raw] of Object.entries(values)) {
         if (!OVERRIDABLE[group].has(name)) continue;
         const v = canonicalThemeValue(group, raw);
-        if (v !== undefined) m[group][name] = v;
+        if (v === undefined) continue;
+        m[group][name] = v;
+        if (group === "color") colors.add(name);
       }
     }
+    Object.assign(m.color, themeSchemeFallbacks(colors));
     const radii: unknown = (over as Record<string, unknown>).radius;
     if (radii !== null && typeof radii === "object") {
       for (const key of ["sm", "md", "bubble"] as const) {

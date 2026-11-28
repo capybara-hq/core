@@ -623,13 +623,13 @@ describe("row grounds of a table inside a card", () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
-    // A card, a form card, a dialog, a sheet and a property section: the panel; an inline card:
-    // raised (spec §6.6, §1 "One box is enough").
+    // A card, a form card and a property section: the panel; what floats (a dialog, a sheet, an
+    // inline card): raised (spec §2.1, §6.6, §1 "One box is enough").
     expect(css).toMatch(
-      /\.cb-card \.cb-table\[data-framed="false"\],\s*\.cb-form-section-fields \.cb-table\[data-framed="false"\],\s*\.cb-dialog \.cb-table\[data-framed="false"\],\s*\.cb-sheet \.cb-table\[data-framed="false"\],\s*\.cb-property-section \.cb-table\[data-framed="false"\] \{\s*--cb-table-ground: var\(--cb-panel\);/,
+      /\.cb-card \.cb-table\[data-framed="false"\],\s*\.cb-form-section-fields \.cb-table\[data-framed="false"\],\s*\.cb-property-section \.cb-table\[data-framed="false"\] \{\s*--cb-table-ground: var\(--cb-panel\);/,
     );
     expect(css).toMatch(
-      /\.cb-icard \.cb-table\[data-framed="false"\] \{\s*--cb-table-ground: var\(--cb-raised\);/,
+      /\.cb-dialog \.cb-table\[data-framed="false"\],\s*\.cb-sheet \.cb-table\[data-framed="false"\],\s*\.cb-icard \.cb-table\[data-framed="false"\] \{\s*--cb-table-ground: var\(--cb-raised\);/,
     );
     expect(css).toMatch(/\.cb-table-row:hover \{\s*--cb-row-ground: var\(--cb-hover\);/);
     expect(css).toMatch(

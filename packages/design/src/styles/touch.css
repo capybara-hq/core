@@ -67,7 +67,7 @@
   width: min(var(--cb-layout-drawer), 86vw);
   padding: var(--cb-inset-top) 0 var(--cb-inset-bottom);
   border-right: 1px solid var(--cb-line-strong);
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   box-shadow: var(--cb-shadow-float-touch);
   outline: none;
   /* a vertical scroller only (§6.52); nothing inside is wider than the panel */

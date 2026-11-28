@@ -11,6 +11,7 @@ import {
   THEME_OVERRIDABLE,
   THEME_TOKENS,
   type ThemeScheme,
+  themeSchemeFallbacks,
 } from "@capybara-hq/plugin-sdk";
 
 const SCHEMES: readonly ThemeScheme[] = ["dark", "light"];
@@ -52,15 +53,21 @@ function schemeDeclarations(
   }
   const over: unknown = (theme.schemes as Record<string, unknown> | undefined)?.[scheme];
   if (!isRecord(over)) return out;
+  const colors = new Set<string>();
   for (const g of GROUPS) {
     const values = over[g];
     if (!isRecord(values)) continue;
     for (const [n, raw] of Object.entries(values)) {
       const v = OVERRIDABLE[g].has(n) ? canonicalThemeValue(g, raw) : undefined;
       if (v === undefined) skip(`schemes.${scheme}.${g}.${n}`);
-      else out.set(VARIABLE[g](n), v);
+      else {
+        out.set(VARIABLE[g](n), v);
+        if (g === "color") colors.add(n);
+      }
     }
   }
+  // A token the built-in palette fills only for itself (the SDK names them)
+  for (const [n, v] of Object.entries(themeSchemeFallbacks(colors))) out.set(VARIABLE.color(n), v);
   const radius = over.radius;
   if (isRecord(radius)) {
     for (const [n, raw] of Object.entries(radius)) {

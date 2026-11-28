@@ -103,6 +103,20 @@ describe("parseThemeFile", () => {
     expect(mergeThemeSchemes(t).light?.color.bg).toBe(THEME_TOKENS.color.bg.light);
   });
 
+  it("a scheme that recolours panel without naming field merges clear fields", () => {
+    const t = parsed({
+      name: { en: "T", zh: "T" },
+      schemes: { light: { color: { panel: "#F7F7F7" } }, dark: { color: { accent: "#FF7A1A" } } },
+    });
+    expect(mergeThemeSchemes(t).light?.color.field).toBe("rgba(0,0,0,0)");
+    expect(mergeThemeSchemes(t).dark?.color.field).toBe(THEME_TOKENS.color.field.dark);
+    const named = parsed({
+      name: { en: "T", zh: "T" },
+      schemes: { light: { color: { panel: "#F7F7F7", field: "#FFFFFF" } } },
+    });
+    expect(mergeThemeSchemes(named).light?.color.field).toBe("#FFFFFF");
+  });
+
   it("accepts the file text, rejects invalid JSON and an oversized file", () => {
     expect(parsed(JSON.stringify(neonGrid())).singleScheme).toBe("dark");
     expect(errorsOf("{")[0]).toMatch(/not valid JSON/);

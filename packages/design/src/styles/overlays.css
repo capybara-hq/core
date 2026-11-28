@@ -57,7 +57,7 @@
   flex-direction: column;
   width: min(480px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   color: var(--cb-ink);
   border: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-md);
@@ -145,7 +145,7 @@
   display: flex;
   flex-direction: column;
   width: min(480px, 100vw);
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   color: var(--cb-ink);
   border-left: 1px solid var(--cb-line-strong);
   box-shadow: var(--cb-shadow-sheet);
@@ -182,7 +182,7 @@
 .cb-menu {
   z-index: var(--cb-z-popover);
   min-width: 160px;
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   color: var(--cb-ink);
   border: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-md);
@@ -391,7 +391,7 @@
   column-gap: 8px;
   row-gap: 4px;
   padding: 8px 8px 8px 12px;
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   color: var(--cb-ink);
   border: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-md);
@@ -461,7 +461,7 @@
   z-index: var(--cb-z-dialog);
   translate: -50% 0;
   width: min(560px, calc(100vw - 32px));
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   color: var(--cb-ink);
   border: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-md);

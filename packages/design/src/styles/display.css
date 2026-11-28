@@ -127,6 +127,7 @@
   gap: 2px;
   border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-sm);
+  background: var(--cb-field);
 }
 .cb-segmented[data-density="dense"] {
   height: var(--cb-control-dense);
@@ -342,7 +343,7 @@
   border: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-sm);
   box-shadow: var(--cb-shadow-1);
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   color: var(--cb-ink);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
@@ -569,7 +570,7 @@
   padding: var(--cb-pad-dense-y) var(--cb-pad-dense-x);
   border: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-sm);
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   box-shadow: var(--cb-shadow-1);
   color: var(--cb-ink);
   font-size: var(--cb-type-small-size);

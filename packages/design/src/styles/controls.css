@@ -530,7 +530,7 @@
   min-height: var(--cb-field-height);
   border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-sm);
-  background: transparent;
+  background: var(--cb-field);
   color: var(--cb-ink);
   transition:
     border-color var(--cb-motion-hover),
@@ -808,7 +808,7 @@
   /* The base radius.sm under the mobile sizes too (spec §6.3): their 12 would round the 14 box
      into a radio. */
   border-radius: 4px;
-  background: transparent;
+  background: var(--cb-field);
   color: var(--cb-on-accent);
   font-size: var(--cb-type-small-size);
   line-height: 1;
