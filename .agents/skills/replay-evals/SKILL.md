@@ -185,6 +185,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   conversation was compacted into the summary above and is no longer shown verbatim." (compaction spec
   §4.2.2): a framing text, rendered for every log, no `DriftReason`. `compaction_skipped` (a manual
   compaction with nothing to summarize, spec §4.7) is display only, never model-visible.
+  `compaction_summary.model` / `compaction_failed.model` (the ref of the model that wrote or failed, compaction
+  model spec §7.1) are not model-visible; a compaction-model summary is `method: "transcript"`.
 - **Idle compact runs** (idle compaction spec §5): `run_started.compactOrigin` (`idle`; absent = manual) and
   `run_aborted.reason: "superseded"` (an idle compact run preempted by input, no account) are display and
   run-control fields, never model-visible, so no `DriftReason`. Request building skips them (a compact run's

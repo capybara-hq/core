@@ -471,7 +471,7 @@ describe("prompt suggestions end to end", () => {
 
     // the idle job fires while the person is away: a compact run, origin idle, after the suggestion
     const idleRun = await withOrgScope(orgId, () =>
-      k.app.get(RunQueue).startIdleCompaction(id, end?.seq as number),
+      k.app.get(RunQueue).startIdleCompaction(id, end?.seq as number, "cache"),
     );
     expect(idleRun).not.toBeNull();
     await waitFor(

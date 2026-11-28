@@ -74,6 +74,11 @@ export const KERNEL_PURPOSES: readonly KernelPurpose[] = [
    * current chat model (a sub-agent's call: the sub-agent's).
    */
   { purpose: "web_fetch", kind: "chat", label: { zh: "网页提取", en: "Web page extraction" } },
+  /**
+   * The compaction summarizer (compaction model spec); unmapped → the model whose next request the
+   * summary serves (the conversation's model, or the overflowed rung on the reactive path).
+   */
+  { purpose: "compaction", kind: "chat", label: { zh: "摘要压缩", en: "Compaction" } },
   {
     purpose: "subagent_fast",
     kind: "chat",

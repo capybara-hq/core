@@ -17,6 +17,7 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { REDIS } from "../infra/tokens.js";
+import { ModelsModule } from "../models/models.module.js";
 import { OrgSettingsModule } from "../orgs/settings.service.js";
 import { OperationAuthorityModule } from "../sandbox/operation-authority.module.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
@@ -83,6 +84,8 @@ import { WriteBaseService } from "./write-base.service.js";
     PermissionProfileStoreModule,
     GitModule,
     ProvidersModule,
+    // the `compaction` purpose the run steps summarize with (compaction model spec §4.2)
+    ModelsModule,
     RunJobsModule,
     SubagentsModule,
     UsageReportModule,

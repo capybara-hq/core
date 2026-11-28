@@ -22,6 +22,7 @@ export function compactionSettings(over: Partial<CompactionSettings> = {}): Comp
     idleEnabled: true,
     idleMinTokensFloor: 200_000,
     idleMinWindowRatio: 0.3,
+    idleDelayMinutes: 30,
     ...over,
   };
 }

@@ -8,9 +8,11 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { ModelPurposesService } from "../models/purposes.js";
 import { ToolPipeline } from "../tools/pipeline.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
+import { compactionModelPort } from "./compaction-model.js";
 import { CompactionProgressService } from "./compaction-progress.js";
 import { CompactionSettingsService } from "./compaction-settings.service.js";
 import { LangGraphLoop, type LoopDeps } from "./langgraph-loop.js";
@@ -72,6 +74,8 @@ export class RunSteps {
     @Inject(CompactionProgressService) compactionProgress: CompactionProgressService,
     @Inject(PermissionContextRecorder) permissionContext: PermissionContextRecorder,
     @Inject(WriteBaseService) writeBase: WriteBaseService,
+    /** The org's `compaction` purpose (compaction model spec §4.2). */
+    @Inject(ModelPurposesService) purposes: ModelPurposesService,
   ) {
     this.deps = {
       get db(): KernelSchemaDb {
@@ -85,6 +89,8 @@ export class RunSteps {
       compactionSettings,
       // ephemeral, display-only: the run's progress on its own conversation's stream
       compactionProgress,
+      // the summarizer of every compaction: the org's compaction model when it is usable
+      compactionModel: compactionModelPort(purposes),
       log,
       toolPipeline,
       // plugin hooks for chat runs; the full-run replay drops them (P-18)

@@ -98,7 +98,7 @@ import {
 } from "../tools/permission-approval-jobs.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { IdleCompactionJob } from "./idle-compaction.js";
-import { IDLE_COMPACTION_JOB, type IdleCompactionJobData } from "./idle-compaction-jobs.js";
+import { IDLE_COMPACTION_JOB, type IdleCompactionJobInput } from "./idle-compaction-jobs.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { RunDeletion, STOP_DELETED_ORG_JOB, type StopDeletedOrgData } from "./run-deletion.js";
 import { ENSURE_RUN_JOB, type EnsureRunJobData, RunQueue } from "./run-queue.js";
@@ -335,7 +335,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         return;
       // a large idle conversation's compaction before its prompt cache expires (idle compaction §4.3)
       case IDLE_COMPACTION_JOB:
-        await this.idleCompaction.fire(job.data as IdleCompactionJobData);
+        await this.idleCompaction.fire(job.data as IdleCompactionJobInput);
         return;
       default:
         if (await this.scheduled.runNow(job.name)) return;

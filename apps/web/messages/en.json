@@ -3042,7 +3042,7 @@
     "follow": "Follow the platform settings",
     "followHint": "Turn this off to set the prompt cache for this organization only.",
     "longTtl": "Long prompt cache",
-    "longTtlHint": "Requests use the model's cache tier of at least 30 minutes (such as 1 hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price instead of 1.25×). Idle compaction runs on these models only with this on."
+    "longTtlHint": "Requests use the model's cache tier of at least 30 minutes (such as 1 hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price instead of 1.25×). Without a compaction model, idle compaction runs on these models only with this on."
   },
   "compaction": {
     "title": "Conversation compaction",
@@ -3068,8 +3068,8 @@
       "help": "The most tokens the summary may produce (1,024–32,000; 20,000 is the default)."
     },
     "idleEnabled": {
-      "label": "Compact idle conversations before the cache expires",
-      "hint": "While a conversation is idle, compact it from the prompt cache before the cache expires, so the next message neither waits for a compaction nor re-reads the long context at full price. Only for models whose cache lasts 30 minutes or more (most need the long cache tier)."
+      "label": "Compact idle conversations in the background",
+      "hint": "While a conversation is idle, compact it in the background, so the next message neither waits for a compaction nor re-reads the long context at full price. With a compaction model set, this runs after the idle delay below; without one, only before a prompt cache of 30 minutes or more expires (most models need the long cache tier)."
     },
     "idleMinTokensFloor": {
       "label": "Smallest context to compact in the background",
@@ -3078,6 +3078,10 @@
     "idleMinWindowRatio": {
       "label": "Smallest context as a share of the window",
       "help": "Default 0.3: from 300,000 on a model with a 1M window."
+    },
+    "idleDelayMinutes": {
+      "label": "Compact after idle for (minutes)",
+      "help": "Used only when a compaction model is set: compact in the background this long after the last reply (default 30)."
     }
   },
   "configForm": {
@@ -4255,7 +4259,8 @@
         "titles": "Generates titles for new conversations. When it is not set, the model of the conversation's latest run is used.",
         "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's).",
         "review": "The command-review classifier uses it to judge commands before they run. When it is not set, no classifier runs and a command it would be unsure about is asked about.",
-        "vision": "Reads images for a model that cannot view them, through the Read tool (a pasted image too, by its file id). Only models that can view images are listed. When it is not set, those models cannot read images."
+        "vision": "Reads images for a model that cannot view them, through the Read tool (a pasted image too, by its file id). Only models that can view images are listed. When it is not set, those models cannot read images.",
+        "compaction": "When not set, the conversation's own model writes summaries. When set, this model writes every summary (automatic, manual and idle) from the conversation's transcript, which is sent to this model's provider. Pick a model with a large window, a low price and a tested summary quality."
       }
     },
     "catalog": {

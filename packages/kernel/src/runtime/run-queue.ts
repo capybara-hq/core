@@ -9,7 +9,7 @@ import { wakeDecisionIn } from "../background/wake-rules.js";
 import { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
 import { conversationTree } from "../conversations/tree.js";
-import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { ConversationKind, IdleMode, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -260,11 +260,17 @@ export class RunQueue {
    * after `armedSeq`, and that the conversation is not busy: no active run (queued, running or
    * waiting), no unconsumed message, no queue head. The run is a `compact` run with
    * `compact_origin = 'idle'`, run as the conversation's owner, its boundary the current
-   * `consumed_seq`, exactly as a manual one.
+   * `consumed_seq`, exactly as a manual one. `mode` is the mode the job was armed in, stored as
+   * `idle_mode` so the run worker runs it in that mode (compaction model spec §6.3: a run never
+   * switches modes between arm, fire and run).
    */
-  async startIdleCompaction(conversationId: string, armedSeq: number): Promise<string | null> {
+  async startIdleCompaction(
+    conversationId: string,
+    armedSeq: number,
+    mode: IdleMode,
+  ): Promise<string | null> {
     try {
-      return await this.startIdleCompactionIn(conversationId, armedSeq);
+      return await this.startIdleCompactionIn(conversationId, armedSeq, mode);
     } catch (err) {
       this.log.warn("idle compaction run not started", { conversationId, err });
       return null;
@@ -279,6 +285,7 @@ export class RunQueue {
   private async startIdleCompactionIn(
     conversationId: string,
     armedSeq: number,
+    mode: IdleMode,
   ): Promise<string | null> {
     const t = this.db;
     const conv = await t
@@ -348,6 +355,7 @@ export class RunQueue {
         job_id: jobId.recorded,
         compact: true,
         compact_origin: "idle",
+        idle_mode: mode,
       })
       .execute();
     return runId;
