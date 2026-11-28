@@ -21,6 +21,7 @@ export {
   classifierMessage,
   fitReviewInput,
   fitReviewText,
+  LOOPBACK_REVIEW_SYSTEM_PROMPT,
   newReviewTag,
   parseReviewAnswer,
   personMessagesText,
@@ -36,9 +37,19 @@ export {
   reviewSystemPrompt,
   runClassifier,
 } from "./classifier.js";
-export type { CommandReview, ReviewCall, ReviewInput, ReviewVerdict } from "./review.service.js";
+export type {
+  CommandReview,
+  LoopbackPortReviewInput,
+  ReviewCall,
+  ReviewInput,
+  ReviewVerdict,
+} from "./review.service.js";
 export {
   CommandReviewService,
+  LOOPBACK_FULL_ACCESS_REASON,
+  LOOPBACK_UNATTENDED_WHY,
+  loopbackAskReason,
+  loopbackRefusedReason,
   REVIEW_REASONS,
 } from "./review.service.js";
 export {

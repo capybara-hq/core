@@ -60,6 +60,7 @@ import { checkPersonValue, type PersonFieldSpec } from "../platform/person-field
 import { SealedInputs } from "../platform/sealed-inputs.js";
 import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { LoopbackGrants, LoopbackLimitError } from "../sandbox/loopback-grants.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import type {
@@ -170,8 +171,32 @@ export interface ServiceNetworkAskDetail extends NetworkAskDetailBase {
   attempt: number;
 }
 
-/** A network ask's `detail`: a command's or a device service's. */
-export type NetworkAskDetail = CommandNetworkAskDetail | ServiceNetworkAskDetail;
+/**
+ * A device service's loopback port ask (browser loopback port grants): an extension declaring
+ * `permissions.deviceAccess.loopbackPorts` whose service was refused a local port of the person's
+ * own device. It offers only `session` (a grant held by the conversation's root for 24 hours);
+ * approved, the grant is written in the decision's transaction and the call runs again, otherwise
+ * its kept result is written with the outcome's note. `service` names the extension whose service
+ * asked, `url` the page it was loading when known; `database` marks a well-known database port.
+ */
+export interface LoopbackAskDetail
+  extends Omit<NetworkAskDetailBase, "appliesAt" | "grantedHosts" | "outcome"> {
+  kind: "loopback";
+  service: string;
+  url: string | null;
+  port: number;
+  database: boolean;
+  /** The call's attempt (`tool_call_started`) that asked: the re-run takes the next one. */
+  attempt: number;
+  /** What took effect once approved: the root conversation's grant. */
+  outcome?: "session";
+}
+
+/** A network ask's `detail`: a command's, a device service's, or a loopback port's. */
+export type NetworkAskDetail =
+  | CommandNetworkAskDetail
+  | ServiceNetworkAskDetail
+  | LoopbackAskDetail;
 
 /** `Omit` over each member of a union. */
 type OmitEach<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -179,11 +204,17 @@ type OmitEach<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 /** A network ask's detail as the API shows it: without the kept call result. */
 export type NetworkAskView = OmitEach<NetworkAskDetail, "result">;
 
-/** The hosts a network ask asked about, whichever kind it is. */
-export function networkAskHosts(detail: Pick<NetworkAskDetail, "hosts" | "kind">): string[] {
+/** The hosts a network ask asked about, whichever kind it is (a loopback port ask: none). */
+export function networkAskHosts(
+  detail:
+    | Pick<CommandNetworkAskDetail, "hosts" | "kind">
+    | Pick<ServiceNetworkAskDetail, "hosts" | "kind">
+    | Pick<LoopbackAskDetail, "kind">,
+): string[] {
+  if (detail.kind === "loopback") return [];
   return detail.kind === "service"
-    ? [...(detail.hosts as string[])]
-    : (detail.hosts as { host: string }[]).map((h) => h.host);
+    ? [...(detail as Pick<ServiceNetworkAskDetail, "hosts">).hosts]
+    : (detail as Pick<CommandNetworkAskDetail, "hosts">).hosts.map((h) => h.host);
 }
 
 /**
@@ -538,7 +569,7 @@ export interface NetworkAskInput {
   requestedFor: string;
   /** The tool key the ask is recorded under: the call's (`Bash` for a command). */
   toolKey: string;
-  detail: OmitEach<NetworkAskDetail, "grantedHosts" | "outcome">;
+  detail: OmitEach<CommandNetworkAskDetail | ServiceNetworkAskDetail, "grantedHosts" | "outcome">;
   /**
    * What the device's provider enforces (device-provider spec §6.3, `networkAskOffer`): `once` (a
    * run grant) only with per-operation hosts, `always` (add to the device's own list) only when
@@ -553,10 +584,15 @@ interface NetworkDecision {
   wanted: string[];
   /** The hosts allowed (empty when denied or refused by the device). */
   granted: string[];
-  /** Null when denied. */
-  outcome: "once" | "always" | null;
+  /** Null when denied; `session` for a loopback port ask (the root conversation's grant). */
+  outcome: "once" | "always" | "session" | null;
   via: DecisionVia;
 }
+
+/** A new loopback port ask, made by the tool pipeline ({@link ApprovalsService.requestLoopback}). */
+export type LoopbackAskInput = Omit<NetworkAskInput, "detail" | "scopes"> & {
+  detail: LoopbackAskDetail;
+};
 
 const NETWORK_APPLIES_AT: ReadonlySet<NetworkAppliesAt> = new Set([
   "next-command",
@@ -739,6 +775,10 @@ export class ApprovalsService {
     @Optional()
     @Inject(PermissionCallGrants)
     private readonly permissionGrants?: PermissionCallGrants,
+    /** A loopback port ask's approval writes the root conversation's grant (absent: refused). */
+    @Optional()
+    @Inject(LoopbackGrants)
+    private readonly loopback?: Pick<LoopbackGrants, "grantIn" | "refusalNow" | "liveLockedIn">,
   ) {}
 
   /**
@@ -956,9 +996,30 @@ export class ApprovalsService {
     return record;
   }
 
+  /**
+   * A loopback port ask (browser loopback port grants): a pending approval of kind `network` for
+   * the device owner, offering only `session`, expiring like a tool approval, and its
+   * `approval_requested` (the call's tool key, the display-only `loopback`: service, port and
+   * whether it is a database port; no `network` field), in one transaction. One per call: a
+   * second request returns the first (whatever its kind).
+   */
+  async requestLoopback(input: LoopbackAskInput): Promise<ApprovalRecord> {
+    const d = input.detail;
+    if (d.kind !== "loopback") throw new Error("a loopback port ask has a loopback detail");
+    if (!(Number.isInteger(d.port) && d.port >= 1 && d.port <= 65535))
+      throw new Error("a loopback port ask names a port from 1 to 65535");
+    if (input.toolKey.length === 0)
+      throw new Error("a loopback port ask names its call's tool key");
+    if (!(Number.isInteger(d.attempt) && d.attempt >= 1))
+      throw new Error("a loopback port ask names the attempt that asked");
+    const { record, toSeq } = await this.requestNetworkIn({ ...input, scopes: ["session"] });
+    if (toSeq !== null) await this.eventLog.notify(record.conversationId, toSeq);
+    return record;
+  }
+
   @Transactional()
   private async requestNetworkIn(
-    input: NetworkAskInput,
+    input: NetworkAskInput | (LoopbackAskInput & { scopes: ["session"] }),
   ): Promise<{ record: ApprovalRecord; toSeq: number | null }> {
     const hours = this.config.get().tools.approvalTimeoutHours;
     const t = this.db.db;
@@ -1022,7 +1083,15 @@ export class ApprovalsService {
           approvalId: rec.id,
           toolKey: rec.toolKey,
           expiresAt: rec.expiresAt,
-          network: { hosts: networkAskHosts(input.detail) },
+          ...(input.detail.kind === "loopback"
+            ? {
+                loopback: {
+                  service: input.detail.service,
+                  port: input.detail.port,
+                  database: input.detail.database,
+                },
+              }
+            : { network: { hosts: networkAskHosts(input.detail) } }),
           requestedFor: rec.requestedFor,
           approverRole: null,
         },
@@ -1443,6 +1512,8 @@ export class ApprovalsService {
     body: DecisionInput,
     actorTokenId: string | undefined,
     via: DecisionVia,
+    /** A panel grant settling the ask: approve only while that grant is still live. */
+    opts: { panelGrantOnly?: boolean } = {},
   ): Promise<ApprovalRecord> {
     const row = await this.db
       .selectFrom("approvals")
@@ -1484,6 +1555,8 @@ export class ApprovalsService {
       throw new ApiError("approval.already_decided", "Approval has already been decided");
     }
     if (row.expired) throw new ApiError("approval.already_decided", "Approval has expired");
+    if (detail.kind === "loopback")
+      return this.decideLoopback(orgId, ask, detail, accountId, body, via, opts.panelGrantOnly);
     const asked = [...new Set(networkAskHosts(detail))];
     let network: NetworkDecision;
     if (body.decision === "approve") {
@@ -1535,6 +1608,200 @@ export class ApprovalsService {
     } else decided = await decide();
     await this.announceDecided(decided.record, decided.toSeq);
     return decided.record;
+  }
+
+  /**
+   * A loopback port ask's decision (browser loopback port grants), under {@link decideNetwork}'s
+   * lock and checks (the device owner, a signed-in session, still pending): an approval takes
+   * scope `session` and no hosts. The device's ceilings are read again first; refused, the ask
+   * stays pending (`approval.loopback_unavailable`). The grant
+   * (`LoopbackGrants.grantIn`, source `human`, the call and the attempt that asked) is written in
+   * the decision's transaction before its conversation, approval and run rows: the grant reads the
+   * root conversation `FOR SHARE` and a conversation's deletion locks its runs after its own row.
+   */
+  private async decideLoopback(
+    orgId: string,
+    ask: ApprovalRecord,
+    detail: LoopbackAskDetail,
+    accountId: string,
+    body: DecisionInput,
+    via: DecisionVia,
+    /**
+     * Settled by the owner's panel grant: the grant is that live row (read `FOR SHARE` in the
+     * decision's transaction), never a new one; a grant revoked meanwhile refuses the approval.
+     */
+    panelGrantOnly = false,
+  ): Promise<ApprovalRecord> {
+    if (body.hosts !== undefined) {
+      throw new ApiError("validation_failed", "A loopback port ask takes no hosts", [
+        { path: "hosts", message: "A loopback port ask takes no hosts" },
+      ]);
+    }
+    const id = ask.id;
+    if (body.decision !== "approve") {
+      const network: NetworkDecision = { wanted: [], granted: [], outcome: null, via };
+      const decided = await this.decideIn(orgId, id, accountId, body, undefined, network);
+      await this.announceDecided(decided.record, decided.toSeq);
+      return decided.record;
+    }
+    const scope = body.scope ?? "session";
+    if (scope !== "session" || !ask.scopes.includes("session")) {
+      throw new ApiError(
+        "approval.scope_not_allowed",
+        `Scope "${scope}" is not allowed for this approval; allowed: ${ask.scopes.join(", ")}`,
+      );
+    }
+    const loopback = this.loopback;
+    if (loopback === undefined) throw new Error("Loopback grants are unavailable");
+    const why = await loopback.refusalNow(orgId, detail.deviceId);
+    if (why !== null) {
+      throw new ApiError(
+        "approval.loopback_unavailable",
+        `Port ${detail.port} on the device cannot be opened to the browser now: ${why}.`,
+      );
+    }
+    const conv = await this.db
+      .selectFrom("conversations")
+      .select("parent_conversation_id")
+      .where("id", "=", ask.conversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!conv) throw notFound();
+    const rootConversationId =
+      conv.parent_conversation_id === null
+        ? ask.conversationId
+        : await rootConversationOf(this.db.db, conv.parent_conversation_id);
+    const network: NetworkDecision = { wanted: [], granted: [], outcome: "session", via };
+    const decided = await this.decideLoopbackIn(
+      orgId,
+      id,
+      accountId,
+      body,
+      network,
+      rootConversationId,
+      async () => {
+        const key = {
+          orgId,
+          deviceId: detail.deviceId,
+          serviceId: detail.service,
+          rootConversationId,
+          port: detail.port,
+        };
+        if (panelGrantOnly) {
+          if ((await loopback.liveLockedIn(key)) === null)
+            throw new ApiError(
+              "approval.loopback_unavailable",
+              `The grant of port ${detail.port} on the device ended before this approval was settled.`,
+            );
+          return;
+        }
+        await loopback.grantIn(key, {
+          source: "human",
+          actorAccountId: accountId,
+          approvalId: id,
+          call: { runId: ask.runId, callId: ask.callId, attempt: detail.attempt },
+        });
+      },
+    );
+    await this.announceDecided(decided.record, decided.toSeq);
+    return decided.record;
+  }
+
+  /**
+   * The owner granted a port from the browser panel (`ctx.deviceAccess.grantLoopbackPort`): the
+   * pending loopback asks for that port of the same device service in the same conversation tree
+   * are approved as the owner's decision (the grant they find is the panel's), so their calls run
+   * again now instead of waiting for the approval timeout, and only while the panel's grant is
+   * still live (a revoke in the meantime wins). An ask decided meanwhile, or one the owner may no
+   * longer decide, is left as it is; any other failure leaves that ask pending and is returned (the
+   * caller logs it), and the others are still settled.
+   */
+  async settleLoopbackAsks(
+    orgId: string,
+    accountId: string,
+    key: { deviceId: string; serviceId: string; rootConversationId: string; port: number },
+  ): Promise<{ approved: number; failed: { approvalId: string; err: unknown }[] }> {
+    const rows = await this.db
+      .selectFrom("approvals")
+      .innerJoin("conversations", "conversations.id", "approvals.conversation_id")
+      .select(["approvals.id", "approvals.conversation_id", "conversations.parent_conversation_id"])
+      .where("approvals.org_id", "=", orgId)
+      .where("approvals.kind", "=", "network")
+      .where("approvals.status", "=", "pending")
+      .where("approvals.requested_for", "=", accountId)
+      .where(sql<string>`approvals.detail->>'kind'`, "=", "loopback")
+      .where(sql<string>`approvals.detail->>'deviceId'`, "=", key.deviceId)
+      .where(sql<string>`approvals.detail->>'service'`, "=", key.serviceId)
+      .where(sql<string>`approvals.detail->>'port'`, "=", String(key.port))
+      .execute();
+    let approved = 0;
+    const failed: { approvalId: string; err: unknown }[] = [];
+    for (const r of rows) {
+      try {
+        const root =
+          r.parent_conversation_id === null
+            ? r.conversation_id
+            : await rootConversationOf(this.db.db, r.parent_conversation_id);
+        if (root !== key.rootConversationId) continue;
+        await this.decideNetwork(
+          orgId,
+          r.id,
+          accountId,
+          { decision: "approve", scope: "session" },
+          undefined,
+          "web",
+          { panelGrantOnly: true },
+        );
+        approved += 1;
+      } catch (e) {
+        if (
+          e instanceof ApiError &&
+          ["approval.already_decided", "approval.not_found", "approval.not_yours"].includes(e.code)
+        )
+          continue;
+        failed.push({ approvalId: r.id, err: e });
+      }
+    }
+    return { approved, failed };
+  }
+
+  /**
+   * A loopback port ask's approval in one transaction: the tree's root conversation row first
+   * (`FOR NO KEY UPDATE`, the order a run's fence takes it in), then the grant, then the decision.
+   * Taking the root before the grant's `FOR SHARE` read and its (device, service) lock keeps one
+   * lock order with a concurrent panel grant (root share, then that lock): without it the
+   * decision held the root shared, the panel waited on the service lock, and the decision's
+   * append then waited to update the root behind the panel's share (a deadlock).
+   */
+  @Transactional({ propagation: "requires_new" })
+  private async decideLoopbackIn(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: DecisionInput,
+    network: NetworkDecision,
+    rootConversationId: string,
+    grant: () => Promise<unknown>,
+  ): Promise<{ record: ApprovalRecord; toSeq: number }> {
+    await this.db.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", rootConversationId)
+      .where("org_id", "=", orgId)
+      .forNoKeyUpdate()
+      .execute();
+    try {
+      await grant();
+    } catch (e) {
+      // the conversation was deleted meanwhile
+      if (e instanceof ApiError && e.code === "conversation.not_found") throw notFound();
+      if (e instanceof LoopbackLimitError)
+        throw new ApiError("approval.loopback_unavailable", e.message);
+      throw e;
+    }
+    const o = await this.decideTx(orgId, id, accountId, body, undefined, network);
+    if ("leaked" in o) throw new Error(`approval ${id}: a leak outcome outside a secure input`);
+    return o;
   }
 
   /**
@@ -1936,12 +2203,16 @@ export class ApprovalsService {
         deny_reason: reason ?? null,
         ...(network?.outcome != null &&
           before.detail !== null && {
-            // what took effect; run grants read grantedHosts
-            detail: JSON.stringify({
-              ...before.detail,
-              grantedHosts: network.granted,
-              outcome: network.outcome,
-            } satisfies NetworkAskDetail),
+            // what took effect; run grants read grantedHosts (a loopback port ask: its grant row)
+            detail: JSON.stringify(
+              (before.detail.kind === "loopback"
+                ? { ...before.detail, outcome: "session" }
+                : {
+                    ...before.detail,
+                    grantedHosts: network.granted,
+                    outcome: network.outcome === "always" ? "always" : "once",
+                  }) satisfies NetworkAskDetail,
+            ),
           }),
         ...(git?.outcome != null &&
           before.git !== null && {
@@ -2047,6 +2318,31 @@ export class ApprovalsService {
         },
       },
     ]);
+    if (network !== undefined && before.detail?.kind === "loopback") {
+      // an approval's grant audited itself (`device.loopback_granted`, with this approval's id)
+      if (!approved) {
+        await audit(t, {
+          actorAccountId: accountId,
+          orgId,
+          action: "device.network_denied",
+          target: before.detail.deviceId,
+          detail: {
+            approvalId: id,
+            deviceId: before.detail.deviceId,
+            serviceId: before.detail.service,
+            port: before.detail.port,
+            outcome: "denied",
+            by: accountId,
+            via: network.via,
+            conversationId: before.conversationId,
+            runId: before.runId,
+            ...(reason !== undefined && { reason }),
+          },
+        });
+      }
+      await this.resumes.resumeIn(before.runId, id);
+      return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
+    }
     if (network !== undefined && before.detail !== null) {
       const asked = [...new Set(networkAskHosts(before.detail))];
       const refused = asked.filter((h) => !network.wanted.includes(h));

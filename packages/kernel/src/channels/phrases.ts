@@ -96,6 +96,15 @@ export const CHANNEL_PHRASES = {
     zh: "智能体的浏览器想访问 {host}",
     en: "The agent's browser wants to reach {host}",
   },
+  /** A loopback port ask's card title (`{port}`; browser loopback port grants). */
+  loopbackTitle: {
+    zh: "允许浏览器访问本机端口 {port}？",
+    en: "Allow the browser to reach port {port} on this device?",
+  },
+  /** Under a loopback port ask's title: the port is a well-known database port. */
+  loopbackDatabase: { zh: "这是一个本地数据库端口。", en: "This is a local database port." },
+  /** A loopback port ask's one button: the grant for this conversation. */
+  loopbackAllow: { zh: "允许本会话访问", en: "Allow for this conversation" },
   /** Under a device service's network ask: open network mode stops the asks. */
   networkServiceNote: {
     zh: "开放网络模式下不会再询问",

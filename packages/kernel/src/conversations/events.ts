@@ -536,7 +536,9 @@ export const ReviewRecordSchema = z
      * scope, a host outside the allowlist, running outside the sandbox, or a sensitive command.
      * Not model-visible, so it needs no DriftReason.
      */
-    crossing: z.enum(["directory", "host", "outside-sandbox", "sensitive"]).optional(),
+    crossing: z
+      .enum(["directory", "host", "outside-sandbox", "sensitive", "loopback-port"])
+      .optional(),
   })
   .strict();
 
@@ -993,7 +995,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       binding: PermissionCallBindingSchema,
       permissionScope: PermissionExpansionSchema,
       targetPath: z.string().max(4096).optional(),
-      scopeKind: z.enum(["directories-and-hosts", "sandbox-escalation"]),
+      scopeKind: z.enum(["directories-and-hosts", "sandbox-escalation", "loopback-port"]),
       /** A per-call sandbox escalation: the model's justification (its scope is empty). */
       escalation: PermissionEscalationSchema.optional(),
       candidateHash: z.string(),
@@ -1005,9 +1007,16 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       decisionSource: z.enum(["review-model", "rule", "full-access"]),
       /** The crossing reviewed (approval-only profiles design); not model-visible. */
-      crossing: z.enum(["directory", "host", "outside-sandbox"]).optional(),
+      crossing: z.enum(["directory", "host", "outside-sandbox", "loopback-port"]).optional(),
       /** The sensitive-command consents (rule ids) a Full access auto-grant skipped; not model-visible. */
       sensitive: z.array(z.string()).optional(),
+      /**
+       * A loopback port grant's review (`scopeKind: "loopback-port"`): the device service and the
+       * port it asked to reach on the person's own device. Not model-visible.
+       */
+      loopback: z
+        .object({ service: z.string(), port: z.number().int().min(1).max(65535) })
+        .optional(),
     }),
   ),
   ev(
@@ -1684,6 +1693,18 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * model-visible, as `network` and `git`; the model sees the call's `tool_result` only.
        */
       command: CommandAskSchema.optional(),
+      /**
+       * A loopback port ask (browser loopback port grants): the device service, the port it asks
+       * to reach on the person's own device and whether it is a well-known database port. Display
+       * only, never model-visible, as `network`.
+       */
+      loopback: z
+        .object({
+          service: z.string(),
+          port: z.number().int().min(1).max(65535),
+          database: z.boolean(),
+        })
+        .optional(),
       /**
        * A secure input request (`kind = 'secure_input'`; profiles govern every approval): what the
        * values are for and the field paths the person enters. Display only, never a value and

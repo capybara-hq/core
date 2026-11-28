@@ -247,6 +247,7 @@
       "scope_not_allowed": "This approval can only be allowed once.",
       "inputs_invalid": "Some entered values are invalid.",
       "input_leaked": "This value appeared in the conversation, so it counts as leaked. Create a new one at the provider and enter that.",
+      "loopback_unavailable": "This device cannot open a local port to the browser now.",
       "inputs_not_expected": "This approval does not take entered values."
     },
     "question": {
@@ -2284,7 +2285,11 @@
       "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner.",
       "serviceTitle": "The agent's browser wants to reach {host}",
       "serviceNote": "Open network mode stops these asks",
-      "serviceOtherApprover": "The agent's browser wants to reach {hosts}; waiting for the device owner."
+      "serviceOtherApprover": "The agent's browser wants to reach {hosts}; waiting for the device owner.",
+      "loopbackTitle": "Allow the browser to reach port {port} on this device?",
+      "loopbackDatabase": "This is a local database port.",
+      "loopbackAllow": "Allow for this conversation",
+      "loopbackOtherApprover": "Only the device's owner can open local port {port}."
     },
     "permissionScope": {
       "intro": "Approving grants this access for this operation only. Each directory includes everything inside it.",
@@ -3361,6 +3366,7 @@
     "review": {
       "network": "Declared only; the platform does not enforce it",
       "clientItem": "Runs plugin code in the browser",
+      "loopbackItem": "Local ports on the device (loopback)",
       "added": "Added permissions",
       "removed": "Removed permissions",
       "none": "No permissions declared.",
@@ -3381,7 +3387,8 @@
         "context": "adds text to the model's context in conversations of organizations that enable it",
         "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again",
         "push_provider": "delivers push notifications with the platform's credentials",
-        "device_access": "runs its own long-lived services in conversations' devices"
+        "device_access": "runs its own long-lived services in conversations' devices",
+        "device_loopback_ports": "its device services may be granted local ports of the person's own device"
       },
       "warnings": "Migration warnings",
       "warningsHint": "Extension migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
@@ -4671,6 +4678,8 @@
         "browserView": "Opened a live view of a device",
         "browserViewClosed": "Closed a live view of a device",
         "deviceNetworkDenied": "Denied network access",
+        "deviceLoopbackGranted": "Allowed a local port",
+        "deviceLoopbackRevoked": "Closed a local port",
         "devicePolicyChanged": "Changed a device's policy",
         "devicePolicyFailed": "A device policy change failed",
         "devicePolicyRequested": "Requested a device policy change",

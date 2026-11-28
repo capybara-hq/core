@@ -23,6 +23,7 @@ export type SensitiveReason =
   | "object_store"
   | "push_provider"
   | "device_access"
+  | "device_loopback_ports"
   | "context"
   | "migration_warnings";
 

@@ -9,6 +9,7 @@ import {
   CLIENT_KEY,
   CONVERSATIONS_KEY,
   DEVICE_ACCESS_KEY_PREFIX,
+  DEVICE_LOOPBACK_PORTS_KEY,
   DIAL_IN_KEY_PREFIX,
   INBOX_KEY,
   PEOPLE_KEY,
@@ -79,7 +80,8 @@ export interface PermissionGroup {
  * Sensitive reason codes (the UI translates them by code): secrets, public routes, embed routes,
  * tools, hooks, embedded apps, client code and client components (client extensions spec §5.4: code that runs with
  * full trust in members' browsers), device services (`device_access`: long-lived processes in
- * conversations' devices), and sensitive extension points
+ * conversations' devices), loopback port grants (`device_loopback_ports`: its device services may
+ * reach local ports of the person's device), and sensitive extension points
  * ({@link SENSITIVE_EXTENSION_POINTS}; the code is the extension point name without `@<major>`, with
  * `-` replaced by `_`).
  */
@@ -100,6 +102,7 @@ export type SensitiveReason =
   | "context"
   | "push_provider"
   | "device_access"
+  | "device_loopback_ports"
   | "migration_warnings";
 
 /** 权限清单里的一项（分组里的一项，或 `added` 里的一个权限键）。 */
@@ -136,6 +139,9 @@ type Category = PermissionGroup["category"];
 
 /** The one item of the "client" group (client extensions spec §5.4). */
 const CLIENT_ITEM = "client code";
+
+/** The "deviceAccess" group's item of loopback port grants (`permissions.deviceAccess.loopbackPorts`). */
+const LOOPBACK_PORTS_ITEM = "local ports on the device (loopback)";
 
 /** The one item of the "inbox" group (collaboration spec §4.9). */
 const INBOX_ITEM = "personal inbox items";
@@ -185,6 +191,7 @@ function itemReason(category: Category, item: string): SensitiveReason | undefin
     if (item.startsWith("embed:")) return "ui_embed";
     return undefined;
   }
+  if (category === "deviceAccess" && item === LOOPBACK_PORTS_ITEM) return "device_loopback_ports";
   return ALWAYS_SENSITIVE.has(category) ? CATEGORY_REASON[category] : undefined;
 }
 
@@ -205,6 +212,8 @@ function keyItem(key: string): { category: Category; item: string } | null {
   if (key === "permissions.secrets") return { category: "secrets", item: "secret store" };
   if (key === CLIENT_KEY) return { category: "client", item: CLIENT_ITEM };
   if (key === INBOX_KEY) return { category: "inbox", item: INBOX_ITEM };
+  if (key === DEVICE_LOOPBACK_PORTS_KEY)
+    return { category: "deviceAccess", item: LOOPBACK_PORTS_ITEM };
   if (key === AGENTS_KEY) return { category: "agents", item: AGENTS_ITEM };
   if (key === CONVERSATIONS_KEY) return { category: "conversations", item: CONVERSATIONS_ITEM };
   if (key === PEOPLE_KEY) return { category: "people", item: PEOPLE_ITEM };
@@ -301,7 +310,14 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
     // machines that connect to the deployment for this provider's devices, speaking its protocol
     { category: "dialIn", items: p.dialIn ? [p.dialIn.protocol] : [] },
     // long-lived services the extension runs in conversations' devices
-    { category: "deviceAccess", items: p.deviceAccess?.services ?? [] },
+    // and, when declared, local ports of the device its services may be granted
+    {
+      category: "deviceAccess",
+      items: [
+        ...(p.deviceAccess?.services ?? []),
+        ...(p.deviceAccess?.loopbackPorts === true ? [LOOPBACK_PORTS_ITEM] : []),
+      ],
+    },
     // the event types it emits for the orgs' event automations (not sensitive)
     { category: "triggers", items: p.triggers?.emit ?? [] },
     // personal inbox items for the orgs' members (not sensitive)

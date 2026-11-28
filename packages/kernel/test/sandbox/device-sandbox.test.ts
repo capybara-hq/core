@@ -1,4 +1,4 @@
-import type { PermissionProfile } from "@capybara-hq/plugin-sdk";
+import type { PermissionProfile, SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
   type ConsentReach,
@@ -15,6 +15,7 @@ import {
   providerLayerOf,
   reachWithin,
 } from "../../src/sandbox/device-sandbox.js";
+import { loopbackRefusal } from "../../src/sandbox/loopback-grant-records.js";
 import {
   intersectPermissionScope,
   type PermissionScopeFacts,
@@ -68,6 +69,7 @@ describe("effectiveDeviceSandbox", () => {
       hosts: [],
       outsideSandbox: true,
       perCallHosts: true,
+      loopbackPorts: false,
       layer: { network: null, outsideSandbox: null },
     });
   });
@@ -656,5 +658,65 @@ describe("the Full access consent reach", () => {
         reach({ hostCeiling: kept }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("loopback port grants", () => {
+  const supporting: DeviceSandboxProviderLayer = {
+    ...operation,
+    network: { ...operation.network, loopbackPorts: true },
+  };
+  const support = (
+    over: { loopbackPorts?: boolean; limitedBy?: "device-update" } = {},
+  ): SandboxPermissionSupport =>
+    ({
+      version: 2,
+      boundary: "operation",
+      restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
+      network: {
+        openPublic: true,
+        allowlist: true,
+        perOperationHosts: true,
+        ...(over.loopbackPorts !== undefined && { loopbackPorts: over.loopbackPorts }),
+      },
+      outsideSandbox: true,
+      background: true,
+      ...(over.limitedBy !== undefined && { limitedBy: { loopbackPorts: over.limitedBy } }),
+    }) as SandboxPermissionSupport;
+
+  it("opens loopback ports only with outside-sandbox and provider support", () => {
+    expect(effectiveDeviceSandbox(platform(), NO_ORG, device(), supporting).loopbackPorts).toBe(
+      true,
+    );
+    expect(
+      effectiveDeviceSandbox(platform({ outsideSandbox: "off" }), NO_ORG, device(), supporting)
+        .loopbackPorts,
+    ).toBe(false);
+    expect(
+      effectiveDeviceSandbox(platform(), { outsideSandbox: "off" }, device(), supporting)
+        .loopbackPorts,
+    ).toBe(false);
+    expect(effectiveDeviceSandbox(platform(), NO_ORG, device(), operation).loopbackPorts).toBe(
+      false,
+    );
+    // the provider layer carries the support's flag
+    expect(providerLayerOf(support({ loopbackPorts: true })).network.loopbackPorts).toBe(true);
+  });
+
+  it("words each loopback refusal", () => {
+    const open = effectiveDeviceSandbox(platform(), NO_ORG, device(), supporting);
+    expect(loopbackRefusal(open, support({ loopbackPorts: true }), "the org keeps it off")).toBe(
+      "running outside the sandbox is not possible here (the org keeps it off)",
+    );
+    expect(loopbackRefusal(open, support({ limitedBy: "device-update" }), null)).toBe(
+      "capybara-device on this device is too old; update capybara-device to let the browser reach local ports",
+    );
+    expect(loopbackRefusal(open, support(), null)).toBe(
+      "this device's provider cannot open a local port to a device service",
+    );
+    expect(loopbackRefusal(open, null, undefined)).toBe(
+      "this device's provider cannot open a local port to a device service",
+    );
+    expect(loopbackRefusal(open, support({ loopbackPorts: true }), null)).toBeNull();
   });
 });
