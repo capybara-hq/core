@@ -7,14 +7,20 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { AccountsService } from "../../src/identity/accounts.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
+import { CompactionService } from "../../src/runtime/compaction.service.js";
+import { CompactionSettingsService } from "../../src/runtime/compaction-settings.service.js";
 import { IdleCompactionJob } from "../../src/runtime/idle-compaction.js";
 import {
   IDLE_COMPACTION_JOB,
   type IdleCompactionJobData,
 } from "../../src/runtime/idle-compaction-jobs.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { RunQueue } from "../../src/runtime/run-queue.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -210,6 +216,29 @@ async function arm(hooks?: Record<string, unknown>): Promise<Armed> {
 const fire = (data: IdleCompactionJobData, now?: number) =>
   withOrgScope(data.orgId, () => k.app.get(IdleCompactionJob).fire(data, now));
 
+/**
+ * Fires `data` directly through a job built from the app's providers with a recording logger (the
+ * kernel logger is transient: the app's job holds its own); returns the outcome and the job's one
+ * `info` line.
+ */
+async function fireLogged(
+  data: IdleCompactionJobData,
+  now?: number,
+): Promise<{ outcome: string; line: Record<string, unknown> | undefined }> {
+  const lines: Array<[string, Record<string, unknown> | undefined]> = [];
+  const job = new IdleCompactionJob(
+    k.app.get(KernelDb),
+    k.app.get(CompactionSettingsService),
+    k.app.get(AccountsService),
+    k.app.get(ProviderRegistry),
+    k.app.get(CompactionService),
+    k.app.get(RunQueue),
+    { info: (msg, fields) => lines.push([msg, fields]), warn: () => {} },
+  );
+  const outcome = await withOrgScope(data.orgId, () => job.fire(data, now));
+  return { outcome, line: lines.find(([msg]) => msg === "idle compaction job")?.[1] };
+}
+
 const idleRuns = (conv: string) =>
   db
     .selectFrom("runs")
@@ -288,13 +317,62 @@ describe("the idle compaction job", () => {
         },
       ]),
     );
-    expect(await fire(first.data)).toBe("started");
-    await idleRunCompleted(first.conv);
+    const { outcome, line } = await fireLogged(first.data);
+    expect(outcome).toBe("started");
+    const idleRunId = await idleRunCompleted(first.conv);
+    // the job's one info line (spec §7)
+    expect(line).toMatchObject({
+      context: "IdleCompaction",
+      outcome: "started",
+      orgId: first.orgId,
+      conversationId: first.conv,
+      runId: first.data.runId,
+      idleRunId,
+      ttl: 3600,
+    });
+    expect(line?.estimate).toBeGreaterThan(50_000);
+    expect(typeof line?.lateMs).toBe("number");
 
     const second = await arm();
     await turn(second.orgId, second.conv, "echo:again", 2);
     expect(await fire(second.data)).toBe("obsolete");
     expect(await idleRuns(second.conv)).toEqual([]);
+  });
+
+  it("reports the first failing check: a stale job that is also past its expiry is obsolete", async () => {
+    const { orgId, conv, data } = await arm();
+    await turn(orgId, conv, "echo:again", 2);
+    expect(await fire(data, data.expiresAt)).toBe("obsolete");
+    expect(await idleRuns(conv)).toEqual([]);
+  });
+
+  it("is busy with an active run", async () => {
+    const { conv, data } = await arm();
+    await db
+      .insertInto("runs")
+      .values({
+        id: randomUUID(),
+        conversation_id: conv,
+        execution_id: null,
+        trigger_account_id: ownerId,
+        status: "waiting",
+        agent_version: 1,
+        trigger_seq: 0,
+      })
+      .execute();
+    expect(await fire(data)).toBe("busy");
+    expect(await idleRuns(conv)).toEqual([]);
+  });
+
+  it("is busy with an unconsumed message below the armed seq (the arm raced the run's end)", async () => {
+    const { conv, data } = await arm();
+    await db
+      .updateTable("conversations")
+      .set({ consumed_seq: "0" })
+      .where("id", "=", conv)
+      .execute();
+    expect(await fire(data)).toBe("busy");
+    expect(await idleRuns(conv)).toEqual([]);
   });
 
   it("is busy with a queue head", async () => {
@@ -318,6 +396,18 @@ describe("the idle compaction job", () => {
   it("is disabled after the org turns idle compaction off", async () => {
     const { orgId, conv, data } = await arm();
     await patchOrg(orgId, { compaction: { ...IDLE_SETTINGS, idleEnabled: false } });
+    expect(await fire(data)).toBe("disabled");
+    expect(await idleRuns(conv)).toEqual([]);
+  });
+
+  it("is disabled when the owner turns idle compaction off in their preferences", async () => {
+    const { conv, data } = await arm();
+    const res = await owner({
+      method: "PUT",
+      url: "/api/v1/me/preferences",
+      payload: { idleCompaction: "off" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
     expect(await fire(data)).toBe("disabled");
     expect(await idleRuns(conv)).toEqual([]);
   });
@@ -353,6 +443,18 @@ describe("the idle compaction job", () => {
     expect(await idleRuns(conv)).toEqual([]);
   });
 
+  it("is no_model after the org disables the armed call's model", async () => {
+    const { orgId, conv, data } = await arm();
+    const res = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/models/model-fake/disabled`,
+      payload: { disable: ["fake-1"], enable: [] },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(await fire(data)).toBe("no_model");
+    expect(await idleRuns(conv)).toEqual([]);
+  });
+
   it("is small when a summary already covers all but the latest turn", async () => {
     const { orgId, conv, data } = await arm();
     const res = await owner({
@@ -365,7 +467,13 @@ describe("the idle compaction job", () => {
     const events = await eventsOf(db, conv);
     expect(events.some((e) => e.type === "compaction_summary")).toBe(true);
     // the job as if armed after the manual compaction (the arm decision would not arm it: small)
-    expect(await fire({ ...data, armedSeq: events.at(-1)?.seq as number })).toBe("small");
+    const { outcome, line } = await fireLogged({
+      ...data,
+      armedSeq: events.at(-1)?.seq as number,
+    });
+    expect(outcome).toBe("small");
+    // the dry run answered (an unavailable model or storage would leave no estimate)
+    expect(line?.estimate).toEqual(expect.any(Number));
     expect(await idleRuns(conv)).toEqual([]);
   });
 

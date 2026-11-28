@@ -25,7 +25,9 @@ import { RunQueue } from "./run-queue.js";
 /**
  * Facts not read yet, set so that they pass: {@link idleFireDecision} over the facts read so far
  * plus these fails only on a fact already read, so the reads stop at the first failing check while
- * the rules stay in one place (as `IdleArm` does for the arm decision).
+ * the rules stay in one place (as `IdleArm` does for the arm decision). `now` and `expiresAt` need
+ * no read but join the known facts only at check 5 (`expiresAt` +∞ until then), so a late job that
+ * also fails an earlier check reports that check's outcome (spec §4.3 order).
  */
 const PASSING: IdleFireFacts = {
   live: true,
@@ -103,7 +105,7 @@ export class IdleCompactionJob {
   ): Promise<IdleFireOutcome | "started"> {
     const t = this.kdb.db;
     const { orgId, conversationId, armedSeq } = data;
-    const known: Partial<IdleFireFacts> = { now, expiresAt: data.expiresAt };
+    const known: Partial<IdleFireFacts> = {};
     const failing = (): IdleFireOutcome | undefined => {
       const d = idleFireDecision({ ...PASSING, ...known });
       return d.fire ? undefined : d.outcome;
@@ -210,7 +212,12 @@ export class IdleCompactionJob {
       settings.enabled &&
       settings.idleEnabled &&
       !(await this.accounts.idleCompactionOff(conv.account_id));
-    // check 5 needs no read (`now`, `expiresAt`)
+    outcome = failing();
+    if (outcome !== undefined) return outcome;
+
+    // check 5 needs no read: the job's time against the armed call's expiry
+    known.now = now;
+    known.expiresAt = data.expiresAt;
     outcome = failing();
     if (outcome !== undefined) return outcome;
 
