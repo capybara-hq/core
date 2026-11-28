@@ -46,6 +46,7 @@ import {
 import { DeviceProviders } from "../sandbox/providers.js";
 import { CommandReviewService, LOOPBACK_UNATTENDED_WHY } from "../sandbox/review/review.service.js";
 import type { SandboxUseContext } from "../sandbox/use-context.js";
+import { ApprovalsService } from "../tools/approvals.service.js";
 import { mapSandboxError } from "../tools/builtins/sandbox/common.js";
 import {
   attachCallScope,
@@ -196,6 +197,9 @@ export class DeviceAccessService {
       LoopbackGrants,
       "grantIn" | "revoke" | "liveForRoot" | "refusalNow"
     >,
+    /** A panel grant settles the agent's pending ask for the same port. */
+    @Inject(ApprovalsService)
+    private readonly approvals: Pick<ApprovalsService, "settleLoopbackAsks">,
   ) {}
 
   private get db() {
@@ -622,6 +626,16 @@ export class DeviceAccessService {
       throw e;
     }
     await this.refreshLoopback(d, key.serviceId);
+    // the agent's pending ask for the same port is the owner's decision now: its call runs again
+    try {
+      await this.approvals.settleLoopbackAsks(d.orgId, scope.accountId, key);
+    } catch (err) {
+      this.log.warn("pending loopback asks not settled after a panel grant", {
+        deviceId: d.deviceId,
+        serviceId: key.serviceId,
+        err,
+      });
+    }
     return viewOf(row);
   }
 

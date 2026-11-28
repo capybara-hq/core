@@ -486,6 +486,8 @@ export async function approvalCard(
       ? commandCardText(v.command, v.scopes, locale, redact)
       : null;
   const special = network ?? command;
+  const serviceAsk =
+    v.kind === "network" && (v.detail?.kind === "service" || v.detail?.kind === "loopback");
   const display =
     v.summary === null && special === null
       ? (await toolInfo({ db: d.db, registry: d.registry }, v.orgId, [v.toolKey]))[0]
@@ -495,8 +497,9 @@ export async function approvalCard(
     id: v.id,
     title: network?.title ?? command?.title ?? phrase("approvalTitle", locale),
     // the label carries the source, so no separate appName (renderers would repeat it); a
-    // network or command ask's command ran in Bash
-    toolName: special !== null ? "Bash" : approvalToolName(v, locale),
+    // command's network ask and a command ask ran in Bash, a device service's ask (network or
+    // loopback port) names the extension's tool that asked
+    toolName: special !== null && !serviceAsk ? "Bash" : approvalToolName(v, locale),
     agentName: v.agent.name || "Agent",
     // the field keeps its contract name; it carries the call line (a network ask's hosts and
     // command, a command ask's reason and command), never the raw input

@@ -152,6 +152,7 @@ import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
 import {
   loopbackGrantedNote,
+  loopbackNotAppliedNote,
   loopbackPendingNote,
   loopbackReviewDeniedNote,
   planLoopbackAsk,
@@ -1237,7 +1238,23 @@ function serviceRerunAfter(ask: ApprovalRecord | null): number | null {
  * Null when the call does not run again.
  */
 function rerunAfter(ask: ApprovalRecord | null, grant: LoopbackGrantRow | null): number | null {
-  return serviceRerunAfter(ask) ?? grant?.attempt ?? null;
+  return serviceRerunAfter(ask) ?? loopbackAskRerunAfter(ask) ?? grant?.attempt ?? null;
+}
+
+/**
+ * The attempt of an approved loopback port ask: the call runs again after it whatever became of
+ * the grant (the approval is the person's decision; a grant the panel made first, or one that
+ * ended since, leaves the re-run to meet the port as it is and report it).
+ */
+function loopbackAskRerunAfter(ask: ApprovalRecord | null): number | null {
+  const d = ask?.detail;
+  return ask?.status === "approved" && d?.kind === "loopback" ? d.attempt : null;
+}
+
+/** Every attempt after which the call ran again (an approved ask, a loopback grant). */
+function rerunPoints(ask: ApprovalRecord | null, grant: LoopbackGrantRow | null): Set<number> {
+  const points = [serviceRerunAfter(ask), loopbackAskRerunAfter(ask), grant?.attempt ?? null];
+  return new Set(points.filter((p): p is number => p !== null));
 }
 
 /** An ask whose approval runs the call again: it belongs to the attempt that asked. */
@@ -1614,14 +1631,14 @@ export class ToolPipeline {
       });
       return undefined;
     }
+    // the call's network ask (one per call) and its live loopback port grant
+    const ask = await this.deps.approvals.networkForCall(ctx.runId, call.id);
+    const grant = await this.loopbackGrantOf(ctx.runId, call.id);
     let attempt = rounds.length + 1;
     // a device service's call that ran again after its network ask took one attempt more (browser
     // use spec §7.1): input rounds the re-run asked come after it
     if (rounds.length > 0) {
-      const asked = rerunAfter(
-        await this.deps.approvals.networkForCall(ctx.runId, call.id),
-        await this.loopbackGrantOf(ctx.runId, call.id),
-      );
+      const asked = rerunAfter(ask, grant);
       if (asked !== null && attempt > asked) attempt += 1;
     }
     const resume: ToolResume | undefined = last
@@ -1636,6 +1653,18 @@ export class ToolPipeline {
       ctx.conversationId,
       idem.started(ctx.runId, call.id, attempt),
     );
+    // a call that ran again (after a loopback grant or an approved ask) is looked at in its latest
+    // attempt: a re-run that asked a network ask of its own resumes from that ask
+    const reruns = rerunPoints(ask, grant);
+    while (started?.type === "tool_call_started" && reruns.has(attempt)) {
+      const next = await this.deps.eventLog.findByIdem(
+        ctx.conversationId,
+        idem.started(ctx.runId, call.id, attempt + 1),
+      );
+      if (next?.type !== "tool_call_started") break;
+      attempt += 1;
+      started = next;
+    }
     if (started?.type === "tool_call_started") {
       // a command that ran and was refused a network host waits for the device owner (network
       // ask-to-allow spec §6.2, P-D2): pending → wait on; settled → its kept result and the
@@ -1645,20 +1674,23 @@ export class ToolPipeline {
       // A loopback port ask (browser loopback port grants) too; a port that Full access or the
       // review model granted to this attempt has no ask: its grant row names the attempt, so the
       // call runs again in the next one, also after a crash between the grant and the re-run
-      const ask = await this.deps.approvals.networkForCall(ctx.runId, call.id);
-      const grant = await this.loopbackGrantOf(ctx.runId, call.id);
       const askedHere =
         ask !== null &&
         (!asksPerAttempt(ask) ||
           (ask.detail as { attempt?: number } | null | undefined)?.attempt === attempt);
-      const grantedHere = ask === null && grant !== null && grant.attempt === attempt;
-      if ((ask !== null && askedHere) || grantedHere) {
+      const grantedHere = !askedHere && grant !== null && grant.attempt === attempt;
+      if (askedHere || grantedHere) {
         const notes =
-          ask === null && grant !== null
-            ? [loopbackGrantedNote(grant.port)]
-            : settledNetworkNotes(ask as ApprovalRecord, approvalHours(ask as ApprovalRecord));
+          askedHere && ask !== null
+            ? settledNetworkNotes(ask, approvalHours(ask))
+            : [loopbackGrantedNote((grant as LoopbackGrantRow).port)];
         if (notes === null) return approvalWait(ask as ApprovalRecord);
-        if (ask !== null && rerunAfter(ask, grant) === null) {
+        const rerunsHere =
+          !askedHere ||
+          serviceRerunAfter(ask) !== null ||
+          loopbackAskRerunAfter(ask) !== null ||
+          grant?.attempt === attempt;
+        if (askedHere && ask !== null && !rerunsHere) {
           const kept = ask.detail?.result;
           // the device code the command printed is carried in the kept result: write its
           // display-only event here too (a crash before the ask's first write, or an older kept
@@ -1691,7 +1723,7 @@ export class ToolPipeline {
           // the asked hosts are settled: only an earlier round's launch review is carried; a
           // granted loopback port's note goes with the re-run's result
           const { review: carriedReview } = carriedOf(rounds);
-          const loopback = ask === null || ask.detail?.kind === "loopback";
+          const loopback = !askedHere || ask?.detail?.kind === "loopback";
           return this.runCall(
             ctx,
             call,
@@ -3678,13 +3710,12 @@ export class ToolPipeline {
       // granted already (the panel, an earlier call): the service had not applied it yet, so the
       // call runs again once; refused again (or granted to this call), its result stands
       if (rerunning || (await grants.forCall(ctx.runId, call.id)) !== null)
-        return { kind: "write", notes: [] };
+        return { kind: "write", notes: [loopbackNotAppliedNote(port)] };
       await this.writeResultIn(ctx, call.id, toolKey, kept, [...pre], callAudit, []);
       return { kind: "rerun", notes: [] };
     }
-    // one ask per call: a call that ran again after its grant is not asked again
-    if (rerunning || (await this.deps.approvals.networkForCall(ctx.runId, call.id)) !== null)
-      return { kind: "write", notes: [serviceAskedNote([hp])] };
+    // a call that ran again after its grant is not decided again (the port was closed meanwhile)
+    if (rerunning) return { kind: "write", notes: [serviceAskedNote([hp])] };
     const binding = {
       orgId: facts.orgId,
       rootConversationId: facts.rootConversationId,
@@ -3782,15 +3813,18 @@ export class ToolPipeline {
         database: plan.database,
       });
       const source = verdict.by === "classifier" ? "review-model" : "rule";
-      if (verdict.decision === "allow" && verdict.by === "classifier")
-        return grant("review-model", verdict.reason);
+      // only the review model allows here (a rule allows only under Full access, decided above)
+      if (verdict.decision === "allow") return grant("review-model", verdict.reason);
       if (verdict.decision === "deny") {
         await this.recordLoopbackReview(ctx, reviewed("deny", verdict.reason, source));
         return { kind: "write", notes: [loopbackReviewDeniedNote(port, verdict.reason)] };
       }
       await this.recordLoopbackReview(ctx, reviewed("ask", verdict.reason, source));
     }
-    // the person: the device's owner, within the run's network asks
+    // the person: the device's owner, within the run's network asks; one ask per call (a call
+    // that ran again after its network ask is not asked again)
+    if ((await this.deps.approvals.networkForCall(ctx.runId, call.id)) !== null)
+      return { kind: "write", notes: [serviceAskedNote([hp])] };
     const run = await this.deps.network?.grants.runState(ctx.runId, device.deviceId);
     if (run?.pending === true) return { kind: "write", notes: [otherAskPendingNote([hp])] };
     if ((run?.asks ?? 0) >= MAX_NETWORK_ASKS_PER_RUN)

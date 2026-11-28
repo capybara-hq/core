@@ -12,10 +12,12 @@ import { PermissionProfilesService } from "../../src/conversations/permission-pr
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DeviceAccessService } from "../../src/device-access/device-access.service.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { ExecutionRevoked } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
+import { LoopbackGrants } from "../../src/sandbox/loopback-grants.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { ESCALATION_UNATTENDED_WHY } from "../../src/sandbox/review/permission-candidate.js";
@@ -105,6 +107,13 @@ beforeAll(async () => {
   const owner = await session(k, "owner");
   orgId = await createOrgWithProviders(k, owner);
   await enableExtensions(raw, orgId, "fake-device-access");
+  // the org's effective hosts take cdn.example.org (the device's own list holds only a.dev)
+  const res = await owner({
+    method: "PATCH",
+    url: `/api/v1/orgs/${orgId}/settings`,
+    payload: { deviceNetwork: { extraHosts: ["cdn.example.org"] } },
+  });
+  expect(res.statusCode, res.body).toBe(200);
 });
 
 afterAll(async () => {
@@ -223,7 +232,8 @@ async function profile(p: "request-approval" | "approve-for-me" | "full-access")
 /** The model calls `navigate` on the local port once (starting the echo service first). */
 const navigate = (url = URL_3999) =>
   postMessage(s.req, orgId, s.conversationId, `tool:${NAVIGATE}:${navigateInput(url)}`);
-const navigateInput = (url = URL_3999) => JSON.stringify({ url, service: true });
+const navigateInput = (url = URL_3999, blockedAgain?: string[]) =>
+  JSON.stringify({ url, service: true, ...(blockedAgain !== undefined && { blockedAgain }) });
 
 const decide = (id: string, payload: Record<string, unknown>) =>
   s.req({ method: "POST", url: `/api/v1/orgs/${orgId}/approvals/${id}/decision`, payload });
@@ -643,6 +653,79 @@ describe("loopback port asks", () => {
     expect(ofType(await eventsOf(db, s.conversationId), "permission_reviewed")).toEqual([]);
     expect(await asks()).toEqual([]);
     expect(await grants()).toEqual([]);
+  });
+
+  it("a re-run that asks a network ask of its own resumes from that ask and runs again", async () => {
+    await profile("full-access");
+    // the port is granted, and the page then loads a CDN host the device's list does not hold
+    await postMessage(
+      s.req,
+      orgId,
+      s.conversationId,
+      `tool:${NAVIGATE}:${navigateInput(URL_3999, ["cdn.example.org"])}`,
+    );
+    const ask = await nextAsk();
+    expect(ask.detail).toMatchObject({ kind: "service", hosts: ["cdn.example.org"], attempt: 2 });
+    const res = await decide(ask.id, { decision: "approve", scope: "always" });
+    expect(res.statusCode, res.body).toBe(200);
+    await waitForTerminal(db, s.conversationId, 1, 30_000);
+    expect(await startedAttempts()).toEqual([1, 2, 3]);
+    const [r, ...rest] = await results();
+    expect(rest).toEqual([]);
+    expect(r?.content).toContain(`Loaded ${URL_3999}.`);
+    expect(r?.content).not.toContain("Result unknown");
+    expect(invocations()).toEqual([3]);
+  });
+
+  it("an approved ask reruns the call even when the panel granted the port first", async () => {
+    await profile("request-approval");
+    await navigate();
+    const ask = await nextAsk();
+    // the panel's grant, written as the panel writes it (not tied to the call)
+    await k.app.get(TransactionHost).run(() =>
+      k.app.get(LoopbackGrants).grantIn(
+        {
+          orgId,
+          deviceId: s.deviceId,
+          serviceId: SERVICE_ID,
+          rootConversationId: s.conversationId,
+          port: 3999,
+        },
+        { source: "owner-panel", actorAccountId: s.accountId },
+      ),
+    );
+    const res = await decide(ask.id, { decision: "approve", scope: "session" });
+    expect(res.statusCode, res.body).toBe(200);
+    await waitForTerminal(db, s.conversationId, 1, 30_000);
+    expect(await startedAttempts()).toEqual([1, 2]);
+    const [r] = await results();
+    expect(r?.content).toContain(`Loaded ${URL_3999}.`);
+    expect(r?.content).toContain(loopbackGrantedNote(3999));
+    const [g, ...others] = await grants();
+    expect(others).toEqual([]);
+    expect(g).toMatchObject({ source: "owner-panel", call_id: null });
+  });
+
+  it("a panel grant of the same port settles the pending ask; the call reruns", async () => {
+    await profile("request-approval");
+    await navigate();
+    const ask = await nextAsk();
+    await k.app.get(DeviceAccessService).grantLoopbackPort(
+      { extension: "fake-device-access", services: ["echo"], loopbackPorts: true },
+      {
+        orgId,
+        accountId: s.accountId,
+        conversationId: s.conversationId,
+        service: "echo",
+        port: 3999,
+      },
+    );
+    await waitForTerminal(db, s.conversationId, 1, 30_000);
+    expect((await asks()).find((a) => a.id === ask.id)?.status).toBe("approved");
+    expect(await startedAttempts()).toEqual([1, 2]);
+    const [r] = await results();
+    expect(r?.content).toContain(`Loaded ${URL_3999}.`);
+    expect((await grants())[0]).toMatchObject({ source: "owner-panel" });
   });
 
   it("resumes a granted call as the rerun after a crash", async () => {

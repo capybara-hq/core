@@ -1665,28 +1665,89 @@ export class ApprovalsService {
         ? ask.conversationId
         : await rootConversationOf(this.db.db, conv.parent_conversation_id);
     const network: NetworkDecision = { wanted: [], granted: [], outcome: "session", via };
-    const decided = await this.decideLoopbackIn(orgId, id, accountId, body, network, () =>
-      loopback.grantIn(
-        {
-          orgId,
-          deviceId: detail.deviceId,
-          serviceId: detail.service,
-          rootConversationId,
-          port: detail.port,
-        },
-        {
-          source: "human",
-          actorAccountId: accountId,
-          approvalId: id,
-          call: { runId: ask.runId, callId: ask.callId, attempt: detail.attempt },
-        },
-      ),
+    const decided = await this.decideLoopbackIn(
+      orgId,
+      id,
+      accountId,
+      body,
+      network,
+      rootConversationId,
+      () =>
+        loopback.grantIn(
+          {
+            orgId,
+            deviceId: detail.deviceId,
+            serviceId: detail.service,
+            rootConversationId,
+            port: detail.port,
+          },
+          {
+            source: "human",
+            actorAccountId: accountId,
+            approvalId: id,
+            call: { runId: ask.runId, callId: ask.callId, attempt: detail.attempt },
+          },
+        ),
     );
     await this.announceDecided(decided.record, decided.toSeq);
     return decided.record;
   }
 
-  /** A loopback port ask's approval: the grant first, then the decision, in one transaction. */
+  /**
+   * The owner granted a port from the browser panel (`ctx.deviceAccess.grantLoopbackPort`): the
+   * pending loopback asks for that port of the same device service in the same conversation tree
+   * are approved as the owner's decision (the grant they find is the panel's), so their calls run
+   * again now instead of waiting for the approval timeout. Returns how many were approved; an ask
+   * decided meanwhile, or one the owner may no longer decide, is left as it is.
+   */
+  async settleLoopbackAsks(
+    orgId: string,
+    accountId: string,
+    key: { deviceId: string; serviceId: string; rootConversationId: string; port: number },
+  ): Promise<number> {
+    const rows = await this.db
+      .selectFrom("approvals")
+      .innerJoin("conversations", "conversations.id", "approvals.conversation_id")
+      .select(["approvals.id", "approvals.conversation_id", "conversations.parent_conversation_id"])
+      .where("approvals.org_id", "=", orgId)
+      .where("approvals.kind", "=", "network")
+      .where("approvals.status", "=", "pending")
+      .where("approvals.requested_for", "=", accountId)
+      .where(sql<string>`approvals.detail->>'kind'`, "=", "loopback")
+      .where(sql<string>`approvals.detail->>'deviceId'`, "=", key.deviceId)
+      .where(sql<string>`approvals.detail->>'service'`, "=", key.serviceId)
+      .where(sql<string>`approvals.detail->>'port'`, "=", String(key.port))
+      .execute();
+    let approved = 0;
+    for (const r of rows) {
+      const root =
+        r.parent_conversation_id === null
+          ? r.conversation_id
+          : await rootConversationOf(this.db.db, r.parent_conversation_id);
+      if (root !== key.rootConversationId) continue;
+      try {
+        await this.decide(orgId, r.id, accountId, { decision: "approve", scope: "session" });
+        approved += 1;
+      } catch (e) {
+        if (
+          e instanceof ApiError &&
+          ["approval.already_decided", "approval.not_found", "approval.not_yours"].includes(e.code)
+        )
+          continue;
+        throw e;
+      }
+    }
+    return approved;
+  }
+
+  /**
+   * A loopback port ask's approval in one transaction: the tree's root conversation row first
+   * (`FOR NO KEY UPDATE`, the order a run's fence takes it in), then the grant, then the decision.
+   * Taking the root before the grant's `FOR SHARE` read and its (device, service) lock keeps one
+   * lock order with a concurrent panel grant (root share, then that lock): without it the
+   * decision held the root shared, the panel waited on the service lock, and the decision's
+   * append then waited to update the root behind the panel's share (a deadlock).
+   */
   @Transactional({ propagation: "requires_new" })
   private async decideLoopbackIn(
     orgId: string,
@@ -1694,8 +1755,16 @@ export class ApprovalsService {
     accountId: string,
     body: DecisionInput,
     network: NetworkDecision,
+    rootConversationId: string,
     grant: () => Promise<unknown>,
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
+    await this.db.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", rootConversationId)
+      .where("org_id", "=", orgId)
+      .forNoKeyUpdate()
+      .execute();
     try {
       await grant();
     } catch (e) {

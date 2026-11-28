@@ -51,7 +51,8 @@ const REFUSED_ITEM = {
  * - `navigate` reports hosts its "service" saw refused (`ctx.deviceAccess.reportBlockedHosts`, with
  *   the URL): `blocked` (layer `device`, or each entry's own layer when given as
  *   `{ host, layer }`) on the first invocation of a logical call; a re-run of the same call (same
- *   idempotency key) reports `blockedAgain` when given, else loads the page. With `service: true`
+ *   idempotency key) reports `blockedAgain` when given (its second invocation only; a third loads
+ *   the page), else loads the page. With `service: true`
  *   it first starts and asks the echo service (so the report is about the device those calls
  *   resolved), then awaits `globalThis.__fakeDeviceAccessBeforeReport` when a test set one. Every
  *   invocation's key is recorded in `globalThis.__fakeDeviceAccessCalls`
@@ -146,13 +147,14 @@ export default defineExtension({
         const key = call.idempotencyKey ?? call.callId;
         const calls = fakeDeviceAccessCalls();
         calls.push(key);
-        const first = calls.filter((k) => k === key).length === 1;
+        const n = calls.filter((k) => k === key).length;
+        const first = n === 1;
         if (service) await echo(call, url);
         await beforeReport()?.();
         const loopback = first ? loopbackRefusal(url) : null;
         const refused = [
           ...(loopback !== null ? [loopback] : []),
-          ...reported(first ? blocked : blockedAgain),
+          ...reported(first ? blocked : n === 2 ? blockedAgain : []),
         ];
         if (refused.length > 0) {
           ctx.deviceAccess.reportBlockedHosts(call, refused, { url, service: "echo" });

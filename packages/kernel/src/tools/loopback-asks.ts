@@ -56,6 +56,13 @@ export const loopbackPendingNote = (host: string, port: number) =>
 export const loopbackGrantedNote = (port: number) =>
   `Port ${port} on the device was approved for this conversation.`;
 
+/**
+ * Granted, yet the device service still refused the port: it had not applied the grant yet (a
+ * service applies a changed set of ports when it restarts).
+ */
+export const loopbackNotAppliedNote = (port: number) =>
+  `[network] Port ${port} on the device is approved for this conversation, but the device service had not applied it yet; it applies when the service restarts. Call the tool again to reach it.`;
+
 /** Not asked: the ceilings or the provider refuse a loopback grant now. */
 export const loopbackRefusedNote = (
   host: string,
