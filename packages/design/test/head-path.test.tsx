@@ -3,7 +3,7 @@
 // row where its sibling tabs draw none; a page without tabs keeps its path.
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { DesignProvider, headPath, ListPage } from "../src/index";
+import { DesignProvider, headPath, ListPage, PageLevelContext } from "../src/index";
 
 afterEach(cleanup);
 
@@ -56,5 +56,30 @@ describe("a tab route's head", () => {
       </DesignProvider>,
     );
     expect(screen.getByRole("navigation", { name: "路径" })).toBeTruthy();
+  });
+});
+
+describe("the app's navigation level decides the path row (maintainer decision 2026-11-29)", () => {
+  const head = (level: "first" | "deeper" | undefined, path = PATH) =>
+    render(
+      <DesignProvider locale="zh">
+        <PageLevelContext.Provider value={level}>
+          <ListPage header={{ path, title: "页" }}>
+            <p>rows</p>
+          </ListPage>
+        </PageLevelContext.Provider>
+      </DesignProvider>,
+    );
+  it("a first-level page draws none, whatever its segment count (a settings sub-page)", () => {
+    head("first");
+    expect(screen.queryByRole("navigation", { name: "路径" })).toBeNull();
+  });
+  it("a deeper page draws it from two segments (a plugin item: scope / page)", () => {
+    head("deeper", PATH.slice(0, 2));
+    expect(screen.getByRole("navigation", { name: "路径" })).toBeTruthy();
+  });
+  it("unset (a catalog page), the segment count decides", () => {
+    head(undefined, PATH.slice(0, 2));
+    expect(screen.queryByRole("navigation", { name: "路径" })).toBeNull();
   });
 });

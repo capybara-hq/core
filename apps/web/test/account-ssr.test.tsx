@@ -184,10 +184,10 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("the path's `account` leads to the first personal settings page (profile)", async () => {
+  it("a personal settings sub-page is a sibling of the first: no path row", async () => {
     await renderRouteWithCache("/account/connections", ROUTES);
-    const link = await screen.findByRole("link", { name: en.path.home.account });
-    expect(link.getAttribute("href")).toBe("/account/profile");
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByRole("navigation", { name: "Path" })).toBeNull();
   });
 
   it("/account/connections: a connector the kernel no longer shows is left out", async () => {

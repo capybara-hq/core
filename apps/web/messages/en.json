@@ -1902,7 +1902,6 @@
     "deviceFailed": "Device status unavailable"
   },
   "pluginPage": {
-    "pathLabel": "Extension page",
     "liveLost": "Live updates stopped. Reload the page for the latest content."
   },
   "devices": {
@@ -2203,7 +2202,7 @@
       "templates": "Templates"
     },
     "home": {
-      "account": "Account",
+      "root": "Personal settings",
       "profile": "Profile",
       "preferences": "Preferences",
       "notifications": "Notifications",

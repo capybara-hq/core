@@ -192,10 +192,9 @@ describe("插件页面 /p/<plugin>/<id>", () => {
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
     expect(screen.getAllByText("Board").length).toBeGreaterThan(0);
-    // the path names the page kind in words, never the route segment "p"
-    const path = screen.getByRole("navigation", { name: "Path" });
-    expect(within(path).getByText(en.pluginPage.pathLabel)).toBeTruthy();
-    expect(within(path).queryByText("p")).toBeNull();
+    // the nav opens an extension page without params: a first-level page, no path row (spec
+    // §4.2 path rule, maintainer decision 2026-11-29)
+    expect(screen.queryByRole("navigation", { name: "Path" })).toBeNull();
     // the view was read on the server, none in the browser before the stream says so
     expect(server.find((c) => c.url.includes("/views/"))?.url).toBe(
       `${UI}/views/board/overview?locale=en`,

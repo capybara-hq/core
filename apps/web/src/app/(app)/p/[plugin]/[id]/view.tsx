@@ -1,6 +1,6 @@
 "use client";
 
-import { DetailPage, Text } from "@capybara-hq/design";
+import { DetailPage, PageLevelContext, Text } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import type { ReactNode } from "react";
@@ -8,6 +8,7 @@ import { PageCrumbsProvider } from "../../../../../components/client-ext/host-ap
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { ExtensionSlot } from "../../../../../components/extension-ui/ExtensionSlot";
 import { NoAccess } from "../../../../../components/NoAccess";
+import { pluginPageHref } from "../../../../../components/shell/nav";
 import { usePagePath } from "../../../../../components/shell/path";
 import { retryOnMountOf } from "../../../../../lib/query/client";
 import { contributionsQuery } from "../../../../../lib/query/conversation";
@@ -57,12 +58,7 @@ function PluginPageData({ orgId, plugin, id, params }: PageProps) {
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {
-    return (
-      <DetailPage
-        header={{ path: [...scope, { label: t("pluginPage.pathLabel") }], title: "" }}
-        loading={{ blocks: 1 }}
-      />
-    );
+    return <DetailPage header={{ path: scope, title: "" }} loading={{ blocks: 1 }} />;
   }
   const listed = read.data.find((c) => c.plugin === plugin && c.id === id && c.slot === "org.page");
   return <PluginPageHidden orgId={orgId} plugin={plugin} id={id} params={params} listed={listed} />;
@@ -125,9 +121,13 @@ function PluginPage({
   const t = useTranslations();
   const locale = uiLocale(useLocale());
   const title = contribution?.title[locale] ?? id;
-  const crumbs = [...scope, { label: t("pluginPage.pathLabel") }];
+  // The page's own name leads its path (the nav's name for it, such as Projects or Memory), linking to the page
+  // without params. The nav opens it without params: a first-level page, no path row; with params
+  // (an item opened inside it) it is deeper, and its path row shows (spec §4.2 path rule).
+  const crumbs = [...scope, { label: title, href: pluginPageHref(plugin, id) }];
+  const level = Object.keys(params).length === 0 ? "first" : "deeper";
   const hostPage = (body: ReactNode) => (
-    <DetailPage header={{ path: [...crumbs, { label: title }], title }}>{body}</DetailPage>
+    <DetailPage header={{ path: crumbs, title }}>{body}</DetailPage>
   );
   // a full page (`frame: "page"`) draws its page; the host's DetailPage is only around its other
   // states (loading, failed, off, crashed), and its template gets the host's crumbs
@@ -142,5 +142,9 @@ function PluginPage({
   ) : (
     <Text tone="muted">{t("errors.ui.not_found")}</Text>
   );
-  return full ? <PageCrumbsProvider value={crumbs}>{slot}</PageCrumbsProvider> : hostPage(slot);
+  return (
+    <PageLevelContext.Provider value={level}>
+      {full ? <PageCrumbsProvider value={crumbs}>{slot}</PageCrumbsProvider> : hostPage(slot)}
+    </PageLevelContext.Provider>
+  );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { AppShell, AVATAR_PRESET_IDS } from "@capybara-hq/design";
+import { AppShell, AVATAR_PRESET_IDS, PageLevelContext } from "@capybara-hq/design";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import AccountProfileView from "../../app/(app)/account/profile/view";
@@ -11,6 +11,7 @@ import ConversationsView from "../../app/(app)/conversations/view";
 import FilesView from "../../app/(app)/files/view";
 import InboxView from "../../app/(app)/inbox/view";
 import SkillsView from "../../app/(app)/skills/view";
+import { pathLevel } from "../../components/shell/levels";
 import { type Session, SessionContext } from "../../components/shell/session";
 import type { Agent } from "../../lib/agents";
 import type { AutomationListItem } from "../../lib/automations";
@@ -336,6 +337,18 @@ export function seeded(): QueryClient {
   return qc;
 }
 
+/** The app route each catalog page stands for (its navigation level, levels.ts). */
+const ROUTE: Record<MemberPage, string> = {
+  agents: "/agents",
+  skills: "/skills",
+  connectors: "/connectors",
+  automations: "/automations",
+  files: "/files",
+  conversations: "/conversations",
+  inbox: "/inbox",
+  profile: "/account/profile",
+};
+
 function Page({ page }: { page: MemberPage }) {
   switch (page) {
     case "agents":
@@ -372,7 +385,10 @@ export function MemberPageCatalog({ page }: { page: MemberPage }) {
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={SESSION}>
         <AppShell sidebar={sidebar} commands={COMMANDS}>
-          <Page page={page} />
+          {/* the page's real route's navigation level, as the app frame sets it */}
+          <PageLevelContext.Provider value={pathLevel(ROUTE[page])}>
+            <Page page={page} />
+          </PageLevelContext.Provider>
         </AppShell>
       </SessionContext.Provider>
     </QueryClientProvider>

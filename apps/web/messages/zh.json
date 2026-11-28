@@ -1890,7 +1890,6 @@
     "deviceFailed": "设备状态读取失败"
   },
   "pluginPage": {
-    "pathLabel": "扩展页",
     "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
   },
   "devices": {
@@ -2191,7 +2190,7 @@
       "templates": "模板"
     },
     "home": {
-      "account": "账号",
+      "root": "个人设置",
       "profile": "个人资料",
       "preferences": "偏好设置",
       "notifications": "通知",

@@ -218,20 +218,34 @@ afterEach(() => {
 });
 
 describe("frame page", () => {
-  it("frame page renders without DetailPage and with scope crumbs", async () => {
+  it("frame page renders without DetailPage; opened by the nav it draws no path row", async () => {
     renderBoard(Board as ComponentType<never>);
     await flush();
     await waitFor(() => expect(screen.getByTestId("q-items").textContent).toContain("ready"));
     expect(document.querySelectorAll('[data-template="DetailPage"]')).toHaveLength(0);
     expect(document.querySelectorAll('[data-template="ListPage"]')).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Board" })).toBeTruthy();
-    // the host's crumbs (the org, the extension pages' label), then the plugin's own path
-    const text = document.body.textContent ?? "";
-    const org = text.indexOf("acme");
-    const label = text.indexOf(en.pluginPage.pathLabel);
-    expect(org).toBeGreaterThanOrEqual(0);
-    expect(org).toBeLessThan(label);
-    expect(label).toBeLessThan(text.indexOf("Open"));
+    // no params: the page the nav opens, a first-level page (spec §4.2 path rule)
+    expect(screen.queryByRole("navigation", { name: "Path" })).toBeNull();
+  });
+
+  it("with params (an item opened inside it) the page is deeper: scope, page name, own path, title", async () => {
+    renderBoard(Board as ComponentType<never>, { params: { item: "K-1" } });
+    await flush();
+    await waitFor(() => expect(screen.getByTestId("q-items").textContent).toContain("ready"));
+    const path = screen.getByRole("navigation", { name: "Path" });
+    const segs = [...path.querySelectorAll(".cb-pageheader-path-seg")].map((s) =>
+      s.textContent?.trim(),
+    );
+    // the host's crumbs (the org, the page's own name linking to its first view), the plugin's
+    // own path, then the page's title; never the old extension page label
+    expect(segs[0]).toBe("acme");
+    expect(segs[1]).toBe(BOARD.title.en);
+    expect(segs.at(-1)).toBe("Board");
+    expect(path.textContent).not.toContain("Extension page");
+    expect(within(path).getByRole("link", { name: BOARD.title.en }).getAttribute("href")).toBe(
+      `/p/${BOARD.plugin}/${BOARD.id}`,
+    );
   });
 
   it("while the module loads, the host draws its own page around the loading state", async () => {

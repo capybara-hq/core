@@ -173,6 +173,19 @@ only, recolours `panel`) render unchanged and still pass the readability check.
 
 ### 3. Page head (`shell/page-header.tsx`)
 
+- **The path level follows navigation (maintainer decision 2026-11-29; it replaces the segment
+  count as the basis).** First level, no path row: every page the sidebar reaches directly (its
+  items and the 更多 menu's: 组织设置, 设备, 插件, 扩展, 渠道, 评测与运行, extension pages such as
+  记忆; the account menu's 个人设置; the admin console's nav), their header tabs and their settings
+  sub-nav items (every `/settings/<section>` and `/account/<section>` page is a sibling of the
+  first). Deeper, path row shown: a page reached from inside a page (an item, a create or import
+  flow, a project opened from 项目, a plugin item page). The app keeps the first level in one route
+  table built from its navigation (apps/web `levels.ts`: the sidebar's routes, the settings and
+  account sub-navs, the admin nav and every routed tab) and sets `PageLevelContext`; the plugin
+  page host makes an extension page with params deeper, leads its path with the page's own name
+  (no 扩展页 label) and ends a deeper full page's path with its title. Without the context (a
+  reference block) the head keeps the segment count. Personal pages are named by 个人设置, never
+  `~`.
 - From 600 up the path row is not rendered when the path has two segments or fewer (scope / page);
   the title row starts the head. Compact already draws no path row. The `path` prop stays required:
   compact back and `web-ui-page-path` use it.

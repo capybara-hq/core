@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, useMemo, useRef } from "react";
+import { createContext, Fragment, type ReactNode, useContext, useMemo, useRef } from "react";
 import { Button, IconButton, Input, LinkButton } from "../controls/index";
 import type { MetricProps } from "../display/index";
 import {
@@ -192,6 +192,16 @@ export function HeadSearch({ search }: { search: NonNullable<PageHeaderProps["se
   );
 }
 
+/**
+ * The navigation level of the page being drawn (spec §4.2 path rule, maintainer decision
+ * 2026-11-29): `first` for a page the sidebar reaches directly (a sidebar or More item, the
+ * account menu's personal settings, the admin console's nav, their header tabs and their settings
+ * sub-nav items), `deeper` for a page reached from inside a page (an item, a create or import flow).
+ * The app sets it from its navigation; a first-level page draws no path row, a deeper one draws it.
+ * Unset (a reference block, a catalog page), the head falls back to the segment count.
+ */
+export const PageLevelContext = createContext<"first" | "deeper" | undefined>(undefined);
+
 /** The number of path segments of a route (`/admin/plugins/market` is 3; a query does not count). */
 const routeDepth = (href: string) =>
   (href.split(/[?#]/)[0] ?? "").split("/").filter((s) => s !== "").length;
@@ -238,6 +248,7 @@ export function PageHeader(p: PageHeaderProps) {
   const announces = useSkeletonAnnounces();
   // A tab's route stands at its head's first tab's level (headPath).
   const segments = headPath(p.path, p.tabs, p.activeTab);
+  const level = useContext(PageLevelContext);
   const tabItems = p.tabs ?? [];
   // The primary action is rightmost (spec §4.2), whatever order the page gives.
   const isPrimary = (a: HeaderAction) => "variant" in a && a.variant === "primary";
@@ -430,7 +441,13 @@ export function PageHeader(p: PageHeaderProps) {
   // sidebar already names the place. The path stays a prop (the compact back walks it). An
   // object page passes its two-segment parent path while its name loads (`loading.title`): it
   // counts as deep already, so the path row does not appear under a loaded head and shift it.
-  const firstLevel = segments.length <= 1 || (segments.length === 2 && loading?.title !== true);
+  // The app's navigation level decides where it is set (PageLevelContext).
+  const firstLevel =
+    level === "first"
+      ? true
+      : level === "deeper"
+        ? segments.length <= 1
+        : segments.length <= 1 || (segments.length === 2 && loading?.title !== true);
   const pathNode = form === "compact" || firstLevel ? null : navNode;
   const actionsNode =
     actions.length > 0 ? (

@@ -3,7 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
-import { useOrgSettingsNav } from "../src/components/settings-nav";
+import {
+  ACCOUNT_HREFS,
+  ORG_SETTINGS_HREFS,
+  useAccountNav,
+  useOrgSettingsNav,
+} from "../src/components/settings-nav";
 import {
   activeNavOf,
   type NavLevel,
@@ -348,6 +353,24 @@ describe("org settings nav", () => {
     ]);
     expect(items.some((i) => i.href === "/settings/extensions")).toBe(false);
     expect(items.some((i) => i.href === "/settings/plugins")).toBe(false);
+    // every sub-nav page is in the path level's first level (levels.ts)
+    expect(items.map((i) => i.href)).toEqual([...ORG_SETTINGS_HREFS]);
+  });
+
+  it("the personal settings' nav is ACCOUNT_HREFS, the path level's first level", () => {
+    function Groups() {
+      const groups = useAccountNav();
+      return <pre data-testid="groups">{JSON.stringify(groups.flatMap((g) => g.items))}</pre>;
+    }
+    render(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <Groups />
+      </NextIntlClientProvider>,
+    );
+    const items = JSON.parse(screen.getByTestId("groups").textContent ?? "[]") as {
+      href: string;
+    }[];
+    expect(items.map((i) => i.href)).toEqual([...ACCOUNT_HREFS]);
   });
 });
 
