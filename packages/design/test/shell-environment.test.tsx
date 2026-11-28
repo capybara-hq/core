@@ -742,7 +742,7 @@ describe("the page path in the desktop's top row (desktop client spec §7.3, dec
     ).toContain("var(--cb-shell-toggle, 0px)");
   });
 
-  it("a slug-only or first-level path draws no path row; the head starts below the top row", () => {
+  it("a slug-only or first-level path draws no path row; the head starts below the row it reserves", () => {
     for (const path of [
       [{ label: "capybara", href: "/" }],
       [{ label: "capybara", href: "/" }, { label: "inbox" }],
@@ -754,9 +754,11 @@ describe("the page path in the desktop's top row (desktop client spec §7.3, dec
       );
       expect(html).not.toContain("cb-pageheader-path");
     }
+    // (the top row only where controls reach into the content column, maintainer decision
+    // 2026-11-28: beside the full sidebar the head starts as in a browser)
     expect(
       find(`${DESKTOP_HEAD} .cb-template-head:not(:has(.cb-pageheader-path))`, "padding-top"),
-    ).toBe("max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)))");
+    ).toBe("max(var(--cb-space-5), calc(var(--cb-shell-head-row) - var(--cb-space-2)))");
   });
 
   it("keeps the browser's path row: no rule outside the desktop shell moves or hides it", () => {

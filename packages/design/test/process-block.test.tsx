@@ -234,27 +234,32 @@ describe("ProcessBlock rail", () => {
     expect(of(".cb-rail-step::after")?.top).toBe(
       "calc(var(--cb-row-dense) / 2 + var(--cb-rail-clear))",
     );
-    // half the mark plus 4px: a 14 icon, the 5 dot, the 10 high capybara
+    // half the mark plus 4px: a 14 icon, the 5 dot, the 15 high capybara
     expect(of(".cb-rail-step")?.["--cb-rail-clear"]).toBe("calc(7px + 4px)");
     expect(of(".cb-rail-step:has(> .cb-rail-gutter > .cb-rail-dot)")?.["--cb-rail-clear"]).toBe(
       "calc(2.5px + 4px)",
     );
-    expect(of(".cb-rail-step.cb-rail-planning")?.["--cb-rail-clear"]).toBe("calc(5px + 4px)");
+    expect(of(".cb-rail-step.cb-rail-planning")?.["--cb-rail-clear"]).toBe("calc(7.5px + 4px)");
     // no ground behind a mark knocks the rule out
     expect(of(".cb-rail-gutter > span:not(.cb-rail-dot)")?.background).toBeUndefined();
   });
 
-  it("the planning capybara is drawn at one CSS pixel per art pixel in the rail gutter", () => {
+  it("the planning capybara is drawn at 1.5 CSS px per art pixel, centred on the rail gutter", () => {
     const rules = parseCss(css("conversation.css"));
     const of = (sel: string): Record<string, string> =>
       Object.assign({}, ...rules.filter((r) => r.selector === sel).map((r) => r.decls));
     const mark = of(".cb-rail-planning > .cb-rail-gutter > .cb-working-mark");
-    expect([mark.width, mark.height, mark.margin]).toEqual(["14px", "10px", undefined]);
+    expect([mark.width, mark.height, mark.margin]).toEqual(["21px", "15px", undefined]);
+    // half a pixel over each side of the 20 px column: centred, the column not widened
+    expect(mark["margin-inline"]).toBe("-0.5px");
     const svg = of(".cb-rail-planning > .cb-rail-gutter > .cb-working-mark > svg");
-    expect([svg.width, svg.height]).toEqual(["14px", "10px"]);
+    expect([svg.width, svg.height]).toEqual(["21px", "15px"]);
     // a theme's mark: the same box, its aspect kept
     const img = of(".cb-rail-planning > .cb-rail-gutter > .cb-working-mark-img");
-    expect([img.width, img.height, img["max-width"]]).toEqual(["auto", "10px", "16px"]);
+    expect([img.width, img.height, img["max-width"]]).toEqual(["auto", "15px", "24px"]);
+    // the caption sits 1px lower (the font's CJK ink rides high), the row height unchanged
+    const caption = of(".cb-rail-planning .cb-working-caption");
+    expect([caption.position, caption.top]).toEqual(["relative", "1px"]);
     // the standalone working line keeps its 28 × 20 capybara
     expect(of(".cb-working-mark").height).toBe("var(--cb-space-5)");
   });
