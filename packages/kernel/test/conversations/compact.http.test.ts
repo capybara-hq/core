@@ -9,7 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../src/agents/definition.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type IdleMode, type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
@@ -85,6 +85,11 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_LOOPER, HOOKS_PROBE],
+        // fake-1 is the conversations' model; fake-c a compaction model whose window is large
+        // enough to be eligible (compaction model spec §4.3)
+        extensionConfig: {
+          "model-fake": { models: [{ id: "fake-1" }, { id: "fake-c", contextWindow: 200_000 }] },
+        },
         // a looper turn is a tool loop of this many steps (then the wrap-up)
         runtime: { maxSteps: 6 },
       },
@@ -190,12 +195,13 @@ describe("manual compaction", () => {
     expect(run.compact).toBe(true);
     // idle compaction spec §5.1 (S12): a person's compact run is recorded as manual; its
     // run_started carries no origin (absent = manual)
+    // a person's compact run has no idle mode (compaction model spec §6.3)
     const origin = await db
       .selectFrom("runs")
-      .select("compact_origin")
+      .select(["compact_origin", "idle_mode"])
       .where("id", "=", runId)
       .executeTakeFirstOrThrow();
-    expect(origin.compact_origin).toBe("manual");
+    expect(origin).toEqual({ compact_origin: "manual", idle_mode: null });
 
     const events = await eventsOf(db, conv);
     const started = ev(events, "run_started").find((e) => e.runId === runId);
@@ -663,15 +669,40 @@ describe("idle compact runs (idle compaction spec §5.1, §5.2)", () => {
     return last.seq;
   }
 
-  const startIdle = (orgId: string, conv: string, armedSeq: number) =>
-    withOrgScope(orgId, () => k.app.get(RunQueue).startIdleCompaction(conv, armedSeq));
+  const startIdle = (orgId: string, conv: string, armedSeq: number, mode?: IdleMode) =>
+    withOrgScope(orgId, () => k.app.get(RunQueue).startIdleCompaction(conv, armedSeq, mode));
+
+  const FAKE_C = { provider: "model-fake", model: "fake-c" };
+
+  /** Maps the org's `compaction` purpose to `model` (null clears the org's mapping). */
+  async function mapCompaction(orgId: string, model: typeof FAKE_C | null): Promise<void> {
+    const res = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/model-purposes/compaction`,
+      payload: { target: model === null ? null : { model, params: {} } },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+  }
+
+  /** Waits until the idle run's compaction reached its (held) model call. */
+  const summarizing = (runId: string) =>
+    waitFor(
+      async () => {
+        const raw = await redis.get(compactionProgressKey(runId));
+        return raw !== null && (JSON.parse(raw) as { phase: string }).phase === "summarizing"
+          ? raw
+          : null;
+      },
+      20_000,
+      "the idle compaction reached its model call",
+    );
 
   const runStatus = (runId: string, status: string) =>
     waitFor(
       async () => {
         const row = await db
           .selectFrom("runs")
-          .select(["status", "compact_origin"])
+          .select(["status", "compact_origin", "idle_mode"])
           .where("id", "=", runId)
           .executeTakeFirst();
         return row?.status === status ? row : null;
@@ -699,10 +730,11 @@ describe("idle compact runs (idle compaction spec §5.1, §5.2)", () => {
   it("starts an idle compact run on a settled conversation: in-context summary, origin idle, run as the owner", async () => {
     const { orgId, conv } = await setup();
     await seedTurns(orgId, conv, 6);
-    const runId = await startIdle(orgId, conv, await armedSeqOf(conv));
+    const runId = await startIdle(orgId, conv, await armedSeqOf(conv), "cache");
     expect(runId).toMatch(/[0-9a-f-]{36}/);
     const run = await runStatus(runId as string, "completed");
     expect(run.compact_origin).toBe("idle");
+    expect(run.idle_mode).toBe("cache");
     const events = (await eventsOf(db, conv)).filter((e) => e.runId === runId);
     const started = ev(events, "run_started");
     expect(started).toHaveLength(1);
@@ -987,6 +1019,94 @@ describe("idle compact runs (idle compaction spec §5.1, §5.2)", () => {
       .executeTakeFirstOrThrow();
     expect(row).toEqual({ queue_paused: false, tree_stopped_at: null });
     // the queued message goes out after the idle run's end
+    await waitFor(
+      async () =>
+        ev(await eventsOf(db, conv), "user_message").some((e) =>
+          e.payload.content.some((b) => b.type === "text" && b.text === "echo:queued"),
+        ) || null,
+      20_000,
+      "the queued message was sent",
+    );
+  });
+
+  it("runs a compaction_model idle run on the compaction model: the transcript, the automatic plan, usage on C (compaction model spec §6.3)", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    await mapCompaction(orgId, FAKE_C);
+    const turns = ev(await eventsOf(db, conv), "user_message");
+    const runId = await startIdle(orgId, conv, await armedSeqOf(conv), "compaction_model");
+    expect(runId).not.toBeNull();
+    const run = await runStatus(runId as string, "completed");
+    expect(run).toMatchObject({ compact_origin: "idle", idle_mode: "compaction_model" });
+
+    const events = (await eventsOf(db, conv)).filter((e) => e.runId === runId);
+    expect(ev(events, "run_started").map((e) => e.payload.compactOrigin)).toEqual(["idle"]);
+    const summaries = ev(events, "compaction_summary");
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.payload).toMatchObject({ method: "transcript", model: FAKE_C });
+    // the automatic plan (keepRecentTurns 4), never the manual one: the latest four turns stay
+    // verbatim, so the summary ends before the third turn's message
+    expect(summaries[0]?.payload.coversUpToSeq).toBeLessThan(turns[2]?.seq as number);
+    expect(
+      ev(events, "usage").map((e) => [e.payload.purpose, e.payload.provider, e.payload.model]),
+    ).toEqual([["compaction", "model-fake", "fake-c"]]);
+    expect(capture.compactions.map((r) => r.model)).toEqual(["fake-c"]);
+  });
+
+  it("a compaction_model idle run whose compaction model was cleared before the claim writes nothing and completes", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    await mapCompaction(orgId, FAKE_C);
+    const armedSeq = await armedSeqOf(conv);
+    await runQueue.pause();
+    let runId: string | null = null;
+    try {
+      runId = await startIdle(orgId, conv, armedSeq, "compaction_model");
+      expect(runId).not.toBeNull();
+      await mapCompaction(orgId, null);
+    } finally {
+      await runQueue.resume();
+    }
+    const run = await runStatus(runId as string, "completed");
+    expect(run.idle_mode).toBe("compaction_model");
+    // never a summary on the conversation's model, never a switch to the in-context summary
+    const events = (await eventsOf(db, conv)).filter((e) => e.runId === runId);
+    expect(events.map((e) => e.type)).toEqual(["run_started", "run_finished"]);
+    expect(capture.compactions).toEqual([]);
+  });
+
+  it("a superseded stop ends a compaction_model idle run as a cache one: no summary, the queue not paused", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    await mapCompaction(orgId, FAKE_C);
+    const armedSeq = await armedSeqOf(conv);
+    await holdModelCalls(orgId, 10_000);
+    const runId = await startIdle(orgId, conv, armedSeq, "compaction_model");
+    expect(runId).not.toBeNull();
+    const idle = runId as string;
+    await summarizing(idle);
+    const queued = await seedQueued(k.app, orgId, conv, ownerId, {
+      text: "echo:queued",
+      clientMessageId: randomUUID(),
+    });
+    expect(queued.statusCode, queued.body).toBe(201);
+    await holdModelCalls(orgId, 0);
+    await k.app.get(RunAbort).request(idle, null, { reason: "superseded" });
+    await runStatus(idle, "aborted");
+
+    const events = await eventsOf(db, conv);
+    expect(
+      ev(events, "run_aborted")
+        .filter((e) => e.runId === idle)
+        .map((e) => e.payload),
+    ).toEqual([{ byAccountId: null, reason: "superseded" }]);
+    expect(ev(events, "compaction_summary").filter((e) => e.runId === idle)).toEqual([]);
+    const row = await db
+      .selectFrom("conversations")
+      .select(["queue_paused", "tree_stopped_at"])
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ queue_paused: false, tree_stopped_at: null });
     await waitFor(
       async () =>
         ev(await eventsOf(db, conv), "user_message").some((e) =>
