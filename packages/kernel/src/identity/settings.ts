@@ -1151,8 +1151,7 @@ export class SettingsService {
             compactionPatch.idleMinTokensFloor ?? current.compaction.idleMinTokensFloor,
           idleMinWindowRatio:
             compactionPatch.idleMinWindowRatio ?? current.compaction.idleMinWindowRatio,
-          idleDelayMinutes:
-            compactionPatch.idleDelayMinutes ?? current.compaction.idleDelayMinutes,
+          idleDelayMinutes: compactionPatch.idleDelayMinutes ?? current.compaction.idleDelayMinutes,
         };
       }
       if (promptCachePatch !== undefined) {
