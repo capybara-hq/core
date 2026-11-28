@@ -12,6 +12,7 @@ import {
   encodeViewerContext,
   isRollCheck,
   parseConversationDeleted,
+  parseLoopbackPorts,
   parseRollCheck,
   parseViewerContext,
   SERVICE_CONNECTION_KINDS,
@@ -191,5 +192,30 @@ describe("conversation-deleted notice", () => {
 
   it("names a ten-minute restore window", () => {
     expect(DEVICE_SERVICE_RESTORE_MAX_AGE_MS).toBe(600_000);
+  });
+});
+
+describe("parseLoopbackPorts", () => {
+  it("parses loopback ports strictly", () => {
+    expect(parseLoopbackPorts([3999, 3000], "p")).toEqual([3000, 3999]);
+    expect(parseLoopbackPorts([], "p")).toEqual([]);
+    expect(parseLoopbackPorts([1, 65535], "p")).toEqual([1, 65535]);
+    for (const bad of [
+      [0],
+      [65536],
+      [3.5],
+      ["3000"],
+      [3000, 3000],
+      Array.from({ length: 33 }, (_, i) => i + 1),
+      "x",
+      null,
+    ])
+      expect(() => parseLoopbackPorts(bad, "p")).toThrow(TypeError);
+    expect(
+      parseLoopbackPorts(
+        Array.from({ length: 32 }, (_, i) => 32 - i),
+        "p",
+      ),
+    ).toHaveLength(32);
   });
 });

@@ -8,6 +8,7 @@ import type {
 import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { childRunDefinition, type FollowUpNarrowing } from "../runtime/subagents/definition.js";
+import { storedToolSpec } from "../tools/specs.js";
 
 /**
  * 评测用例快照（C3）：复制截至某次运行终态的会话事件、这些事件引用的 agent 版本定义、请求用到的工具定义
@@ -159,11 +160,12 @@ async function snapshotOf(
   if (hashes.size > 0) {
     const specRows = await db
       .selectFrom("tool_specs")
-      .select(["spec_hash", "spec"])
+      .select(["spec_hash", "spec", "spec_text"])
       .where("spec_hash", "in", [...hashes].sort())
       .orderBy("spec_hash")
       .execute();
-    for (const r of specRows) toolSpecs[r.spec_hash] = r.spec as ToolSpec;
+    // the JSON text as sent (key order kept), so the rebuilt request serializes like the original
+    for (const r of specRows) toolSpecs[r.spec_hash] = storedToolSpec(r);
   }
 
   const started = events.find((e) => e.type === "subagent_started")?.payload as

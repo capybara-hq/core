@@ -139,6 +139,7 @@ const PURPOSE_TITLES: Record<string, string[]> = {
   eval: ["评测评委", "Eval judge"],
   image: ["图片生成", "Image generation"],
   title: ["会话标题", "Conversation titles"],
+  compaction: ["摘要压缩", "Compaction"],
   "notes.summarize": ["摘要", "Summarize"],
   subagent_fast: ["Sub-agent: fast"],
   subagent_standard: ["Sub-agent: standard"],
@@ -527,7 +528,7 @@ describe("one box is enough (acceptance item AB)", () => {
       if (el === null) throw new Error("no loading sections yet");
       return el as HTMLElement;
     });
-    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(9);
+    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(10);
     expect(formSectionLayout(first)).toBe("columns");
     noNested();
   });
@@ -891,5 +892,53 @@ describe("the image purpose", () => {
     await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes(), { locale: "en" });
     await purposeBox("image");
     expect(screen.queryByText(en.models.imageUnmapped)).toBeNull();
+  });
+});
+
+describe("the compaction purpose", () => {
+  const compactionView = (over: Record<string, unknown> = {}) => ({
+    purpose: "compaction",
+    kind: "chat",
+    label: { zh: "摘要压缩", en: "Compaction" },
+    declaredBy: "kernel",
+    declaredByName: null,
+    default: null,
+    override: null,
+    effective: null,
+    ...over,
+  });
+
+  it.each(LOCALES)("lists it with its hint and saves it (%s)", async (locale) => {
+    const calls = adminRoutes({
+      "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [compactionView()] }),
+      "PUT /api/v1/admin/model-purposes/compaction": (c) => {
+        const t = (bodyOf(c) as { target: unknown }).target;
+        return json(200, { purpose: compactionView({ default: t, effective: t }) });
+      },
+    });
+    await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes(), { locale });
+    const box = await purposeBox("compaction");
+    expect(box.getByText(msgs[locale].models.purpose.hint.compaction)).toBeTruthy();
+    const user = userEvent.setup();
+    await pickOption(
+      box.getByRole("combobox", { name: msgs[locale].models.purpose.model }),
+      "alpha/alpha-large",
+      user,
+    );
+    await user.click(actionRow().getByRole("button", { name: msgs[locale].models.purpose.save }));
+    await vi.waitFor(() =>
+      expect(
+        calls.some((c) => c.method === "PUT" && c.url.endsWith("/model-purposes/compaction")),
+      ).toBe(true),
+    );
+  });
+
+  it("the hint copy is the spec's", () => {
+    expect(
+      en.models.purpose.hint.compaction.startsWith("When not set, the conversation's own model"),
+    ).toBe(true);
+    expect(zh.models.purpose.hint.compaction.startsWith("未设置时由会话自己的模型写摘要。")).toBe(
+      true,
+    );
   });
 });

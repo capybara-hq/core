@@ -446,7 +446,12 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       const ownerHome = r.home ?? home;
       // both modes report refused hosts: the macOS proxy's and the Linux forwarder's refusals
       // (a local-Docker device runs the Linux agent in its container)
-      const features: DeviceFeature[] = ["networkReport", "projects"];
+      // loopback ports are applied by the macOS service launcher (a host device on macOS only)
+      const features: DeviceFeature[] = [
+        "networkReport",
+        "projects",
+        ...(mode === "os" && platform === "darwin" ? (["loopbackPorts"] as const) : []),
+      ];
       return {
         envelope: {
           program: {

@@ -6,6 +6,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { oweLoopbackRefreshes } from "./loopback-grant-records.js";
 import { coversHost } from "./modes.js";
 import {
   isExecutionMethod,
@@ -91,7 +92,7 @@ export class PermissionCeilingWrites {
     if (!id) throw new Error("Ceiling publication requires its actual subject");
     this.locks.assertHeld(level, id, true);
     const vector = await this.epochs.readLocked(subject);
-    await this.epochs.bumpLocked(level, id, required(vector[level]));
+    const epoch = await this.epochs.bumpLocked(level, id, required(vector[level]));
     if (invalidateFullConsent) {
       await this.db
         .updateTable("permission_authority_epochs")
@@ -110,6 +111,22 @@ export class PermissionCeilingWrites {
       for (const root of await roots.orderBy("org_id").orderBy("id").forUpdate().execute())
         await this.resetRoot(root, subject, level);
     }
+    // every revoking writer may have narrowed the outside-sandbox ceiling: the refresh of each
+    // live loopback grant set under the subject decides, and revokes the grants it now refuses
+    if (revoke !== false)
+      await oweLoopbackRefreshes(
+        this.db.db,
+        this.outbox,
+        {
+          level,
+          ...(subject.orgId !== undefined && { orgId: subject.orgId }),
+          ...(subject.deviceId !== undefined && { deviceId: subject.deviceId }),
+          ...(subject.rootConversationId !== undefined && {
+            rootConversationId: subject.rootConversationId,
+          }),
+        },
+        `c${level}-${id}-${epoch}`,
+      );
     if (!revoke) return;
     // Acknowledged background starts stay revocable by every actual revoking writer (deletion is
     // the root-level one). Profile changes never reach here: they only bump the root epoch.

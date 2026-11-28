@@ -8,11 +8,14 @@ import {
   compactionBackoff,
   compactionChunkSize,
   compactionInputBudget,
+  compactionModelEligible,
   compactionPlan,
   compactionRequestOverhead,
   compactionRetryNote,
+  compactionSummaryCap,
   extractSummary,
   MANUAL_TAIL_SHARE,
+  MIN_COMPACTION_MODEL_CHUNK_TOKENS,
   manualOpeningSeqs,
   manualTailBudget,
   shouldCompact,
@@ -836,5 +839,34 @@ describe("compactionBackoff", () => {
     log.compactionFailed(3);
     log.summary(2, "done");
     expect(compactionBackoff(log.events)).toBe(false);
+  });
+});
+
+describe("compactionSummaryCap", () => {
+  it.each([
+    [20_000, 128_000, undefined, 20_000],
+    [20_000, 8_192, undefined, 8_192],
+    [20_000, 32_000, 393_216, 20_000],
+    [20_000, 4_096, 393_216, 4_096],
+    [20_000, 128_000, 8_192, 8_192],
+  ])("setting %i, conversation %i, summarizer %s gives %i", (setting, conv, summ, expected) => {
+    expect(compactionSummaryCap(setting, conv, summ)).toBe(expected);
+  });
+});
+
+describe("compactionModelEligible", () => {
+  it("accepts large windows and rejects small ones", () => {
+    expect(compactionModelEligible(128_000, 20_000, 8_000)).toBe(true);
+    expect(compactionModelEligible(1_048_576, 20_000, 8_000)).toBe(true);
+    expect(compactionModelEligible(64_000, 20_000, 8_000)).toBe(false);
+  });
+
+  it("flips exactly at the chunk floor", () => {
+    const chunk = (w: number) => compactionChunkSize(compactionInputBudget(w, 4096, 8000), 4096);
+    let w = 32_000;
+    while (chunk(w) < MIN_COMPACTION_MODEL_CHUNK_TOKENS) w += 1;
+    expect(chunk(w)).toBe(MIN_COMPACTION_MODEL_CHUNK_TOKENS);
+    expect(compactionModelEligible(w, 4096, 8000)).toBe(true);
+    expect(compactionModelEligible(w - 1, 4096, 8000)).toBe(false);
   });
 });

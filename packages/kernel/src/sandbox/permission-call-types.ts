@@ -49,9 +49,15 @@ export type PermissionFullAccessGrantDecision = {
 export type PermissionGrantSource = PermissionGrantDecision["source"];
 /**
  * The kind of one boundary crossing, as `ReviewRecord.crossing` records it: a directory outside the
- * scope, a new host on an allowlist, running one call outside the sandbox, or a sensitive command.
+ * scope, a new host on an allowlist, running one call outside the sandbox, a sensitive command, or
+ * a device service (the browser) reaching one loopback port on the person's own device.
  */
-export type PermissionCrossingKind = "directory" | "host" | "outside-sandbox" | "sensitive";
+export type PermissionCrossingKind =
+  | "directory"
+  | "host"
+  | "outside-sandbox"
+  | "sensitive"
+  | "loopback-port";
 /**
  * What a call grant authorizes: an exact directory and host expansion of the restricted scope, or
  * one Bash call run outside the OS sandbox (per-call sandbox escalation: full execution for that

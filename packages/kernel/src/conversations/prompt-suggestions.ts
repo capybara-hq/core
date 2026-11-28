@@ -501,10 +501,8 @@ export class PromptSuggestionGenerator {
         step: 0,
         provider: u.provider,
         model: u.model,
-        inputTokens: u.usage.inputTokens,
-        outputTokens: u.usage.outputTokens,
-        cacheReadTokens: u.usage.cacheReadTokens,
-        cacheWriteTokens: u.usage.cacheWriteTokens,
+        // the whole usage, `cacheWriteByTtl` included (1 h writes are priced by their tier)
+        ...u.usage,
         purpose: "suggestion",
       },
     };

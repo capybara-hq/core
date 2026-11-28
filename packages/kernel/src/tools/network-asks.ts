@@ -15,6 +15,7 @@ import {
   type NetworkAppliesAt,
   networkAskHosts,
 } from "./approvals.service.js";
+import { settledLoopbackNotes } from "./loopback-asks.js";
 
 /**
  * Network asks in the tool pipeline (network ask-to-allow spec §6.2, §6.6–§6.9, §8.3): what a
@@ -526,19 +527,22 @@ const NO_OFFER_WHY = "the device's owner changes the device's network on its pag
  * The note of a settled network ask (spec §6.6): one line per outcome. An approval allows
  * `detail.grantedHosts` for the run (`once`) or added them to the device's own list (`always`,
  * applying at `detail.appliesAt`) and declines the hosts left unchecked; `hours` is the ask's own
- * wait (created to expiry). Null while it is pending.
+ * wait (created to expiry). Null while it is pending. A loopback port ask's notes are
+ * {@link settledLoopbackNotes}.
  */
 export function settledNetworkNotes(a: ApprovalRecord, hours: number): string[] | null {
-  const asked = a.detail === null ? [] : networkAskHosts(a.detail);
+  if (a.detail?.kind === "loopback") return settledLoopbackNotes(a, hours);
+  const detail = a.detail;
+  const asked = detail === null ? [] : networkAskHosts(detail);
   switch (a.status) {
     case "approved": {
-      const granted = a.detail?.grantedHosts ?? asked;
+      const granted = detail?.grantedHosts ?? asked;
       const rest = asked.filter((h) => !granted.includes(h));
       const notes: string[] = [];
       if (granted.length > 0) {
         notes.push(
-          a.scope === "always" && a.detail !== null
-            ? addedToDeviceNote(granted, a.detail.appliesAt)
+          a.scope === "always" && detail !== null
+            ? addedToDeviceNote(granted, detail.appliesAt)
             : allowedOnceNote(granted),
         );
       }
