@@ -35,6 +35,7 @@ export {
 export {
   assertHeader,
   type HeaderAction,
+  headPath,
   PageHeader,
   type PageHeaderProps,
 } from "./page-header";

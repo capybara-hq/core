@@ -31,7 +31,7 @@ import { PluginInstallsSection } from "../../../../components/PluginInstallCards
 import { usePluginActions, usePluginState } from "../../../../components/PluginSwitch";
 import { fromOrgDetail } from "../../../../components/plugin-contents/from-org";
 import { PluginContents } from "../../../../components/plugin-contents/PluginContents";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import {
   descriptionOf,
@@ -80,13 +80,14 @@ export default function PluginItemView({ itemId }: { itemId: string }) {
 
 function CatalogItem({ orgId, itemId, me }: { orgId: string; itemId: string; me: Me }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const read = usePageQuery(orgCatalogItemQuery(orgId, itemId));
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {
     return (
       <DetailPage
-        header={{ path: [...scope, { label: "plugins", href: "/plugins" }], title: "" }}
+        header={{ path: [...scope, pw("plugins", "/plugins")], title: "" }}
         // One column, no tab row (one view): the facts (the description over publisher, owner and
         // status) and the five component sections (extension, skills, agent templates, connector
         // templates, dependencies)
@@ -116,6 +117,7 @@ function CatalogItemDetail({
   me: Me;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("catalog.org");
   const locale = useLocale();
   const stateOf = usePluginState();
@@ -164,11 +166,7 @@ function CatalogItemDetail({
   return (
     <DetailPage
       header={{
-        path: [
-          ...scope,
-          { label: "plugins", href: "/plugins" },
-          { label: displayNameOf(item, locale) },
-        ],
+        path: [...scope, pw("plugins", "/plugins"), { label: displayNameOf(item, locale) }],
         avatar: (
           <ObjectMark
             size={40}

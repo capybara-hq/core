@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useContext } from "react";
 import { usePathname } from "../../i18n/navigation";
 import { HOME_PATH } from "../../lib/routes";
@@ -15,21 +16,98 @@ export type PathSegment = { label: string; href?: string };
 export type PathScope = "org" | "home" | "admin";
 
 /**
+ * The route words of each scope's paths (spec §2.4): a path names its places by the sidebar's and
+ * the tabs' names (`管理后台 / 连接器 / 模板`), never by URL slugs. Keys are the route words; the
+ * labels live in the `path` messages.
+ */
+export const PATH_WORDS = {
+  admin: [
+    "root",
+    "inbox",
+    "audit",
+    "accounts",
+    "orgs",
+    "plugins",
+    "extensions",
+    "skills",
+    "agents",
+    "connectors",
+    "themes",
+    "models",
+    "settings",
+    "templates",
+    "market",
+    "pending",
+    "sources",
+    "import",
+  ],
+  org: [
+    "agents",
+    "skills",
+    "connectors",
+    "automations",
+    "files",
+    "conversations",
+    "inbox",
+    "extensions",
+    "plugins",
+    "devices",
+    "channels",
+    "evals",
+    "trajectories",
+    "settings",
+    "new",
+    "install",
+    "run",
+    "enable",
+    "organization",
+    "appearance",
+    "navigation",
+    "models",
+    "audit",
+    "sandbox",
+    "members",
+    "shares",
+    "tokens",
+    "templates",
+  ],
+  home: [
+    "account",
+    "profile",
+    "preferences",
+    "notifications",
+    "connections",
+    "identities",
+    "grants",
+    "shares",
+  ],
+} as const;
+
+/** A route word of `scope` (a key of the `path.<scope>` messages; a test keeps the two in step). */
+export type PathWord<S extends PathScope> = (typeof PATH_WORDS)[S][number];
+
+/** Whether `word` is a route word of `scope`. */
+export function isPathWord(scope: PathScope, word: string): boolean {
+  return (PATH_WORDS[scope] as readonly string[]).includes(word);
+}
+
+/**
  * The path of a page head (spec §2.4): the scope first, then the page and the object. `rest` are the
- * segments after the scope, route words (`agents`) or object names; segments with an `href` link.
- * The scope links to its root (home, the new conversation, for an org; `/admin` for the admin
- * console); `~` does not.
+ * segments after the scope, route words (from {@link usePathWord}) or object names; segments with
+ * an `href` link. The scope links to its root (home, the new conversation, for an org; `/admin` for
+ * the admin console, named by `adminLabel`); `~` does not.
  */
 export function buildPagePath(
   scope: PathScope,
   orgSlug: string | undefined,
   rest: PathSegment[],
+  adminLabel = "管理后台",
 ): PathSegment[] {
   const first: PathSegment =
     scope === "home"
       ? { label: "~" }
       : scope === "admin"
-        ? { label: "/admin", href: "/admin" }
+        ? { label: adminLabel, href: "/admin" }
         : { label: orgSlug ?? "~", href: HOME_PATH };
   return [first, ...rest];
 }
@@ -40,8 +118,20 @@ export function buildPagePath(
  */
 export function usePagePath(scope: PathScope, ...rest: PathSegment[]): PathSegment[] {
   const me = useContext(SessionContext)?.me;
+  const t = useTranslations("path.admin");
   const slug = me?.memberships.find((m) => m.orgId === me.currentOrgId)?.slug;
-  return buildPagePath(scope, slug, rest);
+  return buildPagePath(scope, slug, rest, t("root"));
+}
+
+/**
+ * A route word of `scope` as a path segment: its translated name (the sidebar's or the tab's), linked
+ * to `href` when given. `usePathWord("admin")("connectors", "/admin/connectors")` reads 连接器.
+ */
+export function usePathWord<S extends PathScope>(
+  scope: S,
+): (word: PathWord<S>, href?: string) => PathSegment {
+  const t = useTranslations(`path.${scope}`) as unknown as (key: string) => string;
+  return (word, href) => (href === undefined ? { label: t(word) } : { label: t(word), href });
 }
 
 /** A UUID segment: shown by its first 8 characters. */
@@ -202,5 +292,8 @@ export function routeSegments(pathname: string): { admin: boolean; rest: PathSeg
  */
 export function useRoutePath(): PathSegment[] {
   const { admin, rest } = routeSegments(usePathname());
-  return usePagePath(admin ? "admin" : "org", ...rest);
+  const scope = admin ? "admin" : "org";
+  const t = useTranslations(`path.${scope}`) as unknown as (key: string) => string;
+  const named = rest.map((s) => (isPathWord(scope, s.label) ? { ...s, label: t(s.label) } : s));
+  return usePagePath(scope, ...named);
 }

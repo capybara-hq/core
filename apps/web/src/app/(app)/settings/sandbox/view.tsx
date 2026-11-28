@@ -19,7 +19,7 @@ import { useEffect, useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { ApiClientError } from "../../../../lib/api";
 import { allowHostProblem } from "../../../../lib/network-hosts";
@@ -71,6 +71,7 @@ export default function SandboxSettingsView({ allowHosts = [] }: { allowHosts?: 
 
 function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: string[] }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("orgSettings");
   const ts = useTranslations("sandboxSettings");
   const tc = useTranslations("common");
@@ -128,7 +129,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
     setDraft((d) => ({ ...d, hostsText: [...base, ...added].join("\n") }));
   }, [loaded, manage, allowHosts, prefilled]);
   const header = {
-    path: [...scope, { label: "settings", href: "/settings/organization" }, { label: "sandbox" }],
+    path: [...scope, pw("settings", "/settings/organization"), pw("sandbox")],
     title: ts("title"),
   };
   if (read.kind === "notFound") return <NotFound />;

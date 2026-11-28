@@ -31,7 +31,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { Person } from "../../../../components/Person";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import {
   type AcceptanceMode,
@@ -116,6 +116,7 @@ const sameSet = (a: readonly string[], b: readonly string[]) =>
 
 function AutomationSettings({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("automationSettings");
   const tc = useTranslations("common");
   const toast = useToast();
@@ -134,11 +135,7 @@ function AutomationSettings({ orgId }: { orgId: string }) {
       })),
   });
   const header = {
-    path: [
-      ...scope,
-      { label: "settings", href: "/settings/organization" },
-      { label: "automations" },
-    ],
+    path: [...scope, pw("settings", "/settings/organization"), pw("automations")],
     title: t("title"),
   };
   if (read.kind === "notFound") return <NotFound />;

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { DeviceCreateDialog } from "../../../components/DeviceCreateDialog";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { useDeviceName } from "../../../components/use-device-name";
 import {
   canCreateDevice,
@@ -41,6 +41,7 @@ export default function DevicesView() {
 
 function Devices({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("devices");
   const [creating, setCreating] = useState(false);
   const list = usePageQuery(devicesQuery(orgId));
@@ -49,7 +50,7 @@ function Devices({ orgId }: { orgId: string }) {
   // New device needs a provider to create on: without one it is not offered
   const canCreate = list.kind === "ready" && canCreateDevice(list.data);
   const header = {
-    path: [...scope, { label: "devices" }],
+    path: [...scope, pw("devices")],
     title: t("title"),
     ...(canCreate && {
       actions: [

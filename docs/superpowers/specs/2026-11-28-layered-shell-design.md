@@ -176,10 +176,21 @@ only, recolours `panel`) render unchanged and still pass the readability check.
 - From 600 up the path row is not rendered when the path has two segments or fewer (scope / page);
   the title row starts the head. Compact already draws no path row. The `path` prop stays required:
   compact back and `web-ui-page-path` use it.
+- **Header tabs are one level (maintainer decision 2026-11-28).** A head whose tabs are routes (each
+  tab its own page) is one place: every tab's route stands at the level of the head's first tab
+  (`headPath`: the segments a tab's route adds to the first tab's route go), so no tab of such a
+  head draws a path row (`/admin/connectors/templates`, `/admin/agents/templates`,
+  `/admin/plugins/market`, `/admin/plugins/pending` like their first tabs). A truly deeper page (an
+  item's detail, an upload or import wizard, a create form, the marketplace sources page) has no
+  such tabs and keeps its path row.
 - The title row gains a `DragFill` between the title block and the actions (§5), so a page without
-  a path row still has a drag area.
-- Follow-up, not in this change: the path's segment labels are route slugs ("agents", "templates");
-  showing page names belongs to the pages that build the path.
+  a path row still has a drag area; in the desktop shell the head's top padding above the title row
+  drags too (a filler laid over the padding, as high as it, scrolling with the head; maintainer
+  decision 2026-11-28), so every page drags along its top and no control lies under a filler.
+- **Names, not URL slugs (maintainer decision 2026-11-28).** The path's segments are the places'
+  names, the sidebar's and the tabs' (`管理后台 / 连接器 / 模板`, `Admin console / Connectors /
+  Templates`; the admin scope is 管理后台, no longer `/admin`), translated through the `path`
+  messages (apps/web `usePathWord`); object names stay as they are.
 
 ### 4. Sidebar (`shell/sidebar.tsx`, `styles/sidebar.css`)
 

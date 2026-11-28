@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { ComponentsTable, useOwnerTabs } from "../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { adminComponentsQuery } from "../../../../lib/query/components";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useAdmin } from "../../../../lib/query/workspace";
@@ -25,11 +25,12 @@ export default function AdminSkillsView() {
 
 function AdminSkills() {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents");
   const list = usePageQuery(adminComponentsQuery("skill"));
   const tabs = useOwnerTabs(list.kind === "ready" ? list.data.components : null);
   const header = {
-    path: [...scope, { label: "skills" }],
+    path: [...scope, pw("skills")],
     title: t("titles.skill"),
     description: t("descriptions.skill"),
     tabs: tabs.items,

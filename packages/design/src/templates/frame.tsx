@@ -11,6 +11,7 @@ import {
 } from "react";
 import { SkeletonBox, SkeletonText, StatCards, Tabs, type TabsProps } from "../display/index";
 import { Grid, Stack, Text } from "../layout/index";
+import { DragFill } from "../shell/drag-fill";
 import {
   type ActionRowProps,
   PageHeader,
@@ -180,6 +181,9 @@ export function TemplateHead({
       data-tabs={withTabs ? "true" : undefined}
       data-band={band ? "true" : undefined}
     >
+      {/* The head's top strip in a desktop shell (above the title row of a head without a path
+          row): a window drag region, shown by shell-environment.css only there. */}
+      <DragFill className="cb-template-head-drag" />
       <div
         className="cb-template-head-frame"
         data-width="content"

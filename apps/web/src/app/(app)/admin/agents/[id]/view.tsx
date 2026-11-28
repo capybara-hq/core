@@ -27,7 +27,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import { type AdminAgentDetail, adminAvatarValue } from "../../../../../lib/admin-items";
 import { TEMPLATE_EFFORTS, type TemplateEffort } from "../../../../../lib/agent-templates";
@@ -59,6 +59,7 @@ export default function AdminAgentView({ id }: { id: string }) {
 
 function AdminAgentRead({ id }: { id: string }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const read = usePageQuery(adminAgentQuery(id));
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -66,7 +67,7 @@ function AdminAgentRead({ id }: { id: string }) {
     return (
       <DetailPage
         header={{
-          path: [...scope, { label: "agents", href: "/admin/agents" }, { label: id }],
+          path: [...scope, pw("agents", "/admin/agents"), { label: id }],
           title: "",
           loading: { avatar: true, actions: 2 },
         }}
@@ -79,13 +80,14 @@ function AdminAgentRead({ id }: { id: string }) {
 
 function AdminAgent({ agent }: { agent: AdminAgentDetail }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminItems.agents");
   const [open, setOpen] = useState<"transfer" | "delete" | null>(null);
   return (
     <>
       <DetailPage
         header={{
-          path: [...scope, { label: "agents", href: "/admin/agents" }, { label: agent.name }],
+          path: [...scope, pw("agents", "/admin/agents"), { label: agent.name }],
           title: agent.name,
           avatar: <Avatar value={adminAvatarValue(agent.avatar)} name={agent.name} size={40} />,
           actions: [

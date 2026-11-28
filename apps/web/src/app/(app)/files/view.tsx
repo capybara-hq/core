@@ -38,7 +38,7 @@ import { ShareDialog } from "../../../components/file-preview/ShareDialog";
 import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
 import { useOpenDownload } from "../../../components/SessionFilePreview";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
 import { sourceUrls } from "../../../lib/file-source";
 import {
@@ -110,6 +110,7 @@ export default function FilesView({ initial }: { initial: FilesUrl }) {
 
 function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("files");
   const locale = uiLocale(useLocale());
   const now = useNow();
@@ -218,7 +219,7 @@ function Files({ orgId, initial }: { orgId: string; initial: FilesUrl }) {
   };
 
   const header = {
-    path: [...scope, { label: "files" }],
+    path: [...scope, pw("files")],
     title: t("title"),
     tabs: TABS.map((o) => ({
       id: o === "" ? "all" : o,

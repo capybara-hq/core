@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { NoAccess } from "../../../../components/NoAccess";
 import { SharesTable } from "../../../../components/SharesTable";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useWorkspace } from "../../../../lib/query/workspace";
 
 /**
@@ -21,16 +21,13 @@ export default function SharesSettingsView() {
 
 function Shares({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("shares.list");
   const nav = useOrgSettingsNav();
   return (
     <SettingsPage
       header={{
-        path: [
-          ...scope,
-          { label: "settings", href: "/settings/organization" },
-          { label: "shares" },
-        ],
+        path: [...scope, pw("settings", "/settings/organization"), pw("shares")],
         title: t("title"),
         description: t("description"),
       }}
