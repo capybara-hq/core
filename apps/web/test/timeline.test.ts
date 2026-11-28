@@ -656,6 +656,26 @@ describe("buildTimeline", () => {
     expect(users).toEqual(["old", "new", "", "[file: d.png]"]);
   });
 
+  it("a message naming only a connector keeps content[0] as its text", () => {
+    const out = buildTimeline(
+      [
+        user(1, "[connector: Slack] ping", {
+          content: [
+            { type: "text", text: "[connector: Slack] ping" },
+            { type: "text", text: '[connector: Slack] The person named the connector "Slack".' },
+          ],
+          inline: [
+            { kind: "connector", start: 0, end: 18, label: "Slack", ref: { connectorId: "c1" } },
+          ],
+        }),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(out[0]).toMatchObject({ kind: "user", text: "[connector: Slack] ping" });
+  });
+
   it("a message referencing conversations alone keeps content[0] as its text and names them", () => {
     const quote = (id: string) => ({
       type: "text",

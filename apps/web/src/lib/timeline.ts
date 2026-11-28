@@ -710,8 +710,13 @@ function userText(e: Extract<ConversationEvent, { type: "user_message" }>): stri
   const attachments = e.payload.attachments ?? [];
   const projectFiles = e.payload.projectFiles ?? [];
   const conversationRefs = e.payload.conversationRefs ?? [];
+  // a message with tokens (composer inline tokens spec §3.3) keeps its blocks after content[0]
+  const tokens = (e.payload as { inline?: unknown[] }).inline ?? [];
   const content = withoutFileLines(e.payload.content);
-  return attachments.length > 0 || projectFiles.length > 0 || conversationRefs.length > 0
+  return attachments.length > 0 ||
+    projectFiles.length > 0 ||
+    conversationRefs.length > 0 ||
+    tokens.length > 0
     ? joinText(content.slice(0, 1), "text")
     : joinText(content, "text");
 }
