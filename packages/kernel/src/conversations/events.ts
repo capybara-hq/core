@@ -1043,6 +1043,22 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * body's list. Absent: none.
        */
       projectFiles: z.array(z.object({ path: z.string() })).optional(),
+      /**
+       * The referenced conversations (@ conversations spec §2): the quoted block of reference i is
+       * `content[1 + attachments.length + projectFiles.length + i]`, before the uploaded files'
+       * blocks. `title` is the title at send time (null: untitled), `source` what the block was
+       * built from, `upToSeq` the highest seq read. Deduplicated. Absent: none.
+       */
+      conversationRefs: z
+        .array(
+          z.object({
+            id: z.string(),
+            title: z.string().nullable(),
+            source: z.enum(["summary", "excerpt"]),
+            upToSeq: z.number().int().nonnegative(),
+          }),
+        )
+        .optional(),
       authorAccountId: z.string(),
       /**
        * Who wrote the message, at send time (run context spec §3.2): display name and org role

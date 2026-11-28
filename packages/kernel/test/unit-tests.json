@@ -39,6 +39,7 @@
   "config/plugin-permissions.test.ts",
   "config/runtime-limits.test.ts",
   "config/tools.test.ts",
+  "conversations/conversation-ref.test.ts",
   "conversations/event-people.test.ts",
   "conversations/events.test.ts",
   "conversations/prompt-suggestion-request.test.ts",

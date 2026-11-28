@@ -43,6 +43,7 @@ import { ConnectorContent } from "../tools/connector-content.js";
 import { type QuestionRecord, QuestionsService } from "../tools/questions.service.js";
 import { ConversationAccess, parentReachable } from "./access.js";
 import { type AgentTreeNode, readAgentTree } from "./agent-tree.js";
+import { conversationRefText, REF_TURN_MESSAGES, refMessageText } from "./conversation-ref.js";
 import { type AppendEvent, EventLog } from "./event-log.js";
 import { peopleOfEvents } from "./event-people.js";
 import { type ConversationEvent, type LogContentBlock, refFileId } from "./events.js";
@@ -335,12 +336,30 @@ export interface ResolvedExtra {
   projectFiles?: { path: string }[];
   /** The project root the project file blocks name (set with `projectFiles`). */
   projectRoot?: string;
+  /**
+   * The referenced conversations (@ conversations spec §2), in block order after the project
+   * files' blocks; absent: none.
+   */
+  conversationRefs?: ConversationRefMeta[];
+}
+
+/** One referenced conversation as `payload.conversationRefs` names it. */
+export interface ConversationRefMeta {
+  id: string;
+  /** The title at send time; null: untitled. */
+  title: string | null;
+  /** `summary`: built from its latest compaction summary; `excerpt`: from its last messages. */
+  source: "summary" | "excerpt";
+  /** The highest seq read from it. */
+  upToSeq: number;
 }
 
 export { MAX_PROJECT_FILES } from "../devices/device-project-files.service.js";
 
 /** Where a message's project files are checked: the conversation's device and bound project. */
 export interface ProjectFilesTarget {
+  /** The conversation being written in (a reference to it is refused); absent: a new one. */
+  conversationId?: string | undefined;
   deviceId: string | null;
   project: { name: string; path: string } | null | undefined;
   /** Stops the check on the device (the request's signal: the client hung up). */
@@ -353,6 +372,19 @@ export interface ProjectFilesTarget {
  */
 export const projectFileText = (path: string, root: string): string =>
   `Referenced project file: ${path} (in the project root ${root}; read it with Read when needed).`;
+
+/**
+ * A referenced conversation that cannot be referenced (422, `details: [{ id, reason? }]`): one
+ * code and one message for every case, so another person's conversation reads as a missing one.
+ */
+const conversationRefUnavailable = (details: { id: string; reason?: "empty" }[]): ApiError =>
+  new ApiError(
+    "conversation.reference_unavailable",
+    details.every((d) => d.reason === "empty")
+      ? "A referenced conversation has no messages yet; remove it and send again"
+      : "A referenced conversation is not available; remove it and send again",
+    details,
+  );
 
 /** A message's project file that cannot be referenced (422, `details: [{ path }]` or `reason`). */
 const projectFileUnavailable = (message: string, details: unknown[]): ApiError =>
@@ -457,6 +489,11 @@ export interface UserMessageInput {
    * project root (composer menus §5): checked with `stat`, never read or copied.
    */
   projectFiles?: { path: string }[];
+  /**
+   * The sender's own conversations referenced by id (@ conversations spec §1): each is read at
+   * send time into one text block ({@link conversationRefText}).
+   */
+  conversationRefs?: { id: string }[];
   /** Switch the conversation's model from the next run (the agent's own model = back to it). */
   model?: ModelRef;
   /** Switch the effort (one of the model's declared `effort` values). */
@@ -1594,6 +1631,10 @@ export class ConversationsService {
    * write ({@link resolveExtra}); one block each after the `@` resources' bodies, before the
    * uploaded files' blocks, and `payload.projectFiles`. Any refusal writes nothing; a repeated
    * send with the same `clientMessageId` returns the written event without checking again.
+   *
+   * `conversationRefs` (@ conversations spec §1): read as the sender in the same step, one block
+   * each after the project files' blocks, and `payload.conversationRefs`; refused and retried
+   * like the project files.
    */
   async postUserMessage(
     orgId: string,
@@ -1620,7 +1661,11 @@ export class ConversationsService {
     const agent = needsAgent
       ? (await this.agents.get(orgId, conv.agentId, accountId)).definition
       : undefined;
-    const extra = await this.resolveExtra(orgId, accountId, input, { ...conv, signal });
+    const extra = await this.resolveExtra(orgId, accountId, input, {
+      ...conv,
+      conversationId,
+      signal,
+    });
     const invoked =
       agent === undefined
         ? undefined
@@ -1984,27 +2029,163 @@ export class ConversationsService {
   async resolveExtra(
     orgId: string,
     accountId: string,
-    input: Pick<UserMessageInput, "attachments" | "projectFiles">,
+    input: Pick<UserMessageInput, "attachments" | "projectFiles" | "conversationRefs">,
     target?: ProjectFilesTarget,
   ): Promise<ResolvedExtra> {
     const refs = input.attachments ?? [];
     const files = await this.checkProjectFiles(orgId, accountId, input.projectFiles ?? [], target);
+    const conversations = await this.readConversationRefs(
+      orgId,
+      accountId,
+      input.conversationRefs ?? [],
+      target?.conversationId,
+    );
     const resolved =
       refs.length === 0
         ? { blocks: [], attachments: [] }
         : await this.content.resolveAttachments(orgId, accountId, refs);
-    if (files === undefined) return resolved;
+    if (files === undefined && conversations.length === 0) return resolved;
     return {
       blocks: [
         ...resolved.blocks,
-        ...files.paths.map((path) => ({
+        ...(files?.paths ?? []).map((path) => ({
           type: "text" as const,
-          text: projectFileText(path, files.root),
+          text: projectFileText(path, files?.root ?? ""),
         })),
+        ...conversations.map((c) => ({ type: "text" as const, text: c.text })),
       ],
       attachments: resolved.attachments,
-      projectFiles: files.paths.map((path) => ({ path })),
-      projectRoot: files.root,
+      ...(files !== undefined && {
+        projectFiles: files.paths.map((path) => ({ path })),
+        projectRoot: files.root,
+      }),
+      ...(conversations.length > 0 && { conversationRefs: conversations.map((c) => c.meta) }),
+    };
+  }
+
+  /**
+   * {@link resolveExtra}'s referenced conversations (@ conversations spec §1), read as the sender
+   * outside any transaction, once each in the body's order. Each must be the sender's own chat in
+   * this org, not deleted, its agent still visible ({@link readable} plus `kind = 'chat'`); any
+   * other → `conversation.reference_unavailable` (`details: [{ id }]`, the same for every case);
+   * one with no `user_message` yet → the same code with `reason: "empty"`; the conversation
+   * being written in → `conversation.reference_self`.
+   */
+  private async readConversationRefs(
+    orgId: string,
+    accountId: string,
+    refs: readonly { id: string }[],
+    selfId: string | undefined,
+  ): Promise<{ text: string; meta: ConversationRefMeta }[]> {
+    if (refs.length === 0) return [];
+    const ids = [...new Set(refs.map((r) => r.id))];
+    if (selfId !== undefined && ids.includes(selfId)) {
+      throw new ApiError(
+        "conversation.reference_self",
+        "A message cannot reference the conversation it is written in; remove that reference",
+        [{ id: selfId }],
+      );
+    }
+    const refused: { id: string; reason?: "empty" }[] = [];
+    const read: { text: string; meta: ConversationRefMeta }[] = [];
+    for (const id of ids) {
+      const one = await this.readConversationRef(orgId, accountId, id);
+      if (one === "unavailable") refused.push({ id });
+      else if (one === "empty") refused.push({ id, reason: "empty" });
+      else read.push(one);
+    }
+    // the unavailable ones first: a client reads the first detail's reason for its copy
+    if (refused.length > 0) {
+      throw conversationRefUnavailable([
+        ...refused.filter((r) => r.reason === undefined),
+        ...refused.filter((r) => r.reason !== undefined),
+      ]);
+    }
+    return read;
+  }
+
+  /** One referenced conversation's block and metadata, or why it cannot be referenced. */
+  private async readConversationRef(
+    orgId: string,
+    accountId: string,
+    id: string,
+  ): Promise<{ text: string; meta: ConversationRefMeta } | "unavailable" | "empty"> {
+    const row = await this.db
+      .selectFrom("conversations")
+      .select(["id", "title", "agent_id", "updated_at"])
+      .select(activitySql("conversations").as("activity"))
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      // a sub-agent's or an eval replay conversation is never referenced
+      .where("kind", "=", "chat")
+      .executeTakeFirst();
+    if (!row) return "unavailable";
+    let agentName: string;
+    try {
+      agentName = (await this.agents.get(orgId, row.agent_id, accountId)).definition.name;
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "agent.not_found") return "unavailable";
+      throw e;
+    }
+    // the latest summary (conversation_events_compaction_summary_idx), then the newest messages
+    // after what it covers
+    const summary = await this.db
+      .selectFrom("conversation_events")
+      .select(["seq", sql<unknown>`payload`.as("payload")])
+      .where("conversation_id", "=", id)
+      .where("type", "=", "compaction_summary")
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    const summaryPayload = summary?.payload as { coversUpToSeq: number; text: string } | undefined;
+    const rows = await this.db
+      .selectFrom("conversation_events")
+      .select(["seq", "type", sql<unknown>`payload`.as("payload")])
+      .where("conversation_id", "=", id)
+      .where("type", "in", ["user_message", "assistant_message"])
+      .where("seq", ">", String(summaryPayload?.coversUpToSeq ?? 0))
+      .orderBy("seq", "desc")
+      .limit(REF_TURN_MESSAGES)
+      .execute();
+    // nothing to quote: no summary and no message of the person yet (a long run's steps may fill
+    // the newest rows, so the log is asked when they hold none)
+    if (summary === undefined && !rows.some((r) => r.type === "user_message")) {
+      const anyUser = await this.db
+        .selectFrom("conversation_events")
+        .select("seq")
+        .where("conversation_id", "=", id)
+        .where("type", "=", "user_message")
+        .limit(1)
+        .executeTakeFirst();
+      if (anyUser === undefined) return "empty";
+    }
+    const messages = rows
+      .slice()
+      .reverse()
+      .map((r) => ({
+        role: r.type === "user_message" ? ("user" as const) : ("assistant" as const),
+        text: refMessageText(r.type, r.payload),
+      }))
+      .filter((m) => m.text !== "");
+    const upToSeq = Math.max(Number(rows[0]?.seq ?? 0), Number(summary?.seq ?? 0));
+    return {
+      text: conversationRefText({
+        id,
+        title: row.title,
+        agentName,
+        lastActiveAt: row.updated_at,
+        running: row.activity === "running",
+        summary: summaryPayload?.text ?? null,
+        messages,
+      }),
+      meta: {
+        id,
+        title: row.title,
+        source: summary === undefined ? "excerpt" : "summary",
+        upToSeq,
+      },
     };
   }
 
@@ -2091,6 +2272,8 @@ export class ConversationsService {
         ...(extra.attachments.length > 0 && { attachments: extra.attachments }),
         ...(extra.projectFiles !== undefined &&
           extra.projectFiles.length > 0 && { projectFiles: extra.projectFiles }),
+        ...(extra.conversationRefs !== undefined &&
+          extra.conversationRefs.length > 0 && { conversationRefs: extra.conversationRefs }),
         authorAccountId: accountId,
         ...context,
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
