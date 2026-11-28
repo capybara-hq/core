@@ -1,5 +1,17 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.141
+
+### Minor Changes
+
+- 5743a33: Browser access to a granted loopback port: the kernel's loopback grants, the approval card for a
+  local port and the patched sandbox proxy ship in the images.
+
+### Patch Changes
+
+- Updated dependencies [1f54362]
+  - @capybara-hq/kernel@0.1.0-rc.114
+
 ## 0.1.0-rc.140
 
 ### Patch Changes
