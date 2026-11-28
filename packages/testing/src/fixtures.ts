@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
  * | `fake-tools-ui` | tools `write` and `web-only` (`sources` web and channel_dm; returns its call context), view `tasks`, a migration, skill `fake-notes`, template `fake-notes` (for fake-connector); no storage |
  * | `fake-storage-user` | tools `note` / `read_note` through `ctx.storage` (`permissions.storage`) |
  * | `fake-lifecycle` | observes `org.member_removed`, `agent.deleted` and `org.deleted`; a migration with tables `calls` (every call) and `deliveries` (every call that succeeded), each row the mount and the payload; deployment config `failTimes` (default 0): the first `failTimes` calls of each (mount, payload) throw, and `label` (optional, at most 10 characters, overridable per org: an invalid org copy) |
+ * | `fake-run-lifecycle` | observes `run.lifecycle`; every payload is recorded in order on `globalThis.__fakeRunLifecycle.calls` (`fakeRunLifecycleProbe`); probe `failTimes`: the first N calls throw after being recorded |
  * | `fake-embed` | embeds `panel` (page) and `panel-conv` (conversation), static `/ui/panel.js`, token-checked routes, SSE over `ctx.bus` |
  * | `fake-bootstrap-a` | `model-provider@2` with a required secret `apiKey` (pending configuration until set) |
  * | `fake-bootstrap-b` | `object-store@1` kept in its own PG table; `bucket` + secret `secretKey` |
@@ -28,7 +29,7 @@ import { fileURLToPath } from "node:url";
  * | `fake-watch` | tool `wait` (input `{ key, deadlineMs? }`): a watched input wait whose watcher reads kv `fake-watch:<key>` (`go` settles, `fail` throws, `hang` never answers, else pending), counts its polls in kv `fake-watch:<key>:polls` and writes the identity it got to kv `fake-watch:<key>:ctx`; the resumed call returns `{ outcome, answer, signal }` as JSON; tool `nowatch` asks for a watched wait without a watcher |
  * | `fake-client-broken` | client code that throws: component `boom` (render), a `run.started` events listener, and a `conversation.empty` replacement (render) |
  * | `fake-push` | `push-provider@1` scripted by the token prefix (`dead:`, `auth:`, `rate:`, `flaky:<n>:`, `throw:`, `net:`, `hang:`; else delivered); deployment config `apps` (default `["com.example.app"]`), optional secret `key`; every send is a row of `plugin_fake_push.sends` and an entry of `fakePushProbe().sends`; `makeFakePush()` is the same provider without a kernel |
- * | `fake-trigger-source` | `trigger-source@1`: declares `item.created`, `item.updated`, `item.assigned` (directed) in `permissions.triggers.emit`, facts `status` / `priority` / `labels` / `projectKey` (all filterable); tool `emit_item_event` emits its input through `ctx.triggers.emit` with `cause: { call }` and returns `{ eventId, duplicate }` (or `{ error: <code> }`); `visible()` admits `globalThis.__fakeTriggerSource.visible` (every account when unset); the probe (`fakeTriggerSourceProbe`) also carries the extension's `ctx.triggers.emit` and `ctx.inbox` (`permissions.inbox`); `org.page` view `requests` whose UI action records `{ actionId, accountId, role, payload }` on the probe's `actions` (action `fail` throws) |
+ * | `fake-trigger-source` | `trigger-source@1`: declares `item.created`, `item.updated`, `item.assigned` (directed) in `permissions.triggers.emit`, facts `status` / `priority` / `labels` / `projectKey` (all filterable); tool `emit_item_event` emits its input through `ctx.triggers.emit` with `cause: { call }` and returns `{ eventId, duplicate }` (or `{ error: <code> }`); `visible()` admits `globalThis.__fakeTriggerSource.visible` (every account when unset); the probe (`fakeTriggerSourceProbe`) also carries the extension's `ctx.triggers.emit` and `ctx.inbox` (`permissions.inbox`); `org.page` view `requests` whose UI action records `{ actionId, accountId, role, payload }` on the probe's `actions` (action `fail` throws); observes `run.lifecycle` into the probe's `lifecycle` |
  * | `fake-config-form` | display name 表单样例 / Form sample; no extension point: an openai-compatible-shaped deployment config (endpoints with a preset menu, an API key per endpoint in the secret record `apiKeys`, model rows, advanced fields, localized custom issues) carrying the config form hints of the extension config forms spec §6, for the web form e2e |
  */
 export const FAKE_EXTENSIONS = [
@@ -38,6 +39,7 @@ export const FAKE_EXTENSIONS = [
   "fake-tools-ui",
   "fake-storage-user",
   "fake-lifecycle",
+  "fake-run-lifecycle",
   "fake-embed",
   "fake-bootstrap-a",
   "fake-bootstrap-b",

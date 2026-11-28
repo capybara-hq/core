@@ -1,6 +1,7 @@
 import {
   defineExtension,
   type InboxCtx,
+  type RunLifecyclePayload,
   type ToolCallContext,
   type ToolSpec,
   TriggerError,
@@ -23,6 +24,8 @@ import {
  *   ({@link fakeTriggerSourceProbe}; in-process kernels only), so a test can emit as the extension
  *   outside a tool call; likewise `causeOf` (its `ctx.triggers.causeOf`) and `inbox` (its
  *   `ctx.inbox`, `permissions.inbox`).
+ * - It observes `run.lifecycle` (`permissions.hooks`) and records every payload on the probe's
+ *   `lifecycle`.
  * - The `org.page` view `requests` has a UI action that records every call on the probe's
  *   `actions` (`{ actionId, accountId, role, payload }`) and answers a toast; an action id `fail`
  *   throws instead (nothing recorded).
@@ -41,6 +44,8 @@ export interface FakeTriggerSourceProbe {
   causeOf?: (call: ToolCallContext) => Promise<string>;
   /** The extension's `ctx.inbox`, set by its setup. */
   inbox?: InboxCtx;
+  /** Every `run.lifecycle` payload the extension received (it subscribes), in order. */
+  lifecycle?: RunLifecyclePayload[];
   /** The calls of the `requests` view's UI action, in order. */
   actions?: { actionId: string; accountId: string; role: string; payload: unknown }[];
 }
@@ -110,6 +115,7 @@ export default defineExtension({
   ui: [{ id: "requests", title: { zh: "请求", en: "Requests" }, slot: "org.page", kind: "view" }],
   permissions: {
     tools: ["emit_item_event"],
+    hooks: ["run.lifecycle"],
     triggers: { emit: [...FAKE_TRIGGER_TYPES] },
     inbox: true,
     ui: { views: ["requests"] },
@@ -120,6 +126,15 @@ export default defineExtension({
     probe.emit = (event) => ctx.triggers.emit(event);
     probe.causeOf = (call) => ctx.triggers.causeOf(call);
     probe.inbox = ctx.inbox;
+    ctx.hooks.on(
+      "run.lifecycle",
+      (p) => {
+        const pr = fakeTriggerSourceProbe();
+        pr.lifecycle ??= [];
+        pr.lifecycle.push({ ...p });
+      },
+      { mode: "observe" },
+    );
     ctx.ui.view("requests", async () => ({
       blocks: [{ type: "actions", buttons: [{ actionId: "accept", label: "Accept" }] }],
     }));

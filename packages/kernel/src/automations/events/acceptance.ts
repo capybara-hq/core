@@ -14,6 +14,7 @@ import { ApiError } from "../../errors.js";
 import { ExtensionDisplayNames } from "../../extensions/display-name.js";
 import { ExtensionsModule } from "../../extensions/extensions.module.js";
 import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
+import { oweOfferDeclinedIn } from "../../extensions/run-lifecycle-owe.js";
 import { audit } from "../../identity/audit.js";
 import { InboxItemsModule, InboxItemsService } from "../../inbox/inbox-items.service.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
@@ -176,7 +177,7 @@ export class AcceptanceService {
       return "skipped";
     }
     const seen = await ctx.visible([audience.accountId]);
-    if (seen === undefined) return "undelivered";
+    if (seen === undefined) return refuse("the source gave no answer on who may see the subject");
     if (!seen.includes(audience.accountId)) return refuse("the source does not show the subject");
     const mode = await this.modeFor(orgId, audience.accountId, ev.plugin, ctx.settings);
     return this.routeIn(ev, mode, ctx);
@@ -202,7 +203,7 @@ export class AcceptanceService {
     // another dispatch of the event settled it first
     if (held?.state !== "pending") return "skipped";
     if (mode === "off") {
-      // TODO(collaboration C4): fire `run.lifecycle` `offer_declined` with `reason: "off"` here
+      await this.oweDeclined(ev, audience, "off");
       this.log.info("directed trigger event: the person's acceptance rule is off", {
         orgId,
         eventId: ev.id,
@@ -232,7 +233,7 @@ export class AcceptanceService {
     await this.settle(orgId, ev.id, "dispatched");
     if (added === 0) {
       // the event row is held and the cause checked: only a paused or ended automation takes none
-      // TODO(collaboration C4): fire `run.lifecycle` `offer_declined` with `reason: "paused"` here
+      await this.oweDeclined(ev, audience, "paused");
       this.log.info("directed trigger event: the person's acceptance automation is paused", {
         orgId,
         eventId: ev.id,
@@ -241,6 +242,27 @@ export class AcceptanceService {
       return "paused";
     }
     return "fired";
+  }
+
+  /**
+   * Tells the event's source plugin that directed work was not run (`run.lifecycle`
+   * `offer_declined`), owed in the caller's transaction; nothing when the plugin does not
+   * subscribe in the org.
+   */
+  private oweDeclined(
+    ev: EventRow,
+    audience: { accountId: string; agentId: string },
+    reason: "declined" | "off" | "paused",
+  ): Promise<void> {
+    return oweOfferDeclinedIn(this.kdb.db, this.outbox, {
+      orgId: ev.org_id,
+      plugin: ev.plugin,
+      eventId: ev.id,
+      accountId: audience.accountId,
+      agentId: audience.agentId,
+      subject: ev.subject,
+      reason,
+    });
   }
 
   /**
@@ -777,7 +799,7 @@ export class AcceptanceService {
       target: offerId,
       detail: { source: offer.source, agentId: offer.agent_id, eventId: ev.id },
     });
-    // TODO(collaboration C4): fire `run.lifecycle` `offer_declined` for the event's source here
+    await this.oweDeclined(ev, { accountId, agentId: offer.agent_id }, "declined");
     const causer = await this.causerOf(orgId, ev);
     if (causer === null || causer === accountId) return;
     const [person, agentName] = await Promise.all([

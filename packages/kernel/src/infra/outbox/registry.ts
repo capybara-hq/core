@@ -488,6 +488,21 @@ export const OUTBOX_JOBS = {
   // `extensions/lifecycle-hooks.ts` LIFECYCLE_JOB: owed by the transaction that removes a member,
   // deletes an agent or deletes an org, once per subscribing plugin, under `lifecycleJobId`
   // (memory plugin spec §6.3)
+  // `extensions/run-lifecycle-owe.ts` RUN_LIFECYCLE_JOB: owed by the transaction that starts a
+  // run, suspends it, finishes it or declines directed work, once per phase of a run and plugin
+  // (collaboration spec §4.5); delivered by the lifecycle queue's consumer
+  "hook-run-lifecycle": {
+    queue: "cap-kernel-lifecycle",
+    idempotent:
+      "the `run.lifecycle` handler sets a display state keyed by the run and phase (the SDK contract: handlers are idempotent); the job id is deterministic per run, phase and wait",
+    processedIn: "packages/kernel/src/extensions/lifecycle-hooks.ts",
+    opts: {
+      attempts: 10,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: { age: 7 * 86_400, count: 1_000 },
+    },
+  },
   lifecycle: {
     queue: "cap-kernel-lifecycle",
     idempotent:

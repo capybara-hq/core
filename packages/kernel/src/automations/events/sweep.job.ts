@@ -84,7 +84,7 @@ export function reoweDecision(
  *   `automations.eventRetentionDays` ago, none of whose deliveries still waits for a run and with
  *   no open work offer, is
  *   deleted with its deliveries (the foreign key cascades), in batches of {@link DELETE_BATCH}, one
- *   transaction each. A `pending` event (its dispatch has not settled it) stays. A
+ *   transaction each. A `pending` event (its dispatch has not settled it) stays, until the pending-directed rule below ends it. A
  *   run keeps its `trigger_key` and a kernel run its `trigger_event_id` (neither has a foreign
  *   key); a chain whose event is gone restarts at depth 0.
  * - **Lost windows.** The dispatcher owes one coalesce job per window, from the delivery that opens
@@ -103,7 +103,8 @@ export function reoweDecision(
  *   {@link PENDING_DIRECTED_STALE_MS} after it was stored (a dispatch job of a worker from before
  *   acceptance routing passed it over) is owed its dispatch job again
  *   (`trigger-dispatch-<eventId>-sweep-<minute>`) unless one is pending in the outbox, backing off
- *   by its age as a lost window does and giving up after {@link WINDOW_GIVE_UP_MS}.
+ *   by its age as a lost window does and giving up after {@link WINDOW_GIVE_UP_MS}: past it the
+ *   event is marked `undelivered` with a warning, so retention can delete it.
  * - **Cause handles.** Expired `trigger_cause_handles` (`ctx.triggers.causeOf`) are deleted.
  * - **Inbox items.** An inbox item resolved, or past its expiry, more than `inbox.retentionDays`
  *   ago is deleted (an open item past its expiry already left the inbox).
@@ -172,6 +173,16 @@ export class TriggerEventSweepJob {
     let redispatched = 0;
     for (const e of await this.stalePendingDirected(now)) {
       const decision = reoweDecision(now.getTime() - e.createdAt.getTime(), now.getTime());
+      if (typeof decision === "object") {
+        // a day of re-owed dispatches never settled it: end it, so retention can delete it
+        if (await withOrgScope(e.orgId, () => this.giveUpPending(e.orgId, e.id)))
+          this.log.warn("directed trigger event stayed pending for a day; marked undelivered", {
+            orgId: e.orgId,
+            eventId: e.id,
+            pendingSince: e.createdAt.toISOString(),
+          });
+        continue;
+      }
       if (decision !== "owe") continue;
       if (await withOrgScope(e.orgId, () => this.oweDispatch(e.orgId, e.id, now))) redispatched++;
     }
@@ -317,12 +328,11 @@ export class TriggerEventSweepJob {
     now: Date,
   ): Promise<{ orgId: string; id: string; createdAt: Date }[]> {
     const older = new Date(now.getTime() - PENDING_DIRECTED_STALE_MS);
-    const since = new Date(now.getTime() - WINDOW_GIVE_UP_MS - SWEEP_EVERY_MS);
     const rows = await asPlatform("deployment-wide stale directed trigger event sweep", () =>
       sql<{ org_id: string; id: string; created_at: Date }>`
         SELECT org_id, id, created_at FROM capybara.trigger_events
         WHERE state = 'pending' AND audience IS NOT NULL
-          AND created_at < ${older} AND created_at >= ${since}
+          AND created_at < ${older}
         ORDER BY created_at
         LIMIT ${MAX_PENDING_DIRECTED}`.execute(this.kdb.db),
     );
@@ -331,6 +341,20 @@ export class TriggerEventSweepJob {
       id: r.id,
       createdAt: new Date(r.created_at),
     }));
+  }
+
+  /** Marks a directed event that is still pending `undelivered`; true when it was pending. */
+  @Transactional()
+  private async giveUpPending(orgId: string, eventId: string): Promise<boolean> {
+    const r = await this.kdb.db
+      .updateTable("trigger_events")
+      .set({ state: "undelivered" })
+      .where("org_id", "=", orgId)
+      .where("id", "=", eventId)
+      .where("state", "=", "pending")
+      .returning("id")
+      .executeTakeFirst();
+    return r !== undefined;
   }
 
   /**

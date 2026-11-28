@@ -110,6 +110,7 @@ export const HOOK_MOUNT_POINTS = [
   "org.member_removed",
   "agent.deleted",
   "org.deleted",
+  "run.lifecycle",
 ] as const;
 
 /** A hook mount point name. */

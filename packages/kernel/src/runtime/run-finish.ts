@@ -4,6 +4,7 @@ import { AutomationRunTracker } from "../automations/run-tracker.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { pauseQueueIn } from "../conversations/queue.js";
+import { oweRunLifecycleIn } from "../extensions/run-lifecycle-owe.js";
 import { GitRunEnd } from "../git/run-end.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -147,6 +148,11 @@ export class RunFinish {
       .where("id", "=", a.runId)
       .execute();
     await this.taskRuns.onRunFinished(a.runId, a.status, failureMessage(a.event));
+    // the subject's plugin hears of the end in this transaction (observe-only, delivered later)
+    await oweRunLifecycleIn(t, this.outbox, {
+      runId: a.runId,
+      phase: a.status === "completed" ? "finished" : "failed",
+    });
     // the terminal status is committed first, then the tickets go (the one place runs end)
     afterCommit(() => this.gitRunEnd.onRunFinished(a.runId));
     // a failed or stopped run pauses the queued messages until the person resumes (spec §5.7)

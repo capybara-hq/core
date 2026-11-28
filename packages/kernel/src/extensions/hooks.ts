@@ -95,9 +95,12 @@ export type LifecycleHook = (typeof LIFECYCLE_HOOKS)[number];
 
 /**
  * Mounts delivered by a queue (at least once, by plugin) instead of {@link HookRegistry.run}:
- * `usage.report` and the lifecycle mounts.
+ * `usage.report`, `run.lifecycle` and the lifecycle mounts.
  */
-export type QueuedHook = "usage.report" | LifecycleHook;
+export type QueuedHook = OrgQueuedHook | LifecycleHook;
+
+/** Queued mounts called with the plugin's effective config for the payload's org. */
+export type OrgQueuedHook = "usage.report" | "run.lifecycle";
 
 const AVAILABLE: ReadonlySet<string> = new Set(HOOKS_AVAILABLE);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
@@ -289,12 +292,13 @@ export class HookRegistry {
   }
 
   /**
-   * `usage.report` handlers by plugin name (delivered by the usage queue, not by {@link run}); each
+   * `usage.report` and `run.lifecycle` handlers by plugin name (delivered by the usage queue and
+   * the lifecycle queue, not by {@link run}); each
    * call runs through the instance's `inflight.run` with the plugin's effective config for the
    * payload's organization, and throws {@link HookNeedsConfigError} without calling the handler
    * when that config is not valid (layering spec A §6).
    */
-  handlers(mount: "usage.report"): { plugin: string; handler: HookHandler<"usage.report"> }[] {
+  handlers<K extends OrgQueuedHook>(mount: K): { plugin: string; handler: HookHandler<K> }[] {
     return this.entries(mount).map(({ src, hook }) => ({
       plugin: src.name,
       handler: (payload, signal) =>

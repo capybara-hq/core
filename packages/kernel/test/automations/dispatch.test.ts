@@ -774,7 +774,10 @@ describe("trigger event sweep", () => {
     const [run] = await runsOf(a.id);
     expect(run?.trigger_key).toBe(served);
     expect((await deliveriesOf(a.id)).map((d) => d.event_id)).toEqual([waiting]);
-    // the next sweep finds nothing more to delete
+    // the pending directed event past a day was marked undelivered by that sweep: this one deletes
+    // it, and the next finds nothing more
+    expect((await sweeper().sweepAt(now)).deleted).toBe(1);
+    expect(await exists(pending)).toBe(false);
     expect((await sweeper().sweepAt(now)).deleted).toBe(0);
   });
 

@@ -688,6 +688,33 @@ describe("directed events: guards and isolation", () => {
     expect(await stateOf(stale)).toBe("dispatched");
   });
 
+  it("a source that gives no answer on who may see the subject leaves the event undelivered", async () => {
+    const impl = await sourceImpl();
+    vi.spyOn(impl, "visible").mockResolvedValue(undefined as never);
+    const e = await assign();
+    await dispatch(e);
+    expect(await stateOf(e)).toBe("undelivered");
+    expect(await acceptanceAutomations()).toEqual([]);
+  });
+
+  it("the sweep marks a directed event pending for over a day undelivered, once", async () => {
+    const old = await pendingDirected(25 * 3_600_000);
+    const fresh = await pendingDirected(20 * 60_000);
+    const warn = vi.spyOn(k.app.get(TriggerEventSweepJob).log, "warn");
+    const first = await sweeper().sweepAt(new Date());
+    expect(await stateOf(old)).toBe("undelivered");
+    expect(await stateOf(fresh)).toBe("pending");
+    expect(first.redispatched).toBe(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("marked undelivered"),
+      expect.objectContaining({ eventId: old }),
+    );
+    // settled: a second sweep neither warns again nor owes it a dispatch
+    warn.mockClear();
+    await sweeper().sweepAt(new Date());
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("a subject the source does not show the person is undelivered", async () => {
     probe().visible = [memberId];
     const e = await assign();

@@ -2182,7 +2182,7 @@ export function hasControlChars(s: string): boolean;
 export function hasShellInjection(body: string): boolean;
 
 // @public
-export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted"];
+export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted", "run.lifecycle"];
 
 // @public
 export interface HookCall {
@@ -2248,13 +2248,14 @@ export interface HookPayloads {
     "model.response": ModelResponseHookPayload | ImageResponseHookPayload;
     "org.deleted": OrgDeletedPayload;
     "org.member_removed": OrgMemberRemovedPayload;
+    "run.lifecycle": RunLifecyclePayload;
     "tool.postExecute": ToolPostHookPayload;
     "tool.preExecute": ToolPreHookPayload;
     "usage.report": UsageReportPayload;
 }
 
 // @public
-export const HOOKS_AVAILABLE: readonly ["model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted"];
+export const HOOKS_AVAILABLE: readonly ["model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted", "run.lifecycle"];
 
 // @public
 export interface HookScope {
@@ -3979,6 +3980,23 @@ export type RouteCaller = {
     role: UiRole;
     config: unknown;
 };
+
+// @public
+export interface RunLifecyclePayload {
+    accountId: string;
+    agentId: string;
+    agentVersion?: number;
+    conversationId?: string;
+    orgId: string;
+    phase: "started" | "waiting" | "finished" | "failed" | "offer_declined";
+    reason?: "declined" | "off" | "paused";
+    runId?: string;
+    subject: {
+        kind: string;
+        id: string;
+    };
+    waitingOn?: "approval" | "question" | "input";
+}
 
 // @public
 export const SANDBOX_FAKE_IP_DNS: {

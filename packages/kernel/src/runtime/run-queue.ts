@@ -382,6 +382,7 @@ export class RunQueue {
         trigger_event_id: lineage.triggerEventId,
       })
       .execute();
+    await this.jobs.oweRunStarted(t, runId);
     // the task run its message started follows this run from now on (spec §6)
     if (taskRunId !== null) await linkStartedRunIn(t, taskRunId, runId, conversationId);
     // the root runs again: a person's stop of its tree no longer holds the tree's wakes
@@ -537,6 +538,7 @@ export class RunQueue {
         trigger_event_id: lineage.triggerEventId,
       })
       .execute();
+    await this.jobs.oweRunStarted(t, runId);
     return runId;
   }
 

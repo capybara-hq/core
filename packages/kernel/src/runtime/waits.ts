@@ -6,6 +6,7 @@ import { BackgroundTaskStopper } from "../background/stop.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import { conversationTree } from "../conversations/tree.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { oweRunLifecycleIn } from "../extensions/run-lifecycle-owe.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -200,6 +201,15 @@ export class Waits implements OnApplicationShutdown {
       .executeTakeFirst();
     if (!row) return false;
     await this.oweTimeout(waitingFor, runId, row.org_id);
+    // a wait on a person (not on sub-agents) is told to the subject's plugin, one notice per wait
+    if (waitingFor.kind !== "subagents") {
+      await oweRunLifecycleIn(this.db, this.outbox, {
+        runId,
+        phase: "waiting",
+        waitingOn: waitingFor.kind,
+        waitId: waitingFor.id,
+      });
+    }
     return true;
   }
 

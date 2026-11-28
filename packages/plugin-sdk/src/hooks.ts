@@ -14,6 +14,7 @@ export const HOOKS_AVAILABLE = [
   "org.member_removed",
   "agent.deleted",
   "org.deleted",
+  "run.lifecycle",
 ] as const;
 
 /** Lifecycle mount points: observe-only notices that something was removed. */
@@ -333,6 +334,42 @@ export interface OrgDeletedPayload {
   orgId: string;
 }
 
+/**
+ * `run.lifecycle`: what happened to a run of a conversation that has a subject, or to directed work
+ * the kernel declined to run (collaboration spec §4.5). Observe-only, delivered durably through a
+ * queue, at least once, after the change committed, and only to the plugin named by the
+ * conversation's subject `source` (for `offer_declined`, the plugin that emitted the event), when
+ * it declares `run.lifecycle` in `permissions.hooks` and the org has it enabled; `call.config` is
+ * the extension's effective config for the org. A handler that fails never affects the run.
+ * Handlers must be idempotent. The payload carries ids only.
+ *
+ * - `started`: a run of the conversation was created (queued).
+ * - `waiting`: the run suspended on a person (`waitingOn`: an approval or a question).
+ * - `finished`: the run completed. `failed`: it failed or was stopped.
+ * - `offer_declined`: directed work was not run (`reason`): the person's rule is `off`, the person
+ *   `declined` the offer, or their acceptance automation is `paused`. No run and no conversation:
+ *   `accountId` and `agentId` are the event's audience.
+ */
+export interface RunLifecyclePayload {
+  orgId: string;
+  /** The run's trigger account; for `offer_declined` the event's audience person. */
+  accountId: string;
+  agentId: string;
+  /** Absent for `offer_declined`. */
+  agentVersion?: number;
+  /** Absent for `offer_declined`. */
+  conversationId?: string;
+  /** Absent for `offer_declined`. */
+  runId?: string;
+  phase: "started" | "waiting" | "finished" | "failed" | "offer_declined";
+  /** The conversation's subject (or the directed event's subject). */
+  subject: { kind: string; id: string };
+  /** Set for `waiting`. */
+  waitingOn?: "approval" | "question" | "input";
+  /** Set for `offer_declined`. */
+  reason?: "declined" | "off" | "paused";
+}
+
 /** Payload type of each mount point. */
 export interface HookPayloads {
   "model.request": ModelRequestHookPayload;
@@ -343,6 +380,7 @@ export interface HookPayloads {
   "org.member_removed": OrgMemberRemovedPayload;
   "agent.deleted": AgentDeletedPayload;
   "org.deleted": OrgDeletedPayload;
+  "run.lifecycle": RunLifecyclePayload;
 }
 
 /**
