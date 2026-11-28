@@ -123,3 +123,5 @@ except the catalog).
   medium rule, sheet rows, chip width and close glyph; fixed in 642cad6c5 (product where it broke
   the spec, reference otherwise); round 2 blind review: no severe or moderate differences, minor
   LCD-vs-gray text smoothing in menus and sheets only. ACCEPTED note and changeset added.
+- 2026-11-28: merged origin/main, PR #1021 opened (Refs #973); reference-update and visual-update
+  ran on the branch; this commit starts CI.
