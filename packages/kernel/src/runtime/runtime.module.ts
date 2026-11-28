@@ -30,6 +30,7 @@ import { CompactionProgressService } from "./compaction-progress.js";
 import { CompactionSettingsService } from "./compaction-settings.service.js";
 import { ConversationLock } from "./conversation-lock.js";
 import { IdleArm } from "./idle-arm.js";
+import { IdleCompactionJob } from "./idle-compaction.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { PermissionContextRecorder } from "./permission-context.service.js";
 import { PluginContextService } from "./plugin-context.service.js";
@@ -125,6 +126,9 @@ import { WriteBaseService } from "./write-base.service.js";
     CompactionService,
     // a chat run's finish decides whether it owes an idle compaction job (idle compaction spec §4.2)
     IdleArm,
+    // one delivery of the delayed idle compaction job (idle compaction spec §4.3; the maintenance
+    // processor, worker role only, consumes it)
+    IdleCompactionJob,
     // a finished background task wakes an idle conversation (background Bash spec §3)
     BackgroundWake,
     // one quota per key prefix (the org run quota, the org eval quota)
@@ -160,6 +164,7 @@ import { WriteBaseService } from "./write-base.service.js";
     PermissionContextRecorder,
     CompactionSettingsService,
     CompactionService,
+    IdleCompactionJob,
     RUN_QUOTA,
     EVAL_QUOTA,
     ProvidersModule,

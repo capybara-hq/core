@@ -91,6 +91,8 @@ import {
   type PermissionRecheckData,
 } from "../tools/permission-approval-jobs.js";
 import { ToolsModule } from "../tools/tools.module.js";
+import { IdleCompactionJob } from "./idle-compaction.js";
+import { IDLE_COMPACTION_JOB, type IdleCompactionJobData } from "./idle-compaction-jobs.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { RunDeletion, STOP_DELETED_ORG_JOB, type StopDeletedOrgData } from "./run-deletion.js";
 import { ENSURE_RUN_JOB, type EnsureRunJobData, RunQueue } from "./run-queue.js";
@@ -120,7 +122,8 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link OwnedPluginCleanup}, `automation-fire` and `automation-settle` → {@link AutomationFirer}, `automation-coalesce` → {@link EventCoalescer}, `share-object-delete` → {@link ShareObjects}, `blob-delete`, `file-staging-delete` and `file-release` →
  * {@link BlobObjects}, `file-library-hash`, `file-library-hash-org` → {@link FileLibraryHashJob},
  * `file-library-backfill` → {@link FileLibraryBackfill}, `platform-icon-delete` →
- * {@link PlatformIconObjects}, `device-conversation-notice` → {@link ConversationNoticeDelivery}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * {@link PlatformIconObjects}, `device-conversation-notice` → {@link ConversationNoticeDelivery},
+ * `idle-compaction` → {@link IdleCompactionJob}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -165,6 +168,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     private readonly notices: Pick<ConversationNoticeDelivery, "attempt">,
     @Inject(TriggerDispatcher) private readonly triggers: Pick<TriggerDispatcher, "dispatch">,
     @Inject(EventCoalescer) private readonly coalescer: Pick<EventCoalescer, "flush">,
+    @Inject(IdleCompactionJob) private readonly idleCompaction: Pick<IdleCompactionJob, "fire">,
     @Optional()
     @Inject(CloudPermissionSnapshots)
     private readonly snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
@@ -314,6 +318,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         await this.notices.attempt(orgId, noticeId, { timeoutMs: NOTICE_PROMPT_TIMEOUT_MS });
         return;
       }
+      // a large idle conversation's compaction before its prompt cache expires (idle compaction §4.3)
+      case IDLE_COMPACTION_JOB:
+        await this.idleCompaction.fire(job.data as IdleCompactionJobData);
+        return;
       default:
         if (await this.scheduled.runNow(job.name)) return;
         // never completed unrun: in a rolling deploy an old worker meets a job a newer replica
