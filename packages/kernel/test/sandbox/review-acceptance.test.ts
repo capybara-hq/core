@@ -264,11 +264,14 @@ type ToolResult = Extract<ConversationEvent, { type: "tool_result" }>;
 const results = async (conv: string): Promise<ToolResult[]> =>
   (await eventsOf(db, conv)).filter((e): e is ToolResult => e.type === "tool_result");
 
-/** Runs one tool call and waits for the run's terminal event (the call finished or was refused). */
-async function call(conv: string, key: string, input: unknown, n: number): Promise<ToolResult> {
-  await postMessage(owner, orgAuto, conv, `tool:${key}:${JSON.stringify(input)}`);
-  await waitForTerminal(db, conv, n, 30_000);
-  return (await results(conv)).at(-1) as ToolResult;
+/**
+ * Runs one tool call and waits for the end of the run that made it. A finished background task
+ * wakes the conversation with a run of its own, so counting terminal events cannot tell which run
+ * ended (issue #1036): the call's own `tool_result` after the message is the anchor, and the
+ * terminal event after it ends that run (runs of one conversation never overlap).
+ */
+async function call(conv: string, key: string, input: unknown): Promise<ToolResult> {
+  return callIn(orgAuto, conv, key, input);
 }
 
 /** The same, in an org whose mode is fixed by the org settings. */
@@ -277,11 +280,24 @@ async function callIn(
   conv: string,
   key: string,
   input: unknown,
-  n: number,
 ): Promise<ToolResult> {
-  await postMessage(owner, orgId, conv, `tool:${key}:${JSON.stringify(input)}`);
-  await waitForTerminal(db, conv, n, 30_000);
-  return (await results(conv)).at(-1) as ToolResult;
+  const sent = await postMessage(owner, orgId, conv, `tool:${key}:${JSON.stringify(input)}`);
+  return waitFor(
+    async () => {
+      const events = await eventsOf(db, conv);
+      const result = events.find(
+        (e): e is ToolResult =>
+          e.type === "tool_result" && e.seq > sent && e.payload.toolKey === key,
+      );
+      if (result === undefined) return null;
+      const ended = events.some(
+        (e) => e.seq > result.seq && ["run_finished", "run_failed", "run_aborted"].includes(e.type),
+      );
+      return ended ? result : null;
+    },
+    30_000,
+    `the ${key} call's run to end`,
+  );
 }
 
 describe("acceptance: auto mode on a real kernel", () => {
@@ -289,63 +305,46 @@ describe("acceptance: auto mode on a real kernel", () => {
     const conv = await createConv(owner, orgAuto, agentAuto);
     // the device's sandbox network is open: github.com is no host crossing, nobody is asked
     // (approval-only profiles design, "Profiles": a host crosses only an allowlist)
-    const cloned = await call(
-      conv,
-      "Bash",
-      { command: `git clone ${CORE_URL}`, description: "Clone core" },
-      1,
-    );
+    const cloned = await call(conv, "Bash", {
+      command: `git clone ${CORE_URL}`,
+      description: "Clone core",
+    });
     expect(cloned.payload.isError, cloned.payload.content).toBe(false);
     expect(cloned.payload.review).toMatchObject({ decision: "allow", by: "rule" });
     expect(cloned.payload.content).toContain("Cloning into");
 
     // the protected-file tree today's sandbox refused to write is in the device's workspace
-    const mcp = await call(conv, "Read", { file_path: "/workspace/core/.mcp.json" }, 2);
+    const mcp = await call(conv, "Read", { file_path: "/workspace/core/.mcp.json" });
     expect(mcp.payload.isError, mcp.payload.content).toBe(false);
-    const command = await call(
-      conv,
-      "Read",
-      { file_path: "/workspace/core/.claude/commands/hello.md" },
-      3,
-    );
+    const command = await call(conv, "Read", {
+      file_path: "/workspace/core/.claude/commands/hello.md",
+    });
     expect(command.payload.content).toContain("say hello");
   });
 
   it("scenario 1 (sandbox): the file tools stay root-confined and the clone writes under the workspace", async () => {
     const conv = await createConv(owner, orgSandbox, agentSandbox);
     // a read outside what the device lets sandboxed work read is refused by the device itself
-    const outside = await callIn(orgSandbox, conv, "Read", { file_path: "/etc/passwd" }, 1);
+    const outside = await callIn(orgSandbox, conv, "Read", { file_path: "/etc/passwd" });
     expect(outside.payload.isError).toBe(true);
     expect(outside.payload.content).toContain(
       "outside the scope this conversation has on the device",
     );
     // a write inside the workspace runs at once (one outside it is a crossing the profile decides)
-    const write = await callIn(
-      orgSandbox,
-      conv,
-      "Write",
-      { file_path: "/workspace/note.txt", content: "x" },
-      2,
-    );
+    const write = await callIn(orgSandbox, conv, "Write", {
+      file_path: "/workspace/note.txt",
+      content: "x",
+    });
     expect(write.payload.isError, write.payload.content).toBe(false);
 
     // the clone runs in the workspace; its files are there and readable
-    const cloned = await callIn(
-      orgSandbox,
-      conv,
-      "Bash",
-      { command: `git clone ${CORE_URL}`, description: "Clone core" },
-      3,
-    );
+    const cloned = await callIn(orgSandbox, conv, "Bash", {
+      command: `git clone ${CORE_URL}`,
+      description: "Clone core",
+    });
     expect(cloned.payload.isError, cloned.payload.content).toBe(false);
     expect(cloned.payload.review).toMatchObject({ decision: "allow", rule: "allow.git" });
-    const mcp = await callIn(
-      orgSandbox,
-      conv,
-      "Read",
-      { file_path: "/workspace/core/.mcp.json" },
-      4,
-    );
+    const mcp = await callIn(orgSandbox, conv, "Read", { file_path: "/workspace/core/.mcp.json" });
     expect(mcp.payload.isError, mcp.payload.content).toBe(false);
   });
 
@@ -360,12 +359,10 @@ describe("acceptance: auto mode on a real kernel", () => {
     ).toMatchObject({ outcome: "allow", hits: [{ id: "allow.network" }] });
 
     const conv = await createConv(owner, orgAuto, agentAuto);
-    const version = await call(
-      conv,
-      "Bash",
-      { command: `curl -s ${versionUrl}`, description: "Check the docker proxy" },
-      1,
-    );
+    const version = await call(conv, "Bash", {
+      command: `curl -s ${versionUrl}`,
+      description: "Check the docker proxy",
+    });
     expect(version.payload.isError, version.payload.content).toBe(false);
     expect(version.payload.review).toMatchObject({ decision: "allow", rule: "allow.network" });
     // the command really reached the loopback server
@@ -374,13 +371,10 @@ describe("acceptance: auto mode on a real kernel", () => {
 
   it("scenario 2 (sandbox): the device's network is the allowlist", async () => {
     const conv = await createConv(owner, orgSandbox, agentSandbox);
-    const version = await callIn(
-      orgSandbox,
-      conv,
-      "Bash",
-      { command: `curl -s ${versionUrl}`, description: "Check the docker proxy" },
-      1,
-    );
+    const version = await callIn(orgSandbox, conv, "Bash", {
+      command: `curl -s ${versionUrl}`,
+      description: "Check the docker proxy",
+    });
     // the rules are the same in both modes; the network is what sandbox mode narrows
     expect(version.payload.review).toMatchObject({ decision: "allow", rule: "allow.network" });
     const created = await waitFor(
@@ -401,12 +395,11 @@ describe("acceptance: auto mode on a real kernel", () => {
     // launch-then-deny regression red: a launch inserts its `background_tasks` row as soon as it
     // starts, and every exec reaches the sandbox's own log.
     const opsBefore = (await readFakeSandboxOps(root)).length;
-    const denied = await call(
-      conv,
-      "Bash",
-      { command: "rm -rf /", description: "Clean up", run_in_background: true },
-      1,
-    );
+    const denied = await call(conv, "Bash", {
+      command: "rm -rf /",
+      description: "Clean up",
+      run_in_background: true,
+    });
     expect(denied.payload.isError).toBe(true);
     expect(denied.payload.review).toMatchObject({ decision: "deny", rule: "deny.root-destroy" });
     expect(denied.payload.content).not.toContain("Started background task");
@@ -446,12 +439,11 @@ describe("acceptance: auto mode on a real kernel", () => {
     )?.[1];
     expect(taskId, launched.payload.content).toBeDefined();
 
-    const output = await call(
-      conv,
-      "TaskOutput",
-      { task_id: taskId, block: true, timeout: 30_000 },
-      3,
-    );
+    const output = await call(conv, "TaskOutput", {
+      task_id: taskId,
+      block: true,
+      timeout: 30_000,
+    });
     expect(output.payload.isError, output.payload.content).toBe(false);
     expect(output.payload.content).toContain("Cloning into 'cloned'");
   });
@@ -465,7 +457,7 @@ describe("acceptance: auto mode on a real kernel", () => {
       .where("id", "=", conv)
       .execute();
     const command = 'gh pr create --title "feat: auto mode" --body "T15"';
-    const created = await call(conv, "Bash", { command, description: "Open the PR" }, 1);
+    const created = await call(conv, "Bash", { command, description: "Open the PR" });
     expect(created.payload.isError, created.payload.content).toBe(false);
     expect(created.payload.review).toMatchObject({
       decision: "allow",
@@ -492,12 +484,11 @@ describe("acceptance: auto mode on a real kernel", () => {
 
   it("scenario 5: gh auth login on a cloud device yields one device_code event and no token", async () => {
     const conv = await createConv(owner, orgAuto, agentAuto);
-    const launched = await call(
-      conv,
-      "Bash",
-      { command: "gh auth login --web", description: "Sign in", run_in_background: true },
-      1,
-    );
+    const launched = await call(conv, "Bash", {
+      command: "gh auth login --web",
+      description: "Sign in",
+      run_in_background: true,
+    });
     expect(launched.payload.isError, launched.payload.content).toBe(false);
     const taskId = /Started background task (bt_[A-Za-z0-9_-]+)/.exec(
       launched.payload.content,
@@ -506,7 +497,7 @@ describe("acceptance: auto mode on a real kernel", () => {
     // the launch only records the task: nothing has read the prompt yet
     expect((await eventsOf(db, conv)).filter((e) => e.type === "device_code")).toHaveLength(0);
 
-    await call(conv, "TaskOutput", { task_id: taskId, block: true, timeout: 30_000 }, 2);
+    await call(conv, "TaskOutput", { task_id: taskId, block: true, timeout: 30_000 });
     const events = await eventsOf(db, conv);
     const codes = events.filter(
       (e): e is Extract<ConversationEvent, { type: "device_code" }> => e.type === "device_code",
