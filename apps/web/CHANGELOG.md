@@ -1,5 +1,30 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.143
+
+### Patch Changes
+
+- 9bb13fa: The composer's agents chip reads 「N 个智能体」 / "N agents" alone, as Claude Code's "● 3 agents": the
+  running count is no longer drawn, and the leading dot carries the state (the running accent while a
+  sub-agent runs, warn while one waits, faint once all have finished). Its accessible name and
+  tooltip keep the counts.
+  
+  The agent map follows one colour rule for every status dot (tree, level 2 head, legend, Agent call
+  block, chip): running accent, waiting and limit warn, completed faint, stopped a hollow faint ring,
+  failed fail. Its count line drops the running count (「N 个智能体 · 点击查看详情」), and a node names
+  its model only on the root or where it differs from the root's.
+- d905e4d: Org admins can delete a connector from its card's ⋯ menu on the connectors page (删除 / Delete),
+  with the same name confirmation as the connector's 设置 tab.
+- Updated dependencies [9bb13fa]
+- Updated dependencies [84fb1df]
+- Updated dependencies [7b6565d]
+- Updated dependencies [f93197e]
+- Updated dependencies [af0ec96]
+- Updated dependencies [12a20da]
+- Updated dependencies [4894752]
+- Updated dependencies [a0e1dfd]
+  - @capybara-hq/design@0.2.0-rc.56
+
 ## 0.1.0-rc.142
 
 ### Patch Changes

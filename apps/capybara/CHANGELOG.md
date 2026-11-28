@@ -1,5 +1,69 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.143
+
+### Patch Changes
+
+- 84fb1df: Desktop shell: the band search field opens the command palette again. It now renders after the
+  content column, so the paper gutter and head drag fillers no longer cover it (#1120).
+- af0ec96: Composer frame: one even `space.2` inset (the field is the box; ＋, send, the attachment strip and
+  the text no longer pulled into its padding), and from 600 with a fine pointer the place (device and
+  project) moves out of the input into a `hover` tray above it, which the field overlaps; the pickers
+  lose the "/" separator and get a pill ground only on hover. On touch, send is concentric with the
+  pill's round end. The UI part `composer` (and its `aria-busy`) is now the field, the box: the place
+  tray and the open menu sit outside it, in the frame.
+- 12a20da: Web: an extension embed (such as the browser panel) no longer flashes white when it opens in the
+  dark theme. The frame stays hidden until its document has loaded and no longer inherits the dark
+  color scheme, so the browser keeps the embed's canvas transparent instead of painting it light.
+- c94a643: A message may carry `tokens` (connectors, connector resources, library files, project files,
+  conversations), each marked in `text` with U+FFFC, beside the older reference fields (not both).
+  The kernel resolves them as the sender before writing: each marker becomes an English placeholder
+  (`[connector: Slack]`, `[resource: … from …]`, `[file: …]`, `[project file: …]`,
+  `[conversation: …]`), a named connector adds a mention block (a connector of at most 20 tools
+  records its tool keys, loaded from that message by steps that run with tool search), and
+  `payload.inline` / `payload.connectorMentions` record them. Every file block, uploads included, is
+  now preceded by a `[file: <name>]` line, which conversation bubbles never show, and a resource block
+  says "from the connector". New refusals: `conversation.connector_unavailable`
+  (`not_found`, `needs_config`, `not_offered`) and `connector.resource_unreadable` (`ui_template`,
+  `empty`), with zh / en copy.
+- 4894752: The composer switches to inline tokens: everything picked through `/` or `@` (a skill, a
+  connector, a connector resource, a library file, a conversation) and ＋ 项目文件 picks stand in the
+  sentence as tokens, while uploads stay cards. `@` lists the agent's connectors first (→ opens a
+  connector's resources), then files and conversations; ＋ loses 连接器资源 and its connector rows
+  insert a token. At most one skill per message. A message goes out as `text` with one U+FFFC per
+  token and its `tokens`; a refusal marks the token and offers 移除. Bubbles draw a message's tokens
+  from `payload.inline`, the skill chip first. The design adds `openTrigger` / `setTriggerQuery` to
+  the editor's handle and a `@capybara-hq/design/testing` entry with the editor's test drivers;
+  `FileDrop` leaves a paste a child already took alone.
+  A sent bubble's conversation token links to its conversation and a library file token opens the
+  file; a connector prompt picked mid-sentence goes where its `/` stood.
+- a0e1dfd: Page heads: a head whose tabs are routes stands at its first tab's level on every tab, so a tab's
+  own route (such as the admin 模板, 市场 or 待确认 tabs) no longer shows a path row its sibling tabs
+  do not (`headPath`). Path segments are now place names (管理后台 / 连接器 / 模板) instead of URL
+  slugs. In the desktop shell the strip above a first-level page's title drags the window too.
+- 3702282: Pin file-preview rc.5: the file previewer paints no ground of its own before the host's `init`, so
+  it no longer flashes white in the dark theme.
+- 588cfd2: Prompt suggestions share the prompt cache with the run again: tool definitions read back for a
+  rebuilt request keep the key order they were sent with (`tool_specs.spec_text`, migration 0201;
+  jsonb had reordered the input schemas, so every suggestion re-wrote the whole history), and the
+  suggestion's usage event keeps the provider's per-lifetime cache write split.
+- aa0371c: Toasts in the desktop shell start below the window's top row (the rail form's start band, the
+  caption buttons' end band, the full sidebar's brand row) instead of lying over it, and a toast
+  equal to one already shown folds into it (its timer starts over) instead of stacking a second one.
+- Updated dependencies [b41536f]
+- Updated dependencies [7651f27]
+- Updated dependencies [3b6a67c]
+- Updated dependencies [c94a643]
+- Updated dependencies [87a51b6]
+- Updated dependencies [40cf427]
+- Updated dependencies [4ee14be]
+- Updated dependencies [ecfef5f]
+- Updated dependencies [9ed473c]
+- Updated dependencies [3702282]
+- Updated dependencies [901b2ed]
+- Updated dependencies [588cfd2]
+  - @capybara-hq/kernel@0.1.0-rc.116
+
 ## 0.1.0-rc.142
 
 ### Patch Changes

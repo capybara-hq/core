@@ -1,5 +1,49 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.56
+
+### Patch Changes
+
+- 9bb13fa: The composer's agents chip reads 「N 个智能体」 / "N agents" alone, as Claude Code's "● 3 agents": the
+  running count is no longer drawn, and the leading dot carries the state (the running accent while a
+  sub-agent runs, warn while one waits, faint once all have finished). Its accessible name and
+  tooltip keep the counts.
+  
+  The agent map follows one colour rule for every status dot (tree, level 2 head, legend, Agent call
+  block, chip): running accent, waiting and limit warn, completed faint, stopped a hollow faint ring,
+  failed fail. Its count line drops the running count (「N 个智能体 · 点击查看详情」), and a node names
+  its model only on the root or where it differs from the root's.
+- 84fb1df: Desktop shell: the band search field opens the command palette again. It now renders after the
+  content column, so the paper gutter and head drag fillers no longer cover it (#1120).
+- 7b6565d: Cap square agent avatar border-radius at 25% (`min(var(--cb-radius-sm), 25%)` / `min(var(--cb-radius-md), 25%)`) so compact/touch radius scaling keeps agents distinct from circular person avatars at small sizes.
+- f93197e: Composer: a Lexical-based `ComposerEditor` with inline tokens (connectors, resources, files,
+  project files, conversations, skills) and the presentational `InlineToken`, standalone for now;
+  the composer box moves onto it in a later change.
+- af0ec96: Composer frame: one even `space.2` inset (the field is the box; ＋, send, the attachment strip and
+  the text no longer pulled into its padding), and from 600 with a fine pointer the place (device and
+  project) moves out of the input into a `hover` tray above it, which the field overlaps; the pickers
+  lose the "/" separator and get a pill ground only on hover. On touch, send is concentric with the
+  pill's round end. The UI part `composer` (and its `aria-busy`) is now the field, the box: the place
+  tray and the open menu sit outside it, in the frame.
+- 12a20da: Web: an extension embed (such as the browser panel) no longer flashes white when it opens in the
+  dark theme. The frame stays hidden until its document has loaded and no longer inherits the dark
+  color scheme, so the browser keeps the embed's canvas transparent instead of painting it light.
+- 4894752: The composer switches to inline tokens: everything picked through `/` or `@` (a skill, a
+  connector, a connector resource, a library file, a conversation) and ＋ 项目文件 picks stand in the
+  sentence as tokens, while uploads stay cards. `@` lists the agent's connectors first (→ opens a
+  connector's resources), then files and conversations; ＋ loses 连接器资源 and its connector rows
+  insert a token. At most one skill per message. A message goes out as `text` with one U+FFFC per
+  token and its `tokens`; a refusal marks the token and offers 移除. Bubbles draw a message's tokens
+  from `payload.inline`, the skill chip first. The design adds `openTrigger` / `setTriggerQuery` to
+  the editor's handle and a `@capybara-hq/design/testing` entry with the editor's test drivers;
+  `FileDrop` leaves a paste a child already took alone.
+  A sent bubble's conversation token links to its conversation and a library file token opens the
+  file; a connector prompt picked mid-sentence goes where its `/` stood.
+- a0e1dfd: Page heads: a head whose tabs are routes stands at its first tab's level on every tab, so a tab's
+  own route (such as the admin 模板, 市场 or 待确认 tabs) no longer shows a path row its sibling tabs
+  do not (`headPath`). Path segments are now place names (管理后台 / 连接器 / 模板) instead of URL
+  slugs. In the desktop shell the strip above a first-level page's title drags the window too.
+
 ## 0.2.0-rc.55
 
 ### Patch Changes
