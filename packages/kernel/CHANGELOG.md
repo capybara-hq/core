@@ -1,5 +1,12 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.108
+
+### Patch Changes
+
+- 73516ef: Pin the model provider plugins that declare prompt cache support (anthropic, ark, bailian,
+  deepseek, openai, openai-compatible) and the plugins marketplace commit they were released from.
+
 ## 0.1.0-rc.107
 
 ### Patch Changes
