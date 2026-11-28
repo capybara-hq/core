@@ -639,8 +639,9 @@ reports it).
   reported rectangle alone (`--cb-shell-row-end`, 0 without controls or with controls at the start);
   below 600 the flat title bar is unchanged.
 - **The band's search field (maintainer decision 2026-11-28).** Any ground band (the start controls'
-  band in the rail's form, the end controls' band) holds a search field at the window's centre on
-  the controls' row, which opens the command palette as the sidebar's search button does; while it
+  band in the rail's form, the end controls' band) holds a search field at the centre of the band's
+  free span (the paper's start edge to the caption buttons or the window's end inset) on the
+  controls' row, which opens the command palette as the sidebar's search button does; while it
   shows, that button (the full sidebar's or the rail's) gives way. Not on a conversation, whose band
   row is full; hidden where it would overlap the band row's content, the sidebar or the window
   controls (the button comes back); no drag region. Layered shell spec §2.

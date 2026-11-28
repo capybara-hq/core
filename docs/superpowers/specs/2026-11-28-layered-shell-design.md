@@ -153,17 +153,18 @@ only, recolours `panel`) render unchanged and still pass the readability check.
   band of ground (the start controls' band in the rail's form, the end controls' band in every form
   from 600 up), the band's centre holds a search field so the band never looks empty: it looks like
   an input (the field ground, a `line` border, `radius.sm`, `control.default` high, the search icon
-  and 搜索 / Search in `muted`), sits at the window's centre on the controls' row (the window's
-  centre, not the band's free span: it stays put as the path row's length or the panel toggles
-  change), has an accessible name (搜索或执行命令), keyboard focus with the 1px inset ring and
-  `aria-keyshortcuts` Ctrl/⌘ K, is no drag region, and opens the command palette exactly as the
-  sidebar's search button does. While it shows, the sidebar's (or the rail's) search button gives
-  way to it. It is never drawn on a conversation (`/chat/<id>`), whose band row (path, title, panel
-  toggles) is full, and it hides (the button comes back) wherever it would come within 12 px of the
-  band row's content (a path or title, a path row, the panel toggles, the band's sidebar toggle),
-  the sidebar or the window controls, measured again on resize and on every page change. Without a
-  band (macOS beside the full sidebar, a browser, compact, a banner, a frame without a palette such
-  as the setup frame) nothing changes.
+  and 搜索 / Search in `muted`), sits at the centre of the band's free span on the controls' row (from
+  the paper's start edge, after the sidebar or the rail, to the caption buttons or the window's end
+  inset; not the window's centre, which lies left of the span beside the full sidebar, and not after
+  the path row, so it never moves as the path's length changes), has an accessible name (搜索或执行命令),
+  keyboard focus with the 1px inset ring and `aria-keyshortcuts` Ctrl/⌘ K, is no drag region, and
+  opens the command palette exactly as the sidebar's search button does. While it shows, the
+  sidebar's (or the rail's) search button gives way to it. It is never drawn on a conversation
+  (`/chat/<id>`), whose band row (path, title, panel toggles) is full, and it hides (the button
+  comes back) wherever it would come within 12 px of the band row's content (a path or title, a path
+  row, the panel toggles, the band's sidebar toggle), the sidebar or the window controls, measured
+  again on resize and on every page change. Without a band (macOS beside the full sidebar, a
+  browser, compact, a banner, a frame without a palette such as the setup frame) nothing changes.
 - **A first-level head beside the full sidebar (maintainer decision 2026-11-28).** A head without a
   path row reserves the window's top row only where controls reach into the content column (end
   controls, or start controls past the visible sidebar: `--cb-shell-head-row`); beside the full

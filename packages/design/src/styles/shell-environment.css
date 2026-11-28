@@ -508,7 +508,9 @@
    2026-11-28): wherever the window's top row is a band of ground (the start controls' band in the
    rail's form, the end controls' band; `--cb-shell-paper-drop` not 0, so never from compact, with
    a banner, beside macOS's full sidebar or in a browser), a field looking like an input sits at
-   the window's centre, centred on the controls' row, and opens the command palette as the
+   the centre of the band's free span, from the paper's start edge (the visible sidebar's or the
+   rail's width, `--cb-shell-lead`) to the trailing controls (the end reserve) or the window's end
+   inset, so the path row's length never moves it, centred on the controls' row, and opens the command palette as the
    sidebar's search button does. Not on a conversation: its band row (path, title, panel toggles)
    is full. band-search.tsx hides it (`data-fits="false"`, still laid out to be measured) where it
    would overlap the band row's content, the sidebar or the controls; while it shows, the sidebar's
@@ -522,7 +524,16 @@
     position: absolute;
     z-index: 2;
     top: calc((var(--cb-shell-row) - var(--cb-control-default)) / 2);
-    left: 50%;
+    left: calc(
+      (
+        var(--cb-inset-left) +
+        var(--cb-shell-lead) +
+        100vw -
+        var(--cb-shell-reserve-end) -
+        var(--cb-inset-right)
+      ) /
+      2
+    );
     box-sizing: border-box;
     width: clamp(160px, 22vw, 280px);
     height: var(--cb-control-default);

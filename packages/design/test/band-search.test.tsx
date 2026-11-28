@@ -105,13 +105,17 @@ describe("where CSS shows the band search (shell-environment.css)", () => {
   const Q = "not style(--cb-shell-paper-drop: 0px)";
   const FIELD_SEL =
     ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"]) > .cb-band-search';
-  it("in any band (start or end), centred on the window and on the controls' row", () => {
+  it("in any band (start or end), centred on the band's free span and on the controls' row", () => {
     expect(
       rules().find((r) => r.at === null && r.selector === ".cb-band-search")?.decls.display,
     ).toBe("none");
     const shown = rules().find((r) => r.at === Q && r.selector === FIELD_SEL);
     expect(shown?.decls.display).toBe("flex");
-    expect(shown?.decls.left).toBe("50%");
+    // the paper's start edge (after the sidebar or the rail) to the end reserve or end inset: not
+    // the window's centre, and nothing from the path row, so a path's length never moves it
+    expect(shown?.decls.left).toBe(
+      "calc( ( var(--cb-inset-left) + var(--cb-shell-lead) + 100vw - var(--cb-shell-reserve-end) - var(--cb-inset-right) ) / 2 )",
+    );
     expect(shown?.decls.transform).toBe("translateX(-50%)");
     expect(shown?.decls.top).toBe("calc((var(--cb-shell-row) - var(--cb-control-default)) / 2)");
     // it looks like an input
