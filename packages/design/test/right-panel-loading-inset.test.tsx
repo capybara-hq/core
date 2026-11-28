@@ -1,6 +1,6 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { DesignProvider, RightPanel, SkeletonBars } from "../src/index";
+import { DesignProvider, LoadFailed, RightPanel, SkeletonBars } from "../src/index";
 import { css, parseCss } from "./css-rules";
 
 afterEach(cleanup);
@@ -56,5 +56,42 @@ describe("RightPanel loading inset", () => {
     expect(container.querySelector('[data-part="skeleton-list"]')?.hasAttribute("data-inset")).toBe(
       false,
     );
+  });
+});
+
+const failRules = parseCss(css("conversation.css"));
+
+describe("RightPanel failure inset", () => {
+  it("a failed panel pads and centres its body", () => {
+    const { container } = render(
+      <DesignProvider locale="en">
+        <RightPanel title="Browser" body="flush" state="failed" onClose={() => {}} />
+      </DesignProvider>,
+    );
+    const body = container.querySelector('[data-part="panel-body"]');
+    expect(body?.getAttribute("data-pad")).toBe("pad");
+    expect(body?.querySelector('[data-part="load-failed"]')?.hasAttribute("data-inset")).toBe(
+      false,
+    );
+  });
+
+  it("an inset failure line in a flush body takes the padded body's inset, centred", () => {
+    const { container } = render(
+      <DesignProvider locale="en">
+        <RightPanel title="Browser" body="flush" onClose={() => {}}>
+          <LoadFailed name="Browser" reason="x" onRetry={() => {}} inset />
+        </RightPanel>
+      </DesignProvider>,
+    );
+    const body = container.querySelector('[data-part="panel-body"]');
+    expect(body?.getAttribute("data-pad")).toBe("flush");
+    expect(body?.querySelector('[data-part="load-failed"]')?.getAttribute("data-inset")).toBe(
+      "pane",
+    );
+    const rule = failRules.find(
+      (r) => r.at === null && r.selector === '.cb-load-failed[data-inset="pane"]',
+    );
+    expect(rule?.decls.padding).toBe(padding('.cb-rpanel-body[data-pad="pad"]'));
+    expect(rule?.decls.margin).toBe("auto");
   });
 });

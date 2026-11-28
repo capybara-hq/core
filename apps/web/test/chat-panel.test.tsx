@@ -8,8 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { EmbedTab } from "../src/components/extension-ui/EmbedTab";
+import { ExtensionPanel } from "../src/components/extension-ui/ExtensionBlocks";
 import type { ShellData } from "../src/lib/server/session";
-import type { UiView } from "../src/lib/ui";
+import type { UiContributionItem, UiView } from "../src/lib/ui";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { Link, resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -340,6 +341,41 @@ describe("嵌入应用（第二档）", () => {
     const bars = container.querySelector('[data-part="skeleton-list"]');
     expect(bars?.getAttribute("data-inset")).toBe("pane");
     expect(container.querySelector(".cb-skeleton")).toBeNull();
+  });
+
+  it("an embed panel whose page fails to load draws the failure line at the pane inset", async () => {
+    stubApi({
+      [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
+      [`POST ${UI}/embeds/board/live/token`]: () =>
+        json(502, { error: { code: "ui.render_failed", message: "x" } }),
+    });
+    const { container } = render(
+      <QueryClientProvider client={testQueryClient()}>
+        <NextIntlClientProvider locale="en" messages={en}>
+          <DesignProvider locale="en" link={Link as LinkComponent}>
+            <ToastProvider>
+              <ExtensionPanel
+                ctx={{ orgId: "o1", conversationId: "c1", onOpen: () => {} }}
+                c={{ ...EMBED, path: "/ui/live" } as UiContributionItem}
+                item={undefined}
+                onClose={() => {}}
+                onFullscreen={() => {}}
+                onPanelMode={() => {}}
+              />
+            </ToastProvider>
+          </DesignProvider>
+        </NextIntlClientProvider>
+      </QueryClientProvider>,
+    );
+    const failed = await vi.waitFor(() => {
+      const f = container.querySelector('[data-part="load-failed"]');
+      if (!f) throw new Error("no failure line yet");
+      return f;
+    });
+    expect(container.querySelector('[data-part="panel-body"]')?.getAttribute("data-pad")).toBe(
+      "flush",
+    );
+    expect(failed.getAttribute("data-inset")).toBe("pane");
   });
 
   it("组织页面 /p/<plugin>/<id>：kind embed 渲染沙箱 iframe（不带 conversationId，不开组织流）", async () => {

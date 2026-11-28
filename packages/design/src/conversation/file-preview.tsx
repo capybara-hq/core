@@ -16,19 +16,30 @@ import { fillCopy } from "./tool-copy";
 // failing one affects only this panel. Share (file sharing design §5) is an icon button before
 // Download when the caller passes `onShare`.
 
-/** An extension block that failed to load (§6.16): the name, the reason and Retry, in place. */
+/**
+ * An extension block that failed to load (§6.16): the name, the reason and Retry, in place.
+ * `inset`: in a pane without padding (a flush right panel body) the line takes the padded body's
+ * inset (`space.4`) and sits centred, as in a failed panel's body, never against the pane's edges.
+ */
 export function LoadFailed({
   name,
   reason,
   onRetry,
+  inset = false,
 }: {
   name: string;
   reason?: string;
   onRetry?(): void;
+  inset?: boolean;
 }): JSX.Element {
   const t = useDesignT();
   return (
-    <div className="cb-load-failed" role="alert">
+    <div
+      className="cb-load-failed"
+      data-part="load-failed"
+      data-inset={inset ? "pane" : undefined}
+      role="alert"
+    >
       <span className="cb-load-failed-title" data-part="load-failed-title">
         <Icon name="circle-alert" size={14} />
         {fillCopy(t("files.loadFailed"), { name })}

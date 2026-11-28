@@ -2231,6 +2231,11 @@ button.cb-file-card:focus-visible {
   align-items: center;
   gap: var(--cb-space-2);
 }
+/* In a pane without padding: the padded right panel body's inset, centred like a failed body. */
+.cb-load-failed[data-inset="pane"] {
+  margin: auto;
+  padding: var(--cb-space-4);
+}
 .cb-load-failed > .cb-link-btn {
   margin-left: auto;
 }
