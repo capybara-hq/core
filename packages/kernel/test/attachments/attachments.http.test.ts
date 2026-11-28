@@ -188,14 +188,17 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     expect(reqs).toHaveLength(1);
     expect(reqs[0]?.messages[0]?.content[0]).toEqual({ type: "text", text: SENDER_LINE });
     const blocks = userBlocks(reqs[0] as ModelRequest);
+    // each file's block follows its `[file: …]` line (composer inline tokens spec §3.3)
     expect(blocks).toEqual([
       { type: "text", text: "look" },
+      { type: "text", text: "[file: cat.png]" },
       {
         type: "image",
         mediaType: "image/png",
         name: "cat.png",
         source: { kind: "base64", data: PNG.toString("base64") },
       },
+      { type: "text", text: "[file: spec.pdf]" },
       {
         type: "document",
         mediaType: "application/pdf",
@@ -211,7 +214,9 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     expect(user?.payload).toMatchObject({
       content: [
         { type: "text", text: "look" },
+        { type: "text", text: "[file: cat.png]" },
         { type: "image", source: { kind: "ref", fileId: img }, name: "cat.png" },
+        { type: "text", text: "[file: spec.pdf]" },
         { type: "document", source: { kind: "ref", fileId: pdf }, name: "spec.pdf" },
       ],
     });
@@ -232,7 +237,8 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     expect(res.statusCode, res.body).toBe(202);
     await waitForTerminal(db, convId);
     const user = (await eventsOf(db, convId)).find((e) => e.type === "user_message");
-    expect(user?.payload.content[1]).toEqual({
+    expect(user?.payload.content[1]).toEqual({ type: "text", text: "[file: 电商工行.xlsx]" });
+    expect(user?.payload.content[2]).toEqual({
       type: "file",
       mediaType: XLSX,
       source: { kind: "ref", fileId: id },
@@ -282,7 +288,11 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     const texts = userBlocks(agentRequests()[0] as ModelRequest).map((b) =>
       b.type === "text" ? b.text : b.type,
     );
-    expect(texts).toEqual(["x", '[Attachment "gone.png" is no longer available.]']);
+    expect(texts).toEqual([
+      "x",
+      "[file: gone.png]",
+      '[Attachment "gone.png" is no longer available.]',
+    ]);
   });
 
   it("finalize 之后对象被换成别的大小：不发字节，按不再可用处理", async () => {
@@ -299,6 +309,7 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     expect(JSON.stringify(req)).not.toContain(swapped.toString("base64"));
     expect(userBlocks(req).map((b) => (b.type === "text" ? b.text : b.type))).toEqual([
       "x",
+      "[file: swap.png]",
       '[Attachment "swap.png" is no longer available.]',
     ]);
   });
@@ -344,8 +355,17 @@ describe("message files (library files)", () => {
     };
     const reqs = agentRequests();
     expect(reqs).toHaveLength(2);
-    expect(userBlocks(reqs[0] as ModelRequest)).toEqual([{ type: "text", text: "one" }, image]);
-    expect(userBlocks(reqs[1] as ModelRequest)).toEqual([{ type: "text", text: "two" }, image]);
+    const line = { type: "text", text: "[file: cat.png]" };
+    expect(userBlocks(reqs[0] as ModelRequest)).toEqual([
+      { type: "text", text: "one" },
+      line,
+      image,
+    ]);
+    expect(userBlocks(reqs[1] as ModelRequest)).toEqual([
+      { type: "text", text: "two" },
+      line,
+      image,
+    ]);
     // one file, ready, referred to by both conversations
     const file = await db
       .selectFrom("files")
@@ -480,7 +500,7 @@ describe("the download URL as JSON (as=url)", () => {
 });
 
 describe("只有附件的消息", () => {
-  it("text 为空 + files：202，日志与请求里都没有空文本块", async () => {
+  it("empty text with files: 202, the file line leads, no empty text block in log or request", async () => {
     const convId = await conversationWith("see-1");
     const img = await ready(owner, "cat.png", "image/png", PNG);
     const res = await post(owner, convId, { text: "", files: [img] });
@@ -488,6 +508,7 @@ describe("只有附件的消息", () => {
     await waitForTerminal(db, convId);
     const [msg] = (await eventsOf(db, convId)).filter((e) => e.type === "user_message");
     expect(msg?.payload.content).toEqual([
+      { type: "text", text: "[file: cat.png]" },
       {
         type: "image",
         mediaType: "image/png",
@@ -497,7 +518,7 @@ describe("只有附件的消息", () => {
       },
     ]);
     const blocks = userBlocks(agentRequests()[0] as ModelRequest);
-    expect(blocks.map((b) => b.type)).toEqual(["image"]);
+    expect(blocks.map((b) => b.type)).toEqual(["text", "image"]);
   });
 
   it("text 为空且没有 files → 400；text 为空但带 @ 资源 → 400", async () => {

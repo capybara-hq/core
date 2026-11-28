@@ -710,9 +710,31 @@ function userText(e: Extract<ConversationEvent, { type: "user_message" }>): stri
   const attachments = e.payload.attachments ?? [];
   const projectFiles = e.payload.projectFiles ?? [];
   const conversationRefs = e.payload.conversationRefs ?? [];
-  return attachments.length > 0 || projectFiles.length > 0 || conversationRefs.length > 0
-    ? joinText(e.payload.content.slice(0, 1), "text")
-    : joinText(e.payload.content, "text");
+  // a message with tokens (composer inline tokens spec §3.3) keeps its blocks after content[0]
+  const tokens = (e.payload as { inline?: unknown[] }).inline ?? [];
+  const content = withoutFileLines(e.payload.content);
+  return attachments.length > 0 ||
+    projectFiles.length > 0 ||
+    conversationRefs.length > 0 ||
+    tokens.length > 0
+    ? joinText(content.slice(0, 1), "text")
+    : joinText(content, "text");
+}
+
+const FILE_LINE = /^\[file: [^\n]*\]$/;
+const isFileBlock = (b: ContentBlock | undefined): boolean =>
+  b?.type === "image" || b?.type === "document" || b?.type === "file";
+
+/**
+ * The content without the kernel's `[file: <name>]` lines (composer inline tokens spec §3.3): a
+ * text block of that form right before a file's block names the file for the model, so the bubble,
+ * which draws the file as a card, never shows it (an upload-only message then has no text). Older
+ * messages have no such lines and keep their text.
+ */
+function withoutFileLines(content: readonly ContentBlock[]): ContentBlock[] {
+  return content.filter(
+    (b, i) => !(b.type === "text" && FILE_LINE.test(b.text) && isFileBlock(content[i + 1])),
+  );
 }
 
 const asRecord = (v: unknown): Record<string, unknown> =>

@@ -246,6 +246,34 @@ describe("projectFiles on send", () => {
     expect(statPaths(machine)).toEqual([`${ROOT}/src/a.ts`, `${ROOT}/README.md`]);
   });
 
+  it("a projectFile token: its placeholder in the text, its block led by it, normalized once", async () => {
+    const d = await owned();
+    await connect(d);
+    const conv = await conversation(d);
+    const res = await send(d, conv, {
+      text: "\uFFFC then \uFFFC",
+      tokens: [
+        { type: "projectFile", path: "./src/a.ts" },
+        { type: "projectFile", path: "src/a.ts" },
+      ],
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const [m] = await userMessages(conv);
+    expect(m?.payload.content).toEqual([
+      { type: "text", text: "[project file: src/a.ts] then [project file: src/a.ts]" },
+      {
+        type: "text",
+        text: `[project file: src/a.ts] ${projectFileText("src/a.ts", ROOT)}`,
+      },
+    ]);
+    expect(m?.payload.projectFiles).toEqual([{ path: "src/a.ts" }]);
+    // `inline` names the file by its normalized path at both places
+    expect(m?.payload.inline?.map((e) => e.ref)).toEqual([
+      { path: "src/a.ts" },
+      { path: "src/a.ts" },
+    ]);
+  });
+
   it("puts the project file blocks after the @ resources' bodies", async () => {
     const d = await owned();
     await connect(d);
@@ -587,6 +615,47 @@ describe("projectFiles on send", () => {
       .where("create_request_id", "=", clientMessageId)
       .execute();
     expect(none).toEqual([]);
+  });
+
+  it("create and first-message with a projectFile token on a bound device project", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    const message = () => ({
+      text: "start with \uFFFC",
+      clientMessageId: randomUUID(),
+      tokens: [{ type: "projectFile", path: "./src/a.ts" }],
+    });
+    const expected = [
+      { type: "text", text: "start with [project file: src/a.ts]" },
+      { type: "text", text: `[project file: src/a.ts] ${projectFileText("src/a.ts", ROOT)}` },
+    ];
+    const created = await d.req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations`,
+      payload: { agentId, deviceId: d.deviceId, project: "app", message: message() },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const body = created.json() as { event: UserMessage };
+    expect(body.event.payload.content).toEqual(expected);
+    expect(body.event.payload.projectFiles).toEqual([{ path: "src/a.ts" }]);
+    expect(body.event.payload.inline?.[0]?.ref).toEqual({ path: "src/a.ts" });
+    const home = await d.req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/first-message`,
+      payload: {
+        agentId,
+        deviceId: d.deviceId,
+        project: "app",
+        message: message(),
+        permission: { profile: "request-approval" },
+      },
+    });
+    expect(home.statusCode, home.body).toBe(201);
+    const [m] = await userMessages(
+      (home.json() as { conversation: { id: string } }).conversation.id,
+    );
+    expect(m?.payload.content).toEqual(expected);
+    expect(statPaths(machine)).toEqual([`${ROOT}/src/a.ts`, `${ROOT}/src/a.ts`]);
   });
 
   it("first-message (the new-conversation home): the files are referenced, a missing path refused", async () => {

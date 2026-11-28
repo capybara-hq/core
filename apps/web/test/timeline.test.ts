@@ -622,6 +622,60 @@ describe("buildTimeline", () => {
     );
   });
 
+  it("bubbles never show the kernel's file lines; older messages keep their text", () => {
+    const image = (fileId: string, name: string) => ({
+      type: "image",
+      mediaType: "image/png",
+      source: { kind: "ref", fileId },
+      name,
+    });
+    const out = buildTimeline(
+      [
+        // an older message: its text, then a bare upload
+        user(1, "old", { content: [{ type: "text", text: "old" }, image("f1", "a.png")] }),
+        // a new message: its text, then the upload's line and block
+        user(2, "new", {
+          content: [
+            { type: "text", text: "new" },
+            { type: "text", text: "[file: b.png]" },
+            image("f2", "b.png"),
+          ],
+        }),
+        // upload only: the first block is the file line
+        user(3, "", {
+          content: [{ type: "text", text: "[file: c.png]" }, image("f3", "c.png")],
+        }),
+        // a typed text that only looks like a file line stays
+        user(4, "[file: d.png]"),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    const users = out.flatMap((e) => (e.kind === "user" ? [e.text] : []));
+    expect(users).toEqual(["old", "new", "", "[file: d.png]"]);
+  });
+
+  it("a message naming only a connector keeps content[0] as its text", () => {
+    const out = buildTimeline(
+      [
+        user(1, "[connector: Slack] ping", {
+          content: [
+            { type: "text", text: "[connector: Slack] ping" },
+            { type: "text", text: '[connector: Slack] The person named the connector "Slack".' },
+          ],
+          inline: [
+            { kind: "connector", start: 0, end: 18, label: "Slack", ref: { connectorId: "c1" } },
+          ],
+        }),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(out[0]).toMatchObject({ kind: "user", text: "[connector: Slack] ping" });
+  });
+
   it("a message referencing conversations alone keeps content[0] as its text and names them", () => {
     const quote = (id: string) => ({
       type: "text",

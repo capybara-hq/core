@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -88,7 +89,7 @@ export type ComposerMenuProps = {
   /** The footer's `@` and `/` hints become buttons switching to that menu. */
   onSwitch?(kind: "slash" | "at"): void;
   /**
-   * A second level is open (a connector's resources): the head 「‹ title」 with a back button, ←
+   * A second level is open (a connector's resources): the head "‹ title" with a back button, ←
    * and Backspace on an empty query call `onBack`. On compact it is the sheet's in-sheet drill-in
    * (spec §6.59) with the search field. The caller supplies the level's `groups`.
    */
@@ -134,8 +135,11 @@ function readCaret(e: KeyboardEvent<HTMLElement>): ComposerMenuCaret {
     selectionEnd?: number | null;
     value?: string;
   };
-  const start = f.selectionStart ?? 0;
-  const end = f.selectionEnd ?? 0;
+  // no selection to read (not a text field): assume nothing about the caret
+  if (typeof f.selectionStart !== "number" || typeof f.selectionEnd !== "number")
+    return { collapsed: false, atStart: false, atEnd: false };
+  const start = f.selectionStart;
+  const end = f.selectionEnd;
   return { collapsed: start === end, atStart: end === 0, atEnd: start === (f.value?.length ?? 0) };
 }
 
@@ -559,7 +563,7 @@ function Notice({
   );
 }
 
-/** The second level's head 「‹ title」: a back button and the level's title. */
+/** The second level's head "‹ title": a back button and the level's title. */
 function LevelHead({ level }: { level: NonNullable<ComposerMenuProps["level"]> }): JSX.Element {
   const t = useDesignT();
   return (
@@ -620,7 +624,7 @@ function Footer({
     );
   return (
     <div className="cb-cmm-foot" data-part="composer-menu-foot">
-      {switchTo("at", "@", t("composerMenu.footAt").replace(/^@\s*/, ""))}
+      {switchTo("at", "@", t("composerMenu.footAt"))}
       {sep}
       {switchTo("slash", "/", t("composerMenu.hint.slash"))}
       {sep}
@@ -650,17 +654,34 @@ function SheetBody({
   p,
   controller,
   title,
+  keepFocus,
 }: {
   p: ComposerMenuProps;
   controller: ComposerMenuController;
   title: string;
+  /** Set by the sheet that owns this body: the search field had the focus when the body unmounted. */
+  keepFocus?: { current: boolean };
 }): JSX.Element {
   const t = useDesignT();
+  const field = useRef<HTMLInputElement>(null);
+  // The sheet keys its pane by page, so a drill (or back) remounts this body: hand the focus on
+  // to the new search field when the old one held it.
+  useLayoutEffect(() => {
+    const input = field.current;
+    if (keepFocus?.current) {
+      keepFocus.current = false;
+      input?.focus();
+    }
+    return () => {
+      if (keepFocus && document.activeElement === input) keepFocus.current = true;
+    };
+  }, [keepFocus]);
   const label = p.searchLabel ?? t("composerMenu.search");
   const activeDom = controller.shown.flatMap((g) => g.items).find((r) => r.active)?.domId;
   return (
     <div className="cb-cmm" data-part="composer-menu" data-kind={p.kind} data-form="sheet">
       <input
+        ref={field}
         type="search"
         className="cb-cmm-search"
         data-part="composer-menu-search"
@@ -692,6 +713,7 @@ function ComposerMenuSheet({
   title: string;
 }): JSX.Element {
   const t = useDesignT();
+  const keepFocus = useRef(false);
   useOverlayHistory(true, p.onClose);
   return (
     <RD.Root
@@ -710,7 +732,7 @@ function ComposerMenuSheet({
         // on touch a choice never focuses the composer (its focus pops the keyboard)
         returnFocus={() => !isTouchPointer()}
       >
-        <SheetBody p={p} controller={controller} title={title} />
+        <SheetBody p={p} controller={controller} title={title} keepFocus={keepFocus} />
       </BottomSheetContent>
     </RD.Root>
   );

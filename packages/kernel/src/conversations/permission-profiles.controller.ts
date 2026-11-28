@@ -81,6 +81,7 @@ export class PermissionProfilesController {
       {
         text: message.text,
         clientMessageId: message.clientMessageId,
+        ...(message.tokens !== undefined ? { tokens: message.tokens } : {}),
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
         ...(message.files !== undefined ? { files: message.files } : {}),
         ...(message.projectFiles !== undefined ? { projectFiles: message.projectFiles } : {}),

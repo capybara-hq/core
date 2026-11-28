@@ -197,7 +197,13 @@
         "default": "引用的会话已不可用。请移除它后再试。",
         "empty": "引用的会话还没有消息。请移除它后再试。"
       },
-      "reference_self": "不能在会话里引用这个会话本身。请移除这个引用。"
+      "reference_self": "不能在会话里引用这个会话本身。请移除这个引用。",
+      "connector_unavailable": {
+        "default": "消息中的连接器不能使用，移除后再试。",
+        "not_found": "这个连接器已不存在或已停用",
+        "needs_config": "需要管理员先完成配置",
+        "not_offered": "这个智能体不能使用它"
+      }
     },
     "background_task": {
       "not_found": "这个后台任务不存在或已被清理。",
@@ -237,6 +243,11 @@
       "tool_not_found": "该连接器没有这个工具。",
       "tool_not_pending": "该工具不在待复核状态。",
       "resources_disabled": "该连接器已关闭读取资源。",
+      "resource_unreadable": {
+        "default": "消息中的资源没有可读内容，移除后再试。",
+        "ui_template": "这是界面模板，没有可读内容",
+        "empty": "这个资源是空的"
+      },
       "not_personal": "该连接器整个组织共用一个凭据，没有按成员设置的工具权限。",
       "git_push_widen_not_allowed": "放宽连接器的 git 推送策略需要由人在连接器的设置页操作。"
     },

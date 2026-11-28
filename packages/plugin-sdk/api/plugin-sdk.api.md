@@ -819,6 +819,7 @@ export interface ConnectorSession {
         name: string;
         description?: string;
         mimeType?: string;
+        size?: number;
     }[]>;
     listTools(): Promise<ToolSpec[]>;
     readResource?(uri: string): Promise<ToolResult>;

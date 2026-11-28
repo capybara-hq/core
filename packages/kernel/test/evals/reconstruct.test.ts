@@ -1954,7 +1954,9 @@ describe("reconstructRequest：基线零漂移", () => {
         { type: "text", text: projectFileText("src/a.ts", root) },
         { type: "text", text: projectFileText("docs/b.md", root) },
       ]);
-      expect(message.payload.content[3]).toMatchObject({
+      // the upload's `[file: …]` line, then its block
+      expect(message.payload.content[3]).toEqual({ type: "text", text: "[file: notes.txt]" });
+      expect(message.payload.content[4]).toMatchObject({
         type: "document",
         source: { kind: "ref", fileId: id },
       });
@@ -2006,7 +2008,8 @@ describe("reconstructRequest：基线零漂移", () => {
     expect(block).toContain(`Referenced conversation: "`);
     expect(block).toContain("User: echo:the pricing thread");
     expect(block).toContain(`conversations.events operation (conversationId ${ref}).`);
-    expect(message.payload.content[2]).toMatchObject({
+    expect(message.payload.content[2]).toEqual({ type: "text", text: "[file: notes.txt]" });
+    expect(message.payload.content[3]).toMatchObject({
       type: "document",
       source: { kind: "ref", fileId: id },
     });

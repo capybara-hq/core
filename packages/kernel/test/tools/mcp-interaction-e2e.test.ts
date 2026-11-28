@@ -490,7 +490,7 @@ describe("prompts 与 resources", () => {
     const blocks = ev.payload.content as { type: string; text: string }[];
     expect(blocks[0]).toEqual({ type: "text", text: "Please read these" });
     expect(blocks[1]?.text).toBe(
-      `Attached resource "Handbook" (docs://handbook) from app Forms:\n\n# Handbook ${"x".repeat(10)} token=[REDACTED]`,
+      `Attached resource "Handbook" (docs://handbook) from the connector Forms:\n\n# Handbook ${"x".repeat(10)} token=[REDACTED]`,
     );
     expect(blocks[2]?.text.length).toBeLessThan(52_000);
     expect(blocks[2]?.text).toMatch(

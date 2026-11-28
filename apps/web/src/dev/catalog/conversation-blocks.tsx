@@ -208,11 +208,10 @@ function userBubbleBlocks(): ReactNode {
       </Block>
       {/* composer inline tokens spec §1: tokens inside the sentence, and after the skill chip */}
       <Block id="user-bubble-tokens">
-        <UserBubble text="" segments={BUBBLE_TOKENS_FIXTURE.text} />
+        <UserBubble segments={BUBBLE_TOKENS_FIXTURE.text} />
       </Block>
       <Block id="user-bubble-skill-tokens">
         <UserBubble
-          text=""
           skill={BUBBLE_TOKENS_FIXTURE.skill.label}
           segments={BUBBLE_TOKENS_FIXTURE.skill.arguments}
         />

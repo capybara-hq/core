@@ -853,7 +853,7 @@ function composerMenuBlocks(): ReactNode {
           }}
         />
       </Block>
-      {/* the second level: the head 「‹ Slack · 资源」, typing filters the resources */}
+      {/* the second level: the head "‹ Slack · Resources", typing filters the resources */}
       <Block id="composer-menu-at-resources" offsetTop={320}>
         <ComposerMenuComposer
           value="@"

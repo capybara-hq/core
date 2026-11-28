@@ -1621,7 +1621,7 @@ export const COMPOSER_MENU_FIXTURE: {
   conversations: FixtureComposerMenuGroup;
   /** The @ menu's first level with connectors first (inline tokens §4): rows, a connector waiting for setup. */
   atConnectors: FixtureComposerMenuGroup[];
-  /** The @ menu's second level: one connector's resources, under the head 「‹ title」. */
+  /** The @ menu's second level: one connector's resources, under the head "‹ title". */
   resources: { title: string; groups: FixtureComposerMenuGroup[] };
   /** The / menu with a skill already in the draft: its skills are disabled with the one-skill line. */
   slashOneSkill: FixtureComposerMenuGroup[];

@@ -236,6 +236,7 @@ UI: a "Conversation compaction" section on the platform settings page and the or
 ## 6. Deferred
 
 - Background precompute of the summary.
-- A `compaction` model purpose mapping (cheaper summary model).
+- A `compaction` model purpose mapping (cheaper summary model): taken up by the compaction model
+  design (`2026-11-28-compaction-model-design.md`).
 - A real percentage in the single-request path (not possible without chunking).
 - A policy for a single user message larger than the window other than truncation with a note.

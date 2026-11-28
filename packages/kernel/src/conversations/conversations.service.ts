@@ -39,8 +39,15 @@ import { permissionScopeHash } from "../sandbox/permission-facts.js";
 import { revokeSharesIn } from "../shares/revoke.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { type ApprovalRecord, ApprovalsService } from "../tools/approvals.service.js";
-import { ConnectorContent } from "../tools/connector-content.js";
+import {
+  attachmentMeta,
+  ConnectorContent,
+  type ReadResource,
+  resourceBlockText,
+} from "../tools/connector-content.js";
+import { MentionableConnectorsService } from "../tools/mentionable-connectors.js";
 import { type QuestionRecord, QuestionsService } from "../tools/questions.service.js";
+import { READ_RESOURCE } from "../tools/resources.js";
 import { ConversationAccess, parentReachable } from "./access.js";
 import { type AgentTreeNode, readAgentTree } from "./agent-tree.js";
 import { conversationRefText, REF_TURN_MESSAGES, refMessageText } from "./conversation-ref.js";
@@ -48,6 +55,18 @@ import { type AppendEvent, EventLog } from "./event-log.js";
 import { peopleOfEvents } from "./event-people.js";
 import { type ConversationEvent, type LogContentBlock, refFileId } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
+import {
+  connectorMentionText,
+  fileLine,
+  foldLabel,
+  type InlineEntry,
+  MENTION_LOAD_MAX_TOOLS,
+  type MessageToken,
+  numberLabels,
+  placeholder,
+  renderInline,
+  tokenEntityKey,
+} from "./inline-tokens.js";
 import {
   type ImSenderContext,
   type MessageContext,
@@ -326,10 +345,25 @@ export interface AttachmentRef {
 
 /**
  * Resolved `@` resources and referenced project files: the blocks after the user text (the
- * resources' bodies, then one text block per project file) and their metadata.
+ * resources' bodies, then one text block per project file) and their metadata. A message with
+ * `tokens` (composer inline tokens spec §3) also gets its rendered text, where its placeholders
+ * stand, its connector mentions and its file tokens.
  */
 export interface ResolvedExtra {
   blocks: { type: "text"; text: string }[];
+  /**
+   * The text with each token marker replaced by its placeholder (a skill invocation's trimmed
+   * arguments); absent: the message has no tokens and its text is used as typed.
+   */
+  text?: string;
+  /** Where each placeholder stands in {@link text} (`payload.inline`, display only). */
+  inline?: InlineEntry[];
+  /** The connectors the message names (`payload.connectorMentions`), in block order. */
+  connectorMentions?: ConnectorMention[];
+  /** The library files the message's file tokens name, in text order, before the uploads. */
+  fileTokenIds?: string[];
+  /** The label of each file (file tokens and uploads), numbered across them (spec §3.2). */
+  fileLabels?: Map<string, string>;
   /** 写进 user_message 的附件元数据：事件 payload 字段名仍为 `appId` / `appName`（C27）。 */
   attachments: { appId: string; appName: string; uri: string; name: string }[];
   /** The referenced project files (normalized paths), in block order; absent: none. */
@@ -341,6 +375,28 @@ export interface ResolvedExtra {
    * files' blocks; absent: none.
    */
   conversationRefs?: ConversationRefMeta[];
+}
+
+/** One connector a message names, as `payload.connectorMentions` records it (spec §3.5). */
+export interface ConnectorMention {
+  connectorId: string;
+  slug: string;
+  name: string;
+  /** The agent's offered tools of it at send time. */
+  toolCount: number;
+  /**
+   * Its offered tool keys when it offers at most 20 (else empty), loaded from this message on when
+   * a step runs with tool search (inert without it).
+   */
+  loadedTools: string[];
+}
+
+/** Where the agent's tools are resolved for a message that names connectors or resources. */
+export interface MessageAgentContext {
+  agent: AgentDefinition;
+  source: ConversationSource;
+  /** The conversation the step's sandbox tools follow; absent for a conversation being created. */
+  sandboxConversationId?: string | undefined;
 }
 
 /** One referenced conversation as `payload.conversationRefs` names it. */
@@ -372,6 +428,54 @@ export interface ProjectFilesTarget {
  */
 export const projectFileText = (path: string, root: string): string =>
   `Referenced project file: ${path} (in the project root ${root}; read it with Read when needed).`;
+
+/** The files a message attaches, in block order: its file tokens' files, then its uploads. */
+const messageFiles = (
+  input: Pick<UserMessageInput, "files">,
+  extra: Pick<ResolvedExtra, "fileTokenIds">,
+): string[] => {
+  const tokens = extra.fileTokenIds ?? [];
+  return [...tokens, ...uploadsBeside(input.files ?? [], tokens)];
+};
+
+/** A message's uploads without the files its file tokens already name (attached once). */
+const uploadsBeside = (uploads: readonly string[], fileTokenIds: readonly string[]): string[] => {
+  const named = new Set(fileTokenIds);
+  return uploads.filter((id) => !named.has(id));
+};
+
+/**
+ * The files' blocks with a `[file: <label>]` text block before each media block (composer inline
+ * tokens spec §3.3), so the model reads which file each one is (an image is sent bare). A file
+ * with no given label is labelled by its name, numbered after the given labels.
+ */
+export function withFileLines(
+  blocks: readonly LogContentBlock[],
+  labels?: ReadonlyMap<string, string>,
+): LogContentBlock[] {
+  const given = labels ?? new Map<string, string>();
+  const numbered = numberLabels([
+    ...[...given].map(([id, label]) => ({ key: id, label })),
+    ...blocks.flatMap((b) =>
+      (b.type === "image" || b.type === "document" || b.type === "file") && b.source.kind === "ref"
+        ? [{ key: refFileId(b.source), label: foldLabel(b.name ?? "") }]
+        : [],
+    ),
+  ]);
+  return blocks.flatMap((b) =>
+    (b.type === "image" || b.type === "document" || b.type === "file") && b.source.kind === "ref"
+      ? [
+          {
+            type: "text" as const,
+            text: fileLine(
+              given.get(refFileId(b.source)) ?? numbered.get(refFileId(b.source)) ?? "",
+            ),
+          },
+          b,
+        ]
+      : [b],
+  );
+}
 
 /**
  * A referenced conversation that cannot be referenced (422, `details: [{ id, reason? }]`): one
@@ -482,6 +586,11 @@ export const EVENTS_TURN_EXTEND = 2000;
 export interface UserMessageInput {
   text: string;
   clientMessageId?: string;
+  /**
+   * Inline tokens (composer inline tokens spec §3.1), one U+FFFC in `text` each, in order; never
+   * with `attachments`, `projectFiles` or `conversationRefs` (the HTTP layer refuses both).
+   */
+  tokens?: MessageToken[];
   attachments?: AttachmentRef[];
   files?: string[];
   /**
@@ -600,10 +709,13 @@ export class ConversationsService {
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     /** Reads `@` resources with the sender's credentials. */
     @Inject(ConnectorContent)
-    private readonly content: Pick<ConnectorContent, "resolveAttachments">,
+    private readonly content: Pick<ConnectorContent, "resolveAttachments" | "readResources">,
     /** Attaches the sender's library files to the conversation in the message's transaction. */
     @Inject(LibraryFilesService)
-    private readonly libraryFiles: Pick<LibraryFilesService, "attachForMessage">,
+    private readonly libraryFiles: Pick<
+      LibraryFilesService,
+      "attachForMessage" | "labelsFor" | "checkMessageFileCount"
+    >,
     /** Renders a person's skill invocation (phase D). */
     @Inject(SkillInvoker) private readonly invoker: Pick<SkillInvoker, "prepare">,
     /** Stops a deleted conversation's background tasks. */
@@ -629,6 +741,9 @@ export class ConversationsService {
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     /** Owes the snapshot deletions of the shares a deletion revokes (file sharing spec §9). */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    /** The agent's tools for a message naming connectors or resources (inline tokens §3.4). */
+    @Inject(MentionableConnectorsService)
+    private readonly mentions: Pick<MentionableConnectorsService, "resolveForMessage">,
   ) {}
 
   /**
@@ -711,21 +826,27 @@ export class ConversationsService {
     const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
     // the project its files are checked in, read before the write (the binding inside it decides)
     const project =
-      (input.projectFiles?.length ?? 0) > 0
+      (input.projectFiles?.length ?? 0) > 0 ||
+      input.tokens?.some((t) => t.type === "projectFile") === true
         ? await this.bindingFor(orgId, accountId, deviceId, pick.project)
         : undefined;
-    const extra = await this.resolveExtra(orgId, accountId, input, {
-      deviceId,
-      project,
-      signal: internal.signal,
-    });
+    const extra = await this.resolveExtra(
+      orgId,
+      accountId,
+      input,
+      { deviceId, project, signal: internal.signal },
+      // no sandbox conversation yet: the row is written after the resolution (its id with it), so
+      // the device-bound builtins are listed as for a conversation without one; a connector's
+      // tools never depend on it, only the tool search threshold's count may
+      { agent: agent.definition, source: internal.source },
+    );
     const invoked = await this.prepareSkill(
       orgId,
       accountId,
       agentId,
       { conversationId: undefined, deviceId },
       agent.definition,
-      input,
+      { ...(input.skill !== undefined && { skill: input.skill }), text: extra.text ?? input.text },
     );
     const id = randomUUID();
     let all: ConversationEvent[] | undefined;
@@ -837,7 +958,13 @@ export class ConversationsService {
           internal.initialPermission,
         )
       : [];
-    const blocks = await this.bindIn(orgId, id, accountId, input.files ?? []);
+    const blocks = await this.bindIn(
+      orgId,
+      id,
+      accountId,
+      messageFiles(input, extra),
+      extra.fileLabels,
+    );
     // a new conversation has no run yet, so nothing to skip
     const written = await this.writeMessage(
       orgId,
@@ -1656,16 +1783,29 @@ export class ConversationsService {
         return existing;
       }
     }
+    const namesConnectors =
+      input.tokens?.some((t) => t.type === "connector" || t.type === "resource") === true;
     const needsAgent =
-      input.model !== undefined || input.effort !== undefined || input.skill !== undefined;
+      input.model !== undefined ||
+      input.effort !== undefined ||
+      input.skill !== undefined ||
+      namesConnectors;
     const agent = needsAgent
       ? (await this.agents.get(orgId, conv.agentId, accountId)).definition
       : undefined;
-    const extra = await this.resolveExtra(orgId, accountId, input, {
-      ...conv,
-      conversationId,
-      signal,
-    });
+    const extra = await this.resolveExtra(
+      orgId,
+      accountId,
+      input,
+      { ...conv, conversationId, signal },
+      agent !== undefined && namesConnectors
+        ? {
+            agent,
+            source: await this.sourceOf(orgId, conversationId),
+            sandboxConversationId: conversationId,
+          }
+        : undefined,
+    );
     const invoked =
       agent === undefined
         ? undefined
@@ -1675,7 +1815,10 @@ export class ConversationsService {
             conv.agentId,
             { conversationId, deviceId: conv.deviceId },
             agent,
-            input,
+            {
+              ...(input.skill !== undefined && { skill: input.skill }),
+              text: extra.text ?? input.text,
+            },
           );
     // one transaction: the sender, time zone and language are read with the message's write
     // (run context spec §3.2)
@@ -1757,7 +1900,13 @@ export class ConversationsService {
       if (!sameSelection(expectedSelection, selection)) return { selection };
     }
 
-    const blocks = await this.bindIn(orgId, conversationId, accountId, input.files ?? []);
+    const blocks = await this.bindIn(
+      orgId,
+      conversationId,
+      accountId,
+      messageFiles(input, extra),
+      extra.fileLabels,
+    );
     const written = await this.writeMessage(
       orgId,
       conversationId,
@@ -2029,9 +2178,17 @@ export class ConversationsService {
   async resolveExtra(
     orgId: string,
     accountId: string,
-    input: Pick<UserMessageInput, "attachments" | "projectFiles" | "conversationRefs">,
+    input: Pick<
+      UserMessageInput,
+      "text" | "tokens" | "files" | "skill" | "attachments" | "projectFiles" | "conversationRefs"
+    >,
     target?: ProjectFilesTarget,
+    /** Where the agent's tools are resolved; required when the tokens name connectors or resources. */
+    agentContext?: MessageAgentContext,
   ): Promise<ResolvedExtra> {
+    if (input.tokens !== undefined) {
+      return this.resolveTokens(orgId, accountId, input, input.tokens, target, agentContext);
+    }
     const refs = input.attachments ?? [];
     const files = await this.checkProjectFiles(orgId, accountId, input.projectFiles ?? [], target);
     const conversations = await this.readConversationRefs(
@@ -2061,6 +2218,235 @@ export class ConversationsService {
       }),
       ...(conversations.length > 0 && { conversationRefs: conversations.map((c) => c.meta) }),
     };
+  }
+
+  /**
+   * {@link resolveExtra} for a message with tokens (composer inline tokens spec §3), as the sender,
+   * outside any transaction; any refusal writes nothing. Each entity is resolved once however
+   * often its token repeats: project file paths are normalized first (a path leaving the project →
+   * `device.path_outside_project` before anything is read), then the connectors named and the
+   * resources' connectors against the agent's tools in one resolution
+   * ({@link MentionableConnectorsService.resolveForMessage}: `conversation.connector_unavailable`),
+   * the project files and the referenced conversations as without tokens, the resources last
+   * ({@link ConnectorContent.readResources}; one whose `read_resource` the agent is not offered →
+   * `connector.resources_disabled`), and the files' names. Labels are numbered per kind in text
+   * order (file tokens before uploads); each marker becomes its placeholder in the text (the trimmed
+   * arguments of a skill invocation, where `inline` then points). Blocks, in order: resources,
+   * project files, conversations, connector mentions; the files' blocks follow in the write.
+   */
+  private async resolveTokens(
+    orgId: string,
+    accountId: string,
+    input: Pick<UserMessageInput, "text" | "files" | "skill">,
+    tokens: readonly MessageToken[],
+    target: ProjectFilesTarget | undefined,
+    agentContext: MessageAgentContext | undefined,
+  ): Promise<ResolvedExtra> {
+    // keyed first: a project file path leaving the project is refused before anything is read
+    const keyed = tokens.map((t) => ({ t, key: tokenEntityKey(t) }));
+    const distinct = <K extends MessageToken["type"]>(kind: K) => {
+      const seen = new Set<string>();
+      return keyed.flatMap(({ t, key }) => {
+        if (t.type !== kind || seen.has(key)) return [];
+        seen.add(key);
+        return [t as Extract<MessageToken, { type: K }>];
+      });
+    };
+    const named = distinct("connector").map((t) => t.connectorId);
+    const resourceRefs = distinct("resource").map(({ connectorId, uri }) => ({ connectorId, uri }));
+    const paths = [...new Set(distinct("projectFile").map((t) => projectFilePath(t.path)))];
+    const conversationIds = distinct("conversation").map((t) => t.id);
+    const fileTokenIds = distinct("file").map((t) => t.id);
+    // a file both named by a token and uploaded is attached once, as the token
+    const uploads = uploadsBeside(input.files ?? [], fileTokenIds);
+    // the per-message file cap, before anything remote is read (attaching checks it again)
+    this.libraryFiles.checkMessageFileCount(fileTokenIds.length + uploads.length);
+
+    // the agent's tools first (the database only), then the checks as without tokens, the
+    // resources (remote reads) last
+    let resolved:
+      | Awaited<ReturnType<MentionableConnectorsService["resolveForMessage"]>>
+      | undefined;
+    if (named.length > 0 || resourceRefs.length > 0) {
+      if (agentContext === undefined) {
+        throw new Error("resolveTokens: connector or resource tokens need the agent's context");
+      }
+      resolved = await this.mentions.resolveForMessage(
+        orgId,
+        agentContext.agent,
+        {
+          source: agentContext.source,
+          sandboxConversationId: agentContext.sandboxConversationId,
+        },
+        named,
+      );
+    }
+    const toolSearch = resolved?.toolSearch === true;
+    const mentioned = resolved?.connectors ?? [];
+    const files = await this.checkProjectFiles(
+      orgId,
+      accountId,
+      paths.map((path) => ({ path })),
+      target,
+    );
+    const conversations = await this.readConversationRefs(
+      orgId,
+      accountId,
+      conversationIds.map((id) => ({ id })),
+      target?.conversationId,
+    );
+    const read: ReadResource[] =
+      resolved === undefined || resourceRefs.length === 0
+        ? []
+        : await this.content.readResources(
+            orgId,
+            accountId,
+            resourceRefs,
+            new Set(
+              resolved.tools.flatMap((t) =>
+                t.source.kind === "connector" &&
+                t.source.resources === true &&
+                t.source.name === READ_RESOURCE
+                  ? [t.source.connectorId]
+                  : [],
+              ),
+            ),
+          );
+    const fileNames = await this.libraryFiles.labelsFor(orgId, accountId, [
+      ...fileTokenIds,
+      ...uploads,
+    ]);
+
+    // labels, numbered per kind in text order
+    const connectorName = new Map<string, string>([
+      ...mentioned.map((c) => [c.id, c.name] as const),
+      ...read.map((r) => [r.connectorId, r.connectorName] as const),
+    ]);
+    const connectorLabels = numberLabels(
+      keyed.flatMap(({ t }) =>
+        t.type === "connector" || t.type === "resource"
+          ? [
+              {
+                key: t.connectorId,
+                label: foldLabel(connectorName.get(t.connectorId) ?? t.connectorId),
+              },
+            ]
+          : [],
+      ),
+    );
+    const resourceName = new Map(read.map((r) => [`resource:${r.connectorId}:${r.uri}`, r.name]));
+    const conversationTitle = new Map(
+      conversations.map((c) => [`conversation:${c.meta.id}`, c.meta.title]),
+    );
+    const labelOfKey = (t: MessageToken, key: string): string => {
+      switch (t.type) {
+        case "connector":
+          return foldLabel(connectorName.get(t.connectorId) ?? t.connectorId);
+        case "resource":
+          return foldLabel(resourceName.get(key) ?? t.uri);
+        case "file":
+          return foldLabel(fileNames.get(t.id) ?? t.id);
+        case "projectFile":
+          return foldLabel(key.slice("projectFile:".length));
+        case "conversation":
+          return foldLabel(conversationTitle.get(key) ?? "") || "Untitled conversation";
+      }
+    };
+    // numbered per kind (each kind has its own placeholder), file tokens before uploads
+    const kindLabels = new Map<string, string>();
+    for (const kind of ["resource", "file", "projectFile", "conversation"] as const) {
+      const items = [
+        ...keyed
+          .filter(({ t }) => t.type === kind)
+          .map(({ t, key }) => ({ key, label: labelOfKey(t, key) })),
+        ...(kind === "file"
+          ? uploads.map((id) => ({ key: `file:${id}`, label: foldLabel(fileNames.get(id) ?? id) }))
+          : []),
+      ];
+      for (const [k, v] of numberLabels(items)) kindLabels.set(k, v);
+    }
+    const labelOf = (t: MessageToken): string =>
+      t.type === "connector"
+        ? (connectorLabels.get(t.connectorId) ?? t.connectorId)
+        : (kindLabels.get(tokenEntityKey(t)) ?? "");
+    const connectorLabelOf = (id: string): string => connectorLabels.get(id) ?? id;
+    const rendered = renderInline(
+      input.skill === undefined ? input.text : input.text.trim(),
+      // `inline` names a project file by its normalized path
+      tokens.map((t) => (t.type === "projectFile" ? { ...t, path: projectFilePath(t.path) } : t)),
+      labelOf,
+      connectorLabelOf,
+    );
+
+    const connectorMentions: ConnectorMention[] = mentioned.map((c) => {
+      const keys = c.tools.map((t) => t.key);
+      return {
+        connectorId: c.id,
+        slug: c.slug,
+        name: c.name,
+        toolCount: keys.length,
+        // recorded whatever the send-time tool search state: request building reads the loaded
+        // keys only under tool search, so they are inert when a step has it off
+        loadedTools: keys.length <= MENTION_LOAD_MAX_TOOLS ? keys : [],
+      };
+    });
+    const blocks = [
+      ...read.map((r) =>
+        resourceBlockText(
+          r,
+          placeholder(
+            "resource",
+            kindLabels.get(`resource:${r.connectorId}:${r.uri}`) ?? r.name,
+            connectorLabelOf(r.connectorId),
+          ),
+        ),
+      ),
+      ...(files?.paths ?? []).map(
+        (path) =>
+          `${placeholder("projectFile", kindLabels.get(`projectFile:${path}`) ?? path)} ${projectFileText(path, files?.root ?? "")}`,
+      ),
+      ...conversations.map(
+        (c) =>
+          `${placeholder("conversation", kindLabels.get(`conversation:${c.meta.id}`) ?? "")}\n${c.text}`,
+      ),
+      ...mentioned.map((c) =>
+        connectorMentionText({
+          label: connectorLabelOf(c.id),
+          name: foldLabel(c.name),
+          slug: c.slug,
+          toolCount: c.tools.length,
+          toolSearch,
+        }),
+      ),
+    ].map((text) => ({ type: "text" as const, text }));
+    const fileLabels = new Map(
+      [...fileTokenIds, ...uploads].map((id) => [id, kindLabels.get(`file:${id}`) ?? id]),
+    );
+    return {
+      blocks,
+      text: rendered.text,
+      inline: rendered.inline,
+      connectorMentions,
+      fileTokenIds,
+      fileLabels,
+      attachments: read.map(attachmentMeta),
+      ...(files !== undefined && {
+        projectFiles: files.paths.map((path) => ({ path })),
+        projectRoot: files.root,
+      }),
+      ...(conversations.length > 0 && { conversationRefs: conversations.map((c) => c.meta) }),
+    };
+  }
+
+  /** The conversation's source (where it comes from: web, IM, an automation). */
+  private async sourceOf(orgId: string, conversationId: string): Promise<ConversationSource> {
+    const row = await this.db
+      .selectFrom("conversations")
+      .select("source")
+      .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    return row.source as ConversationSource;
   }
 
   /**
@@ -2236,6 +2622,8 @@ export class ConversationsService {
     conversationId: string,
     accountId: string,
     files: readonly string[],
+    /** Each file's label (composer inline tokens spec §3.2); a file not in it: its name. */
+    labels?: ReadonlyMap<string, string>,
   ): Promise<LogContentBlock[]> {
     if (files.length === 0) return [];
     const blocks = await this.libraryFiles.attachForMessage(
@@ -2245,7 +2633,7 @@ export class ConversationsService {
       files,
     );
     afterCommit(() => this.eventLog.publishChanged(conversationId, "files"));
-    return blocks;
+    return withFileLines(blocks, labels);
   }
 
   private userMessage(
@@ -2258,8 +2646,9 @@ export class ConversationsService {
     markers: Pick<InternalMessageOptions, "schedule" | "automationEvent"> = {},
   ): AppendEvent {
     const { schedule, automationEvent } = markers;
-    // a skill invocation's rendered text replaces the typed arguments as content[0]
-    const text = invoked?.text ?? input.text;
+    // a skill invocation's rendered text replaces the typed arguments as content[0]; tokens
+    // put their placeholders into the text
+    const text = invoked?.text ?? extra.text ?? input.text;
     return {
       type: "user_message",
       ...(input.clientMessageId !== undefined && {
@@ -2277,6 +2666,9 @@ export class ConversationsService {
           extra.projectFiles.length > 0 && { projectFiles: extra.projectFiles }),
         ...(extra.conversationRefs !== undefined &&
           extra.conversationRefs.length > 0 && { conversationRefs: extra.conversationRefs }),
+        ...(extra.connectorMentions !== undefined &&
+          extra.connectorMentions.length > 0 && { connectorMentions: extra.connectorMentions }),
+        ...(extra.inline !== undefined && extra.inline.length > 0 && { inline: extra.inline }),
         authorAccountId: accountId,
         ...context,
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
