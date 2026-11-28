@@ -108,6 +108,12 @@ export function CompactionSection({
           disabled={disabled || !value.idleEnabled}
           onChange={(idleMinWindowRatio) => onChange({ idleMinWindowRatio })}
         />
+        <NumberField
+          field="idleDelayMinutes"
+          value={value.idleDelayMinutes}
+          disabled={disabled || !value.idleEnabled}
+          onChange={(idleDelayMinutes) => onChange({ idleDelayMinutes })}
+        />
       </Stack>
     </FormSection>
   );

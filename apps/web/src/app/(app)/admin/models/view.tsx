@@ -82,8 +82,8 @@ function usePutPrice() {
 }
 
 /**
- * The purposes while they load, as PurposeEditor draws them: the kernel's nine (eval, title,
- * command review, web extraction, the three sub-agent tiers, image generation, vision), each its
+ * The purposes while they load, as PurposeEditor draws them: the kernel's ten (eval, title,
+ * command review, web extraction, compaction, the three sub-agent tiers, image generation, vision), each its
  * own section (a title and its one line over the model select), so the count, and with it the
  * template's columns, does not change on load.
  */
@@ -92,6 +92,7 @@ const LOADING_PURPOSES = [
   "title",
   "review",
   "web_fetch",
+  "compaction",
   "subagent_fast",
   "subagent_standard",
   "subagent_capable",
