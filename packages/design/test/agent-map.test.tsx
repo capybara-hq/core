@@ -47,18 +47,23 @@ const rule = (selector: string) => {
 };
 
 describe("AgentMapTree (§6.16.28)", () => {
-  it('every node has the same height and one meta line "model · time · tokens"', () => {
+  it("every node has the same height and one meta line; the model only where it differs from the root's", () => {
     wrap(<AgentMapTree root={root} background={[]} onOpen={() => {}} now={NOW} />);
     const all = nodes();
-    expect(all).toHaveLength(6);
+    expect(all).toHaveLength(7);
     for (const n of all) {
       const metas = n.querySelectorAll('[data-part="agent-node-meta"]');
       expect(metas).toHaveLength(1);
-      expect(metas[0]?.textContent).toMatch(/^\w+ 5\.5 · (\d+ 分 )?[\d.]+ 秒 · [\d.]+k tokens$/);
+      expect(metas[0]?.textContent).toMatch(/^(\w+ 5\.5 · )?(\d+ 分 )?[\d.]+ 秒 · [\d.]+k tokens$/);
     }
-    expect(all[0]?.querySelector('[data-part="agent-node-meta"]')?.textContent).toBe(
-      "opus 5.5 · 42 分 18 秒 · 392.7k tokens",
-    );
+    const metaOf = (id: string) =>
+      all.find((n) => n.dataset.id === id)?.querySelector('[data-part="agent-node-meta"]')
+        ?.textContent;
+    // the root keeps its model; a sub-agent on the root's model shows time and tokens only
+    expect(metaOf("am_root")).toBe("opus 5.5 · 42 分 18 秒 · 392.7k tokens");
+    expect(metaOf("am_sales")).toBe("12 分 04 秒 · 188.2k tokens");
+    expect(metaOf("am_appendix")).toMatch(/^haiku 5\.5 · /);
+    expect(metaOf("am_review")).toMatch(/^sonnet 5\.5 · /);
     // Equal height: one compact row (row.roomy) for every node, both lines one line.
     expect(rule(".cb-amap-node")).toMatch(/height: var\(--cb-row-roomy\);/);
     expect(rule(".cb-amap-node")).toMatch(/width: 336px;/);
@@ -66,7 +71,7 @@ describe("AgentMapTree (§6.16.28)", () => {
     expect(rule(".cb-amap-node-name")).toMatch(/text-overflow: ellipsis;/);
     expect(rule(".cb-amap-node-meta")).toMatch(/white-space: nowrap;/);
     // The model gives way first: time and tokens never take the ellipsis.
-    const meta = all[1]?.querySelector('[data-part="agent-node-meta"]') as HTMLElement;
+    const meta = all[0]?.querySelector('[data-part="agent-node-meta"]') as HTMLElement;
     expect(meta.querySelector(".cb-amap-node-model")?.textContent).toMatch(/^\w+ 5\.5$/);
     expect(meta.querySelector(".cb-amap-node-cost")?.textContent).toMatch(/^ · .+ tokens$/);
     expect(rule(".cb-amap-node-model")).toMatch(/text-overflow: ellipsis;/);
@@ -102,26 +107,40 @@ describe("AgentMapTree (§6.16.28)", () => {
     ).toEqual(words);
   });
 
-  it('the header counts the sub-agents and running ones, the root not counted ("5 个智能体 · 1 个运行中")', () => {
-    // Three of the six run in the fixture; drop the review to match the mockup's count.
-    const two: AgentMapNode = {
-      ...root,
-      children: root.children.map((c) =>
-        c.id === "am_invoice"
-          ? { ...c, children: c.children.map((g) => ({ ...g, status: "completed" as const })) }
-          : c,
-      ),
-    };
+  it("one colour rule for every dot: running accent, finished faint (stopped hollow), failed fail, waiting and limit warn", () => {
+    expect(rule(".cb-amap-dot")).toMatch(/background: var\(--cb-faint\);/);
+    expect(rule('.cb-amap-dot[data-status="running"]')).toMatch(/background: var\(--cb-accent\);/);
+    expect(rule('.cb-amap-dot[data-status="completed"]')).toMatch(/background: var\(--cb-faint\);/);
+    const aborted = rule('.cb-amap-dot[data-status="aborted"]');
+    expect(aborted).toMatch(/background: transparent;/);
+    expect(aborted).toMatch(/box-shadow: inset 0 0 0 1\.5px var\(--cb-faint\);/);
+    expect(rule('.cb-amap-dot[data-status="failed"]')).toMatch(/background: var\(--cb-fail\);/);
+    expect(css).toMatch(
+      /\.cb-amap-dot\[data-status="waiting"\],\n\.cb-amap-dot\[data-status="limit"\] \{\s*background: var\(--cb-warn\);/,
+    );
+    expect(css).not.toMatch(/--cb-ok/);
+    wrap(<AgentMapTree root={root} background={[]} onOpen={() => {}} now={NOW} />);
+    const dotOf = (id: string) =>
+      nodes()
+        .find((n) => n.dataset.id === id)
+        ?.querySelector('[data-part="agent-dot"]');
+    expect(dotOf("am_chart")?.getAttribute("data-status")).toBe("aborted");
+    expect(dotOf("am_chart")?.getAttribute("aria-label")).toBe("已停止");
+  });
+
+  it('the header counts the sub-agents, the root not counted, and names no running count ("6 个智能体 · 点击查看详情")', () => {
+    // three of them run: the dots say it, the line does not
+    const two = root;
     wrap(<AgentMapTree root={two} background={[]} onOpen={() => {}} now={NOW} />);
-    expect(screen.getByText("5 个智能体 · 1 个运行中 · 点击查看详情")).toBeTruthy();
+    expect(screen.getByText("6 个智能体 · 点击查看详情")).toBeTruthy();
     cleanup();
     wrap(<AgentMapTree root={two} background={[]} onOpen={() => {}} now={NOW} />, "en");
-    expect(screen.getByText("5 agents · 1 running · Click a node for details")).toBeTruthy();
+    expect(screen.getByText("6 agents · Click a node for details")).toBeTruthy();
     cleanup();
     // one sub-agent: the chip's singular
     const one: AgentMapNode = { ...root, children: [{ ...(root.children[0] as AgentMapNode) }] };
     wrap(<AgentMapTree root={one} background={[]} onOpen={() => {}} now={NOW} />, "en");
-    expect(screen.getByText("1 agent · 0 running · Click a node for details")).toBeTruthy();
+    expect(screen.getByText("1 agent · Click a node for details")).toBeTruthy();
   });
 
   it("background tasks render under the root column", () => {
@@ -177,7 +196,7 @@ describe("AgentMapTree (§6.16.28)", () => {
     await userEvent.click(rootNode);
     expect(onOpen).not.toHaveBeenCalled();
     // the other nodes stay buttons
-    expect(nodes().filter((n) => n.tagName === "BUTTON")).toHaveLength(5);
+    expect(nodes().filter((n) => n.tagName === "BUTTON")).toHaveLength(6);
     expect(rule('.cb-amap-node[data-root="true"]')).toMatch(/cursor: default;/);
   });
 

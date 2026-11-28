@@ -1543,6 +1543,7 @@ export const AGENT_MAP_FIXTURE: {
       agentNode("am_review", "复查发票核对结果", "sonnet 5.5", 67_000, 108_800, "running"),
     ]),
     agentNode("am_summary", "起草管理层摘要", "opus 5.5", 280_000, 41_000, "waiting"),
+    agentNode("am_chart", "绘制季度趋势图", "opus 5.5", 96_000, 18_600, "aborted"),
     agentNode("am_appendix", "翻译附录表格", "haiku 5.5", 192_000, 30_400, "failed"),
   ]),
   selected: "am_invoice",
