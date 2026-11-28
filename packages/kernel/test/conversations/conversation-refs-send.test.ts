@@ -355,6 +355,41 @@ describe("conversationRefs on send", () => {
     expect(await userMessages(conv)).toEqual([]);
   });
 
+  it("a long run after the person's message is not empty: tool-only steps and text replies alike", async () => {
+    const m = await member();
+    // 1 user message, then 12 tool-only steps: only rows with text count toward the cap
+    const tools = await createConv(m.req, orgId, agentId);
+    await seed(tools, [
+      { type: "user_message", text: "start the job" },
+      ...Array.from({ length: 12 }, () => ({ type: "tool_only" as const })),
+    ]);
+    // 1 user message, then 12 text replies filling the newest rows: the log is asked
+    const replies = await createConv(m.req, orgId, agentId);
+    await seed(replies, [
+      { type: "user_message", text: "start the job" },
+      ...Array.from({ length: 12 }, (_, i) => ({
+        type: "assistant_message" as const,
+        text: `step ${i}`,
+      })),
+    ]);
+    const conv = await createConv(m.req, orgId, agentId);
+    const res = await send(m.req, conv, {
+      text: "status?",
+      conversationRefs: [{ id: tools }, { id: replies }],
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const [msg] = await userMessages(conv);
+    expect(textAt(msg, 1)).toContain("Latest messages:\nUser: start the job\n");
+    expect(textAt(msg, 1)).not.toContain("Agent:");
+    expect(textAt(msg, 2)).toContain("Latest messages:\nAgent: step 0\n");
+    expect(textAt(msg, 2)).toContain("Agent: step 11\n");
+    expect(textAt(msg, 2)).not.toContain("User:");
+    expect(msg?.payload.conversationRefs).toEqual([
+      { id: tools, title: null, source: "excerpt", upToSeq: 1 },
+      { id: replies, title: null, source: "excerpt", upToSeq: 13 },
+    ]);
+  });
+
   it("refuses the conversation being written in", async () => {
     const m = await member();
     const conv = await referenced(m);
@@ -453,6 +488,32 @@ describe("conversationRefs on send", () => {
       .where("create_request_id", "=", clientMessageId)
       .execute();
     expect(none).toEqual([]);
+  });
+
+  it("a first-message retry with the same clientMessageId reads nothing again", async () => {
+    const m = await member();
+    const ref = await referenced(m);
+    const body = {
+      agentId,
+      message: {
+        text: "from home",
+        clientMessageId: randomUUID(),
+        conversationRefs: [{ id: ref }],
+      },
+      permission: { profile: "request-approval" },
+    };
+    const url = `/api/v1/orgs/${orgId}/conversations/first-message`;
+    const first = await m.req({ method: "POST", url, payload: body });
+    expect(first.statusCode, first.body).toBe(201);
+    // the referenced conversation goes away: a retry would be refused if it were read again
+    await m.req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/conversations/${ref}` });
+    const again = await m.req({ method: "POST", url, payload: body });
+    expect(again.statusCode, again.body).toBe(200);
+    const ids = (r: typeof first) =>
+      r.json() as { conversation: { id: string }; event: { seq: number } };
+    expect(ids(again).conversation.id).toBe(ids(first).conversation.id);
+    expect(ids(again).event.seq).toBe(ids(first).event.seq);
+    expect(await userMessages(ids(first).conversation.id)).toHaveLength(1);
   });
 
   it("the latest summary lookup has its partial index", async () => {

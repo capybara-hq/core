@@ -2145,12 +2145,15 @@ export class ConversationsService {
       .select(["seq", "type", sql<unknown>`payload`.as("payload")])
       .where("conversation_id", "=", id)
       .where("type", "in", ["user_message", "assistant_message"])
+      // only messages with text count toward the cap (a run's tool-only steps carry none)
+      .where(sql<boolean>`payload -> 'content' @> '[{"type":"text"}]'::jsonb`)
       .where("seq", ">", String(summaryPayload?.coversUpToSeq ?? 0))
       .orderBy("seq", "desc")
       .limit(REF_TURN_MESSAGES)
       .execute();
-    // nothing to quote: no summary and no message of the person yet (a long run's steps may fill
-    // the newest rows, so the log is asked when they hold none)
+    // nothing to quote: no summary and no message of the person yet (a long run's text replies may
+    // fill the newest rows, and a files-only message has no text, so the log is asked when they
+    // hold none)
     if (summary === undefined && !rows.some((r) => r.type === "user_message")) {
       const anyUser = await this.db
         .selectFrom("conversation_events")

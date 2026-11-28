@@ -62,10 +62,12 @@ describe("conversationRefText", () => {
     });
     expect(text).toContain("Summary of the conversation: HEAD");
     expect(text).toContain("TAIL\nLatest messages:");
-    expect(text).toContain(`[… ${summary.length - REF_SUMMARY_MAX} characters omitted …]`);
+    expect(text).toContain(
+      `Summary of the conversation: ${clipMiddle(summary, REF_SUMMARY_MAX)}\n`,
+    );
     expect(text).toContain("User: START");
     expect(text).toContain(`END\nEnd of the referenced conversation.`);
-    expect(text).toContain(`[… ${message.length - REF_MESSAGE_MAX} characters omitted …]`);
+    expect(text).toContain(`User: ${clipMiddle(message, REF_MESSAGE_MAX)}\n`);
   });
 
   it("stays within the block bound by dropping the oldest messages first", () => {
@@ -92,8 +94,31 @@ describe("conversationRefText", () => {
 describe("clipMiddle", () => {
   it("keeps text within the bound as it is and never splits a surrogate pair", () => {
     expect(clipMiddle("short", 10)).toBe("short");
-    const clipped = clipMiddle("😀".repeat(10), 4);
-    expect(clipped).toBe("😀😀\n[… 6 characters omitted …]\n😀😀");
+    const clipped = clipMiddle("😀".repeat(100), 40);
+    expect(clipped).toMatch(/^😀+\n\[… \d+ characters omitted …\]\n😀+$/u);
+    expect(clipped).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(Array.from(clipped).length).toBeLessThanOrEqual(40);
+    // a bound too small for the marker keeps the head only
+    expect(clipMiddle("abcdefghij", 4)).toBe("abcd");
+  });
+
+  it("the marker counts toward the bound and names the characters really omitted", () => {
+    for (const [length, max] of [
+      [REF_SUMMARY_MAX + 1, REF_SUMMARY_MAX],
+      [REF_SUMMARY_MAX * 10, REF_SUMMARY_MAX],
+      [REF_MESSAGE_MAX + 7, REF_MESSAGE_MAX],
+      [123_456, REF_MESSAGE_MAX],
+    ] as const) {
+      const clipped = clipMiddle(`H${"x".repeat(length - 2)}T`, max);
+      const cs = Array.from(clipped);
+      expect(cs.length).toBeLessThanOrEqual(max);
+      expect(cs.length).toBeGreaterThan(max - 5);
+      expect(clipped.startsWith("H")).toBe(true);
+      expect(clipped.endsWith("T")).toBe(true);
+      const marker = /\n\[… (\d+) characters omitted …\]\n/.exec(clipped);
+      const omitted = Number(marker?.[1]);
+      expect(cs.length - Array.from(marker?.[0] ?? "").length + omitted).toBe(length);
+    }
   });
 });
 
@@ -120,5 +145,27 @@ describe("refMessageText", () => {
         ],
       }),
     ).toBe("one\ntwo");
+  });
+
+  it("a skill invocation gives what the person typed; a template sub-agent's skill nothing", () => {
+    const rendered = { content: [{ type: "text", text: "RENDERED SKILL BODY" }] };
+    expect(
+      refMessageText("user_message", {
+        ...rendered,
+        skill: { name: "review", plugin: "acme", arguments: "the PR" },
+      }),
+    ).toBe("/acme:review the PR");
+    expect(
+      refMessageText("user_message", { ...rendered, skill: { name: "plan", arguments: "" } }),
+    ).toBe("/plan");
+    expect(
+      refMessageText("user_message", {
+        ...rendered,
+        skill: { name: "plan", arguments: "x", template: true },
+      }),
+    ).toBe("");
+    expect(
+      refMessageText("user_message", { ...rendered, templateSkillNotice: { name: "plan" } }),
+    ).toBe("");
   });
 });

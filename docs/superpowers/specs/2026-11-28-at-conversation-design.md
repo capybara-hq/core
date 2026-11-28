@@ -133,7 +133,9 @@ The proposals below were accepted as written, with these rulings on the review's
   partial index `conversation_events_compaction_summary_idx ON conversation_events
   (conversation_id, seq) WHERE type = 'compaction_summary'`, a migration like 0133; the table has no
   `org_id`, so no RLS policy) and the newest `user_message` / `assistant_message` events after its
-  `coversUpToSeq` (or after 0), newest first, at most `REF_TURN_MESSAGES` (12) rows.
+  `coversUpToSeq` (or after 0), newest first, at most `REF_TURN_MESSAGES` (12) rows; only rows
+  with a text block count (a run's tool-only steps are skipped in the query), and "no
+  `user_message` yet" is checked against the whole log, not just those rows.
 - The queue does not take `conversationRefs` (it has no HTTP entry; like project files).
 
 ### 2. Model input: the logged block

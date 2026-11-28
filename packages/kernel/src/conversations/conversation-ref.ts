@@ -5,6 +5,8 @@
  * building and replay never read another conversation.
  */
 
+import { typedInvocation } from "./events.js";
+
 /** The most conversations one message may reference. */
 export const MAX_CONVERSATION_REFS = 3;
 /** The newest user / assistant message events read after the latest summary (or from the start). */
@@ -36,18 +38,23 @@ export interface ConversationRefSource {
 /** Characters of `text` (code points, so a clip never splits a surrogate pair). */
 const chars = (text: string): string[] => Array.from(text);
 
+/** The omission marker that stands for `n` clipped characters. */
+const omission = (n: number): string => `\n[… ${n} characters omitted …]\n`;
+
 /**
- * `text` clipped to at most `max` characters plus the omission marker: its head and its tail are
- * kept (the end of a summary holds its current work), the middle replaced by
+ * `text` clipped to at most `max` characters, the omission marker included: its head and its tail
+ * are kept (the end of a summary holds its current work), the middle replaced by
  * `[… n characters omitted …]`.
  */
 export function clipMiddle(text: string, max: number): string {
   const cs = chars(text);
   if (cs.length <= max) return text;
-  const head = Math.ceil(max / 2);
-  const tail = max - head;
-  const omitted = cs.length - head - tail;
-  return `${cs.slice(0, head).join("")}\n[… ${omitted} characters omitted …]\n${cs
+  // the marker's room is reserved with the digits of the whole length, never fewer than it needs
+  const keep = max - chars(omission(cs.length)).length;
+  if (keep <= 0) return cs.slice(0, max).join("");
+  const head = Math.ceil(keep / 2);
+  const tail = keep - head;
+  return `${cs.slice(0, head).join("")}${omission(cs.length - keep)}${cs
     .slice(cs.length - tail)
     .join("")}`;
 }
@@ -93,6 +100,9 @@ export function conversationRefText(src: ConversationRefSource): string {
  * The text a referenced conversation's message contributes: a `user_message`'s first block when
  * it is text (the typed text, so a message that itself referenced files or conversations brings
  * no nested blocks), an `assistant_message`'s text blocks (no thinking, tool calls or results).
+ * A skill invocation contributes what the person typed (`/name args`), never the rendered skill
+ * in `content[0]`; a template sub-agent's skill (or its notice) contributes nothing, like
+ * `caseTitle` (evals/sets.service.ts).
  */
 export function refMessageText(type: string, payload: unknown): string {
   const content = (payload as { content?: unknown } | null)?.content;
@@ -106,7 +116,15 @@ export function refMessageText(type: string, payload: unknown): string {
       ? block.text
       : undefined;
   };
-  if (type === "user_message") return (textOf(content[0]) ?? "").trim();
+  if (type === "user_message") {
+    const p = payload as {
+      skill?: { name: string; plugin?: string; arguments: string; template?: true };
+      templateSkillNotice?: unknown;
+    };
+    if (p.skill?.template || p.templateSkillNotice !== undefined) return "";
+    if (p.skill !== undefined) return typedInvocation(p.skill).trim();
+    return (textOf(content[0]) ?? "").trim();
+  }
   return content
     .map(textOf)
     .filter((t): t is string => t !== undefined)
