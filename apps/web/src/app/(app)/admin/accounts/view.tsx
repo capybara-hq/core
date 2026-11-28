@@ -21,7 +21,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import {
   type AccountPatch,
   type AdminAccount,
@@ -62,9 +62,10 @@ export default function AdminAccountsView() {
 
 function AdminAccounts() {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("admin.accounts");
   const read = usePageQuery(adminAccountsQuery());
-  const header = { path: [...scope, { label: "accounts" }], title: t("title") };
+  const header = { path: [...scope, pw("accounts")], title: t("title") };
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {

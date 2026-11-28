@@ -24,7 +24,7 @@ import {
   useProblem,
 } from "../../../../../components/MarketplaceSourceDialog";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import {
   type Marketplace,
   marketplaceErrorKind,
@@ -62,6 +62,7 @@ export default function SourcesView() {
 
 function SourcesRead() {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("catalog.admin.marketplaces");
   const read = usePageQuery(marketplacesQuery());
   if (read.kind === "notFound") return <NotFound />;
@@ -70,7 +71,7 @@ function SourcesRead() {
     return (
       <ListPage
         header={{
-          path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "sources" }],
+          path: [...scope, pw("plugins", "/admin/plugins"), pw("sources")],
           title: t("title"),
           description: t("description"),
           search: { label: t("search"), value: "", onChange: () => {} },
@@ -85,6 +86,7 @@ function SourcesRead() {
 
 function Sources({ data }: { data: SourceList }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("catalog.admin.marketplaces");
   const ta = useTranslations("catalog.admin.actions");
   // The dialog: `null` closed, `"add"`, or the custom source being edited
@@ -105,7 +107,7 @@ function Sources({ data }: { data: SourceList }) {
     <>
       <ListPage
         header={{
-          path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "sources" }],
+          path: [...scope, pw("plugins", "/admin/plugins"), pw("sources")],
           title: t("title"),
           description: t("description"),
           search: { label: t("search"), value: q, onChange: setQ },

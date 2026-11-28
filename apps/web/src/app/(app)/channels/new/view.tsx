@@ -21,7 +21,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { SetupGuideSection } from "../../../../components/SetupGuideSection";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
 import { configIssues, issueLines } from "../../../../lib/api";
@@ -64,12 +64,13 @@ type ChannelPreset = { agentId: string; returnTo: string | undefined };
 
 function NewChannel({ orgId, preset }: { orgId: string; preset: ChannelPreset }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("channels");
   const tc = useTranslations("common");
   const extensions = usePageQuery(orgExtensionsQuery(orgId));
   const agents = usePageQuery(agentsQuery(orgId));
   const header = {
-    path: [...scope, { label: "channels", href: "/channels" }, { label: "new" }],
+    path: [...scope, pw("channels", "/channels"), pw("new")],
     title: t("form.title"),
   };
   const router = useRouter();
@@ -141,6 +142,7 @@ function NewChannelForm({
   agents: Agent[];
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const ta = useTranslations("agents");
   const t = useTranslations("channels");
   const tc = useTranslations("common");
@@ -253,7 +255,7 @@ function NewChannelForm({
   }
 
   const header = {
-    path: [...scope, { label: "channels", href: "/channels" }, { label: "new" }],
+    path: [...scope, pw("channels", "/channels"), pw("new")],
     title: t("form.title"),
   };
   if (plugins.length === 0) {

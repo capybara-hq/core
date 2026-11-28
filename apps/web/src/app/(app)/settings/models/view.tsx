@@ -25,7 +25,7 @@ import { NoAccess } from "../../../../components/NoAccess";
 import { modelProvidersOf, OrgModelProviders } from "../../../../components/OrgModelProviders";
 import { usePurposeDrafts } from "../../../../components/PurposeEditor";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import type { ProviderModels } from "../../../../lib/agents";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import type { OrgExtension } from "../../../../lib/extensions";
@@ -120,6 +120,7 @@ function OrgModels({
   initialProvider: string;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("models");
   const nav = useOrgSettingsNav();
   const purposes = usePageQuery(orgPurposesQuery(orgId));
@@ -129,7 +130,7 @@ function OrgModels({
   const [tab, setTab] = useUrlTab(initialTab, parseModelsTab, "models");
   const [provider, setProvider] = useUrlParam("provider", initialProvider, (r) => r ?? "", "");
   const header: Header = {
-    path: [...scope, { label: "settings", href: "/settings/organization" }, { label: "models" }],
+    path: [...scope, pw("settings", "/settings/organization"), pw("models")],
     title: t("org.pageTitle"),
     tabs: (["models", "purposes"] as const).map((id) => ({
       id,

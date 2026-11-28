@@ -192,6 +192,30 @@ export function HeadSearch({ search }: { search: NonNullable<PageHeaderProps["se
   );
 }
 
+/** The number of path segments of a route (`/admin/plugins/market` is 3; a query does not count). */
+const routeDepth = (href: string) =>
+  (href.split(/[?#]/)[0] ?? "").split("/").filter((s) => s !== "").length;
+
+/**
+ * The path a head stands at (spec §4.2 path rule, maintainer decision 2026-11-28): a head whose
+ * tabs are routes (each tab its own page, `href`) is one place, so every tab's route has the level
+ * of the head's first tab. On a tab whose route is deeper than the first tab's, the segments it adds
+ * (the tab's own) go: `Admin console / Connectors / Templates` stands at `Admin console /
+ * Connectors`, which, two segments, draws no path row, as on the first tab. The compact back walks
+ * this path too.
+ */
+export function headPath(
+  path: PageHeaderProps["path"],
+  tabs: PageHeaderProps["tabs"],
+  activeTab: string | undefined,
+): PageHeaderProps["path"] {
+  const first = tabs?.[0]?.href;
+  const open = tabs?.find((t) => t.id === (activeTab ?? tabs[0]?.id))?.href;
+  if (first === undefined || open === undefined) return path;
+  const extra = routeDepth(open) - routeDepth(first);
+  return extra > 0 && path.length > extra ? path.slice(0, path.length - extra) : path;
+}
+
 /**
  * The page header (spec §4.2): row 1 the path, row 2 the title (+ count / status) and the
  * description, actions on the right. No line, no ground. Compact (below 600; responsive system
@@ -212,7 +236,8 @@ export function PageHeader(p: PageHeaderProps) {
   const hasShell = useHasShell();
   const form = useClassForm();
   const announces = useSkeletonAnnounces();
-  const segments = p.path;
+  // A tab's route stands at its head's first tab's level (headPath).
+  const segments = headPath(p.path, p.tabs, p.activeTab);
   const tabItems = p.tabs ?? [];
   // The primary action is rightmost (spec §4.2), whatever order the page gives.
   const isPrimary = (a: HeaderAction) => "variant" in a && a.variant === "primary";
@@ -248,7 +273,7 @@ export function PageHeader(p: PageHeaderProps) {
   const shellActions = useStableItems(folded);
   useRegisterShellPage({
     ...(p.title ? { title: p.title } : {}),
-    path: p.path,
+    path: segments,
     ...(hasShell && folded.length > 0 ? { actions: shellActions } : {}),
   });
   const rest = actions.filter((a) => !isPrimary(a));

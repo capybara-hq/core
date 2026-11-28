@@ -27,7 +27,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import {
   changeMemberRole,
@@ -78,6 +78,7 @@ export default function MembersView() {
 
 function Members({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const nav = useOrgSettingsNav();
   const t = useTranslations("members");
   const tr = useTranslations("roles");
@@ -103,7 +104,7 @@ function Members({ orgId }: { orgId: string }) {
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   const rows = read.kind === "ready" ? read.data.members : [];
   const header = {
-    path: [...scope, { label: "settings", href: "/settings/organization" }, { label: "members" }],
+    path: [...scope, pw("settings", "/settings/organization"), pw("members")],
     title: t("title"),
     ...(read.kind === "ready" ? { count: String(rows.length) } : {}),
     // Members read the list; managing it is for admins (R3: say why it is read-only)

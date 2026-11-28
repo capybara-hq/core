@@ -14,6 +14,7 @@ import {
   ConversationPage,
   DesignProvider,
   type DrawerNavData,
+  ListPage,
   NewTitleBar,
   PageHeader,
   RightPanel,
@@ -1232,6 +1233,54 @@ describe("the side panel's header", () => {
 describe("the paper's top gutter in the desktop shell (layered shell spec §5)", () => {
   const rules = parseCss(css("shell-environment.css"));
   const wide = rules.filter((r) => r.at === "(min-width: 600px)");
+
+  it("a head without a path row drags along its top padding too, no control under it", () => {
+    // maintainer decision 2026-11-28: the strip above the title row is a filler laid over the
+    // head's top padding, exactly as high (no added height), scrolling with the head
+    const HEAD =
+      ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))';
+    const strip = wide.find((r) => r.selector === `${HEAD} > .cb-template-head-drag`);
+    const pad = wide.find((r) => r.selector === HEAD && r.decls["padding-top"])?.decls[
+      "padding-top"
+    ];
+    expect(strip?.decls.display).toBe("block");
+    expect(strip?.decls.position).toBe("absolute");
+    expect(strip?.decls.inset).toBe("0 0 auto");
+    expect(strip?.decls.height).toBe(pad);
+    expect(wide.find((r) => r.selector === HEAD && r.decls.position)?.decls.position).toBe(
+      "relative",
+    );
+    // in a band: only the paper's part of the padding (the gutter drags the band above it)
+    const band = rules.find(
+      (r) =>
+        r.at === "not style(--cb-shell-paper-drop: 0px)" &&
+        r.selector === `${HEAD} > .cb-template-head-drag`,
+    );
+    expect(band?.decls.top).toBe("var(--cb-shell-row)");
+    expect(band?.decls.height).toBe("var(--cb-space-5)");
+    // hidden outside a desktop shell
+    expect(
+      rules.find(
+        (r) => r.at === null && r.selector.split(/,\s*/).includes(".cb-template-head-drag"),
+      )?.decls.display,
+    ).toBe("none");
+  });
+
+  it("the template head draws the strip as an empty filler", () => {
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <AppShell sidebar={sidebar} collapsed={false} onCollapsedChange={noop}>
+          <ListPage header={{ path: [{ label: "acme" }, { label: "智能体" }], title: "智能体" }}>
+            <p>rows</p>
+          </ListPage>
+        </AppShell>
+      </DesignProvider>,
+    );
+    const strip = container.querySelector(".cb-template-head > .cb-template-head-drag");
+    expect(strip?.classList.contains("cb-drag-fill")).toBe(true);
+    expect(strip?.getAttribute("aria-hidden")).toBe("true");
+    expect(strip?.childElementCount).toBe(0);
+  });
 
   it("starts after the start reserve, so the band's sidebar toggle is never under it", () => {
     expect(

@@ -17,7 +17,7 @@ import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
 import { evalsTabs } from "../../../lib/evals-tabs";
 import { roleAtLeast } from "../../../lib/members";
@@ -78,6 +78,7 @@ function Trajectories({
   filters: Filters;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("trajectories");
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -121,7 +122,7 @@ function Trajectories({
   return (
     <ListPage
       header={{
-        path: [...scope, { label: "trajectories" }],
+        path: [...scope, pw("trajectories")],
         ...(admin
           ? { title: t("title"), tabs: evalsTabs(t), activeTab: "runs" }
           : { title: t("tabs.runs") }),

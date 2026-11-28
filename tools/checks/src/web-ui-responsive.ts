@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import {
   type Finding,
@@ -677,10 +677,18 @@ export function loadMoreFindings(p: ParsedFile): Finding[] {
   return out;
 }
 
+/**
+ * Whether a file's text can draw a Load more row: `LoadMore`, a `loadMore` key or the words, in
+ * any case. Only a few files of apps/web can, so the tree scan parses only those (issue #1087).
+ */
+export function mayDrawLoadMore(source: string): boolean {
+  return /load ?more|加载更多/i.test(source);
+}
+
 export function loadMoreTreeFindings(webSrcDir: string): Finding[] {
   const out: Finding[] = [];
   for (const { file, isTest } of listSourceFiles(webSrcDir)) {
-    if (isTest) continue;
+    if (isTest || !mayDrawLoadMore(readFileSync(file, "utf8"))) continue;
     const p = parseFile(file);
     if (!isParseError(p)) out.push(...loadMoreFindings(p));
   }

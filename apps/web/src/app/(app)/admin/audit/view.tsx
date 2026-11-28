@@ -6,7 +6,7 @@ import { auditSlice, useAuditColumns } from "../../../../components/audit-log";
 import { useCursorPages } from "../../../../components/cursor-pages";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import type { AuditEvent, AuditPage } from "../../../../lib/admin";
 import { platformAuditQuery } from "../../../../lib/query/admin";
 import { usePageQuery } from "../../../../lib/query/page-query";
@@ -29,11 +29,12 @@ export default function AdminAuditView() {
 
 function AdminAudit() {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("admin.audit");
   const read = usePageQuery(platformAuditQuery());
   const columns = useAuditColumns();
   const header = {
-    path: [...scope, { label: "audit" }],
+    path: [...scope, pw("audit")],
     title: t("title"),
     description: t("description"),
   };

@@ -20,7 +20,7 @@ import { type ReactNode, useMemo, useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { Person } from "../../../../components/Person";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import {
   dismissPlatformNotice,
@@ -81,6 +81,7 @@ function AdminInbox({
   type: PlatformInboxType | null;
 }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("admin.inbox");
   const tt = useTranslations("admin.overview.attention");
   const locale = useLocale();
@@ -125,7 +126,7 @@ function AdminInbox({
           },
         }
       : { primary: { label: t("open"), onSelect: () => router.push(platformInboxHref(item)) } };
-  const header = { path: [...scope, { label: "inbox" }], title: t("title") };
+  const header = { path: [...scope, pw("inbox")], title: t("title") };
 
   if (inbox === null) {
     return (

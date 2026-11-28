@@ -7,7 +7,7 @@ import { useCursorPages } from "../../../../components/cursor-pages";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import type { AuditEvent, AuditPage } from "../../../../lib/admin";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { orgAuditQuery } from "../../../../lib/query/settings";
@@ -42,6 +42,7 @@ function useOrgAuditColumns(): Column<AuditEvent>[] {
 
 function OrgAudit({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("orgAudit");
   const nav = useOrgSettingsNav();
   const columns = useOrgAuditColumns();
@@ -51,7 +52,7 @@ function OrgAudit({ orgId }: { orgId: string }) {
   return (
     <SettingsPage
       header={{
-        path: [...scope, { label: "settings", href: "/settings/organization" }, { label: "audit" }],
+        path: [...scope, pw("settings", "/settings/organization"), pw("audit")],
         title: t("title"),
         description: t("description"),
       }}

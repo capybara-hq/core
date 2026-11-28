@@ -70,13 +70,26 @@ function jobObjectOf(method: string, arg: Node | undefined): Node | undefined {
 }
 
 /**
+ * Whether a file's text can hold what {@link scanKernel} reads: an exported variable set to a
+ * string literal (`export const X = "value"`, also as a later declarator) or the word `outbox`.
+ * Parsing is most of the check's cost and about two thirds of the kernel files hold neither, so
+ * the scan skips those (issue #1087).
+ */
+export function mayHoldOutboxFacts(source: string): boolean {
+  return EXPORTED_STRING.test(source) || /\boutbox\b/.test(source);
+}
+const EXPORTED_STRING = /\bexport\s+(?:const|let|var)\s[^;]*?=\s*["']/;
+
+/**
  * One pass over the kernel source: `export const X = "value"` of every file (X → value), and the
- * `outbox.add` / `outbox.addMany` calls outside tests.
+ * `outbox.add` / `outbox.addMany` calls outside tests. Files that can hold neither
+ * ({@link mayHoldOutboxFacts}) are not parsed.
  */
 function scanKernel(root: string): { constants: Map<string, string>; adds: OwedAdd[] } {
   const constants = new Map<string, string>();
   const adds: OwedAdd[] = [];
   for (const { file, isTest } of listSourceFiles(join(root, "packages/kernel/src"))) {
+    if (!mayHoldOutboxFacts(readFileSync(file, "utf8"))) continue;
     const p = parseFile(file);
     if (isParseError(p)) continue;
     for (const s of p.program.body as Node[]) {

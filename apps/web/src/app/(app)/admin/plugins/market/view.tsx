@@ -15,7 +15,7 @@ import { useEffect, useState } from "react";
 import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { usePluginsHead } from "../../../../../components/PluginsHead";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import { issueLines } from "../../../../../lib/api";
 import {
@@ -88,6 +88,7 @@ export default function CatalogView({ sourceId, q }: { sourceId: string; q: stri
 
 function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const head = usePluginsHead("market");
   const t = useTranslations("catalog.admin.entries");
   const ta = useTranslations("catalog.admin");
@@ -343,7 +344,7 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
       header={{
         // The 插件 head shared by its three tabs, with the search
         ...head,
-        path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "market" }],
+        path: [...scope, pw("plugins", "/admin/plugins"), pw("market")],
         search: { label: t("search"), value: q, onChange: setQ },
       }}
       variant="cards"

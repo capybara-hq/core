@@ -24,7 +24,7 @@ import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { useComponentsLabel, usePluginsHead } from "../../../../../components/PluginsHead";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import {
   type CatalogItem,
@@ -78,6 +78,7 @@ export default function PendingView() {
 
 function PendingRead({ orgId }: { orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const head = usePluginsHead("pending");
   const read = usePageQuery(pendingPluginsQuery());
   const rq = deploymentRequestsQuery();
@@ -89,7 +90,7 @@ function PendingRead({ orgId }: { orgId: string | null }) {
       <ListPage
         header={{
           ...head,
-          path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "pending" }],
+          path: [...scope, pw("plugins", "/admin/plugins"), pw("pending")],
         }}
         variant="objects"
         loading
@@ -109,6 +110,7 @@ function Pending({
   orgId: string | null;
 }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const head = usePluginsHead("pending");
   const t = useTranslations("catalog.admin.pending");
   const ta = useTranslations("catalog.admin");
@@ -162,7 +164,7 @@ function Pending({
       <ListPage
         header={{
           ...head,
-          path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "pending" }],
+          path: [...scope, pw("plugins", "/admin/plugins"), pw("pending")],
         }}
         variant="objects"
         listLabel={t("listLabel")}

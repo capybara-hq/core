@@ -10,7 +10,7 @@ import { useComponentState, useComponentSwitch } from "../../../components/Compo
 import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
 import { navLevelOf } from "../../../components/shell/nav";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { type AgentsTab, parseAgentsTab } from "../../../lib/agents";
 import { usableRows } from "../../../lib/components";
 import { canUpdateOrg } from "../../../lib/org-settings";
@@ -167,6 +167,7 @@ function AgentsTabList({
   newAgent: { label: string; variant: "primary"; href: string } | undefined;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("agents");
   const tabError = useTabError();
   const list = usePageQuery(agentsQuery(orgId));
@@ -186,7 +187,7 @@ function AgentsTabList({
     })),
     onChange: (v: string) => onFilter(v as AgentScope),
   };
-  const header = { ...head, path: [...scope, { label: "agents" }] };
+  const header = { ...head, path: [...scope, pw("agents")] };
   const common = { variant: "cards" as const, listLabel: t("title"), scope: scopeChoice };
   if (list.kind === "loading") {
     return <ListPage header={header} {...common} loading={{ rows: 6 }} />;
@@ -239,6 +240,7 @@ function TemplatesTab({
   query: string;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("agents.templates");
   const tc = useTranslations("orgComponents");
   const tabError = useTabError();
@@ -249,7 +251,7 @@ function TemplatesTab({
   const stateOf = useComponentState();
   const { actionsOf, dialog, error } = useComponentSwitch({ orgId, admin });
   if (list.kind === "notFound") return <NotFound />;
-  const header = { ...head, path: [...scope, { label: "agents" }] };
+  const header = { ...head, path: [...scope, pw("agents")] };
   const common = {
     variant: "cards" as const,
     listLabel: t("listLabel"),

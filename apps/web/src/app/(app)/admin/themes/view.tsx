@@ -9,7 +9,7 @@ import {
 } from "../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { adminComponentsQuery } from "../../../../lib/query/components";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useAdmin } from "../../../../lib/query/workspace";
@@ -29,12 +29,13 @@ export default function AdminThemesView() {
 
 function AdminThemes() {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents");
   const list = usePageQuery(adminComponentsQuery("theme"));
   const tabs = useOwnerTabs(list.kind === "ready" ? list.data.components : null);
   const platformDefault = usePlatformDefaultTheme();
   const header = {
-    path: [...scope, { label: "themes" }],
+    path: [...scope, pw("themes")],
     title: t("titles.theme"),
     description: t("descriptions.theme"),
     tabs: tabs.items,

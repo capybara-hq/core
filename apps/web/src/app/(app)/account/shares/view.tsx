@@ -4,7 +4,7 @@ import { SettingsPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { SharesTable } from "../../../../components/SharesTable";
 import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useWorkspace } from "../../../../lib/query/workspace";
 
 /**
@@ -19,12 +19,13 @@ export default function MySharesView() {
 
 function MyShares({ orgId }: { orgId: string }) {
   const scope = usePagePath("home");
+  const pw = usePathWord("home");
   const t = useTranslations("shares.list");
   const nav = useAccountNav();
   return (
     <SettingsPage
       header={{
-        path: [...scope, { label: "account", href: ACCOUNT_HOME }, { label: "shares" }],
+        path: [...scope, pw("account", ACCOUNT_HOME), pw("shares")],
         title: t("mineTitle"),
         description: t("mineDescription"),
       }}

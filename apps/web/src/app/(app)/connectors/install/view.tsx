@@ -14,7 +14,7 @@ import {
 } from "../../../../components/ConnectorWizard";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { type ConnectorKind, wizardKinds } from "../../../../lib/connectors";
 import { connectorKindsQuery } from "../../../../lib/query/conversation";
 import { usePageQuery } from "../../../../lib/query/page-query";
@@ -76,12 +76,13 @@ function InstallTemplate({ orgId, itemId }: { orgId: string; itemId: string }) {
 
 function InstallApp({ orgId, prefill }: { orgId: string; prefill: WizardPrefill | null }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("connectors");
   const read = usePageQuery(connectorKindsQuery(orgId));
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   const header = {
-    path: [...scope, { label: "connectors", href: "/connectors" }, { label: "install" }],
+    path: [...scope, pw("connectors", "/connectors"), pw("install")],
     title: t("wizard.title"),
   };
   if (read.kind === "loading") {

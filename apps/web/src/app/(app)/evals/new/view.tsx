@@ -15,7 +15,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
 import { createEvalSet } from "../../../../lib/evals";
@@ -75,6 +75,7 @@ function NewEvalSetForm({
   preset: string;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("evals");
   const tc = useTranslations("common");
   const router = useRouter();
@@ -119,7 +120,7 @@ function NewEvalSetForm({
       create
       loading={loading}
       header={{
-        path: [...scope, { label: "evals", href: "/evals" }, { label: "new" }],
+        path: [...scope, pw("evals", "/evals"), pw("new")],
         title: t("form.title"),
       }}
       actionRow={{

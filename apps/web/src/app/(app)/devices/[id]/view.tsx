@@ -24,7 +24,7 @@ import { DeviceProjectsSection } from "../../../../components/DeviceProjectsSect
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useDeviceName } from "../../../../components/use-device-name";
 import { useRouter } from "../../../../i18n/navigation";
 import {
@@ -74,6 +74,7 @@ export default function DeviceView({ id }: { id: string }) {
 function DevicePage({ orgId, id }: { orgId: string; id: string }) {
   const t = useTranslations("devices");
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   // Rebuild files is a job: after the request the page polls until the files are back, within a deadline
   const [resetAt, setResetAt] = useState<number | null>(null);
   const read = usePageQuery({
@@ -86,7 +87,7 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
     return (
       <DetailPage
         header={{
-          path: [...scope, { label: "devices", href: "/devices" }],
+          path: [...scope, pw("devices", "/devices")],
           title: "",
           titleHidden: true,
           loading: { actions: 2 },
@@ -138,6 +139,7 @@ function Detail({
   onResetScheduled(): void;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("devices");
   const router = useRouter();
   const toast = useToast();
@@ -177,7 +179,7 @@ function Detail({
     <>
       <DetailPage
         header={{
-          path: [...scope, { label: "devices", href: "/devices" }, { label: name }],
+          path: [...scope, pw("devices", "/devices"), { label: name }],
           title: name,
           // the nameplate is the page's visible head; the title stays an h1 for assistive tech
           titleHidden: true,

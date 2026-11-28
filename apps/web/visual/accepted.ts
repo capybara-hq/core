@@ -83,6 +83,10 @@ export const ACCEPTED: string[] = [
   // plan Task 7): accepted side by side in the Playwright Linux image; the reference PNGs wait for
   // the reference-update workflow
   "composer-menu",
+  // the Lexical composer editor and its inline tokens (inline tokens spec §1, §2): blocks and state
+  // list in place; the reference PNGs and the side-by-side review wait for the reference-update
+  // and visual-update workflows
+  "composer-editor",
   "project-file-picker",
   // mobile touch (Task 25): size tables and state lists in the spec, reference blocks in the catalog
   "drawer",

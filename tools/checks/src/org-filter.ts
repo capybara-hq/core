@@ -417,13 +417,24 @@ export function checkOrgFilterFile(p: ParsedFile, tables: Set<string>): Finding[
   return findings;
 }
 
+/**
+ * Whether a file's text can hold a query or a marker: a query method name, the word `sql` (the
+ * tag, also with type arguments) or `org-filter:`. Parsing is most of the check's cost and about two thirds of the kernel files hold
+ * none, so the scan skips those (issue #1087).
+ */
+export function mayHoldQuery(source: string): boolean {
+  return MAY_HOLD_QUERY.test(source);
+}
+// `sql` as a word: the tag may carry type arguments (sql<number>`…`)
+const MAY_HOLD_QUERY = new RegExp(`\\b(?:${[...QUERY_METHODS, "sql"].join("|")})\\b|org-filter:`);
+
 /** Runs the check over every non-test file of `packages/kernel/src` under `root`. */
 export function checkOrgFilter(root: string): Finding[] {
   const tables = orgScopedTables(root);
   if (!(tables instanceof Set)) return [tables];
   const findings: Finding[] = [...checkPolicies(root, tables)];
   for (const { file, isTest } of listSourceFiles(join(root, KERNEL_SRC))) {
-    if (isTest || file.endsWith(SCHEMA)) continue;
+    if (isTest || file.endsWith(SCHEMA) || !mayHoldQuery(readFileSync(file, "utf8"))) continue;
     const parsed = parseFile(file);
     if (isParseError(parsed)) {
       findings.push(parsed);

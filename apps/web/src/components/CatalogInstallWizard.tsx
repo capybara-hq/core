@@ -52,7 +52,7 @@ import {
 import { FormError } from "./form-error";
 import { type EnableState, enableState, fromOrgDetail } from "./plugin-contents/from-org";
 import { PluginContents } from "./plugin-contents/PluginContents";
-import { usePagePath } from "./shell/path";
+import { usePagePath, usePathWord } from "./shell/path";
 
 export type TemplateDraft = {
   name: string;
@@ -280,13 +280,14 @@ export function CatalogInstallWizard({
   frame(view: WizardView): ReactNode;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("catalog.org.install");
   const header = (title: string) => ({
     path: [
       ...scope,
-      { label: "plugins", href: "/plugins" },
+      pw("plugins", "/plugins"),
       { label: itemId, href: `/plugins/${encodeURIComponent(itemId)}` },
-      { label: "enable" },
+      pw("enable"),
     ],
     title,
   });
