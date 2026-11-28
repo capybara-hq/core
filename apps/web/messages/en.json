@@ -7206,7 +7206,7 @@
       "deleteDescription": "The task stops and is removed. Conversations it started stay.",
       "deleteConfirm": "Delete “{name}”?",
       "deleteConfirmBody": "The task stops and is removed. Conversations it started stay.",
-      "deleteAcceptanceBody": "Deleting does not stop the work: while your rule for its source is “Run it at once”, the next work assigned to you makes it again.",
+      "deleteAcceptanceBody": "Deleting does not stop acceptance: while your rule for its source is “Run it at once”, the next event directed to you makes it again.",
       "deleteAcceptanceLink": "Change your acceptance rules",
       "created": "Automation created",
       "saved": "Automation saved",
@@ -7299,7 +7299,7 @@
         "retry": "Retry"
       }
     },
-    "acceptsWork": "Accepts work from {source}",
+    "acceptsWork": "Accepts events from {source}",
     "acceptanceTag": "Acceptance rule"
   },
   "navSettings": {

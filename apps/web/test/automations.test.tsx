@@ -245,7 +245,7 @@ describe("/automations (my automations)", () => {
     };
     stubApi(accepting);
     await renderRouteWithCache("/automations?view=list", accepting);
-    expect(await screen.findByText("Accepts work from Collab Tracker")).toBeTruthy();
+    expect(await screen.findByText("Accepts events from Collab Tracker")).toBeTruthy();
     const row = within(screen.getAllByRole("row")[1] as HTMLElement);
     expect(row.getByText(E.acceptanceTag)).toBeTruthy();
   });

@@ -7194,7 +7194,7 @@
       "deleteDescription": "任务会停止并被移除，它创建的会话会保留。",
       "deleteConfirm": "删除「{name}」？",
       "deleteConfirmBody": "任务会停止并被移除，它创建的会话会保留。",
-      "deleteAcceptanceBody": "删除不会停止接收工作：只要你对其来源的规则是「立即运行」，下一项指派给你的工作会重新创建它。",
+      "deleteAcceptanceBody": "删除不会停止接收：只要你对其来源的规则是「立即运行」，下一个指向你的事件会重新创建它。",
       "deleteAcceptanceLink": "修改接收规则",
       "created": "自动化已创建",
       "saved": "自动化已保存",
@@ -7287,7 +7287,7 @@
         "retry": "重试"
       }
     },
-    "acceptsWork": "接受来自{source}的工作",
+    "acceptsWork": "接收来自{source}的事件",
     "acceptanceTag": "接收规则"
   },
   "navSettings": {
