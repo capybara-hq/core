@@ -151,6 +151,16 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   uploaded files' blocks, with `payload.projectFiles` (block i at `content[1 + attachments.length + i]`). Nothing is
   read at build time or in a replay, so no `DriftReason`. The command review reads these lines as the person's
   intent, never the `@` resources' bodies. Case in `reconstruct.test.ts` ("referenced project files …").
+- **Referenced conversations** (@ conversations spec `docs/superpowers/specs/2026-11-28-at-conversation-design.md`
+  §2): the sender's own conversations named in `conversationRefs` are read at send time (the latest
+  `compaction_summary` and the user / agent text after it, or the last messages; fixed bounds in
+  `conversations/conversation-ref.ts`) and logged in the `user_message` as one English quoted block each
+  (`conversationRefText`: title, id, agent, last active date, a running note, a closing line pointing to the
+  Platform tool's `conversations.events`), after the project file lines and before the uploaded files' blocks,
+  with `payload.conversationRefs` (block i at `content[1 + attachments.length + projectFiles.length + i]`).
+  Request building and replays never read another conversation, so no `DriftReason`. The command review skips
+  these blocks (quoted material, not the person's intent). Case in `reconstruct.test.ts` ("referenced
+  conversations …").
 - **A reply cut off at the output token limit** (issue #951): an `assistant_message` with `stopReason:
   "max_tokens"` is followed in the request by the `role: "system"` `OUTPUT_TRUNCATED_TEXT`
   (`runtime/context/output-truncated.ts`), derived from the logged stop reason alone, so no event

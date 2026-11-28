@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Attachment strip</h1>
-<p>Attachments in the composer: image thumbnails (56) with remove, file chips (type, name, size), upload progress, and a rejected file with a fail border and the reason.</p>
+<p>Attachments in the composer: image thumbnails (56) with remove, file chips (type, name, size), upload progress, and a rejected file with a fail border and the reason; referenced conversations (the chats icon and the title, at most layout.file-card, the title truncating first) and one refused at send.</p>
 <div class="r-blocks">
 <section data-ref-block="attachment-strip-image" style="width:752px" data-pad>
   <template data-fixture="attachment-strip" data-opts='{"state": "image"}'></template>
@@ -23,6 +23,12 @@
 </section>
 <section data-ref-block="attachment-strip-rejected" style="width:752px" data-pad>
   <template data-fixture="attachment-strip" data-opts='{"state": "rejected"}'></template>
+</section>
+<section data-ref-block="attachment-strip-conversation" style="width:752px" data-pad>
+  <template data-fixture="attachment-strip" data-opts='{"state": "conversation"}'></template>
+</section>
+<section data-ref-block="attachment-strip-conversation-refused" style="width:752px" data-pad>
+  <template data-fixture="attachment-strip" data-opts='{"state": "conversation-refused"}'></template>
 </section>
 </div>
 </main>

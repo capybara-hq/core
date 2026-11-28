@@ -27,6 +27,8 @@ export type LinkComponent = ComponentType<{
   "data-id"?: string;
   "data-state"?: string;
   "data-optional"?: string;
+  /** What the link stands for, for the size table (a bubble's conversation chip). */
+  "data-kind"?: string;
   /** A touch row's own attributes (NavRow, FloatingIconButton): current, drawer pick, section. */
   "data-current"?: string | undefined;
   "data-drawer-pick"?: string | undefined;

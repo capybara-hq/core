@@ -396,6 +396,14 @@ export const ERROR_CODES = {
    * `details: [{ path?, reason? }]`.
    */
   "conversation.project_file_unavailable": 422,
+  /**
+   * A referenced conversation cannot be referenced (@ conversations spec §1): missing, deleted,
+   * another person's or org's, a sub-agent's or eval conversation, or its agent no longer visible,
+   * all alike; or it has no messages yet (`reason: "empty"`); `details: [{ id, reason? }]`.
+   */
+  "conversation.reference_unavailable": 422,
+  /** A message references the conversation it is written in; `details: [{ id }]`. */
+  "conversation.reference_self": 422,
   "run.not_active": 409,
   /** A run that is not one of the conversation's (the live draft route, spec 2026-11-07 §3.2). */
   "run.not_found": 404,

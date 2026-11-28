@@ -400,6 +400,9 @@ export function useConversationPage(
         ...(d.retry.projectFiles !== undefined
           ? { projectFiles: d.retry.projectFiles.map((path) => ({ path })) }
           : {}),
+        ...(d.retry.conversationRefs !== undefined
+          ? { conversationRefs: d.retry.conversationRefs.map((id) => ({ id })) }
+          : {}),
         retryOf: d.retry.seq,
         ...(d.retry.skill !== undefined ? { skill: { name: d.retry.skill } } : {}),
         ...pick,

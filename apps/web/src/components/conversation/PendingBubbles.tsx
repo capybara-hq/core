@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type BubbleAttachment,
   BubbleAttachments,
   QueuePaused,
   Stack,
@@ -25,6 +26,8 @@ export type PendingSend = {
   text: string;
   skill?: string;
   files: { name: string; kind: "image" | "file"; type?: string }[];
+  /** The referenced conversations (link chips after the files). */
+  conversations?: { id: string; title: string | null }[];
 };
 
 /** The `clientMessageId`s of the log's user messages. */
@@ -55,6 +58,7 @@ export function usePendingSends(events: readonly ConversationEvent[] | undefined
       text: m.text,
       ...(m.display?.skill !== undefined ? { skill: m.display.skill } : {}),
       files: m.display?.files ?? [],
+      ...(m.display?.conversations !== undefined ? { conversations: m.display.conversations } : {}),
     };
     setList((cur) => [...cur.filter((x) => x.clientMessageId !== p.clientMessageId), p]);
   }, []);
@@ -76,16 +80,28 @@ export function PendingBubbles({ items }: { items: readonly PendingSend[] }) {
             text={p.text}
             queued
             {...(p.skill !== undefined ? { skill: p.skill } : {})}
-            {...(p.files.length > 0
+            {...(p.files.length > 0 || (p.conversations?.length ?? 0) > 0
               ? {
                   attachments: (
                     <BubbleAttachments
-                      items={p.files.map((f, i) => ({
-                        id: `${p.clientMessageId}:${i}`,
-                        kind: f.kind,
-                        name: f.name,
-                        ...(f.type !== undefined ? { type: f.type } : {}),
-                      }))}
+                      items={[
+                        ...p.files.map(
+                          (f, i): BubbleAttachment => ({
+                            id: `${p.clientMessageId}:${i}`,
+                            kind: f.kind,
+                            name: f.name,
+                            ...(f.type !== undefined ? { type: f.type } : {}),
+                          }),
+                        ),
+                        ...(p.conversations ?? []).map(
+                          (c): BubbleAttachment => ({
+                            id: `${p.clientMessageId}:conversation:${c.id}`,
+                            kind: "conversation",
+                            name: c.title ?? "",
+                            href: `/chat/${encodeURIComponent(c.id)}`,
+                          }),
+                        ),
+                      ]}
                     />
                   ),
                 }

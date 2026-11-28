@@ -376,6 +376,8 @@ export interface RetryMessage {
   attachments?: { connectorId: string; uri: string }[];
   /** The referenced project files' paths (composer menus §5). Absent: none. */
   projectFiles?: string[];
+  /** The referenced conversations' ids (@ conversations spec §3). Absent: none. */
+  conversationRefs?: string[];
   /** A skill invocation: the name to invoke again (`<plugin>:<name>` for a plugin's skill). */
   skill?: string;
 }
@@ -404,6 +406,11 @@ export type TimelineEntry =
        * the bubble, their English blocks never part of `text`. Absent: none.
        */
       projectFiles?: string[];
+      /**
+       * Referenced conversations (@ conversations spec §3): link chips on the bubble, their quoted
+       * blocks never part of `text`. Absent: none.
+       */
+      conversationRefs?: { id: string; title: string | null }[];
       /** A skill invocation (phase D): the chip ("/fix-issue") and how it runs. */
       skill?: { label: string; mode: "inline" | "fork" };
       /** An inline invocation's rendered text, sent in the person's name (`content[0]`). */
@@ -695,13 +702,15 @@ export function messageFiles(content: ContentBlock[]): MessageFile[] {
 }
 
 /**
- * The text a person typed (with `@` resources or project files only `content[0]`: the resources'
- * bodies stay folded, the project files' blocks are the model's, shown as chips).
+ * The text a person typed (with `@` resources, project files or referenced conversations only
+ * `content[0]`: the resources' bodies stay folded, the project files' and the conversations'
+ * blocks are the model's, shown as chips).
  */
 function userText(e: Extract<ConversationEvent, { type: "user_message" }>): string {
   const attachments = e.payload.attachments ?? [];
   const projectFiles = e.payload.projectFiles ?? [];
-  return attachments.length > 0 || projectFiles.length > 0
+  const conversationRefs = e.payload.conversationRefs ?? [];
+  return attachments.length > 0 || projectFiles.length > 0 || conversationRefs.length > 0
     ? joinText(e.payload.content.slice(0, 1), "text")
     : joinText(e.payload.content, "text");
 }
@@ -1462,6 +1471,9 @@ export function buildEventTimeline(
           };
           const projectFiles = e.payload.projectFiles ?? [];
           if (projectFiles.length > 0) entry.projectFiles = projectFiles.map((f) => f.path);
+          const refs = e.payload.conversationRefs ?? [];
+          if (refs.length > 0)
+            entry.conversationRefs = refs.map((r) => ({ id: r.id, title: r.title }));
           if (skill) {
             entry.skill = { label: skillChipLabel(skill.name), mode: skill.mode };
             // A fork's content[0] is the lead for the model, not the instructions: those are the
@@ -1484,12 +1496,14 @@ export function buildEventTimeline(
           uri: a.uri,
         }));
         const retryProjectFiles = (e.payload.projectFiles ?? []).map((f) => f.path);
+        const retryRefs = (e.payload.conversationRefs ?? []).map((r) => r.id);
         lastUser = {
           seq: retryOf ?? e.seq,
           text,
           files,
           ...(retryAttachments.length > 0 ? { attachments: retryAttachments } : {}),
           ...(retryProjectFiles.length > 0 ? { projectFiles: retryProjectFiles } : {}),
+          ...(retryRefs.length > 0 ? { conversationRefs: retryRefs } : {}),
           ...(skill ? { skill: skill.plugin ? `${skill.plugin}:${skill.name}` : skill.name } : {}),
         };
         break;

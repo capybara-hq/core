@@ -165,7 +165,12 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
   the start or after whitespace (`a@b` and an IME composition open nothing). The trigger stays in
   the text and the text after it is the query; a pick removes both, Esc keeps the text. The `@`
   query is searched on the kernel (`connectorResourcesQuery(orgId, query)`, debounced, one cache
-  entry per text, `filter={false}`); the textarea is a `combobox` in tests, not a `textbox`.
+  entry per text, `filter={false}`); the textarea is a `combobox` in tests, not a `textbox`. The
+  whole `@` menu's groups, in order: the library's files (`libraryFileSearchQuery`), 会话 (the
+  sender's conversations by title, `conversationMentionQuery`, the current one dropped, at most 5
+  rows, `icon: "chats"`; a pick is a `kind: "conversation"` strip chip sent as `conversationRefs`,
+  at most 3), then the connector resources by connector; all read the same rested query with the
+  same IME hold, and ＋ → File library / Connector resources narrow it to one source.
 - A card whose state the log does not carry (a sub-agent's approval or question, named only by id)
   reads it before the first paint (`openWaitReads` in the route's `then`) and draws nothing until
   that read answers (`ApprovalCard fromRead`), never a pending card first (web query cache spec §6).
