@@ -18,6 +18,7 @@ import {
   IDLE_COMPACTION_JOB,
   type IdleCompactionJobData,
 } from "../../src/runtime/idle-compaction-jobs.js";
+import { IdleReturn } from "../../src/runtime/idle-return.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
@@ -501,5 +502,114 @@ describe("the idle compaction job", () => {
     expect(next.runId).not.toBe(data.runId);
     expect(await fire(next)).toBe("backoff");
     expect(await idleRuns(conv)).toHaveLength(1);
+  });
+});
+
+const MIN = 60_000;
+
+/**
+ * The `idle_return` log's reader SQL (idle compaction spec S11) against real rows: each case arms
+ * its own org and conversation (a finished model-fake run with a long context), then reads the log
+ * through an `IdleReturn` built with a recording logger (the kernel logger is transient).
+ */
+describe("idle_return log", () => {
+  /** The finish time of the armed conversation's one run. */
+  async function finishedAt(runId: string): Promise<number> {
+    const run = await db
+      .selectFrom("runs")
+      .select("finished_at")
+      .where("id", "=", runId)
+      .executeTakeFirstOrThrow();
+    return (run.finished_at as Date).getTime();
+  }
+
+  async function record(
+    a: Armed,
+    now: number,
+  ): Promise<Array<[string, Record<string, unknown> | undefined]>> {
+    const lines: Array<[string, Record<string, unknown> | undefined]> = [];
+    const service = new IdleReturn(
+      k.app.get(KernelDb),
+      k.app.get(CompactionSettingsService),
+      k.app.get(ProviderRegistry),
+      { info: (msg, fields) => lines.push([msg, fields]), debug: () => {} },
+    );
+    await withOrgScope(a.orgId, () =>
+      service.record({ id: a.conv, org_id: a.orgId }, randomUUID(), now),
+    );
+    return lines.filter(([msg]) => msg === "idle_return");
+  }
+
+  it("logs the return with the previous run's context, even behind many side-call usages", async () => {
+    const a = await arm();
+    // more side-call usages than the reader once scanned, all after the step usage
+    await withOrgScope(a.orgId, () =>
+      k.app.get(EventLog).append(
+        a.conv,
+        Array.from({ length: 10 }, () => ({
+          type: "usage" as const,
+          runId: a.data.runId,
+          payload: {
+            step: 0,
+            provider: "model-fake",
+            model: "fake-1",
+            inputTokens: 5,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            purpose: "title",
+          },
+        })),
+      ),
+    );
+    const lines = await record(a, (await finishedAt(a.data.runId)) + 31 * MIN);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.[1]).toMatchObject({
+      context: "IdleCompaction",
+      orgId: a.orgId,
+      conversationId: a.conv,
+      gapMs: 31 * MIN,
+      threshold: 50_000,
+      idleSummary: false,
+    });
+    expect(lines[0]?.[1]?.contextTokens).toBeGreaterThan(50_000);
+    expect(lines[0]?.[1]).toHaveProperty("ttl");
+  });
+
+  it("reports an idle compact run's summary written after the previous run", async () => {
+    const a = await arm();
+    const idleRun = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: idleRun,
+        conversation_id: a.conv,
+        execution_id: null,
+        trigger_account_id: ownerId,
+        status: "completed",
+        agent_version: 1,
+        trigger_seq: 0,
+        compact: true,
+        compact_origin: "idle",
+      })
+      .execute();
+    await withOrgScope(a.orgId, () =>
+      k.app.get(EventLog).append(a.conv, [
+        {
+          type: "compaction_summary",
+          runId: idleRun,
+          payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900, step: 0 },
+        },
+      ]),
+    );
+    await sql`UPDATE capybara.runs SET finished_at = now() WHERE id = ${idleRun}`.execute(raw);
+    const lines = await record(a, (await finishedAt(a.data.runId)) + 31 * MIN);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.[1]).toMatchObject({ idleSummary: true });
+  });
+
+  it("logs nothing within the 30-minute gap", async () => {
+    const a = await arm();
+    expect(await record(a, (await finishedAt(a.data.runId)) + 29 * MIN)).toEqual([]);
   });
 });
