@@ -87,6 +87,8 @@ export interface FakeMcpResource {
   name: string;
   description?: string;
   mimeType?: string;
+  /** Size in bytes stated in the listing. */
+  size?: number;
   text?: string;
   /** base64。 */
   blob?: string;
@@ -304,6 +306,7 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
           name: r.name,
           ...(r.description !== undefined && { description: r.description }),
           ...(r.mimeType !== undefined && { mimeType: r.mimeType }),
+          ...(r.size !== undefined && { size: r.size }),
         })),
       }));
       server.setRequestHandler(ReadResourceRequestSchema, async (req) => {

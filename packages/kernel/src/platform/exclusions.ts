@@ -715,7 +715,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/connectors/resources",
     category: "internal",
     reason:
-      "Feeds the @ reference picker of the web input box; no operation gives it, an agent reads connector resources through its connector tools",
+      "Feeds the @ picker of the web input box, whose second level lists one connector's readable resources (`connectorId`); no operation gives it, an agent reads connector resources through its connector tools",
   },
   {
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/prompts/:name",
