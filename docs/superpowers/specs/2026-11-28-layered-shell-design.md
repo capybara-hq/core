@@ -201,6 +201,9 @@ the safe area on compact. §4.4 keeps the ActionRow and loses the StatusBar.
   its accessible name; the context meter's states; no `StatusBar` export (API report).
 - `drag-regions.test.tsx`: the new fillers are empty elements; overlays carve them out.
 - `check:tokens`: the changed values pass every contrast pair.
+- Card step: `layering-steps.test.ts` holds the built-in steps (panel between paper and ground,
+  panel-2 between paper and panel, raised above panel); the field fallback is tested in the SDK
+  (`mergeThemeSchemes`) and the kernel (`renderThemeCss`).
 - Size matrix and compact violation suites: unchanged pages still pass at the three classes.
 - Visual baselines and the reference compare (blind reviewer) per the writing-web-ui acceptance steps.
 
