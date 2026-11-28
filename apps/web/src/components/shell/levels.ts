@@ -7,7 +7,7 @@ import { NAV_HREFS } from "./nav";
 
 /**
  * The first level of the app's navigation (spec §4.2 path rule, maintainer decision 2026-11-29):
- * every page the sidebar reaches directly. The sidebar's items and its 更多 menu, the new
+ * every page the sidebar reaches directly. The sidebar's items and its More menu, the new
  * conversation, the inbox and all conversations, the account menu's personal settings, the admin
  * console's nav; their header tabs (routed tabs inherit their head's level) and their settings
  * sub-nav items (siblings of the first). A first-level page draws no path row; every other page

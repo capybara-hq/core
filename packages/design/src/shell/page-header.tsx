@@ -194,7 +194,7 @@ export function HeadSearch({ search }: { search: NonNullable<PageHeaderProps["se
 
 /**
  * The navigation level of the page being drawn (spec §4.2 path rule, maintainer decision
- * 2026-11-29): `first` for a page the sidebar reaches directly (a sidebar or 更多 item, the
+ * 2026-11-29): `first` for a page the sidebar reaches directly (a sidebar or More item, the
  * account menu's personal settings, the admin console's nav, their header tabs and their settings
  * sub-nav items), `deeper` for a page reached from inside a page (an item, a create or import flow).
  * The app sets it from its navigation; a first-level page draws no path row, a deeper one draws it.

@@ -121,7 +121,7 @@ function PluginPage({
   const t = useTranslations();
   const locale = uiLocale(useLocale());
   const title = contribution?.title[locale] ?? id;
-  // The page's own name leads its path (the nav's name for it, 项目 / 记忆), linking to the page
+  // The page's own name leads its path (the nav's name for it, such as Projects or Memory), linking to the page
   // without params. The nav opens it without params: a first-level page, no path row; with params
   // (an item opened inside it) it is deeper, and its path row shows (spec §4.2 path rule).
   const crumbs = [...scope, { label: title, href: pluginPageHref(plugin, id) }];

@@ -238,7 +238,7 @@ describe("frame page", () => {
       s.textContent?.trim(),
     );
     // the host's crumbs (the org, the page's own name linking to its first view), the plugin's
-    // own path, then the page's title; never the old 扩展页 label
+    // own path, then the page's title; never the old extension page label
     expect(segs[0]).toBe("acme");
     expect(segs[1]).toBe(BOARD.title.en);
     expect(segs.at(-1)).toBe("Board");

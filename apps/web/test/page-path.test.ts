@@ -133,14 +133,14 @@ describe("the path level follows navigation (maintainer decision 2026-11-29)", (
     ...ADMIN_PAGES.map((p) => p.href),
     ...heads.flat().map((t) => t.href ?? ""),
     ...evalsTabs((k) => k).map((t) => t.href),
-    // extension pages the 更多 menu and the admin nav open (the host makes one with params deeper)
+    // extension pages the More menu and the admin nav open (the host makes one with params deeper)
     "/p/memory/memory",
     "/p/collab/projects",
     "/admin/p/memory/overview",
   ];
   it("every sidebar, 更多, account menu, admin nav, tab and settings sub-nav route is first-level", () => {
     for (const href of first) expect(pathLevel(href), href).toBe("first");
-    // the 更多 menu's 组织设置 and the account menu's 个人设置 among them
+    // the More menu's organization settings and the account menu's personal settings among them
     expect(first).toContain("/settings/organization");
     expect(first).toContain("/account/profile");
   });
