@@ -346,6 +346,34 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
     );
   });
 
+  // browser loopback port grants: the extension's tool asked, not a shell command
+  it("a loopback port card names the extension's tool, the port and the session choice", async () => {
+    const loopback = {
+      ...view,
+      detail: {
+        kind: "loopback" as const,
+        deviceId: "d1",
+        service: "browser.daemon",
+        url: "http://127.0.0.1:3999/",
+        port: 3999,
+        database: false,
+        attempt: 1,
+      },
+      toolKey: "plugin__browser__navigate",
+      toolName: "navigate",
+      extension: { name: "browser", displayName: { zh: "浏览器", en: "Browser" } },
+      scopes: ["session"],
+    };
+    const en = await approvalCard(deps(loopback), "na1", "https://cap.example", "en");
+    expect(en).toMatchObject({
+      title: "Allow the browser to reach port 3999 on this device?",
+      toolName: "Browser [navigate]",
+      inputPreview: "http://127.0.0.1:3999/",
+      scopes: ["session"],
+      scopeLabels: { session: "Allow for this conversation" },
+    });
+  });
+
   it("the card: Bash, the hosts, the clipped redacted command, the all-hosts line, both scopes and when the list applies", async () => {
     const zh = await approvalCard(deps(view), "na1", "https://cap.example", "zh", redact);
     expect(zh).toMatchObject({

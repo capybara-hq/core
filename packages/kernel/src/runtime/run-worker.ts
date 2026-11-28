@@ -19,7 +19,7 @@ import {
   sameSelection,
 } from "../conversations/selection.js";
 import { TitleQueue } from "../conversations/titles.js";
-import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { ConversationKind, IdleMode, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { SettingsService } from "../identity/settings.js";
 import { waitWithin } from "../infra/close-within.js";
@@ -476,6 +476,7 @@ export class RunWorker {
         "budget_run_id",
         "compact",
         "compact_origin",
+        "idle_mode",
       ])
       .where("id", "=", runId)
       .executeTakeFirst();
@@ -666,6 +667,7 @@ export class RunWorker {
       budget_run_id: string | null;
       compact: boolean;
       compact_origin: CompactOrigin | null;
+      idle_mode: IdleMode | null;
     },
     conv: {
       id: string;
@@ -1096,6 +1098,7 @@ export class RunWorker {
       trigger_seq: string;
       started_at: Date | null;
       compact_origin: CompactOrigin | null;
+      idle_mode: IdleMode | null;
     },
     conv: {
       id: string;
@@ -1171,8 +1174,9 @@ export class RunWorker {
           absorbedUpToSeq: Number(consumed_seq),
           signal: ac.signal,
         },
-        // R13: an idle run requires the in-context summary and never sets `manual`
-        origin,
+        // R13: an idle run never sets `manual`; it runs in the mode it was armed in (a row from
+        // before 0200 has none: cache, the in-context summary or nothing)
+        origin === "idle" ? { origin, idleMode: run.idle_mode ?? "cache" } : { origin },
       );
     } catch (err) {
       if (state.abandoned) return "abandoned";

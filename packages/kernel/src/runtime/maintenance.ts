@@ -64,6 +64,12 @@ import {
   SANDBOX_RESET_FILES_JOB,
 } from "../sandbox/jobs.js";
 import {
+  LOOPBACK_REFRESH_JOB,
+  LOOPBACK_REFRESH_TIMEOUT_MS,
+  type LoopbackRefreshJobData,
+} from "../sandbox/loopback-grant-records.js";
+import { LoopbackGrants } from "../sandbox/loopback-grants.js";
+import {
   HOLDER_REVOKE,
   OPERATION_RECONCILE,
   OPERATION_REVOKE,
@@ -92,7 +98,7 @@ import {
 } from "../tools/permission-approval-jobs.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { IdleCompactionJob } from "./idle-compaction.js";
-import { IDLE_COMPACTION_JOB, type IdleCompactionJobData } from "./idle-compaction-jobs.js";
+import { IDLE_COMPACTION_JOB, type IdleCompactionJobInput } from "./idle-compaction-jobs.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { RunDeletion, STOP_DELETED_ORG_JOB, type StopDeletedOrgData } from "./run-deletion.js";
 import { ENSURE_RUN_JOB, type EnsureRunJobData, RunQueue } from "./run-queue.js";
@@ -123,7 +129,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link BlobObjects}, `file-library-hash`, `file-library-hash-org` → {@link FileLibraryHashJob},
  * `file-library-backfill` → {@link FileLibraryBackfill}, `platform-icon-delete` →
  * {@link PlatformIconObjects}, `device-conversation-notice` → {@link ConversationNoticeDelivery},
- * `idle-compaction` → {@link IdleCompactionJob}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * `idle-compaction` → {@link IdleCompactionJob}, `device-loopback-refresh` → {@link LoopbackGrants}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -169,6 +175,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(TriggerDispatcher) private readonly triggers: Pick<TriggerDispatcher, "dispatch">,
     @Inject(EventCoalescer) private readonly coalescer: Pick<EventCoalescer, "flush">,
     @Inject(IdleCompactionJob) private readonly idleCompaction: Pick<IdleCompactionJob, "fire">,
+    @Inject(LoopbackGrants) private readonly loopback: Pick<LoopbackGrants, "refresh">,
     @Optional()
     @Inject(CloudPermissionSnapshots)
     private readonly snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
@@ -318,9 +325,17 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         await this.notices.attempt(orgId, noticeId, { timeoutMs: NOTICE_PROMPT_TIMEOUT_MS });
         return;
       }
+      // a service's live loopback port set sent to it, after revoking what the device now
+      // refuses (browser loopback port grants design §4)
+      case LOOPBACK_REFRESH_JOB:
+        await this.loopback.refresh(
+          job.data as LoopbackRefreshJobData,
+          AbortSignal.timeout(LOOPBACK_REFRESH_TIMEOUT_MS),
+        );
+        return;
       // a large idle conversation's compaction before its prompt cache expires (idle compaction §4.3)
       case IDLE_COMPACTION_JOB:
-        await this.idleCompaction.fire(job.data as IdleCompactionJobData);
+        await this.idleCompaction.fire(job.data as IdleCompactionJobInput);
         return;
       default:
         if (await this.scheduled.runNow(job.name)) return;

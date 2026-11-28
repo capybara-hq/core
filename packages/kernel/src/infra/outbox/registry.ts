@@ -578,6 +578,21 @@ export const OUTBOX_JOBS = {
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
     opts: { attempts: 1, removeOnComplete: true, removeOnFail: true },
   },
+  // `sandbox/loopback-grants.ts` LOOPBACK_REFRESH_JOB: owed by a loopback grant, a revoke, the
+  // expiry pass, a root's deletion and every revoking ceiling publication, per (device, service),
+  // under `loopbackRefreshJobId` (browser loopback port grants design §4)
+  "device-loopback-refresh": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "the refresh sends the whole live set to an ifRunning ensure; a repeat sends the same set and the machine keeps the service",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
   // `extensions/run-lifecycle-owe.ts` RUN_LIFECYCLE_JOB: owed by the transaction that starts a
   // run, suspends it on a person, resumes it, ends it (finished, failed, aborted) or declines,
   // expires or gives up on directed work, once per phase of a run (and wait) and plugin

@@ -48,9 +48,16 @@ export function PermissionReview({
   const t = useTranslations("extensions");
   const label = (category: string) =>
     t.has(`category.${category}`) ? t(`category.${category}`) : category;
-  /** An item as shown: the client code item (reason `client_code`) is translated. */
+  /**
+   * An item as shown: the client code item (reason `client_code`) and the loopback ports item
+   * (reason `device_loopback_ports`) are translated.
+   */
   const itemText = (item: PermissionItem): string =>
-    item.reason === "client_code" ? t("review.clientItem") : item.value;
+    item.reason === "client_code"
+      ? t("review.clientItem")
+      : item.reason === "device_loopback_ports"
+        ? t("review.loopbackItem")
+        : item.value;
   const reasonText = (item: PermissionItem): string | null => {
     if (item.reason === undefined) return null;
     const key = `review.reason.${item.reason}`;

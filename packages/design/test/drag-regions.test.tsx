@@ -438,15 +438,20 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     expect(css$).toMatch(
       /@property --cb-shell-paper-drop \{[^}]*syntax: "<length>";[^}]*initial-value: 0px;/,
     );
-    // the drop is the rail's, set only in the rail's form from 600 up and never with a banner
-    const drops = rules().filter((r) => r.decls["--cb-shell-paper-drop"] !== undefined);
+    // the drop is the rail's in the rail's form from 600 up (the end row's too, #1065, below) and
+    // never with a banner
+    const drops = rules().filter(
+      (r) => r.decls["--cb-shell-paper-drop"] !== undefined && r.selector.includes(":has("),
+    );
     expect(drops.map((r) => r.at).sort()).toEqual([
       "(min-width: 600px)",
       "(min-width: 600px) and (max-width: 840px)",
       "(min-width: 841px)",
     ]);
     for (const r of drops) {
-      expect(r.decls["--cb-shell-paper-drop"]).toBe("var(--cb-shell-rail-drop)");
+      expect(r.decls["--cb-shell-paper-drop"]).toBe(
+        "max(var(--cb-shell-rail-drop), var(--cb-shell-row-end))",
+      );
       expect(r.selector).toContain('.cb-shell:not([data-banner="true"]):has(');
       expect(r.selector).not.toContain('data-mode="full"');
     }
@@ -474,17 +479,18 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     const layer = rules().find(
       (r) => r.at === Q && r.selector === `${PAGE}::before, ${CONV}::before`,
     );
-    expect(layer?.decls.inset).toBe("calc(var(--cb-shell-row) + var(--cb-space-2)) 0 0");
+    expect(layer?.decls.inset).toBe("var(--cb-shell-row) 0 0");
     expect(layer?.decls.background).toBe("var(--cb-bg)");
-    // the next row starts on the paper; a first-level head (no path row) starts inside it
-    expect(decl(`${CONV} > .cb-title-bar`, "margin-bottom", Q)).toBe("var(--cb-space-2)");
+    // the next row starts on the paper right below the band (the title bar keeps no margin); a
+    // first-level head (no path row) starts inside it
+    expect(decl(`${CONV} > .cb-title-bar`, "margin-bottom", Q)).toBeUndefined();
     expect(
       decl(
         ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))',
         "padding-top",
         Q,
       ),
-    ).toBe("calc(var(--cb-shell-row) + var(--cb-space-2) + var(--cb-space-5))");
+    ).toBe("calc(var(--cb-shell-row) + var(--cb-space-5))");
     // the conversation's title bar is the band's whole row: it runs to the window's end over the
     // inline panel (its end group at the far end, clear of end controls) ...
     expect(
@@ -500,7 +506,7 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     );
     // ... and the inline panel's box starts below the band, so nothing of it lies over the bar
     const PANEL = ':root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full])';
-    expect(decl(PANEL, "margin-top", Q)).toBe("calc(var(--cb-shell-row) + var(--cb-space-2))");
+    expect(decl(PANEL, "margin-top", Q)).toBe("var(--cb-shell-row)");
     expect(decl(PANEL, "padding-top", Q)).toBe("0");
     expect(
       decl(
@@ -532,6 +538,164 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
             /not all and \(min-width: 600px\)/.test(r.at ?? "")),
       ),
     ).toEqual([]);
+  });
+
+  it("end controls make the band in every form from 600 up; start controls only in the rail's (#1065)", () => {
+    // maintainer decision 2026-11-28: the end controls' row is the band whatever the sidebar's
+    // form (the full sidebar included), so the conversation title row (breadcrumb, panel toggles)
+    // and a deeper page's path row sit in it beside the caption buttons, and every paper, the inline
+    // panel's too, starts at its bottom edge (the band rules of the test above)
+    const base = rules().filter(
+      (r) =>
+        r.decls["--cb-shell-paper-drop"] !== undefined &&
+        r.selector === ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"])',
+    );
+    expect(base.map((r) => [r.at, r.decls["--cb-shell-paper-drop"]])).toEqual([
+      ["(min-width: 600px)", "var(--cb-shell-row-end)"],
+    ]);
+    // the end row is 0 without controls and with controls at the start (reserve-end is 0 when the
+    // rectangle's centre lies in the window's start half), so a browser and the full sidebar beside
+    // start controls keep the paper's first row in the paper
+    expect(decl(':root[data-shell="desktop"]', "--cb-shell-row-end")).toBe(
+      "min(var(--cb-shell-row), calc(var(--cb-shell-reserve-end) * 100000))",
+    );
+    expect(decl(':root[data-shell="desktop"]', "--cb-shell-reserve-end")).toContain(
+      "calc( (var(--cb-shell-controls-x, 0px) + var(--cb-shell-controls-width, 0px) / 2 - 50vw) * 100000 )",
+    );
+    // a banner is the first row (its children clear every row), and below 600 the flat title bar
+    // holds the row: no drop there
+    expect(
+      rules().filter(
+        (r) =>
+          r.decls["--cb-shell-paper-drop"] !== undefined &&
+          (r.selector.includes('[data-banner="true"]:') || /not all/.test(r.at ?? "")),
+      ),
+    ).toEqual([]);
+    // the band's sidebar toggle stays the rail's (start controls) alone: no toggle beside end ones
+    expect(css("shell-environment.css")).toContain(
+      "@container not style(--cb-shell-rail-drop: 0px)",
+    );
+  });
+
+  it("with end controls the conversation's papers share one top edge below the band, panel open or closed", () => {
+    const Q = "not style(--cb-shell-paper-drop: 0px)";
+    const CONV = ':root[data-shell="desktop"] .cb-shell-main .cb-conv-main';
+    const PANEL = ':root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full])';
+    const top = "var(--cb-shell-row)";
+    // the conversation paper's colour and the inline panel's box both start at row + space.2 ...
+    const layer = rules().find((r) => r.at === Q && r.selector.includes(`${CONV}::before`));
+    expect(layer?.decls.inset).toBe(`${top} 0 0`);
+    expect(decl(PANEL, "margin-top", Q)).toBe(top);
+    // ... whether a panel is open or not: no rule in the band keys the papers' top on the panel
+    expect(
+      rules().filter(
+        (r) =>
+          r.at === Q &&
+          /:has\([^)]*cb-conv-panel/.test(r.selector) &&
+          (r.decls["margin-top"] !== undefined || r.decls.inset !== undefined),
+      ),
+    ).toEqual([]);
+    // the title row stays in the band over the panel, its end group clear of the end controls
+    const BAR =
+      ':root[data-shell="desktop"] .cb-shell-column .cb-shell-main .cb-conv-main > .cb-title-bar';
+    expect(decl(BAR, "width", Q)).toBe("100cqw");
+    expect(decl(BAR, "padding-right", Q)).toContain(
+      "calc(var(--cb-shell-reserve-end) + var(--cb-space-2))",
+    );
+  });
+
+  it("a band's row is optically centred: its icons lie as far above the paper as below the window's top", () => {
+    // maintainer decision 2026-11-28, both bands (start in the rail's form, end in every form): the
+    // row is the band's whole height, the band is as high as the controls' bottom edge (the row is
+    // centred on the controls), and the papers start at that edge, never above it, so the
+    // caption buttons' square hover grounds end where the paper starts
+    const Q = "not style(--cb-shell-paper-drop: 0px)";
+    const CONV = ':root[data-shell="desktop"] .cb-shell-main .cb-conv-main';
+    const PAGE =
+      ':root[data-shell="desktop"] .cb-shell-column > .cb-shell-main:not(:has(.cb-conv-page))';
+    expect(decl(':root[data-shell="desktop"]', "--cb-shell-row")).toBe(
+      "min(var(--cb-shell-controls-bottom), var(--cb-shell-below))",
+    );
+    expect(decl(':root[data-shell="desktop"]', "--cb-shell-controls-bottom")).toBe(
+      "calc( var(--cb-shell-controls-y, 0px) + var(--cb-shell-controls-height, 0px) )",
+    );
+    const row = decl(`${CONV} > .cb-title-bar`, "height", Q);
+    expect(row).toBe("max(var(--cb-layout-title-bar), var(--cb-shell-row))");
+    const paperTop = rules().find(
+      (r) => r.at === Q && r.selector === `${PAGE}::before, ${CONV}::before`,
+    )?.decls.inset;
+    expect(paperTop).toBe("var(--cb-shell-row) 0 0");
+    expect(
+      decl(
+        ':root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full])',
+        "margin-top",
+        Q,
+      ),
+    ).toBe("var(--cb-shell-row)");
+    // nothing in a band adds a gap between the row and the paper
+    expect(decl(`${CONV} > .cb-title-bar`, "margin-bottom", Q)).toBeUndefined();
+    // the numbers for the reported rectangles (controls from the window's top edge): the macOS
+    // lights (14 high in a 48 row) and the Windows caption buttons (48 high), with a 28 control and
+    // a 16 glyph centred in the row: equal gaps above and below, and the paper at the controls' foot
+    for (const controls of [
+      { y: 0, height: 48, mark: 14 },
+      { y: 0, height: 48, mark: 48 },
+    ]) {
+      const band = controls.y + controls.height;
+      const paper = band;
+      for (const size of [controls.mark, 28, 16]) {
+        const top = (band - size) / 2;
+        expect(paper - (top + size)).toBe(top);
+      }
+      expect(paper).toBeGreaterThanOrEqual(controls.y + controls.height);
+    }
+  });
+
+  it("a first-level head reserves the top row only where controls reach into the content column", () => {
+    const COLUMN = ':root[data-shell="desktop"] .cb-shell-column';
+    expect(decl(COLUMN, "--cb-shell-head-row")).toBe(
+      "min( var(--cb-shell-row), calc((var(--cb-shell-reserve-end) + var(--cb-shell-column-reserve)) * 100000) )",
+    );
+    // the column reserve is 0 beside the full sidebar (the lights lie over it), so a first-level
+    // head there starts space.5 into the paper, as in a browser
+    expect(decl(COLUMN, "--cb-shell-column-reserve")).toContain("- var(--cb-shell-lead)");
+    expect(
+      decl(
+        ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))',
+        "padding-top",
+        "(min-width: 600px)",
+      ),
+    ).toBe("max(var(--cb-space-5), calc(var(--cb-shell-head-row) - var(--cb-space-2)))");
+  });
+
+  it("in the end band a first-level head stays in the paper; the band holds only the controls", () => {
+    // maintainer decision 2026-11-28 (#1096): the band holds what the conversation band holds (a
+    // path row, the panel toggles); a first-level page's head (the large title, its actions, the
+    // tabs) stays in the paper as on macOS, space.5 below the band, and the band above it is
+    // ground with the caption buttons alone (the rail's form on macOS draws the same band)
+    const css$ = css("shell-environment.css");
+    expect(css$).not.toContain("--cb-shell-end-drop");
+    const Q = "not style(--cb-shell-paper-drop: 0px)";
+    const HEAD =
+      ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))';
+    expect(
+      rules()
+        .filter((r) => r.at !== null && r.at.startsWith("not style(") && r.selector === HEAD)
+        .map((r) => [r.at, r.decls["padding-top"]]),
+    ).toEqual([[Q, "calc(var(--cb-shell-row) + var(--cb-space-5))"]]);
+    // no rule sizes a first-level head's title row to the band
+    expect(
+      rules().filter(
+        (r) =>
+          r.selector.includes(".cb-pageheader-row") &&
+          (r.decls["min-height"] ?? "").includes("--cb-shell-row"),
+      ),
+    ).toEqual([]);
+    // the gutter over it is the band (the head reserves the row: end controls reach into the
+    // content column), so the empty band drags the window
+    expect(decl(':root[data-shell="desktop"] .cb-shell-column', "--cb-shell-head-row")).toContain(
+      "var(--cb-shell-reserve-end)",
+    );
   });
 
   it("no hairline closes the band where the rail drops: band, rail and gutters are one ground", () => {
@@ -1089,16 +1253,17 @@ describe("the paper's top gutter in the desktop shell (layered shell spec §5)",
     const tall = wide.find(
       (r) => r.selector.includes("> .cb-shell-gutter") && r.selector.includes(":has("),
     );
-    // (space.2 more in the rail-drop band, where the paper starts space.2 below the band)
-    expect(tall?.decls.height).toBe(
-      "calc( max(var(--cb-space-2), var(--cb-shell-row)) + min(var(--cb-space-2), calc(var(--cb-shell-paper-drop) * 100000)) )",
-    );
+    // the row the head reserves: the top row only where controls reach into the content column
+    // (end controls, start controls past the visible sidebar); beside the full sidebar space.2,
+    // and the head starts as in a browser (maintainer decision 2026-11-28). In a band the paper
+    // starts at the band's bottom edge, so the gutter is the band itself.
+    expect(tall?.decls.height).toBe("max(var(--cb-space-2), var(--cb-shell-head-row))");
     expect(
       wide.find(
         (r) =>
           r.selector ===
           ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))',
       )?.decls["padding-top"],
-    ).toBe("max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)))");
+    ).toBe("max(var(--cb-space-5), calc(var(--cb-shell-head-row) - var(--cb-space-2)))");
   });
 });

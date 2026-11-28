@@ -50,7 +50,22 @@ export type NetworkApprovalDetail =
       /** The page the service was loading, when known. */
       url: string | null;
       hosts: string[];
-    });
+    })
+  | {
+      kind: "loopback";
+      /** The device the port is on. */
+      deviceId: string;
+      /** The extension whose service asked. */
+      service: string;
+      /** The page the service was loading, when known. */
+      url: string | null;
+      port: number;
+      /** The port looks like a local database's. */
+      database: boolean;
+      attempt: number;
+      /** Set once decided: the grant lasts for the conversation. */
+      outcome?: "session";
+    };
 
 /**
  * A command review ask's detail (auto mode spec §5.4): a shell command, or a file write outside

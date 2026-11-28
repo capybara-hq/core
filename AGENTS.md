@@ -165,7 +165,9 @@ Each line is the rule you must not miss; the skill has the rest.
   client secret or a member's token.
   [writing-extensions](.agents/skills/writing-extensions/SKILL.md)
 - **Device access (`ctx.deviceAccess`):** only the conversation's owner on their own personal
-  device; a device service launch passes the command review as it runs and fails closed; viewer
+  device; a device service launch passes the command review as it runs and fails closed; a loopback
+  grant is per conversation and per port, owner-only, and expires with the conversation or after 24
+  hours; viewer
   tickets are single use; a viewer stream starts with the kernel's viewer context message (the
   ticket's conversation and its root), never one from the panel; stream frames never pass through
   Redis or PG; a deleted conversation is refused, and only the kernel's conversation-deleted
@@ -215,7 +217,9 @@ Each line is the rule you must not miss; the skill has the rest.
   (`report`); writes stay in the project and workspace (an operation scope names the project root
   and write roots, reads are the provider's rule); the network (the open public internet, or an
   allowlist) is one kernel setting per device under the org and platform ceilings, and every
-  provider enforces allowlists; private ranges, metadata and host services stay closed; minimal
+  provider enforces allowlists; private ranges, metadata and host services stay closed, except a loopback port granted to a device
+  service for one conversation (`loopback-port`, decided like an outside-sandbox escalation and
+  bounded by the device's outside-sandbox setting); minimal
   environment. A profile chooses who approves every approval addressed to the person (person,
   review model, nobody); another role's approval and secure input are never decided by it;
   running outside the sandbox is a per-call escalation bounded by the device's outside-sandbox

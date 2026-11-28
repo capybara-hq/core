@@ -1,5 +1,27 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.55
+
+### Patch Changes
+
+- a38800d: Desktop shell: with window controls on the end side, a first-level page's head (the large title,
+  its actions and the tabs) stays in the paper below the top-row band instead of sitting in the band
+  beside the caption buttons; the band holds only a path row and the panel toggles, as on macOS. Any
+  ground band (the macOS rail-form band and the end controls' band) now holds a search field at the
+  window's centre that opens the command palette; the sidebar's search button gives way while it
+  shows. Not on a conversation, and hidden where it does not fit.
+
+## 0.2.0-rc.54
+
+### Patch Changes
+
+- 854f600: Desktop shell: window controls reported on the end side (the Windows / Linux caption overlay) now
+  get a top-row band of ground in every sidebar form from 600 up. The paper's first row sits in it
+  beside the caption buttons, and the papers start below it with one top edge, so the buttons no
+  longer lie over the paper's corner and the paper does not jump when the right panel opens. In both
+  bands (this one and the macOS rail-form band) the paper now starts at the controls' bottom edge, so
+  the row's icons sit as far above the paper as below the window's top.
+
 ## 0.2.0-rc.53
 
 ### Patch Changes

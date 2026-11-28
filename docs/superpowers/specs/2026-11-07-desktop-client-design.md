@@ -603,7 +603,9 @@ reports it).
   past the rail, the top row is one continuous band across the whole window on the ground, with no
   vertical divider in it; the lights sit in it, and the rail and its mark start below the band.
   Since the layered shell (layered shell spec §2, amended for #1046) the paper's colour, or the
-  conversation's two papers, start `space.2` below the band, so the lights never lie on the paper;
+  conversation's two papers, start at the band's bottom edge (the controls' bottom: the row's icons
+  lie as far above the paper as below the window's top, maintainer decision 2026-11-28), so the
+  lights never lie on the paper;
   the paper's first row (the conversation title bar, a deeper page's path row) stays in the band
   after the toggle, and no hairline closes the band (it replaced the 2026-11-21 hairline). On expanded the collapsed rail's expand button moves into the band right after the controls and
   before the title (the title starts after it) and leaves the rail. The medium rail cannot expand;
@@ -621,6 +623,28 @@ reports it).
   whole box drags the window (double-click zooms, as the native title bar; Electron's drag region),
   the title menu's items move into "…", and every empty spot of the row drags. Only the two buttons
   take clicks. Pushed pages and the home draw the same row with no path or title text in it.
+- **The end controls' band (maintainer decision 2026-11-28, #1065).** Controls reported on the end
+  side (the Windows / Linux caption overlay: see-through, 138 × 48 at the window's top-right edge,
+  re-announced on resize) would lie over the paper's top end corner, their square hover and close
+  grounds straddling the ground gap and the paper. From 600 up, in every sidebar form (the full
+  sidebar included), the top row is then one band of ground at the controls' height: the paper's
+  first row (the conversation title bar with its breadcrumb and panel toggles, right-aligned and
+  clear of the controls; a deeper page's path row) sits in it beside the caption buttons, and the
+  papers (the conversation's and the inline right panel's, a page's) start at its bottom edge with
+  one top edge (the same optical centring; the caption buttons' hover grounds end where the paper
+  starts), so the paper does not jump when the panel opens or closes (layered shell spec §2). A
+  first-level page's head (the large title, its actions, the tabs) stays in the paper below the
+  band, as on macOS (#1096). Start and end differ on purpose: start controls (the traffic lights) keep the rail's
+  band above, and beside the full sidebar the title row stays in the paper. Geometry comes from the
+  reported rectangle alone (`--cb-shell-row-end`, 0 without controls or with controls at the start);
+  below 600 the flat title bar is unchanged.
+- **The band's search field (maintainer decision 2026-11-28).** Any ground band (the start controls'
+  band in the rail's form, the end controls' band) holds a search field at the centre of the band's
+  free span (the paper's start edge to the caption buttons or the window's end inset) on the
+  controls' row, which opens the command palette as the sidebar's search button does; while it
+  shows, that button (the full sidebar's or the rail's) gives way. Not on a conversation, whose band
+  row is full; hidden where it would overlap the band row's content, the sidebar or the window
+  controls (the button comes back); no drag region. Layered shell spec §2.
 - **The content column's top row** is the conversation title bar (48) or a template head's path
   row (as high as the row, centred on it; the title row follows `layout.head-path` below). Past a
   rail both start after the controls (the title bar at the rectangle's edge plus `space.3`, the
@@ -633,9 +657,12 @@ reports it).
   Without reported controls the path row is the browser's, in the content frame. Their end keeps
   clear of end controls: the title bar's right-side toggles (properties, panels, more), a
   title-less head's actions on the path row, the shared file page's download; an open side panel
-  starts below the end controls instead, the strip above it a drag filler. Every other
+  starts below the end controls instead, the strip above it a drag filler (outside an AppShell;
+  inside one the end band below applies). Every other
   right-side control of a template (a page head's actions, the tab row's search) is below the top
-  row.
+  row. A first-level head reserves
+  the top row only where controls reach into the content column; beside the full sidebar it starts
+  as in a browser (maintainer decision 2026-11-28).
 - **Overlays** on the controls' side start below the row: the rail's conversations sheet, the
   medium rail's sidebar drawer (and its scrim) and the compact drawer under the lights, the end-edge sheets under end controls, the image viewer under
   either; centred dialogs and the palette need nothing.

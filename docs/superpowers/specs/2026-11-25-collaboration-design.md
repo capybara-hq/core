@@ -319,8 +319,10 @@ config, default 30). Dismissing is `inbox.item-dismiss`; clicking an action is a
   their inbox item) and retention then treats them as closed. The
   acceptance automation (`origin = acceptance`) has a fixed trigger, agent and mode; people edit
   its name, grants and pause state. It does not count against the per-member task limits.
-- **Personal page.** A person sets their rules at `/account/automations` ("Accepting work"); the
-  org default sits in the org's automation settings. `automations.acceptance-set` is a Platform
+- **Personal rules.** A person sets their rules in the 接收规则 ("Acceptance rules") sheet of the
+  automations page (`/automations?rules=1`, opened from the page head while a source directs
+  events to them); acceptance automations carry the same tag in the list. The org default sits in
+  the org's automation settings. `automations.acceptance-set` is a Platform
   operation declared `personOnly`: the ask is always the person's, never decided by a review model
   or a full-access profile, and refused in an unattended run.
 - **`run.lifecycle`.** Phases `started`, `waiting`, `resumed`, `finished`, `failed`, `aborted` and
