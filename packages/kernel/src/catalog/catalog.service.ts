@@ -18,6 +18,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { sameRepository } from "../packages/provenance.js";
 import { assertNotPlatformDefault } from "../themes/theme-usage.js";
 import {
@@ -57,6 +58,7 @@ import {
   pluginNameFrom,
 } from "./marketplaces.service.js";
 import { type Owner, releaseExtensionClaim } from "./ownership.js";
+import { switchOffItemConnectors } from "./plugin-connectors.js";
 import { PluginImport, type PluginReview, type ReviewProvenance } from "./plugin-import.js";
 import { cancelPendingRequests } from "./request-rules.js";
 import type { PluginScope } from "./scope.js";
@@ -345,6 +347,8 @@ export class CatalogService {
     @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
     /** A removed org-owned plugin's cleanup job, owed by the removal (transactional outbox §8.1). */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    /** The orgs whose connectors a delete switches off, locked before the item (ruling P3-50). */
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -830,6 +834,9 @@ export class CatalogService {
   @Transactional()
   private async writeRemove(actor: string, itemId: string, opts: ActorOpts): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
+    // The orgs whose connectors the delete switches off, sorted, before the item (the global lock
+    // order, ruling P3-50, as the platform plugin update takes them)
+    await this.lockConnectorOrgs(itemId);
     // The item row before the install lock the check below takes (the global lock order: the
     // item, then the install lock, ruling P3-50; also the item before its theme rows in removeIn)
     await this.db
@@ -840,6 +847,24 @@ export class CatalogService {
       .execute();
     await this.assertExtensionDisabled(this.db, itemId, true);
     if ((await this.removeIn(actor, itemId, opts)) === null) throw notFound();
+  }
+
+  /**
+   * Locks, in sorted order, the live orgs with live connectors made from the item's connector
+   * templates (a deleted org is skipped).
+   */
+  // org-filter: the super admin's delete of a catalog item reaches its template connectors in
+  // every org by design; this only collects their orgs to lock them
+  private async lockConnectorOrgs(itemId: string): Promise<void> {
+    const rows = await this.db
+      .selectFrom("connectors as c")
+      .innerJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
+      .select("c.org_id")
+      .distinct()
+      .where("t.catalog_item_id", "=", itemId)
+      .where("c.deleted_at", "is", null)
+      .execute();
+    for (const orgId of rows.map((r) => r.org_id).sort()) await this.orgLock.tryLock(orgId);
   }
 
   /**
@@ -944,6 +969,12 @@ export class CatalogService {
       .where("catalog_item_id", "=", itemId)
       .where("deleted_at", "is", null)
       .execute();
+    // Its connectors are switched off with it, as an uninstall switches them off (spec §5 rule 8):
+    // endpoint and credentials stay, and an import of the same plugin again relinks them to the
+    // new item, whose install switches them back on (`relinkDeletedItemConnectors`). The super
+    // admin's delete locked their orgs first; an owner's delete or an org deletion removes an
+    // item no other org uses (P3-19), so its connectors are the owner org's, already locked
+    await switchOffItemConnectors(t, itemId);
     // Pending requests for a deleted item are pointless: cancel them in the same transaction
     await cancelPendingRequests(t, { itemId }, actor, "item_removed", opts);
     await audit(t, {

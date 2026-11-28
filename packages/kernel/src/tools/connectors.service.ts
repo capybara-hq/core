@@ -13,6 +13,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { z } from "zod";
 import { connectorTemplateState } from "../catalog/component-state.js";
+import { pluginSwitchOff } from "../catalog/plugin-connectors.js";
 import { assertItemInstallable } from "../catalog/request-rules.js";
 import { productName } from "../config/product-name.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -1964,29 +1965,15 @@ export class ConnectorsService {
    * Disables a connector because its plugin was switched off in the org (spec §5 rule 8): its
    * endpoint and credentials stay. Only a connector that was active is marked with the plugin
    * (`connectors.disabled_by_plugin_id`), so switching the plugin back on re-enables exactly what
-   * this call disabled; one an org admin disabled by hand keeps no marker and stays disabled. The
-   * caller holds the org row lock and runs in its transaction.
+   * this call disabled; one an org admin disabled by hand keeps no marker and stays disabled
+   * (`pluginSwitchOff`, which the plugin's delete shares). The caller holds the org row lock and
+   * runs in its transaction.
    */
   @Transactional({ propagation: "mandatory" })
   async disableWithPluginIn(orgId: string, connectorId: string, itemId: string): Promise<void> {
-    const t = this.db;
-    const row = await t
-      .selectFrom("connectors")
-      .select(["status"])
-      .where("id", "=", connectorId)
-      .where("org_id", "=", orgId)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!row) return;
-    await t
+    await this.db
       .updateTable("connectors")
-      .set({
-        status: "disabled",
-        // An admin's disable is not the plugin's: it is not marked and so stays off on switch-on
-        ...(row.status === "active" && { disabled_by_plugin_id: itemId }),
-        updated_at: sql`now()`,
-      })
+      .set(pluginSwitchOff(itemId))
       .where("id", "=", connectorId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
