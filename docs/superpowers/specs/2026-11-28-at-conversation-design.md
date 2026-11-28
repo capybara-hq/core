@@ -189,11 +189,13 @@ its conversations.events operation (conversationId <id>).
   a token right before the caret is deleted as one unit, wherever it stands (settles the default left
   open here). ＋ gains no row (decision: `@` is the way in; open to change).
 - The draft identity, retry and restore paths (`ComposerBar` draft, `first-message-attempt.ts`)
-  carry `conversationRefs` like `projectFiles`; a refusal marks the refused chip (as
-  `missingProjectFiles` does) with the error's copy. Retry of a failed run whose reference has
-  become unavailable shows only the conversation's error line (there is no draft chip to mark).
+  carry the draft's segments, conversation tokens included (superseded by the inline tokens spec §2
+  "Drafts" and "Draft identity": the identity is the segments by `(kind, id)`); a refusal marks the
+  refused token (by `(kind, id)`) with the error's copy. Retry of a failed run whose reference has
+  become unavailable shows only the conversation's error line (there is no draft token to mark).
 - Bubble (amended by the composer inline tokens spec §3.5: the bubble draws conversation tokens from
-  `payload.inline` in the sentence, linking to `/chat/<id>`; the link chip below is the older form):
+  `payload.inline` in the sentence, each a link to `/chat/<id>` through the DesignProvider's `link`,
+  on the `raised` ground (the bubble is on `selected`); the link chip below is the older form):
   `userText` shows `content[0]` when `conversationRefs` is present; `BubbleAttachments`
   gains a link chip (`kind: "conversation"`, `href`, `chats` icon, through the DesignProvider's
   `link`), opening `/chat/<id>`; a deleted or archived target opens the not-found / archived page
