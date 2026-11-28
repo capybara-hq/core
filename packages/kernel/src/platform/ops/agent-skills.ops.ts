@@ -243,11 +243,13 @@ export class AgentSkillsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.invocable-skills",
         description:
-          "List the skills a person can invoke with / on an agent (its effective skills: org, platform and its own), by name: id, name, source (platform, plugin, agent or project), state (manual for manual-only), description, version and the plugin. Optionally pass a conversation of yours with that agent to include its trial drafts and, for a conversation bound to a project, the project's skills as project:<name>.",
+          "List the skills a person can invoke with / on an agent (its effective skills: org, platform and its own), by name: id, name, source (platform, plugin, agent or project), state (manual for manual-only), description, version and the plugin. Optionally pass a conversation of yours with that agent to include its trial drafts and, for a conversation bound to a project, the project's skills as project:<name>; without a conversation, pass deviceId and project (a project of that device) to include that project's skills as last read in one of your conversations.",
         input: z
           .object({
             agentId: AgentId,
             conversationId: InvocableSkillsQuerySchema.shape.conversationId,
+            deviceId: InvocableSkillsQuerySchema.shape.deviceId,
+            project: InvocableSkillsQuerySchema.shape.project,
           })
           .strict(),
         example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
@@ -271,6 +273,9 @@ export class AgentSkillsOperations implements OnModuleInit {
               input.agentId,
               ctx.actorAccountId,
               input.conversationId,
+              input.deviceId !== undefined && input.project !== undefined
+                ? { deviceId: input.deviceId, project: input.project }
+                : undefined,
             )
           ).map((s) => ({
             id: s.id,

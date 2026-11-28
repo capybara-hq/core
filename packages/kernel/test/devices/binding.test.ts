@@ -811,3 +811,131 @@ describe("binding a conversation to a project", () => {
     expect(await countOf(m.id)).toBe(0);
   });
 });
+
+describe("project skills before a conversation's first run (design 2026-11-28)", () => {
+  const SNAPSHOT = {
+    project: "core",
+    root: CORE.path,
+    skills: [{ name: "fix-issue", description: "Fix an issue.", digest: "b".repeat(64) }],
+  };
+
+  /** A conversation of `accountId` bound to `device`'s `core`, its log holding `payload`. */
+  async function earlier(accountId: string, device: string, payload: unknown): Promise<string> {
+    const id = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id,
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: accountId,
+        device_id: device,
+        project_name: CORE.name,
+        project_path: CORE.path,
+        source: "web",
+      })
+      .execute();
+    await k.app.get(EventLog).append(id, [{ type: "project_root", payload: payload as never }]);
+    return id;
+  }
+
+  const listed = async (req: Req, query: string) => {
+    const res = await req({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}/invocable-skills?${query}`,
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    return (res.json() as { skills: { name: string; source: string }[] }).skills
+      .filter((s) => s.source === "project")
+      .map((s) => s.name);
+  };
+
+  it("the new conversation's menu lists the picked project's last known skills, the caller's only", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE] });
+    const pick = `deviceId=${device}&project=core`;
+    // nothing known yet
+    expect(await listed(m.req, pick)).toEqual([]);
+    await earlier(m.id, device, SNAPSHOT);
+    expect(await listed(m.req, pick)).toEqual(["project:fix-issue"]);
+    // a project the device does not have, or no pick at all: none
+    expect(await listed(m.req, `deviceId=${device}&project=plugins`)).toEqual([]);
+    expect(await listed(m.req, "")).toEqual([]);
+    // another person naming the same device and project learns nothing of it
+    const other = await member();
+    expect(await listed(other.req, pick)).toEqual([]);
+  });
+
+  it("a newer unavailable snapshot is skipped for the last usable one", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE] });
+    await earlier(m.id, device, SNAPSHOT);
+    await earlier(m.id, device, {
+      project: "core",
+      root: CORE.path,
+      skills: [],
+      unavailable: { reason: "gone", message: "The project's root no longer exists." },
+    });
+    expect(await listed(m.req, `deviceId=${device}&project=core`)).toEqual(["project:fix-issue"]);
+  });
+
+  it("a bound conversation whose runs recorded no project_root lists the last known skills", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE] });
+    await earlier(m.id, device, SNAPSHOT);
+    const res = await m.req({
+      method: "POST",
+      url: conversations(),
+      payload: { agentId, deviceId: device, project: "core" },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const conv = (res.json() as { conversation: { id: string } }).conversation.id;
+    expect(await listed(m.req, `conversationId=${conv}`)).toEqual(["project:fix-issue"]);
+    // its own snapshot wins once a run recorded one, even an unavailable one
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "project_root",
+        payload: {
+          project: "core",
+          root: CORE.path,
+          skills: [],
+          unavailable: { reason: "gone", message: "The project's root no longer exists." },
+        },
+      },
+    ]);
+    expect(await listed(m.req, `conversationId=${conv}`)).toEqual([]);
+  });
+
+  it("a first message /project:<name> is the stub of the last known snapshot; with none it is refused", async () => {
+    const m = await member();
+    const device = await localDevice(m.id, { projects: [CORE] });
+    const send = () =>
+      k.app
+        .get(ConversationsService)
+        .createWithMessage(
+          orgId,
+          m.id,
+          agentId,
+          { text: "1063", clientMessageId: randomUUID(), skill: { name: "project:fix-issue" } },
+          { deviceId: device, project: "core" },
+          { source: "web" },
+        );
+    await expect(send()).rejects.toMatchObject({
+      code: "skill.not_invocable",
+      details: [{ reason: "not_found" }],
+    });
+    expect(await countOf(m.id)).toBe(0);
+    await earlier(m.id, device, SNAPSHOT);
+    const before = await countOf(m.id);
+    const created = await send();
+    expect(await countOf(m.id)).toBe(before + 1);
+    const message = created.events.find((e) => e.type === "user_message");
+    if (message?.type !== "user_message") throw new Error("no user_message");
+    expect(message.payload.skill).toMatchObject({ name: "project:fix-issue", source: "project" });
+    const text = message.payload.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+    expect(text).toContain('call Skill with the name "project:fix-issue"');
+    expect(text).toContain(`${CORE.path}/.agents/skills/fix-issue`);
+    expect(text).toContain(`last recorded for this project has the digest ${"b".repeat(64)}`);
+    expect(text.endsWith("\n\n1063")).toBe(true);
+  });
+});
