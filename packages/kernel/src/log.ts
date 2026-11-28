@@ -55,33 +55,63 @@ const ORG_SECRET_CAPACITY = 10_000;
 /** 匹配器按前缀分桶的前缀长度（不超过两种最短登记长度）。 */
 const PREFIX_LEN = MIN_SECRET_LEN;
 
+/** Counts the candidate comparisons a matcher makes (tests). */
+export interface MatcherProbes {
+  count: number;
+}
+
 /**
- * 编译后的打码匹配器：按值的前 `PREFIX_LEN` 个字符分桶，桶内按长度降序。扫描字符串时每个位置查一次桶、
- * 记下最长命中的区间，重叠或相邻的区间合并后替换；开销与字符串长度成正比，与登记的密钥数基本无关。
+ * The compiled redaction matcher. Values are bucketed by their first `PREFIX_LEN` characters; inside a
+ * bucket, by length, one set per distinct length, longest first. At each position of the scanned
+ * string it looks up the bucket once and probes each of its lengths once (a set lookup of the slice of
+ * that length), keeping the longest hit; overlapping or adjacent hits merge and are replaced. The cost
+ * grows with the string's length and the number of distinct lengths in a bucket, never with the
+ * number of registered values: many secrets sharing a prefix (`sk-proj-`, `ghp_`) cost no more.
  */
-function compileMatcher(values: Iterable<string>): (s: string) => string {
-  const buckets = new Map<string, string[]>();
+function compileMatcher(values: Iterable<string>, probes?: MatcherProbes): (s: string) => string {
+  const byPrefix = new Map<string, Map<number, Set<string>>>();
   for (const v of values) {
     const key = v.slice(0, PREFIX_LEN);
-    const b = buckets.get(key);
-    if (b) b.push(v);
-    else buckets.set(key, [v]);
+    let byLen = byPrefix.get(key);
+    if (!byLen) {
+      byLen = new Map();
+      byPrefix.set(key, byLen);
+    }
+    const set = byLen.get(v.length);
+    if (set) set.add(v);
+    else byLen.set(v.length, new Set([v]));
   }
-  if (buckets.size === 0) return (s) => s;
-  for (const b of buckets.values()) b.sort((a, c) => c.length - a.length);
+  if (byPrefix.size === 0) return (s) => s;
+  const buckets = new Map<string, { lens: number[]; sets: Set<string>[] }>();
+  for (const [key, byLen] of byPrefix) {
+    const lens = [...byLen.keys()].sort((a, c) => c - a);
+    buckets.set(key, { lens, sets: lens.map((l) => byLen.get(l) as Set<string>) });
+  }
+  const longest = (s: string, i: number): number => {
+    const b = buckets.get(s.slice(i, i + PREFIX_LEN));
+    if (!b) return 0;
+    const room = s.length - i;
+    for (let k = 0; k < b.lens.length; k++) {
+      const len = b.lens[k] as number;
+      if (len > room) continue;
+      if (probes) probes.count++;
+      if ((b.sets[k] as Set<string>).has(s.slice(i, i + len))) return len;
+    }
+    return 0;
+  };
   return (s) => {
     if (s.length < PREFIX_LEN) return s;
-    // 每个位置都记下最长命中的区间 [i, i + len)，不跳过（否则先开始的密钥会吞掉与之重叠的后一个密钥的开头，
-    // 使后者剩余部分明文输出）；重叠或相邻的区间合并后整段替换为一个 [REDACTED]。
+    // Record the longest hit [i, i + len) at every position without skipping ahead (skipping would
+    // let an earlier secret swallow the start of an overlapping later one and leave its rest in
+    // clear text); overlapping or adjacent hits merge into one [REDACTED].
     let out = "";
     let last = 0;
     let runStart = -1;
     let runEnd = -1;
     for (let i = 0; i <= s.length - PREFIX_LEN; i++) {
-      const b = buckets.get(s.slice(i, i + PREFIX_LEN));
-      const hit = b?.find((v) => s.startsWith(v, i));
-      if (!hit) continue;
-      const end = i + hit.length;
+      const len = longest(s, i);
+      if (len === 0) continue;
+      const end = i + len;
       if (runStart >= 0 && i <= runEnd) {
         if (end > runEnd) runEnd = end;
         continue;
@@ -177,6 +207,8 @@ export interface LoggerOptions {
   orgSecretCapacity?: number;
   /** Called on every matcher rebuild (tests). */
   onMatcherBuild?: () => void;
+  /** Counts the candidate comparisons the matchers make (tests). */
+  matcherProbes?: MatcherProbes;
 }
 
 /** Fields shown in the pretty prefix instead of the lines below, in this order. */
@@ -290,7 +322,7 @@ export function createLogger(level: string = "info", opts: LoggerOptions = {}): 
 
   const redact = (s: string): string => {
     if (!matcher) {
-      matcher = compileMatcher(new Set([...secrets, ...orgSecrets]));
+      matcher = compileMatcher(new Set([...secrets, ...orgSecrets]), opts.matcherProbes);
       opts.onMatcherBuild?.();
     }
     return matcher(s);
@@ -298,7 +330,7 @@ export function createLogger(level: string = "info", opts: LoggerOptions = {}): 
   /** 顶层 msg 只按部署方密钥打码：组织来源的值不能遮蔽日志消息。 */
   const redactMsg = (s: string): string => {
     if (!deployMatcher) {
-      deployMatcher = compileMatcher(secrets);
+      deployMatcher = compileMatcher(secrets, opts.matcherProbes);
       opts.onMatcherBuild?.();
     }
     return deployMatcher(s);
