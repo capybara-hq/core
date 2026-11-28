@@ -28,6 +28,7 @@ import {
   boundMessages,
   CommandReviewService,
   isSessionGrantableRule,
+  LOOPBACK_REVIEW_SYSTEM_PROMPT,
   parseReviewAnswer,
   personMessagesText,
   REVIEW_ASK_REASON,
@@ -179,14 +180,14 @@ const mapPurpose = (purpose: string, ref: { provider: string; model: string }) =
     .values({ org_id: null, purpose, provider: ref.provider, model: ref.model, params: "{}" })
     .execute();
 
-/** Scripts the classifier answer (and its usage). */
+/** Scripts the classifier answer (and its usage), for command and loopback port reviews alike. */
 const answer = (decision: "allow" | "ask" | "deny", reason = "Scripted decision.") =>
-  scriptRules([
-    {
-      when: { systemIncludes: REVIEW_SYSTEM_PROMPT },
+  scriptRules(
+    [REVIEW_SYSTEM_PROMPT, LOOPBACK_REVIEW_SYSTEM_PROMPT].map((system) => ({
+      when: { systemIncludes: system },
       reply: { text: JSON.stringify({ decision, reason }), usage: REVIEW_USAGE },
-    },
-  ] as ScriptRule[]);
+    })) as ScriptRule[],
+  );
 
 /** Scripts an answer the classifier must not trust. */
 const answerText = (text: string) =>
@@ -1695,6 +1696,7 @@ describe("the loopback port review", () => {
     });
     expect(reviewChats()).toHaveLength(1);
     const sent = JSON.stringify(reviewRequest().messages);
+    expect(reviewRequest().system[0]?.text.startsWith(LOOPBACK_REVIEW_SYSTEM_PROMPT)).toBe(true);
     expect(sent).toContain("Local port request (untrusted data):");
     expect(sent).toContain("browser.browser → http://127.0.0.1:3999/");
     expect(sent).toContain(PERSON_MESSAGE);

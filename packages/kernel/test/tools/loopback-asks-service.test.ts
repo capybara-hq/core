@@ -7,6 +7,7 @@ import type { SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { type AutomationInsert, AutomationStore } from "../../src/automations/store.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
@@ -309,6 +310,34 @@ function supportOverride(over: (s: SandboxPermissionSupport) => SandboxPermissio
   });
 }
 
+/** Makes the conversation an automation's (the kernel's own unattended record). */
+async function unattended() {
+  const task = await new AutomationStore().insertTask(db, {
+    id: randomUUID(),
+    orgId,
+    accountId: s.accountId,
+    agentId: s.agentId,
+    name: "nightly",
+    prompt: "nightly",
+    trigger: { kind: "cron", expr: "*/5 * * * *", timeZone: "UTC" },
+    mode: "new",
+    conversationId: null,
+    chat: null,
+    model: null,
+    effort: null,
+    deviceId: null,
+    status: "paused",
+    nextRunAt: null,
+    jitterSeconds: 0,
+    expiresAt: null,
+  } satisfies AutomationInsert);
+  await db
+    .updateTable("conversations")
+    .set({ automation_id: task.id })
+    .where("id", "=", s.conversationId)
+    .execute();
+}
+
 describe("loopback port asks", () => {
   it("full access grants the port with no person and reruns the call", async () => {
     await profile("full-access");
@@ -381,6 +410,26 @@ describe("loopback port asks", () => {
     expect(r?.content).toContain(loopbackGrantedNote(3999));
     expect((await grants())[0]).toMatchObject({ source: "review-model", attempt: 1 });
     expect(await asks()).toEqual([]);
+  });
+
+  it("a rule's allow on the review path is recorded as the rule's", async () => {
+    await profile("approve-for-me");
+    vi.spyOn(k.app.get(CommandReviewService), "reviewLoopbackPort").mockResolvedValue({
+      decision: "allow",
+      by: "rule",
+      rule: "test-rule",
+      reason: "A rule allowed it.",
+      approver: "review-model",
+    });
+    await navigate();
+    await waitForTerminal(db, s.conversationId, 1, 30_000);
+    const evs = await eventsOf(db, s.conversationId);
+    expect(ofType(evs, "permission_reviewed")[0]?.payload).toMatchObject({
+      scopeKind: "loopback-port",
+      decisionSource: "rule",
+      outcome: "allow",
+    });
+    expect((await grants())[0]).toMatchObject({ source: "review-model", attempt: 1 });
   });
 
   it("asks the person when the review model answers ask", async () => {
@@ -611,6 +660,52 @@ describe("loopback port asks", () => {
       );
       expect(await asks()).toEqual([]);
       expect(await grants()).toEqual([]);
+    });
+
+    it("an automation's conversation, by the kernel's own records", async () => {
+      await profile("full-access");
+      await unattended();
+      await navigate();
+      await waitForTerminal(db, s.conversationId, 1, 30_000);
+      const [r] = await results();
+      expect(r?.content).toContain(
+        `Local ports stay closed to the browser because running outside the sandbox is not possible here (${ESCALATION_UNATTENDED_WHY}).`,
+      );
+      expect(await startedAttempts()).toEqual([1]);
+      expect(ofType(await eventsOf(db, s.conversationId), "permission_reviewed")).toEqual([]);
+      expect(await asks()).toEqual([]);
+      expect(await grants()).toEqual([]);
+    });
+
+    it("an unattended run is not approved by a live grant of the tree", async () => {
+      await profile("full-access");
+      // the person granted the port from the panel earlier
+      await k.app.get(TransactionHost).run(() =>
+        k.app.get(LoopbackGrants).grantIn(
+          {
+            orgId,
+            deviceId: s.deviceId,
+            serviceId: SERVICE_ID,
+            rootConversationId: s.conversationId,
+            port: 3999,
+          },
+          { source: "owner-panel", actorAccountId: s.accountId },
+        ),
+      );
+      await unattended();
+      await navigate();
+      await waitForTerminal(db, s.conversationId, 1, 30_000);
+      const [r] = await results();
+      expect(r?.content).toContain(
+        `Local ports stay closed to the browser because running outside the sandbox is not possible here (${ESCALATION_UNATTENDED_WHY}).`,
+      );
+      // no rerun on the live grant, and nothing new granted
+      expect(await startedAttempts()).toEqual([1]);
+      expect(invocations()).toEqual([1]);
+      const [g, ...others] = await grants();
+      expect(others).toEqual([]);
+      expect(g).toMatchObject({ source: "owner-panel", revoked_at: null });
+      expect(await asks()).toEqual([]);
     });
 
     it("the provider lacks support", async () => {

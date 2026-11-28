@@ -1805,7 +1805,12 @@ export function buildEventTimeline(
           typeof p.binding?.callId !== "string"
         )
           break;
-        if (p.decisionSource !== "full-access" && p.decisionSource !== "review-model") break;
+        if (
+          p.decisionSource !== "full-access" &&
+          p.decisionSource !== "review-model" &&
+          p.decisionSource !== "rule"
+        )
+          break;
         const c = calls.get(callKey(e.runId, p.binding.callId));
         if (!c) break;
         c.tool.row.autoGranted = "loopback-port";

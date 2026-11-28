@@ -293,6 +293,7 @@ describe("buildTimeline", () => {
         { id: "a", name: "Bash", input: { command: "open" } },
         { id: "b", name: "Bash", input: { command: "open" } },
         { id: "c", name: "Bash", input: { command: "open" } },
+        { id: "d", name: "Bash", input: { command: "open" } },
       ]),
       reviewed(3, "a", "full-access"),
       reviewed(4, "b", "review-model"),
@@ -302,6 +303,9 @@ describe("buildTimeline", () => {
       result(6, "a", "Bash"),
       result(7, "b", "Bash"),
       result(8, "c", "Bash"),
+      // a rule's allow is an automatic one
+      reviewed(9, "d", "rule"),
+      result(10, "d", "Bash"),
     ];
     const rows = tools(buildTimeline(events, [], new Map(), "zh"))[0]?.rows.map((r) => r.row) ?? [];
     expect(rows[0]).toMatchObject({ autoGranted: "loopback-port", autoGrantedPort: 3999 });
@@ -312,6 +316,8 @@ describe("buildTimeline", () => {
       approvedBy: "review-model",
     });
     expect(rows[2]).not.toHaveProperty("autoGranted");
+    expect(rows[3]).toMatchObject({ autoGranted: "loopback-port", autoGrantedPort: 3999 });
+    expect(rows[3]).not.toHaveProperty("approvedBy");
   });
 
   it("a call to a tool the step did not load (not_loaded view) is a neutral notice, not a failure", () => {

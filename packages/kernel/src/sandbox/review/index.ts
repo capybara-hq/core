@@ -21,6 +21,7 @@ export {
   classifierMessage,
   fitReviewInput,
   fitReviewText,
+  LOOPBACK_REVIEW_SYSTEM_PROMPT,
   newReviewTag,
   parseReviewAnswer,
   personMessagesText,

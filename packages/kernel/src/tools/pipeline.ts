@@ -3687,6 +3687,9 @@ export class ToolPipeline {
       facts.escalationRefusal == null,
     );
     if (plan.kind === "none") return { kind: "none" };
+    // refused before the live grants are read: an unattended run is never approved by a grant
+    // the person made earlier in the tree (no grant, no rerun). The device's carve-out stays the
+    // union of the service's live grants; refusing an unattended tab is the browser's check
     if (plan.kind === "refused") return { kind: "write", notes: [plan.note] };
     const key = {
       orgId: ctx.orgId,
@@ -3756,6 +3759,7 @@ export class ToolPipeline {
     const grant = async (
       source: "full-access" | "review-model",
       reason: string,
+      decisionSource: "review-model" | "rule" | "full-access" = source,
     ): Promise<{ kind: "rerun"; notes: string[] } | { kind: "write"; notes: string[] }> => {
       try {
         await this.grantLoopbackIn(
@@ -3766,7 +3770,7 @@ export class ToolPipeline {
           key,
           { runId: ctx.runId, callId: call.id, attempt },
           source,
-          [reviewed("allow", reason, source), ...pre],
+          [reviewed("allow", reason, decisionSource), ...pre],
           callAudit,
         );
       } catch (e) {
@@ -3808,8 +3812,9 @@ export class ToolPipeline {
         database: plan.database,
       });
       const source = verdict.by === "classifier" ? "review-model" : "rule";
-      // only the review model allows here (a rule allows only under Full access, decided above)
-      if (verdict.decision === "allow") return grant("review-model", verdict.reason);
+      // the review path's grant; its record names who allowed it (a rule allows only under Full
+      // access, decided above, so a rule's allow here is not expected but recorded as one)
+      if (verdict.decision === "allow") return grant("review-model", verdict.reason, source);
       if (verdict.decision === "deny") {
         await this.recordLoopbackReview(ctx, reviewed("deny", verdict.reason, source));
         return { kind: "write", notes: [loopbackReviewDeniedNote(port, verdict.reason)] };

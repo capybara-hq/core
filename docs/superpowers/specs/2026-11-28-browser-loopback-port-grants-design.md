@@ -115,6 +115,12 @@ A loopback grant is the tuple `(org, device, service id, conversation root, port
   provider's support (§5.4) and the owner's device setting. The ask is never offered where it
   would be refused. The note then says why ("local ports stay closed to the browser because
   running outside the sandbox is off for this device").
+- An unattended run (an automation's conversation, or an automation run with no person joined) is
+  refused before the live grants are read: a grant the person made earlier in the same tree is
+  never an unattended run's approval, so the kernel neither grants nor reruns its call (final
+  review M3, 2026-11-28). The device carve-out is still the union of the service's live grants,
+  so the port stays open on the machine while the grant lives; refusing the unattended tab
+  itself is the browser's per-tab check.
 - A person's approval is a new approval detail kind, `loopback`
   (`{ service, url, port, attempt, outcome }`). The card says what is reached and from where:
   "允许浏览器访问本机端口 3999？" / "Allow the browser to reach port 3999 on this device?", with

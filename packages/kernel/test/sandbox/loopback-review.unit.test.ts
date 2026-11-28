@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ConversationEventSchema } from "../../src/conversations/events.js";
-import { classifierMessage } from "../../src/sandbox/review/classifier.js";
+import {
+  classifierMessage,
+  LOOPBACK_REVIEW_SYSTEM_PROMPT,
+  REVIEW_SYSTEM_PROMPT,
+  reviewSystemPrompt,
+} from "../../src/sandbox/review/classifier.js";
 import { approverForCrossing } from "../../src/sandbox/review/permission-candidate.js";
 
 /**
@@ -30,6 +35,17 @@ describe("the loopback-port crossing", () => {
         subAgent: false,
       }),
     ).toBe("person");
+  });
+
+  it("frames a loopback review as a port request, and only a loopback review", () => {
+    const loopback = reviewSystemPrompt("review-0", "loopback-port");
+    expect(loopback.startsWith(LOOPBACK_REVIEW_SYSTEM_PROMPT)).toBe(true);
+    expect(loopback).toContain("one local port");
+    expect(loopback).not.toContain("shell command");
+    expect(loopback).toContain("<review-0>");
+    for (const kind of ["command", "write", "read"] as const)
+      expect(reviewSystemPrompt("review-0", kind).startsWith(REVIEW_SYSTEM_PROMPT)).toBe(true);
+    expect(reviewSystemPrompt("review-0")).toBe(reviewSystemPrompt("review-0", "command"));
   });
 
   it("states the loopback request to the review model", () => {
