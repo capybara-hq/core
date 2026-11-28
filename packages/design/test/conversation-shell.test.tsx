@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AppShell,
@@ -659,6 +660,65 @@ describe("PropertySection hint", () => {
     unmount();
     wrap(<PropertySection title="文件">body</PropertySection>);
     expect(document.querySelector('[data-part="property-hint"]')).toBeNull();
+  });
+});
+
+describe("frames hidden while their body renders nothing", () => {
+  let show: (on: boolean) => void = noop;
+  const Maybe = ({ text }: { text: string }) => {
+    const [on, setOn] = useState(false);
+    show = setOn;
+    return on ? <p>{text}</p> : null;
+  };
+  const sectionOf = () => document.querySelector('[data-part="property-section"]') as HTMLElement;
+
+  it("PropertySection hideWhenEmpty is not drawn until its body draws a node", async () => {
+    wrap(
+      <PropertySection title="协作" hideWhenEmpty>
+        <Maybe text="协作内容" />
+      </PropertySection>,
+    );
+    expect(sectionOf().hidden).toBe(true);
+    expect(sectionOf().getAttribute("data-empty")).toBe("true");
+    await act(async () => show(true));
+    expect(sectionOf().hidden).toBe(false);
+    expect(sectionOf().getAttribute("data-empty")).toBeNull();
+    await act(async () => show(false));
+    expect(sectionOf().hidden).toBe(true);
+  });
+
+  it("a section with content, or without hideWhenEmpty, is drawn", () => {
+    const { unmount } = wrap(
+      <PropertySection title="协作" hideWhenEmpty>
+        text
+      </PropertySection>,
+    );
+    expect(sectionOf().hidden).toBe(false);
+    unmount();
+    wrap(<PropertySection title="协作">{null}</PropertySection>);
+    expect(sectionOf().hidden).toBe(false);
+  });
+
+  it("the stylesheet removes an empty section from the layout", () => {
+    const rule = parseCss(css("conversation-page.css")).find(
+      (r) => r.at === null && r.selector === '.cb-property-section[data-empty="true"]',
+    );
+    expect(rule?.decls.display).toBe("none");
+  });
+
+  it("RightPanel emptyText shows the empty state while the body renders nothing", async () => {
+    wrap(
+      <RightPanel title="协作" onClose={noop} emptyText="没有内容">
+        <Maybe text="面板内容" />
+      </RightPanel>,
+    );
+    const panel = screen.getByRole("complementary", { name: "协作" });
+    expect(within(panel).getByText("没有内容")).toBeTruthy();
+    await act(async () => show(true));
+    expect(within(panel).getByText("面板内容")).toBeTruthy();
+    expect(within(panel).queryByText("没有内容")).toBeNull();
+    await act(async () => show(false));
+    expect(within(panel).getByText("没有内容")).toBeTruthy();
   });
 });
 
