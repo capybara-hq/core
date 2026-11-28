@@ -219,6 +219,22 @@ describe("mentionable connectors", () => {
     ]);
   });
 
+  it("leaves out a needs_config connector the agent switches off or whose extension is not loaded", async () => {
+    const off = await connector({ credential: undefined });
+    const gone = await connector({ name: "Gone", slug: "gone", credential: undefined });
+    const shown = await connector({ name: "Wiki", slug: "wiki", credential: undefined });
+    await k.app
+      .get(KernelDb)
+      .updateTable("connectors")
+      .set({ connector: "not-loaded" })
+      .where("id", "=", gone)
+      .execute();
+    const a = await agent({
+      disabledTools: [{ kind: "connector", connectorId: off, tools: "all" }],
+    });
+    expect((await list(a)).map((c) => c.id)).toEqual([shown]);
+  });
+
   it("credential missing for a personal OAuth connector not connected", async () => {
     const id = await connector(
       {
@@ -258,6 +274,30 @@ describe("mentionable connectors", () => {
     });
     expect(res.statusCode, res.body).toBe(403);
     expect((res.json() as { error: { code: string } }).error.code).toBe("forbidden");
+  });
+
+  it("never lists another org's connectors, nor an agent under another org's path", async () => {
+    const docs = await connector();
+    const other = await createOrgWithProviders(k, req, "Other");
+    await enableConnectorExtensions(k, other);
+    const foreignConnector = await connector(
+      { name: "Foreign", slug: "foreign" },
+      undefined,
+      other,
+    );
+    const foreignAgent = await agent({}, req, other);
+    const a = await agent();
+    expect((await list(a)).map((c) => c.id)).toEqual([docs]);
+    // the other org's own listing has only its connector
+    const theirs = await req({ method: "GET", url: url(foreignAgent, other) });
+    expect(theirs.statusCode, theirs.body).toBe(200);
+    expect(
+      (theirs.json() as { connectors: MentionableConnector[] }).connectors.map((c) => c.id),
+    ).toEqual([foreignConnector]);
+    // the first org's agent under the other org's path
+    const crossed = await req({ method: "GET", url: url(a, other) });
+    expect(crossed.statusCode, crossed.body).toBe(404);
+    expect((crossed.json() as { error: { code: string } }).error.code).toBe("agent.not_found");
   });
 
   it("another org's agent is not found", async () => {

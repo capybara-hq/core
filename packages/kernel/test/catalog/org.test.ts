@@ -1252,6 +1252,68 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
     expect(await detailOf()).toEqual({ own: "Our team mailbox", template: none });
   });
 
+  it("mentionable connectors carry their template's icon and descriptions", async () => {
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: { name: "mentioned", connectorTemplates: [{ path: "./connectors/mail.json" }] },
+        files: templateFiles("mail", mcpTemplate({ endpoint: { url: env.mcp.url } }), {
+          description: { zh: "邮件与日历", en: "Mail and calendar" },
+          displayName: named("m-mail"),
+        }),
+      }),
+    );
+    const made = await install(env.boss, env, itemId);
+    expect(made.statusCode, made.body).toBe(201);
+    const [conn] = await templateConnectors(env, { itemId });
+    const id = conn?.id as string;
+    const created = await env.mem({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/agents`,
+      payload: {
+        definition: { name: "Helper", model: { provider: "model-fake", model: "fake-1" } },
+        visibility: "org",
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const agentId = (created.json() as { agent: { id: string } }).agent.id;
+    const mentionable = async () => {
+      const r = await env.mem({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/agents/${agentId}/mentionable-connectors`,
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      return (r.json() as { connectors: Record<string, unknown>[] }).connectors.find(
+        (c) => c.id === id,
+      );
+    };
+    const icon = `/api/v1/orgs/${env.orgId}/connectors/${id}/icon?v=t-1.0.0`;
+    // installed without its org credential: shown as needs_config, with the template's look
+    expect(await mentionable()).toMatchObject({
+      state: "needs_config",
+      toolCount: 0,
+      icon,
+      description: "Mail and calendar",
+      descriptionZh: "邮件与日历",
+    });
+    // the icon URL loads for the member
+    const img = await env.mem({ method: "GET", url: icon });
+    expect(img.statusCode, img.body).toBe(200);
+    await configureConnector(env, id);
+    expect(await mentionable()).toMatchObject({ state: "ready", icon });
+    expect((await mentionable())?.toolCount).toBeGreaterThan(0);
+    // its own description replaces the template's in both languages
+    const set = await env.boss({
+      method: "PATCH",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${id}`,
+      payload: { description: "Our team mailbox" },
+    });
+    expect(set.statusCode, set.body).toBe(200);
+    const own = await mentionable();
+    expect(own?.description).toBe("Our team mailbox");
+    expect(own).not.toHaveProperty("descriptionZh");
+  });
+
   it("the org extensions list carries each extension's plugin icon (null without one)", async () => {
     const itemId = await seedPluginItem(env, "fake-tools-ui");
     const list = async () => {

@@ -185,7 +185,7 @@ export class AgentsController {
     @Param("agentId") agentId: string,
   ): Promise<{ connectors: MentionableConnector[] }> {
     const p = requireUser(principal);
-    return this.mentionable.list(org.orgId, p.account.id, agentId);
+    return this.mentionable.list(org, p.account.id, agentId);
   }
 
   @Patch(":agentId")
