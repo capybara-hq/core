@@ -22,6 +22,7 @@ import {
   type DeviceAccessCaller,
   DeviceAccessService,
 } from "../../src/device-access/device-access.service.js";
+import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { DeviceServices } from "../../src/sandbox/device-services.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -35,6 +36,7 @@ import {
   fakeServiceStarts,
   readFakeSandboxLimits,
   readFakeSandboxOps,
+  readFakeServiceLoopbackPorts,
   setFakeServiceMode,
 } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -73,11 +75,19 @@ const FAKE_DEVICE_ACCESS = fileURLToPath(
 );
 const ECHO_TOOL = "plugin__fake-device-access__echo";
 const HANDOFF_TOOL = "plugin__fake-device-access__handoff";
-const CALLER: DeviceAccessCaller = { extension: "fake-device-access", services: ["echo"] };
+const CALLER: DeviceAccessCaller = {
+  extension: "fake-device-access",
+  services: ["echo"],
+  loopbackPorts: false,
+};
 /** The id the provider knows the fixture's service by (`<extension>.<name>`). */
 const ID = "fake-device-access.echo";
 /** Another extension declaring the same service name. */
-const OTHER: DeviceAccessCaller = { extension: "other-ext", services: ["echo"] };
+const OTHER: DeviceAccessCaller = {
+  extension: "other-ext",
+  services: ["echo"],
+  loopbackPorts: false,
+};
 const OTHER_ID = "other-ext.echo";
 
 let pgc: TestContainer;
@@ -648,7 +658,7 @@ describe("ctx.deviceAccess", () => {
       () => access.ensureService(CALLER, call, echoServiceSpec()),
       () =>
         access.request(CALLER, call, { service: "echo", body: new Uint8Array(1), timeoutMs: 1000 }),
-      () => access.reportBlockedHosts(call, [{ host: "example.org", layer: "device" }]),
+      () => access.reportBlockedHosts(CALLER, call, [{ host: "example.org", layer: "device" }]),
     ]) {
       expect(await refusal(attempt)).toEqual({
         code: "not_owner",
@@ -790,17 +800,22 @@ describe("ctx.deviceAccess", () => {
     // before any service call of this call: no device named (the pipeline asks about the
     // conversation's)
     const before = callOf();
-    access.reportBlockedHosts(before, [device("example.org")], { url: "https://example.org/a" });
+    access.reportBlockedHosts(CALLER, before, [device("example.org")], {
+      url: "https://example.org/a",
+    });
     expect(callScopeOf(before)?.blocked).toEqual({
       deviceId: null,
       hosts: new Map([["example.org", "device"]]),
       url: "https://example.org/a",
+      loopback: null,
     });
     // after the call's service calls: the device they resolved; reports accumulate
     const call = callOf();
     await access.ensureService(CALLER, call, echoServiceSpec());
-    access.reportBlockedHosts(call, [device("example.org")]);
-    access.reportBlockedHosts(call, [device("cdn.example.org")], { url: "https://example.org/b" });
+    access.reportBlockedHosts(CALLER, call, [device("example.org")]);
+    access.reportBlockedHosts(CALLER, call, [device("cdn.example.org")], {
+      url: "https://example.org/b",
+    });
     const blocked = callScopeOf(call)?.blocked;
     expect(blocked?.deviceId).toBe(s.deviceId);
     expect(blocked?.hosts).toEqual(
@@ -822,7 +837,7 @@ describe("ctx.deviceAccess", () => {
       signal: AbortSignal.timeout(30_000),
     };
     expect(callScopeOf(bare)).toBeNull();
-    access.reportBlockedHosts(bare, [device("example.org")]);
+    access.reportBlockedHosts(CALLER, bare, [device("example.org")]);
     expect(callScopeOf(bare)?.blocked?.hosts).toEqual(new Map([["example.org", "device"]]));
   });
 
@@ -830,8 +845,8 @@ describe("ctx.deviceAccess", () => {
     const call = callOf();
     // a private-resolving name the proxy refused for its address; a later device-layer report of
     // the same host (another spelling) never makes it grantable again
-    access.reportBlockedHosts(call, [{ host: "intranet.example.org", layer: "address" }]);
-    access.reportBlockedHosts(call, [
+    access.reportBlockedHosts(CALLER, call, [{ host: "intranet.example.org", layer: "address" }]);
+    access.reportBlockedHosts(CALLER, call, [
       { host: "Intranet.Example.org.", layer: "device" },
       { host: "cdn.example.org", layer: "unknown" },
       { host: "cdn.example.org", layer: "device" },
@@ -1190,7 +1205,7 @@ describe("ctx.deviceAccess in a watcher's scope and ifRunning (browser long wait
 
   it("refused hosts reported in a watcher's scope are dropped", () => {
     const call = watchCallOf();
-    access.reportBlockedHosts(call, [{ host: "x.dev", layer: "device" }]);
+    access.reportBlockedHosts(CALLER, call, [{ host: "x.dev", layer: "device" }]);
     expect(callScopeOf(call)?.blocked).toBeNull();
   });
 });
@@ -1444,5 +1459,203 @@ describe("ctx.deviceAccess.answerHandoff across a conversation tree", () => {
       }),
     ).rejects.toMatchObject({ code: "question.not_found" });
     expect(await statusOf(child.id)).toBe("pending");
+  });
+});
+
+describe("ctx.deviceAccess loopback port grants", () => {
+  const LOOPBACK: DeviceAccessCaller = { ...CALLER, loopbackPorts: true };
+  const scopeOf = (over: { accountId?: string; conversationId?: string } = {}) => ({
+    orgId,
+    accountId: over.accountId ?? s.accountId,
+    conversationId: over.conversationId ?? s.conversationId,
+    service: "echo",
+  });
+  const auditsOf = (action: string) =>
+    db
+      .selectFrom("audit_events")
+      .select(["actor_account_id", "detail"])
+      .where("target", "=", s.deviceId)
+      .where("action", "=", action)
+      .execute();
+  /** The loopback sets the fake provider's ensures got after the first `from`. */
+  const sentSince = async (from: number) =>
+    (await readFakeServiceLoopbackPorts(sandboxRoot)).slice(from);
+  const sentCount = async () => (await readFakeServiceLoopbackPorts(sandboxRoot)).length;
+
+  it("keeps port and class only for an extension declaring loopbackPorts", () => {
+    const loopback = {
+      host: "127.0.0.1",
+      port: 3999,
+      layer: "address" as const,
+      class: "loopback" as const,
+    };
+    // not declared: an address host like any other
+    const plain = callOf();
+    access.reportBlockedHosts(CALLER, plain, [loopback], { url: "http://127.0.0.1:3999/" });
+    expect(callScopeOf(plain)?.blocked).toEqual({
+      deviceId: null,
+      hosts: new Map([["127.0.0.1", "address"]]),
+      url: "http://127.0.0.1:3999/",
+      loopback: null,
+    });
+    // declared: the first loopback entry, with the only declared service
+    const call = callOf();
+    access.reportBlockedHosts(LOOPBACK, call, [
+      { host: "intranet.example.org", layer: "address", class: "private" },
+      { host: "::1", port: 4000, layer: "address", class: "private" },
+      { host: "127.0.0.2", port: 4000, layer: "address", class: "loopback" },
+      { host: "localhost", port: 3.5, layer: "address", class: "loopback" },
+      { ...loopback, layer: "device" },
+      loopback,
+    ]);
+    access.reportBlockedHosts(LOOPBACK, call, [{ ...loopback, host: "localhost", port: 5000 }]);
+    expect(callScopeOf(call)?.blocked?.loopback).toEqual({
+      serviceId: ID,
+      host: "127.0.0.1",
+      port: 3999,
+    });
+    expect(callScopeOf(call)?.blocked?.hosts.get("127.0.0.1")).toBe("address");
+    // a named service must be declared; with two services one must be named
+    const undeclared = callOf();
+    access.reportBlockedHosts(LOOPBACK, undeclared, [loopback], { service: "other" });
+    expect(callScopeOf(undeclared)?.blocked?.loopback).toBeNull();
+    const two: DeviceAccessCaller = { ...LOOPBACK, services: ["echo", "recorder"] };
+    const unnamed = callOf();
+    access.reportBlockedHosts(two, unnamed, [loopback]);
+    expect(callScopeOf(unnamed)?.blocked?.loopback).toBeNull();
+    const named = callOf();
+    access.reportBlockedHosts(two, named, [loopback], { service: "recorder" });
+    expect(callScopeOf(named)?.blocked?.loopback).toEqual({
+      serviceId: "fake-device-access.recorder",
+      host: "127.0.0.1",
+      port: 3999,
+    });
+  });
+
+  it("refuses an extension that does not declare loopbackPorts", async () => {
+    for (const attempt of [
+      () => access.grantLoopbackPort(CALLER, { ...scopeOf(), port: 3999 }),
+      () => access.revokeLoopbackPort(CALLER, { ...scopeOf(), port: 3999 }),
+      () => access.loopbackPorts(CALLER, scopeOf()),
+    ])
+      expect(await refusal(attempt)).toEqual({
+        code: "loopback_not_declared",
+        message: "This extension does not declare permissions.deviceAccess.loopbackPorts.",
+      });
+  });
+
+  it("grants a loopback port from the owner panel and refreshes the running service", async () => {
+    allowReview();
+    await access.ensureService(CALLER, callOf(), echoServiceSpec());
+    const from = await sentCount();
+    const view = await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
+    expect(view).toMatchObject({ port: 3999, source: "owner-panel", database: false });
+    const expires = Date.parse(view.expiresAt);
+    expect(expires).toBeGreaterThan(Date.now() + 23 * 3600_000);
+    expect(expires).toBeLessThanOrEqual(Date.now() + 24 * 3600_000);
+    const audits = await auditsOf("device.loopback_granted");
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.actor_account_id).toBe(s.accountId);
+    expect(audits[0]?.detail).toMatchObject({
+      source: "owner-panel",
+      port: 3999,
+      serviceId: ID,
+      conversationId: s.conversationId,
+    });
+    // the running service got the live set at once
+    expect(await sentSince(from)).toContainEqual([3999]);
+    // granting it again answers the live grant
+    const again = await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
+    expect(again).toEqual(view);
+    expect(await auditsOf("device.loopback_granted")).toHaveLength(1);
+    // a database port says so
+    expect((await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 5432 })).database).toBe(
+      true,
+    );
+    // not a port
+    await expect(access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 70000 })).rejects.toThrow(
+      TypeError,
+    );
+  });
+
+  it("refuses a non-owner", async () => {
+    await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
+    const theirs = scopeOf({ accountId: other.accountId });
+    for (const attempt of [
+      () => access.grantLoopbackPort(LOOPBACK, { ...theirs, port: 4000 }),
+      () => access.revokeLoopbackPort(LOOPBACK, { ...theirs, port: 3999 }),
+      () => access.loopbackPorts(LOOPBACK, theirs),
+    ])
+      expect(await refusal(attempt)).toEqual({
+        code: "not_owner",
+        message: DEVICE_ACCESS_NOT_OWNER_TEXT,
+      });
+    expect((await access.loopbackPorts(LOOPBACK, scopeOf())).map((g) => g.port)).toEqual([3999]);
+  });
+
+  it("refuses when outside-sandbox is off, naming the layer", async () => {
+    const before = await db
+      .selectFrom("orgs")
+      .select("settings")
+      .where("id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    await k.app.get(OrgSettingsService).update(orgId, { outsideSandbox: "off" }, ownerId);
+    try {
+      const r = await refusal(access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 }));
+      expect(r.code).toBe("loopback_unavailable");
+      expect(r.message).toContain("running outside the sandbox is not possible here");
+      // the org's setting is named: the org admin can change it
+      expect(r.message).toMatch(/organization/);
+    } finally {
+      await db
+        .updateTable("orgs")
+        .set({ settings: JSON.stringify(before.settings) })
+        .where("id", "=", orgId)
+        .execute();
+    }
+    expect(await auditsOf("device.loopback_granted")).toHaveLength(0);
+  });
+
+  it("lists the root's live grants for a sub-agent scope", async () => {
+    const child = randomUUID();
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, kind, parent_conversation_id)
+      VALUES (${child}, ${orgId}, ${s.agentId}, ${s.accountId}, 'subagent', ${s.conversationId})`.execute(
+      db,
+    );
+    // granted from the sub-agent's panel: the root holds it
+    await access.grantLoopbackPort(LOOPBACK, {
+      ...scopeOf({ conversationId: child }),
+      port: 4000,
+    });
+    await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
+    const fromChild = await access.loopbackPorts(LOOPBACK, scopeOf({ conversationId: child }));
+    expect(fromChild.map((g) => g.port)).toEqual([3999, 4000]);
+    expect(await access.loopbackPorts(LOOPBACK, scopeOf())).toEqual(fromChild);
+    const rows = await db
+      .selectFrom("device_loopback_grants")
+      .select("conversation_id")
+      .where("device_id", "=", s.deviceId)
+      .execute();
+    expect(rows.map((r) => r.conversation_id)).toEqual([s.conversationId, s.conversationId]);
+  });
+
+  it("revokes and narrows", async () => {
+    allowReview();
+    await access.ensureService(CALLER, callOf(), echoServiceSpec());
+    await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
+    const from = await sentCount();
+    await access.revokeLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
+    expect(await access.loopbackPorts(LOOPBACK, scopeOf())).toEqual([]);
+    // the revoke's own send went last (a send of the older set in flight, the grant's owed
+    // refresh, lands before it: the per-service lock orders them)
+    const sent = await sentSince(from);
+    expect(sent.at(-1)).toEqual([]);
+    const audits = await auditsOf("device.loopback_revoked");
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.actor_account_id).toBe(s.accountId);
+    expect(audits[0]?.detail).toMatchObject({ port: 3999, reason: "revoked" });
+    // revoking what is not granted succeeds
+    await access.revokeLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
   });
 });

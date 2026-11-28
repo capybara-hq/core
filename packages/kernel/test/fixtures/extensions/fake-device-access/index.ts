@@ -3,6 +3,7 @@ import {
   type DeviceServiceSpec,
   defineExtension,
   type ExtensionContext,
+  isLoopbackGrantHost,
   type ServiceBlockedHost,
   type ToolCallContext,
 } from "@capybara-hq/plugin-sdk";
@@ -13,6 +14,23 @@ type Refused = string | ServiceBlockedHost;
 /** The report of `refused` (a bare name is a `device`-layer refusal). */
 const reported = (refused: readonly Refused[]): ServiceBlockedHost[] =>
   refused.map((r) => (typeof r === "string" ? { host: r, layer: "device" } : r));
+
+/**
+ * The loopback refusal a `url` naming a loopback grant host gives (`127.0.0.1`, `[::1]`,
+ * `localhost`: layer `address`, class `loopback`, the URL's port), or null for any other URL.
+ */
+const loopbackRefusal = (url: string): ServiceBlockedHost | null => {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = u.hostname.replace(/^\[(.*)\]$/, "$1");
+  if (!isLoopbackGrantHost(host)) return null;
+  const port = u.port !== "" ? Number(u.port) : u.protocol === "https:" ? 443 : 80;
+  return { host, port, layer: "address", class: "loopback" };
+};
 
 /** A JSON schema item for {@link Refused}. */
 const REFUSED_ITEM = {
@@ -37,7 +55,10 @@ const REFUSED_ITEM = {
  *   it first starts and asks the echo service (so the report is about the device those calls
  *   resolved), then awaits `globalThis.__fakeDeviceAccessBeforeReport` when a test set one. Every
  *   invocation's key is recorded in `globalThis.__fakeDeviceAccessCalls`
- *   ({@link fakeDeviceAccessCalls}).
+ *   ({@link fakeDeviceAccessCalls}). A `url` naming a loopback host (`http://127.0.0.1:3999/`)
+ *   adds the loopback refusal `{ host, port, layer: "address", class: "loopback" }` to the first
+ *   invocation's report (service `echo`; the extension declares
+ *   `permissions.deviceAccess.loopbackPorts`).
  * - `echo` starts the echo service and answers its echo of `text`.
  * - `handoff` asks the person (`InputRequired`, one boolean field `done`) and answers what they
  *   said; with `service: true` it first starts and asks the echo service (a launch reviewed in
@@ -77,7 +98,10 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: [],
-  permissions: { tools: ["navigate", "echo", "handoff"], deviceAccess: { services: ["echo"] } },
+  permissions: {
+    tools: ["navigate", "echo", "handoff"],
+    deviceAccess: { services: ["echo"], loopbackPorts: true },
+  },
   setup(ctx: ExtensionContext) {
     const echo = async (call: ToolCallContext, body: string): Promise<string> => {
       await ctx.deviceAccess.ensureService(call, echoServiceSpec());
@@ -122,9 +146,13 @@ export default defineExtension({
         const first = calls.filter((k) => k === key).length === 1;
         if (service) await echo(call, url);
         await beforeReport()?.();
-        const refused = first ? blocked : blockedAgain;
+        const loopback = first ? loopbackRefusal(url) : null;
+        const refused = [
+          ...(loopback !== null ? [loopback] : []),
+          ...reported(first ? blocked : blockedAgain),
+        ];
         if (refused.length > 0) {
-          ctx.deviceAccess.reportBlockedHosts(call, reported(refused), { url });
+          ctx.deviceAccess.reportBlockedHosts(call, refused, { url, service: "echo" });
           return text(`Could not load ${url}.`);
         }
         return text(`Loaded ${url}.`);

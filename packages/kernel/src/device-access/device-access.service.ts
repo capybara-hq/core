@@ -7,7 +7,9 @@ import {
   type DeviceServiceStatus,
   deviceServiceFilesDigest,
   deviceServiceId,
+  isLoopbackGrantHost,
   type Logger,
+  type LoopbackGrantView,
   type NetworkBlockLayer,
   parseRollCheck,
   parseToolKey,
@@ -28,10 +30,21 @@ import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import { assertServiceSpec, DeviceServices } from "../sandbox/device-services.js";
+import {
+  isDatabasePort,
+  type LoopbackGrantKey,
+  type LoopbackGrantRow,
+  LoopbackGrants,
+  loopbackRefusal,
+} from "../sandbox/loopback-grants.js";
+import { PermissionFacts } from "../sandbox/permission-facts.js";
 import { DeviceProviders } from "../sandbox/providers.js";
+import { escalationCeilingWhy } from "../sandbox/review/permission-candidate.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import type { SandboxUseContext } from "../sandbox/use-context.js";
 import { mapSandboxError } from "../tools/builtins/sandbox/common.js";
@@ -82,6 +95,11 @@ export interface DeviceAccessCaller {
   sha256?: string | null;
   /** True once the calling instance is being replaced or unloaded (it drains its calls). */
   superseded?: () => boolean;
+  /**
+   * The approved manifest declares `permissions.deviceAccess.loopbackPorts: true`: its services may
+   * be granted local ports of the device (browser loopback port grants design).
+   */
+  loopbackPorts: boolean;
 }
 
 /**
@@ -173,6 +191,11 @@ export class DeviceAccessService {
     @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "current">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(LoopbackGrants)
+    private readonly loopback: Pick<LoopbackGrants, "grantIn" | "revoke" | "liveForRoot">,
+    @Inject(PermissionFacts)
+    private readonly facts: Pick<PermissionFacts, "deviceSandboxFacts">,
   ) {}
 
   private get db() {
@@ -501,11 +524,19 @@ export class DeviceAccessService {
    * once the handler returns) on the device this call's own `ctx.deviceAccess` calls resolved, if
    * any. A malformed entry (not a non-empty host with a known layer) is dropped; a host reported
    * again keeps its most restrictive layer, so a later report never makes it grantable.
+   *
+   * A loopback refusal (layer `address`, class `loopback`, a loopback grant host, an integer port
+   * in 1–65535) of an extension declaring `permissions.deviceAccess.loopbackPorts` also lands as
+   * the scope's `loopback` entry (the first such entry of the call wins), naming the service it
+   * came from: `opts.service` when declared, else the extension's only declared service; with no
+   * such service it does not. Every other port and class is dropped: the entry is an address host
+   * like any other.
    */
   reportBlockedHosts(
+    caller: DeviceAccessCaller,
     call: ToolCallContext,
     hosts: ServiceBlockedHost[],
-    opts?: { url?: string },
+    opts?: { url?: string; service?: string },
   ): void {
     assertCallOwner(call);
     const scope = callScopeOf(call) ?? attachCallScope(call);
@@ -521,13 +552,164 @@ export class DeviceAccessService {
     );
     if (valid.length === 0) return;
     const url = typeof opts?.url === "string" && opts.url.length > 0 ? opts.url : null;
-    if (scope.blocked === null) scope.blocked = { deviceId: scope.device, hosts: new Map(), url };
+    if (scope.blocked === null)
+      scope.blocked = { deviceId: scope.device, hosts: new Map(), url, loopback: null };
     else if (url !== null) scope.blocked.url = url;
     const seen = scope.blocked.hosts;
     for (const h of valid) {
       const key = serviceHostKey(h.host);
       const had = seen.get(key);
       seen.set(key, had === undefined ? h.layer : strongerLayer(had, h.layer));
+    }
+    if (scope.blocked.loopback !== null || !caller.loopbackPorts) return;
+    const service = reportedService(caller, opts?.service);
+    if (service === null) return;
+    const entry = valid.find(
+      (h) =>
+        h.layer === "address" &&
+        h.class === "loopback" &&
+        isLoopbackGrantHost(h.host) &&
+        Number.isInteger(h.port) &&
+        (h.port as number) >= 1 &&
+        (h.port as number) <= 65535,
+    );
+    if (entry === undefined) return;
+    scope.blocked.loopback = {
+      serviceId: deviceServiceId(caller.extension, service),
+      host: entry.host,
+      port: entry.port as number,
+    };
+  }
+
+  /**
+   * Grants the scope conversation's root a local port of its device for one service (the owner's
+   * click in the panel, source `owner-panel`): owner only, refused with `loopback_unavailable`
+   * when the device's outside-sandbox ceilings or its provider do not allow it now
+   * ({@link loopbackRefusal}). The record is written in its own transaction
+   * (`LoopbackGrants.grantIn`, which owes the refresh); the running service then gets the live set
+   * at once, best effort (the owed refresh job is the backstop).
+   */
+  async grantLoopbackPort(
+    caller: DeviceAccessCaller,
+    scope: DeviceAccessScope & { service: string; port: number },
+  ): Promise<LoopbackGrantView> {
+    const { d, key } = await this.loopbackKey(caller, scope, scope.port);
+    const facts = await this.facts.deviceSandboxFacts(d.orgId, d.deviceId);
+    // the person is at the panel (attended): only the device's outside-sandbox ceiling decides,
+    // in the words a per-call escalation is refused with
+    const escalation = facts.box.outsideSandbox
+      ? null
+      : escalationCeilingWhy({
+          layer: facts.box.layer.outsideSandbox,
+          boundary: facts.box.boundary,
+          description: facts.description,
+          changeHint: facts.changeHint,
+        });
+    const why = loopbackRefusal(facts.box, facts.support, escalation);
+    if (why !== null)
+      throw new DeviceAccessError(
+        "loopback_unavailable",
+        `Port ${scope.port} on the device cannot be opened to the device service ${scope.service}: ${why}.`,
+      );
+    let row: LoopbackGrantRow;
+    try {
+      row = await this.grantInTx(key, scope.accountId);
+    } catch (e) {
+      // the conversation was deleted meanwhile
+      if (e instanceof ApiError && e.code === "conversation.not_found")
+        throw new DeviceAccessError("no_device", "The conversation does not exist.", { cause: e });
+      throw e;
+    }
+    await this.refreshLoopback(d, key.serviceId);
+    return viewOf(row);
+  }
+
+  /**
+   * Revokes the scope conversation root's grant of the port to the service (owner only); nothing
+   * to revoke succeeds. The running service then gets the live set at once, best effort (the
+   * owed refresh job is the backstop).
+   */
+  async revokeLoopbackPort(
+    caller: DeviceAccessCaller,
+    scope: DeviceAccessScope & { service: string; port: number },
+  ): Promise<void> {
+    const { d, key } = await this.loopbackKey(caller, scope, scope.port);
+    if (await this.loopback.revoke(key, scope.accountId))
+      await this.refreshLoopback(d, key.serviceId);
+  }
+
+  /** The live grants of the service held by the scope conversation's root (owner only), by port. */
+  async loopbackPorts(
+    caller: DeviceAccessCaller,
+    scope: DeviceAccessScope & { service: string },
+  ): Promise<LoopbackGrantView[]> {
+    const { d, key } = await this.loopbackKey(caller, scope, null);
+    const rows = await this.loopback.liveForRoot(
+      d.orgId,
+      d.deviceId,
+      key.serviceId,
+      d.rootConversationId,
+    );
+    return rows.map(viewOf);
+  }
+
+  /**
+   * The checks every loopback call makes (the extension declares loopback ports and the service,
+   * the port is one, the account owns the conversation and its personal device) and the grant key
+   * under the conversation's root (`port` 0 for a listing).
+   */
+  private async loopbackKey(
+    caller: DeviceAccessCaller,
+    scope: DeviceAccessScope & { service: string },
+    port: number | null,
+  ): Promise<{ d: ScopedDevice; key: LoopbackGrantKey }> {
+    if (!caller.loopbackPorts)
+      throw new DeviceAccessError(
+        "loopback_not_declared",
+        "This extension does not declare permissions.deviceAccess.loopbackPorts.",
+      );
+    assertDeclared(caller, scope.service);
+    if (port !== null && !(Number.isInteger(port) && port >= 1 && port <= 65535))
+      throw new TypeError(
+        `${String(port)} is not a port: a loopback port is an integer from 1 to 65535.`,
+      );
+    const d = await this.scopedDevice(caller, scope);
+    return {
+      d,
+      key: {
+        orgId: d.orgId,
+        deviceId: d.deviceId,
+        serviceId: deviceServiceId(caller.extension, scope.service),
+        rootConversationId: d.rootConversationId,
+        port: port ?? 0,
+      },
+    };
+  }
+
+  /**
+   * The grant in a transaction of its own. `grantIn` locks the root conversation first, so nothing
+   * here locks rows the conversation deletion path locks after the conversation.
+   */
+  @Transactional()
+  private grantInTx(key: LoopbackGrantKey, accountId: string): Promise<LoopbackGrantRow> {
+    return this.loopback.grantIn(key, { source: "owner-panel", actorAccountId: accountId });
+  }
+
+  /** Sends the service's live set now when it runs (best effort, logged on failure). */
+  private async refreshLoopback(d: ScopedDevice, serviceId: string): Promise<void> {
+    try {
+      await this.services.refreshLoopback(
+        d.orgId,
+        d.deviceId,
+        serviceId,
+        AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+      );
+    } catch (err) {
+      this.log.warn("device service not refreshed after a loopback grant change", {
+        deviceId: d.deviceId,
+        serviceId,
+        err,
+      });
     }
   }
 
@@ -613,7 +795,7 @@ export class DeviceAccessService {
     if (!declared.includes(t.service)) return "revoked";
     try {
       const d = await this.scopedDevice(
-        { extension: t.extension, services: [t.service] },
+        { extension: t.extension, services: [t.service], loopbackPorts: false },
         { orgId: t.orgId, accountId: t.accountId, conversationId: t.conversationId },
       );
       return d.orgId === t.orgId &&
@@ -840,6 +1022,25 @@ export class DeviceAccessService {
   private rootOf(conversationId: string): Promise<string> {
     return rootConversationOf(this.db, conversationId);
   }
+}
+
+/** A grant record as the extension sees it. */
+function viewOf(row: LoopbackGrantRow): LoopbackGrantView {
+  return {
+    port: row.port,
+    source: row.source,
+    expiresAt: row.expiresAt,
+    database: isDatabasePort(row.port),
+  };
+}
+
+/**
+ * The declared service a report came from: `named` when the caller declares it, the caller's only
+ * service when it names none, else null.
+ */
+function reportedService(caller: DeviceAccessCaller, named: string | undefined): string | null {
+  if (named !== undefined) return caller.services.includes(named) ? named : null;
+  return caller.services.length === 1 ? (caller.services[0] as string) : null;
 }
 
 /** A provider's status under the extension's own service name (the provider names the id). */

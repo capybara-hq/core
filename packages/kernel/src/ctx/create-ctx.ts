@@ -187,6 +187,9 @@ export type DeviceAccessBackend = Pick<
   | "streamTicket"
   | "addNetworkHosts"
   | "answerHandoff"
+  | "grantLoopbackPort"
+  | "revokeLoopbackPort"
+  | "loopbackPorts"
 >;
 
 /** What `ctx.triggers` calls through (`TriggerEventsService`). */
@@ -758,12 +761,9 @@ export function createExtensionContext(
           sha256: identity.sha256,
           // a draining instance (its successor is loaded) never rolls a service back to its files
           superseded: () => disposing || lifecycle.signal.aborted,
+          // read from the approved manifest: an upgrade adding it waits for approval again
+          loopbackPorts: perms.deviceAccess?.loopbackPorts === true,
         };
-        const loopbackMissing = () =>
-          new DeviceAccessError(
-            "capability_missing",
-            "Loopback port grants are not available in this deployment yet.",
-          );
         const backend = (): DeviceAccessBackend => {
           const b = deps.deviceAccess?.();
           if (!b)
@@ -777,20 +777,13 @@ export function createExtensionContext(
           ensureService: async (call, spec) => backend().ensureService(caller, call, spec),
           request: async (call, req) => backend().request(caller, call, req),
           reportBlockedHosts: (call, hosts, opts) =>
-            backend().reportBlockedHosts(call, hosts, opts),
+            backend().reportBlockedHosts(caller, call, hosts, opts),
           streamTicket: async (scope) => backend().streamTicket(caller, scope),
           addNetworkHosts: async (scope) => backend().addNetworkHosts(caller, scope),
           answerHandoff: async (scope) => backend().answerHandoff(caller, scope),
-          // loopback port grants: placeholders until the kernel implements them
-          grantLoopbackPort: async () => {
-            throw loopbackMissing();
-          },
-          revokeLoopbackPort: async () => {
-            throw loopbackMissing();
-          },
-          loopbackPorts: async () => {
-            throw loopbackMissing();
-          },
+          grantLoopbackPort: async (scope) => backend().grantLoopbackPort(caller, scope),
+          revokeLoopbackPort: async (scope) => backend().revokeLoopbackPort(caller, scope),
+          loopbackPorts: async (scope) => backend().loopbackPorts(caller, scope),
         } satisfies DeviceAccessCtx;
       })()
     : undefined;
