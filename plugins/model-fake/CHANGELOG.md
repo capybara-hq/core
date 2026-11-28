@@ -1,5 +1,16 @@
 # @capybara-hq/plugin-model-fake
 
+## 0.1.0-rc.87
+
+### Patch Changes
+
+- efaf3e7: model-fake scripts the in-context compaction call from the conversation's own user messages:
+  `compact-fail:<kind>` fails it, `compact-tool:<name>:<json>` answers with a tool call even under
+  `toolChoice: "none"`, `compact-cutoff:once` / `compact-cutoff:always` answer past the output cap.
+- Updated dependencies [5aaf693]
+- Updated dependencies [6332845]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.86
+
 ## 0.1.0-rc.86
 
 ### Patch Changes

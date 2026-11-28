@@ -80,6 +80,8 @@ export const ERROR_CODES = {
    * the Platform tool (only a person turns it on).
    */
   "org.external_sharing_not_allowed": 400,
+  /** An org's navigation setting puts more than 3 plugin pages in the primary navigation. */
+  "org_settings.nav_primary_limit": 400,
   /** A deployment setting set in the startup config (file, Nacos or env): read-only in the admin console. */
   "deployment.setting_readonly": 409,
   /** Allowing outside-sandbox runs platform-wide through an API token or the Platform tool (only off). */
@@ -452,6 +454,16 @@ export const ERROR_CODES = {
   "ui.action_failed": 502,
   "ui.invalid_view": 502,
   "ui.timeout": 504,
+  /** A component query's params are over `UI_LIMITS.componentQueryParamsBytes` as JSON. */
+  "ui.query_params_too_large": 413,
+  /** A component query's result is over `UI_LIMITS.componentQueryBytes` as JSON, or not JSON. */
+  "ui.query_result_too_large": 502,
+  /** A component query did not answer within 10 seconds (its signal aborted). */
+  "ui.query_timeout": 504,
+  /** A component query handler threw. */
+  "ui.query_failed": 502,
+  /** No query handler for that component, or the component is not offered to the caller. */
+  "ui.query_not_found": 404,
   "storage.unavailable": 503,
   "attachment.not_found": 404,
   "attachment.not_ready": 409,

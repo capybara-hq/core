@@ -13,6 +13,7 @@ import {
   type ParamValue,
   type StopReason,
   sanitizeParams,
+  validateCacheWriteByTtl,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -20,6 +21,7 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { CaseSnapshot } from "../evals/snapshot.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { hasInvocation, skillLoadOffered } from "../skills/catalog.js";
@@ -40,6 +42,7 @@ import {
   planMedia,
   type RequestTool,
 } from "./context/build.js";
+import { selectCacheTtl } from "./context/cache-ttl.js";
 import {
   acceptSummary,
   buildCompactionRequest,
@@ -69,6 +72,18 @@ import {
   planSqueezedFit,
   sentOutputCap,
 } from "./context/fit.js";
+import {
+  buildInContextCompactionRequest,
+  IN_CONTEXT_BOUNDARY_MODE,
+  type InContextBoundary,
+  type InContextSkip,
+  inContextCoversUpToSeq,
+  inContextSummaryAllowed,
+  latestModelCall,
+  unansweredAfterReply,
+  unansweredOpeners,
+  withInContextRetryNote,
+} from "./context/in-context-compaction.js";
 import { guardToolPairs } from "./context/pairing.js";
 import { hasProjectSkills, overlongProjectSkills } from "./context/project-root.js";
 import { TOOLS_UNSUPPORTED_REMINDER, turnLimitReminder } from "./context/reminders.js";
@@ -223,16 +238,19 @@ export interface ModelStepDeps {
   tools: Pick<ToolRegistry, "forAgent">;
   config: Pick<KernelConfigService, "get">;
   /**
-   * The compaction settings in effect for the run's organization (context compaction spec §4.8):
-   * resolved once per model step.
+   * The compaction settings in effect for the run's organization (context compaction spec §4.8)
+   * and its prompt cache settings (idle compaction spec §9.2): both resolved once per model step
+   * (`resolveStep`, one org settings read); `resolve` is the compaction settings alone, which
+   * step replays read.
    */
-  compactionSettings: Pick<CompactionSettingsService, "resolve">;
+  compactionSettings: Pick<CompactionSettingsService, "resolve" | "resolveStep">;
   /**
    * Ephemeral compaction progress (context compaction spec §4.6): display-only, never in the log.
    * Absent in eval replays and single-step replays, which have no live conversation to show it on.
    */
   compactionProgress?: CompactionProgressSink;
-  log: Logger;
+  /** The kernel logger (its `debug` level is optional here: SDK loggers have none). */
+  log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
   /**
    * 会话附件（构建请求时解析日志里的媒体引用；见 AttachmentsService）。未提供时媒体引用一律按「不再可用」处理。
    * 两个方法都只对「确定不存在」返回缺省 / null；暂时故障（存储不可用、网络错误）一律抛错（Ruling M4）。
@@ -260,6 +278,20 @@ export interface ModelStepDeps {
    * as `tool_base`. Only chat and sub-agent runs use it (never an eval replay); absent, no base.
    */
   writeBase?: WriteBaseReader;
+  /**
+   * The live snapshot of the conversation for the in-context summary (idle compaction spec §9.4,
+   * `evals/snapshot.ts` `liveSnapshot`): `events` with the definitions and tool specs they
+   * reference, for run `runId` (the run of the last model call) of agent `agentId`. Live runs and
+   * manual compact runs get it (`RunSteps`); absent (eval replays, most tests), every compaction
+   * summarizes the transcript.
+   */
+  liveSnapshot?: (
+    orgId: string,
+    conversationId: string,
+    runId: string,
+    agentId: string,
+    events: readonly ConversationEvent[],
+  ) => Promise<CaseSnapshot>;
   /**
    * How long an attempt waits for its aborted base reads (default `WRITE_BASE_SETTLE_MS`); tests
    * shorten it.
@@ -763,8 +795,9 @@ async function runStep(
     const resolved = await resolveAgentTools(deps, input, events);
     const tools: StepTools = stepToolsOf(resolved, input, deps);
     const beforeCompaction = events.length;
-    // the org's effective compaction settings, once for this step (org > platform > built-in)
-    const compaction = await deps.compactionSettings.resolve(input.orgId);
+    // the org's effective compaction and prompt cache settings, once for this step (org >
+    // platform > built-in)
+    const { compaction, promptCache } = await deps.compactionSettings.resolveStep(input.orgId);
     events = await maybeCompact(deps, input, events, runtime, compaction, tools);
     // a sub-agent checks its budget again after a compaction call, so the step's own request is
     // not a second call over the cap (review M5; the loop checks before each step); the budget
@@ -820,6 +853,7 @@ async function runStep(
         events,
         runtime,
         compaction,
+        promptCache.longTtl,
         tools,
         wrapUpReason,
         streamed,
@@ -1102,6 +1136,8 @@ function buildRequest(
   runtime: Runtime,
   tools: StepTools,
   wrapUp: boolean,
+  /** The prompt cache lifetime to ask for ({@link selectCacheTtl}); absent asks for none. */
+  cacheTtl?: number,
 ): { request: ModelRequest; meta: ModelCallMeta; estimate: number } {
   const { request, meta, mediaTokens } = assembleModelRequest({
     events,
@@ -1114,6 +1150,7 @@ function buildRequest(
     tools: tools.list,
     toolSearch: tools.toolSearch,
     ...(wrapUp && { toolChoice: "none" as const }),
+    ...(cacheTtl !== undefined && { cacheTtl }),
     mediaInfo: tools.media.info,
     media: tools.media.bytes,
     mediaBudgetBytes: limits.budgetBytes,
@@ -1269,6 +1306,11 @@ interface CompactOptions {
    * `compaction_failed`.
    */
   manual?: boolean;
+  /**
+   * Summarize the transcript, never the in-context request (idle compaction spec §9.4): the
+   * reactive path sets it, since its last request is the one that overflowed.
+   */
+  transcriptOnly?: boolean;
 }
 
 /** What one compaction execution wrote: the events, the summary's seq and whether it failed. */
@@ -1279,6 +1321,169 @@ export interface CompactionOutcome {
   summarySeq: number | null;
   /** Whether a `compaction_failed` was written (a failed call, a denial or a failed acceptance). */
   failed: boolean;
+}
+
+/**
+ * Why a compaction summarizes the transcript instead of the in-context request (idle compaction
+ * spec §9.4): the builder's skips, plus the runtime's own reasons. Logged as a `debug` line with
+ * `context=Compaction`.
+ */
+type InContextFallback =
+  | InContextSkip
+  /**
+   * `CompactOptions.manual`: a manual compact run keeps the #990 plan on the transcript path
+   * (ruling R13).
+   */
+  | "manual"
+  /** `CompactOptions.transcriptOnly` (the reactive path: its last request overflowed). */
+  | "transcript_only"
+  /** The model is not in the quality-gate table ({@link inContextSummaryAllowed}). */
+  | "quality_gate"
+  /** No `ModelStepDeps.liveSnapshot` (eval replays). */
+  | "no_snapshot"
+  /** No agent id on the step input, or a last call without a run. */
+  | "no_agent"
+  | "snapshot_failed"
+  /** The builder threw (a bug: it never throws for a snapshot's content). */
+  | "build_failed"
+  /** Boundary mode `all` would cover less than the plan: a covered message is not absorbed. */
+  | "covers_unabsorbed"
+  /**
+   * Input the model has not answered follows the last reply (ruling R9, {@link
+   * unansweredAfterReply}): a tool result, or an absorbed message other than a run opener.
+   */
+  | "pending_input";
+
+/** The in-context summary call of one compaction. */
+interface InContextSummary {
+  request: ModelRequest;
+  /** The same request with the retry note, sent after a reply cut off at the output limit. */
+  retryRequest: ModelRequest;
+  /** What the summary covers (boundary mode `all`: every event the request includes). */
+  coversUpToSeq: number;
+  /** The unanswered run openers re-rendered after the summary ({@link unansweredOpeners}). */
+  opening: number[];
+}
+
+/**
+ * The in-context summary request of a compaction (idle compaction spec §9.4), or why the
+ * compaction summarizes the transcript: a manual compact run (ruling R13: it keeps the #990 plan),
+ * the reactive path's `transcriptOnly`, a model the quality
+ * gate does not list, a compaction model other than the last call's, no live snapshot, or a skip of
+ * {@link buildInContextCompactionRequest}. Media come from the step's own media cache (what the
+ * next step would send). Never throws.
+ */
+async function inContextSummary(
+  deps: ModelStepDeps,
+  input: ModelStepInput,
+  events: ConversationEvent[],
+  ref: ModelRef,
+  info: ModelInfo,
+  tools: StepTools,
+  settings: { reserveTokens: number; summaryCap: number },
+  plan: { coversUpToSeq: number },
+  opts: CompactOptions,
+): Promise<InContextSummary | { skip: InContextFallback }> {
+  // ruling R13: only automatic compactions summarize in context; conditioned on `manual`, never
+  // on `force` (the reactive path forces too, and phase 2's idle compact run is not manual)
+  if (opts.manual === true) return { skip: "manual" };
+  if (opts.transcriptOnly) return { skip: "transcript_only" };
+  if (!inContextSummaryAllowed(ref.provider, info.id)) return { skip: "quality_gate" };
+  if (deps.liveSnapshot === undefined) return { skip: "no_snapshot" };
+  const call = latestModelCall(events);
+  if (call === undefined) return { skip: "no_model_call" };
+  // The compaction's ref (provider + configured model name) against the last call's recorded one;
+  // the builder compares the resolved `info.id` again. The two can differ only for an alias the
+  // registry resolves to another id: either mismatch skips to the transcript, so it fails safe.
+  if (call.payload.provider !== ref.provider || call.payload.model !== ref.model) {
+    return { skip: "model_mismatch" };
+  }
+  // cheap checks before the snapshot read (the builder repeats this one)
+  if (call.payload.request.fit !== undefined) return { skip: "fit_plan" };
+  if (input.agentId === undefined || call.runId === null) return { skip: "no_agent" };
+
+  let boundary: InContextBoundary;
+  let coversUpToSeq: number;
+  if (IN_CONTEXT_BOUNDARY_MODE === "all") {
+    boundary = { mode: "all" };
+    coversUpToSeq = inContextCoversUpToSeq(events, input.absorbedUpToSeq);
+    if (coversUpToSeq < plan.coversUpToSeq) return { skip: "covers_unabsorbed" };
+  } else {
+    const kept = events.find((e) => e.type === "user_message" && e.seq > plan.coversUpToSeq);
+    if (kept === undefined) return { skip: "boundary_ambiguous" };
+    boundary = { mode: "marked", firstKeptSeq: kept.seq };
+    coversUpToSeq = plan.coversUpToSeq;
+  }
+  // the openers the summary re-renders, and so the ones the settled-point check admits (what is
+  // checked is what is re-rendered): only those after the reference call's reply, which the model
+  // has not answered (a turn-start compaction's)
+  const opening = unansweredOpeners(
+    events,
+    openingSeqs(events, input.runId, coversUpToSeq, input.absorbedUpToSeq),
+  );
+  // ruling R9: only at a settled point; a run opener is re-rendered after the summary (R9a)
+  if (
+    unansweredAfterReply(events, {
+      coversUpToSeq,
+      absorbedUpToSeq: input.absorbedUpToSeq,
+      openers: opening,
+    })
+  ) {
+    return { skip: "pending_input" };
+  }
+  // review M1: the request holds only what the summary covers, so no event after an unabsorbed
+  // message is both summarized and kept in the tail
+  const included = events.filter((e) => e.seq <= coversUpToSeq);
+
+  let snapshot: CaseSnapshot;
+  try {
+    snapshot = await deps.liveSnapshot(
+      input.orgId,
+      input.conversationId,
+      call.runId,
+      input.agentId,
+      events,
+    );
+  } catch (err) {
+    deps.log.warn("in-context summary snapshot failed", {
+      context: "Compaction",
+      conversationId: input.conversationId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { skip: "snapshot_failed" };
+  }
+  try {
+    const built = buildInContextCompactionRequest({
+      snapshot,
+      events: included,
+      absorbedUpToSeq: input.absorbedUpToSeq,
+      model: info,
+      mediaInfo: tools.media.info,
+      media: tools.media.bytes,
+      reserveTokens: settings.reserveTokens,
+      summaryCap: settings.summaryCap,
+      boundary,
+      retry: false,
+      // the fit check calibrates like the trigger does
+      calibration: lastActual(events),
+    });
+    if ("skip" in built) return built;
+    return {
+      request: built.request,
+      // review M2: built once; the retry form only appends the note (the fit check above did not
+      // count its few tokens, which the reserve absorbs)
+      retryRequest: withInContextRetryNote(built.request, settings.summaryCap),
+      coversUpToSeq,
+      opening,
+    };
+  } catch (err) {
+    deps.log.warn("in-context summary request failed to build", {
+      context: "Compaction",
+      conversationId: input.conversationId,
+      err,
+    });
+    return { skip: "build_failed" };
+  }
 }
 
 /**
@@ -1390,7 +1595,8 @@ export async function runCompaction(
   const tailBudget = bounds.target - estimateTokens([], built.system, built.tools);
   // a manual compaction ignores keepRecentTurns and keeps at most about a fifth of the window of
   // the latest turn (spec §4.7, maintainer decision 2026-11-28); the reactive path (`force`
-  // without `manual`) plans like the proactive one
+  // without `manual`) plans like the proactive one. A manual compaction always summarizes the
+  // transcript with this plan (ruling R13); an automatic one may summarize in context below
   const manual = opts.manual === true;
   const plan = manual
     ? compactionPlan(events, compaction, manualTailBudget(info.contextWindow, tailBudget), {
@@ -1419,11 +1625,6 @@ export async function runCompaction(
       failed: false,
     };
   }
-  // decided now and recorded in the summary (spec §4.2): the request never depends on later events
-  // a manual compact run is started by no message: the turn it cuts into is the latest message run's
-  const opening = manual
-    ? manualOpeningSeqs(events, plan.coversUpToSeq, input.absorbedUpToSeq)
-    : openingSeqs(events, input.runId, plan.coversUpToSeq, input.absorbedUpToSeq);
 
   const { runId, step, signal, conversationId } = input;
   const ref = modelRef;
@@ -1442,6 +1643,41 @@ export async function runCompaction(
   // the summary call's output cap: the org's effective setting, never above the model's own cap
   // (context compaction spec §4.8)
   const summaryCap = Math.min(compaction.maxOutputTokens, info.maxOutputTokens);
+  // idle compaction spec §9.4: an automatic compaction tries the summary from the conversation's
+  // last request first (its cached prefix); a skip (always for a manual one, ruling R13)
+  // summarizes the transcript exactly as before
+  const inContext = await inContextSummary(
+    deps,
+    input,
+    events,
+    modelRef,
+    info,
+    tools,
+    { reserveTokens: compaction.reserveTokens, summaryCap },
+    plan,
+    opts,
+  );
+  const ic = "skip" in inContext ? null : inContext;
+  if ("skip" in inContext) {
+    deps.log.debug?.("in-context summary skipped", {
+      context: "Compaction",
+      conversationId,
+      reason: inContext.skip,
+    });
+  }
+  // review M6: the preparation awaited the snapshot read; an abort meanwhile sends no call
+  if (signal.aborted) {
+    deps.compactionProgress?.clear(runId);
+    throw new StepAborted();
+  }
+  const coversUpToSeq = ic?.coversUpToSeq ?? plan.coversUpToSeq;
+  // decided now and recorded in the summary (spec §4.2): the request never depends on later events;
+  // a manual compact run is started by no message: the turn it cuts into is the latest message run's
+  const opening =
+    ic?.opening ??
+    (manual
+      ? manualOpeningSeqs(events, coversUpToSeq, input.absorbedUpToSeq)
+      : openingSeqs(events, input.runId, coversUpToSeq, input.absorbedUpToSeq));
   // the payload's attempt drives the backoff; the keys use the compaction's ordinal in the step
   const attemptNo = consecutiveCompactionFailures(events) + 1;
   const ordinal = compactionOrdinal(events, runId, step);
@@ -1467,9 +1703,12 @@ export async function runCompaction(
   const overhead = compactionRequestOverhead();
   const allowance = Math.ceil(summaryCap / 2);
   const baseChunkSize = compactionChunkSize(budget, summaryCap);
-  // the whole transcript is one call unless it is over a usable base chunk size
+  // the whole transcript is one call unless it is over a usable base chunk size; the in-context
+  // request is never chunked (spec §4.5): it is one request the model already accepted
   let remaining: string | null =
-    baseChunkSize >= MIN_COMPACTION_CHUNK_TOKENS && textTokens(plan.transcript) > baseChunkSize
+    ic === null &&
+    baseChunkSize >= MIN_COMPACTION_CHUNK_TOKENS &&
+    textTokens(plan.transcript) > baseChunkSize
       ? plan.transcript
       : null;
   /** Whether this compaction is chunked (real `i/N` progress only in this path). */
@@ -1538,7 +1777,12 @@ export async function runCompaction(
     // the compaction (spec §4.5, issue #959)
     let retry = false;
     for (;;) {
-      const request = buildCompactionRequest(callInput, info.id, summaryCap, { retry });
+      const request =
+        ic !== null
+          ? retry
+            ? ic.retryRequest
+            : ic.request
+          : buildCompactionRequest(callInput, info.id, summaryCap, { retry });
       if (hookBase && deps.hooks?.has("model.request")) {
         let verdict: Awaited<ReturnType<HookRunner["run"]>>;
         try {
@@ -1582,6 +1826,7 @@ export async function runCompaction(
               chars: partial.length,
             });
           },
+          deps.log,
         );
         usages.push({ chunk: multiChunk ? chunkNo : undefined, retry, usage: out.usage });
         if (hookBase && deps.hooks) {
@@ -1600,6 +1845,13 @@ export async function runCompaction(
             signal,
             deps.log,
           );
+        }
+        // the in-context request declares the conversation's tools under toolChoice "none": a
+        // reply that calls one anyway is no summary (idle compaction spec §9.4)
+        if (out.content.some((b) => b.type === "tool_call")) {
+          failure = "summary reply called a tool";
+          failedChunk = multiChunk ? chunkNo : null;
+          break;
         }
         if (out.stopReason === "max_tokens") {
           if (!retry) {
@@ -1737,6 +1989,16 @@ export async function runCompaction(
   if (failure !== null) {
     deps.log.warn("compaction failed", { conversationId, reason: failure });
   }
+  // review M4: an in-context summary (boundary mode all) covers more than the plan's transcript:
+  // what it saved is estimated from the transcript of everything it covers
+  const savedFrom =
+    ic === null
+      ? plan.transcript
+      : (compactionPlan(
+          events.filter((e) => e.seq <= coversUpToSeq),
+          { ...compaction, keepRecentTurns: 0 },
+          Number.POSITIVE_INFINITY,
+        )?.transcript ?? plan.transcript);
   const event: AppendEvent =
     failure === null
       ? {
@@ -1745,13 +2007,14 @@ export async function runCompaction(
           // the manual compact run's run id is in it; a crash-retried attempt writes nothing twice
           idemKey: idem.compactionSummary(runId, step, ordinal),
           payload: {
-            coversUpToSeq: plan.coversUpToSeq,
+            coversUpToSeq,
             text: summary,
             // the run's opening messages the summary covers: request building re-renders them
             ...(opening.length > 0 && { openingSeqs: opening }),
             // what compaction saved: the estimated transcript input minus the stored summary
             // output (context compaction spec §4.9)
-            savedTokens: summarySavedTokens(plan.transcript, summary),
+            savedTokens: summarySavedTokens(savedFrom, summary),
+            method: ic !== null ? "in_context" : "transcript",
             step,
           },
         }
@@ -1850,6 +2113,8 @@ async function ladder(
   events: ConversationEvent[],
   runtime: Runtime,
   compaction: CompactionSettings,
+  /** `promptCache.longTtl` for the run's organization: each rung picks its model's tier from it. */
+  longTtl: boolean,
   tools: StepTools,
   wrapUpReason: WrapUpReason | null,
   streamed: { text: string },
@@ -1939,6 +2204,7 @@ async function ladder(
             force: true,
             ref: rung.ref,
             fallback: rung.fallback,
+            transcriptOnly: true,
           });
           if (evs !== before && (await budgetUsedUpAfterCompaction(deps, input, wrapUpReason))) {
             throw new BudgetUsedUp();
@@ -1983,6 +2249,8 @@ async function ladder(
             runtime,
             tools,
             wrapUp,
+            // the rung's own model decides the tier (a fallback may offer none)
+            selectCacheTtl(info.cache, longTtl),
           );
           const { request, estimate } = built;
           const fitInput = {
@@ -2018,6 +2286,7 @@ async function ladder(
             force: true,
             ref: rung.ref,
             fallback: rung.fallback,
+            transcriptOnly: true,
           });
           if (evs !== before) {
             if (await budgetUsedUpAfterCompaction(deps, input, wrapUpReason)) {
@@ -2153,6 +2422,7 @@ async function ladder(
                 bases?.onInput(ev.id, ev.input);
               }
             },
+            deps.log,
           );
         } finally {
           // the attempt's base reads end with it: aborted, then waited for (the abort reaches
@@ -2495,9 +2765,29 @@ export function deltaChars(ev: Exclude<ModelStreamEvent, { type: "message_comple
 }
 
 /**
+ * The provider's usage as the kernel records it: a `cacheWriteByTtl` that fails
+ * `validateCacheWriteByTtl` is dropped with a warn (the rest of the usage stays), so the `usage`
+ * event's schema never rejects a call the model already answered.
+ */
+export function trustedUsage(
+  usage: ModelUsage,
+  model: string,
+  log?: Pick<Logger, "warn">,
+): ModelUsage {
+  if (usage.cacheWriteByTtl === undefined) return usage;
+  const problem = validateCacheWriteByTtl(usage);
+  if (problem === null) return usage;
+  log?.warn("invalid cacheWriteByTtl from the provider; dropped", { model, problem });
+  const { cacheWriteByTtl: _dropped, ...rest } = usage;
+  return rest;
+}
+
+/**
  * 消费一次模型流，带空闲看门狗：两次事件之间超过 `idleMs` → 本地中止并按 `ModelError("timeout")` 抛出。
  * 外部 `signal` 触发 → `StepAborted`。每次 `next()` 都与停止信号竞速，供应商不响应 signal 也不会卡住。
  * 运行时与评测单步回放（`evals/step-replay.ts`）、评委共用。
+ * The usage goes through {@link trustedUsage}, so a malformed `cacheWriteByTtl` never fails a call
+ * after the model replied.
  */
 export async function consumeModelStream(
   provider: BoundProvider,
@@ -2505,6 +2795,8 @@ export async function consumeModelStream(
   idleMs: number,
   signal: AbortSignal,
   onDelta: (ev: Exclude<ModelStreamEvent, { type: "message_complete" }>) => void,
+  /** Where a dropped `cacheWriteByTtl` is reported. */
+  log?: Pick<Logger, "warn">,
 ): Promise<StreamOutcome> {
   if (signal.aborted) throw new StepAborted();
   const local = new AbortController();
@@ -2541,7 +2833,11 @@ export async function consumeModelStream(
       arm();
       const ev = r.value;
       if (ev.type === "message_complete") {
-        return { content: ev.content, stopReason: ev.stopReason, usage: ev.usage };
+        return {
+          content: ev.content,
+          stopReason: ev.stopReason,
+          usage: trustedUsage(ev.usage, request.model, log),
+        };
       }
       onDelta(ev);
     }

@@ -600,9 +600,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     // the appearance theme cards, then the plugin UI code switch row
     expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(7);
     // ... plus the login methods (rows), the prompt suggestion switch, the compaction section (a
-    // switch and four numbers, no card radios) and the sharing section (a switch, a number and a
-    // list)
-    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(12);
+    // switch and four numbers, no card radios), the prompt cache switch and the sharing section (a
+    // switch, a number and a list)
+    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(13);
     await release();
   });
 

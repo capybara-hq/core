@@ -161,7 +161,8 @@ export function buildSuggestionRequest(input: {
     reference = ref.request;
     // every event of the snapshot (it ends at the run's terminal event): absorbable events past
     // the recorded absorbedUpToSeq stay out, anything else model-visible after the final reply
-    // breaks the check below
+    // breaks the check below. It keeps the baseline's recorded cacheTtl: the same tier as the
+    // last call keeps its cache entry whole (idle compaction spec §9.4)
     extended = assembleModelRequest({ ...gathered.input, events });
   } catch (err) {
     // a corrupt recorded permission context (`eval.snapshot_invalid`)

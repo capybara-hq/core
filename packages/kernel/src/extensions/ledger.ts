@@ -7,6 +7,7 @@ export type RegistrationKind =
   | "lease"
   | "ui.view"
   | "ui.action"
+  | "ui.query"
   | "provide"
   | "hook"
   | "setup.check";

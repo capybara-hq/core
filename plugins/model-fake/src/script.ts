@@ -275,6 +275,8 @@ type Plan =
       delayMs?: number;
       /** `streamtool:`: wait this long between the fragments of the streamed input. */
       streamMs?: number;
+      /** `compact-tool:`: called even under `toolChoice: "none"` (a model that ignores it). */
+      ignoresToolChoice?: true;
     }
   | { kind: "stall" }
   | { kind: "fail"; error: ModelError };
@@ -284,7 +286,7 @@ type Plan =
  */
 function plan(req: ModelRequest): Plan {
   const p = scripted(req);
-  if (p.kind !== "tool" || req.toolChoice !== "none") return p;
+  if (p.kind !== "tool" || req.toolChoice !== "none" || p.ignoresToolChoice) return p;
   const { text } = lastUser(req);
   const t = text.startsWith("tool:")
     ? `Tool calls are disabled; would call ${p.name}.`
@@ -330,7 +332,54 @@ function scripted(req: ModelRequest): Plan {
     }
     return std(`Suggestion: ${(userTexts(req)[0] ?? "").slice(0, 40)}`);
   }
+  // The summary call. Directives are user messages of their own, so they act only on the
+  // in-context form (the conversation's own messages); the transcript form wraps every message in
+  // one `<transcript>` text. `compact-fail:<kind>` fails the call, `compact-tool:<name>:<json>`
+  // calls a tool even under `toolChoice: "none"`, `compact-cutoff:once` answers past the output
+  // cap (`max_tokens`) unless the last user message carries the kernel's retry note (it names the
+  // output token limit), `compact-cutoff:always` does so every time.
   if (req.purpose === "compaction") {
+    const lines = userTexts(req);
+    const failLine = lines.find((t) => t.startsWith("compact-fail:"));
+    if (failLine !== undefined) {
+      const kind = failLine.slice("compact-fail:".length).trim();
+      return {
+        kind: "fail",
+        error: isErrorKind(kind)
+          ? new ModelError(kind, `Scripted ${kind} failure`)
+          : new ModelError("invalid_request", `Unknown failure kind "${kind}"`),
+      };
+    }
+    for (const line of lines) {
+      const call = /^compact-tool:([^:]+):([\s\S]*)$/.exec(line);
+      if (!call) continue;
+      try {
+        return {
+          kind: "tool",
+          name: call[1] as string,
+          input: JSON.parse(call[2] as string),
+          ignoresToolChoice: true,
+        };
+      } catch {
+        return {
+          kind: "fail",
+          error: new ModelError("invalid_request", "compact-tool directive carries invalid JSON"),
+        };
+      }
+    }
+    const cutoff = lines.find((t) => t.startsWith("compact-cutoff:"));
+    if (cutoff !== undefined) {
+      const always = cutoff.slice("compact-cutoff:".length).trim() === "always";
+      if (always || !text.includes("output token limit")) {
+        // one character past the cap the stream cuts at (maxOutputTokens * 4)
+        return {
+          kind: "text",
+          text: "x".repeat(req.maxOutputTokens * 4 + 1),
+          chunk: 1024,
+          delayMs: 0,
+        };
+      }
+    }
     return std(`Summary: ${text.slice(0, 200)}`);
   }
   if (text.startsWith("echo:")) return std(text.slice(5));

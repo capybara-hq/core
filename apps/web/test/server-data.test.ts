@@ -269,6 +269,8 @@ describe("getShell", () => {
       "/api/v1/orgs/o1/conversations/groups": () => err(500, "internal"),
       "/api/v1/orgs/o1/inbox": () => err(500, "internal"),
       "/api/v1/orgs/o1/ui/client": () => json(200, NO_CLIENT),
+      // an org with pages also reads its navigation choices
+      "/api/v1/orgs/o1/settings": () => json(200, { settings: {} }),
       "/api/v1/orgs/o1/ui/contributions": () =>
         json(200, {
           items: [

@@ -7893,6 +7893,281 @@ span.r-scal-daynum {
   font-weight: 600;
 }
 
+/* ── Board (spec §6.69): lanes on the hover ground, cards as the one box ─── */
+
+.r-board {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cb-layout-board-gap);
+  overflow-x: auto;
+}
+.r-board-column {
+  flex: none;
+  box-sizing: border-box;
+  width: var(--cb-layout-board-column);
+  padding: 0 var(--cb-layout-board-gap) var(--cb-layout-board-gap);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-hover);
+}
+.r-board-column[data-over="true"] {
+  background: var(--cb-selected);
+}
+.r-board-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-default);
+  min-width: 0;
+  /* the title is body (§6.69); the older todo board's .r-board-head above sets micro muted */
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.r-board-title {
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.r-board-count {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-code);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-board-lock {
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--cb-muted);
+}
+.r-board-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.r-board-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  padding: var(--cb-space-3);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+}
+.r-board-card[data-held="true"] {
+  border-color: var(--cb-line-strong);
+  background: var(--cb-raised);
+  box-shadow: var(--cb-shadow-float);
+}
+.r-board-card-title {
+  color: var(--cb-ink);
+}
+.r-board-card-meta {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-board-card-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-board-card-hint .cb-icon {
+  margin-top: 1px;
+}
+.r-board-empty {
+  display: block;
+  box-sizing: border-box;
+  height: 64px;
+  border: 1px dashed var(--cb-line);
+  border-radius: var(--cb-radius-md);
+}
+.r-board[data-form="compact"] {
+  scroll-snap-type: x mandatory;
+}
+.r-board[data-form="compact"] .r-board-column {
+  width: calc(100% - var(--cb-space-8));
+  scroll-snap-align: start;
+}
+.r-board-card[data-form="compact"] {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+  padding-right: var(--cb-space-1);
+}
+.r-board-card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.r-board-card[data-form="compact"] .r-icon-btn {
+  flex: none;
+  margin-top: calc(var(--cb-space-3) * -1 + var(--cb-space-1));
+}
+
+/* ── PrincipalPicker (spec §6.70) ────────────────────────────────────────── */
+.r-pp-frame {
+  width: 320px;
+}
+.r-pp-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+}
+/* The field: the Select's (§6.2), its value space.2 from the border (the r-input's padding),
+   space.3 under the mobile sizes (§2.5); the field is the frame's width. */
+.r-pp-frame,
+.r-pp-sheet-page {
+  display: flex;
+  flex-direction: column;
+}
+.r-pp-value {
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+[data-mobile-sizes] .r-select-field {
+  padding: 0 var(--cb-space-3);
+}
+.r-pp-label {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.r-pp-more {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-pp-panel-box {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  max-height: var(--cb-layout-menu-max-height);
+  margin-top: var(--cb-space-1);
+  overflow: hidden;
+  border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  box-shadow: var(--cb-shadow-1);
+}
+.r-pp-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--cb-space-1);
+}
+.r-pp-search {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--cb-control-dense);
+  margin-bottom: var(--cb-space-1);
+  padding: 0 var(--cb-pad-dense-x);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  outline: none;
+}
+/* Text typed into is at least 16px under the mobile sizes (spec §2.5, §4.3; base.css). */
+[data-mobile-sizes] .r-pp-search {
+  font-size: max(16px, 1em);
+}
+.r-pp-search::placeholder {
+  color: var(--cb-faint);
+}
+.r-pp-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.r-pp-group-label {
+  padding: var(--cb-space-2) var(--cb-pad-default-x) var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.r-pp-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  box-sizing: border-box;
+  height: var(--cb-row-default);
+  padding: 0 var(--cb-pad-default-x);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+}
+.r-pp-option[data-hinted="true"] {
+  height: var(--cb-row-roomy);
+}
+.r-pp-option[data-active="true"] {
+  background: var(--cb-hover);
+}
+.r-pp-option[aria-selected="true"] {
+  background: var(--cb-selected);
+}
+.r-pp-option[aria-disabled="true"] {
+  color: var(--cb-disabled);
+}
+.r-pp-option .cb-icon {
+  flex: none;
+  color: var(--cb-muted);
+}
+.r-pp-option .r-avatar {
+  flex: none;
+}
+.r-pp-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+.r-pp-name {
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.r-pp-hint {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-pp-option[aria-disabled="true"] .r-pp-hint {
+  color: var(--cb-disabled);
+}
+.r-pp-empty,
+.r-pp-loading {
+  padding: var(--cb-space-2) var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-pp-sheet-page {
+  padding: var(--cb-space-4);
+}
+/* Compact: the BottomSheet's own head and body (§6.59, the r-cmm-sheet pieces); the panel
+   inside has no padding of its own. */
+.r-cmm-sheet-body .r-pp-panel {
+  padding: 0;
+}
+
 /* LibraryPage (spec §5.13): the filter row, then the list card (in its 320 column, space.3 short of
    it) beside the preview card; only template-library draws these. */
 .r-lib-body {
@@ -7943,6 +8218,7 @@ span.r-scal-daynum {
   width: 16px;
   height: 16px;
 }
+
 /* ── Composer menus (§6.16.30): ＋, / and @ anchored above the composer ── */
 
 /* Room above the composer for the menu (the catalog's offsetTop). */

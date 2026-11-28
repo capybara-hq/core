@@ -167,6 +167,34 @@ describe("组织 HTTP", () => {
     expect((await read()).settings.compaction).toBeUndefined();
   });
 
+  it("PATCH /orgs/:id/settings promptCache: an override sets longTtl, null follows the platform, a typo → 400", async () => {
+    const req = await session("owner");
+    const id = await createOrg(req);
+    const url = `/api/v1/orgs/${id}/settings`;
+    const patch = (payload: Record<string, unknown>) => req({ method: "PATCH", url, payload });
+    const read = async () =>
+      (await req({ method: "GET", url })).json() as {
+        settings: { promptCache?: unknown };
+        deployment: { promptCache: unknown };
+      };
+
+    const initial = await read();
+    expect(initial.settings.promptCache).toBeUndefined();
+    expect(initial.deployment.promptCache).toEqual({ longTtl: false });
+
+    const set = await patch({ promptCache: { longTtl: true } });
+    expect(set.statusCode).toBe(200);
+    expect((await read()).settings.promptCache).toEqual({ longTtl: true });
+
+    const typo = await patch({ promptCache: { longTTL: true } });
+    expect(typo.statusCode).toBe(400);
+    expect(errCode(typo)).toBe("validation_failed");
+
+    const clear = await patch({ promptCache: null });
+    expect(clear.statusCode).toBe(200);
+    expect((await read()).settings.promptCache).toBeUndefined();
+  });
+
   it("member 能看成员、不能改角色（403）；owner 能改", async () => {
     const ownerReq = await session("owner");
     const id = await createOrg(ownerReq);

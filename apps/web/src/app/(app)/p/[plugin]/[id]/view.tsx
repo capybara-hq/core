@@ -3,6 +3,8 @@
 import { DetailPage, Text } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
+import type { ReactNode } from "react";
+import { PageCrumbsProvider } from "../../../../../components/client-ext/host-api";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { ExtensionSlot } from "../../../../../components/extension-ui/ExtensionSlot";
 import { NoAccess } from "../../../../../components/NoAccess";
@@ -26,15 +28,29 @@ import NotFound from "../../../not-found";
  * view the extension failed is its own error state), and the org UI stream refreshes it after
  * first paint. An embed opens the extension's own page in a sandboxed iframe (its token request is
  * the embed handshake, in the browser), which refreshes itself. An unknown contribution says so.
+ * A component page with `frame: "page"` draws its whole page itself (plugin full pages spec §2):
+ * no DetailPage around it, the host's crumbs (the org, the extension pages' label) reach its
+ * forwarded template, and it must render exactly one (the slot's template guard). `params`: the
+ * address's query string, the component's `params` (spec §5).
  */
-export default function PluginPageView({ plugin, id }: { plugin: string; id: string }) {
+export default function PluginPageView({
+  plugin,
+  id,
+  params,
+}: {
+  plugin: string;
+  id: string;
+  params: Record<string, string>;
+}) {
   const ws = useWorkspace();
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <PluginPageData orgId={ws.orgId} plugin={plugin} id={id} />;
+  return <PluginPageData orgId={ws.orgId} plugin={plugin} id={id} params={params} />;
 }
 
-function PluginPageData({ orgId, plugin, id }: { orgId: string; plugin: string; id: string }) {
+type PageProps = { orgId: string; plugin: string; id: string; params: Record<string, string> };
+
+function PluginPageData({ orgId, plugin, id, params }: PageProps) {
   const scope = usePagePath("org");
   const t = useTranslations();
   const read = usePageQuery(contributionsQuery(orgId));
@@ -49,7 +65,7 @@ function PluginPageData({ orgId, plugin, id }: { orgId: string; plugin: string; 
     );
   }
   const listed = read.data.find((c) => c.plugin === plugin && c.id === id && c.slot === "org.page");
-  return <PluginPageHidden orgId={orgId} plugin={plugin} id={id} listed={listed} />;
+  return <PluginPageHidden orgId={orgId} plugin={plugin} id={id} params={params} listed={listed} />;
 }
 
 /**
@@ -61,13 +77,9 @@ function PluginPageHidden({
   orgId,
   plugin,
   id,
+  params,
   listed,
-}: {
-  orgId: string;
-  plugin: string;
-  id: string;
-  listed: UiContributionItem | undefined;
-}) {
+}: PageProps & { listed: UiContributionItem | undefined }) {
   const q = uiArrangementQuery(orgId);
   const arrangement = useQuery({
     ...q,
@@ -89,6 +101,7 @@ function PluginPageHidden({
       orgId={orgId}
       plugin={plugin}
       id={id}
+      params={params}
       contribution={listed ?? hidden}
       direct={hidden !== undefined}
     />
@@ -99,12 +112,10 @@ function PluginPage({
   orgId,
   plugin,
   id,
+  params,
   contribution,
   direct,
-}: {
-  orgId: string;
-  plugin: string;
-  id: string;
+}: PageProps & {
   /** Undefined when the org has no such page. */
   contribution: UiContributionItem | undefined;
   /** The page is hidden from the lists: the slot gets it as `args.direct`. */
@@ -114,19 +125,22 @@ function PluginPage({
   const t = useTranslations();
   const locale = uiLocale(useLocale());
   const title = contribution?.title[locale] ?? id;
-  return (
-    <DetailPage
-      header={{ path: [...scope, { label: t("pluginPage.pathLabel") }, { label: title }], title }}
-    >
-      {contribution ? (
-        <ExtensionSlot
-          slot="org.page"
-          args={{ orgId, ...(direct ? { direct: contribution } : {}) }}
-          select={{ plugin, id }}
-        />
-      ) : (
-        <Text tone="muted">{t("errors.ui.not_found")}</Text>
-      )}
-    </DetailPage>
+  const crumbs = [...scope, { label: t("pluginPage.pathLabel") }];
+  const hostPage = (body: ReactNode) => (
+    <DetailPage header={{ path: [...crumbs, { label: title }], title }}>{body}</DetailPage>
   );
+  // a full page (`frame: "page"`) draws its page; the host's DetailPage is only around its other
+  // states (loading, failed, off, crashed), and its template gets the host's crumbs
+  const full = contribution?.kind === "component" && contribution.frame === "page";
+  const slot = contribution ? (
+    <ExtensionSlot
+      slot="org.page"
+      args={{ orgId, params, ...(direct ? { direct: contribution } : {}) }}
+      select={{ plugin, id }}
+      {...(full && { host: { page: hostPage } })}
+    />
+  ) : (
+    <Text tone="muted">{t("errors.ui.not_found")}</Text>
+  );
+  return full ? <PageCrumbsProvider value={crumbs}>{slot}</PageCrumbsProvider> : hostPage(slot);
 }

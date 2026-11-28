@@ -7,6 +7,8 @@ import {
   shouldCompact,
 } from "../../../src/runtime/context/compaction.js";
 import { applyFit, planFit, planningBounds } from "../../../src/runtime/context/fit.js";
+import { unansweredOpeners } from "../../../src/runtime/context/in-context-compaction.js";
+import { automationEventBlock } from "../../../src/runtime/context/run-context.js";
 import { estimateTokens } from "../../../src/runtime/context/tokens.js";
 import { AGENT, compactionSettings, Log, MODEL } from "./fixtures.js";
 
@@ -171,5 +173,73 @@ describe("compaction inside the current turn, end to end", () => {
     const next = build(log);
     expect(next.messages[0]).toEqual(right.messages[0]);
     expect(next.messages.slice(0, right.messages.length)).toEqual(right.messages);
+  });
+});
+
+describe("compaction at the start of an event automation's run (collaboration spec §4.6)", () => {
+  const EVENT = {
+    automationId: "auto-1",
+    automationRunId: "arun-1",
+    automationName: "Triage new items",
+    source: "fake-trigger-source",
+    events: [
+      {
+        id: "ev-1",
+        type: "item.created",
+        subject: { kind: "item", id: "item-1", title: "Fix login" },
+        summary: "Alice opened it.",
+      },
+    ],
+  };
+  const PROMPT = "triage the new item and label it";
+
+  it("re-renders the automation's message after the summary, its event block in the transcript", () => {
+    const log = new Log();
+    log.turn(1);
+    log.turn(2);
+    const opener = log.add(
+      {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: PROMPT }],
+          authorAccountId: "acc-1",
+          automationEvent: EVENT,
+        },
+      },
+      null,
+    );
+    log.add({
+      type: "run_started",
+      payload: {
+        agentVersion: 1,
+        model: { provider: "model-fake", model: "fake-1" },
+        triggerAccountId: "acc-1",
+        trigger: "automation_event",
+      },
+    });
+    // a turn-start compaction (transcript path) before the run's first call
+    const plan = compactionPlan(log.events, { ...SETTINGS, keepRecentTurns: 0 }, 1_000_000);
+    const covers = plan?.coversUpToSeq ?? 0;
+    expect(covers).toBeGreaterThanOrEqual(opener.seq);
+    expect(plan?.transcript).toContain(`User: ${automationEventBlock(EVENT)}\n${PROMPT}`);
+    const absorbedUpTo = log.events.at(-1)?.seq ?? 0;
+    const opening = openingSeqs(log.events, "run-1", covers, absorbedUpTo);
+    expect(opening).toEqual([opener.seq]);
+    // the in-context form keeps it too: the model has not answered it yet
+    expect(unansweredOpeners(log.events, opening)).toEqual([opener.seq]);
+    log.summary(covers, "Two earlier questions were answered.", opening);
+
+    const { request, meta } = buildModelRequest({
+      events: log.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL_10K,
+      step: 1,
+    });
+    const first = textOf(request.messages[0] as ModelMessage);
+    expect(first).toContain("<conversation_summary>");
+    expect(first).toContain(automationEventBlock(EVENT));
+    expect(first).toContain(PROMPT);
+    expect(meta.automationEventSeqs).toEqual([opener.seq]);
   });
 });

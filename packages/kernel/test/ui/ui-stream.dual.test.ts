@@ -139,7 +139,9 @@ describe("界面刷新（双副本）", () => {
       10_000,
       "conversation ui frame",
     );
-    expect(uiFrames(convStream.messages)).toEqual([{ plugin: "ui-probe", contribution: "panel" }]);
+    expect(uiFrames(convStream.messages)).toEqual([
+      { plugin: "ui-probe", contribution: "panel", queries: true },
+    ]);
 
     const invOrg = await at(0, "POST", "/plugins/ui-probe/invalidate", {
       orgId,
@@ -147,7 +149,9 @@ describe("界面刷新（双副本）", () => {
     });
     expect(invOrg.status).toBe(204);
     await orgStream.until((m) => uiFrames(m).length > 0, 10_000, "org ui frame");
-    expect(uiFrames(orgStream.messages)).toEqual([{ plugin: "ui-probe", contribution: "orgpage" }]);
+    expect(uiFrames(orgStream.messages)).toEqual([
+      { plugin: "ui-probe", contribution: "orgpage", queries: true },
+    ]);
     // 对话级刷新不进组织流
     expect(uiFrames(orgStream.messages).some((f) => f.contribution === "panel")).toBe(false);
 

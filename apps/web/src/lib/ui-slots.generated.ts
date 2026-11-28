@@ -59,7 +59,7 @@ export const UI_SLOT_SPECS: Record<
     scope: "org",
     accepts: ["view", "embed", "component"],
     minRole: "member",
-    args: [],
+    args: ["params"],
     density: "regular",
     compact: "kept",
     anchors: [],

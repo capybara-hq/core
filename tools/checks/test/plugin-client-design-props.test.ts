@@ -30,6 +30,11 @@ describe("plugin-client design props", () => {
   // unresolved import or another error, in both directions of the comparison.
   for (const [what, project, file] of [
     ["a package prop the design no longer accepts", "tsconfig.drift.json", "compat-drift.tsx"],
+    [
+      "a drifted prop of a generic DataTable",
+      "tsconfig.drift-table.json",
+      "compat-drift-table.tsx",
+    ],
     ["a new required design prop", "tsconfig.required.json", "compat-required.tsx"],
     ["a package prop the design does not have", "tsconfig.extra.json", "compat-extra.tsx"],
   ] as const) {

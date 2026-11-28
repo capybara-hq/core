@@ -325,7 +325,7 @@ describe("platform UI routes", () => {
       );
       expect(uiFrames(org.messages).map((f) => f.contribution)).toEqual(["page"]);
       expect(uiFrames(platform.messages)).toEqual([
-        { plugin: "ui-slots", contribution: "platform-home" },
+        { plugin: "ui-slots", contribution: "platform-home", queries: true },
       ]);
     } finally {
       for (const s of streams) s.close();

@@ -33,10 +33,9 @@ import { formatRightHash, parseRightHash, type RightTarget } from "../../lib/rig
 import { agentsSummary, dispatchedAny, useAgentTree } from "../../lib/subagents";
 import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
 import { toolLabelText } from "../../lib/tool-label";
-import { type UiOpen, uiKey, uiLocale } from "../../lib/ui";
+import { ICON_OF, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useOfferedContributions } from "../extension-ui/ClientComponentBlock";
-import { ICON_OF } from "../extension-ui/ExtensionBlocks";
 import { ExtensionSlot, useSlotContributions } from "../extension-ui/ExtensionSlot";
 import { AgentMap } from "./AgentMap";
 import { BackgroundListPanel, BackgroundTaskPanel } from "./BackgroundSection";

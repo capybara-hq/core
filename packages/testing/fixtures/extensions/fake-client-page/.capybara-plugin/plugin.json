@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-client-page",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: a full org.page component with named queries and a form-sized action"
+}

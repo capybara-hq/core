@@ -346,6 +346,8 @@ export interface DeploymentSettings {
    * may override. Absent from a kernel before the setting (read as the built-in defaults).
    */
   compaction?: CompactionSettings;
+  /** Prompt cache (idle compaction spec §6.4): long cache tier switch; absent reads as off. */
+  promptCache?: { longTtl: boolean };
   /** File sharing governance (spec §8): the platform switch and where it comes from. */
   externalSharing?: SharingSetting<"allow" | "deny">;
   /** The longest expiry a share may take, in days, and where it comes from. */
@@ -470,6 +472,7 @@ export type DeploymentSettingsPatch = Partial<
     | "devicesDefaultProvider"
     | "attribution"
     | "compaction"
+    | "promptCache"
     | "externalSharing"
     | "shareMaxExpiryDays"
     | "promptSuggestions"
@@ -496,6 +499,8 @@ export type DeploymentSettingsPatch = Partial<
   devicesDefaultProvider?: DevicesDefaultProviderPatch;
   /** Each given field replaces the stored one; fields left out keep their value. */
   compaction?: CompactionSettingsPatch;
+  /** Each given field replaces the stored one. */
+  promptCache?: { longTtl?: boolean };
   /** `on` / `off`; null clears the stored choice (back to on). */
   promptSuggestions?: "on" | "off" | null;
 };

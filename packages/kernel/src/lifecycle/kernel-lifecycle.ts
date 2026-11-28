@@ -359,6 +359,12 @@ export class KernelLifecycle
     if (bootstrapAgain && opts.bootstrap !== undefined) {
       await this.runBootstrap(opts.bootstrap.dir, true);
       this.checkpoint();
+      // The second pass installs its extensions through the lifecycle ops, which only publish
+      // `kernel.plugins.changed`: this replica would load them whenever the message arrives. The
+      // start loads them itself before it goes on (the template connectors plan against them) and
+      // serves (an org's first request sees the builtin plugin's tools)
+      await this.extensionLifecycle.reconcile("bootstrap");
+      this.checkpoint();
     }
     // The one-off reconciliation of template connectors (plugin pages spec §7): once the
     // extensions loaded (it plans connectors against their connector extensions) and the bootstrap

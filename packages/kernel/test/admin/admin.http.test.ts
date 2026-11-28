@@ -568,6 +568,7 @@ describe("超级管理员端点", () => {
       devicesDefaultProvider: DEFAULT_DEVICE_PROVIDER,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
+      promptCache: { longTtl: false },
       ...DEFAULT_SHARING,
     });
     const put = await adminReq({
@@ -593,6 +594,7 @@ describe("超级管理员端点", () => {
       devicesDefaultProvider: DEFAULT_DEVICE_PROVIDER,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
+      promptCache: { longTtl: false },
       ...DEFAULT_SHARING,
     });
     const bad = await adminReq({
@@ -638,6 +640,7 @@ describe("超级管理员端点", () => {
       devicesDefaultProvider: DEFAULT_DEVICE_PROVIDER,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
+      promptCache: { longTtl: false },
       ...DEFAULT_SHARING,
     });
 
@@ -671,6 +674,7 @@ describe("超级管理员端点", () => {
       devicesDefaultProvider: DEFAULT_DEVICE_PROVIDER,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
+      promptCache: { longTtl: false },
       ...DEFAULT_SHARING,
     });
     expect(await limit("orgA")).toBe(k.app.get(KernelConfigService).get().runtime.orgConcurrency);
@@ -705,6 +709,7 @@ describe("超级管理员端点", () => {
       devicesDefaultProvider: DEFAULT_DEVICE_PROVIDER,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
+      promptCache: { longTtl: false },
       ...DEFAULT_SHARING,
     });
   });

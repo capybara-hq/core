@@ -577,9 +577,16 @@ export class ModelPurposesService {
     await opts.beforeSend?.(target.model, request);
     let chars = 0;
     try {
-      const out = await consumeModelStream(provider, request, idleMs, signal, (ev) => {
-        chars += deltaChars(ev);
-      });
+      const out = await consumeModelStream(
+        provider,
+        request,
+        idleMs,
+        signal,
+        (ev) => {
+          chars += deltaChars(ev);
+        },
+        this.log,
+      );
       return {
         content: out.content,
         stopReason: out.stopReason,

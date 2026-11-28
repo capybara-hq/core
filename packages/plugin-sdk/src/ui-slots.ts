@@ -130,13 +130,13 @@ const SLOT_DATA = [
     accepts: ["view", "embed", "component"],
     cardinality: "list",
     minRole: "member",
-    args: [],
+    args: ["params"],
     density: "regular",
     icon: "optional",
     compact: "kept",
     description: {
-      en: "A full page in the organization navigation.",
-      zh: "组织导航中的完整页面。",
+      en: "A full page in the organization navigation. Only component contributions receive `params` (the page query string); views and embeds do not.",
+      zh: "组织导航中的完整页面。只有 component 贡献会收到 `params`（页面查询串），view 与 embed 不会。",
     },
   },
   {

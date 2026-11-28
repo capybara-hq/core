@@ -321,12 +321,20 @@
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first.",
       "unavailable": "Cannot read this extension's state right now, so the directory sync did not start. Try again shortly."
     },
+    "org_settings": {
+      "nav_primary_limit": "At most 3 plugin pages can be in the primary navigation. Move one to More first."
+    },
     "ui": {
       "not_found": "This panel is not available. The extension may be disabled or you cannot access this conversation.",
       "render_failed": "The extension failed to load this panel. Try again.",
       "action_failed": "The extension failed to perform this action. Try again.",
       "invalid_view": "The extension returned content that cannot be displayed. Try again later.",
-      "timeout": "The extension did not respond in time. Try again."
+      "timeout": "The extension did not respond in time. Try again.",
+      "query_not_found": "This page's data is not available. The extension may be disabled or you cannot use it.",
+      "query_failed": "The extension failed to load this page's data. Try again.",
+      "query_timeout": "The extension did not return this page's data in time. Try again.",
+      "query_result_too_large": "The extension returned more data than this page can show.",
+      "query_params_too_large": "This request is too large to send to the extension."
     },
     "channel": {
       "not_found": "The channel does not exist or has been deleted.",
@@ -2810,7 +2818,8 @@
       "audit": "Audit log",
       "shares": "Shares",
       "myShares": "My shares",
-      "notifications": "Notifications"
+      "notifications": "Notifications",
+      "navigation": "Navigation"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -2967,6 +2976,14 @@
     "title": "Prompt suggestions",
     "description": "After the agent replies, the input box suggests the next message you might send. Each suggestion is one extra call to the same model, mostly served from the prompt cache.",
     "platformOff": "Turned off by the platform"
+  },
+  "promptCache": {
+    "title": "Prompt cache",
+    "description": "Choose which cache tier requests use for the model's prompt cache.",
+    "follow": "Follow the platform settings",
+    "followHint": "Turn this off to set the prompt cache for this organization only.",
+    "longTtl": "Long prompt cache",
+    "longTtlHint": "Requests use the model's cache tier of at least 30 minutes (such as 1 hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price instead of 1.25×)."
   },
   "compaction": {
     "title": "Conversation compaction",
@@ -7201,6 +7218,20 @@
         "retry": "Retry"
       }
     }
+  },
+  "navSettings": {
+    "title": "Navigation",
+    "description": "Choose where each plugin page sits in the sidebar.",
+    "section": "Plugin pages",
+    "sectionHint": "Primary pages come after the built-in entries, at most 3. The rest are under More. A page keeps the placement its plugin suggests until you choose one.",
+    "primary": "Primary navigation",
+    "more": "More",
+    "suggested": "Suggested by the plugin: {section}",
+    "empty": "No plugin pages in this organization.",
+    "emptyHint": "Pages from the plugins you switch on appear here.",
+    "limit": "At most 3 plugin pages can be in the primary navigation.",
+    "save": "Save",
+    "saved": "Navigation saved."
   },
   "automationSettings": {
     "title": "Automations",

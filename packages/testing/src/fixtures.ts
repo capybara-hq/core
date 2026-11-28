@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
  * | `fake-context` | `context@1` scripted by its deployment config (`text`, default "fake context"; `mode` `ok` / `null` / `throw` / `hang`); calls recorded on `globalThis.__fakeContext` (`fakeContextProbe`); tool `note` (`sources` web and channel_dm) |
  * | `fake-client` | client extension (`permissions.client`, no extension point): components `hud` (`conversation.properties.section`, server view with `data`), `brand` (`shell.brand`, renders `builtin` in `data-testid="fake-client-brand"`), `empty` (`conversation.empty`), `frame` (`conversation.composer.frame`) and `fx` (`shell.overlay`); `client/styles/fake.css` (outline-color on `button.primary` and the composer's buttons, `--cx-fake-client-run` while `run=running`); an `events` listener storing the last event type; theme `fake`; `suggestedAppearance` = theme `fake` + `shell.brand` -> `brand` |
  * | `fake-watch` | tool `wait` (input `{ key, deadlineMs? }`): a watched input wait whose watcher reads kv `fake-watch:<key>` (`go` settles, `fail` throws, `hang` never answers, else pending), counts its polls in kv `fake-watch:<key>:polls` and writes the identity it got to kv `fake-watch:<key>:ctx`; the resumed call returns `{ outcome, answer, signal }` as JSON; tool `nowatch` asks for a watched wait without a watcher |
+ * | `fake-client-page` | a full page (plugin full pages spec §3-§4): `org.page` component `board` (`frame: "page"`, `nav: "primary"`, client entry using `usePluginQuery("items")`) with queries `items` (items, params and caller), `slow` (rejects only when its signal aborts; counted in `fakeClientPageProbe().aborted`), `boom` (throws) and `huge` (over `UI_LIMITS.componentQueryBytes`); action `move` (any payload, calls `ctx.ui.invalidate` for `board`, answers `invalidate: ["items"]`); `org.page` view `summary` with action `go` |
  * | `fake-client-broken` | client code that throws: component `boom` (render), a `run.started` events listener, and a `conversation.empty` replacement (render) |
  * | `fake-push` | `push-provider@1` scripted by the token prefix (`dead:`, `auth:`, `rate:`, `flaky:<n>:`, `throw:`, `net:`, `hang:`; else delivered); deployment config `apps` (default `["com.example.app"]`), optional secret `key`; every send is a row of `plugin_fake_push.sends` and an entry of `fakePushProbe().sends`; `makeFakePush()` is the same provider without a kernel |
  * | `fake-trigger-source` | `trigger-source@1`: declares `item.created`, `item.updated`, `item.assigned` (directed) in `permissions.triggers.emit`, facts `status` / `priority` / `labels` / `projectKey` (all filterable); tool `emit_item_event` emits its input through `ctx.triggers.emit` with `cause: { call }` and returns `{ eventId, duplicate }` (or `{ error: <code> }`); `visible()` admits `globalThis.__fakeTriggerSource.visible` (every account when unset); the probe (`fakeTriggerSourceProbe`) also carries the extension's `ctx.triggers.emit` |
@@ -51,6 +52,7 @@ export const FAKE_EXTENSIONS = [
   "fake-push",
   "fake-client",
   "fake-client-broken",
+  "fake-client-page",
   "fake-watch",
   "fake-trigger-source",
 ] as const;

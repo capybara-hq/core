@@ -10,6 +10,7 @@ import {
 import { assistantIdemKey } from "../runtime/model-call.js";
 import { MATCH_IGNORED_FIELDS } from "../tools/builtin-names.js";
 import { RUN_STOPPED_TEXT, type ToolPipeline, type ToolStepContext } from "../tools/pipeline.js";
+import { canonicalJson } from "./canonical-json.js";
 import type { CaseSnapshot } from "./snapshot.js";
 
 /**
@@ -56,21 +57,6 @@ export interface RecordedCall {
    * lookups use the snapshot's conversation), never reads or stores again.
    */
   media?: ReadMedia[];
-}
-
-/** 规范化 JSON：对象键递归按码点排序，数组保持顺序；`undefined` 按 JSON 规则省略。 */
-export function canonicalJson(v: unknown): string {
-  const norm = (x: unknown): unknown => {
-    if (Array.isArray(x)) return x.map(norm);
-    if (x !== null && typeof x === "object") {
-      const o = x as Record<string, unknown>;
-      const out: Record<string, unknown> = {};
-      for (const k of Object.keys(o).sort()) out[k] = norm(o[k]);
-      return out;
-    }
-    return x;
-  };
-  return JSON.stringify(norm(v) ?? null);
 }
 
 /** The matching key of a call: the canonical JSON of its input without the ignored fields. */

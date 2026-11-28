@@ -3,6 +3,8 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import {
   type CompactionSettings,
   effectiveCompactionSettings,
+  effectivePromptCacheSettings,
+  type PromptCacheSettings,
   SettingsService,
 } from "../identity/settings.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -29,6 +31,28 @@ export async function resolveCompactionSettings(
   return effectiveCompactionSettings(platform.compaction, org.compaction);
 }
 
+/** The settings a model step reads: compaction and the prompt cache, from one read of each source. */
+export interface StepSettings {
+  compaction: CompactionSettings;
+  promptCache: PromptCacheSettings;
+}
+
+/**
+ * The effective compaction and prompt cache settings for `orgId` (org override > platform setting
+ * > built-in default), with one read of the platform settings and one of the org row.
+ */
+export async function resolveStepSettings(
+  settings: Pick<SettingsService, "get">,
+  db: KernelSchemaDb,
+  orgId: string,
+): Promise<StepSettings> {
+  const [platform, org] = await Promise.all([settings.get(), readOrgSettings(db, orgId)]);
+  return {
+    compaction: effectiveCompactionSettings(platform.compaction, org.compaction),
+    promptCache: effectivePromptCacheSettings(platform.promptCache, org.promptCache),
+  };
+}
+
 /**
  * The compaction settings in effect for one organization (context compaction spec §4.8):
  * the organization's override over the platform's stored settings, which carry the built-in
@@ -45,5 +69,10 @@ export class CompactionSettingsService {
   /** The effective settings for `orgId`: org override > platform setting > built-in default. */
   resolve(orgId: string): Promise<CompactionSettings> {
     return resolveCompactionSettings(this.settings, this.db.db, orgId);
+  }
+
+  /** What a model step reads for `orgId`: the compaction and prompt cache settings, one read each. */
+  resolveStep(orgId: string): Promise<StepSettings> {
+    return resolveStepSettings(this.settings, this.db.db, orgId);
   }
 }

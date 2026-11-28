@@ -321,12 +321,20 @@
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。",
       "unavailable": "暂时无法读取该扩展的状态，通讯录同步未开始。请稍后重试。"
     },
+    "org_settings": {
+      "nav_primary_limit": "主导航里最多放 3 个插件页面，请先把一个移到“更多”。"
+    },
     "ui": {
       "not_found": "这个面板不可用：扩展可能未启用，或你无权访问这个会话。",
       "render_failed": "扩展加载这个面板失败，请重试。",
       "action_failed": "扩展执行这个操作失败，请重试。",
       "invalid_view": "扩展返回的内容无法显示，请稍后重试。",
-      "timeout": "扩展没有及时响应，请重试。"
+      "timeout": "扩展没有及时响应，请重试。",
+      "query_not_found": "这个页面的数据不可用：扩展可能未启用，或你无权使用它。",
+      "query_failed": "扩展加载这个页面的数据失败，请重试。",
+      "query_timeout": "扩展没有及时返回这个页面的数据，请重试。",
+      "query_result_too_large": "扩展返回的数据超出了这个页面能显示的范围。",
+      "query_params_too_large": "这个请求太大，无法发给扩展。"
     },
     "channel": {
       "not_found": "渠道不存在或已删除。",
@@ -2798,7 +2806,8 @@
       "audit": "审计日志",
       "shares": "分享",
       "myShares": "我的分享",
-      "notifications": "通知"
+      "notifications": "通知",
+      "navigation": "导航"
     },
     "empty": "没有需要你个人凭据的连接器。",
     "emptyHint": "使用个人凭据的连接器会出现在这里。",
@@ -2955,6 +2964,14 @@
     "title": "输入建议",
     "description": "智能体回复后，在输入框里给出你可能想发的下一条消息。每次会额外调用一次同一模型，通常大部分由缓存提供。",
     "platformOff": "平台已关闭"
+  },
+  "promptCache": {
+    "title": "提示缓存",
+    "description": "选择请求使用模型提示缓存的哪一档。",
+    "follow": "跟随平台设置",
+    "followHint": "关闭后可以为这个组织单独设置提示缓存。",
+    "longTtl": "长提示缓存",
+    "longTtlHint": "请求改用模型至少 30 分钟的缓存档（如 1 小时），缓存写入按长档计价（Anthropic 约为输入价的 2 倍，而 5 分钟档约 1.25 倍）。"
   },
   "compaction": {
     "title": "对话压缩",
@@ -7189,6 +7206,20 @@
         "retry": "重试"
       }
     }
+  },
+  "navSettings": {
+    "title": "导航",
+    "description": "选择每个插件页面在侧边栏里的位置。",
+    "section": "插件页面",
+    "sectionHint": "主导航里的页面排在内置入口之后，最多 3 个，其余在“更多”里。在你选择之前，页面沿用插件建议的位置。",
+    "primary": "主导航",
+    "more": "更多",
+    "suggested": "插件建议：{section}",
+    "empty": "这个组织里还没有插件页面。",
+    "emptyHint": "启用的插件带来的页面会显示在这里。",
+    "limit": "主导航里最多放 3 个插件页面。",
+    "save": "保存",
+    "saved": "导航已保存。"
   },
   "automationSettings": {
     "title": "自动化",

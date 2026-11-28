@@ -1,5 +1,28 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.27
+
+### Patch Changes
+
+- ca30a43: Component queries for plugin pages: `POST /api/v1/orgs/:orgId/ui/query/:plugin/:id` runs a
+  component's `ctx.ui.query` handler (params ≤ 16 KB, result ≤ 1 MB, 10 s timeout); component
+  actions take payloads up to 64 KB and may name queries to refetch; `ctx.ui.invalidate` carries
+  `queries: true`. The `fake-client-page` test fixture; `perm-ui` checks `ctx.ui.query` ids.
+  
+  Plugin pages in the primary navigation: the org setting `navigation.pluginPages` (per contribution
+  key the section `primary` or `more`; at most 3 primary, else 400 `org_settings.nav_primary_limit`)
+  through `PATCH /orgs/:orgId/settings` and the Platform operation `org-settings.update`; the
+  contributions list names an `org.page` component's `nav` suggestion.
+- Updated dependencies [d3e9ad6]
+- Updated dependencies [5aaf693]
+- Updated dependencies [efaf3e7]
+- Updated dependencies [ca30a43]
+- Updated dependencies [6332845]
+- Updated dependencies [48e8860]
+- Updated dependencies [a5b4a02]
+  - @capybara-hq/kernel@0.1.0-rc.107
+  - @capybara-hq/plugin-sdk@0.1.0-rc.86
+
 ## 0.1.0-rc.26
 
 ### Patch Changes

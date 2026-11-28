@@ -266,6 +266,7 @@ export class PromptSuggestionGenerator {
           (ev) => {
             streamedChars += deltaChars(ev);
           },
+          this.log,
         );
       } catch (err) {
         if (shutdown.aborted) {

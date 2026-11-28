@@ -46,6 +46,7 @@ import { builtinsOff } from "../helpers/disabled-tools.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
+import { stepSettingsStub } from "./context/fixtures.js";
 
 /**
  * Gate 9.4 (permission context replay spec B2): the request boundary of every agent-history
@@ -139,9 +140,10 @@ beforeAll(async () => {
     stepLog: stepLogFor(db, eventLog),
     registry,
     config: { get: () => baseConfig },
-    compactionSettings: {
-      resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 }),
-    },
+    compactionSettings: stepSettingsStub(() => ({
+      ...COMPACTION_SETTINGS.parse({}),
+      reserveTokens: 0,
+    })),
     tools: k.app.get(ToolRegistry),
     log: silent,
   };
@@ -434,13 +436,11 @@ describe("permission context request boundary", () => {
     const d: ModelStepDeps = {
       ...deps,
       permissionContext: port,
-      compactionSettings: {
-        resolve: async () => ({
-          ...COMPACTION_SETTINGS.parse({}),
-          enabled: false,
-          reserveTokens: 0,
-        }),
-      },
+      compactionSettings: stepSettingsStub(() => ({
+        ...COMPACTION_SETTINGS.parse({}),
+        enabled: false,
+        reserveTokens: 0,
+      })),
     };
     const agent = agentWith({ fallback: { provider: "stub", model: "small" } });
     expect((await step(d, { agent })).content).toEqual([{ type: "text", text: "done" }]);

@@ -1,5 +1,14 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.132
+
+### Patch Changes
+
+- Updated dependencies [6cb1d98]
+- Updated dependencies [24a4312]
+- Updated dependencies [19b28a9]
+  - @capybara-hq/design@0.2.0-rc.50
+
 ## 0.1.0-rc.131
 
 ### Patch Changes

@@ -103,7 +103,7 @@ export type ConversationBusMessage =
       guess?: { path: string };
       confirmed?: boolean;
     }
-  | { kind: "ui"; plugin: string; contribution: string }
+  | { kind: "ui"; plugin: string; contribution: string; queries?: true }
   | { kind: "changed"; what: ConversationChange }
   | {
       kind: "subagent_progress";

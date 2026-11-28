@@ -318,7 +318,13 @@ export function useSignIn(): SignIn;
 Design re-exports (a versioned subset; their props are the design system's, frozen per
 `CLIENT_API_VERSION`): `Button`, `Badge`, `Icon`, `KeyValue`, `Kbd`, `Logo`, `Spinner`, `Stack`,
 `Text`, `Tooltip`, `PropertySection`, and `ViewBlocks` (the host's renderer of a `UiView`, the one
-`ExtensionViewTab` uses). Adding one is compatible; removing one or changing its props needs
+`ExtensionViewTab` uses). Plugin full pages (2026-11-25, written back from the implementation) add
+the page templates (`ListPage`, `DetailPage`, `FormPage`, `SettingsPage`; the host prepends its
+crumbs and a page renders exactly one), and `ActionRow`, `Avatar`, `Board`, `CellTitle`,
+`DangerConfirm`, `DataTable`, `Dialog`, `EmptyState`, `Field`, `FilterChip`, `FormSection`,
+`Input`, `ItemList`, `ItemListItem`, `Markdown`, `Menu`, `PersonName`, `Popover`,
+`PrincipalPicker`, `Segmented`, `Select`, `Sheet`, `Switch`, `Tabs`, `Textarea` (`DESIGN_NAMES`;
+props are a subset, `href`s are normalized by the host). Adding one is compatible; removing one or changing its props needs
 `CLIENT_API_VERSION` 2.
 
 **Versions**: the host accepts a bundle whose `apiVersion` equals its own `CLIENT_API_VERSION`
@@ -378,6 +384,14 @@ permissions: {
 - `UiView` gains `data?: JsonValue`, accepted only from a component's render, at most
   `UI_LIMITS.componentDataBytes` = 32 768 bytes of JSON (`ui.invalid_view` otherwise). A
   component's view may have no blocks. Views of the other kinds keep refusing `data`.
+- **Component queries** (written back from plugin full pages, 2026-11-25): `ctx.ui.query(<component
+  id>, handler)` serves `usePluginQuery(query, params?, { staleMs? })` through
+  `POST /api/v1/orgs/:orgId/ui/query/:plugin/:id` (same gate as the component's view; params 16 KB,
+  result 1 MB, 10 s; `ui.query_not_found` 404, `ui.query_params_too_large` 413, `ui.query_failed` 502,
+  `ui.query_timeout` 504, `ui.query_result_too_large` 502). The web key is
+  `["org", orgId, "plugin-query", plugin, id, query, paramsJson, restJson]`; `ctx.ui.invalidate`
+  and a component action's `invalidate: string[]` refetch them. `org.page` components also get
+  `usePageParams()` and `useNavigate()`.
 - **Props carry page data; server calls follow the slot's scope**: what a component receives as
   props (§5.3) is what the page already shows; anything the server must authorize goes through
   `useView` / `useAction`, checked by the kernel.

@@ -227,7 +227,8 @@ Each line is the rule you must not miss; the skill has the rest.
   [writing-connectors](.agents/skills/writing-connectors/SKILL.md)
 - **Channels, login, directory:** ack only after `onEvent` resolves; long connections held only by
   the `gateway` role. [writing-channels](.agents/skills/writing-channels/SKILL.md)
-- **Extension UI:** schema views or approved embeds; embed tokens never valid for `/api`.
+- **Extension UI:** schema views or approved embeds; embed tokens never valid for `/api`. Plugin full
+  pages are forwarded design templates plus component queries (`ctx.ui.query`), never embeds.
   [writing-extension-ui](.agents/skills/writing-extension-ui/SKILL.md)
 - **File sharing:** a share is a snapshot; external links need the platform and org switches;
   shared and rendered HTML is served only with the sandbox CSP and the CDN allowlist, never from a

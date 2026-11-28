@@ -1,5 +1,58 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.132
+
+### Patch Changes
+
+- 4c7d149: File library: files belong to the person and conversations refer to them; bytes are per-org blobs
+  deduplicated by sha256 and shared by files and shares (no more copies per share). A new Files page
+  (`/files`, nav 文件) lists the person's uploads and agent deliveries with a preview, details,
+  share, download, delete and upload; the conversation's file panel links to it. A daily blob sweep
+  frees bytes nothing refers to (deleted files keep their bytes for `files.deletedRetentionDays`,
+  default 30), and a one-off hashing job merges migrated duplicates. The Platform tool gains
+  `files.list`, `files.get`, `files.usage`, `files.delete` (handoff to the Files page) and
+  `files.add` (a conversation file into the library).
+- efaf3e7: Compaction summaries reuse the prompt cache: every compaction first summarizes from the
+  conversation's last request (its cached prefix) plus a summary instruction, for models that pass
+  the in-context quality gate, and otherwise summarizes the transcript as before;
+  `compaction_summary.method` records which path ran.
+- 19b28a9: Org admins put plugin pages in the primary navigation: the sidebar and the compact drawer take
+  `primaryExtensions` (after the built-in entries), the web places each page by the admin's saved
+  choice, else the plugin's `nav` suggestion (at most 3 primary), and the organization settings get a
+  Navigation page (导航) to choose. Component queries show their own error messages
+  (`errors.ui.query_*`).
+- 6332845: Full plugin pages contract: `ctx.ui.query`, the `usePluginQuery`, `usePageParams` and
+  `useNavigate` hooks, `frame` / `nav` on `org.page` components, the `params` prop of `org.page`,
+  new `UI_LIMITS` for queries and page params, and fake-host support in `/testing`.
+  
+  `@capybara-hq/plugin-client` forwards the page templates (`ListPage`, `DetailPage`, `FormPage`,
+  `FormSection`, `SettingsPage`, `ActionRow`), data components (`DataTable`, `CellTitle`, `ItemList`,
+  `ItemListItem`, `Markdown`, `EmptyState`, `Avatar`, `PersonName`, `FilterChip`), inputs (`Input`,
+  `Textarea`, `Field`, `Tabs`, `Segmented`, `PrincipalPicker`), overlays (`Dialog`, `DangerConfirm`,
+  `Sheet`, `Menu`, `Popover`) and `Board`, with behaving stand-ins in `/testing`; the web host
+  prepends its scope crumbs to a forwarded template's `header.path`. The density of `Select`,
+  `Input`, `Segmented` and `FilterChip` is typed as the design's own steps.
+  
+  The web renders full plugin pages: an `org.page` component with `frame: "page"` draws its page on
+  `/p/<plugin>/<id>` without the host's DetailPage and must render exactly one forwarded template
+  (dev and tests throw, production logs once); its params come from the query string (2 048 bytes),
+  `useNavigate` changes them or opens another page of the plugin or a conversation, and
+  `usePluginQuery` reads through the query cache, refetched on `ctx.ui.invalidate` and an action's
+  `invalidate`. The host drops links in forwarded components other than same-origin paths and
+  http(s) URLs. The contributions list names a component page's `frame`. The `/testing` DataTable
+  stand-in draws `empty` / `noResults` and its `state`.
+- 48e8860: Add the `promptCache.longTtl` setting to the platform and org settings.
+- a5b4a02: Ask for the long prompt cache tier per request when `promptCache.longTtl` is on, record it in the
+  model call and replay it with zero drift.
+- Updated dependencies [d3e9ad6]
+- Updated dependencies [5aaf693]
+- Updated dependencies [efaf3e7]
+- Updated dependencies [ca30a43]
+- Updated dependencies [6332845]
+- Updated dependencies [48e8860]
+- Updated dependencies [a5b4a02]
+  - @capybara-hq/kernel@0.1.0-rc.107
+
 ## 0.1.0-rc.131
 
 ### Patch Changes

@@ -5,7 +5,7 @@ import type {
   ConversationEventType,
   EventPayload,
 } from "../conversations/events.js";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { childRunDefinition, type FollowUpNarrowing } from "../runtime/subagents/definition.js";
 
@@ -60,34 +60,45 @@ export interface CaseSnapshot {
   parent?: { conversationId: string; runId: string; callId: string };
 }
 
-/** The follow-up narrowing on the last sub-agent task message of `events`, if any. */
-function lastTaskNarrowing(events: readonly SnapshotEvent[]): FollowUpNarrowing | undefined {
+/**
+ * The follow-up narrowing of run `runId`: the one on the last sub-agent task message up to the
+ * run's last event (its terminal event when it has one), if any. A task message logged after the
+ * run (a later follow-up's, which a live snapshot may hold) never narrows this run's definition.
+ * Without any event of the run, every event counts.
+ */
+export function runTaskNarrowing(
+  events: readonly SnapshotEvent[],
+  runId: string,
+): FollowUpNarrowing | undefined {
+  const end = events.findLast((e) => e.runId === runId)?.seq ?? Number.POSITIVE_INFINITY;
   const task = events.findLast(
     (e) =>
-      e.type === "user_message" && (e.payload as { dispatch?: unknown }).dispatch !== undefined,
+      e.seq <= end &&
+      e.type === "user_message" &&
+      (e.payload as { dispatch?: unknown }).dispatch !== undefined,
   );
   return (task?.payload as EventPayload<"user_message"> | undefined)?.dispatch?.narrowed;
 }
 
 const TERMINAL = new Set<ConversationEventType>(["run_finished", "run_failed", "run_aborted"]);
 
-/** 读事件的分页大小。 */
+/** The page size when reading events. */
 const PAGE = 1000;
 
 type ModelCallEvent = Extract<ConversationEvent, { type: "model_call" }>;
 
+type ConversationRow = { agent_id: string; kind: ConversationKind; source: ConversationSource };
+
 /**
- * 给某次运行建用例快照。会话不在该组织、或运行不属于该会话 → `conversation.not_found`；
- * 运行还没有终态事件 → `eval.run_not_finished`（409）；序列化后超过 `maxBytes` 字节 → `eval.case_too_large`（413）。
- * `maxBytes` 由调用方传入（`evals.maxCaseBytes`）。
+ * The conversation and the run's agent version; `conversation.not_found` when the conversation is
+ * not in the org or the run is not the conversation's.
  */
-export async function takeSnapshot(
+async function conversationRun(
   db: KernelSchemaDb,
   orgId: string,
   conversationId: string,
   runId: string,
-  maxBytes: number,
-): Promise<CaseSnapshot> {
+): Promise<{ conv: ConversationRow; agentVersion: number }> {
   const conv = await db
     .selectFrom("conversations")
     .select(["agent_id", "kind", "source"])
@@ -105,55 +116,23 @@ export async function takeSnapshot(
   if (!conv || !run) {
     throw new ApiError("conversation.not_found", "Conversation or run not found");
   }
+  return { conv, agentVersion: run.agent_version };
+}
 
-  const end = await db
-    .selectFrom("conversation_events")
-    .select("seq")
-    .where("conversation_id", "=", conversationId)
-    .where("run_id", "=", runId)
-    .where("type", "in", [...TERMINAL])
-    .orderBy("seq")
-    .executeTakeFirst();
-  if (!end) throw new ApiError("eval.run_not_finished", "The run has not finished yet");
-  const endSeq = Number(end.seq);
-
-  const tooLarge = () =>
-    new ApiError(
-      "eval.case_too_large",
-      `The run's snapshot is larger than the ${maxBytes}-byte limit`,
-    );
-  const events: SnapshotEvent[] = [];
-  /** 已读事件序列化后的字节数（快照总大小的下界）：一超过上限就停，不把超大的对话整个读进内存。 */
-  let bytes = 0;
-  let after = 0;
-  for (;;) {
-    const rows = await db
-      .selectFrom("conversation_events")
-      .select(["seq", "type", "run_id", "payload", "created_at"])
-      .where("conversation_id", "=", conversationId)
-      .where("seq", ">", String(after))
-      .where("seq", "<=", String(endSeq))
-      .orderBy("seq")
-      .limit(PAGE)
-      .execute();
-    for (const r of rows) {
-      const e: SnapshotEvent = {
-        seq: Number(r.seq),
-        type: r.type as ConversationEventType,
-        payload: r.payload,
-        runId: r.run_id,
-        createdAt: new Date(r.created_at).toISOString(),
-      };
-      bytes += Buffer.byteLength(JSON.stringify(e));
-      if (bytes > maxBytes) throw tooLarge();
-      events.push(e);
-    }
-    const last = rows.at(-1);
-    if (rows.length < PAGE || !last) break;
-    after = Number(last.seq);
-  }
-
-  const versions = new Set<number>([run.agent_version]);
+/**
+ * The snapshot of `events`: the agent versions they reference (each `run_started` and the run's
+ * own), the tool specs of every `model_call`'s `tools` / `catalog`, and a sub-agent's frozen
+ * definition and parent call. Shared by {@link takeSnapshot} and {@link liveSnapshot}.
+ */
+async function snapshotOf(
+  db: KernelSchemaDb,
+  ids: { orgId: string; conversationId: string; runId: string },
+  conv: ConversationRow,
+  agentVersion: number,
+  events: SnapshotEvent[],
+): Promise<CaseSnapshot> {
+  const { orgId, conversationId, runId } = ids;
+  const versions = new Set<number>([agentVersion]);
   const hashes = new Set<string>();
   for (const e of events) {
     if (e.type === "run_started") {
@@ -200,13 +179,13 @@ export async function takeSnapshot(
           .executeTakeFirst()
       : undefined;
 
-  const snapshot: CaseSnapshot = {
+  return {
     version: 1,
     orgId,
     conversationId,
     runId,
     agentId: conv.agent_id,
-    agentVersion: run.agent_version,
+    agentVersion,
     source: conv.source,
     events,
     definitions,
@@ -214,10 +193,10 @@ export async function takeSnapshot(
     ...(started !== undefined && {
       subagent: {
         // this run's definition: the frozen one with its follow-up's narrowing (final review
-        // I1); the run's task message is the last one up to its terminal event
+        // I1); the run's task message is the last one up to the run's last event
         definition: childRunDefinition(
           normalizeStoredDefinition(started.definition),
-          lastTaskNarrowing(events),
+          runTaskNarrowing(events, runId),
         ),
         preamble: started.preamble,
         ...(invokedSkill !== undefined && { invokedSkill }),
@@ -231,8 +210,118 @@ export async function takeSnapshot(
       },
     }),
   };
+}
+
+/**
+ * Takes a case snapshot of a run. The conversation not in the org, or the run not the
+ * conversation's → `conversation.not_found`; the run without a terminal event yet →
+ * `eval.run_not_finished` (409); over `maxBytes` bytes serialized → `eval.case_too_large` (413).
+ * The caller passes `maxBytes` (`evals.maxCaseBytes`).
+ */
+export async function takeSnapshot(
+  db: KernelSchemaDb,
+  orgId: string,
+  conversationId: string,
+  runId: string,
+  maxBytes: number,
+): Promise<CaseSnapshot> {
+  const { conv, agentVersion } = await conversationRun(db, orgId, conversationId, runId);
+
+  const end = await db
+    .selectFrom("conversation_events")
+    .select("seq")
+    .where("conversation_id", "=", conversationId)
+    .where("run_id", "=", runId)
+    .where("type", "in", [...TERMINAL])
+    .orderBy("seq")
+    .executeTakeFirst();
+  if (!end) throw new ApiError("eval.run_not_finished", "The run has not finished yet");
+  const endSeq = Number(end.seq);
+
+  const tooLarge = () =>
+    new ApiError(
+      "eval.case_too_large",
+      `The run's snapshot is larger than the ${maxBytes}-byte limit`,
+    );
+  const events: SnapshotEvent[] = [];
+  /**
+   * Serialized bytes of the events read so far (a lower bound of the snapshot's size): stop as
+   * soon as it is over the limit, never reading a huge conversation into memory whole.
+   */
+  let bytes = 0;
+  let after = 0;
+  for (;;) {
+    const rows = await db
+      .selectFrom("conversation_events")
+      .select(["seq", "type", "run_id", "payload", "created_at"])
+      .where("conversation_id", "=", conversationId)
+      .where("seq", ">", String(after))
+      .where("seq", "<=", String(endSeq))
+      .orderBy("seq")
+      .limit(PAGE)
+      .execute();
+    for (const r of rows) {
+      const e: SnapshotEvent = {
+        seq: Number(r.seq),
+        type: r.type as ConversationEventType,
+        payload: r.payload,
+        runId: r.run_id,
+        createdAt: new Date(r.created_at).toISOString(),
+      };
+      bytes += Buffer.byteLength(JSON.stringify(e));
+      if (bytes > maxBytes) throw tooLarge();
+      events.push(e);
+    }
+    const last = rows.at(-1);
+    if (rows.length < PAGE || !last) break;
+    after = Number(last.seq);
+  }
+
+  const snapshot = await snapshotOf(
+    db,
+    { orgId, conversationId, runId },
+    conv,
+    agentVersion,
+    events,
+  );
   if (Buffer.byteLength(JSON.stringify(snapshot)) > maxBytes) throw tooLarge();
   return snapshot;
+}
+
+/**
+ * A snapshot of events the caller already holds, for a request built live rather than stored (the
+ * in-context compaction summary, idle compaction spec §9.4): no terminal event is required and no
+ * byte cap applies, since nothing is stored. `runId` is the run of the call the request rebuilds;
+ * `conversation.not_found` as in {@link takeSnapshot}. `agentId` is the caller's check: a
+ * conversation whose agent differs is not found either.
+ */
+export async function liveSnapshot(
+  db: KernelSchemaDb,
+  input: {
+    orgId: string;
+    conversationId: string;
+    runId: string;
+    agentId: string;
+    events: readonly ConversationEvent[];
+  },
+): Promise<CaseSnapshot> {
+  const { orgId, conversationId, runId } = input;
+  const { conv, agentVersion } = await conversationRun(db, orgId, conversationId, runId);
+  if (conv.agent_id !== input.agentId) {
+    throw new ApiError("conversation.not_found", "Conversation or run not found");
+  }
+  const events = [...input.events]
+    .sort((a, b) => a.seq - b.seq)
+    .map(
+      (e): SnapshotEvent => ({
+        seq: e.seq,
+        type: e.type,
+        payload: e.payload,
+        runId: e.runId,
+        createdAt: new Date(e.createdAt).toISOString(),
+      }),
+    );
+  return snapshotOf(db, { orgId, conversationId, runId }, conv, agentVersion, events);
 }
 
 /**
