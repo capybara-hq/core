@@ -10,7 +10,7 @@ import {
   SANDBOX_FAKE_IP_DNS,
   SANDBOX_SYSTEM_WRITE_DENIES,
 } from "@capybara-hq/plugin-sdk";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   escalatedEnvironment,
   macNetworkConfig,
@@ -76,10 +76,10 @@ async function openGuard(
   }) as Guard;
 }
 
-/** Whether the guard lets `host` be dialed on port 443 (the address it dials, or the refusal). */
-function dial(guard: Guard, host: string): Promise<string> {
+/** Whether the guard lets `host` be dialed on `port` (the address it dials, or the refusal). */
+function dial(guard: Guard, host: string, port = 443): Promise<string> {
   return new Promise((resolve) => {
-    guard.lookupFor(443)(host, {}, (error, address) =>
+    guard.lookupFor(port)(host, {}, (error, address) =>
       resolve(error ? `refused: ${error.reason ?? error.message}` : String(address)),
     );
   });
@@ -163,6 +163,202 @@ describe("the patched runtime's strict resolved-address guard", () => {
     const literal = filter.indexOf("resolvedAddressGuard.literalDenial(canonicalHost, port)");
     expect(literal).toBeGreaterThan(0);
     expect(literal).toBeLessThan(filter.indexOf("// Check allowed domains"));
+  });
+});
+
+/** A resolver answering every name with `addresses`. */
+const answer =
+  (...addresses: string[]): Lookup =>
+  (_host, _options, callback) =>
+    callback(
+      null,
+      addresses.map((address) => ({ address, family: address.includes(":") ? 6 : 4 })),
+    );
+
+/** The macOS worker's strict open network, with no DNS-over-HTTPS and no local addresses. */
+const STRICT = {
+  ...macNetworkConfig({ hosts: [], openNetwork: true }).network,
+  dohRequest: noDoh,
+  localAddresses: () => [],
+};
+
+/** The addresses the guard's lookup for `port` hands the dialer for `host` (`all: true`). */
+function lookup(guard: Guard, host: string, port: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    guard.lookupFor(port)(host, { all: true }, (error, addresses) =>
+      error ? reject(error) : resolve(addresses),
+    );
+  });
+}
+
+type FilterAnswer = { allowed: true } | { allowed: false; reason: string | undefined };
+
+/**
+ * The patched runtime's proxy request filter (`filterNetworkRequest`, module-private) evaluated
+ * from its source against the macOS worker's allowlist network (no hosts, no ask callback) plus
+ * `network`, with the runtime's own host helpers and a guard built from the same config.
+ */
+async function strictFilter(
+  network: Record<string, unknown>,
+  base: Record<string, unknown> = macNetworkConfig({ hosts: [] }).network,
+): Promise<(port: number, host: string) => Promise<FilterAnswer>> {
+  const { createResolvedAddressGuard } = await load("resolved-address-guard.js");
+  const { canonicalizeHost, isValidHost } = await load("parent-proxy.js");
+  const { matchesDomainPatternWithPort } = await load("domain-pattern.js");
+  const { isIP } = await import("node:net");
+  const config = { network: { ...base, ...network } };
+  const guard = createResolvedAddressGuard({
+    ...config.network,
+    resolve: answer(),
+    dohRequest: noDoh,
+    localAddresses: () => [],
+  });
+  const source = readFileSync(join(srt, "dist/sandbox/sandbox-manager.js"), "utf8");
+  const start = source.indexOf("async function filterNetworkRequest");
+  const body = source.slice(start, source.indexOf("\n}\n", start) + 2);
+  const deps = {
+    config,
+    resolvedAddressGuard: guard,
+    canonicalizeHost,
+    isValidHost,
+    matchesDomainPatternWithPort,
+    isIP,
+    logForDebugging: () => {},
+    recordOutboundDeny: () => {},
+    deniedDomainReason: () => "host is on the deny list",
+    commandNetworkListsByKey: new Map(),
+    decodeSandboxedCommand: (key: string) => key,
+    isDeclaredDenial: () => true,
+    denialReasonOf: () => undefined,
+  };
+  const filterNetworkRequest = new Function(
+    ...Object.keys(deps),
+    `${body}\nreturn filterNetworkRequest;`,
+  )(...Object.values(deps));
+  return async (port, host) => {
+    let reason: string | undefined;
+    const allowed = await filterNetworkRequest(port, host, undefined, undefined, (r: string) => {
+      reason = r;
+    });
+    return allowed ? { allowed: true } : { allowed: false, reason };
+  };
+}
+
+// A granted local port (browser loopback port grants design): in strict mode the proxy dials
+// exactly 127.0.0.1, ::1 and the literal name localhost (never resolved) on a listed port, and
+// nothing else a strict network closes opens with it.
+describe("the patched runtime's exact loopback carve-out", () => {
+  it("allows exactly 127.0.0.1, [::1] and localhost on a listed port", async () => {
+    const filter = await strictFilter({ allowedLoopbackPorts: [3999] });
+    for (const host of ["127.0.0.1", "::1", "[::1]", "localhost", "LOCALHOST"])
+      expect(await filter(3999, host), host).toEqual({ allowed: true });
+  });
+
+  it("refuses another port, another loopback literal, a private literal and metadata", async () => {
+    const filter = await strictFilter({ allowedLoopbackPorts: [3999] });
+    expect(await filter(4000, "127.0.0.1")).toMatchObject({
+      allowed: false,
+      reason: expect.stringMatching(/^address is /),
+    });
+    expect((await filter(4000, "localhost")).allowed).toBe(false);
+    for (const host of [
+      "127.0.0.2",
+      "10.0.0.1",
+      "192.168.1.1",
+      "100.64.0.1",
+      "169.254.169.254",
+      "fe80::1",
+      "0.0.0.0",
+      "::",
+      "app.localhost",
+      "localhost.example.test",
+    ])
+      expect((await filter(3999, host)).allowed, host).toBe(false);
+  });
+
+  it("keeps a deny-listed loopback entry refused", async () => {
+    const filter = await strictFilter({
+      allowedLoopbackPorts: [3999],
+      deniedDomains: ["127.0.0.1:3999", "localhost"],
+    });
+    expect((await filter(3999, "127.0.0.1")).allowed).toBe(false);
+    expect((await filter(3999, "localhost")).allowed).toBe(false);
+    expect(await filter(3999, "::1")).toEqual({ allowed: true });
+  });
+
+  it("refuses a name that resolves to 127.0.0.1", async () => {
+    const { createResolvedAddressGuard } = await load("resolved-address-guard.js");
+    const guard = createResolvedAddressGuard({
+      ...STRICT,
+      allowedLoopbackPorts: [3999],
+      resolve: answer("127.0.0.1"),
+    }) as Guard;
+    expect(await dial(guard, "dev.example.test", 3999)).toMatch(/^refused: resolved to/);
+    expect(await dial(guard, "app.localhost", 3999)).toMatch(/^refused: resolved to/);
+  });
+
+  it("dials localhost without the resolver, and only on a listed port", async () => {
+    const { createResolvedAddressGuard } = await load("resolved-address-guard.js");
+    const resolve = vi.fn(answer("127.0.0.1"));
+    const guard = createResolvedAddressGuard({
+      ...STRICT,
+      allowedLoopbackPorts: [3999],
+      resolve,
+    }) as Guard & { loopbackCarveOut(hostname: string, port: number): string | undefined };
+    expect(await lookup(guard, "localhost", 3999)).toEqual([{ address: "127.0.0.1", family: 4 }]);
+    expect(await lookup(guard, "LocalHost", 3999)).toEqual([{ address: "127.0.0.1", family: 4 }]);
+    expect(await dial(guard, "localhost", 3999)).toBe("127.0.0.1");
+    expect(resolve).not.toHaveBeenCalled();
+    expect(guard.loopbackCarveOut("127.0.0.1", 3999)).toBe("127.0.0.1");
+    expect(guard.loopbackCarveOut("::1", 3999)).toBe("::1");
+    expect(guard.loopbackCarveOut("localhost", 3999)).toBe("127.0.0.1");
+    expect(guard.loopbackCarveOut("localhost", 4000)).toBeUndefined();
+    expect(guard.loopbackCarveOut("127.0.0.2", 3999)).toBeUndefined();
+    // another port goes through the resolver and is refused as today
+    expect(await dial(guard, "localhost", 4000)).toMatch(/^refused: resolved to/);
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores allowedLoopbackPorts without strict mode", async () => {
+    const { createResolvedAddressGuard } = await load("resolved-address-guard.js");
+    const resolve = vi.fn(answer("127.0.0.1"));
+    const lax = createResolvedAddressGuard({ allowedLoopbackPorts: [3999], resolve }) as Guard & {
+      loopbackCarveOut(hostname: string, port: number): string | undefined;
+    };
+    expect(lax.loopbackCarveOut("127.0.0.1", 3999)).toBeUndefined();
+    // upstream: localhost is resolved and may resolve to loopback
+    expect(await dial(lax, "localhost", 3999)).toBe("127.0.0.1");
+    expect(resolve).toHaveBeenCalledTimes(1);
+    const filter = await strictFilter(
+      { allowedLoopbackPorts: [3999] },
+      { allowedDomains: [], deniedDomains: [] },
+    );
+    expect(await filter(3999, "127.0.0.1")).toEqual({
+      allowed: false,
+      reason: "host is not on the allow list",
+    });
+  });
+
+  it("checks the carve-out after the deny list and before the literal check", () => {
+    const source = readFileSync(join(srt, "dist/sandbox/sandbox-manager.js"), "utf8");
+    const filter = source.slice(source.indexOf("async function filterNetworkRequest"));
+    const carveOut = filter.indexOf("resolvedAddressGuard.loopbackCarveOut(canonicalHost, port)");
+    expect(carveOut).toBeGreaterThan(filter.indexOf("// Check denied domains first"));
+    expect(carveOut).toBeLessThan(
+      filter.indexOf("resolvedAddressGuard.literalDenial(canonicalHost, port)"),
+    );
+  });
+
+  it("accepts the option in the network config schema", async () => {
+    const { NetworkConfigSchema } = await load("sandbox-config.js");
+    const BASE = macNetworkConfig({ hosts: [] }).network;
+    expect(NetworkConfigSchema.safeParse({ ...BASE, allowedLoopbackPorts: [3999] }).success).toBe(
+      true,
+    );
+    for (const ports of [[0], [65536], [1.5], Array.from({ length: 33 }, (_, i) => 3000 + i)])
+      expect(NetworkConfigSchema.safeParse({ ...BASE, allowedLoopbackPorts: ports }).success).toBe(
+        false,
+      );
   });
 });
 
