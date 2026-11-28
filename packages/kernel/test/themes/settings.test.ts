@@ -339,19 +339,24 @@ describe("theme settings", () => {
       expect((await prefs({ timeZone: "Europe/Berlin" })).json()).toEqual({
         timeZone: "Europe/Berlin",
         theme: null,
+        idleCompaction: null,
       });
       const r = await prefs({ theme: on });
       expect(r.statusCode, r.body).toBe(200);
-      expect(r.json()).toEqual({ timeZone: "Europe/Berlin", theme: on });
+      expect(r.json()).toEqual({ timeZone: "Europe/Berlin", theme: on, idleCompaction: null });
       const g = await env.mem({ method: "GET", url: "/api/v1/me/preferences" });
-      expect(g.json()).toEqual({ timeZone: "Europe/Berlin", theme: on });
+      expect(g.json()).toEqual({ timeZone: "Europe/Berlin", theme: on, idleCompaction: null });
     });
 
     it("clearing the time zone keeps the theme", async () => {
       await prefs({ theme: on, timeZone: "Asia/Shanghai" });
       const r = await prefs({ timeZone: null });
-      expect(r.json()).toEqual({ timeZone: null, theme: on });
-      expect((await prefs({ theme: null })).json()).toEqual({ timeZone: null, theme: null });
+      expect(r.json()).toEqual({ timeZone: null, theme: on, idleCompaction: null });
+      expect((await prefs({ theme: null })).json()).toEqual({
+        timeZone: null,
+        theme: null,
+        idleCompaction: null,
+      });
     });
 
     it("a theme on in none of the person's orgs is refused", async () => {

@@ -702,7 +702,11 @@ describe("platform", () => {
   it("platform.set-preferences sets your own time zone, personal and rememberable", async () => {
     const id = await agentOf(env.memId, "private");
     const c = ctxOf(env.memId, id);
-    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: null, theme: null });
+    expect(await run("platform.preferences", {}, c)).toEqual({
+      timeZone: null,
+      theme: null,
+      idleCompaction: null,
+    });
     const o = op("platform.set-preferences");
     expect(o.confirm).toBe("personal");
     expect(o.rememberable).toBeUndefined();
@@ -716,25 +720,66 @@ describe("platform", () => {
     expect(await run("platform.set-preferences", { timeZone: "Europe/Berlin" }, c)).toEqual({
       timeZone: "Europe/Berlin",
       theme: null,
+      idleCompaction: null,
     });
     expect(await run("platform.preferences", {}, c)).toEqual({
       timeZone: "Europe/Berlin",
       theme: null,
+      idleCompaction: null,
     });
     // only the caller's own account: another member still follows the browser
     const other = ctxOf(env.bossId, randomUUID());
-    expect(await run("platform.preferences", {}, other)).toEqual({ timeZone: null, theme: null });
+    expect(await run("platform.preferences", {}, other)).toEqual({
+      timeZone: null,
+      theme: null,
+      idleCompaction: null,
+    });
     // null goes back to the browser's zone
     await run("platform.set-preferences", { timeZone: null }, c);
-    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: null, theme: null });
+    expect(await run("platform.preferences", {}, c)).toEqual({
+      timeZone: null,
+      theme: null,
+      idleCompaction: null,
+    });
     // a theme that is on in none of your orgs is refused; the time zone is left alone
     await expect(run("platform.set-preferences", { theme: "nope" }, c)).rejects.toThrow(
       /theme\.not_available/,
     );
-    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: null, theme: null });
+    expect(await run("platform.preferences", {}, c)).toEqual({
+      timeZone: null,
+      theme: null,
+      idleCompaction: null,
+    });
     expect(await summarize("platform.set-preferences", { theme: null }, c)).toEqual({
       zh: "把你的主题从「跟随组织」改为「跟随组织」",
       en: 'Change your theme from "follow the org" to "follow the org"',
+    });
+  });
+
+  it("platform.set-preferences turns idle compaction off for you and null follows the org", async () => {
+    const c = ctxOf(env.memId, await agentOf(env.memId, "private"));
+    expect(await summarize("platform.set-preferences", { idleCompaction: "off" }, c)).toEqual({
+      zh: "把你的空闲压缩从「跟随组织」改为「关闭」",
+      en: 'Change your idle compaction from "follow the org" to "off"',
+    });
+    expect(
+      (await run("platform.set-preferences", { idleCompaction: "off" }, c)) as object,
+    ).toMatchObject({
+      idleCompaction: "off",
+    });
+    try {
+      expect(await run("platform.preferences", {}, c)).toMatchObject({ idleCompaction: "off" });
+      expect(await summarize("platform.set-preferences", { idleCompaction: null }, c)).toEqual({
+        zh: "把你的空闲压缩从「关闭」改为「跟随组织」",
+        en: 'Change your idle compaction from "off" to "follow the org"',
+      });
+    } finally {
+      await run("platform.set-preferences", { idleCompaction: null }, c);
+    }
+    expect(await run("platform.preferences", {}, c)).toMatchObject({ idleCompaction: null });
+    expect(await summarize("platform.set-preferences", { idleCompaction: null }, c)).toEqual({
+      zh: "把你的空闲压缩从「跟随组织」改为「跟随组织」",
+      en: 'Change your idle compaction from "follow the org" to "follow the org"',
     });
   });
 

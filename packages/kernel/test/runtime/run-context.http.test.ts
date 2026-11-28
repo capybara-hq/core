@@ -170,25 +170,27 @@ describe("message sender, time zone and language", () => {
 
   it("idle compaction preference: off is stored and cleared; anything else is refused", async () => {
     const prefs = "/api/v1/me/preferences";
-    await owner({ method: "PUT", url: prefs, payload: { timeZone: "Europe/Berlin" } });
-    const off = await owner({ method: "PUT", url: prefs, payload: { idleCompaction: "off" } });
-    expect(off.statusCode, off.body).toBe(200);
-    expect(off.json()).toEqual({ timeZone: "Europe/Berlin", theme: null, idleCompaction: "off" });
-    expect((await owner({ method: "GET", url: prefs })).json()).toEqual({
-      timeZone: "Europe/Berlin",
-      theme: null,
-      idleCompaction: "off",
-    });
-    const bad = await owner({ method: "PUT", url: prefs, payload: { idleCompaction: "on" } });
-    expect(bad.statusCode).toBe(400);
-    expect((bad.json() as { error?: { code?: string } }).error?.code).toBe("validation_failed");
-    const cleared = await owner({ method: "PUT", url: prefs, payload: { idleCompaction: null } });
-    expect(cleared.json()).toEqual({
-      timeZone: "Europe/Berlin",
-      theme: null,
-      idleCompaction: null,
-    });
-    await owner({ method: "PUT", url: prefs, payload: { timeZone: null } });
+    try {
+      await owner({ method: "PUT", url: prefs, payload: { timeZone: "Europe/Berlin" } });
+      const off = await owner({ method: "PUT", url: prefs, payload: { idleCompaction: "off" } });
+      expect(off.statusCode, off.body).toBe(200);
+      expect(off.json()).toEqual({ timeZone: "Europe/Berlin", theme: null, idleCompaction: "off" });
+      expect((await owner({ method: "GET", url: prefs })).json()).toEqual({
+        timeZone: "Europe/Berlin",
+        theme: null,
+        idleCompaction: "off",
+      });
+      // absent means untouched
+      const tz = await owner({ method: "PUT", url: prefs, payload: { timeZone: "Asia/Tokyo" } });
+      expect(tz.json()).toEqual({ timeZone: "Asia/Tokyo", theme: null, idleCompaction: "off" });
+      const bad = await owner({ method: "PUT", url: prefs, payload: { idleCompaction: "on" } });
+      expect(bad.statusCode).toBe(400);
+      expect((bad.json() as { error?: { code?: string } }).error?.code).toBe("validation_failed");
+      const cleared = await owner({ method: "PUT", url: prefs, payload: { idleCompaction: null } });
+      expect(cleared.json()).toEqual({ timeZone: "Asia/Tokyo", theme: null, idleCompaction: null });
+    } finally {
+      await owner({ method: "PUT", url: prefs, payload: { idleCompaction: null, timeZone: null } });
+    }
   });
 
   it("the org default time zone: PATCH validation and the fallback it gives", async () => {

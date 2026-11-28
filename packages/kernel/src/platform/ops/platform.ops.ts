@@ -207,7 +207,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.preferences",
         description:
-          'Read your own preferences: your time zone (an IANA name such as Asia/Shanghai, or null when it follows the time zone of the browser you send messages from; the run context already tells you the zone in effect for this message) your theme (a theme id, or null when you follow the org\'s theme; themes.list names them) and idleCompaction ("off" when you turned off compacting your conversations while they sit idle, or null when you follow the org).',
+          'Read your own preferences: your time zone (an IANA name such as Asia/Shanghai, or null when it follows the time zone of the browser you send messages from; the run context already tells you the zone in effect for this message), your theme (a theme id, or null when you follow the org\'s theme; themes.list names them) and idleCompaction ("off" when you turned off compacting your conversations while they sit idle, or null when you follow the org).',
         input: EMPTY,
         example: {},
         // any signed-in person may call the route; every run's actor is a member of this org
@@ -221,7 +221,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
         description:
           'Change your own preferences; give only the ones to change, the others keep their values. timeZone: an IANA name such as Europe/Berlin, or null to follow the time zone of the browser you send messages from; it applies to the messages you send afterwards, on the web and in IM (the current run keeps its zone). theme: a theme id from themes.list (it applies in every org where that theme is on and personal picks are allowed), or null to follow the org\'s theme. idleCompaction: "off" to never compact your conversations while they sit idle, or null to follow the org (it can only turn the feature off, never on).',
         input: PreferencesSchema.refine((i) => Object.values(i).some((v) => v !== undefined), {
-          message: "give timeZone, theme, idleCompaction or several",
+          message: "give at least one of timeZone, theme, idleCompaction",
         }),
         example: { timeZone: "Asia/Shanghai" },
         authz: { orgAction: "agents.use" },
