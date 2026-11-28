@@ -1429,3 +1429,38 @@ it("drops loopback ports from the key while the owner ceiling forbids running ou
   expect(f.requests).toHaveLength(3);
   expect(f.requests[2]?.grant.loopbackPorts).toEqual([80]);
 });
+
+it("reconcile stops a service holding loopback ports once the owner ceiling forbids running outside the sandbox", async () => {
+  let outsideSandbox = true;
+  // the revision stays the same: the effective network key alone must stop it
+  const f = await macFixture(undefined, () => ({
+    network: "allowlist",
+    allowedDomains: ["a.example.com"],
+    outsideSandbox,
+    revision: "r1",
+  }));
+  const ensure = () =>
+    serveServiceOp(
+      f.supervisor,
+      {
+        op: "service.ensure",
+        spec: spec(),
+        network: { kind: "allowlist", hosts: ["a.example.com"], loopbackPorts: [3999] },
+      },
+      signal(),
+    );
+  expect(await ensure()).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(f.requests[0]?.grant.loopbackPorts).toEqual([3999]);
+  // nothing changed: kept
+  await f.supervisor.reconcile(signal());
+  expect(f.supervisor.status("browser.browser").state).toBe("running");
+  // the owner turns running outside the sandbox off: the service stops at once
+  outsideSandbox = false;
+  await f.supervisor.reconcile(signal());
+  expect(f.supervisor.status("browser.browser").state).toBe("stopped");
+  expect(f.requests).toHaveLength(1);
+  // the next ensure starts it again without any port
+  expect(await ensure()).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(f.requests).toHaveLength(2);
+  expect(f.requests[1]?.grant).not.toHaveProperty("loopbackPorts");
+});

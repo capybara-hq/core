@@ -261,8 +261,9 @@ const MAC_TLS_TRUST_SERVICES: readonly string[] = Object.freeze(["com.apple.Trus
  * bind to loopback (spec "Known limitations"), and with it the command could reach every local
  * port. A device service's grant may name `loopbackPorts`: the patched runtime's
  * `allowedLoopbackPorts`, which it honours only in strict mode (always on outside the seam), lets
- * the proxy dial exactly those ports on 127.0.0.1, ::1 and localhost. `allowPrivate` is a trusted test seam (like the Linux forwarder's): it lifts the address
- * rules so a fixture on loopback can be granted; nothing in production sets it.
+ * the proxy dial exactly those ports on 127.0.0.1, ::1 and localhost. `allowPrivate` is a trusted
+ * test seam (like the Linux forwarder's): it lifts the address rules so a fixture on loopback can
+ * be granted; nothing in production sets it.
  *
  * TLS trust needs one Mach service, `com.apple.TrustEvaluationAgent` (the per-user agent, not its
  * `.system` sibling): Apple's LibreSSL in `/usr/bin/curl`, `/usr/bin/openssl` and the Command
