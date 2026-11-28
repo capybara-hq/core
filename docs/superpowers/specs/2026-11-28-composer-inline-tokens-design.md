@@ -280,8 +280,9 @@ Token =
   renders a placeholder, so `content[0]` is never empty when blocks follow).
 - The skill token: the web removes it from the text (collapsing the whitespace at the seam) and sends
   `skill`; the rest is the skill's arguments, which may contain other tokens.
-- The internal `UserMessageInput` keeps resolved arrays; the queue (kernel-internal) takes no tokens,
-  as it takes no project files today.
+- The internal `UserMessageInput` keeps `tokens` (the old `attachments` / `projectFiles` /
+  `conversationRefs` arrays are gone; implementation, 2026-11-28); the queue (kernel-internal) takes
+  no tokens, as it takes no project files today.
 
 #### 3.2 Placeholders (model-visible, English)
 
@@ -347,6 +348,9 @@ connector or resource tokens.
 - **File, project file, conversation:** unchanged codes (`file.*`, `conversation.project_file_unavailable`,
   `device.path_outside_project`, `conversation.reference_unavailable`, `conversation.reference_self`).
 - The web maps each code's details to the token by `(kind, id)` and marks it refused (§1).
+  (Implementation, 2026-11-28: the resource refusals `connector.resources_disabled` and
+  `connector.not_found` carry `details: [{connectorId}]` so the web marks the token;
+  `conversation.project_file_unavailable` with reason `no_project` marks every project file token.)
 - New error codes are registered in `errors.ts` with zh / en copy (§7).
 
 #### 3.5 Logged payload
@@ -395,7 +399,9 @@ connector or resource tokens.
   the org's live, active connectors of which `forAgent` offers the agent at least one tool, plus the
   `needs_config` ones (shown disabled); no session is opened. Each connector also returns
   `descriptionZh?` (the template's Chinese description, falling back to the template's description;
-  the web picks by locale; implementation, 2026-11-28). The web filters by the query
+  the web picks by locale; implementation, 2026-11-28). Correction (implementation, 2026-11-28): the
+  kernel sends `descriptionZh` only when the connector has no description of its own and the
+  template has a Chinese one; the web falls back to `description`. The web filters by the query
   (`commandScore`, client side) through a `defineQuery` cached per agent.
 - **Second level** (state `at-resources`): the menu head shows 「‹ Slack · 资源」 (a back button,
   「返回」 / "Back"); the text after `@` that named the connector is cleared (the `@` stays) and

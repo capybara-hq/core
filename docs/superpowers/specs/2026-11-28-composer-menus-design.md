@@ -97,18 +97,19 @@ rules (no arguments, refused while running).
 ### 4. @ menu
 
 - **Amended (composer inline tokens spec 2026-11-28 §4):** the first level is 连接器 (the connectors themselves, at most 6, ahead of the rest), then files, then conversations; connector resources are no longer searched at the first level but sit on a second level behind the connector's → (the head 「‹ Slack · 资源」, ← or Backspace on an empty query goes back), without UI templates and empty resources. A pick inserts an inline token at the caret instead of adding a card or chip.
-- Groups: 最近文件 / 匹配的文件 (the file library: `GET /orgs/:orgId/files?q=<query>&limit=8`, from
-  the file library line), then 会话 (the sender's own conversations by title: `GET
-  /orgs/:orgId/conversations?q=<query>&limit=9`, the current and the referenced ones dropped, at
-  most 5 rows, icon `chats`, title or 未命名会话, `<agent name> · <relative time>`; an empty query
-  lists the most recent; a pick is a conversation chip sent as `conversationRefs`, at most 3; added by the
-  @ conversations spec 2026-11-28 §3), then connector resources grouped by connector with the
-  connector icon (`GET connectors/resources?query=<query>`: the web now passes `query`).
+- Groups (after 连接器, see above): 最近文件 / 匹配的文件 (the file library: `GET
+  /orgs/:orgId/files?q=<query>&limit=8`, from the file library line), then 会话 (the sender's own
+  conversations by title: `GET /orgs/:orgId/conversations?q=<query>&limit=9`, the current and the
+  referenced ones dropped, at most 5 rows, icon `chats`, title or 未命名会话, `<agent name> ·
+  <relative time>`; an empty query lists the most recent; a pick is a `conversation` token, at most
+  3; added by the @ conversations spec 2026-11-28 §3). Superseded by the inline tokens spec §4: there
+  is no resources group at the first level; `GET connectors/resources` takes a required
+  `connectorId` and serves the second level only.
 - Picking a file inserts a `file` token at the caret (inline tokens spec §1; its id goes into `tokens`
   as `{type: "file", id}`; the file library makes any ready file of the sender sendable), not a card
   in the attachment strip. Picking a resource inserts a `resource` token (`{connectorId, uri}`).
   Limits: files per message as today; resources `MAX_ATTACHMENTS` (5).
-- Until the file library ships the files group is absent (the menu works with resources alone).
+- Until the file library ships the files group is absent (the menu then shows connectors and conversations).
 
 ### 5. Project files (kernel + web)
 
@@ -121,18 +122,21 @@ rules (no arguments, refused while running).
   with that reason. Errors registered with zh / en copy.
 - **Sending:** the message body gains project file tokens (amended by the composer inline tokens spec
   §3.1: `{type: "projectFile", path}` in `tokens`, the place marked by U+FFFC in `text`; the separate
-  `projectFiles` field is gone) (relative to the conversation's project, at most 10). The kernel checks the conversation has a device project, normalizes and bounds each path
+  `projectFiles` field is gone), each path relative to the conversation's project, at most 10. The
+  kernel checks the conversation has a device project, normalizes and bounds each path
   (same rule), and checks each exists with the provider's `stat` in the browse scope; any failure
   refuses the send with `conversation.project_file_unavailable` (path in details). No bytes are read or
   copied.
 - **Model input:** each path becomes a text block after the user text, logged in the user message:
-  `[project file: <path>] Referenced project file: <relative path> (in the project root <project path>; read it with Read
-  when needed).` (the placeholder line is the inline tokens spec's, §3.2) English, model-visible, part of the logged message, so replay is unchanged (no
-  `DriftReason`). The bubble draws the paths as inline tokens in the sentence.
+  `[project file: <path>] Referenced project file: <relative path> (in the project root <project
+  path>; read it with Read when needed).` (the placeholder is the inline tokens spec's, §3.2) English,
+  model-visible, part of the logged message, so replay is unchanged (no `DriftReason`). The bubble draws the paths as inline tokens in the sentence.
 - **Picker (web):** a sheet / popover listing the project's root, folders navigable with a path row,
-  a filter field, multi-select, 「引用」 inserts the paths as `projectFile` tokens at the caret (amended by the composer inline tokens spec 2026-11-28: no longer chips in the attachment strip).
-- Platform tool: the listing route gets an operation (read-only). `projectFiles` is a field of the
-  shared send body `MessageFields` (`conversations.controller.ts`); no Platform operation carries
+  a filter field, multi-select, 「引用」 inserts the paths as `projectFile` tokens at the caret
+  (amended by the composer inline tokens spec 2026-11-28: no longer chips in the attachment strip).
+- Platform tool: the listing route gets an operation (read-only). The project file tokens are part of
+  the shared send body `MessageFields` (`conversations.controller.ts`; the `projectFiles` field this
+  spec added is replaced by `tokens`, inline tokens spec §3.1); no Platform operation carries
   that body: the send routes are exclusions (`POST …/:id/messages` and `POST …/conversations`
   `internal`, first-message `human-only`, `platform/exclusions.ts`), so the field changes no
   operation (corrected by the @ conversations spec, 2026-11-28).
