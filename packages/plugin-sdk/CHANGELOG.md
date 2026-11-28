@@ -1,5 +1,15 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.88
+
+### Patch Changes
+
+- 1f75908: `run.lifecycle` `offer_declined` payloads name the declined event: `eventId` (the kernel's id) and
+  `dedupeKey` (the key the plugin passed to `ctx.triggers.emit`), for every reason, so a plugin can
+  tell a stale decline from one for its latest event of the subject.
+- b43b201: The packages ship their public API reports: `api/plugin-client.api.md` and
+  `api/plugin-sdk.api.md` are now in the published files.
+
 ## 0.1.0-rc.87
 
 ### Minor Changes
