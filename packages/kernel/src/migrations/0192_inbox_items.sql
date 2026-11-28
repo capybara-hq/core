@@ -5,7 +5,9 @@
 --   actionId, payload? } }`; a click calls the plugin's UI action as the person who clicked;
 -- - `dedupe_key`: while an item with the same key is open for the same person, source and plugin,
 --   a post returns it instead of adding another (the partial unique index);
--- - `expires_at`: past it the item leaves the inbox (read as gone; no sweep needed to hide it).
+-- - `expires_at`: past it the item leaves the inbox (read as gone; no sweep needed to hide it);
+-- - `detail`: a kernel item's structured facts the web renders in its own copy (a declined offer:
+--   who declined, for which agent); null for a plugin item.
 -- The push category `inbox` joins the CHECK of 0188 (dropped and added in this file's one
 -- transaction). The table carries `org_id` and its `org_scope` policy (still dark: nothing enables
 -- row level security before phase 5).
@@ -27,6 +29,7 @@ CREATE TABLE IF NOT EXISTS inbox_items (
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz,
+  detail jsonb,
   CHECK ((source = 'plugin') = (plugin IS NOT NULL))
 );
 

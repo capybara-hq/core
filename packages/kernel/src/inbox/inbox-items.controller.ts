@@ -53,7 +53,8 @@ export class InboxItemsController {
 
   @Post(":id/dismiss")
   @HttpCode(204)
-  @OrgAction("approvals.decide")
+  // the person's own item: any member, a guest included, reads and dismisses their own
+  @OrgAction("org.read")
   async dismiss(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,

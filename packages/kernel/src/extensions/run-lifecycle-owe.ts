@@ -1,4 +1,4 @@
-import type { RunLifecyclePayload } from "@capybara-hq/plugin-sdk";
+import type { RunLifecycleDeclineReason, RunLifecyclePayload } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import type { ConversationSubject, KernelSchemaDb } from "../db/kernel-schema.js";
 import type { OutboxService } from "../infra/outbox/outbox.service.js";
@@ -138,7 +138,7 @@ export async function oweOfferDeclinedIn(
     accountId: string;
     agentId: string;
     subject: { kind: string; id: string };
-    reason: "declined" | "off" | "paused";
+    reason: RunLifecycleDeclineReason;
   },
 ): Promise<void> {
   if (!(await subscribesToRunLifecycle(db, a.orgId, a.plugin))) return;

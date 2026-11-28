@@ -375,6 +375,7 @@ function AutomationForm({
       {deleting && (
         <DeleteAutomationDialog
           name={task.name}
+          origin={task.origin}
           onClose={() => setDeleting(false)}
           onDelete={async () => {
             await actions.remove.mutateAsync(task.id);

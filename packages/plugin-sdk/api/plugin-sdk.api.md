@@ -3986,14 +3986,17 @@ export type RouteCaller = {
 };
 
 // @public
+export type RunLifecycleDeclineReason = "declined" | "off" | "paused" | "expired" | "undelivered";
+
+// @public
 export interface RunLifecyclePayload {
     accountId: string;
     agentId: string;
     agentVersion?: number;
     conversationId?: string;
     orgId: string;
-    phase: "started" | "waiting" | "finished" | "failed" | "aborted" | "offer_declined";
-    reason?: "declined" | "off" | "paused";
+    phase: "started" | "waiting" | "resumed" | "finished" | "failed" | "aborted" | "offer_declined";
+    reason?: RunLifecycleDeclineReason;
     runId?: string;
     subject: {
         kind: string;

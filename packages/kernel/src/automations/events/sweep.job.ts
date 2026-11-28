@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { oweOfferDeclinedIn } from "../../extensions/run-lifecycle-owe.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { asPlatform, withOrgScope } from "../../infra/database/org-scope.js";
@@ -20,6 +21,7 @@ import {
   type TriggerDispatchJobData,
   triggerDispatchJobId,
 } from "../job-ids.js";
+import { AcceptanceService, OFFER_TTL_SECONDS } from "./acceptance.js";
 import { COALESCE_STALE_MS, coalesceJobIdOfKey } from "./guards.js";
 
 const DAY_MS = 86_400_000;
@@ -45,6 +47,8 @@ const MAX_WINDOWS = 1000;
 export const PENDING_DIRECTED_STALE_MS = 10 * 60_000;
 /** Stale pending directed events looked at per sweep. */
 const MAX_PENDING_DIRECTED = 1000;
+/** Stale open work offers expired per sweep; what is left waits for the next one. */
+const MAX_STALE_OFFERS = 1000;
 
 /** A window of an (automation, subject) pair whose deliveries still wait for a run. */
 interface WaitingWindow {
@@ -80,13 +84,17 @@ export function reoweDecision(
 /**
  * The trigger event sweep (collaboration spec §4.7), every five minutes across replicas:
  *
+ * - **Offers.** A work offer still `open` seven days ({@link OFFER_TTL_SECONDS}) after it was made
+ *   is marked `expired` ({@link AcceptanceService.expireOffer}: its inbox item resolved, the
+ *   source told `run.lifecycle` `offer_declined` with reason `expired`), one transaction each,
+ *   before retention runs: an offer counts as open only while it is `open` and younger than that.
  * - **Retention.** A trigger event settled (`dispatched`, `undelivered`, `depth_stopped`) more than
  *   `automations.eventRetentionDays` ago, none of whose deliveries still waits for a run and with
- *   no open work offer, is
- *   deleted with its deliveries (the foreign key cascades), in batches of {@link DELETE_BATCH}, one
- *   transaction each. A `pending` event (its dispatch has not settled it) stays, until the
- *   pending-directed rule below ends it. A run keeps its `trigger_key` and a kernel run its `trigger_event_id` (neither has a foreign
- *   key); a chain whose event is gone restarts at depth 0.
+ *   no open work offer, is deleted with its deliveries (the foreign key cascades), in batches of
+ *   {@link DELETE_BATCH}, one transaction each. A `pending` event (its dispatch has not settled
+ *   it) stays, until the pending-directed rule below ends it. A run keeps its `trigger_key` and a
+ *   kernel run its `trigger_event_id` (neither has a foreign key); a chain whose event is gone
+ *   restarts at depth 0.
  * - **Lost windows.** The dispatcher owes one coalesce job per window, from the delivery that opens
  *   it (`<coalesceJobIdOfKey>-<eventId>`, due `coalesceSeconds` on). A pair whose newest waiting
  *   delivery has waited longer than the org's `coalesceSeconds` plus {@link COALESCE_STALE_MS}
@@ -104,14 +112,15 @@ export function reoweDecision(
  *   acceptance routing passed it over) is owed its dispatch job again
  *   (`trigger-dispatch-<eventId>-sweep-<minute>`) unless one is pending in the outbox, backing off
  *   by its age as a lost window does and giving up after {@link WINDOW_GIVE_UP_MS}: past it the
- *   event is marked `undelivered` with a warning, so retention can delete it.
+ *   event is marked `undelivered` with a warning, so retention can delete it, and its source is
+ *   told `run.lifecycle` `offer_declined` with reason `undelivered` in the same transaction.
  * - **Cause handles.** Expired `trigger_cause_handles` (`ctx.triggers.causeOf`) are deleted.
  * - **Inbox items.** An inbox item resolved, or past its expiry, more than `inbox.retentionDays`
  *   ago is deleted (an open item past its expiry already left the inbox).
  */
 @Injectable()
-// org-filter: deployment-wide sweeps of trigger events, waiting deliveries, cause handles and inbox
-// items (LockedCron), each owed job in its own org
+// org-filter: deployment-wide sweeps of trigger events, waiting deliveries, work offers, cause
+// handles and inbox items (LockedCron), each owed job and expired offer in its own org
 export class TriggerEventSweepJob {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
@@ -120,6 +129,8 @@ export class TriggerEventSweepJob {
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+    @Inject(AcceptanceService)
+    private readonly acceptance: Pick<AcceptanceService, "expireOffer">,
   ) {}
 
   @LockedCron("*/5 * * * *", { name: TRIGGER_EVENT_SWEEP_JOB })
@@ -128,11 +139,12 @@ export class TriggerEventSweepJob {
   }
 
   /**
-   * One sweep as of `now` (tests pass their own): how many events it deleted, windows it owed,
-   * cause handles and inbox items it deleted, and stale pending directed events it owed a
-   * dispatch again.
+   * One sweep as of `now` (tests pass their own): how many offers it expired, events it deleted,
+   * windows it owed, cause handles and inbox items it deleted, and stale pending directed events
+   * it owed a dispatch again.
    */
   async sweepAt(now: Date): Promise<{
+    expiredOffers: number;
     deleted: number;
     owed: number;
     handles: number;
@@ -140,9 +152,16 @@ export class TriggerEventSweepJob {
     redispatched: number;
   }> {
     const cfg = this.config.get();
+    const cutoff = new Date(now.getTime() - OFFER_TTL_SECONDS * 1000);
+    let expiredOffers = 0;
+    for (const o of await this.staleOffers(cutoff)) {
+      if (await withOrgScope(o.orgId, () => this.acceptance.expireOffer(o.orgId, o.id, cutoff)))
+        expiredOffers++;
+    }
+    if (expiredOffers > 0) this.log.info("open work offers expired", { expired: expiredOffers });
     const days = cfg.automations.eventRetentionDays;
     const deleted = await this.inBatches((b) =>
-      this.deleteEvents(new Date(now.getTime() - days * DAY_MS), b),
+      this.deleteEvents(new Date(now.getTime() - days * DAY_MS), cutoff, b),
     );
     if (deleted > 0) this.log.info("old trigger events deleted", { deleted, retentionDays: days });
     let owed = 0;
@@ -186,7 +205,7 @@ export class TriggerEventSweepJob {
       if (decision !== "owe") continue;
       if (await withOrgScope(e.orgId, () => this.oweDispatch(e.orgId, e.id, now))) redispatched++;
     }
-    return { deleted, owed, handles, inboxItems, redispatched };
+    return { expiredOffers, deleted, owed, handles, inboxItems, redispatched };
   }
 
   /** Runs `batch` (one transaction each) until it deletes fewer than a full batch; the total. */
@@ -236,9 +255,27 @@ export class TriggerEventSweepJob {
     });
   }
 
-  /** Deletes settled events older than `cutoff` (see the class), at most `limit`; how many. */
+  /**
+   * Open work offers made at or before `cutoff` (seven days before the sweep's `now`), oldest
+   * first, at most {@link MAX_STALE_OFFERS}.
+   */
+  private async staleOffers(cutoff: Date): Promise<{ orgId: string; id: string }[]> {
+    const rows = await asPlatform("deployment-wide stale work offer sweep", () =>
+      sql<{ org_id: string; id: string }>`
+        SELECT org_id, id FROM capybara.automation_offers
+        WHERE state = 'open' AND created_at <= ${cutoff}
+        ORDER BY created_at
+        LIMIT ${MAX_STALE_OFFERS}`.execute(this.kdb.db),
+    );
+    return rows.rows.map((r) => ({ orgId: r.org_id, id: r.id }));
+  }
+
+  /**
+   * Deletes settled events older than `cutoff` (see the class), at most `limit`; how many. An
+   * offer made at or before `offerCutoff` no longer counts as open, whatever its state says.
+   */
   @Transactional()
-  private async deleteEvents(cutoff: Date, limit: number): Promise<number> {
+  private async deleteEvents(cutoff: Date, offerCutoff: Date, limit: number): Promise<number> {
     const db = this.kdb.db;
     return asPlatform("deployment-wide trigger event retention sweep", async () => {
       const r = await sql<{ id: string }>`
@@ -253,7 +290,7 @@ export class TriggerEventSweepJob {
             )
             AND NOT EXISTS (
               SELECT 1 FROM capybara.automation_offers o
-              WHERE o.event_id = e.id AND o.state = 'open'
+              WHERE o.event_id = e.id AND o.state = 'open' AND o.created_at > ${offerCutoff}
             )
           ORDER BY e.created_at
           LIMIT ${limit}
@@ -322,7 +359,8 @@ export class TriggerEventSweepJob {
 
   /**
    * Directed events still `pending` more than {@link PENDING_DIRECTED_STALE_MS} after they were
-   * stored and less than {@link WINDOW_GIVE_UP_MS} plus one sweep, oldest first.
+   * stored, oldest first, at most {@link MAX_PENDING_DIRECTED}; no upper bound on age: one past
+   * {@link WINDOW_GIVE_UP_MS} is marked `undelivered` by the sweep and so leaves this list.
    */
   private async stalePendingDirected(
     now: Date,
@@ -343,18 +381,35 @@ export class TriggerEventSweepJob {
     }));
   }
 
-  /** Marks a directed event that is still pending `undelivered`; true when it was pending. */
+  /**
+   * Marks a directed event that is still pending `undelivered` and tells its source
+   * (`run.lifecycle` `offer_declined`, reason `undelivered`) in the same transaction; true when it
+   * was pending.
+   */
   @Transactional()
   private async giveUpPending(orgId: string, eventId: string): Promise<boolean> {
-    const r = await this.kdb.db
+    const db = this.kdb.db;
+    const r = await db
       .updateTable("trigger_events")
       .set({ state: "undelivered" })
       .where("org_id", "=", orgId)
       .where("id", "=", eventId)
       .where("state", "=", "pending")
-      .returning("id")
+      .returning(["plugin", "audience", "subject"])
       .executeTakeFirst();
-    return r !== undefined;
+    if (r === undefined) return false;
+    if (r.audience !== null) {
+      await oweOfferDeclinedIn(db, this.outbox, {
+        orgId,
+        plugin: r.plugin,
+        eventId,
+        accountId: r.audience.accountId,
+        agentId: r.audience.agentId,
+        subject: r.subject,
+        reason: "undelivered",
+      });
+    }
+    return true;
   }
 
   /**

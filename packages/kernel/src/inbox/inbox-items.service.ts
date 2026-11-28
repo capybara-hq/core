@@ -41,6 +41,8 @@ export interface PersonalInboxItemView {
   /** An in-app path; a plugin item's is one of the plugin's pages (`/p/<plugin>/…`). */
   link: string | null;
   actions: { id: string; label: LocalizedName; style?: "primary" | "danger" }[];
+  /** A kernel item's structured facts (its kind's copy reads them); null for a plugin item. */
+  detail: Record<string, unknown> | null;
   expiresAt: string;
   createdAt: string;
 }
@@ -94,11 +96,18 @@ export class InboxItemsService {
    * (org, account, source, plugin, key) is returned instead (no new push); an expired one is
    * closed and replaced. The caller runs it in the item's org scope.
    *
+   * `opts.detail` (kernel items only, never from an extension): structured facts the web renders
+   * in the kind's own copy.
+   *
    * Throws `InboxError`: `invalid_item` (a missing or malformed field, not an active member),
    * `org_disabled` (the plugin is not enabled in the org).
    */
   @Transactional()
-  async post(source: InboxSource, p: InboxPost): Promise<{ itemId: string }> {
+  async post(
+    source: InboxSource,
+    p: InboxPost,
+    opts: { detail?: Record<string, unknown> } = {},
+  ): Promise<{ itemId: string }> {
     if (typeof p !== "object" || p === null) throw invalid("the item must be an object");
     const plugin = source.kind === "plugin" ? source.plugin : null;
     const errs = validateInboxPost(p, plugin ?? "").filter(
@@ -164,6 +173,10 @@ export class InboxItemsService {
           link: p.link ?? null,
           actions: JSON.stringify(actions),
           dedupe_key: dedupe,
+          detail:
+            source.kind === "kernel" && opts.detail !== undefined
+              ? JSON.stringify(opts.detail)
+              : null,
           expires_at: sql<Date>`now() + make_interval(secs => ${seconds})`,
         })
         // only the partial dedupe index can conflict (the id is new)
@@ -289,6 +302,7 @@ export class InboxItemsService {
         "body",
         "link",
         "actions",
+        "detail",
         "expires_at",
         "created_at",
       ])
@@ -318,6 +332,7 @@ export class InboxItemsService {
         label: { zh: a.label.zh, en: a.label.en },
         ...(a.style !== undefined && { style: a.style }),
       })),
+      detail: r.source === "kernel" ? (r.detail ?? null) : null,
       expiresAt: r.expires_at.toISOString(),
       createdAt: r.created_at.toISOString(),
     }));

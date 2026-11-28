@@ -13,6 +13,7 @@ import { runJob } from "../infra/queue/run-job.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { deployedSnapshot } from "./deployed-snapshots.js";
+import { isExtensionEnabled } from "./enabled.js";
 import { ExtensionsModule } from "./extensions.module.js";
 import { deepFreeze, errMsg, HookNeedsConfigError, type LifecycleHook } from "./hooks.js";
 import { ExtensionHost } from "./host.js";
@@ -153,11 +154,19 @@ export class LifecycleHooks {
 
   /**
    * One `run.lifecycle` delivery: the plugin's handlers run with its effective config for the
-   * payload's org; an org whose config is not valid, or a plugin that registered no handler, is
-   * dropped with a warning (the notice is display state, never worth retrying forever).
+   * payload's org; an org that switched the plugin off since the notice was owed, an org whose
+   * config is not valid, or a plugin that registered no handler, is dropped with a log line (the
+   * notice is display state, never worth retrying forever).
    */
   private async processRunLifecycle(data: RunLifecycleJob, stop: AbortSignal): Promise<void> {
     const fields = { mount: data.mount, plugin: data.plugin };
+    if (!(await isExtensionEnabled(this.kdb.db, data.payload.orgId, data.plugin))) {
+      this.log.info("run.lifecycle delivery dropped: the plugin is not enabled in the org", {
+        ...fields,
+        orgId: data.payload.orgId,
+      });
+      return;
+    }
     const handlers = this.host.hooks
       .handlers("run.lifecycle")
       .filter((h) => h.plugin === data.plugin)

@@ -53,10 +53,10 @@ interface Candidate {
  * - a directed event (`audience` set) is routed by its audience's acceptance rule
  *   ({@link AcceptanceService.route}): it reaches at most that person's acceptance automation for
  *   the source and agent, or becomes a work offer, or nothing;
- * - the active, unexpired event automations people made in the org on this source and type whose filter
- *   matches the facts, minus the ones the event's cause run made (the same owner and the agent of
- *   the run's root conversation: self-trigger), are checked with the source's `visible()` once for
- *   all their owners; an owner it does not admit gets nothing;
+ * - the active, unexpired event automations people made in the org on this source and type whose
+ *   filter matches the facts, minus the ones the event's cause run made (the same owner and the
+ *   agent of the run's root conversation: self-trigger), are checked with the source's `visible()`
+ *   once for all their owners; an owner it does not admit gets nothing;
  * - each remaining automation gets a delivery, and the delivery that opens a window for its
  *   (automation, subject) pair owes the pair's `automation-coalesce` job, due `coalesceSeconds`
  *   on; later events of the window find its deliveries waiting and owe nothing, so the window ends

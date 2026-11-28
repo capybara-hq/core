@@ -2452,6 +2452,8 @@
       "dismiss": "移除",
       "dismissed": "已从收件箱移除",
       "done": "已处理",
+      "someone": "有人",
+      "theirAgent": "其智能体",
       "kinds": {
         "automation_depth_stopped": {
           "label": "自动化链已停止",
@@ -2459,7 +2461,7 @@
         },
         "automation_offer_declined": {
           "label": "工作被拒绝",
-          "hint": "你指派的工作被拒绝了。来源会显示它未被接受；如仍需处理，请指派给其他人。"
+          "hint": "{person} 拒绝了你指派给 {agent} 的工作。来源会显示它未被接受；如仍需处理，请指派给其他人。"
         }
       },
       "confirmTitle": "确认{action}？",
@@ -7147,6 +7149,8 @@
       "deleteDescription": "任务会停止并被移除，它创建的会话会保留。",
       "deleteConfirm": "删除「{name}」？",
       "deleteConfirmBody": "任务会停止并被移除，它创建的会话会保留。",
+      "deleteAcceptanceBody": "删除不会停止接收工作：只要你对其来源的规则是「立即运行」，下一项指派给你的工作会重新创建它。",
+      "deleteAcceptanceLink": "修改你的接受规则",
       "created": "自动化已创建",
       "saved": "自动化已保存",
       "started": "已开始运行",

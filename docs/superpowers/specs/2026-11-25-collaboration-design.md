@@ -245,9 +245,10 @@ zero-drift fixtures run before and after.
   age of the pair's newest waiting delivery and gives up, logging, once that delivery is 24 hours
   old (the newest window's age, so an old window given up on never hides a newer lost one).
   A cause handle records the run's depth and trigger account when it is made, so retention
-  deleting the run's trigger event within the handle's life does not restart the chain. It also deletes expired cause handles (§4.2)
-  and inbox items closed or past their expiry more than `inbox.retentionDays` ago (platform
-  config, default 30; §4.9).
+  deleting the run's trigger event within the handle's life does not restart the chain. The sweep
+  also deletes expired cause handles (§4.2), expires work offers left open for seven days (§4.4),
+  and deletes inbox items closed or past their expiry more than `inbox.retentionDays` ago
+  (platform config, default 30; §4.9).
 - **Rate:** `maxRunsPerHour` applies per person (the runs of the owner's automations in the last
   hour, time and event runs together); add `maxEventRunsPerSubjectPerHour` (default 12).
 - **Overlap:** an event run never waits for its automation's previous run (its events would be
@@ -258,11 +259,23 @@ zero-drift fixtures run before and after.
 
 ### 4.8 Run lifecycle hook
 
-New observe hook `run.lifecycle` (`started`, `waiting` with what it waits on, `finished`, `failed`,
-and `offer_declined` for a declined directed event)
-for runs whose conversation has a `subject` from the same plugin, fired after commit from
-`runtime/run-finish.ts` and the run start path. The plugin shows "agent working / waiting on you /
-done" on the item. At least once; the plugin treats it as a hint.
+New observe hook `run.lifecycle` for runs whose conversation has a `subject` from the same plugin,
+owed in the transaction that changes the run and delivered after commit. The phases:
+
+- `started`: a run was created (queued);
+- `waiting`: the run suspended on a person (`waitingOn` `approval` or `input`; waits on sub-agents
+  are not announced);
+- `resumed`: that person's wait cleared (answered, decided or timed out) and the run continues
+  (one per wait, owed where the run leaves `waiting`);
+- `finished`, `failed`, `aborted`: the run completed, failed, or was stopped by a person or the
+  kernel;
+- `offer_declined`, to the plugin that emitted a directed event the kernel did not run, with
+  `reason`: `off` (the person's rule), `declined` (the person declined the offer), `paused` (the
+  acceptance automation is paused or ended), `expired` (the offer stayed open seven days and the
+  sweep expired it) or `undelivered` (the sweep gave up on the pending event after 24 hours).
+
+Compact runs are never announced. The plugin shows "agent working / waiting on you / done" on the
+item. At least once; the plugin treats it as a hint.
 
 ### 4.9 Personal inbox items
 
@@ -296,16 +309,20 @@ config, default 30). Dismissing is `inbox.item-dismiss`; clicking an action is a
   is dispatched again by the sweep and given up (`undelivered`) after 24 hours.
 - **Acceptance.** `automation_acceptance` holds the person's rule per source (`auto`, `confirm`,
   `off`; no row follows `automations.directedDefault`); `automation_offers` holds offers
-  (unique per event; `open`, `accepted`, `declined`, `expired`). Offers expire after 7 days. The
+  (unique per event; `open`, `accepted`, `declined`, `expired`). An offer counts as open only
+  while it is `open` and younger than 7 days; the sweep marks older ones `expired` (resolving
+  their inbox item) and retention then treats them as closed. The
   acceptance automation (`origin = acceptance`) has a fixed trigger, agent and mode; people edit
   its name, grants and pause state. It does not count against the per-member task limits.
 - **Personal page.** A person sets their rules at `/account/automations` ("Accepting work"); the
   org default sits in the org's automation settings. `automations.acceptance-set` is a Platform
   operation declared `personOnly`: the ask is always the person's, never decided by a review model
   or a full-access profile, and refused in an unattended run.
-- **`run.lifecycle`.** The payload carries ids only (org, account, agent, run, conversation,
-  subject, `waitingOn` `approval` or `input`); `offer_declined` has `reason` `declined`, `off` or
-  `paused` (the acceptance automation is paused or ended) and no run or conversation.
+- **`run.lifecycle`.** Phases `started`, `waiting`, `resumed`, `finished`, `failed`, `aborted` and
+  `offer_declined` (§4.8). The payload carries ids only (org, account, agent, run, conversation,
+  subject, `waitingOn` `approval` or `input` for `waiting` and `resumed`); `offer_declined` has
+  `reason` `declined`, `off`, `paused`, `expired` or `undelivered` and no run or conversation. The
+  plugin must be enabled in the org when the notice is owed and again when it is delivered.
 
 ## 5. Plugin: data (`plugin_collab`)
 

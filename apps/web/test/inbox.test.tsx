@@ -1649,6 +1649,72 @@ describe("personal inbox items", () => {
     },
   );
 
+  it.each(LOCALES)(
+    "a declined notice names who declined and the agent; an outside subject opens its URL (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      const url = "https://tracker.example.com/items/CAP-9";
+      await renderInbox(
+        {
+          [LIST]: () =>
+            json(
+              200,
+              listed([
+                pluginItem({
+                  source: "kernel",
+                  plugin: null,
+                  pluginName: null,
+                  kind: "automation_offer_declined",
+                  title: "Fix the login page",
+                  body: "Olga declined this work for Builder.",
+                  link: null,
+                  actions: [],
+                  detail: {
+                    declinedBy: { id: "a1", name: "Olga" },
+                    agent: { id: "g1", name: "Builder" },
+                    subjectUrl: url,
+                  },
+                }),
+              ]),
+            ),
+        },
+        { locale },
+      );
+      const hint = m.inbox.item.kinds.automation_offer_declined.hint
+        .replace("{person}", "Olga")
+        .replace("{agent}", "Builder");
+      expect(await screen.findByText(hint)).toBeTruthy();
+      await userEvent.setup().click(screen.getByRole("button", { name: m.inbox.item.open }));
+      expect(router.push).toHaveBeenCalledWith(url);
+    },
+  );
+
+  it("a declined notice without its facts still reads (someone, their agent)", async () => {
+    await renderInbox({
+      [LIST]: () =>
+        json(
+          200,
+          listed([
+            pluginItem({
+              source: "kernel",
+              plugin: null,
+              pluginName: null,
+              kind: "automation_offer_declined",
+              title: "Fix the login page",
+              link: null,
+              actions: [],
+              detail: null,
+            }),
+          ]),
+        ),
+    });
+    const hint = en.inbox.item.kinds.automation_offer_declined.hint
+      .replace("{person}", en.inbox.item.someone)
+      .replace("{agent}", en.inbox.item.theirAgent);
+    expect(await screen.findByText(hint)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en.inbox.item.open })).toBeNull();
+  });
+
   it("a failed click shows the error copy and reads the inbox again", async () => {
     const { calls } = await renderInbox({
       [LIST]: () => json(200, listed([pluginItem()])),

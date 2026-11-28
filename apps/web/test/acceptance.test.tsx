@@ -115,6 +115,7 @@ describe("a work offer in the inbox", () => {
     eventType: "item.assigned",
     subject: { kind: "item", id: "CAP-7", title: "Export reports as PDF" },
     summary: "Mo assigned CAP-7 to you.",
+    inboxItemId: "it1",
     createdAt: T,
     expiresAt: "2026-12-02T12:00:00.000Z",
   };
@@ -148,6 +149,32 @@ describe("a work offer in the inbox", () => {
       "POST /api/v1/orgs/o1/automations/offers/f1/accept",
     );
     expect(await screen.findByText(m.empty)).toBeTruthy();
+  });
+
+  it("the offer's push link (its own item's id) opens the offer", async () => {
+    const second = {
+      ...offer,
+      id: "f2",
+      inboxItemId: "it2",
+      subject: { kind: "item", id: "CAP-8", title: "Fix the login page" },
+      summary: "Mo assigned CAP-8 to you.",
+    };
+    const routes = {
+      "GET /api/v1/orgs/o1/inbox": () =>
+        json(200, {
+          items: [
+            { type: "automation_offer", id: "f1", createdAt: T, offer },
+            { type: "automation_offer", id: "f2", createdAt: T, offer: second },
+          ],
+          truncated: false,
+        }),
+    };
+    stubApi(routes);
+    window.history.replaceState(null, "", "/inbox#item=it2");
+    await renderRouteWithCache("/inbox", routes, { locale: "en" });
+    expect(await screen.findByText("Mo assigned CAP-8 to you.")).toBeTruthy();
+    expect(screen.queryByText("Mo assigned CAP-7 to you.")).toBeNull();
+    window.history.replaceState(null, "", "/inbox");
   });
 
   it("decline POSTs the offer's decline", async () => {

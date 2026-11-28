@@ -1995,7 +1995,7 @@ export interface TriggerEventsTable {
 export type TriggerEventState = "pending" | "dispatched" | "undelivered" | "depth_stopped";
 
 /**
- * 0191: a serializable trigger cause (`ctx.triggers.causeOf`, collaboration spec §4.2): an opaque
+ * 0193: a serializable trigger cause (`ctx.triggers.causeOf`, collaboration spec §4.2): an opaque
  * id bound to the org, the extension that asked for it and the run of the tool call it was made
  * from (with the depth and trigger account the run had then), accepted by `emit`
  * (`cause: { handle }`) until `expires_at`.
@@ -2023,7 +2023,7 @@ export interface StoredInboxAction {
 
 export type InboxItemState = "open" | "resolved" | "expired";
 
-/** 0190: a personal inbox item (collaboration spec §4.9), for one person in one org. */
+/** 0192: a personal inbox item (collaboration spec §4.9), for one person in one org. */
 export interface InboxItemsTable {
   id: string;
   org_id: string;
@@ -2041,11 +2041,19 @@ export interface InboxItemsTable {
   expires_at: Ts;
   created_at: Ts;
   resolved_at: TsNullable;
+  /**
+   * Structured facts of a kernel item the web renders in its own copy (a declined offer: who
+   * declined, for which agent, the subject's absolute URL); null for a plugin item.
+   */
+  detail: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null>;
 }
 
 export type AcceptanceMode = "auto" | "confirm" | "off";
 
-/** 0192: a person's acceptance rule for one trigger source's directed events (collaboration §4.4). */
+/**
+ * 0194: a person's acceptance rule for one trigger source's directed events (collaboration spec
+ * §4.4).
+ */
 export interface AutomationAcceptanceTable {
   org_id: string;
   account_id: string;
@@ -2056,7 +2064,7 @@ export interface AutomationAcceptanceTable {
 
 export type AutomationOfferState = "open" | "accepted" | "declined" | "expired";
 
-/** 0192: work offered to a person under a `confirm` rule (collaboration spec §4.4). */
+/** 0194: work offered to a person under a `confirm` rule (collaboration spec §4.4). */
 export interface AutomationOffersTable {
   id: string;
   org_id: string;

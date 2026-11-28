@@ -1404,8 +1404,9 @@ export function createExtensionContext(
       return closing;
     },
   };
-  // secrets / storage / models / dialIn / devices / deviceAccess / triggers / inbox / agents / conversations / people: a plain property when declared; otherwise a
-  // non-enumerable getter that throws, so spreading or printing ctx triggers no denial and no audit
+  // secrets / storage / models / dialIn / devices / deviceAccess / triggers / inbox / agents /
+  // conversations / people: a plain property when declared; otherwise a non-enumerable getter
+  // that throws, so spreading or printing ctx triggers no denial and no audit
   const gated = (key: GatedKey, api: unknown, item = `permissions.${key}`): void => {
     if (api) {
       Object.assign(ctx, { [key]: api });

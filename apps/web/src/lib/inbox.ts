@@ -43,6 +43,11 @@ export interface PersonalInboxItem {
   /** An in-app path (a plugin's item opens one of its pages). */
   link: string | null;
   actions: { id: string; label: LocalizedName; style?: "primary" | "danger" }[];
+  /**
+   * The platform's own facts of one of its items, read by its kind's copy (a declined offer:
+   * `declinedBy`, `agent`, and `subjectUrl` when the item is outside the app); null for a plugin's.
+   */
+  detail: Record<string, unknown> | null;
   expiresAt: string;
   createdAt: string;
 }
@@ -61,6 +66,8 @@ export interface AutomationOffer {
   subject: { kind: string; id: string; title: string; url?: string };
   /** What happened, as the source reports it. */
   summary: string;
+  /** The offer's own item (its push opens `#item=<this id>`); null when none was posted. */
+  inboxItemId: string | null;
   createdAt: string;
   expiresAt: string;
 }

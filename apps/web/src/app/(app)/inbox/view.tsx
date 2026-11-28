@@ -134,7 +134,12 @@ function Inbox({
   // The two-level stack (spec §6.47): the list is the page until an item is opened; the open item
   // is in the URL hash, so the system back closes it and `#item=<id>` deep-links.
   const hashItem = useHashItem();
-  const active = rows.find((a) => a.id === (hashItem.id ?? activeId)) ?? rows[0];
+  // an offer's push opens its own item's id: the offer stands for it
+  const wanted = hashItem.id ?? activeId;
+  const active =
+    rows.find(
+      (a) => a.id === wanted || (a.type === "automation_offer" && a.offer.inboxItemId === wanted),
+    ) ?? rows[0];
   const [scope, setScope] = useState<ApprovalScope>("once");
   const approvals = useDecide(orgId);
   const changes = useDecideSkillChange(orgId);
@@ -765,8 +770,8 @@ const KERNEL_ITEM_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * A personal item's source (the plugin's display name, or the platform's own label) and, for the platform's
- * own kinds, the label of its kind (null otherwise).
+ * A personal item's source (the plugin's display name, or the platform's own label) and, for the
+ * platform's own kinds, the label of its kind and its hint (null otherwise).
  */
 function personalItemTexts(
   i: PersonalInboxItem,
@@ -781,8 +786,33 @@ function personalItemTexts(
   return {
     source,
     label: known ? ti(`kinds.${i.kind}.label`) : null,
-    hint: known ? ti(`kinds.${i.kind}.hint`) : null,
+    hint: !known
+      ? null
+      : i.kind === "automation_offer_declined"
+        ? ti("kinds.automation_offer_declined.hint", {
+            person: factName(i.detail, "declinedBy") ?? ti("someone"),
+            agent: factName(i.detail, "agent") ?? ti("theirAgent"),
+          })
+        : ti(`kinds.${i.kind}.hint`),
   };
+}
+
+/** The `name` of the object fact `key` of a platform item's detail, when it is a non-empty string. */
+function factName(detail: Record<string, unknown> | null, key: string): string | null {
+  const v = detail?.[key];
+  if (typeof v !== "object" || v === null) return null;
+  const name = (v as { name?: unknown }).name;
+  return typeof name === "string" && name !== "" ? name : null;
+}
+
+/**
+ * Where a personal item opens: its in-app link, else (a platform item about something outside the
+ * app) the absolute `http(s)` URL its detail keeps; null when neither.
+ */
+function itemLink(i: PersonalInboxItem): string | null {
+  if (i.link !== null) return i.link;
+  const url = i.source === "kernel" ? i.detail?.subjectUrl : undefined;
+  return typeof url === "string" && /^https?:\/\//.test(url) ? url : null;
 }
 
 /**
@@ -821,7 +851,7 @@ function personalItemDetail({
     onSelect: () => onAction(a.id),
     disabled: pending,
   });
-  const link = item.link;
+  const link = itemLink(item);
   const actionRow: ActionRowProps =
     first === undefined
       ? {

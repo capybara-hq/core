@@ -200,6 +200,7 @@ function AutomationList({
       {deleting !== null && (
         <DeleteAutomationDialog
           name={deleting.name}
+          origin={deleting.origin}
           onClose={() => setDeleting(null)}
           onDelete={async () => {
             await actions.remove.mutateAsync(deleting.id);

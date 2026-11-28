@@ -4,8 +4,8 @@
 --   acceptance automation runs the work), `confirm` (an offer waits in their inbox) or `off`
 --   (nothing runs). No row = the org's `automations.directedDefault` (default `auto`).
 -- - `automation_offers`: work offered to a person under `confirm`, one per directed event: `open`
---   until the person accepts or declines it, or it is past seven days (`expired`, set when it is
---   next read). `inbox_item_id` is the push-carrying inbox item it resolves when decided;
+--   until the person accepts or declines it; one `open` past seven days counts as closed and is
+--   set `expired` by the trigger event sweep (or when it is next read). `inbox_item_id` is the push-carrying inbox item it resolves when decided;
 --   `automation_id` the acceptance automation an accept delivered the event to.
 -- - The acceptance automation of (org, person, source, agent) is one live row of `automations`
 --   (`origin = 'acceptance'`): the partial unique index makes two directed events dispatched at

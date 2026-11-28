@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   InboxError,
   type LocalizedName,
+  type RunLifecycleDeclineReason,
   type TriggerEventDeclaration,
   type TriggerSource,
   type TriggerSubject,
@@ -67,6 +68,8 @@ export interface AutomationOfferView {
   subject: TriggerSubject;
   /** The extension's summary of what happened (written by people, shown as text). */
   summary: string;
+  /** The offer's own inbox item (it carries the push, whose link names it); null if not posted. */
+  inboxItemId: string | null;
   createdAt: string;
   expiresAt: string;
 }
@@ -112,6 +115,17 @@ const directedTypes = (declared: readonly TriggerEventDeclaration[]): string[] =
 /** An in-app link a kernel inbox item may carry; anything else is left out. */
 const inAppLink = (url: string | undefined): string | undefined =>
   url?.startsWith("/") && !url.startsWith("//") && url.length <= 2048 ? url : undefined;
+
+/** An absolute `http(s)` link (a subject outside the app); anything else is left out. */
+const webLink = (url: string | undefined): string | undefined => {
+  if (url === undefined || url.length > 2048) return undefined;
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 /**
  * Directed events and acceptance (collaboration spec §4.4). A directed event names the person and
@@ -252,7 +266,7 @@ export class AcceptanceService {
   private oweDeclined(
     ev: EventRow,
     audience: { accountId: string; agentId: string },
-    reason: "declined" | "off" | "paused",
+    reason: RunLifecycleDeclineReason,
   ): Promise<void> {
     return oweOfferDeclinedIn(this.kdb.db, this.outbox, {
       orgId: ev.org_id,
@@ -613,6 +627,7 @@ export class AcceptanceService {
         "o.id",
         "o.source",
         "o.agent_id",
+        "o.inbox_item_id",
         "o.created_at",
         "e.type",
         "e.subject",
@@ -642,6 +657,7 @@ export class AcceptanceService {
       eventType: r.type,
       subject: r.subject,
       summary: r.summary,
+      inboxItemId: r.inbox_item_id,
       createdAt: r.created_at.toISOString(),
       expiresAt: new Date(r.created_at.getTime() + OFFER_TTL_SECONDS * 1000).toISOString(),
     }));
@@ -811,6 +827,8 @@ export class AcceptanceService {
       this.agentName(orgId, offer.agent_id),
     ]);
     const link = inAppLink(ev.subject.url);
+    // a subject outside the app (an absolute URL) is kept as a fact the web opens itself
+    const subjectUrl = link === undefined ? webLink(ev.subject.url) : undefined;
     try {
       await this.inbox.post(
         { kind: "kernel" },
@@ -822,6 +840,13 @@ export class AcceptanceService {
           body: `${person?.display_name || "The person"} declined this work for ${agentName || "their agent"}.`,
           ...(link !== undefined && { link }),
           dedupeKey: `automation-offer-declined-${offerId}`,
+        },
+        {
+          detail: {
+            declinedBy: { id: accountId, name: person?.display_name ?? "" },
+            agent: { id: offer.agent_id, name: agentName },
+            ...(subjectUrl !== undefined && { subjectUrl }),
+          },
         },
       );
     } catch (err) {
@@ -845,8 +870,44 @@ export class AcceptanceService {
   }
 
   /**
+   * Marks the open offer `offerId` `expired` when it was made at or before `cutoff` (default: its
+   * seven days ago, on the database's clock), resolves its inbox item and tells the event's source
+   * plugin (`run.lifecycle` `offer_declined`, reason `expired`), all in one transaction; the trigger
+   * event sweep calls it for every stale open offer, and {@link openOffer} for one it finds stale.
+   * False when the offer was not open or not yet stale (nothing written).
+   */
+  @Transactional()
+  async expireOffer(orgId: string, offerId: string, cutoff?: Date): Promise<boolean> {
+    const db = this.kdb.db;
+    const row = await db
+      .updateTable("automation_offers")
+      .set({ state: "expired", decided_at: sql<Date>`now()` })
+      .where("org_id", "=", orgId)
+      .where("id", "=", offerId)
+      .where("state", "=", "open")
+      .where(
+        "created_at",
+        "<=",
+        cutoff ?? sql<Date>`now() - make_interval(secs => ${OFFER_TTL_SECONDS})`,
+      )
+      .returning(["event_id", "account_id", "agent_id", "inbox_item_id"])
+      .executeTakeFirst();
+    if (row === undefined) return false;
+    if (row.inbox_item_id !== null) await this.inbox.close(orgId, row.inbox_item_id);
+    const ev = await db
+      .selectFrom("trigger_events")
+      .selectAll()
+      .where("org_id", "=", orgId)
+      .where("id", "=", row.event_id)
+      .executeTakeFirst();
+    if (ev !== undefined)
+      await this.oweDeclined(ev, { accountId: row.account_id, agentId: row.agent_id }, "expired");
+    return true;
+  }
+
+  /**
    * The caller's offer `offerId` and its event, open and unexpired (see {@link accept}'s errors);
-   * an offer past its life is marked `expired` (its inbox item already left the inbox).
+   * an offer past its life is marked `expired` ({@link expireOffer}).
    */
   private async openOffer(orgId: string, accountId: string, offerId: string) {
     if (!UUID_RE.test(offerId)) throw offerNotFound();
@@ -863,13 +924,7 @@ export class AcceptanceService {
       .executeTakeFirst();
     if (offer === undefined) throw offerNotFound();
     if (offer.state === "open" && offer.past) {
-      await db
-        .updateTable("automation_offers")
-        .set({ state: "expired", decided_at: sql<Date>`now()` })
-        .where("org_id", "=", orgId)
-        .where("id", "=", offerId)
-        .where("state", "=", "open")
-        .execute();
+      await this.expireOffer(orgId, offerId);
       throw offerClosed();
     }
     if (offer.state !== "open") throw offerClosed();

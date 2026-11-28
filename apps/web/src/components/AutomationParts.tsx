@@ -9,6 +9,7 @@ import {
   Stack,
   StatusMark,
   Text,
+  TextLink,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
@@ -16,6 +17,7 @@ import { type ComponentProps, useState } from "react";
 import {
   type Automation,
   type AutomationListItem,
+  type AutomationOrigin,
   type AutomationTrigger,
   automationState,
   automationWords,
@@ -124,13 +126,19 @@ export function useAutomationActions(orgId: string) {
   return { pause, resume, run, remove };
 }
 
-/** Delete a task: asks first (a dangerous dialog that starts on Cancel). */
+/**
+ * Delete a task: asks first (a dangerous dialog that starts on Cancel). An acceptance automation
+ * (`origin: acceptance`) is made again by the next assigned work while the person's rule for its
+ * source is `auto`: the dialog says so and links to the rules (`/account/automations`).
+ */
 export function DeleteAutomationDialog({
   name,
+  origin,
   onClose,
   onDelete,
 }: {
   name: string;
+  origin: AutomationOrigin;
   onClose(): void;
   onDelete(): Promise<void>;
 }) {
@@ -176,6 +184,12 @@ export function DeleteAutomationDialog({
     >
       <Stack gap={12}>
         <Text variant="prose">{t("deleteConfirmBody")}</Text>
+        {origin === "acceptance" && (
+          <Text variant="prose">
+            {t("deleteAcceptanceBody")}{" "}
+            <TextLink href="/account/automations">{t("deleteAcceptanceLink")}</TextLink>
+          </Text>
+        )}
         {error !== undefined && <FormError message={error} />}
       </Stack>
     </Dialog>

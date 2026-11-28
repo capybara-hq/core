@@ -2464,6 +2464,8 @@
       "dismiss": "Dismiss",
       "dismissed": "Removed from your inbox",
       "done": "Done",
+      "someone": "Someone",
+      "theirAgent": "their agent",
       "kinds": {
         "automation_depth_stopped": {
           "label": "Automation chain stopped",
@@ -2471,7 +2473,7 @@
         },
         "automation_offer_declined": {
           "label": "Work declined",
-          "hint": "Work you assigned was declined. The source shows it as not accepted; assign it to someone else if it still needs doing."
+          "hint": "{person} declined the work you assigned for {agent}. The source shows it as not accepted; assign it to someone else if it still needs doing."
         }
       },
       "confirmTitle": "{action}?",
@@ -7159,6 +7161,8 @@
       "deleteDescription": "The task stops and is removed. Conversations it started stay.",
       "deleteConfirm": "Delete “{name}”?",
       "deleteConfirmBody": "The task stops and is removed. Conversations it started stay.",
+      "deleteAcceptanceBody": "Deleting does not stop the work: while your rule for its source is “Run it at once”, the next work assigned to you makes it again.",
+      "deleteAcceptanceLink": "Change your acceptance rules",
       "created": "Automation created",
       "saved": "Automation saved",
       "started": "Run started",

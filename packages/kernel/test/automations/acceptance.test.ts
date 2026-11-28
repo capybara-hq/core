@@ -492,6 +492,8 @@ describe("directed events: confirm and off", () => {
         eventType: "item.assigned",
         subject: ITEM,
         summary: "Item ITEM-1 was assigned to you.",
+        // the push names the offer's own item: the web opens the offer by it
+        inboxItemId: item?.id,
       },
     });
 
@@ -525,7 +527,23 @@ describe("directed events: confirm and off", () => {
       state: "open",
     });
     expect(told[0]?.body).toContain("Olga");
+    // who declined and for which agent stay as facts the web renders in its own copy
+    expect(told[0]?.detail).toEqual({
+      declinedBy: { id: ownerId, name: "Olga" },
+      agent: { id: agentId, name: "Watcher" },
+    });
     expect(await deliveriesOf(automationId)).toHaveLength(1);
+  });
+
+  it("a declined notice keeps an absolute subject URL as a fact (an in-app link stays the link)", async () => {
+    await setRule(owner, "confirm");
+    const url = "https://tracker.example.com/items/ITEM-9";
+    await dispatch(await assign({ subject: { kind: "item", id: "ITEM-9", title: "Ninth", url } }));
+    const [offer] = await offers();
+    expect((await offerAction(owner, offer?.id as string, "decline")).statusCode).toBe(204);
+    const [told] = await inboxItemsOf(memberId);
+    expect(told?.link).toBeNull();
+    expect(told?.detail).toMatchObject({ subjectUrl: url });
   });
 
   it("decline tells the owner of the run that caused the event; nobody when it is the decliner", async () => {
@@ -543,16 +561,47 @@ describe("directed events: confirm and off", () => {
     await setRule(owner, "confirm");
     const e = await assign();
     await dispatch(e);
-    const later = new Date(Date.now() + 31 * 86_400_000);
-    await sweeper().sweepAt(later);
+    // the event is past retention, its offer is still young (open for seven days)
+    await db
+      .updateTable("trigger_events")
+      .set({ created_at: new Date(Date.now() - 31 * 86_400_000) })
+      .where("id", "=", e)
+      .execute();
+    expect((await sweeper().sweepAt(new Date())).expiredOffers).toBe(0);
     expect(await stateOf(e)).toBe("dispatched");
     const [offer] = await offers();
     expect((await offerAction(owner, offer?.id as string, "decline")).statusCode).toBe(204);
-    await sweeper().sweepAt(later);
+    await sweeper().sweepAt(new Date());
     expect(
       await db.selectFrom("trigger_events").select("id").where("id", "=", e).execute(),
     ).toEqual([]);
     expect(await offers()).toEqual([]);
+  });
+
+  it("the sweep expires an offer open past seven days, resolves its item, then retention ends it", async () => {
+    await setRule(owner, "confirm");
+    const e = await assign();
+    await dispatch(e);
+    const [offer] = await offers();
+    // eight days on: the offer is stale (no longer open), the event not yet past retention
+    const later = new Date(Date.now() + 8 * 86_400_000);
+    const first = await sweeper().sweepAt(later);
+    expect(first).toMatchObject({ expiredOffers: 1, deleted: 0 });
+    expect((await offers())[0]).toMatchObject({ id: offer?.id, state: "expired" });
+    expect((await inboxItemsOf(ownerId))[0]).toMatchObject({
+      id: offer?.inbox_item_id,
+      state: "resolved",
+    });
+    const inbox = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/inbox` });
+    expect((inbox.json() as { items: { type: string }[] }).items).toEqual([]);
+    expect(codeOf(await offerAction(owner, offer?.id as string, "accept"))).toBe(
+      "automation.offer_closed",
+    );
+    // past retention, the expired offer no longer keeps its event
+    expect((await sweeper().sweepAt(new Date(Date.now() + 31 * 86_400_000))).deleted).toBe(1);
+    expect(
+      await db.selectFrom("trigger_events").select("id").where("id", "=", e).execute(),
+    ).toEqual([]);
   });
 
   it("a source whose visible() fails while accepting leaves the offer open (offer_unavailable)", async () => {

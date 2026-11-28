@@ -11,9 +11,11 @@ import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { TriggerDispatcher } from "../../src/automations/events/dispatcher.js";
+import { TriggerEventSweepJob } from "../../src/automations/events/sweep.job.js";
 import { AUTOMATION_SCAN_JOB, TRIGGER_EVENT_SWEEP_JOB } from "../../src/automations/job-ids.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { LifecycleHooks } from "../../src/extensions/lifecycle-hooks.js";
 import { RUN_LIFECYCLE_JOB, runLifecycleJobId } from "../../src/extensions/run-lifecycle-owe.js";
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
@@ -41,11 +43,12 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * `run.lifecycle` (collaboration spec §4.5): the plugin named by a conversation's `subject.source`
- * hears, durably and observe-only, that a run started, waited on a person, finished or failed;
- * the source plugin of a directed event hears `offer_declined` when the work was not run (the
- * person's rule is off, they declined the offer, or their acceptance automation is paused). Only a
- * plugin that declares the hook and is enabled in the org is told; a conversation without a
+ * `run.lifecycle` (collaboration spec §4.8): the plugin named by a conversation's `subject.source`
+ * hears, durably and observe-only, that a run started, waited on a person, resumed, finished,
+ * failed or was aborted; the source plugin of a directed event hears `offer_declined` when the
+ * work was not run (the person's rule is off, they declined the offer, their acceptance automation
+ * is paused, the offer expired, or the event stayed undelivered). Only a plugin that declares the
+ * hook and is enabled in the org (when owed and when delivered) is told; a conversation without a
  * subject tells nobody.
  */
 
@@ -208,7 +211,7 @@ describe("run.lifecycle: runs", () => {
     expect(sourceProbe().lifecycle).toEqual([]);
   });
 
-  it("a run waiting on an approval produces waiting with waitingOn approval, then finished", async () => {
+  it("a run waiting on an approval produces waiting, then resumed once decided, then finished", async () => {
     const conv = await subjectConv(RUN_PLUGIN);
     await postMessage(owner, orgId, conv, ECHO);
     const asked = await waitForEvent(
@@ -232,8 +235,44 @@ describe("run.lifecycle: runs", () => {
       payload: { decision: "approve" },
     });
     expect(res.statusCode, res.body).toBe(200);
-    await delivered(3);
-    expect(phases()).toEqual(["started", "waiting", "finished"]);
+    await delivered(4);
+    expect(phases()).toEqual(["started", "waiting", "resumed", "finished"]);
+    expect(runProbe().calls[2]).toMatchObject({
+      phase: "resumed",
+      waitingOn: "approval",
+      runId: asked.runId,
+      conversationId: conv,
+    });
+    expect(
+      runLifecycleJobId({ id: asked.runId as string, phase: "resumed", waitId: approvalId }),
+    ).toBe(`hook-run-lifecycle-${asked.runId}-resumed-${approvalId}`);
+  });
+
+  it("drops a delivery at its time when the org switched the plugin off after it was owed", async () => {
+    const off = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/${RUN_PLUGIN}`,
+      payload: { enabled: false },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    await k.app.get(LifecycleHooks).process(
+      {
+        mount: "run.lifecycle",
+        plugin: RUN_PLUGIN,
+        payload: {
+          orgId,
+          accountId: ownerId,
+          agentId,
+          agentVersion: 1,
+          conversationId: randomUUID(),
+          runId: randomUUID(),
+          phase: "started",
+          subject: { kind: "item", id: "ITEM-1" },
+        },
+      },
+      new AbortController().signal,
+    );
+    expect(runProbe().calls).toEqual([]);
   });
 
   it("a stopped run produces aborted", async () => {
@@ -429,6 +468,40 @@ describe("run.lifecycle: offer_declined", () => {
     const other: TriggerSubject = { kind: "item", id: "ITEM-2", title: "Second" };
     await dispatch(await assign(other));
     expect(await told()).toEqual([expected("paused", other)]);
+  });
+
+  it("an offer the sweep expires produces offer_declined with reason expired", async () => {
+    await setRule("confirm");
+    await dispatch(await assign());
+    await db
+      .updateTable("automation_offers")
+      .set({ created_at: new Date(Date.now() - 8 * 86_400_000) })
+      .where("org_id", "=", orgId)
+      .execute();
+    expect((await k.app.get(TriggerEventSweepJob).sweepAt(new Date())).expiredOffers).toBe(1);
+    expect(await told()).toEqual([expected("expired")]);
+  });
+
+  it("a directed event the sweep gives up on produces offer_declined with reason undelivered", async () => {
+    const id = randomUUID();
+    await db
+      .insertInto("trigger_events")
+      .values({
+        id,
+        org_id: orgId,
+        plugin: SOURCE,
+        type: "item.assigned",
+        subject: JSON.stringify(ITEM),
+        facts: JSON.stringify({ status: "open" }),
+        summary: "Assigned before.",
+        dedupe_key: id,
+        audience: JSON.stringify({ accountId: ownerId, agentId }),
+        state: "pending",
+        created_at: new Date(Date.now() - 25 * 3_600_000),
+      })
+      .execute();
+    await k.app.get(TriggerEventSweepJob).sweepAt(new Date());
+    expect(await told()).toEqual([expected("undelivered")]);
   });
 
   it("a plugin that did not declare run.lifecycle is told nothing", async () => {

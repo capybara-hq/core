@@ -89,7 +89,10 @@ export interface PersonView {
  * `ctx.people` (requires `permissions.people: { read: true }`): members of the org only.
  */
 export interface PeopleCtx {
-  /** The given accounts that are members of the org (others are dropped), at most {@link PEOPLE_GET_MAX} ids. */
+  /**
+   * The given accounts that are members of the org (others are dropped), at most
+   * {@link PEOPLE_GET_MAX} ids.
+   */
   get(args: { orgId: string; accountIds: string[] }): Promise<PersonView[]>;
   /**
    * Active members whose display name contains `query` (case-insensitive), by name; an empty

@@ -255,15 +255,18 @@ export class RunResume {
    * Locks the run row (`FOR UPDATE`); when it is `waiting` and waits on nothing else (no pending
    * approval or input request, no active fork sub-agent), sets it `queued` (adding this wait's
    * time to `waited_ms`, recording the resume job id) and owes the resume job
-   * {@link resumeJobId}`(conversation, waitId)` on its conversation kind's run queue. A `running`
-   * run is left alone: its suspend has not set `waiting` yet and re-checks the wait after.
+   * {@link resumeJobId}`(conversation, waitId)` on its conversation kind's run queue, and, when
+   * the wait was on a person and the conversation has a subject, `run.lifecycle` `resumed` (not
+   * for compact runs). A `running` run is left alone: its suspend has not set `waiting` yet and
+   * re-checks the wait after.
    */
   @Transactional({ propagation: "mandatory" })
   async resumeIn(runId: string, waitId: string): Promise<ResumeOutcome> {
     const t = this.kdb.db;
+    // the wait's expiry is set only for a wait on sub-agents: null here is a wait on a person
     const run = await t
       .selectFrom("runs")
-      .select("status")
+      .select(["status", "wait_expires_at", "compact", "agent_version", "trigger_account_id"])
       .where("id", "=", runId)
       .forUpdate()
       .executeTakeFirst();
@@ -330,9 +333,27 @@ export class RunResume {
     // org-filter: the conversation of the run row just resumed above; reads its own org
     const conv = await t
       .selectFrom("conversations")
-      .select(["kind", "org_id"])
+      .select(["kind", "org_id", "agent_id", "subject"])
       .where("id", "=", row.conversation_id)
       .executeTakeFirstOrThrow();
+    // a person's wait cleared and the run continues: told to the subject's plugin, one notice per
+    // wait; the reads above carry what it needs, so a conversation without a subject costs no query
+    if (conv.subject !== null && run.wait_expires_at === null && !run.compact) {
+      await oweRunLifecycleFor(
+        t,
+        this.outbox,
+        {
+          orgId: conv.org_id,
+          conversationId: row.conversation_id,
+          runId,
+          agentId: conv.agent_id,
+          agentVersion: run.agent_version,
+          accountId: run.trigger_account_id,
+          subject: conv.subject,
+        },
+        { phase: "resumed", waitingOn: await this.waitKind(conv.org_id, runId, waitId), waitId },
+      );
+    }
     await this.outbox.add<RunJobData>({
       queue: runQueueNameFor(conv.kind),
       name: RUN_JOB,
@@ -341,6 +362,23 @@ export class RunResume {
       orgId: conv.org_id,
     });
     return "queued";
+  }
+
+  /** What the cleared wait `waitId` of `runId` was: an approval (a permission one too), else input. */
+  private async waitKind(
+    orgId: string,
+    runId: string,
+    waitId: string,
+  ): Promise<"approval" | "input"> {
+    if (waitId.startsWith("permission-")) return "approval";
+    const approval = await this.kdb.db
+      .selectFrom("approvals")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("id", "=", waitId)
+      .where("run_id", "=", runId)
+      .executeTakeFirst();
+    return approval !== undefined ? "approval" : "input";
   }
 }
 

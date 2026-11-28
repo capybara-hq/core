@@ -119,10 +119,12 @@ ctx.setup.check("bot-token", {
   facts for pages (`permissions.agents`, `conversations`, `people`; each call names an `orgId`, and
   the extension must be enabled there). They return ids, names and avatars, never emails or
   conversation content.
-- The `run.lifecycle` hook (`permissions.hooks`) tells the extension that a run of a conversation
-  about its subject started, is waiting on a person, finished or failed, and that directed work was
-  not run (`offer_declined`). It is delivered at least once: make the handler idempotent and treat
-  it as a hint. For events about your subjects see `trigger-source`.
+- The `run.lifecycle` hook (`permissions.hooks`) tells the extension each phase of a run of a
+  conversation about its subject: `started`, `waiting` (on a person), `resumed` (that wait
+  cleared), `finished`, `failed` or `aborted`; and that directed work was not run
+  (`offer_declined`, `reason` `off`, `declined`, `paused`, `expired` or `undelivered`). It is
+  delivered at least once: make the handler idempotent and treat it as a hint. For events about
+  your subjects see `trigger-source`.
 
 ## Extension points
 
