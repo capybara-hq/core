@@ -433,7 +433,7 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     ).toEqual([]);
   });
 
-  it("the paper drops with the rail: the band is ground across the window, the paper below it", () => {
+  it("in the rail's form the paper's first row sits in the band; the paper's colour starts below it", () => {
     const css$ = css("shell-environment.css");
     expect(css$).toMatch(
       /@property --cb-shell-paper-drop \{[^}]*syntax: "<length>";[^}]*initial-value: 0px;/,
@@ -448,48 +448,77 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     for (const r of drops) {
       expect(r.decls["--cb-shell-paper-drop"]).toBe("var(--cb-shell-rail-drop)");
       expect(r.selector).toContain('.cb-shell:not([data-banner="true"]):has(');
-      expect(r.selector).toContain(".cb-sidebar[data-");
       expect(r.selector).not.toContain('data-mode="full"');
     }
     expect(drops.find((r) => r.at === "(min-width: 841px)")?.selector).toContain(
       '[data-collapsed="true"]',
     );
-    // the content column (and so its paper, or the conversation's two papers) starts below the band
+    const Q = "not style(--cb-shell-paper-drop: 0px)";
+    const PAGE =
+      ':root[data-shell="desktop"] .cb-shell-column > .cb-shell-main:not(:has(.cb-conv-page))';
+    const CONV = ':root[data-shell="desktop"] .cb-shell-main .cb-conv-main';
+    // the paper's box starts at the window's top edge, so its first row is the band's height
+    expect(decl(PAGE, "margin-top", Q)).toBe("0");
+    expect(decl(':root[data-shell="desktop"] .cb-shell-main .cb-conv-page', "padding-top", Q)).toBe(
+      "0",
+    );
+    expect(decl(`${CONV} > .cb-title-bar`, "height", Q)).toBe(
+      "max(var(--cb-layout-title-bar), var(--cb-shell-row))",
+    );
+    expect(
+      decl(':root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path', "min-height", Q),
+    ).toBe("var(--cb-shell-row)");
+    // the paper's colour is a layer space.2 below the band: the box is transparent over the band
+    const paper = rules().find((r) => r.at === Q && r.selector === `${PAGE}, ${CONV}`);
+    expect(paper?.decls.background).toBe("transparent");
+    const layer = rules().find(
+      (r) => r.at === Q && r.selector === `${PAGE}::before, ${CONV}::before`,
+    );
+    expect(layer?.decls.inset).toBe("calc(var(--cb-shell-row) + var(--cb-space-2)) 0 0");
+    expect(layer?.decls.background).toBe("var(--cb-bg)");
+    // the next row starts on the paper; a first-level head (no path row) starts inside it
+    expect(decl(`${CONV} > .cb-title-bar`, "margin-bottom", Q)).toBe("var(--cb-space-2)");
     expect(
       decl(
-        ':root[data-shell="desktop"] .cb-shell > .cb-shell-column',
+        ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))',
         "padding-top",
-        "(min-width: 600px)",
+        Q,
       ),
-    ).toBe("var(--cb-shell-paper-drop)");
-    // below the band the column has no top row, and the paper keeps clear of no controls
-    const PAPER_QUERY = "not style(--cb-shell-paper-drop: 0px)";
-    for (const v of ["--cb-shell-row", "--cb-shell-row-start", "--cb-shell-row-end"]) {
-      expect(decl(':root[data-shell="desktop"] .cb-shell > .cb-shell-column', v, PAPER_QUERY)).toBe(
-        "0px",
-      );
-    }
-    for (const v of [
-      "--cb-shell-reserve-start",
-      "--cb-shell-reserve-end",
-      "--cb-shell-column-reserve",
-    ]) {
-      expect(
-        decl(':root[data-shell="desktop"] .cb-shell-column > .cb-shell-main', v, PAPER_QUERY),
-      ).toBe("0px");
-    }
-    // the column keeps its reserve: the gutter above the paper still starts after the toggle
+    ).toBe("calc(var(--cb-shell-row) + var(--cb-space-2) + var(--cb-space-5))");
+    // the inline panel's paper starts at the same line, the strip above it a filler
+    expect(
+      decl(
+        ':root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full])',
+        "padding-top",
+        Q,
+      ),
+    ).toBe("calc(var(--cb-shell-row) + var(--cb-space-2))");
+    expect(
+      decl(
+        ':root[data-shell="desktop"] .cb-shell-main .cb-conv-panel > .cb-drag-fill',
+        "height",
+        Q,
+      ),
+    ).toBe("calc(var(--cb-shell-row) + var(--cb-space-2))");
+    // the band's rows keep their reserves: no rule clears the row, the start reserve or the
+    // column reserve, so the row starts after the toggle and ends clear of end controls
     expect(
       rules().filter(
         (r) =>
-          r.selector.endsWith(".cb-shell-column") && r.decls["--cb-shell-column-reserve"] === "0px",
+          r.at === Q &&
+          [
+            "--cb-shell-row",
+            "--cb-shell-reserve-start",
+            "--cb-shell-reserve-end",
+            "--cb-shell-column-reserve",
+          ].some((v) => r.decls[v] !== undefined),
       ),
     ).toEqual([]);
-    // no paper rule reads the drop in the full sidebar's form or below 600
+    // no rule reads the drop in the full sidebar's form or below 600
     expect(
       rules().filter(
         (r) =>
-          /paper-drop/.test(Object.values(r.decls).join()) &&
+          /paper-drop/.test(Object.values(r.decls).join() + (r.at ?? "")) &&
           (/data-mode="full"/.test(r.selector) ||
             /not all and \(min-width: 600px\)/.test(r.at ?? "")),
       ),
@@ -500,7 +529,10 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     const pseudo = parseCss(css("shell-environment.css")).filter(
       (r) => /::(after|before)/.test(r.selector) && /\.cb-shell\b/.test(r.selector),
     );
-    expect(pseudo.filter((r) => r.decls.content !== undefined)).toEqual([]);
+    // (the paper's colour layer under the band's rows is a surface, not a line)
+    expect(
+      pseudo.filter((r) => r.decls.content !== undefined && r.decls.background !== "var(--cb-bg)"),
+    ).toEqual([]);
   });
 
   it("the expand button sits in the band right after the controls, and leaves the rail", () => {
@@ -1032,11 +1064,6 @@ describe("the paper's top gutter in the desktop shell (layered shell spec §5)",
     expect(
       wide.find((r) => r.selector === ':root[data-shell="desktop"] .cb-shell-gutter')?.decls.left,
     ).toBe("var(--cb-shell-column-reserve, 0px)");
-    // where the paper drops below the band, the gutter reaches down to the paper: the band's empty
-    // ground after the toggle drags the window
-    expect(
-      wide.find((r) => r.selector === ':root[data-shell="desktop"] .cb-shell-gutter')?.decls.height,
-    ).toBe("calc(var(--cb-space-2) + var(--cb-shell-paper-drop))");
     // and the toggle is a no-drag root as well (a later no-drag region cuts it out of a filler)
     const roots = rules.filter(
       (r) =>
@@ -1053,8 +1080,9 @@ describe("the paper's top gutter in the desktop shell (layered shell spec §5)",
     const tall = wide.find(
       (r) => r.selector.includes("> .cb-shell-gutter") && r.selector.includes(":has("),
     );
+    // (space.2 more in the rail-drop band, where the paper starts space.2 below the band)
     expect(tall?.decls.height).toBe(
-      "calc(max(var(--cb-space-2), var(--cb-shell-row)) + var(--cb-shell-paper-drop))",
+      "calc( max(var(--cb-space-2), var(--cb-shell-row)) + min(var(--cb-space-2), calc(var(--cb-shell-paper-drop) * 100000)) )",
     );
     expect(
       wide.find(

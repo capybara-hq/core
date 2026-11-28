@@ -229,12 +229,23 @@ const ALLOWED: Record<string, Record<string, string[]>> = {
   ':root[data-shell="desktop"] .cb-shell-main .cb-template-head': {
     "padding-top": ["max(0px, calc(var(--cb-space-5) - var(--cb-shell-row) * 100000))"],
   },
-  // A head without a path row (layered shell spec §3) starts below the top row instead.
+  // A head without a path row (layered shell spec §3) starts below the top row instead. The
+  // second values are the rail-drop band's (layered shell spec §2): the path row is the band's
+  // whole height, the paper starts space.2 below it, and the title row starts space.5 into it.
   ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))': {
-    "padding-top": ["max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)))"],
+    "padding-top": [
+      "max(var(--cb-space-5), calc(var(--cb-shell-row) - var(--cb-space-2)))",
+      "calc(var(--cb-shell-row) + var(--cb-space-2) + var(--cb-space-5))",
+    ],
   },
   ':root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path': {
-    "min-height": ["max(0px, calc(var(--cb-shell-row) - var(--cb-space-2)))"],
+    "min-height": [
+      "max(0px, calc(var(--cb-shell-row) - var(--cb-space-2)))",
+      "var(--cb-shell-row)",
+    ],
+  },
+  ':root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path + .cb-pageheader-row': {
+    "margin-top": ["calc(var(--cb-space-2) + var(--cb-space-5))"],
   },
   ".cb-pageheader-description": { margin: ["var(--cb-layout-head-description) 0 0"] },
   ".cb-pageheader-tabs": {

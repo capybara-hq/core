@@ -602,10 +602,10 @@ reports it).
   collapsed on expanded; 48) is narrower than the lights (92): where the reported controls reach
   past the rail, the top row is one continuous band across the whole window on the ground, with no
   vertical divider in it; the lights sit in it, and the rail and its mark start below the band.
-  Since the layered shell (layered shell spec §2, amended for #1046) the paper, or the
-  conversation's two papers, also start below the band, `space.2` under it, so the lights never lie
-  on the paper; the page or conversation title is in the paper's own first row, and no hairline
-  closes the band (it replaced the 2026-11-21 hairline). On expanded the collapsed rail's expand button moves into the band right after the controls and
+  Since the layered shell (layered shell spec §2, amended for #1046) the paper's colour, or the
+  conversation's two papers, start `space.2` below the band, so the lights never lie on the paper;
+  the paper's first row (the conversation title bar, a deeper page's path row) stays in the band
+  after the toggle, and no hairline closes the band (it replaced the 2026-11-21 hairline). On expanded the collapsed rail's expand button moves into the band right after the controls and
   before the title (the title starts after it) and leaves the rail. The medium rail cannot expand;
   its sidebar toggle (maintainer decision 2026-11-21, design spec §6.13) sits in the same place in
   the band and opens the full sidebar as a drawer over the content, starting below the band so the
