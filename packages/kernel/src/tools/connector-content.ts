@@ -31,6 +31,9 @@ import { READ_RESOURCE } from "./resources.js";
 const LIST_TIMEOUT_MS = 10_000;
 /** 一次列出的资源最多条数。 */
 const MAX_RESOURCES = 500;
+/** One connector's listing shows at most this many resources. */
+const MAX_CONNECTOR_RESOURCES = 200;
+const UI_TEMPLATE_MIME = "text/html;profile=mcp-app";
 /** 渲染后的提示文本上限（与消息正文上限一致）。 */
 const MAX_PROMPT_CHARS = 100_000;
 /** 每个附件的正文上限（字符）。 */
@@ -60,6 +63,7 @@ export interface ConnectorResourceView {
   name: string;
   description?: string;
   mimeType?: string;
+  size?: number;
 }
 
 /** 列表时某个连接器不可用：发起人没有连接个人凭据，或连接 / 列出失败（含熔断打开）。 */
@@ -87,6 +91,23 @@ interface ConnectorRow {
   connector: string;
   endpoint: unknown;
   auth: unknown;
+}
+
+/** An MCP app UI template (not content a person can attach): `ui:` URI or the mcp-app HTML profile. */
+export function isUiTemplate(r: { uri: string; mimeType?: string }): boolean {
+  if (r.mimeType !== undefined && r.mimeType.replace(/\s+/g, "").toLowerCase() === UI_TEMPLATE_MIME)
+    return true;
+  return /^ui:/i.test(r.uri);
+}
+
+/** Whether a resource is offered to a person: not a UI template, not empty. */
+export function listableResource(r: {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+  size?: number;
+}): boolean {
+  return !isUiTemplate(r) && r.size !== 0;
 }
 
 const errName = (e: unknown): string =>
@@ -299,13 +320,58 @@ export class ConnectorContent {
     return { text };
   }
 
-  /** 发起人可用的资源；`query` 按名称 / URI / 描述的子串过滤（不区分大小写），最多 {@link MAX_RESOURCES} 条。 */
+  /**
+   * The resources the sender can use; `query` filters by name, URI or description substring (case
+   * insensitive). Without `connectorId`: every active connector, at most {@link MAX_RESOURCES}.
+   * With it: one session on that connector, UI templates and empty resources hidden, at most
+   * {@link MAX_CONNECTOR_RESOURCES}.
+   */
   async listResources(
     orgId: string,
     accountId: string,
-    query?: string,
+    opts: { connectorId?: string; query?: string } = {},
   ): Promise<{ resources: ConnectorResourceView[]; unavailable: ConnectorUnavailable[] }> {
-    const q = query?.trim().toLowerCase() ?? "";
+    const q = opts.query?.trim().toLowerCase() ?? "";
+    const view = (
+      app: ConnectorRow,
+      r: Awaited<ReturnType<NonNullable<ConnectorSession["listResources"]>>>[number],
+    ): ConnectorResourceView => ({
+      connectorId: app.id,
+      connectorSlug: app.slug,
+      connectorName: app.name,
+      uri: r.uri,
+      name: r.name,
+      ...(r.description !== undefined && { description: r.description }),
+      ...(r.mimeType !== undefined && { mimeType: r.mimeType }),
+      ...(r.size !== undefined && { size: r.size }),
+    });
+    const matches = (r: { name: string; uri: string; description?: string }) =>
+      q === "" || [r.name, r.uri, r.description ?? ""].some((v) => v.toLowerCase().includes(q));
+    if (opts.connectorId !== undefined) {
+      const app = await this.connectorRow(orgId, opts.connectorId);
+      if (!(await this.resourcesEnabled([app.id])).has(app.id)) {
+        throw new ApiError(
+          "connector.resources_disabled",
+          "Reading resources is disabled for this connector",
+        );
+      }
+      // A failing connector throws credential.missing / connector.connect_failed here instead of
+      // filling `unavailable`: the caller asked about this one connector only.
+      const items = await this.withSession(
+        orgId,
+        app,
+        accountId,
+        Math.min(this.config.get().tools.timeoutMs, LIST_TIMEOUT_MS),
+        async (s) => (s.listResources ? s.listResources() : []),
+      );
+      return {
+        resources: items
+          .filter((r) => listableResource(r) && matches(r))
+          .slice(0, MAX_CONNECTOR_RESOURCES)
+          .map((r) => view(app, r)),
+        unavailable: [],
+      };
+    }
     const { items, unavailable } = await this.acrossConnectors(
       orgId,
       accountId,

@@ -366,6 +366,7 @@ async function openSession(
           name: x.name,
           ...(typeof x.description === "string" && { description: x.description }),
           ...(typeof x.mimeType === "string" && { mimeType: x.mimeType }),
+          ...(typeof x.size === "number" && { size: x.size }),
         })),
       );
     session.readResource = (uri) =>
