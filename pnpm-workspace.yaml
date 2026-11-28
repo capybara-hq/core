@@ -14,3 +14,10 @@ allowBuilds:
   ssh2: true
 patchedDependencies:
   '@anthropic-ai/sandbox-runtime@0.0.81': patches/@anthropic-ai__sandbox-runtime@0.0.81.patch
+# @lexical/react depends on @lexical/yjs, whose yjs peer is required; the composer has no
+# collaborative editing, so yjs is optional and not installed (composer inline tokens spec §2).
+packageExtensions:
+  '@lexical/yjs@0.53.0':
+    peerDependenciesMeta:
+      yjs:
+        optional: true

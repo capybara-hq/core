@@ -16,7 +16,7 @@ import {
 } from "../../../components/AutomationParts";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
 import type { AutomationsUrl } from "../../../lib/automation-calendar";
 import type { AutomationListItem } from "../../../lib/automations";
@@ -68,6 +68,7 @@ function Automations({
   initial: AutomationsUrl;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("automations");
   const tr = useTranslations("acceptance");
   const [url, setUrl] = useAutomationsUrl(initial);
@@ -79,7 +80,7 @@ function Automations({
   // Only when a source directs events to me: the rules sheet's entry.
   const directed = (useAcceptanceRules(orgId).data?.items.length ?? 0) > 0;
   const header = {
-    path: [...scope, { label: "automations" }],
+    path: [...scope, pw("automations")],
     title: t("title"),
     actions: [
       ...(directed

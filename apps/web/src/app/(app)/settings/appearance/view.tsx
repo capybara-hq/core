@@ -18,7 +18,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
 import {
@@ -63,6 +63,7 @@ export default function AppearanceSettingsView() {
 
 function AppearanceSettings({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("appearance");
   const nav = useOrgSettingsNav();
   const { me } = useSession();
@@ -72,11 +73,7 @@ function AppearanceSettings({ orgId }: { orgId: string }) {
   const components = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data
     ?.components;
   const header = {
-    path: [
-      ...scope,
-      { label: "settings", href: "/settings/organization" },
-      { label: "appearance" },
-    ],
+    path: [...scope, pw("settings", "/settings/organization"), pw("appearance")],
     title: t("title"),
   };
   if (read.kind === "notFound") return <NotFound />;

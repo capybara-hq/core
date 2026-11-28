@@ -40,7 +40,7 @@ import {
   LicenseFact,
   PluginContents,
 } from "../../../../../components/plugin-contents/PluginContents";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import { ApiClientError } from "../../../../../lib/api";
 import {
@@ -119,6 +119,7 @@ export default function PluginDetailGate({ itemId }: { itemId: string }) {
 
 function PluginDetailRead({ itemId, orgId }: { itemId: string; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("catalog.admin.detail");
   const read = usePageQuery(catalogItemQuery(itemId));
   if (read.kind === "notFound") return <NotFound />;
@@ -127,7 +128,7 @@ function PluginDetailRead({ itemId, orgId }: { itemId: string; orgId: string | n
     return (
       <DetailPage
         header={{
-          path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: itemId }],
+          path: [...scope, pw("plugins", "/admin/plugins"), { label: itemId }],
           title: "",
         }}
         tabs={{
@@ -149,6 +150,7 @@ function PluginDetailRead({ itemId, orgId }: { itemId: string; orgId: string | n
 
 function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("catalog.admin");
   const td = useTranslations("catalog");
   const locale = useLocale();
@@ -362,7 +364,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     <>
       <DetailPage
         header={{
-          path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: name }],
+          path: [...scope, pw("plugins", "/admin/plugins"), { label: name }],
           avatar: (
             <ObjectMark
               size={40}

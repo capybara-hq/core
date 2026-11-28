@@ -186,7 +186,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
 
   it("the path's `account` leads to the first personal settings page (profile)", async () => {
     await renderRouteWithCache("/account/connections", ROUTES);
-    const link = await screen.findByRole("link", { name: "account" });
+    const link = await screen.findByRole("link", { name: en.path.home.account });
     expect(link.getAttribute("href")).toBe("/account/profile");
   });
 

@@ -26,7 +26,7 @@ import { ExtensionDeploymentConfig } from "../../../../../components/ExtensionDe
 import { LoginSourceSection } from "../../../../../components/LoginSourceSection";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { SetupGuideSection } from "../../../../../components/SetupGuideSection";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import type { AdminExtension } from "../../../../../lib/admin-extensions";
 import { pointsOf } from "../../../../../lib/extension-capabilities";
 import { extensionLabel, labelLocale } from "../../../../../lib/extension-label";
@@ -78,6 +78,7 @@ export default function ExtensionDetailView({ name }: { name: string }) {
 
 function ExtensionDetail({ name, orgId }: { name: string; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("admin.extensions");
   const qc = useQueryClient();
   const read = usePageQuery(adminExtensionsQuery());
@@ -100,7 +101,7 @@ function ExtensionDetail({ name, orgId }: { name: string; orgId: string | null }
     return (
       <DetailPage
         header={{
-          path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label: name }],
+          path: [...scope, pw("extensions", "/admin/extensions"), { label: name }],
           title: "",
           // the plugin's mark keeps its place
           loading: { title: true, avatar: true },
@@ -153,6 +154,7 @@ function Detail({
   ) => Parameters<typeof DetailPage>[0]["tabs"];
 }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("admin.extensions");
   const qc = useQueryClient();
   const lang = labelLocale(useLocale());
@@ -169,7 +171,7 @@ function Detail({
   return (
     <DetailPage
       header={{
-        path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label }],
+        path: [...scope, pw("extensions", "/admin/extensions"), { label }],
         title: label,
         ...(plugin && {
           // the plugin's icon, the initial without one (spec §6.17)

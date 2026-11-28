@@ -23,6 +23,7 @@ import {
   filtersScopeTreeFindings,
   loadMoreFindings,
   loadMoreTreeFindings,
+  mayDrawLoadMore,
   type SizeBranchAllowed,
   sizeBranchFindings,
   sizeBranchTreeFindings,
@@ -610,6 +611,13 @@ describe("responsive guards (spec §5.3, §7)", () => {
       expect(loadMoreTreeFindings(tree).map((x) => x.file.slice(tree.length + 1))).toEqual([
         "pages/more.tsx",
       ]);
+    });
+
+    it("the tree scan parses only files that can say Load more", () => {
+      expect(
+        ["<LoadMore />", 't("run.loadMore")', "Load More", "加载更多"].map(mayDrawLoadMore),
+      ).toEqual([true, true, true, true]);
+      expect(mayDrawLoadMore("<ObjectList onLoadNext={next} />")).toBe(false);
     });
 
     it("no page of apps/web draws a Load more row", () => {

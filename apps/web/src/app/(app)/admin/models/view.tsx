@@ -31,7 +31,7 @@ import {
 import { useModelDisabling } from "../../../../components/ModelDisabling";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePurposeDrafts } from "../../../../components/PurposeEditor";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import type { ModelKind } from "../../../../lib/agents";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import {
@@ -154,6 +154,7 @@ function AdminModelsRead({
   initialProvider: string;
 }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("models");
   const tc = useTranslations("models.admin.columns");
   const models = usePageQuery(adminModelsQuery());
@@ -162,7 +163,7 @@ function AdminModelsRead({
   const [tab, setTab] = useUrlTab(initialTab, parseModelsTab, "models");
   const [provider, setProvider] = useUrlParam("provider", initialProvider, (r) => r ?? "", "");
   const header = {
-    path: [...scope, { label: "models" }],
+    path: [...scope, pw("models")],
     title: t("admin.title"),
     tabs: (["models", "purposes"] as const).map((id) => ({
       id,

@@ -21,7 +21,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { OrgNetworkSheet } from "../../../../components/OrgNetworkAllowances";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import {
   type AdminOrg,
   type DeploymentSettings,
@@ -70,12 +70,13 @@ export default function AdminOrgsView() {
 
 function AdminOrgs() {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("admin.orgs");
   const orgs = usePageQuery(adminOrgsQuery());
   const settings = usePageQuery(deploymentSettingsQuery());
   const [editing, setEditing] = useState<AdminOrg | null>(null);
   const [network, setNetwork] = useState<AdminOrg | null>(null);
-  const header = { path: [...scope, { label: "orgs" }], title: t("title") };
+  const header = { path: [...scope, pw("orgs")], title: t("title") };
   if (orgs.kind === "notFound" || settings.kind === "notFound") return <NotFound />;
   if (orgs.kind === "error") return <ErrorFrame reset={orgs.retry} />;
   if (settings.kind === "error") return <ErrorFrame reset={settings.retry} />;

@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-import { checkOutboxRegistry } from "../src/outbox-registry.js";
+import { beforeAll, describe, expect, it } from "vitest";
+import { checkOutboxRegistry, mayHoldOutboxFacts } from "../src/outbox-registry.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/outbox-registry/${name}`, import.meta.url));
@@ -46,8 +46,24 @@ describe("checkOutboxRegistry", () => {
     ]);
   });
 
+  it("parses only files that can hold a string constant or an outbox call", () => {
+    expect(mayHoldOutboxFacts('export const WAKE_JOB = "bg-wake";')).toBe(true);
+    expect(mayHoldOutboxFacts("export const A = make(),\n  B = 'b';")).toBe(true);
+    expect(mayHoldOutboxFacts("await this.outbox.add(job);")).toBe(true);
+    expect(mayHoldOutboxFacts("export const LIMIT = 10;\nconst s = 'x';")).toBe(false);
+  });
+});
+
+describe("the real registry", () => {
+  // One whole-kernel scan (about half a second idle, ten times that on a loaded parallel run): in
+  // the hook, bounded by hookTimeout, so the test timeout covers only the assertions (#1087).
+  let findings: ReturnType<typeof checkOutboxRegistry>;
+  beforeAll(() => {
+    findings = checkOutboxRegistry(repoRoot);
+  });
+
   it("passes the real registry", () => {
     expect(existsSync(join(repoRoot, "packages/kernel/src/infra/outbox/registry.ts"))).toBe(true);
-    expect(checkOutboxRegistry(repoRoot)).toEqual([]);
+    expect(findings).toEqual([]);
   });
 });

@@ -366,6 +366,23 @@
   :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
     padding-top: max(var(--cb-space-5), calc(var(--cb-shell-head-row) - var(--cb-space-2)));
   }
+  /* Its top padding (the strip above the title row) is a drag region too (maintainer decision
+     2026-11-28): a filler laid over the padding, as high as it, so every page drags along its top
+     and no control lies under it (the title row starts below). It scrolls with the head, so the
+     body never passes under it. */
+  :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
+    position: relative;
+  }
+  :root[data-shell="desktop"]
+    .cb-shell-main
+    .cb-template-head:not(:has(.cb-pageheader-path))
+    > .cb-template-head-drag {
+    display: block;
+    position: absolute;
+    inset: 0 0 auto;
+    height: max(var(--cb-space-5), calc(var(--cb-shell-head-row) - var(--cb-space-2)));
+    margin: 0;
+  }
   /* In-paper top rows end with the window's top row: the paper starts space.2 below its edge. A
      maximised panel lies under the title bar, so only the inline panel pads below end controls. */
   :root[data-shell="desktop"] .cb-shell-main .cb-title-bar {
@@ -475,6 +492,14 @@
   }
   :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
     padding-top: calc(var(--cb-shell-row) + var(--cb-space-5));
+  }
+  /* (its drag strip: the paper's part of the padding, below the band, which the gutter drags) */
+  :root[data-shell="desktop"]
+    .cb-shell-main
+    .cb-template-head:not(:has(.cb-pageheader-path))
+    > .cb-template-head-drag {
+    top: var(--cb-shell-row);
+    height: var(--cb-space-5);
   }
   /* The conversation's title bar is the band's whole row: it runs to the window's end edge over
      the inline right panel (its end group, the panel and action toggles, at the far end, clear of
@@ -704,7 +729,8 @@
    ground above the page) and the controls area itself (`.cb-shell-band`, a real
    element the AppShell draws over the space every row there keeps empty; across the whole window
    while there is a band). Never a container that holds controls (drag-regions.test.tsx). */
-.cb-shell-band {
+.cb-shell-band,
+.cb-template-head-drag {
   display: none;
 }
 :root[data-shell="desktop"] .cb-shell-band {

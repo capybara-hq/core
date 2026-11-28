@@ -350,7 +350,7 @@ describe("the agent map's entry points", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: MAP })).toBeNull());
     expect(label()).toBe("2 agents");
-    // the child ends: nothing below it counts as running any more, the dot goes
+    // the child ends: nothing below it counts as running any more, the dot turns faint
     act(() => {
       FakeEventSource.instances[0]?.emit(
         "event",
@@ -368,7 +368,9 @@ describe("the agent map's entry points", () => {
     await waitFor(() =>
       expect(agentsChip()?.getAttribute("aria-label")).toBe("2 agents, 0 running"),
     );
-    expect(agentsChip()?.querySelector('[data-part="agent-dot"]')).toBeNull();
+    expect(
+      agentsChip()?.querySelector('[data-part="agent-dot"]')?.hasAttribute("data-status"),
+    ).toBe(false);
   });
 
   it("the chip's tree reads stay bounded: re-renders and known agents' progress read nothing", async () => {
