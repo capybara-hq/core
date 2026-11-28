@@ -57,7 +57,9 @@ let failDispatch = true;
 let seq = 0;
 
 type Emit = (e: TriggerEvent) => Promise<{ eventId: string; duplicate: boolean }>;
-const probe = () => (globalThis as { __fakeTriggerSource?: { emit?: Emit } }).__fakeTriggerSource;
+type CauseOf = (call: ToolCallContext) => Promise<string>;
+const probe = () =>
+  (globalThis as { __fakeTriggerSource?: { emit?: Emit; causeOf?: CauseOf } }).__fakeTriggerSource;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -240,6 +242,7 @@ describe("ctx.triggers.emit", () => {
     ["a missing subject title", { subject: { kind: "item", id: "1", title: "" } }],
     ["a summary over 4 KB", { summary: "x".repeat(4097) }],
     ["a cause with neither shape", { cause: {} as never }],
+    ["a cause with two shapes", { cause: { handle: "h", accountId: "a" } as never }],
     [
       "a javascript: subject url",
       { subject: { kind: "item", id: "1", title: "t", url: "javascript:alert(1)" } },
@@ -370,6 +373,137 @@ describe("ctx.triggers.emit", () => {
     await expect(
       emit({ orgId: other, cause: { call: pipelineCall(run.id, conv) } }),
     ).rejects.toMatchObject({ code: "invalid_event" });
+  });
+
+  /** A run of `orgId` (its conversation too) that started from an event of `depth`. */
+  async function runAtDepth(depth: number) {
+    const { run } = await emitFromRun({
+      type: "item.created",
+      subject: { kind: "item", id: "ITEM-4", title: "Fourth" },
+      facts: {},
+      summary: "Item ITEM-4 was created.",
+      dedupeKey: `seed-${++seq}`,
+    });
+    const conv = (
+      await db
+        .selectFrom("runs")
+        .select("conversation_id")
+        .where("id", "=", run.id)
+        .executeTakeFirstOrThrow()
+    ).conversation_id;
+    const from = await emit();
+    await sql`UPDATE capybara.trigger_events SET depth = ${depth} WHERE id = ${from.eventId}`.execute(
+      raw,
+    );
+    await sql`UPDATE capybara.runs SET trigger_event_id = ${from.eventId} WHERE id = ${run.id}`.execute(
+      raw,
+    );
+    return { runId: run.id, conv };
+  }
+
+  const causeOf = (call: ToolCallContext) => {
+    const fn = probe()?.causeOf;
+    if (!fn) throw new Error("fake-trigger-source did not set up");
+    return fn(call);
+  };
+
+  it("a cause handle carries the call's run and depth through a queued emit", async () => {
+    const { runId, conv } = await runAtDepth(2);
+    const before = Date.now();
+    const handle = await causeOf(pipelineCall(runId, conv));
+    expect(
+      await db
+        .selectFrom("trigger_cause_handles")
+        .selectAll()
+        .where("id", "=", handle)
+        .executeTakeFirstOrThrow(),
+    ).toMatchObject({
+      org_id: orgId,
+      plugin: PLUGIN,
+      run_id: runId,
+      depth: 3,
+      cause_account_id: ownerId,
+    });
+    const row = await db
+      .selectFrom("trigger_cause_handles")
+      .select("expires_at")
+      .where("id", "=", handle)
+      .executeTakeFirstOrThrow();
+    const ttl = new Date(row.expires_at).getTime() - before;
+    expect(ttl).toBeGreaterThan(23.9 * 3_600_000);
+    expect(ttl).toBeLessThanOrEqual(24 * 3_600_000 + 60_000);
+    // the job's payload is JSON: only the handle survives the trip
+    const payload = JSON.parse(JSON.stringify({ handle })) as { handle: string };
+    for (const key of ["queued-1", "queued-2"]) {
+      const r = await emit({ dedupeKey: key, cause: { handle: payload.handle } });
+      expect(await eventRow(r.eventId)).toMatchObject({
+        cause_run_id: runId,
+        cause_account_id: ownerId,
+        depth: 3,
+      });
+    }
+    // the run's trigger event deleted by retention within the handle's life: the minted depth holds
+    await sql`UPDATE capybara.runs SET trigger_event_id = 'gone' WHERE id = ${runId}`.execute(raw);
+    const r = await emit({ dedupeKey: "queued-after-retention", cause: { handle } });
+    expect(await eventRow(r.eventId)).toMatchObject({ cause_run_id: runId, depth: 3 });
+    // a run no longer of the org (its conversation gone) refuses the handle
+    await sql`DELETE FROM capybara.conversations WHERE id = ${conv}`.execute(raw);
+    await expect(emit({ cause: { handle } })).rejects.toMatchObject({ code: "invalid_event" });
+  });
+
+  it("a cause handle is refused for another org, another plugin, past its expiry or forged", async () => {
+    const { runId, conv } = await runAtDepth(0);
+    const handle = await causeOf(pipelineCall(runId, conv));
+    // another org where the plugin is enabled too
+    const other = await orgWithSource("Other");
+    await expect(emit({ orgId: other, cause: { handle } })).rejects.toMatchObject({
+      code: "invalid_event",
+    });
+    // a handle another plugin made for the same org and run
+    await db
+      .insertInto("trigger_cause_handles")
+      .values({
+        id: "foreign-handle",
+        org_id: orgId,
+        plugin: "another-plugin",
+        run_id: runId,
+        depth: 0,
+        expires_at: new Date(Date.now() + 3_600_000),
+      })
+      .execute();
+    await expect(emit({ cause: { handle: "foreign-handle" } })).rejects.toMatchObject({
+      code: "invalid_event",
+    });
+    // forged ids
+    for (const forged of ["no-such-handle", "", 42 as never])
+      await expect(emit({ cause: { handle: forged } })).rejects.toMatchObject({
+        code: "invalid_event",
+      });
+    // past its expiry
+    await expect(emit({ cause: { handle } })).resolves.toMatchObject({ duplicate: false });
+    await sql`UPDATE capybara.trigger_cause_handles SET expires_at = now() - interval '1 second'
+      WHERE id = ${handle}`.execute(raw);
+    await expect(emit({ cause: { handle } })).rejects.toMatchObject({ code: "invalid_event" });
+  });
+
+  it("causeOf refuses a context the pipeline did not make, or one naming another org", async () => {
+    await expect(causeOf({ orgId, accountId: ownerId } as ToolCallContext)).rejects.toMatchObject({
+      name: "TriggerError",
+      code: "invalid_event",
+    });
+    await expect(causeOf({} as ToolCallContext)).rejects.toMatchObject({ code: "invalid_event" });
+    const { runId, conv } = await runAtDepth(0);
+    const other = await orgWithSource("Other");
+    const call = pipelineCall(runId, conv);
+    (call as { orgId: string }).orgId = other;
+    await expect(causeOf(call)).rejects.toMatchObject({ code: "invalid_event" });
+    expect(
+      await db
+        .selectFrom("trigger_cause_handles")
+        .select("id")
+        .where("org_id", "=", other)
+        .execute(),
+    ).toEqual([]);
   });
 
   it("the owed dispatch is delivered to the maintenance queue", async () => {

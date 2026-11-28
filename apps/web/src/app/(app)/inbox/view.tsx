@@ -6,6 +6,7 @@ import {
   Button,
   CodeBlock,
   clipCommand,
+  DangerConfirm,
   DateTime,
   Field,
   formatDateTime,
@@ -46,7 +47,12 @@ import {
 import { usePagePath } from "../../../components/shell/path";
 import { Link, useRouter } from "../../../i18n/navigation";
 import type { Approval, ApprovalScope } from "../../../lib/approvals";
-import { addAutomationGrants, connectionOf } from "../../../lib/automations";
+import {
+  acceptAutomationOffer,
+  addAutomationGrants,
+  connectionOf,
+  declineAutomationOffer,
+} from "../../../lib/automations";
 import {
   type CatalogRequest,
   decideOrgRequest,
@@ -61,11 +67,15 @@ import {
 import { useHashItem } from "../../../lib/hash-item";
 import {
   type AutomationAttention,
+  type AutomationOffer,
+  clickInboxItemAction,
+  dismissInboxItem,
   dismissNotice,
   hasNotice,
   type InboxItem,
   isShowable,
   type OrgNotice,
+  type PersonalInboxItem,
 } from "../../../lib/inbox";
 import { networkGrantHost } from "../../../lib/network-hosts";
 import { entryOfRequest } from "../../../lib/pending-connectors";
@@ -124,7 +134,12 @@ function Inbox({
   // The two-level stack (spec §6.47): the list is the page until an item is opened; the open item
   // is in the URL hash, so the system back closes it and `#item=<id>` deep-links.
   const hashItem = useHashItem();
-  const active = rows.find((a) => a.id === (hashItem.id ?? activeId)) ?? rows[0];
+  // an offer's push opens its own item's id: the offer stands for it
+  const wanted = hashItem.id ?? activeId;
+  const active =
+    rows.find(
+      (a) => a.id === wanted || (a.type === "automation_offer" && a.offer.inboxItemId === wanted),
+    ) ?? rows[0];
   const [scope, setScope] = useState<ApprovalScope>("once");
   const approvals = useDecide(orgId);
   const changes = useDecideSkillChange(orgId);
@@ -147,6 +162,44 @@ function Inbox({
     fn: (id: string) => dismissOrgRequest(orgId, id),
     invalidates: () => inboxChangeKeys(orgId),
   });
+  const ti = useTranslations("inbox.item");
+  // A `danger` button of a personal item waits for its confirmation here
+  const [dangerAction, setDangerAction] = useState<{
+    item: PersonalInboxItem;
+    action: PersonalInboxItem["actions"][number];
+  } | null>(null);
+  // A personal item: pressing a button runs the plugin's action as me; dismissing closes it.
+  // Either changes only the inbox (the plugin refreshes its own views).
+  const itemActionMutation = useAppMutation({
+    fn: (v: { id: string; actionId: string }) =>
+      clickInboxItemAction(orgId, v.id, v.actionId, locale === "zh" ? "zh" : "en"),
+    invalidates: () => inboxChangeKeys(orgId),
+  });
+  const dismissItemMutation = useAppMutation({
+    fn: (id: string) => dismissInboxItem(orgId, id),
+    invalidates: () => inboxChangeKeys(orgId),
+  });
+  const to = useTranslations("inbox.offer");
+  // Accepting work makes (or uses) my acceptance automation, so my automations change too;
+  // declining changes only the inbox
+  const acceptOfferMutation = useAppMutation({
+    fn: (id: string) => acceptAutomationOffer(orgId, id),
+    invalidates: () => [keys.org(orgId).automationsAll(), ...inboxChangeKeys(orgId)],
+  });
+  const declineOfferMutation = useAppMutation({
+    fn: (id: string) => declineAutomationOffer(orgId, id),
+    invalidates: () => inboxChangeKeys(orgId),
+  });
+  async function decideOffer(offer: AutomationOffer, decision: "accept" | "decline") {
+    try {
+      if (decision === "accept") await acceptOfferMutation.mutateAsync(offer.id);
+      else await declineOfferMutation.mutateAsync(offer.id);
+      handled(offer.id, to(decision === "accept" ? "accepted" : "declined"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+      handled(offer.id, null);
+    }
+  }
   const tdd = useTranslations("inbox.requestDecided");
   const tsa = useTranslations("inboxAutomation");
   const tnr = useTranslations("inbox.network");
@@ -211,6 +264,8 @@ function Inbox({
     automationReason: (a) => automationReason(a, tsa, departed),
     network: tnr("label"),
     networkDecided: tnr("decidedLabel"),
+    item: (i) => personalItemTexts(i, ti, locale),
+    offer: to("label"),
   };
   /**
    * An item was handled (or failed as already handled elsewhere: it is no longer pending): it is
@@ -284,6 +339,26 @@ function Inbox({
     }
   }
 
+  async function pressItemAction(item: PersonalInboxItem, actionId: string) {
+    try {
+      const r = await itemActionMutation.mutateAsync({ id: item.id, actionId });
+      handled(item.id, r.toast ? r.toast[locale === "zh" ? "zh" : "en"] : ti("done"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+      handled(item.id, null);
+    }
+  }
+
+  async function dismissItem(item: PersonalInboxItem) {
+    try {
+      await dismissItemMutation.mutateAsync(item.id);
+      handled(item.id, ti("dismissed"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+      handled(item.id, null);
+    }
+  }
+
   async function dismiss(notice: OrgNotice) {
     setNoticePending(true);
     try {
@@ -300,107 +375,132 @@ function Inbox({
   const detail: Detail | null =
     active === undefined
       ? null
-      : active.type === "automation_attention"
-        ? automationDetail({
-            attention: active.attention,
-            createdAt: active.createdAt,
-            pending: addGrantMutation.isPending,
-            onAdd: (k) => void addGrant(active.attention.taskId, k),
-            onOpen: () =>
-              router.push(`/automations/${encodeURIComponent(active.attention.taskId)}`),
-            tsa,
-            t,
-            departed,
+      : active.type === "automation_offer"
+        ? offerDetail({
+            offer: active.offer,
+            pending: acceptOfferMutation.isPending || declineOfferMutation.isPending,
+            onDecide: (d) => void decideOffer(active.offer, d),
+            to,
+            locale,
           })
-        : hasNotice(active)
-          ? noticeDetail({
-              notice: active.notice,
-              pending: noticePending,
-              onDismiss: () => void dismiss(active.notice),
-              tnn,
-              t,
+        : active.type === "item"
+          ? personalItemDetail({
+              item: active.item,
+              pending: itemActionMutation.isPending || dismissItemMutation.isPending,
+              onAction: (actionId) => void pressItemAction(active.item, actionId),
+              onDanger: (action) => setDangerAction({ item: active.item, action }),
+              onDismiss: () => void dismissItem(active.item),
+              // an in-app path stays on the router; a subject outside the app opens in a new tab
+              onOpen: (link) =>
+                link.startsWith("/")
+                  ? router.push(link)
+                  : window.open(link, "_blank", "noopener,noreferrer"),
+              ti,
               locale,
             })
-          : active.type === "catalog_request_decided" && isNetworkRequest(active.request)
-            ? networkDecidedDetail({
-                request: active.request,
-                pending: noticePending,
-                onDismiss: () => void dismissDecided(active.request),
-                tnr,
-                tdd,
+          : active.type === "automation_attention"
+            ? automationDetail({
+                attention: active.attention,
+                createdAt: active.createdAt,
+                pending: addGrantMutation.isPending,
+                onAdd: (k) => void addGrant(active.attention.taskId, k),
+                onOpen: () =>
+                  router.push(`/automations/${encodeURIComponent(active.attention.taskId)}`),
+                tsa,
                 t,
+                departed,
               })
-            : active.type === "catalog_request" && isNetworkRequest(active.request)
-              ? networkRequestDetail({
-                  request: active.request,
-                  pending: requestPending,
-                  reason: rejectReason,
-                  setReason: setRejectReason,
-                  onDecide: (d) => void decideRequest(active.request, d, rejectReason),
-                  tnr,
-                  td,
+            : hasNotice(active)
+              ? noticeDetail({
+                  notice: active.notice,
+                  pending: noticePending,
+                  onDismiss: () => void dismiss(active.notice),
+                  tnn,
                   t,
-                  departed,
+                  locale,
                 })
-              : active.type === "catalog_request_decided" && isSetupRequest(active.request)
-                ? setupDecidedDetail({
+              : active.type === "catalog_request_decided" && isNetworkRequest(active.request)
+                ? networkDecidedDetail({
                     request: active.request,
                     pending: noticePending,
                     onDismiss: () => void dismissDecided(active.request),
-                    ts,
+                    tnr,
                     tdd,
                     t,
                   })
-                : active.type === "catalog_request" && isSetupRequest(active.request)
-                  ? setupRequestDetail({
+                : active.type === "catalog_request" && isNetworkRequest(active.request)
+                  ? networkRequestDetail({
                       request: active.request,
                       pending: requestPending,
                       reason: rejectReason,
                       setReason: setRejectReason,
-                      onConfigure: () => setConfiguring(active.request),
-                      onReject: () => void decideRequest(active.request, "reject", rejectReason),
-                      ts,
+                      onDecide: (d) => void decideRequest(active.request, d, rejectReason),
+                      tnr,
                       td,
                       t,
-                      locale,
+                      departed,
                     })
-                  : active.type === "catalog_request_decided"
-                    ? decidedRequestDetail({
+                  : active.type === "catalog_request_decided" && isSetupRequest(active.request)
+                    ? setupDecidedDetail({
                         request: active.request,
                         pending: noticePending,
                         onDismiss: () => void dismissDecided(active.request),
+                        ts,
                         tdd,
                         t,
-                        locale,
                       })
-                    : active.type === "catalog_request"
-                      ? directoryRequestDetail({
+                    : active.type === "catalog_request" && isSetupRequest(active.request)
+                      ? setupRequestDetail({
                           request: active.request,
                           pending: requestPending,
-                          onDecide: (d) => void decideRequest(active.request, d),
+                          reason: rejectReason,
+                          setReason: setRejectReason,
+                          onConfigure: () => setConfiguring(active.request),
+                          onReject: () =>
+                            void decideRequest(active.request, "reject", rejectReason),
+                          ts,
                           td,
                           t,
                           locale,
                         })
-                      : active.type === "tool_approval"
-                        ? toolApprovalDetail({
-                            approval: knownApproval(active.approval, cachedApproval),
-                            scope,
-                            setScope,
-                            pending: approvals.pending,
-                            onDecide: (d) => void decideApproval(active.approval, d),
-                            openConversation: () => router.push(active.approval.conversationPath),
+                      : active.type === "catalog_request_decided"
+                        ? decidedRequestDetail({
+                            request: active.request,
+                            pending: noticePending,
+                            onDismiss: () => void dismissDecided(active.request),
+                            tdd,
+                            t,
                             locale,
-                            t,
-                            ta,
                           })
-                        : skillChangeDetail({
-                            orgId,
-                            change: active.skillChange,
-                            pending: changes.pending,
-                            onDecide: (d) => void decideChange(active.skillChange, d),
-                            t,
-                          });
+                        : active.type === "catalog_request"
+                          ? directoryRequestDetail({
+                              request: active.request,
+                              pending: requestPending,
+                              onDecide: (d) => void decideRequest(active.request, d),
+                              td,
+                              t,
+                              locale,
+                            })
+                          : active.type === "tool_approval"
+                            ? toolApprovalDetail({
+                                approval: knownApproval(active.approval, cachedApproval),
+                                scope,
+                                setScope,
+                                pending: approvals.pending,
+                                onDecide: (d) => void decideApproval(active.approval, d),
+                                openConversation: () =>
+                                  router.push(active.approval.conversationPath),
+                                locale,
+                                t,
+                                ta,
+                              })
+                            : skillChangeDetail({
+                                orgId,
+                                change: active.skillChange,
+                                pending: changes.pending,
+                                onDecide: (d) => void decideChange(active.skillChange, d),
+                                t,
+                              });
 
   if (inbox === null) {
     return (
@@ -419,6 +519,32 @@ function Inbox({
   const setupAgent = configuring?.agent ?? null;
   return (
     <>
+      {dangerAction !== null && (
+        <DangerConfirm
+          open
+          onOpenChange={(o) => {
+            if (!o) setDangerAction(null);
+          }}
+          title={ti("confirmTitle", {
+            action: dangerAction.action.label[locale === "zh" ? "zh" : "en"],
+          })}
+          description={
+            <Text>
+              {ti("confirmHint", {
+                title: dangerAction.item.title,
+                action: dangerAction.action.label[locale === "zh" ? "zh" : "en"],
+              })}
+            </Text>
+          }
+          confirmName={dangerAction.action.label[locale === "zh" ? "zh" : "en"]}
+          confirmLabel={dangerAction.action.label[locale === "zh" ? "zh" : "en"]}
+          onConfirm={async () => {
+            const { item, action } = dangerAction;
+            setDangerAction(null);
+            await pressItemAction(item, action.id);
+          }}
+        />
+      )}
       {configuring !== null && setupAgent !== null && (
         <PendingConnectorDialog
           orgId={orgId}
@@ -486,8 +612,13 @@ function Inbox({
   );
 }
 
-/** An item that waits for my decision (the row's warn dot, spec §6.47); notices and answers don't. */
+/**
+ * An item that waits for my decision (the row's warn dot, spec §6.47); notices, answers and
+ * personal items without buttons don't.
+ */
 const waitsForMe = (i: InboxItem): boolean =>
+  (i.type === "item" && i.item.actions.length > 0) ||
+  i.type === "automation_offer" ||
   i.type === "tool_approval" ||
   i.type === "skill_change" ||
   i.type === "automation_attention" ||
@@ -499,7 +630,7 @@ const subjectOf = (i: InboxItem): string =>
     ? i.approval.id
     : i.type === "skill_change"
       ? i.skillChange.id
-      : i.type === "automation_attention"
+      : i.type === "automation_attention" || i.type === "item" || i.type === "automation_offer"
         ? i.id
         : hasNotice(i)
           ? i.notice.id
@@ -519,6 +650,8 @@ interface Labels {
   automationReason(a: AutomationAttention): string;
   network: string;
   networkDecided: string;
+  item(i: PersonalInboxItem): { source: string; label: string | null };
+  offer: string;
 }
 
 /**
@@ -532,6 +665,22 @@ function rowOf(
   locale: string,
 ): { title: string; trailing: string | null; description: string } {
   const joined = (...parts: string[]) => parts.filter((p) => p !== "").join(" · ");
+  if (item.type === "automation_offer") {
+    const o = item.offer;
+    return {
+      title: o.subject.title,
+      trailing: null,
+      description: joined(labels.offer, o.sourceName[locale === "zh" ? "zh" : "en"], o.agent.name),
+    };
+  }
+  if (item.type === "item") {
+    const texts = labels.item(item.item);
+    return {
+      title: item.item.title,
+      trailing: null,
+      description: joined(texts.source, texts.label ?? ""),
+    };
+  }
   if (item.type === "automation_attention") {
     const a = item.attention;
     return {
@@ -615,6 +764,201 @@ function rowOf(
     title: toolLabelText(approvalToolLabel(item.approval, locale)),
     trailing: null,
     description: item.approval.agent.name,
+  };
+}
+
+/** The platform's own item kinds that read with their own copy (`inbox.item.kinds.<kind>`). */
+const KERNEL_ITEM_KINDS: ReadonlySet<string> = new Set([
+  "automation_depth_stopped",
+  "automation_offer_declined",
+]);
+
+/**
+ * A personal item's source (the plugin's display name, or the platform's own label) and, for the
+ * platform's own kinds, the label of its kind and its hint (null otherwise).
+ */
+function personalItemTexts(
+  i: PersonalInboxItem,
+  ti: Translate,
+  locale: string,
+): { source: string; label: string | null; hint: string | null } {
+  const source =
+    i.source === "kernel"
+      ? ti("platform")
+      : (i.pluginName?.[locale === "zh" ? "zh" : "en"] ?? i.plugin ?? "");
+  const known = i.source === "kernel" && KERNEL_ITEM_KINDS.has(i.kind);
+  return {
+    source,
+    label: known ? ti(`kinds.${i.kind}.label`) : null,
+    hint: !known
+      ? null
+      : i.kind === "automation_offer_declined"
+        ? ti("kinds.automation_offer_declined.hint", {
+            person: factName(i.detail, "declinedBy") ?? ti("someone"),
+            agent: factName(i.detail, "agent") ?? ti("theirAgent"),
+          })
+        : ti(`kinds.${i.kind}.hint`),
+  };
+}
+
+/** The `name` of the object fact `key` of a platform item's detail, when it is a non-empty string. */
+function factName(detail: Record<string, unknown> | null, key: string): string | null {
+  const v = detail?.[key];
+  if (typeof v !== "object" || v === null) return null;
+  const name = (v as { name?: unknown }).name;
+  return typeof name === "string" && name !== "" ? name : null;
+}
+
+/**
+ * Where a personal item opens: its in-app link, else (a platform item about something outside the
+ * app) the absolute `http(s)` URL its detail keeps; null when neither.
+ */
+function itemLink(i: PersonalInboxItem): string | null {
+  if (i.link !== null) return i.link;
+  const url = i.source === "kernel" ? i.detail?.subjectUrl : undefined;
+  return typeof url === "string" && /^https?:\/\//.test(url) ? url : null;
+}
+
+/**
+ * One of my personal items (collaboration spec §4.9): its body (the platform's own kinds read with
+ * their own copy), a link to open, and its buttons. The first two buttons that are not `danger`
+ * stand in the action row (dismiss as its cancel), the others in the content; a `danger` button
+ * is a danger button there and asks for confirmation (`onDanger`) before it runs. Without a plain
+ * button, dismiss is the primary and open the secondary.
+ */
+function personalItemDetail({
+  item,
+  pending,
+  onAction,
+  onDanger,
+  onDismiss,
+  onOpen,
+  ti,
+  locale,
+}: {
+  item: PersonalInboxItem;
+  pending: boolean;
+  onAction(actionId: string): void;
+  onDanger(action: PersonalInboxItem["actions"][number]): void;
+  onDismiss(): void;
+  onOpen(link: string): void;
+  ti: Translate;
+  locale: string;
+}): Detail {
+  const texts = personalItemTexts(item, ti, locale);
+  const label = (a: PersonalInboxItem["actions"][number]) => a.label[locale === "zh" ? "zh" : "en"];
+  const plain = item.actions.filter((a) => a.style !== "danger");
+  const danger = item.actions.filter((a) => a.style === "danger");
+  const [first, second, ...rest] = plain;
+  const button = (a: PersonalInboxItem["actions"][number]) => ({
+    label: label(a),
+    onSelect: () => onAction(a.id),
+    disabled: pending,
+  });
+  const link = itemLink(item);
+  const actionRow: ActionRowProps =
+    first === undefined
+      ? {
+          primary: {
+            label: ti("dismiss"),
+            onSelect: onDismiss,
+            loading: pending,
+            disabled: pending,
+          },
+          ...(link !== null
+            ? { secondary: { label: ti("open"), onSelect: () => onOpen(link) } }
+            : {}),
+        }
+      : {
+          cancel: { label: ti("dismiss"), onSelect: onDismiss, disabled: pending },
+          ...(second !== undefined ? { secondary: button(second) } : {}),
+          primary: { ...button(first), loading: pending },
+        };
+  const body = texts.hint ?? item.body;
+  return {
+    title: item.title,
+    ...(texts.label !== null
+      ? { status: <StatusMark status="waiting" label={texts.label} /> }
+      : {}),
+    facts: [
+      { label: ti("source"), value: texts.source },
+      ...(link !== null && first !== undefined
+        ? [{ label: ti("open"), value: <TextLink href={link}>{item.title}</TextLink> }]
+        : []),
+      { label: ti("expires"), value: <DateTime value={item.expiresAt} /> },
+    ],
+    actionRow,
+    content: (
+      <Stack gap={12}>
+        {body !== "" && <Text variant="prose">{body}</Text>}
+        {rest.map((a) => (
+          <Button key={a.id} density="dense" disabled={pending} onClick={() => onAction(a.id)}>
+            {label(a)}
+          </Button>
+        ))}
+        {danger.map((a) => (
+          <Button
+            key={a.id}
+            variant="danger"
+            density="dense"
+            disabled={pending}
+            onClick={() => onDanger(a)}
+          >
+            {label(a)}
+          </Button>
+        ))}
+      </Stack>
+    ),
+  };
+}
+
+/**
+ * Work a source assigned to me and my agent (collaboration spec §4.4): what happened, the source,
+ * the agent and when the offer expires. Accept (primary) lets the agent work on it as me through my
+ * acceptance automation for the source; decline (secondary) tells whoever assigned it.
+ */
+function offerDetail({
+  offer,
+  pending,
+  onDecide,
+  to,
+  locale,
+}: {
+  offer: AutomationOffer;
+  pending: boolean;
+  onDecide(decision: "accept" | "decline"): void;
+  to: Translate;
+  locale: string;
+}): Detail {
+  const source = offer.sourceName[locale === "zh" ? "zh" : "en"];
+  const agent = offer.agent.name || offer.agent.id;
+  const url = offer.subject.url;
+  return {
+    title: offer.subject.title,
+    status: <StatusMark status="waiting" label={to("label")} />,
+    facts: [
+      { label: to("source"), value: source },
+      { label: to("agent"), value: agent },
+      ...(url !== undefined && url !== ""
+        ? [{ label: to("item"), value: <TextLink href={url}>{offer.subject.title}</TextLink> }]
+        : []),
+      { label: to("expires"), value: <DateTime value={offer.expiresAt} /> },
+    ],
+    actionRow: {
+      secondary: { label: to("decline"), onSelect: () => onDecide("decline"), disabled: pending },
+      primary: {
+        label: to("accept"),
+        onSelect: () => onDecide("accept"),
+        loading: pending,
+        disabled: pending,
+      },
+    },
+    content: (
+      <Stack gap={12}>
+        <Text variant="prose">{to("hint", { source, agent })}</Text>
+        {offer.summary !== "" && <Text variant="prose">{offer.summary}</Text>}
+      </Stack>
+    ),
   };
 }
 

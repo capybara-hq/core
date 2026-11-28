@@ -387,6 +387,10 @@ imports no domain module). `defineOperation({...})` fields:
   `reset-files`). `confirmFor(input, ctx)` picks the class per call when it depends on the target
   (`agents.update`: `personal` only on the actor's own private agent; a throw counts as not
   remembered). A route marked `HUMAN_ONLY` is not an operation (exclusion `human-only`).
+- `personOnly: true`: an operation that changes the person's own consent (`automations.acceptance-set`).
+  The ask is always the person's: no review model and no full-access profile decides it
+  (`CallPolicy.personDecides`), and an unattended run is refused. Use it only for the person's own
+  ask about their own consent, never for org or platform writes.
 - `summary(input, ctx)`: for every write, the bilingual card line rendered from the validated input and
   kernel reads (target names, preview counts), never from model text (zh says 平台 / 超级管理员 / 智能体).
 - `precheck(input, ctx)`: for a write, the read-only preconditions known to fail (a taken name, a stale

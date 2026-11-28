@@ -20,6 +20,7 @@ import {
   AgentSaveAsTemplateController,
   AgentTemplatesController,
 } from "../agents/templates.controller.js";
+import { AcceptanceController } from "../automations/acceptance.controller.js";
 import { AutomationsController } from "../automations/automations.controller.js";
 import { AutomationsModule } from "../automations/automations.module.js";
 import { BackgroundController } from "../background/background.controller.js";
@@ -91,6 +92,7 @@ import {
   SsoController,
 } from "../identity/sso.controller.js";
 import { InboxModule } from "../inbox/inbox.module.js";
+import { InboxItemsController } from "../inbox/inbox-items.controller.js";
 import { PlatformInboxController } from "../inbox/platform-inbox.controller.js";
 import { ModelEnablementController } from "../models/enablement.controller.js";
 import { ModelsModule } from "../models/models.module.js";
@@ -188,6 +190,7 @@ const CONTROLLERS: Type[] = [
   BackgroundController,
   DevicesController,
   AutomationsController,
+  AcceptanceController,
   AttachmentsController,
   LibraryFilesController,
   SkillsController,
@@ -195,6 +198,7 @@ const CONTROLLERS: Type[] = [
   AgentSkillsController,
   InvocableSkillsController,
   InboxController,
+  InboxItemsController,
   PlatformInboxController,
   ConversationStreamController,
   ConnectorContentController,

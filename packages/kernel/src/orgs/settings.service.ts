@@ -183,6 +183,9 @@ export const AutomationsSettingsSchema = z.object({
   maxEventDepth: posInt(1000, 8),
   coalesceSeconds: posInt(86_400, 30),
   maxEventRunsPerSubjectPerHour: posInt(1_000_000, 12),
+  // what a directed event (work assigned to a member and their agent, collaboration spec §4.4)
+  // does for a member who set no acceptance rule for its source
+  directedDefault: z.enum(["auto", "confirm", "off"]).default("auto").catch("auto"),
   // the trigger sources (extension names) whose events fire no automation of the org; an invalid
   // entry is dropped, the valid ones stay off
   eventSourcesOff: z
@@ -221,6 +224,7 @@ export const AutomationsPatchSchema = z
     maxEventDepth: z.number().int().min(1).max(1000),
     coalesceSeconds: z.number().int().min(1).max(86_400),
     maxEventRunsPerSubjectPerHour: z.number().int().min(1).max(1_000_000),
+    directedDefault: z.enum(["auto", "confirm", "off"]),
     eventSourcesOff: z.array(z.string().min(1).max(214)).max(200),
     forbiddenTools: z.array(z.string().min(1).max(200)).max(500),
   })

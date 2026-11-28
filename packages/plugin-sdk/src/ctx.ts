@@ -1,4 +1,5 @@
 import type { Kysely } from "kysely";
+import type { AgentsCtx, ConversationsCtx, PeopleCtx } from "./agents-ctx.js";
 import type {
   DeviceServiceSpec,
   DeviceServiceStatus,
@@ -8,6 +9,7 @@ import type { DevicesCtx, DialInChannel } from "./dial-in.js";
 import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
 import type { RouteCaller } from "./http-access.js";
+import type { InboxCtx } from "./inbox.js";
 import type {
   ImageAspectRatio,
   ImageMediaType,
@@ -446,6 +448,20 @@ export interface ExtensionContext {
    * {@link TriggersCtx}).
    */
   triggers: TriggersCtx;
+  /**
+   * Posts personal inbox items and resolves them (requires `permissions.inbox`, see
+   * {@link InboxCtx}).
+   */
+  inbox: InboxCtx;
+  /** The agents a member may use (requires `permissions.agents`, see {@link AgentsCtx}). */
+  agents: AgentsCtx;
+  /**
+   * The conversations serving the extension's own subjects (requires `permissions.conversations`,
+   * see {@link ConversationsCtx}).
+   */
+  conversations: ConversationsCtx;
+  /** Names and avatars of an org's members (requires `permissions.people`, see {@link PeopleCtx}). */
+  people: PeopleCtx;
   provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
   /**
    * The lifecycle signal of this plugin instance: aborted when the instance is revoked (disabled,

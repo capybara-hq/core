@@ -30,6 +30,7 @@ describe("hook mount points", () => {
       "org.member_removed",
       "agent.deleted",
       "org.deleted",
+      "run.lifecycle",
     ]);
     for (const h of HOOKS_AVAILABLE) expect(HOOK_MOUNT_POINTS).toContain(h);
   });
@@ -77,6 +78,14 @@ describe("hook mount points", () => {
       ]);
     }
     expect([...LIFECYCLE_HOOKS]).toEqual(["org.member_removed", "agent.deleted", "org.deleted"]);
+  });
+
+  it("run.lifecycle is a registrable observe hook (not a deletion lifecycle mount)", () => {
+    expect(HOOKS_AVAILABLE as readonly string[]).toContain("run.lifecycle");
+    expect(HOOK_MOUNT_POINTS as readonly string[]).toContain("run.lifecycle");
+    expect(POLICY_HOOKS as readonly string[]).not.toContain("run.lifecycle");
+    expect(LIFECYCLE_HOOKS as readonly string[]).not.toContain("run.lifecycle");
+    expect(validatePermissions("p", { hooks: ["run.lifecycle"] })).toEqual([]);
   });
 
   it("model.request payloads carry media placeholders, never media sources (I-3)", () => {

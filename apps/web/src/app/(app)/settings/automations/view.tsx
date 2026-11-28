@@ -25,6 +25,7 @@ import {
   DeleteAutomationDialog,
   useAutomationActions,
   useAutomationWords,
+  useEventSourceName,
 } from "../../../../components/AutomationParts";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -33,6 +34,7 @@ import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import {
+  type AcceptanceMode,
   AUTOMATION_SETTINGS_DEFAULTS,
   type AutomationListItem,
   type AutomationsSettings,
@@ -97,6 +99,8 @@ type Draft = Partial<{
   forbidden: string;
   /** The event sources turned off, as the full list. */
   off: string[];
+  /** What work assigned to a member does when they set no rule for its source. */
+  directed: AcceptanceMode;
 }>;
 
 /** A whole number of at least 1, and at most `max` when given (null otherwise). */
@@ -153,7 +157,11 @@ function AutomationSettings({ orgId }: { orgId: string }) {
               description: t("generalHint"),
             },
             { fields: 7, title: t("limits"), description: t("limitsHint") },
-            { fields: 4, title: t("events"), description: t("eventsHint") },
+            {
+              fields: [{}, {}, {}, { control: "radio-cards", options: 3 }, {}],
+              title: t("events"),
+              description: t("eventsHint"),
+            },
             {
               fields: [{ control: "textarea", rows: 4, help: true }],
               title: t("forbidden"),
@@ -173,6 +181,7 @@ function AutomationSettings({ orgId }: { orgId: string }) {
   const countText = (k: CountKey) => draft.counts?.[k] ?? String(saved[k]);
   const countOf = (k: CountKey) => count(countText(k), COUNT_MAX[k]);
   const off = draft.off ?? saved.eventSourcesOff;
+  const directed = draft.directed ?? saved.directedDefault;
   const expiryText =
     draft.expiry ?? (saved.defaultExpiryDays === null ? "" : String(saved.defaultExpiryDays));
   // the stored list cannot be read (it reads []): the notice's save sends the list shown to repair it
@@ -193,6 +202,7 @@ function AutomationSettings({ orgId }: { orgId: string }) {
       }),
     ),
     ...(!sameSet(off, saved.eventSourcesOff) ? { eventSourcesOff: off } : {}),
+    ...(directed !== saved.directedDefault ? { directedDefault: directed } : {}),
     ...(!invalid.has("defaultExpiryDays") && expiry !== saved.defaultExpiryDays
       ? { defaultExpiryDays: expiry }
       : {}),
@@ -328,6 +338,17 @@ function AutomationSettings({ orgId }: { orgId: string }) {
               />
             </Field>
           ))}
+          <RadioGroup
+            label={t("directedDefault")}
+            variant="card"
+            value={directed}
+            onChange={(v) => setDraft((d) => ({ ...d, directed: v as AcceptanceMode }))}
+            options={(["auto", "confirm", "off"] as const).map((v) => ({
+              value: v,
+              label: t(`directed.${v}`),
+              description: t(`directed.${v}Hint`),
+            }))}
+          />
           <EventSourcesOff
             orgId={orgId}
             off={off}
@@ -427,7 +448,8 @@ function AllTasks({ orgId }: { orgId: string }) {
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
   const refs = names.kind === "ready" ? names.refs : {};
-  const base = automationColumns(ts, when, agentName).map((c) => ({
+  const sourceName = useEventSourceName(orgId, tasks.data?.items);
+  const base = automationColumns(ts, when, agentName, sourceName).map((c) => ({
     ...c,
     compact: COMPACT[c.key],
   }));
@@ -477,6 +499,7 @@ function AllTasks({ orgId }: { orgId: string }) {
       {deleting !== null && (
         <DeleteAutomationDialog
           name={deleting.name}
+          origin={deleting.origin}
           onClose={() => setDeleting(null)}
           onDelete={async () => {
             await actions.remove.mutateAsync(deleting.id);

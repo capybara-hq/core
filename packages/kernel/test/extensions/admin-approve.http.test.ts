@@ -290,7 +290,12 @@ describe("插件列表与网页批准权限", () => {
   it("详情：与列表一项相同；未知插件 404", async () => {
     const res = await admin({ method: "GET", url: "/api/v1/admin/extensions/demo-pkg" });
     expect(res.statusCode, res.body).toBe(200);
-    expect(res.json()).toEqual((await list()).get("demo-pkg"));
+    // A replica's heartbeat ticks between the two reads, so only that timestamp may differ.
+    const sameShape = (v: { replicas: object[] }) => ({
+      ...v,
+      replicas: v.replicas.map((r) => ({ ...r, heartbeatAt: null })),
+    });
+    expect(sameShape(res.json())).toEqual(sameShape((await list()).get("demo-pkg") as never));
     const nope = await admin({ method: "GET", url: "/api/v1/admin/extensions/nope" });
     expect(nope.statusCode).toBe(404);
     expect(nope.json().error.code).toBe("extension.not_found");

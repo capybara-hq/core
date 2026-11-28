@@ -105,6 +105,11 @@ export interface Automation {
   deviceId: string | null;
   /** What a question in an unattended run does; null = the org's default. */
   unattendedAsk: AutomationUnattendedAsk | null;
+  /**
+   * Who made it: its owner, or the kernel from the owner's acceptance rule for the trigger source
+   * (an acceptance automation receives that source's directed events for its agent, §4.4).
+   */
+  origin: AutomationOrigin;
   status: AutomationStatus;
   pauseReason: AutomationPauseReason | null;
   /** The account that paused the task (creator or admin); null when not paused by a person. */

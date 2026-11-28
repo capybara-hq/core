@@ -17,6 +17,7 @@ import { ApiModule } from "./http/api.module.js";
 import { ErrorFilterModule } from "./http/error-filter.module.js";
 import { PluginRouteAccessModule } from "./http/plugin-route-access.js";
 import { IdentityModule } from "./identity/identity.module.js";
+import { InboxItemsModule } from "./inbox/inbox-items.service.js";
 import { CacheModule } from "./infra/cache/cache.module.js";
 import { ConfigModule } from "./infra/config/config.module.js";
 import { DatabaseModule } from "./infra/database/database.module.js";
@@ -40,6 +41,7 @@ import { createConfiguredLogger } from "./log-config.js";
 import { KERNEL_OVERRIDE_TOKENS } from "./overrides.js";
 import { PlatformModule } from "./platform/platform.module.js";
 import { PlatformOpsModule } from "./platform/platform-ops.module.js";
+import { PluginReadsModule } from "./plugin-reads/plugin-reads.service.js";
 import { GatewayModule } from "./roles/gateway.module.js";
 import { WorkerModule } from "./roles/worker.module.js";
 import { UsageReportModule } from "./runtime/usage-report.js";
@@ -133,6 +135,10 @@ export class KernelModule {
         ExtensionDeviceAccessModule,
         // ctx.triggers: the events extensions emit (the host finds it at the time of use)
         TriggerEventsModule,
+        // ctx.inbox: personal inbox items extensions post (the host finds it at the time of use)
+        InboxItemsModule,
+        // ctx.agents / ctx.conversations / ctx.people: read-only org facts (found at the time of use)
+        PluginReadsModule,
         // the Platform tool's operation registry and actor facts
         PlatformModule,
         // its operations (skills, agents, ...), registered at start on every role

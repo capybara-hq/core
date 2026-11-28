@@ -30,6 +30,7 @@ describe("automation settings", () => {
       maxEventDepth: 8,
       coalesceSeconds: 30,
       maxEventRunsPerSubjectPerHour: 12,
+      directedDefault: "auto",
       eventSourcesOff: [],
       forbiddenTools: [],
     });

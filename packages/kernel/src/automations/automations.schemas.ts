@@ -208,6 +208,48 @@ export class AutomationGrantParamsDto extends createZodDto(
   "AutomationGrantParams",
 ) {}
 
+/** A person's acceptance rule mode for one source's directed events (collaboration spec §4.4). */
+export const AcceptanceModeInput = z.enum(["auto", "confirm", "off"]);
+
+/** `GET automations/acceptance`: no query. */
+export const AutomationAcceptanceQuery = z.object({}).strict();
+
+/**
+ * `PUT automations/acceptance`: the caller's rules to change, each `{ source, mode }`; `mode: null`
+ * removes the caller's rule for the source (the org's default applies again).
+ */
+export const AutomationAcceptanceBody = z
+  .object({
+    rules: z
+      .array(
+        z
+          .object({
+            source: z.string().trim().min(1).max(214),
+            mode: AcceptanceModeInput.nullable(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict();
+
+/** `POST automations/offers/:id/accept|decline`. */
+export const AutomationOfferParams = z.object({ id: Id });
+
+export class AutomationAcceptanceQueryDto extends createZodDto(
+  AutomationAcceptanceQuery,
+  "AutomationAcceptanceQuery",
+) {}
+export class AutomationAcceptanceBodyDto extends createZodDto(
+  AutomationAcceptanceBody,
+  "AutomationAcceptanceBody",
+) {}
+export class AutomationOfferParamsDto extends createZodDto(
+  AutomationOfferParams,
+  "AutomationOfferParams",
+) {}
+
 /** The automation routes the Platform operations mirror (`check:platform-ops` keys). */
 export const AUTOMATION_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/automations", query: AutomationListQuery },
@@ -218,6 +260,8 @@ export const AUTOMATION_ROUTES: readonly RouteSchemas[] = [
     route: "GET /api/v1/orgs/:orgId/automations/event-sources",
     query: AutomationEventSourcesQuery,
   },
+  { route: "GET /api/v1/orgs/:orgId/automations/acceptance", query: AutomationAcceptanceQuery },
+  { route: "PUT /api/v1/orgs/:orgId/automations/acceptance", body: AutomationAcceptanceBody },
   { route: "POST /api/v1/orgs/:orgId/automations", body: AutomationCreateBody },
   { route: "GET /api/v1/orgs/:orgId/automations/:id", params: AutomationParams },
   {

@@ -1,5 +1,6 @@
 export const SDK_VERSION = "0.1.0-rc.86";
 export * from "./agent-template.js";
+export * from "./agents-ctx.js";
 export * from "./avatar-presets.js";
 export * from "./bootstrap.js";
 export * from "./cards.js";
@@ -25,6 +26,7 @@ export * from "./git-hosts.js";
 export * from "./hooks.js";
 export * from "./http-access.js";
 export * from "./identity.js";
+export * from "./inbox.js";
 export * from "./marketplace.js";
 export * from "./model.js";
 export * from "./model-params.js";

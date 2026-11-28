@@ -19,6 +19,7 @@ const COPY = {
   subagentFinished: ["a sub-agent finished", "子智能体已完成"],
   automationRan: ["your automation ran", "你的自动化已运行"],
   automationFailed: ["your automation failed", "你的自动化运行失败"],
+  inboxItem: ["a new item in your inbox", "收件箱有新事项"],
 } as const;
 
 const resolved = (over: Partial<ResolvedPush> = {}): ResolvedPush => ({

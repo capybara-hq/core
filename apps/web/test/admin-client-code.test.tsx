@@ -401,6 +401,28 @@ describe("declaredPermissions (the org-upload confirm)", () => {
     ]);
   });
 
+  it("personal inbox items are a group of their own, not sensitive", () => {
+    expect(declaredPermissions(manifest({ inbox: true }))).toEqual([
+      { category: "inbox", items: ["personal inbox items"], sensitive: false },
+    ]);
+  });
+
+  it("the read-only org facts are groups of their own, not sensitive", () => {
+    expect(
+      declaredPermissions(
+        manifest({
+          agents: { read: true },
+          conversations: { subjects: true },
+          people: { read: true },
+        }),
+      ),
+    ).toEqual([
+      { category: "agents", items: ["agents a member may use"], sensitive: false },
+      { category: "conversations", items: ["conversations of its own subjects"], sensitive: false },
+      { category: "people", items: ["members' names and avatars"], sensitive: false },
+    ]);
+  });
+
   it("emitted event types are a group of their own, not sensitive", () => {
     expect(declaredPermissions(manifest({ triggers: { emit: ["item.created"] } }))).toEqual([
       { category: "triggers", items: ["item.created"], sensitive: false },

@@ -222,6 +222,30 @@ describe("/automations (my automations)", () => {
     expect(browser).toEqual([]);
   });
 
+  it("an acceptance automation names the source whose work it accepts", async () => {
+    const accepting = {
+      ...common,
+      [`GET ${BASE}`]: ok({
+        items: [
+          task({
+            id: "s3",
+            name: "Collab · Helper",
+            origin: "acceptance",
+            mode: "subject",
+            nextRunAt: null,
+            trigger: { kind: "event", source: "collab", types: ["item.assigned"], filter: [] },
+          }),
+        ],
+      }),
+      [`GET ${BASE}/event-sources`]: ok({
+        items: [{ source: "collab", name: { zh: "协作", en: "Collab Tracker" }, events: [] }],
+      }),
+    };
+    stubApi(accepting);
+    await renderRouteWithCache("/automations?view=list", accepting);
+    expect(await screen.findByText("Accepts work from Collab Tracker")).toBeTruthy();
+  });
+
   it("zh: the schedule in words and the 自动化 title", async () => {
     stubApi(routes);
     await renderRouteWithCache("/automations?view=list", routes, { locale: "zh" });
@@ -277,6 +301,41 @@ describe("/automations (my automations)", () => {
     expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/s1/pause"))).toBe(true);
     expect(await screen.findByText(E.state.paused.creator)).toBeTruthy();
     expect(calls.filter((c) => c.method === "GET" && c.url === BASE).length).toBeGreaterThan(0);
+  });
+
+  it("deleting an acceptance automation says it does not stop the work and links to the rules", async () => {
+    stubApi({
+      ...common,
+      [`GET ${BASE}`]: ok({
+        items: [
+          task({
+            origin: "acceptance",
+            mode: "subject",
+            nextRunAt: null,
+            trigger: { kind: "event", source: "collab", types: ["item.assigned"], filter: [] },
+          }),
+        ],
+      }),
+      [`GET ${BASE}/event-sources`]: ok({ items: [] }),
+    });
+    await renderRouteWithCache("/automations?view=list", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Row actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: E.actions.delete }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText(E.actions.deleteAcceptanceBody, { exact: false })).toBeTruthy();
+    const link = dialog.getByRole("link", { name: E.actions.deleteAcceptanceLink });
+    expect(link.getAttribute("href")).toBe("/account/automations");
+  });
+
+  it("deleting a person's own task does not mention acceptance rules", async () => {
+    stubApi({ ...common, [`GET ${BASE}`]: ok({ items: [task()] }) });
+    await renderRouteWithCache("/automations?view=list", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Row actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: E.actions.delete }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.queryByRole("link", { name: E.actions.deleteAcceptanceLink })).toBeNull();
   });
 
   it("a guest sees the no-access state and nothing is read", async () => {

@@ -1618,6 +1618,23 @@ export const KernelConfigSchema = z.strictObject({
         ),
     })
     .prefault({} as never),
+  /** People's inbox items (collaboration spec §4.9); platform only. */
+  inbox: z
+    .strictObject({
+      retentionDays: z
+        .number()
+        .int()
+        .positive()
+        .default(30)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Days an inbox item is kept once it is closed: an item resolved or closed as expired more than this many days ago, or whose expiry passed more than this many days ago, is deleted by the trigger event sweep (every five minutes)",
+          }),
+        ),
+    })
+    .prefault({} as never),
   subagents: z
     .strictObject({
       maxDepth: z

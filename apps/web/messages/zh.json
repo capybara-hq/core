@@ -475,7 +475,9 @@
       "already_decided": "该技能改动已被处理。"
     },
     "inbox": {
-      "notice_not_found": "这条通知不存在或已被移除。"
+      "notice_not_found": "这条通知不存在或已被移除。",
+      "item_not_found": "这条收件箱事项已不存在：已被处理、移除或过期。",
+      "action_not_found": "这个事项已不再提供该按钮。"
     },
     "trajectory": {
       "not_found": "没有找到这条运行记录，或你没有查看权限。"
@@ -620,7 +622,11 @@
       "event_source_unavailable": "该事件来源在本组织不可用。",
       "event_type_unknown": "事件来源没有声明这个事件类型，或该类型只用于指派。",
       "filter_invalid": "事件过滤条件引用了不存在或不可过滤的字段，或取值不合规。",
-      "run_now_unsupported": "事件自动化在事件到达时运行，不能立即运行或试运行。"
+      "run_now_unsupported": "事件自动化在事件到达时运行，不能立即运行或试运行。",
+      "acceptance_fixed": "这个自动化用于接受指派给你的工作，触发条件、智能体和目标都是固定的。请改为修改你对该来源的接受规则。",
+      "offer_not_found": "这项工作邀请不存在，或不是给你的。",
+      "offer_closed": "这项工作邀请已被接受、拒绝或已过期。",
+      "offer_unavailable": "现在无法接受这项工作：来源、条目或智能体已不再对你可用，或你用于接受它的自动化已暂停。"
     },
     "deployment": {
       "setting_readonly": "这项设置由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
@@ -2452,6 +2458,41 @@
       "titleRejected": "未允许 · {hosts}",
       "hintApproved": "组织现在允许这些域名，再运行一次命令即可。",
       "hintRejected": "你允许这些域名的申请没有通过。"
+    },
+    "item": {
+      "platform": "平台",
+      "source": "来自",
+      "expires": "移出收件箱",
+      "open": "打开",
+      "dismiss": "移除",
+      "dismissed": "已从收件箱移除",
+      "done": "已处理",
+      "someone": "有人",
+      "theirAgent": "其智能体",
+      "kinds": {
+        "automation_depth_stopped": {
+          "label": "自动化链已停止",
+          "hint": "有一个事件未送达：它所在的自动化链达到了本组织允许自动化相互触发的层数上限。请检查这个自动化，避免它不断触发自身。"
+        },
+        "automation_offer_declined": {
+          "label": "工作被拒绝",
+          "hint": "{person} 拒绝了你指派给 {agent} 的工作。来源会显示它未被接受；如仍需处理，请指派给其他人。"
+        }
+      },
+      "confirmTitle": "确认{action}？",
+      "confirmHint": "将以你的身份对「{title}」执行「{action}」。输入按钮名称以确认。"
+    },
+    "offer": {
+      "label": "待接受的工作",
+      "source": "来自",
+      "agent": "智能体",
+      "item": "条目",
+      "expires": "过期时间",
+      "accept": "接受",
+      "decline": "拒绝",
+      "accepted": "已接受：你的智能体已开始工作",
+      "declined": "已拒绝：已告知指派人",
+      "hint": "{source} 把这项工作指派给了你和 {agent}。接受后 {agent} 将以你的身份处理它，也可以拒绝。"
     }
   },
   "connectors": {
@@ -2807,6 +2848,7 @@
       "shares": "分享",
       "myShares": "我的分享",
       "notifications": "通知",
+      "acceptWork": "接受工作",
       "navigation": "导航"
     },
     "empty": "没有需要你个人凭据的连接器。",
@@ -3269,7 +3311,11 @@
       "components": "界面组件",
       "dialIn": "机器接入（协议）",
       "deviceAccess": "设备服务",
-      "triggers": "发出的事件"
+      "triggers": "发出的事件",
+      "inbox": "个人收件箱事项",
+      "agents": "成员可用的智能体",
+      "conversations": "自有主题的对话",
+      "people": "成员的姓名与头像"
     },
     "configFirstHint": "需在下方填写本组织自己的配置副本，此扩展才能在本组织使用",
     "sync": "立即同步",
@@ -4669,7 +4715,10 @@
         "toolGrantRevoked": "撤销了已记住的授权",
         "trajectoryViewed": "查看了轨迹",
         "pushRegistered": "在设备上开启了通知",
-        "pushUnregistered": "移除了一台通知设备"
+        "pushUnregistered": "移除了一台通知设备",
+        "automationAcceptanceChanged": "修改了接受工作的规则",
+        "automationOfferAccepted": "接受了指派的工作",
+        "automationOfferDeclined": "拒绝了指派的工作"
       }
     },
     "accounts": {
@@ -7115,6 +7164,8 @@
       "deleteDescription": "任务会停止并被移除，它创建的会话会保留。",
       "deleteConfirm": "删除「{name}」？",
       "deleteConfirmBody": "任务会停止并被移除，它创建的会话会保留。",
+      "deleteAcceptanceBody": "删除不会停止接收工作：只要你对其来源的规则是「立即运行」，下一项指派给你的工作会重新创建它。",
+      "deleteAcceptanceLink": "修改你的接受规则",
       "created": "自动化已创建",
       "saved": "自动化已保存",
       "started": "已开始运行",
@@ -7205,7 +7256,8 @@
         "loadFailed": "加载失败。",
         "retry": "重试"
       }
-    }
+    },
+    "acceptsWork": "接受来自 {source} 的工作"
   },
   "navSettings": {
     "title": "导航",
@@ -7267,7 +7319,16 @@
     "saved": "设置已保存",
     "tasks": "全部任务",
     "tasksHint": "组织中的所有自动化。你可以暂停、恢复或删除；只有创建人能修改。",
-    "tasksEmpty": "组织中还没有自动化"
+    "tasksEmpty": "组织中还没有自动化",
+    "directedDefault": "工作指派给成员时",
+    "directed": {
+      "auto": "立即运行",
+      "autoHint": "成员的智能体立即开始工作，超出预先批准的工具时先询问成员。",
+      "confirm": "先询问成员",
+      "confirmHint": "工作在成员的收件箱中等待，直到成员接受或拒绝。",
+      "off": "不运行",
+      "offHint": "不运行任何内容；来源会显示该工作未被接受。"
+    }
   },
   "inboxAutomation": {
     "label": "自动化",
@@ -7411,7 +7472,9 @@
       "tasks": "任务状态",
       "tasksHint": "后台任务或子智能体已结束。",
       "automations": "自动化",
-      "automationsHint": "你的自动化已运行或运行失败。"
+      "automationsHint": "你的自动化已运行或运行失败。",
+      "inbox": "收件箱",
+      "inboxHint": "收件箱有新事项，来自平台或插件。"
     },
     "deviceName": {
       "ios": "iOS 设备",
@@ -7450,6 +7513,24 @@
       "back": "回到 {product}",
       "closeTabHint": "现在可以关闭这个标签页。",
       "backToApp": "回到应用里继续。"
+    }
+  },
+  "acceptance": {
+    "title": "接受工作",
+    "description": "本组织中的来源把工作指派给你和你的某个智能体时，会发生什么。",
+    "section": "会指派工作的来源",
+    "sectionHint": "为每个来源分别选择。工作始终以你的身份、由你的智能体、在你批准的工具范围内运行。",
+    "empty": "本组织中没有会指派工作的来源。",
+    "saved": "已保存",
+    "mode": {
+      "default": "组织默认（{mode}）",
+      "defaultHint": "跟随组织的选择，组织修改时一并变化。",
+      "auto": "立即运行",
+      "autoHint": "你的智能体通过你为 {source} 准备的自动化立即开始工作，超出预先批准的工具时先询问你。",
+      "confirm": "先询问我",
+      "confirmHint": "来自 {source} 的工作在你的收件箱中等待，直到你接受或拒绝。",
+      "off": "从不",
+      "offHint": "不运行任何内容；{source} 会显示该工作未被接受。"
     }
   }
 }

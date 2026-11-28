@@ -11,8 +11,12 @@ export interface TriggerSubject {
   url?: string;
 }
 
-/** Who caused an event: a tool call of the extension, or an account acting outside a call. */
-export type TriggerCause = { call: ToolCallContext } | { accountId: string };
+/**
+ * Who caused an event: a tool call of the extension (`call`, the context the kernel passed to the
+ * handler), a handle the kernel made from such a call ({@link TriggersCtx.causeOf}; for an event
+ * emitted later, from a queue job), or an account acting outside a call.
+ */
+export type TriggerCause = { call: ToolCallContext } | { handle: string } | { accountId: string };
 
 /** An event an extension emits through `ctx.triggers.emit`. */
 export interface TriggerEvent {
@@ -42,6 +46,16 @@ export type EventFilter = EventFilterClause[];
 /** `ctx.triggers` (requires `permissions.triggers`). */
 export interface TriggersCtx {
   emit(event: TriggerEvent): Promise<{ eventId: string; duplicate: boolean }>;
+  /**
+   * A serializable cause for an event emitted after the tool call returned: an opaque handle for
+   * `call` (the context the kernel passed to the handler) that the kernel binds to the call's org
+   * and run and to this extension, valid for 24 hours. Pass it in the `ctx.queue` job's payload
+   * and emit with `cause: { handle }`: the event keeps the call's chain depth and self-trigger
+   * check. One handle may be used for several events of that org. Throws `TriggerError`
+   * (`invalid_event`) for a context the kernel did not make; `emit` refuses an expired handle, or
+   * one of another org or extension, the same way.
+   */
+  causeOf(call: ToolCallContext): Promise<string>;
 }
 
 export type TriggerErrorCode = "type_not_declared" | "invalid_event" | "org_disabled";

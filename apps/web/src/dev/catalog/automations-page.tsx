@@ -112,6 +112,7 @@ const listTask = (t: CalendarTask): AutomationListItem => ({
   expiresAt: null,
   consecutiveFailures: 0,
   unattendedAsk: null,
+  origin: "person",
   lastRun: null,
   createdAt: T,
   updatedAt: T,

@@ -241,6 +241,7 @@ export class RunQueue {
         "account_id",
         "deleted_at",
         "tree_stopped_at",
+        "subject",
       ])
       .where("id", "=", conversationId)
       .forUpdate()
@@ -382,6 +383,15 @@ export class RunQueue {
         trigger_event_id: lineage.triggerEventId,
       })
       .execute();
+    await this.jobs.oweRunStarted(t, {
+      orgId: conv.org_id,
+      conversationId,
+      runId,
+      agentId: conv.agent_id,
+      agentVersion: agent.current_version,
+      accountId: trigger.accountId,
+      subject: conv.subject,
+    });
     // the task run its message started follows this run from now on (spec §6)
     if (taskRunId !== null) await linkStartedRunIn(t, taskRunId, runId, conversationId);
     // the root runs again: a person's stop of its tree no longer holds the tree's wakes

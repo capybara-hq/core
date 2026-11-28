@@ -77,6 +77,21 @@ export interface ExtensionPermissions {
    * each matching {@link TRIGGER_TYPE_RE}). An emit of another type is refused.
    */
   triggers?: { emit: string[] };
+  /**
+   * `ctx.inbox`: personal inbox items for the members of orgs that enabled the extension, each
+   * linking only to the extension's own pages, with buttons that call its UI actions as the
+   * person who clicks.
+   */
+  inbox?: boolean;
+  /** `ctx.agents`: which agents a member of an org that enabled the extension may use. */
+  agents?: { read: true };
+  /**
+   * `ctx.conversations`: the conversations serving the extension's own subjects (metadata only,
+   * never content).
+   */
+  conversations?: { subjects: true };
+  /** `ctx.people`: names and avatars of an org's members (never email or other profile fields). */
+  people?: { read: true };
 }
 
 /** The most services `permissions.deviceAccess.services` may list. */
@@ -95,6 +110,7 @@ export const HOOK_MOUNT_POINTS = [
   "org.member_removed",
   "agent.deleted",
   "org.deleted",
+  "run.lifecycle",
 ] as const;
 
 /** A hook mount point name. */
@@ -133,6 +149,10 @@ const KEYS = new Set([
   "dialIn",
   "deviceAccess",
   "triggers",
+  "inbox",
+  "agents",
+  "conversations",
+  "people",
 ]);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
@@ -170,10 +190,22 @@ export function validatePermissions(
   for (const k of Object.keys(p)) {
     if (!KEYS.has(k)) errs.push(`unknown permissions key "${k}"`);
   }
-  for (const k of ["secrets", "storage", "client"]) {
+  for (const k of ["secrets", "storage", "client", "inbox"]) {
     if (p[k] !== undefined && typeof p[k] !== "boolean") {
       errs.push(`permissions.${k} must be a boolean`);
     }
+  }
+  for (const [k, flag] of [
+    ["agents", "read"],
+    ["conversations", "subjects"],
+    ["people", "read"],
+  ] as const) {
+    const v = p[k];
+    if (
+      v !== undefined &&
+      (!isObj(v) || Object.keys(v).some((x) => x !== flag) || v[flag] !== true)
+    )
+      errs.push(`permissions.${k} must be { ${flag}: true }`);
   }
   if (p.tools !== undefined) strList("permissions.tools", p.tools, errs);
   if (p.hooks !== undefined) {

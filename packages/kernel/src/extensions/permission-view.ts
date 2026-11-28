@@ -5,9 +5,13 @@ import type { ReportBodyInput } from "../client/client.schemas.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
 import {
+  AGENTS_KEY,
   CLIENT_KEY,
+  CONVERSATIONS_KEY,
   DEVICE_ACCESS_KEY_PREFIX,
   DIAL_IN_KEY_PREFIX,
+  INBOX_KEY,
+  PEOPLE_KEY,
   type PermissionSet,
   permissionKeys,
   TRIGGERS_KEY_PREFIX,
@@ -54,7 +58,11 @@ export interface PermissionGroup {
     | "client"
     | "dialIn"
     | "deviceAccess"
-    | "triggers";
+    | "triggers"
+    | "inbox"
+    | "agents"
+    | "conversations"
+    | "people";
   /**
    * Sensitive category: secrets, public routes, tools, hooks, client components, client code,
    * device services; also
@@ -129,6 +137,14 @@ type Category = PermissionGroup["category"];
 /** The one item of the "client" group (client extensions spec §5.4). */
 const CLIENT_ITEM = "client code";
 
+/** The one item of the "inbox" group (collaboration spec §4.9). */
+const INBOX_ITEM = "personal inbox items";
+
+/** The items of the read-only org fact groups. */
+const AGENTS_ITEM = "agents a member may use";
+const CONVERSATIONS_ITEM = "conversations of its own subjects";
+const PEOPLE_ITEM = "members' names and avatars";
+
 /** 总是敏感的类别。 */
 const ALWAYS_SENSITIVE: ReadonlySet<Category> = new Set<Category>([
   "secrets",
@@ -188,6 +204,10 @@ function keyItem(key: string): { category: Category; item: string } | null {
   const after = (prefix: string) => (key.startsWith(prefix) ? key.slice(prefix.length) : null);
   if (key === "permissions.secrets") return { category: "secrets", item: "secret store" };
   if (key === CLIENT_KEY) return { category: "client", item: CLIENT_ITEM };
+  if (key === INBOX_KEY) return { category: "inbox", item: INBOX_ITEM };
+  if (key === AGENTS_KEY) return { category: "agents", item: AGENTS_ITEM };
+  if (key === CONVERSATIONS_KEY) return { category: "conversations", item: CONVERSATIONS_ITEM };
+  if (key === PEOPLE_KEY) return { category: "people", item: PEOPLE_ITEM };
   if (/^config\.(deployment|org)\.secret:/.test(key))
     return { category: "secrets", item: key.slice(key.indexOf(":") + 1) };
   const table: [string, Category, string][] = [
@@ -284,6 +304,15 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
     { category: "deviceAccess", items: p.deviceAccess?.services ?? [] },
     // the event types it emits for the orgs' event automations (not sensitive)
     { category: "triggers", items: p.triggers?.emit ?? [] },
+    // personal inbox items for the orgs' members (not sensitive)
+    { category: "inbox", items: p.inbox === true ? [INBOX_ITEM] : [] },
+    // read-only org facts (not sensitive)
+    { category: "agents", items: p.agents?.read === true ? [AGENTS_ITEM] : [] },
+    {
+      category: "conversations",
+      items: p.conversations?.subjects === true ? [CONVERSATIONS_ITEM] : [],
+    },
+    { category: "people", items: p.people?.read === true ? [PEOPLE_ITEM] : [] },
   ];
   return groups
     .filter((g) => g.items.length > 0)

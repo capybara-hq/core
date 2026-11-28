@@ -14,6 +14,7 @@ export const HOOKS_AVAILABLE = [
   "org.member_removed",
   "agent.deleted",
   "org.deleted",
+  "run.lifecycle",
 ] as const;
 
 /** Lifecycle mount points: observe-only notices that something was removed. */
@@ -333,6 +334,51 @@ export interface OrgDeletedPayload {
   orgId: string;
 }
 
+/**
+ * `run.lifecycle`: what happened to a run of a conversation that has a subject, or to directed work
+ * the kernel did not run (collaboration spec §4.8). Observe-only, delivered durably through a
+ * queue, at least once, after the change committed, and only to the plugin named by the
+ * conversation's subject `source` (for `offer_declined`, the plugin that emitted the event), when
+ * it declares `run.lifecycle` in `permissions.hooks` and the org has it enabled (checked when the
+ * change commits and again at delivery); `call.config` is the extension's effective config for the
+ * org. A handler that fails never affects the run. Handlers must be idempotent. The payload carries
+ * ids only. Compact runs (context compaction) are never reported.
+ *
+ * - `started`: a run of the conversation was created (queued).
+ * - `waiting`: the run suspended on a person (`waitingOn`: an `approval`, or `input`: a question
+ *   or a connect card).
+ * - `resumed`: the person's wait cleared (answered, decided or timed out) and the run continues;
+ *   one per wait, like `waiting`.
+ * - `finished`: the run completed. `failed`: it failed. `aborted`: a person or the kernel stopped
+ *   it.
+ * - `offer_declined`: directed work was not run (`reason`): the person's rule is `off`, the person
+ *   `declined` the offer, their acceptance automation is `paused`, the offer `expired` unanswered
+ *   (seven days), or the event stayed `undelivered` (the kernel gave up routing it). No run and no
+ *   conversation: `accountId` and `agentId` are the event's audience.
+ */
+export interface RunLifecyclePayload {
+  orgId: string;
+  /** The run's trigger account; for `offer_declined` the event's audience person. */
+  accountId: string;
+  agentId: string;
+  /** Absent for `offer_declined`. */
+  agentVersion?: number;
+  /** Absent for `offer_declined`. */
+  conversationId?: string;
+  /** Absent for `offer_declined`. */
+  runId?: string;
+  phase: "started" | "waiting" | "resumed" | "finished" | "failed" | "aborted" | "offer_declined";
+  /** The conversation's subject (or the directed event's subject). */
+  subject: { kind: string; id: string };
+  /** Set for `waiting` and `resumed`. */
+  waitingOn?: "approval" | "input";
+  /** Set for `offer_declined`. */
+  reason?: RunLifecycleDeclineReason;
+}
+
+/** Why directed work was not run (`run.lifecycle` `offer_declined`). */
+export type RunLifecycleDeclineReason = "declined" | "off" | "paused" | "expired" | "undelivered";
+
 /** Payload type of each mount point. */
 export interface HookPayloads {
   "model.request": ModelRequestHookPayload;
@@ -343,6 +389,7 @@ export interface HookPayloads {
   "org.member_removed": OrgMemberRemovedPayload;
   "agent.deleted": AgentDeletedPayload;
   "org.deleted": OrgDeletedPayload;
+  "run.lifecycle": RunLifecyclePayload;
 }
 
 /**

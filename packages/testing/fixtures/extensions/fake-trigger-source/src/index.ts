@@ -1,5 +1,8 @@
 import {
   defineExtension,
+  type InboxCtx,
+  type RunLifecyclePayload,
+  type ToolCallContext,
   type ToolSpec,
   TriggerError,
   type TriggerEvent,
@@ -19,7 +22,13 @@ import {
  *   account when that is unset.
  * - Its setup puts `emit` (the extension's own `ctx.triggers.emit`) on the probe
  *   ({@link fakeTriggerSourceProbe}; in-process kernels only), so a test can emit as the extension
- *   outside a tool call.
+ *   outside a tool call; likewise `causeOf` (its `ctx.triggers.causeOf`) and `inbox` (its
+ *   `ctx.inbox`, `permissions.inbox`).
+ * - It observes `run.lifecycle` (`permissions.hooks`) and records every payload on the probe's
+ *   `lifecycle`.
+ * - The `org.page` view `requests` has a UI action that records every call on the probe's
+ *   `actions` (`{ actionId, accountId, role, payload }`) and answers a toast; an action id `fail`
+ *   throws instead (nothing recorded).
  */
 
 // capybara:allow-module-state a read-only constant list
@@ -31,6 +40,14 @@ export interface FakeTriggerSourceProbe {
   visible?: string[];
   /** The extension's `ctx.triggers.emit`, set by its setup. */
   emit?: (event: TriggerEvent) => Promise<{ eventId: string; duplicate: boolean }>;
+  /** The extension's `ctx.triggers.causeOf`, set by its setup. */
+  causeOf?: (call: ToolCallContext) => Promise<string>;
+  /** The extension's `ctx.inbox`, set by its setup. */
+  inbox?: InboxCtx;
+  /** Every `run.lifecycle` payload the extension received (it subscribes), in order. */
+  lifecycle?: RunLifecyclePayload[];
+  /** The calls of the `requests` view's UI action, in order. */
+  actions?: { actionId: string; accountId: string; role: string; payload: unknown }[];
 }
 
 export function fakeTriggerSourceProbe(): FakeTriggerSourceProbe {
@@ -95,10 +112,45 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: ["trigger-source@1"],
-  permissions: { tools: ["emit_item_event"], triggers: { emit: [...FAKE_TRIGGER_TYPES] } },
+  ui: [{ id: "requests", title: { zh: "请求", en: "Requests" }, slot: "org.page", kind: "view" }],
+  permissions: {
+    tools: ["emit_item_event"],
+    hooks: ["run.lifecycle"],
+    triggers: { emit: [...FAKE_TRIGGER_TYPES] },
+    inbox: true,
+    ui: { views: ["requests"] },
+  },
   setup(ctx) {
     ctx.provide("trigger-source@1", source);
-    fakeTriggerSourceProbe().emit = (event) => ctx.triggers.emit(event);
+    const probe = fakeTriggerSourceProbe();
+    probe.emit = (event) => ctx.triggers.emit(event);
+    probe.causeOf = (call) => ctx.triggers.causeOf(call);
+    probe.inbox = ctx.inbox;
+    ctx.hooks.on(
+      "run.lifecycle",
+      (p) => {
+        const pr = fakeTriggerSourceProbe();
+        pr.lifecycle ??= [];
+        pr.lifecycle.push({ ...p });
+      },
+      { mode: "observe" },
+    );
+    ctx.ui.view("requests", async () => ({
+      blocks: [{ type: "actions", buttons: [{ actionId: "accept", label: "Accept" }] }],
+    }));
+    ctx.ui.action("requests", async (args) => {
+      if (args.actionId === "fail") throw new Error("the fake action failed");
+      const accountId = "accountId" in args ? args.accountId : "";
+      const role = "role" in args ? String(args.role) : "";
+      fakeTriggerSourceProbe().actions ??= [];
+      fakeTriggerSourceProbe().actions?.push({
+        actionId: args.actionId,
+        accountId,
+        role,
+        payload: args.payload,
+      });
+      return { toast: { zh: "已接受", en: "Accepted" } };
+    });
     ctx.tools.register(EMIT, async (input, call) => {
       const event = { orgId: call.orgId, ...(input as object), cause: { call } } as TriggerEvent;
       try {

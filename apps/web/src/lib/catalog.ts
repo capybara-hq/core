@@ -137,6 +137,12 @@ export interface StaticExtensionManifest {
     deviceAccess?: { services: string[] };
     /** The event types the extension emits for event automations (SDK `triggers`). */
     triggers?: { emit: string[] };
+    /** Personal inbox items for the orgs' members (SDK `inbox`). */
+    inbox?: boolean;
+    /** Read-only org facts (SDK `agents`, `conversations`, `people`). */
+    agents?: { read: true };
+    conversations?: { subjects: true };
+    people?: { read: true };
   };
   /** The config fields the extension declares (SDK `StaticConfigField`). */
   config?: { deployment: StaticConfigField[] };
@@ -1761,6 +1767,13 @@ export function declaredPermissions(
     },
     { category: "deviceAccess", items: p.deviceAccess?.services ?? [], sensitive: true },
     { category: "triggers", items: p.triggers?.emit ?? [] },
+    { category: "inbox", items: p.inbox === true ? ["personal inbox items"] : [] },
+    { category: "agents", items: p.agents?.read === true ? ["agents a member may use"] : [] },
+    {
+      category: "conversations",
+      items: p.conversations?.subjects === true ? ["conversations of its own subjects"] : [],
+    },
+    { category: "people", items: p.people?.read === true ? ["members' names and avatars"] : [] },
   ];
   return groups
     .filter((g) => g.items.length > 0)

@@ -11,6 +11,7 @@ import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { AutomationToolsPort } from "../tools/builtins/automations.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AutomationsService } from "./automations.service.js";
+import { AcceptanceModule } from "./events/acceptance.js";
 import { AutomationStoreModule } from "./store.module.js";
 
 /**
@@ -36,9 +37,11 @@ import { AutomationStoreModule } from "./store.module.js";
     SandboxModule,
     NetworkGrantsModule,
     DialInModule,
+    // directed events: the person's acceptance rules and work offers (collaboration spec §4.4)
+    AcceptanceModule,
   ],
   providers: [AutomationsService],
-  exports: [AutomationsService, AutomationStoreModule],
+  exports: [AutomationsService, AutomationStoreModule, AcceptanceModule],
 })
 export class AutomationsModule implements OnModuleInit {
   constructor(

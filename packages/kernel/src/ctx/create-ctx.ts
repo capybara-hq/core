@@ -1,5 +1,8 @@
 import {
+  type AgentsCtx,
   type AvailableHook,
+  type ConversationsCtx,
+  CtxReadError,
   DEVICE_PROVIDER_EXTENSION_POINT,
   type DeviceAccessCtx,
   DeviceAccessError,
@@ -19,9 +22,13 @@ import {
   type FilePreviewProvider,
   type HookHandler,
   type HttpAccess,
+  type InboxCtx,
+  InboxError,
+  type InboxPost,
   type Logger,
   OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
+  type PeopleCtx,
   parseExtensionPoint,
   type RouteCaller,
   resolveUiSlots,
@@ -59,11 +66,13 @@ import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enable
 import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.js";
 import { RegistrationLedger } from "../extensions/ledger.js";
 import { audit } from "../identity/audit.js";
+import type { InboxItemsService } from "../inbox/inbox-items.service.js";
 import { withOrgScope } from "../infra/database/org-scope.js";
 import type { LockService } from "../infra/lock/lock.service.js";
 import type { ModelEmbeddings } from "../models/embeddings.js";
 import type { ModelImages } from "../models/images.js";
 import { can, type OrgRole } from "../orgs/roles.js";
+import type { PluginReadsService } from "../plugin-reads/plugin-reads.service.js";
 import type { HookRunner } from "../runtime/hook-calls.js";
 import type { DeviceReports } from "../sandbox/device-reports.js";
 import type { ShareLiveness } from "../shares/liveness.js";
@@ -153,6 +162,17 @@ export interface KernelDeps {
    * `ctx.triggers.emit` rejects.
    */
   triggers?: () => TriggersBackend | undefined;
+  /**
+   * What `ctx.inbox` calls through (`InboxItemsService`), found at the time of use like
+   * `deviceAccess`. Absent, or resolving to undefined (a ctx built alone in a test, the CLI):
+   * `ctx.inbox` calls reject.
+   */
+  inbox?: () => InboxBackend | undefined;
+  /**
+   * What `ctx.agents`, `ctx.conversations` and `ctx.people` call through (`PluginReadsService`),
+   * found at the time of use like `inbox`. Absent, or resolving to undefined: those calls reject.
+   */
+  pluginReads?: () => PluginReadsBackend | undefined;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
@@ -170,7 +190,16 @@ export type DeviceAccessBackend = Pick<
 >;
 
 /** What `ctx.triggers` calls through (`TriggerEventsService`). */
-export type TriggersBackend = Pick<TriggerEventsService, "emit">;
+export type TriggersBackend = Pick<TriggerEventsService, "emit" | "causeOf">;
+
+/** What `ctx.inbox` calls through (`InboxItemsService`). */
+export type InboxBackend = Pick<InboxItemsService, "post" | "resolveForPlugin">;
+
+/** What `ctx.agents`, `ctx.conversations` and `ctx.people` call through. */
+export type PluginReadsBackend = Pick<
+  PluginReadsService,
+  "usableBy" | "bySubject" | "peopleGet" | "peopleSearch"
+>;
 
 /**
  * A plain-data copy of an emitted event, taken once at the ctx boundary (check-then-use): every
@@ -470,8 +499,9 @@ export type KernelExtensionContext = ExtensionContext & {
 };
 
 /**
- * 插件实例的部署配置（已校验）：`ctx.config` 是读它的 getter。hot 字段改动时宿主替换 `value`（C10），
- * 插件下次读 `ctx.config` 就是新值；非 hot 改动重新加载实例（新 ctx）。
+ * An extension instance's deployment config (validated): `ctx.config` is a getter that reads it.
+ * When a hot field changes the host replaces `value` (C10) and the extension's next read of
+ * `ctx.config` sees the new value; a change to a non-hot field reloads the instance (a new ctx).
  */
 export class LiveConfig {
   constructor(public value: unknown) {}
@@ -485,7 +515,11 @@ type GatedKey =
   | "dialIn"
   | "devices"
   | "deviceAccess"
-  | "triggers";
+  | "triggers"
+  | "inbox"
+  | "agents"
+  | "conversations"
+  | "people";
 
 /**
  * Builds the namespaced ctx for one extension from its permission manifest, and returns its
@@ -502,7 +536,9 @@ type GatedKey =
  *   an extension that provides `device-provider@1`, `reportChanged` only for a live device bound to
  *   this extension (through `deps.devices`; another device throws `ExtensionPermissionError`);
  *   `triggers` only with `permissions.triggers`, each emit only of a declared event type, stored
- *   in the event's org scope (through `deps.triggers`);
+ *   in the event's org scope, and `causeOf` handles bound to this extension (through
+ *   `deps.triggers`); `inbox` only with `permissions.inbox`,
+ *   posting and resolving only as this extension, in the item's org scope (through `deps.inbox`);
  *   `http.route`
  *   only the method + path declared in `permissions.http` (the record carries the declared access and
  *   its mount, see {@link Route}); `tools.register` only names declared in
@@ -759,8 +795,124 @@ export function createExtensionContext(
               throw new TriggerError("invalid_event", "invalid event: missing_org_id");
             return withOrgScope(snap.orgId, () => b.emit(name, declared, snap));
           },
+          // a handle bound to this extension and the call's run, in the call's org (the service
+          // checks the context is the pipeline's and its run is of that org)
+          causeOf: async (call) => {
+            const b = deps.triggers?.();
+            if (!b) throw new Error("Trigger events are not available in this process.");
+            const orgId: unknown =
+              typeof call === "object" && call !== null ? (call as { orgId?: unknown }).orgId : "";
+            if (typeof orgId !== "string" || orgId === "")
+              throw new TriggerError(
+                "invalid_event",
+                "causeOf takes the tool call context the kernel passed to the handler",
+              );
+            // read once: the scope and the service get the same org
+            return withOrgScope(orgId, () => b.causeOf(name, orgId, call));
+          },
         } satisfies TriggersCtx;
       })()
+    : undefined;
+  // ctx.inbox: only with permissions.inbox; items are posted and resolved as this extension (the
+  // kernel checks the link is one of its own pages), in the item's org scope, from a plain-data
+  // copy read once (what is checked is what is stored)
+  const inboxApi: InboxCtx | undefined = perms.inbox
+    ? ({
+        post: async (p) => {
+          const b = deps.inbox?.();
+          if (!b) throw new Error("The inbox is not available in this process.");
+          let snap: InboxPost;
+          try {
+            snap = structuredClone(p);
+          } catch (err) {
+            throw new InboxError("invalid_item", "the item must be plain data", { cause: err });
+          }
+          if (
+            typeof snap !== "object" ||
+            snap === null ||
+            typeof snap.orgId !== "string" ||
+            snap.orgId === ""
+          )
+            throw new InboxError("invalid_item", "invalid inbox item: missing_org_id");
+          const orgId = snap.orgId;
+          return withOrgScope(orgId, () => b.post({ kind: "plugin", plugin: name }, snap));
+        },
+        resolve: async (args) => {
+          const b = deps.inbox?.();
+          if (!b) throw new Error("The inbox is not available in this process.");
+          const orgId = (args as { orgId?: unknown } | null)?.orgId;
+          const itemId = (args as { itemId?: unknown } | null)?.itemId;
+          if (typeof orgId !== "string" || orgId === "" || typeof itemId !== "string")
+            throw new InboxError("not_found", "inbox item not found");
+          await withOrgScope(orgId, () => b.resolveForPlugin(name, orgId, itemId));
+        },
+      } satisfies InboxCtx)
+    : undefined;
+  // ctx.agents / ctx.conversations / ctx.people: read-only, each only with its permission; every
+  // call runs in the named org's scope and the backend checks the extension is enabled there
+  const readsBackend = (): PluginReadsBackend => {
+    const b = deps.pluginReads?.();
+    if (!b)
+      throw new Error("Agent, conversation and people reads are not available in this process.");
+    return b;
+  };
+  const readArgs = (args: unknown): Record<string, unknown> & { orgId: string } => {
+    const a = args as Record<string, unknown> | null;
+    if (typeof a !== "object" || a === null || typeof a.orgId !== "string" || a.orgId === "")
+      throw new CtxReadError("invalid_args", "orgId is required");
+    return a as Record<string, unknown> & { orgId: string };
+  };
+  const agentsApi: AgentsCtx | undefined = perms.agents
+    ? ({
+        usableBy: async (args) => {
+          const a = readArgs(args);
+          if (typeof a.accountId !== "string" || a.accountId === "")
+            throw new CtxReadError("invalid_args", "accountId is required");
+          const accountId = a.accountId;
+          return withOrgScope(a.orgId, () => readsBackend().usableBy(name, a.orgId, accountId));
+        },
+      } satisfies AgentsCtx)
+    : undefined;
+  const conversationsApi: ConversationsCtx | undefined = perms.conversations
+    ? ({
+        bySubject: async (args) => {
+          const a = readArgs(args);
+          const s = a.subject as { kind?: unknown; id?: unknown } | null;
+          if (
+            typeof s !== "object" ||
+            s === null ||
+            typeof s.kind !== "string" ||
+            s.kind === "" ||
+            typeof s.id !== "string" ||
+            s.id === ""
+          )
+            throw new CtxReadError("invalid_args", "subject needs a kind and an id");
+          const subject = { kind: s.kind, id: s.id };
+          return withOrgScope(a.orgId, () => readsBackend().bySubject(name, a.orgId, subject));
+        },
+      } satisfies ConversationsCtx)
+    : undefined;
+  const peopleApi: PeopleCtx | undefined = perms.people
+    ? ({
+        get: async (args) => {
+          const a = readArgs(args);
+          const ids = a.accountIds;
+          if (!Array.isArray(ids))
+            throw new CtxReadError("invalid_args", "accountIds must be a list");
+          return withOrgScope(a.orgId, () => readsBackend().peopleGet(name, a.orgId, [...ids]));
+        },
+        search: async (args) => {
+          const a = readArgs(args);
+          return withOrgScope(a.orgId, () =>
+            readsBackend().peopleSearch(
+              name,
+              a.orgId,
+              a.query as string,
+              a.limit as number | undefined,
+            ),
+          );
+        },
+      } satisfies PeopleCtx)
     : undefined;
   // "METHOD path" -> the access the manifest declares for it (the approved manifest)
   const declaredRoutes = new Map<string, HttpAccess>(
@@ -1252,8 +1404,9 @@ export function createExtensionContext(
       return closing;
     },
   };
-  // secrets / storage / models / dialIn / devices / deviceAccess / triggers: a plain property when declared; otherwise a
-  // non-enumerable getter that throws, so spreading or printing ctx triggers no denial and no audit
+  // secrets / storage / models / dialIn / devices / deviceAccess / triggers / inbox / agents /
+  // conversations / people: a plain property when declared; otherwise a non-enumerable getter
+  // that throws, so spreading or printing ctx triggers no denial and no audit
   const gated = (key: GatedKey, api: unknown, item = `permissions.${key}`): void => {
     if (api) {
       Object.assign(ctx, { [key]: api });
@@ -1272,6 +1425,10 @@ export function createExtensionContext(
   gated("devices", devicesApi, `provides ${DEVICE_PROVIDER_EXTENSION_POINT}`);
   gated("deviceAccess", deviceAccessApi);
   gated("triggers", triggersApi);
+  gated("inbox", inboxApi);
+  gated("agents", agentsApi);
+  gated("conversations", conversationsApi);
+  gated("people", peopleApi);
   return ctx as KernelExtensionContext;
 }
 

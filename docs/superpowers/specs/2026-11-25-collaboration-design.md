@@ -135,7 +135,7 @@ interface TriggerEvent {
   facts: Record<string, string | number | boolean | string[]>; // filterable, declared per type
   summary: string;              // English, what happened, at most 4 KB; model-visible
   dedupeKey: string;            // idempotency per plugin
-  cause?: { call: ToolCallContext } | { accountId: string };
+  cause?: { call: ToolCallContext } | { handle: string } | { accountId: string };
   audience?: { accountId: string; agentId: string }; // a directed event (§4.4)
 }
 ```
@@ -150,6 +150,13 @@ interface TriggerEvent {
   the pipeline's call facts (`callScopeOf`, refusing a context the pipeline did not make), checks
   the run is in the org and derives the chain depth (§4.7). `cause.accountId` is the person behind
   a UI action or route.
+- `cause.handle` carries a call's cause into a `ctx.queue` job (*decided* 2026-11-28): in the tool
+  call the plugin asks `ctx.triggers.causeOf(call)` (verified as `cause.call`), the kernel stores a
+  `trigger_cause_handles` row bound to the org, the plugin and the run for 24 hours and returns its
+  id; the job's payload carries the id, and `emit` accepts it only unexpired, for an event of that
+  org from that plugin, deriving the run and depth as for `cause.call`. An expired handle, a
+  handle of another org or plugin, and an unknown id are `invalid_event`. The trigger event sweep
+  deletes expired handles.
 
 ### 4.3 Declaring sources: `trigger-source@1`
 
@@ -232,7 +239,16 @@ zero-drift fixtures run before and after.
   find its deliveries waiting and owe nothing. The job reads every waiting delivery for the pair.
   A window whose job was lost for good is taken over by the next event of the pair, or by the
   trigger event sweep, which also deletes settled events after `automations.eventRetentionDays`
-  (platform config, default 30).
+  (platform config, default 30). The sweep takes a window as lost only when its newest waiting
+  delivery is past the window and no outbox row of the pair is pending (a window the dispatcher
+  just opened is never flushed early); it owes a lost window's job again with a back-off by the
+  age of the pair's newest waiting delivery and gives up, logging, once that delivery is 24 hours
+  old (the newest window's age, so an old window given up on never hides a newer lost one).
+  A cause handle records the run's depth and trigger account when it is made, so retention
+  deleting the run's trigger event within the handle's life does not restart the chain. The sweep
+  also deletes expired cause handles (§4.2), expires work offers left open for seven days (§4.4),
+  and deletes inbox items closed or past their expiry more than `inbox.retentionDays` ago
+  (platform config, default 30; §4.9).
 - **Rate:** `maxRunsPerHour` applies per person (the runs of the owner's automations in the last
   hour, time and event runs together); add `maxEventRunsPerSubjectPerHour` (default 12).
 - **Overlap:** an event run never waits for its automation's previous run (its events would be
@@ -243,11 +259,23 @@ zero-drift fixtures run before and after.
 
 ### 4.8 Run lifecycle hook
 
-New observe hook `run.lifecycle` (`started`, `waiting` with what it waits on, `finished`, `failed`,
-and `offer_declined` for a declined directed event)
-for runs whose conversation has a `subject` from the same plugin, fired after commit from
-`runtime/run-finish.ts` and the run start path. The plugin shows "agent working / waiting on you /
-done" on the item. At least once; the plugin treats it as a hint.
+New observe hook `run.lifecycle` for runs whose conversation has a `subject` from the same plugin,
+owed in the transaction that changes the run and delivered after commit. The phases:
+
+- `started`: a run was created (queued);
+- `waiting`: the run suspended on a person (`waitingOn` `approval` or `input`; waits on sub-agents
+  are not announced);
+- `resumed`: that person's wait cleared (answered, decided or timed out) and the run continues
+  (one per wait, owed where the run leaves `waiting`);
+- `finished`, `failed`, `aborted`: the run completed, failed, or was stopped by a person or the
+  kernel;
+- `offer_declined`, to the plugin that emitted a directed event the kernel did not run, with
+  `reason`: `off` (the person's rule), `declined` (the person declined the offer), `paused` (the
+  acceptance automation is paused or ended), `expired` (the offer stayed open seven days and the
+  sweep expired it) or `undelivered` (the sweep gave up on the pending event after 24 hours).
+
+Compact runs are never announced. The plugin shows "agent working / waiting on you / done" on the
+item. At least once; the plugin treats it as a hint.
 
 ### 4.9 Personal inbox items
 
@@ -260,9 +288,41 @@ expiry). The kernel writes it too (a declined offer, §4.4; a depth stop, §4.7)
 
 `ctx.inbox.post / resolve` (permission `permissions.inbox`): an item for one person with a title,
 a short body, a link (the plugin's page) and up to three actions; an action names one of the
-plugin's UI actions (`ctx.ui.action`), which the kernel calls with the person who clicked. The inbox lists them under the
-plugin's name; push follows the person's push settings. Items have an expiry. Channel cards for
-them are a later phase.
+plugin's UI actions (`ctx.ui.action`), which the kernel calls with the person who clicked. The
+inbox lists them under the plugin's name; push follows the person's push settings. Items have an
+expiry. Channel cards for them are a later phase.
+
+As built: kernel items have the kinds `automation_offer`, `automation_offer_declined` and
+`automation_depth_stopped` (no actions; the web writes their copy by kind). A plugin item links only
+under `/p/<plugin>/`, carries at most three actions (each idempotent) and a `dedupeKey` (one open
+item per key and person), and expires after 30 days by default (90 at most); an offer's item
+expires after 7 days. Closed and expired rows are swept after `inbox.retentionDays` (platform
+config, default 30). Dismissing is `inbox.item-dismiss`; clicking an action is a human-only route.
+
+### 4.10 As built (collaboration kernel)
+
+- **Cause handles.** `ctx.triggers.causeOf(call)` stores a row in `trigger_cause_handles` (org,
+  plugin, run, depth, trigger account); the handle is valid for 24 hours and accepted only for the
+  same org and extension. A queued emit with `cause: { handle }` keeps the chain depth.
+- **Event retention.** Trigger events are deleted after `automations.eventRetentionDays` (platform
+  config, default 30), except an event with an open offer; an event still pending after 10 minutes
+  is dispatched again by the sweep and given up (`undelivered`) after 24 hours.
+- **Acceptance.** `automation_acceptance` holds the person's rule per source (`auto`, `confirm`,
+  `off`; no row follows `automations.directedDefault`); `automation_offers` holds offers
+  (unique per event; `open`, `accepted`, `declined`, `expired`). An offer counts as open only
+  while it is `open` and younger than 7 days; the sweep marks older ones `expired` (resolving
+  their inbox item) and retention then treats them as closed. The
+  acceptance automation (`origin = acceptance`) has a fixed trigger, agent and mode; people edit
+  its name, grants and pause state. It does not count against the per-member task limits.
+- **Personal page.** A person sets their rules at `/account/automations` ("Accepting work"); the
+  org default sits in the org's automation settings. `automations.acceptance-set` is a Platform
+  operation declared `personOnly`: the ask is always the person's, never decided by a review model
+  or a full-access profile, and refused in an unattended run.
+- **`run.lifecycle`.** Phases `started`, `waiting`, `resumed`, `finished`, `failed`, `aborted` and
+  `offer_declined` (§4.8). The payload carries ids only (org, account, agent, run, conversation,
+  subject, `waitingOn` `approval` or `input` for `waiting` and `resumed`); `offer_declined` has
+  `reason` `declined`, `off`, `paused`, `expired` or `undelivered` and no run or conversation. The
+  plugin must be enabled in the org when the notice is owed and again when it is delivered.
 
 ## 5. Plugin: data (`plugin_collab`)
 
@@ -393,7 +453,8 @@ create private agents from them as today.
 ## AGENTS.md rules touched
 
 - **Extensions:** new `ctx.triggers`, `ctx.inbox`, `ctx.agents.usableBy`,
-  `ctx.conversations.bySubject`; new permission keys `triggers`, `inbox`, `agents`, `conversations`; new extension point
+  `ctx.conversations.bySubject`, `ctx.people`; new permission keys `triggers`, `inbox`, `agents`,
+  `conversations`, `people`; new extension point
   `trigger-source@1` (`multi`, org-scoped); new observe hook `run.lifecycle`. Hooks still observe
   only.
 - **Multi-replica discipline:** dispatch is an outbox job; coalescing is a BullMQ delayed job with a

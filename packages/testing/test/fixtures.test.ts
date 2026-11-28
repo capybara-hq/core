@@ -75,6 +75,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-tools-ui": { provides: [] },
   "fake-storage-user": { provides: [] },
   "fake-lifecycle": { provides: [] },
+  "fake-run-lifecycle": { provides: [] },
   "fake-embed": { provides: [] },
   "fake-bootstrap-a": { provides: ["model-provider@2"] },
   "fake-bootstrap-b": { provides: ["object-store@1"] },

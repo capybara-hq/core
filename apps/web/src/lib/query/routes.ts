@@ -85,6 +85,7 @@ import {
 import { platformMetaQuery } from "./app-auth";
 import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
 import {
+  acceptanceRulesQuery,
   automationCalendarQuery,
   automationGrantsQuery,
   automationQuery,
@@ -268,6 +269,12 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
       me === null
         ? []
         : [q(pushRegistrationsQuery(me.account.id)), q(pushPreferencesQuery(me.account.id))],
+  },
+  {
+    pattern: "/account/automations",
+    // Members up, in the current org: my acceptance rules for the sources that assign work.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member") ? [] : [q(acceptanceRulesQuery(orgId))],
   },
   {
     pattern: "/account/shares",

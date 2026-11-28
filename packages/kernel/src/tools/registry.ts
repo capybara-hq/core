@@ -289,6 +289,12 @@ export interface CallPolicy {
    */
   personOnly?: true;
   /**
+   * With `personOnly`: the conversation's profile never decides the ask either (no review model,
+   * no full access): the person answers it themself. For a call that changes what the person
+   * consents to (`PlatformOperation.personOnly`).
+   */
+  personDecides?: true;
+  /**
    * The file the call takes in place of an upload, as the card shows it (platform web parity spec
    * §5): stored in the approval's `detail.file`, so the approval binds its sha256. Never the bytes.
    */

@@ -233,6 +233,7 @@ describe("ctx.triggers (permissions.triggers)", () => {
         seen.push({ plugin, declared, scope: currentScope() });
         return { eventId: "e1", duplicate: false };
       },
+      causeOf: async () => "h1",
     });
     const emit = ["item.created"];
     const ctx = createExtensionContext(
@@ -260,6 +261,7 @@ describe("ctx.triggers (permissions.triggers)", () => {
         got.push(e);
         return { eventId: "e1", duplicate: false };
       },
+      causeOf: async () => "h1",
     });
     const ctx = createExtensionContext(
       { ...deps, triggers },
@@ -287,6 +289,35 @@ describe("ctx.triggers (permissions.triggers)", () => {
     await ctx.close();
   });
 
+  it("causeOf asks the backend as this extension, in the call's org scope", async () => {
+    const seen: { plugin: string; orgId: string; call: unknown; scope: unknown }[] = [];
+    const triggers = () => ({
+      emit: async () => ({ eventId: "e1", duplicate: false }),
+      causeOf: async (plugin: string, orgId: string, call: unknown) => {
+        seen.push({ plugin, orgId, call, scope: currentScope() });
+        return "h1";
+      },
+    });
+    const ctx = createExtensionContext(
+      { ...deps, triggers },
+      mf({ permissions: { triggers: { emit: ["item.created"] } } }),
+      {},
+    );
+    const call = { orgId: "o1" } as never;
+    expect(await ctx.triggers.causeOf(call)).toBe("h1");
+    expect(seen).toEqual([
+      { plugin: "perm-test", orgId: "o1", call, scope: { kind: "org", orgId: "o1" } },
+    ]);
+    // the call is passed by reference: the pipeline's call scope is a symbol-keyed field
+    expect(seen[0]?.call).toBe(call);
+    for (const bad of [{ orgId: "" }, null, "o1"])
+      await expect(ctx.triggers.causeOf(bad as never)).rejects.toMatchObject({
+        code: "invalid_event",
+      });
+    expect(seen).toHaveLength(1);
+    await ctx.close();
+  });
+
   it("without a backend (a ctx built alone, the CLI) emit rejects", async () => {
     const ctx = createExtensionContext(
       deps,
@@ -294,6 +325,62 @@ describe("ctx.triggers (permissions.triggers)", () => {
       {},
     );
     await expect(ctx.triggers.emit(event)).rejects.toThrow("not available");
+    await ctx.close();
+  });
+});
+
+describe("ctx.inbox (permissions.inbox)", () => {
+  const item = { orgId: "o1", accountId: "a1", kind: "item.assigned", title: "Assigned" };
+
+  it("without permissions.inbox ctx.inbox throws ExtensionPermissionError and audits", async () => {
+    const ctx = createExtensionContext(deps, mf(), {});
+    expect(() => ctx.inbox).toThrow(ExtensionPermissionError);
+    expect(Object.keys(ctx)).not.toContain("inbox");
+    await ctx.close();
+    expect((await denials())[0]?.detail).toMatchObject({ item: "permissions.inbox" });
+  });
+
+  it("posts and resolves as this extension, from a plain copy, in the item's org scope", async () => {
+    const seen: { op: string; source?: unknown; args: unknown; scope: unknown }[] = [];
+    const inbox = () => ({
+      post: async (source: unknown, p: unknown) => {
+        seen.push({ op: "post", source, args: p, scope: currentScope() });
+        return { itemId: "i1" };
+      },
+      resolveForPlugin: async (plugin: string, orgId: string, itemId: string) => {
+        seen.push({ op: "resolve", args: { plugin, orgId, itemId }, scope: currentScope() });
+      },
+    });
+    const ctx = createExtensionContext(
+      { ...deps, inbox } as never,
+      mf({ permissions: { inbox: true } }),
+      {},
+    );
+    expect(await ctx.inbox.post(item)).toEqual({ itemId: "i1" });
+    await ctx.inbox.resolve({ orgId: "o1", itemId: "i1" });
+    expect(seen).toEqual([
+      {
+        op: "post",
+        source: { kind: "plugin", plugin: "perm-test" },
+        args: item,
+        scope: { kind: "org", orgId: "o1" },
+      },
+      {
+        op: "resolve",
+        args: { plugin: "perm-test", orgId: "o1", itemId: "i1" },
+        scope: { kind: "org", orgId: "o1" },
+      },
+    ]);
+    expect(seen[0]?.args).not.toBe(item);
+    await expect(ctx.inbox.post({ ...item, orgId: "" })).rejects.toMatchObject({
+      code: "invalid_item",
+    });
+    await ctx.close();
+  });
+
+  it("without a backend (a ctx built alone, the CLI) post rejects", async () => {
+    const ctx = createExtensionContext(deps, mf({ permissions: { inbox: true } }), {});
+    await expect(ctx.inbox.post(item)).rejects.toThrow("not available");
     await ctx.close();
   });
 });

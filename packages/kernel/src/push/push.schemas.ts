@@ -4,7 +4,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 
 /** The push categories a person switches (mobile app spec §9.4); an absent preference is on. */
-export const PUSH_CATEGORIES = ["waiting", "replies", "tasks", "automations"] as const;
+export const PUSH_CATEGORIES = ["waiting", "replies", "tasks", "automations", "inbox"] as const;
 export type PushCategory = (typeof PUSH_CATEGORIES)[number];
 
 /**
@@ -58,13 +58,14 @@ export interface PushRegistrationView {
   current: boolean;
 }
 
-/** The person's four push switches, as `GET` / `PUT /me/push-preferences` answer them. */
+/** The person's five push switches, as `GET` / `PUT /me/push-preferences` answer them. */
 export const PushPreferencesSchema = z
   .object({
     waiting: z.boolean(),
     replies: z.boolean(),
     tasks: z.boolean(),
     automations: z.boolean(),
+    inbox: z.boolean(),
   })
   .strict();
 export type PushPreferences = z.infer<typeof PushPreferencesSchema>;
@@ -72,7 +73,7 @@ export type PushPreferences = z.infer<typeof PushPreferencesSchema>;
 /** `PUT /me/push-preferences`: the switches to change, at least one. */
 export const PushPreferencesPatchSchema = PushPreferencesSchema.partial().refine(
   (p) => Object.values(p).some((v) => v !== undefined),
-  { message: "give at least one of waiting, replies, tasks, automations" },
+  { message: "give at least one of waiting, replies, tasks, automations, inbox" },
 );
 export type PushPreferencesPatch = z.infer<typeof PushPreferencesPatchSchema>;
 export class PushPreferencesPatchDto extends createZodDto(

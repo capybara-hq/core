@@ -60,6 +60,14 @@ export interface AgentDeletedPayload {
 }
 
 // @public
+export interface AgentsCtx {
+    usableBy(args: {
+        orgId: string;
+        accountId: string;
+    }): Promise<UsableAgent[]>;
+}
+
+// @public
 export interface AgentTemplate {
     connectors?: AgentTemplateConnector[];
     description: string;
@@ -174,6 +182,15 @@ export interface AuthInjection {
 
 // @public
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
+
+// @public
+export type AvatarValue = {
+    kind: "preset";
+    id: BuiltinAvatarPresetId;
+} | {
+    kind: "image";
+    src: string;
+} | null;
 
 // @public
 export const BOOTSTRAP_EXTRA_MANIFEST_SCHEMA_VERSION = 1;
@@ -939,7 +956,32 @@ export function contrastRatio(fg: string, bg: string): number;
 export const CONVERSATION_SOURCES: readonly ["web", "channel_dm", "channel_group", "subagent"];
 
 // @public
+export const CONVERSATIONS_BY_SUBJECT_MAX = 200;
+
+// @public
+export interface ConversationsCtx {
+    bySubject(args: {
+        orgId: string;
+        subject: {
+            kind: string;
+            id: string;
+        };
+    }): Promise<SubjectConversation[]>;
+}
+
+// @public
 export type ConversationSource = (typeof CONVERSATION_SOURCES)[number];
+
+// @public
+export class CtxReadError extends Error {
+    constructor(code: CtxReadErrorCode, message: string, opts?: {
+        cause?: unknown;
+    });
+    readonly code: CtxReadErrorCode;
+}
+
+// @public
+export type CtxReadErrorCode = "invalid_args" | "org_disabled";
 
 // @public
 export function decodeDialInStreamData(message: Uint8Array): {
@@ -1699,11 +1741,13 @@ export const EXTENSION_TOOL_NAME: RegExp;
 
 // @public
 export interface ExtensionContext {
+    agents: AgentsCtx;
     bus: {
         publish(topic: string, payload: unknown): Promise<void>;
         subscribe(topic: string, handler: (payload: unknown) => void): Promise<() => Promise<void>>;
     };
     readonly config: unknown;
+    conversations: ConversationsCtx;
     db: Kysely<any>;
     deviceAccess: DeviceAccessCtx;
     devices: DevicesCtx;
@@ -1730,6 +1774,7 @@ export interface ExtensionContext {
     http: {
         route(method: "GET" | "POST" | "PUT" | "DELETE", path: string, handler: (req: Request, caller: RouteCaller) => Promise<Response>): void;
     };
+    inbox: InboxCtx;
     kv: {
         get(key: string): Promise<string | null>;
         set(key: string, value: string, opts: {
@@ -1748,6 +1793,7 @@ export interface ExtensionContext {
     log: Logger;
     models: ExtensionModels;
     net: ExtensionNet;
+    people: PeopleCtx;
     provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
     queue: {
         define<T>(name: string, handler: (data: T) => Promise<void>, opts?: {
@@ -1891,7 +1937,13 @@ export class ExtensionPermissionError extends Error {
 
 // @public
 export interface ExtensionPermissions {
+    agents?: {
+        read: true;
+    };
     client?: boolean;
+    conversations?: {
+        subjects: true;
+    };
     deviceAccess?: {
         services: string[];
     };
@@ -1900,6 +1952,7 @@ export interface ExtensionPermissions {
     };
     hooks?: HookMountPoint[];
     http?: HttpPermission[];
+    inbox?: boolean;
     models?: {
         purpose: string;
         kind: "chat" | "embedding" | "image_generation";
@@ -1909,6 +1962,9 @@ export interface ExtensionPermissions {
         };
     }[];
     network?: string[];
+    people?: {
+        read: true;
+    };
     policyHooks?: PolicyHook[];
     secrets?: boolean;
     setupChecks?: string[];
@@ -2127,7 +2183,7 @@ export function hasControlChars(s: string): boolean;
 export function hasShellInjection(body: string): boolean;
 
 // @public
-export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted"];
+export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted", "run.lifecycle"];
 
 // @public
 export interface HookCall {
@@ -2193,13 +2249,14 @@ export interface HookPayloads {
     "model.response": ModelResponseHookPayload | ImageResponseHookPayload;
     "org.deleted": OrgDeletedPayload;
     "org.member_removed": OrgMemberRemovedPayload;
+    "run.lifecycle": RunLifecyclePayload;
     "tool.postExecute": ToolPostHookPayload;
     "tool.preExecute": ToolPreHookPayload;
     "usage.report": UsageReportPayload;
 }
 
 // @public
-export const HOOKS_AVAILABLE: readonly ["model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted"];
+export const HOOKS_AVAILABLE: readonly ["model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted", "run.lifecycle"];
 
 // @public
 export interface HookScope {
@@ -2407,6 +2464,76 @@ export interface InboundSender {
     locale?: string;
     tenantId: string;
     timeZone?: string;
+}
+
+// @public
+export const INBOX_ACTIONS_MAX = 3;
+
+// @public
+export const INBOX_ID_RE: RegExp;
+
+// @public
+export const INBOX_KIND_RE: RegExp;
+
+// @public
+export const INBOX_LIMITS: {
+    readonly titleChars: 200;
+    readonly bodyChars: 2000;
+    readonly linkChars: 512;
+    readonly kindChars: 64;
+    readonly labelChars: 40;
+    readonly idChars: 64;
+    readonly dedupeKeyChars: 200;
+    readonly payloadBytes: 2000;
+    readonly defaultExpirySeconds: number;
+    readonly maxExpirySeconds: number;
+};
+
+// @public
+export interface InboxAction {
+    id: string;
+    label: LocalizedName;
+    style?: "primary" | "danger";
+    uiAction: {
+        contribution: string;
+        actionId: string;
+        payload?: unknown;
+    };
+}
+
+// @public
+export interface InboxCtx {
+    post(p: InboxPost): Promise<{
+        itemId: string;
+    }>;
+    resolve(args: {
+        orgId: string;
+        itemId: string;
+    }): Promise<void>;
+}
+
+// @public
+export class InboxError extends Error {
+    constructor(code: InboxErrorCode, message: string, opts?: {
+        cause?: unknown;
+    });
+    readonly code: InboxErrorCode;
+}
+
+// @public
+export type InboxErrorCode = "invalid_item" | "org_disabled" | "not_found";
+
+// @public
+export interface InboxPost {
+    accountId: string;
+    actions?: InboxAction[];
+    body?: string;
+    dedupeKey?: string;
+    expiresInSeconds?: number;
+    kind: string;
+    link?: string;
+    orgId: string;
+    title: string;
 }
 
 // @public
@@ -3368,7 +3495,34 @@ export function parseToolKey(key: string): ParsedToolKey | null;
 export function parseViewerContext(body: Uint8Array | string): DeviceServiceViewerContext | null;
 
 // @public
+export const PEOPLE_GET_MAX = 200;
+
+// @public
+export const PEOPLE_SEARCH_MAX = 50;
+
+// @public
+export interface PeopleCtx {
+    get(args: {
+        orgId: string;
+        accountIds: string[];
+    }): Promise<PersonView[]>;
+    search(args: {
+        orgId: string;
+        query: string;
+        limit?: number;
+    }): Promise<Pick<PersonView, "id" | "name" | "avatar">[]>;
+}
+
+// @public
 export type PermissionProfile = "request-approval" | "approve-for-me" | "full-access";
+
+// @public
+export interface PersonView {
+    active: boolean;
+    avatar: AvatarValue;
+    id: string;
+    name: string;
+}
 
 // @public
 export function pickImageSize(info: ModelImageGenerationInfo, opts: {
@@ -3830,6 +3984,26 @@ export type RouteCaller = {
     role: UiRole;
     config: unknown;
 };
+
+// @public
+export type RunLifecycleDeclineReason = "declined" | "off" | "paused" | "expired" | "undelivered";
+
+// @public
+export interface RunLifecyclePayload {
+    accountId: string;
+    agentId: string;
+    agentVersion?: number;
+    conversationId?: string;
+    orgId: string;
+    phase: "started" | "waiting" | "resumed" | "finished" | "failed" | "aborted" | "offer_declined";
+    reason?: RunLifecycleDeclineReason;
+    runId?: string;
+    subject: {
+        kind: string;
+        id: string;
+    };
+    waitingOn?: "approval" | "input";
+}
 
 // @public
 export const SANDBOX_FAKE_IP_DNS: {
@@ -4547,6 +4721,18 @@ export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest;
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
 
 // @public
+export interface SubjectConversation {
+    agentId: string;
+    id: string;
+    lastActivityAt: string;
+    ownerAccountId: string;
+    state: SubjectConversationState;
+}
+
+// @public
+export type SubjectConversationState = "idle" | "running" | "waiting";
+
+// @public
 export interface SuggestedAppearance {
     replacements?: Record<string, string>;
     theme?: string;
@@ -5130,6 +5316,8 @@ export const TRIGGER_TYPE_RE: RegExp;
 export type TriggerCause = {
     call: ToolCallContext;
 } | {
+    handle: string;
+} | {
     accountId: string;
 };
 
@@ -5179,6 +5367,7 @@ export type TriggerFactValue = string | number | boolean | string[];
 
 // @public
 export interface TriggersCtx {
+    causeOf(call: ToolCallContext): Promise<string>;
     emit(event: TriggerEvent): Promise<{
         eventId: string;
         duplicate: boolean;
@@ -5507,6 +5696,13 @@ export interface UiView {
 }
 
 // @public
+export interface UsableAgent {
+    avatar: AvatarValue;
+    id: string;
+    name: string;
+}
+
+// @public
 export type UsagePurpose = ModelCallPurpose | "embedding";
 
 // @public
@@ -5559,6 +5755,9 @@ export function validateGitSource(git: unknown, at?: string): string[];
 
 // @public
 export function validateImageGenerateResult(req: ImageGenerateRequest, info: ModelImageGenerationInfo, res: unknown): string | null;
+
+// @public
+export function validateInboxPost(p: InboxPost, plugin: string): string[];
 
 // @public
 export function validateInputForm(form: InputForm): string[];

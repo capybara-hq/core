@@ -400,6 +400,10 @@ describe("automation channel delivery (spec §8)", () => {
 
   it("a group run whose first post is a file roots its thread with a text line", async () => {
     await ownerGroupThread("grp-files", "g-files-hello");
+    // a group chat shows a progress card by default, posted when the delivery reads the run's
+    // start and so racing the artifact for the first post; this test is about the file being it
+    await sql`UPDATE capybara.channel_connections SET process_display = 'off'
+      WHERE id = ${miniId}`.execute(raw);
     const t = await chatTask(
       { connectionId: miniId, chatId: "grp-files", chatType: "group" },
       { prompt: "chart please" },
@@ -483,6 +487,8 @@ describe("automation channel delivery (spec §8)", () => {
       .where("conversation_id", "=", conv)
       .executeTakeFirstOrThrow();
     expect(delivery.pending_thread_account_id).toBeNull();
+    await sql`UPDATE capybara.channel_connections SET process_display = NULL
+      WHERE id = ${miniId}`.execute(raw);
   });
 
   it("a group target on a channel without threads is skipped with unsupported_target", async () => {

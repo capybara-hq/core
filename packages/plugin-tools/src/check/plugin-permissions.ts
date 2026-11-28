@@ -121,6 +121,14 @@ interface Manifest {
   deviceAccess: boolean;
   /** permissions.triggers is declared (the event types it may emit are checked at run time). */
   triggers: boolean;
+  /** permissions.inbox is declared (`true`). */
+  inbox: boolean;
+  /** permissions.agents is declared as `{ read: true }`. */
+  agents: boolean;
+  /** permissions.conversations is declared as `{ subjects: true }`. */
+  conversations: boolean;
+  /** permissions.people is declared as `{ read: true }`. */
+  people: boolean;
   /** The literal extension name, when it is one. */
   name: string | undefined;
   setup: Node | undefined;
@@ -171,6 +179,10 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     models: false,
     deviceAccess: false,
     triggers: false,
+    inbox: false,
+    agents: false,
+    conversations: false,
+    people: false,
     name: stringValue(
       prop(obj, "name")?.value ? resolve(prop(obj, "name")?.value as Node, decls) : undefined,
     ),
@@ -193,6 +205,18 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
       me !== undefined && !(me.type === "ArrayExpression" && (me.elements as Node[]).length === 0);
     m.deviceAccess = prop(pe, "deviceAccess") !== undefined;
     m.triggers = prop(pe, "triggers") !== undefined;
+    const inbox = prop(pe, "inbox");
+    m.inbox = !!inbox && (resolve(inbox.value as Node, decls) as Node).value === true;
+    const flagged = (key: string, flag: string): boolean => {
+      const v = prop(pe, key);
+      if (!v) return false;
+      const o = resolve(v.value as Node, decls) as Node;
+      const f = o.type === "ObjectExpression" ? prop(o, flag) : undefined;
+      return !!f && (resolve(f.value as Node, decls) as Node).value === true;
+    };
+    m.agents = flagged("agents", "read");
+    m.conversations = flagged("conversations", "subjects");
+    m.people = flagged("people", "read");
     for (const t of strings(prop(pe, "tools")?.value as Node | undefined, decls)) m.tools.add(t);
     for (const h of strings(prop(pe, "hooks")?.value as Node | undefined, decls)) m.hooks.add(h);
     for (const h of strings(prop(pe, "policyHooks")?.value as Node | undefined, decls)) {
@@ -448,6 +472,38 @@ function scanSetup(
               "ctx.triggers is used but not declared; list the event types it emits in permissions.triggers.emit in the extension manifest",
             );
           }
+        } else if (name === "agents") {
+          if (!m.agents) {
+            add(
+              n,
+              "perm-agents",
+              "ctx.agents is used but not declared; set permissions.agents: { read: true } in the extension manifest",
+            );
+          }
+        } else if (name === "conversations") {
+          if (!m.conversations) {
+            add(
+              n,
+              "perm-conversations",
+              "ctx.conversations is used but not declared; set permissions.conversations: { subjects: true } in the extension manifest",
+            );
+          }
+        } else if (name === "people") {
+          if (!m.people) {
+            add(
+              n,
+              "perm-people",
+              "ctx.people is used but not declared; set permissions.people: { read: true } in the extension manifest",
+            );
+          }
+        } else if (name === "inbox") {
+          if (!m.inbox) {
+            add(
+              n,
+              "perm-inbox",
+              "ctx.inbox is used but not declared; set permissions.inbox: true in the extension manifest",
+            );
+          }
         } else if (
           name === "http" ||
           name === "tools" ||
@@ -531,6 +587,10 @@ function scanFile(
  *   services it may use are checked at run time);
  * - perm-triggers: ctx.triggers is used but permissions.triggers is not declared (the event types
  *   it may emit are checked at run time);
+ * - perm-inbox: ctx.inbox is used but permissions.inbox is not `true`;
+ * - perm-agents / perm-conversations / perm-people: ctx.agents, ctx.conversations or ctx.people is
+ *   used but permissions.agents is not `{ read: true }`, permissions.conversations is not
+ *   `{ subjects: true }` or permissions.people is not `{ read: true }`;
  * - perm-reserved: platform access that cannot be confirmed (a destructured ctx, a computed member).
  * 路由路径、工具名、能力 ref、界面 id 须是字符串字面量或本文件的 const；动态的写法报「无法静态确认」，
  * 豁免：`// capybara:allow-dynamic-permission <原因>`（行尾或紧邻上一行，原因必填）。

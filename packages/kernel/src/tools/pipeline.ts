@@ -287,6 +287,12 @@ export const PERSON_FIELDS_ROLE_TEXT =
  */
 export const PERSON_ONLY_UNATTENDED_TEXT =
   "This write shows its result once, on the web, to the person you work for, and no one is there to read it; it cannot run unattended.";
+/**
+ * A call that changes what the person consents to (`CallPolicy.personDecides`) in an unattended
+ * run: only that person decides it, and nobody is there.
+ */
+export const PERSON_DECIDES_UNATTENDED_TEXT =
+  "This write changes what the person you work for consents to, so only they can confirm it, and no one is there; it cannot run unattended. Ask them to make the change on the web.";
 /** A call only the person may confirm whose ask would go to a role instead of the person. */
 export const PERSON_ONLY_ROLE_TEXT =
   "This write shows its result once to the person you work for, so it runs only for them, and they lack the role. Ask an admin to do it on the web.";
@@ -1757,7 +1763,11 @@ export class ToolPipeline {
     const personOnly = callPolicy?.personOnly === true;
     if ((personFields !== undefined || personOnly) && unattendedRules(ctx.unattended)) {
       return fail(
-        personFields !== undefined ? PERSON_FIELDS_UNATTENDED_TEXT : PERSON_ONLY_UNATTENDED_TEXT,
+        personFields !== undefined
+          ? PERSON_FIELDS_UNATTENDED_TEXT
+          : callPolicy?.personDecides === true
+            ? PERSON_DECIDES_UNATTENDED_TEXT
+            : PERSON_ONLY_UNATTENDED_TEXT,
         outKey,
       );
     }
@@ -2414,6 +2424,8 @@ export class ToolPipeline {
     if (profiles === undefined || reviewer === undefined) return asks;
     if (ask.approverRole !== null || ask.requestedFor === null) return asks;
     if (ctx.unattended != null) return asks;
+    // a change of what the person consents to: they answer it themself, never their profile
+    if (callPolicy?.personDecides === true) return asks;
     if (tool.spec.annotations?.requiresUserInteraction === true) return asks;
     // a decision already recorded for this call governs it whatever the profile reads now (R2: a
     // resumed call reuses it; a profile change never revokes started work)

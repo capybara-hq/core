@@ -6,6 +6,7 @@ import { type OutboxJob, OutboxService } from "../infra/outbox/outbox.service.js
 import {
   automationRunEventId,
   conversationEventId,
+  inboxItemEventId,
   PUSH_FANOUT_JOB,
   PUSH_QUEUE,
   type PushFanoutData,
@@ -67,6 +68,13 @@ export class PushOwed {
     await this.outbox.add(
       fanoutJob(automationRunEventId(taskRunId), orgId, { kind: "automation", taskRunId }),
     );
+  }
+
+  /** The fanout of a personal inbox item just posted, in the caller's transaction. */
+  @Transactional({ propagation: "mandatory" })
+  async oweInboxItem(itemId: string, orgId: string): Promise<void> {
+    if (!this.host.any()) return;
+    await this.outbox.add(fanoutJob(inboxItemEventId(itemId), orgId, { kind: "inbox", itemId }));
   }
 }
 

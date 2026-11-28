@@ -147,6 +147,11 @@ Each line is the rule you must not miss; the skill has the rest.
   (`ctx.dialIn`, `ctx.devices`) for providers that declare `permissions.dialIn` and implement
   `DeviceProvider.dialIn` (the kernel has no device location of its own; local devices are the
   `device-local` plugin's), its long connections held only by the `gateway` role;
+  `ctx.triggers` emits events about an extension's subjects: an emitted event's cause and chain
+  depth are the kernel's, and an emit from a queue job carries a `causeOf` handle made in the tool
+  call; `trigger-source@1` is a `multi`, brokered, org-scoped point; `ctx.inbox` items are personal
+  and a plugin's links stay under `/p/<plugin>/`; a directed event runs only through the person's
+  acceptance rule (`auto`, `confirm`, `off`), never a person-made automation;
   hooks observe or deny, never rewrite; every kernel model call fires `model.request`, an
   extension's `ctx.models.embed` too (`purpose: "embedding"`, no conversation fields) and
   `ctx.models.generateImage` (`purpose: "image"`), and policy hooks fail closed. An extension
@@ -189,7 +194,8 @@ Each line is the rule you must not miss; the skill has the rest.
   (`platform-op-secret-param`); "it is an upload" is no reason to exclude a route, a file reaches an
   operation as a file reference (`platform-op-upload`), and an operation that sends the person to
   confirm, review or decide on the web returns a handoff link card or states `noHandoff`
-  (`platform-op-handoff`).
+  (`platform-op-handoff`); an operation that changes a person's own consent declares `personOnly`
+  (always the person's ask, refused unattended).
   [writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md)
 - **Tools, sub-agents, web tools, skills:** English descriptions and actionable errors; tool keys
   contain no dots. [writing-tools](.agents/skills/writing-tools/SKILL.md)

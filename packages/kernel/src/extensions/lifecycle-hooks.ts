@@ -1,4 +1,4 @@
-import type { HookHandler, HookPayloads } from "@capybara-hq/plugin-sdk";
+import type { AvailableHook, HookHandler, HookPayloads } from "@capybara-hq/plugin-sdk";
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Job, Worker } from "bullmq";
@@ -13,12 +13,17 @@ import { runJob } from "../infra/queue/run-job.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { deployedSnapshot } from "./deployed-snapshots.js";
+import { isExtensionEnabled } from "./enabled.js";
 import { ExtensionsModule } from "./extensions.module.js";
-import { deepFreeze, errMsg, type LifecycleHook } from "./hooks.js";
+import { deepFreeze, errMsg, HookNeedsConfigError, type LifecycleHook } from "./hooks.js";
 import { ExtensionHost } from "./host.js";
+import {
+  LIFECYCLE_QUEUE,
+  type RUN_LIFECYCLE_JOB,
+  type RunLifecycleJob,
+} from "./run-lifecycle-owe.js";
 
-/** Queue of lifecycle hook deliveries (no `:` in the name). */
-export const LIFECYCLE_QUEUE = "cap-kernel-lifecycle";
+export { LIFECYCLE_QUEUE };
 /** The job name of every delivery (registered in `infra/outbox/registry.ts`). */
 export const LIFECYCLE_JOB = "lifecycle";
 /** One handler call's time limit. */
@@ -32,6 +37,15 @@ export interface LifecycleJob<K extends LifecycleHook = LifecycleHook> {
   plugin: string;
   payload: HookPayloads[K];
 }
+
+/**
+ * The job name of a `run.lifecycle` delivery, owed by `run-lifecycle-owe.ts` (which the runtime
+ * imports without this module's Nest graph); typed against that constant so the two cannot drift.
+ */
+export const RUN_LIFECYCLE_JOB_NAME: typeof RUN_LIFECYCLE_JOB = "hook-run-lifecycle";
+
+/** Every job of {@link LIFECYCLE_QUEUE}: a deletion notice or a `run.lifecycle` delivery. */
+export type LifecycleQueueJob = LifecycleJob | RunLifecycleJob;
 
 /**
  * The deterministic job id of one delivery: the mount, the plugin and the payload's ids (no `:`;
@@ -119,12 +133,13 @@ export class LifecycleHooks {
   }
 
   /** One delivery job (the consumer {@link LifecycleHooksProcessor} calls it). */
-  async process(data: LifecycleJob, stop: AbortSignal): Promise<void> {
+  async process(data: LifecycleQueueJob, stop: AbortSignal): Promise<void> {
+    if (data.mount === "run.lifecycle") return this.processRunLifecycle(data, stop);
     const fields = { mount: data.mount, plugin: data.plugin };
     const handlers = this.host.hooks
       .lifecycleHandlers(data.mount)
       .filter((h) => h.plugin === data.plugin)
-      .map((h) => h.handler as HookHandler<LifecycleHook>);
+      .map((h) => h.handler as unknown as HookHandler<AvailableHook>);
     if (handlers.length === 0) {
       if (this.host.current(data.plugin) === undefined) {
         // another replica or a later attempt may have it loaded
@@ -133,14 +148,52 @@ export class LifecycleHooks {
       this.log.warn("lifecycle hook delivery dropped: the plugin registered no handler", fields);
       return;
     }
-    const payload = deepFreeze(structuredClone(data.payload)) as HookPayloads[LifecycleHook];
+    const payload = deepFreeze(structuredClone(data.payload)) as HookPayloads[AvailableHook];
     for (const h of handlers) await this.call(h, payload, stop);
+  }
+
+  /**
+   * One `run.lifecycle` delivery: the plugin's handlers run with its effective config for the
+   * payload's org; an org that switched the plugin off since the notice was owed, an org whose
+   * config is not valid, or a plugin that registered no handler, is dropped with a log line (the
+   * notice is display state, never worth retrying forever).
+   */
+  private async processRunLifecycle(data: RunLifecycleJob, stop: AbortSignal): Promise<void> {
+    const fields = { mount: data.mount, plugin: data.plugin };
+    if (!(await isExtensionEnabled(this.kdb.db, data.payload.orgId, data.plugin))) {
+      this.log.info("run.lifecycle delivery dropped: the plugin is not enabled in the org", {
+        ...fields,
+        orgId: data.payload.orgId,
+      });
+      return;
+    }
+    const handlers = this.host.hooks
+      .handlers("run.lifecycle")
+      .filter((h) => h.plugin === data.plugin)
+      .map((h) => h.handler as HookHandler<AvailableHook>);
+    if (handlers.length === 0) {
+      if (this.host.current(data.plugin) === undefined) {
+        throw new Error(`plugin ${data.plugin} is not loaded on this replica`);
+      }
+      this.log.warn("run.lifecycle delivery dropped: the plugin registered no handler", fields);
+      return;
+    }
+    const payload = deepFreeze(structuredClone(data.payload)) as HookPayloads[AvailableHook];
+    try {
+      for (const h of handlers) await this.call(h, payload, stop);
+    } catch (err) {
+      if (!(err instanceof HookNeedsConfigError)) throw err;
+      this.log.warn("run.lifecycle delivery dropped: the org's config of the plugin is invalid", {
+        ...fields,
+        orgId: data.payload.orgId,
+      });
+    }
   }
 
   /** One handler call, aborted after {@link LIFECYCLE_HOOK_TIMEOUT_MS} or when the replica stops. */
   private async call(
-    h: HookHandler<LifecycleHook>,
-    payload: HookPayloads[LifecycleHook],
+    h: HookHandler<AvailableHook>,
+    payload: HookPayloads[AvailableHook],
     stop: AbortSignal,
   ): Promise<void> {
     const ac = new AbortController();
@@ -169,7 +222,7 @@ export class LifecycleHooks {
   }
 
   /** A job failed (the worker's `failed` event): a retry warns, the last attempt logs an error. */
-  onFailed(j: Job<LifecycleJob> | undefined, err: Error): void {
+  onFailed(j: Job<LifecycleQueueJob> | undefined, err: Error): void {
     if (!j) return;
     const fields = {
       jobId: j.id,
@@ -191,7 +244,7 @@ export class LifecycleHooks {
  */
 @Injectable()
 @Processor(LIFECYCLE_QUEUE, { autorun: false, concurrency: LIFECYCLE_CONCURRENCY })
-export class LifecycleHooksProcessor extends WorkerHost<Worker<LifecycleJob>> {
+export class LifecycleHooksProcessor extends WorkerHost<Worker<LifecycleQueueJob>> {
   private readonly stopping = new AbortController();
 
   constructor(
@@ -201,7 +254,7 @@ export class LifecycleHooksProcessor extends WorkerHost<Worker<LifecycleJob>> {
     super();
   }
 
-  process(job: Job<LifecycleJob>): Promise<void> {
+  process(job: Job<LifecycleQueueJob>): Promise<void> {
     return runJob(LIFECYCLE_QUEUE, job, () => this.hooks.process(job.data, this.stopping.signal), {
       platform: "extension lifecycle hook (deployment-wide)",
     });
@@ -219,7 +272,7 @@ export class LifecycleHooksProcessor extends WorkerHost<Worker<LifecycleJob>> {
   }
 
   @OnWorkerEvent("failed")
-  failed(job: Job<LifecycleJob> | undefined, err: Error): void {
+  failed(job: Job<LifecycleQueueJob> | undefined, err: Error): void {
     this.hooks.onFailed(job, err);
   }
 

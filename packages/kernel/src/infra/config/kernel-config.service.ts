@@ -78,6 +78,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "automations.maxEventRunsPerSubjectPerHourCap": () => {},
   // The trigger event sweep reads the retention at every tick.
   "automations.eventRetentionDays": () => {},
+  // ... and the inbox item retention.
+  "inbox.retentionDays": () => {},
   // Run start reads the skills catalog budget when it records a snapshot.
   "skills.catalogBudgetChars": () => {},
   // The attribution defaults are read live at every run start, admin settings view and org settings.

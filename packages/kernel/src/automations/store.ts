@@ -3,17 +3,36 @@ import type { Selectable, Updateable } from "kysely";
 import { sql } from "kysely";
 import type { AutomationRunsTable, AutomationsTable, KernelSchemaDb } from "../db/kernel-schema.js";
 import { asPlatform } from "../infra/database/org-scope.js";
-import type { Automation, AutomationGrant, TaskRun, TaskRunStatus, TimedTaskRun } from "./types.js";
+import type {
+  Automation,
+  AutomationGrant,
+  AutomationPrincipal,
+  TaskRun,
+  TaskRunStatus,
+  TimedTaskRun,
+} from "./types.js";
 
 /** What a caller supplies to create a task; the counters, pause fields and timestamps default. */
 export type AutomationInsert = Omit<
   Automation,
-  "pauseReason" | "pausedBy" | "consecutiveFailures" | "createdAt" | "updatedAt" | "unattendedAsk"
-> & { unattendedAsk?: Automation["unattendedAsk"] };
+  | "pauseReason"
+  | "pausedBy"
+  | "consecutiveFailures"
+  | "createdAt"
+  | "updatedAt"
+  | "unattendedAsk"
+  | "origin"
+> & {
+  unattendedAsk?: Automation["unattendedAsk"];
+  /** Default `person`. */
+  origin?: Automation["origin"];
+  /** Whom it acts as; null (the default) = the member `accountId`. */
+  principal?: AutomationPrincipal | null;
+};
 
 /** The fields a task update may change (`updated_at` is always refreshed). */
 export type AutomationPatch = Partial<
-  Omit<Automation, "id" | "orgId" | "accountId" | "createdAt" | "updatedAt">
+  Omit<Automation, "id" | "orgId" | "accountId" | "origin" | "createdAt" | "updatedAt">
 >;
 
 /** The fields of a task run insert either kind of run has; it starts `pending`. */
@@ -76,6 +95,7 @@ const toTask = (r: Selectable<AutomationsTable>): Automation => ({
   effort: r.effort,
   deviceId: r.device_id,
   unattendedAsk: r.unattended_ask,
+  origin: r.origin,
   status: r.status,
   pauseReason: r.pause_reason,
   pausedBy: r.paused_by,
@@ -162,6 +182,8 @@ export class AutomationStore {
         effort: task.effort,
         device_id: task.deviceId,
         unattended_ask: task.unattendedAsk ?? null,
+        origin: task.origin ?? "person",
+        principal: task.principal == null ? null : JSON.stringify(task.principal),
         status: task.status,
         next_run_at: task.nextRunAt,
         jitter_seconds: task.jitterSeconds,
@@ -264,6 +286,9 @@ export class AutomationStore {
       .select((eb) => eb.fn.countAll<string>().as("n"))
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
+      // acceptance automations are the kernel's (collaboration spec §4.4): they use up none of the
+      // person's or the org's own limits
+      .where("origin", "=", "person")
       .where("status", "in", ["active", "paused"]);
     if (accountId !== undefined) q = q.where("account_id", "=", accountId);
     const row = await q.executeTakeFirstOrThrow();

@@ -9,12 +9,15 @@ import {
   Stack,
   StatusMark,
   Text,
+  TextLink,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useQuery } from "@tanstack/react-query";
+import { useLocale, useTranslations } from "next-intl";
 import { type ComponentProps, useState } from "react";
 import {
   type Automation,
   type AutomationListItem,
+  type AutomationOrigin,
   type AutomationTrigger,
   automationState,
   automationWords,
@@ -25,6 +28,9 @@ import {
   type TriggerInput,
   zoneOf,
 } from "../lib/automations";
+import { extensionLabel, labelLocale } from "../lib/extension-label";
+import { eventSourcesQuery } from "../lib/query/automations";
+import { retryOnMountOf } from "../lib/query/client";
 import { inboxChangeKeys } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
@@ -45,6 +51,29 @@ export function useAutomationWords(): (
         : w.values;
     const when = t(`when.${w.key}`, values);
     return zone === undefined ? when : t("withZone", { when, zone });
+  };
+}
+
+/**
+ * A trigger source's display name for the task lists (the extension name while it cannot be
+ * read). The event sources are read only when one of `tasks` is an acceptance automation.
+ */
+export function useEventSourceName(
+  orgId: string,
+  tasks: readonly Pick<Automation, "origin">[] | null | undefined,
+): (source: string) => string {
+  const locale = labelLocale(useLocale());
+  const q = eventSourcesQuery(orgId);
+  const sources = useQuery({
+    ...q,
+    retryOnMount: retryOnMountOf(q.queryKey),
+    enabled: (tasks ?? []).some((t) => t.origin === "acceptance"),
+  }).data;
+  return (source) => {
+    const s = sources?.items.find((i) => i.source === source);
+    return s === undefined
+      ? source
+      : extensionLabel({ name: s.source, displayName: s.name }, locale);
   };
 }
 
@@ -97,13 +126,19 @@ export function useAutomationActions(orgId: string) {
   return { pause, resume, run, remove };
 }
 
-/** Delete a task: asks first (a dangerous dialog that starts on Cancel). */
+/**
+ * Delete a task: asks first (a dangerous dialog that starts on Cancel). An acceptance automation
+ * (`origin: acceptance`) is made again by the next assigned work while the person's rule for its
+ * source is `auto`: the dialog says so and links to the rules (`/account/automations`).
+ */
 export function DeleteAutomationDialog({
   name,
+  origin,
   onClose,
   onDelete,
 }: {
   name: string;
+  origin: AutomationOrigin;
   onClose(): void;
   onDelete(): Promise<void>;
 }) {
@@ -149,6 +184,12 @@ export function DeleteAutomationDialog({
     >
       <Stack gap={12}>
         <Text variant="prose">{t("deleteConfirmBody")}</Text>
+        {origin === "acceptance" && (
+          <Text variant="prose">
+            {t("deleteAcceptanceBody")}{" "}
+            <TextLink href="/account/automations">{t("deleteAcceptanceLink")}</TextLink>
+          </Text>
+        )}
         {error !== undefined && <FormError message={error} />}
       </Stack>
     </Dialog>
@@ -165,9 +206,24 @@ export function automationColumns(
   t: AutomationT,
   when: ReturnType<typeof useAutomationWords>,
   agentName: (id: string) => string,
+  /** A trigger source's display name (an acceptance automation names the source it serves). */
+  sourceName: (source: string) => string = (s) => s,
 ): (Column<AutomationListItem> & { key: AutomationColumnKey })[] {
   return [
-    { key: "name", header: t("columns.name"), cell: (s) => <CellTitle title={s.name} /> },
+    {
+      key: "name",
+      header: t("columns.name"),
+      // an acceptance automation says which source's work it accepts (collaboration spec §4.4)
+      cell: (s) =>
+        s.origin === "acceptance" && s.trigger.kind === "event" ? (
+          <CellTitle
+            title={s.name}
+            description={t("acceptsWork", { source: sourceName(s.trigger.source) })}
+          />
+        ) : (
+          <CellTitle title={s.name} />
+        ),
+    },
     { key: "agent", header: t("columns.agent"), cell: (s) => agentName(s.agentId) },
     {
       key: "schedule",
