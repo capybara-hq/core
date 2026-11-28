@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildModelRequest } from "../../../src/runtime/context/build.js";
 import {
   compactionPlan,
+  manualOpeningSeqs,
   openingSeqs,
   shouldCompact,
 } from "../../../src/runtime/context/compaction.js";
@@ -228,6 +229,81 @@ describe("compaction at the start of an event automation's run (collaboration sp
     // the in-context form keeps it too: the model has not answered it yet
     expect(unansweredOpeners(log.events, opening)).toEqual([opener.seq]);
     log.summary(covers, "Two earlier questions were answered.", opening);
+
+    const { request, meta } = buildModelRequest({
+      events: log.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL_10K,
+      step: 1,
+    });
+    const first = textOf(request.messages[0] as ModelMessage);
+    expect(first).toContain("<conversation_summary>");
+    expect(first).toContain(automationEventBlock(EVENT));
+    expect(first).toContain(PROMPT);
+    expect(meta.automationEventSeqs).toEqual([opener.seq]);
+  });
+
+  it("manual compaction of an automation event run keeps the opener, including its event block", () => {
+    const log = new Log();
+    log.turn(1);
+    const opener = log.add(
+      {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: PROMPT }],
+          authorAccountId: "acc-1",
+          automationEvent: EVENT,
+        },
+      },
+      null,
+    );
+    log.add({
+      type: "run_started",
+      payload: {
+        agentVersion: 1,
+        model: { provider: "model-fake", model: "fake-1" },
+        triggerAccountId: "acc-1",
+        trigger: "automation_event",
+      },
+    });
+    for (let n = 1; n <= 5; n++) {
+      log.assistant(
+        [{ type: "tool_call", id: `auto-call-${n}`, name: "Read", input: { n } }],
+        "tool_use",
+        n,
+      );
+      log.add({
+        type: "tool_result",
+        payload: {
+          step: n,
+          callId: `auto-call-${n}`,
+          toolKey: "Read",
+          content: `result ${n}: ${"y".repeat(400)}`,
+          isError: false,
+        },
+      });
+    }
+    log.add(
+      {
+        type: "run_started",
+        payload: {
+          agentVersion: 1,
+          model: { provider: "model-fake", model: "fake-1" },
+          triggerAccountId: "acc-1",
+          trigger: "compact",
+        },
+      },
+      "run-compact",
+    );
+
+    const plan = compactionPlan(log.events, SETTINGS, 300, { manual: true });
+    expect(plan).not.toBeNull();
+    const covers = plan?.coversUpToSeq ?? 0;
+    expect(covers).toBeGreaterThanOrEqual(opener.seq);
+    const opening = manualOpeningSeqs(log.events, covers, Number.POSITIVE_INFINITY);
+    expect(opening).toEqual([opener.seq]);
+    log.summary(covers, "Earlier turn and first tool steps summarized.", opening);
 
     const { request, meta } = buildModelRequest({
       events: log.events,
