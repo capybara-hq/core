@@ -5,12 +5,18 @@ import {
   type AttachmentStripItem,
   Button,
   ComposerBox,
+  type ComposerEditorHandle,
   ComposerMenu,
   type ComposerMenuGroup,
   type ComposerMenuItem,
   type ComposerMenuKind,
   type ComposerMenuProps,
   type ComposerPlace,
+  type ComposerSegment,
+  type ComposerTokenData,
+  type ComposerTokenKind,
+  type ComposerTrigger,
+  commandScore,
   Dialog,
   Field,
   FileDrop,
@@ -30,27 +36,29 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { useLocale, useTranslations } from "next-intl";
 import {
   type ChangeEvent,
-  type CompositionEvent,
-  type KeyboardEvent,
   type ReactNode,
   type Ref,
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { ApiClientError } from "../../lib/api";
 import {
   type ConnectorPrompt,
-  type ConnectorResource,
   type ConnectorSummary,
   type ConnectorUnavailable,
-  connectorDescriptionOf,
+  type MentionableConnector,
+  mentionableDescriptionOf,
   renderConnectorPrompt,
 } from "../../lib/connectors";
-import { MAX_CONVERSATION_REFS, type MessageInput } from "../../lib/conversations";
+import {
+  MAX_CONVERSATION_REFS,
+  type MessageInput,
+  type MessageToken,
+  TOKEN_MARKER,
+} from "../../lib/conversations";
 import { focusWhenPossible } from "../../lib/deferred-focus";
 import type { LibraryFileView } from "../../lib/library-files";
 import {
@@ -58,7 +66,9 @@ import {
   connectorResourcesQuery,
   connectorsQuery,
   invocableSkillsQuery,
+  mentionableConnectorsQuery,
 } from "../../lib/query/conversation";
+import { keys } from "../../lib/query/keys";
 import { libraryFileSearchQuery } from "../../lib/query/library";
 import { useAppMutation } from "../../lib/query/mutation";
 import { CONVERSATION_MENTION_ROWS, conversationMentionQuery } from "../../lib/query/shell";
@@ -80,30 +90,22 @@ import { modeMenuFromPickers } from "./PermissionPicker";
 import { MAX_PROJECT_FILES, ProjectFilesPicker } from "./ProjectFilesPicker";
 import type { SendResult } from "./useConversation";
 
-/** At most this many `@` resources per message (kernel `MAX_ATTACHMENTS`). */
-const MAX_ATTACHMENTS = 5;
+/** At most this many tokens per message (kernel `MAX_TOKENS`). */
+const MAX_TOKENS = 20;
 
-/** An `@` resource in the draft. */
-export interface DraftAttachment {
-  connectorId: string;
-  connectorName: string;
-  uri: string;
-  name: string;
-}
+/** The per-kind token caps (kernel: connectors, resources, project files, conversations). */
+const MAX_OF_KIND: Partial<Record<ComposerTokenKind, number>> = {
+  connector: 3,
+  resource: 5,
+  projectFile: MAX_PROJECT_FILES,
+  conversation: MAX_CONVERSATION_REFS,
+};
 
-/** A conversation referenced in the draft (@ conversations spec §3): its id and its title. */
-export interface DraftConversationRef {
-  id: string;
-  /** The title when it was picked; null: untitled (the chip reads "Untitled conversation"). */
-  title: string | null;
-}
+/** At most this many connector rows in the `@` menu's first level (composer inline tokens §4). */
+const CONNECTOR_ROWS = 6;
 
-/**
- * Why the kernel refused a referenced conversation (@ conversations spec §1): gone or not the
- * sender's (`unavailable`), without messages yet (`empty`), or the conversation written in
- * (`self`).
- */
-export type RefusedConversationRef = { id: string; why: "unavailable" | "empty" | "self" };
+/** At most this many resource rows in a connector's second level. */
+const MAX_RESOURCE_ROWS = 50;
 
 /**
  * `clientMessageId`: `crypto.randomUUID` only exists in secure contexts (HTTPS / localhost);
@@ -115,30 +117,174 @@ export function newClientMessageId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** A token of the draft (a segment that is not text). */
+const isToken = (s: ComposerSegment): s is ComposerTokenData => typeof s !== "string";
+
+/** Joins adjacent text runs and drops empty ones, so equal drafts have one shape. */
+function normalize(segments: readonly ComposerSegment[]): ComposerSegment[] {
+  const out: ComposerSegment[] = [];
+  for (const s of segments) {
+    if (typeof s === "string") {
+      if (s === "") continue;
+      const last = out[out.length - 1];
+      if (typeof last === "string") out[out.length - 1] = last + s;
+      else out.push(s);
+    } else out.push(s);
+  }
+  return out;
+}
+
+/** The distinct entities the draft's tokens name (of `kind`, or of every kind but the skill). */
+function distinctTokens(segments: readonly ComposerSegment[], kind?: ComposerTokenKind): number {
+  return new Set(
+    segments.flatMap((s) =>
+      isToken(s) && s.kind !== "skill" && (kind === undefined || s.kind === kind)
+        ? [`${s.kind}:${s.id}`]
+        : [],
+    ),
+  ).size;
+}
+
+/** The draft's tokens as the send body counts them: every occurrence but the skill's. */
+const tokenCount = (segments: readonly ComposerSegment[]): number =>
+  segments.filter((s) => isToken(s) && s.kind !== "skill").length;
+
+/** The draft holds no text (whitespace aside) and no token. */
+const blank = (segments: readonly ComposerSegment[]) =>
+  segments.every((s) => typeof s === "string" && s.trim() === "");
+
 /**
- * A draft's identity: text + resources + files + project files + referenced conversations + skill
- * (any change makes it a new message).
+ * A draft's identity (composer inline tokens spec §2 "Draft identity"): its text and each token's
+ * `(kind, id)` in order, the uploads' ids and the skill invoked. Moving a token, adding one or
+ * editing text makes a new message (a new `clientMessageId`); a label fetched later or a refusal
+ * mark does not.
  */
-const draftKey = (
-  text: string,
-  attachments: DraftAttachment[],
-  files: string[],
-  projectFiles: string[],
-  conversationRefs: DraftConversationRef[],
+export function draftKey(
+  segments: readonly ComposerSegment[],
+  uploads: readonly string[],
   skill: string | undefined,
-) =>
-  JSON.stringify([
-    text,
-    attachments.map((a) => [a.connectorId, a.uri]),
-    files,
-    projectFiles,
-    conversationRefs.map((c) => c.id),
+): string {
+  return JSON.stringify([
+    normalize(segments).map((s) => (typeof s === "string" ? s : [s.kind, s.id])),
+    uploads,
     skill ?? null,
   ]);
+}
+
+/** A resource token's id: `<connectorId>:<uri>` (a connector id is a UUID, it holds no colon). */
+const resourceId = (connectorId: string, uri: string) => `${connectorId}:${uri}`;
+
+/** The send body's token for one draft token (a skill token is the `skill` field, not a token). */
+function messageToken(t: ComposerTokenData): MessageToken | null {
+  switch (t.kind) {
+    case "connector":
+      return { type: "connector", connectorId: t.id };
+    case "resource": {
+      const at = t.id.indexOf(":");
+      return at < 0
+        ? null
+        : { type: "resource", connectorId: t.id.slice(0, at), uri: t.id.slice(at + 1) };
+    }
+    case "file":
+      return { type: "file", id: t.id };
+    case "projectFile":
+      return { type: "projectFile", path: t.id };
+    case "conversation":
+      return { type: "conversation", id: t.id };
+    default:
+      return null;
+  }
+}
+
+/** Removes the token marker from typed text (the editor never lets one in; a guard). */
+const withoutMarkers = (s: string) => s.split(TOKEN_MARKER).join("");
+
+/**
+ * What a draft sends (composer inline tokens spec §3.1): `text` with one U+FFFC per token, the
+ * `tokens` in order, and the skill token's name, which leaves the text with the whitespace at its
+ * seam collapsed to one space (or none at an edge); `shown` is the same sentence as segments, for
+ * the pending bubble (the skill chip draws apart). The text is trimmed.
+ */
+export function composerMessageParts(segments: readonly ComposerSegment[]): {
+  text: string;
+  tokens: MessageToken[];
+  skill?: string;
+  shown: ComposerSegment[];
+} {
+  let text = "";
+  const tokens: MessageToken[] = [];
+  const shown: ComposerSegment[] = [];
+  let skill: string | undefined;
+  let seam = false;
+  const put = (piece: string, token?: ComposerTokenData) => {
+    if (seam) {
+      if (text !== "") {
+        text += " ";
+        shown.push(" ");
+      }
+      seam = false;
+    }
+    text += piece;
+    shown.push(
+      token
+        ? {
+            kind: token.kind,
+            id: token.id,
+            label: token.label,
+            ...(token.icon ? { icon: token.icon } : {}),
+          }
+        : piece,
+    );
+  };
+  for (const s of normalize(segments)) {
+    if (typeof s === "string") {
+      let clean = withoutMarkers(s);
+      if (seam) clean = clean.replace(/^\s+/, "");
+      if (clean !== "") put(clean);
+      continue;
+    }
+    if (s.kind === "skill") {
+      skill ??= s.id;
+      // the text before the skill gives up its trailing whitespace at the seam
+      const trimmed = text.replace(/\s+$/, "");
+      if (trimmed !== text) {
+        text = trimmed;
+        const last = shown[shown.length - 1];
+        if (typeof last === "string") {
+          const cut = last.replace(/\s+$/, "");
+          if (cut === "") shown.pop();
+          else shown[shown.length - 1] = cut;
+        }
+      }
+      seam = true;
+      continue;
+    }
+    const token = messageToken(s);
+    if (token === null) continue;
+    tokens.push(token);
+    put(TOKEN_MARKER, s);
+  }
+  // trimmed as the kernel stores it; the shown sentence loses the same edges
+  const lead = text.length - text.trimStart().length;
+  const tail = text.length - text.trimEnd().length;
+  const first = shown[0];
+  if (lead > 0 && typeof first === "string") {
+    const cut = first.trimStart();
+    if (cut === "") shown.shift();
+    else shown[0] = cut;
+  }
+  const last = shown[shown.length - 1];
+  if (tail > 0 && typeof last === "string") {
+    const cut = last.trimEnd();
+    if (cut === "") shown.pop();
+    else shown[shown.length - 1] = cut;
+  }
+  return { text: text.trim(), tokens, ...(skill !== undefined ? { skill } : {}), shown };
+}
 
 /**
  * A project-relative path as the kernel normalizes it (`./a//b/` -> `a/b`, `..` resolved), so a
- * refusal's path matches the chip it came from.
+ * refusal's path matches the token it came from.
  */
 function normalizeProjectPath(path: string): string {
   const out: string[] = [];
@@ -151,56 +297,125 @@ function normalizeProjectPath(path: string): string {
 }
 
 /**
- * The draft's project file paths a refusal names: `conversation.project_file_unavailable` (not a
- * file in the project) or `device.path_outside_project` (leaves it), compared normalized; none
- * for another error.
+ * A token a send was refused for (composer inline tokens spec §3.4), by `(kind, id)`, with the
+ * refusal's code and its `reason` detail (the copy is `errors.<code>[.<reason>]`).
  */
-export function missingProjectFiles(e: unknown, draft: readonly string[]): string[] {
-  if (
-    !(e instanceof ApiClientError) ||
-    (e.code !== "conversation.project_file_unavailable" && e.code !== "device.path_outside_project")
-  )
-    return [];
-  const named = new Set(
-    e.rawDetails.flatMap((d) => {
-      const path = (d as { path?: unknown } | null)?.path;
-      return typeof path === "string" ? [normalizeProjectPath(path)] : [];
-    }),
+export type RefusedToken = { kind: ComposerTokenKind; id: string; code: string; reason?: string };
+
+const detailsOf = (e: ApiClientError) =>
+  e.rawDetails.map((d) =>
+    typeof d === "object" && d !== null ? (d as Record<string, unknown>) : {},
   );
-  return draft.filter((p) => named.has(normalizeProjectPath(p)));
-}
+const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
 /**
- * The draft's referenced conversations a refusal names (`conversation.reference_unavailable`, with
- * `reason: "empty"` for one without messages, or `conversation.reference_self`), in draft order;
- * none for another error.
+ * The draft's tokens a refusal names, in draft order: a connector the agent cannot use
+ * (`conversation.connector_unavailable`), a resource with nothing to read
+ * (`connector.resource_unreadable`), a connector's resources the agent cannot read or a connector
+ * gone (`connector.resources_disabled`, `connector.not_found` naming its `connectorId`), a project file not in the project
+ * (`conversation.project_file_unavailable`, `device.path_outside_project`), a conversation that
+ * cannot be referenced (`conversation.reference_unavailable`, `conversation.reference_self`), a
+ * library file that is gone or not ready (`file.*` naming its `fileId`). None for another error.
  */
-export function refusedConversationRefs(
-  e: unknown,
-  draft: readonly DraftConversationRef[],
-): RefusedConversationRef[] {
-  if (
-    !(e instanceof ApiClientError) ||
-    (e.code !== "conversation.reference_unavailable" && e.code !== "conversation.reference_self")
-  )
-    return [];
-  const named = new Map<string, RefusedConversationRef["why"]>();
-  for (const d of e.rawDetails) {
-    const { id, reason } = (d ?? {}) as { id?: unknown; reason?: unknown };
-    if (typeof id !== "string") continue;
-    named.set(
-      id,
-      e.code === "conversation.reference_self"
-        ? "self"
-        : reason === "empty"
-          ? "empty"
-          : "unavailable",
-    );
+export function refusedTokens(e: unknown, segments: readonly ComposerSegment[]): RefusedToken[] {
+  if (!(e instanceof ApiClientError)) return [];
+  const named: { kind: ComposerTokenKind; match(id: string): boolean; reason?: string }[] = [];
+  for (const d of detailsOf(e)) {
+    const reason = str(d.reason);
+    const extra = reason !== undefined ? { reason } : {};
+    switch (e.code) {
+      case "conversation.connector_unavailable": {
+        const id = str(d.connectorId);
+        if (id !== undefined) named.push({ kind: "connector", match: (x) => x === id, ...extra });
+        break;
+      }
+      case "connector.resources_disabled":
+      case "connector.not_found": {
+        // a connector's resources the agent cannot read, or a connector gone: its resource
+        // tokens (the one URI when named), and for a gone one its connector tokens too
+        const id = str(d.connectorId);
+        const uri = str(d.uri);
+        if (id === undefined) break;
+        named.push({
+          kind: "resource",
+          match: (x) => (uri !== undefined ? x === resourceId(id, uri) : x.startsWith(`${id}:`)),
+        });
+        if (e.code === "connector.not_found" && uri === undefined)
+          named.push({ kind: "connector", match: (x) => x === id });
+        break;
+      }
+      case "connector.resource_unreadable": {
+        const id = str(d.connectorId);
+        const uri = str(d.uri);
+        if (id !== undefined && uri !== undefined)
+          named.push({ kind: "resource", match: (x) => x === resourceId(id, uri), ...extra });
+        break;
+      }
+      case "conversation.project_file_unavailable":
+      case "device.path_outside_project": {
+        const path = str(d.path);
+        if (reason === "no_project") {
+          // no project to reference files in: every project file token
+          named.push({ kind: "projectFile", match: () => true, ...extra });
+        } else if (path !== undefined) {
+          // a path clipped in the details ("…" at the end) matches by its prefix
+          const cut = path.endsWith("…");
+          const want = normalizeProjectPath(cut ? path.slice(0, -1) : path);
+          named.push({
+            kind: "projectFile",
+            match: (x) =>
+              cut ? normalizeProjectPath(x).startsWith(want) : normalizeProjectPath(x) === want,
+            ...extra,
+          });
+        }
+        break;
+      }
+      case "conversation.reference_unavailable":
+      case "conversation.reference_self": {
+        const id = str(d.id);
+        if (id !== undefined)
+          named.push({ kind: "conversation", match: (x) => x === id, ...extra });
+        break;
+      }
+      default: {
+        const id = str(d.fileId);
+        if (e.code.startsWith("file.") && id !== undefined)
+          named.push({ kind: "file", match: (x) => x === id, ...extra });
+      }
+    }
   }
-  return draft.flatMap((c) => {
-    const why = named.get(c.id);
-    return why === undefined ? [] : [{ id: c.id, why }];
-  });
+  const out: RefusedToken[] = [];
+  for (const t of segments) {
+    if (!isToken(t) || out.some((r) => r.kind === t.kind && r.id === t.id)) continue;
+    const hit = named.find((n) => n.kind === t.kind && n.match(t.id));
+    if (hit)
+      out.push({
+        kind: t.kind,
+        id: t.id,
+        code: e.code,
+        ...(hit.reason !== undefined ? { reason: hit.reason } : {}),
+      });
+  }
+  return out;
+}
+
+/** The draft without the tokens `drop` names, the space each one stood between kept once. */
+function withoutTokens(
+  segments: readonly ComposerSegment[],
+  drop: (t: ComposerTokenData) => boolean,
+): ComposerSegment[] {
+  const out: ComposerSegment[] = [];
+  let gap = false;
+  for (const s of segments) {
+    if (isToken(s) && drop(s)) {
+      const last = out[out.length - 1];
+      gap = gap || last === undefined || (typeof last === "string" && /\s$/.test(last));
+      continue;
+    }
+    out.push(gap && typeof s === "string" ? s.replace(/^[ \t]/, "") : s);
+    gap = false;
+  }
+  return normalize(out);
 }
 
 /** A slash command: `/<connector slug>:<prompt name>`. */
@@ -208,29 +423,26 @@ export const promptCommand = (p: Pick<ConnectorPrompt, "connectorSlug" | "name">
   `/${p.connectorSlug}:${p.name}`;
 
 /**
- * The open composer menu (spec 2026-11-28 composer menus §1–§4): its kind; where its trigger
- * (`/` or `@`) stands in the text and where the query typed after it ends (the caret at the last
- * edit), or `at: null` for a menu opened without a trigger (+, or Skills over a draft with text),
- * whose query is `q` (the compact sheet's search field); and what an `@` menu lists: everything
- * (absent), the library's files only (`"files"`, + → File library), the connector resources only
- * (`"resources"`), or one connector's resources.
+ * The open composer menu (composer menus spec §1–§4, composer inline tokens spec §4): its kind;
+ * whether it follows a trigger typed in the text (`@` or `/`; its query is the text typed after
+ * it) or was opened without one (+, whose query is `q`, the compact sheet's search field); where
+ * a `/` trigger stands (`atStart`); what an `@` menu lists (everything, or the library's files
+ * only: + → File library); and the connector whose resources it lists (its second level).
  */
 type MenuState = {
   kind: ComposerMenuKind;
-  at: number | null;
-  end: number;
+  trigger: boolean;
   q: string;
-  scope?: "files" | "resources" | { connectorId: string };
+  atStart?: boolean;
+  scope?: "files";
+  level?: MentionableConnector;
 };
 
 /**
  * How long the `@` query rests before the kernel is asked (each text is its own cache entry, for
- * the resources and the library files alike).
+ * the resources, the library files and the conversations alike).
  */
 const RESOURCE_SEARCH_DELAY_MS = 200;
-
-/** At most this many `@` rows are drawn (the kernel's matches, or one connector's of them). */
-const MAX_RESOURCE_ROWS = 50;
 
 /** `value`, once it has not changed for `ms`. */
 function useDebounced<T>(value: T, ms: number): T {
@@ -242,30 +454,21 @@ function useDebounced<T>(value: T, ms: number): T {
   return settled;
 }
 
-/** A menu's trigger in the text: `/` alone in the draft, `@` at the start or after whitespace. */
-type Trigger = { kind: "slash" | "at"; at: number; end: number };
-
 /** What the composer sends: the message without the switch (the caller adds model / effort). */
 export type ComposerMessage = Pick<
   MessageInput,
-  | "text"
-  | "clientMessageId"
-  | "attachments"
-  | "files"
-  | "projectFiles"
-  | "conversationRefs"
-  | "skill"
+  "text" | "clientMessageId" | "tokens" | "files" | "skill"
 > & {
   /**
    * What a pending bubble shows until the log has the message (never sent): the skill's chip
-   * label and the files' names.
+   * label, the sentence with its tokens and the uploads' names.
    */
   display?: {
     skill?: string;
+    /** The sentence as text runs and tokens (absent: `text` has no tokens). */
+    segments?: ComposerSegment[];
     /** `type`: the file's type badge, as the thread's chip shows it. */
     files: { name: string; kind: "image" | "file"; type?: string }[];
-    /** The referenced conversations, as link chips. Absent: none. */
-    conversations?: DraftConversationRef[];
   };
   /**
    * The draft as it was sent, for a view that outlives this composer (the new conversation's
@@ -275,52 +478,50 @@ export type ComposerMessage = Pick<
 };
 
 /**
- * A composer's draft handed from one composer to the next (text, chip, resources, files, project
- * files, id).
+ * A composer's draft handed from one composer to the next (composer inline tokens spec §2
+ * "Drafts"): the text and tokens (`segments`, the skill token among them), the invoked skill as
+ * listed, the uploads, the draft's id, and the tokens the failed send was refused for.
  */
 export type ComposerDraft = {
-  text: string;
+  segments: ComposerSegment[];
   skill: InvocableSkill | null;
-  attachments: DraftAttachment[];
   files: DraftFile[];
-  /** Referenced project file paths (composer menus §5). */
-  projectFiles?: string[];
-  /** Of those, the paths the failed send was refused for (marked on their chips). */
-  missing?: string[];
-  /** Referenced conversations (@ conversations spec §3). */
-  conversationRefs?: DraftConversationRef[];
-  /** Of those, the ones the failed send was refused for (marked on their chips). */
-  refusedRefs?: RefusedConversationRef[];
   /** The draft's `clientMessageId`, kept for the retry (the kernel dedupes it). */
   id?: { key: string; id: string };
+  /** Tokens the failed send was refused for (marked, with the Remove line). */
+  refused?: RefusedToken[];
 };
 
 /** What a page may do to its composer from outside (the new conversation's quick actions). */
 export type ComposerControl = {
   /**
-   * Replaces the text with `text` and focuses the input (not on a touch device: the keyboard would
-   * pop up). The text it replaced is one undo step:
-   * the next ⌘Z / Ctrl+Z, before any other edit, brings it back.
+   * Replaces the draft with `text` and focuses the input (not on a touch device: the keyboard
+   * would pop up). The draft it replaced is one undo step.
    */
   fill(text: string): void;
   /** Focuses the input (a new conversation's agent was picked). */
   focus(): void;
 };
 
-/** ⌘Z on a Mac, Ctrl+Z elsewhere (either is taken: the browser's own undo also takes both). */
-export const isUndoKey = (e: {
-  key: string;
-  metaKey: boolean;
-  ctrlKey: boolean;
-  shiftKey: boolean;
-  altKey: boolean;
-}) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z";
-
 /** The `/` menu's skill headings, in order (project root §4.6). */
 const SKILL_SOURCES: readonly InvocableSource[] = ["project", "agent", "platform", "plugin"];
 
 /** The name a picked skill is invoked by: `<plugin>:<name>` for a plugin's skill. */
 const invokeName = (s: InvocableSkill) => (s.plugin ? `${s.plugin}:${s.name}` : s.name);
+
+/** The composer's text box (the editor's content editable). */
+const COMPOSER_INPUT = '[data-part="composer-input"]';
+
+/**
+ * The sentence after a typed `/name ` (an invocation's arguments): its first `cut` characters,
+ * which are the command, leave the first text run.
+ */
+function dropCommand(shown: readonly ComposerSegment[], cut: number): ComposerSegment[] {
+  const [first, ...rest] = shown;
+  if (typeof first !== "string") return [...shown];
+  const kept = first.slice(cut).trimStart();
+  return kept === "" ? rest : [kept, ...rest];
+}
 
 /** Blob previews of the draft's images, revoked when the file leaves the draft or on unmount. */
 function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
@@ -356,30 +557,37 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
 }
 
 /**
- * The composer (spec §5.2, §6.16.2): text, the attachment strip, the pickers and send / stop.
+ * The composer (spec §5.2, §6.16.2): the editor (text with inline tokens), the attachment strip
+ * (uploads), the pickers and send / stop.
  *
  * Keys: ↵ and ⌘↵ / Ctrl+↵ send; while a run is going the message is an interjection the run takes
  * in at its next step (run input spec 2026-11-07 D1, D2; there is no queue); Shift+↵ is a newline;
- * nothing happens while an IME is composing.
+ * nothing happens while an IME is composing (the editor holds its triggers and ↵).
  *
  * Carried over from the old composer: each draft keeps one `clientMessageId` until it is sent or
- * changed (the kernel dedupes retries); files come from +, drop or paste, upload at once and
- * block sending while uploading or failed; a send that fails keeps the draft.
+ * changed (the kernel dedupes retries; {@link draftKey}); uploads come from +, drop or paste,
+ * upload at once and block sending while uploading or failed; a send that fails keeps the draft.
  *
- * Menus (composer menus spec §1–§4): one `ComposerMenu` anchored to the composer, the textarea its
- * combobox. + lists what can be added or used (upload, connector resources, skills, the usable
- * connectors); `/` in an empty composer lists the agent's skills, the connectors' prompts and the
- * commands last; `@` at the start or after whitespace (never mid-word, never from an IME
- * composition) searches the connectors' resources on the kernel. The trigger stays in the text and
- * what follows it is the query; a pick takes both out, Esc closes and keeps the text.
+ * Tokens (composer inline tokens spec): everything picked through `/` or `@` is an inline token
+ * where it was typed: a skill, a connector, a connector resource, a library file, a conversation;
+ * + → Project files inserts project file tokens at the caret. Uploads stay cards in the strip. The
+ * message goes out as `text` with one U+FFFC per token and the `tokens` in order; the skill token
+ * leaves the text as `skill` (at most one per message). A refusal marks the tokens it names and
+ * shows the Remove line.
  *
- * Skills (phase D spec §3): picking one shows its chip, and the text after it is the arguments
- * (Backspace at the start or the chip's × removes it and keeps the text). A draft typed as
- * `/name args` that names a listed skill is sent as its invocation; anything else as text (and a
- * typed one the kernel refuses as an unknown skill, `skill.not_invocable` `not_found`, from a stale
- * list, is resent as text; any other refusal keeps the draft and shows why). The
- * list is read for `agentId` (with `conversationId` once the conversation exists, so its trial
- * drafts apply) when the menu opens or a typed `/name` is sent.
+ * Menus (composer menus spec §1–§4, inline tokens §4): one `ComposerMenu` anchored to the
+ * composer, the editor its combobox. + lists what can be added or used (upload, the file library,
+ * project files, skills, the agent's connectors); `/` at the start or after whitespace lists the
+ * agent's skills and the connectors' prompts, and the commands when the `/` is the whole draft;
+ * `@` lists the agent's connectors (→ opens one's resources), the library's files and the
+ * sender's conversations. The trigger stays in the text and what follows it is the query; a pick
+ * replaces both with its token, Esc closes and keeps the text.
+ *
+ * A draft typed as `/name args` that names a listed skill is sent as its invocation; anything
+ * else as text (a typed one the kernel refuses as an unknown skill, `skill.not_invocable`
+ * `not_found`, from a stale list, is resent as text; any other refusal keeps the draft and shows
+ * why). The list is read for `agentId` (with `conversationId` once the conversation exists, so
+ * its trial drafts apply) when the menu opens or a typed `/name` is sent.
  */
 export function ComposerBar({
   orgId,
@@ -468,8 +676,8 @@ export function ComposerBar({
   /**
    * The device project the message goes to (composer menus §5): the conversation's binding, or
    * the new conversation's pick, and only for the device's owner (the listing is the owner's).
-   * Its files can be referenced from the + menu (Project files); a change of it drops the
-   * references.
+   * Its files can be referenced from the + menu (Project files); a change of it drops their
+   * tokens.
    */
   project?: { deviceId: string; name: string } | undefined;
 }) {
@@ -479,39 +687,20 @@ export function ComposerBar({
   const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [text, setText] = useState(initialDraft?.text ?? "");
-  const [attachments, setAttachments] = useState<DraftAttachment[]>(
-    initialDraft?.attachments ?? [],
+  /** The draft: text runs and tokens, the skill token among them. */
+  const [segments, setSegments] = useState<ComposerSegment[]>(initialDraft?.segments ?? []);
+  const segmentsNow = useRef(segments);
+  segmentsNow.current = segments;
+  /** The skill picked last, as listed (its argument hint); the skill token names it by id. */
+  const [pickedSkill, setPickedSkill] = useState<InvocableSkill | null>(
+    initialDraft?.skill ?? null,
   );
-  /** The picked skill (the chip), or null. */
-  const [skill, setSkill] = useState<InvocableSkill | null>(initialDraft?.skill ?? null);
-  /** Referenced project file paths (composer menus §5), in pick order. */
-  const [projectFiles, setProjectFiles] = useState<string[]>(initialDraft?.projectFiles ?? []);
-  /** Paths the kernel refused at the last send ({@link missingProjectFiles}). */
-  const [missingFiles, setMissingFiles] = useState<readonly string[]>(initialDraft?.missing ?? []);
-  /** Referenced conversations (@ conversations spec §3), in pick order. */
-  const [conversationRefs, setConversationRefs] = useState<DraftConversationRef[]>(
-    initialDraft?.conversationRefs ?? [],
-  );
-  /** Of those, the ones the kernel refused at the last send ({@link refusedConversationRefs}). */
-  const [refusedRefs, setRefusedRefs] = useState<readonly RefusedConversationRef[]>(
-    initialDraft?.refusedRefs ?? [],
-  );
+  /** The tokens the last send was refused for (composer inline tokens spec §3.4). */
+  const [refused, setRefused] = useState<RefusedToken[]>(initialDraft?.refused ?? []);
+  const editor = useRef<ComposerEditorHandle | null>(null);
   const [pickingFiles, setPickingFiles] = useState(false);
   /** The device cannot list its project files: the + row shows why, disabled. */
   const [listUnsupported, setListUnsupported] = useState<string | null>(null);
-  // another project (the new conversation's picker) has other files: the references go
-  const projectKey =
-    project === undefined ? null : JSON.stringify([project.deviceId, project.name]);
-  const projectAt = useRef(projectKey);
-  useEffect(() => {
-    if (projectAt.current === projectKey) return;
-    projectAt.current = projectKey;
-    setProjectFiles([]);
-    setMissingFiles([]);
-    setPickingFiles(false);
-    setListUnsupported(null);
-  }, [projectKey]);
   const qc = useQueryClient();
   /** The agent's invocable skills (read again when the menu opens once they are stale). */
   const skillsQ = invocableSkillsQuery(orgId, agentId ?? "", conversationId, project);
@@ -541,35 +730,62 @@ export function ComposerBar({
   /** Files attached any way (a drop, a paste, the picker) count as typing. */
   const addFiles = (list: File[]) => {
     dismissSuggestion();
-    drafts.add(list);
+    // library file tokens count toward the per-message file cap
+    drafts.add(list, distinctTokens(segmentsNow.current, "file"));
   };
 
   const [menu, setMenu] = useState<MenuState | null>(null);
+  /** What a menu opened through `openTrigger` (a + row) lists once its trigger is reported. */
+  const opening = useRef<Pick<MenuState, "scope" | "level"> | null>(null);
   const [argsFor, setArgsFor] = useState<ConnectorPrompt | null>(null);
   const [args, setArgs] = useState<Record<string, string>>({});
   const [rendering, setRendering] = useState(false);
   const draft = useRef<{ key: string; id: string } | undefined>(initialDraft?.id);
   /** A typed `/name` is being resolved (the skills read): a second ↵ waits for it. */
   const resolving = useRef(false);
-  /**
-   * An IME composition is going (between compositionstart and compositionend): its intermediate
-   * text never opens or closes a menu and is never searched; what it commits is checked at its end.
-   * (Keys an IME commits directly, such as Shift+2 giving `@`, report keyCode 229 without a
-   * composition and open the menu like any typed character.)
-   */
-  const composing = useRef(false);
-  const [composingNow, setComposingNow] = useState(false);
-  /** Where the caret goes once the text a pick left is rendered (the pick's position). */
-  const caretAfter = useRef<number | null>(null);
 
-  // A new agent (a new conversation's picker) has other skills: its chip and list go.
-  // (a change, not the mount: a given-back draft keeps its chip)
+  /** The draft's skill token (at most one counts), and the skill it names as listed. */
+  const skillToken = segments.find((s): s is ComposerTokenData => isToken(s) && s.kind === "skill");
+  const skill: InvocableSkill | null =
+    skillToken === undefined
+      ? null
+      : pickedSkill !== null && invokeName(pickedSkill) === skillToken.id
+        ? pickedSkill
+        : ((skills ?? []).find((s) => invokeName(s) === skillToken.id) ?? null);
+
+  /** Replaces the draft (the editor follows: a restore, a removal). */
+  const putSegments = useCallback((next: ComposerSegment[]) => {
+    segmentsNow.current = next;
+    setSegments(next);
+  }, []);
+
+  // Another project (the new conversation's picker) has other files: their tokens go.
+  const projectKey =
+    project === undefined ? null : JSON.stringify([project.deviceId, project.name]);
+  const projectAt = useRef(projectKey);
+  useEffect(() => {
+    if (projectAt.current === projectKey) return;
+    projectAt.current = projectKey;
+    const cur = segmentsNow.current;
+    if (cur.some((s) => isToken(s) && s.kind === "projectFile")) {
+      putSegments(withoutTokens(cur, (x) => x.kind === "projectFile"));
+    }
+    setPickingFiles(false);
+    setListUnsupported(null);
+  }, [projectKey, putSegments]);
+
+  // A new agent (a new conversation's picker) has other skills: the skill token goes.
+  // (a change, not the mount: a given-back draft keeps its token)
   const agentAt = useRef(agentId);
   useEffect(() => {
     if (agentAt.current === agentId) return;
     agentAt.current = agentId;
-    setSkill(null);
-  }, [agentId]);
+    const cur = segmentsNow.current;
+    if (cur.some((s) => isToken(s) && s.kind === "skill")) {
+      putSegments(withoutTokens(cur, (x) => x.kind === "skill"));
+    }
+    setPickedSkill(null);
+  }, [agentId, putSegments]);
 
   /**
    * The agent's invocable skills. A conversation that is not the caller's (404) lists without it.
@@ -587,57 +803,56 @@ export function ComposerBar({
     }
   }
 
-  /**
-   * `@` resources, project files or conversations are referenced: they need text (their blocks
-   * follow it).
-   */
-  const needsText =
-    attachments.length > 0 || projectFiles.length > 0 || conversationRefs.length > 0;
-  // A lone "/" is the menu's trigger, not a message.
-  const empty = (value: string) =>
-    skill === null && (value === "" || value === "/") && (files.length === 0 || needsText);
+  /** Nothing to send: no text, token, skill or upload (a lone "/" is the menu's trigger). */
+  const isEmpty = (p: ReturnType<typeof composerMessageParts>) =>
+    p.skill === undefined &&
+    p.tokens.length === 0 &&
+    (p.text === "" || p.text === "/") &&
+    (files.length === 0 || p.text === "/");
+  const empty = isEmpty(composerMessageParts(segments));
 
   /**
    * Runs the built-in `/compact` (shared by the typed command and the `/` menu entry): the
-   * composer clears the text it ran from and keeps it if the kernel refuses (a busy conversation
-   * read from another tab).
+   * composer clears the draft it ran from and gives it back if the kernel refuses (a busy
+   * conversation read from another tab).
    */
-  async function runCompact(clearText: string) {
+  async function runCompact(from: ComposerSegment[]) {
     if (onCompact === undefined) return;
-    setText((cur) => (cur === clearText ? "" : cur));
+    if (draftKey(segmentsNow.current, [], undefined) === draftKey(from, [], undefined)) {
+      editor.current?.clear();
+      putSegments([]);
+    }
     try {
       await onCompact();
     } catch (e) {
-      setText((cur) => (cur.trim() === "" ? clearText : cur));
+      if (blank(segmentsNow.current)) putSegments(from);
       toast.error(errorMessage(e));
     }
   }
 
   async function submit() {
-    const sentText = text;
-    const sentSkill = skill;
-    const sentAttachments = attachments;
-    const sentProjectFiles = projectFiles;
-    const sentRefs = conversationRefs;
-    const value = text.trim();
-    if (sendDisabled && !empty(value)) onBlocked?.();
+    // the editor's latest draft: its change may not have rendered yet (a paste right before ↵)
+    const sentSegments = segmentsNow.current;
+    const sentPicked = skill;
+    const sent = composerMessageParts(sentSegments);
+    const nothing = isEmpty(sent);
+    if (sendDisabled && !nothing) onBlocked?.();
     if (drafts.blocking || sendDisabled || resolving.current) return;
-    const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
-    // Files alone can be sent; `@` resources, project files and conversations need text (their
-    // blocks follow content[0]).
-    if (empty(value)) return;
+    const uploads = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
+    if (nothing) return;
     // The built-in /compact command (context compaction spec §4.10), before the skill lookup: no
-    // arguments, no user message. A skill chip owns the text after it, so it is not a command then.
-    if (onCompact !== undefined && skill === null) {
-      const command = parseSlashCommand(value);
+    // arguments, no user message. A skill token owns the text after it, so it is not a command
+    // then.
+    if (onCompact !== undefined && sent.skill === undefined && sent.tokens.length === 0) {
+      const command = parseSlashCommand(sent.text);
       if (command !== null && command.name === "compact") {
         if (command.args !== "") toast.error(t("compactNoArgs"));
         else if (running) toast.error(t("compactBusy"));
-        else await runCompact(sentText);
+        else await runCompact(sentSegments);
         return;
       }
     }
-    const fileIds = sent.map((f) => f.id);
+    const fileIds = uploads.map((f) => f.id);
     const shownFiles = files
       .filter((f) => f.id !== undefined)
       .map((f) => ({
@@ -649,12 +864,13 @@ export function ComposerBar({
         // a library file has no local blob: its chip shows the type badge
         ...(f.library ? { type: typeBadge(f.name, f.contentType ?? "") } : {}),
       }));
-    // the chip, else a typed `/name args` naming a listed skill (spec §3.2)
-    let invoke = skill !== null ? invokeName(skill) : undefined;
-    let args = value;
+    // the skill token, else a typed `/name args` naming a listed skill (spec §3.2)
+    let invoke = sent.skill;
+    let args = sent.text;
+    let shown = sent.shown;
     let typedInvoke = false;
     if (invoke === undefined) {
-      const typed = parseSlashCommand(value);
+      const typed = parseSlashCommand(sent.text);
       if (typed !== null) {
         resolving.current = true;
         const list = skills ?? (await loadSkills().finally(() => (resolving.current = false)));
@@ -664,84 +880,62 @@ export function ComposerBar({
           // a project skill typed by its bare name is invoked as `project:<name>`
           invoke = found.source === "project" ? found.name : typed.name;
           args = typed.args;
+          shown = dropCommand(sent.shown, sent.text.length - typed.args.length);
           typedInvoke = true;
         }
       }
     }
     // The composer clears now, with the pending bubble in the same render (conversation send
     // spec §2.1; a typed `/name` first resolves, review fix 4): the message shows where it was
-    // sent and comes back here if the kernel refuses it. Only what was sent is cleared (the
-    // person may have typed on while the skills were read).
-    setText((cur) =>
-      cur === sentText
-        ? ""
-        : cur.startsWith(sentText)
-          ? cur.slice(sentText.length).trimStart()
-          : cur,
-    );
-    setSkill((cur) => (cur === sentSkill ? null : cur));
-    setAttachments((cur) => cur.filter((a) => !sentAttachments.includes(a)));
-    setProjectFiles((cur) => cur.filter((p) => !sentProjectFiles.includes(p)));
-    setMissingFiles([]);
-    setConversationRefs((cur) => cur.filter((c) => !sentRefs.includes(c)));
-    setRefusedRefs([]);
-    const taken = drafts.take(sent.map((f) => f.key));
-    const restore = () => {
-      setText((cur) => (cur.trim() === "" ? sentText : `${sentText}\n${cur}`));
-      setSkill((cur) => cur ?? sentSkill);
-      setAttachments((cur) => [
-        ...sentAttachments,
-        ...cur.filter((a) => !sentAttachments.includes(a)),
-      ]);
-      setProjectFiles((cur) => [
-        ...sentProjectFiles,
-        ...cur.filter((p) => !sentProjectFiles.includes(p)),
-      ]);
-      setConversationRefs((cur) => [
-        ...sentRefs,
-        ...cur.filter((c) => !sentRefs.some((s) => s.id === c.id)),
-      ]);
+    // sent and comes back here if the kernel refuses it. Only the draft that was sent is cleared
+    // (the person may have typed on while the skills were read).
+    if (draftKey(segmentsNow.current, [], undefined) === draftKey(sentSegments, [], undefined)) {
+      editor.current?.clear();
+      putSegments([]);
+    }
+    setRefused([]);
+    const taken = drafts.take(uploads.map((f) => f.key));
+    const restore = (marks: RefusedToken[]) => {
+      // a skill picked while the send was out gives way to the sent one: one skill per message
+      const sentSkill = sentSegments.some((x) => isToken(x) && x.kind === "skill");
+      const cur = sentSkill
+        ? withoutTokens(segmentsNow.current, (x) => x.kind === "skill")
+        : segmentsNow.current;
+      putSegments(blank(cur) ? sentSegments : normalize([...sentSegments, "\n", ...cur]));
+      setPickedSkill((p) => p ?? sentPicked);
+      setRefused(marks);
       drafts.restore(taken);
     };
-    const message = (text: string, name: string | undefined): ComposerMessage => {
-      const key = draftKey(text, attachments, fileIds, sentProjectFiles, sentRefs, name);
+    const message = (
+      text: string,
+      tokens: MessageToken[],
+      name: string | undefined,
+      bubble: ComposerSegment[],
+    ): ComposerMessage => {
+      const key = draftKey(sentSegments, fileIds, name);
       if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
       return {
         text,
         clientMessageId: draft.current.id,
-        attachments: attachments.map((a) => ({ connectorId: a.connectorId, uri: a.uri })),
+        ...(tokens.length > 0 ? { tokens } : {}),
         files: fileIds,
-        ...(sentProjectFiles.length > 0
-          ? { projectFiles: sentProjectFiles.map((path) => ({ path })) }
-          : {}),
-        ...(sentRefs.length > 0 ? { conversationRefs: sentRefs.map((c) => ({ id: c.id })) } : {}),
         ...(name !== undefined ? { skill: { name } } : {}),
         // the chip shows the bare name, as the thread's bubble does
         display: {
-          files: [
-            ...shownFiles,
-            ...sentProjectFiles.map((path) => ({
-              name: path,
-              kind: "file" as const,
-              type: typeBadge(path, ""),
-            })),
-          ],
-          ...(sentRefs.length > 0 ? { conversations: sentRefs } : {}),
+          files: shownFiles,
+          ...(tokens.length > 0 ? { segments: bubble } : {}),
           ...(name !== undefined ? { skill: skillChipLabel(name) } : {}),
         },
         draft: {
-          text: sentText,
-          skill: sentSkill,
-          attachments: sentAttachments,
+          segments: sentSegments,
+          skill: sentPicked,
           files: taken,
-          projectFiles: sentProjectFiles,
-          conversationRefs: sentRefs,
           id: draft.current,
         },
       };
     };
     try {
-      let r = await onSend(message(args, invoke));
+      let r = await onSend(message(args, sent.tokens, invoke, shown));
       if (
         !r.ok &&
         typedInvoke &&
@@ -753,40 +947,28 @@ export function ComposerBar({
         // unknown name is sent as text (spec §3.2), and the list is read again. Any other refusal
         // (a project skill the project cannot serve now, ...) keeps the draft and says why.
         void loadSkills(true);
-        r = await onSend(message(value, undefined));
+        r = await onSend(message(sent.text, sent.tokens, undefined, sent.shown));
       }
       if (r.ok) {
         draft.current = undefined;
       } else {
-        restore();
+        const marks = refusedTokens(r.error, sentSegments);
+        restore(marks);
+        // the agent's connectors changed under the menu: read them again
+        if (
+          agentId !== undefined &&
+          marks.some((x) => x.kind === "connector" || x.kind === "resource")
+        )
+          void qc.invalidateQueries({ queryKey: keys.org(orgId).mentionableConnectors(agentId) });
         drafts.markFailed(r.error);
-        setMissingFiles(missingProjectFiles(r.error, sentProjectFiles));
-        setRefusedRefs(refusedConversationRefs(r.error, sentRefs));
       }
     } catch (e) {
-      restore();
+      restore([]);
       throw e;
     }
   }
 
-  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    // The one undo step of a fill: only while the text is still what the fill put there.
-    const undo = undoFill.current;
-    if (undo !== null && isUndoKey(e)) {
-      undoFill.current = null;
-      if (text === undo.text) {
-        e.preventDefault();
-        setText(undo.before);
-        return;
-      }
-    }
-    if (e.key !== "Enter" || e.nativeEvent.isComposing || e.shiftKey) return;
-    e.preventDefault();
-    // ↵ and ⌘↵ / Ctrl+↵ alike: while a run is going the message is an interjection (D1, D2).
-    void submit();
-  }
-
-  /** Opens a menu and reads what it lists (the `@` menu's resources follow its query). */
+  /** Opens a menu and reads what it lists. */
   function openMenu(next: MenuState) {
     setMenu(next);
     if (next.kind === "slash") {
@@ -795,119 +977,108 @@ export function ComposerBar({
     }
   }
 
-  /** The text without the open menu's trigger and query (what a pick leaves). */
-  const withoutTrigger = (): string =>
-    menu !== null && menu.at !== null ? text.slice(0, menu.at) + text.slice(menu.end) : text;
-
-  /** The textarea takes the focus again (a click moved it), never on a touch device (keyboard). */
+  /** The editor takes the focus again (a click moved it), never on a touch device (keyboard). */
   const refocus = () => {
     if (!isTouchPointer()) focusText();
   };
 
-  /** The menu a character just put at `caret` opens, if it is a trigger there. */
-  const triggerAt = (next: string, caret: number): Trigger | null => {
-    if (next === "/" && caret === 1 && skill === null) return { kind: "slash", at: 0, end: 1 };
-    // `@` at the start or after whitespace; `a@b` is an address
-    if (next[caret - 1] === "@" && (caret === 1 || /\s/.test(next[caret - 2] ?? ""))) {
-      return { kind: "at", at: caret - 1, end: caret };
-    }
-    return null;
-  };
-
-  function onCompositionStart() {
-    composing.current = true;
-    setComposingNow(true);
-  }
-
-  /** The composition committed its text: the open menu follows it, a committed trigger opens one. */
-  function onCompositionEnd(e: CompositionEvent<HTMLTextAreaElement>) {
-    composing.current = false;
-    setComposingNow(false);
-    const el = e.currentTarget;
-    if (menu !== null && menu.at !== null) {
-      onChange(el.value, el);
+  /**
+   * The editor's trigger at the caret (composer inline tokens spec §2): `/` or `@` typed at the
+   * start or after whitespace opens its menu, the text after it is the query, and the menu goes
+   * with the trigger. A menu opened without a trigger (+) is left to the edits (`onChange`).
+   */
+  function onTrigger(tr: ComposerTrigger | null) {
+    if (tr === null) {
+      setMenu((cur) => (cur?.trigger ? null : cur));
       return;
     }
-    if (menu === null && (e.data === "@" || e.data === "/")) {
-      const trigger = triggerAt(el.value, el.selectionStart ?? el.value.length);
-      if (trigger !== null) openMenu({ ...trigger, q: "" });
+    const kind = tr.trigger === "@" ? "at" : "slash";
+    // what a + row asked the new menu to list, taken once here: the updater below stays pure
+    // (StrictMode calls it twice)
+    const following = menu?.trigger === true && menu.kind === kind;
+    const extra = following ? {} : (opening.current ?? {});
+    if (!following) opening.current = null;
+    setMenu((cur) =>
+      cur?.trigger && cur.kind === kind
+        ? { ...cur, q: tr.query, atStart: tr.atStart }
+        : { kind, trigger: true, q: tr.query, atStart: tr.atStart, ...extra },
+    );
+    if (kind === "slash" && !(menu?.trigger && menu.kind === "slash")) {
+      void loadSkills(true);
+      qc.fetchQuery(connectorPromptsQuery(orgId)).catch((e) => toast.error(errorMessage(e)));
     }
   }
 
-  /** + (or the footer's `/`): the `/` menu, its trigger typed into an empty draft. */
+  /** + (or the footer's `/`): the `/` menu, its trigger typed at the caret. */
   function openSlash() {
-    const base = withoutTrigger();
-    if (base === "" && skill === null) {
-      setText("/");
-      openMenu({ kind: "slash", at: 0, end: 1, q: "" });
-    } else {
-      // over a draft the picked skill's chip takes the text as its arguments
-      setText(base);
-      openMenu({ kind: "slash", at: null, end: 0, q: "" });
-    }
+    setMenu(null);
+    opening.current = null;
+    editor.current?.openTrigger("/");
     refocus();
   }
 
-  /** + (or the footer's `@`): the `@` menu, its trigger typed at the end of the draft. */
-  function openAt(scope?: MenuState["scope"]) {
-    const base = withoutTrigger();
-    const next = base === "" || /\s$/.test(base) ? `${base}@` : `${base} @`;
-    setText(next);
-    openMenu({
-      kind: "at",
-      at: next.length - 1,
-      end: next.length,
-      q: "",
-      ...(scope !== undefined ? { scope } : {}),
-    });
+  /**
+   * + (or the footer's `@`): the `@` menu, its trigger typed at the caret; `files` lists only the
+   * library's files (+ → File library), `level` opens straight on a connector's resources.
+   */
+  function openAt(extra: Pick<MenuState, "scope" | "level"> = {}) {
+    setMenu(null);
+    opening.current = extra;
+    editor.current?.openTrigger("@");
     refocus();
   }
 
-  function onChange(next: string, el?: HTMLTextAreaElement | null) {
-    // An edit after a fill: ⌘Z is the browser's own again.
-    undoFill.current = null;
-    const caret = el?.selectionStart ?? next.length;
-    // a menu with a trigger follows the text after it, and goes when the trigger does
-    if (menu !== null && menu.at !== null) {
-      // an IME's intermediate text: checked once the composition commits (onCompositionEnd)
-      if (composing.current) {
-        setMenu({ ...menu, end: Math.max(caret, menu.at + 1) });
-        setText(next);
-        return;
-      }
-      const query = next.slice(menu.at + 1, caret);
-      const gone =
-        next[menu.at] !== (menu.kind === "slash" ? "/" : "@") ||
-        caret <= menu.at ||
-        query.includes("\n") ||
-        // `/name args`: past the name the text is the skill's arguments, not a search
-        (menu.kind === "slash" && /\s/.test(query)) ||
-        // `@ `: an address or plain text, not a pick
-        (menu.kind === "at" && /^\s/.test(query));
-      setMenu(gone ? null : { ...menu, end: caret });
-      setText(next);
+  /**
+   * Puts a token where the open trigger and its query stand (or at the caret for a menu opened
+   * without one), the menu closing. A kind at its cap says so instead.
+   */
+  function insert(token: ComposerTokenData) {
+    const cur = segmentsNow.current.filter(isToken);
+    const already = cur.some((x) => x.kind === token.kind && x.id === token.id);
+    // the kernel caps the tokens array itself (one marker each): a repeat counts too
+    if (token.kind !== "skill" && tokenCount(segmentsNow.current) >= MAX_TOKENS) {
+      toast.error(t("tokenTotalLimit", { max: MAX_TOKENS }));
       return;
     }
-    // one character typed (an IME's intermediate text never opens a menu)
-    if (!composing.current && next.length === text.length + 1) {
-      const trigger = triggerAt(next, caret);
-      if (trigger !== null) {
-        setText(next);
-        openMenu({ ...trigger, q: "" });
+    if (!already && token.kind !== "skill") {
+      const cap = MAX_OF_KIND[token.kind];
+      const ofKind = distinctTokens(segmentsNow.current, token.kind);
+      if (cap !== undefined && ofKind >= cap) {
+        toast.error(t("tokenLimit", { max: cap }));
+        return;
+      }
+      // file tokens and uploads share the per-message file cap
+      const max = drafts.limits.maxPerMessage;
+      if (token.kind === "file" && ofKind + files.length >= max) {
+        toast.error(t("filesLimit", { max }));
         return;
       }
     }
-    // a menu opened without a trigger (+) goes with any edit
-    if (menu !== null) setMenu(null);
-    setText(next);
+    const m = menu;
+    setMenu(null);
+    dismissSuggestion();
+    editor.current?.insertToken(
+      token,
+      m?.trigger ? { trigger: m.kind === "at" ? "@" : "/", length: m.q.length + 1 } : undefined,
+    );
+    refocus();
+  }
+
+  /** Closes the menu (Esc, a pick that inserts nothing): a trigger's stays closed until retyped. */
+  function closeMenu() {
+    if (menu?.trigger) editor.current?.dismissTrigger();
+    setMenu(null);
   }
 
   async function insertPrompt(p: ConnectorPrompt, values: Record<string, string>) {
     setRendering(true);
     try {
       const r = await renderPrompt({ p, values });
-      setText(r.text);
+      // where the `/` and its query stood; the rest of the draft stays
+      editor.current?.insertText(r.text);
       setArgsFor(null);
+      // the arguments dialog had the focus: the text box takes it back (never on touch)
+      refocus();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -916,6 +1087,9 @@ export function ComposerBar({
   }
 
   function pickPrompt(p: ConnectorPrompt) {
+    // the typed `/` and its query leave the draft (the rendered prompt replaces it later)
+    if (menu?.trigger) editor.current?.setTriggerQuery(menu.q.length + 1, "");
+    closeMenu();
     if (p.arguments.length === 0) {
       void insertPrompt(p, {});
       return;
@@ -924,45 +1098,31 @@ export function ComposerBar({
     setArgsFor(p);
   }
 
-  function attach(r: ConnectorResource) {
-    if (attachments.some((a) => a.connectorId === r.connectorId && a.uri === r.uri)) return;
-    if (attachments.length >= MAX_ATTACHMENTS) {
-      toast.error(t("attachLimit", { max: MAX_ATTACHMENTS }));
-      return;
-    }
-    setAttachments([
-      ...attachments,
-      { connectorId: r.connectorId, connectorName: r.connectorName, uri: r.uri, name: r.name },
-    ]);
-  }
-
-  /** A pick: the trigger and its query leave the text (the caret stays there), the menu closes. */
-  const picked = () => {
-    if (menu !== null && menu.at !== null) caretAfter.current = menu.at;
-    setText(withoutTrigger());
-    setMenu(null);
-  };
-
-  // What the menus list. The connectors give the + menu its rows and every row of a connector
-  // its icon; the `@` menu's resources are searched on the kernel as the query rests.
-  const query = menu === null ? "" : menu.at !== null ? text.slice(menu.at + 1, menu.end) : menu.q;
-  const connectorList = useQuery({ ...connectorsQuery(orgId), enabled: menu !== null }).data
-    ?.connectors;
-  // while an IME composes inside the `@` menu its intermediate text (pinyin) is not the query
-  const liveAtQuery = menu?.kind === "at" ? query.trim() : "";
-  const heldAtQuery = useRef(liveAtQuery);
-  if (!composingNow) heldAtQuery.current = liveAtQuery;
-  const atQuery = heldAtQuery.current;
+  // What the menus list. The connectors give the `/` menu's prompt rows their icons; the `@` menu
+  // lists the agent's connectors, and its files, conversations and a connector's resources are
+  // searched on the kernel as the query rests.
+  const query = menu?.q ?? "";
+  const connectorList = useQuery({
+    ...connectorsQuery(orgId),
+    enabled: menu?.kind === "slash",
+  }).data?.connectors;
+  const wantsConnectors = menu !== null && menu.kind !== "slash" && agentId !== undefined;
+  const mentionableQ = useQuery({
+    ...mentionableConnectorsQuery(orgId, agentId ?? ""),
+    enabled: wantsConnectors,
+  });
+  const mentionable = mentionableQ.data;
+  const atQuery = menu?.kind === "at" ? query.trim() : "";
   const searched = useDebounced(atQuery, RESOURCE_SEARCH_DELAY_MS);
-  // What the open `@` menu lists (its scope): the library's files, the connector resources.
-  const atScope = menu?.kind === "at" ? menu.scope : undefined;
-  const showFiles = menu?.kind === "at" && (atScope === undefined || atScope === "files");
-  const showResources = menu?.kind === "at" && atScope !== "files";
-  // the sender's own conversations (@ conversations spec §3): only in the whole `@` menu
-  const showConversations = menu?.kind === "at" && atScope === undefined;
+  const level = menu?.kind === "at" ? menu.level : undefined;
+  const firstLevel = menu?.kind === "at" && level === undefined;
+  const showFiles = firstLevel && (menu.scope === undefined || menu.scope === "files");
+  // the agent's connectors and the sender's conversations: only in the whole `@` menu
+  const showConnectors = firstLevel && menu.scope === undefined;
+  const showConversations = firstLevel && menu.scope === undefined;
   const resourcesQ = useQuery({
-    ...connectorResourcesQuery(orgId, searched),
-    enabled: showResources,
+    ...connectorResourcesQuery(orgId, level?.id ?? "", searched),
+    enabled: level !== undefined,
     placeholderData: keepPreviousData,
   });
   const resources = resourcesQ.data;
@@ -987,11 +1147,11 @@ export function ComposerBar({
   const timeZone = useTimeZone();
   const now = useNow();
   // The rows are an earlier query's (the query has not rested yet, or its answer is on its way):
-  // the menu filters them by the query itself, so ↵ never attaches a row the query no longer
+  // the menu filters them by the query itself, so ↵ never picks a row the query no longer
   // matches.
-  const staleResources =
+  const staleRows =
     searched !== atQuery ||
-    (showResources && resourcesQ.isPlaceholderData) ||
+    (level !== undefined && resourcesQ.isPlaceholderData) ||
     (showFiles && filesQ.isPlaceholderData) ||
     (showConversations && conversationsQ.isPlaceholderData);
   const connectorById = new Map<string, ConnectorSummary>(
@@ -1015,7 +1175,7 @@ export function ComposerBar({
               mark: markOf(u.connectorId, u.connectorName),
               badge: t(`connectorUnavailable.${u.reason}`),
               onSelect: () => {
-                setMenu(null);
+                closeMenu();
                 toast.error(
                   t(`connectorUnavailableHint.${u.reason}`, { connector: u.connectorName }),
                 );
@@ -1057,13 +1217,19 @@ export function ComposerBar({
       label: skillShownName(sk),
       icon: "skills",
       ...(sk.argumentHint !== undefined ? { hint: sk.argumentHint } : {}),
-      ...(description !== "" ? { description } : {}),
+      // one skill per message (composer inline tokens spec): with a skill token in the draft the
+      // others say so, disabled
+      ...(skillToken !== undefined
+        ? { disabled: true, description: t("composerMenu.oneSkill") }
+        : description !== ""
+          ? { description }
+          : {}),
       ...(sk.plugin !== undefined ? { keywords: [`${sk.plugin}:${sk.name}`] } : {}),
       // `project:` still finds a project skill
       ...(sk.source === "project" ? { keywords: [sk.name] } : {}),
       onSelect: () => {
-        picked();
-        setSkill(sk);
+        setPickedSkill(sk);
+        insert({ kind: "skill", id: invokeName(sk), label: skillShownName(sk) });
       },
     };
   };
@@ -1094,10 +1260,7 @@ export function ComposerBar({
           mark: markOf(p.connectorId, p.connectorName),
           keywords: [`${p.connectorSlug}:${p.name}`, ...(p.title ? [p.title] : [])],
           ...(p.description ? { description: p.description } : {}),
-          onSelect: () => {
-            picked();
-            pickPrompt(p);
-          },
+          onSelect: () => pickPrompt(p),
         }),
       ),
     })),
@@ -1112,6 +1275,82 @@ export function ComposerBar({
     return f.origin !== "upload" && f.agentName !== undefined && f.agentName !== ""
       ? t("composerMenu.fileByAgent", { agent: f.agentName, how })
       : how;
+  };
+
+  /** A connector's token: its icon through the kernel's icon route, its initial otherwise. */
+  const connectorToken = (c: MentionableConnector): ComposerTokenData => ({
+    kind: "connector",
+    id: c.id,
+    label: c.name,
+    icon: { initial: c.name, ...(c.icon ? { src: c.icon } : {}) },
+  });
+
+  /**
+   * A connector row (composer inline tokens spec §4): its icon, its name, its description (or
+   * "Connect your account first"); waiting for setup it is disabled with its Needs setup badge;
+   * with readable resources a → opens them. The row's pick inserts the connector's token.
+   */
+  const connectorItem = (c: MentionableConnector, fromPlus: boolean): ComposerMenuItem => {
+    const waiting = c.state === "needs_config";
+    const description =
+      c.credential === "missing"
+        ? t("composerMenu.connectYourAccount")
+        : mentionableDescriptionOf(c, locale);
+    return {
+      id: `connector:${c.id}`,
+      label: c.name,
+      mark: { text: c.name, ...(c.icon ? { image: c.icon } : {}) },
+      keywords: [c.slug],
+      ...(description !== undefined && description !== "" ? { description } : {}),
+      ...(waiting ? { disabled: true, badge: t("composerMenu.needsConfig") } : {}),
+      ...(c.resources && !waiting
+        ? {
+            drill: {
+              label: t("composerMenu.drill", { name: c.name }),
+              onDrill: () => (fromPlus ? openAt({ level: c }) : drillInto(c)),
+            },
+          }
+        : {}),
+      onSelect: () => insert(connectorToken(c)),
+    };
+  };
+
+  /** The `@` menu's second level: the connector's resources, its query typed after the `@`. */
+  function drillInto(c: MentionableConnector) {
+    if (menu === null || !menu.trigger) return;
+    // the text after `@` that named the connector goes (the `@` stays): typing filters resources
+    editor.current?.setTriggerQuery(menu.q.length, "");
+    setMenu({ ...menu, q: "", level: c });
+  }
+
+  /** The agent's connectors matching the query, best first, at most {@link CONNECTOR_ROWS}. */
+  const connectorsGroup = (): ComposerMenuGroup[] => {
+    const q = atQuery;
+    const list = (mentionable ?? [])
+      .map((c, i) => ({
+        c,
+        i,
+        score:
+          q === ""
+            ? 1
+            : commandScore(
+                {
+                  label: c.name,
+                  search: c.slug,
+                  ...(mentionableDescriptionOf(c, locale) !== undefined
+                    ? { description: mentionableDescriptionOf(c, locale) as string }
+                    : {}),
+                },
+                q,
+              ),
+      }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score || a.i - b.i)
+      .slice(0, CONNECTOR_ROWS)
+      .map((x) => connectorItem(x.c, false));
+    return list.length === 0
+      ? []
+      : [{ id: "connectors", label: t("composerMenu.connectorsGroup"), items: list }];
   };
 
   /** The `@` menu's files group: Recent files for the empty query, else Matching files. */
@@ -1131,16 +1370,13 @@ export function ComposerBar({
             ...(drafts.limits.available
               ? { description: fileDescription(f) }
               : { disabled: true, description: t("filesUnavailable") }),
-            onSelect: () => {
-              picked();
-              dismissSuggestion();
-              drafts.addLibrary({
+            onSelect: () =>
+              insert({
+                kind: "file",
                 id: f.id,
-                name: f.name,
-                size: f.size,
-                contentType: f.contentType,
-              });
-            },
+                label: f.name,
+                icon: { fileType: typeBadge(f.name, f.contentType) },
+              }),
           }),
         ),
       },
@@ -1149,25 +1385,29 @@ export function ComposerBar({
 
   /**
    * The `@` menu's conversations group (@ conversations spec §3): the sender's matching
-   * conversations, newest first, without the one written in and those already referenced, at most
-   * {@link CONVERSATION_MENTION_ROWS}; with {@link MAX_CONVERSATION_REFS} referenced the rows are
-   * disabled and say why.
+   * conversations, newest first, without the one written in and those already in the draft, at
+   * most {@link CONVERSATION_MENTION_ROWS}; with {@link MAX_CONVERSATION_REFS} in the draft the
+   * rows are disabled and say why.
    */
   const conversationsGroup = (): ComposerMenuGroup[] => {
+    const inDraft = new Set(
+      segments.flatMap((s) => (isToken(s) && s.kind === "conversation" ? [s.id] : [])),
+    );
     const list = (conversationsQ.data?.conversations ?? [])
-      .filter((c) => c.id !== conversationId && !conversationRefs.some((r) => r.id === c.id))
+      .filter((c) => c.id !== conversationId && !inDraft.has(c.id))
       .slice(0, CONVERSATION_MENTION_ROWS);
     if (list.length === 0) return [];
-    const full = conversationRefs.length >= MAX_CONVERSATION_REFS;
+    const full = inDraft.size >= MAX_CONVERSATION_REFS;
     return [
       {
         id: "conversations",
         label: t("composerMenu.conversations"),
         items: list.map((c): ComposerMenuItem => {
           const when = formatRelative(c.updatedAt, locale, now);
+          const title = c.title || t("composerMenu.untitledConversation");
           return {
             id: `conversation:${c.id}`,
-            label: c.title || t("composerMenu.untitledConversation"),
+            label: title,
             icon: "chats",
             ...(full
               ? {
@@ -1175,143 +1415,113 @@ export function ComposerBar({
                   description: t("composerMenu.conversationLimit", { max: MAX_CONVERSATION_REFS }),
                 }
               : { description: c.agent ? `${c.agent.name} · ${when}` : when }),
-            onSelect: () => {
-              picked();
-              dismissSuggestion();
-              setConversationRefs((cur) =>
-                cur.some((r) => r.id === c.id) || cur.length >= MAX_CONVERSATION_REFS
-                  ? cur
-                  : [...cur, { id: c.id, title: c.title }],
-              );
-            },
+            onSelect: () => insert({ kind: "conversation", id: c.id, label: title }),
           };
         }),
       },
     ];
   };
 
-  /**
-   * The `@` menu: the library's files, the sender's conversations, then the kernel's resource
-   * matches grouped by connector (only the files for `"files"`, only one connector's resources
-   * for a connector scope).
-   */
-  const atContent = (scope: MenuState["scope"]): ComposerMenuGroup[] => {
-    const files = showFiles ? filesGroup() : [];
-    if (scope === "files") return files;
-    const conversations = showConversations ? conversationsGroup() : [];
-    const only = typeof scope === "object" ? scope.connectorId : undefined;
-    const list = (resources?.resources ?? [])
-      .filter((r) => only === undefined || r.connectorId === only)
-      .slice(0, MAX_RESOURCE_ROWS);
+  /** A connector's resources (the second level), as the kernel lists them for the query. */
+  const resourcesGroups = (c: MentionableConnector): ComposerMenuGroup[] => {
+    const list = (resources?.resources ?? []).slice(0, MAX_RESOURCE_ROWS);
+    const mark = { text: c.name, ...(c.icon ? { image: c.icon } : {}) };
     return [
-      ...files,
-      ...conversations,
-      ...byConnector(list).map((g) => ({
-        id: `resources-${g.id}`,
-        label: g.label,
-        items: g.items.map(
-          (r): ComposerMenuItem => ({
-            id: r.uri,
-            label: r.name,
-            description: r.uri,
-            mark: markOf(r.connectorId, r.connectorName),
-            onSelect: () => {
-              picked();
-              attach(r);
+      ...(list.length > 0
+        ? [
+            {
+              id: `resources-${c.id}`,
+              items: list.map(
+                (r): ComposerMenuItem => ({
+                  id: r.uri,
+                  label: r.name,
+                  description: r.description ?? r.uri,
+                  mark,
+                  onSelect: () =>
+                    insert({
+                      kind: "resource",
+                      id: resourceId(r.connectorId, r.uri),
+                      label: r.name,
+                      icon: { initial: c.name, ...(c.icon ? { src: c.icon } : {}) },
+                    }),
+                }),
+              ),
             },
-          }),
-        ),
-      })),
-      ...unavailableGroup(
-        resources?.unavailable.filter((u) => only === undefined || u.connectorId === only),
-      ),
+          ]
+        : []),
     ];
   };
 
-  /** The + menu (spec §2): Add, Abilities, then one row per usable connector. */
-  const plusContent = (): ComposerMenuGroup[] => {
-    const usable = (connectorList ?? []).filter((c) => c.status === "active");
+  /** The `@` menu: the agent's connectors, the library's files, the sender's conversations. */
+  const atContent = (m: MenuState): ComposerMenuGroup[] => {
+    if (m.level !== undefined) return resourcesGroups(m.level);
+    const filesRows = showFiles ? filesGroup() : [];
+    if (m.scope === "files") return filesRows;
     return [
-      {
-        id: "add",
-        label: t("composerMenu.add"),
-        items: [
-          {
-            id: "upload",
-            label: t("composerMenu.upload"),
-            icon: "upload",
-            ...(drafts.limits.available
-              ? {}
-              : { disabled: true, description: t("filesUnavailable") }),
-            onSelect: () => {
-              setMenu(null);
-              fileInput.current?.click();
-            },
-          },
-          {
-            id: "library",
-            label: t("composerMenu.library"),
-            icon: "file-text",
-            ...(drafts.limits.available
-              ? {}
-              : { disabled: true, description: t("filesUnavailable") }),
-            onSelect: () => openAt("files"),
-          },
-          ...(project !== undefined
-            ? [
-                {
-                  id: "project-files",
-                  label: t("composerMenu.projectFiles"),
-                  icon: "folder",
-                  description:
-                    listUnsupported ??
-                    t("composerMenu.projectFilesHint", { project: project.name }),
-                  ...(listUnsupported !== null ? { disabled: true } : {}),
-                  onSelect: () => {
-                    setMenu(null);
-                    setPickingFiles(true);
-                  },
-                } satisfies ComposerMenuItem,
-              ]
-            : []),
-          {
-            id: "resources",
-            label: t("composerMenu.resources"),
-            icon: "connector",
-            onSelect: () => openAt("resources"),
-          },
-        ],
-      },
-      {
-        id: "abilities",
-        label: t("composerMenu.abilities"),
-        items: [
-          {
-            id: "skills",
-            label: t("composerMenu.skills"),
-            icon: "skills",
-            onSelect: openSlash,
-          },
-        ],
-      },
-      {
-        id: "connectors",
-        label: t("composerMenu.connectors"),
-        items: usable.map((c): ComposerMenuItem => {
-          const description = connectorDescriptionOf(c, locale);
-          const waiting = c.setup === "needs_config";
-          return {
-            id: c.id,
-            label: c.name,
-            mark: { text: c.name, ...(c.icon ? { image: c.icon } : {}) },
-            ...(description !== null ? { description } : {}),
-            ...(waiting ? { disabled: true, badge: t("composerMenu.needsConfig") } : {}),
-            onSelect: () => openAt({ connectorId: c.id }),
-          };
-        }),
-      },
+      ...(showConnectors ? connectorsGroup() : []),
+      ...filesRows,
+      ...(showConversations ? conversationsGroup() : []),
     ];
   };
+
+  /** The + menu (spec §2, inline tokens §4): Add, Abilities, then the agent's connectors. */
+  const plusContent = (): ComposerMenuGroup[] => [
+    {
+      id: "add",
+      label: t("composerMenu.add"),
+      items: [
+        {
+          id: "upload",
+          label: t("composerMenu.upload"),
+          icon: "upload",
+          ...(drafts.limits.available
+            ? {}
+            : { disabled: true, description: t("filesUnavailable") }),
+          onSelect: () => {
+            setMenu(null);
+            fileInput.current?.click();
+          },
+        },
+        {
+          id: "library",
+          label: t("composerMenu.library"),
+          icon: "file-text",
+          ...(drafts.limits.available
+            ? {}
+            : { disabled: true, description: t("filesUnavailable") }),
+          onSelect: () => openAt({ scope: "files" }),
+        },
+        ...(project !== undefined
+          ? [
+              {
+                id: "project-files",
+                label: t("composerMenu.projectFiles"),
+                icon: "folder",
+                description:
+                  listUnsupported ?? t("composerMenu.projectFilesHint", { project: project.name }),
+                ...(listUnsupported !== null ? { disabled: true } : {}),
+                onSelect: () => {
+                  setMenu(null);
+                  setPickingFiles(true);
+                },
+              } satisfies ComposerMenuItem,
+            ]
+          : []),
+      ],
+    },
+    {
+      id: "abilities",
+      label: t("composerMenu.abilities"),
+      items: [
+        { id: "skills", label: t("composerMenu.skills"), icon: "skills", onSelect: openSlash },
+      ],
+    },
+    {
+      id: "connectors",
+      label: t("composerMenu.connectors"),
+      items: (mentionable ?? []).map((c) => connectorItem(c, true)),
+    },
+  ];
 
   const contentGroups: ComposerMenuGroup[] =
     menu === null
@@ -1319,16 +1529,22 @@ export function ComposerBar({
       : menu.kind === "slash"
         ? slashContent()
         : menu.kind === "at"
-          ? atContent(menu.scope)
+          ? atContent(menu)
           : plusContent();
 
-  // The built-in /compact command (context compaction spec §4.10) is always in the `/` menu, after
-  // what the agent offers (a command never takes the first Enter meant for a skill: the groups
-  // keep their order whatever the query). It is not part of the `@` menu. With nothing invocable
-  // the "no skills selected" guidance (spec §5 rule 11) stands below the list, next to the
-  // command; `/compact` is also still typed and parsed.
+  // The built-in /compact command (context compaction spec §4.10) is in the `/` menu only while
+  // the `/` is the whole draft, after what the agent offers (a command never takes the first
+  // Enter meant for a skill: the groups keep their order whatever the query). With nothing
+  // invocable the "no skills selected" guidance (spec §5 rule 11) stands below the list, next to
+  // the command; `/compact` is also still typed and parsed.
+  const wholeDraft =
+    menu?.kind === "slash" &&
+    menu.trigger &&
+    menu.atStart === true &&
+    segments.every((s) => typeof s === "string") &&
+    segments.join("").trim() === `/${menu.q}`;
   const commandGroup: ComposerMenuGroup | null =
-    menu?.kind === "slash" && onCompact !== undefined
+    wholeDraft && onCompact !== undefined
       ? {
           id: "commands",
           label: t("commandsGroup"),
@@ -1339,15 +1555,13 @@ export function ComposerBar({
               icon: "terminal",
               description: t("compactCommandHint"),
               onSelect: () => {
-                const rest = withoutTrigger();
-                setMenu(null);
+                const from = segmentsNow.current;
+                closeMenu();
                 if (running) {
-                  setText(rest);
                   toast.error(t("compactBusy"));
                   return;
                 }
-                setText(rest);
-                void runCompact(rest);
+                void runCompact(from);
               },
             },
           ],
@@ -1364,61 +1578,64 @@ export function ComposerBar({
   // The `@` menu loads while a source it lists is on its way; it fails as a whole only when every
   // source it lists failed (then the empty line is the reason).
   const libraryFailed = showFiles && filesQ.isError;
-  const resourcesFailed = showResources && resourcesQ.isError;
+  const connectorsFailed = showConnectors && mentionableQ.isError;
+  const resourcesFailed = level !== undefined && resourcesQ.isError;
   const conversationsFailed = showConversations && conversationsQ.isError;
   const resting = searched !== atQuery;
   const atLoading =
     (showFiles && !filesQ.isError && (filesQ.isFetching || resting)) ||
+    (showConnectors && mentionableQ.isFetching) ||
     (showConversations && !conversationsQ.isError && (conversationsQ.isFetching || resting)) ||
-    (showResources && !resourcesQ.isError && (resourcesQ.isFetching || resting));
-  const anyFailed = libraryFailed || resourcesFailed || conversationsFailed;
+    (level !== undefined && !resourcesQ.isError && (resourcesQ.isFetching || resting));
+  const failures = [
+    ...(connectorsFailed
+      ? [t("composerMenu.connectorsFailed", { reason: errorMessage(mentionableQ.error) })]
+      : []),
+    ...(libraryFailed
+      ? [t("composerMenu.libraryFailed", { reason: errorMessage(filesQ.error) })]
+      : []),
+    ...(conversationsFailed
+      ? [t("composerMenu.conversationsFailed", { reason: errorMessage(conversationsQ.error) })]
+      : []),
+  ];
+  const sources = (showConnectors ? 1 : 0) + (showFiles ? 1 : 0) + (showConversations ? 1 : 0);
   const everyFailed =
-    anyFailed &&
-    (libraryFailed || !showFiles) &&
-    (conversationsFailed || !showConversations) &&
-    (resourcesFailed || !showResources);
-  /** The first failed source's reason as the menu says it (files, conversations, resources). */
-  const failure = (): string =>
-    libraryFailed
-      ? t("composerMenu.libraryFailed", { reason: errorMessage(filesQ.error) })
-      : conversationsFailed
-        ? t("composerMenu.conversationsFailed", { reason: errorMessage(conversationsQ.error) })
-        : t("composerMenu.resourcesFailed", { reason: errorMessage(resourcesQ.error) });
+    level !== undefined ? resourcesFailed : sources > 0 && failures.length === sources;
+  const atEmpty = (): string => {
+    if (level !== undefined)
+      return resourcesFailed
+        ? t("composerMenu.resourcesFailed", { reason: errorMessage(resourcesQ.error) })
+        : t("composerMenu.noResources", { name: level.name });
+    if (everyFailed)
+      return errorMessage(
+        connectorsFailed ? mentionableQ.error : libraryFailed ? filesQ.error : conversationsQ.error,
+      );
+    return t(
+      menu?.kind === "at" && menu.scope === "files"
+        ? "composerMenu.noFiles"
+        : "composerMenu.noAtMatch",
+    );
+  };
   const menuProps: ComposerMenuProps | null =
     menu === null
       ? null
       : {
           kind: menu.kind,
           groups,
-          // the `@` menu's query is the one searched (an IME's intermediate text is not)
           query: menu.kind === "at" ? atQuery : query,
-          // the `@` menu's rows are the kernel's matches already, unless they are an earlier query's
-          filter: menu.kind !== "at" || staleResources,
+          // the `@` menu's server rows are the kernel's matches already (its connectors are
+          // filtered here), unless they are an earlier query's
+          filter: menu.kind !== "at" || staleRows,
           loading: menu.kind === "at" && atLoading,
           empty:
-            menu.kind === "at" && everyFailed
-              ? errorMessage(
-                  resourcesFailed
-                    ? resourcesQ.error
-                    : conversationsFailed
-                      ? conversationsQ.error
-                      : filesQ.error,
-                )
+            menu.kind === "at"
+              ? atEmpty()
               : noInvocable && commandGroup === null
                 ? guidance
-                : menu.kind === "at"
-                  ? t(
-                      showFiles
-                        ? showResources
-                          ? "composerMenu.noFilesOrResources"
-                          : "composerMenu.noFiles"
-                        : "composerMenu.noResources",
-                    )
-                  : t("composerMenu.noMatch"),
-          // one source failed and the other did not (both failing is the empty line above): the
-          // failure is said under the rows of the one that answered
-          ...(menu.kind === "at" && !everyFailed && anyFailed
-            ? { notice: { text: failure() } }
+                : t("composerMenu.noMatch"),
+          // some sources failed and others did not: the failures are said under the rows
+          ...(menu.kind === "at" && level === undefined && !everyFailed && failures.length > 0
+            ? { notice: { text: failures.join(" ") } }
             : {}),
           ...(noInvocable
             ? commandGroup !== null
@@ -1429,15 +1646,28 @@ export function ComposerBar({
                 ? { notice: { action: guidanceAction } }
                 : {}
             : {}),
-          onClose: () => setMenu(null),
+          ...(level !== undefined
+            ? {
+                level: {
+                  title: t("composerMenu.resourcesHead", { name: level.name }),
+                  onBack: () =>
+                    setMenu((cur) => {
+                      if (cur === null) return cur;
+                      const { level: _level, ...rest } = cur;
+                      return rest;
+                    }),
+                },
+              }
+            : {}),
+          onClose: closeMenu,
           onSwitch: (kind) => (kind === "at" ? openAt() : openSlash()),
           onQueryChange: (q) => {
-            if (menu.at === null) {
+            if (!menu.trigger) {
               setMenu({ ...menu, q });
               return;
             }
-            setText(text.slice(0, menu.at + 1) + q + text.slice(menu.end));
-            setMenu({ ...menu, end: menu.at + 1 + q.length });
+            // the sheet's search field types into the query after the trigger
+            editor.current?.setTriggerQuery(menu.q.length, q);
           },
           searchLabel: t("composerMenu.search"),
         };
@@ -1446,70 +1676,49 @@ export function ComposerBar({
   const missingArgs =
     argsFor?.arguments.filter((a) => a.required && (args[a.name] ?? "").trim() === "") ?? [];
 
-  /** A refused conversation chip's line: the refusal's own copy (`errors.conversation.*`). */
-  const refusedRefCopy = (why: RefusedConversationRef["why"]): string =>
-    why === "self"
-      ? te("conversation.reference_self")
-      : te(`conversation.reference_unavailable.${why === "empty" ? "empty" : "default"}`);
+  /** A refusal's line for its token: the error's own copy (`errors.<code>[.<reason>]`). */
+  const refusalCopy = (r: RefusedToken): string => {
+    if (!te.has(r.code)) return te("unknown");
+    const copy: unknown = te.raw(r.code);
+    if (typeof copy === "string") return te(r.code);
+    const entries = (copy ?? {}) as Record<string, unknown>;
+    if (r.reason !== undefined && typeof entries[r.reason] === "string")
+      return te(`${r.code}.${r.reason}`);
+    return typeof entries.default === "string" ? te(`${r.code}.default`) : te("unknown");
+  };
+  // The refusal marks (composer inline tokens spec §1): only for tokens still in the draft.
+  const marked = segments.filter(isToken);
+  const refusedNow = refused.filter((r) => marked.some((x) => x.kind === r.kind && x.id === r.id));
+  const refusalOf = (x: ComposerTokenData) =>
+    refusedNow.find((r) => r.kind === x.kind && r.id === x.id);
+  const shownSegments = segments.map((s): ComposerSegment => {
+    if (!isToken(s)) return s;
+    const { state: _state, reason: _reason, ...plain } = s;
+    const r = refusalOf(s);
+    return r === undefined ? plain : { ...plain, state: "refused", reason: refusalCopy(r) };
+  });
+  const refusedCount = new Set(refusedNow.map((r) => `${r.kind}:${r.id}`)).size;
+  const firstRefused = shownSegments.find(
+    (s): s is ComposerTokenData => isToken(s) && s.state === "refused",
+  );
 
-  const strip: AttachmentStripItem[] = [
-    ...files.map((f): AttachmentStripItem => {
-      const type = f.file ? fileContentType(f.file) : (f.contentType ?? "");
-      const src = previews.get(f.key);
-      return {
-        id: f.key,
-        // a library image has no local preview: it shows as a file with its type mark
-        kind: type.startsWith("image/") && f.status !== "error" && !f.library ? "image" : "file",
-        name: f.name,
-        contentType: type,
-        size: f.size,
-        ...(src !== undefined ? { src } : {}),
-        ...(f.status === "uploading" ? { progress: f.progress } : {}),
-        ...(f.status === "error" ? { error: drafts.errorText(f) } : {}),
-        ...(drafts.canRetry(f) ? { onRetry: () => drafts.retry(f.key) } : {}),
-        onRemove: () => drafts.remove(f.key),
-      };
-    }),
-    ...projectFiles.map(
-      (path): AttachmentStripItem => ({
-        id: `project:${path}`,
-        kind: "file",
-        // the whole path: src/index.ts and test/index.ts are two chips
-        name: path,
-        ...(missingFiles.includes(path) ? { error: t("projectFileMissing", { path }) } : {}),
-        onRemove: () => {
-          setProjectFiles((list) => list.filter((x) => x !== path));
-          setMissingFiles((list) => list.filter((x) => x !== path));
-        },
-      }),
-    ),
-    ...conversationRefs.map((c): AttachmentStripItem => {
-      const why = refusedRefs.find((r) => r.id === c.id)?.why;
-      return {
-        id: `conversation:${c.id}`,
-        kind: "conversation",
-        // empty: the design draws "Untitled conversation"
-        name: c.title ?? "",
-        ...(why !== undefined ? { error: refusedRefCopy(why) } : {}),
-        onRemove: () => {
-          setConversationRefs((list) => list.filter((x) => x.id !== c.id));
-          setRefusedRefs((list) => list.filter((x) => x.id !== c.id));
-        },
-      };
-    }),
-    ...attachments.map(
-      (a): AttachmentStripItem => ({
-        id: `@${a.connectorId}:${a.uri}`,
-        kind: "file",
-        name: `@${a.name}`,
-        size: 0,
-        onRemove: () =>
-          setAttachments((list) =>
-            list.filter((x) => !(x.connectorId === a.connectorId && x.uri === a.uri)),
-          ),
-      }),
-    ),
-  ];
+  const strip: AttachmentStripItem[] = files.map((f): AttachmentStripItem => {
+    const type = f.file ? fileContentType(f.file) : (f.contentType ?? "");
+    const src = previews.get(f.key);
+    return {
+      id: f.key,
+      // a library image has no local preview: it shows as a file with its type mark
+      kind: type.startsWith("image/") && f.status !== "error" && !f.library ? "image" : "file",
+      name: f.name,
+      contentType: type,
+      size: f.size,
+      ...(src !== undefined ? { src } : {}),
+      ...(f.status === "uploading" ? { progress: f.progress } : {}),
+      ...(f.status === "error" ? { error: drafts.errorText(f) } : {}),
+      ...(drafts.canRetry(f) ? { onRetry: () => drafts.retry(f.key) } : {}),
+      onRemove: () => drafts.remove(f.key),
+    };
+  });
 
   const hint =
     waiting === "skip"
@@ -1518,48 +1727,32 @@ export function ComposerBar({
         ? t("waitingHint")
         : running
           ? t("runningHint")
-          : needsText && skill === null && empty(text.trim())
-            ? t("referencesNeedText")
-            : undefined;
+          : undefined;
   const runState = useRunStateValue().state;
-  const textEl = useRef<HTMLTextAreaElement>(null);
-  /**
-   * The text a fill replaced, while the fill's text is unedited. A controlled textarea's value set
-   * by React is not on the browser's undo stack, so the composer keeps this one step itself.
-   */
-  const undoFill = useRef<{ before: string; text: string } | null>(null);
-  const textNow = useRef(text);
-  textNow.current = text;
-  // a pick puts the caret where its trigger stood (a controlled value set moves it to the end)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once the picked text is rendered
-  useLayoutEffect(() => {
-    const at = caretAfter.current;
-    const el = textEl.current;
-    if (at === null || el === null) return;
-    caretAfter.current = null;
-    const pos = Math.min(at, el.value.length);
-    el.setSelectionRange(pos, pos);
-  }, [text]);
   // A pending composer frame hides the composer for up to 1.5 s (focus() is a no-op then): the
   // focus waits for the reveal or the winner's composer (client extensions spec §6.3)
   const cancelFocus = useRef<() => void>(() => {});
   const focusText = useCallback(() => {
     cancelFocus.current();
-    cancelFocus.current = focusWhenPossible(() => textEl.current);
+    cancelFocus.current = focusWhenPossible(() => {
+      const handle = editor.current;
+      if (handle === null) return null;
+      handle.focus();
+      const active = document.activeElement;
+      return active instanceof HTMLElement && active.matches(COMPOSER_INPUT) ? active : null;
+    });
   }, []);
   useEffect(() => () => cancelFocus.current(), []);
   useImperativeHandle(
     control,
     () => ({
       fill(next: string) {
-        const before = textNow.current;
-        undoFill.current = before === next ? null : { before, text: next };
-        // a fill (a quick action) is an edit: the suggestion goes for this run
+        // a fill (a quick action) is an edit: the suggestion goes for this run; the draft it
+        // replaced is one undo step in the editor
         dismissSuggestion();
-        textNow.current = next;
-        setText(next);
-        // a value set from outside puts the caret after the text; on a touch device the text is
-        // only placed, never focused (focus would pop the keyboard for a tap on a quick action)
+        editor.current?.replace([next]);
+        // on a touch device the text is only placed, never focused (focus would pop the keyboard
+        // for a tap on a quick action)
         if (!isTouchPointer()) focusText();
       },
       focus() {
@@ -1570,28 +1763,39 @@ export function ComposerBar({
   );
 
   // The built-in composer: framed, the frame slot's default; bare (`frame={false}`), the inputs a
-  // replacement wraps in its own frame (the host checks after commit that the composer's textarea
+  // replacement wraps in its own frame (the host checks after commit that the composer's text box
   // is in the document). A replacement renders one of the two.
   const composer = (frame: boolean) => (
     <ComposerBox
       frame={frame}
-      value={text}
-      onChange={(v) => {
+      segments={shownSegments}
+      onChange={(next) => {
         // any edit ends the suggestion for this run, also one that empties the draft
         dismissSuggestion();
-        onChange(v, textEl.current);
+        segmentsNow.current = next;
+        setSegments(next);
+        // a menu opened without a trigger (+) goes with any edit
+        setMenu((cur) => (cur !== null && !cur.trigger ? null : cur));
       }}
-      onKeyDown={onKeyDown}
-      onCompositionStart={onCompositionStart}
-      onCompositionEnd={onCompositionEnd}
+      editorRef={editor}
+      onTrigger={onTrigger}
+      onPasteFiles={addFiles}
+      onSubmit={() => void submit()}
       placeholder={placeholder}
       {...(hint !== undefined ? { hint } : {})}
-      {...(skill !== null
+      {...(skill?.argumentHint !== undefined ? { skillHint: skill.argumentHint } : {})}
+      {...(firstRefused !== undefined
         ? {
-            token: {
-              label: `/${skillShownName(skill)}`,
-              ...(skill.argumentHint !== undefined ? { hint: skill.argumentHint } : {}),
-              onRemove: () => setSkill(null),
+            refused: {
+              label:
+                refusedCount > 1
+                  ? `${firstRefused.label} (+${refusedCount - 1})`
+                  : firstRefused.label,
+              reason: firstRefused.reason ?? "",
+              onRemove: () => {
+                putSegments(withoutTokens(segmentsNow.current, (x) => refusalOf(x) !== undefined));
+                setRefused([]);
+              },
             },
           }
         : {})}
@@ -1611,9 +1815,9 @@ export function ComposerBar({
           setMenu(null);
           return;
         }
-        // an open `/` or `@` menu's trigger and query leave the text first
-        if (menu !== null) setText(withoutTrigger());
-        openMenu({ kind: "plus", at: null, end: 0, q: "" });
+        // an open `/` or `@` menu closes first (its trigger stays as typed text)
+        if (menu?.trigger) editor.current?.dismissTrigger();
+        openMenu({ kind: "plus", trigger: false, q: "" });
         refocus();
       }}
       attachOpen={menu?.kind === "plus"}
@@ -1641,17 +1845,19 @@ export function ComposerBar({
           : {
               // Never busy: the message is pending in the thread, not in the composer.
               mode: "send",
-              disabled: sendDisabled === true || drafts.blocking || empty(text.trim()),
+              disabled: sendDisabled === true || drafts.blocking || empty,
               onClick: () => void submit(),
             }
       }
-      // the token warning's 仍然发送 sends as ↵ does, also while the button is Stop
-      onSend={() => void submit()}
-      textareaRef={textEl}
       {...(offered !== null
         ? { suggestion: { text: offered.text, onDismiss: dismissSuggestion } }
         : {})}
     />
+  );
+
+  /** The project files already in the draft (the picker starts from none and adds tokens). */
+  const projectTokens = segments.flatMap((s) =>
+    isToken(s) && s.kind === "projectFile" ? [s.id] : [],
   );
 
   return (
@@ -1689,16 +1895,26 @@ export function ComposerBar({
           deviceId={project.deviceId}
           project={project.name}
           open={pickingFiles}
-          initial={projectFiles}
+          initial={[]}
           onClose={() => {
             setPickingFiles(false);
             refocus();
           }}
           onConfirm={(paths) => {
             dismissSuggestion();
-            setProjectFiles(paths.slice(0, MAX_PROJECT_FILES));
-            // picked again: the marks of the last refusal no longer hold
-            setMissingFiles([]);
+            // each picked path not in the draft yet becomes a token at the caret
+            const kindRoom = MAX_PROJECT_FILES - new Set(projectTokens).size;
+            const totalRoom = MAX_TOKENS - tokenCount(segmentsNow.current);
+            const room = Math.max(Math.min(kindRoom, totalRoom), 0);
+            const fresh = [...new Set(paths)].filter((p) => !projectTokens.includes(p));
+            for (const path of fresh.slice(0, room))
+              editor.current?.insertToken({ kind: "projectFile", id: path, label: path });
+            if (fresh.length > room)
+              toast.error(
+                kindRoom <= totalRoom
+                  ? t("tokenLimit", { max: MAX_PROJECT_FILES })
+                  : t("tokenTotalLimit", { max: MAX_TOKENS }),
+              );
           }}
           onUnsupported={(e) => {
             const reason = errorMessage(e);

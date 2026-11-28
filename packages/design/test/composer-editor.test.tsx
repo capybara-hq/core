@@ -232,6 +232,50 @@ describe("ComposerEditor (composer inline tokens spec §2)", () => {
     expect(h().value()).toEqual(["hi ", slack, " x"]);
   });
 
+  it("openTrigger types the trigger as a keystroke, a space first after a word", () => {
+    const onTrigger = vi.fn();
+    const { h } = mount({ over: { onTrigger } });
+    act(() => h().replace(["hi"]));
+    act(() => h().openTrigger("@"));
+    expect(h().value()).toEqual(["hi @"]);
+    expect(onTrigger).toHaveBeenLastCalledWith({ trigger: "@", query: "", atStart: false });
+  });
+
+  it("insertText puts plain text at the caret, the other segments kept", () => {
+    const { h, editor } = mount();
+    act(() => h().replace(["ask ", slack]));
+    type(editor, " now");
+    act(() => {
+      editor.update(
+        () => {
+          const p = $getRoot().getFirstChildOrThrow() as ElementNode;
+          p.getFirstChildOrThrow().selectEnd();
+        },
+        { discrete: true },
+      );
+    });
+    act(() => h().insertText("please\uFFFC "));
+    expect(h().value()).toEqual(["ask please ", slack, " now"]);
+  });
+
+  it("setTriggerQuery replaces the query and keeps the trigger open", () => {
+    const onTrigger = vi.fn();
+    const { h, editor } = mount({ over: { onTrigger } });
+    type(editor, "@");
+    type(editor, "s");
+    type(editor, "l");
+    expect(onTrigger).toHaveBeenLastCalledWith({ trigger: "@", query: "sl", atStart: true });
+    act(() => h().setTriggerQuery(2, ""));
+    expect(h().value()).toEqual(["@"]);
+    expect(onTrigger).toHaveBeenLastCalledWith({ trigger: "@", query: "", atStart: true });
+    act(() => h().setTriggerQuery(0, "gen"));
+    expect(onTrigger).toHaveBeenLastCalledWith({ trigger: "@", query: "gen", atStart: true });
+    // covering the trigger too removes it, and the trigger closes
+    act(() => h().setTriggerQuery(4, ""));
+    expect(h().value()).toEqual([]);
+    expect(onTrigger).toHaveBeenLastCalledWith(null);
+  });
+
   it("Backspace after a token removes it", async () => {
     const { h, box } = mount({ initial: ["a ", slack] });
     act(() => h().replace(["a ", slack]));

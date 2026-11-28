@@ -32,6 +32,7 @@ import {
   TextNode,
 } from "lexical";
 import { isTouchPointer } from "../../shell/pointer";
+import type { ComposerMenuCaret } from "../composer-menu";
 import { $plainWithCaret, stripPastedText, TOKEN_MARKER } from "./segments";
 import { $isTokenNode } from "./token-node";
 
@@ -48,7 +49,7 @@ export type ComposerTrigger = { trigger: "@" | "/"; query: string; atStart: bool
 /** The editor's callbacks, read at the moment of each event (the latest props). */
 export type ComposerCommandProps = {
   onTrigger?(t: ComposerTrigger | null): void;
-  onKeyDown?(e: KeyboardEvent): boolean;
+  onKeyDown?(e: KeyboardEvent, caret: ComposerMenuCaret): boolean;
   onPasteFiles?(files: File[]): void;
   onPasteText?(text: string): void;
   onSubmit(): void;
@@ -178,7 +179,7 @@ export function registerComposerCommands(
       KEY_DOWN_COMMAND,
       (event) => {
         if (editor.isComposing() || event.isComposing) return false;
-        if (props().onKeyDown?.(event)) {
+        if (props().onKeyDown?.(event, $caretFacts())) {
           event.preventDefault();
           return true;
         }
@@ -226,6 +227,11 @@ export function registerComposerCommands(
         if (event === null || event.shiftKey || event.isComposing || editor.isComposing()) {
           return false;
         }
+        // keyCode 229: the ↵ that confirms an IME's text (Safari reports it after
+        // compositionend, with isComposing false). It is the IME's, neither a send nor a line
+        // break: `true` stops Lexical's own line break, and the default is left alone so the
+        // IME still commits its text.
+        if (event.keyCode === 229) return true;
         if (isTouchPointer()) return false;
         event.preventDefault();
         props().onSubmit();
@@ -364,6 +370,16 @@ export function registerComposerCommands(
     ),
   );
   return { dispose, dismissTrigger };
+}
+
+/**
+ * Where the caret stands in the draft (each token one character): collapsed, and at the start or
+ * the end of the text. A range or a selected token is not collapsed and stands at no edge.
+ */
+export function $caretFacts(): ComposerMenuCaret {
+  const { text, caret } = $plainWithCaret($getSelection());
+  if (caret === null) return { collapsed: false, atStart: false, atEnd: false };
+  return { collapsed: true, atStart: caret === 0, atEnd: caret === text.length };
 }
 
 /** A selection with something in it: a range that is not a caret, or selected tokens. */

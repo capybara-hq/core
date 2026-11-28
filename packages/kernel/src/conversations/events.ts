@@ -1068,6 +1068,47 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           }),
         )
         .optional(),
+      /**
+       * The connectors the message names (composer inline tokens spec §3.5), in block order:
+       * `toolCount` the agent's offered tools of it at send time, `loadedTools` its offered tool
+       * keys when it has at most 20 (empty with more), loaded from this message on by steps that
+       * run with tool search (inert in a step without it). The mention block's last sentence is
+       * the send-time tool search snapshot. Each has a mention block after the referenced
+       * conversations' blocks. Absent: none.
+       */
+      connectorMentions: z
+        .array(
+          z.object({
+            connectorId: z.string(),
+            slug: z.string(),
+            name: z.string(),
+            toolCount: z.number().int().nonnegative(),
+            loadedTools: z.array(z.string()),
+          }),
+        )
+        .optional(),
+      /**
+       * Where each inline token's placeholder stands (composer inline tokens spec §3.5): UTF-16
+       * offsets into `content[0]`, or into `skill.arguments` for an invocation, its label and what
+       * it names. Display only: request building never reads it. Absent: no tokens.
+       */
+      inline: z
+        .array(
+          z.object({
+            kind: z.enum(["connector", "resource", "file", "projectFile", "conversation"]),
+            start: z.number().int().nonnegative(),
+            end: z.number().int().nonnegative(),
+            label: z.string(),
+            ref: z.union([
+              z.object({ connectorId: z.string(), uri: z.string() }),
+              z.object({ connectorId: z.string() }),
+              z.object({ fileId: z.string() }),
+              z.object({ path: z.string() }),
+              z.object({ id: z.string() }),
+            ]),
+          }),
+        )
+        .optional(),
       authorAccountId: z.string(),
       /**
        * Who wrote the message, at send time (run context spec §3.2): display name and org role
@@ -1591,8 +1632,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       review: ReviewRecordSchema.optional(),
       /**
-       * `ToolSearch` 本次加载的工具 key（没有匹配时不写）。已加载集合 = 会话中全部 tool_result 的
-       * `loadedTools` 并集（含已被摘要覆盖的部分），构建请求时由日志还原，不放进程内存。
+       * The tool keys this `ToolSearch` call loaded (absent when nothing matched). The loaded set is
+       * the union of every `tool_result.loadedTools` and `user_message` connector mention's
+       * `loadedTools` in the conversation (including those a summary covers), rebuilt from the log
+       * when a request is built, never kept in process memory.
        */
       loadedTools: z.array(z.string()).optional(),
       /**

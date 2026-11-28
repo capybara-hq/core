@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { draftText, sendComposer, typeComposer } from "./support/composer";
 import {
   AGENTS,
   CONV,
@@ -140,7 +141,7 @@ describe("binding a new conversation to a project (the top strip)", () => {
     await user.click(await screen.findByRole("menuitemradio", { name: "core" }));
     expect(projectPicker()?.textContent).toContain("core");
     expect(devicePicker().textContent).not.toContain("core");
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
       deviceId: "e1",
@@ -172,10 +173,12 @@ describe("binding a new conversation to a project (the top strip)", () => {
     const user = userEvent.setup();
     await user.click(await vi.waitFor(() => projectPicker() as HTMLElement));
     await user.click(await screen.findByRole("menuitemradio", { name: "core" }));
-    await user.type(input(), "/");
+    typeComposer("/");
     await user.click(await screen.findByRole("option", { name: /^fix-issue/ }));
+    // the picked skill is the draft's leading token
+    expect(screen.getByRole("img", { name: "Skill: /fix-issue" })).toBeTruthy();
     expect(calls.some((c) => c.url === `${INVOCABLE}?deviceId=e1&project=core`)).toBe(true);
-    await user.type(input(), "1063{Enter}");
+    sendComposer("1063");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
       deviceId: "e1",
@@ -188,8 +191,8 @@ describe("binding a new conversation to a project (the top strip)", () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache("/", newRoutes());
-    const user = userEvent.setup();
-    await user.type(input(), "go{Enter}");
+    const _user = userEvent.setup();
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).not.toHaveProperty("project");
   });
@@ -209,7 +212,7 @@ describe("binding a new conversation to a project (the top strip)", () => {
     await user.click(await screen.findByRole("menuitemradio", { name: /Build box/ }));
     // a device without projects offers no project choice
     await vi.waitFor(() => expect(projectPicker()).toBeNull());
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     const body = bodyOf(calls.find((c) => c.method === "POST"));
     expect(body).toMatchObject({ deviceId: "e2" });
@@ -234,7 +237,7 @@ describe("binding a new conversation to a project (the top strip)", () => {
       await screen.findByRole("menuitemradio", { name: new RegExp(en.devices.personal) }),
     );
     await vi.waitFor(() => expect(projectPicker()?.textContent).toBe(en.chat.freeMode));
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     const body = bodyOf(calls.find((c) => c.method === "POST"));
     expect(body).toMatchObject({ deviceId: "e1" });
@@ -566,7 +569,7 @@ describe("the / menu groups entries by source", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     await screen.findByRole("listbox");
     const dialog = document.querySelector('[data-part="composer-menu"]') as HTMLElement;
     await within(dialog).findByText("fix-issue");
@@ -589,7 +592,12 @@ describe("the / menu groups entries by source", () => {
     ).toEqual([`fix-issue${en.chat.skillSourceTag.project} · Fix an issue`]);
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     await user.click(within(dialog).getByRole("option", { name: /^fix-issue/ }));
-    await user.type(input(), "42{Enter}");
+    sendComposer("42");
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`)).toHaveLength(
+        1,
+      ),
+    );
     const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
     expect(post).toHaveLength(1);
     expect(bodyOf(post[0] as Call)).toMatchObject({
@@ -650,7 +658,7 @@ describe("the / menu groups entries by source", () => {
       const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
       expect(post).toHaveLength(1);
       expect(bodyOf(post[0] as Call)).toMatchObject({ skill: { name: "project:fix-issue" } });
-      expect(input(m)).toHaveProperty("value", "/project:fix-issue 42");
+      expect(draftText()).toBe("/project:fix-issue 42");
     },
   );
 });

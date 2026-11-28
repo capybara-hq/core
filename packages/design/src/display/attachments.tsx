@@ -167,7 +167,9 @@ export function FileDrop({ label, onFiles, disabled, dragging: forced, children 
     if (files.length > 0) onFiles(files);
   };
   const onPaste = (e: ClipboardEvent<HTMLDivElement>) => {
-    if (disabled) return;
+    // a paste a child already took is its own: the composer's editor hands pasted files over
+    // itself (onPasteFiles), so they are never added twice
+    if (disabled || e.defaultPrevented) return;
     const files = Array.from(e.clipboardData?.files ?? []);
     if (files.length === 0) return;
     if (!Array.from(e.clipboardData.types ?? []).includes("text/plain")) e.preventDefault();

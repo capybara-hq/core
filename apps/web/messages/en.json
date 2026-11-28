@@ -197,7 +197,13 @@
         "default": "A referenced conversation is no longer available. Remove it and try again.",
         "empty": "A referenced conversation has no messages yet. Remove it and try again."
       },
-      "reference_self": "A conversation can't reference itself. Remove that reference."
+      "reference_self": "A conversation can't reference itself. Remove that reference.",
+      "connector_unavailable": {
+        "default": "A connector in this message can't be used. Remove it and try again.",
+        "not_found": "This connector no longer exists or is turned off",
+        "needs_config": "An admin needs to finish setting it up",
+        "not_offered": "This agent can't use it"
+      }
     },
     "background_task": {
       "not_found": "The background task does not exist or has been cleaned up.",
@@ -237,6 +243,11 @@
       "tool_not_found": "The tool does not exist in this connector.",
       "tool_not_pending": "The tool is not waiting for review.",
       "resources_disabled": "Reading resources is turned off for this connector.",
+      "resource_unreadable": {
+        "default": "A resource in this message has nothing to read. Remove it and try again.",
+        "ui_template": "It is a UI template with nothing to read",
+        "empty": "This resource is empty"
+      },
       "not_personal": "This connector uses one credential for the whole organization, so it has no per-member tool permissions.",
       "git_push_widen_not_allowed": "Loosening the connector's git push policy needs a person on the connector's settings page."
     },
@@ -1556,9 +1567,6 @@
     "waiting": "Waiting for you",
     "attachments": "Attachments",
     "removeAttachment": "Remove {name}",
-    "attachLimit": "At most {max} attachments per message.",
-    "referencesNeedText": "Write a message to send with the referenced resources, project files or conversations.",
-    "projectFileMissing": "{path} is no longer in the project. Remove it or pick it again.",
     "noInvocable": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills before you can invoke it with /.",
     "noInvocableAction": "Choose skills",
     "noInvocableReadOnly": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills first; ask its owner or an org admin.",
@@ -1848,11 +1856,9 @@
       },
       "fileByAgent": "{agent} · {how}",
       "noFiles": "No matching files",
-      "noFilesOrResources": "No matching files, conversations or resources",
       "libraryFailed": "The file library could not be read: {reason}",
       "conversationsFailed": "Conversations could not be read: {reason}",
       "resourcesFailed": "Connector resources could not be read: {reason}",
-      "resources": "Connector resources",
       "projectFiles": "Project files",
       "projectFilesHint": "Reference files of the project {project} without uploading them",
       "abilities": "Abilities",
@@ -1860,9 +1866,18 @@
       "connectors": "Connectors",
       "needsConfig": "Needs setup",
       "noMatch": "Nothing matches",
-      "noResources": "No matching resources",
-      "search": "Search"
-    }
+      "noResources": "{name} has no resources to reference",
+      "search": "Search",
+      "connectorsGroup": "Connectors",
+      "drill": "Browse {name} resources",
+      "resourcesHead": "{name} · Resources",
+      "connectYourAccount": "Connect your account first",
+      "oneSkill": "One skill per message",
+      "noAtMatch": "No matching connectors, files or conversations",
+      "connectorsFailed": "Connectors could not be read: {reason}"
+    },
+    "tokenLimit": "At most {max} of these per message.",
+    "tokenTotalLimit": "At most {max} references per message."
   },
   "ui": {
     "empty": "Nothing here yet.",

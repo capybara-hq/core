@@ -18,11 +18,11 @@ test("send from / (the new conversation): the composer clears at once, the plann
   await page.goto(`/?agent=${agentId}`);
   const input = composer(page);
   // the agent is picked (the composer's placeholder names it)
-  await expect(input).not.toHaveAttribute("placeholder", /—/);
+  await expect(input).toHaveAttribute("aria-placeholder", /^[^—]+$/);
   await input.fill(`slow:200:${LONG}`);
   await input.press("Enter");
   // the composer is empty within 100 ms, long before the create answers
-  await expect(input).toHaveValue("", { timeout: 100 });
+  await expect(input).toHaveText("", { timeout: 100 });
   // the planning row (the process block's live tail, §6.16.8a) shows before the first token
   const line = page.locator('[data-part="rail-planning"]');
   await expect(line).toBeVisible();

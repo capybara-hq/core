@@ -13,10 +13,17 @@ import { Avatar } from "../display/avatar";
 import type { PersonLike } from "../display/person-name";
 import { Icon } from "../icons/icon";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+import type { ComposerSegment, ComposerTokenData } from "./composer-editor/segments";
+import { InlineToken, type InlineTokenAction, skillText } from "./composer-editor/token";
 import { fillCopy } from "./tool-copy";
 
+/**
+ * The message is `text`, or `segments` (text runs and inline tokens, composer inline tokens spec
+ * §1), never both: each token is a read-only {@link InlineToken} in the sentence. The text runs
+ * keep the bubble's own `pre-wrap` treatment (the bubble draws plain text, not markdown), so
+ * tokens interleave as inline boxes. The skill chip still comes first.
+ */
 export type UserBubbleProps = {
-  text: string;
   /** Shown above the bubble, right-aligned (usually {@link BubbleAttachments}). */
   attachments?: ReactNode;
   /** The queued form (§6.16.14): dashed border, translucent. */
@@ -46,7 +53,12 @@ export type UserBubbleProps = {
    * (jsdom lays nothing out).
    */
   referenceLong?: boolean;
-};
+  /**
+   * What a token of `segments` opens: a referenced conversation's page, a library file's preview.
+   * Such a token is a link or a button (focusable, its focus ring); the others stay marks.
+   */
+  tokenAction?(token: ComposerTokenData): InlineTokenAction | undefined;
+} & ({ text: string; segments?: never } | { text?: never; segments: ComposerSegment[] });
 
 /** The clamp of a long message in prose lines (`layout.bubble-clamp` = 8 × `type.prose.line`). */
 const CLAMP_LINES = 8;
@@ -72,6 +84,22 @@ export function bubbleLooksLong(text: string): boolean {
     if (lines > CLAMP_LINES) return true;
   }
   return false;
+}
+
+/** The segments' plain text, what the clamp's guess and the empty check read (a token is its label). */
+function segmentsText(segments: ComposerSegment[]): string {
+  return segments
+    .map((x) => (typeof x === "string" ? x : x.kind === "skill" ? skillText(x.label) : x.label))
+    .join("");
+}
+
+/** The `action` prop of a bubble's token, or none. */
+function actionOf(
+  of: UserBubbleProps["tokenAction"],
+  token: ComposerTokenData,
+): { action?: InlineTokenAction } {
+  const action = of?.(token);
+  return action === undefined ? {} : { action };
 }
 
 /** The skill chip inside a bubble (§6.16.6): the composer's chip without its remove button. */
@@ -112,7 +140,8 @@ function BubbleRow({
  * attachments above and the skill chip on its first line always show.
  */
 export function UserBubble({
-  text,
+  text: textProp,
+  segments,
   attachments,
   queued,
   skill,
@@ -121,8 +150,10 @@ export function UserBubble({
   author,
   defaultExpanded,
   referenceLong,
+  tokenAction,
 }: UserBubbleProps): JSX.Element {
   const t = useDesignT();
+  const text = segments ? segmentsText(segments) : (textProp ?? "");
   const bodyId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
   // Per bubble and local to the view (acceptance item AC4): never persisted.
@@ -142,7 +173,7 @@ export function UserBubble({
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [text, skill, expanded, referenceLong]);
+  }, [text, segments, skill, expanded, referenceLong]);
   return (
     <div className="cb-user-msg" data-cap-part="message.user">
       {sender !== undefined ? (
@@ -172,9 +203,23 @@ export function UserBubble({
               data-part="bubble-body"
               data-expanded={expanded ? "true" : "false"}
               data-overflows={overflows && !expanded ? "true" : undefined}
+              // a token tabbed into below the clamp opens the message, so it shows with its ring
+              onFocusCapture={() => {
+                if (overflows && !expanded) setExpanded(true);
+              }}
             >
               {skill !== undefined ? <BubbleSkill label={skill} /> : null}
-              {text}
+              {segments
+                ? segments.map((seg, i) =>
+                    typeof seg === "string" ? (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: a fixed, ordered list
+                      <Fragment key={i}>{seg}</Fragment>
+                    ) : (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: a fixed, ordered list
+                      <InlineToken key={i} token={seg} {...actionOf(tokenAction, seg)} />
+                    ),
+                  )
+                : text}
             </div>
           </div>
         </BubbleRow>

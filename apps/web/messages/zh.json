@@ -197,7 +197,13 @@
         "default": "引用的会话已不可用。请移除它后再试。",
         "empty": "引用的会话还没有消息。请移除它后再试。"
       },
-      "reference_self": "不能在会话里引用这个会话本身。请移除这个引用。"
+      "reference_self": "不能在会话里引用这个会话本身。请移除这个引用。",
+      "connector_unavailable": {
+        "default": "消息中的连接器不能使用，移除后再试。",
+        "not_found": "这个连接器已不存在或已停用",
+        "needs_config": "需要管理员先完成配置",
+        "not_offered": "这个智能体不能使用它"
+      }
     },
     "background_task": {
       "not_found": "这个后台任务不存在或已被清理。",
@@ -237,6 +243,11 @@
       "tool_not_found": "该连接器没有这个工具。",
       "tool_not_pending": "该工具不在待复核状态。",
       "resources_disabled": "该连接器已关闭读取资源。",
+      "resource_unreadable": {
+        "default": "消息中的资源没有可读内容，移除后再试。",
+        "ui_template": "这是界面模板，没有可读内容",
+        "empty": "这个资源是空的"
+      },
       "not_personal": "该连接器整个组织共用一个凭据，没有按成员设置的工具权限。",
       "git_push_widen_not_allowed": "放宽连接器的 git 推送策略需要由人在连接器的设置页操作。"
     },
@@ -1556,9 +1567,6 @@
     "waiting": "等你处理",
     "attachments": "附件",
     "removeAttachment": "移除 {name}",
-    "attachLimit": "每条消息最多 {max} 个附件。",
-    "referencesNeedText": "引用资源、项目文件或会话时，请写一句消息再发送。",
-    "projectFileMissing": "{path} 已不在项目中，请移除或重新选择。",
     "noInvocable": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中，才能用 / 调用。",
     "noInvocableAction": "去选择技能",
     "noInvocableReadOnly": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中才能调用，请联系它的所有者或组织管理员。",
@@ -1836,11 +1844,9 @@
       },
       "fileByAgent": "{agent} {how}",
       "noFiles": "没有匹配的文件",
-      "noFilesOrResources": "没有匹配的文件、会话或资源",
       "libraryFailed": "文件库读取失败：{reason}",
       "conversationsFailed": "会话读取失败：{reason}",
       "resourcesFailed": "连接器资源读取失败：{reason}",
-      "resources": "连接器资源",
       "projectFiles": "项目文件",
       "projectFilesHint": "引用项目 {project} 中的文件，不上传",
       "abilities": "能力",
@@ -1848,9 +1854,18 @@
       "connectors": "连接器",
       "needsConfig": "待配置",
       "noMatch": "没有匹配项",
-      "noResources": "没有匹配的资源",
-      "search": "搜索"
-    }
+      "noResources": "{name} 没有可引用的资源",
+      "search": "搜索",
+      "connectorsGroup": "连接器",
+      "drill": "查看 {name} 的资源",
+      "resourcesHead": "{name} · 资源",
+      "connectYourAccount": "需要连接你的账号",
+      "oneSkill": "一条消息只能使用一个技能",
+      "noAtMatch": "没有匹配的连接器、文件或会话",
+      "connectorsFailed": "连接器读取失败：{reason}"
+    },
+    "tokenLimit": "这类引用每条消息最多 {max} 个。",
+    "tokenTotalLimit": "每条消息最多引用 {max} 项。"
   },
   "ui": {
     "empty": "这里还没有内容。",

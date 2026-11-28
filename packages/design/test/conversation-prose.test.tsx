@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BubbleAttachments,
   bubbleLooksLong,
+  type ComposerSegment,
   DesignProvider,
   Prose,
   RunDivider,
@@ -105,6 +106,76 @@ describe("UserBubble (§6.16.6)", () => {
     cleanup();
     const withSkill = render(<UserBubble text="" skill="/fix-issue" />);
     expect(withSkill.container.querySelector('[data-part="bubble"]')).not.toBeNull();
+  });
+
+  const slackToken = { kind: "connector", id: "c-slack", label: "Slack" } as const;
+  const fileToken = { kind: "file", id: "f1", label: "a.pdf", icon: { fileType: "PDF" } } as const;
+
+  it("bubble draws tokens inline", () => {
+    const segments: ComposerSegment[] = ["send to ", slackToken, " now"];
+    const { container } = wrap(<UserBubble segments={segments} />);
+    const body = container.querySelector('[data-part="bubble-body"]') as Element;
+    const token = body.querySelector('[data-part="inline-token"]') as HTMLElement;
+    // inside the body's own flow, between the two text runs, read-only
+    expect(token.parentElement).toBe(body);
+    expect(token.previousSibling?.textContent).toBe("send to ");
+    expect(token.nextSibling?.textContent).toBe(" now");
+    expect(token.dataset.selected).toBeUndefined();
+    expect(token.getAttribute("role")).toBe("img");
+    expect(container.querySelector('[data-part="bubble"]')).not.toBeNull();
+  });
+
+  it("skill chip precedes argument tokens", () => {
+    const { container } = wrap(<UserBubble skill="/fix-issue" segments={[slackToken, " 123"]} />);
+    const body = container.querySelector('[data-part="bubble-body"]') as Element;
+    expect(body.firstElementChild?.getAttribute("data-part")).toBe("bubble-skill");
+    expect(body.children[1]?.getAttribute("data-part")).toBe("inline-token");
+  });
+
+  it("a token with an action opens it: a link through the provider, or a button", async () => {
+    const onOpen = vi.fn();
+    const conv = { kind: "conversation" as const, id: "c2", label: "Pricing" };
+    const { container } = wrap(
+      <UserBubble
+        segments={["see ", conv, " and ", fileToken, " or ", slackToken]}
+        tokenAction={(t) =>
+          t.kind === "conversation"
+            ? { href: `/chat/${t.id}` }
+            : t.kind === "file"
+              ? { onOpen }
+              : undefined
+        }
+      />,
+    );
+    const link = screen.getByRole("link", { name: "会话：Pricing" });
+    expect(link.getAttribute("href")).toBe("/chat/c2");
+    await userEvent.click(screen.getByRole("button", { name: "文件：a.pdf" }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    // a token without an action stays a mark, never a control
+    expect(container.querySelectorAll('[data-part="inline-token-link"]')).toHaveLength(2);
+  });
+
+  it("a clamped message opens when the focus enters one of its tokens", () => {
+    const conv = { kind: "conversation" as const, id: "c2", label: "Pricing" };
+    const { container } = wrap(
+      <UserBubble
+        referenceLong
+        segments={["long ", conv]}
+        tokenAction={(t) => ({ href: `/chat/${t.id}` })}
+      />,
+    );
+    const body = container.querySelector('[data-part="bubble-body"]') as HTMLElement;
+    expect(body.getAttribute("data-expanded")).toBe("false");
+    act(() => screen.getByRole("link", { name: "会话：Pricing" }).focus());
+    expect(body.getAttribute("data-expanded")).toBe("true");
+  });
+
+  it("token names read in line order", () => {
+    const { container } = wrap(<UserBubble segments={["a ", slackToken, " b ", fileToken]} />);
+    const names = [...container.querySelectorAll('[data-part="inline-token"]')].map((n) =>
+      n.getAttribute("aria-label"),
+    );
+    expect(names).toEqual(["连接器：Slack", "文件：a.pdf"]);
   });
 
   it("skill: the chip before the arguments in the bubble, details under it", () => {

@@ -404,6 +404,12 @@ export const ERROR_CODES = {
   "conversation.reference_unavailable": 422,
   /** A message references the conversation it is written in; `details: [{ id }]`. */
   "conversation.reference_self": 422,
+  /**
+   * A connector a message names cannot be used by the conversation's agent now (composer inline
+   * tokens spec §3.4); `details: [{ connectorId, reason: "not_found" | "needs_config" |
+   * "not_offered" }]`.
+   */
+  "conversation.connector_unavailable": 422,
   "run.not_active": 409,
   /** A run that is not one of the conversation's (the live draft route, spec 2026-11-07 §3.2). */
   "run.not_found": 404,
@@ -420,6 +426,12 @@ export const ERROR_CODES = {
   "connector.tool_not_found": 404,
   "connector.tool_not_pending": 409,
   "connector.resources_disabled": 409,
+  /**
+   * A resource a message references has nothing to read: an MCP Apps UI template or an empty body
+   * (composer inline tokens spec §3.4); `details: [{ connectorId, uri, reason: "ui_template" |
+   * "empty" }]`.
+   */
+  "connector.resource_unreadable": 422,
   /** Per-member tool policies on a connector with one org credential (decision 2026-11-09). */
   "connector.not_personal": 409,
   /**

@@ -306,7 +306,7 @@ describe("ReplaceableSlot", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const composer = (
       <div data-cap-part="composer">
-        <textarea aria-label="Message" />
+        <textarea aria-label="Message" data-part="composer-input" />
       </div>
     );
     const frame = (
@@ -337,7 +337,7 @@ describe("ReplaceableSlot", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const composer = (
       <div data-cap-part="composer">
-        <textarea aria-label="Message" />
+        <textarea aria-label="Message" data-part="composer-input" />
       </div>
     );
     let hide: () => void = () => {};
@@ -378,7 +378,7 @@ describe("ReplaceableSlot", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const composer = (
       <div data-cap-part="composer">
-        <textarea aria-label="Message" />
+        <textarea aria-label="Message" data-part="composer-input" />
       </div>
     );
     const Drop = () => <div data-testid="frame">no composer here</div>;
@@ -391,7 +391,7 @@ describe("ReplaceableSlot", () => {
       <>
         {/* another composer elsewhere on the page does not satisfy the slot's check */}
         <div data-cap-part="composer">
-          <textarea aria-label="Elsewhere" />
+          <textarea aria-label="Elsewhere" data-part="composer-input" />
         </div>
         <ExtensionSlot
           slot="conversation.composer.frame"
@@ -409,10 +409,10 @@ describe("ReplaceableSlot", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const composer = (
       <div data-cap-part="composer">
-        <textarea aria-label="Message" />
+        <textarea aria-label="Message" data-part="composer-input" />
       </div>
     );
-    // two copies of `children` would mount two composers sharing one textarea ref
+    // two copies of `children` would mount two composers sharing one editor ref
     const Twice = ({ children }: { children: ReactNode }) => (
       <div data-testid="frame">
         {children}
@@ -444,7 +444,7 @@ describe("ReplaceableSlot", () => {
   it("a composer frame that renders its children stays", async () => {
     const composer = (
       <div data-cap-part="composer">
-        <textarea aria-label="Message" />
+        <textarea aria-label="Message" data-part="composer-input" />
       </div>
     );
     const Wrap = ({ children, runState }: { children: ReactNode; runState: string }) => (
@@ -469,7 +469,7 @@ describe("ReplaceableSlot", () => {
     await flush();
     const frame = screen.getByTestId("frame");
     expect(frame.getAttribute("data-run")).toBe("running");
-    expect(frame.querySelector("textarea")).not.toBeNull();
+    expect(frame.querySelector('[data-part="composer-input"]')).not.toBeNull();
     expect(reports()).toEqual([]);
   });
 
@@ -501,7 +501,7 @@ describe("ReplaceableSlot", () => {
     expect(composers).toHaveLength(1);
     expect(frame.contains(composers[0] as Node)).toBe(true);
     expect(composers[0]?.getAttribute("data-frame")).toBe("bare");
-    expect(frame.querySelector("textarea")).not.toBeNull();
+    expect(frame.querySelector('[data-part="composer-input"]')).not.toBeNull();
     expect(reports()).toEqual([]);
   });
 

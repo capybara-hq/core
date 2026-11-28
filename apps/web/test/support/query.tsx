@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { ServerClock } from "@capybara-hq/design";
 import type { DehydratedState, QueryClient } from "@tanstack/react-query";
 import { act } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { type ReactNode, StrictMode } from "react";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { vi } from "vitest";
@@ -25,6 +25,8 @@ type RouteOpts = Parameters<typeof renderPage>[1] & {
   readiness?: OrgReadiness;
   /** The document request's `Cookie` header the layout's prefetch sees. */
   cookie?: string;
+  /** Render the page under `<StrictMode>` (effects and state updaters run twice). */
+  strict?: boolean;
 };
 
 const APP = join(import.meta.dirname, "../../src/app");
@@ -65,7 +67,7 @@ function withCache(page: ReactNode, state?: DehydratedState) {
  */
 /** The server half of a document load: the layout's and the route's prefetch, and the page. */
 async function serverLoad(path: string, routes: Routes, opts: RouteOpts) {
-  const { readiness, cookie, ...render } = opts;
+  const { readiness, cookie, strict: _strict, ...render } = opts;
   const me = render.me ?? ME;
   const calls = serverRoutes({ ...sessionRoutes(me, readiness), ...routes });
   let state: DehydratedState;
@@ -92,7 +94,11 @@ async function serverLoad(path: string, routes: Routes, opts: RouteOpts) {
 export async function renderRouteWithCache(path: string, routes: Routes, opts: RouteOpts = {}) {
   const { calls, state, page, render } = await serverLoad(path, routes, opts);
   const client = testQueryClient();
-  const view = renderPage(withCache(page, state), { ...render, client });
+  const cached = withCache(page, state);
+  const view = renderPage(opts.strict ? <StrictMode>{cached}</StrictMode> : cached, {
+    ...render,
+    client,
+  });
   /**
    * A client navigation to `to` under the same layout: the page of `to` replaces this one inside
    * the same `HydrationBoundary` (the layout does not run again), with the same browser cache.
@@ -143,7 +149,7 @@ export async function renderRouteEmptyCache(
   routes: Routes,
   opts: RouteOpts = {},
 ): Promise<{ calls: Call[]; client: QueryClient } & ReturnType<typeof renderPage>> {
-  const { readiness, cookie: _cookie, ...render } = opts;
+  const { readiness, cookie: _cookie, strict: _strict, ...render } = opts;
   const all = { ...sessionRoutes(render.me ?? ME, readiness), ...routes };
   let page: ReactNode;
   serverRoutes(all);

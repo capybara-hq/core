@@ -2,7 +2,6 @@
 // the cached log, `changed` frames invalidate their key, and a return reads only what changed.
 import { type DehydratedState, hashKey, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -23,6 +22,7 @@ import {
 } from "../src/lib/query/conversation";
 import { keys } from "../src/lib/query/keys";
 import { type Call, json, stubApi } from "./support/api";
+import { draftText, typeComposer } from "./support/composer";
 import {
   CONV,
   ev,
@@ -537,7 +537,7 @@ describe("the conversation page from the cache", () => {
     expect(page.querySelector("[aria-busy='true']")).not.toBeNull();
     // the composer is real while the thread loads: it can be typed in, not sent from
     const box = screen.getByRole("combobox", { name: en.chat.inputLabel, hidden: true });
-    await userEvent.setup().type(box, "early");
+    typeComposer("early", box);
     const send = screen.getByRole("button", { name: en.chat.send, hidden: true });
     expect(send).toHaveProperty("disabled", true);
     expect(screen.queryByText("hi")).toBeNull();
@@ -545,7 +545,7 @@ describe("the conversation page from the cache", () => {
     expect(await screen.findByText("hi")).toBeTruthy();
     await vi.waitFor(() => expect(page.querySelector("[aria-busy='true']")).toBeNull());
     // the draft stayed and can be sent now
-    expect(box).toHaveProperty("value", "early");
+    expect(draftText(box)).toBe("early");
     expect(screen.getByRole("button", { name: en.chat.send, hidden: true })).toHaveProperty(
       "disabled",
       false,

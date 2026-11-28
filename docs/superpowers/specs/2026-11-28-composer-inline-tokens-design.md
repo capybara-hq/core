@@ -183,11 +183,12 @@ collaborative editing).
   code never sees Lexical either (`plugin-client` exposes no editor type).
 - **Shape.** One `LexicalComposer` with `PlainTextPlugin` (no rich formatting; one paragraph per
   line), a `ContentEditable` as the composer input, and one `TokenNode` (a `DecoratorNode`, inline,
-  `isKeyboardSelectable`, rendering the token of §1 as a React element; its JSON is
-  `{kind, id, label, icon?, state?}`). The model the page sees is derived from the editor state
+  not keyboard-selectable (implementation, 2026-11-28) (`isKeyboardSelectable` is false: ← / → step
+  over it in one move, a click selects it), rendering the token of §1 as a React element; its JSON is
+  `{kind, id, label, icon?, state?, reason?}`). The model the page sees is derived from the editor state
   (`$getRoot()` text and token nodes, in order) and set through `editor.update`; the page never
-  touches Lexical nodes. Styles live in the design's CSS as today (`cb-composer-input`,
-  `cb-composer-token`), the Lexical theme maps only class names.
+  touches Lexical nodes. Styles live in the design's CSS, class names `cb-composer-editor` (the editor) and `cb-inline-token`
+  (a token) (implementation, 2026-11-28); the Lexical theme maps only class names.
 
 Behaviour contract (each line is a test, §8), and what implements it:
 
@@ -199,7 +200,8 @@ Behaviour contract (each line is a test, §8), and what implements it:
   `COMMAND_PRIORITY_HIGH` while a menu is open) return early while it is composing. A composition
   never spans a token: a decorator node is atomic for Lexical's selection. A full-width `＠`
   committed by an IME is not a trigger (only `@`); Shift+2 committed directly types `@` as today.
-- **Caret.** ← / → step over a token in one move; Shift+← / → extend the selection over it as a
+- **Caret.** ← / → step over a token in one move (it is not keyboard-selectable (implementation, 2026-11-28): the caret
+  never lands on it); Shift+← / → extend the selection over it as a
   unit; a click on a token selects it as a node selection (`accent` outline). The caret is never
   inside a token (Lexical's decorator node behaviour).
 - **Deleting.** Backspace with the caret right after a token deletes the token, Delete right before
@@ -214,7 +216,8 @@ Behaviour contract (each line is a test, §8), and what implements it:
   history is cleared on send. A page's `ComposerControl.replace` (quick actions) stays one undoable
   step.
 - **Paste.** Plain text only: a `PASTE_COMMAND` handler at high priority reads `text/plain`, strips
-  U+FFFC and other format characters (`Cf`), and inserts it as text, so HTML and Lexical's own
+  U+FFFC and the other format characters (`Cf`) except U+200C and U+200D (ZWNJ / ZWJ carry meaning:
+  emoji sequences, Persian and Indic scripts; implementation, 2026-11-28), and inserts it as text, so HTML and Lexical's own
   clipboard format never create nodes; files go to the upload strip as today. Pasted text never
   becomes tokens, even `@Slack` or `/skill`, and never opens a menu; line breaks are kept. The token
   warning still runs on paste.
@@ -234,15 +237,17 @@ Behaviour contract (each line is a test, §8), and what implements it:
   touch a tap on a token selects it and the keyboard's delete removes it. ↵ on a soft keyboard is a
   newline as today; send is the button. Playwright runs the IME and caret tests on Chromium and
   WebKit; Android keyboards (Gboard, Sogou) are part of the acceptance pass on a device.
-- **Screen readers.** The `ContentEditable` is `role="textbox"` `aria-multiline="true"` and, while
-  the page passes `menu`, the combobox of §6.16.2 (`aria-expanded`, `aria-controls`,
-  `aria-activedescendant`, passed through to it); each token's element is `role="img"` with its
+- **Screen readers.** The `ContentEditable` is `role="textbox"` `aria-multiline="true"` and, while a
+  menu is open, the combobox of §6.16.2 (`aria-expanded`, `aria-controls`, `aria-activedescendant`;
+  `aria-multiline` kept; implementation, 2026-11-28); a refused token names its reason through
+  `aria-describedby` (implementation, 2026-11-28); each token's element is `role="img"` with its
   accessible name (§1), so reading the line says 「给 连接器：Slack 发消息」.
 - **Growth and placeholder.** One line when empty, grows to 8 lines then scrolls, as the textarea
   did; the placeholder (`PlainTextPlugin placeholder`) and the skill's argument hint (faint ghost text
   after the skill token while nothing follows it) as today.
 - **Ref.** The editor exposes `value` / `focus()` / `insertToken()` / `replace()` through its ref so
-  `ComposerControl` keeps working; the Lexical editor instance stays inside `packages/design`.
+  `ComposerControl` keeps working, and `dismissTrigger()` (the page closed its menu, so the trigger
+  listener forgets the open trigger; implementation, 2026-11-28); the Lexical editor instance stays inside `packages/design`.
 
 ### 3. Message contract (kernel)
 
@@ -275,8 +280,9 @@ Token =
   renders a placeholder, so `content[0]` is never empty when blocks follow).
 - The skill token: the web removes it from the text (collapsing the whitespace at the seam) and sends
   `skill`; the rest is the skill's arguments, which may contain other tokens.
-- The internal `UserMessageInput` keeps resolved arrays; the queue (kernel-internal) takes no tokens,
-  as it takes no project files today.
+- The internal `UserMessageInput` keeps `tokens` (the old `attachments` / `projectFiles` /
+  `conversationRefs` arrays are gone; implementation, 2026-11-28); the queue (kernel-internal) takes
+  no tokens, as it takes no project files today.
 
 #### 3.2 Placeholders (model-visible, English)
 
@@ -342,6 +348,9 @@ connector or resource tokens.
 - **File, project file, conversation:** unchanged codes (`file.*`, `conversation.project_file_unavailable`,
   `device.path_outside_project`, `conversation.reference_unavailable`, `conversation.reference_self`).
 - The web maps each code's details to the token by `(kind, id)` and marks it refused (§1).
+  (Implementation, 2026-11-28: the resource refusals `connector.resources_disabled` and
+  `connector.not_found` carry `details: [{connectorId}]` so the web marks the token;
+  `conversation.project_file_unavailable` with reason `no_project` marks every project file token.)
 - New error codes are registered in `errors.ts` with zh / en copy (§7).
 
 #### 3.5 Logged payload
@@ -353,8 +362,10 @@ connector or resource tokens.
   (`{connectorId}`, `{connectorId, uri}`, `{fileId}`, `{path}`, `{id}`). **Display only**: request
   building never reads it.
 - `connectorMentions: [{connectorId, slug, name, toolCount, loadedTools: string[]}]`: `loadedTools`
-  are the connector's tool keys loaded by the mention (empty when tool search was off or the
-  connector has more than 20 tools).
+  are the connector's offered tool keys whenever it offers at most 20 tools, **regardless of the
+  send-time tool-search flag** (implementation, 2026-11-28); empty when it offers more than 20. They
+  are inert for a step with tool search off (every tool is in its request anyway); the mention
+  text's last sentence (§3.3) is the send-time snapshot of the flag.
 
 `attachments`, `projectFiles`, `conversationRefs` stay as they are (they name the blocks).
 
@@ -386,7 +397,11 @@ connector or resource tokens.
   principal) → `{connectors: [{id, slug, name, description?, icon: string | null, state: "ready" |
   "needs_config", credential: "connected" | "missing" | "none", toolCount, resources: boolean}]}`:
   the org's live, active connectors of which `forAgent` offers the agent at least one tool, plus the
-  `needs_config` ones (shown disabled); no session is opened. The web filters by the query
+  `needs_config` ones (shown disabled); no session is opened. Each connector also returns
+  `descriptionZh?` (the template's Chinese description, falling back to the template's description;
+  the web picks by locale; implementation, 2026-11-28). Correction (implementation, 2026-11-28): the
+  kernel sends `descriptionZh` only when the connector has no description of its own and the
+  template has a Chinese one; the web falls back to `description`. The web filters by the query
   (`commandScore`, client side) through a `defineQuery` cached per agent.
 - **Second level** (state `at-resources`): the menu head shows 「‹ Slack · 资源」 (a back button,
   「返回」 / "Back"); the text after `@` that named the connector is cleared (the `@` stays) and

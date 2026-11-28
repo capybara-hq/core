@@ -3,9 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { refusedConversationRefs } from "../src/components/conversation/ComposerBar";
+import { refusedTokens } from "../src/components/conversation/ComposerBar";
 import { ApiClientError } from "../src/lib/api";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
+import {
+  backspaceComposer,
+  composerTokens,
+  draftText,
+  findComposerBox,
+  pressComposer,
+  sendComposer,
+  typeComposer,
+} from "./support/composer";
 import {
   AGENTS,
   CONV,
@@ -23,11 +32,11 @@ import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 
 /**
- * @ conversations (spec 2026-11-28 @ conversations §3, plan Task 3): the `@` menu's conversations
- * group lists the sender's conversations by title (never the one written in), a pick becomes a strip
- * chip and goes out as `conversationRefs` (the first message too), a refusal marks the refused
- * chips, and the bubble shows a logged message's references as link chips, never their quoted
- * blocks.
+ * @ conversations (spec 2026-11-28 @ conversations §3, composer inline tokens spec): the `@`
+ * menu's conversations group lists the sender's conversations by title (never the one written
+ * in), a pick becomes an inline `conversation` token sent in `tokens` (the first message too), a
+ * refusal marks the refused tokens with the Remove line, and the bubble shows an older logged
+ * message's references as link chips, never their quoted blocks.
  */
 
 const params = { conversationId: "c1" };
@@ -77,7 +86,10 @@ const listReads = (calls: Call[]) =>
 const posts = (calls: Call[], url: string) =>
   calls.filter((c) => c.method === "POST" && c.url === url);
 
-/** The routes the `@` menu reads besides the conversations: one library file, one resource. */
+/**
+ * The routes the `@` menu reads besides the conversations: one library file, no connectors (a
+ * resource is listed only in its connector's second level).
+ */
 const menuRoutes = {
   [`GET ${LIBRARY}`]: () =>
     json(200, {
@@ -111,6 +123,8 @@ const menuRoutes = {
       unavailable: [],
     }),
   [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
+  [`GET ${ORG}/agents/ag1/mentionable-connectors`]: () => json(200, { connectors: [] }),
+  [`GET ${ORG}/agents/ag2/mentionable-connectors`]: () => json(200, { connectors: [] }),
   [`GET ${LIST}`]: listing,
 };
 
@@ -131,23 +145,38 @@ function chatApi(
   });
 }
 
-const input = (m = en) =>
-  screen.getByRole("combobox", { name: m.chat.inputLabel, hidden: true }) as HTMLTextAreaElement;
+const MARK = "￼";
 const menu = async () => {
   await screen.findByRole("listbox");
   return document.querySelector('[data-part="composer-menu"]') as HTMLElement;
 };
 const headingsOf = (el: HTMLElement) =>
   [...el.querySelectorAll('[data-part="composer-menu-label"]')].map((h) => h.textContent);
-const strip = (m = en) => screen.getByRole("group", { name: m.chat.files });
+/** The draft's conversation token titled `title`, as drawn. */
+const tokenOf = (title: string) =>
+  screen.getByRole("img", { name: new RegExp(`^(Conversation: |会话：)${title}`) });
 /** Types `@`, waits for the conversations row named `name` and picks it. */
-async function pick(user: ReturnType<typeof userEvent.setup>, name: string | RegExp, m = en) {
-  await user.type(input(m), "@");
+async function pick(user: ReturnType<typeof userEvent.setup>, name: string | RegExp) {
+  await findComposerBox();
+  typeComposer("@");
   const el = await menu();
   await user.click(await within(el).findByRole("option", { name }));
 }
 const refusal = (code: string, details: unknown[]) => () =>
   json(422, { error: { code, message: "refused", details } });
+/** The refusal line (the fail Callout) once it shows. */
+const refusalLine = () =>
+  vi.waitFor(() => {
+    const el = [...document.querySelectorAll('[data-part="callout"]')].find(
+      (c) => c.getAttribute("data-tone") === "fail",
+    );
+    if (!el) throw new Error("no refusal line");
+    // the editor draws the restored draft's tokens after the line (it applies a draft the page
+    // sets in an effect, then renders its tokens): wait for a refused token too
+    if (!document.querySelector('[data-part="inline-token"][data-state="refused"]'))
+      throw new Error("no refused token drawn yet");
+    return el as HTMLElement;
+  });
 
 beforeEach(() => {
   params.conversationId = "c1";
@@ -163,19 +192,18 @@ afterEach(() => {
 });
 
 describe("the @ menu's conversations group", () => {
-  it("lists my recent conversations after the files and before the resources, never this one", async () => {
+  it("lists my recent conversations after the files, never this one", async () => {
     const calls = chatApi();
     await renderChatRoute({ locale: "zh" });
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(zh), "@");
+    await findComposerBox();
+    typeComposer("@");
     const el = await menu();
     await within(el).findByRole("option", { name: /Quarterly plan/ });
-    await within(el).findByText("Handbook");
+    await within(el).findByText("report.pdf");
     expect(headingsOf(el)).toEqual([
       zh.chat.composerMenu.recentFiles,
       zh.chat.composerMenu.conversations,
-      "Docs",
     ]);
     // the empty query reads the newest six, the current one is dropped
     expect(listReads(calls)).toEqual([`${LIST}?limit=9`]);
@@ -205,12 +233,12 @@ describe("the @ menu's conversations group", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "@");
+    await findComposerBox();
+    typeComposer("@");
     let el = await menu();
     await within(el).findByRole("option", { name: /Doc 0/ });
     expect(within(el).queryByRole("option", { name: /Doc 5/ })).toBeNull();
-    await user.type(input(), "quarterly");
+    typeComposer("quarterly");
     await vi.waitFor(() => expect(listReads(calls)).toContain(`${LIST}?limit=9&q=quarterly`));
     el = await menu();
     await within(el).findByRole("option", { name: /Quarterly review/ });
@@ -221,7 +249,7 @@ describe("the @ menu's conversations group", () => {
     expect(listReads(calls)).toEqual([`${LIST}?limit=9`, `${LIST}?limit=9&q=quarterly`]);
   });
 
-  it("is not listed by + → File library or Connector resources", async () => {
+  it("is not listed by + → File library", async () => {
     const calls = chatApi();
     await renderChatRoute();
     await screen.findByText("hi");
@@ -232,7 +260,7 @@ describe("the @ menu's conversations group", () => {
     expect(listReads(calls)).toEqual([]);
   });
 
-  it("a pick becomes a strip chip; the message carries conversationRefs and needs text", async () => {
+  it("a pick becomes an inline token; the message carries it in tokens", async () => {
     const calls = chatApi({
       [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(9, "x") }),
     });
@@ -240,41 +268,46 @@ describe("the @ menu's conversations group", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await pick(user, /Quarterly plan/);
-    expect(input().value).toBe("");
-    const chip = within(strip()).getByText("Quarterly plan").closest('[data-part="attachment"]');
-    expect(chip?.getAttribute("data-kind")).toBe("conversation");
+    expect(tokenOf("Quarterly plan")).toBeTruthy();
+    expect(draftText()).toBe("@Quarterly plan ");
+    expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull();
     // a picked conversation is not offered again
-    await user.type(input(), "@");
+    typeComposer("@");
     const el = await menu();
     await within(el).findByRole("option", { name: /Release notes/ });
     expect(within(el).queryByRole("option", { name: /Quarterly plan/ })).toBeNull();
-    await user.keyboard("{Escape}");
-    await user.clear(input());
+    pressComposer("Escape");
+    await vi.waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    backspaceComposer();
+    // a token alone can be sent: it renders a placeholder
     expect((screen.getByRole("button", { name: en.chat.send }) as HTMLButtonElement).disabled).toBe(
-      true,
+      false,
     );
-    expect(input().getAttribute("placeholder")).toBe(en.chat.referencesNeedText);
-    await user.type(input(), "compare{Enter}");
-    const post = posts(calls, `${BASE}/messages`);
-    expect(post).toHaveLength(1);
-    expect(bodyOf(post[0])).toMatchObject({ text: "compare", conversationRefs: [{ id: "c2" }] });
-    await vi.waitFor(() => expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull());
+    sendComposer("compare");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    const body = bodyOf(posts(calls, `${BASE}/messages`)[0]) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      text: `${MARK} compare`,
+      tokens: [{ type: "conversation", id: "c2" }],
+    });
+    expect(body).not.toHaveProperty("conversationRefs");
+    await vi.waitFor(() => expect(composerTokens()).toHaveLength(0));
   });
 
-  it("the pending bubble shows the reference as a link chip", async () => {
+  it("the pending bubble draws the reference as a token", async () => {
     chatApi({ [`POST ${BASE}/messages`]: () => new Promise<Response>(() => {}) });
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await pick(user, /Quarterly plan/);
-    await user.type(input(), "compare{Enter}");
+    sendComposer("compare");
     const bubble = await vi.waitFor(() => {
       const el = document.querySelector("[data-pending]");
       if (!el) throw new Error("no pending bubble");
       return el as HTMLElement;
     });
-    const link = within(bubble).getByRole("link", { name: /Quarterly plan/ });
-    expect(link.getAttribute("href")).toBe("/chat/c2");
+    expect(within(bubble).getByRole("img", { name: "Conversation: Quarterly plan" })).toBeTruthy();
+    expect(bubble.textContent).toContain("compare");
   });
 
   it("with three referenced the rows are disabled and say why", async () => {
@@ -285,7 +318,7 @@ describe("the @ menu's conversations group", () => {
     await pick(user, /Quarterly plan/);
     await pick(user, /Release notes/);
     await pick(user, /Quarterly review/);
-    await user.type(input(), "@");
+    typeComposer("@");
     const el = await menu();
     const untitled = await within(el).findByRole("option", {
       name: new RegExp(en.chat.composerMenu.untitledConversation),
@@ -294,44 +327,33 @@ describe("the @ menu's conversations group", () => {
     expect(untitled.getAttribute("aria-disabled")).toBe("true");
     expect(untitled.textContent).toContain(limit);
     await user.click(untitled);
-    expect(within(strip()).queryByText(en.chat.composerMenu.untitledConversation)).toBeNull();
+    expect(composerTokens()).toHaveLength(3);
   });
 });
 
 describe("menu keys and the draft's identity", () => {
-  it("↵ picks the active conversation row; Backspace through the @ closes without a chip", async () => {
+  it("↵ picks the active conversation row; Backspace through the @ closes without a token", async () => {
     chatApi();
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "@");
+    await findComposerBox();
+    typeComposer("@");
     let el = await menu();
     await within(el).findByRole("option", { name: /Quarterly plan/ });
-    await within(el).findByText("Handbook");
+    await within(el).findByText("report.pdf");
     // the files' row first, then the first conversation
-    await user.keyboard("{ArrowDown}{Enter}");
-    expect(within(strip()).getByText("Quarterly plan")).toBeTruthy();
-    expect(input().value).toBe("");
-    await user.type(input(), "@");
+    pressComposer("ArrowDown");
+    pressComposer("Enter");
+    expect(tokenOf("Quarterly plan")).toBeTruthy();
+    expect(draftText()).toBe("@Quarterly plan ");
+    typeComposer("@");
     el = await menu();
     await within(el).findByRole("option", { name: /Release notes/ });
-    await user.keyboard("{Backspace}");
+    pressComposer("Backspace");
+    backspaceComposer();
     await vi.waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
-    expect(input().value).toBe("");
-    expect(within(strip()).queryByText("Release notes")).toBeNull();
-  });
-
-  it("a chip's remove button removes it from the keyboard", async () => {
-    chatApi();
-    await renderChatRoute();
-    await screen.findByText("hi");
-    const user = userEvent.setup();
-    await pick(user, /Quarterly plan/);
-    within(strip())
-      .getByRole("button", { name: /Quarterly plan/ })
-      .focus();
-    await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull());
+    expect(draftText()).toBe("@Quarterly plan ");
+    expect(composerTokens()).toHaveLength(1);
   });
 
   it("a resend keeps the clientMessageId; another set of references gets a new one", async () => {
@@ -349,36 +371,40 @@ describe("menu keys and the draft's identity", () => {
     const user = userEvent.setup();
     await pick(user, /Quarterly plan/);
     await pick(user, /Release notes/);
-    await user.type(input(), "compare{Enter}");
+    sendComposer("compare");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
-    await vi.waitFor(() => expect(input().value).toBe("compare"));
-    await user.type(input(), "{Enter}");
+    await vi.waitFor(() => expect(composerTokens()).toHaveLength(2));
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
-    await vi.waitFor(() => expect(input().value).toBe("compare"));
+    await vi.waitFor(() => expect(composerTokens()).toHaveLength(2));
     const id = (i: number) =>
       (bodyOf(posts(calls, `${BASE}/messages`)[i]) as { clientMessageId: string }).clientMessageId;
     expect(id(1)).toBe(id(0));
-    await user.click(within(strip()).getByRole("button", { name: /Release notes/ }));
-    await user.type(input(), "{Enter}");
+    // another reference makes another message (after a space: `@` right after a word is text)
+    typeComposer(" ");
+    await pick(user, /Quarterly review/);
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(3));
-    expect(bodyOf(posts(calls, `${BASE}/messages`)[2])).toMatchObject({
-      conversationRefs: [{ id: "c2" }],
-    });
+    expect(
+      (bodyOf(posts(calls, `${BASE}/messages`)[2]) as { tokens: unknown[] }).tokens,
+    ).toHaveLength(3);
     expect(id(2)).not.toBe(id(0));
   });
 });
 
-describe("refusedConversationRefs", () => {
+describe("refusedTokens (conversations)", () => {
   const draft = [
-    { id: "c2", title: "Quarterly plan" },
-    { id: "c3", title: null },
+    "compare ",
+    { kind: "conversation" as const, id: "c2", label: "Quarterly plan" },
+    " ",
+    { kind: "conversation" as const, id: "c3", label: "Untitled conversation" },
   ];
   const refused = (code: string, details: unknown[]) =>
     new ApiClientError(422, code, "refused", [], details);
 
-  it("names the draft's refused ids with their reason, in draft order", () => {
+  it("names the draft's refused tokens with their reason, in draft order", () => {
     expect(
-      refusedConversationRefs(
+      refusedTokens(
         refused("conversation.reference_unavailable", [
           { id: "c3", reason: "empty" },
           { id: "c2" },
@@ -386,31 +412,33 @@ describe("refusedConversationRefs", () => {
         draft,
       ),
     ).toEqual([
-      { id: "c2", why: "unavailable" },
-      { id: "c3", why: "empty" },
+      { kind: "conversation", id: "c2", code: "conversation.reference_unavailable" },
+      {
+        kind: "conversation",
+        id: "c3",
+        code: "conversation.reference_unavailable",
+        reason: "empty",
+      },
     ]);
-    expect(
-      refusedConversationRefs(refused("conversation.reference_self", [{ id: "c2" }]), draft),
-    ).toEqual([{ id: "c2", why: "self" }]);
+    expect(refusedTokens(refused("conversation.reference_self", [{ id: "c2" }]), draft)).toEqual([
+      { kind: "conversation", id: "c2", code: "conversation.reference_self" },
+    ]);
   });
 
   it("marks nothing for ids not in the draft or another error", () => {
     expect(
-      refusedConversationRefs(refused("conversation.reference_unavailable", [{ id: "x9" }]), draft),
+      refusedTokens(refused("conversation.reference_unavailable", [{ id: "x9" }]), draft),
     ).toEqual([]);
     expect(
-      refusedConversationRefs(
-        refused("conversation.project_file_unavailable", [{ id: "c2" }]),
-        draft,
-      ),
+      refusedTokens(refused("conversation.project_file_unavailable", [{ id: "c2" }]), draft),
     ).toEqual([]);
-    expect(refusedConversationRefs(new Error("boom"), draft)).toEqual([]);
+    expect(refusedTokens(new Error("boom"), draft)).toEqual([]);
   });
 });
 
 describe("a refused reference", () => {
   it.each(["zh", "en"] as const)(
-    "marks each refused chip with its own copy and gives the draft back (%s)",
+    "marks each refused token and gives the draft back (%s)",
     async (locale) => {
       const m = locale === "zh" ? zh : en;
       chatApi({
@@ -422,23 +450,27 @@ describe("a refused reference", () => {
       await renderChatRoute({ locale });
       await screen.findByText("hi");
       const user = userEvent.setup();
-      await pick(user, /Quarterly plan/, m);
-      await pick(user, /Release notes/, m);
-      await pick(user, /Quarterly review/, m);
-      await user.type(input(m), "compare{Enter}");
+      await pick(user, /Quarterly plan/);
+      await pick(user, /Release notes/);
+      await pick(user, /Quarterly review/);
+      sendComposer("compare");
       const copy = m.errors.conversation.reference_unavailable;
-      const back = await screen.findByRole("group", { name: m.chat.files });
-      const chipOf = (title: string) =>
-        within(back).getByText(title).closest('[data-part="attachment"]') as HTMLElement;
-      await vi.waitFor(() => expect(chipOf("Quarterly plan").textContent).toContain(copy.default));
-      expect(chipOf("Release notes").textContent).toContain(copy.empty);
-      expect(chipOf("Quarterly review").getAttribute("data-state")).toBe("ready");
-      expect(input(m).value).toBe("compare");
-      // removing a refused chip takes its mark with it
-      await user.click(
-        within(chipOf("Quarterly plan")).getByRole("button", { name: /Quarterly plan/ }),
+      const line = await refusalLine();
+      // the line names the first refused token with its own copy
+      expect(line.textContent).toContain("Quarterly plan");
+      expect(line.textContent).toContain(copy.default);
+      await vi.waitFor(() =>
+        expect(tokenOf("Quarterly plan").getAttribute("data-state")).toBe("refused"),
       );
-      expect(within(back).queryByText("Quarterly plan")).toBeNull();
+      expect(tokenOf("Release notes").getAttribute("data-state")).toBe("refused");
+      expect(tokenOf("Quarterly review").getAttribute("data-state")).toBeNull();
+      expect(draftText()).toContain("compare");
+      // Remove takes the refused tokens out, the rest stays
+      await user.click(
+        within(line).getByRole("button", { name: locale === "zh" ? "移除" : "Remove" }),
+      );
+      await vi.waitFor(() => expect(composerTokens()).toHaveLength(1));
+      expect(tokenOf("Quarterly review")).toBeTruthy();
     },
   );
 
@@ -450,12 +482,8 @@ describe("a refused reference", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await pick(user, /Quarterly plan/);
-    await user.type(input(), "compare{Enter}");
-    expect(
-      await within(await screen.findByRole("group", { name: en.chat.files })).findByText(
-        en.errors.conversation.reference_self,
-      ),
-    ).toBeTruthy();
+    sendComposer("compare");
+    expect((await refusalLine()).textContent).toContain(en.errors.conversation.reference_self);
   });
 });
 
@@ -465,7 +493,7 @@ describe("the bubble", () => {
     text: `Referenced conversation: "Quarterly plan" (id ${id}; another conversation of this person)`,
   });
 
-  it("shows content[0] as the text and the references as links, never the quoted blocks", async () => {
+  it("shows content[0] as the text and an older message's references as links, never the quoted blocks", async () => {
     chatApi({}, [
       userMsg(1, "compare", {
         content: [{ type: "text", text: "compare" }, quote("c2"), quote("c3")],
@@ -484,7 +512,7 @@ describe("the bubble", () => {
     expect(untitled.getAttribute("href")).toBe("/chat/c3");
   });
 
-  it("Retry of a failed run sends the references again", async () => {
+  it("Retry of a failed run sends the references again as tokens", async () => {
     const calls = chatApi(
       { [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(4, "compare") }) },
       [
@@ -500,9 +528,9 @@ describe("the bubble", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Retry" }));
     expect(bodyOf(posts(calls, `${BASE}/messages`)[0])).toMatchObject({
-      text: "compare",
+      text: `compare ${MARK}`,
       retryOf: 1,
-      conversationRefs: [{ id: "c2" }],
+      tokens: [{ type: "conversation", id: "c2" }],
     });
   });
 });
@@ -522,7 +550,7 @@ describe("a new conversation's first message", () => {
     ...extra,
   });
 
-  it("carries conversationRefs, every conversation offered (none is being written in)", async () => {
+  it("carries the conversation token, every conversation offered (none is being written in)", async () => {
     resetNavigation("/");
     const r = newRoutes({
       [`POST ${ORG}/conversations/first-message`]: () =>
@@ -531,18 +559,19 @@ describe("a new conversation's first message", () => {
     const calls = stubApi(r);
     await renderRouteWithCache("/", r);
     const user = userEvent.setup();
-    await user.type(input(), "@");
+    await findComposerBox();
+    typeComposer("@");
     const el = await menu();
     await within(el).findByRole("option", { name: /This conversation/ });
     await user.click(within(el).getByRole("option", { name: /Quarterly plan/ }));
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(posts(calls, `${ORG}/conversations/first-message`)[0])).toMatchObject({
-      message: { text: "go", conversationRefs: [{ id: "c2" }] },
+      message: { text: `${MARK} go`, tokens: [{ type: "conversation", id: "c2" }] },
     });
   });
 
-  it("a refused create marks the chip in the composer it comes back to", async () => {
+  it("a refused create marks the token in the composer it comes back to", async () => {
     resetNavigation("/");
     const r = newRoutes({
       [`POST ${ORG}/conversations/first-message`]: refusal("conversation.reference_unavailable", [
@@ -553,12 +582,13 @@ describe("a new conversation's first message", () => {
     await renderRouteWithCache("/", r);
     const user = userEvent.setup();
     await pick(user, /Quarterly plan/);
-    await user.type(input(), "go{Enter}");
-    const back = await screen.findByRole("group", { name: en.chat.files });
-    expect(
-      await within(back).findByText(en.errors.conversation.reference_unavailable.default),
-    ).toBeTruthy();
-    expect(input().value).toBe("go");
+    sendComposer("go");
+    const line = await refusalLine();
+    expect(line.textContent).toContain(en.errors.conversation.reference_unavailable.default);
+    await vi.waitFor(() =>
+      expect(tokenOf("Quarterly plan").getAttribute("data-state")).toBe("refused"),
+    );
+    expect(draftText()).toBe("@Quarterly plan go");
     expect(router.replace).not.toHaveBeenCalled();
   });
 });

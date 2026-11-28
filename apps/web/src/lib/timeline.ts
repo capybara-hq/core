@@ -1,4 +1,5 @@
 import {
+  type ComposerSegment,
   type DiffData,
   type ImageRatio,
   isImageRatio,
@@ -18,14 +19,16 @@ import type {
   ContentBlock,
   ConversationEvent,
   HandoffTarget,
+  InlineEntry,
   InputForm,
   MessageAttachment,
+  MessageToken,
   ModelRef,
   ReviewRecord,
   ToolInfo,
   ToolResultImage,
 } from "./conversations";
-import { refId } from "./conversations";
+import { refId, TOKEN_MARKER } from "./conversations";
 import type { OrgRole } from "./members";
 import { parsePartialJson } from "./partial-json";
 import type { PersonRef } from "./people";
@@ -367,19 +370,16 @@ export type RunData = {
 export type FailedRun = Extract<TimelineEntry, { kind: "run"; status: "failed" }>;
 
 /**
- * What Retry repeats: the text (an invocation's arguments), files, `@` resources, project files and
- * the skill invoked.
+ * What Retry repeats: the text (an invocation's arguments) with one U+FFFC per token, the tokens,
+ * the uploaded files and the skill invoked.
  */
 export interface RetryMessage {
   seq: number;
   text: string;
+  /** The uploads (the attachment cards); a file token is in `tokens`. */
   files: MessageFile[];
-  /** The `@` resources, as the send body names them. Absent: none. */
-  attachments?: { connectorId: string; uri: string }[];
-  /** The referenced project files' paths (composer menus §5). Absent: none. */
-  projectFiles?: string[];
-  /** The referenced conversations' ids (@ conversations spec §3). Absent: none. */
-  conversationRefs?: string[];
+  /** The inline tokens, as the send body names them (composer inline tokens §3.1). Absent: none. */
+  tokens?: MessageToken[];
   /** A skill invocation: the name to invoke again (`<plugin>:<name>` for a plugin's skill). */
   skill?: string;
 }
@@ -401,6 +401,11 @@ export type TimelineEntry =
       seq: number;
       /** What the person typed (an invocation's arguments). */
       text: string;
+      /**
+       * The message as text runs and inline tokens (composer inline tokens spec §3.5), drawn in
+       * place of `text`. Absent: a message without tokens.
+       */
+      segments?: ComposerSegment[];
       files: MessageFile[];
       attachments: MessageAttachment[];
       /**
@@ -703,18 +708,124 @@ export function messageFiles(content: ContentBlock[]): MessageFile[] {
   );
 }
 
+type UserMessagePayload = Extract<ConversationEvent, { type: "user_message" }>["payload"];
+
 /**
- * The text a person typed (with `@` resources, project files or referenced conversations only
- * `content[0]`: the resources' bodies stay folded, the project files' and the conversations'
- * blocks are the model's, shown as chips).
+ * The text a person typed. With inline tokens, `@` resources, project files or referenced
+ * conversations only `content[0]` (the referenced blocks after it are the model's, drawn as tokens
+ * or chips), and none when `content[0]` is the `[file: <name>]` line of a file block after it (an
+ * upload-only message). Older messages (text, then bare file blocks) keep their text.
  */
-function userText(e: Extract<ConversationEvent, { type: "user_message" }>): string {
-  const attachments = e.payload.attachments ?? [];
-  const projectFiles = e.payload.projectFiles ?? [];
-  const conversationRefs = e.payload.conversationRefs ?? [];
-  return attachments.length > 0 || projectFiles.length > 0 || conversationRefs.length > 0
-    ? joinText(e.payload.content.slice(0, 1), "text")
-    : joinText(e.payload.content, "text");
+export function personText(payload: UserMessagePayload): string {
+  const referenced =
+    (payload.attachments?.length ?? 0) > 0 ||
+    (payload.projectFiles?.length ?? 0) > 0 ||
+    (payload.conversationRefs?.length ?? 0) > 0 ||
+    (payload.inline?.length ?? 0) > 0;
+  const content = withoutFileLines(payload.content);
+  return referenced ? joinText(content.slice(0, 1), "text") : joinText(content, "text");
+}
+
+const userText = (e: Extract<ConversationEvent, { type: "user_message" }>): string =>
+  personText(e.payload);
+
+/** A logged token's id as the composer names it: a resource is `<connectorId>:<uri>`. */
+function inlineTokenId(entry: InlineEntry): string {
+  const ref = entry.ref;
+  if ("fileId" in ref) return ref.fileId;
+  if ("path" in ref) return ref.path;
+  if ("id" in ref) return ref.id;
+  return ref.uri !== undefined ? `${ref.connectorId}:${ref.uri}` : ref.connectorId;
+}
+
+/** A logged token as the send body names it. */
+function inlineToken(entry: InlineEntry): MessageToken | null {
+  const ref = entry.ref;
+  switch (entry.kind) {
+    case "connector":
+      return "connectorId" in ref ? { type: "connector", connectorId: ref.connectorId } : null;
+    case "resource":
+      return "connectorId" in ref && ref.uri !== undefined
+        ? { type: "resource", connectorId: ref.connectorId, uri: ref.uri }
+        : null;
+    case "file":
+      return "fileId" in ref ? { type: "file", id: ref.fileId } : null;
+    case "projectFile":
+      return "path" in ref ? { type: "projectFile", path: ref.path } : null;
+    case "conversation":
+      return "id" in ref ? { type: "conversation", id: ref.id } : null;
+  }
+}
+
+/** The entries that point inside `base`, in text order, without overlaps. */
+function placedEntries(base: string, inline: readonly InlineEntry[]): InlineEntry[] {
+  const out: InlineEntry[] = [];
+  let at = 0;
+  for (const e of [...inline].sort((a, b) => a.start - b.start)) {
+    if (e.start < at || e.end <= e.start || e.end > base.length) continue;
+    out.push(e);
+    at = e.end;
+  }
+  return out;
+}
+
+/**
+ * A message's text runs and tokens (composer inline tokens spec §3.5): each `inline` entry's
+ * placeholder in `base` (`content[0]`, or an invocation's arguments) becomes its token, labelled
+ * as logged. A file token's lead is its type mark from the name.
+ */
+export function inlineSegments(base: string, inline: readonly InlineEntry[]): ComposerSegment[] {
+  const out: ComposerSegment[] = [];
+  let at = 0;
+  for (const e of placedEntries(base, inline)) {
+    if (e.start > at) out.push(base.slice(at, e.start));
+    out.push({ kind: e.kind, id: inlineTokenId(e), label: e.label });
+    at = e.end;
+  }
+  if (at < base.length) out.push(base.slice(at));
+  return out;
+}
+
+/** `base` with each placeholder back to its U+FFFC, and the tokens in order (what Retry sends). */
+function inlineRetry(
+  base: string,
+  inline: readonly InlineEntry[],
+): { text: string; tokens: MessageToken[] } {
+  // a literal U+FFFC in the text (an older message's) would count as a token's marker
+  const run = (from: number, to: number) => base.slice(from, to).split(TOKEN_MARKER).join("");
+  let text = "";
+  const tokens: MessageToken[] = [];
+  let at = 0;
+  for (const e of placedEntries(base, inline)) {
+    const token = inlineToken(e);
+    if (token === null) continue;
+    text += run(at, e.start) + TOKEN_MARKER;
+    tokens.push(token);
+    at = e.end;
+  }
+  return { text: text + run(at, base.length), tokens };
+}
+
+/** The file ids a message names through file tokens (drawn inline, never as cards). */
+const fileTokenIds = (inline: readonly InlineEntry[] | undefined): Set<string> =>
+  new Set(
+    (inline ?? []).flatMap((e) => (e.kind === "file" && "fileId" in e.ref ? [e.ref.fileId] : [])),
+  );
+
+const FILE_LINE = /^\[file: [^\n]*\]$/;
+const isFileBlock = (b: ContentBlock | undefined): boolean =>
+  b?.type === "image" || b?.type === "document" || b?.type === "file";
+
+/**
+ * The content without the kernel's `[file: <name>]` lines (composer inline tokens spec §3.3): a
+ * text block of that form right before a file's block names the file for the model, so the bubble,
+ * which draws the file as a card, never shows it (an upload-only message then has no text). Older
+ * messages have no such lines and keep their text.
+ */
+function withoutFileLines(content: readonly ContentBlock[]): ContentBlock[] {
+  return content.filter(
+    (b, i) => !(b.type === "text" && FILE_LINE.test(b.text) && isFileBlock(content[i + 1])),
+  );
 }
 
 const asRecord = (v: unknown): Record<string, unknown> =>
@@ -1454,7 +1565,12 @@ export function buildEventTimeline(
           break;
         }
         const text = skill ? skill.arguments : userText(e);
-        const files = messageFiles(e.payload.content);
+        const inline = e.payload.inline ?? [];
+        // file tokens stand in the sentence; only the uploads are cards
+        const tokenFiles = fileTokenIds(inline);
+        const files = messageFiles(e.payload.content).filter(
+          (f) => !tokenFiles.has(f.attachmentId),
+        );
         const retryOf = e.payload.retryOf;
         const failed = retryOf === undefined ? undefined : failedBySeq.get(retryOf);
         const d = failed === undefined ? undefined : out[failed];
@@ -1468,14 +1584,19 @@ export function buildEventTimeline(
             seq: e.seq,
             text,
             files,
-            attachments: e.payload.attachments ?? [],
+            // with tokens the references are in the sentence, not chips
+            attachments: inline.length > 0 ? [] : (e.payload.attachments ?? []),
             authorAccountId: e.payload.authorAccountId,
           };
-          const projectFiles = e.payload.projectFiles ?? [];
-          if (projectFiles.length > 0) entry.projectFiles = projectFiles.map((f) => f.path);
-          const refs = e.payload.conversationRefs ?? [];
-          if (refs.length > 0)
-            entry.conversationRefs = refs.map((r) => ({ id: r.id, title: r.title }));
+          if (inline.length > 0) {
+            entry.segments = inlineSegments(text, inline);
+          } else {
+            const projectFiles = e.payload.projectFiles ?? [];
+            if (projectFiles.length > 0) entry.projectFiles = projectFiles.map((f) => f.path);
+            const refs = e.payload.conversationRefs ?? [];
+            if (refs.length > 0)
+              entry.conversationRefs = refs.map((r) => ({ id: r.id, title: r.title }));
+          }
           if (skill) {
             entry.skill = { label: skillChipLabel(skill.name), mode: skill.mode };
             // A fork's content[0] is the lead for the model, not the instructions: those are the
@@ -1493,19 +1614,33 @@ export function buildEventTimeline(
         if (skill?.mode === "fork") {
           forks.set(e.seq, { label: `/${skill.name}`, dispatched: false, reported: false });
         }
-        const retryAttachments = (e.payload.attachments ?? []).map((a) => ({
-          connectorId: a.appId,
-          uri: a.uri,
-        }));
-        const retryProjectFiles = (e.payload.projectFiles ?? []).map((f) => f.path);
-        const retryRefs = (e.payload.conversationRefs ?? []).map((r) => r.id);
+        // Retry sends the message again as tokens: its placeholders back to markers. An older
+        // message's references (no `inline`) follow its text as tokens.
+        const again = inlineRetry(text, inline);
+        const older: MessageToken[] =
+          inline.length > 0
+            ? []
+            : [
+                ...(e.payload.attachments ?? []).map(
+                  (a): MessageToken => ({ type: "resource", connectorId: a.appId, uri: a.uri }),
+                ),
+                ...(e.payload.projectFiles ?? []).map(
+                  (f): MessageToken => ({ type: "projectFile", path: f.path }),
+                ),
+                ...(e.payload.conversationRefs ?? []).map(
+                  (r): MessageToken => ({ type: "conversation", id: r.id }),
+                ),
+              ];
+        const retryTokens = [...again.tokens, ...older];
+        const retryText =
+          older.length === 0
+            ? again.text
+            : `${again.text}${again.text === "" ? "" : " "}${TOKEN_MARKER.repeat(older.length)}`;
         lastUser = {
           seq: retryOf ?? e.seq,
-          text,
+          text: retryText,
           files,
-          ...(retryAttachments.length > 0 ? { attachments: retryAttachments } : {}),
-          ...(retryProjectFiles.length > 0 ? { projectFiles: retryProjectFiles } : {}),
-          ...(retryRefs.length > 0 ? { conversationRefs: retryRefs } : {}),
+          ...(retryTokens.length > 0 ? { tokens: retryTokens } : {}),
           ...(skill ? { skill: skill.plugin ? `${skill.plugin}:${skill.name}` : skill.name } : {}),
         };
         break;

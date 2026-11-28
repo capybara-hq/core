@@ -666,6 +666,93 @@ describe("buildTimeline", () => {
     );
   });
 
+  it("bubbles never show the kernel's file lines; older messages keep their text", () => {
+    const image = (fileId: string, name: string) => ({
+      type: "image",
+      mediaType: "image/png",
+      source: { kind: "ref", fileId },
+      name,
+    });
+    const out = buildTimeline(
+      [
+        // an older message: its text, then a bare upload
+        user(1, "old", { content: [{ type: "text", text: "old" }, image("f1", "a.png")] }),
+        // a new message: its text, then the upload's line and block
+        user(2, "new", {
+          content: [
+            { type: "text", text: "new" },
+            { type: "text", text: "[file: b.png]" },
+            image("f2", "b.png"),
+          ],
+        }),
+        // upload only: the first block is the file line
+        user(3, "", {
+          content: [{ type: "text", text: "[file: c.png]" }, image("f3", "c.png")],
+        }),
+        // a typed text that only looks like a file line stays
+        user(4, "[file: d.png]"),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    const users = out.flatMap((e) => (e.kind === "user" ? [e.text] : []));
+    expect(users).toEqual(["old", "new", "", "[file: d.png]"]);
+  });
+
+  it("a message naming only a connector keeps content[0] as its text", () => {
+    const out = buildTimeline(
+      [
+        user(1, "[connector: Slack] ping", {
+          content: [
+            { type: "text", text: "[connector: Slack] ping" },
+            { type: "text", text: '[connector: Slack] The person named the connector "Slack".' },
+          ],
+          inline: [
+            { kind: "connector", start: 0, end: 18, label: "Slack", ref: { connectorId: "c1" } },
+          ],
+        }),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(out[0]).toMatchObject({ kind: "user", text: "[connector: Slack] ping" });
+    // the bubble draws the token in the sentence (composer inline tokens spec §3.5)
+    expect(out[0]).toMatchObject({
+      segments: [{ kind: "connector", id: "c1", label: "Slack" }, " ping"],
+      attachments: [],
+    });
+  });
+
+  it("Retry of a failed message with tokens sends its placeholders back as markers", () => {
+    const out = buildTimeline(
+      [
+        user(1, "ask [connector: Slack] now", {
+          content: [
+            { type: "text", text: "ask [connector: Slack] now" },
+            { type: "text", text: '[connector: Slack] The person named the connector "Slack".' },
+          ],
+          inline: [
+            { kind: "connector", start: 4, end: 22, label: "Slack", ref: { connectorId: "k1" } },
+          ],
+        }),
+        ev(2, "run_failed", { error: { code: "model.timeout", message: "x" } }),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(out[1]).toMatchObject({
+      status: "failed",
+      retry: {
+        seq: 1,
+        text: "ask \uFFFC now",
+        tokens: [{ type: "connector", connectorId: "k1" }],
+      },
+    });
+  });
+
   it("a message referencing conversations alone keeps content[0] as its text and names them", () => {
     const quote = (id: string) => ({
       type: "text",
@@ -714,9 +801,10 @@ describe("buildTimeline", () => {
       new Map(),
       "en",
     );
+    // an older message's references follow its text as tokens (the body has no other field)
     expect(out[1]).toMatchObject({
       status: "failed",
-      retry: { seq: 1, text: "compare", conversationRefs: ["c2"] },
+      retry: { seq: 1, text: "compare \uFFFC", tokens: [{ type: "conversation", id: "c2" }] },
     });
   });
 
@@ -927,9 +1015,11 @@ describe("buildTimeline", () => {
       status: "failed",
       retry: {
         seq: 1,
-        text: "look",
-        attachments: [{ connectorId: "k1", uri: "docs://h" }],
-        projectFiles: ["src/app.ts"],
+        text: "look \uFFFC\uFFFC",
+        tokens: [
+          { type: "resource", connectorId: "k1", uri: "docs://h" },
+          { type: "projectFile", path: "src/app.ts" },
+        ],
       },
     });
   });

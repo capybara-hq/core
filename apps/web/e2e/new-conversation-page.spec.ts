@@ -48,14 +48,14 @@ test("the new conversation page greets, a quick action fills the composer, and t
 
   const input = composer(page);
   await expect(input).toHaveAttribute(
-    "placeholder",
+    "aria-placeholder",
     zh.chat.newPlaceholder.replace("{agent}", "Cap quick"),
   );
   await input.fill("draft text");
   // the quick actions are a zap button in the composer's control row (design i18n "quick.label")
   await page.getByRole("button", { name: QUICK_ACTIONS }).click();
   await page.getByRole("menuitem", { name: "Say hello" }).click();
-  await expect(input).toHaveValue("echo:hello from a quick action");
+  await expect(input).toHaveText("echo:hello from a quick action");
   await expect(input).toBeFocused();
 
   await input.press("Enter");

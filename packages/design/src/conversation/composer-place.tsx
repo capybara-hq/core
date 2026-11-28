@@ -10,17 +10,17 @@ import { Picker, type PickerProps } from "./composer";
 import { shortDeviceLabel } from "./composer-options";
 
 // The composer's top strip (spec §6.16.2 "Top strip", composer menus spec §6, §7): where the
-// conversation runs, the device then its project. From 600 up two pickers with a muted "/" between
-// them; below 600 one chip "<device> / <project>" opening a bottom sheet with a device group, then
-// that device's projects. CSS shows one of the two forms.
+// conversation runs, the device then its project. From 600 up two pickers side by side (with a fine
+// pointer in the tray above the field); below 600 one chip "<device> / <project>" opening a bottom
+// sheet with a device group, then that device's projects. CSS shows one of the two forms.
 
 /** The top strip's pickers: the device, then the project (absent when the device offers none). */
 export type ComposerPlace = { device: PickerProps; project?: PickerProps };
 
 /**
- * The top strip (§6.16.2): both forms in the DOM, the CSS of the size class showing one. A `locked`
- * picker is static text (a conversation's device and project); the compact chip is static text
- * when nothing in it can change.
+ * The top strip (§6.16.2): both forms in the DOM, the CSS of the size class showing one. The two
+ * pickers stand side by side with no separator; a `locked` one is static text (a conversation's
+ * device and project); the compact chip is static text when nothing in it can change.
  */
 export function ComposerPlaceStrip({ device, project }: ComposerPlace): JSX.Element {
   const t = useDesignT();
@@ -34,18 +34,7 @@ export function ComposerPlaceStrip({ device, project }: ComposerPlace): JSX.Elem
     >
       <span className="cb-composer-place-full" data-part="composer-place-full">
         <Picker {...device} titled />
-        {project ? (
-          <>
-            <span
-              className="cb-composer-place-sep"
-              data-part="composer-place-sep"
-              aria-hidden="true"
-            >
-              /
-            </span>
-            <Picker {...project} titled />
-          </>
-        ) : null}
+        {project ? <Picker {...project} titled /> : null}
       </span>
       <ComposerPlaceChip device={device} {...(project ? { project } : {})} />
     </div>

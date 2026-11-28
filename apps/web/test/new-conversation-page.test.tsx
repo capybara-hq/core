@@ -5,7 +5,7 @@ import {
   type SidebarProps,
 } from "@capybara-hq/design";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -15,6 +15,7 @@ import { agentsQuery } from "../src/lib/query/agents";
 import { keys } from "../src/lib/query/keys";
 import { conversationGroupsQuery } from "../src/lib/query/shell";
 import { bodyOf, json, stubApi } from "./support/api";
+import { draftText, sendComposer, typeComposer } from "./support/composer";
 import {
   CONV,
   DEVICES,
@@ -186,7 +187,7 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(await titles(userEvent.setup())).toEqual(["Plan", "Review", "Draft", "Polish", "Ship"]);
     // the composer has no agent picker; the model picker stays
     expect(bar.textContent).not.toContain("Beta");
-    expect(input().getAttribute("placeholder")).toBe("What should Beta do?");
+    expect(input().getAttribute("aria-placeholder")).toBe("What should Beta do?");
     // top to bottom: greeting, agents, composer (no line of quick actions between them)
     const body = container.querySelector('[data-part="new-conversation-body"]') as HTMLElement;
     expect(body.querySelector('[data-part="quick-action"]')).toBeNull();
@@ -225,7 +226,7 @@ describe("the new conversation page (agent profile design §4)", () => {
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await user.click(within(row() as HTMLElement).getByRole("button", { name: "Alpha" }));
-    expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
+    expect(input().getAttribute("aria-placeholder")).toBe("What should Alpha do?");
     // the composer takes the focus, ready to type
     expect(document.activeElement).toBe(input());
     expect(await titles(user)).toEqual(["Summarize", "Translate"]);
@@ -233,13 +234,13 @@ describe("the new conversation page (agent profile design §4)", () => {
     await user.click(within(row() as HTMLElement).getByRole("button", { name: "More +2" }));
     await user.click(await screen.findByRole("option", { name: /Gamma/ }));
     expect(quick()).toBeNull();
-    expect(input().getAttribute("placeholder")).toBe("What should Gamma do?");
+    expect(input().getAttribute("aria-placeholder")).toBe("What should Gamma do?");
     await vi.waitFor(() => expect(document.activeElement).toBe(input()));
     await act(() => new Promise((r) => setTimeout(r, 10)));
     expect(document.activeElement).toBe(input());
     // the send goes to the selected agent
     await user.click(within(row() as HTMLElement).getByRole("button", { name: "Alpha" }));
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ agentId: "ag1" });
   });
@@ -270,35 +271,23 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(screen.getByText("Start a conversation with Alpha")).toBeTruthy();
     expect(screen.queryByText(en.chat.greeting.sub)).toBeNull();
     expect(await titles(userEvent.setup())).toEqual(["Summarize", "Translate"]);
-    expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
+    expect(input().getAttribute("aria-placeholder")).toBe("What should Alpha do?");
   });
 
-  it("picking a quick action fills the composer; ⌘Z restores the previous text", async () => {
+  it("picking a quick action fills the composer and leaves the focus in it", async () => {
     expectNoFirstPaintFetch();
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
-    await user.type(input(), "my draft");
+    typeComposer("my draft");
     await pick(user, "Review");
-    expect(input()).toHaveProperty("value", "Review body");
+    expect(draftText()).toBe("Review body");
     // the menu closes and leaves the focus in the composer it filled
     expect(screen.queryByRole("menu")).toBeNull();
     await vi.waitFor(() => expect(document.activeElement).toBe(input()));
-    // one undo step: the previous text comes back, and a second ⌘Z is the browser's own
-    fireEvent.keyDown(input(), { key: "z", metaKey: true });
-    expect(input()).toHaveProperty("value", "my draft");
-    const again = fireEvent.keyDown(input(), { key: "z", metaKey: true });
-    expect(again).toBe(true);
-    expect(input()).toHaveProperty("value", "my draft");
-    // Ctrl+Z too; an edit after the pick leaves ⌘Z to the browser
     await pick(user, "Plan");
-    expect(input()).toHaveProperty("value", "Plan body");
-    fireEvent.keyDown(input(), { key: "z", ctrlKey: true });
-    expect(input()).toHaveProperty("value", "my draft");
-    await pick(user, "Plan");
-    await vi.waitFor(() => expect(document.activeElement).toBe(input()));
-    await user.type(input(), "!");
-    expect(fireEvent.keyDown(input(), { key: "z", metaKey: true })).toBe(true);
-    expect(input()).toHaveProperty("value", "Plan body!");
+    expect(draftText()).toBe("Plan body");
+    // ⌘Z / Ctrl+Z back to the replaced draft is the editor's history (one undo step per fill),
+    // covered by the design's editor tests: jsdom cannot drive Lexical's history here
   });
 
   it("an agent with avatar null shows its initial in the row, the cards, title bar and sidebar", async () => {
@@ -403,19 +392,19 @@ describe("?draft= (a setup guide's 让智能体协助)", () => {
     const calls = stubApi(routes());
     const draft = "Help me finish setting up “Create the Slack app” for Acme Bot.\n\nSetup guide";
     await renderRouteWithCache(`/?draft=${encodeURIComponent(draft)}`, routes());
-    await vi.waitFor(() => expect(input()).toHaveProperty("value", draft));
+    await vi.waitFor(() => expect(draftText()).toBe(draft));
     // the page settled (its greeting is picked after mount); nothing but the person sends
     await screen.findByRole("heading", { name: /Grant/ });
     await act(async () => {});
     expect(calls.some((c) => c.method === "POST")).toBe(false);
     expect(router.replace).not.toHaveBeenCalled();
     // the agent the home picks (the most recent one)
-    expect(input().getAttribute("placeholder")).toBe("What should Beta do?");
+    expect(input().getAttribute("aria-placeholder")).toBe("What should Beta do?");
   });
 
   it("a blank draft leaves the composer empty", async () => {
     await renderRouteWithCache("/?draft=%20%20", routes());
-    await vi.waitFor(() => expect(input()).toHaveProperty("value", ""));
+    await vi.waitFor(() => expect(draftText()).toBe(""));
   });
 });
 
@@ -428,7 +417,7 @@ describe("the device picker (environments design §4.1)", () => {
   });
   const send = async (text: string) => {
     const user = userEvent.setup();
-    await user.type(input(), `${text}{Enter}`);
+    sendComposer(text);
     return user;
   };
   const createdAt = () =>
@@ -459,7 +448,7 @@ describe("the device picker (environments design §4.1)", () => {
     });
   });
 
-  it("a first message with a library file reads the library again on the next @", async () => {
+  it("a first message with a library file picked by @ sends it as a file token", async () => {
     resetNavigation("/");
     const LIBRARY = `${ORG}/files`;
     const libraryFile = {
@@ -484,16 +473,20 @@ describe("the device picker (environments design §4.1)", () => {
       calls.filter((c) => c.method === "GET" && c.url.split("?")[0] === LIBRARY);
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
-    await user.type(input(), "@");
+    typeComposer("@");
     await user.click(await screen.findByRole("option", { name: /report\.pdf/ }));
     expect(libraryReads()).toHaveLength(1);
-    await user.type(input(), "go{Enter}");
+    // a library file picked by @ is a file token in the sentence, not an upload
+    expect(screen.getByRole("img", { name: "File: report.pdf" })).toBeTruthy();
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
-      message: { text: "go", files: ["lf1"] },
+    const message = (bodyOf(calls.find((c) => c.method === "POST")) as { message: unknown })
+      .message;
+    expect(message).toMatchObject({
+      text: "\uFFFC go",
+      tokens: [{ type: "file", id: "lf1" }],
     });
-    await user.type(input(), "@");
-    await vi.waitFor(() => expect(libraryReads()).toHaveLength(2));
+    expect(message).not.toHaveProperty("files");
   });
 
   it("picker defaults to the last used device", async () => {
@@ -621,7 +614,7 @@ describe("the device picker (environments design §4.1)", () => {
     expect(within(dialog).getByText(en.chat.permission.full.titleNoDevice)).toBeTruthy();
     expect(dialog.textContent).toContain(en.chat.permission.full.bodyNoDevice);
     await user.click(within(dialog).getByRole("button", { name: "Use Auto" }));
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     const body = bodyOf(calls.find((c) => c.method === "POST")) as Record<string, unknown>;
     expect(body.permission).toEqual({ profile: "full-access" });
@@ -650,7 +643,7 @@ describe("the device picker (environments design §4.1)", () => {
     const full = await screen.findByRole("menuitemradio", { name: /^Auto/ });
     expect(full.getAttribute("aria-disabled")).toBeNull();
     await user.click(screen.getByRole("menuitemradio", { name: /^Request approval/ }));
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     const body = bodyOf(calls.find((c) => c.method === "POST")) as Record<string, unknown>;
     expect(body).not.toHaveProperty("deviceId");
@@ -768,7 +761,7 @@ describe("the new conversation on a touch device (phones, maintainer decision 20
         .map((b) => b.textContent),
     ).toEqual(["Plan", "Review", "Draft", "Polish", "Ship"]);
     await user.click(within(list).getByRole("button", { name: "Review" }));
-    expect(input()).toHaveProperty("value", "Review body");
+    expect(draftText()).toBe("Review body");
     // no keyboard popping up for a tap that only placed the text
     expect(document.activeElement).not.toBe(input());
   });
@@ -776,7 +769,7 @@ describe("the new conversation on a touch device (phones, maintainer decision 20
   it("a ?draft= prefills the phone composer without focusing it", async () => {
     touch();
     await renderRouteWithCache("/?draft=Help%20me", routes());
-    await vi.waitFor(() => expect(input()).toHaveProperty("value", "Help me"));
+    await vi.waitFor(() => expect(draftText()).toBe("Help me"));
     expect(document.activeElement).not.toBe(input());
   });
 
@@ -785,7 +778,7 @@ describe("the new conversation on a touch device (phones, maintainer decision 20
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await user.click(within(row() as HTMLElement).getByRole("button", { name: "Alpha" }));
-    expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
+    expect(input().getAttribute("aria-placeholder")).toBe("What should Alpha do?");
     expect(document.activeElement).not.toBe(input());
     // the list follows the agent
     const list = document.querySelector('[data-part="quick-action-list"]') as HTMLElement;
@@ -843,7 +836,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     await renderRouteWithCache("/", routes());
     expect(browser).toEqual([]);
     expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Approve for me/);
-    await userEvent.setup().type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     // never the legacy create, never a create-then-PATCH
     expect(writes(calls)).toEqual([FIRST]);
@@ -860,7 +853,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await choose(user, "Request approval");
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(writes(calls)).toEqual([FIRST]);
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
@@ -885,7 +878,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     await user.click(permissionButton());
     expect(screen.getByRole("menu").textContent).not.toContain("Checked when this device starts");
     await user.keyboard("{Escape}");
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(writes(calls)).toEqual([FIRST]);
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
@@ -908,7 +901,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     await vi.waitFor(() =>
       expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me"),
     );
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
       deviceId: "e2",
@@ -936,7 +929,9 @@ describe("the first send carries the permission choice (atomic first message, Ta
       await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       await user.click(permissionButton());
       await user.click(await screen.findByRole("menuitemradio", { name: /^Request approval/ }));
-      await user.type(input(), "go{Enter}");
+      // on a touch device ↵ is a newline: the send button sends
+      typeComposer("go");
+      await user.click(screen.getByRole("button", { name: en.chat.send }));
       await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
       expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
         permission: { profile: "request-approval" },
@@ -990,9 +985,9 @@ describe("the first send carries the permission choice (atomic first message, Ta
     });
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     // the outcome is unknown: the draft comes back, nothing claims the create failed
-    await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
+    await vi.waitFor(() => expect(draftText()).toBe("go"));
     expect(document.body.textContent).toContain(en.chat.firstSend.unconfirmed);
     expect(router.replace).not.toHaveBeenCalled();
     // an unchanged send is the original's retry
@@ -1018,9 +1013,9 @@ describe("the first send carries the permission choice (atomic first message, Ta
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await chooseFull(user);
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     // the draft comes back, Full consent is dropped, the device's preview is read again
-    await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
+    await vi.waitFor(() => expect(draftText()).toBe("go"));
     expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Approve for me/);
     await vi.waitFor(() =>
       expect(calls.some((c) => c.method === "GET" && c.url.endsWith("preview?deviceId=e1"))).toBe(
@@ -1038,7 +1033,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     const [first, retried] = firstBodies(calls);
     expect(retried).toBe(first);
     // the composer kept the person's draft through the retry
-    expect(input()).toHaveProperty("value", "go");
+    expect(draftText()).toBe("go");
     // fresh consent to the new scope, then the updated send: a new id, the new revision
     await chooseFull(user);
     await user.click(input());
@@ -1066,8 +1061,8 @@ describe("the first send carries the permission choice (atomic first message, Ta
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await chooseFull(user);
-    await user.type(input(), "go{Enter}");
-    await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
+    sendComposer("go");
+    await vi.waitFor(() => expect(draftText()).toBe("go"));
     await vi.waitFor(() =>
       expect(calls.some((c) => c.method === "GET" && c.url.endsWith("preview?deviceId=e1"))).toBe(
         true,
@@ -1091,14 +1086,14 @@ describe("the first send carries the permission choice (atomic first message, Ta
     });
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
-    await user.type(input(), "go{Enter}");
-    await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
+    sendComposer("go");
+    await vi.waitFor(() => expect(draftText()).toBe("go"));
     // a changed choice makes it a new logical request with a new id
     await choose(user, "Request approval");
     await user.click(input());
     await user.keyboard("{Enter}");
     await vi.waitFor(() => expect(n).toBe(2));
-    await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
+    await vi.waitFor(() => expect(draftText()).toBe("go"));
     const [original, updated] = firstBodies(calls);
     expect(idOf(updated)).not.toBe(idOf(original));
     expect(JSON.parse(updated as string).permission).toEqual({ profile: "request-approval" });
@@ -1117,7 +1112,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     const open = await screen.findByRole("link", { name: en.chat.firstSend.open });
     expect(open.getAttribute("href")).toBe("/chat/c9");
     expect(router.replace).not.toHaveBeenCalled();
-    expect(input()).toHaveProperty("value", "go");
+    expect(draftText()).toBe("go");
     expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Request approval/);
   });
 
@@ -1136,7 +1131,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     const { client } = await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await chooseFull(user);
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(retryOriginal()).toHaveLength(1));
     // another device on display, then the original (Full on e1) is retried and refused
     await user.click(screen.getByRole("button", { name: new RegExp(`^${en.chat.pickDevice}: `) }));
@@ -1157,7 +1152,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
         }),
     });
     const { client } = await renderRouteWithCache("/", routes());
-    await userEvent.setup().type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(document.querySelector("[data-pending]")).not.toBeNull());
     cleanup();
     await act(async () => answer(created()()));
@@ -1195,7 +1190,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     const view = await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await choose(user, "Request approval");
-    await user.type(input(), "go{Enter}");
+    sendComposer("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c1"));
     // the pending bubble showed once and the composer never said Approve for me
     stubApi({

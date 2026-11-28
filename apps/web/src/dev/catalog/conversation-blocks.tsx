@@ -7,8 +7,8 @@ import {
   ApprovalBlock,
   AttachmentStrip,
   BubbleAttachments,
+  ComposerEditor,
   ComposerFrame,
-  ComposerInput,
   ConnectBlock,
   CsvPreview,
   type DiffData,
@@ -45,6 +45,7 @@ import {
 } from "@capybara-hq/design";
 import {
   AGENT_MAP_FIXTURE,
+  BUBBLE_TOKENS_FIXTURE,
   CONV_FIXTURE,
   CONVERSATION_REF_FIXTURE,
   DIVIDER_FIXTURE,
@@ -203,6 +204,16 @@ function userBubbleBlocks(): ReactNode {
           text={SKILL_FIXTURE.bubble.arguments}
           skill={SKILL_FIXTURE.chip.label}
           details={<Disclosure summary={SKILL_FIXTURE.bubble.details}>{null}</Disclosure>}
+        />
+      </Block>
+      {/* composer inline tokens spec §1: tokens inside the sentence, and after the skill chip */}
+      <Block id="user-bubble-tokens">
+        <UserBubble segments={BUBBLE_TOKENS_FIXTURE.text} />
+      </Block>
+      <Block id="user-bubble-skill-tokens">
+        <UserBubble
+          skill={BUBBLE_TOKENS_FIXTURE.skill.label}
+          segments={BUBBLE_TOKENS_FIXTURE.skill.arguments}
         />
       </Block>
       <Block id="user-bubble-sender">
@@ -1334,11 +1345,12 @@ function StripBlock({ id, index }: { id: string; index: number }) {
             },
           ]}
         />
-        <ComposerInput
-          aria-label="消息"
-          defaultValue="帮我对一下这几个文件"
-          readOnly
-          tabIndex={-1}
+        <ComposerEditor
+          segments={["帮我对一下这几个文件"]}
+          onChange={noop}
+          onSubmit={noop}
+          placeholder=""
+          disabled
         />
       </ComposerFrame>
     </Block>
@@ -1361,7 +1373,13 @@ function ConversationStripBlock({ id, refused }: { id: string; refused?: boolean
             onRemove: noop,
           }))}
         />
-        <ComposerInput aria-label="消息" defaultValue={R.message} readOnly tabIndex={-1} />
+        <ComposerEditor
+          segments={[R.message]}
+          onChange={noop}
+          onSubmit={noop}
+          placeholder=""
+          disabled
+        />
       </ComposerFrame>
     </Block>
   );

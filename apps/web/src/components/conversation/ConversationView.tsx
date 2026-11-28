@@ -396,13 +396,7 @@ export function useConversationPage(
         text: d.retry.text,
         clientMessageId,
         files: d.retry.files.map((f) => f.attachmentId),
-        ...(d.retry.attachments !== undefined ? { attachments: d.retry.attachments } : {}),
-        ...(d.retry.projectFiles !== undefined
-          ? { projectFiles: d.retry.projectFiles.map((path) => ({ path })) }
-          : {}),
-        ...(d.retry.conversationRefs !== undefined
-          ? { conversationRefs: d.retry.conversationRefs.map((id) => ({ id })) }
-          : {}),
+        ...(d.retry.tokens !== undefined ? { tokens: d.retry.tokens } : {}),
         retryOf: d.retry.seq,
         ...(d.retry.skill !== undefined ? { skill: { name: d.retry.skill } } : {}),
         ...pick,

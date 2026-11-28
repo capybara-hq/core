@@ -76,7 +76,8 @@ function Harness({ initial = "ds/DeepSeek-V4-Pro", few = false, onPick = vi.fn()
   };
   return (
     <ComposerBox
-      value=""
+      segments={[]}
+      onSubmit={() => {}}
       onChange={() => {}}
       placeholder="p"
       onAttach={() => {}}

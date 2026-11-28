@@ -21,7 +21,7 @@ const PromptBody = z
   .strict();
 
 const ResourcesQuery = z.object({
-  connectorId: z.uuid().optional(),
+  connectorId: z.uuid(),
   query: z.string().max(200).optional(),
 });
 
@@ -49,9 +49,9 @@ export class ConnectorContentController {
   }
 
   /**
-   * The resources the sender can use; `query` filters by name, URI or description substring. With
-   * `connectorId` it opens one session on that connector only (the second level of the picker;
-   * UI templates and empty resources are hidden).
+   * One connector's resources the sender can use (the `@` menu's second level): one session on
+   * that connector, UI templates and empty resources hidden; `query` filters by name, URI or
+   * description substring.
    */
   @Get("resources")
   @OrgAction("connectors.use")
@@ -59,10 +59,10 @@ export class ConnectorContentController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @ZQuery(ConnectorResourcesQuery) q: z.infer<typeof ResourcesQuery>,
-  ): Promise<{ resources: ConnectorResourceView[]; unavailable: ConnectorUnavailable[] }> {
+  ): Promise<{ resources: ConnectorResourceView[] }> {
     const p = requireUser(principal);
     return this.content.listResources(org.orgId, p.account.id, {
-      ...(q.connectorId !== undefined && { connectorId: q.connectorId }),
+      connectorId: q.connectorId,
       ...(q.query !== undefined && { query: q.query }),
     });
   }

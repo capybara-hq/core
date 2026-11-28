@@ -5,6 +5,13 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
+  draftText,
+  findComposerBox,
+  pasteComposer,
+  pressComposer,
+  typeComposer,
+} from "./support/composer";
+import {
   AGENTS,
   CONV,
   ev,
@@ -74,7 +81,6 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
   });
 }
 
-const input = () => screen.getByRole("combobox", { name: en.chat.inputLabel, hidden: true });
 const menu = async () => {
   await screen.findByRole("listbox");
   return document.querySelector('[data-part="composer-menu"]') as HTMLElement;
@@ -115,17 +121,16 @@ describe("/compact", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(input());
-    // pasted: the palette never opens
-    await user.paste("/compact");
-    await user.keyboard("{Enter}");
+    await findComposerBox();
+    // pasted: the menu never opens
+    pasteComposer("/compact");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(compactPosts(calls)).toHaveLength(1));
     // the kernel validates the body: the client sends {} (not no body)
     expect(bodyOf(compactPosts(calls)[0])).toEqual({});
     expect(messagePosts(calls)).toHaveLength(0);
     // the command is not a draft: it clears
-    await vi.waitFor(() => expect((input() as HTMLTextAreaElement).value).toBe(""));
+    await vi.waitFor(() => expect(draftText()).toBe(""));
   });
 
   it("/compact with arguments shows a hint and sends nothing (the draft stays to fix)", async () => {
@@ -135,15 +140,14 @@ describe("/compact", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("/compact now");
-    await user.keyboard("{Enter}");
+    await findComposerBox();
+    pasteComposer("/compact now");
+    pressComposer("Enter");
     expect(await screen.findByText(en.chat.compactNoArgs)).toBeTruthy();
     await new Promise((r) => setTimeout(r, 50));
     expect(compactPosts(calls)).toHaveLength(0);
     expect(messagePosts(calls)).toHaveLength(0);
-    expect((input() as HTMLTextAreaElement).value).toBe("/compact now");
+    expect(draftText()).toBe("/compact now");
   });
 
   it("does not compact while a run is active: it says so and sends nothing", async () => {
@@ -153,10 +157,9 @@ describe("/compact", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("/compact");
-    await user.keyboard("{Enter}");
+    await findComposerBox();
+    pasteComposer("/compact");
+    pressComposer("Enter");
     expect(await screen.findByText(en.chat.compactBusy)).toBeTruthy();
     await new Promise((r) => setTimeout(r, 50));
     expect(compactPosts(calls)).toHaveLength(0);
@@ -171,13 +174,12 @@ describe("/compact", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("/compact");
-    await user.keyboard("{Enter}");
+    await findComposerBox();
+    pasteComposer("/compact");
+    pressComposer("Enter");
     expect(await screen.findByText(en.errors.conversation.busy)).toBeTruthy();
     await vi.waitFor(() => expect(compactPosts(calls)).toHaveLength(1));
-    expect((input() as HTMLTextAreaElement).value).toBe("/compact");
+    await vi.waitFor(() => expect(draftText()).toBe("/compact"));
   });
 
   it("is not a skill: an agent skill named compact does not capture the built-in command", async () => {
@@ -188,10 +190,9 @@ describe("/compact", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("/compact");
-    await user.keyboard("{Enter}");
+    await findComposerBox();
+    pasteComposer("/compact");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(compactPosts(calls)).toHaveLength(1));
     expect(messagePosts(calls)).toHaveLength(0);
   });
@@ -257,8 +258,10 @@ describe("the / menu command entry", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "/");
+    await findComposerBox();
+    typeComposer("/");
     const dialog = await menu();
+    await within(dialog).findByRole("option", { name: /^brainstorming/ });
     const headings = headingsOf(dialog);
     // after the agent's skills (a command never takes the first Enter meant for a skill)
     expect(headings).toEqual([en.chat.skillSource.platform, en.chat.commandsGroup]);
@@ -276,8 +279,8 @@ describe("the / menu command entry", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "/");
+    await findComposerBox();
+    typeComposer("/");
     const dialog = await menu();
     const headings = headingsOf(dialog);
     expect(headings).toEqual([en.chat.commandsGroup]);
@@ -287,33 +290,42 @@ describe("the / menu command entry", () => {
     expect(within(dialog).getByRole("link", { name: en.chat.noInvocableAction })).toBeTruthy();
   });
 
-  it("is not in the @ resources menu (there it would sit above the resources)", async () => {
+  it("is not in the @ menu, nor mid-sentence in the / menu", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
-      [`GET ${ORG}/connectors/resources`]: () =>
+      [`GET ${ORG}/agents/ag1/mentionable-connectors`]: () =>
         json(200, {
-          resources: [
+          connectors: [
             {
-              connectorId: "a1",
-              connectorSlug: "docs",
-              connectorName: "Docs",
-              uri: "docs://handbook",
-              name: "Handbook",
+              id: "a1",
+              slug: "docs",
+              name: "Docs",
+              icon: null,
+              state: "ready",
+              credential: "none",
+              toolCount: 1,
+              resources: true,
             },
           ],
-          unavailable: [],
         }),
+      [`GET ${ORG}/files`]: () => json(200, { files: [], next: null }),
+      [`GET ${ORG}/conversations`]: () => json(200, { conversations: [], next: null }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "read @");
-    const dialog = await menu();
-    await within(dialog).findByText("Handbook");
-    const headings = headingsOf(dialog);
-    expect(headings).toEqual(["Docs"]);
+    await findComposerBox();
+    typeComposer("read @");
+    let dialog = await menu();
+    await within(dialog).findByRole("option", { name: /Docs/ });
+    expect(headingsOf(dialog)).toEqual([en.chat.composerMenu.connectorsGroup]);
     expect(within(dialog).queryByRole("option", { name: /^compact/ })).toBeNull();
     expect(within(dialog).queryByText(en.chat.commandsGroup)).toBeNull();
+    pressComposer("Escape");
+    // a `/` after text opens the skills, never the commands
+    typeComposer(" /");
+    dialog = await menu();
+    await within(dialog).findByRole("option", { name: /^brainstorming/ });
+    expect(within(dialog).queryByRole("option", { name: /^compact/ })).toBeNull();
     expect(compactPosts(calls)).toHaveLength(0);
   });
 });
@@ -536,9 +548,8 @@ describe("i18n", () => {
     await user.click(screen.getByRole("button", { name: /^未命名会话/ }));
     expect(await screen.findByRole("menuitem", { name: zh.chat.compact })).toBeTruthy();
     await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("combobox", { name: zh.chat.inputLabel, hidden: true }));
-    await user.paste("/compact foo");
-    await user.keyboard("{Enter}");
+    pasteComposer("/compact foo");
+    pressComposer("Enter");
     expect(await screen.findByText(zh.chat.compactNoArgs)).toBeTruthy();
   });
 });

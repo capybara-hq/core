@@ -29,12 +29,10 @@ import { READ_RESOURCE } from "./resources.js";
 
 /** 列表请求里每个连接器的超时上限（毫秒；取它与 `tools.timeoutMs` 的较小值）。 */
 const LIST_TIMEOUT_MS = 10_000;
-/** 一次列出的资源最多条数。 */
-const MAX_RESOURCES = 500;
 /** One connector's listing shows at most this many resources. */
 const MAX_CONNECTOR_RESOURCES = 200;
 const UI_TEMPLATE_MIME = "text/html;profile=mcp-app";
-/** 渲染后的提示文本上限（与消息正文上限一致）。 */
+/** The cap on a rendered prompt's text (the same as a message's text). */
 const MAX_PROMPT_CHARS = 100_000;
 /** 每个附件的正文上限（字符）。 */
 export const MAX_ATTACHMENT_CHARS = 50_000;
@@ -109,6 +107,31 @@ export function listableResource(r: {
 }): boolean {
   return !isUiTemplate(r) && r.size !== 0;
 }
+
+/** One resource a message references, as read for it (the body redacted and capped). */
+export interface ReadResource {
+  connectorId: string;
+  connectorName: string;
+  uri: string;
+  /** The listed name, or the URI. */
+  name: string;
+  body: string;
+}
+
+/**
+ * The model-visible block of a read resource: its placeholder first when it was a token
+ * (`[resource: <label> from <connector label>] `), then the English head and the body.
+ */
+export const resourceBlockText = (r: ReadResource, placeholder?: string): string =>
+  `${placeholder === undefined ? "" : `${placeholder} `}Attached resource ${JSON.stringify(r.name)} (${r.uri}) from the connector ${r.connectorName}:\n\n${r.body}`;
+
+/** The `payload.attachments` entry of a read resource (field names kept, C27). */
+export const attachmentMeta = (r: ReadResource): AttachmentMeta => ({
+  appId: r.connectorId,
+  appName: r.connectorName,
+  uri: r.uri,
+  name: r.name,
+});
 
 const errName = (e: unknown): string =>
   e instanceof Error && typeof e.name === "string" && e.name !== "" ? e.name : "Error";
@@ -239,10 +262,8 @@ export class ConnectorContent {
     orgId: string,
     accountId: string,
     work: (s: ConnectorSession, app: ConnectorRow) => Promise<T[] | undefined>,
-    only?: (apps: ConnectorRow[]) => Promise<ConnectorRow[]>,
   ): Promise<{ items: T[]; unavailable: ConnectorUnavailable[] }> {
-    const all = await this.activeConnectors(orgId);
-    const apps = only ? await only(all) : all;
+    const apps = await this.activeConnectors(orgId);
     const timeoutMs = Math.min(this.config.get().tools.timeoutMs, LIST_TIMEOUT_MS);
     const results = await Promise.all(
       apps.map(async (app) => {
@@ -321,16 +342,19 @@ export class ConnectorContent {
   }
 
   /**
-   * The resources the sender can use; `query` filters by name, URI or description substring (case
-   * insensitive). Without `connectorId`: every active connector, at most {@link MAX_RESOURCES}.
-   * With it: one session on that connector, UI templates and empty resources hidden, at most
-   * {@link MAX_CONNECTOR_RESOURCES}.
+   * One connector's resources the sender can use (the `@` menu's second level, composer inline
+   * tokens spec §5): one session on that connector with the sender's credential, UI templates and
+   * empty resources hidden, at most {@link MAX_CONNECTOR_RESOURCES}; `query` filters by name, URI
+   * or description substring (case insensitive). A connector that is not live and active →
+   * `connector.not_found`; one whose `read_resource` is off → `connector.resources_disabled`; a
+   * missing credential or a failed connection is thrown (`credential.missing`,
+   * `connector.connect_failed`).
    */
   async listResources(
     orgId: string,
     accountId: string,
-    opts: { connectorId?: string; query?: string } = {},
-  ): Promise<{ resources: ConnectorResourceView[]; unavailable: ConnectorUnavailable[] }> {
+    opts: { connectorId: string; query?: string },
+  ): Promise<{ resources: ConnectorResourceView[] }> {
     const q = opts.query?.trim().toLowerCase() ?? "";
     const view = (
       app: ConnectorRow,
@@ -347,88 +371,84 @@ export class ConnectorContent {
     });
     const matches = (r: { name: string; uri: string; description?: string }) =>
       q === "" || [r.name, r.uri, r.description ?? ""].some((v) => v.toLowerCase().includes(q));
-    if (opts.connectorId !== undefined) {
-      const app = await this.connectorRow(orgId, opts.connectorId);
-      if (!(await this.resourcesEnabled([app.id])).has(app.id)) {
-        throw new ApiError(
-          "connector.resources_disabled",
-          "Reading resources is disabled for this connector",
-        );
-      }
-      // A failing connector throws credential.missing / connector.connect_failed here instead of
-      // filling `unavailable`: the caller asked about this one connector only.
-      const items = await this.withSession(
-        orgId,
-        app,
-        accountId,
-        Math.min(this.config.get().tools.timeoutMs, LIST_TIMEOUT_MS),
-        async (s) => (s.listResources ? s.listResources() : []),
+    const app = await this.connectorRow(orgId, opts.connectorId);
+    if (!(await this.resourcesEnabled([app.id])).has(app.id)) {
+      throw new ApiError(
+        "connector.resources_disabled",
+        "Reading resources is disabled for this connector",
       );
-      return {
-        resources: items
-          .filter((r) => listableResource(r) && matches(r))
-          .slice(0, MAX_CONNECTOR_RESOURCES)
-          .map((r) => view(app, r)),
-        unavailable: [],
-      };
     }
-    const { items, unavailable } = await this.acrossConnectors(
+    // A failing connector throws credential.missing / connector.connect_failed: the caller asked
+    // about this one connector only.
+    const items = await this.withSession(
       orgId,
+      app,
       accountId,
-      async (s, app) => {
-        if (!s.listResources) return undefined;
-        return (await s.listResources())
-          .filter(
-            (r) =>
-              q === "" ||
-              [r.name, r.uri, r.description ?? ""].some((v) => v.toLowerCase().includes(q)),
-          )
-          .map(
-            (r): ConnectorResourceView => ({
-              connectorId: app.id,
-              connectorSlug: app.slug,
-              connectorName: app.name,
-              uri: r.uri,
-              name: r.name,
-              ...(r.description !== undefined && { description: r.description }),
-              ...(r.mimeType !== undefined && { mimeType: r.mimeType }),
-            }),
-          );
-      },
-      // 管理员停用了读取资源的连接器不列出（也不打开会话）
-      async (apps) => {
-        const enabled = await this.resourcesEnabled(apps.map((a) => a.id));
-        return apps.filter((a) => enabled.has(a.id));
-      },
+      Math.min(this.config.get().tools.timeoutMs, LIST_TIMEOUT_MS),
+      async (s) => (s.listResources ? s.listResources() : []),
     );
-    return { resources: items.slice(0, MAX_RESOURCES), unavailable };
+    return {
+      resources: items
+        .filter((r) => listableResource(r) && matches(r))
+        .slice(0, MAX_CONNECTOR_RESOURCES)
+        .map((r) => view(app, r)),
+    };
   }
 
   /**
-   * 解析消息附件：以发送者的凭据**并行**读取每个资源（打码、每个限 {@link MAX_ATTACHMENT_CHARS} 字符；总时限
-   * min(`tools.timeoutMs`, 30s)），按请求顺序返回要追加在用户消息后的文本块与元数据。名称取资源清单里的 name
-   * （读不到清单时用 URI）。连接器的 `read_resource` 工具被管理员停用 → 409 `connector.resources_disabled`。
-   * 任一附件失败整条消息失败（不写入）。
+   * Reads the resources a message references with the sender's credentials, **in parallel**
+   * (redacted, each capped at {@link MAX_ATTACHMENT_CHARS} characters; total time limit
+   * min(`tools.timeoutMs`, 30s)), in request order. The name is the one in the resource listing
+   * (the URI when the listing does not have it). Refusals, any of which fails the whole message
+   * (nothing is written):
+   * - the connector is not live and active, or provides no resources → `connector.not_found`;
+   * - its `read_resource` tool is switched off by an admin (Ruling A23), or `readOffered` is given
+   *   and does not hold the connector (the conversation's agent is not offered that tool) →
+   *   409 `connector.resources_disabled`;
+   * - an MCP Apps UI template, or a body that is empty after trimming → 422
+   *   `connector.resource_unreadable` (`details: [{ connectorId, uri, reason }]`).
    */
-  async resolveAttachments(
+  async readResources(
     orgId: string,
     accountId: string,
-    refs: { connectorId: string; uri: string }[],
-  ): Promise<{ blocks: { type: "text"; text: string }[]; attachments: AttachmentMeta[] }> {
+    refs: readonly { connectorId: string; uri: string }[],
+    readOffered?: ReadonlySet<string>,
+  ): Promise<ReadResource[]> {
     const apps = new Map<string, ConnectorRow>();
-    for (const id of new Set(refs.map((r) => r.connectorId)))
-      apps.set(id, await this.connectorRow(orgId, id));
+    for (const id of new Set(refs.map((r) => r.connectorId))) {
+      // the refusal names the connector, so the sender's composer can mark its tokens
+      const app = await this.connectorRow(orgId, id).catch((e: unknown) => {
+        throw e instanceof ApiError && e.code === "connector.not_found"
+          ? new ApiError("connector.not_found", e.message, [{ connectorId: id }])
+          : e;
+      });
+      apps.set(id, app);
+    }
     const enabled = await this.resourcesEnabled([...apps.keys()]);
     for (const id of apps.keys()) {
-      if (!enabled.has(id)) {
+      if (!enabled.has(id) || (readOffered !== undefined && !readOffered.has(id))) {
         throw new ApiError(
           "connector.resources_disabled",
-          "Reading resources is turned off for this connector",
+          readOffered !== undefined && enabled.has(id)
+            ? "This agent cannot read resources of this connector"
+            : "Reading resources is turned off for this connector",
+          [{ connectorId: id }],
         );
       }
     }
     const timeoutMs = Math.min(this.config.get().tools.timeoutMs, ATTACHMENTS_TIMEOUT_MS);
-    const read = await Promise.all(
+    const unreadable = (
+      ref: { connectorId: string; uri: string },
+      reason: "ui_template" | "empty",
+    ) =>
+      new ApiError(
+        "connector.resource_unreadable",
+        reason === "ui_template"
+          ? `${ref.uri} is a UI template with nothing to read; remove it`
+          : `${ref.uri} is empty; remove it`,
+        [{ connectorId: ref.connectorId, uri: ref.uri, reason }],
+      );
+    return Promise.all(
       refs.map(async (ref) => {
         const app = apps.get(ref.connectorId) as ConnectorRow;
         const got = await this.withSession(orgId, app, accountId, timeoutMs, async (s) => {
@@ -436,27 +456,31 @@ export class ConnectorContent {
           const listed = s.listResources
             ? (await s.listResources().catch(() => [])).find((r) => r.uri === ref.uri)
             : undefined;
+          if (isUiTemplate(listed ?? { uri: ref.uri })) return "ui_template" as const;
           const result: ToolResult = await s.readResource(ref.uri);
-          return { name: listed?.name ?? ref.uri, text: renderResult(result).text };
+          const text = renderResult(result).text;
+          // no content at all renders as a placeholder line, which is no content either
+          const empty = (result.content?.length ?? 0) === 0 || text.trim() === "";
+          return { name: listed?.name ?? ref.uri, text, empty };
         });
         if (!got)
-          throw new ApiError("connector.not_found", "This connector does not provide resources");
-        return { app, ref, got };
+          throw new ApiError("connector.not_found", "This connector does not provide resources", [
+            { connectorId: ref.connectorId, uri: ref.uri },
+          ]);
+        if (got === "ui_template") throw unreadable(ref, "ui_template");
+        if (got.empty) throw unreadable(ref, "empty");
+        let body = got.text;
+        if (body.length > MAX_ATTACHMENT_CHARS) {
+          body = `${body.slice(0, MAX_ATTACHMENT_CHARS)}\n[Attachment truncated: showing the first ${MAX_ATTACHMENT_CHARS} of ${got.text.length} characters.]`;
+        }
+        return {
+          connectorId: app.id,
+          connectorName: app.name,
+          uri: ref.uri,
+          name: got.name,
+          body,
+        };
       }),
     );
-    const blocks: { type: "text"; text: string }[] = [];
-    const attachments: AttachmentMeta[] = [];
-    for (const { app, ref, got } of read) {
-      let body = got.text;
-      if (body.length > MAX_ATTACHMENT_CHARS) {
-        body = `${body.slice(0, MAX_ATTACHMENT_CHARS)}\n[Attachment truncated: showing the first ${MAX_ATTACHMENT_CHARS} of ${got.text.length} characters.]`;
-      }
-      blocks.push({
-        type: "text",
-        text: `Attached resource ${JSON.stringify(got.name)} (${ref.uri}) from app ${app.name}:\n\n${body}`,
-      });
-      attachments.push({ appId: app.id, appName: app.name, uri: ref.uri, name: got.name });
-    }
-    return { blocks, attachments };
   }
 }

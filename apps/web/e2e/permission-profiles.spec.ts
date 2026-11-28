@@ -87,7 +87,7 @@ async function setPermissionSupport(report: Record<string, unknown> | null): Pro
 async function newChat(page: Page, agentId: string): Promise<void> {
   await page.goto(`/?agent=${agentId}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
-  await expect(composer(page)).not.toHaveAttribute("placeholder", /—/);
+  await expect(composer(page)).toHaveAttribute("aria-placeholder", /^[^—]+$/);
 }
 
 /**

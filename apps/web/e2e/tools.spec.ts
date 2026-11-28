@@ -134,20 +134,27 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   const dialog = page.getByRole("dialog", { name: "/kb:summarize" });
   await dialog.getByLabel(/topic/).fill("cats");
   await dialog.getByRole("button", { name: zh.chat.insertPrompt }).click();
-  await expect(input).toHaveValue("Summarize cats");
+  await expect(input).toHaveText("Summarize cats");
   await input.fill("");
+  await expect(input).toHaveText("");
 
-  // 2. `@` → 资源 → 附件条目 → 发送：消息显示附件，模型收到资源正文（model-fake 的 echo 原样回显）
+  // 2. `@` → the connector's resources → an inline token → send: the bubble shows the token, the
+  // model gets the resource body (model-fake's echo repeats it)
   await input.pressSequentially("echo:got ");
   await input.press("@");
-  // 同一个假服务也被上一个用例装成了 Fixture：按连接器分组取 Docs 的那条
-  await page
-    .getByRole("group", { name: "Docs", exact: true })
-    .getByRole("option", { name: "Handbook" })
+  // the connectors lead the menu; the same fake server is also installed as Fixture by the
+  // previous test, so the Docs row's → opens the resources
+  const menu = page.getByRole("listbox");
+  await menu
+    .getByRole("button", { name: zh.chat.composerMenu.drill.replace("{name}", "Docs") })
     .click();
-  await expect(page.getByRole("group", { name: zh.chat.files })).toContainText("@Handbook");
+  await menu.getByRole("option", { name: /Handbook/ }).click();
+  const handbook = designZh("composer.token.resource").replace("{name}", "Handbook");
+  await expect(input.getByRole("img", { name: handbook, exact: true })).toBeVisible();
   await input.press("Enter");
-  await expect(page.locator('[data-entry="user"]').last()).toContainText("@Handbook · Docs");
+  await expect(
+    page.locator('[data-entry="user"]').last().getByRole("img", { name: handbook, exact: true }),
+  ).toBeVisible();
   await expect(replies(page).last()).toContainText("Handbook");
 
   // 3. elicitation：工具调用途中请用户填表 → 回答后工具重新发起并拿到答案

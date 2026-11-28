@@ -31,7 +31,7 @@ import {
   useState,
 } from "react";
 import { useDesignT } from "../../provider";
-import type { ComposerMenuCombobox } from "../composer-menu";
+import type { ComposerMenuCaret, ComposerMenuCombobox } from "../composer-menu";
 import {
   $replaceSelectedTokens,
   type ComposerCommandProps,
@@ -40,12 +40,14 @@ import {
   registerComposerCommands,
 } from "./commands";
 import {
+  $plainWithCaret,
   $readSegments,
   $writeSegments,
   type ComposerSegment,
   type ComposerTokenData,
   normalizeSegments,
   sameSegments,
+  stripPastedText,
 } from "./segments";
 import { InlineToken } from "./token";
 import { $createTokenNode, $isTokenNode, TokenNode } from "./token-node";
@@ -65,6 +67,11 @@ export type ComposerEditorHandle = {
   insertToken(t: ComposerTokenData, replaceQuery?: { trigger: "@" | "/"; length: number }): void;
   /** Replaces the draft (one undo step), the caret at its end. */
   replace(segments: ComposerSegment[]): void;
+  /**
+   * Inserts plain text at the caret (one undo step; at the end without a caret), cleaned as a
+   * paste is: a rendered connector prompt where its `/` stood.
+   */
+  insertText(text: string): void;
   /** Empties the draft and its undo history (after a send). */
   clear(): void;
   /**
@@ -72,6 +79,19 @@ export type ComposerEditorHandle = {
    * new trigger character is typed.
    */
   dismissTrigger(): void;
+  /**
+   * Types `trigger` at the caret as a keystroke would (a space first when the character before
+   * it is not whitespace), so its menu opens and what is typed next is its query: the + menu's
+   * rows that open `@` or `/`.
+   */
+  openTrigger(trigger: "@" | "/"): void;
+  /**
+   * Replaces the `length` characters before the caret (the open trigger's query) with `query`,
+   * the trigger staying open: the `@` menu's drill into a connector's resources (an empty query)
+   * and the compact sheet's search field. A `length` that covers the trigger too removes it, and
+   * its menu closes (a pick that inserts no token).
+   */
+  setTriggerQuery(length: number, query: string): void;
 };
 
 export type ComposerEditorProps = {
@@ -82,8 +102,11 @@ export type ComposerEditorProps = {
   hint?: string;
   /** The open trigger at the caret; null when there is none. */
   onTrigger?(t: ComposerTrigger | null): void;
-  /** The menu's keys, offered first; `true` stops the editor's own handling. */
-  onKeyDown?(e: KeyboardEvent): boolean;
+  /**
+   * The menu's keys, offered first with where the caret stands (`useComposerMenu().onKeyDown`
+   * takes both); `true` stops the editor's own handling. Never called during an IME composition.
+   */
+  onKeyDown?(e: KeyboardEvent, caret: ComposerMenuCaret): boolean;
   onPasteFiles?(files: File[]): void;
   /** The raw pasted text (the token warning's hook). */
   onPasteText?(text: string): void;
@@ -93,6 +116,13 @@ export type ComposerEditorProps = {
   combobox?: ComposerMenuCombobox;
   autoFocus?: boolean;
   disabled?: boolean;
+  /** The id of an element that further describes the text box (the suggestion's Tab hint). */
+  describedBy?: string;
+  /**
+   * The placeholder is a prompt suggestion (§6.16.2 state `suggestion`): one line cut with an
+   * ellipsis on a phone.
+   */
+  suggestion?: boolean;
   /** The reference set and catalog only: draw the medium or compact form in a wide window. */
   referenceForm?: "medium" | "compact";
 };
@@ -205,7 +235,14 @@ function Bridge({
     handle,
     () => ({
       value: () => editor.getEditorState().read($readSegments),
-      focus: () => editor.focus(),
+      focus: () => {
+        editor.focus();
+        // the DOM selection Lexical sets focuses the text in a browser, not everywhere (jsdom)
+        const root = editor.getRootElement();
+        if (root !== null && !root.contains(root.ownerDocument.activeElement)) {
+          root.focus({ preventScroll: true });
+        }
+      },
       insertToken: (t, replaceQuery) => {
         editor.update(
           () => {
@@ -253,6 +290,24 @@ function Bridge({
           { discrete: true },
         );
       },
+      insertText: (text) => {
+        const clean = stripPastedText(text);
+        if (clean === "") return;
+        editor.update(
+          () => {
+            $programmatic(editor);
+            let selection = $isNodeSelection($getSelection())
+              ? $replaceSelectedTokens()
+              : $getSelection();
+            if (!$isRangeSelection(selection)) {
+              $getRoot().selectEnd();
+              selection = $getSelection();
+            }
+            if ($isRangeSelection(selection)) selection.insertRawText(clean);
+          },
+          { discrete: true },
+        );
+      },
       clear: () => {
         editor.update(
           () => {
@@ -264,6 +319,64 @@ function Bridge({
         editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
       },
       dismissTrigger: () => dismiss.current(),
+      openTrigger: (trigger) => {
+        const before = editor.getEditorState().read(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
+          const { text, caret } = $plainWithCaret(selection);
+          return caret === null || caret === 0 ? "" : (text[caret - 1] ?? "");
+        });
+        // a space first, as its own update: the trigger must be the one character typed
+        if (before === null || (before !== "" && !/\s/.test(before))) {
+          editor.update(
+            () => {
+              $programmatic(editor);
+              let selection = $getSelection();
+              if (!$isRangeSelection(selection)) {
+                $getRoot().selectEnd();
+                selection = $getSelection();
+              }
+              if (!$isRangeSelection(selection)) return;
+              if (!selection.isCollapsed()) selection.removeText();
+              const { text, caret } = $plainWithCaret(selection);
+              const c = caret === null || caret === 0 ? "" : (text[caret - 1] ?? "");
+              if (c !== "" && !/\s/.test(c)) selection.insertText(" ");
+            },
+            { discrete: true },
+          );
+        }
+        // no programmatic tag: the trigger listener reads it as typed
+        editor.update(
+          () => {
+            $addUpdateTag(HISTORY_PUSH_TAG);
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) selection.insertText(trigger);
+            else $getRoot().selectEnd().insertText(trigger);
+          },
+          { discrete: true },
+        );
+      },
+      setTriggerQuery: (length, query) => {
+        editor.update(
+          () => {
+            $programmatic(editor);
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+            const anchor = selection.anchor;
+            const node = anchor.getNode();
+            if (length > 0) {
+              if ($isTextNode(node) && anchor.offset >= length) {
+                node.spliceText(anchor.offset - length, length, "", true);
+              } else {
+                for (let i = 0; i < length; i++) selection.deleteCharacter(true);
+              }
+            }
+            const now = $getSelection();
+            if (query !== "" && $isRangeSelection(now)) now.insertText(query);
+          },
+          { discrete: true },
+        );
+      },
     }),
     [editor],
   );
@@ -287,6 +400,7 @@ export const ComposerEditor: ForwardRefExoticComponent<
   const ghost = props.hint ? ghostOf(shown) : null;
   const hintId = `${id}-hint`;
   const { role: _role, ...aria } = props.combobox ?? ({} as Partial<ComposerMenuCombobox>);
+  const describedBy = [ghost ? hintId : undefined, props.describedBy].filter(Boolean).join(" ");
   return (
     <LexicalComposer
       initialConfig={{
@@ -306,6 +420,7 @@ export const ComposerEditor: ForwardRefExoticComponent<
         className="cb-composer-editor"
         data-part="composer-editor"
         data-form={props.referenceForm}
+        data-suggestion={props.suggestion ? "true" : undefined}
       >
         <PlainTextPlugin
           contentEditable={
@@ -318,7 +433,7 @@ export const ComposerEditor: ForwardRefExoticComponent<
               ariaLabel={t("composer.message")}
               autoCapitalize="sentences"
               autoCorrect="on"
-              {...(ghost ? { ariaDescribedBy: hintId } : {})}
+              {...(describedBy ? { ariaDescribedBy: describedBy } : {})}
               {...aria}
               aria-placeholder={props.placeholder}
               placeholder={

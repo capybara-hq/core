@@ -1,10 +1,20 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { createRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ComposerBox, type ComposerBoxProps, DesignProvider } from "../src/index";
+import {
+  ComposerBox,
+  type ComposerBoxProps,
+  type ComposerEditorHandle,
+  type ComposerSegment,
+  type ComposerTokenData,
+  DesignProvider,
+} from "../src/index";
+import { findNestedBoxes } from "../src/reference/index";
+import { composerText, focusEnd, select } from "./composer-editor-helpers";
 
-/** Phase D Task 10: the skill chip (token) in the composer (spec §6.16.2, state `skill`). */
+// The composer box on the inline token editor (composer inline tokens spec §1, §2): the skill
+// token, the refusal line, ↵, the menu's keys and the editor's handle.
 
 afterEach(cleanup);
 
@@ -13,8 +23,9 @@ const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "en") =>
   render(<DesignProvider locale={locale}>{ui}</DesignProvider>);
 
 const props = (over: Partial<ComposerBoxProps> = {}): ComposerBoxProps => ({
-  value: "",
+  segments: [],
   onChange: noop,
+  onSubmit: noop,
   placeholder: "Message, / for commands",
   onAttach: noop,
   pickers: {
@@ -25,125 +36,259 @@ const props = (over: Partial<ComposerBoxProps> = {}): ComposerBoxProps => ({
   ...over,
 });
 
-function Harness({ onRemove, initial }: { onRemove(): void; initial: string }) {
-  const [value, setValue] = useState(initial);
+const skill: ComposerTokenData = { kind: "skill", id: "fix-issue", label: "/fix-issue" };
+const slack: ComposerTokenData = { kind: "connector", id: "c-slack", label: "Slack" };
+
+/** A page holding the draft in state, as ComposerBar does. */
+function Harness({
+  initial,
+  over = {},
+  seen,
+}: {
+  initial: ComposerSegment[];
+  over?: Partial<ComposerBoxProps>;
+  seen?(s: ComposerSegment[]): void;
+}) {
+  const [segments, setSegments] = useState(initial);
   return (
     <ComposerBox
       {...props({
-        value,
-        onChange: setValue,
-        token: { label: "/fix-issue", hint: "[issue-number]", onRemove },
+        segments,
+        onChange: (s) => {
+          setSegments(s);
+          seen?.(s);
+        },
+        ...over,
       })}
     />
   );
 }
 
-describe("ComposerBox token (skill chip)", () => {
-  it("renders the token with its label before the text area", () => {
-    wrap(<ComposerBox {...props({ token: { label: "/fix-issue", onRemove: noop } })} />);
-    const token = document.querySelector('[data-part="composer-token"]');
-    expect(token?.textContent).toContain("/fix-issue");
-    const input = screen.getByRole("textbox");
-    // the token comes first in document order
-    expect(token?.compareDocumentPosition(input)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+describe("ComposerBox skill token", () => {
+  it("the skill is an inline token leading the draft", () => {
+    wrap(<ComposerBox {...props({ segments: [skill, " 42"] })} />);
+    const token = screen.getByRole("img", { name: "Skill: /fix-issue" });
+    expect(token.getAttribute("data-kind")).toBe("skill");
+    expect(composerText().contains(token)).toBe(true);
+    expect(composerText().textContent).toContain("42");
+    // no chip and no remove button any more
+    expect(screen.queryByRole("button", { name: /Remove/ })).toBeNull();
   });
 
-  it("the token's hint becomes the textarea placeholder", () => {
+  it("the skill's argument hint is ghost text after a lone skill token", () => {
+    wrap(<ComposerBox {...props({ segments: [skill, " "], skillHint: "[issue-number]" })} />);
+    const hint = document.querySelector(".cb-composer-editor-hint");
+    expect(hint?.textContent).toBe("[issue-number]");
+    const ids = (composerText().getAttribute("aria-describedby") ?? "").split(" ");
+    expect(ids).toContain(hint?.id);
+  });
+
+  it("the hint goes once arguments follow the token", () => {
+    wrap(<ComposerBox {...props({ segments: [skill, " 42"], skillHint: "[issue-number]" })} />);
+    expect(document.querySelector(".cb-composer-editor-hint")).toBeNull();
+  });
+
+  it("an empty draft shows the placeholder", () => {
+    wrap(<ComposerBox {...props({ skillHint: "[issue-number]" })} />);
+    expect(composerText().getAttribute("aria-placeholder")).toBe("Message, / for commands");
+    expect(document.querySelector(".cb-composer-editor-placeholder")?.textContent).toBe(
+      "Message, / for commands",
+    );
+  });
+
+  it("Backspace right after the skill token removes it and keeps the text", async () => {
+    const seen = vi.fn();
+    wrap(<Harness initial={[skill, "123"]} seen={seen} />);
+    focusEnd();
+    select(0);
+    await act(async () => {
+      fireEvent.keyDown(composerText(), { key: "Backspace" });
+    });
+    expect(seen).toHaveBeenLastCalledWith(["123"]);
+    expect(screen.queryByRole("img", { name: "Skill: /fix-issue" })).toBeNull();
+  });
+});
+
+describe("ComposerBox keys and handle", () => {
+  it("Enter sends through onSubmit; Shift+Enter does not", async () => {
+    const onSubmit = vi.fn();
+    wrap(<Harness initial={["hello"]} over={{ onSubmit }} />);
+    focusEnd();
+    await act(async () => {
+      fireEvent.keyDown(composerText(), { key: "Enter", shiftKey: true });
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.keyDown(composerText(), { key: "Enter" });
+    });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("the menu's keys come first, with the caret facts from the editor", async () => {
+    const onSubmit = vi.fn();
+    const onKeyDown = vi.fn((e: KeyboardEvent) => e.key === "Enter");
     wrap(
-      <ComposerBox
-        {...props({ token: { label: "/fix-issue", hint: "[issue-number]", onRemove: noop } })}
+      <Harness
+        initial={["@sl"]}
+        over={{
+          onSubmit,
+          menu: {
+            combobox: { role: "combobox", "aria-expanded": true, "aria-autocomplete": "list" },
+            onKeyDown,
+          },
+        }}
       />,
     );
-    expect(screen.getByRole("textbox").getAttribute("placeholder")).toBe("[issue-number]");
+    focusEnd();
+    await act(async () => {
+      fireEvent.keyDown(composerText(), { key: "Enter" });
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onKeyDown).toHaveBeenLastCalledWith(expect.objectContaining({ key: "Enter" }), {
+      collapsed: true,
+      atStart: false,
+      atEnd: true,
+    });
+    select(0);
+    fireEvent.keyDown(composerText(), { key: "ArrowLeft" });
+    expect(onKeyDown).toHaveBeenLastCalledWith(expect.anything(), {
+      collapsed: true,
+      atStart: true,
+      atEnd: false,
+    });
+    select(0, 2);
+    fireEvent.keyDown(composerText(), { key: "ArrowLeft" });
+    expect(onKeyDown).toHaveBeenLastCalledWith(expect.anything(), {
+      collapsed: false,
+      atStart: false,
+      atEnd: false,
+    });
   });
 
-  it("without a hint the placeholder stays", () => {
-    wrap(<ComposerBox {...props({ token: { label: "/x", onRemove: noop } })} />);
-    expect(screen.getByRole("textbox").getAttribute("placeholder")).toBe("Message, / for commands");
+  it("editorRef is the editor's handle", () => {
+    const ref = createRef<ComposerEditorHandle>();
+    wrap(<Harness initial={["hi ", slack]} over={{ editorRef: ref }} />);
+    expect(ref.current?.value()).toEqual(["hi ", slack]);
+    act(() => ref.current?.replace(["new"]));
+    expect(ref.current?.value()).toEqual(["new"]);
   });
 
-  it("Backspace with the caret at 0 calls onRemove and keeps the text", async () => {
-    const user = userEvent.setup();
-    const onRemove = vi.fn();
-    wrap(<Harness onRemove={onRemove} initial="123" />);
-    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
-    input.focus();
-    input.setSelectionRange(0, 0);
-    await user.keyboard("{Backspace}");
-    expect(onRemove).toHaveBeenCalledTimes(1);
-    expect(input.value).toBe("123");
-  });
-
-  it("Backspace elsewhere edits the text and keeps the token", async () => {
-    const user = userEvent.setup();
-    const onRemove = vi.fn();
-    wrap(<Harness onRemove={onRemove} initial="123" />);
-    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
-    input.focus();
-    input.setSelectionRange(3, 3);
-    await user.keyboard("{Backspace}");
-    expect(onRemove).not.toHaveBeenCalled();
-    expect(input.value).toBe("12");
-  });
-
-  it("Backspace with a selection starting at 0 deletes the selection, not the token", () => {
-    const onRemove = vi.fn();
-    wrap(<Harness onRemove={onRemove} initial="123" />);
-    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
-    input.setSelectionRange(0, 2);
-    fireEvent.keyDown(input, { key: "Backspace" });
-    expect(onRemove).not.toHaveBeenCalled();
-  });
-
-  it("the remove button calls onRemove and is named after the token", async () => {
-    const user = userEvent.setup();
-    const onRemove = vi.fn();
-    wrap(<ComposerBox {...props({ token: { label: "/fix-issue", onRemove } })} />);
-    await user.click(screen.getByRole("button", { name: "Remove /fix-issue" }));
-    expect(onRemove).toHaveBeenCalledTimes(1);
-  });
-
-  it("after the × removes the chip, focus goes to the text area (batch 5 review m1)", async () => {
-    const user = userEvent.setup();
-    function Removable() {
-      const [on, setOn] = useState(true);
-      return (
-        <ComposerBox
-          {...props(on ? { token: { label: "/fix-issue", onRemove: () => setOn(false) } } : {})}
-        />
-      );
-    }
-    wrap(<Removable />);
-    await user.click(screen.getByRole("button", { name: "Remove /fix-issue" }));
-    expect(document.querySelector('[data-part="composer-token"]')).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("textbox"));
-  });
-
-  it("the text area is described by the chip's label while it is there (batch 5 review m2)", () => {
-    const { rerender } = wrap(
-      <ComposerBox {...props({ token: { label: "/fix-issue", onRemove: noop } })} />,
-    );
-    const box = screen.getByRole("textbox");
-    const ids = (box.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
-    expect(ids.map((i) => document.getElementById(i)?.textContent)).toContain("/fix-issue");
+  it("a page's new segments replace the draft", () => {
+    const { rerender } = wrap(<ComposerBox {...props({ segments: ["old"] })} />);
     rerender(
       <DesignProvider locale="en">
-        <ComposerBox {...props()} />
+        <ComposerBox {...props({ segments: ["restored ", slack] })} />
       </DesignProvider>,
     );
-    expect(screen.getByRole("textbox").hasAttribute("aria-describedby")).toBe(false);
+    expect(screen.getByRole("img", { name: "Connector: Slack" })).toBeTruthy();
+    expect(composerText().textContent).toContain("restored");
   });
 
-  it("the caller's onKeyDown still runs for other keys", () => {
-    const onKeyDown = vi.fn();
-    wrap(<ComposerBox {...props({ onKeyDown, token: { label: "/x", onRemove: noop } })} />);
-    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
-    expect(onKeyDown).toHaveBeenCalledTimes(1);
+  it("pasted files go to onPasteFiles and change no text", async () => {
+    const onPasteFiles = vi.fn();
+    const seen = vi.fn();
+    wrap(<Harness initial={[]} seen={seen} over={{ onPasteFiles }} />);
+    focusEnd();
+    const file = new File(["x"], "shot.png", { type: "image/png" });
+    await act(async () => {
+      fireEvent.paste(composerText(), {
+        clipboardData: { files: [file], getData: () => "", types: ["Files"] },
+      });
+    });
+    expect(onPasteFiles).toHaveBeenCalledWith([file]);
+    expect(seen).not.toHaveBeenCalled();
   });
 
-  it("zh names the remove button", () => {
-    wrap(<ComposerBox {...props({ token: { label: "/x", onRemove: noop } })} />, "zh");
-    expect(screen.getByRole("button", { name: "移除 /x" })).toBeTruthy();
+  it("onTrigger reports a typed @ at the caret", async () => {
+    const onTrigger = vi.fn();
+    wrap(<Harness initial={[]} over={{ onTrigger }} />);
+    focusEnd();
+    const { typeText } = await import("./composer-editor-helpers");
+    typeText("@");
+    expect(onTrigger).toHaveBeenLastCalledWith({ trigger: "@", query: "", atStart: true });
+  });
+});
+
+describe("ComposerBox refusal line (inline tokens spec §1, §3.4)", () => {
+  const refusedSlack: ComposerTokenData = {
+    ...slack,
+    state: "refused",
+    reason: "This agent can't use it",
+  };
+
+  /** The page after a refused send: the refused tokens marked, the line until they are gone. */
+  function Refused({ locale = "en" }: { locale?: "zh" | "en" }) {
+    const [segments, setSegments] = useState<ComposerSegment[]>(["给 ", refusedSlack, " 发消息"]);
+    const left = segments.filter((s) => typeof s !== "string" && s.state === "refused");
+    return (
+      <ComposerBox
+        {...props({
+          segments,
+          onChange: setSegments,
+          ...(left.length > 0
+            ? {
+                refused: {
+                  label: "Slack",
+                  reason: locale === "zh" ? "这个智能体不能使用它" : "This agent can't use it",
+                  onRemove: () =>
+                    setSegments(
+                      segments.filter((s) => typeof s === "string" || s.state !== "refused"),
+                    ),
+                },
+              }
+            : {}),
+        })}
+      />
+    );
+  }
+
+  it("refused Callout removes refused tokens", async () => {
+    const user = userEvent.setup();
+    wrap(<Refused />);
+    const line = screen.getByRole("status");
+    expect(line.getAttribute("data-tone")).toBe("fail");
+    expect(line.textContent).toContain("Slack can't be used: This agent can't use it");
+    expect(screen.getByRole("img", { name: "Connector: Slack, unavailable" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.queryByRole("img", { name: /Slack/ })).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(composerText().textContent).toContain("发消息");
+  });
+
+  it("says it in Chinese", () => {
+    wrap(<Refused locale="zh" />, "zh");
+    expect(screen.getByRole("status").textContent).toContain(
+      "Slack 不能使用：这个智能体不能使用它",
+    );
+    expect(screen.getByRole("button", { name: "移除" })).toBeTruthy();
+  });
+
+  it("is the fail line at the top of the field, not a box in its box", () => {
+    wrap(<Refused />);
+    const callout = document.querySelector('[data-part="composer-field"] > [data-part="callout"]');
+    expect(callout?.parentElement?.firstElementChild).toBe(callout);
+    expect(callout?.getAttribute("data-framed")).toBe("false");
+    expect(callout?.getAttribute("data-tone")).toBe("fail");
+    expect(findNestedBoxes(document.body)).toEqual([]);
+  });
+
+  it("the token warning takes the line while it shows", async () => {
+    const SLACK = "xoxb-123456789012-abcdefghij";
+    wrap(
+      <ComposerBox
+        {...props({
+          segments: [refusedSlack, ` ${SLACK}`],
+          refused: { label: "Slack", reason: "This agent can't use it", onRemove: noop },
+        })}
+      />,
+    );
+    focusEnd();
+    await act(async () => {
+      fireEvent.keyDown(composerText(), { key: "Enter" });
+    });
+    const lines = screen.getAllByRole("status");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.getAttribute("data-tone")).toBe("warn");
   });
 });
 
@@ -212,7 +357,10 @@ describe("ComposerBox frame", () => {
     wrap(<ComposerBox {...props()} />);
     const frame = document.querySelector('[data-part="composer"]');
     expect(frame?.getAttribute("data-frame")).toBeNull();
-    expect(frame?.getAttribute("data-cap-part")).toBe("composer");
+    // the UI part `composer` is the box, the field, never the tray above it
+    const field = frame?.querySelector(':scope > [data-part="composer-field"]');
+    expect(field?.getAttribute("data-cap-part")).toBe("composer");
+    expect(frame?.getAttribute("data-cap-part")).toBeNull();
   });
 
   it("frame={false} keeps the inputs and the composer part without the box", () => {
@@ -220,8 +368,14 @@ describe("ComposerBox frame", () => {
     const frames = document.querySelectorAll('[data-part="composer"]');
     expect(frames).toHaveLength(1);
     expect(frames[0]?.getAttribute("data-frame")).toBe("bare");
-    expect(frames[0]?.getAttribute("data-cap-part")).toBe("composer");
-    expect(document.querySelector('[data-cap-part~="composer"] textarea')).not.toBeNull();
+    expect(
+      frames[0]?.querySelector('[data-part="composer-field"]')?.getAttribute("data-cap-part"),
+    ).toBe("composer");
+    expect(
+      document.querySelector(
+        '[data-cap-part~="composer"] [contenteditable][data-part="composer-input"]',
+      ),
+    ).not.toBeNull();
     expect(screen.getByRole("button", { name: /send/i })).toBeTruthy();
   });
 });

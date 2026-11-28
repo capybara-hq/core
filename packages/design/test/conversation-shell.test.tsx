@@ -388,8 +388,9 @@ const pickers = (over: Partial<ComposerBoxProps["pickers"]> = {}): ComposerBoxPr
 });
 
 const composer = (over: Partial<ComposerBoxProps> = {}): ComposerBoxProps => ({
-  value: "",
+  segments: [],
   onChange: noop,
+  onSubmit: noop,
   placeholder: "输入消息，/ 使用命令",
   onAttach: noop,
   pickers: pickers(),
@@ -422,7 +423,7 @@ describe("ComposerBox (§6.16.2)", () => {
   it("send is disabled without text and the hint replaces the placeholder while running", () => {
     wrap(<ComposerBox {...composer({ hint: "运行中发送的消息会在下一步交给智能体" })} />);
     expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByLabelText("消息").getAttribute("placeholder")).toBe(
+    expect(screen.getByLabelText("消息").getAttribute("aria-placeholder")).toBe(
       "运行中发送的消息会在下一步交给智能体",
     );
   });

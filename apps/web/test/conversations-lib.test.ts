@@ -193,8 +193,8 @@ describe("the first message: one serialized envelope, sent as stored (atomic fir
       {
         agentId: "ag 1",
         message: {
-          text: "go",
-          attachments: [{ connectorId: "k1", uri: "doc://1" }],
+          text: "go \uFFFC",
+          tokens: [{ type: "resource", connectorId: "k1", uri: "doc://1" }],
           files: ["f1"],
           skill: { name: "triage" },
           model: { provider: "p", model: "m" },
@@ -209,9 +209,9 @@ describe("the first message: one serialized envelope, sent as stored (atomic fir
     expect(JSON.parse(body)).toEqual({
       agentId: "ag 1",
       message: {
-        text: "go",
+        text: "go \uFFFC",
         clientMessageId: "m1",
-        attachments: [{ connectorId: "k1", uri: "doc://1" }],
+        tokens: [{ type: "resource", connectorId: "k1", uri: "doc://1" }],
         files: ["f1"],
         model: { provider: "p", model: "m" },
         effort: "high",

@@ -111,6 +111,10 @@ The proposals below were accepted as written, with these rulings on the review's
 
 ### 1. Kernel: the body field and validation
 
+- **Amended (composer inline tokens spec 2026-11-28 §3.1):** `conversationRefs` is replaced by
+  `{type: "conversation", id}` entries of the ordered `tokens` list (the place marked by U+FFFC in
+  `text`, at most 3, `MAX_CONVERSATION_REFS`); the validation below is unchanged. The text reads
+  `[conversation: <title>]` at the token's place.
 - `MessageFields.conversationRefs: z.array(z.object({ id: z.string().min(1).max(100) }).strict())
   .max(MAX_CONVERSATION_REFS)` (3), optional. Duplicates collapse (first order kept). `textRule`
   extends: with conversation refs the text must not be empty (or the message invokes a skill),
@@ -180,13 +184,19 @@ its conversations.events operation (conversationId <id>).
   conversation and the already referenced ones dropped client-side, at most 5 rows (9 = 5 rows +
   the current one + up to 3 referenced, so the dropped rows never leave the group short). Rows: `icon: "chats"`, the title (Untitled →
   「未命名会话」), description `<agent name> · <relative time>`; an empty query lists the most
-  recent. Picking adds a conversation chip to the attachment strip (`chats` icon, the title);
-  ↵ / Backspace rules as for files. ＋ gains no row (decision: `@` is the way in; open to change).
+  recent. Picking inserts a `conversation` **inline token** at the caret (`chats` icon, the title; amended by
+  the composer inline tokens spec 2026-11-28 §1: not a strip chip). Backspace follows the token rule:
+  a token right before the caret is deleted as one unit, wherever it stands (settles the default left
+  open here). ＋ gains no row (decision: `@` is the way in; open to change).
 - The draft identity, retry and restore paths (`ComposerBar` draft, `first-message-attempt.ts`)
-  carry `conversationRefs` like `projectFiles`; a refusal marks the refused chip (as
-  `missingProjectFiles` does) with the error's copy. Retry of a failed run whose reference has
-  become unavailable shows only the conversation's error line (there is no draft chip to mark).
-- Bubble: `userText` shows `content[0]` when `conversationRefs` is present; `BubbleAttachments`
+  carry the draft's segments, conversation tokens included (superseded by the inline tokens spec §2
+  "Drafts" and "Draft identity": the identity is the segments by `(kind, id)`); a refusal marks the
+  refused token (by `(kind, id)`) with the error's copy. Retry of a failed run whose reference has
+  become unavailable shows only the conversation's error line (there is no draft token to mark).
+- Bubble (amended by the composer inline tokens spec §3.5: the bubble draws conversation tokens from
+  `payload.inline` in the sentence, each a link to `/chat/<id>` through the DesignProvider's `link`,
+  on the `raised` ground (the bubble is on `selected`); the link chip below is the older form):
+  `userText` shows `content[0]` when `conversationRefs` is present; `BubbleAttachments`
   gains a link chip (`kind: "conversation"`, `href`, `chats` icon, through the DesignProvider's
   `link`), opening `/chat/<id>`; a deleted or archived target opens the not-found / archived page
   the route already has. No download button.

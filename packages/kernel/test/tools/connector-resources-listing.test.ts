@@ -145,13 +145,18 @@ describe("resources listing with connectorId", () => {
   it("filters UI templates and empty resources", async () => {
     const a = await install("one", first);
     const res = await list(a);
-    const body = res.json() as {
-      resources: { uri: string; size?: number }[];
-      unavailable: unknown[];
-    };
+    const body = res.json() as { resources: { uri: string; size?: number }[] };
     expect(body.resources.map((r) => r.uri)).toEqual(["docs://handbook", "docs://unsized"]);
     expect(body.resources[0]).toMatchObject({ uri: "docs://handbook", size: 12 });
-    expect(body.unavailable).toEqual([]);
+    // one connector asked about: no `unavailable` list (a failure is the answer itself)
+    expect(body).not.toHaveProperty("unavailable");
+  });
+
+  it("refuses a listing without connectorId", async () => {
+    await install("one", first);
+    const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/resources` });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(listed(first)).toBe(0);
   });
 
   it("caps at 200", async () => {

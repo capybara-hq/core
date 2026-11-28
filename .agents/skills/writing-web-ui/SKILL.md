@@ -164,13 +164,32 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
   no key while the menu is closed, so the page decides the triggers: `/` on an empty draft, `@` at
   the start or after whitespace (`a@b` and an IME composition open nothing). The trigger stays in
   the text and the text after it is the query; a pick removes both, Esc keeps the text. The `@`
-  query is searched on the kernel (`connectorResourcesQuery(orgId, query)`, debounced, one cache
-  entry per text, `filter={false}`); the textarea is a `combobox` in tests, not a `textbox`. The
-  whole `@` menu's groups, in order: the library's files (`libraryFileSearchQuery`), 会话 (the
-  sender's conversations by title, `conversationMentionQuery`, the current one dropped, at most 5
-  rows, `icon: "chats"`; a pick is a `kind: "conversation"` strip chip sent as `conversationRefs`,
-  at most 3), then the connector resources by connector; all read the same rested query with the
-  same IME hold, and ＋ → File library / Connector resources narrow it to one source.
+  query is searched on the kernel for files and conversations (debounced, one cache entry per
+  text, `filter={false}`); the composer is a `combobox` in tests while a menu is open, a `textbox`
+  otherwise. The `@` menu's groups, in order (composer inline tokens spec 2026-11-28 §4): 连接器
+  (the agent's mentionable connectors from `…/agents/:agentId/mentionable-connectors`, one `defineQuery` cached per agent, filtered client side by
+  `commandScore`, a `drill` on rows that offer resources, `descriptionZh` or `description` by
+  locale), the library's files (`libraryFileSearchQuery`), 会话 (`conversationMentionQuery`, the
+  current one dropped, at most 5 rows, `icon: "chats"`); a connector's resources are searched only
+  on the second level (`connectorResourcesQuery`, which takes the connector's id). All read the same
+  rested query with the same IME hold, and ＋ → 文件库 narrows it to files.
+- **Composer editor and tokens** (composer inline tokens spec 2026-11-28, design §6.16.2): the
+  composer input is `ComposerEditor` (Lexical, inside `packages/design`); `apps/web` never imports
+  `lexical` or `@lexical/*` (`check:web-ui`) and never touches nodes: it passes and receives
+  **segments** (text runs and token descriptors `{kind, id, label, icon?, state?, reason?}`). Every
+  pick (`/`, `@`, ＋ 文件库 / 项目文件 / 连接器) calls the editor's `insertToken()` at the caret;
+  uploads alone are `files` and attachment cards. On send the segments become the body: `text` with
+  one U+FFFC per token in order, `tokens` (`connector`, `resource`, `file`, `projectFile`,
+  `conversation`), `files` (uploads) and `skill` (the one skill token, taken out of the text);
+  `attachments`, `projectFiles` and `conversationRefs` no longer exist. The draft identity
+  (`draftKey`) is the segments by `(kind, id)`, so moving a token or editing text is a new message
+  and a label refresh is not; a failed send, the layout switch and the first-message attempt
+  restore the segments. A refusal's `details` map to tokens by `(kind, id)` (`refused` on the draft,
+  `state: "refused"` with the reason) and the page passes the Callout line (`composer.refused`,
+  「移除」 removes the refused tokens). The page closes its menu through the handle's
+  `dismissTrigger()`. Bubbles draw tokens from `payload.inline`, never from the placeholders (and
+  never show the `[file: …]` lines). Tests: `ComposerEditor` is exercised with real typing in the design's jsdom and
+  Playwright tests (IME, caret, centring); web tests check the body, not the DOM nodes of Lexical.
 - A card whose state the log does not carry (a sub-agent's approval or question, named only by id)
   reads it before the first paint (`openWaitReads` in the route's `then`) and draws nothing until
   that read answers (`ApprovalCard fromRead`), never a pending card first (web query cache spec §6).
@@ -477,7 +496,7 @@ Test files (`*.test.*`) are not checked. The package import rule is a blacklist:
 The behaviour, routes, delivery and safety rules are in [writing-extension-ui](../writing-extension-ui/SKILL.md) (client code section); this section is what a web or design change must keep.
 
 - **Where things live.** `ClientHost` (the workspace layout's client component: sets `globalThis.__CAPYBARA_CLIENT_HOST__`, imports the entries, keeps the registry, applies the crash budget and reports, polices the plugin stylesheets, turns a client navigation across the workspace / admin boundary into a document load), `ClientExtensionsHead` (server: import map, entry preloads, plugin stylesheets), `events.ts` (client events derived from the conversation log), `run-state.tsx` (the run-state context `ConversationView` publishes into), `host-api.ts` (what the `@capybara-hq/plugin-client` hooks read). The host's export list and `CLIENT_API_VERSION` are a generated copy of the package (`pnpm gen:plugin-client`, `check:plugin-client-api`); the shims in `public/_capybara/client-host/` are generated by `pnpm gen:client-host` (the e2e and visual harnesses run it; the server warns when the manifest is missing).
-- **Slots.** Component contributions render only through `<ExtensionSlot>`; `ClientComponentBlock`, `ReplaceableSlot` and `ReplaceableFrame` appear in JSX only in `components/extension-ui/` (`web-ui-extension-slot`). A replaceable single slot is `<ExtensionSlot slot="shell.brand" args={{ orgId }} host={{ builtin, ... }} />` in its one owner file; the built-in is always passed (it is the fallback, the pending render and the safe-mode render, so the first client render equals the server render and hydration never mismatches). When the shell lists a delivered winner the server renders the built-in pending (hidden in `ReplaceableFrame`, whose CSS alone reveals it after 1 500 ms). The design `Sidebar` takes `brand` as a function of the panel it is drawn in (`{ collapsed, panel }`), called once per drawn panel. The composer frame passes `builtin` (framed) and `children` (the inputs without the frame); the winner must render `children` exactly once or the host falls back (`ReplaceableSlot` checks, after every commit and DOM change in the frame, that the slot holds exactly one composer textarea; a portal out of the frame counts as dropping it). A component in a list slot is drawn inside the host's frame (section, panel, card), so the slot's owner passes the frame, not the plugin.
+- **Slots.** Component contributions render only through `<ExtensionSlot>`; `ClientComponentBlock`, `ReplaceableSlot` and `ReplaceableFrame` appear in JSX only in `components/extension-ui/` (`web-ui-extension-slot`). A replaceable single slot is `<ExtensionSlot slot="shell.brand" args={{ orgId }} host={{ builtin, ... }} />` in its one owner file; the built-in is always passed (it is the fallback, the pending render and the safe-mode render, so the first client render equals the server render and hydration never mismatches). When the shell lists a delivered winner the server renders the built-in pending (hidden in `ReplaceableFrame`, whose CSS alone reveals it after 1 500 ms). The design `Sidebar` takes `brand` as a function of the panel it is drawn in (`{ collapsed, panel }`), called once per drawn panel. The composer frame passes `builtin` (framed) and `children` (the inputs without the frame); the winner must render `children` exactly once or the host falls back (`ReplaceableSlot` checks, after every commit and DOM change in the frame, that the slot holds exactly one composer text box, the editor's `data-part="composer-input"`; a portal out of the frame counts as dropping it). A component in a list slot is drawn inside the host's frame (section, panel, card), so the slot's owner passes the frame, not the plugin.
 - **`data-cap-part`.** A built-in element a plugin may style carries a literal `data-cap-part="<name>"` (a string literal or a conditional of literals; `check:ui-parts`: `ui-part-literal`, `-undeclared`, `-owner`, `-unrendered`), in a file the part's `owner` list names. Add the part to `UI_PARTS` in the SDK (bumping `version` for a rename or removal), run `pnpm gen:ui-parts`, and add the literal in the owner file. `data-part` stays internal (tests, design CSS). The shell element also carries `data-cap-state` (`AppShell` `capState`: `run=`, `theme=`, `sign-in=new`, `motion=`; the shell appends `sidebar=rail|full` after hydration); a new token needs the spec §7.3 and the skill updated. No styles go into `apps/web` for any of it: the overlay (`DecorationLayer`), the pending frame (`ReplaceableFrame`) and the safe-mode banner (`SafeModeBanner`) are design components (design spec §4.5).
 - **CSS layers.** `packages/design/src/styles/index.css` declares `@layer design, theme, extensions;` and imports every stylesheet with `layer(design)`; `renderThemeCss` wraps theme CSS in `@layer theme`; plugin CSS is `@layer extensions`. A new design stylesheet must be imported with `layer(design)`: an unlayered rule would beat every layered plugin rule whatever the order. (Next's own `_global-error.html` style is unlayered; harmless, only the error page.)
 - **The CSP nonce.** `src/proxy.ts` creates a nonce per request (`lib/headers.ts`: `newNonce`, `documentPolicy`), sets it on the forwarded request (`x-nonce`, which Next puts on its own scripts and the layouts read) and the CSP on the response; a client-sent nonce or policy never survives. A layout that renders its own inline `<script>` (the import map) must put the nonce on it. New script sources are a CSP change reviewed on its own (`SCRIPT_PATHS`); the policy has no scheme and uses the document host, so a proxy must forward `Host`. `style-src`, `connect-src`, `img-src` stay open.

@@ -2,6 +2,7 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { findComposerBox, sendComposer } from "./support/composer";
 import {
   AGENTS,
   CONV,
@@ -77,8 +78,8 @@ describe("leftover queued messages (run input spec 2026-11-07 D3)", () => {
     });
     await renderChatRoute();
     await screen.findByText("first queued");
-    const input = screen.getByRole("combobox", { name: "Message", hidden: true });
-    await userEvent.setup().type(input, "third{Enter}");
+    await findComposerBox();
+    sendComposer("third");
     await vi.waitFor(() =>
       expect(calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`)).toHaveLength(
         1,

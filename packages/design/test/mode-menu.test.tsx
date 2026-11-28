@@ -228,7 +228,8 @@ describe("ComposerBox with a mode menu", () => {
     const [mode, setMode] = useState("approve");
     return (
       <ComposerBox
-        value=""
+        segments={[]}
+        onSubmit={() => {}}
         onChange={() => {}}
         placeholder="Message"
         onAttach={() => {}}

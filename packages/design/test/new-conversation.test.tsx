@@ -434,7 +434,8 @@ describe("QuickActions (spec §6.16.27)", () => {
   });
   const box = (quickActions?: React.ReactNode) => (
     <ComposerBox
-      value=""
+      segments={[]}
+      onSubmit={() => {}}
       onChange={() => {}}
       placeholder="p"
       onAttach={() => {}}

@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
+  type FakeMcpServer,
   fakeExtensionEntry,
+  startFakeMcpServer,
   startTestPostgres,
   startTestRedis,
   startTestS3,
@@ -44,6 +46,7 @@ import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { ConversationMedia } from "../../src/files/conversation-media.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
+import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
 import { compactionProgressKey } from "../../src/runtime/compaction-progress.js";
@@ -71,6 +74,8 @@ import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { catalogLineChars, SkillsCatalogService } from "../../src/skills/catalog.js";
 import { StorageService } from "../../src/storage/storage.service.js";
+import { CONNECTOR_TOOLS_QUEUE } from "../../src/tools/connector-tools-jobs.js";
+import { ConnectorsService } from "../../src/tools/connectors.service.js";
 import { allowedOnceNote } from "../../src/tools/network-asks.js";
 import {
   hookDeniedText,
@@ -93,6 +98,7 @@ import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
   createOrgWithProviders,
+  enableConnectorExtensions,
   eventsOf,
   gate,
   MODEL_LOOPER,
@@ -117,6 +123,8 @@ import { onlySkills } from "../helpers/skills.js";
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const FAKE_WATCH = fakeExtensionEntry("fake-watch");
+const FAKE_CONNECTOR = fakeExtensionEntry("fake-connector");
+const MCP_TOKEN = "tok_reconstruct_mentions_0123456789";
 const TOOLS_PROBE = fileURLToPath(
   new URL("../fixtures/plugins/tools-probe/index.ts", import.meta.url),
 );
@@ -149,6 +157,8 @@ let owner: Req;
 let ownerId: string;
 let orgId: string;
 let sandboxRoot: string;
+/** The MCP server behind the connector a mention case names (tools `search` and `write`). */
+let mcp: FakeMcpServer;
 
 /** The run context clock (`RUN_CONTEXT_CLOCK`): real time unless a test sets a day. */
 let clockMs: number | null = null;
@@ -158,7 +168,18 @@ const runHooks: RunHooks = {};
 
 beforeAll(async () => {
   capture.install();
-  [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
+  [pgc, rd, s3, mcp] = await Promise.all([
+    startTestPostgres(),
+    startTestRedis(),
+    startTestS3(),
+    startFakeMcpServer({
+      verifyBearer: (t) => t === MCP_TOKEN,
+      tools: [
+        { name: "search", description: "Search messages", inputSchema: { type: "object" } },
+        { name: "write", description: "Send a message", inputSchema: { type: "object" } },
+      ],
+    }),
+  ]);
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
@@ -178,6 +199,7 @@ beforeAll(async () => {
           HOOKS_PROBE,
           SANDBOX_FAKE,
           FAKE_WATCH,
+          FAKE_CONNECTOR,
         ],
         runtime: { maxSteps: 4 },
         tools: { searchThresholdTools: 1 },
@@ -203,6 +225,7 @@ beforeAll(async () => {
             forcePathStyle: true,
           },
           "device-fake": { root: sandboxRoot },
+          "fake-connector": {},
         },
       },
     ),
@@ -213,6 +236,11 @@ beforeAll(async () => {
         { provide: RUN_HOOKS, useValue: runHooks },
         // watched waits poll fast here (browser long waits spec §5.3)
         { provide: TOOL_WATCH_TIMINGS, useValue: { intervalMs: 150, timeoutMs: 300 } },
+        // a mention case lists its connector's tools itself, not through the background job
+        {
+          provide: OUTBOX_DISPATCH_FAILS,
+          useValue: (queue: string) => queue === CONNECTOR_TOOLS_QUEUE,
+        },
       ],
     },
   );
@@ -237,7 +265,7 @@ afterAll(async () => {
   capture.restore();
   await k?.close();
   await destroyDb?.();
-  await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
+  await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop(), mcp?.stop()]);
   if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
 });
 
@@ -2141,9 +2169,12 @@ describe("reconstructRequest：基线零漂移", () => {
         method: "POST",
         url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
         payload: {
-          text: "echo:read them",
+          text: "echo:read them \uFFFC \uFFFC",
           files: [id],
-          projectFiles: [{ path: "src/a.ts" }, { path: "./docs/b.md" }],
+          tokens: [
+            { type: "projectFile", path: "src/a.ts" },
+            { type: "projectFile", path: "./docs/b.md" },
+          ],
         },
       });
       expect(res.statusCode, res.body).toBe(202);
@@ -2155,11 +2186,16 @@ describe("reconstructRequest：基线零漂移", () => {
       >;
       expect(message.payload.projectFiles).toEqual([{ path: "src/a.ts" }, { path: "docs/b.md" }]);
       expect(message.payload.content.slice(0, 3)).toEqual([
-        { type: "text", text: "echo:read them" },
-        { type: "text", text: projectFileText("src/a.ts", root) },
-        { type: "text", text: projectFileText("docs/b.md", root) },
+        {
+          type: "text",
+          text: "echo:read them [project file: src/a.ts] [project file: docs/b.md]",
+        },
+        { type: "text", text: `[project file: src/a.ts] ${projectFileText("src/a.ts", root)}` },
+        { type: "text", text: `[project file: docs/b.md] ${projectFileText("docs/b.md", root)}` },
       ]);
-      expect(message.payload.content[3]).toMatchObject({
+      // the upload's `[file: …]` line, then its block
+      expect(message.payload.content[3]).toEqual({ type: "text", text: "[file: notes.txt]" });
+      expect(message.payload.content[4]).toMatchObject({
         type: "document",
         source: { kind: "ref", fileId: id },
       });
@@ -2197,7 +2233,11 @@ describe("reconstructRequest：基线零漂移", () => {
     const res = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
-      payload: { text: "echo:same for EU", files: [id], conversationRefs: [{ id: ref }] },
+      payload: {
+        text: "echo:same for EU \uFFFC",
+        files: [id],
+        tokens: [{ type: "conversation", id: ref }],
+      },
     });
     expect(res.statusCode, res.body).toBe(202);
     await waitForTerminal(db, conv, 1, 30_000);
@@ -2206,12 +2246,16 @@ describe("reconstructRequest：基线零漂移", () => {
       { type: "user_message" }
     >;
     expect(message.payload.conversationRefs).toMatchObject([{ id: ref, source: "excerpt" }]);
-    expect(message.payload.content[0]).toEqual({ type: "text", text: "echo:same for EU" });
+    expect((message.payload.content[0] as { text: string }).text).toMatch(
+      /^echo:same for EU \[conversation: .+\]$/,
+    );
     const block = (message.payload.content[1] as { type: string; text: string }).text;
+    expect(block).toMatch(/^\[conversation: .+\]\n/);
     expect(block).toContain(`Referenced conversation: "`);
     expect(block).toContain("User: echo:the pricing thread");
     expect(block).toContain(`conversations.events operation (conversationId ${ref}).`);
-    expect(message.payload.content[2]).toMatchObject({
+    expect(message.payload.content[2]).toEqual({ type: "text", text: "[file: notes.txt]" });
+    expect(message.payload.content[3]).toMatchObject({
       type: "document",
       source: { kind: "ref", fileId: id },
     });
@@ -4046,6 +4090,113 @@ describe("reconstructRequest: event automations", () => {
     expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([
       "automation_event_block",
     ]);
+  });
+});
+
+describe("reconstructRequest: composer inline tokens (composer inline tokens spec §3.5, §3.6)", () => {
+  const M = "\uFFFC";
+  type UserMessage = Extract<ConversationEvent, { type: "user_message" }>;
+  const userMessage = async (conv: string) =>
+    (await eventsOf(db, conv)).find((e): e is UserMessage => e.type === "user_message");
+
+  it("connector mention loads tools: the mention's loaded keys in this and later requests, zero drift", async () => {
+    await enableConnectorExtensions(k, orgId);
+    const service = k.app.get(ConnectorsService);
+    const connectorId = await service.createDeferredIn(orgId, null, {
+      name: "Slack",
+      slug: "slack",
+      connector: "fake",
+      endpoint: { url: mcp.url },
+      auth: { type: "bearer", ownership: "org" },
+      credential: { token: MCP_TOKEN },
+    });
+    try {
+      expect(await service.listToolsForJob({ orgId, connectorId })).toBe("listed");
+      // only the connector's two tools: over the threshold, so the org's tool search is on
+      const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+      const conv = await createConv(owner, orgId, agentId);
+      reset();
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload: { text: `echo:ask ${M}`, tokens: [{ type: "connector", connectorId }] },
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      await waitForTerminal(db, conv, 1, 30_000);
+      await postMessage(owner, orgId, conv, "echo:and then?");
+      await waitForTerminal(db, conv, 2, 30_000);
+      const mention = (await userMessage(conv))?.payload.connectorMentions?.[0];
+      expect([...(mention?.loadedTools ?? [])].sort()).toEqual([
+        "mcp__slack__search",
+        "mcp__slack__write",
+      ]);
+      expect(sent).toHaveLength(2);
+      for (const r of sent) {
+        expect(r.tools.map((t) => t.name)).toEqual(["ToolSearch", ...(mention?.loadedTools ?? [])]);
+      }
+      await expectZeroDrift(conv, await snapshotOf(conv));
+    } finally {
+      // later cases' agents get no connector tools
+      await service.remove(orgId, connectorId, ownerId);
+    }
+  });
+
+  it("inline tokens: placeholders and file token labels are logged content, zero drift; payload.inline is display only", async () => {
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const ref = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, ref, "echo:the pricing thread");
+    await waitForTerminal(db, ref, 1, 30_000);
+    const conv = await createConv(owner, orgId, agentId);
+    const token = await attach("a.png", PNG);
+    const upload = await attach("a.png", PNG);
+    reset();
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+      payload: {
+        text: `echo:compare ${M} with ${M}`,
+        tokens: [
+          { type: "file", id: token },
+          { type: "conversation", id: ref },
+        ],
+        files: [upload],
+      },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const message = (await userMessage(conv)) as UserMessage;
+    const content = message.payload.content;
+    const head = (content[0] as { type: "text"; text: string }).text;
+    expect(head).toMatch(/^echo:compare \[file: a\.png\] with \[conversation: .+\]$/);
+    for (const e of message.payload.inline ?? []) {
+      expect(head.slice(e.start, e.end)).toMatch(/^\[(file|conversation): .+\]$/);
+    }
+    expect(message.payload.inline?.map((e) => e.kind)).toEqual(["file", "conversation"]);
+    const lines = content.flatMap((b) =>
+      b.type === "text" && b.text.startsWith("[file: ") ? [b.text] : [],
+    );
+    expect(lines).toEqual(["[file: a.png]", "[file: a.png (2)]"]);
+    // the request carries the logged placeholders and file lines as they are
+    const asSent = JSON.stringify(sent[0]?.messages);
+    expect(asSent).toContain(JSON.stringify(head));
+    expect(asSent).toContain('"[file: a.png (2)]"');
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap, 1);
+    // request building never reads payload.inline: a snapshot without it rebuilds the same request
+    const call = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    const info = await modelInfo("model-fake", "fake-v");
+    const opts = {
+      model: info,
+      mediaBudgetBytes: k.app.get(KernelConfigService).get().attachments.requestMediaBytes,
+      ...(await mediaFor(conv, snap, call.seq, info)),
+    };
+    const stripped = structuredClone(snap);
+    for (const e of stripped.events) {
+      if (e.type === "user_message") delete (e.payload as { inline?: unknown }).inline;
+    }
+    expect(reconstructRequest(stripped, call.seq, opts).request).toEqual(
+      reconstructRequest(snap, call.seq, opts).request,
+    );
   });
 });
 

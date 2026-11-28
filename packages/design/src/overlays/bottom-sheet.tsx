@@ -81,6 +81,8 @@ export type BottomSheetFrameProps = {
   share: number;
   handleLabel?: string | undefined;
   closeLabel?: string | undefined;
+  /** A drilled-in page's back control (named by this label), as the real sheet draws it. */
+  backLabel?: string | undefined;
   /** The page behind the sheet. */
   page?: ReactNode;
   /** Drawn under the body, outside its scroll (a dialog's buttons). */
@@ -99,6 +101,7 @@ export function BottomSheetFrame({
   share,
   handleLabel,
   closeLabel,
+  backLabel,
   page,
   footer,
   children,
@@ -132,6 +135,18 @@ export function BottomSheetFrame({
               part="sheet-close"
             />
           }
+          {...(backLabel
+            ? {
+                back: (
+                  <IconButton
+                    label={backLabel}
+                    icon={<Icon name="chevron-left" size={16} />}
+                    className="cb-bsheet-back"
+                    part="sheet-back"
+                  />
+                ),
+              }
+            : {})}
           handleLabel={grab}
           footer={footer}
         >

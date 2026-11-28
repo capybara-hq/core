@@ -166,13 +166,17 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
    * 加文件（选择 / 拖入 / 粘贴）：预检，通过的立即上传；超出条数上限的不收。存储不可用时一个都不收。
    * 收下后合计大小首次超过单次请求的预算时提醒（发送后较早的文件会被省略）。
    */
-  const add = (picked: File[]) => {
+  const add = (picked: File[], reserved = 0) => {
     if (!limits.available) {
       toast.error(t("filesUnavailable"));
       return;
     }
-    // 预检拦下的条目（不会发出去、只是提示）不占条数名额
-    let room = Math.max(0, limits.maxPerMessage - filesRef.current.filter(counts).length);
+    // Entries the precheck refused (never sent, only shown) take no room; `reserved` is room taken
+    // elsewhere (the draft's library file tokens share the per-message cap).
+    let room = Math.max(
+      0,
+      limits.maxPerMessage - reserved - filesRef.current.filter(counts).length,
+    );
     let overflow = false;
     const added: DraftFile[] = [];
     const toStart: [string, File][] = [];

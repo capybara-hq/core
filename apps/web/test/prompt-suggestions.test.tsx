@@ -5,6 +5,13 @@ import en from "../messages/en.json";
 import type { ConversationEvent } from "../src/lib/conversations";
 import { type Call, json, stubApi } from "./support/api";
 import {
+  backspaceComposer,
+  composerBox,
+  draftText,
+  pressComposer,
+  typeComposer,
+} from "./support/composer";
+import {
   AGENTS,
   CONV,
   ev,
@@ -67,9 +74,8 @@ const assistant = (seq: number, text: string, runId = "r1") =>
 /** A finished first run: its `run_finished` is seq 4. */
 const FINISHED = [userMsg(1, "hi"), runStarted(2), assistant(3, "hello"), runFinished(4)];
 
-const input = () =>
-  screen.getByRole("combobox", { name: en.chat.inputLabel, hidden: true }) as HTMLTextAreaElement;
-const placeholder = () => input().getAttribute("placeholder");
+const input = () => composerBox();
+const placeholder = () => input().getAttribute("aria-placeholder");
 const es = () => FakeEventSource.instances.at(-1) as FakeEventSource;
 const suggest = (runId: string, afterSeq: number, text = TEXT) =>
   act(() => es().emit("suggestion", { runId, afterSeq, text }));
@@ -100,10 +106,8 @@ describe("prompt suggestions in the composer", () => {
     expect(placeholder()).toBe(en.chat.placeholder);
     suggest("r1", 4);
     await vi.waitFor(() => expect(placeholder()).toBe(TEXT));
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.keyboard("{Tab}");
-    expect(input().value).toBe(TEXT);
+    pressComposer("Tab");
+    expect(draftText()).toBe(TEXT);
   });
 
   it.each([
@@ -162,9 +166,9 @@ describe("prompt suggestions in the composer", () => {
     await open(FINISHED);
     suggest("r1", 4);
     await vi.waitFor(() => expect(placeholder()).toBe(TEXT));
-    const user = userEvent.setup();
-    await user.type(input(), "x");
-    await user.clear(input());
+    typeComposer("x");
+    backspaceComposer();
+    expect(draftText()).toBe("");
     expect(placeholder()).toBe(en.chat.placeholder);
   });
 

@@ -37,6 +37,12 @@
       "import": "./dist/reference/index.js",
       "default": "./dist/reference/index.js"
     },
+    "./testing": {
+      "@capybara-hq/source": "./src/testing/index.ts",
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js",
+      "default": "./dist/testing/index.js"
+    },
     "./styles.css": "./src/styles/index.css"
   },
   "files": [

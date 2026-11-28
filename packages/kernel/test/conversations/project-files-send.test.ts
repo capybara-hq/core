@@ -18,7 +18,6 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { deviceNotRunning, SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { SkillInvoker } from "../../src/skills/invoke.js";
-import { ConnectorContent } from "../../src/tools/connector-content.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import {
   type Answer,
@@ -42,11 +41,12 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Referencing project files on send (composer menus §5): `projectFiles` on a message of a
- * conversation bound to a device project is checked with `stat` through the owner browse (outside
- * the message's transaction) and logged as one English text block per path, after the `@`
- * resources' bodies, with `payload.projectFiles`. A dial-in device on `fake-dial-in` answers each
- * relayed `stat` from {@link FILES}.
+ * Referencing project files on send (composer menus §5, composer inline tokens spec §3):
+ * `projectFile` tokens on a message of a conversation bound to a device project are checked with
+ * `stat` through the owner browse (outside the message's transaction); each marker becomes a
+ * `[project file: <path>]` placeholder and each file one English text block led by it, with
+ * `payload.projectFiles`. A dial-in device on `fake-dial-in` answers each relayed `stat` from
+ * {@link FILES}.
  */
 
 const SANDBOX_FAKE = fileURLToPath(
@@ -212,6 +212,26 @@ async function conversation(d: Owned, project: string | null = "app"): Promise<s
   return (res.json() as { conversation: { id: string } }).conversation.id;
 }
 
+const MARK = "\uFFFC";
+
+/** A message naming project files as tokens: `text`, then one marker per path. */
+const withFiles = (text: string, ...paths: string[]) => ({
+  text: [text, ...paths.map(() => MARK)].filter((x) => x !== "").join(" "),
+  tokens: paths.map((path) => ({ type: "projectFile", path })),
+});
+
+/** `text` with each (normalized) path's placeholder after it, as content[0] holds it. */
+const sentence = (text: string, ...paths: string[]) => ({
+  type: "text",
+  text: [text, ...paths.map((path) => `[project file: ${path}]`)].filter((x) => x !== "").join(" "),
+});
+
+/** A project file's block as a token message writes it: led by its placeholder. */
+const fileBlock = (path: string) => ({
+  type: "text",
+  text: `[project file: ${path}] ${projectFileText(path, ROOT)}`,
+});
+
 const send = (d: Owned, conv: string, payload: Record<string, unknown>) =>
   d.req({
     method: "POST",
@@ -223,62 +243,59 @@ type UserMessage = Extract<ConversationEvent, { type: "user_message" }>;
 const userMessages = async (conv: string) =>
   (await eventsOf(db, conv)).filter((e): e is UserMessage => e.type === "user_message");
 
-describe("projectFiles on send", () => {
+describe("project file tokens on send", () => {
   it("logs one English block per path after the text, normalized, with payload.projectFiles", async () => {
     const d = await owned();
     const machine = await connect(d);
     const conv = await conversation(d);
-    const res = await send(d, conv, {
-      text: "look at these",
-      projectFiles: [{ path: "./src/a.ts" }, { path: "README.md" }],
-    });
+    const res = await send(d, conv, withFiles("look at these", "./src/a.ts", "README.md"));
     expect(res.statusCode, res.body).toBe(202);
     const [m] = await userMessages(conv);
     expect(m?.payload.content).toEqual([
-      { type: "text", text: "look at these" },
+      sentence("look at these", "src/a.ts", "README.md"),
       {
         type: "text",
-        text: "Referenced project file: src/a.ts (in the project root /home/u/p; read it with Read when needed).",
+        text: "[project file: src/a.ts] Referenced project file: src/a.ts (in the project root /home/u/p; read it with Read when needed).",
       },
-      { type: "text", text: projectFileText("README.md", ROOT) },
+      fileBlock("README.md"),
     ]);
     expect(m?.payload.projectFiles).toEqual([{ path: "src/a.ts" }, { path: "README.md" }]);
     expect(statPaths(machine)).toEqual([`${ROOT}/src/a.ts`, `${ROOT}/README.md`]);
   });
 
-  it("puts the project file blocks after the @ resources' bodies", async () => {
+  it("a projectFile token: its placeholder in the text, its block led by it, normalized once", async () => {
     const d = await owned();
     await connect(d);
     const conv = await conversation(d);
-    const connectorId = randomUUID();
-    vi.spyOn(k.app.get(ConnectorContent), "resolveAttachments").mockResolvedValue({
-      blocks: [{ type: "text", text: "RESOURCE BODY" }],
-      attachments: [{ appId: connectorId, appName: "Docs", uri: "doc://1", name: "One" }],
-    });
     const res = await send(d, conv, {
-      text: "both",
-      attachments: [{ connectorId, uri: "doc://1" }],
-      projectFiles: [{ path: "src/a.ts" }],
+      text: "\uFFFC then \uFFFC",
+      tokens: [
+        { type: "projectFile", path: "./src/a.ts" },
+        { type: "projectFile", path: "src/a.ts" },
+      ],
     });
     expect(res.statusCode, res.body).toBe(202);
     const [m] = await userMessages(conv);
     expect(m?.payload.content).toEqual([
-      { type: "text", text: "both" },
-      { type: "text", text: "RESOURCE BODY" },
-      { type: "text", text: projectFileText("src/a.ts", ROOT) },
+      { type: "text", text: "[project file: src/a.ts] then [project file: src/a.ts]" },
+      {
+        type: "text",
+        text: `[project file: src/a.ts] ${projectFileText("src/a.ts", ROOT)}`,
+      },
     ]);
-    expect(m?.payload.attachments).toHaveLength(1);
     expect(m?.payload.projectFiles).toEqual([{ path: "src/a.ts" }]);
+    // `inline` names the file by its normalized path at both places
+    expect(m?.payload.inline?.map((e) => e.ref)).toEqual([
+      { path: "src/a.ts" },
+      { path: "src/a.ts" },
+    ]);
   });
 
   it("a missing path or a directory refuses the send with its path, nothing written", async () => {
     const d = await owned();
     await connect(d);
     const conv = await conversation(d);
-    const res = await send(d, conv, {
-      text: "hi",
-      projectFiles: [{ path: "src/a.ts" }, { path: "gone.ts" }, { path: "src" }],
-    });
+    const res = await send(d, conv, withFiles("hi", "src/a.ts", "gone.ts", "src"));
     expect(res.statusCode, res.body).toBe(422);
     expect(errOf(res)).toMatchObject({
       code: "conversation.project_file_unavailable",
@@ -288,12 +305,25 @@ describe("projectFiles on send", () => {
     expect(await userMessages(conv)).toEqual([]);
   });
 
+  it("a long missing path is named whole in the details (the composer matches it)", async () => {
+    const d = await owned();
+    await connect(d);
+    const conv = await conversation(d);
+    const long = `${"deep/".repeat(60)}gone.ts`;
+    const res = await send(d, conv, withFiles("hi", long));
+    expect(res.statusCode, res.body).toBe(422);
+    expect(errOf(res)).toMatchObject({
+      code: "conversation.project_file_unavailable",
+      details: [{ path: long }],
+    });
+  });
+
   it("a path leaving the project is refused before the device is asked", async () => {
     const d = await owned();
     const machine = await connect(d);
     const conv = await conversation(d);
     for (const path of ["../x", "a/../../x", "/etc/passwd", "a\\b"]) {
-      const res = await send(d, conv, { text: "hi", projectFiles: [{ path }] });
+      const res = await send(d, conv, withFiles("hi", path));
       expect(res.statusCode, `${path}: ${res.body}`).toBe(422);
       expect(errOf(res)?.code).toBe("device.path_outside_project");
     }
@@ -306,7 +336,7 @@ describe("projectFiles on send", () => {
     const machine = await connect(d);
     const conv = await conversation(d);
     for (const path of [".", "./", "a/.."]) {
-      const res = await send(d, conv, { text: "hi", projectFiles: [{ path }] });
+      const res = await send(d, conv, withFiles("hi", path));
       expect(res.statusCode, `${path}: ${res.body}`).toBe(422);
       expect(errOf(res)).toMatchObject({
         code: "device.path_outside_project",
@@ -323,17 +353,14 @@ describe("projectFiles on send", () => {
     const machine = await connect(d);
     const conv = await conversation(d);
     const stat = vi.spyOn(k.app.get(DeviceProjectFilesService), "statAll");
-    const res = await send(d, conv, {
-      text: "twice",
-      projectFiles: [{ path: "src/a.ts" }, { path: "./src//a.ts" }, { path: "README.md" }],
-    });
+    const res = await send(d, conv, withFiles("twice", "src/a.ts", "./src//a.ts", "README.md"));
     expect(res.statusCode, res.body).toBe(202);
     const [m] = await userMessages(conv);
     expect(m?.payload.projectFiles).toEqual([{ path: "src/a.ts" }, { path: "README.md" }]);
     expect(m?.payload.content).toEqual([
-      { type: "text", text: "twice" },
-      { type: "text", text: projectFileText("src/a.ts", ROOT) },
-      { type: "text", text: projectFileText("README.md", ROOT) },
+      sentence("twice", "src/a.ts", "src/a.ts", "README.md"),
+      fileBlock("src/a.ts"),
+      fileBlock("README.md"),
     ]);
     expect(statPaths(machine)).toEqual([`${ROOT}/src/a.ts`, `${ROOT}/README.md`]);
     // checked once each, with the request's signal (stops when the client hangs up)
@@ -346,11 +373,7 @@ describe("projectFiles on send", () => {
     const d = await owned();
     const machine = await connect(d);
     const conv = await conversation(d);
-    const body = {
-      text: "once",
-      clientMessageId: randomUUID(),
-      projectFiles: [{ path: "README.md" }],
-    };
+    const body = { ...withFiles("once", "README.md"), clientMessageId: randomUUID() };
     const first = await send(d, conv, body);
     expect(first.statusCode, first.body).toBe(202);
     const again = await send(d, conv, body);
@@ -361,7 +384,7 @@ describe("projectFiles on send", () => {
     expect(await userMessages(conv)).toHaveLength(1);
   });
 
-  it("a skill invocation with empty text: the rendered skill is content[0], the file block follows", async () => {
+  it("a skill invocation whose arguments are a project file token: the rendered skill is content[0], the file block follows", async () => {
     const d = await owned();
     await connect(d);
     const conv = await conversation(d);
@@ -376,11 +399,7 @@ describe("projectFiles on send", () => {
         mode: "inline",
       },
     });
-    const res = await send(d, conv, {
-      text: "",
-      skill: { name: "review" },
-      projectFiles: [{ path: "src/a.ts" }],
-    });
+    const res = await send(d, conv, { ...withFiles("", "src/a.ts"), skill: { name: "review" } });
     expect(res.statusCode, res.body).toBe(202);
     const [m] = await userMessages(conv);
     const files = m?.payload.projectFiles ?? [];
@@ -388,10 +407,7 @@ describe("projectFiles on send", () => {
     expect(m?.payload.content[0]).toEqual({ type: "text", text: "RENDERED SKILL" });
     // project file i's block is content[1 + attachments.length + i]
     const at = 1 + (m?.payload.attachments?.length ?? 0);
-    expect(m?.payload.content[at]).toEqual({
-      type: "text",
-      text: projectFileText("src/a.ts", ROOT),
-    });
+    expect(m?.payload.content[at]).toEqual(fileBlock("src/a.ts"));
     expect(m?.payload.content).toHaveLength(2);
   });
 
@@ -399,7 +415,7 @@ describe("projectFiles on send", () => {
     const d = await owned();
     await connect(d);
     const conv = await conversation(d, null);
-    const res = await send(d, conv, { text: "hi", projectFiles: [{ path: "src/a.ts" }] });
+    const res = await send(d, conv, withFiles("hi", "src/a.ts"));
     expect(res.statusCode, res.body).toBe(422);
     expect(errOf(res)).toMatchObject({
       code: "conversation.project_file_unavailable",
@@ -408,17 +424,22 @@ describe("projectFiles on send", () => {
     expect(await userMessages(conv)).toEqual([]);
   });
 
-  it("the body is validated: text required, at most 10, strict entries", async () => {
+  it("the body is validated: a marker per token, at most 10, strict entries, no old fields", async () => {
     const d = await owned();
     await connect(d);
     const conv = await conversation(d);
+    const token = [{ type: "projectFile", path: "src/a.ts" }];
     const cases: Record<string, unknown>[] = [
-      { text: "", projectFiles: [{ path: "src/a.ts" }] },
-      // files alone may go without text, not with project files
-      { text: "", files: [randomUUID()], projectFiles: [{ path: "src/a.ts" }] },
-      { text: "hi", projectFiles: Array.from({ length: 11 }, (_, i) => ({ path: `f${i}` })) },
-      { text: "hi", projectFiles: [{ path: "" }] },
-      { text: "hi", projectFiles: [{ path: "src/a.ts", extra: 1 }] },
+      // a token without its marker
+      { text: "", tokens: token },
+      { text: "", files: [randomUUID()], tokens: token },
+      withFiles("hi", ...Array.from({ length: 11 }, (_, i) => `f${i}`)),
+      withFiles("hi", ""),
+      { text: `hi ${MARK}`, tokens: [{ type: "projectFile", path: "src/a.ts", extra: 1 }] },
+      // the old reference fields left the body (composer inline tokens spec §3.1)
+      { text: "hi", projectFiles: [{ path: "src/a.ts" }] },
+      { text: "hi", conversationRefs: [{ id: "c-1" }] },
+      { text: "hi", attachments: [{ connectorId: randomUUID(), uri: "doc://1" }] },
     ];
     for (const payload of cases) {
       const res = await send(d, conv, payload);
@@ -435,7 +456,7 @@ describe("projectFiles on send", () => {
     const start = vi
       .spyOn(sandbox, "ensureRunningForOwner")
       .mockRejectedValueOnce(deviceNotRunning());
-    const stopped = await send(d, conv, { text: "hi", projectFiles: [{ path: "src/a.ts" }] });
+    const stopped = await send(d, conv, withFiles("hi", "src/a.ts"));
     expect(stopped.statusCode, stopped.body).toBe(409);
     expect(errOf(stopped)?.code).toBe("device.not_running");
     start.mockRestore();
@@ -445,7 +466,7 @@ describe("projectFiles on send", () => {
       15_000,
       "lease released",
     );
-    const offline = await send(d, conv, { text: "hi", projectFiles: [{ path: "src/a.ts" }] });
+    const offline = await send(d, conv, withFiles("hi", "src/a.ts"));
     expect(offline.statusCode, offline.body).toBe(503);
     expect(errOf(offline)?.code).toBe("device.offline");
     expect(await userMessages(conv)).toEqual([]);
@@ -471,7 +492,7 @@ describe("projectFiles on send", () => {
     expect(await status()).toBe("suspended");
     const resumes = () => machine.frames.filter((f) => f.type === "req" && f.op === "resume");
     const before = resumes().length;
-    const res = await send(d, conv, { text: "hi", projectFiles: [{ path: "src/a.ts" }] });
+    const res = await send(d, conv, withFiles("hi", "src/a.ts"));
     expect(res.statusCode, res.body).toBe(202);
     expect(resumes().length).toBe(before + 1);
     expect(await status()).toBe("running");
@@ -502,7 +523,7 @@ describe("projectFiles on send", () => {
         agentId,
         deviceId: d.deviceId,
         project: "app",
-        message: { text: "start", clientMessageId, projectFiles: [{ path: "README.md" }] },
+        message: { ...withFiles("start", "README.md"), clientMessageId },
       },
     });
     expect(res.statusCode, res.body).toBe(409);
@@ -527,13 +548,10 @@ describe("projectFiles on send", () => {
       .where("device_id", "=", d.deviceId)
       .where("name", "=", "app")
       .execute();
-    const res = await send(d, conv, { text: "hi", projectFiles: [{ path: "src/a.ts" }] });
+    const res = await send(d, conv, withFiles("hi", "src/a.ts"));
     expect(res.statusCode, res.body).toBe(202);
     const [m] = await userMessages(conv);
-    expect(m?.payload.content.at(-1)).toEqual({
-      type: "text",
-      text: projectFileText("src/a.ts", ROOT),
-    });
+    expect(m?.payload.content.at(-1)).toEqual(fileBlock("src/a.ts"));
     expect(statPaths(machine)).toEqual([`${ROOT}/src/a.ts`]);
   });
 
@@ -547,11 +565,7 @@ describe("projectFiles on send", () => {
         agentId,
         deviceId: d.deviceId,
         project: "app",
-        message: {
-          text: "start here",
-          clientMessageId: randomUUID(),
-          projectFiles: [{ path: "README.md" }],
-        },
+        message: { ...withFiles("start here", "README.md"), clientMessageId: randomUUID() },
       },
     });
     expect(created.statusCode, created.body).toBe(201);
@@ -561,8 +575,8 @@ describe("projectFiles on send", () => {
     };
     expect(body.conversation.project.path).toBe(ROOT);
     expect(body.event.payload.content).toEqual([
-      { type: "text", text: "start here" },
-      { type: "text", text: projectFileText("README.md", ROOT) },
+      sentence("start here", "README.md"),
+      fileBlock("README.md"),
     ]);
     expect(body.event.payload.projectFiles).toEqual([{ path: "README.md" }]);
 
@@ -573,7 +587,7 @@ describe("projectFiles on send", () => {
       payload: {
         agentId,
         deviceId: d.deviceId,
-        message: { text: "start", clientMessageId, projectFiles: [{ path: "README.md" }] },
+        message: { ...withFiles("start", "README.md"), clientMessageId },
       },
     });
     expect(refused.statusCode, refused.body).toBe(422);
@@ -587,6 +601,47 @@ describe("projectFiles on send", () => {
       .where("create_request_id", "=", clientMessageId)
       .execute();
     expect(none).toEqual([]);
+  });
+
+  it("create and first-message with a projectFile token on a bound device project", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    const message = () => ({
+      text: "start with \uFFFC",
+      clientMessageId: randomUUID(),
+      tokens: [{ type: "projectFile", path: "./src/a.ts" }],
+    });
+    const expected = [
+      { type: "text", text: "start with [project file: src/a.ts]" },
+      { type: "text", text: `[project file: src/a.ts] ${projectFileText("src/a.ts", ROOT)}` },
+    ];
+    const created = await d.req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations`,
+      payload: { agentId, deviceId: d.deviceId, project: "app", message: message() },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const body = created.json() as { event: UserMessage };
+    expect(body.event.payload.content).toEqual(expected);
+    expect(body.event.payload.projectFiles).toEqual([{ path: "src/a.ts" }]);
+    expect(body.event.payload.inline?.[0]?.ref).toEqual({ path: "src/a.ts" });
+    const home = await d.req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/first-message`,
+      payload: {
+        agentId,
+        deviceId: d.deviceId,
+        project: "app",
+        message: message(),
+        permission: { profile: "request-approval" },
+      },
+    });
+    expect(home.statusCode, home.body).toBe(201);
+    const [m] = await userMessages(
+      (home.json() as { conversation: { id: string } }).conversation.id,
+    );
+    expect(m?.payload.content).toEqual(expected);
+    expect(statPaths(machine)).toEqual([`${ROOT}/src/a.ts`, `${ROOT}/src/a.ts`]);
   });
 
   it("first-message (the new-conversation home): the files are referenced, a missing path refused", async () => {
@@ -605,27 +660,22 @@ describe("projectFiles on send", () => {
         },
       });
     const created = await first({
-      text: "start here",
+      ...withFiles("start here", "./src/a.ts", "README.md"),
       clientMessageId: randomUUID(),
-      projectFiles: [{ path: "./src/a.ts" }, { path: "README.md" }],
     });
     expect(created.statusCode, created.body).toBe(201);
     const conv = (created.json() as { conversation: { id: string } }).conversation.id;
     const [m] = await userMessages(conv);
     expect(m?.payload.content).toEqual([
-      { type: "text", text: "start here" },
-      { type: "text", text: projectFileText("src/a.ts", ROOT) },
-      { type: "text", text: projectFileText("README.md", ROOT) },
+      sentence("start here", "src/a.ts", "README.md"),
+      fileBlock("src/a.ts"),
+      fileBlock("README.md"),
     ]);
     expect(m?.payload.projectFiles).toEqual([{ path: "src/a.ts" }, { path: "README.md" }]);
     expect(statPaths(machine)).toEqual([`${ROOT}/src/a.ts`, `${ROOT}/README.md`]);
 
     const clientMessageId = randomUUID();
-    const refused = await first({
-      text: "start",
-      clientMessageId,
-      projectFiles: [{ path: "gone.ts" }],
-    });
+    const refused = await first({ ...withFiles("start", "gone.ts"), clientMessageId });
     expect(refused.statusCode, refused.body).toBe(422);
     expect(errOf(refused)).toMatchObject({
       code: "conversation.project_file_unavailable",

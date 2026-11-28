@@ -570,8 +570,15 @@ function composerProps(
         : "";
   const [image, pdf] = FI.attachments;
   return {
-    value,
+    // the skill state: the skill token leads the draft, its argument hint the ghost after it
+    segments:
+      state === "skill"
+        ? [{ kind: "skill", id: "fix-issue", label: SKILL_FIXTURE.chip.label }, " "]
+        : value === ""
+          ? []
+          : [value],
     onChange: noop,
+    onSubmit: noop,
     placeholder:
       state === "new" || state === "device"
         ? K.newPlaceholder.replace("研究助手", C.agent.name)
@@ -597,7 +604,7 @@ function composerProps(
       : {}),
     onAttach: noop,
     pickers: pickers(state, open),
-    ...(state === "skill" ? { token: { ...SKILL_FIXTURE.chip, onRemove: noop } } : {}),
+    ...(state === "skill" ? { skillHint: SKILL_FIXTURE.chip.hint } : {}),
     send:
       state === "running"
         ? { mode: "stop", onClick: noop }
@@ -631,7 +638,16 @@ function placeProps(locked: boolean): ComposerPlace {
 }
 
 /** The composer with the top strip, the mode button after + and the model · effort at the end. */
-function PlaceComposer({ locked, form }: { locked: boolean; form?: "medium" }) {
+function PlaceComposer({
+  locked,
+  form,
+  bare,
+}: {
+  locked: boolean;
+  form?: "medium";
+  /** Without the frame's box (a plugin's frame around it): the strip is no tray. */
+  bare?: boolean;
+}) {
   const base = composerProps("idle");
   return (
     <ComposerBox
@@ -640,6 +656,7 @@ function PlaceComposer({ locked, form }: { locked: boolean; form?: "medium" }) {
       place={placeProps(locked)}
       mode={modeProps("closed")}
       {...(form ? { referenceForm: form } : {})}
+      {...(bare ? { frame: false } : {})}
     />
   );
 }
@@ -682,12 +699,23 @@ function composerBlocks(): ReactNode {
           referenceTouch
         />
       </Block>
-      {/* the top strip (§6.16.2 "Top strip"): open on a new conversation, locked on one */}
+      {/* the top strip (§6.16.2 "Top strip"): the tray above the field, open on a new
+          conversation, locked on one; focused, the ring wraps the field alone */}
       <Block id="composer-place">
         <PlaceComposer locked={false} />
       </Block>
       <Block id="composer-place-locked">
         <PlaceComposer locked />
+      </Block>
+      <Block
+        id="composer-place-focus"
+        force={{ pseudo: ["focus"], selector: '[data-part="composer-input"]' }}
+      >
+        <PlaceComposer locked />
+      </Block>
+      {/* without the frame's box (`frame={false}`): no tray ground, radius or overlap */}
+      <Block id="composer-place-bare">
+        <PlaceComposer locked={false} bare />
       </Block>
       <RefBlock id="composer-place-medium" width={600} pad>
         <PlaceComposer locked={false} form="medium" />
@@ -730,7 +758,14 @@ function commandPaletteBlocks(): ReactNode {
 // ── Composer menus (§6.16.30: +, / and @ anchored above the composer) ─────────
 
 const menuGroups = (groups: FixtureComposerMenuGroup[]): ComposerMenuGroup[] =>
-  groups.map((g) => ({ ...g, items: g.items.map((it) => ({ ...it, onSelect: noop })) }));
+  groups.map((g) => ({
+    ...g,
+    items: g.items.map(({ drill, ...it }) => ({
+      ...it,
+      ...(drill ? { drill: { label: drill, onDrill: noop } } : {}),
+      onSelect: noop,
+    })),
+  }));
 
 /** A conversation's composer holding the text `value` with the menu open above it. */
 function ComposerMenuComposer({
@@ -745,7 +780,7 @@ function ComposerMenuComposer({
   return (
     <ComposerBox
       {...composerProps("idle")}
-      value={value}
+      segments={value === "" ? [] : [value]}
       send={{ mode: "send", disabled: value === "", onClick: noop }}
       {...(menu.kind === "plus" ? { attachOpen: true } : {})}
       menu={{
@@ -759,16 +794,27 @@ function ComposerMenuComposer({
 }
 
 /** The compact form: the `/` menu as a bottom sheet at rest at the phone size, over an empty page. */
-function ComposerMenuSheetBlock() {
+function ComposerMenuSheetBlock({ drillIn = false }: { drillIn?: boolean }) {
   const M = COMPOSER_MENU_FIXTURE;
-  const props: ComposerMenuProps = {
-    kind: "slash",
-    groups: menuGroups(M.slash),
-    query: "",
-    empty: M.empty.slash,
-    onClose: noop,
-    onQueryChange: noop,
-  };
+  const props: ComposerMenuProps = drillIn
+    ? {
+        kind: "at",
+        groups: menuGroups(M.resources.groups),
+        query: "",
+        filter: false,
+        empty: M.empty.at,
+        onClose: noop,
+        onQueryChange: noop,
+        level: { title: M.resources.title, onBack: noop },
+      }
+    : {
+        kind: "slash",
+        groups: menuGroups(M.slash),
+        query: "",
+        empty: M.empty.slash,
+        onClose: noop,
+        onQueryChange: noop,
+      };
   const controller = useComposerMenu(props);
   return <ComposerMenu {...props} controller={controller} referenceSheet={{}} />;
 }
@@ -815,6 +861,45 @@ function composerMenuBlocks(): ReactNode {
           }}
         />
       </Block>
+      {/* the @ menu's first level: connectors first, → opens a connector's resources */}
+      <Block id="composer-menu-at-connectors" offsetTop={420}>
+        <ComposerMenuComposer
+          value="@"
+          menu={{
+            kind: "at",
+            groups: menuGroups(M.atConnectors),
+            query: "",
+            filter: false,
+            empty: M.empty.at,
+          }}
+        />
+      </Block>
+      {/* the second level: the head "‹ Slack · Resources", typing filters the resources */}
+      <Block id="composer-menu-at-resources" offsetTop={320}>
+        <ComposerMenuComposer
+          value="@"
+          menu={{
+            kind: "at",
+            groups: menuGroups(M.resources.groups),
+            query: "",
+            filter: false,
+            empty: M.empty.at,
+            level: { title: M.resources.title, onBack: noop },
+          }}
+        />
+      </Block>
+      {/* a skill is already in the draft: the skills are disabled with the one-skill line */}
+      <Block id="composer-menu-slash-one-skill" offsetTop={320}>
+        <ComposerMenuComposer
+          value="/"
+          menu={{
+            kind: "slash",
+            groups: menuGroups(M.slashOneSkill),
+            query: "",
+            empty: M.empty.slash,
+          }}
+        />
+      </Block>
       <Block id="composer-menu-empty" offsetTop={160}>
         <ComposerMenuComposer
           value={`@${M.emptyQuery}`}
@@ -836,6 +921,9 @@ function composerMenuBlocks(): ReactNode {
       </Block>
       <RefBlock id="composer-menu-compact" width={390} height={844}>
         <ComposerMenuSheetBlock />
+      </RefBlock>
+      <RefBlock id="composer-menu-compact-resources" width={390} height={844}>
+        <ComposerMenuSheetBlock drillIn />
       </RefBlock>
     </>
   );

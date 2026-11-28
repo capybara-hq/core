@@ -142,7 +142,8 @@ const picker = (label: string, value: string, items: string[], onPick = noop): P
 });
 const box = (over: Partial<ComposerBoxProps> = {}) => (
   <ComposerBox
-    value=""
+    segments={[]}
+    onSubmit={() => {}}
     onChange={noop}
     placeholder="p"
     onAttach={noop}
@@ -169,7 +170,7 @@ describe("the composer pill", () => {
     const pill = document.querySelector('[data-cap-part~="composer.box"]') as HTMLElement;
     expect(within(pill).getByRole("button", { name: "添加附件" })).toBeTruthy();
     expect(pill.querySelector(".cb-send")).not.toBeNull();
-    expect(pill.querySelectorAll("textarea")).toHaveLength(1);
+    expect(pill.querySelectorAll('[contenteditable][data-part="composer-input"]')).toHaveLength(1);
     const labels = [...pill.querySelectorAll("button")].map(
       (b) => b.getAttribute("aria-label") ?? "",
     );
@@ -194,8 +195,8 @@ describe("the composer pill", () => {
 
 describe("outside touch the composer and thread keep their base rules", () => {
   const base = (sel: string) => rules.find((r) => r.at === null && r.selector === sel)?.decls;
-  it("the frame is still the box, with its border, radius and shadow", () => {
-    expect(base(".cb-composer")).toMatchObject({
+  it("the field is still the box, with its border, radius and shadow", () => {
+    expect(base(".cb-composer-field")).toMatchObject({
       display: "grid",
       border: "1px solid var(--cb-line)",
       "border-radius": "var(--cb-radius-md)",
@@ -221,14 +222,10 @@ describe("outside touch the composer and thread keep their base rules", () => {
           r.decls["grid-row"],
       )
       .map((r) => [r.selector, r.decls["grid-row"], r.decls["grid-column"]]);
-    // row 1 the top strip, 2 and 3 the token warning and the attachments, 4 the text
+    // the field's rows: 1 to 3 the token warning and the attachments, 4 the text (the top strip
+    // is the tray above the field, outside its grid)
     expect(rows).toEqual([
-      [".cb-composer > .cb-composer-place", "1", undefined],
-      [
-        ".cb-composer-box > .cb-composer-input, .cb-composer-box > .cb-composer-line",
-        "4",
-        "1 / -1",
-      ],
+      [".cb-composer-box > .cb-composer-editor", "4", "1 / -1"],
       [".cb-composer-box > .cb-composer-attach", "5", "1"],
       [".cb-composer-bar", "5", "2"],
       [".cb-composer-box > .cb-send, .cb-composer-box > .cb-stop", "5", "3"],
@@ -238,11 +235,11 @@ describe("outside touch the composer and thread keep their base rules", () => {
     wrap(box());
     const frame = document.querySelector('[data-part="composer"]') as HTMLElement;
     expect(
-      [...frame.querySelectorAll("textarea, button")].map(
-        (el) => el.getAttribute("aria-label") ?? el.tagName,
+      [...frame.querySelectorAll('[data-part="composer-input"], button')].map((el) =>
+        el.matches("[contenteditable]") ? "TEXT" : (el.getAttribute("aria-label") ?? el.tagName),
       ),
     ).toEqual([
-      "TEXTAREA",
+      "TEXT",
       "添加附件",
       "发送",
       "设备: 个人设备",

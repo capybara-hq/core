@@ -8,7 +8,7 @@ import {
   type RenderedInvocation,
   recordedSkillBlocked,
 } from "../skills/invoke.js";
-import type { AttachmentRef, ResolvedExtra } from "./conversations.service.js";
+import type { ResolvedExtra } from "./conversations.service.js";
 import { type AppendEvent, type EventLog, payloadJson } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
@@ -86,7 +86,6 @@ export interface QueuedFile {
 export interface QueueInput {
   text: string;
   clientMessageId: string;
-  attachments?: AttachmentRef[];
   files?: string[];
   /** A model / effort pick, applied when the message is sent (as a direct send's). */
   model?: ModelRef;

@@ -24,9 +24,15 @@ export const RECORD_ROW_MENU = "行操作";
 /** Row menu trigger of an ObjectRow (object lists: agents, skills, ...; design `shell.moreActions`). */
 export const OBJECT_ROW_MENU = "更多操作";
 
-/** The composer's textarea. */
+/**
+ * The composer's text box: a contenteditable editor (composer inline tokens spec §2), role
+ * `combobox` while the page hosts a menu and `textbox` otherwise. Its draft is its text
+ * (`toHaveText`; an empty draft has none), its placeholder is `aria-placeholder`.
+ */
 export const composer = (page: Page): Locator =>
-  page.getByRole("combobox", { name: zh.chat.inputLabel, exact: true });
+  page
+    .getByRole("combobox", { name: zh.chat.inputLabel, exact: true })
+    .or(page.getByRole("textbox", { name: zh.chat.inputLabel, exact: true }));
 
 /** User bubbles and assistant prose of the thread, in order. */
 export const users = (page: Page): Locator =>
@@ -103,10 +109,10 @@ export async function startChat(page: Page, agentName: string): Promise<void> {
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   // the agent is picked: the composer's placeholder names it
   await expect(composer(page)).toHaveAttribute(
-    "placeholder",
+    "aria-placeholder",
     zh.chat.newPlaceholder.replace("{agent}", agentName),
   );
-  await expect(composer(page)).toBeEnabled();
+  await expect(composer(page)).toBeEditable();
 }
 
 /**

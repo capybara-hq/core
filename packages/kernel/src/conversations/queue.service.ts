@@ -13,7 +13,6 @@ import {
   type InternalMessageOptions,
   NO_REPLY_SKIPS,
   type ReplySkips,
-  type ResolvedExtra,
   type RunControl,
 } from "./conversations.service.js";
 import { EventLog, payloadJson } from "./event-log.js";
@@ -128,11 +127,11 @@ export class ConversationQueue {
   ): Promise<{ item: QueueItem | null; event?: ConversationEvent; created: boolean }> {
     const conv = await this.conversations.writable(orgId, conversationId, accountId);
     const files = input.files ?? [];
-    checkText(input.text, files.length, input.attachments?.length ?? 0, input.skill !== undefined);
+    checkText(input.text, files.length, 0, input.skill !== undefined);
     const prior = await this.prior(conversationId, input.clientMessageId);
     if (prior) return prior;
-    // a cheap unlocked check first, so a full queue never reads `@` resources (slow, remote,
-    // credentialed); the locked check below stays authoritative
+    // a cheap unlocked check first (before a skill is rendered); the locked check below stays
+    // authoritative
     const { n: queued } = await this.db
       .selectFrom("conversation_queue")
       .select((eb) => eb.fn.countAll<string>().as("n"))
@@ -140,23 +139,13 @@ export class ConversationQueue {
       .executeTakeFirstOrThrow();
     if (Number(queued) >= QUEUE_MAX_ITEMS) throw queueFull();
     await this.conversations.checkPick(orgId, conv, accountId, input);
-    // a skill invocation is rendered now, like the `@` resources (spec §4.5)
+    // a skill invocation is rendered now (spec §4.5)
     const invoked = await this.conversations.prepareQueuedSkill(orgId, conv, accountId, input);
-    const extra = await this.conversations.resolveExtra(orgId, accountId, input);
     const skill =
       invoked === undefined || input.skill === undefined
         ? undefined
         : storedSkill(input.skill.name, invoked);
-    const out = await this.addIn(
-      orgId,
-      conversationId,
-      accountId,
-      input,
-      files,
-      skill,
-      extra,
-      internal,
-    );
+    const out = await this.addIn(orgId, conversationId, accountId, input, files, skill, internal);
     if (out === null) {
       return (
         (await this.prior(conversationId, input.clientMessageId)) ?? { item: null, created: false }
@@ -178,7 +167,6 @@ export class ConversationQueue {
     input: QueueInput,
     files: readonly string[],
     skill: ReturnType<typeof storedSkill> | undefined,
-    extra: ResolvedExtra,
     internal: InternalMessageOptions,
   ): Promise<{ row: QueueRow; created: boolean } | null> {
     const t = this.db.db;
@@ -230,12 +218,9 @@ export class ConversationQueue {
         account_id: accountId,
         position: last === null ? 1 : Number(last) + 1,
         text: noNul(input.text),
-        content: payloadJson([
-          ...(skill === undefined ? [] : [skill.first]),
-          ...extra.blocks,
-          ...blocks,
-        ]),
-        attachments: payloadJson(extra.attachments),
+        content: payloadJson([...(skill === undefined ? [] : [skill.first]), ...blocks]),
+        // only leftover rows (older versions) carry `@` resources
+        attachments: payloadJson([]),
         files: JSON.stringify(fileMeta),
         client_message_id: input.clientMessageId,
         model: input.model === undefined ? null : JSON.stringify(input.model),
