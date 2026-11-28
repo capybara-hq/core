@@ -594,14 +594,14 @@ function sidebarBlocks(): ReactNode {
       <SidebarBlock
         id="sidebar-item-hover"
         {...base}
-        force={{ pseudo: ["hover"], selector: navAt("connectors") }}
+        force={{ pseudo: ["hover"], selector: navAt("skills-connectors") }}
       />
       <SidebarBlock
         id="sidebar-item-focus"
         {...base}
         // The inbox left the nav items for the brand row (an icon button) and there is no home
         // item: the focus ring is shown on 连接器, a nav item every sidebar has (guests' too).
-        force={{ pseudo: ["focus", "focus-visible"], selector: navAt("connectors") }}
+        force={{ pseudo: ["focus", "focus-visible"], selector: navAt("skills-connectors") }}
       />
       <SidebarBlock id="sidebar-conversation-active" activeConversation="cnv_r2" />
       <SidebarBlock id="sidebar-group-collapsed" {...base} collapsed={["agt_research"]} />

@@ -27,19 +27,16 @@ test("keyboard: Tab enters the nav at the current item, ↓ moves, Enter follows
   await b.getByRole("link", { name: /^收件箱/ }).focus();
   await page.keyboard.press("Tab");
   await expect(b.getByRole("link", { name: "智能体" })).toBeFocused();
-  // Nav order (acceptance 2026-11-07): 新会话, 智能体, 技能, 连接器, then the 更多 button; no 首页.
+  // Nav order (option B, 2026-11-29): New conversation, Agents, Skills · Connectors, then More.
   await page.keyboard.press("ArrowDown");
-  await expect(b.getByRole("link", { name: "技能" })).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  await expect(b.getByRole("link", { name: "连接器" })).toBeFocused();
+  await expect(b.getByRole("link", { name: "技能 · 连接器" })).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(b.getByRole("button", { name: "更多", exact: true })).toBeFocused();
   await expect(b.getByRole("link", { name: "首页" })).toHaveCount(0);
   await page.keyboard.press("ArrowUp");
-  await page.keyboard.press("ArrowUp");
-  await expect(b.getByRole("link", { name: "技能" })).toBeFocused();
+  await expect(b.getByRole("link", { name: "技能 · 连接器" })).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/at=skills/);
+  await expect(page).toHaveURL(/at=skills-connectors/);
 });
 
 test("group collapse animates its height over motion.expand", async ({ page }) => {
