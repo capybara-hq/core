@@ -19,13 +19,6 @@
   inherits: true;
   initial-value: 0px;
 }
-/* How far the paper starts below its usual place for end controls alone: the end row from 600 up,
-   else 0 (below). Registered so a style query can tell the end band from the start one. */
-@property --cb-shell-end-drop {
-  syntax: "<length>";
-  inherits: true;
-  initial-value: 0px;
-}
 /* The compact flat title bar's height (below): the top row's height below 600 inside the desktop
    shell with reported controls, else 0. Registered for the same reason. */
 @property --cb-shell-flat {
@@ -296,7 +289,6 @@
 @media (min-width: 600px) {
   :root[data-shell="desktop"] .cb-shell:not([data-banner="true"]) {
     --cb-shell-paper-drop: var(--cb-shell-row-end);
-    --cb-shell-end-drop: var(--cb-shell-row-end);
   }
   :root[data-shell="desktop"]
     .cb-shell:not([data-banner="true"]):has(
@@ -512,46 +504,69 @@
     height: 0;
   }
 }
-/* A first-level page in the end controls' band (#1065, maintainer decision 2026-11-28): its head's
-   title row (or a title-less head's actions) is the band's row beside the caption buttons, as the
-   conversation title bar and a deeper page's path row are, so the band is never empty there: the
-   row is as high as the band and centred in it, its end (the head's actions) clear of the controls
-   past the frame's centring margin, and the next row (the tab row, the notice) or the body starts
-   on the paper below it with its usual head gap. The paper's top gutter keeps space.2 high: the
-   row's own filler drags the band, and the gutter must not lie over the row's controls. The
-   start band (the rail's form) keeps its first-level band empty but for the lights and the toggle. */
-@container not style(--cb-shell-end-drop: 0px) {
-  :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
-    padding-top: 0;
-  }
-  :root[data-shell="desktop"]
-    .cb-shell-main
-    .cb-template-head:not(:has(.cb-pageheader-path))
-    :is(.cb-pageheader > .cb-pageheader-row, .cb-pageheader-titleless) {
+/* The band's search field (layered shell spec §2, desktop client spec §7.3, maintainer decision
+   2026-11-28): wherever the window's top row is a band of ground (the start controls' band in the
+   rail's form, the end controls' band; `--cb-shell-paper-drop` not 0, so never from compact, with
+   a banner, beside macOS's full sidebar or in a browser), a field looking like an input sits at
+   the window's centre, centred on the controls' row, and opens the command palette as the
+   sidebar's search button does. Not on a conversation: its band row (path, title, panel toggles)
+   is full. band-search.tsx hides it (`data-fits="false"`, still laid out to be measured) where it
+   would overlap the band row's content, the sidebar or the controls; while it shows, the sidebar's
+   (or the rail's) search button gives way to it. A control: no-drag (below). */
+.cb-band-search {
+  display: none;
+}
+@container not style(--cb-shell-paper-drop: 0px) {
+  :root[data-shell="desktop"] .cb-shell:not([data-banner="true"]) > .cb-band-search {
+    display: flex;
+    position: absolute;
+    z-index: 2;
+    top: calc((var(--cb-shell-row) - var(--cb-control-default)) / 2);
+    left: 50%;
+    box-sizing: border-box;
+    width: clamp(160px, 22vw, 280px);
+    height: var(--cb-control-default);
     align-items: center;
-    min-height: var(--cb-shell-row);
-    padding-right: max(
-      0px,
-      calc(
-        var(--cb-shell-reserve-end) +
-        var(--cb-space-2) -
-        var(--cb-content-pad) -
-        var(--cb-inset-right) -
-        max(0px, (100cqw - var(--cb-layout-content)) / 2)
-      )
-    );
+    gap: var(--cb-space-2);
+    padding: 0 var(--cb-pad-default-x);
+    border: 1px solid var(--cb-line);
+    border-radius: var(--cb-radius-sm);
+    background: var(--cb-field);
+    color: var(--cb-muted);
+    font: inherit;
+    font-size: var(--cb-type-small-size);
+    line-height: var(--cb-type-small-line);
+    text-align: start;
+    cursor: pointer;
+    pointer-events: auto;
+    transform: translateX(-50%);
+  }
+  :root[data-shell="desktop"] .cb-shell > .cb-band-search:hover {
+    border-color: var(--cb-line-strong);
+  }
+  :root[data-shell="desktop"] .cb-shell > .cb-band-search:focus-visible {
+    outline: 1px solid var(--cb-accent);
+    outline-offset: -1px;
+  }
+  :root[data-shell="desktop"] .cb-shell > .cb-band-search[data-fits="false"] {
+    visibility: hidden;
   }
   :root[data-shell="desktop"]
-    .cb-shell-column:has(
-      .cb-template-head
-        :is(
-          .cb-pageheader > .cb-pageheader-row:not(.cb-pageheader-path + .cb-pageheader-row),
-          .cb-pageheader-titleless > h1 + .cb-drag-fill
-        )
-    )
-    > .cb-shell-gutter {
-    height: var(--cb-space-2);
+    .cb-shell:has(.cb-shell-main .cb-title-bar:not([data-new]))
+    > .cb-band-search {
+    display: none;
   }
+  :root[data-shell="desktop"]
+    .cb-shell:has(> .cb-band-search[data-fits="true"])
+    > .cb-sidebar
+    [data-part="search"] {
+    display: none;
+  }
+}
+.cb-band-search-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* Below 600 the floating row is the top row: centred on the controls and clear of them. The side
    insets stay in both ends: a desktop shell may report them (`--cb-shell-inset-*`, 0 otherwise),
@@ -793,7 +808,8 @@
   .cb-drawer,
   .cb-drawer-scrim,
   .cb-conv-pushed,
-  .cb-shell-rail-toggle
+  .cb-shell-rail-toggle,
+  .cb-band-search
 ) {
   -webkit-app-region: no-drag;
   app-region: no-drag;

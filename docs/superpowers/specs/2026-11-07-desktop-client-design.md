@@ -633,11 +633,17 @@ reports it).
   papers (the conversation's and the inline right panel's, a page's) start at its bottom edge with
   one top edge (the same optical centring; the caption buttons' hover grounds end where the paper
   starts), so the paper does not jump when the panel opens or closes (layered shell spec §2). A
-  first-level page's title row (the h1 and its actions) is the band's row there, so the band is
-  never empty. Start and end differ on purpose: start controls (the traffic lights) keep the rail's
+  first-level page's head (the large title, its actions, the tabs) stays in the paper below the
+  band, as on macOS (#1096). Start and end differ on purpose: start controls (the traffic lights) keep the rail's
   band above, and beside the full sidebar the title row stays in the paper. Geometry comes from the
   reported rectangle alone (`--cb-shell-row-end`, 0 without controls or with controls at the start);
   below 600 the flat title bar is unchanged.
+- **The band's search field (maintainer decision 2026-11-28).** Any ground band (the start controls'
+  band in the rail's form, the end controls' band) holds a search field at the window's centre on
+  the controls' row, which opens the command palette as the sidebar's search button does; while it
+  shows, that button (the full sidebar's or the rail's) gives way. Not on a conversation, whose band
+  row is full; hidden where it would overlap the band row's content, the sidebar or the window
+  controls (the button comes back); no drag region. Layered shell spec §2.
 - **The content column's top row** is the conversation title bar (48) or a template head's path
   row (as high as the row, centred on it; the title row follows `layout.head-path` below). Past a
   rail both start after the controls (the title bar at the rectangle's edge plus `space.3`, the
@@ -653,7 +659,7 @@ reports it).
   starts below the end controls instead, the strip above it a drag filler (outside an AppShell;
   inside one the end band below applies). Every other
   right-side control of a template (a page head's actions, the tab row's search) is below the top
-  row, except a first-level head's title row in the end band (above). A first-level head reserves
+  row. A first-level head reserves
   the top row only where controls reach into the content column; beside the full sidebar it starts
   as in a browser (maintainer decision 2026-11-28).
 - **Overlays** on the controls' side start below the row: the rail's conversations sheet, the

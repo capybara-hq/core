@@ -140,14 +140,30 @@ only, recolours `panel`) render unchanged and still pass the readability check.
   of the controls; a deeper page's path row) sits in it beside the caption buttons, and the papers
   (the conversation's and the inline right panel's, a page's) start at its bottom edge (optical
   centring, above) with one top edge, so nothing jumps when the panel opens or closes and the
-  system's square hover and close grounds always lie on the ground. A first-level page (no path row)
-  puts its head's title row (the h1 and the head's actions, or a title-less head's actions) in the
-  band too, centred in it, the actions clear of the caption buttons, so the band is never empty; the
-  tab row or the body starts on the paper below with its usual head gap. **Start and end differ by
+  system's square hover and close grounds always lie on the ground. The band holds only what the
+  conversation band holds, a path row and the panel toggles (maintainer decision 2026-11-28,
+  #1096): a first-level page's head (the large title, its actions, the tabs) stays in the paper as
+  on macOS, `space.5` below the band, and its band holds the caption buttons alone, as the rail's
+  form on macOS holds the lights and the toggle. **Start and end differ by
   maintainer decision (2026-11-28):** start controls (the macOS traffic lights) keep the band to the
   rail's form, and beside the full sidebar the paper keeps its first row (the lights sit over the
   sidebar's brand row, not over a paper). It is keyed on the reported rectangle alone; without
   controls (a browser) and below 600 (the flat title bar) nothing changes.
+- **The band's search field (maintainer decision 2026-11-28).** Wherever the window's top row is a
+  band of ground (the start controls' band in the rail's form, the end controls' band in every form
+  from 600 up), the band's centre holds a search field so the band never looks empty: it looks like
+  an input (the field ground, a `line` border, `radius.sm`, `control.default` high, the search icon
+  and 搜索 / Search in `muted`), sits at the window's centre on the controls' row (the window's
+  centre, not the band's free span: it stays put as the path row's length or the panel toggles
+  change), has an accessible name (搜索或执行命令), keyboard focus with the 1px inset ring and
+  `aria-keyshortcuts` Ctrl/⌘ K, is no drag region, and opens the command palette exactly as the
+  sidebar's search button does. While it shows, the sidebar's (or the rail's) search button gives
+  way to it. It is never drawn on a conversation (`/chat/<id>`), whose band row (path, title, panel
+  toggles) is full, and it hides (the button comes back) wherever it would come within 12 px of the
+  band row's content (a path or title, a path row, the panel toggles, the band's sidebar toggle),
+  the sidebar or the window controls, measured again on resize and on every page change. Without a
+  band (macOS beside the full sidebar, a browser, compact, a banner, a frame without a palette such
+  as the setup frame) nothing changes.
 - **A first-level head beside the full sidebar (maintainer decision 2026-11-28).** A head without a
   path row reserves the window's top row only where controls reach into the content column (end
   controls, or start controls past the visible sidebar: `--cb-shell-head-row`); beside the full
