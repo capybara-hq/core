@@ -225,6 +225,28 @@ export class LoopbackGrants {
     return this.live.livePorts(orgId, deviceId, serviceId);
   }
 
+  /**
+   * In the caller's transaction (`propagation: "mandatory"`): the key's live grant read
+   * `FOR SHARE`, or null. A revoke committed first is not seen; one that comes later waits for the
+   * caller's transaction.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async liveLockedIn(key: LoopbackGrantKey): Promise<LoopbackGrantRow | null> {
+    const row = await this.db
+      .selectFrom("device_loopback_grants")
+      .selectAll()
+      .where("org_id", "=", key.orgId)
+      .where("device_id", "=", key.deviceId)
+      .where("service_id", "=", key.serviceId)
+      .where("conversation_id", "=", key.rootConversationId)
+      .where("port", "=", key.port)
+      .where("revoked_at", "is", null)
+      .where("expires_at", ">", sql<Date>`now()`)
+      .forShare()
+      .executeTakeFirst();
+    return row === undefined ? null : rowOf(row);
+  }
+
   /** The live grants of one (device, service) held by the root, by port. */
   async liveForRoot(
     orgId: string,

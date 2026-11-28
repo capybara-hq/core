@@ -22,6 +22,7 @@ import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { ESCALATION_UNATTENDED_WHY } from "../../src/sandbox/review/permission-candidate.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import {
   loopbackDeniedNote,
   loopbackExpiredNote,
@@ -232,8 +233,13 @@ async function profile(p: "request-approval" | "approve-for-me" | "full-access")
 /** The model calls `navigate` on the local port once (starting the echo service first). */
 const navigate = (url = URL_3999) =>
   postMessage(s.req, orgId, s.conversationId, `tool:${NAVIGATE}:${navigateInput(url)}`);
-const navigateInput = (url = URL_3999, blockedAgain?: string[]) =>
-  JSON.stringify({ url, service: true, ...(blockedAgain !== undefined && { blockedAgain }) });
+const navigateInput = (url = URL_3999, blockedAgain?: string[], ask = false) =>
+  JSON.stringify({
+    url,
+    service: true,
+    ...(blockedAgain !== undefined && { blockedAgain }),
+    ...(ask && { ask }),
+  });
 
 const decide = (id: string, payload: Record<string, unknown>) =>
   s.req({ method: "POST", url: `/api/v1/orgs/${orgId}/approvals/${id}/decision`, payload });
@@ -726,6 +732,75 @@ describe("loopback port asks", () => {
     const [r] = await results();
     expect(r?.content).toContain(`Loaded ${URL_3999}.`);
     expect((await grants())[0]).toMatchObject({ source: "owner-panel" });
+  });
+
+  it("an input round after two re-runs resumes in the attempt after them, with the answer", async () => {
+    await profile("full-access");
+    // attempt 1: the port is granted; attempt 2: a CDN host is asked about and approved;
+    // attempt 3 asks an input round; its answer runs attempt 4
+    await postMessage(
+      s.req,
+      orgId,
+      s.conversationId,
+      `tool:${NAVIGATE}:${navigateInput(URL_3999, ["cdn.example.org"], true)}`,
+    );
+    const ask = await nextAsk();
+    expect((await decide(ask.id, { decision: "approve", scope: "always" })).statusCode).toBe(200);
+    const question = await waitFor(
+      async () =>
+        (
+          await db
+            .selectFrom("questions")
+            .select(["id", "status"])
+            .where("conversation_id", "=", s.conversationId)
+            .executeTakeFirst()
+        )?.id,
+      30_000,
+      "the input round",
+    );
+    const res = await s.req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/questions/${question}/answer`,
+      payload: { answer: { done: true } },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    await waitForTerminal(db, s.conversationId, 1, 30_000);
+    expect(await startedAttempts()).toEqual([1, 2, 3, 4]);
+    const [r, ...rest] = await results();
+    expect(rest).toEqual([]);
+    expect(r?.content).toContain("done: true");
+    expect(r?.content).not.toContain("Result unknown");
+  });
+
+  it("a panel grant revoked before the settle leaves the ask pending and the port closed", async () => {
+    await profile("request-approval");
+    await navigate();
+    const ask = await nextAsk();
+    const key = {
+      orgId,
+      deviceId: s.deviceId,
+      serviceId: SERVICE_ID,
+      rootConversationId: s.conversationId,
+      port: 3999,
+    };
+    const grantsService = k.app.get(LoopbackGrants);
+    await k.app
+      .get(TransactionHost)
+      .run(() =>
+        grantsService.grantIn(key, { source: "owner-panel", actorAccountId: s.accountId }),
+      );
+    // revoked from another surface before the panel's settle runs
+    expect(await grantsService.revoke(key, s.accountId)).toBe(true);
+    const settled = await k.app.get(ApprovalsService).settleLoopbackAsks(orgId, s.accountId, key);
+    expect(settled.approved).toBe(0);
+    expect(settled.failed.map((f) => (f.err as { code?: string }).code)).toEqual([
+      "approval.loopback_unavailable",
+    ]);
+    expect((await asks()).find((a) => a.id === ask.id)?.status).toBe("pending");
+    expect(
+      await grantsService.liveForRoot(orgId, s.deviceId, SERVICE_ID, s.conversationId),
+    ).toEqual([]);
+    expect((await grants()).every((g) => g.revoked_at !== null)).toBe(true);
   });
 
   it("resumes a granted call as the rerun after a crash", async () => {

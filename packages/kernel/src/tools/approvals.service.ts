@@ -778,7 +778,7 @@ export class ApprovalsService {
     /** A loopback port ask's approval writes the root conversation's grant (absent: refused). */
     @Optional()
     @Inject(LoopbackGrants)
-    private readonly loopback?: Pick<LoopbackGrants, "grantIn" | "refusalNow">,
+    private readonly loopback?: Pick<LoopbackGrants, "grantIn" | "refusalNow" | "liveLockedIn">,
   ) {}
 
   /**
@@ -1512,6 +1512,8 @@ export class ApprovalsService {
     body: DecisionInput,
     actorTokenId: string | undefined,
     via: DecisionVia,
+    /** A panel grant settling the ask: approve only while that grant is still live. */
+    opts: { panelGrantOnly?: boolean } = {},
   ): Promise<ApprovalRecord> {
     const row = await this.db
       .selectFrom("approvals")
@@ -1554,7 +1556,7 @@ export class ApprovalsService {
     }
     if (row.expired) throw new ApiError("approval.already_decided", "Approval has expired");
     if (detail.kind === "loopback")
-      return this.decideLoopback(orgId, ask, detail, accountId, body, via);
+      return this.decideLoopback(orgId, ask, detail, accountId, body, via, opts.panelGrantOnly);
     const asked = [...new Set(networkAskHosts(detail))];
     let network: NetworkDecision;
     if (body.decision === "approve") {
@@ -1624,6 +1626,11 @@ export class ApprovalsService {
     accountId: string,
     body: DecisionInput,
     via: DecisionVia,
+    /**
+     * Settled by the owner's panel grant: the grant is that live row (read `FOR SHARE` in the
+     * decision's transaction), never a new one; a grant revoked meanwhile refuses the approval.
+     */
+    panelGrantOnly = false,
   ): Promise<ApprovalRecord> {
     if (body.hosts !== undefined) {
       throw new ApiError("validation_failed", "A loopback port ask takes no hosts", [
@@ -1672,22 +1679,29 @@ export class ApprovalsService {
       body,
       network,
       rootConversationId,
-      () =>
-        loopback.grantIn(
-          {
-            orgId,
-            deviceId: detail.deviceId,
-            serviceId: detail.service,
-            rootConversationId,
-            port: detail.port,
-          },
-          {
-            source: "human",
-            actorAccountId: accountId,
-            approvalId: id,
-            call: { runId: ask.runId, callId: ask.callId, attempt: detail.attempt },
-          },
-        ),
+      async () => {
+        const key = {
+          orgId,
+          deviceId: detail.deviceId,
+          serviceId: detail.service,
+          rootConversationId,
+          port: detail.port,
+        };
+        if (panelGrantOnly) {
+          if ((await loopback.liveLockedIn(key)) === null)
+            throw new ApiError(
+              "approval.loopback_unavailable",
+              `The grant of port ${detail.port} on the device ended before this approval was settled.`,
+            );
+          return;
+        }
+        await loopback.grantIn(key, {
+          source: "human",
+          actorAccountId: accountId,
+          approvalId: id,
+          call: { runId: ask.runId, callId: ask.callId, attempt: detail.attempt },
+        });
+      },
     );
     await this.announceDecided(decided.record, decided.toSeq);
     return decided.record;
@@ -1697,14 +1711,16 @@ export class ApprovalsService {
    * The owner granted a port from the browser panel (`ctx.deviceAccess.grantLoopbackPort`): the
    * pending loopback asks for that port of the same device service in the same conversation tree
    * are approved as the owner's decision (the grant they find is the panel's), so their calls run
-   * again now instead of waiting for the approval timeout. Returns how many were approved; an ask
-   * decided meanwhile, or one the owner may no longer decide, is left as it is.
+   * again now instead of waiting for the approval timeout, and only while the panel's grant is
+   * still live (a revoke in the meantime wins). An ask decided meanwhile, or one the owner may no
+   * longer decide, is left as it is; any other failure leaves that ask pending and is returned (the
+   * caller logs it), and the others are still settled.
    */
   async settleLoopbackAsks(
     orgId: string,
     accountId: string,
     key: { deviceId: string; serviceId: string; rootConversationId: string; port: number },
-  ): Promise<number> {
+  ): Promise<{ approved: number; failed: { approvalId: string; err: unknown }[] }> {
     const rows = await this.db
       .selectFrom("approvals")
       .innerJoin("conversations", "conversations.id", "approvals.conversation_id")
@@ -1719,14 +1735,23 @@ export class ApprovalsService {
       .where(sql<string>`approvals.detail->>'port'`, "=", String(key.port))
       .execute();
     let approved = 0;
+    const failed: { approvalId: string; err: unknown }[] = [];
     for (const r of rows) {
-      const root =
-        r.parent_conversation_id === null
-          ? r.conversation_id
-          : await rootConversationOf(this.db.db, r.parent_conversation_id);
-      if (root !== key.rootConversationId) continue;
       try {
-        await this.decide(orgId, r.id, accountId, { decision: "approve", scope: "session" });
+        const root =
+          r.parent_conversation_id === null
+            ? r.conversation_id
+            : await rootConversationOf(this.db.db, r.parent_conversation_id);
+        if (root !== key.rootConversationId) continue;
+        await this.decideNetwork(
+          orgId,
+          r.id,
+          accountId,
+          { decision: "approve", scope: "session" },
+          undefined,
+          "web",
+          { panelGrantOnly: true },
+        );
         approved += 1;
       } catch (e) {
         if (
@@ -1734,10 +1759,10 @@ export class ApprovalsService {
           ["approval.already_decided", "approval.not_found", "approval.not_yours"].includes(e.code)
         )
           continue;
-        throw e;
+        failed.push({ approvalId: r.id, err: e });
       }
     }
-    return approved;
+    return { approved, failed };
   }
 
   /**

@@ -628,7 +628,14 @@ export class DeviceAccessService {
     await this.refreshLoopback(d, key.serviceId);
     // the agent's pending ask for the same port is the owner's decision now: its call runs again
     try {
-      await this.approvals.settleLoopbackAsks(d.orgId, scope.accountId, key);
+      const { failed } = await this.approvals.settleLoopbackAsks(d.orgId, scope.accountId, key);
+      for (const f of failed)
+        this.log.warn("a pending loopback ask not settled after a panel grant", {
+          deviceId: d.deviceId,
+          serviceId: key.serviceId,
+          approvalId: f.approvalId,
+          err: f.err,
+        });
     } catch (err) {
       this.log.warn("pending loopback asks not settled after a panel grant", {
         deviceId: d.deviceId,

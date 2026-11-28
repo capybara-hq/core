@@ -3,6 +3,7 @@ import {
   type DeviceServiceSpec,
   defineExtension,
   type ExtensionContext,
+  type InputRequired,
   isLoopbackGrantHost,
   type ServiceBlockedHost,
   type ToolCallContext,
@@ -52,7 +53,8 @@ const REFUSED_ITEM = {
  *   the URL): `blocked` (layer `device`, or each entry's own layer when given as
  *   `{ host, layer }`) on the first invocation of a logical call; a re-run of the same call (same
  *   idempotency key) reports `blockedAgain` when given (its second invocation only; a third loads
- *   the page), else loads the page. With `service: true`
+ *   the page), else loads the page. With `ask: true` its third invocation asks an input round
+ *   (one boolean field `done`), and the invocation that resumes it answers `done: <answer>`. With `service: true`
  *   it first starts and asks the echo service (so the report is about the device those calls
  *   resolved), then awaits `globalThis.__fakeDeviceAccessBeforeReport` when a test set one. Every
  *   invocation's key is recorded in `globalThis.__fakeDeviceAccessCalls`
@@ -128,6 +130,7 @@ export default defineExtension({
             service: { type: "boolean" },
             blocked: { type: "array", items: REFUSED_ITEM },
             blockedAgain: { type: "array", items: REFUSED_ITEM },
+            ask: { type: "boolean" },
           },
           required: ["url"],
         },
@@ -149,6 +152,9 @@ export default defineExtension({
         calls.push(key);
         const n = calls.filter((k) => k === key).length;
         const first = n === 1;
+        if (call.resume !== undefined)
+          return text(`done: ${JSON.stringify(call.resume.answer?.done ?? null)}`);
+        if ((input as { ask?: boolean }).ask === true && n === 3) return askDone();
         if (service) await echo(call, url);
         await beforeReport()?.();
         const loopback = first ? loopbackRefusal(url) : null;
@@ -228,14 +234,17 @@ export default defineExtension({
           ctx.deviceAccess.reportBlockedHosts(call, reported(blocked), {
             url: "https://example.org/",
           });
-        return {
-          kind: "input_required" as const,
-          form: {
-            title: "Finish in the browser",
-            fields: [{ key: "done", label: "Done", schema: { type: "boolean" }, required: true }],
-          },
-        };
+        return askDone();
       },
     );
+  },
+});
+
+/** The input round `handoff` (and `navigate` with `ask`) asks: one boolean field `done`. */
+const askDone = (): InputRequired => ({
+  kind: "input_required" as const,
+  form: {
+    title: "Finish in the browser",
+    fields: [{ key: "done", label: "Done", schema: { type: "boolean" }, required: true }],
   },
 });

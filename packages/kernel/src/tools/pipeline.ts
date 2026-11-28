@@ -1232,16 +1232,6 @@ function serviceRerunAfter(ask: ApprovalRecord | null): number | null {
 }
 
 /**
- * The attempt after which a call runs again: a device service's approved network ask
- * ({@link serviceRerunAfter}), else the call's live loopback port grant (Full access, the review
- * model or an approved loopback port ask granted the port to the attempt that was refused it).
- * Null when the call does not run again.
- */
-function rerunAfter(ask: ApprovalRecord | null, grant: LoopbackGrantRow | null): number | null {
-  return serviceRerunAfter(ask) ?? loopbackAskRerunAfter(ask) ?? grant?.attempt ?? null;
-}
-
-/**
  * The attempt of an approved loopback port ask: the call runs again after it whatever became of
  * the grant (the approval is the person's decision; a grant the panel made first, or one that
  * ended since, leaves the re-run to meet the port as it is and report it).
@@ -1251,7 +1241,12 @@ function loopbackAskRerunAfter(ask: ApprovalRecord | null): number | null {
   return ask?.status === "approved" && d?.kind === "loopback" ? d.attempt : null;
 }
 
-/** Every attempt after which the call ran again (an approved ask, a loopback grant). */
+/**
+ * Every attempt after which the call ran again: a device service's approved network ask
+ * ({@link serviceRerunAfter}), an approved loopback port ask ({@link loopbackAskRerunAfter}), or
+ * the call's live loopback port grant (Full access or the review model granted the port to the
+ * attempt that was refused it).
+ */
 function rerunPoints(ask: ApprovalRecord | null, grant: LoopbackGrantRow | null): Set<number> {
   const points = [serviceRerunAfter(ask), loopbackAskRerunAfter(ask), grant?.attempt ?? null];
   return new Set(points.filter((p): p is number => p !== null));
@@ -1635,11 +1630,12 @@ export class ToolPipeline {
     const ask = await this.deps.approvals.networkForCall(ctx.runId, call.id);
     const grant = await this.loopbackGrantOf(ctx.runId, call.id);
     let attempt = rounds.length + 1;
-    // a device service's call that ran again after its network ask took one attempt more (browser
-    // use spec §7.1): input rounds the re-run asked come after it
+    // each time the call ran again (after its network ask, browser use spec §7.1, or a loopback
+    // grant or ask) took one attempt more: input rounds asked after a re-run come after it, so
+    // every re-run point the count has passed adds one, in order
+    const reruns = rerunPoints(ask, grant);
     if (rounds.length > 0) {
-      const asked = rerunAfter(ask, grant);
-      if (asked !== null && attempt > asked) attempt += 1;
+      for (const p of [...reruns].sort((a, b) => a - b)) if (attempt > p) attempt += 1;
     }
     const resume: ToolResume | undefined = last
       ? {
@@ -1655,7 +1651,6 @@ export class ToolPipeline {
     );
     // a call that ran again (after a loopback grant or an approved ask) is looked at in its latest
     // attempt: a re-run that asked a network ask of its own resumes from that ask
-    const reruns = rerunPoints(ask, grant);
     while (started?.type === "tool_call_started" && reruns.has(attempt)) {
       const next = await this.deps.eventLog.findByIdem(
         ctx.conversationId,
