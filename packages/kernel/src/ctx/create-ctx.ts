@@ -759,6 +759,11 @@ export function createExtensionContext(
           // a draining instance (its successor is loaded) never rolls a service back to its files
           superseded: () => disposing || lifecycle.signal.aborted,
         };
+        const loopbackMissing = () =>
+          new DeviceAccessError(
+            "capability_missing",
+            "Loopback port grants are not available in this deployment yet.",
+          );
         const backend = (): DeviceAccessBackend => {
           const b = deps.deviceAccess?.();
           if (!b)
@@ -776,6 +781,16 @@ export function createExtensionContext(
           streamTicket: async (scope) => backend().streamTicket(caller, scope),
           addNetworkHosts: async (scope) => backend().addNetworkHosts(caller, scope),
           answerHandoff: async (scope) => backend().answerHandoff(caller, scope),
+          // loopback port grants: placeholders until the kernel implements them
+          grantLoopbackPort: async () => {
+            throw loopbackMissing();
+          },
+          revokeLoopbackPort: async () => {
+            throw loopbackMissing();
+          },
+          loopbackPorts: async () => {
+            throw loopbackMissing();
+          },
         } satisfies DeviceAccessCtx;
       })()
     : undefined;

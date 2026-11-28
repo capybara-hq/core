@@ -223,11 +223,17 @@ export interface DeviceAccessCtx {
    * planning still applies (a host the device list cannot take is never asked about; an IP
    * literal is always `address`). A host reported twice keeps its most restrictive layer.
    * `opts.url` is the page the refusals came from, shown with the ask.
+   *
+   * A loopback refusal (`layer: "address"`, a loopback grant host with its `port`) of an extension
+   * that declares `permissions.deviceAccess.loopbackPorts` raises a loopback port ask instead,
+   * where the device's outside-sandbox ceilings allow one (a note otherwise). `opts.service` is the
+   * declared service the refusals came from; it is required for a loopback ask when the
+   * extension declares more than one service.
    */
   reportBlockedHosts(
     call: ToolCallContext,
     hosts: ServiceBlockedHost[],
-    opts?: { url?: string },
+    opts?: { url?: string; service?: string },
   ): void;
   /**
    * A short-lived, single-use ticket for one viewer stream to the service (the person's panel
@@ -243,6 +249,33 @@ export interface DeviceAccessCtx {
    */
   addNetworkHosts(scope: DeviceAccessScope & { hosts: string[] }): Promise<void>;
   /**
+   * Grants the service one loopback port of the device (`LOOPBACK_GRANT_HOSTS` on `port`) for the
+   * scope conversation's tree: the grant is held by the conversation's root, so its sub-agents
+   * share it. Owner only (the person's own click in the panel; needs
+   * `permissions.deviceAccess.loopbackPorts`, else `loopback_not_declared`). The same ceilings as
+   * an outside-sandbox escalation apply (platform, org, device and owner settings, an attended
+   * run, a provider that supports loopback ports): refused with `loopback_unavailable`; more than
+   * `LOOPBACK_MAX_PORTS_PER_SERVICE` live ports refuse with `loopback_limit`. Recorded with source
+   * `owner-panel`; the grant lives 24 hours (or until revoked, the conversation is deleted or the
+   * outside-sandbox setting is switched off), and the running service is refreshed with it.
+   * Granting a live port again answers the existing grant.
+   */
+  grantLoopbackPort(
+    scope: DeviceAccessScope & { service: string; port: number },
+  ): Promise<LoopbackGrantView>;
+  /**
+   * Revokes the scope conversation root's grant of `port` to the service (owner only, needs
+   * `permissions.deviceAccess.loopbackPorts`); succeeds when there is none. The running service is
+   * refreshed without the port.
+   */
+  revokeLoopbackPort(scope: DeviceAccessScope & { service: string; port: number }): Promise<void>;
+  /**
+   * The live loopback port grants of the service held by the scope conversation's root, sorted by
+   * port (owner only, needs `permissions.deviceAccess.loopbackPorts`). Grants live 24 hours from
+   * issue and follow the same outside-sandbox ceilings as {@link grantLoopbackPort}.
+   */
+  loopbackPorts(scope: DeviceAccessScope & { service: string }): Promise<LoopbackGrantView[]>;
+  /**
    * Answers the handoff question of this extension's tool call `callId` from the panel.
    * `handoffConversationId` is the conversation whose tool call raised the handoff (the extension
    * learns it from `ToolCallContext.conversationId`; the panel may echo it back, so it is
@@ -256,6 +289,23 @@ export interface DeviceAccessCtx {
   ): Promise<void>;
 }
 
+/**
+ * Who granted a loopback port: the person deciding an ask (`human`), the review model
+ * (`review-model`), a Full access profile within its ceilings (`full-access`), or the owner's own
+ * click in the panel (`owner-panel`, {@link DeviceAccessCtx.grantLoopbackPort}).
+ */
+export type LoopbackGrantSource = "human" | "review-model" | "full-access" | "owner-panel";
+
+/** One live loopback port grant of a device service ({@link DeviceAccessCtx.loopbackPorts}). */
+export interface LoopbackGrantView {
+  port: number;
+  source: LoopbackGrantSource;
+  /** ISO 8601 time the grant ends (24 hours after issue). */
+  expiresAt: string;
+  /** The port is a well-known database port (`LOOPBACK_DATABASE_PORTS`). */
+  database: boolean;
+}
+
 /** Why a {@link DeviceAccessCtx} call was refused. */
 export type DeviceAccessErrorCode =
   | "no_device"
@@ -264,7 +314,16 @@ export type DeviceAccessErrorCode =
   | "not_owner"
   | "service_not_declared"
   /** An `ifRunning` request found the device's instance or the service not running. */
-  | "not_running";
+  | "not_running"
+  /** A loopback port call from an extension without `permissions.deviceAccess.loopbackPorts`. */
+  | "loopback_not_declared"
+  /**
+   * A loopback port cannot be granted here: running outside the sandbox is off (platform, org,
+   * device or owner setting), the run is unattended, or the provider has no loopback support.
+   */
+  | "loopback_unavailable"
+  /** The service already holds `LOOPBACK_MAX_PORTS_PER_SERVICE` live loopback port grants. */
+  | "loopback_limit";
 
 /** A {@link DeviceAccessCtx} call was refused; the message is actionable English for the model. */
 export class DeviceAccessError extends Error {
