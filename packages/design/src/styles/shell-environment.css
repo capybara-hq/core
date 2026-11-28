@@ -12,6 +12,13 @@
   inherits: true;
   initial-value: 0px;
 }
+/* How far the paper starts below its usual place: the rail drop in the rail's form from 600 up,
+   else 0 (below). Registered for the same reason. */
+@property --cb-shell-paper-drop {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
 /* The compact flat title bar's height (below): the top row's height below 600 inside the desktop
    shell with reported controls, else 0. Registered for the same reason. */
 @property --cb-shell-flat {
@@ -252,6 +259,39 @@
     display: none;
   }
 }
+/* The paper's first row in the band (layered shell spec §2, §5, option A): in the rail's form from
+   600 up, where the rail drops below the band, the band is ground across the whole window and holds
+   the paper's first row after the lights and the band's sidebar toggle: the conversation title bar,
+   or a deeper page's path row. Nothing moves in the DOM: the row stays the first row of its paper's
+   box and keeps every top-row rule above (its height, its start after the toggle, its end clear of
+   end controls, its filler); only the paper's colour starts below it, `space.2` under the band, as
+   the paper lies `space.2` under the window's top edge elsewhere, and the next row (the thread, the
+   title row) starts there. A first-level page has no path row: its band holds only the lights and
+   the toggle, and its head starts inside the paper. The rail's form follows the visible sidebar as
+   `--cb-shell-lead` does; the full sidebar, a banner, compact and a window without start controls
+   past the rail keep 0. */
+@media (min-width: 600px) {
+  :root[data-shell="desktop"]
+    .cb-shell:not([data-banner="true"]):has(
+      > .cb-sidebar[data-mode="rail"]:not([data-responsive="true"])
+    ) {
+    --cb-shell-paper-drop: var(--cb-shell-rail-drop);
+  }
+}
+@media (min-width: 600px) and (max-width: 840px) {
+  :root[data-shell="desktop"]
+    .cb-shell:not([data-banner="true"]):has(> .cb-sidebar[data-responsive="true"]) {
+    --cb-shell-paper-drop: var(--cb-shell-rail-drop);
+  }
+}
+@media (min-width: 841px) {
+  :root[data-shell="desktop"]
+    .cb-shell:not([data-banner="true"]):has(
+      > .cb-sidebar[data-responsive="true"][data-collapsed="true"]
+    ) {
+    --cb-shell-paper-drop: var(--cb-shell-rail-drop);
+  }
+}
 /* Where the rail drops below the band no hairline closes the band: the band, the rail and the
    gutters are one ground (layered shell spec §2), and a line there would cut across the paper. */
 
@@ -332,7 +372,10 @@
         )
     )
     > .cb-shell-gutter {
-    height: max(var(--cb-space-2), var(--cb-shell-row));
+    height: calc(
+      max(var(--cb-space-2), var(--cb-shell-row)) +
+      min(var(--cb-space-2), calc(var(--cb-shell-paper-drop) * 100000))
+    );
   }
   :root[data-shell="desktop"]
     .cb-shell-main
@@ -374,6 +417,76 @@
   }
 }
 
+/* (the paper's first row in the band, above: after the top-row rules it overrides) */
+@container not style(--cb-shell-paper-drop: 0px) {
+  /* The paper's box (a page's shell main, the conversation's papers) starts at the window's top
+     edge, so its first row is the band's whole height and centred on the lights; the paper's
+     colour is a layer that starts space.2 below the band, and the box keeps its clip. */
+  :root[data-shell="desktop"] .cb-shell-column > .cb-shell-main:not(:has(.cb-conv-page)) {
+    margin-top: 0;
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-page {
+    padding-top: 0;
+  }
+  :root[data-shell="desktop"] .cb-shell-column > .cb-shell-main:not(:has(.cb-conv-page)),
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-main {
+    position: relative;
+    isolation: isolate;
+    background: transparent;
+  }
+  :root[data-shell="desktop"] .cb-shell-column > .cb-shell-main:not(:has(.cb-conv-page))::before,
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-main::before {
+    position: absolute;
+    z-index: -1;
+    inset: calc(var(--cb-shell-row) + var(--cb-space-2)) 0 0;
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-bg);
+    content: "";
+  }
+  /* The band's rows: the conversation title bar and a deeper page's path row, as high as the band. */
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-main > .cb-title-bar {
+    height: max(var(--cb-layout-title-bar), var(--cb-shell-row));
+    margin-bottom: var(--cb-space-2);
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path {
+    min-height: var(--cb-shell-row);
+  }
+  /* The next row starts on the paper: the thread right below the title bar, the title row space.5
+     into the paper (a head's top padding), and a first-level head (no path row) inside it. */
+  :root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path + .cb-pageheader-row {
+    margin-top: calc(var(--cb-space-2) + var(--cb-space-5));
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
+    padding-top: calc(var(--cb-shell-row) + var(--cb-space-2) + var(--cb-space-5));
+  }
+  /* The conversation's title bar is the band's whole row: it runs to the window's end edge over
+     the inline right panel (its end group, the panel and action toggles, at the far end, clear of
+     end controls), so the middle column lets it out sideways (it still clips vertically) and the
+     page is the container it measures. The inline panel's paper starts below the band, its box
+     too, so nothing of the panel lies over the bar's controls and its own strip filler is gone
+     (the bar's filler covers the band). */
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-page {
+    container-type: inline-size;
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-main {
+    overflow-x: visible;
+    overflow-y: clip;
+  }
+  :root[data-shell="desktop"] .cb-shell-column .cb-shell-main .cb-conv-main > .cb-title-bar {
+    width: 100cqw;
+    padding-right: max(
+      calc(var(--cb-space-3) + var(--cb-inset-right)),
+      calc(var(--cb-shell-reserve-end) + var(--cb-space-2))
+    );
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full]) {
+    margin-top: calc(var(--cb-shell-row) + var(--cb-space-2));
+    padding-top: 0;
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-panel > .cb-drag-fill {
+    height: 0;
+  }
+}
 /* Below 600 the floating row is the top row: centred on the controls and clear of them. The side
    insets stay in both ends: a desktop shell may report them (`--cb-shell-inset-*`, 0 otherwise),
    and the controls' reserve wins wherever the window controls sit. */

@@ -600,12 +600,12 @@ reports it).
   before the tools do. The full sidebar is unchanged by the rail rule below.
 - **The rail's top row (maintainer decision 2026-11-21, #532).** The rail (medium, or
   collapsed on expanded; 48) is narrower than the lights (92): where the reported controls reach
-  past the rail, the top row is one continuous band across the whole window on the page ground
-  (the content surface), with no vertical divider in it; the lights and the page or conversation
-  title sit in it, and the rail's surface, its divider and its mark start below the band. A
-  hairline (`line-soft`, the sidebar's divider colour) runs under the band across the whole window,
-  so the band reads as the title bar and the rail's divider meets it in a T (maintainer decision
-  2026-11-21). On expanded the collapsed rail's expand button moves into the band right after the controls and
+  past the rail, the top row is one continuous band across the whole window on the ground, with no
+  vertical divider in it; the lights sit in it, and the rail and its mark start below the band.
+  Since the layered shell (layered shell spec §2, amended for #1046) the paper's colour, or the
+  conversation's two papers, start `space.2` below the band, so the lights never lie on the paper;
+  the paper's first row (the conversation title bar, a deeper page's path row) stays in the band
+  after the toggle, and no hairline closes the band (it replaced the 2026-11-21 hairline). On expanded the collapsed rail's expand button moves into the band right after the controls and
   before the title (the title starts after it) and leaves the rail. The medium rail cannot expand;
   its sidebar toggle (maintainer decision 2026-11-21, design spec §6.13) sits in the same place in
   the band and opens the full sidebar as a drawer over the content, starting below the band so the
