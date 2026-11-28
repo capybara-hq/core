@@ -112,6 +112,29 @@ async function holdModelCalls(sleepMs: number): Promise<void> {
   expect(configured.statusCode, configured.body).toBe(200);
 }
 
+/**
+ * Holds the conversation's runs after `idle` before their run_started until `release`, which first
+ * lifts the model-call hold. model-call.ts records `summarizing` before the `model.request` hook
+ * reads the probe's config, so lifting the hold right after `summarizing` could let the idle
+ * summary through; lifted only after the idle run ended, it reaches no call but the next run's.
+ */
+function holdFollowing(conv: string, idle: string): { release: () => Promise<void> } {
+  const following = gate();
+  hooks.beforeRunStarted = async (runId, conversationId) => {
+    if (conversationId === conv && runId !== idle) await following.promise;
+  };
+  return {
+    release: async () => {
+      try {
+        await holdModelCalls(0);
+      } finally {
+        delete hooks.beforeRunStarted;
+        following.open();
+      }
+    },
+  };
+}
+
 const ev = <T extends ConversationEvent["type"]>(events: ConversationEvent[], type: T) =>
   events.filter(
     (e): e is ConversationEvent & { type: T; payload: EventPayload<T> } => e.type === type,
@@ -250,9 +273,13 @@ describe("idle compaction preemption (idle compaction spec §5.2)", () => {
     await holdModelCalls(60_000);
     const idle = await startIdle(conv);
     await summarizing(idle);
-    await holdModelCalls(0);
-    await postMessage(owner, orgId, conv, "echo:after the pause");
-    await runStatus(idle, "aborted");
+    const following = holdFollowing(conv, idle);
+    try {
+      await postMessage(owner, orgId, conv, "echo:after the pause");
+      await runStatus(idle, "aborted");
+    } finally {
+      await following.release();
+    }
     const [next] = await runsAfter(conv, idle);
 
     const events = await eventsOf(db, conv);
@@ -304,9 +331,13 @@ describe("idle compaction preemption (idle compaction spec §5.2)", () => {
     await holdModelCalls(60_000);
     const idle = await startIdle(conv);
     await summarizing(idle);
-    await holdModelCalls(0);
-    await finishTask(conv);
-    await runStatus(idle, "aborted");
+    const following = holdFollowing(conv, idle);
+    try {
+      await finishTask(conv);
+      await runStatus(idle, "aborted");
+    } finally {
+      await following.release();
+    }
     const [next] = await runsAfter(conv, idle);
     const events = await eventsOf(db, conv);
     expect(supersededOnly(events, idle)).toEqual([{ byAccountId: null, reason: "superseded" }]);
@@ -356,9 +387,13 @@ describe("idle compaction preemption (idle compaction spec §5.2)", () => {
       "background_task_finished",
     );
     await summarizing(idle);
-    await holdModelCalls(0);
-    await finishTask(conv);
-    await runStatus(idle, "aborted");
+    const following = holdFollowing(conv, idle);
+    try {
+      await finishTask(conv);
+      await runStatus(idle, "aborted");
+    } finally {
+      await following.release();
+    }
     const [next] = await runsAfter(conv, idle);
     const events = await eventsOf(db, conv);
     expect(supersededOnly(events, idle)).toEqual([{ byAccountId: null, reason: "superseded" }]);
@@ -417,13 +452,17 @@ describe("idle compaction preemption (idle compaction spec §5.2)", () => {
     await holdModelCalls(60_000);
     const idle = await startIdle(conv);
     await summarizing(idle);
-    await holdModelCalls(0);
-    const queued = await seedQueued(k.app, orgId, conv, ownerId, {
-      text: "echo:queued",
-      clientMessageId: randomUUID(),
-    });
-    expect(queued.statusCode, queued.body).toBe(201);
-    await runStatus(idle, "aborted");
+    const following = holdFollowing(conv, idle);
+    try {
+      const queued = await seedQueued(k.app, orgId, conv, ownerId, {
+        text: "echo:queued",
+        clientMessageId: randomUUID(),
+      });
+      expect(queued.statusCode, queued.body).toBe(201);
+      await runStatus(idle, "aborted");
+    } finally {
+      await following.release();
+    }
     await runsAfter(conv, idle);
     const events = await eventsOf(db, conv);
     expect(supersededOnly(events, idle)).toEqual([{ byAccountId: null, reason: "superseded" }]);
@@ -494,14 +533,23 @@ describe("idle compaction preemption (idle compaction spec §5.2)", () => {
     await holdModelCalls(60_000);
     const idle = await startIdle(conv);
     await summarizing(idle);
-    // the person's stop marker is stored; its broadcast has not reached the worker yet
-    await redis.set(`capk:run-abort:${idle}`, JSON.stringify({ byAccountId: ownerId }), "EX", 3600);
-    await postMessage(owner, orgId, conv, "echo:while stopping");
-    // the message's ensureRun has run (its run would follow the idle run): the marker is the person's
-    expect(await k.app.get(RunAbort).requested(idle)).toEqual({ byAccountId: ownerId });
-    await holdModelCalls(0);
-    await k.app.get(RunAbort).request(idle, ownerId);
-    await runStatus(idle, "aborted");
+    const following = holdFollowing(conv, idle);
+    try {
+      // the person's stop marker is stored; its broadcast has not reached the worker yet
+      await redis.set(
+        `capk:run-abort:${idle}`,
+        JSON.stringify({ byAccountId: ownerId }),
+        "EX",
+        3600,
+      );
+      await postMessage(owner, orgId, conv, "echo:while stopping");
+      // the message's ensureRun has run (its run follows the idle run): the marker is the person's
+      expect(await k.app.get(RunAbort).requested(idle)).toEqual({ byAccountId: ownerId });
+      await k.app.get(RunAbort).request(idle, ownerId);
+      await runStatus(idle, "aborted");
+    } finally {
+      await following.release();
+    }
     const events = await eventsOf(db, conv);
     expect(ev(forRun(events, idle), "run_aborted").map((e) => e.payload)).toEqual([
       { byAccountId: ownerId, reason: "user" },

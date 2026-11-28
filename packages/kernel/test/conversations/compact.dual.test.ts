@@ -18,7 +18,7 @@ import {
   type IdleCompactionJobData,
 } from "../../src/runtime/idle-compaction-jobs.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
-import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
+import { RUN_QUEUE_NAME, RunQueue } from "../../src/runtime/run-queue.js";
 import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -315,7 +315,28 @@ describe("manual compaction on two replicas", () => {
 describe("idle compaction on two replicas", () => {
   it("the same job fired concurrently on both replicas starts one idle compact run and writes one summary", async () => {
     const { conv, data } = await arm();
-    const outcomes = await Promise.all([fireOn(a, data), fireOn(b, data)]);
+    // both deliveries pass their unlocked checks and reach the start before either goes on: the
+    // conversation row lock alone decides which one starts the run
+    const queues = [a.app.get(RunQueue), b.app.get(RunQueue)];
+    const both = gate();
+    let arrived = 0;
+    for (const q of queues) {
+      const original = q.startIdleCompaction.bind(q);
+      q.startIdleCompaction = async (conversationId, armedSeq) => {
+        if (++arrived === 2) both.open();
+        await both.promise;
+        return original(conversationId, armedSeq);
+      };
+    }
+    let outcomes: Awaited<ReturnType<typeof fireOn>>[];
+    try {
+      outcomes = await Promise.all([fireOn(a, data), fireOn(b, data)]);
+    } finally {
+      // the own property shadowed the prototype method: removing it restores the original
+      for (const q of queues)
+        delete (q as Partial<Pick<RunQueue, "startIdleCompaction">>).startIdleCompaction;
+    }
+    expect(arrived).toBe(2);
     expect(outcomes.filter((o) => o === "started")).toHaveLength(1);
     expect(["obsolete", "busy"]).toContain(outcomes.find((o) => o !== "started"));
 
@@ -341,8 +362,13 @@ describe("idle compaction on two replicas", () => {
   it("a message through one replica supersedes the idle compact run another replica's worker holds", async () => {
     const { conv, data } = await arm();
     // the worker that claims the idle run stops before its run_started: the test learns which
-    // replica holds it, then lets it reach its (held) summary call
+    // replica holds it, then lets it reach its (held) summary call. Every later run of the
+    // conversation stops there too until the hold is lifted: model-call.ts records `summarizing`
+    // before the `model.request` hook reads the probe's config, so the hold may only be lifted once
+    // the idle run has ended, and before the next run can reach a model call
     const go = gate();
+    const following = gate();
+    let claimedId: string | undefined;
     let reached!: (claim: { runId: string; holder: "a" | "b" }) => void;
     const claimed = new Promise<{ runId: string; holder: "a" | "b" }>((r) => {
       reached = r;
@@ -353,30 +379,39 @@ describe("idle compaction on two replicas", () => {
     ] as const) {
       h.beforeRunStarted = async (runId, conversationId) => {
         if (conversationId !== conv) return;
-        reached({ runId, holder });
-        await go.promise;
+        if (claimedId === undefined) {
+          claimedId = runId;
+          reached({ runId, holder });
+          await go.promise;
+        } else if (runId !== claimedId) {
+          await following.promise;
+        }
       };
     }
-    let claim: { runId: string; holder: "a" | "b" };
+    let idle: string;
     try {
       expect(await fireOn(b, data)).toBe("started");
-      claim = await claimed;
+      const claim = await claimed;
+      idle = claim.runId;
       const [idleRow] = await idleRuns(conv);
-      expect(idleRow?.id).toBe(claim.runId);
+      expect(idleRow?.id).toBe(idle);
       await holdModelCalls(60_000);
+      go.open();
+      const holder = claim.holder === "a" ? a : b;
+      const poster = claim.holder === "a" ? ownerB : ownerA;
+      await summarizing(idle);
+      // the lock record lives in the shared Redis, so either replica reads the same holder: this
+      // proves the idle run holds the conversation lock, not which replica's worker runs it
+      expect(await holder.app.get(ConversationLock).holder(conv)).toBe(idle);
+
+      await postMessage(poster, idleOrgId, conv, "echo:after the pause");
+      await runStatus(idle, "aborted");
     } finally {
+      await holdModelCalls(0);
       for (const h of [hooksA, hooksB]) delete h.beforeRunStarted;
       go.open();
+      following.open();
     }
-    const idle = claim.runId;
-    const holder = claim.holder === "a" ? a : b;
-    const poster = claim.holder === "a" ? ownerB : ownerA;
-    await summarizing(idle);
-    expect(await holder.app.get(ConversationLock).holder(conv)).toBe(idle);
-    await holdModelCalls(0);
-
-    await postMessage(poster, idleOrgId, conv, "echo:after the pause");
-    await runStatus(idle, "aborted");
     const [next] = await runsAfter(conv, idle);
 
     const events = await eventsOf(dbA, conv);

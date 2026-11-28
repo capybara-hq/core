@@ -66,6 +66,7 @@ import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
+import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { catalogLineChars, SkillsCatalogService } from "../../src/skills/catalog.js";
@@ -93,6 +94,7 @@ import {
   createConv,
   createOrgWithProviders,
   eventsOf,
+  gate,
   MODEL_LOOPER,
   PW,
   postMessage,
@@ -151,6 +153,9 @@ let sandboxRoot: string;
 /** The run context clock (`RUN_CONTEXT_CLOCK`): real time unless a test sets a day. */
 let clockMs: number | null = null;
 
+/** The run worker's seams: a test sets the ones it needs and removes them after. */
+const runHooks: RunHooks = {};
+
 beforeAll(async () => {
   capture.install();
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -200,6 +205,7 @@ beforeAll(async () => {
     {
       overrides: [
         { provide: RUN_CONTEXT_CLOCK, useValue: () => clockMs ?? Date.now() },
+        { provide: RUN_HOOKS, useValue: runHooks },
         // watched waits poll fast here (browser long waits spec §5.3)
         { provide: TOOL_WATCH_TIMINGS, useValue: { intervalMs: 150, timeoutMs: 300 } },
       ],
@@ -1167,7 +1173,14 @@ describe("reconstructRequest：基线零漂移", () => {
     expect(last.payload.request.summarySeq).toBe(summary.seq);
     const head = sent.at(-1)?.messages[0];
     const blocks = Array.isArray(head?.content) ? head.content : [];
-    expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(/^<conversation_summary>/);
+    expect(blocks[0]).toEqual({
+      type: "text",
+      text: summaryText(summary.payload.text, {
+        openers: 0,
+        keptTail: false,
+        method: "in_context",
+      }),
+    });
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
@@ -1224,10 +1237,35 @@ describe("reconstructRequest：基线零漂移", () => {
         20_000,
         "the idle compaction reached its model call",
       );
-      await hold(0);
       // the next run compacts inline at half the window
       await compactionSettings({ keepRecentTurns: 1, reserveTokens: 0, threshold: 0.5 });
-      await postMessage(owner, orgId, conv, "long:3000");
+      // the message's run waits before its run_started until the hold is lifted, and the hold is
+      // lifted only once the idle run is aborted: model-call.ts records `summarizing` before the
+      // `model.request` hook reads the probe's config, so an earlier lift could free the idle
+      // summary, and a later one would hold the message run's own compaction call
+      const following = gate();
+      runHooks.beforeRunStarted = async (runId, conversationId) => {
+        if (conversationId === conv && runId !== idle) await following.promise;
+      };
+      try {
+        await postMessage(owner, orgId, conv, "long:3000");
+        await waitFor(
+          async () => {
+            const row = await db
+              .selectFrom("runs")
+              .select("status")
+              .where("id", "=", idle as string)
+              .executeTakeFirst();
+            return row?.status === "aborted" ? row : null;
+          },
+          30_000,
+          "the idle compact run aborted",
+        );
+      } finally {
+        await hold(0);
+        delete runHooks.beforeRunStarted;
+        following.open();
+      }
       await waitForTerminal(db, conv, n + 2, 30_000);
       await postMessage(owner, orgId, conv, "echo:after");
       await waitForTerminal(db, conv, n + 3, 30_000);
@@ -1240,11 +1278,24 @@ describe("reconstructRequest：基线零漂移", () => {
           .map((e) => (e.payload as never as { reason: string }).reason),
       ).toEqual(["superseded"]);
       expect(idleEvents.some((e) => e.type === "compaction_summary")).toBe(false);
-      const summaries = events.filter((e) => e.type === "compaction_summary");
+      const summaries = events.filter(
+        (e): e is Extract<ConversationEvent, { type: "compaction_summary" }> =>
+          e.type === "compaction_summary",
+      );
       expect(summaries).toHaveLength(1);
-      expect(summaries[0]?.runId).not.toBe(idle);
+      const inline = summaries[0]?.runId;
+      expect(inline).not.toBe(idle);
+      // the message's own run compacted inline, in context (a message run's trigger: absent or
+      // `message`)
+      const inlineStarted = events.find((e) => e.type === "run_started" && e.runId === inline);
+      expect(inlineStarted?.type).toBe("run_started");
+      expect(
+        inlineStarted?.type === "run_started" && (inlineStarted.payload.trigger ?? "message"),
+      ).toBe("message");
+      expect(summaries[0]?.payload.method).toBe("in_context");
       await expectZeroDrift(conv, await snapshotOf(conv));
     } finally {
+      delete runHooks.beforeRunStarted;
       await hold(0);
       await enableProbe(false);
       await compactionSettings({ keepRecentTurns: 1, reserveTokens: 0 });
