@@ -62,8 +62,8 @@ State this in the PR description and the release notes.
 | S6 | §4.2 check 4: "explicit, or implicit with a declared lifetime floor" | phase 1 encodes that as `ModelCacheInfo.guaranteed`, which `deriveCacheExpiry` already requires | the arm check is `deriveCacheExpiry(...) !== null && ttl >= 1800` over the run's calls (guaranteed, trusted declaration) | no |
 | S7 | §4.2 has no quality-gate or settled-point check; §4.3 check 9 catches both at fire time | `inContextSummaryAllowed` (ruling R8) and `unansweredAfterReply` (R9) are pure; a `max_steps` / `max_output` run usually ends with tool results after the last reply (`pending_input`) | add both to the arm decision, so no job is owed that can only end `no_prefix` (spec anti-goal: "a job enqueued for every run whether or not it can ever fire") | no (same outcomes, fewer jobs) |
 | S8 | §5.7 lists only `runs.compact_origin` | personal preferences are columns on `accounts` (`time_zone`, `theme`), not a JSON blob | the same migration adds `accounts.idle_compaction text NULL CHECK (idle_compaction = 'off')` | no |
-| S9 | §6.2: the fields join the shared schemas "the existing Platform operations are built from"; "no exclusion is added" | `admin.update-settings` already `omits: ["compaction", …]` ("changed in the admin console's settings page"); `org-settings.update` and the `/me/preferences` operation enumerate their fields in the description | keep the existing omit (platform-level idle fields stay console-only, like every compaction field); add the three fields to the `org-settings.update` description and `idleCompaction` to the preferences operation's description | no (decision point D2) |
-| S10 | §6.4: only a preempted idle run is silent | `apps/web/src/lib/timeline.ts` turns every compact run's `compaction_failed` into a `compact-failed` divider and its stop into `compact-stopped` | an idle run's failure is silent like an automatic one; its stop (superseded or a person's) shows nothing; only its summary draws the idle divider | **yes** for a person's stop of an idle run (spec covers only preemption; decision point D3) |
+| S9 | §6.2: the fields join the shared schemas "the existing Platform operations are built from"; "no exclusion is added" | `admin.update-settings` already `omits: ["compaction", …]` ("changed in the admin console's settings page"); `org-settings.update` and the `/me/preferences` operation enumerate their fields in the description | keep the existing omit (platform-level idle fields stay console-only, like every compaction field); add the three fields to the `org-settings.update` description and `idleCompaction` to the preferences operation's description | no (decision D2) |
+| S10 | §6.4: only a preempted idle run is silent | `apps/web/src/lib/timeline.ts` turns every compact run's `compaction_failed` into a `compact-failed` divider and its stop into `compact-stopped` | an idle run's failure is silent like an automatic one; its stop (superseded or a person's) shows nothing; only its summary draws the idle divider | **yes** for a person's stop of an idle run (spec covers only preemption; decision D3) |
 | S11 | §7 `idle_return`: "previous run ended more than 30 min earlier" | an idle compact run is itself a run and ends minutes before the return | "previous run" = the latest non-compact run of the conversation; "idle summary written in between" = a `compaction_summary` in a run with `compactOrigin: "idle"` after that run's end; logged at run start; the inline compaction time joins by `runId` with the existing `Compaction` log line | no |
 | S12 | §5.1 "with `compact_origin = 'idle'`… existing compact runs read as manual" | manual runs are inserted by `startCompactionIn` with `compact: true` | new manual runs write `compact_origin = 'manual'`; `run_started.compactOrigin` is written only for idle runs (absent = manual), so manual runs' events are unchanged | no |
 | S13 | §4.3 check 8 uses "the calibrated estimate of the next request" and "the part the plan would summarize" | both are computed inside `runCompaction` (private `buildRequest`, `compactionPlan`, `inContextSummary`) | split `runCompaction` into `prepareCompaction` (resolve, media, request estimate, plan, in-context build) and the call/acceptance part; the job uses it as a dry run (`CompactionService.probeIdle`), the run repeats it | no |
@@ -108,7 +108,7 @@ Shared-file rules:
 ## Release sequencing
 
 1. One core PR (`feat/idle-compaction-phase2`, from `origin/main`), opened after W7, marked ready, final whole-branch review on the most capable model. Body: `Refs #974` (or the phase 2 issue), the coverage table, the spec issues S1–S14 as resolved, D1–D6.
-2. Main merges it; the next Version Packages PR publishes the core release (`@capybara-hq/capybara` images and `@capybara-hq/kernel`). Release notes: "idle compaction: on by default (`idleEnabled`), runs only where a model's cache lasts ≥ 30 minutes and the in-context summary is gated; with the default `promptCache.longTtl: false` that is no model today; turning on the long tier costs every cache write the long tier's price (Anthropic about 2× instead of 1.25× of input)".
+2. Main merges it; the next Version Packages PR publishes the core release (`@capybara-hq/capybara` images and `@capybara-hq/kernel`). Release notes (D5): "idle compaction: on by default (`idleEnabled`), but it does not fire in the default config: it runs only where a model's cache lasts ≥ 30 minutes and its in-context summary is gated, which with the default `promptCache.longTtl: false` is no model today; turning on the long tier (Sonnet, Qwen4-max) enables it and costs every cache write the long tier's price (Anthropic about 2× instead of 1.25× of input). Gating an OpenAI model (#1002) waits for OpenAI credits."
 3. Main upgrades prod (`ssh prod`, official images only) and local dev. No plugins release is needed: phase 1's declarations (R3) are already pinned (#1019).
 4. Two weeks of `IdleCompaction` and `idle_return` logs on prod (spec §10 step 3), then revisit the size defaults.
 
@@ -119,7 +119,7 @@ Shared-file rules:
 **Files:**
 - Modify: `docs/superpowers/specs/2026-11-27-idle-compaction-design.md` (§4.2, §4.3, §5.1, §5.2, §5.7, §6.2, §6.4, §7; a "Phase 2 plan review" entry in §12)
 
-- [ ] **Step 1:** For each of S1–S14, edit the cited section to state the resolution (the plan table's last-but-one column) in the spec's voice; mark S5 and S10 "(behaviour change, decided in the phase 2 plan review)". Add to §12 one bullet per decision point D1–D6 with the maintainer's answer.
+- [ ] **Step 1:** For each of S1–S14, edit the cited section to state the resolution (the plan table's last-but-one column) in the spec's voice; mark S5 and S10 "(behaviour change, decided in the PR #1024 review, 2026-11-28)". Add to §12 one bullet per decision D1–D6 as recorded in "Decisions" below.
 - [ ] **Step 2:** `pnpm check:agent-docs` and `pnpm lint` — PASS.
 - [ ] **Step 3: Commit** `docs(idle-compaction): resolve the phase 2 spec issues`.
 
@@ -504,14 +504,16 @@ High risk. Most capable model; reviewed alone.
 
 ---
 
-## Decision points (recommendations; the maintainer rules in the plan review)
+## Decisions (PR #1024 review, 2026-11-28; delegated by the maintainer to main)
 
-- **D1 S5, automation lineage.** Recommend: a wake run whose `runs.automation_run_id` is set does not arm, and `automation_event` never arms. Alternative: follow §4.2 literally (wakes always arm), costing background calls on conversations nobody reads.
-- **D2 S9, platform-level idle fields through the Platform tool.** Recommend: keep `admin.update-settings`' existing `compaction` omit (console-only, like every compaction field), document the fields on `org-settings.update` and the preference operation. Alternative: lift the omit for all compaction fields (a separate change with its own review).
-- **D3 S10, a person's stop of an idle run.** Recommend: show nothing (an idle compaction stays quiet; the person stopped background work they did not start). Alternative: the manual "compaction stopped" divider.
-- **D4 Arm-time quality gate and settled point (S7).** Recommend: check both at arm time (same outcomes, fewer owed jobs). No behaviour change, but the maintainer should know that `max_steps` and `max_output` runs then almost never arm.
-- **D5 Default on with nothing qualifying.** `idleEnabled` defaults on (Q1), yet nothing fires until `longTtl` is on for a gated Sonnet / Qwen4-max line or an OpenAI model passes the gate (#1002). Recommend: ship as specified, say so in the release notes, and prioritize #1002 (OpenAI credits) since GPT-5.6+ is the only family that qualifies by default.
-- **D6 Size floor in tests.** The settings floor is 50,000 (spec range), so integration tests build conversations of about 220k characters on model-fake. Recommend: keep the spec range (no test-only lower bound); the cost is a few hundred ms of fixture building per test file.
+S1–S14 are accepted as resolved in the table above; S5 and S10 are the behaviour changes decided here.
+
+- **D1 S5, automation lineage: accepted.** A wake run whose `runs.automation_run_id` is set does not arm, and `automation_event` never arms (spec goal 2: never on conversations nobody started by hand).
+- **D2 S9, platform-level idle fields through the Platform tool: accepted.** `admin.update-settings` keeps its existing `compaction` omit (console-only, like every compaction field); the fields are documented on `org-settings.update` and the preference operation.
+- **D3 S10, a person's stop of an idle run: accepted.** It shows nothing, like a preempted or failed idle run; only an idle summary draws a divider.
+- **D4 Arm-time quality gate and settled point (S7): accepted.** Both are checked at arm time: the same outcomes with fewer owed jobs; `max_steps` and `max_output` runs then almost never arm.
+- **D5 Default on with nothing qualifying: accepted with a change.** `idleEnabled` stays on by default (Q1). The release notes say that idle compaction **does not fire in the default config** (`promptCache.longTtl` off): it runs only where an admin turns on the long cache tier for a gated Sonnet / Qwen4-max line. #1002 (gating an OpenAI 5.6+ model, the only family whose default cache qualifies) waits for OpenAI credits; this plan does not depend on it.
+- **D6 Size floor in tests: accepted.** The settings range stays 50,000–2,000,000 (no test-only lower bound); integration tests build conversations of about 220k characters on model-fake.
 
 ## AGENTS.md rules touched
 
