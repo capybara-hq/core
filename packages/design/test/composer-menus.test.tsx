@@ -1,6 +1,16 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { type ReactElement, type KeyboardEvent as ReactKeyboardEvent, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { messages } from "../src/i18n";
 import {
   ComposerBox,
   ComposerMenu,
@@ -470,7 +480,7 @@ describe("ComposerMenu (anchored)", () => {
     expect(foot.textContent).toContain("↵ 使用");
     expect(foot.textContent).toContain("esc 关闭");
     expect(foot.textContent).toContain("输入以搜索");
-    const at = within(foot).getByRole("button", { name: "@ 文件与资源" });
+    const at = within(foot).getByRole("button", { name: "@ 连接器、文件与会话" });
     // a click on a hint keeps the focus in the composer
     expect(fireEvent.mouseDown(at)).toBe(false);
     fireEvent.click(at);
@@ -482,7 +492,7 @@ describe("ComposerMenu (anchored)", () => {
   it("speaks English with the en locale", () => {
     wrap(<Harness groups={slashGroups()} onSwitch={() => {}} />, "en");
     const foot = document.querySelector('[data-part="composer-menu-foot"]') as HTMLElement;
-    expect(within(foot).getByRole("button", { name: "@ Files and resources" })).toBeTruthy();
+    expect(within(foot).getByRole("button", { name: "@ Connectors, files and conversations" })).toBeTruthy();
     expect(foot.textContent).toContain("esc Close");
   });
 
@@ -941,5 +951,454 @@ describe("ComposerMenu (compact) focus and Esc", () => {
     });
     await waitFor(() => expect(sheet()).toBeNull());
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Drill-in, connector rows and the one-skill line (inline tokens spec §4) ──
+
+function connectorGroups(
+  picks: Picks = {},
+  drills: Record<string, ReturnType<typeof vi.fn>> = {},
+): ComposerMenuGroup[] {
+  const drill = (id: string, label: string) => {
+    drills[id] ??= vi.fn();
+    return { label, onDrill: drills[id] as () => void };
+  };
+  const pick = (id: string) => {
+    picks[id] ??= vi.fn();
+    return picks[id] as () => void;
+  };
+  return [
+    {
+      id: "connectors",
+      label: "连接器",
+      items: [
+        {
+          id: "slack",
+          label: "Slack",
+          mark: { text: "Slack" },
+          description: "团队消息",
+          drill: drill("slack", "查看 Slack 的资源"),
+          onSelect: pick("slack"),
+        },
+        {
+          id: "jira",
+          label: "Jira",
+          mark: { text: "Jira" },
+          description: "项目和工单",
+          badge: "待配置",
+          disabled: true,
+          onSelect: pick("jira"),
+        },
+      ],
+    },
+  ];
+}
+
+function LevelHarness({
+  onBack,
+  initial = "@",
+  withLevel = true,
+  drills,
+}: {
+  onBack: () => void;
+  initial?: string;
+  withLevel?: boolean;
+  drills?: Record<string, ReturnType<typeof vi.fn>>;
+}) {
+  const [text, setText] = useState(initial);
+  const props: ComposerMenuProps = {
+    kind: "at",
+    groups: connectorGroups({}, drills),
+    query: text.slice(1),
+    filter: false,
+    empty: "没有匹配",
+    onClose: () => {},
+    ...(withLevel ? { level: { title: "Slack · 资源", onBack } } : {}),
+  };
+  const menu = useComposerMenu(props);
+  return (
+    <ComposerBox
+      value={text}
+      onChange={setText}
+      placeholder="输入消息"
+      onAttach={() => {}}
+      pickers={{ model: { label: "切换模型", value: "m", groups: [], onPick: () => {} } }}
+      send={{ mode: "send", onClick: () => {} }}
+      menu={{
+        node: <ComposerMenu {...props} controller={menu} />,
+        combobox: menu.combobox,
+        onKeyDown: menu.onKeyDown,
+      }}
+    />
+  );
+}
+
+describe("ComposerMenu drill-in", () => {
+  it("drill button opens the second level", () => {
+    const drills: Record<string, ReturnType<typeof vi.fn>> = {};
+    const picks: Picks = {};
+    function H() {
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: connectorGroups(picks, drills),
+        query: "",
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+      };
+      const menu = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={menu} referenceAnchored />;
+    }
+    wrap(<H />);
+    const rows = screen.getAllByRole("option");
+    // the connector row: name, description line, a drill button named for the connector
+    expect(rows[0]?.textContent).toContain("团队消息");
+    fireEvent.click(
+      within(rows[0] as HTMLElement).getByRole("button", { name: "查看 Slack 的资源" }),
+    );
+    expect(drills.slack).toHaveBeenCalledTimes(1);
+    // the button is not a pick
+    expect(picks.slack).not.toHaveBeenCalled();
+    // a connector waiting for setup: the badge, disabled, no drill
+    expect(rows[1]?.getAttribute("aria-disabled")).toBe("true");
+    expect(rows[1]?.querySelector('[data-part="composer-menu-badge"]')?.textContent).toBe("待配置");
+    expect(rows[1]?.querySelector('[data-part="composer-menu-drill"]')).toBeNull();
+    // the footer hints the key
+    expect(document.querySelector('[data-part="composer-menu-foot"]')?.textContent).toContain(
+      "→ 资源",
+    );
+  });
+
+  it("ArrowRight on a drillable row drills", () => {
+    const drills: Record<string, ReturnType<typeof vi.fn>> = {};
+    wrap(<LevelHarness onBack={() => {}} withLevel={false} drills={drills} />);
+    // the caret mid-text: → moves it, it does not drill
+    textarea().setSelectionRange(0, 0);
+    key("ArrowRight");
+    expect(drills.slack).not.toHaveBeenCalled();
+    // the caret at the end (where typing the query leaves it): → drills
+    textarea().setSelectionRange(1, 1);
+    const ev = createEvent.keyDown(textarea(), { key: "ArrowRight" });
+    fireEvent(textarea(), ev);
+    expect(drills.slack).toHaveBeenCalledTimes(1);
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it("shows the head with a back button at a level, and none for a flat menu", () => {
+    const onBack = vi.fn();
+    wrap(<LevelHarness onBack={onBack} />);
+    const head = document.querySelector('[data-part="composer-menu-level"]') as HTMLElement;
+    expect(head.textContent).toContain("Slack · 资源");
+    fireEvent.click(within(head).getByRole("button", { name: "返回" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    // the level's own footer carries no → hint
+    expect(document.querySelector('[data-part="composer-menu-drill-hint"]')).toBeNull();
+    cleanup();
+    wrap(<LevelHarness onBack={onBack} withLevel={false} />);
+    expect(document.querySelector('[data-part="composer-menu-level"]')).toBeNull();
+  });
+
+  it("ArrowLeft and Backspace on empty query go back", () => {
+    const onBack = vi.fn();
+    wrap(<LevelHarness onBack={onBack} />);
+    const left = createEvent.keyDown(textarea(), { key: "ArrowLeft" });
+    fireEvent(textarea(), left);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(left.defaultPrevented).toBe(true);
+    const back = createEvent.keyDown(textarea(), { key: "Backspace" });
+    fireEvent(textarea(), back);
+    expect(onBack).toHaveBeenCalledTimes(2);
+    // handled: the composer does not delete the "@"
+    expect(back.defaultPrevented).toBe(true);
+  });
+
+  it("Backspace with a query does not go back", () => {
+    const onBack = vi.fn();
+    wrap(<LevelHarness onBack={onBack} initial="@sl" />);
+    const ev = createEvent.keyDown(textarea(), { key: "Backspace" });
+    fireEvent(textarea(), ev);
+    expect(onBack).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it("compact renders the drill-in in the sheet", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const onBack = vi.fn();
+    const drills: Record<string, ReturnType<typeof vi.fn>> = {};
+    function Compact({ level }: { level: boolean }) {
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: connectorGroups({}, drills),
+        query: "",
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+        onQueryChange: () => {},
+        ...(level ? { level: { title: "Slack · 资源", onBack } } : {}),
+      };
+      const menu = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={menu} />;
+    }
+    wrap(<Compact level={false} />);
+    const sheet = screen.getByRole("dialog");
+    // the drill button is a button of the row's trailing end
+    fireEvent.click(within(sheet).getByRole("button", { name: "查看 Slack 的资源" }));
+    expect(drills.slack).toHaveBeenCalledTimes(1);
+    cleanup();
+    wrap(<Compact level />);
+    const level = screen.getByRole("dialog", { name: "Slack · 资源" });
+    // the sheet's own drill-in: the level's title as the sheet title, its back control, no own head
+    expect(within(level).getByRole("heading", { name: "Slack · 资源" })).toBeTruthy();
+    expect(level.querySelector('[data-part="composer-menu-level"]')).toBeNull();
+    fireEvent.click(within(level).getByRole("button", { name: "返回" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    // Esc in the sheet goes back instead of closing
+    fireEvent.keyDown(within(level).getByRole("searchbox"), { key: "Escape" });
+    expect(onBack).toHaveBeenCalledTimes(2);
+    // Backspace on the empty search field goes back too
+    fireEvent.keyDown(within(level).getByRole("searchbox"), { key: "Backspace" });
+    expect(onBack).toHaveBeenCalledTimes(3);
+  });
+
+  it("the sheet search field drills only with the caret at the end of the query", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const drills: Record<string, ReturnType<typeof vi.fn>> = {};
+    function Compact() {
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: connectorGroups({}, drills),
+        query: "sl",
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+        onQueryChange: () => {},
+      };
+      const menu = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={menu} />;
+    }
+    wrap(<Compact />);
+    const search = screen.getByRole("searchbox") as HTMLInputElement;
+    search.setSelectionRange(1, 1);
+    fireEvent.keyDown(search, { key: "ArrowRight" });
+    expect(drills.slack).not.toHaveBeenCalled();
+    search.setSelectionRange(0, 2);
+    fireEvent.keyDown(search, { key: "ArrowRight" });
+    expect(drills.slack).not.toHaveBeenCalled();
+    search.setSelectionRange(2, 2);
+    fireEvent.keyDown(search, { key: "ArrowRight" });
+    expect(drills.slack).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes the caret facts from the caller when given (a contenteditable has none)", () => {
+    const drills: Record<string, ReturnType<typeof vi.fn>> = {};
+    const onBack = vi.fn();
+    let ctl: ReturnType<typeof useComposerMenu> | undefined;
+    function H({ level }: { level: boolean }) {
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: connectorGroups({}, drills),
+        query: "",
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+        ...(level ? { level: { title: "Slack · 资源", onBack } } : {}),
+      };
+      ctl = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={ctl} referenceAnchored />;
+    }
+    const div = document.createElement("div");
+    const ev = (k: string) =>
+      ({
+        key: k,
+        keyCode: 0,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        currentTarget: div,
+        nativeEvent: {},
+        preventDefault: () => {},
+      }) as unknown as React.KeyboardEvent<HTMLElement>;
+    wrap(<H level={false} />);
+    const mid = { collapsed: true, atStart: false, atEnd: false };
+    act(() => {
+      expect(ctl?.onKeyDown(ev("ArrowRight"), mid)).toBe(false);
+    });
+    expect(drills.slack).not.toHaveBeenCalled();
+    act(() => {
+      expect(ctl?.onKeyDown(ev("ArrowRight"), { ...mid, atEnd: true })).toBe(true);
+    });
+    expect(drills.slack).toHaveBeenCalledTimes(1);
+    cleanup();
+    wrap(<H level />);
+    act(() => {
+      expect(
+        ctl?.onKeyDown(ev("Backspace"), { collapsed: false, atStart: false, atEnd: true }),
+      ).toBe(false);
+    });
+    expect(onBack).not.toHaveBeenCalled();
+    act(() => {
+      expect(
+        ctl?.onKeyDown(ev("Backspace"), { collapsed: true, atStart: false, atEnd: true }),
+      ).toBe(true);
+    });
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("→ on a disabled drill row does nothing; ← with a query does not go back", () => {
+    const onBack = vi.fn();
+    const drill = vi.fn();
+    function H({ query }: { query: string }) {
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: [
+          {
+            id: "g",
+            items: [
+              {
+                id: "x",
+                label: "X",
+                disabled: true,
+                drill: { label: "查看 X 的资源", onDrill: drill },
+                onSelect: () => {},
+              },
+            ],
+          },
+        ],
+        query,
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+        level: { title: "t", onBack },
+      };
+      const menu = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={menu} referenceAnchored />;
+    }
+    const div = document.createElement("div");
+    wrap(<H query="" />);
+    expect(document.querySelector('[data-part="composer-menu-drill"]')).toBeNull();
+    expect(document.querySelector("[aria-keyshortcuts]")).toBeNull();
+    cleanup();
+    // the full composer path: the textarea of a harness with a level and a query
+    function L() {
+      const [text] = useState("@sl");
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: connectorGroups(),
+        query: text.slice(1),
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+        level: { title: "t", onBack },
+      };
+      const menu = useComposerMenu(props);
+      return (
+        <ComposerBox
+          value={text}
+          onChange={() => {}}
+          placeholder="输入消息"
+          onAttach={() => {}}
+          pickers={{ model: { label: "切换模型", value: "m", groups: [], onPick: () => {} } }}
+          send={{ mode: "send", onClick: () => {} }}
+          menu={{
+            node: <ComposerMenu {...props} controller={menu} />,
+            combobox: menu.combobox,
+            onKeyDown: menu.onKeyDown,
+          }}
+        />
+      );
+    }
+    wrap(<L />);
+    const left = createEvent.keyDown(textarea(), { key: "ArrowLeft" });
+    fireEvent(textarea(), left);
+    expect(onBack).not.toHaveBeenCalled();
+    expect(left.defaultPrevented).toBe(false);
+    expect(drill).not.toHaveBeenCalled();
+    void div;
+  });
+
+  it("the drill button names the connector, never picks the row, and the row advertises →", () => {
+    const picks: Picks = {};
+    const drills: Record<string, ReturnType<typeof vi.fn>> = {};
+    function H() {
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: connectorGroups(picks, drills),
+        query: "",
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+      };
+      const menu = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={menu} referenceAnchored />;
+    }
+    wrap(<H />);
+    const row = screen.getAllByRole("option")[0] as HTMLElement;
+    expect(row.getAttribute("aria-keyshortcuts")).toBe("ArrowRight");
+    const btn = within(row).getByRole("button", { name: "查看 Slack 的资源" });
+    expect(btn.getAttribute("aria-label")).toBe("查看 Slack 的资源");
+    fireEvent.click(btn);
+    expect(drills.slack).toHaveBeenCalledTimes(1);
+    expect(picks.slack).not.toHaveBeenCalled();
+  });
+
+  it("the active row starts over when the level changes", () => {
+    function H({ level }: { level: boolean }) {
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: [
+          {
+            id: "g",
+            items: [
+              { id: "a", label: "A", onSelect: () => {} },
+              { id: "b", label: "B", onSelect: () => {} },
+            ],
+          },
+        ],
+        query: "",
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+        ...(level ? { level: { title: "L", onBack: () => {} } } : {}),
+      };
+      const menu = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={menu} referenceAnchored />;
+    }
+    const { rerender } = wrap(<H level={false} />);
+    fireEvent.mouseMove(screen.getAllByRole("option")[1] as HTMLElement);
+    expect(screen.getAllByRole("option")[1]?.getAttribute("aria-selected")).toBe("true");
+    rerender(
+      <DesignProvider locale="zh">
+        <H level />
+      </DesignProvider>,
+    );
+    expect(screen.getAllByRole("option")[0]?.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("disabled skill rows show the one-skill line", () => {
+    const groups: ComposerMenuGroup[] = [
+      {
+        id: "skills",
+        label: "技能",
+        items: [
+          {
+            id: "fix-issue",
+            label: "fix-issue",
+            icon: "skills",
+            description: messages.zh["composerMenu.oneSkill"],
+            disabled: true,
+            onSelect: () => {},
+          },
+        ],
+      },
+    ];
+    wrap(<Harness groups={groups} />);
+    const row = options()[0] as HTMLElement;
+    expect(row.getAttribute("aria-disabled")).toBe("true");
+    expect(row.querySelector('[data-part="composer-menu-desc"]')?.textContent).toBe(
+      "一条消息只能使用一个技能",
+    );
+    expect(messages.en["composerMenu.oneSkill"]).toBe("One skill per message");
   });
 });

@@ -124,6 +124,69 @@
   display: inline-flex;
   flex: none;
 }
+/* The drill button: a trailing → on a row that has a second level (a connector's resources). */
+.cb-cmm-drill {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-row-default);
+  height: var(--cb-row-default);
+  margin: calc(var(--cb-space-1) * -1) calc(var(--cb-space-1) * -1) calc(var(--cb-space-1) * -1) 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  cursor: pointer;
+}
+.cb-cmm-drill:hover {
+  color: var(--cb-ink);
+}
+.cb-cmm-drill:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+/* The second level's head 「‹ title」. */
+.cb-cmm-level {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-height: var(--cb-row-default);
+  padding: 0 var(--cb-space-1);
+  border-bottom: 1px solid var(--cb-line-soft);
+  color: var(--cb-ink);
+}
+.cb-cmm-back {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-row-default);
+  height: var(--cb-row-default);
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  cursor: pointer;
+}
+.cb-cmm-back:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-cmm-back:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-cmm-level-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .cb-cmm-empty,
 .cb-cmm-loading {
   padding: var(--cb-space-2) var(--cb-pad-default-x);
@@ -254,4 +317,11 @@
 .cb-cmm[data-form="sheet"] .cb-cmm-empty,
 .cb-cmm[data-form="sheet"] .cb-cmm-loading {
   padding: var(--cb-space-3) var(--cb-space-4);
+}
+/* the sheet's drill button is the row's whole trailing touch.hit area, flush with the row's end */
+.cb-cmm[data-form="sheet"] .cb-cmm-drill {
+  width: var(--cb-touch-hit);
+  height: var(--cb-touch-hit);
+  margin: 0 calc(var(--cb-space-4) * -1) 0 0;
+  border-radius: 0;
 }

@@ -730,7 +730,14 @@ function commandPaletteBlocks(): ReactNode {
 // ── Composer menus (§6.16.30: +, / and @ anchored above the composer) ─────────
 
 const menuGroups = (groups: FixtureComposerMenuGroup[]): ComposerMenuGroup[] =>
-  groups.map((g) => ({ ...g, items: g.items.map((it) => ({ ...it, onSelect: noop })) }));
+  groups.map((g) => ({
+    ...g,
+    items: g.items.map(({ drill, ...it }) => ({
+      ...it,
+      ...(drill ? { drill: { label: drill, onDrill: noop } } : {}),
+      onSelect: noop,
+    })),
+  }));
 
 /** A conversation's composer holding the text `value` with the menu open above it. */
 function ComposerMenuComposer({
@@ -759,16 +766,27 @@ function ComposerMenuComposer({
 }
 
 /** The compact form: the `/` menu as a bottom sheet at rest at the phone size, over an empty page. */
-function ComposerMenuSheetBlock() {
+function ComposerMenuSheetBlock({ drillIn = false }: { drillIn?: boolean }) {
   const M = COMPOSER_MENU_FIXTURE;
-  const props: ComposerMenuProps = {
-    kind: "slash",
-    groups: menuGroups(M.slash),
-    query: "",
-    empty: M.empty.slash,
-    onClose: noop,
-    onQueryChange: noop,
-  };
+  const props: ComposerMenuProps = drillIn
+    ? {
+        kind: "at",
+        groups: menuGroups(M.resources.groups),
+        query: "",
+        filter: false,
+        empty: M.empty.at,
+        onClose: noop,
+        onQueryChange: noop,
+        level: { title: M.resources.title, onBack: noop },
+      }
+    : {
+        kind: "slash",
+        groups: menuGroups(M.slash),
+        query: "",
+        empty: M.empty.slash,
+        onClose: noop,
+        onQueryChange: noop,
+      };
   const controller = useComposerMenu(props);
   return <ComposerMenu {...props} controller={controller} referenceSheet={{}} />;
 }
@@ -815,6 +833,45 @@ function composerMenuBlocks(): ReactNode {
           }}
         />
       </Block>
+      {/* the @ menu's first level: connectors first, → opens a connector's resources */}
+      <Block id="composer-menu-at-connectors" offsetTop={420}>
+        <ComposerMenuComposer
+          value="@"
+          menu={{
+            kind: "at",
+            groups: menuGroups(M.atConnectors),
+            query: "",
+            filter: false,
+            empty: M.empty.at,
+          }}
+        />
+      </Block>
+      {/* the second level: the head 「‹ Slack · 资源」, typing filters the resources */}
+      <Block id="composer-menu-at-resources" offsetTop={320}>
+        <ComposerMenuComposer
+          value="@"
+          menu={{
+            kind: "at",
+            groups: menuGroups(M.resources.groups),
+            query: "",
+            filter: false,
+            empty: M.empty.at,
+            level: { title: M.resources.title, onBack: noop },
+          }}
+        />
+      </Block>
+      {/* a skill is already in the draft: the skills are disabled with the one-skill line */}
+      <Block id="composer-menu-slash-one-skill" offsetTop={320}>
+        <ComposerMenuComposer
+          value="/"
+          menu={{
+            kind: "slash",
+            groups: menuGroups(M.slashOneSkill),
+            query: "",
+            empty: M.empty.slash,
+          }}
+        />
+      </Block>
       <Block id="composer-menu-empty" offsetTop={160}>
         <ComposerMenuComposer
           value={`@${M.emptyQuery}`}
@@ -836,6 +893,9 @@ function composerMenuBlocks(): ReactNode {
       </Block>
       <RefBlock id="composer-menu-compact" width={390} height={844}>
         <ComposerMenuSheetBlock />
+      </RefBlock>
+      <RefBlock id="composer-menu-compact-resources" width={390} height={844}>
+        <ComposerMenuSheetBlock drillIn />
       </RefBlock>
     </>
   );

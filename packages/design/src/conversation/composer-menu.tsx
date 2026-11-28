@@ -51,6 +51,12 @@ export type ComposerMenuItem = {
   disabled?: boolean;
   /** More text the query matches, as `search` in `commandScore` ("superpowers:brainstorming"). */
   keywords?: string[];
+  /**
+   * A second level behind the row (a connector's resources): a trailing → button, named `label`
+   * for assistive technology, and the → key on the active row; `onDrill` opens the level. The row's
+   * own pick stays the row. Ignored on a disabled row.
+   */
+  drill?: { label: string; onDrill(): void };
   /** The pick. The caller closes the menu or switches it (Skills opens `/`); the menu does neither. */
   onSelect(): void;
 };
@@ -81,6 +87,12 @@ export type ComposerMenuProps = {
   onClose(): void;
   /** The footer's `@` and `/` hints become buttons switching to that menu. */
   onSwitch?(kind: "slash" | "at"): void;
+  /**
+   * A second level is open (a connector's resources): the head 「‹ title」 with a back button, ←
+   * and Backspace on an empty query call `onBack`. On compact it is the sheet's in-sheet drill-in
+   * (spec §6.59) with the search field. The caller supplies the level's `groups`.
+   */
+  level?: { title: string; onBack(): void };
   /** The compact sheet's search field (the keyboard covers the composer there). */
   onQueryChange?(query: string): void;
   /** The sheet's search field label (default "Search"). */
@@ -109,6 +121,24 @@ export type ComposerMenuShownGroup = {
   items: ComposerMenuShownItem[];
 };
 
+/**
+ * Where the caret stands in the composer's text, for the keys that only act at an edge. A caller
+ * whose field has no `selectionStart` (a contenteditable) passes it as `onKeyDown`'s second
+ * argument; without it the menu reads the event target's selection.
+ */
+export type ComposerMenuCaret = { collapsed: boolean; atStart: boolean; atEnd: boolean };
+
+function readCaret(e: KeyboardEvent<HTMLElement>): ComposerMenuCaret {
+  const f = e.currentTarget as HTMLElement & {
+    selectionStart?: number | null;
+    selectionEnd?: number | null;
+    value?: string;
+  };
+  const start = f.selectionStart ?? 0;
+  const end = f.selectionEnd ?? 0;
+  return { collapsed: start === end, atStart: end === 0, atEnd: start === (f.value?.length ?? 0) };
+}
+
 /** The attributes the composer textarea takes as the menu's combobox (spec §6.16.30). */
 export type ComposerMenuCombobox = {
   role: "combobox";
@@ -133,7 +163,7 @@ export type ComposerMenuController = {
    * types). `true` when the menu took the key (the composer then stops); never during an IME
    * composition.
    */
-  onKeyDown(e: KeyboardEvent<HTMLElement>): boolean;
+  onKeyDown(e: KeyboardEvent<HTMLElement>, caret?: ComposerMenuCaret): boolean;
   /** The rows after ranking, for `ComposerMenu`. */
   shown: ComposerMenuShownGroup[];
   /** The pointer moved onto a row. */
@@ -192,6 +222,8 @@ const noModifier = (e: KeyboardEvent<HTMLElement>) =>
 export function useComposerMenu(p: ComposerMenuProps | null): ComposerMenuController {
   const listboxId = useId();
   const [chosen, setChosen] = useState<{ key: string; kind: string; query: string } | null>(null);
+  // a level starts its own active row, as a new menu kind does
+  const levelKey = (q: ComposerMenuProps) => `${q.kind}|${q.level?.title ?? ""}`;
   const open = p !== null;
   const ranked = p ? rankComposerMenu(p.groups, p.query, p.filter !== false) : [];
   const flat = ranked.flatMap((g) => g.items.map((item) => ({ item, key: `${g.id}/${item.id}` })));
@@ -199,7 +231,7 @@ export function useComposerMenu(p: ComposerMenuProps | null): ComposerMenuContro
   const activeKey =
     p &&
     chosen &&
-    chosen.kind === p.kind &&
+    chosen.kind === levelKey(p) &&
     chosen.query === p.query &&
     enabled.some((r) => r.key === chosen.key)
       ? chosen.key
@@ -218,7 +250,7 @@ export function useComposerMenu(p: ComposerMenuProps | null): ComposerMenuContro
   }));
 
   const choose = (key: string) => {
-    if (p) setChosen({ key, kind: p.kind, query: p.query });
+    if (p) setChosen({ key, kind: levelKey(p), query: p.query });
   };
   const move = (dir: 1 | -1) => {
     if (enabled.length === 0) return;
@@ -234,8 +266,13 @@ export function useComposerMenu(p: ComposerMenuProps | null): ComposerMenuContro
     if (item.disabled) return;
     item.onSelect();
   };
-  const handle = (e: KeyboardEvent<HTMLElement>, from: "composer" | "field"): boolean => {
+  const handle = (
+    e: KeyboardEvent<HTMLElement>,
+    from: "composer" | "field",
+    given?: ComposerMenuCaret,
+  ): boolean => {
     if (!p) return false;
+    const caretFacts = () => given ?? readCaret(e);
     // an IME composition owns its keys (Enter confirms the text, it never picks)
     if (e.nativeEvent.isComposing || e.keyCode === 229) return false;
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && noModifier(e)) {
@@ -262,12 +299,27 @@ export function useComposerMenu(p: ComposerMenuProps | null): ComposerMenuContro
       p.onClose();
       return true;
     }
+    // the second level: ← and Backspace on an empty query go back (Backspace then never reaches
+    // the composer, so it does not delete the "@")
+    if (p.level && noModifier(e) && p.query === "") {
+      if (e.key === "ArrowLeft" || (e.key === "Backspace" && caretFacts().collapsed)) {
+        e.preventDefault();
+        p.level.onBack();
+        return true;
+      }
+    }
+    // → on the active row opens its second level, with the caret collapsed at the end of the text
+    // (elsewhere it moves the caret)
+    if (e.key === "ArrowRight" && noModifier(e) && active?.item.drill && !active.item.disabled) {
+      const c = caretFacts();
+      if (c.collapsed && c.atEnd) {
+        e.preventDefault();
+        active.item.drill.onDrill();
+        return true;
+      }
+    }
     if (from === "composer" && p.kind !== "plus") {
-      const field = e.currentTarget as HTMLElement & {
-        selectionStart?: number | null;
-        selectionEnd?: number | null;
-      };
-      const collapsed = field.selectionStart === field.selectionEnd;
+      const collapsed = caretFacts().collapsed;
       // the caret right after the trigger: Backspace deletes it, and the menu goes with it (a
       // selection's Backspace deletes the selection instead)
       if (e.key === "Backspace" && p.query === "" && collapsed) {
@@ -299,7 +351,7 @@ export function useComposerMenu(p: ComposerMenuProps | null): ComposerMenuContro
     listboxId,
     activeId: open ? active?.item.id : undefined,
     combobox,
-    onKeyDown: (e) => handle(e, "composer"),
+    onKeyDown: (e, caret) => handle(e, "composer", caret),
     shown,
     hover: choose,
     pick,
@@ -345,6 +397,7 @@ function Row({
       aria-selected={active}
       aria-labelledby={`${domId}-label${item.badge ? ` ${domId}-badge` : ""}`}
       {...(item.description ? { "aria-describedby": `${domId}-desc` } : {})}
+      {...(item.drill && !item.disabled ? { "aria-keyshortcuts": "ArrowRight" } : {})}
       {...(item.disabled ? { "aria-disabled": true, "data-disabled": "true" } : {})}
       {...(item.description ? { "data-described": "true" } : {})}
       // the composer keeps the focus (and its caret) through a click
@@ -376,6 +429,24 @@ function Row({
         <span className="cb-cmm-badge" data-part="composer-menu-badge" id={`${domId}-badge`}>
           <Badge tone="warn">{item.badge}</Badge>
         </span>
+      ) : null}
+      {item.drill && !item.disabled ? (
+        <button
+          type="button"
+          className="cb-cmm-drill"
+          data-part="composer-menu-drill"
+          aria-label={item.drill.label}
+          // a pointer shortcut: the → key drills, the tab order skips it
+          tabIndex={-1}
+          // the composer keeps the focus through a click
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            e.stopPropagation();
+            item.drill?.onDrill();
+          }}
+        >
+          <Icon name="chevron-right" size={16} />
+        </button>
       ) : null}
     </div>
   );
@@ -481,8 +552,36 @@ function Notice({
   );
 }
 
+/** The second level's head 「‹ title」: a back button and the level's title. */
+function LevelHead({ level }: { level: NonNullable<ComposerMenuProps["level"]> }): JSX.Element {
+  const t = useDesignT();
+  return (
+    <div className="cb-cmm-level" data-part="composer-menu-level">
+      <button
+        type="button"
+        className="cb-cmm-back"
+        data-part="composer-menu-back"
+        aria-label={t("composerMenu.back")}
+        // the composer keeps the focus through a click
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => level.onBack()}
+      >
+        <Icon name="chevron-left" size={16} />
+      </button>
+      <span className="cb-cmm-level-title">{level.title}</span>
+    </div>
+  );
+}
+
 /** The footer's key hints (from 841 up): the menu switches as buttons, the rest as text. */
-function Footer({ p }: { p: ComposerMenuProps }): JSX.Element {
+function Footer({
+  p,
+  controller,
+}: {
+  p: ComposerMenuProps;
+  controller: ComposerMenuController;
+}): JSX.Element {
   const t = useDesignT();
   const sep = (
     <span className="cb-cmm-sep" aria-hidden="true">
@@ -514,12 +613,18 @@ function Footer({ p }: { p: ComposerMenuProps }): JSX.Element {
     );
   return (
     <div className="cb-cmm-foot" data-part="composer-menu-foot">
-      {switchTo("at", "@", t("composerMenu.hint.at"))}
+      {switchTo("at", "@", t("composerMenu.footAt").replace(/^@\s*/, ""))}
       {sep}
       {switchTo("slash", "/", t("composerMenu.hint.slash"))}
       {sep}
       <span>{keyText("↑↓", t("composerMenu.hint.move"))}</span>
       {sep}
+      {!p.level && controller.shown.some((g) => g.items.some((r) => r.item.drill)) ? (
+        <>
+          <span data-part="composer-menu-drill-hint">{t("composerMenu.footDrill")}</span>
+          {sep}
+        </>
+      ) : null}
       <span>{keyText("↵", t("composerMenu.hint.pick"))}</span>
       {sep}
       <span>{keyText("esc", t("composerMenu.hint.close"))}</span>
@@ -579,6 +684,7 @@ function ComposerMenuSheet({
   controller: ComposerMenuController;
   title: string;
 }): JSX.Element {
+  const t = useDesignT();
   useOverlayHistory(true, p.onClose);
   return (
     <RD.Root
@@ -588,7 +694,10 @@ function ComposerMenuSheet({
       }}
     >
       <BottomSheetContent
-        title={title}
+        // a level is the sheet's own drill-in (§6.59): its title, a back control, Esc goes back
+        title={p.level?.title ?? title}
+        {...(p.level ? { page: p.level.title } : {})}
+        back={p.level ? { label: t("composerMenu.back"), onBack: p.level.onBack } : undefined}
         part="composer-menu-sheet"
         onDismiss={p.onClose}
         // on touch a choice never focuses the composer (its focus pops the keyboard)
@@ -626,7 +735,13 @@ export function ComposerMenu({
   const title = t(`composerMenu.title.${p.kind}`);
   if (referenceSheet) {
     return (
-      <BottomSheetFrame title={title} state="idle" share={0} page={referenceSheet.page}>
+      <BottomSheetFrame
+        title={p.level?.title ?? title}
+        state="idle"
+        share={0}
+        page={referenceSheet.page}
+        {...(p.level ? { backLabel: t("composerMenu.back") } : {})}
+      >
         <SheetBody p={p} controller={controller} title={title} />
       </BottomSheetFrame>
     );
@@ -673,10 +788,11 @@ function AnchoredMenu({
   }, []);
   return (
     <div ref={ref} className="cb-cmm" data-part="composer-menu" data-kind={p.kind}>
+      {p.level ? <LevelHead level={p.level} /> : null}
       <div className="cb-cmm-scroll">
         <List p={p} controller={controller} title={title} />
       </div>
-      <Footer p={p} />
+      <Footer p={p} controller={controller} />
     </div>
   );
 }

@@ -13,10 +13,19 @@ import { Avatar } from "../display/avatar";
 import type { PersonLike } from "../display/person-name";
 import { Icon } from "../icons/icon";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+import type { ComposerSegment } from "./composer-editor/segments";
+import { InlineToken, skillText } from "./composer-editor/token";
 import { fillCopy } from "./tool-copy";
 
 export type UserBubbleProps = {
   text: string;
+  /**
+   * The message as text runs and inline tokens (composer inline tokens spec §1): when given, drawn
+   * instead of `text`, each token a read-only {@link InlineToken} in the sentence. The text runs
+   * keep the bubble's own `pre-wrap` treatment (the bubble draws plain text, not markdown), so
+   * tokens interleave as inline boxes. The skill chip still comes first.
+   */
+  segments?: ComposerSegment[];
   /** Shown above the bubble, right-aligned (usually {@link BubbleAttachments}). */
   attachments?: ReactNode;
   /** The queued form (§6.16.14): dashed border, translucent. */
@@ -74,6 +83,13 @@ export function bubbleLooksLong(text: string): boolean {
   return false;
 }
 
+/** The segments' plain text, what the clamp's guess and the empty check read (a token is its label). */
+function segmentsText(segments: ComposerSegment[]): string {
+  return segments
+    .map((x) => (typeof x === "string" ? x : x.kind === "skill" ? skillText(x.label) : x.label))
+    .join("");
+}
+
 /** The skill chip inside a bubble (§6.16.6): the composer's chip without its remove button. */
 export function BubbleSkill({ label }: { label: string }): JSX.Element {
   return (
@@ -112,7 +128,8 @@ function BubbleRow({
  * attachments above and the skill chip on its first line always show.
  */
 export function UserBubble({
-  text,
+  text: textProp,
+  segments,
   attachments,
   queued,
   skill,
@@ -123,6 +140,7 @@ export function UserBubble({
   referenceLong,
 }: UserBubbleProps): JSX.Element {
   const t = useDesignT();
+  const text = segments ? segmentsText(segments) : textProp;
   const bodyId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
   // Per bubble and local to the view (acceptance item AC4): never persisted.
@@ -142,7 +160,7 @@ export function UserBubble({
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [text, skill, expanded, referenceLong]);
+  }, [text, segments, skill, expanded, referenceLong]);
   return (
     <div className="cb-user-msg" data-cap-part="message.user">
       {sender !== undefined ? (
@@ -174,7 +192,17 @@ export function UserBubble({
               data-overflows={overflows && !expanded ? "true" : undefined}
             >
               {skill !== undefined ? <BubbleSkill label={skill} /> : null}
-              {text}
+              {segments
+                ? segments.map((seg, i) =>
+                    typeof seg === "string" ? (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: a fixed, ordered list
+                      <Fragment key={i}>{seg}</Fragment>
+                    ) : (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: a fixed, ordered list
+                      <InlineToken key={i} token={seg} />
+                    ),
+                  )
+                : text}
             </div>
           </div>
         </BubbleRow>

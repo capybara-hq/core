@@ -1598,6 +1598,8 @@ export type FixtureComposerMenuItem = {
   badge?: string;
   disabled?: boolean;
   keywords?: string[];
+  /** The label of the trailing → button (a connector with a resources level). */
+  drill?: string;
 };
 export type FixtureComposerMenuGroup = {
   id: string;
@@ -1617,6 +1619,12 @@ export const COMPOSER_MENU_FIXTURE: {
   at: FixtureComposerMenuGroup[];
   /** The @ menu's Conversations group for the same query, drawn after the files (state `conversations`). */
   conversations: FixtureComposerMenuGroup;
+  /** The @ menu's first level with connectors first (inline tokens §4): rows, a connector waiting for setup. */
+  atConnectors: FixtureComposerMenuGroup[];
+  /** The @ menu's second level: one connector's resources, under the head 「‹ title」. */
+  resources: { title: string; groups: FixtureComposerMenuGroup[] };
+  /** The / menu with a skill already in the draft: its skills are disabled with the one-skill line. */
+  slashOneSkill: FixtureComposerMenuGroup[];
   atQuery: string;
   emptyQuery: string;
   empty: { slash: string; at: string };
@@ -1785,6 +1793,94 @@ export const COMPOSER_MENU_FIXTURE: {
       },
     ],
   },
+  atConnectors: [
+    {
+      id: "connectors",
+      label: "连接器",
+      items: [
+        {
+          id: "slack",
+          label: "Slack",
+          mark: { text: "Slack" },
+          description: "团队消息和频道",
+          drill: "查看 Slack 的资源",
+        },
+        {
+          id: "docs",
+          label: "飞书文档",
+          mark: { text: "飞书文档" },
+          description: "需要连接你的账号",
+          drill: "查看 飞书文档 的资源",
+        },
+        {
+          id: "jira",
+          label: "Jira",
+          mark: { text: "Jira" },
+          description: "项目和工单",
+          badge: "待配置",
+          disabled: true,
+        },
+      ],
+    },
+    {
+      id: "files",
+      label: "文件",
+      items: [
+        {
+          id: "f1",
+          label: "2026年第三季度报告.xlsx",
+          file: { name: "2026年第三季度报告.xlsx" },
+          description: "2026-11-24 上传",
+        },
+      ],
+    },
+  ],
+  resources: {
+    title: "Slack · 资源",
+    groups: [
+      {
+        id: "resources",
+        label: "资源",
+        items: [
+          {
+            id: "r1",
+            label: "#产品组 的频道摘要",
+            mark: { text: "Slack" },
+            description: "slack://channel/C01/summary",
+          },
+          {
+            id: "r2",
+            label: "本周发布公告",
+            mark: { text: "Slack" },
+            description: "slack://canvas/F02",
+          },
+        ],
+      },
+    ],
+  },
+  slashOneSkill: [
+    {
+      id: "project-skills",
+      label: "项目技能",
+      items: [
+        {
+          id: "fix-issue",
+          label: "fix-issue",
+          icon: "skills",
+          hint: "[issue-number]",
+          description: "一条消息只能使用一个技能",
+          disabled: true,
+        },
+        {
+          id: "release-check",
+          label: "release-check",
+          icon: "skills",
+          description: "一条消息只能使用一个技能",
+          disabled: true,
+        },
+      ],
+    },
+  ],
   atQuery: "季度",
   emptyQuery: "预算表2019",
   empty: { slash: "没有匹配的技能或命令", at: "没有匹配的文件或资源" },
@@ -1932,4 +2028,29 @@ export const COMPOSER_EDITOR_FIXTURE: {
     },
   },
   hint: "[issue-number]",
+};
+
+/**
+ * A sent message with inline tokens (composer inline tokens spec §1, user bubble): text with
+ * tokens mid-sentence, and a skill invocation whose arguments hold a token.
+ */
+export const BUBBLE_TOKENS_FIXTURE: {
+  text: (string | FixtureInlineToken)[];
+  skill: { label: string; arguments: (string | FixtureInlineToken)[] };
+} = {
+  text: [
+    "把 ",
+    COMPOSER_EDITOR_FIXTURE.tokens.file,
+    " 的结论发给 ",
+    COMPOSER_EDITOR_FIXTURE.tokens.slack,
+    " 里的 ",
+    COMPOSER_EDITOR_FIXTURE.tokens.resource,
+    "，再看看 ",
+    COMPOSER_EDITOR_FIXTURE.tokens.projectFile,
+    " 有没有要改的",
+  ],
+  skill: {
+    label: "/fix-issue",
+    arguments: [COMPOSER_EDITOR_FIXTURE.tokens.conversation, " 123"],
+  },
 };
