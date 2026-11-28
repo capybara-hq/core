@@ -699,7 +699,7 @@ export function ComposerBar({
   const [listUnsupported, setListUnsupported] = useState<string | null>(null);
   const qc = useQueryClient();
   /** The agent's invocable skills (read again when the menu opens once they are stale). */
-  const skillsQ = invocableSkillsQuery(orgId, agentId ?? "", conversationId);
+  const skillsQ = invocableSkillsQuery(orgId, agentId ?? "", conversationId, project);
   // Read when the menu opens or a typed `/name` is sent (`loadSkills`), or prefetched with the page.
   const skills = useQuery({ ...skillsQ, enabled: false }).data;
   // The `/` menu's prompts, read when it opens (`openMenu`).
@@ -789,7 +789,7 @@ export function ComposerBar({
    */
   async function loadSkills(fresh = false): Promise<InvocableSkill[]> {
     if (agentId === undefined) return [];
-    const q = invocableSkillsQuery(orgId, agentId, conversationId);
+    const q = invocableSkillsQuery(orgId, agentId, conversationId, project);
     try {
       // The menu opening and a refusal read the list again (a person's action, not a view).
       return await qc.fetchQuery(fresh ? { ...q, staleTime: 0 } : q);

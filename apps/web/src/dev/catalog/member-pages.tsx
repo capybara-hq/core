@@ -20,7 +20,7 @@ import type { InboxItem } from "../../lib/inbox";
 import type { LibraryFileView } from "../../lib/library-files";
 import { agentsQuery, agentTemplatesQuery } from "../../lib/query/agents";
 import { authSourcesQuery } from "../../lib/query/auth";
-import { automationsQuery } from "../../lib/query/automations";
+import { acceptanceRulesQuery, automationsQuery } from "../../lib/query/automations";
 import { orgComponentsQuery } from "../../lib/query/components";
 import { connectorsQuery } from "../../lib/query/conversation";
 import { inboxQuery } from "../../lib/query/inbox";
@@ -312,6 +312,7 @@ export function seeded(): QueryClient {
     settings: { automations: { enabled: true, minIntervalMinutes: 60 } },
   });
   qc.setQueryData(automationsQuery(ORG).queryKey, { items: AUTOMATIONS });
+  qc.setQueryData(acceptanceRulesQuery(ORG).queryKey, { items: [], directedDefault: "auto" });
   qc.setQueryData(conversationListQuery(ORG).queryKey, {
     conversations: CONVERSATIONS,
     next: null,
@@ -345,7 +346,9 @@ function Page({ page }: { page: MemberPage }) {
       return <ConnectorsView />;
     case "automations":
       return (
-        <AutomationsView initial={{ view: "list", range: "week", date: null, scope: "mine" }} />
+        <AutomationsView
+          initial={{ view: "list", range: "week", date: null, scope: "mine", rules: false }}
+        />
       );
     case "files":
       return <FilesView initial={{ origin: "", agent: "", type: "", q: "" }} />;
