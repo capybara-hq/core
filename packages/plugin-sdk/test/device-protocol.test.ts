@@ -282,6 +282,12 @@ describe("device protocol value guards", () => {
       );
     });
 
+    it("keeps the loopbackPorts hello feature", () => {
+      expect(parseHello({ ...hello, features: ["loopbackPorts", "bogus"] }).features).toEqual([
+        "loopbackPorts",
+      ]);
+    });
+
     it("drops unreadable features and policy summaries", () => {
       expect(parseHello({ ...hello, features: "networkReport" }).features).toBeUndefined();
       expect(parseHello({ ...hello, features: ["tiers"] }).features).toEqual([]);

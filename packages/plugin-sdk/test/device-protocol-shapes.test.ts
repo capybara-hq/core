@@ -79,6 +79,58 @@ describe("parseSandboxPermissionSupport", () => {
     ).toThrow(DeviceProtocolError);
   });
 
+  it("parses network.loopbackPorts and its limitedBy", () => {
+    const s = parseSandboxPermissionSupport({
+      ...operationSupport(),
+      network: { ...operationSupport().network, loopbackPorts: true },
+    });
+    expect(s.network.loopbackPorts).toBe(true);
+    expect(parseSandboxPermissionSupport(operationSupport()).network.loopbackPorts).toBeUndefined();
+    expect(
+      parseSandboxPermissionSupport({
+        ...operationSupport(),
+        network: { ...operationSupport().network, loopbackPorts: false },
+      }).network.loopbackPorts,
+    ).toBe(false);
+    expect(() =>
+      parseSandboxPermissionSupport({
+        ...operationSupport(),
+        outsideSandbox: false,
+        network: { ...operationSupport().network, loopbackPorts: true },
+      }),
+    ).toThrow(/outsideSandbox/);
+    expect(() =>
+      parseSandboxPermissionSupport({
+        ...instanceSupport(),
+        network: { ...instanceSupport().network, loopbackPorts: true },
+      }),
+    ).toThrow(DeviceProtocolError);
+    expect(() =>
+      parseSandboxPermissionSupport({
+        ...operationSupport(),
+        network: { ...operationSupport().network, loopbackPorts: "yes" },
+      }),
+    ).toThrow(DeviceProtocolError);
+    expect(
+      parseSandboxPermissionSupport({
+        ...operationSupport(),
+        limitedBy: { loopbackPorts: "device-update" },
+      }).limitedBy?.loopbackPorts,
+    ).toBe("device-update");
+    for (const limitedBy of [{ loopbackPorts: "owner" }, { loopbackPorts: true }])
+      expect(() => parseSandboxPermissionSupport({ ...operationSupport(), limitedBy })).toThrow(
+        DeviceProtocolError,
+      );
+    // an open crossing names no limit
+    expect(() =>
+      parseSandboxPermissionSupport({
+        ...operationSupport(),
+        network: { ...operationSupport().network, loopbackPorts: true },
+        limitedBy: { loopbackPorts: "device-update" },
+      }),
+    ).toThrow(DeviceProtocolError);
+  });
+
   it.each([
     ["version 1", { version: 1 }],
     ["unknown boundary", { boundary: "process" }],

@@ -58,10 +58,12 @@ export type DeviceOp =
 /**
  * Optional capabilities a device announces in its hello: `networkReport` means exec results may
  * carry `network`; `projects` means the device serves `list` and `scan` (the provider never sends
- * `list` or `scan` to a device that did not announce `projects`).
+ * `list` or `scan` to a device that did not announce `projects`); `loopbackPorts` means the device
+ * accepts `service.ensure` `network.loopbackPorts` (the provider never sends that key to a device
+ * that did not announce it).
  */
-export type DeviceFeature = "networkReport" | "projects";
-const DEVICE_FEATURES: readonly DeviceFeature[] = ["networkReport", "projects"];
+export type DeviceFeature = "networkReport" | "projects" | "loopbackPorts";
+const DEVICE_FEATURES: readonly DeviceFeature[] = ["networkReport", "projects", "loopbackPorts"];
 
 /**
  * What a device knows of its local policy and reports (in the hello or a `policy` event). The owner
@@ -863,14 +865,22 @@ export function parseSandboxPermissionSupport(value: unknown): SandboxPermission
   }
   const n = strictRecord(
     o.network,
-    ["openPublic", "allowlist", "perOperationHosts"],
+    ["openPublic", "allowlist", "perOperationHosts", "loopbackPorts"],
     `${what} network`,
   );
-  const network = {
+  const network: {
+    openPublic: boolean;
+    allowlist: boolean;
+    perOperationHosts: boolean;
+    loopbackPorts?: boolean;
+  } = {
     openPublic: strictBoolean(n, "openPublic", what),
     allowlist: strictBoolean(n, "allowlist", what),
     perOperationHosts: strictBoolean(n, "perOperationHosts", what),
   };
+  // Absent means false: a provider built on an earlier SDK still parses.
+  if (n.loopbackPorts !== undefined)
+    network.loopbackPorts = strictBoolean(n, "loopbackPorts", what);
   if (
     o.boundary === "operation" &&
     restricted === null &&
@@ -890,10 +900,20 @@ export function parseSandboxPermissionSupport(value: unknown): SandboxPermission
     throw new DeviceProtocolError(
       `Invalid ${what}: an instance boundary claims no restricted scope, outside escalation or per-operation hosts`,
     );
+  if (network.loopbackPorts === true && (o.boundary !== "operation" || !outsideSandbox))
+    throw new DeviceProtocolError(
+      `Invalid ${what}: loopbackPorts needs outsideSandbox on an operation boundary`,
+    );
   if (o.unavailableReason !== undefined) string(o.unavailableReason, 4096);
-  let limitedBy: { outsideSandbox?: "owner"; openPublic?: "owner" } | undefined;
+  let limitedBy:
+    | { outsideSandbox?: "owner"; openPublic?: "owner"; loopbackPorts?: "device-update" }
+    | undefined;
   if (o.limitedBy !== undefined) {
-    const l = strictRecord(o.limitedBy, ["outsideSandbox", "openPublic"], `${what} limitedBy`);
+    const l = strictRecord(
+      o.limitedBy,
+      ["outsideSandbox", "openPublic", "loopbackPorts"],
+      `${what} limitedBy`,
+    );
     limitedBy = {};
     for (const [key, open] of [
       ["outsideSandbox", outsideSandbox],
@@ -907,6 +927,17 @@ export function parseSandboxPermissionSupport(value: unknown): SandboxPermission
           `Invalid ${what}: limitedBy.${key} names who keeps a closed crossing closed, but it is open`,
         );
       limitedBy[key] = "owner";
+    }
+    if (l.loopbackPorts !== undefined) {
+      if (l.loopbackPorts !== "device-update")
+        throw new DeviceProtocolError(
+          `Invalid ${what}: limitedBy.loopbackPorts must be device-update`,
+        );
+      if (network.loopbackPorts === true)
+        throw new DeviceProtocolError(
+          `Invalid ${what}: limitedBy.loopbackPorts names who keeps a closed crossing closed, but it is open`,
+        );
+      limitedBy.loopbackPorts = "device-update";
     }
   }
   return freeze({

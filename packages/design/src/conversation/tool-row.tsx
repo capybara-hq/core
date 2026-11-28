@@ -92,6 +92,13 @@ export type ToolRowData = {
    */
   autoGranted?: ToolAutoGranted;
   /**
+   * The port of a `loopback-port` crossing: the row says "Allowed access to local port <port>
+   * automatically (this conversation, 24 hours)" (`tool.autoGranted.loopback`), or, with
+   * `approvedBy: "review-model"`, that the review model allowed it (`tool.autoGranted.loopbackReview`)
+   * in place of the separate approved-by words.
+   */
+  autoGrantedPort?: number;
+  /**
    * Who approved the call without asking the person (`tool_ask_decided`): "auto" (the Auto profile)
    * or "review-model" (Approve for me). A done or failed row adds the neutral words "Approved
    * automatically" / "Approved by the review model" (`tool.approvedBy.*`) in `muted` (§6.16.9).
@@ -260,6 +267,8 @@ export function ToolMeta({ row }: { row: ToolRowData }): JSX.Element | null {
   const t = useDesignT();
   const ended = row.status === "done" || row.status === "failed";
   const exit = ended && row.exitCode !== undefined && row.exitCode !== 0 ? row.exitCode : null;
+  // a loopback port grant names its port, and who allowed it, in one phrase
+  const loopbackPort = row.autoGranted === "loopback-port" ? row.autoGrantedPort : undefined;
   const any =
     exit !== null ||
     (row.status === "done" && (row.guard || row.notice)) ||
@@ -290,10 +299,23 @@ export function ToolMeta({ row }: { row: ToolRowData }): JSX.Element | null {
       ) : null}
       {(row.status === "done" || row.status === "failed") && row.autoGranted ? (
         <span className="cb-muted" data-part="auto-granted-word">
-          {` · ${t("tool.autoGranted").replace("{kind}", t(`tool.crossing.${row.autoGranted}`))}`}
+          {` · ${
+            loopbackPort !== undefined
+              ? fillCopy(
+                  t(
+                    row.approvedBy === "review-model"
+                      ? "tool.autoGranted.loopbackReview"
+                      : "tool.autoGranted.loopback",
+                  ),
+                  { port: loopbackPort },
+                )
+              : t("tool.autoGranted").replace("{kind}", t(`tool.crossing.${row.autoGranted}`))
+          }`}
         </span>
       ) : null}
-      {(row.status === "done" || row.status === "failed") && row.approvedBy ? (
+      {(row.status === "done" || row.status === "failed") &&
+      row.approvedBy &&
+      loopbackPort === undefined ? (
         <span className="cb-muted" data-part="approved-by-word">
           {` · ${t(row.approvedBy === "auto" ? "tool.approvedBy.auto" : "tool.approvedBy.reviewModel")}`}
         </span>

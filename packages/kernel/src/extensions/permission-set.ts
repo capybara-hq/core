@@ -66,9 +66,11 @@ export interface PermissionSet {
     /**
      * The device services the extension runs in conversations' devices
      * (`permissions.deviceAccess`, browser use spec §7): one blocking key per service. Absent when
-     * not declared (and in older snapshots).
+     * not declared (and in older snapshots). `loopbackPorts` (browser loopback port grants design):
+     * its services may be granted local ports of the device, one blocking key; present only when
+     * declared true.
      */
-    deviceAccess?: { services: string[] };
+    deviceAccess?: { services: string[]; loopbackPorts?: true };
     /**
      * The event types the extension may emit (`permissions.triggers.emit`, collaboration spec
      * §4.2): one blocking key per type, so an upgrade adding a type waits for approval. Absent
@@ -234,7 +236,12 @@ export function buildPermissionSet(input: {
       ...(p.dialIn ? { dialIn: { protocol: p.dialIn.protocol } } : {}),
       // only when declared, likewise
       ...(p.deviceAccess
-        ? { deviceAccess: { services: sortedUnique(p.deviceAccess.services) } }
+        ? {
+            deviceAccess: {
+              services: sortedUnique(p.deviceAccess.services),
+              ...(p.deviceAccess.loopbackPorts === true && { loopbackPorts: true as const }),
+            },
+          }
         : {}),
       // only when declared, likewise
       ...(p.triggers ? { triggers: { emit: sortedUnique(p.triggers.emit) } } : {}),
@@ -254,6 +261,7 @@ export function buildPermissionSet(input: {
  * `permissions.http.<access>:<METHOD> <path>` (`permissions.http.public:POST /events`),
  * `ui.view:tasks`, `ui.embed:board`, `permissions.client`, `ui.component:hud`,
  * `permissions.dialin:capybara-device/6`, `permissions.deviceaccess:browser`,
+ * `permissions.deviceaccess.loopbackports`,
  * `permissions.triggers:item.created`, `permissions.inbox`.
  * Tolerates old snapshots missing fields (read as empty), so format changes never throw.
  */
@@ -287,6 +295,7 @@ export function permissionKeys(set: PermissionSet): string[] {
   for (const c of p.setupChecks ?? []) keys.push(`${SETUP_CHECK_KEY_PREFIX}${c}`);
   if (p.dialIn?.protocol) keys.push(`${DIAL_IN_KEY_PREFIX}${p.dialIn.protocol}`);
   for (const svc of p.deviceAccess?.services ?? []) keys.push(`${DEVICE_ACCESS_KEY_PREFIX}${svc}`);
+  if (p.deviceAccess?.loopbackPorts === true) keys.push(DEVICE_LOOPBACK_PORTS_KEY);
   for (const t of p.triggers?.emit ?? []) keys.push(`${TRIGGERS_KEY_PREFIX}${t}`);
   if (p.inbox === true) keys.push(INBOX_KEY);
   if (p.agents?.read === true) keys.push(AGENTS_KEY);
@@ -320,6 +329,13 @@ export const DIAL_IN_KEY_PREFIX = "permissions.dialin:";
  * catalog permission keys require (`PERMISSION_KEY_RE`).
  */
 export const DEVICE_ACCESS_KEY_PREFIX = "permissions.deviceaccess:";
+
+/**
+ * Permission key of loopback port grants (`permissions.deviceAccess.loopbackPorts: true`, browser
+ * loopback port grants design): sensitive and blocking, so an approved extension never gains it on
+ * upgrade without approval again. Recorded only when declared.
+ */
+export const DEVICE_LOOPBACK_PORTS_KEY = "permissions.deviceaccess.loopbackports";
 
 /**
  * Key prefix of an event type the extension emits (`permissions.triggers.emit`): blocking, not

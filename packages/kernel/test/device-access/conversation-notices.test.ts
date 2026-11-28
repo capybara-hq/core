@@ -65,7 +65,11 @@ import {
 const FAKE_DEVICE_ACCESS = fileURLToPath(
   new URL("../fixtures/extensions/fake-device-access/index.ts", import.meta.url),
 );
-const CALLER: DeviceAccessCaller = { extension: "fake-device-access", services: ["echo"] };
+const CALLER: DeviceAccessCaller = {
+  extension: "fake-device-access",
+  services: ["echo"],
+  loopbackPorts: false,
+};
 const ID = "fake-device-access.echo";
 
 let pgc: TestContainer;

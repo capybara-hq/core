@@ -20,6 +20,7 @@ import { deletePushRegistrationsForSessions } from "../push/registration-cleanup
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RunControl } from "../runtime/run-control.js";
 import { oweDeviceDestroy } from "../sandbox/jobs.js";
+import { revokeLoopbackGrantsOfDevice } from "../sandbox/loopback-grant-records.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { revokeSharesIn } from "../shares/revoke.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
@@ -392,7 +393,11 @@ export class Offboarding {
       .where("deleted_at", "is", null)
       .returning("id")
       .execute();
-    for (const d of devices) await oweDeviceDestroy(this.outbox, d.id, orgId);
+    for (const d of devices) {
+      await oweDeviceDestroy(this.outbox, d.id, orgId);
+      // its loopback port grants end with it (browser loopback port grants design §4)
+      await revokeLoopbackGrantsOfDevice(this.db.db, this.outbox, { orgId, deviceId: d.id });
+    }
     await this.db
       .deleteFrom("device_defaults")
       .where("org_id", "=", orgId)

@@ -3,6 +3,7 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import zh from "../messages/zh.json";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
@@ -26,6 +27,7 @@ const PLATFORM = {
   idleEnabled: true,
   idleMinTokensFloor: 200_000,
   idleMinWindowRatio: 0.3,
+  idleDelayMinutes: 30,
 };
 
 const DEPLOYMENT = {
@@ -119,6 +121,72 @@ describe("对话压缩 settings", () => {
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
       compaction: { idleEnabled: false },
     });
+  });
+
+  it("platform: the idle delay shows 30, follows idleEnabled and saves only itself", async () => {
+    resetNavigation("/admin/settings");
+    const calls = adminRoutes();
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    const section = await sectionOf(T.title);
+    const delay = textbox(section, T.idleDelayMinutes.label);
+    expect(delay.value).toBe("30");
+    expect(delay.disabled).toBe(false);
+    const user = userEvent.setup();
+    await user.clear(delay);
+    await user.type(delay, "60");
+    await user.click(screen.getByRole("button", { name: en.admin.settings.save }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+      compaction: { idleDelayMinutes: 60 },
+    });
+    await user.click(within(section).getByRole("switch", { name: T.idleEnabled.label }));
+    expect(textbox(section, T.idleDelayMinutes.label).disabled).toBe(true);
+  });
+
+  it("platform: an idle delay outside 5 to 1440 is not committed", async () => {
+    resetNavigation("/admin/settings");
+    const calls = adminRoutes();
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    const section = await sectionOf(T.title);
+    const delay = textbox(section, T.idleDelayMinutes.label);
+    const user = userEvent.setup();
+    await user.clear(delay);
+    await user.type(delay, "2");
+    await user.tab();
+    expect(textbox(section, T.idleDelayMinutes.label).value).toBe("30");
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+
+  it("org: follows the platform's idle delay and saves an override", async () => {
+    resetNavigation("/settings/organization");
+    const calls = orgRoutes({ toolSearch: "on" });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes());
+    const section = await sectionOf(T.title);
+    expect(textbox(section, T.idleDelayMinutes.label).value).toBe("30");
+    expect(textbox(section, T.idleDelayMinutes.label).disabled).toBe(true);
+    const user = userEvent.setup();
+    await user.click(within(section).getByRole("checkbox", { name: T.follow }));
+    const delay = textbox(section, T.idleDelayMinutes.label);
+    await user.clear(delay);
+    await user.type(delay, "90");
+    const row = screen.getByRole("region", { name: "Pending changes" });
+    await user.click(within(row).getByRole("button", { name: en.orgSettings.save }));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      compaction: { idleDelayMinutes: 90 },
+    });
+  });
+
+  it("the idle copy is mode-neutral in both locales", () => {
+    expect(T.idleEnabled.label).toBe("Compact idle conversations in the background");
+    expect(zh.compaction.idleEnabled.label).toBe("空闲时在后台压缩");
+    expect(T.idleEnabled.hint).toContain(
+      "With a compaction model set, this runs after the idle delay below",
+    );
+    expect(zh.compaction.idleEnabled.hint).toContain(
+      "配置了摘要压缩模型时，在下面的空闲时长后压缩",
+    );
+    expect(T.idleDelayMinutes.label).toBe("Compact after idle for (minutes)");
+    expect(zh.compaction.idleDelayMinutes.label).toBe("空闲多久后压缩（分钟）");
   });
 
   it("platform: an idle floor below the range is not committed", async () => {

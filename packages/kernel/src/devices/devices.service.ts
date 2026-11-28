@@ -39,6 +39,7 @@ import type {
 } from "../sandbox/device-sandbox.js";
 import { deviceSideLayer, hostGrantable } from "../sandbox/device-sandbox.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
+import { revokeLoopbackGrantsOfDevice } from "../sandbox/loopback-grant-records.js";
 import { coversHost, type DeviceLimits, type DeviceNetwork } from "../sandbox/modes.js";
 import { assertAuthorityWriteHeld } from "../sandbox/permission-authority-lock.js";
 import {
@@ -1043,6 +1044,8 @@ export class DevicesService {
       .where("device_id", "=", id)
       .execute();
     await this.machines.revokeActive(id, "deleted");
+    // its loopback port grants end with it (browser loopback port grants design §4)
+    await revokeLoopbackGrantsOfDevice(this.db.db, this.outbox, { orgId, deviceId: id });
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),

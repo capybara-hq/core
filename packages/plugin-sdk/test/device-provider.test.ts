@@ -8,8 +8,12 @@ import {
   EXTENSION_NAME_RE,
   EXTENSION_POINTS,
   isFileSystemGoneError,
+  isLoopbackGrantHost,
   isProjectPathRefusedError,
   isSandboxGoneError,
+  LOOPBACK_DATABASE_PORTS,
+  LOOPBACK_GRANT_HOSTS,
+  LOOPBACK_MAX_PORTS_PER_SERVICE,
   ProjectPathRefusedError,
   parseDeviceReport,
   SANDBOX_ROOTS,
@@ -312,5 +316,30 @@ describe("sandboxProxyRefusalLayer", () => {
         "resolved by a fake-IP resolver and the DNS-over-HTTPS lookup failed (timed out)",
       ),
     ).toBe("unknown");
+  });
+});
+
+describe("loopback port grants", () => {
+  it("names exactly the three loopback grant hosts", () => {
+    expect(LOOPBACK_GRANT_HOSTS).toEqual(["127.0.0.1", "::1", "localhost"]);
+    for (const h of ["127.0.0.1", "::1", "[::1]", "localhost", "LocalHost", "LOCALHOST"])
+      expect(isLoopbackGrantHost(h)).toBe(true);
+    for (const h of [
+      "127.0.0.2",
+      "0.0.0.0",
+      "10.0.0.1",
+      "169.254.169.254",
+      "localhost.",
+      "a.localhost",
+      "::ffff:127.0.0.1",
+      "[::ffff:127.0.0.1]",
+      "",
+    ])
+      expect(isLoopbackGrantHost(h)).toBe(false);
+  });
+
+  it("flags the well-known database ports and bounds the ports per service", () => {
+    expect(LOOPBACK_DATABASE_PORTS).toEqual([5432, 3306, 6379, 27017]);
+    expect(LOOPBACK_MAX_PORTS_PER_SERVICE).toBe(32);
   });
 });
