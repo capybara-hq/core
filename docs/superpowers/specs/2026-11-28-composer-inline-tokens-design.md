@@ -31,8 +31,8 @@ connector resources to a second level under their connector, without the unreada
 3. The text sent to the model keeps token positions: each token's place becomes an English positional
    placeholder (§3.2), with the referenced content blocks after it as the existing resolution does.
    Replay-safe: everything is written into the `user_message`.
-4. The input becomes a rich-text (`contenteditable`) composer in `packages/design`; `apps/web` still
-   writes no styles.
+4. The input becomes a rich-text composer in `packages/design`, built on Lexical (maintainer,
+   2026-11-28, answering this spec's open question); `apps/web` still writes no styles.
 5. `@`'s first level lists connectors themselves (only those the conversation's agent can use), plus
    library files and conversations. Picking `@Slack` inserts a connector token; on send the message
    carries a connector mention, which the kernel turns into model-visible English and, if the
@@ -57,13 +57,18 @@ connector resources to a second level under their connector, without the unreada
 - **A `needs_config` connector is listed, disabled, with 待配置**, as the ＋ menu already shows it
   (composer menus §2); a connector whose *personal* credential is not connected is pickable (the tool
   call then returns the existing connection card, `pipeline.ts:3957`).
+- **A connector with more than 20 tools loads none** (maintainer, 2026-11-28): its mention text points
+  the model to `ToolSearch` instead (§3.3).
+- **Every file gets a `[file: <name>]` line**, uploads included (maintainer, 2026-11-28; §3.3).
 - **Mention-loaded tools stay loaded** from that message on, like a `ToolSearch` load, not for one turn
-  only: the loaded set only grows so the tools list stays append-only and cache-stable, and earlier
+  only (confirmed by the maintainer, 2026-11-28): the loaded set only grows so the tools list stays append-only and cache-stable, and earlier
   calls of those tools keep their definitions.
 - **At most one skill token per message**; once one is in the draft the `/` menu's skills are disabled
   with the line 「一条消息只能使用一个技能」.
-- **Inline tokens have no ×.** They are removed with Backspace / Delete or by selecting over them; the
-  strip's cards keep their remove buttons.
+- **Inline tokens have no ×** (confirmed 2026-11-28). Backspace / Delete remove them as ordinary
+  composer deletion; the strip's cards keep their remove buttons.
+- **The bubble keeps the skill chip first** (confirmed 2026-11-28), then the arguments with their
+  tokens.
 - **`/` opens mid-sentence** (at the start or after whitespace, like `@`); commands (`/compact`) are
   offered only when the `/` is the whole draft.
 
@@ -136,10 +141,16 @@ connector resources to a second level under their connector, without the unreada
 | `conversation` | `@` 会话 | `chats` | title / 未命名会话 | `@<title>` |
 | `skill` | `/` | none (as today) | `/invoice-scan-match` in mono `accent` | `/invoice-scan-match` |
 
-- A token is one atomic inline element in the text flow. Look (design): inline-flex, height one
-  prose line minus 4 (22 at `prose` 26), padding 0 `space.1`, gap `space.1`, radius `sm`, `selected`
-  ground, label in the prose font `ink`, max width 16em (medium 12em, compact 10em) with an ellipsis,
-  the full label in its tooltip. The skill token keeps today's `accent-tint` ground and mono `accent`
+- A token is one atomic inline element in the text flow. Look (design): inline-flex, padding 0
+  `space.1`, gap `space.1`, radius `sm`, `selected` ground, label in the prose font `ink` at the same
+  font size as the prose around it, max width 16em (medium 12em, compact 10em) with an ellipsis,
+  the full label in its tooltip.
+- **Centred on the line, never baseline-shifted** (maintainer review of the demo, 2026-11-28): the
+  box is the line height minus 4 (22 at `prose` 26; compact, with the mobile type, the line height
+  minus 2), set with `vertical-align: top` and half the difference as its block margin (2, compact
+  1), and its label is centred in it, so the token's text and the sentence's text share one optical
+  centre. No `vertical-align` offset in pixels (the demo's `-3px` left the text too high). The icon
+  lead is centred in the box the same way. The skill token keeps today's `accent-tint` ground and mono `accent`
   label (an action, not a reference). A selected token (caret selection over it, or a tap) gets the
   `accent` 1px outline.
 - **Refused** (after a send refusal, §3.4): 1px `fail` border, `fail` label, `circle-alert` lead in
@@ -148,62 +159,90 @@ connector resources to a second level under their connector, without the unreada
 - Accessible name: `<kind>: <label>` (「连接器：Slack」 / "Connector: Slack"); refused adds 「，不可用」
   / ", unavailable" and is described by the reason.
 
-### 2. The editor (design: `ComposerEditor`, replacing `ComposerInput`)
+### 2. The editor (design: `ComposerEditor` on Lexical, replacing `ComposerInput`)
 
-A `contenteditable` element owned by `packages/design`, with a model the component keeps: an ordered
-list of segments, each a text run or a token (`{kind, id, label, icon?, state?}`). The DOM is rendered
-from the model; tokens are `contenteditable="false"` spans. The page (`ComposerBar`) passes and
-receives segments only (`value: Segment[]`, `onChange(segments, caret)`), never DOM. The editor uses
-`beforeinput` for every edit it performs itself and lets the browser edit text runs during an IME
-composition, reading the result at `compositionend`.
+**Engine (maintainer, 2026-11-28): Lexical**, not a hand-built `contenteditable`. Pinned exactly in
+`packages/design/package.json`: `lexical@0.53.0`, `@lexical/react@0.53.0`, `@lexical/plain-text@0.53.0`,
+`@lexical/history@0.53.0` (MIT; 0.53.0 was published 2026-10-28, the latest stable on npm on
+2026-11-28, so more than two weeks old). `@lexical/react` declares `react` / `react-dom` `>=18.x` as
+peers, so the repo's React 19 (`^19.3.1`) fits; its `yjs` peer is optional and not installed (no
+collaborative editing).
 
-Behaviour contract (each line is a test, §8):
+- **Cost.** Measured with esbuild (minified, `production` condition, React external): `lexical` +
+  `@lexical/plain-text` + `@lexical/history` are about 211 KB minified / 70 KB gzip; with the
+  `@lexical/react` entries the composer uses (`LexicalComposer`, `PlainTextPlugin`, `ContentEditable`,
+  `HistoryPlugin`, `LexicalErrorBoundary`) about 225 KB / 75 KB gzip. `lexical` itself is most of it
+  (it pulls `@lexical/clipboard`, `@lexical/html`, `@lexical/selection`). Imports go through those
+  subpath entries only, never the `@lexical/react` barrel. The composer is on the first screen of
+  the workspace home, so the bytes are paid on first load; the implementation plan measures the
+  web's first-load JS before and after and may split the editor into its own chunk behind the
+  composer frame.
+- **Dependency rules.** `packages/design` may take third-party dependencies (it already has Radix,
+  cmdk, dnd-kit); Lexical joins them there. `apps/web` imports nothing from `lexical` / `@lexical/*`
+  (a low-level UI package, `check:web-ui`); it passes and receives segments only. Plugin client
+  code never sees Lexical either (`plugin-client` exposes no editor type).
+- **Shape.** One `LexicalComposer` with `PlainTextPlugin` (no rich formatting; one paragraph per
+  line), a `ContentEditable` as the composer input, and one `TokenNode` (a `DecoratorNode`, inline,
+  `isKeyboardSelectable`, rendering the token of §1 as a React element; its JSON is
+  `{kind, id, label, icon?, state?}`). The model the page sees is derived from the editor state
+  (`$getRoot()` text and token nodes, in order) and set through `editor.update`; the page never
+  touches Lexical nodes. Styles live in the design's CSS as today (`cb-composer-input`,
+  `cb-composer-token`), the Lexical theme maps only class names.
 
-- **IME.** During a composition (`compositionstart` … `compositionend`, or `isComposing`) no trigger
-  opens a menu, the query does not change, ↵ never picks or sends and no token is committed; at
-  `compositionend` the committed text is read and a trigger it contains opens the menu as typed. A
-  composition never spans a token: the caret is never placed inside one, and a composition that starts
-  next to a token edits only the neighbouring text run. A full-width `＠` committed by an IME is not a
-  trigger (only `@`); Shift+2 committed directly types `@` as today.
-- **Caret.** ← / → step over a token in one move; Shift+← / → extend the selection over it as a unit;
-  ↑ / ↓ move by line as the browser does. A click on a token selects it; a click in text places the
-  caret. The caret is never inside a token.
-- **Deleting.** Backspace with the caret right after a token deletes the token (one unit, one undo
-  step); Delete with the caret right before one deletes it; ⌥/Ctrl+Backspace deletes the previous word
-  or the previous token, whichever is nearer. A selection over tokens deletes them with the text.
-  This replaces the skill chip's "Backspace at the start removes the chip" and settles the @
-  conversations default (decision 8).
-- **Undo / redo.** The editor keeps its own history (the browser's breaks on DOM rendering): ⌘Z /
-  Ctrl+Z, ⇧⌘Z / Ctrl+Y and `beforeinput` `historyUndo` / `historyRedo`. A step ends at a token insert
-  or delete, a paste, a caret jump, a menu pick and a 1 s pause in typing; an IME composition is one
-  step. The history keeps 100 steps and is cleared on send. A page's `ComposerControl.replace` (quick
-  actions) stays one undoable step.
-- **Paste.** Plain text only (`text/plain`; HTML and other types are ignored, files go to the upload
-  strip as today). Pasted text never becomes tokens, even `@Slack` or `/skill`, and never opens a
-  menu; line breaks are kept; U+FFFC and other format characters (`Cf`) are stripped. The token
+Behaviour contract (each line is a test, §8), and what implements it:
+
+- **IME.** During a composition no trigger opens a menu, the query does not change, ↵ never picks
+  or sends and no token is committed; at composition end the committed text is read and a trigger it
+  contains opens the menu as typed. Lexical handles composition itself (it holds its reconciliation
+  while composing and reports `editor.isComposing()`); the trigger listener
+  (`registerUpdateListener`) and the key commands (`KEY_ENTER_COMMAND`, `KEY_ARROW_*_COMMAND`, at
+  `COMMAND_PRIORITY_HIGH` while a menu is open) return early while it is composing. A composition
+  never spans a token: a decorator node is atomic for Lexical's selection. A full-width `＠`
+  committed by an IME is not a trigger (only `@`); Shift+2 committed directly types `@` as today.
+- **Caret.** ← / → step over a token in one move; Shift+← / → extend the selection over it as a
+  unit; a click on a token selects it as a node selection (`accent` outline). The caret is never
+  inside a token (Lexical's decorator node behaviour).
+- **Deleting.** Backspace with the caret right after a token deletes the token, Delete right before
+  one deletes it, a word delete removes the previous word or token, and a selection over tokens
+  deletes them with the text: this is ordinary composer deletion (Lexical's `deleteCharacter` on a
+  decorator node removes it whole, one history step). Tokens have no ×. This replaces the skill
+  chip's "Backspace at the start removes the chip" and settles the @ conversations default
+  (decision 8).
+- **Undo / redo.** Lexical's `HistoryPlugin` (`@lexical/history`) owns ⌘Z / Ctrl+Z, ⇧⌘Z / Ctrl+Y
+  and `historyUndo` / `historyRedo`, with its merge rules for typing; a token insert, a menu pick and
+  a paste are each one step (made as one `editor.update` tagged as their own history entry). The
+  history is cleared on send. A page's `ComposerControl.replace` (quick actions) stays one undoable
+  step.
+- **Paste.** Plain text only: a `PASTE_COMMAND` handler at high priority reads `text/plain`, strips
+  U+FFFC and other format characters (`Cf`), and inserts it as text, so HTML and Lexical's own
+  clipboard format never create nodes; files go to the upload strip as today. Pasted text never
+  becomes tokens, even `@Slack` or `/skill`, and never opens a menu; line breaks are kept. The token
   warning still runs on paste.
-- **Copy / cut.** A selection is written as `text/plain` with each token as its plain form (table
-  above); nothing else (no custom type, so a paste back is text, by the paste rule).
+- **Copy / cut.** `COPY_COMMAND` / `CUT_COMMAND` write only `text/plain`, each token as its plain
+  form (table above): no HTML and no Lexical clipboard type, so a paste back is text, by the paste
+  rule.
 - **Drafts.** `ComposerDraft` becomes `{segments, skill, files (uploads), id?, refused?}`; `refused`
-  names refused tokens by `(kind, id)` with their reason. A failed send restores the segments with the
-  refused tokens marked; the new conversation's layout switch and the first-message attempt carry it as
-  today (`first-message-attempt.ts`).
+  names refused tokens by `(kind, id)` with their reason. A failed send restores the segments (an
+  `editor.update` that rebuilds the paragraph nodes and token nodes) with the refused tokens marked;
+  the new conversation's layout switch and the first-message attempt carry it as today
+  (`first-message-attempt.ts`). Lexical's serialized state is never stored or handed over.
 - **Draft identity.** `draftKey` becomes the JSON of `[segments as [text | [kind, id]], upload ids,
   skill]`: moving a token, adding one or editing text is a new message (new `clientMessageId`);
   re-rendering a label (a title fetched later) is not.
-- **Mobile keyboards.** `autocapitalize="sentences"`, `autocorrect` and predictive text on; tokens are
-  atomic for the keyboard too (the editor ends a composition that would cross one). On touch a tap on
-  a token selects it and the keyboard's delete removes it. ↵ on a soft keyboard is a newline as today;
-  send is the button.
-- **Screen readers.** The editor is `role="textbox"` `aria-multiline="true"` and, while the page passes
-  `menu`, the combobox of §6.16.2 (`aria-expanded`, `aria-controls`, `aria-activedescendant`); each
-  token is `role="img"` with its accessible name (§1), so reading the line says
-  「给 连接器：Slack 发消息」. Inserting a token announces nothing extra (the name is read in place).
-- **Growth and placeholder.** One line when empty, grows to 8 lines then scrolls, as the textarea did;
-  the placeholder and the skill's argument hint (faint ghost text after the skill token while nothing
-  follows it) as today.
-- **Form participation.** No hidden textarea; the editor exposes `value` / `focus()` / `insertToken()`
-  / `replace()` through its ref so `ComposerControl` keeps working.
+- **Mobile keyboards.** `autocapitalize="sentences"`, `autocorrect` and predictive text on;
+  Lexical's Android composition handling is relied on, and tokens stay atomic for the keyboard. On
+  touch a tap on a token selects it and the keyboard's delete removes it. ↵ on a soft keyboard is a
+  newline as today; send is the button. Playwright runs the IME and caret tests on Chromium and
+  WebKit; Android keyboards (Gboard, Sogou) are part of the acceptance pass on a device.
+- **Screen readers.** The `ContentEditable` is `role="textbox"` `aria-multiline="true"` and, while
+  the page passes `menu`, the combobox of §6.16.2 (`aria-expanded`, `aria-controls`,
+  `aria-activedescendant`, passed through to it); each token's element is `role="img"` with its
+  accessible name (§1), so reading the line says 「给 连接器：Slack 发消息」.
+- **Growth and placeholder.** One line when empty, grows to 8 lines then scrolls, as the textarea
+  did; the placeholder (`PlainTextPlugin placeholder`) and the skill's argument hint (faint ghost text
+  after the skill token while nothing follows it) as today.
+- **Ref.** The editor exposes `value` / `focus()` / `insertToken()` / `replace()` through its ref so
+  `ComposerControl` keeps working; the Lexical editor instance stays inside `packages/design`.
 
 ### 3. Message contract (kernel)
 
@@ -261,7 +300,8 @@ arguments):
 #### 3.3 Blocks after `content[0]`
 
 Order (kept from today, the new kinds appended inside it so the classifier's indices do not move):
-resources, project files, conversations, **connector mentions**, **file tokens**, uploads.
+resources, project files, conversations, **connector mentions**, **file tokens**, uploads (each file
+block preceded by its `[file: …]` line).
 
 - **Resource:** today's block with the placeholder first:
   `[resource: Send Message from Slack] Attached resource "Send Message" (<uri>) from the connector Slack:\n\n<body>`.
@@ -278,8 +318,11 @@ resources, project files, conversations, **connector mentions**, **file tokens**
   tool search on and more → `It has <n> tools; load the ones this message needs with ToolSearch.`;
   tool search off → nothing (every tool is already in the request). The text states the mechanism
   only (no instruction about what to do with Slack).
-- **File token:** a text block `[file: report.pdf]` immediately before the file's media block, so an
-  image (sent bare) is tied to its place in the sentence. Uploads keep today's blocks with no label.
+- **File (token or upload):** a text block `[file: report.pdf]` immediately before each file's
+  media block, so an image (sent bare) is tied to its name and, for a token, to its place in the
+  sentence. Uploads get the same line (maintainer, 2026-11-28); their labels share the collision
+  numbering of §3.2 with file tokens. Only new messages carry it: it is written into the logged
+  `content`, so an older message replays as it was logged.
 
 #### 3.4 Validation and refusals
 
@@ -374,8 +417,12 @@ connector or resource tokens.
 |---|---|---|---|
 | Editor | inside the pill, mobile type; tokens max 10em, icon 14 | tokens max 12em | tokens max 16em |
 | `@` menu | bottom sheet with search; second level as in-sheet drill-in; → is the whole row's trailing button `touch.hit` | anchored; → button on the row | anchored; → button, key hints with `→ 资源` |
-| Attachment strip | uploads only, thumbnails and cards as today | same | same |
+| Attachment strip | uploads only, thumbnails and cards as today; a file card beside a thumbnail keeps its own height, centred | same | same |
 | Refusal | Callout line above the editor, buttons under the sentence | line, buttons at the end | line, buttons at the end |
+
+**Attachment strip** (§6.16.21, maintainer review 2026-11-28): the strip's items are centred on
+its cross axis (`align-items: center`), so a file card next to an image thumbnail keeps its own
+height (`row.default`) and sits centred on the thumbnail's 56, never stretched to it.
 
 The adaptation lives in `ComposerEditor`, `ComposerMenu` and the attachment strip; `apps/web` passes
 data only and never reads the size class.
@@ -414,6 +461,7 @@ Removed: `composerMenu.resources` (＋ 连接器资源), the skill chip's 「移
 ## Not in this change
 
 - `$` as a trigger (Open questions).
+- Collaborative editing (Lexical's `yjs` binding is not installed).
 - Tokens in IM channel messages, scheduled task prompts or the queue.
 - Rich text beyond tokens (no bold, lists or links in the composer).
 - Showing the skill token at its typed position in the bubble: the bubble keeps the skill chip first,
@@ -427,8 +475,9 @@ Removed: `composerMenu.resources` (＋ 连接器资源), the skill chip's 「移
 - @ conversations spec §1 (the field becomes a `conversation` token), §3 (an inline token, not a
   strip chip; Backspace by the token rule).
 - File library spec: a file picked by `@` is a token; uploads stay cards.
-- `docs/design/spec.md`: §6.16.2 (the editor, tokens, skill chip replaced, refusal line), §6.16.21
-  (uploads only; conversation states move to the token), §6.16.30 (connectors group, drill, footer),
+- `docs/design/spec.md`: §6.16.2 (the editor, tokens and their centring, skill chip replaced,
+  refusal line), §6.16.21 (uploads only; items centred, no stretch; conversation states move to the
+  token), §6.16.30 (connectors group, drill, footer),
   §6.16.6 (bubble draws tokens from `payload.inline`), §6.11 composer keys; reference blocks, catalog,
   baselines through `visual-update`.
 - replay-evals skill: "Connector mentions" (loaded set includes `connectorMentions[].loadedTools`) and
@@ -438,7 +487,11 @@ Removed: `composerMenu.resources` (＋ 连接器资源), the skill chip's 「移
 
 ## Tests (outline)
 
-- **Design (jsdom + Playwright Chromium / WebKit for IME and caret):** `ComposerEditor` caret over
+- **Design (jsdom + Playwright Chromium / WebKit for IME and caret):** `ComposerEditor` on Lexical:
+  `TokenNode` serialization and atomic selection, the paste and copy command overrides, history
+  steps (token insert, pick, paste each one undo); token centring (the token label's glyph box
+  centre equals the neighbouring text's within 1 px, expanded and compact, Playwright Chromium and
+  WebKit); a file card beside a thumbnail keeps its height and is centred; caret over
   tokens, Backspace / Delete / word delete, selection over tokens, undo / redo steps, paste as plain
   text (no tokens, U+FFFC stripped), copy plain forms, IME (`compositionstart` holds triggers, ↵
   during composition neither picks nor sends, commit opens the menu), combobox aria, token names,
@@ -455,18 +508,20 @@ Removed: `composerMenu.resources` (＋ 连接器资源), the skill chip's 「移
   resource `ui_template` / `empty` refusals; resources route requires `connectorId`, filters UI
   templates and `size: 0`; mentionable-connectors route (agent `disabledTools`, `needs_config` shown,
   guests); retry with the same `clientMessageId` reads nothing; `reconstruct.test.ts` zero drift
-  before and after plus the two new cases.
+  before and after plus the two new cases; uploads get their `[file: …]` line and an upload whose
+  name collides with a file token is numbered.
 - **Platform parity:** the new route's exclusion, the changed body schema.
 - **Checks:** `check:sdk-api` (the `size` field), `check:i18n`, `check:web-ui`.
 
 ## AGENTS.md rules touched
 
-- **Web UI.** `ComposerEditor`, tokens and the menu's drill-in are design components with reference
+- **Web UI.** `ComposerEditor` (on Lexical, a `packages/design` dependency; `apps/web` imports no
+  `lexical` / `@lexical/*`), tokens and the menu's drill-in are design components with reference
   blocks and states; `apps/web` passes segments and data through `defineQuery` / `useAppMutation`,
   writes no styles; no box in a box (tokens are inline marks, the refusal is a Callout line).
 - **Mobile and shells.** The editor, tokens and menu adapt by size class inside `packages/design`;
   compact uses the bottom sheet's drill-in; touch taps never focus the composer from a sheet.
-- **Runtime and replay.** Placeholders, labels and the connector mention text are written into the
+- **Runtime and replay.** Placeholders, labels (uploads included) and the connector mention text are written into the
   `user_message` at send; the mention's loaded tools are logged in its payload and read into the loaded
   set from the log; no new `DriftReason` (argued in §3.6); zero-drift fixtures before and after.
 - **Tools.** `ToolSearch`'s loaded set gains a second source (mentions); keys keep no dots.
@@ -483,17 +538,9 @@ Removed: `composerMenu.resources` (＋ 连接器资源), the skill chip's 「移
 
 ## Open questions
 
-1. **`$` trigger.** Add `$` (e.g. for skills or variables, as some tools do) as an extra trigger? Not
-   now (decision 7).
-2. **Editor engine.** This spec builds a thin own editor on `contenteditable` + `beforeinput`. If the
-   Android keyboard tests (Gboard / Sogou composition across tokens) prove it fragile, adopt Lexical
-   (MIT) inside `packages/design` instead; the contract in §2 stays.
-3. **Big connectors.** A connector with more than 20 tools loads none and points to `ToolSearch`.
-   Alternative: load the 20 best matches of the message text (deterministic `ToolSearch` scoring over
-   that connector's tools).
-4. **Mention lifetime.** Mention-loaded tools stay loaded for the rest of the conversation (cache and
-   history reasons). Confirm, or prefer an explicit unload at a compaction boundary.
-5. **Labels on uploads.** Uploaded images still reach the model unlabeled; give uploads a
-   `[file: <name>]` line too, for symmetry?
-6. **Skill position in the bubble.** Keep the skill chip first in the bubble, or record its typed
-   offset and draw it in place?
+1. **`$` trigger.** Add `$` as an extra trigger (for skills or variables, as some tools do)? Not now
+   (decision 7); revisit when there is a use for it.
+
+Settled by the maintainer on 2026-11-28 and moved into the design: the editor engine (Lexical, §2),
+big connectors (no load, `ToolSearch`, §3.3), mention lifetime (rest of the conversation, §3.6),
+labels on uploads (§3.3), the skill chip first in the bubble, tokens without ×.
