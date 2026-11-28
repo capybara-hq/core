@@ -32,6 +32,8 @@ const PASSING: IdleArmFacts = {
   automationRunId: null,
   outcome: "completed",
   settings: COMPACTION_SETTINGS.parse({}),
+  mode: "cache",
+  now: 0,
   personalOff: false,
   expiry: {
     callSeq: 0,
@@ -251,6 +253,8 @@ export class IdleArm {
 
     const d = idleArmDecision({ ...PASSING, ...known });
     if (!d.arm) return skip(d.reason);
+    // compaction-model arming is wired in a later task; this path only builds cache mode facts
+    if (d.mode !== "cache") return skip("no_cache");
     this.log.debug("idle compaction armed", {
       context: "IdleCompaction",
       conversationId: conv.id,

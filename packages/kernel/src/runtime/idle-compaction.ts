@@ -37,7 +37,8 @@ const PASSING: IdleFireFacts = {
   now: 0,
   expiresAt: Number.POSITIVE_INFINITY,
   backoff: false,
-  sameModel: true,
+  mode: "cache",
+  modelReady: true,
   probe: {
     estimate: Number.POSITIVE_INFINITY,
     window: 0,
@@ -236,7 +237,7 @@ export class IdleCompactionJob {
         });
       }
     }
-    known.sameModel = resolved;
+    known.modelReady = resolved;
     outcome = failing();
     if (outcome !== undefined || !definition) return outcome ?? "no_model";
 

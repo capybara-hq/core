@@ -159,6 +159,34 @@ export function compactionChunkSize(budget: number, maxOutputTokens: number): nu
 export const MIN_COMPACTION_CHUNK_TOKENS = 256;
 
 /**
+ * A compaction model is eligible only if one summary chunk of it holds at least this many tokens
+ * (compaction model spec §4.3): a smaller chunk would split a long transcript into many calls.
+ */
+export const MIN_COMPACTION_MODEL_CHUNK_TOKENS = 32_000;
+
+/**
+ * `Cmax` (compaction model spec §5.1): the summary cap is the setting bounded by the conversation
+ * model's output limit and, when a compaction model summarizes, by its output limit too. Omitting
+ * `summarizerMax` gives the cap of the conversation model alone; a large-output summarizer never
+ * raises it.
+ */
+export function compactionSummaryCap(
+  setting: number,
+  conversationMax: number,
+  summarizerMax?: number,
+): number {
+  return Math.min(setting, conversationMax, summarizerMax ?? Number.POSITIVE_INFINITY);
+}
+
+/** Compaction model spec §4.3: one chunk of the model's input budget reaches the floor. */
+export function compactionModelEligible(window: number, cap: number, reserve: number): boolean {
+  return (
+    compactionChunkSize(compactionInputBudget(window, cap, reserve), cap) >=
+    MIN_COMPACTION_MODEL_CHUNK_TOKENS
+  );
+}
+
+/**
  * Compaction trigger (context compaction spec §4.1): the calibrated estimate reaches the lower of
  * `threshold × window` and the input target `W - O_p - R_p` (the planning bounds,
  * {@link planningBounds}), or it reaches the hard line `estimate + O_p > window`, which fires even

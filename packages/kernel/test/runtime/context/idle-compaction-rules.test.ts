@@ -13,6 +13,7 @@ import {
 
 const settings = COMPACTION_SETTINGS.parse({});
 const T0 = 1_000_000;
+const NOW = 5_000_000;
 const expiry: CacheExpiry = {
   callSeq: 7,
   t0: T0,
@@ -47,6 +48,8 @@ function armFacts(over: Partial<IdleArmFacts> = {}): IdleArmFacts {
     automationRunId: null,
     outcome: "completed",
     settings,
+    mode: "cache",
+    now: NOW,
     personalOff: false,
     expiry,
     lastCall: {
@@ -69,6 +72,7 @@ describe("idleArmDecision", () => {
   it("arms at the expiry's fire time", () => {
     expect(idleArmDecision(armFacts())).toEqual({
       arm: true,
+      mode: "cache",
       runAt: T0 + 3_240_000,
       expiresAt: T0 + 3_600_000,
       cacheCallSeq: 7,
@@ -157,7 +161,8 @@ function fireFacts(over: Partial<IdleFireFacts> = {}): IdleFireFacts {
     now: EXPIRES - 60_000,
     expiresAt: EXPIRES,
     backoff: false,
-    sameModel: true,
+    modelReady: true,
+    mode: "cache",
     probe: { estimate: 250_000, window: 400_000, growth: 50_000, planned: true },
     inContext: true,
     settings,
@@ -177,7 +182,7 @@ describe("idleFireDecision", () => {
     ["disabled", { enabled: false }],
     ["expired", { now: EXPIRES - 30_000 }],
     ["backoff", { backoff: true }],
-    ["no_model", { sameModel: false }],
+    ["no_model", { modelReady: false }],
     ["small", { probe: null }],
     ["small", { probe: { estimate: 250_000, window: 400_000, growth: 50_000, planned: false } }],
     ["small", { probe: { estimate: 199_999, window: 400_000, growth: 50_000, planned: true } }],
@@ -210,6 +215,80 @@ describe("idleFireDecision", () => {
       fire: false,
       outcome: "small",
     });
+  });
+});
+
+describe("idleArmDecision in compaction-model mode", () => {
+  const cm = (over: Partial<IdleArmFacts> = {}) => armFacts({ mode: "compaction_model", ...over });
+
+  it("arms at now + idleDelayMinutes", () => {
+    expect(idleArmDecision(cm({ expiry: null }))).toEqual({
+      arm: true,
+      mode: "compaction_model",
+      runAt: NOW + 30 * 60_000,
+    });
+    expect(idleArmDecision(cm({ settings: { ...settings, idleDelayMinutes: 5 } }))).toEqual({
+      arm: true,
+      mode: "compaction_model",
+      runAt: NOW + 5 * 60_000,
+    });
+  });
+
+  it.each<[string, Partial<IdleArmFacts>]>([
+    ["expiry null", { expiry: null }],
+    ["ttl 300", { expiry: { ...expiry, ttl: 300 } }],
+    ["no in-context", { inContextAllowed: false }],
+    ["fit plan", { fitPlan: true }],
+    ["unsettled", { settled: false }],
+  ])("arms with %s", (_n, over) => {
+    expect(idleArmDecision(cm(over)).arm).toBe(true);
+  });
+
+  it.each<[string, Partial<IdleArmFacts>]>([
+    ["trigger", { trigger: "schedule" }],
+    ["automation", { trigger: "background_task", automationRunId: "ar1" }],
+    ["outcome", { outcome: "budget" }],
+    ["disabled", { settings: { ...settings, idleEnabled: false } }],
+    ["personal_off", { personalOff: true }],
+    [
+      "small",
+      {
+        lastCall: {
+          provider: "p",
+          model: "m",
+          window: 200_000,
+          input: 150_000,
+          cacheRead: 0,
+          cacheWrite: 0,
+          output: 49_000,
+        },
+      },
+    ],
+    ["small", { lastCall: null }],
+  ])("skips with %s", (reason, over) => {
+    expect(idleArmDecision(cm(over))).toEqual({ arm: false, reason });
+  });
+});
+
+describe("idleFireDecision in compaction-model mode", () => {
+  const cm = (over: Partial<IdleFireFacts> = {}) =>
+    fireFacts({ mode: "compaction_model", ...over });
+
+  it("fires long after expiresAt, without a prefix", () => {
+    expect(idleFireDecision(cm({ now: EXPIRES + 3_600_000 }))).toEqual({ fire: true });
+    expect(idleFireDecision(cm({ inContext: false }))).toEqual({ fire: true });
+  });
+
+  it("ends no_model and small", () => {
+    expect(idleFireDecision(cm({ modelReady: false }))).toEqual({
+      fire: false,
+      outcome: "no_model",
+    });
+    expect(
+      idleFireDecision(
+        cm({ probe: { estimate: 250_000, window: 400_000, growth: 19_999, planned: true } }),
+      ),
+    ).toEqual({ fire: false, outcome: "small" });
   });
 });
 
