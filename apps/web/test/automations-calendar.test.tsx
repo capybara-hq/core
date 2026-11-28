@@ -153,6 +153,8 @@ const routes = (over: Record<string, () => unknown> = {}) => ({
   }),
   [`GET ${BASE}`]: ok({ items: [listTask()] }),
   [`GET ${CAL}`]: ok(ANSWER),
+  // no source directs events to me: no 接收规则 in the head
+  [`GET ${BASE}/acceptance`]: ok({ items: [], directedDefault: "auto" }),
   [`GET ${ORG}/members`]: ok({
     members: [
       {

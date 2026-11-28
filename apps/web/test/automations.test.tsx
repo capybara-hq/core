@@ -163,6 +163,8 @@ const common = {
     ],
   }),
   [`GET ${BASE}/event-sources`]: ok({ items: [] }),
+  // no source directs events to me: no 接收规则 in the head
+  [`GET ${BASE}/acceptance`]: ok({ items: [], directedDefault: "auto" }),
   [`GET ${BASE}/grantable-tools?agentId=ag1`]: ok({ items: TOOLS }),
   [`GET ${BASE}/grantable-tools?agentId=ag2`]: ok({ items: TOOLS }),
   [`GET ${ORG}/settings`]: ok({
@@ -222,7 +224,7 @@ describe("/automations (my automations)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("an acceptance automation names the source whose work it accepts", async () => {
+  it("an acceptance automation carries the tag and names the source whose work it accepts", async () => {
     const accepting = {
       ...common,
       [`GET ${BASE}`]: ok({
@@ -244,6 +246,8 @@ describe("/automations (my automations)", () => {
     stubApi(accepting);
     await renderRouteWithCache("/automations?view=list", accepting);
     expect(await screen.findByText("Accepts work from Collab Tracker")).toBeTruthy();
+    const row = within(screen.getAllByRole("row")[1] as HTMLElement);
+    expect(row.getByText(E.acceptanceTag)).toBeTruthy();
   });
 
   it("zh: the schedule in words and the 自动化 title", async () => {
@@ -325,7 +329,7 @@ describe("/automations (my automations)", () => {
     const dialog = within(await screen.findByRole("dialog"));
     expect(dialog.getByText(E.actions.deleteAcceptanceBody, { exact: false })).toBeTruthy();
     const link = dialog.getByRole("link", { name: E.actions.deleteAcceptanceLink });
-    expect(link.getAttribute("href")).toBe("/account/automations");
+    expect(link.getAttribute("href")).toBe("/automations?rules=1");
   });
 
   it("deleting a person's own task does not mention acceptance rules", async () => {

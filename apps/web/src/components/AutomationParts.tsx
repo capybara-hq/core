@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Badge,
   Button,
   CellTitle,
   type Column,
@@ -129,7 +130,7 @@ export function useAutomationActions(orgId: string) {
 /**
  * Delete a task: asks first (a dangerous dialog that starts on Cancel). An acceptance automation
  * (`origin: acceptance`) is made again by the next assigned work while the person's rule for its
- * source is `auto`: the dialog says so and links to the rules (`/account/automations`).
+ * source is `auto`: the dialog says so and links to the rules (the sheet of `/automations?rules=1`).
  */
 export function DeleteAutomationDialog({
   name,
@@ -187,7 +188,7 @@ export function DeleteAutomationDialog({
         {origin === "acceptance" && (
           <Text variant="prose">
             {t("deleteAcceptanceBody")}{" "}
-            <TextLink href="/account/automations">{t("deleteAcceptanceLink")}</TextLink>
+            <TextLink href="/automations?rules=1">{t("deleteAcceptanceLink")}</TextLink>
           </Text>
         )}
         {error !== undefined && <FormError message={error} />}
@@ -213,13 +214,19 @@ export function automationColumns(
     {
       key: "name",
       header: t("columns.name"),
-      // an acceptance automation says which source's work it accepts (collaboration spec §4.4)
+      // an acceptance automation carries the 接收规则 tag and says which source's work it
+      // accepts (collaboration spec §4.4)
       cell: (s) =>
-        s.origin === "acceptance" && s.trigger.kind === "event" ? (
-          <CellTitle
-            title={s.name}
-            description={t("acceptsWork", { source: sourceName(s.trigger.source) })}
-          />
+        s.origin === "acceptance" ? (
+          <Stack direction="row" gap={8} align="center">
+            <CellTitle
+              title={s.name}
+              {...(s.trigger.kind === "event"
+                ? { description: t("acceptsWork", { source: sourceName(s.trigger.source) }) }
+                : {})}
+            />
+            <Badge>{t("acceptanceTag")}</Badge>
+          </Stack>
         ) : (
           <CellTitle title={s.name} />
         ),

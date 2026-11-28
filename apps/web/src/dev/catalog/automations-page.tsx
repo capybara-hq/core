@@ -17,7 +17,11 @@ import type {
   CalendarTask,
 } from "../../lib/automations";
 import { agentsQuery } from "../../lib/query/agents";
-import { automationCalendarQuery, automationsQuery } from "../../lib/query/automations";
+import {
+  acceptanceRulesQuery,
+  automationCalendarQuery,
+  automationsQuery,
+} from "../../lib/query/automations";
 import { membersQuery } from "../../lib/query/members";
 import { orgSettingsQuery } from "../../lib/query/settings";
 import { meQuery, readinessQuery } from "../../lib/query/shell";
@@ -238,6 +242,8 @@ function seeded(variant: AutomationsPageVariant, zone: string): QueryClient {
   });
   const mine = TASKS.filter((t) => t.length < 5).map((t) => listTask(calTask(t, zone)));
   qc.setQueryData(automationsQuery(ORG).queryKey, { items: mine });
+  // no source directs events to me: the head has no 接收规则 (the baselines stay as they are)
+  qc.setQueryData(acceptanceRulesQuery(ORG).queryKey, { items: [], directedDefault: "auto" });
   qc.setQueryData(automationsQuery(ORG, "all").queryKey, {
     items: TASKS.map((t) => listTask(calTask(t, zone))),
   });
@@ -274,6 +280,7 @@ export function AutomationsPageCatalog({ variant }: { variant: AutomationsPageVa
             range: variant === "month" ? "month" : "week",
             date: DATE,
             scope: variant === "admin" ? "all" : "mine",
+            rules: false,
           }}
         />
       </AppShell>
