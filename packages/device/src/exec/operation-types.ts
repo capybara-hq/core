@@ -106,6 +106,13 @@ export interface LocalOperationGrant {
   readonly readRoots: readonly string[];
   readonly writeRoots: readonly string[];
   readonly hosts: readonly string[];
+  /**
+   * Loopback ports the proxy dials for exactly 127.0.0.1, ::1 and localhost (the patched
+   * runtime's `allowedLoopbackPorts`). Set only by the macOS service launcher for a device
+   * service, never for a command, and only while the owner ceiling allows running outside the
+   * sandbox. Absent or empty: none.
+   */
+  readonly loopbackPorts?: readonly number[];
   readonly deniedReadRoots: readonly string[];
   readonly revision: string;
 }

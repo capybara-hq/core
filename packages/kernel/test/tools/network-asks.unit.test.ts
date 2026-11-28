@@ -520,7 +520,7 @@ describe("settledNetworkNotes", () => {
   it("pending → null; each outcome's note", () => {
     expect(settledNetworkNotes(rec({}), 24)).toBeNull();
     const d = rec({}).detail;
-    if (d === null) throw new Error("detail");
+    if (d === null || d.kind === "loopback") throw new Error("detail");
     expect(
       settledNetworkNotes(
         rec({ status: "approved", detail: { ...d, grantedHosts: ["a.com"], outcome: "once" } }),

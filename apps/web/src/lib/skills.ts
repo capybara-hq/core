@@ -414,10 +414,20 @@ export interface InvocableSkill {
  * `GET …/agents/:agentId/invocable-skills`; with `conversationId` (the caller's conversation with
  * the agent) its trial drafts apply.
  */
-export const listInvocableSkills = (orgId: string, agentId: string, conversationId?: string) =>
+export const listInvocableSkills = (
+  orgId: string,
+  agentId: string,
+  conversationId?: string,
+  /** Without a conversation: the new conversation's picked device project (its skills, as last read). */
+  project?: { deviceId: string; name: string },
+) =>
   apiFetch<{ skills: InvocableSkill[] }>(
     `${org(orgId)}/agents/${enc(agentId)}/invocable-skills${
-      conversationId !== undefined ? `?conversationId=${enc(conversationId)}` : ""
+      conversationId !== undefined
+        ? `?conversationId=${enc(conversationId)}`
+        : project !== undefined
+          ? `?deviceId=${enc(project.deviceId)}&project=${enc(project.name)}`
+          : ""
     }`,
   );
 

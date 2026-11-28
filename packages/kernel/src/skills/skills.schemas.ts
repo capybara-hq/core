@@ -2,6 +2,7 @@ import { hasControlChars, MEDIA_NAME_MAX_CHARS, SKILL_LIMITS } from "@capybara-h
 import { z } from "zod";
 import { SKILL_PACKAGE_UPLOAD_MAX_BYTES } from "../conversations/attachments.service.js";
 import { DOWNLOAD_AS } from "../conversations/conversations.schemas.js";
+import { DeviceProjectName } from "../devices/dto.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 
 /** `POST /skills/uploads`: registers a skill package upload (a presigned form). */
@@ -94,9 +95,17 @@ export const AgentSkillUploadBody = z
   .strict();
 /** `POST /agents/:agentId/skills`: an uploaded package registered as one of the agent's skills. */
 export const AgentSkillRegisterBody = z.object({ uploadId: z.string().min(1).max(100) }).strict();
-/** `?conversationId=` of `GET /agents/:agentId/invocable-skills`. */
+/**
+ * `?conversationId=` of `GET /agents/:agentId/invocable-skills`; without it, `deviceId` and
+ * `project` name a new conversation's picked device project, whose last known snapshot lists the
+ * project's skills (project skills before the first run, design §3.2).
+ */
 export const InvocableSkillsQuerySchema = z
-  .object({ conversationId: z.string().min(1).max(100).optional() })
+  .object({
+    conversationId: z.string().min(1).max(100).optional(),
+    deviceId: z.string().min(1).max(100).optional(),
+    project: DeviceProjectName.optional(),
+  })
   .strict();
 
 export const SKILL_ROUTES: readonly RouteSchemas[] = [

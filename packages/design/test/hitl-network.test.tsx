@@ -136,6 +136,7 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
 
   it.each([
     [{ decision: "approved", scope: "once" }, "已允许（这次）"],
+    [{ decision: "approved", scope: "session" }, "已允许本会话"],
     [{ decision: "denied" }, "已拒绝"],
     [{ decision: "expired" }, "已过期"],
     [{ decision: "skipped" }, "已跳过"],

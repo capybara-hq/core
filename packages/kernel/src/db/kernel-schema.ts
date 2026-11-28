@@ -1501,6 +1501,34 @@ export interface DeviceConversationNoticesTable {
   last_failure: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
+/**
+ * 0199: a grant letting one extension service of a person's own device reach one loopback port for
+ * one conversation tree (browser loopback port grants design §6). At most one live row (null
+ * `revoked_at`) per (device, service, conversation, port).
+ */
+export interface DeviceLoopbackGrantsTable {
+  id: string;
+  org_id: string;
+  device_id: string;
+  /** The service id (`<extension>.<name>`). */
+  service_id: string;
+  /** The root conversation. */
+  conversation_id: string;
+  port: number;
+  source: "human" | "review-model" | "full-access" | "owner-panel";
+  approval_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** The call that asked (`run_id`, `call_id`, `attempt`); null for the owner's panel. */
+  run_id: ColumnType<string | null, string | null | undefined, string | null>;
+  call_id: ColumnType<string | null, string | null | undefined, string | null>;
+  attempt: ColumnType<number | null, number | null | undefined, number | null>;
+  created_at: Ts;
+  expires_at: ColumnType<Date, Date | string, Date | string>;
+  revoked_at: TsNullable;
+  revoke_reason: Generated<
+    "revoked" | "expired" | "conversation-deleted" | "outside-sandbox-off" | null
+  >;
+}
+
 /** 0088_environments.sql, renamed in 0105: the device a member's new conversations use by default. */
 export interface DeviceDefaultsTable {
   org_id: string;
@@ -2319,6 +2347,7 @@ export interface KernelDatabase {
   device_machines: DeviceMachinesTable;
   device_projects: DeviceProjectsTable;
   device_conversation_notices: DeviceConversationNoticesTable;
+  device_loopback_grants: DeviceLoopbackGrantsTable;
   background_tasks: BackgroundTasksTable;
   automations: AutomationsTable;
   automation_runs: AutomationRunsTable;
