@@ -291,7 +291,7 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/account/preferences",
-    // No org needed: my preferences; with an org, its themes (外观: the cards or the lock) and,
+    // No org needed: my preferences; with an org, its themes (appearance: the cards or the lock) and,
     // for a member, its settings (the idle compaction switch reads the org's own).
     queries: ({ me, orgId }) =>
       me === null
