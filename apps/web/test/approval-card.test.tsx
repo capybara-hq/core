@@ -809,3 +809,60 @@ describe("ApprovalCard: a loopback port ask (browser loopback port grants §5.2)
     ).toBeTruthy();
   });
 });
+
+describe("ApprovalCard: a loopback ask, body and decided line", () => {
+  const detail = {
+    kind: "loopback" as const,
+    deviceId: "d1",
+    service: "browser",
+    url: null,
+    port: 3000,
+    database: false,
+    attempt: 1,
+  };
+  const view = (over: Partial<Approval> = {}): Approval => ({
+    ...APPROVAL_COMMAND(),
+    kind: "network",
+    command: null,
+    detail,
+    scopes: ["session"],
+    ...over,
+  });
+  const loopbackItem = (over: Partial<ApprovalItem> = {}) =>
+    item({ toolKey: "browser_open", command: undefined as unknown as CommandAsk, ...over });
+
+  it("draws no body when there is no url and no database flag", async () => {
+    stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: view() }) });
+    const { container } = renderPage(<ApprovalCard orgId="o1" item={loopbackItem()} />, {
+      locale: "en",
+    });
+    await screen.findByRole("button", { name: "Allow for this conversation" });
+    expect(container.querySelector('[data-part="network-body"]')).toBeNull();
+  });
+
+  it("reads a decided session grant as allowed for this conversation", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: view({
+            status: "approved",
+            scope: "session",
+            decidedBy: "a1",
+            decidedAt: EXPIRES,
+          }),
+        }),
+    });
+    renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={loopbackItem({
+          loopback: { service: "browser", port: 3000, database: false },
+          decided: { decision: "approved", scope: "session", byAccountId: "a1" } as never,
+          decidedAt: EXPIRES,
+        })}
+      />,
+      { locale: "en" },
+    );
+    expect(await screen.findByText(/Allowed for this conversation/)).toBeTruthy();
+  });
+});

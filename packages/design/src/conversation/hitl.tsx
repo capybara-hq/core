@@ -101,7 +101,7 @@ export type NetworkAsk = {
    * service's ask names what asked ("The agent's browser wants to reach …").
    */
   title?: string;
-  /** A body line in place of the default "this command was blocked" line (plain text). */
+  /** A body line in place of the default "this command was blocked" line (plain text); "": none. */
   body?: string;
 };
 
@@ -952,12 +952,14 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
           {p.network.title ?? richCopy(titleTpl, vars)}
         </strong>
       </div>
-      <div data-part="network-body">
-        {p.network.body ??
-          (description
-            ? fillCopy(t("hitl.network.body"), { description })
-            : t("hitl.network.bodyPlain"))}
-      </div>
+      {p.network.body === "" ? null : (
+        <div data-part="network-body">
+          {p.network.body ??
+            (description
+              ? fillCopy(t("hitl.network.body"), { description })
+              : t("hitl.network.bodyPlain"))}
+        </div>
+      )}
       {p.network.command !== "" ? (
         <pre className="cb-hcard-json" data-part="network-command">
           {clipCommand(p.network.command)}
