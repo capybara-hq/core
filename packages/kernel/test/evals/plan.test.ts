@@ -126,6 +126,47 @@ describe("case plans", () => {
     expect(plans.run).toEqual(plans.step);
   });
 
+  it("an idle compact run (compactOrigin idle) has no plan in either mode either", () => {
+    const s = snapshot("r1", [
+      user("hello"),
+      {
+        type: "run_started",
+        payload: {
+          agentVersion: 1,
+          model: { provider: "p", model: "m" },
+          triggerAccountId: "acc-1",
+          trigger: "compact",
+          compactOrigin: "idle",
+        },
+      },
+      {
+        type: "usage",
+        payload: {
+          step: 0,
+          provider: "p",
+          model: "m",
+          inputTokens: 1000,
+          outputTokens: 100,
+          ...U,
+          purpose: "compaction",
+        },
+      },
+      {
+        type: "compaction_summary",
+        payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900, step: 0 },
+      },
+      { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 1 } },
+    ]);
+    const plans = casePlans(s);
+    expect(plans.step).toEqual({
+      results: [],
+      modelRequests: 0,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      judgeContextTokens: 0,
+    });
+    expect(plans.run).toEqual(plans.step);
+  });
+
   it("a normal run's step plan pairs each replayable call with its own usage, never a compaction's chunk", () => {
     const s = snapshot("r1", [
       user("hello"),

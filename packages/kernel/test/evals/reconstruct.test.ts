@@ -42,9 +42,11 @@ import {
 import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { ConversationMedia } from "../../src/files/conversation-media.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
+import { compactionProgressKey } from "../../src/runtime/compaction-progress.js";
 import {
   type MediaInfo,
   summaryText,
@@ -62,6 +64,7 @@ import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProjectKnowledgeService } from "../../src/runtime/project/knowledge.service.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
+import { RunQueue } from "../../src/runtime/run-queue.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -1128,6 +1131,123 @@ describe("reconstructRequest：基线零漂移", () => {
         .set({ value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0 }) })
         .where("key", "=", "compaction")
         .execute();
+    }
+  });
+
+  it("an idle compact run's in-context summary, then a message run: zero drift, in-context framing (idle compaction spec §5.1)", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    for (let i = 0; i < 3; i++) {
+      await postMessage(owner, orgId, conv, `echo:turn ${i} ${"words ".repeat(40)}`);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    }
+    const armedSeq = (await eventsOf(db, conv)).findLast((e) => e.type === "run_finished")?.seq;
+    const idle = await withOrgScope(orgId, () =>
+      k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number),
+    );
+    expect(idle).not.toBeNull();
+    await waitForTerminal(db, conv, ++n, 30_000);
+    await postMessage(owner, orgId, conv, "echo:after the idle compaction");
+    await waitForTerminal(db, conv, ++n, 30_000);
+
+    const events = await eventsOf(db, conv);
+    const started = events.find((e) => e.type === "run_started" && e.runId === idle);
+    expect(started?.type === "run_started" && started.payload.trigger).toBe("compact");
+    expect(started?.type === "run_started" && started.payload.compactOrigin).toBe("idle");
+    const summaries = events.filter(
+      (e): e is Extract<ConversationEvent, { type: "compaction_summary" }> =>
+        e.type === "compaction_summary",
+    );
+    expect(summaries.map((e) => [e.runId, e.payload.method])).toEqual([[idle, "in_context"]]);
+    const summary = summaries[0] as Extract<ConversationEvent, { type: "compaction_summary" }>;
+    const calls = modelCalls(events);
+    const last = calls.at(-1) as ModelCallEvent;
+    expect(last.payload.request.summarySeq).toBe(summary.seq);
+    const head = sent.at(-1)?.messages[0];
+    const blocks = Array.isArray(head?.content) ? head.content : [];
+    expect(blocks[0]?.type === "text" && blocks[0].text).toMatch(/^<conversation_summary>/);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("a preempted idle compact run (superseded, no summary), then a run that compacted inline: zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    const compactionSettings = (value: Record<string, unknown>) =>
+      db
+        .updateTable("deployment_settings")
+        .set({ value: JSON.stringify(value) })
+        .where("key", "=", "compaction")
+        .execute();
+    const hold = async (sleepMs: number) => {
+      const res = await owner({
+        method: "POST",
+        url: "/plugins/hooks-probe/config",
+        payload: { orgId, sleepMs, sleepIn: sleepMs > 0 ? ["model.request"] : [] },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    };
+    const enableProbe = async (enabled: boolean) => {
+      const res = await owner({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
+        payload: { enabled },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    };
+    await enableProbe(true);
+    try {
+      // long turns that stay under the automatic trigger
+      await compactionSettings({ keepRecentTurns: 1, reserveTokens: 0, threshold: 0.9 });
+      let n = 0;
+      for (let i = 0; i < 2; i++) {
+        await postMessage(owner, orgId, conv, "long:3000");
+        await waitForTerminal(db, conv, ++n, 30_000);
+      }
+      expect((await eventsOf(db, conv)).some((e) => e.type === "compaction_summary")).toBe(false);
+
+      await hold(60_000);
+      const armedSeq = (await eventsOf(db, conv)).findLast((e) => e.type === "run_finished")?.seq;
+      const idle = await withOrgScope(orgId, () =>
+        k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number),
+      );
+      expect(idle).not.toBeNull();
+      await waitFor(
+        async () => {
+          const r = await k.app.get(REDIS).get(compactionProgressKey(idle as string));
+          return r !== null && (JSON.parse(r) as { phase: string }).phase === "summarizing"
+            ? r
+            : null;
+        },
+        20_000,
+        "the idle compaction reached its model call",
+      );
+      await hold(0);
+      // the next run compacts inline at half the window
+      await compactionSettings({ keepRecentTurns: 1, reserveTokens: 0, threshold: 0.5 });
+      await postMessage(owner, orgId, conv, "long:3000");
+      await waitForTerminal(db, conv, n + 2, 30_000);
+      await postMessage(owner, orgId, conv, "echo:after");
+      await waitForTerminal(db, conv, n + 3, 30_000);
+
+      const events = await eventsOf(db, conv);
+      const idleEvents = events.filter((e) => e.runId === idle);
+      expect(
+        idleEvents
+          .filter((e) => e.type === "run_aborted")
+          .map((e) => (e.payload as never as { reason: string }).reason),
+      ).toEqual(["superseded"]);
+      expect(idleEvents.some((e) => e.type === "compaction_summary")).toBe(false);
+      const summaries = events.filter((e) => e.type === "compaction_summary");
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.runId).not.toBe(idle);
+      await expectZeroDrift(conv, await snapshotOf(conv));
+    } finally {
+      await hold(0);
+      await enableProbe(false);
+      await compactionSettings({ keepRecentTurns: 1, reserveTokens: 0 });
     }
   });
 
