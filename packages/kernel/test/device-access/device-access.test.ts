@@ -1645,6 +1645,50 @@ describe("ctx.deviceAccess loopback port grants", () => {
     expect(rows.map((r) => r.conversation_id)).toEqual([s.conversationId, s.conversationId]);
   });
 
+  it("lists no grants while the tree is unattended; the grants stay live", async () => {
+    await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
+    const task = await new AutomationStore().insertTask(db, {
+      id: randomUUID(),
+      orgId,
+      accountId: s.accountId,
+      agentId: s.agentId,
+      name: "nightly",
+      prompt: "nightly",
+      trigger: { kind: "cron", expr: "*/5 * * * *", timeZone: "UTC" },
+      mode: "new",
+      conversationId: null,
+      chat: null,
+      model: null,
+      effort: null,
+      deviceId: null,
+      status: "paused",
+      nextRunAt: null,
+      jitterSeconds: 0,
+      expiresAt: null,
+    } satisfies AutomationInsert);
+    const setAutomation = (id: string | null) =>
+      db
+        .updateTable("conversations")
+        .set({ automation_id: id })
+        .where("id", "=", s.conversationId)
+        .execute();
+    await setAutomation(task.id);
+    try {
+      expect(await access.loopbackPorts(LOOPBACK, scopeOf())).toEqual([]);
+      // the grant itself is not revoked
+      expect(
+        await db
+          .selectFrom("device_loopback_grants")
+          .select("revoked_at")
+          .where("device_id", "=", s.deviceId)
+          .execute(),
+      ).toEqual([{ revoked_at: null }]);
+    } finally {
+      await setAutomation(null);
+    }
+    expect((await access.loopbackPorts(LOOPBACK, scopeOf())).map((g) => g.port)).toEqual([3999]);
+  });
+
   it("revokes and narrows", async () => {
     allowReview();
     await access.ensureService(CALLER, callOf(), echoServiceSpec());

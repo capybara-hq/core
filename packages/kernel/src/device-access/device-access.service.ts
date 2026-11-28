@@ -660,12 +660,17 @@ export class DeviceAccessService {
       await this.refreshLoopback(d, key.serviceId);
   }
 
-  /** The live grants of the service held by the scope conversation's root (owner only), by port. */
+  /**
+   * The live grants of the service held by the scope conversation's root (owner only), by port.
+   * None while the tree is unattended ({@link unattendedTree}): a grant the person made is never an
+   * unattended run's, so the browser's per-tab check refuses that tab (the grants stay live).
+   */
   async loopbackPorts(
     caller: DeviceAccessCaller,
     scope: DeviceAccessScope & { service: string },
   ): Promise<LoopbackGrantView[]> {
     const { d, key } = await this.loopbackKey(caller, scope, null);
+    if (await this.unattendedTree(d)) return [];
     const rows = await this.loopback.liveForRoot(
       d.orgId,
       d.deviceId,

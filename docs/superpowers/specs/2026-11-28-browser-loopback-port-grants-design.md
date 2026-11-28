@@ -120,7 +120,8 @@ A loopback grant is the tuple `(org, device, service id, conversation root, port
   never an unattended run's approval, so the kernel neither grants nor reruns its call (final
   review M3, 2026-11-28). The device carve-out is still the union of the service's live grants,
   so the port stays open on the machine while the grant lives; refusing the unattended tab
-  itself is the browser's per-tab check.
+  itself is the browser's per-tab check, which honours `ctx.deviceAccess.loopbackPorts`: it lists
+  no grants while the tree is unattended (the grants stay live).
 - A person's approval is a new approval detail kind, `loopback`
   (`{ service, url, port, attempt, outcome }`). The card says what is reached and from where:
   "允许浏览器访问本机端口 3999？" / "Allow the browser to reach port 3999 on this device?", with

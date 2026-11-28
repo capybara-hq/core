@@ -947,9 +947,9 @@ export interface DeviceProvider {
    * `opts.loopbackPorts` is the whole sorted set of the service's live loopback port grants
    * (`DeviceServiceNetwork.loopbackPorts`, at most {@link LOOPBACK_MAX_PORTS_PER_SERVICE}): the
    * service may reach {@link LOOPBACK_GRANT_HOSTS} on exactly these ports and no other loopback
-   * port. The kernel sends it only while the device's permission support reports
-   * `network.loopbackPorts` and its ceilings allow running outside the sandbox, and only a
-   * non-empty set; otherwise the key is absent. A provider forwards it only to a machine that
+   * port. The kernel sends only a non-empty set, while the device's permission support reports
+   * `network.loopbackPorts` or is not known (none, or one naming an `unavailableReason`), and its
+   * ceilings allow running outside the sandbox; on a known refusal the key is absent. A provider forwards it only to a machine that
    * announced the feature. A changed set applies like changed network limits (the running service
    * is restarted on it), and an absent or empty set closes every loopback port again.
    */

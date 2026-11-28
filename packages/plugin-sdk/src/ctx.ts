@@ -281,7 +281,9 @@ export interface DeviceAccessCtx {
   /**
    * The live loopback port grants of the service held by the scope conversation's root, sorted by
    * port (owner only, needs `permissions.deviceAccess.loopbackPorts`). Grants live 24 hours from
-   * issue and follow the same outside-sandbox ceilings as {@link grantLoopbackPort}.
+   * issue and follow the same outside-sandbox ceilings as {@link grantLoopbackPort}. Empty while
+   * the tree is unattended (an automation's conversation, or an automation's run with no person
+   * joined): a grant is never an unattended run's, so a per-tab check refuses that tab.
    */
   loopbackPorts(scope: DeviceAccessScope & { service: string }): Promise<LoopbackGrantView[]>;
   /**
