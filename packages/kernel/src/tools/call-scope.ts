@@ -55,12 +55,16 @@ export interface CallScope {
    * ({@link strongerLayer}); null when nothing was reported. `deviceId` is the device this call's
    * own `ctx.deviceAccess` calls resolved, or null when the call made none (the pipeline then asks
    * about the device the call's conversation works in); `url` is the page the refusals came from,
-   * when the service said.
+   * when the service said. `loopback` is the call's first loopback refusal of an extension that
+   * declares `permissions.deviceAccess.loopbackPorts` (its host is in `hosts` too, as an address
+   * host): the service it came from (`<extension>.<name>`), the host as reported and the port;
+   * null when there was none.
    */
   blocked: {
     deviceId: string | null;
     hosts: Map<string, NetworkBlockLayer>;
     url: string | null;
+    loopback: { serviceId: string; host: string; port: number } | null;
   } | null;
   /**
    * How many device starts of this call are in progress now (`ctx.deviceAccess.ensureService`:

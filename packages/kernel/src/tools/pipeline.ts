@@ -82,6 +82,13 @@ import type { DispatchArgs, DispatchOutcome } from "../runtime/subagents/dispatc
 import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/messages.js";
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
+import {
+  type LoopbackGrantKey,
+  type LoopbackGrantRow,
+  LoopbackGrants,
+  LoopbackLimitError,
+  loopbackRefusal,
+} from "../sandbox/loopback-grants.js";
 import { orgHostOutsideCeiling } from "../sandbox/modes.js";
 import { NetworkGrants, type NetworkRunState } from "../sandbox/network-grants.js";
 import { SandboxOperationAuthority } from "../sandbox/operation-authority.js";
@@ -89,7 +96,7 @@ import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js
 import { PermissionAutoGrants } from "../sandbox/permission-auto-grants.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import type { PermissionCandidate } from "../sandbox/permission-call-types.js";
-import { permissionScopeHash } from "../sandbox/permission-facts.js";
+import { PermissionFacts, permissionScopeHash } from "../sandbox/permission-facts.js";
 import {
   type CommandReview,
   isSessionGrantableRule,
@@ -104,7 +111,10 @@ import {
   escalationRefusedText,
   isEscalatedCall,
 } from "../sandbox/review/permission-candidate.js";
-import { CommandReviewService } from "../sandbox/review/review.service.js";
+import {
+  CommandReviewService,
+  LOOPBACK_FULL_ACCESS_REASON,
+} from "../sandbox/review/review.service.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
 import {
@@ -112,6 +122,7 @@ import {
   type ApprovalScope,
   ApprovalsService,
   type CommandAskDetail,
+  type KeptToolResult,
   type NetworkAskDetail,
 } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
@@ -132,6 +143,7 @@ import {
   attachCallScope,
   type CallScope,
   mergeServiceHosts,
+  serviceHostKey,
   stillStartingUnsent,
 } from "./call-scope.js";
 import { canonicalJson } from "./canonical-json.js";
@@ -139,19 +151,29 @@ import { type ConnectorAuth, CredentialMissing, Credentials } from "./credential
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
 import {
+  loopbackGrantedNote,
+  loopbackNotAppliedNote,
+  loopbackPendingNote,
+  loopbackReviewDeniedNote,
+  planLoopbackAsk,
+} from "./loopback-asks.js";
+import {
   addressEscalationHint,
   blockedEventHosts,
   clipKept,
   type DenialHint,
   denialHintFor,
   deviceAskTerms,
+  MAX_NETWORK_ASKS_PER_RUN,
   NETWORK_ASK_KEPT_MAX_BYTES,
   type NetworkPlan,
   networkBlockedIdemKey,
+  otherAskPendingNote,
   planNetworkAsk,
   serviceAskedNote,
   serviceAskTerms,
   settledNetworkNotes,
+  tooManyNote,
   withNetworkNotes,
 } from "./network-asks.js";
 import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
@@ -537,6 +559,7 @@ interface PipelineDeps {
     | "forCall"
     | "networkForCall"
     | "requestNetwork"
+    | "requestLoopback"
     | "commandForCall"
     | "requestCommand"
     | "requestSecureInput"
@@ -678,6 +701,12 @@ export interface ServiceBlocked {
   hosts: ServiceBlockedHost[];
   /** The page the refusals came from, when the service said. */
   url: string | null;
+  /**
+   * The call's loopback refusal of an extension declaring `permissions.deviceAccess.loopbackPorts`
+   * (`CallScope.blocked.loopback`): the service (`<extension>.<name>`), the host and the port. Its
+   * host is in `hosts` too, as an address host. Absent: none.
+   */
+  loopback?: { serviceId: string; host: string; port: number };
 }
 
 export type ExecOutcome =
@@ -1100,6 +1129,7 @@ function withBlocked(outcome: ExecOutcome, scope: CallScope | undefined): ExecOu
           deviceId: blocked.deviceId,
           hosts: [...blocked.hosts].map(([host, layer]) => ({ host, layer })),
           url: blocked.url,
+          ...(blocked.loopback !== null && { loopback: { ...blocked.loopback } }),
         },
       }),
     // a device service launch's review (ctx.deviceAccess), recorded with the call's result
@@ -1131,11 +1161,26 @@ function carriedOf(rounds: readonly QuestionRecord[]): QuestionCarried {
  * another kernel version) is dropped.
  */
 function mergeBlocked(a: ServiceBlocked | undefined, b: ServiceBlocked): ServiceBlocked {
+  const loopback = validLoopback(b.loopback) ?? validLoopback(a?.loopback);
   return {
     deviceId: b.deviceId ?? a?.deviceId ?? null,
     hosts: mergeServiceHosts(validServiceHosts(a?.hosts), validServiceHosts(b.hosts)),
     url: b.url ?? a?.url ?? null,
+    ...(loopback !== undefined && { loopback }),
   };
+}
+
+/** A well-formed loopback refusal ({@link ServiceBlocked.loopback}); a malformed one is dropped. */
+function validLoopback(l: unknown): ServiceBlocked["loopback"] {
+  const v = l as ServiceBlocked["loopback"] | null | undefined;
+  return v != null &&
+    typeof v.serviceId === "string" &&
+    typeof v.host === "string" &&
+    Number.isInteger(v.port) &&
+    v.port >= 1 &&
+    v.port <= 65535
+    ? { serviceId: v.serviceId, host: v.host, port: v.port }
+    : undefined;
 }
 
 /** The well-formed entries of a refused-host list ({@link ServiceBlocked.hosts}). */
@@ -1185,6 +1230,31 @@ function serviceRerunAfter(ask: ApprovalRecord | null): number | null {
   if (d.appliesAt !== "next-command") return null;
   return d.attempt;
 }
+
+/**
+ * The attempt of an approved loopback port ask: the call runs again after it whatever became of
+ * the grant (the approval is the person's decision; a grant the panel made first, or one that
+ * ended since, leaves the re-run to meet the port as it is and report it).
+ */
+function loopbackAskRerunAfter(ask: ApprovalRecord | null): number | null {
+  const d = ask?.detail;
+  return ask?.status === "approved" && d?.kind === "loopback" ? d.attempt : null;
+}
+
+/**
+ * Every attempt after which the call ran again: a device service's approved network ask
+ * ({@link serviceRerunAfter}), an approved loopback port ask ({@link loopbackAskRerunAfter}), or
+ * the call's live loopback port grant (Full access or the review model granted the port to the
+ * attempt that was refused it).
+ */
+function rerunPoints(ask: ApprovalRecord | null, grant: LoopbackGrantRow | null): Set<number> {
+  const points = [serviceRerunAfter(ask), loopbackAskRerunAfter(ask), grant?.attempt ?? null];
+  return new Set(points.filter((p): p is number => p !== null));
+}
+
+/** An ask whose approval runs the call again: it belongs to the attempt that asked. */
+const asksPerAttempt = (ask: ApprovalRecord): boolean =>
+  ask.detail?.kind === "service" || ask.detail?.kind === "loopback";
 
 /** A builtin result's kernel-internal network report (see `BuiltinResult.networkReport`). */
 function networkReportOf(
@@ -1311,6 +1381,7 @@ export class ToolPipeline {
       | "forCall"
       | "networkForCall"
       | "requestNetwork"
+      | "requestLoopback"
       | "commandForCall"
       | "requestCommand"
       | "requestSecureInput"
@@ -1370,6 +1441,17 @@ export class ToolPipeline {
     @Optional()
     @Inject(AttachmentsService)
     private readonly resultImages?: Pick<AttachmentsService, "storeRead">,
+    /**
+     * A device service's loopback port grants (browser loopback port grants); absent (hand-built
+     * pipelines): a loopback refusal keeps the address note.
+     */
+    @Optional()
+    @Inject(LoopbackGrants)
+    private readonly loopbackGrants?: Pick<LoopbackGrants, "grantIn" | "forCall" | "liveForRoot">,
+    /** The device's sandbox and its provider's support a loopback grant is checked against. */
+    @Optional()
+    @Inject(PermissionFacts)
+    private readonly permissionFacts?: Pick<PermissionFacts, "deviceSandboxFacts">,
   ) {
     this.deps = {
       // the builtins that enter a device on the managed operation route (common.ts
@@ -1544,12 +1626,16 @@ export class ToolPipeline {
       });
       return undefined;
     }
+    // the call's network ask (one per call) and its live loopback port grant
+    const ask = await this.deps.approvals.networkForCall(ctx.runId, call.id);
+    const grant = await this.loopbackGrantOf(ctx.runId, call.id);
     let attempt = rounds.length + 1;
-    // a device service's call that ran again after its network ask took one attempt more (browser
-    // use spec §7.1): input rounds the re-run asked come after it
+    // each time the call ran again (after its network ask, browser use spec §7.1, or a loopback
+    // grant or ask) took one attempt more: input rounds asked after a re-run come after it, so
+    // every re-run point the count has passed adds one, in order
+    const reruns = rerunPoints(ask, grant);
     if (rounds.length > 0) {
-      const asked = serviceRerunAfter(await this.deps.approvals.networkForCall(ctx.runId, call.id));
-      if (asked !== null && attempt > asked) attempt += 1;
+      for (const p of [...reruns].sort((a, b) => a - b)) if (attempt > p) attempt += 1;
     }
     const resume: ToolResume | undefined = last
       ? {
@@ -1563,19 +1649,43 @@ export class ToolPipeline {
       ctx.conversationId,
       idem.started(ctx.runId, call.id, attempt),
     );
+    // a call that ran again (after a loopback grant or an approved ask) is looked at in its latest
+    // attempt: a re-run that asked a network ask of its own resumes from that ask
+    while (started?.type === "tool_call_started" && reruns.has(attempt)) {
+      const next = await this.deps.eventLog.findByIdem(
+        ctx.conversationId,
+        idem.started(ctx.runId, call.id, attempt + 1),
+      );
+      if (next?.type !== "tool_call_started") break;
+      attempt += 1;
+      started = next;
+    }
     if (started?.type === "tool_call_started") {
       // a command that ran and was refused a network host waits for the device owner (network
       // ask-to-allow spec §6.2, P-D2): pending → wait on; settled → its kept result and the
       // outcome's note (the command is never run again; its tool.called was audited when it ran).
       // A device service's ask (browser use spec §7.1) belongs to the attempt that asked; once
       // the person added its hosts to the device's list the call runs again in the next attempt
-      const ask = await this.deps.approvals.networkForCall(ctx.runId, call.id);
+      // A loopback port ask (browser loopback port grants) too; a port that Full access or the
+      // review model granted to this attempt has no ask: its grant row names the attempt, so the
+      // call runs again in the next one, also after a crash between the grant and the re-run
       const askedHere =
-        ask !== null && (ask.detail?.kind !== "service" || ask.detail.attempt === attempt);
-      if (ask !== null && askedHere) {
-        const notes = settledNetworkNotes(ask, approvalHours(ask));
-        if (notes === null) return approvalWait(ask);
-        if (serviceRerunAfter(ask) === null) {
+        ask !== null &&
+        (!asksPerAttempt(ask) ||
+          (ask.detail as { attempt?: number } | null | undefined)?.attempt === attempt);
+      const grantedHere = !askedHere && grant !== null && grant.attempt === attempt;
+      if (askedHere || grantedHere) {
+        const notes =
+          askedHere && ask !== null
+            ? settledNetworkNotes(ask, approvalHours(ask))
+            : [loopbackGrantedNote((grant as LoopbackGrantRow).port)];
+        if (notes === null) return approvalWait(ask as ApprovalRecord);
+        const rerunsHere =
+          !askedHere ||
+          serviceRerunAfter(ask) !== null ||
+          loopbackAskRerunAfter(ask) !== null ||
+          grant?.attempt === attempt;
+        if (askedHere && ask !== null && !rerunsHere) {
           const kept = ask.detail?.result;
           // the device code the command printed is carried in the kept result: write its
           // display-only event here too (a crash before the ask's first write, or an older kept
@@ -1605,11 +1715,19 @@ export class ToolPipeline {
           idem.started(ctx.runId, call.id, attempt + 1),
         );
         if (rerun?.type !== "tool_call_started") {
-          // the asked hosts are settled: only an earlier round's launch review is carried
+          // the asked hosts are settled: only an earlier round's launch review is carried; a
+          // granted loopback port's note goes with the re-run's result
           const { review: carriedReview } = carriedOf(rounds);
-          return this.runCall(ctx, call, await resolve(), attempt + 1, resume, {
-            ...(carriedReview !== undefined && { review: carriedReview }),
-          });
+          const loopback = !askedHere || ask?.detail?.kind === "loopback";
+          return this.runCall(
+            ctx,
+            call,
+            await resolve(),
+            attempt + 1,
+            resume,
+            { ...(carriedReview !== undefined && { review: carriedReview }) },
+            loopback ? { notes, loopbackRerun: true } : {},
+          );
         }
         // the re-run started and its result was lost: the result is unknown, as below
         started = rerun;
@@ -1672,6 +1790,11 @@ export class ToolPipeline {
     resume: ToolResume | undefined,
     /** What earlier input rounds of the call collected for its result ({@link carriedOf}). */
     carried: QuestionCarried = {},
+    /**
+     * A re-run after a granted loopback port: the notes written after its result, and that it is
+     * the re-run (a port still refused is not asked about again in it).
+     */
+    rerun: { notes?: readonly string[]; loopbackRerun?: boolean } = {},
   ): Promise<WaitingFor | undefined> {
     // the command review's record for this call's result (absent: not reviewed, or no device)
     let review: ReviewRecord | undefined;
@@ -2293,9 +2416,76 @@ export class ToolPipeline {
       commandReport === undefined && (outcome.kind === "result" || outcome.kind === "error")
         ? await this.ownDeviceReport(ctx, outKey, outcome.blocked)
         : undefined;
+    // the formatted result and its display-only fields, kept by an ask until it settles
+    const keptResult = {
+      text: rendered.text,
+      content: spilled.content,
+      isError: rendered.isError,
+      ...(spilled.outputId !== undefined && { outputId: spilled.outputId }),
+      ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
+      ...(display !== undefined && { display }),
+      ...(view !== undefined && { view }),
+      ...(media !== undefined && { media }),
+      ...(review !== undefined && { review }),
+      // carried into the kept result so a resumed run writes the event too (it was written
+      // with `network_blocked` below when the ask was created)
+      ...(loginCode !== undefined && { loginCode }),
+      ...(denialHint !== undefined && { denialHint }),
+    };
+    // a device service's loopback refusal (browser loopback port grants), decided before the other
+    // hosts: the conversation's permission profile grants the port (the call runs again now),
+    // the run waits for the device owner, or a note says why the port stays closed; its host is
+    // then not one of the address hosts below
+    let serviceHosts = scoped?.hosts;
+    let loopbackNotes: readonly string[] = [];
+    if (scoped?.loopback !== undefined) {
+      const lb = scoped.loopback;
+      const handled = await this.loopbackBlocked(
+        ctx,
+        call,
+        tool,
+        input,
+        outKey,
+        { deviceId: scoped.deviceId, loopback: lb, url: scoped.url },
+        attempt,
+        keptResult,
+        rerun.loopbackRerun === true,
+        pre,
+        callAudit,
+      );
+      if (handled.kind !== "none") {
+        serviceHosts = scoped.hosts.filter(
+          (h) => serviceHostKey(h.host) !== serviceHostKey(lb.host),
+        );
+        if (handled.kind === "wait") {
+          if (hooks && hookBase) {
+            fireObserve(
+              hooks,
+              "tool.postExecute",
+              { ...hookBase, isError: rendered.isError, content: handled.content, durationMs },
+              ctx.signal,
+              this.deps.log,
+            );
+          }
+          return handled.wait;
+        }
+        if (handled.kind === "rerun") {
+          return this.runCall(
+            ctx,
+            call,
+            resolved,
+            attempt + 1,
+            resume,
+            { ...(carried.review !== undefined && { review: carried.review }) },
+            { notes: handled.notes, loopbackRerun: true },
+          );
+        }
+        loopbackNotes = handled.notes;
+      }
+    }
     const report =
       commandReport ??
-      (scoped === undefined
+      (scoped === undefined || serviceHosts === undefined || serviceHosts.length === 0
         ? undefined
         : {
             deviceId: scoped.deviceId,
@@ -2303,7 +2493,7 @@ export class ToolPipeline {
             // port. The layer is the service's word: it only chooses the note or the ask, and the
             // plan still refuses to ask about a host the device list cannot take (an IP literal
             // or other invalid name is always `address`)
-            blocked: scoped.hosts.map(({ host, layer }) => ({ host, port: 443, layer })),
+            blocked: serviceHosts.map(({ host, layer }) => ({ host, port: 443, layer })),
           });
     let content = spilled.content;
     if (report !== undefined) {
@@ -2315,21 +2505,9 @@ export class ToolPipeline {
         report,
         pre,
         callAudit,
-        {
-          text: rendered.text,
-          content: spilled.content,
-          isError: rendered.isError,
-          ...(spilled.outputId !== undefined && { outputId: spilled.outputId }),
-          ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
-          ...(display !== undefined && { display }),
-          ...(view !== undefined && { view }),
-          ...(media !== undefined && { media }),
-          ...(review !== undefined && { review }),
-          // carried into the kept result so a resumed run writes the event too (it was written
-          // with `network_blocked` below when the ask was created)
-          ...(loginCode !== undefined && { loginCode }),
-          ...(denialHint !== undefined && { denialHint }),
-        },
+        loopbackNotes.length === 0
+          ? keptResult
+          : { ...keptResult, content: withNetworkNotes(keptResult.content, loopbackNotes) },
         reviewedRoots.escalation,
         reviewedRoots.escalationRefusal,
         scoped === undefined
@@ -2354,10 +2532,13 @@ export class ToolPipeline {
       }
       if (handled.event !== null) pre.push(handled.event);
       content = withNetworkNotes(
-        content + denialHintFor(denialHint, handled.addressNote),
+        withNetworkNotes(content, loopbackNotes) + denialHintFor(denialHint, handled.addressNote),
         handled.notes,
       );
-    } else content += denialHintFor(denialHint, undefined);
+    } else
+      content = withNetworkNotes(content, loopbackNotes) + denialHintFor(denialHint, undefined);
+    // a re-run after a granted loopback port: its note after the result
+    content = withNetworkNotes(content, rerun.notes ?? []);
     await this.writeResult(
       ctx,
       call.id,
@@ -3423,6 +3604,325 @@ export class ToolPipeline {
       scopes: offer.scopes,
     });
     return { kind: "wait", wait: approvalWait(ask), content: kept.content };
+  }
+
+  /** The call's live loopback port grant (null: none, ended, or no grants service). */
+  private async loopbackGrantOf(runId: string, callId: string): Promise<LoopbackGrantRow | null> {
+    return (await this.loopbackGrants?.forCall(runId, callId)) ?? null;
+  }
+
+  /**
+   * A device service's loopback refusal (browser loopback port grants): the port of the person's
+   * own device a service of an extension declaring `permissions.deviceAccess.loopbackPorts` was
+   * refused. Refused by the device's ceilings, its provider or an unattended run → a note
+   * (`write`). A live grant the service had not applied yet → the call runs again, once. Else the
+   * conversation's permission profile decides (`approverForCrossing`, crossing `loopback-port`):
+   * Full access grants it, the review model reviews it (allow grants, deny is a note, an unsure
+   * answer asks), the person is asked (the run waits, the result kept in the ask). A grant is
+   * written with its `permission_reviewed`, the call's display events and its `tool.called` in one
+   * transaction, naming this attempt: the call then runs again in the next one (`rerun`), also
+   * after a crash. `none`: not decidable here (no device of the call's account, a hand-built
+   * pipeline, no facts): the host stays an address host with its note.
+   */
+  private async loopbackBlocked(
+    ctx: ToolStepContext,
+    call: ToolCall,
+    tool: ResolvedTool,
+    input: unknown,
+    toolKey: string,
+    report: {
+      deviceId: string;
+      loopback: { serviceId: string; host: string; port: number };
+      url: string | null;
+    },
+    attempt: number,
+    kept: KeptToolResult & { text: string },
+    rerunning: boolean,
+    pre: readonly AppendEvent[],
+    callAudit: CallAudit,
+  ): Promise<
+    | { kind: "none" }
+    | { kind: "wait"; wait: WaitingFor; content: string }
+    | { kind: "rerun"; notes: string[] }
+    | { kind: "write"; notes: string[] }
+  > {
+    const grants = this.loopbackGrants;
+    const sandboxFacts = this.permissionFacts;
+    const authority = this.permissionAuthority;
+    const devices = this.deps.devices;
+    if (!grants || !sandboxFacts || !authority || !devices) return { kind: "none" };
+    // only the device the call works in, and only its owner's own run
+    const device = await devices.reviewFacts(
+      ctx.orgId,
+      ctx.parent?.rootConversationId ?? ctx.conversationId,
+      ctx.conversationId,
+    );
+    if (!device || device.deviceId !== report.deviceId || device.ownerAccountId !== ctx.accountId)
+      return { kind: "none" };
+    const use = {
+      orgId: ctx.orgId,
+      deviceId: device.deviceId,
+      holderConversationId: ctx.conversationId,
+      actor: { accountId: ctx.accountId, conversationId: ctx.conversationId, runId: ctx.runId },
+    };
+    let facts: Awaited<ReturnType<SandboxOperationAuthority["previewCall"]>>;
+    try {
+      facts = await authority.previewCall(use, { runId: ctx.runId, callId: call.id }, ctx.signal);
+    } catch (err) {
+      ctx.signal.throwIfAborted();
+      this.deps.log.warn("cannot read the facts of a loopback refusal; noted as an address", {
+        runId: ctx.runId,
+        callId: call.id,
+        err,
+      });
+      return { kind: "none" };
+    }
+    const { serviceId, host, port } = report.loopback;
+    const hp = host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+    // the effective profile's facts: an unattended run's escalation refusal names it
+    const sandbox = await sandboxFacts.deviceSandboxFacts(ctx.orgId, device.deviceId);
+    const plan = planLoopbackAsk(
+      { host, port },
+      loopbackRefusal(sandbox.box, sandbox.support, facts.escalationRefusal),
+      facts.escalationRefusal == null,
+    );
+    if (plan.kind === "none") return { kind: "none" };
+    // refused before the live grants are read: an unattended run is never approved by a grant
+    // the person made earlier in the tree (no grant, no rerun). The device's carve-out stays the
+    // union of the service's live grants; refusing an unattended tab is the browser's check
+    if (plan.kind === "refused") return { kind: "write", notes: [plan.note] };
+    const key = {
+      orgId: ctx.orgId,
+      deviceId: device.deviceId,
+      serviceId,
+      rootConversationId: facts.rootConversationId,
+      port,
+    };
+    const live = await grants.liveForRoot(
+      ctx.orgId,
+      device.deviceId,
+      serviceId,
+      facts.rootConversationId,
+    );
+    if (live.some((g) => g.port === port)) {
+      // granted already (the panel, an earlier call): the service had not applied it yet, so the
+      // call runs again once; refused again (or granted to this call), its result stands
+      if (rerunning || (await grants.forCall(ctx.runId, call.id)) !== null)
+        return { kind: "write", notes: [loopbackNotAppliedNote(port)] };
+      await this.writeResultIn(ctx, call.id, toolKey, kept, [...pre], callAudit, []);
+      return { kind: "rerun", notes: [] };
+    }
+    // a call that ran again after its grant is not decided again (the port was closed meanwhile)
+    if (rerunning) return { kind: "write", notes: [serviceAskedNote([hp])] };
+    const binding = {
+      orgId: facts.orgId,
+      rootConversationId: facts.rootConversationId,
+      conversationId: facts.conversationId,
+      deviceId: facts.deviceId,
+      accountId: facts.accountId,
+      runId: facts.runId,
+      callId: facts.callId,
+      toolKey: tool.key,
+      specHash: tool.specHash,
+      callInputHash: permissionScopeHash(call.input),
+      resolvedInputHash: permissionScopeHash(input),
+      profile: facts.profile,
+      profileRevision: facts.profileRevision,
+      scopeRevision: facts.scopeRevision,
+      authorityRevision: facts.authorityRevision,
+    };
+    const reviewed = (
+      outcome: "allow" | "ask" | "deny",
+      reason: string,
+      decisionSource: "review-model" | "rule" | "full-access",
+    ): AppendEvent => {
+      const candidate = {
+        binding,
+        permissionScope: { writeDirectories: [], hosts: [] },
+        scopeKind: "loopback-port" as const,
+        loopback: { service: serviceId, port },
+      };
+      return {
+        type: "permission_reviewed",
+        runId: ctx.runId,
+        idemKey: `permission_reviewed:loopback:${ctx.runId}:${call.id}:${attempt}`,
+        payload: {
+          ...candidate,
+          candidateHash: permissionScopeHash(candidate),
+          outcome,
+          reason,
+          decisionSource,
+          crossing: "loopback-port",
+        },
+      };
+    };
+    const grant = async (
+      source: "full-access" | "review-model",
+      reason: string,
+      decisionSource: "review-model" | "rule" | "full-access" = source,
+    ): Promise<{ kind: "rerun"; notes: string[] } | { kind: "write"; notes: string[] }> => {
+      try {
+        await this.grantLoopbackIn(
+          ctx,
+          call.id,
+          toolKey,
+          kept,
+          key,
+          { runId: ctx.runId, callId: call.id, attempt },
+          source,
+          [reviewed("allow", reason, decisionSource), ...pre],
+          callAudit,
+        );
+      } catch (e) {
+        // the service holds the most ports it may: the note says so, nothing was granted
+        if (e instanceof LoopbackLimitError)
+          return {
+            kind: "write",
+            notes: [`[network] ${hp} is a local port on the device. ${e.message}`],
+          };
+        throw e;
+      }
+      return { kind: "rerun", notes: [loopbackGrantedNote(port)] };
+    };
+    const approver = approverForCrossing({
+      profile: facts.profile,
+      crossing: "loopback-port",
+      subAgent: ctx.parent !== undefined,
+    });
+    if (approver === "none") return grant("full-access", LOOPBACK_FULL_ACCESS_REASON);
+    if (approver === "review-model" && this.deps.review?.reviewLoopbackPort) {
+      const verdict = await this.deps.review.reviewLoopbackPort({
+        orgId: ctx.orgId,
+        conversationId: ctx.conversationId,
+        runId: ctx.runId,
+        step: ctx.step,
+        callId: call.id,
+        signal: ctx.signal,
+        accountId: ctx.accountId,
+        agentId: ctx.agentId,
+        agentVersion: ctx.agentVersion,
+        conversationKind: ctx.conversationKind,
+        ...reviewParentOf(ctx.parent),
+        profile: facts.profile,
+        attended: !facts.unattended,
+        refusal: null,
+        service: serviceId,
+        port,
+        url: report.url,
+        database: plan.database,
+      });
+      const source = verdict.by === "classifier" ? "review-model" : "rule";
+      // the review path's grant; its record names who allowed it (a rule allows only under Full
+      // access, decided above, so a rule's allow here is not expected but recorded as one)
+      if (verdict.decision === "allow") return grant("review-model", verdict.reason, source);
+      if (verdict.decision === "deny") {
+        await this.recordLoopbackReview(ctx, reviewed("deny", verdict.reason, source));
+        return { kind: "write", notes: [loopbackReviewDeniedNote(port, verdict.reason)] };
+      }
+      await this.recordLoopbackReview(ctx, reviewed("ask", verdict.reason, source));
+    }
+    // the person: the device's owner, within the run's network asks; one ask per call (a call
+    // that ran again after its network ask is not asked again)
+    if ((await this.deps.approvals.networkForCall(ctx.runId, call.id)) !== null)
+      return { kind: "write", notes: [serviceAskedNote([hp])] };
+    const run = await this.deps.network?.grants.runState(ctx.runId, device.deviceId);
+    if (run?.pending === true) return { kind: "write", notes: [otherAskPendingNote([hp])] };
+    if ((run?.asks ?? 0) >= MAX_NETWORK_ASKS_PER_RUN)
+      return { kind: "write", notes: [tooManyNote([hp])] };
+    const { content, outputId } = await this.keptContent(ctx, call.id, kept);
+    const {
+      text: _text,
+      denialHint: _hint,
+      ...rest
+    } = kept as typeof kept & {
+      denialHint?: DenialHint;
+    };
+    const result: KeptToolResult = {
+      ...rest,
+      content: clipKept(content),
+      ...(outputId !== undefined && { outputId }),
+    };
+    // the service's call ran: its display-only events and tool.called now, the result once the
+    // ask settles
+    const written = await this.writeResultIn(ctx, call.id, toolKey, kept, [...pre], callAudit, []);
+    if (written.length > 0)
+      await this.deps.eventLog.notify(ctx.conversationId, Math.max(...written.map((e) => e.seq)));
+    const ask = await this.deps.approvals.requestLoopback({
+      orgId: ctx.orgId,
+      conversationId: ctx.conversationId,
+      runId: ctx.runId,
+      step: ctx.step,
+      callId: call.id,
+      requestedFor: device.ownerAccountId,
+      toolKey,
+      detail: {
+        kind: "loopback",
+        deviceId: device.deviceId,
+        service: serviceId,
+        url: report.url,
+        port,
+        database: plan.database,
+        attempt,
+        result,
+      },
+    });
+    return { kind: "wait", wait: approvalWait(ask), content: loopbackPendingNote(host, port) };
+  }
+
+  /**
+   * A loopback port grant to this call's attempt and what goes with it, in one transaction: the
+   * grant first (it reads the root conversation `FOR SHARE`, before the conversation row the
+   * appends lock), then `permission_reviewed`, the call's display-only events and its
+   * `tool.called`. The call then runs again in the next attempt.
+   */
+  @Transactional()
+  private async grantLoopbackIn(
+    ctx: ToolStepContext,
+    callId: string,
+    toolKey: string,
+    r: { isError: boolean },
+    key: LoopbackGrantKey,
+    call: { runId: string; callId: string; attempt: number },
+    source: "full-access" | "review-model",
+    events: AppendEvent[],
+    callAudit: CallAudit,
+  ): Promise<void> {
+    const grants = this.loopbackGrants;
+    if (!grants) throw new Error("Loopback grants are unavailable");
+    await grants.grantIn(key, { source, actorAccountId: null, call });
+    await this.writeResultIn(ctx, callId, toolKey, r, events, callAudit, []);
+  }
+
+  /** A review model's loopback verdict that grants nothing (a deny, an unsure answer). */
+  @Transactional()
+  private async recordLoopbackReview(ctx: ToolStepContext, event: AppendEvent): Promise<void> {
+    await this.deps.eventLog.appendIn(ctx.conversationId, [event]);
+  }
+
+  /**
+   * A kept result's content within what an ask keeps: output under the spill threshold but over
+   * {@link NETWORK_ASK_KEPT_MAX_BYTES} is archived after all.
+   */
+  private async keptContent(
+    ctx: ToolStepContext,
+    callId: string,
+    result: { text: string; content: string; outputId?: string },
+  ): Promise<{ content: string; outputId: string | undefined }> {
+    const { content, outputId } = result;
+    if (Buffer.byteLength(content, "utf8") <= NETWORK_ASK_KEPT_MAX_BYTES || outputId !== undefined)
+      return { content, outputId };
+    const spilled = await spillIfLarge(
+      result.text,
+      { spillChars: 0, previewChars: this.config.get().tools.outputPreviewChars },
+      (c) =>
+        this.deps.outputs.save({
+          orgId: ctx.orgId,
+          conversationId: ctx.conversationId,
+          callId,
+          content: c,
+        }),
+    );
+    return { content: spilled.content, outputId: spilled.outputId };
   }
 
   /**

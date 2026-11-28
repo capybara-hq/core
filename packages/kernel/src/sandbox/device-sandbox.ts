@@ -85,7 +85,16 @@ export interface DeviceSandboxDeviceLayer {
  */
 export interface DeviceSandboxProviderLayer {
   boundary: SandboxBoundary;
-  network: { openPublic: boolean; allowlist: boolean; perOperationHosts: boolean };
+  network: {
+    openPublic: boolean;
+    allowlist: boolean;
+    perOperationHosts: boolean;
+    /**
+     * Whether the provider can open one loopback port of the device to one device service (support
+     * `network.loopbackPorts`; absent is false).
+     */
+    loopbackPorts?: boolean;
+  };
   outsideSandbox: boolean;
   /** Who keeps a closed crossing closed when not the provider itself (support `limitedBy`). */
   limitedBy?: { outsideSandbox?: "owner"; openPublic?: "owner" };
@@ -107,6 +116,12 @@ export interface DeviceSandbox {
    * reports `perOperationHosts` (each operation carries its own network).
    */
   perCallHosts: boolean;
+  /**
+   * Whether a device service may be granted one loopback port of the device (browser loopback port
+   * grants design §4): only where a call may run outside the sandbox and the provider reports
+   * `network.loopbackPorts`.
+   */
+  loopbackPorts: boolean;
   /** The layer that set each ceiling, or null when nothing narrowed it. */
   layer: { network: DeviceSandboxLayer | null; outsideSandbox: DeviceSandboxLayer | null };
 }
@@ -155,6 +170,7 @@ export function orgHostsOf(
  * - Allowlist hosts are the org's effective hosts, narrowed by the device's own list: a device list
  *   never adds a host, and an empty one adds no narrowing.
  * - `perCallHosts`: only an operation-boundary provider that reports `perOperationHosts`.
+ * - `loopbackPorts`: only with `outsideSandbox` and a provider that reports `loopbackPorts`.
  */
 export function effectiveDeviceSandbox(
   platform: DeviceSandboxPlatformLayer,
@@ -221,6 +237,7 @@ export function effectiveDeviceSandbox(
     hosts,
     outsideSandbox: outsideLayer === null,
     perCallHosts: !instance && provider.network.perOperationHosts,
+    loopbackPorts: outsideLayer === null && provider.network.loopbackPorts === true,
     layer: { network: networkLayer, outsideSandbox: outsideLayer },
   };
 }

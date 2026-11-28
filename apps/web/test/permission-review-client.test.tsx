@@ -60,3 +60,36 @@ describe("PermissionReview with client code", () => {
     });
   }
 });
+
+describe("PermissionReview with loopback port grants", () => {
+  const groups: PermissionGroup[] = [
+    {
+      category: "deviceAccess",
+      sensitive: true,
+      items: ["browser", "local ports on the device (loopback)"],
+      entries: [
+        { value: "browser", sensitive: true, reason: "device_access" },
+        {
+          value: "local ports on the device (loopback)",
+          sensitive: true,
+          reason: "device_loopback_ports",
+        },
+      ],
+    },
+  ];
+  for (const [locale, item, reason] of [
+    ["zh", "设备上的本地端口（回环）", "其设备服务可被授权访问本人设备上的本地端口"],
+    [
+      "en",
+      "Local ports on the device (loopback)",
+      "its device services may be granted local ports of the person's own device",
+    ],
+  ] as const) {
+    it(`${locale}: the loopback item and its reason are translated`, () => {
+      renderPage(<PermissionReview plugin="browser" groups={groups} />, { locale });
+      expect(screen.getByText(`· ${item}`)).toBeTruthy();
+      expect(screen.getByText(reason, { exact: false })).toBeTruthy();
+      expect(screen.queryByText("· local ports on the device (loopback)")).toBeNull();
+    });
+  }
+});

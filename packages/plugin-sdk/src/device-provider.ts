@@ -22,6 +22,7 @@ import type {
   SandboxPreparationScope,
 } from "./device-operation.js";
 import type { DialInHandler } from "./dial-in.js";
+import type { AddressClass } from "./network-classes.js";
 
 /** Device provider extension point ref. */
 export const DEVICE_PROVIDER_EXTENSION_POINT = "device-provider@1";
@@ -101,12 +102,48 @@ export type NetworkBlockLayer = "device" | "org" | "address" | "unknown";
 
 /**
  * A host a device service saw refused, with the layer that refused it
- * (`ctx.deviceAccess.reportBlockedHosts`). The service reports host names only (no port).
+ * (`ctx.deviceAccess.reportBlockedHosts`), the refused port and, for a closed address, its class.
+ * A `localhost` or loopback literal refused at the `address` layer is what a loopback port ask
+ * starts from.
  */
 export interface ServiceBlockedHost {
   host: string;
   layer: NetworkBlockLayer;
+  /** The refused port; absent: the HTTPS port (443). */
+  port?: number;
+  /**
+   * The closed address class when `layer` is `address` and known (`classifyAddress`, or
+   * `loopback` for `localhost`).
+   */
+  class?: AddressClass;
 }
+
+/**
+ * The only hosts a loopback port grant reaches (`ctx.deviceAccess.grantLoopbackPort`): the IPv4
+ * and IPv6 loopback literals and the name `localhost`, which the device dials without DNS. Every
+ * other loopback literal (`127.0.0.2`) and every private, link-local or metadata address stays
+ * closed.
+ */
+export const LOOPBACK_GRANT_HOSTS = Object.freeze(["127.0.0.1", "::1", "localhost"] as const);
+
+/**
+ * Whether `host` is one of {@link LOOPBACK_GRANT_HOSTS}: `::1` may also be written `[::1]`, and
+ * `localhost` matches case-insensitively. A trailing dot, a subdomain of `localhost` or an
+ * IPv4-mapped address is not one.
+ */
+export function isLoopbackGrantHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return h === "127.0.0.1" || h === "::1" || h === "[::1]" || h === "localhost";
+}
+
+/**
+ * Well-known database ports (PostgreSQL, MySQL, Redis, MongoDB): a grant to one is allowed but
+ * flagged (`LoopbackGrantView.database`) and named in the approval and review texts.
+ */
+export const LOOPBACK_DATABASE_PORTS: readonly number[] = Object.freeze([5432, 3306, 6379, 27017]);
+
+/** The most live loopback port grants one device service holds at once. */
+export const LOOPBACK_MAX_PORTS_PER_SERVICE = 32;
 
 /**
  * The layer of a refusal by a device's sandbox proxy, read from the reason the proxy gives: the
@@ -906,12 +943,21 @@ export interface DeviceProvider {
    * answers its `stopped` status (with `stateDir`, and `codeDir` where kept apart) and stays
    * stopped. A running one answers its `filesDigest` when known, so the kernel reviews a start on
    * new files before calling this without `ifRunning`.
+   *
+   * `opts.loopbackPorts` is the whole sorted set of the service's live loopback port grants
+   * (`DeviceServiceNetwork.loopbackPorts`, at most {@link LOOPBACK_MAX_PORTS_PER_SERVICE}): the
+   * service may reach {@link LOOPBACK_GRANT_HOSTS} on exactly these ports and no other loopback
+   * port. The kernel sends only a non-empty set, while the device's permission support reports
+   * `network.loopbackPorts` or is not known (none, or one naming an `unavailableReason`), and its
+   * ceilings allow running outside the sandbox; on a known refusal the key is absent. A provider forwards it only to a machine that
+   * announced the feature. A changed set applies like changed network limits (the running service
+   * is restarted on it), and an absent or empty set closes every loopback port again.
    */
   ensureService?(
     h: SandboxHandle,
     spec: DeviceServiceSpec,
     signal: AbortSignal,
-    opts?: { ifRunning?: boolean },
+    opts?: { ifRunning?: boolean; loopbackPorts?: readonly number[] },
   ): Promise<DeviceServiceStatus>;
   /** Stops the named service; succeeds when it is not running. */
   stopService?(h: SandboxHandle, name: string, signal: AbortSignal): Promise<void>;
