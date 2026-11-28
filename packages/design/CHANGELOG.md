@@ -1,5 +1,22 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.50
+
+### Patch Changes
+
+- 6cb1d98: Board: a kanban board of columns and cards (spec §6.69): pointer drag between and within columns,
+  a keyboard model by position (Space picks up, arrows move, Space drops, Escape cancels) spoken in
+  a live region, locked columns that still take a drop and show their hint, refused drops, a
+  rejected move snapping back, and the compact form with a Move to… menu per card
+- 24a4312: PrincipalPicker: a combobox that picks people and agents, one or many (spec §6.70): search by name
+  with an `onSearch` callback, People / Agents groups, avatars and hint lines, disabled options,
+  empty and loading lines, and a bottom sheet on the compact class
+- 19b28a9: Org admins put plugin pages in the primary navigation: the sidebar and the compact drawer take
+  `primaryExtensions` (after the built-in entries), the web places each page by the admin's saved
+  choice, else the plugin's `nav` suggestion (at most 3 primary), and the organization settings get a
+  Navigation page (导航) to choose. Component queries show their own error messages
+  (`errors.ui.query_*`).
+
 ## 0.2.0-rc.49
 
 ### Patch Changes
