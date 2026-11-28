@@ -1623,8 +1623,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       review: ReviewRecordSchema.optional(),
       /**
-       * `ToolSearch` 本次加载的工具 key（没有匹配时不写）。已加载集合 = 会话中全部 tool_result 的
-       * `loadedTools` 并集（含已被摘要覆盖的部分），构建请求时由日志还原，不放进程内存。
+       * The tool keys this `ToolSearch` call loaded (absent when nothing matched). The loaded set is
+       * the union of every `tool_result.loadedTools` and `user_message` connector mention's
+       * `loadedTools` in the conversation (including those a summary covers), rebuilt from the log
+       * when a request is built, never kept in process memory.
        */
       loadedTools: z.array(z.string()).optional(),
       /**

@@ -164,13 +164,32 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
   no key while the menu is closed, so the page decides the triggers: `/` on an empty draft, `@` at
   the start or after whitespace (`a@b` and an IME composition open nothing). The trigger stays in
   the text and the text after it is the query; a pick removes both, Esc keeps the text. The `@`
-  query is searched on the kernel (`connectorResourcesQuery(orgId, query)`, debounced, one cache
-  entry per text, `filter={false}`); the textarea is a `combobox` in tests, not a `textbox`. The
-  whole `@` menu's groups, in order: the library's files (`libraryFileSearchQuery`), 会话 (the
-  sender's conversations by title, `conversationMentionQuery`, the current one dropped, at most 5
-  rows, `icon: "chats"`; a pick is a `kind: "conversation"` strip chip sent as `conversationRefs`,
-  at most 3), then the connector resources by connector; all read the same rested query with the
-  same IME hold, and ＋ → File library / Connector resources narrow it to one source.
+  query is searched on the kernel for files and conversations (debounced, one cache entry per
+  text, `filter={false}`); the composer is a `combobox` in tests while a menu is open, a `textbox`
+  otherwise. The `@` menu's groups, in order (composer inline tokens spec 2026-11-28 §4): 连接器
+  (the agent's mentionable connectors from `…/agents/:agentId/mentionable-connectors`, one `defineQuery` cached per agent, filtered client side by
+  `commandScore`, a `drill` on rows that offer resources, `descriptionZh` or `description` by
+  locale), the library's files (`libraryFileSearchQuery`), 会话 (`conversationMentionQuery`, the
+  current one dropped, at most 5 rows, `icon: "chats"`); a connector's resources are searched only
+  on the second level (`connectorResourcesQuery`, which takes the connector's id). All read the same
+  rested query with the same IME hold, and ＋ → 文件库 narrows it to files.
+- **Composer editor and tokens** (composer inline tokens spec 2026-11-28, design §6.16.2): the
+  composer input is `ComposerEditor` (Lexical, inside `packages/design`); `apps/web` never imports
+  `lexical` or `@lexical/*` (`check:web-ui`) and never touches nodes: it passes and receives
+  **segments** (text runs and token descriptors `{kind, id, label, icon?, state?, reason?}`). Every
+  pick (`/`, `@`, ＋ 文件库 / 项目文件 / 连接器) calls the editor's `insertToken()` at the caret;
+  uploads alone are `files` and attachment cards. On send the segments become the body: `text` with
+  one U+FFFC per token in order, `tokens` (`connector`, `resource`, `file`, `projectFile`,
+  `conversation`), `files` (uploads) and `skill` (the one skill token, taken out of the text);
+  `attachments`, `projectFiles` and `conversationRefs` no longer exist. The draft identity
+  (`draftKey`) is the segments by `(kind, id)`, so moving a token or editing text is a new message
+  and a label refresh is not; a failed send, the layout switch and the first-message attempt
+  restore the segments. A refusal's `details` map to tokens by `(kind, id)` (`refused` on the draft,
+  `state: "refused"` with the reason) and the page passes the Callout line (`composer.refused`,
+  「移除」 removes the refused tokens). The page closes its menu through the handle's
+  `dismissTrigger()`. Bubbles draw tokens from `payload.inline`, never from the placeholders (and
+  never show the `[file: …]` lines). Tests: `ComposerEditor` is exercised with real typing in the design's jsdom and
+  Playwright tests (IME, caret, centring); web tests check the body, not the DOM nodes of Lexical.
 - A card whose state the log does not carry (a sub-agent's approval or question, named only by id)
   reads it before the first paint (`openWaitReads` in the route's `then`) and draws nothing until
   that read answers (`ApprovalCard fromRead`), never a pending card first (web query cache spec §6).

@@ -1503,14 +1503,24 @@ export function buildModelRequest(input: BuildModelRequestInput): {
 }
 
 /**
- * 日志里 `ToolSearch` 加载过的工具 key（全部 `tool_result.loadedTools` 的并集，按首次出现顺序）。
- * 不看压缩摘要的边界：加载过的工具在摘要之后仍保持加载（模型可能凭摘要继续使用它们，且已发送的工具列表只追加）。
+ * The tool keys loaded in the log under tool search, in order of first appearance by seq: the union
+ * of every `tool_result.loadedTools` (what `ToolSearch` loaded) and every
+ * `user_message.payload.connectorMentions[].loadedTools` (a mentioned connector's offered tools,
+ * composer inline tokens spec §3.5). Read only when the step runs with tool search; a key the step
+ * does not offer is ignored by the caller. The compaction boundary is not looked at: loaded tools
+ * stay loaded after a summary (the model may keep using them from the summary, and the tool list
+ * sent is append-only).
  */
 export function loadedToolKeys(events: readonly ConversationEvent[]): string[] {
   const out = new Set<string>();
   for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
-    if (e.type !== "tool_result") continue;
-    for (const k of e.payload.loadedTools ?? []) out.add(k);
+    if (e.type === "tool_result") {
+      for (const k of e.payload.loadedTools ?? []) out.add(k);
+    } else if (e.type === "user_message") {
+      for (const m of e.payload.connectorMentions ?? []) {
+        for (const k of m.loadedTools) out.add(k);
+      }
+    }
   }
   return [...out];
 }
