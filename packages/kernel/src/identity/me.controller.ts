@@ -158,7 +158,8 @@ export class MeController {
   /**
    * The person's preferences: `timeZone` null = follow the browser's time zone sent with each
    * message, a set zone overrides it for the messages sent afterwards (run context spec §3.4);
-   * `theme` null = follow the org (themes spec §7).
+   * `theme` null = follow the org (themes spec §7); `idleCompaction` "off" = never compact this
+   * person's conversations while idle, null = follow the org (idle compaction spec §6.3).
    */
   @Get("preferences")
   async preferences(@CurrentPrincipal() principal: Principal): Promise<Preferences> {
@@ -167,7 +168,8 @@ export class MeController {
 
   /**
    * Updates the preferences given; a field left out keeps its value. An unknown time zone → 400
-   * `validation_failed`; a theme on in none of the person's orgs → 400 `theme.not_available`.
+   * `validation_failed`; a theme on in none of the person's orgs → 400 `theme.not_available`;
+   * `idleCompaction` accepts only "off" or null (anything else → 400 `validation_failed`).
    */
   @Put("preferences")
   async setPreferences(

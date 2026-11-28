@@ -14,6 +14,7 @@ import { assertThemeOnForAccount } from "../themes/theme-state.js";
 import { type AccountAvatar, type AccountView, withAvatarUrl } from "./account-avatar.js";
 import { audit } from "./audit.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
+import type { Preferences } from "./me.schemas.js";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./passwords.js";
 import { SuperAdminLock, SuperAdminLockModule } from "./super-admin.js";
 
@@ -349,15 +350,30 @@ export class AccountsService {
   /**
    * A person's preferences: `timeZone` is their time zone setting (IANA), null = follow the browser
    * (run context spec §3.4); `theme` their theme (a `platform_themes` id), null = follow the org
-   * (themes spec §7). Missing account -> nulls.
+   * (themes spec §7); `idleCompaction` "off" = never compact their conversations while idle, null =
+   * follow the org (idle compaction spec §6.3). Missing account -> nulls.
    */
-  async preferences(accountId: string): Promise<{ timeZone: string | null; theme: string | null }> {
+  async preferences(accountId: string): Promise<Preferences> {
     const row = await this.db
       .selectFrom("accounts")
-      .select(["time_zone", "theme"])
+      .select(["time_zone", "theme", "idle_compaction"])
       .where("id", "=", accountId)
       .executeTakeFirst();
-    return { timeZone: row?.time_zone ?? null, theme: row?.theme ?? null };
+    return {
+      timeZone: row?.time_zone ?? null,
+      theme: row?.theme ?? null,
+      idleCompaction: row?.idle_compaction ?? null,
+    };
+  }
+
+  /** Whether the person turned idle compaction off (the runtime's check; `accounts` has no org). */
+  async idleCompactionOff(accountId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("accounts")
+      .select("idle_compaction")
+      .where("id", "=", accountId)
+      .executeTakeFirst();
+    return row?.idle_compaction === "off";
   }
 
   /**
@@ -366,12 +382,17 @@ export class AccountsService {
    */
   async setPreferences(
     accountId: string,
-    prefs: { timeZone?: string | null | undefined; theme?: string | null | undefined },
-  ): Promise<{ timeZone: string | null; theme: string | null }> {
+    prefs: {
+      timeZone?: string | null | undefined;
+      theme?: string | null | undefined;
+      idleCompaction?: "off" | null | undefined;
+    },
+  ): Promise<Preferences> {
     if (prefs.theme != null) await assertThemeOnForAccount(this.db.db, accountId, prefs.theme);
     const set = {
       ...(prefs.timeZone !== undefined && { time_zone: prefs.timeZone }),
       ...(prefs.theme !== undefined && { theme: prefs.theme }),
+      ...(prefs.idleCompaction !== undefined && { idle_compaction: prefs.idleCompaction }),
     };
     if (Object.keys(set).length > 0) {
       await this.db

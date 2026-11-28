@@ -16,6 +16,11 @@ export const PreferencesSchema = z
      * `theme.not_available`); null = follow the org (themes spec §7).
      */
     theme: z.string().min(1).max(200).nullable().optional(),
+    /**
+     * Idle compaction spec §6.3: off = never compact this person's conversations while idle;
+     * null = follow the org. A narrowing only: it cannot turn the feature on.
+     */
+    idleCompaction: z.literal("off").nullable().optional(),
   })
   .strict();
 
@@ -23,6 +28,7 @@ export const PreferencesSchema = z
 export interface Preferences {
   timeZone: string | null;
   theme: string | null;
+  idleCompaction: "off" | null;
 }
 export class PreferencesBody extends createZodDto(PreferencesSchema, "PreferencesBody") {}
 
