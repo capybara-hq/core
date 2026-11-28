@@ -1283,8 +1283,8 @@ function textTokens(text: string): number {
   return estimateTokens([{ role: "user", content: [{ type: "text", text }] }], []);
 }
 
-/** Options of {@link maybeCompact}. */
-interface CompactOptions {
+/** Options of {@link runCompaction} and {@link prepareCompaction}. */
+export interface CompactOptions {
   /**
    * The reactive path (context compaction spec §4.4): summarise regardless of the trigger,
    * `enabled: false` and the failure backoff. A proactive call leaves all of them in force.
@@ -1311,6 +1311,12 @@ interface CompactOptions {
    * reactive path sets it, since its last request is the one that overflowed.
    */
   transcriptOnly?: boolean;
+  /**
+   * The idle compact run (idle compaction spec §4.3 check 9): an in-context skip ends the
+   * compaction with nothing written; never the transcript request. Implies nothing about `manual`
+   * (ruling R13: a manual compaction is transcript-only, so the idle run never sets it).
+   */
+  requireInContext?: boolean;
 }
 
 /** What one compaction execution wrote: the events, the summary's seq and whether it failed. */
@@ -1328,7 +1334,7 @@ export interface CompactionOutcome {
  * spec §9.4): the builder's skips, plus the runtime's own reasons. Logged as a `debug` line with
  * `context=Compaction`.
  */
-type InContextFallback =
+export type InContextFallback =
   | InContextSkip
   /**
    * `CompactOptions.manual`: a manual compact run keeps the #990 plan on the transcript path
@@ -1355,7 +1361,7 @@ type InContextFallback =
   | "pending_input";
 
 /** The in-context summary call of one compaction. */
-interface InContextSummary {
+export interface InContextSummary {
   request: ModelRequest;
   /** The same request with the retry note, sent after a reply cut off at the output limit. */
   retryRequest: ModelRequest;
@@ -1487,6 +1493,154 @@ async function inContextSummary(
 }
 
 /**
+ * What {@link prepareCompaction} decided and built for one compaction, written nowhere: the call
+ * part of {@link runCompaction} sends it, `CompactionService.probeIdle` only reads it (idle
+ * compaction spec §4.3 checks 8 and 9).
+ */
+export interface PreparedCompaction {
+  provider: BoundProvider;
+  info: ModelInfo;
+  /** The model the compaction summarizes with (`opts.ref` or the agent's main model). */
+  ref: ModelRef;
+  /** The calibrated estimate of the next step's request (what the trigger compares). */
+  estimate: number;
+  /** The model's context window. */
+  window: number;
+  /** The estimated tokens of the plan's transcript: what no summary covers yet. */
+  growthTokens: number;
+  plan: { coversUpToSeq: number; transcript: string };
+  /** Whether the manual rule planned it (`opts.manual`). */
+  manual: boolean;
+  /** The summary call's output cap (context compaction spec §4.8). */
+  summaryCap: number;
+  /** The in-context summary request, or why the compaction would summarize the transcript. */
+  inContext: InContextSummary | { skip: InContextFallback };
+}
+
+/** Why {@link prepareCompaction} found no compaction to run. */
+export type CompactionPrepareSkip =
+  /** Below the proactive trigger (never with `force`). */
+  | { skipped: "trigger" }
+  /** The failure backoff holds a proactive attempt (never with `force`). */
+  | { skipped: "backoff" }
+  /** Nothing precedes the kept tail. */
+  | { skipped: "no_plan"; estimate: number; window: number }
+  /** The model or the attachment storage cannot be reached right now. */
+  | { skipped: "unavailable"; reason: string };
+
+/**
+ * The preparation of one compaction (idle compaction spec §4.3): resolve the model, load the media,
+ * build the next step's request and calibrate its estimate, apply the trigger and the backoff (unless
+ * `opts.force`), plan, and build the in-context summary request ({@link inContextSummary}). It writes
+ * nothing and sends no model call; the outcomes a manual compaction records (`compaction_skipped`,
+ * `compaction_failed` for an unavailable model) are {@link runCompaction}'s. `hooks.planned` runs once
+ * the plan exists, before the in-context build reads the live snapshot.
+ */
+export async function prepareCompaction(
+  deps: ModelStepDeps,
+  input: ModelStepInput,
+  events: ConversationEvent[],
+  runtime: Runtime,
+  compaction: CompactionSettings,
+  tools: StepTools,
+  opts: CompactOptions = {},
+  hooks: { planned?: () => void } = {},
+): Promise<PreparedCompaction | CompactionPrepareSkip> {
+  const modelRef = opts.ref ?? input.agent.model;
+  let provider: BoundProvider;
+  let info: ModelInfo;
+  try {
+    ({ provider, info } = await deps.registry.resolve(input.orgId, modelRef));
+  } catch (err) {
+    deps.log.warn("compaction skipped: model unavailable", { model: modelRef, err });
+    return { skipped: "unavailable", reason: "the model is unavailable" };
+  }
+  const limits = mediaLimits(deps);
+  try {
+    await loadMedia(deps, limits, input, events, info, tools);
+  } catch (err) {
+    if (!(err instanceof MediaUnavailableError)) throw err;
+    // storage is temporarily unavailable: skip compaction for this step and leave it to the
+    // fallback ladder, which treats it as a retryable error
+    deps.log.warn("compaction skipped: attachment storage unavailable", {
+      conversationId: input.conversationId,
+      err,
+    });
+    return { skipped: "unavailable", reason: "attachment storage is unavailable" };
+  }
+  const { request: built, estimate: raw } = buildRequest(
+    limits,
+    events,
+    input,
+    info,
+    attemptParams(input.agent, info, opts.fallback === true).value,
+    runtime,
+    tools,
+    false,
+  );
+  const estimate = calibrate(raw, lastActual(events));
+  // The trigger's output cap is the step's own cap, min(agent max, model max) (spec §4.1), not the
+  // settings' maxOutputTokens — that one caps the summary call (spec §4.8).
+  const output = built.maxOutputTokens;
+  // planned with the bounds every step request uses (spec §4.1): O_p and R_p
+  const bounds = planningBounds(info.contextWindow, output, compaction.reserveTokens);
+  // The hard line ignores both gates: enabled: false turns proactive early compaction off only,
+  // and backoff only delays proactive attempts (context compaction spec §4.1). The reactive path
+  // (`force`) ignores the trigger entirely (spec §4.4).
+  if (!opts.force) {
+    if (estimate + bounds.output <= info.contextWindow && compactionBackoff(events))
+      return { skipped: "backoff" };
+    if (!shouldCompact(estimate, info.contextWindow, { ...compaction, maxOutputTokens: output })) {
+      return { skipped: "trigger" };
+    }
+  }
+  // the input room left for the kept tail: the planning target `W - O_p - R_p`, minus the system
+  // prompt and tool definitions every request carries
+  const tailBudget = bounds.target - estimateTokens([], built.system, built.tools);
+  // a manual compaction ignores keepRecentTurns and keeps at most about a fifth of the window of
+  // the latest turn (spec §4.7, maintainer decision 2026-11-28); the reactive path (`force`
+  // without `manual`) plans like the proactive one. A manual compaction always summarizes the
+  // transcript with this plan (ruling R13); an automatic one may summarize in context below
+  const manual = opts.manual === true;
+  const plan = manual
+    ? compactionPlan(events, compaction, manualTailBudget(info.contextWindow, tailBudget), {
+        manual: true,
+      })
+    : compactionPlan(events, compaction, tailBudget);
+  if (!plan) return { skipped: "no_plan", estimate, window: info.contextWindow };
+  hooks.planned?.();
+  // the summary call's output cap: the org's effective setting, never above the model's own cap
+  // (context compaction spec §4.8)
+  const summaryCap = Math.min(compaction.maxOutputTokens, info.maxOutputTokens);
+  // idle compaction spec §9.4: an automatic compaction tries the summary from the conversation's
+  // last request first (its cached prefix); a skip (always for a manual one, ruling R13)
+  // summarizes the transcript exactly as before, or ends an idle one (`requireInContext`)
+  const inContext = await inContextSummary(
+    deps,
+    input,
+    events,
+    modelRef,
+    info,
+    tools,
+    { reserveTokens: compaction.reserveTokens, summaryCap },
+    plan,
+    opts,
+  );
+  return {
+    provider,
+    info,
+    ref: modelRef,
+    estimate,
+    window: info.contextWindow,
+    growthTokens: textTokens(plan.transcript),
+    plan,
+    manual,
+    summaryCap,
+    inContext,
+  };
+}
+
+/**
  * Compaction: summarize the earlier conversation with the main model (consumed non-streaming) when
  * the calibrated estimate crosses the trigger (context compaction spec §4.1). The hard line
  * (`estimate + output > window`) ignores `enabled: false` and the failure backoff; the proactive
@@ -1497,10 +1651,12 @@ async function inContextSummary(
  *
  * `opts.force` (the reactive path, spec §4.4, and a manual compact run, spec §4.7) bypasses the
  * trigger, `enabled` and the backoff, and `opts.ref` makes it summarise with the rung's model rather
- * than the agent's main model.
+ * than the agent's main model. `opts.requireInContext` (the idle compact run, idle compaction spec
+ * §4.3) ends the compaction with nothing written when the in-context summary does not apply.
  *
- * The one execution both paths run: the automatic step path through {@link maybeCompact} and a
- * manual compact run through `CompactionService.force`.
+ * The one execution every path runs: the automatic step path through {@link maybeCompact} and a
+ * compact run (manual or idle) through `CompactionService.force`. The preparation is
+ * {@link prepareCompaction}; this adds the outcomes a manual run records and the call part.
  */
 export async function runCompaction(
   deps: ModelStepDeps,
@@ -1542,69 +1698,30 @@ export async function runCompaction(
     const merged = await mergeWritten(deps.eventLog, input.conversationId, events, written);
     return { events: merged, summarySeq: null, failed: true };
   };
-  const modelRef = opts.ref ?? input.agent.model;
-  let provider: BoundProvider;
-  let info: ModelInfo;
-  try {
-    ({ provider, info } = await deps.registry.resolve(input.orgId, modelRef));
-  } catch (err) {
-    deps.log.warn("compaction skipped: model unavailable", { model: modelRef, err });
-    return unavailable("the model is unavailable");
-  }
-  const limits = mediaLimits(deps);
-  try {
-    await loadMedia(deps, limits, input, events, info, tools);
-  } catch (err) {
-    if (!(err instanceof MediaUnavailableError)) throw err;
-    // storage is temporarily unavailable: skip compaction for this step and leave it to the
-    // fallback ladder, which treats it as a retryable error
-    deps.log.warn("compaction skipped: attachment storage unavailable", {
+  // §4.6 progress: from the plan on the compaction is certain, so the conversation may show a row.
+  // It is display-only (Redis + a bus message, never the log); a lost update costs nothing. An idle
+  // compaction is certain only once its in-context request exists, so it shows the row after it.
+  let startedAt = 0;
+  const progressOf = (progress: CompactionProgress): void => {
+    deps.compactionProgress?.update({
+      runId: input.runId,
       conversationId: input.conversationId,
-      err,
+      ...(input.agentId !== undefined && { agentId: input.agentId }),
+      progress,
     });
-    return unavailable("attachment storage is unavailable");
-  }
-  const { request: built, estimate: raw } = buildRequest(
-    limits,
-    events,
-    input,
-    info,
-    attemptParams(input.agent, info, opts.fallback === true).value,
-    runtime,
-    tools,
-    false,
-  );
-  const estimate = calibrate(raw, lastActual(events));
-  // The trigger's output cap is the step's own cap, min(agent max, model max) (spec §4.1), not the
-  // settings' maxOutputTokens — that one caps the summary call (spec §4.8).
-  const output = built.maxOutputTokens;
-  // planned with the bounds every step request uses (spec §4.1): O_p and R_p
-  const bounds = planningBounds(info.contextWindow, output, compaction.reserveTokens);
-  // The hard line ignores both gates: enabled: false turns proactive early compaction off only,
-  // and backoff only delays proactive attempts (context compaction spec §4.1). The reactive path
-  // (`force`) ignores the trigger entirely (spec §4.4).
-  if (!opts.force) {
-    if (estimate + bounds.output <= info.contextWindow && compactionBackoff(events))
-      return skipped(events);
-    if (!shouldCompact(estimate, info.contextWindow, { ...compaction, maxOutputTokens: output })) {
-      return skipped(events);
-    }
-  }
-  // the input room left for the kept tail: the planning target `W - O_p - R_p`, minus the system
-  // prompt and tool definitions every request carries
-  const tailBudget = bounds.target - estimateTokens([], built.system, built.tools);
-  // a manual compaction ignores keepRecentTurns and keeps at most about a fifth of the window of
-  // the latest turn (spec §4.7, maintainer decision 2026-11-28); the reactive path (`force`
-  // without `manual`) plans like the proactive one. A manual compaction always summarizes the
-  // transcript with this plan (ruling R13); an automatic one may summarize in context below
-  const manual = opts.manual === true;
-  const plan = manual
-    ? compactionPlan(events, compaction, manualTailBudget(info.contextWindow, tailBudget), {
-        manual: true,
-      })
-    : compactionPlan(events, compaction, tailBudget);
-  if (!plan) {
-    if (!manual) return skipped(events);
+  };
+  const preparing = (): void => {
+    startedAt = Date.now();
+    progressOf({ phase: "preparing", step: input.step, startedAt });
+  };
+  const prepared = await prepareCompaction(deps, input, events, runtime, compaction, tools, opts, {
+    planned: () => {
+      if (opts.requireInContext !== true) preparing();
+    },
+  });
+  if ("skipped" in prepared) {
+    if (prepared.skipped === "unavailable") return unavailable(prepared.reason);
+    if (prepared.skipped !== "no_plan" || opts.manual !== true) return skipped(events);
     // a manual compaction that finds nothing to summarize says so (display only, never
     // model-visible): nothing precedes the kept tail
     const written = await appendCounted(deps, input, [
@@ -1625,46 +1742,24 @@ export async function runCompaction(
       failed: false,
     };
   }
-
-  const { runId, step, signal, conversationId } = input;
-  const ref = modelRef;
-  // §4.6 progress: from here the compaction is certain, so the conversation may show a row. It is
-  // display-only (Redis + a bus message, never the log); a lost update costs nothing.
-  const startedAt = Date.now();
-  const progressOf = (progress: CompactionProgress): void => {
-    deps.compactionProgress?.update({
-      runId,
-      conversationId,
-      ...(input.agentId !== undefined && { agentId: input.agentId }),
-      progress,
-    });
-  };
-  progressOf({ phase: "preparing", step, startedAt });
-  // the summary call's output cap: the org's effective setting, never above the model's own cap
-  // (context compaction spec §4.8)
-  const summaryCap = Math.min(compaction.maxOutputTokens, info.maxOutputTokens);
-  // idle compaction spec §9.4: an automatic compaction tries the summary from the conversation's
-  // last request first (its cached prefix); a skip (always for a manual one, ruling R13)
-  // summarizes the transcript exactly as before
-  const inContext = await inContextSummary(
-    deps,
-    input,
-    events,
-    modelRef,
-    info,
-    tools,
-    { reserveTokens: compaction.reserveTokens, summaryCap },
-    plan,
-    opts,
-  );
+  const { provider, info, plan, manual, summaryCap, inContext } = prepared;
+  const modelRef = prepared.ref;
   const ic = "skip" in inContext ? null : inContext;
   if ("skip" in inContext) {
     deps.log.debug?.("in-context summary skipped", {
       context: "Compaction",
-      conversationId,
+      conversationId: input.conversationId,
       reason: inContext.skip,
     });
+    // the idle compact run never falls back to the transcript request (idle compaction spec
+    // §4.3 check 9): it ends with nothing written
+    if (opts.requireInContext === true) return skipped(events);
+  } else if (opts.requireInContext === true) {
+    preparing();
   }
+
+  const { runId, step, signal, conversationId } = input;
+  const ref = modelRef;
   // review M6: the preparation awaited the snapshot read; an abort meanwhile sends no call
   if (signal.aborted) {
     deps.compactionProgress?.clear(runId);

@@ -1674,6 +1674,9 @@
     "divider": {
       "compacted": "较早的会话已压缩",
       "compactedSaved": "较早的会话已压缩 · 节省 {n} tokens",
+      "compactedIdle": "较早的会话已在空闲时压缩 · 节省 {n} tokens",
+      "compactedIdleNoCount": "较早的会话已在空闲时压缩",
+      "compactedIdleHelp": "可以在账户偏好里关闭。",
       "compactFailed": "压缩失败：{reason}",
       "fallback": "所选模型 {from} 已不可用，本条起改用智能体的模型 {to}",
       "compactSkipped": "无需压缩 · 对话还很短",
@@ -1684,6 +1687,7 @@
     },
     "compactionRun": "压缩",
     "compacting": "正在压缩会话…",
+    "compactingIdle": "正在后台压缩会话…",
     "compactingChunk": "{chunk}/{chunks}",
     "compactingElapsed": "{seconds} 秒",
     "compact": "压缩会话",
@@ -3013,7 +3017,7 @@
     "follow": "跟随平台设置",
     "followHint": "关闭后可以为这个组织单独设置提示缓存。",
     "longTtl": "长提示缓存",
-    "longTtlHint": "请求改用模型至少 30 分钟的缓存档（如 1 小时），缓存写入按长档计价（Anthropic 约为输入价的 2 倍，而 5 分钟档约 1.25 倍）。"
+    "longTtlHint": "请求改用模型至少 30 分钟的缓存档（如 1 小时），缓存写入按长档计价（Anthropic 约为输入价的 2 倍，而 5 分钟档约 1.25 倍）。开启后空闲压缩才会在这些模型上运行。"
   },
   "compaction": {
     "title": "对话压缩",
@@ -3037,6 +3041,18 @@
     "maxOutputTokens": {
       "label": "摘要输出上限",
       "help": "摘要最多生成多少 token（1,024–32,000，默认 20,000）。"
+    },
+    "idleEnabled": {
+      "label": "缓存过期前在后台压缩",
+      "hint": "对话空闲时，在模型的提示缓存过期前用缓存压缩，下次发消息时不必等待压缩，也不必全价重读长上下文。只对缓存至少 30 分钟的模型生效（大多数模型需要开启长缓存）。"
+    },
+    "idleMinTokensFloor": {
+      "label": "后台压缩的最小上下文",
+      "help": "上下文不少于这个数和窗口比例两者中较大者时才压缩（默认 200,000）。"
+    },
+    "idleMinWindowRatio": {
+      "label": "按窗口比例的最小上下文",
+      "help": "默认 0.3：1M 窗口的模型从 300,000 起。"
     }
   },
   "configForm": {
@@ -6813,6 +6829,11 @@
       "label": "时区",
       "help": "选择一个时区后，它优先于浏览器的时区。",
       "follow": "跟随浏览器"
+    },
+    "idleCompaction": {
+      "title": "对话",
+      "label": "空闲时压缩我的对话",
+      "orgOff": "组织已关闭"
     }
   },
   "themeImpact": {

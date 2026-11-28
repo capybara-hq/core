@@ -19,6 +19,9 @@ export function compactionSettings(over: Partial<CompactionSettings> = {}): Comp
     keepRecentTurns: 4,
     reserveTokens: 8000,
     maxOutputTokens: 16_000,
+    idleEnabled: true,
+    idleMinTokensFloor: 200_000,
+    idleMinWindowRatio: 0.3,
     ...over,
   };
 }

@@ -876,7 +876,7 @@ export class Waits implements OnApplicationShutdown {
       await this.childFinished(runId);
       return false;
     }
-    await this.abort.request(runId, byAccountId, detail);
+    await this.abort.request(runId, byAccountId, { detail });
     // the suspend handshake (see suspend): a run that became `waiting` after the read above may
     // have checked the marker before it was set, so check `waiting` again after setting it
     // (review M1)

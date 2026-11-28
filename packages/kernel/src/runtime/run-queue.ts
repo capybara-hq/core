@@ -16,7 +16,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { RunAbortDetail } from "./abort.js";
+import { RunAbort, type RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock } from "./conversation-lock.js";
 import { notifyFinished, RunFinish } from "./run-finish.js";
@@ -57,6 +57,10 @@ interface EnsureState {
   pausedNow: boolean;
   /** From the `bg-wake` job: how many times this window's wake fired early (0: none). */
   wakeRetry: number;
+  /** An active idle compact run that pending input preempts: its stop is sent after the commit. */
+  preempt: string | null;
+  /** A queued idle compact run ended in this transaction: its finish is published after the commit. */
+  superseded: { runId: string; toSeq: number } | null;
 }
 
 /** The fields of a conversation's active run that the orphan abort reads. */
@@ -69,6 +73,8 @@ interface ActiveRunRow {
    * first run (`runJobId`).
    */
   job_id: string | null;
+  /** 'idle' for an idle compact run (idle compaction spec §5.2: input preempts it). */
+  compact_origin: "manual" | "idle" | null;
 }
 
 /**
@@ -90,6 +96,8 @@ export class RunQueue {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    /** Preemption of an idle compact run: the cross-replica stop its worker watches. */
+    @Inject(RunAbort) private readonly abort: Pick<RunAbort, "requestIfAbsent">,
     @Optional()
     @Inject(ENSURE_RUN_FAILS)
     private readonly ensureFails: () => boolean = () => false,
@@ -117,6 +125,12 @@ export class RunQueue {
    * never call it.
    *
    * A conversation whose agent is soft-deleted starts no run.
+   *
+   * Pending input (an unconsumed message, a queue head that goes out, a wake) preempts an active
+   * idle compact run (idle compaction spec §5.2): one nobody claimed yet is ended in this call's
+   * transaction and the input's run is created in its place; one a worker runs (the conversation
+   * lock is held, so this call returns before its transaction) hears a `superseded` stop through
+   * {@link RunAbort} after the commit, and its finish starts the input's run.
    */
   async ensureRun(
     conversationId: string,
@@ -124,15 +138,27 @@ export class RunQueue {
     opts: { wakeRetry?: number } = {},
   ): Promise<string | null> {
     if (this.ensureFails()) throw new Error("ensureRun failure (test seam)");
-    if ((await this.lock.holder(conversationId)) !== null) return null;
+    if ((await this.lock.holder(conversationId)) !== null) {
+      // a worker holds the conversation: an idle compact run it runs is preempted from here (S2)
+      const idle = await this.preemptIdleIn(conversationId);
+      if (idle !== null) await this.supersede(idle);
+      return null;
+    }
     const st: EnsureState = {
       dispatchedSeq: null,
       dispatchedSwitch: false,
       dispatchedUnarchived: false,
       pausedNow: false,
       wakeRetry: opts.wakeRetry ?? 0,
+      preempt: null,
+      superseded: null,
     };
     const created = await this.ensureRunIn(conversationId, st);
+    if (st.superseded !== null) {
+      await notifyFinished(this.eventLog, conversationId, st.superseded.toSeq, "aborted");
+      await this.dropCheckpoints(st.superseded.runId);
+    }
+    if (st.preempt !== null) await this.supersede(st.preempt);
     const { dispatchedSeq, dispatchedSwitch, dispatchedUnarchived, pausedNow } = st;
     // a pause is published too (batch 5 review I1): the page shows the reason without a reload
     if (pausedNow) await this.eventLog.publishChanged(conversationId, "queue");
@@ -219,6 +245,109 @@ export class RunQueue {
         trigger_seq: Number(conv.consumed_seq),
         job_id: jobId.recorded,
         compact: true,
+        compact_origin: "manual",
+      })
+      .execute();
+    return runId;
+  }
+
+  /**
+   * Starts an idle compact run (idle compaction spec §5.1), or returns null and never throws: the
+   * idle job calls it at fire time, and a refusal or a failure only means no idle compaction now
+   * (the next run's finish arms again). Under the conversation row lock (the one `ensureRun` and
+   * {@link startCompaction} take) it re-checks that the conversation, its org and its agent are
+   * live, that its owner can still use it (active, the agent visible to them), that nothing but a run-less side-call `usage` (`isIdleNeutralEvent`, S1) was written
+   * after `armedSeq`, and that the conversation is not busy: no active run (queued, running or
+   * waiting), no unconsumed message, no queue head. The run is a `compact` run with
+   * `compact_origin = 'idle'`, run as the conversation's owner, its boundary the current
+   * `consumed_seq`, exactly as a manual one.
+   */
+  async startIdleCompaction(conversationId: string, armedSeq: number): Promise<string | null> {
+    try {
+      return await this.startIdleCompactionIn(conversationId, armedSeq);
+    } catch (err) {
+      this.log.warn("idle compaction run not started", { conversationId, err });
+      return null;
+    }
+  }
+
+  /** {@link startIdleCompaction}'s transaction: the re-checks, the run row and its owed job. */
+  // org-filter: the idle-compaction job's kernel-written conversation id (owed by the run finish
+  // that armed it), run in runJob under the job's org; the conversation's own org is read under its
+  // row lock
+  @Transactional({ propagation: "requires_new" })
+  private async startIdleCompactionIn(
+    conversationId: string,
+    armedSeq: number,
+  ): Promise<string | null> {
+    const t = this.db;
+    const conv = await t
+      .selectFrom("conversations")
+      .select(["org_id", "agent_id", "account_id", "kind", "consumed_seq", "deleted_at"])
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!conv || !isLive(conv.deleted_at) || conv.kind !== "chat") return null;
+    if (!(await orgIsLive(t, conv.org_id))) return null;
+    // stale: an event after the armed seq other than a run-less side-call usage (the predicate of
+    // isIdleNeutralEvent, in SQL)
+    const later = await t
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("conversation_id", "=", conversationId)
+      .where("seq", ">", String(armedSeq))
+      .where((eb) => eb.not(eb.and([eb("type", "=", "usage"), eb("run_id", "is", null)])))
+      .limit(1)
+      .executeTakeFirst();
+    if (later) return null;
+    const active = await t
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conversationId)
+      .where("status", "in", ACTIVE_RUN_STATUSES)
+      .limit(1)
+      .executeTakeFirst();
+    if (active) return null;
+    const unconsumed = await t
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "user_message")
+      .where("seq", ">", conv.consumed_seq)
+      .limit(1)
+      .executeTakeFirst();
+    if (unconsumed) return null;
+    const head = await t
+      .selectFrom("conversation_queue")
+      .select("id")
+      .where("conversation_id", "=", conversationId)
+      .limit(1)
+      .executeTakeFirst();
+    if (head) return null;
+    const agent = await t
+      .selectFrom("agents")
+      .select(["current_version", "deleted_at"])
+      .where("id", "=", conv.agent_id)
+      .where("org_id", "=", conv.org_id)
+      .executeTakeFirst();
+    if (!agent || agent.deleted_at !== null) return null;
+    // the run runs as the owner: only while they can still use the conversation (ensureRunIn's rule)
+    if (!(await authorCanSend(t, conversationId, conv.account_id))) return null;
+    const jobId = await this.jobIdFor(conversationId, Number(conv.consumed_seq));
+    const runId = randomUUID();
+    if (!(await this.oweJob(conversationId, runId, jobId.id, "chat", conv.org_id))) return null;
+    await t
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: conversationId,
+        status: "queued",
+        agent_version: agent.current_version,
+        trigger_account_id: conv.account_id,
+        trigger_seq: Number(conv.consumed_seq),
+        job_id: jobId.recorded,
+        compact: true,
+        compact_origin: "idle",
       })
       .execute();
     return runId;
@@ -268,8 +397,20 @@ export class RunQueue {
       accountId: (newest.payload as { authorAccountId: string }).authorAccountId,
     };
     // an active run (one waiting for approval or an answer too) takes what arrives at its next
-    // step or is followed by the next run after its end
-    if (await this.activeRun(t, conversationId)) return null;
+    // step or is followed by the next run after its end; an idle compact run is preempted instead
+    const active = await this.activeRun(t, conversationId);
+    if (active) {
+      if (active.compact_origin !== "idle") return null;
+      if (!(await this.inputPendingIn(conversationId, conv))) return null;
+      if (!(await this.endQueuedIdleIn(conversationId, active, st))) {
+        st.preempt = active.id;
+        return null;
+      }
+      // the idle run is over: the input's run is decided below, as on an idle conversation. Rarely
+      // the input was a queue head that dispatchQueuedIn then pauses on (a skill that can no
+      // longer be invoked): the idle run is ended for nothing, which is harmless (the next run's
+      // finish arms again)
+    }
     if (!last || Number(last.seq) <= Number(conv.consumed_seq)) {
       // Nothing unconsumed: the queue's head goes out when the queue is not paused. Interjections
       // are always unconsumed messages, so the queue never jumps ahead of them.
@@ -405,6 +546,115 @@ export class RunQueue {
         .execute();
     }
     return runId;
+  }
+
+  /**
+   * {@link ensureRun}'s check while a worker holds the conversation (idle compaction spec §5.2,
+   * S2): the id of the active idle compact run when input is pending, else null. Reads only (no row
+   * lock): a run that ends meanwhile gets a stop it never hears, and its finish's own `ensureRun`
+   * starts the input's run. Any active status counts: a queued one is claimed by the lock holder,
+   * whose watch reads the stored stop when it starts the compaction.
+   */
+  // org-filter: ensure-run is keyed by a kernel-resolved conversation id (after a write that checked
+  // the org, or an owed outbox job); the conversation's own org is read from its row
+  @Transactional({ propagation: "requires_new" })
+  private async preemptIdleIn(conversationId: string): Promise<string | null> {
+    const t = this.db;
+    const idle = await t
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conversationId)
+      .where("status", "in", ACTIVE_RUN_STATUSES)
+      .where("compact_origin", "=", "idle")
+      .executeTakeFirst();
+    if (!idle) return null;
+    const conv = await t
+      .selectFrom("conversations")
+      .select(["consumed_seq", "org_id", "queue_paused", "account_id", "kind", "deleted_at"])
+      .where("id", "=", conversationId)
+      .executeTakeFirst();
+    if (conv?.kind !== "chat" || !isLive(conv.deleted_at)) return null;
+    return (await this.inputPendingIn(conversationId, conv)) ? idle.id : null;
+  }
+
+  /**
+   * Whether input waits for a chat conversation (idle compaction spec §5.2): an unconsumed message,
+   * a queue head that would go out (queue not paused, its author can still send), or a wake-eligible
+   * finished background task or delivery outside its wake window. Reads only: a wake inside its
+   * window owes nothing here (the idle run's finish re-derives it).
+   */
+  private async inputPendingIn(
+    conversationId: string,
+    conv: { consumed_seq: string; org_id: string; queue_paused: boolean; account_id: string },
+  ): Promise<boolean> {
+    const t = this.db;
+    const message = await t
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "user_message")
+      .where("seq", ">", conv.consumed_seq)
+      .limit(1)
+      .executeTakeFirst();
+    if (message) return true;
+    if (!conv.queue_paused) {
+      const head = await t
+        .selectFrom("conversation_queue")
+        .select("id")
+        .where("conversation_id", "=", conversationId)
+        .limit(1)
+        .executeTakeFirst();
+      if (head) return authorCanSend(t, conversationId, conv.account_id);
+    }
+    const wake = await wakeDecisionIn(
+      t,
+      { id: conversationId, orgId: conv.org_id, rootId: conversationId },
+      Number(conv.consumed_seq),
+      this.config.get().runtime.wakeOnBackgroundTask,
+      (accountId) => authorCanSend(t, conversationId, accountId),
+    );
+    return wake?.kind === "wake";
+  }
+
+  /**
+   * Ends a `queued` idle compact run no worker started yet (no `run_started`), in
+   * {@link ensureRunIn}'s transaction under the conversation row lock: `run_aborted { byAccountId:
+   * null, reason: "superseded" }`, which pauses nothing (S3). True when it did; false when a worker
+   * already started it (or it is past `queued`): the caller sends the stop after the commit. A
+   * worker that read it as queued re-checks it under the row locks before its `run_started`
+   * ({@link abortQueuedIn}'s rule).
+   */
+  private async endQueuedIdleIn(
+    conversationId: string,
+    active: ActiveRunRow,
+    st: EnsureState,
+  ): Promise<boolean> {
+    if (active.status !== "queued") return false;
+    const started = await this.db
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("conversation_id", "=", conversationId)
+      .where("idem_key", "=", `run_started:${active.id}`)
+      .executeTakeFirst();
+    if (started) return false;
+    const toSeq = await this.finisher.finishIn({
+      conversationId,
+      runId: active.id,
+      status: "aborted",
+      consumed: null,
+      event: { type: "run_aborted", payload: { byAccountId: null, reason: "superseded" } },
+    });
+    if (toSeq !== null) st.superseded = { runId: active.id, toSeq };
+    return true;
+  }
+
+  /**
+   * Sends the `superseded` stop of an idle compact run, after the commit that decided it. A stop
+   * already requested (a person's, racing the input) is left as it is: it is never relabelled
+   * (SET NX on the marker, {@link RunAbort.requestIfAbsent}).
+   */
+  private async supersede(runId: string): Promise<void> {
+    await this.abort.requestIfAbsent(runId, null, { reason: "superseded" });
   }
 
   /**
@@ -804,7 +1054,7 @@ export class RunQueue {
   private activeRun(t: KernelSchemaDb, conversationId: string): Promise<ActiveRunRow | undefined> {
     return t
       .selectFrom("runs")
-      .select(["id", "status", "trigger_seq", "job_id"])
+      .select(["id", "status", "trigger_seq", "job_id", "compact_origin"])
       .where("conversation_id", "=", conversationId)
       .where("status", "in", ACTIVE_RUN_STATUSES)
       .executeTakeFirst();

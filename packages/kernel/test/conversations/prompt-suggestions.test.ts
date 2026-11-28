@@ -14,8 +14,10 @@ import {
 } from "../../src/conversations/prompt-suggestions.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
+import { RunQueue } from "../../src/runtime/run-queue.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -433,6 +435,35 @@ describe("prompt suggestions end to end", () => {
     expect(res.statusCode, res.body).toBe(200);
     const { id } = await completedRun("suggest:Not now");
     await expectNoSuggestion(id);
+  });
+
+  it("an idle compaction after the run keeps its suggestion fresh (idle compaction spec §6)", async () => {
+    const id = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, id, "suggest:Run the tests");
+    const [end] = await waitForTerminal(db, id);
+    const runId = end?.runId as string;
+    await idle();
+    const store = k.app.get(PromptSuggestionStore);
+    expect(await store.get(id)).toMatchObject({ runId, afterSeq: end?.seq });
+
+    // the idle job fires while the person is away: a compact run, origin idle, after the suggestion
+    const idleRun = await withOrgScope(orgId, () =>
+      k.app.get(RunQueue).startIdleCompaction(id, end?.seq as number),
+    );
+    expect(idleRun).not.toBeNull();
+    await waitFor(
+      async () => (await runsOf(db, id)).some((r) => r.id === idleRun && r.status === "completed"),
+      20_000,
+      "idle compact run completed",
+    );
+    await idle();
+
+    expect(await store.isFresh(id, { runId, afterSeq: end?.seq as number })).toBe(true);
+    const back = await open(id);
+    await back.until((m) => m.some((x) => x.event === "suggestion"), 10_000, "suggestion frame");
+    expect(suggestionsIn(back.messages)).toEqual([
+      { runId, afterSeq: end?.seq, text: "Run the tests" },
+    ]);
   });
 
   it("a message sent while the call is in flight leaves no suggestion for the old run", async () => {

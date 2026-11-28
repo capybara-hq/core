@@ -32,10 +32,12 @@ import type { LeaseHandle } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import { SkillsCatalogService } from "../skills/catalog.js";
 import { ToolRegistry } from "../tools/registry.js";
-import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
+import { RunAbort, type RunAbortBy, type RunAbortDetail, type RunAbortReason } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
-import { CompactionService } from "./compaction.service.js";
+import { CompactionService, type CompactOrigin } from "./compaction.service.js";
 import { ConversationLock, type Lease } from "./conversation-lock.js";
+import { IdleArm } from "./idle-arm.js";
+import { IdleReturn } from "./idle-return.js";
 import { runDeadline, tightestLimit } from "./limits.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
@@ -207,6 +209,10 @@ export class RunWorker {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** The steps' live drafts this process writes for the runs it executes. */
     @Inject(RunDrafts) private readonly drafts: RunDrafts,
+    /** A chat run's finish decides, outside any transaction, whether it arms idle compaction. */
+    @Inject(IdleArm) private readonly idleArm: Pick<IdleArm, "decide">,
+    /** A chat run's start logs a return to an idle conversation (best effort). */
+    @Inject(IdleReturn) private readonly idleReturn: Pick<IdleReturn, "record">,
     @Optional() @Inject(RUN_HOOKS) private readonly hooks?: RunHooks,
   ) {
     this.loop = loops.create(steps.deps);
@@ -469,6 +475,7 @@ export class RunWorker {
         "waited_ms",
         "budget_run_id",
         "compact",
+        "compact_origin",
       ])
       .where("id", "=", runId)
       .executeTakeFirst();
@@ -658,6 +665,7 @@ export class RunWorker {
       waited_ms: string;
       budget_run_id: string | null;
       compact: boolean;
+      compact_origin: CompactOrigin | null;
     },
     conv: {
       id: string;
@@ -790,6 +798,9 @@ export class RunWorker {
         agent = started.agent;
         const toSeq = started.toSeq;
         if (toSeq !== undefined) await this.eventLog.notify(conversationId, toSeq);
+        // a return to an idle conversation (idle compaction spec S11): off the run's path, never
+        // throws; this branch is a non-compact run's first start
+        if (conv.kind === "chat") this.track(this.idleReturn.record(conv, runId));
       }
       // Skills catalog snapshot (ruling M17): written before the run is running, and again on a
       // crash retry (deduped by its idem key). Both records re-read the run under the conversation
@@ -1019,6 +1030,11 @@ export class RunWorker {
           // 超时只消费 loop 实际吸收的消息，不按触发消息兜底（R34）：截止时间可能在第一次吸收之前就已过
           // （如续跑时已超过 started_at + maxRunSeconds），这些消息没有被回复，留给结束后的 ensureRun 起新一轮。
           const consumed = Math.max(outcome.consumedUpToSeq, startConsumed);
+          // idle compaction spec §4.2 (S4): decided before the terminal transaction, never throws
+          const idleCompaction = await this.idleArm.decide(run, conv, outcome.kind);
+          // decide awaited (possibly the model registry): the lease may have gone meanwhile
+          if (state.abandoned) return "abandoned";
+          if (state.leaseLost) return "interrupted";
           await this.finish(
             conversationId,
             runId,
@@ -1027,6 +1043,7 @@ export class RunWorker {
             { type: "run_finished", payload: { reason: outcome.kind, consumedUpToSeq: consumed } },
             true,
             false,
+            idleCompaction,
           );
           this.completed(conversationId, runId, outcome.kind);
           break;
@@ -1035,10 +1052,20 @@ export class RunWorker {
           // completed / max_steps / budget: the loop always absorbed the trigger message; still
           // floor to it
           const consumed = Math.max(outcome.consumedUpToSeq, Number(run.trigger_seq));
-          await this.finish(conversationId, runId, "completed", consumed, {
-            type: "run_finished",
-            payload: { reason: outcome.kind, consumedUpToSeq: consumed },
-          });
+          const idleCompaction = await this.idleArm.decide(run, conv, outcome.kind);
+          // decide awaited (possibly the model registry): the lease may have gone meanwhile
+          if (state.abandoned) return "abandoned";
+          if (state.leaseLost) return "interrupted";
+          await this.finish(
+            conversationId,
+            runId,
+            "completed",
+            consumed,
+            { type: "run_finished", payload: { reason: outcome.kind, consumedUpToSeq: consumed } },
+            true,
+            true,
+            idleCompaction,
+          );
           this.completed(conversationId, runId, outcome.kind);
         }
       }
@@ -1050,12 +1077,15 @@ export class RunWorker {
   }
 
   /**
-   * A manual compaction run (context compaction spec §4.7): starts it (`run_started` with
-   * `trigger: "compact"`, no skills/run/plugin context — nothing reaches the model as a request),
-   * runs the shared compaction execution with the conversation's effective definition, and writes
-   * the terminal state. The run records the summary and its usage only; nothing is absorbed and no
-   * model step runs. A person's stop aborts it (`run_aborted`, no partial summary); a shutdown or a
-   * lost lease leaves it to another replica.
+   * A compaction run (context compaction spec §4.7, a person's; idle compaction spec §5.1, the
+   * idle job's): starts it (`run_started` with `trigger: "compact"`, and `compactOrigin: "idle"`
+   * for an idle one; no skills/run/plugin context — nothing reaches the model as a request), runs
+   * the shared compaction execution with the conversation's effective definition (an idle run
+   * requires the in-context summary and never falls back to the transcript), and writes the
+   * terminal state. The run records the summary and its usage only; nothing is absorbed and no
+   * model step runs. A person's stop aborts it (`run_aborted`, no partial summary), and so does
+   * input preempting an idle run (`reason: "superseded"`, no account); a shutdown or a lost lease
+   * leaves it to another replica.
    */
   private async executeCompaction(
     run: {
@@ -1065,6 +1095,7 @@ export class RunWorker {
       trigger_account_id: string;
       trigger_seq: string;
       started_at: Date | null;
+      compact_origin: CompactOrigin | null;
     },
     conv: {
       id: string;
@@ -1079,11 +1110,13 @@ export class RunWorker {
   ): Promise<ExecResult> {
     const runId = run.id;
     const conversationId = conv.id;
+    // a compact run from before 0195 (no origin) is a person's
+    const origin: CompactOrigin = run.compact_origin ?? "manual";
     const existingStart = await this.eventLog.findByIdem(conversationId, `run_started:${runId}`);
     if (run.status === "queued" || startedAt === null) {
       if (!existingStart) {
         await this.hooks?.beforeRunStarted?.(runId, conversationId);
-        const started = await this.appendRunStarted(conversationId, run, agent, saved, true);
+        const started = await this.appendRunStarted(conversationId, run, agent, saved, origin);
         // a stop that ended the run meanwhile (a queued run's direct abort) wins
         if (started.terminal) return "finished";
         agent = started.agent;
@@ -1106,9 +1139,11 @@ export class RunWorker {
     const ac = new AbortController();
     let abortedBy: string | null | undefined;
     let abortDetail: RunAbortDetail | undefined;
-    const unwatch = await this.abort.watch(runId, (by, detail) => {
+    let abortReason: RunAbortReason | undefined;
+    const unwatch = await this.abort.watch(runId, (by, detail, reason) => {
       abortedBy = by;
       abortDetail = detail;
+      abortReason = reason;
       ac.abort();
     });
     // a shutdown (or a lost lease, which aborts this signal too) stops at the stream boundary
@@ -1122,19 +1157,23 @@ export class RunWorker {
       return "interrupted";
     }
     try {
-      await this.compaction.force({
-        orgId: conv.org_id,
-        conversationId,
-        runId,
-        accountId: run.trigger_account_id,
-        agentId: conv.agent_id,
-        agent,
-        agentVersion: run.agent_version,
-        source: conv.source,
-        conversationKind: "chat",
-        absorbedUpToSeq: Number(consumed_seq),
-        signal: ac.signal,
-      });
+      await this.compaction.force(
+        {
+          orgId: conv.org_id,
+          conversationId,
+          runId,
+          accountId: run.trigger_account_id,
+          agentId: conv.agent_id,
+          agent,
+          agentVersion: run.agent_version,
+          source: conv.source,
+          conversationKind: "chat",
+          absorbedUpToSeq: Number(consumed_seq),
+          signal: ac.signal,
+        },
+        // R13: an idle run requires the in-context summary and never sets `manual`
+        origin,
+      );
     } catch (err) {
       if (state.abandoned) return "abandoned";
       if (state.leaseLost) return "interrupted";
@@ -1145,11 +1184,15 @@ export class RunWorker {
       }
       await this.finish(conversationId, runId, "aborted", null, {
         type: "run_aborted",
-        payload: {
-          byAccountId: abortedBy,
-          reason: "user",
-          ...(abortDetail !== undefined && { detail: abortDetail }),
-        },
+        // input preempted an idle run (idle compaction spec §5.2): no account, no queue pause
+        payload:
+          abortReason === "superseded"
+            ? { byAccountId: null, reason: "superseded" }
+            : {
+                byAccountId: abortedBy,
+                reason: "user",
+                ...(abortDetail !== undefined && { detail: abortDetail }),
+              },
       });
       return "finished";
     } finally {
@@ -1261,7 +1304,8 @@ export class RunWorker {
   /**
    * `run_started` under the conversation row lock, with the model / effort switch in effect then
    * (a chat run's `saved` version under the conversation's selection): what the run uses. A
-   * `compact` run is marked `trigger: "compact"` (context compaction spec §4.7).
+   * compact run (`compact` its origin) is marked `trigger: "compact"` (context compaction spec
+   * §4.7), an idle one also `compactOrigin: "idle"` (absent = manual; idle compaction spec §5.1).
    */
   @Transactional({ propagation: "requires_new" })
   private async appendRunStarted(
@@ -1270,7 +1314,7 @@ export class RunWorker {
     /** The definition so far (a sub-agent's frozen one is final). */
     current: AgentDefinition,
     saved: AgentDefinition | undefined,
-    compact = false,
+    compact: CompactOrigin | null = null,
   ): Promise<{ toSeq: number | undefined; agent: AgentDefinition; terminal?: true }> {
     const t = this.db;
     if (await this.endedUnderLocks(conversationId, run.id)) {
@@ -1297,8 +1341,11 @@ export class RunWorker {
           agentVersion: run.agent_version,
           model: agent.model,
           triggerAccountId: run.trigger_account_id,
-          ...(compact
-            ? { trigger: "compact" as const }
+          ...(compact !== null
+            ? {
+                trigger: "compact" as const,
+                ...(compact === "idle" && { compactOrigin: "idle" as const }),
+              }
             : {
                 ...(boundary?.type === "background_task_finished" && {
                   trigger: "background_task" as const,
@@ -1390,8 +1437,11 @@ export class RunWorker {
     event: FinishRunArgs["event"],
     hook = true,
     floorToTrigger = true,
+    /** A chat run's armed idle compaction intent ({@link IdleArm.decide}). */
+    idleCompaction?: FinishRunArgs["idleCompaction"],
   ): Promise<number | null> {
-    // the terminal transaction also writes the run's open fork report and cancels its waits
+    // the terminal transaction also writes the run's open fork report and cancels its waits, and
+    // owes the idle compaction job when the run armed one
     const toSeq = await this.finisher.finish({
       conversationId,
       runId,
@@ -1399,6 +1449,7 @@ export class RunWorker {
       consumed,
       event,
       floorToTrigger,
+      ...(idleCompaction !== undefined && { idleCompaction }),
     });
     if (hook) await this.hooks?.beforeRelease?.(runId, conversationId);
     return toSeq;

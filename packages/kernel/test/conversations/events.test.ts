@@ -316,3 +316,36 @@ describe("approval_requested", () => {
     }
   });
 });
+
+describe("run_started.compactOrigin and run_aborted superseded", () => {
+  const started = (extra: Record<string, unknown>) =>
+    ConversationEventSchema.safeParse({
+      type: "run_started",
+      payload: {
+        agentVersion: 1,
+        model: { provider: "p", model: "m" },
+        triggerAccountId: "acc1",
+        ...extra,
+      },
+    }).success;
+
+  it("accepts an idle or manual compact origin and refuses another", () => {
+    expect(started({ trigger: "compact", compactOrigin: "idle" })).toBe(true);
+    expect(started({ trigger: "compact", compactOrigin: "manual" })).toBe(true);
+    expect(started({ trigger: "compact", compactOrigin: "other" })).toBe(false);
+  });
+
+  it("parses a run_started written without the field", () => {
+    expect(started({ trigger: "compact" })).toBe(true);
+    expect(started({})).toBe(true);
+  });
+
+  it("accepts a superseded abort with no account", () => {
+    expect(
+      ConversationEventSchema.safeParse({
+        type: "run_aborted",
+        payload: { byAccountId: null, reason: "superseded" },
+      }).success,
+    ).toBe(true);
+  });
+});

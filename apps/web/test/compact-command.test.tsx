@@ -425,6 +425,58 @@ describe("a manual compaction's outcome and other dividers", () => {
     expect(screen.queryByText(/^Compaction · /)).toBeNull();
   });
 
+  describe("the idle divider", () => {
+    const idleStarted = ev(
+      2,
+      "run_started",
+      {
+        agentVersion: 1,
+        model: { provider: "model-fake", model: "fake-1" },
+        triggerAccountId: null,
+        trigger: "compact",
+        compactOrigin: "idle",
+      },
+      "cr1",
+    );
+    const idleEvents = (savedTokens: number) => [
+      userMsg(1, "hi"),
+      idleStarted,
+      ev(
+        3,
+        "compaction_summary",
+        { coversUpToSeq: 1, text: "summary", savedTokens, step: 0 },
+        "cr1",
+      ),
+      ev(4, "run_finished", { reason: "completed", consumedUpToSeq: 1 }, "cr1"),
+    ];
+
+    // the divider's text shares its span with the "View summary" button, so read the span's own text
+    const dividerText = () =>
+      vi.waitFor(() => {
+        const span = document.querySelector('[data-kind="compacted"] .cb-run-divider-text');
+        if (!span) throw new Error("no compacted divider yet");
+        return (span.firstChild?.textContent ?? "").replace(/ ·$/, "");
+      });
+
+    it("shows the saved count and the help line", async () => {
+      api({ [`GET ${BASE}/events`]: () => json(200, { events: idleEvents(1200) }) });
+      await renderChatRoute();
+      await screen.findByText("hi");
+      expect(await dividerText()).toBe(
+        "Earlier conversation compacted while idle · saved 1200 tokens · Turn this off in your account preferences.",
+      );
+    });
+
+    it("without a saved count it names no number", async () => {
+      api({ [`GET ${BASE}/events`]: () => json(200, { events: idleEvents(0) }) });
+      await renderChatRoute();
+      await screen.findByText("hi");
+      expect(await dividerText()).toBe(
+        "Earlier conversation compacted while idle · Turn this off in your account preferences.",
+      );
+    });
+  });
+
   it("a person's model switch is a notice divider", async () => {
     api({
       [`GET ${BASE}/events`]: () =>

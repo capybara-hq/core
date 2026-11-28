@@ -301,6 +301,8 @@ type EventBody =
           | "schedule"
           | "compact"
           | "automation_event";
+        /** A compact run started by the idle job (`idle`); absent = a manual compaction. */
+        compactOrigin?: "manual" | "idle";
       };
     }
   | {

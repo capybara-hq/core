@@ -42,9 +42,11 @@ import {
 import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { ConversationMedia } from "../../src/files/conversation-media.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
+import { compactionProgressKey } from "../../src/runtime/compaction-progress.js";
 import {
   type MediaInfo,
   summaryText,
@@ -62,7 +64,9 @@ import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProjectKnowledgeService } from "../../src/runtime/project/knowledge.service.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
+import { RunQueue } from "../../src/runtime/run-queue.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
+import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { catalogLineChars, SkillsCatalogService } from "../../src/skills/catalog.js";
@@ -90,6 +94,7 @@ import {
   createConv,
   createOrgWithProviders,
   eventsOf,
+  gate,
   MODEL_LOOPER,
   PW,
   postMessage,
@@ -148,6 +153,9 @@ let sandboxRoot: string;
 /** The run context clock (`RUN_CONTEXT_CLOCK`): real time unless a test sets a day. */
 let clockMs: number | null = null;
 
+/** The run worker's seams: a test sets the ones it needs and removes them after. */
+const runHooks: RunHooks = {};
+
 beforeAll(async () => {
   capture.install();
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -197,6 +205,7 @@ beforeAll(async () => {
     {
       overrides: [
         { provide: RUN_CONTEXT_CLOCK, useValue: () => clockMs ?? Date.now() },
+        { provide: RUN_HOOKS, useValue: runHooks },
         // watched waits poll fast here (browser long waits spec §5.3)
         { provide: TOOL_WATCH_TIMINGS, useValue: { intervalMs: 150, timeoutMs: 300 } },
       ],
@@ -1128,6 +1137,168 @@ describe("reconstructRequest：基线零漂移", () => {
         .set({ value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0 }) })
         .where("key", "=", "compaction")
         .execute();
+    }
+  });
+
+  it("an idle compact run's in-context summary, then a message run: zero drift, in-context framing (idle compaction spec §5.1)", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    for (let i = 0; i < 3; i++) {
+      await postMessage(owner, orgId, conv, `echo:turn ${i} ${"words ".repeat(40)}`);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    }
+    const armedSeq = (await eventsOf(db, conv)).findLast((e) => e.type === "run_finished")?.seq;
+    const idle = await withOrgScope(orgId, () =>
+      k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number),
+    );
+    expect(idle).not.toBeNull();
+    await waitForTerminal(db, conv, ++n, 30_000);
+    await postMessage(owner, orgId, conv, "echo:after the idle compaction");
+    await waitForTerminal(db, conv, ++n, 30_000);
+
+    const events = await eventsOf(db, conv);
+    const started = events.find((e) => e.type === "run_started" && e.runId === idle);
+    expect(started?.type === "run_started" && started.payload.trigger).toBe("compact");
+    expect(started?.type === "run_started" && started.payload.compactOrigin).toBe("idle");
+    const summaries = events.filter(
+      (e): e is Extract<ConversationEvent, { type: "compaction_summary" }> =>
+        e.type === "compaction_summary",
+    );
+    expect(summaries.map((e) => [e.runId, e.payload.method])).toEqual([[idle, "in_context"]]);
+    const summary = summaries[0] as Extract<ConversationEvent, { type: "compaction_summary" }>;
+    const calls = modelCalls(events);
+    const last = calls.at(-1) as ModelCallEvent;
+    expect(last.payload.request.summarySeq).toBe(summary.seq);
+    const head = sent.at(-1)?.messages[0];
+    const blocks = Array.isArray(head?.content) ? head.content : [];
+    expect(blocks[0]).toEqual({
+      type: "text",
+      text: summaryText(summary.payload.text, {
+        openers: 0,
+        keptTail: false,
+        method: "in_context",
+      }),
+    });
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("a preempted idle compact run (superseded, no summary), then a run that compacted inline: zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    const compactionSettings = (value: Record<string, unknown>) =>
+      db
+        .updateTable("deployment_settings")
+        .set({ value: JSON.stringify(value) })
+        .where("key", "=", "compaction")
+        .execute();
+    const hold = async (sleepMs: number) => {
+      const res = await owner({
+        method: "POST",
+        url: "/plugins/hooks-probe/config",
+        payload: { orgId, sleepMs, sleepIn: sleepMs > 0 ? ["model.request"] : [] },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    };
+    const enableProbe = async (enabled: boolean) => {
+      const res = await owner({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
+        payload: { enabled },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    };
+    await enableProbe(true);
+    try {
+      // long turns that stay under the automatic trigger
+      await compactionSettings({ keepRecentTurns: 1, reserveTokens: 0, threshold: 0.9 });
+      let n = 0;
+      for (let i = 0; i < 2; i++) {
+        await postMessage(owner, orgId, conv, "long:3000");
+        await waitForTerminal(db, conv, ++n, 30_000);
+      }
+      expect((await eventsOf(db, conv)).some((e) => e.type === "compaction_summary")).toBe(false);
+
+      await hold(60_000);
+      const armedSeq = (await eventsOf(db, conv)).findLast((e) => e.type === "run_finished")?.seq;
+      const idle = await withOrgScope(orgId, () =>
+        k.app.get(RunQueue).startIdleCompaction(conv, armedSeq as number),
+      );
+      expect(idle).not.toBeNull();
+      await waitFor(
+        async () => {
+          const r = await k.app.get(REDIS).get(compactionProgressKey(idle as string));
+          return r !== null && (JSON.parse(r) as { phase: string }).phase === "summarizing"
+            ? r
+            : null;
+        },
+        20_000,
+        "the idle compaction reached its model call",
+      );
+      // the next run compacts inline at half the window
+      await compactionSettings({ keepRecentTurns: 1, reserveTokens: 0, threshold: 0.5 });
+      // the message's run waits before its run_started until the hold is lifted, and the hold is
+      // lifted only once the idle run is aborted: model-call.ts records `summarizing` before the
+      // `model.request` hook reads the probe's config, so an earlier lift could free the idle
+      // summary, and a later one would hold the message run's own compaction call
+      const following = gate();
+      runHooks.beforeRunStarted = async (runId, conversationId) => {
+        if (conversationId === conv && runId !== idle) await following.promise;
+      };
+      try {
+        await postMessage(owner, orgId, conv, "long:3000");
+        await waitFor(
+          async () => {
+            const row = await db
+              .selectFrom("runs")
+              .select("status")
+              .where("id", "=", idle as string)
+              .executeTakeFirst();
+            return row?.status === "aborted" ? row : null;
+          },
+          30_000,
+          "the idle compact run aborted",
+        );
+      } finally {
+        await hold(0);
+        delete runHooks.beforeRunStarted;
+        following.open();
+      }
+      await waitForTerminal(db, conv, n + 2, 30_000);
+      await postMessage(owner, orgId, conv, "echo:after");
+      await waitForTerminal(db, conv, n + 3, 30_000);
+
+      const events = await eventsOf(db, conv);
+      const idleEvents = events.filter((e) => e.runId === idle);
+      expect(
+        idleEvents
+          .filter((e) => e.type === "run_aborted")
+          .map((e) => (e.payload as never as { reason: string }).reason),
+      ).toEqual(["superseded"]);
+      expect(idleEvents.some((e) => e.type === "compaction_summary")).toBe(false);
+      const summaries = events.filter(
+        (e): e is Extract<ConversationEvent, { type: "compaction_summary" }> =>
+          e.type === "compaction_summary",
+      );
+      expect(summaries).toHaveLength(1);
+      const inline = summaries[0]?.runId;
+      expect(inline).not.toBe(idle);
+      // the message's own run compacted inline, in context (a message run's trigger: absent or
+      // `message`)
+      const inlineStarted = events.find((e) => e.type === "run_started" && e.runId === inline);
+      expect(inlineStarted?.type).toBe("run_started");
+      expect(
+        inlineStarted?.type === "run_started" && (inlineStarted.payload.trigger ?? "message"),
+      ).toBe("message");
+      expect(summaries[0]?.payload.method).toBe("in_context");
+      await expectZeroDrift(conv, await snapshotOf(conv));
+    } finally {
+      delete runHooks.beforeRunStarted;
+      await hold(0);
+      await enableProbe(false);
+      await compactionSettings({ keepRecentTurns: 1, reserveTokens: 0 });
     }
   });
 

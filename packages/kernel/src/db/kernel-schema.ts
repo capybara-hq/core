@@ -149,6 +149,8 @@ export interface AccountsTable {
   theme: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0169: the person's own avatar; null shows the SSO avatar or the initial (account profile §5.1). */
   avatar: ColumnType<AccountAvatar | null, string | null | undefined, string | null>;
+  /** 0195: the person's idle compaction opt-out; null follows the org (idle compaction spec §6.3). */
+  idle_compaction: ColumnType<"off" | null, "off" | null | undefined, "off" | null>;
 }
 
 /** 0169: an account's avatar uploads (bytes in the object store under `deployment/account-avatars/`). */
@@ -668,6 +670,15 @@ export interface RunsTable {
    * execution with `force: true` instead of the agent loop, and writes no model step.
    */
   compact: ColumnType<boolean, boolean | undefined, boolean>;
+  /**
+   * 0195: who started a compact run (idle compaction spec §5.1): 'manual' (a person) or 'idle'
+   * (the idle compaction job); null = an ordinary run, or a compact run from before 0195 (manual).
+   */
+  compact_origin: ColumnType<
+    "manual" | "idle" | null,
+    "manual" | "idle" | null | undefined,
+    "manual" | "idle" | null
+  >;
 }
 
 /** 0053: one row per sub-agent dispatch (an `Agent` call of a parent run). */

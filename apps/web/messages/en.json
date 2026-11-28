@@ -1674,6 +1674,9 @@
     "divider": {
       "compacted": "Earlier conversation compacted",
       "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
+      "compactedIdle": "Earlier conversation compacted while idle · saved {n} tokens",
+      "compactedIdleNoCount": "Earlier conversation compacted while idle",
+      "compactedIdleHelp": "Turn this off in your account preferences.",
       "compactFailed": "Compaction failed: {reason}",
       "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message",
       "compactSkipped": "Nothing to compact · the conversation is still short",
@@ -1684,6 +1687,7 @@
     },
     "compactionRun": "Compaction",
     "compacting": "Compacting conversation…",
+    "compactingIdle": "Compacting in the background…",
     "compactingChunk": "{chunk}/{chunks}",
     "compactingElapsed": "{seconds}s",
     "compact": "Compact conversation",
@@ -3025,7 +3029,7 @@
     "follow": "Follow the platform settings",
     "followHint": "Turn this off to set the prompt cache for this organization only.",
     "longTtl": "Long prompt cache",
-    "longTtlHint": "Requests use the model's cache tier of at least 30 minutes (such as 1 hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price instead of 1.25×)."
+    "longTtlHint": "Requests use the model's cache tier of at least 30 minutes (such as 1 hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price instead of 1.25×). Idle compaction runs on these models only with this on."
   },
   "compaction": {
     "title": "Conversation compaction",
@@ -3049,6 +3053,18 @@
     "maxOutputTokens": {
       "label": "Summary output cap",
       "help": "The most tokens the summary may produce (1,024–32,000; 20,000 is the default)."
+    },
+    "idleEnabled": {
+      "label": "Compact idle conversations before the cache expires",
+      "hint": "While a conversation is idle, compact it from the prompt cache before the cache expires, so the next message neither waits for a compaction nor re-reads the long context at full price. Only for models whose cache lasts 30 minutes or more (most need the long cache tier)."
+    },
+    "idleMinTokensFloor": {
+      "label": "Smallest context to compact in the background",
+      "help": "Compacts only when the context is at least the larger of this and the window share (default 200,000)."
+    },
+    "idleMinWindowRatio": {
+      "label": "Smallest context as a share of the window",
+      "help": "Default 0.3: from 300,000 on a model with a 1M window."
     }
   },
   "configForm": {
@@ -6825,6 +6841,11 @@
       "label": "Time zone",
       "help": "A time zone you choose takes precedence over your browser's.",
       "follow": "Follow the browser"
+    },
+    "idleCompaction": {
+      "title": "Conversations",
+      "label": "Compact my conversations while I'm away",
+      "orgOff": "Off in your organization"
     }
   },
   "themeImpact": {

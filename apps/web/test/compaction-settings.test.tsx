@@ -23,6 +23,9 @@ const PLATFORM = {
   keepRecentTurns: 4,
   reserveTokens: 12_000,
   maxOutputTokens: 20_000,
+  idleEnabled: true,
+  idleMinTokensFloor: 200_000,
+  idleMinWindowRatio: 0.3,
 };
 
 const DEPLOYMENT = {
@@ -98,6 +101,59 @@ afterEach(() => {
 });
 
 describe("对话压缩 settings", () => {
+  it("platform: shows the idle fields; turning idleEnabled off disables the size fields and saves only it", async () => {
+    resetNavigation("/admin/settings");
+    const calls = adminRoutes();
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    const section = await sectionOf(T.title);
+    expect(textbox(section, T.idleMinTokensFloor.label).value).toBe("200000");
+    expect(textbox(section, T.idleMinWindowRatio.label).value).toBe("0.3");
+    expect(textbox(section, T.idleMinTokensFloor.label).disabled).toBe(false);
+
+    const user = userEvent.setup();
+    await user.click(within(section).getByRole("switch", { name: T.idleEnabled.label }));
+    expect(textbox(section, T.idleMinTokensFloor.label).disabled).toBe(true);
+    expect(textbox(section, T.idleMinWindowRatio.label).disabled).toBe(true);
+    await user.click(screen.getByRole("button", { name: en.admin.settings.save }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+      compaction: { idleEnabled: false },
+    });
+  });
+
+  it("platform: an idle floor below the range is not committed", async () => {
+    resetNavigation("/admin/settings");
+    const calls = adminRoutes();
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    const section = await sectionOf(T.title);
+    const floor = textbox(section, T.idleMinTokensFloor.label);
+    const user = userEvent.setup();
+    await user.clear(floor);
+    await user.type(floor, "1000");
+    await user.tab();
+    expect(textbox(section, T.idleMinTokensFloor.label).value).toBe("200000");
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+
+  it("org: follows the platform's idle fields and saves an override of the ratio", async () => {
+    resetNavigation("/settings/organization");
+    const calls = orgRoutes({ toolSearch: "on" });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes());
+    const section = await sectionOf(T.title);
+    expect(textbox(section, T.idleMinWindowRatio.label).value).toBe("0.3");
+    expect(textbox(section, T.idleMinWindowRatio.label).disabled).toBe(true);
+    const user = userEvent.setup();
+    await user.click(within(section).getByRole("checkbox", { name: T.follow }));
+    const ratio = textbox(section, T.idleMinWindowRatio.label);
+    await user.clear(ratio);
+    await user.type(ratio, "0.5");
+    const row = screen.getByRole("region", { name: "Pending changes" });
+    await user.click(within(row).getByRole("button", { name: en.orgSettings.save }));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      compaction: { idleMinWindowRatio: 0.5 },
+    });
+  });
+
   it("platform: saves only the changed threshold and refreshes the cached org settings", async () => {
     resetNavigation("/admin/settings");
     const calls = adminRoutes();

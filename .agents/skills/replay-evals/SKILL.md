@@ -171,6 +171,11 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   conversation was compacted into the summary above and is no longer shown verbatim." (compaction spec
   §4.2.2): a framing text, rendered for every log, no `DriftReason`. `compaction_skipped` (a manual
   compaction with nothing to summarize, spec §4.7) is display only, never model-visible.
+- **Idle compact runs** (idle compaction spec §5): `run_started.compactOrigin` (`idle`; absent = manual) and
+  `run_aborted.reason: "superseded"` (an idle compact run preempted by input, no account) are display and
+  run-control fields, never model-visible, so no `DriftReason`. Request building skips them (a compact run's
+  terminal events render no outcome note) and eval planning skips idle compact runs like manual ones; the
+  summary an idle run writes is an ordinary `compaction_summary`.
 - **A watched wait** (browser long waits spec §5.4): what the model reads is the resumed handler's `tool_result`, or
   `WAIT_SKIPPED_TEXT` for one skipped by a message (a logged `tool_result`); `question_asked.watch` and
   `question_answered` outcome `woken` are not model-visible. No `DriftReason`; full-run replay returns the recorded

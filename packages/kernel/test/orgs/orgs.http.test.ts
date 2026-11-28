@@ -142,6 +142,9 @@ describe("组织 HTTP", () => {
       keepRecentTurns: 4,
       reserveTokens: 8000,
       maxOutputTokens: 20_000,
+      idleEnabled: true,
+      idleMinTokensFloor: 200_000,
+      idleMinWindowRatio: 0.3,
     });
 
     const set = await patch({ compaction: { threshold: 0.6 } });
@@ -160,6 +163,23 @@ describe("组织 HTTP", () => {
     const merged = await patch({ compaction: { keepRecentTurns: 2 } });
     expect(merged.statusCode).toBe(200);
     expect((await read()).settings.compaction).toEqual({ threshold: 0.6, keepRecentTurns: 2 });
+
+    // the idle fields merge the same way, then null follows the platform again
+    const idle = await patch({ compaction: { idleMinTokensFloor: 300_000 } });
+    expect(idle.statusCode).toBe(200);
+    expect((await read()).settings.compaction).toEqual({
+      threshold: 0.6,
+      keepRecentTurns: 2,
+      idleMinTokensFloor: 300_000,
+    });
+    for (const bad of [
+      { idleMinTokensFloor: 49_999 },
+      { idleMinWindowRatio: 0.95 },
+      { idleEnable: false },
+    ]) {
+      const res = await patch({ compaction: bad });
+      expect(res.statusCode, JSON.stringify(bad)).toBe(400);
+    }
 
     // null clears the whole override: the org follows the platform again
     const clear = await patch({ compaction: null });

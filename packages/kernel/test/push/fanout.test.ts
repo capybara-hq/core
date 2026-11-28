@@ -512,6 +512,23 @@ describe("recipients when the fanout runs", () => {
     });
   });
 
+  it("an idle compaction's run end pushes nothing; a manual compaction's still replies", async () => {
+    const conv = await seedConv(ids.member1 as string);
+    const compactRun = async (origin: "idle" | "manual") => {
+      const runId = await seedRun(conv, ids.member1 as string);
+      await db
+        .updateTable("runs")
+        .set({ status: "completed", compact: true, compact_origin: origin })
+        .where("id", "=", runId)
+        .execute();
+      return runId;
+    };
+    const idle = await seedEvent(conv, "run_finished", finished, await compactRun("idle"));
+    expect(await fanout().run(idle)).toBe(0);
+    const manual = await seedEvent(conv, "run_finished", finished, await compactRun("manual"));
+    expect(await fanout().run(manual)).toBe(1);
+  });
+
   it("a background task a person (or a deletion) stopped pushes nothing", async () => {
     const conv = await seedConv(ids.member1 as string);
     const runId = await seedRun(conv, ids.member1 as string);

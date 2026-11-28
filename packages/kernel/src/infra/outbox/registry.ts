@@ -323,6 +323,21 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `runtime/idle-compaction-jobs.ts` IDLE_COMPACTION_JOB: owed by the terminal transaction of a
+  // chat run that passed the arm decision (`RunFinish.finishIn`), under `idleCompactionJobId`, with
+  // `runAt` shortly before the run's prompt cache expires (idle compaction spec §4.2, S4)
+  "idle-compaction": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "the job re-reads the conversation and starts at most one idle compact run under the conversation row lock, only while no event other than a run-less side-call usage follows armedSeq; a duplicate delivery finds the first delivery's run_started or its active compact run and does nothing",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: {
+      attempts: 2,
+      backoff: { type: "fixed", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
   // `runtime/usage-report-jobs.ts` USAGE_REPORT_JOB: owed with the usage it reports (a `usage`
   // event or a `model_usage` row) while some plugin subscribes, under `usageReportJobId` /
   // `modelUsageJobId` (spec §8.1)

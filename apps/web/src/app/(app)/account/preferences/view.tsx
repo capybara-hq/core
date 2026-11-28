@@ -6,6 +6,7 @@ import {
   Select,
   SettingsPage,
   Stack,
+  SwitchField,
   Text,
   useToast,
 } from "@capybara-hq/design";
@@ -21,10 +22,12 @@ import {
   putPreferences,
   timeZoneOptions,
 } from "../../../../lib/account-preferences";
+import { COMPACTION_DEFAULTS, effectiveCompaction } from "../../../../lib/compaction";
 import { preferencesQuery } from "../../../../lib/query/account";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
+import { orgSettingsQuery } from "../../../../lib/query/settings";
 import { meQuery } from "../../../../lib/query/shell";
 import {
   cachedOrgThemesKeys,
@@ -73,8 +76,26 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
     enabled: orgId !== null,
     retryOnMount: retryOnMountOf(tq.queryKey),
   }).data;
+  const sq = orgSettingsQuery(orgId ?? "");
+  const settingsRead = useQuery({
+    ...sq,
+    enabled: orgId !== null,
+    retryOnMount: retryOnMountOf(sq.queryKey),
+  });
+  const orgSettings = settingsRead.data;
+  // the switch waits for the org's answer; with no org, or when the read fails (a guest may not
+  // read it), it stays editable: the kernel enforces the org's setting anyway
+  const orgSettingsPending = orgId !== null && settingsRead.isPending;
+  // the org's effective switch: its override over the platform's
+  const orgIdleOff =
+    orgSettings !== undefined &&
+    effectiveCompaction(
+      orgSettings.deployment?.compaction ?? COMPACTION_DEFAULTS,
+      orgSettings.settings.compaction,
+    ).idleEnabled === false;
   const [draft, setDraft] = useState<string | undefined>(undefined);
   const [themeDraft, setThemeDraft] = useState<string | null | undefined>(undefined);
+  const [idleDraft, setIdleDraft] = useState<"off" | null | undefined>(undefined);
   const update = useAppMutation({
     fn: (prefs: Partial<Preferences>) => putPreferences(prefs),
     // a theme pick changes the resolved theme of every org (the page repaints with it; another
@@ -104,6 +125,11 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
           description={t("timeZone.description")}
           loading={{ fields: [{ control: "select", help: true }] }}
         />
+        <FormSection
+          id="idle-compaction"
+          title={t("idleCompaction.title")}
+          loading={{ fields: [{ control: "switch" }] }}
+        />
       </SettingsPage>
     );
   }
@@ -113,16 +139,21 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
   const theme = themeDraft !== undefined ? themeDraft : savedTheme;
   const zoneDirty = value !== saved;
   const themeDirty = theme !== savedTheme;
-  const dirty = zoneDirty || themeDirty;
+  const savedIdle = read.data.idleCompaction ?? null;
+  const idle = idleDraft !== undefined ? idleDraft : savedIdle;
+  const idleDirty = idle !== savedIdle;
+  const dirty = zoneDirty || themeDirty || idleDirty;
 
   async function save() {
     try {
       await update.mutateAsync({
         ...(zoneDirty ? { timeZone: value === FOLLOW ? null : value } : {}),
         ...(themeDirty ? { theme } : {}),
+        ...(idleDirty ? { idleCompaction: idle } : {}),
       });
       setDraft(undefined);
       setThemeDraft(undefined);
+      setIdleDraft(undefined);
       toast.success(t("saved"));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -137,12 +168,13 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
       {...(dirty
         ? {
             actionRow: {
-              unsaved: (zoneDirty ? 1 : 0) + (themeDirty ? 1 : 0),
+              unsaved: (zoneDirty ? 1 : 0) + (themeDirty ? 1 : 0) + (idleDirty ? 1 : 0),
               cancel: {
                 label: tc("cancel"),
                 onSelect: () => {
                   setDraft(undefined);
                   setThemeDraft(undefined);
+                  setIdleDraft(undefined);
                 },
               },
               primary: { label: t("save"), onSelect: () => void save(), loading: update.isPending },
@@ -167,6 +199,20 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
             ]}
           />
         </Field>
+      </FormSection>
+      <FormSection id="idle-compaction" title={t("idleCompaction.title")}>
+        {orgIdleOff ? (
+          <Text variant="prose" tone="muted">
+            {t("idleCompaction.orgOff")}
+          </Text>
+        ) : (
+          <SwitchField
+            label={t("idleCompaction.label")}
+            checked={idle !== "off"}
+            disabled={orgSettingsPending}
+            onChange={(on) => setIdleDraft(on ? null : "off")}
+          />
+        )}
       </FormSection>
     </SettingsPage>
   );

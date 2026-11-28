@@ -616,9 +616,20 @@ export class EventLog {
     }
 
     const n = fresh.length;
+    // updated_at orders the conversation lists; an idle compact run's events leave it (idle
+    // compaction spec §6: quiet). Decided in this same statement (a primary key probe on runs,
+    // only for a batch of one run's events), so the append costs no extra round trip
+    const runIds = new Set(fresh.map((i) => events[i]?.runId));
+    const [onlyRun] = runIds;
+    const updatedAt =
+      runIds.size === 1 && onlyRun !== undefined
+        ? sql<Date>`CASE WHEN EXISTS (SELECT 1 FROM capybara.runs ir
+            WHERE ir.id = ${onlyRun} AND ir.compact_origin = 'idle')
+            THEN updated_at ELSE now() END`
+        : sql<Date>`now()`;
     const { last_seq } = await t
       .updateTable("conversations")
-      .set({ last_seq: sql`last_seq + ${n}`, updated_at: sql`now()` })
+      .set({ last_seq: sql`last_seq + ${n}`, updated_at: updatedAt })
       .where("id", "=", conversationId)
       .returning("last_seq")
       .executeTakeFirstOrThrow();

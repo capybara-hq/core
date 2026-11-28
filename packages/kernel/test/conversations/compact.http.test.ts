@@ -1,17 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type { ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ConversationSource, ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { normalizeStoredDefinition } from "../../src/agents/definition.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { RunAbort } from "../../src/runtime/abort.js";
+import {
+  CompactionService,
+  type ForceCompactionInput,
+} from "../../src/runtime/compaction.service.js";
 import { compactionProgressKey } from "../../src/runtime/compaction-progress.js";
-import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
+import { RUN_QUEUE_NAME, RunQueue } from "../../src/runtime/run-queue.js";
+import { seedQueued } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -31,6 +40,7 @@ import {
   startKernel,
   type TestKernel,
   waitFor,
+  waitForEvent,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -178,11 +188,20 @@ describe("manual compaction", () => {
       "compact run completed",
     );
     expect(run.compact).toBe(true);
+    // idle compaction spec §5.1 (S12): a person's compact run is recorded as manual; its
+    // run_started carries no origin (absent = manual)
+    const origin = await db
+      .selectFrom("runs")
+      .select("compact_origin")
+      .where("id", "=", runId)
+      .executeTakeFirstOrThrow();
+    expect(origin.compact_origin).toBe("manual");
 
     const events = await eventsOf(db, conv);
     const started = ev(events, "run_started").find((e) => e.runId === runId);
     expect(started?.payload.trigger).toBe("compact");
     expect(started?.payload.triggerAccountId).toBe(ownerId);
+    expect(started?.payload).not.toHaveProperty("compactOrigin");
 
     const summaries = ev(events, "compaction_summary").filter((e) => e.runId === runId);
     expect(summaries).toHaveLength(1);
@@ -550,5 +569,431 @@ describe("manual compaction", () => {
     expect(op?.mirrors).toEqual(["POST /api/v1/orgs/:orgId/conversations/:id/compact"]);
     expect(op?.authz).toEqual({ orgAction: "conversations.compact" });
     expect(op?.input.safeParse({ conversationId: randomUUID() }).success).toBe(true);
+  });
+});
+
+describe("idle compaction core (idle compaction spec §4.3, §5)", () => {
+  /** What an idle compact run gives `CompactionService.force`: the conversation's own definition. */
+  async function forceInput(orgId: string, conv: string): Promise<ForceCompactionInput> {
+    const row = await db
+      .selectFrom("conversations")
+      .select(["agent_id", "consumed_seq", "source"])
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    const version = await db
+      .selectFrom("agent_versions")
+      .select(["version", "definition"])
+      .where("agent_id", "=", row.agent_id)
+      .orderBy("version", "desc")
+      .executeTakeFirstOrThrow();
+    return {
+      orgId,
+      conversationId: conv,
+      runId: randomUUID(),
+      accountId: ownerId,
+      agentId: row.agent_id,
+      agent: normalizeStoredDefinition(version.definition),
+      agentVersion: version.version,
+      source: row.source as ConversationSource,
+      conversationKind: "chat",
+      absorbedUpToSeq: Number(row.consumed_seq),
+      signal: new AbortController().signal,
+    };
+  }
+
+  const forceIdle = (input: ForceCompactionInput) =>
+    withOrgScope(input.orgId, () => k.app.get(CompactionService).force(input, "idle"));
+
+  const probe = ({ runId: _r, signal: _s, accountId: _a, ...input }: ForceCompactionInput) =>
+    withOrgScope(input.orgId, () => k.app.get(CompactionService).probeIdle(input));
+
+  it('force(input, "idle") on a finished conversation summarizes in context', async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const input = await forceInput(orgId, conv);
+    const out = await forceIdle(input);
+    expect(out.failed).toBe(false);
+    const events = (await eventsOf(db, conv)).filter((e) => e.runId === input.runId);
+    const summaries = ev(events, "compaction_summary");
+    expect(summaries.map((e) => e.payload.method)).toEqual(["in_context"]);
+    expect(out.summarySeq).toBe(summaries[0]?.seq);
+    expect(ev(events, "usage").map((e) => e.payload.purpose)).toEqual(["compaction"]);
+    // the in-context request: the conversation's own system prompt
+    expect(capture.compactions).toHaveLength(1);
+    expect(capture.compactions[0]?.system).toEqual(capture.sent.at(-1)?.system);
+  });
+
+  it('force(input, "idle") with nothing to summarize writes nothing (no compaction_skipped)', async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 1);
+    const before = (await eventsOf(db, conv)).length;
+    const input = await forceInput(orgId, conv);
+    expect(await forceIdle(input)).toEqual({ summarySeq: null, failed: false });
+    expect(await eventsOf(db, conv)).toHaveLength(before);
+    expect(capture.compactions).toEqual([]);
+  });
+
+  it("probeIdle reads a planned in-context compaction and writes nothing; another model is no prefix", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const before = (await eventsOf(db, conv)).length;
+    const input = await forceInput(orgId, conv);
+    const got = await probe(input);
+    expect(got).toMatchObject({ planned: true, inContext: true });
+    expect(got?.estimate).toBeGreaterThan(0);
+    expect(got?.window).toBeGreaterThan(got?.estimate ?? 0);
+    expect(got?.growth).toBeGreaterThan(0);
+    expect(await eventsOf(db, conv)).toHaveLength(before);
+    expect(capture.compactions).toEqual([]);
+
+    // the last call was another model than the effective definition's: no cached prefix applies
+    await sql`UPDATE capybara.conversation_events SET payload = jsonb_set(payload, '{model}', '"fake-0"')
+      WHERE conversation_id = ${conv} AND type = 'model_call'`.execute(raw);
+    const switched = await probe(input);
+    expect(switched).toMatchObject({ planned: true, inContext: false });
+  });
+});
+
+describe("idle compact runs (idle compaction spec §5.1, §5.2)", () => {
+  /** The seq the idle job would be armed at: the conversation's latest run's terminal event. */
+  async function armedSeqOf(conv: string): Promise<number> {
+    const events = await eventsOf(db, conv);
+    const last = events.filter((e) => e.type === "run_finished").at(-1);
+    if (!last) throw new Error("no finished run");
+    return last.seq;
+  }
+
+  const startIdle = (orgId: string, conv: string, armedSeq: number) =>
+    withOrgScope(orgId, () => k.app.get(RunQueue).startIdleCompaction(conv, armedSeq));
+
+  const runStatus = (runId: string, status: string) =>
+    waitFor(
+      async () => {
+        const row = await db
+          .selectFrom("runs")
+          .select(["status", "compact_origin"])
+          .where("id", "=", runId)
+          .executeTakeFirst();
+        return row?.status === status ? row : null;
+      },
+      30_000,
+      `run ${status}`,
+    );
+
+  /** Holds every model call of the org in its `model.request` hook (the hooks-probe fixture). */
+  async function holdModelCalls(orgId: string, sleepMs: number): Promise<void> {
+    const enabled = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
+      payload: { enabled: true },
+    });
+    expect(enabled.statusCode, enabled.body).toBe(200);
+    const configured = await owner({
+      method: "POST",
+      url: "/plugins/hooks-probe/config",
+      payload: { orgId, sleepMs, sleepIn: sleepMs > 0 ? ["model.request"] : [] },
+    });
+    expect(configured.statusCode, configured.body).toBe(200);
+  }
+
+  it("starts an idle compact run on a settled conversation: in-context summary, origin idle, run as the owner", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const runId = await startIdle(orgId, conv, await armedSeqOf(conv));
+    expect(runId).toMatch(/[0-9a-f-]{36}/);
+    const run = await runStatus(runId as string, "completed");
+    expect(run.compact_origin).toBe("idle");
+    const events = (await eventsOf(db, conv)).filter((e) => e.runId === runId);
+    const started = ev(events, "run_started");
+    expect(started).toHaveLength(1);
+    expect(started[0]?.payload).toMatchObject({
+      trigger: "compact",
+      compactOrigin: "idle",
+      triggerAccountId: ownerId,
+    });
+    expect(ev(events, "compaction_summary").map((e) => e.payload.method)).toEqual(["in_context"]);
+  });
+
+  it("starts when only a run-less side-call usage followed the armed seq (S1)", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const armedSeq = await armedSeqOf(conv);
+    // what the title and prompt-suggestion jobs append after a run ended (no runId)
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "usage",
+        payload: {
+          step: 0,
+          provider: "model-fake",
+          model: "fake-1",
+          inputTokens: 10,
+          outputTokens: 2,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          purpose: "title",
+        },
+      },
+    ]);
+    const runId = await startIdle(orgId, conv, armedSeq);
+    expect(runId).not.toBeNull();
+    await runStatus(runId as string, "completed");
+  });
+
+  it("refuses (null) when a message arrived after the armed seq", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const armedSeq = await armedSeqOf(conv);
+    await postMessage(owner, orgId, conv, "echo:later");
+    await waitForTerminal(db, conv, 7, 20_000);
+    expect(await startIdle(orgId, conv, armedSeq)).toBeNull();
+    expect(
+      (await db.selectFrom("runs").select("id").where("compact", "=", true).execute()).length,
+    ).toBe(0);
+  });
+
+  it("refuses (null) while a run is active", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const armedSeq = await armedSeqOf(conv);
+    await runQueue.pause();
+    try {
+      // a queued manual compact run writes nothing before it starts: only the active run refuses
+      const manual = await compact(conv, orgId);
+      expect(manual.statusCode, manual.body).toBe(202);
+      expect(await startIdle(orgId, conv, armedSeq)).toBeNull();
+    } finally {
+      await runQueue.resume();
+    }
+    await waitForTerminal(db, conv, 7, 30_000);
+  });
+
+  it("refuses (null) while the conversation queue has a head", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const armedSeq = await armedSeqOf(conv);
+    await db
+      .updateTable("conversations")
+      .set({ queue_paused: true, queue_pause_reason: "run_ended" })
+      .where("id", "=", conv)
+      .execute();
+    const queued = await seedQueued(k.app, orgId, conv, ownerId, {
+      text: "echo:queued",
+      clientMessageId: randomUUID(),
+    });
+    expect(queued.statusCode, queued.body).toBe(201);
+    expect(await startIdle(orgId, conv, armedSeq)).toBeNull();
+  });
+
+  it("refuses (null) when the owner can no longer use the conversation", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const armedSeq = await armedSeqOf(conv);
+    await db
+      .updateTable("accounts")
+      .set({ status: "disabled" })
+      .where("id", "=", ownerId)
+      .execute();
+    try {
+      expect(await startIdle(orgId, conv, armedSeq)).toBeNull();
+    } finally {
+      await db
+        .updateTable("accounts")
+        .set({ status: "active" })
+        .where("id", "=", ownerId)
+        .execute();
+    }
+    const compactRuns = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .where("compact", "=", true)
+      .execute();
+    expect(compactRuns).toEqual([]);
+  });
+
+  it("a manual compaction while the idle run is active returns the idle run", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    await runQueue.pause();
+    let idle: string | null = null;
+    try {
+      idle = await startIdle(orgId, conv, await armedSeqOf(conv));
+      expect(idle).not.toBeNull();
+      const res = await compact(conv, orgId);
+      expect(res.statusCode, res.body).toBe(202);
+      expect((res.json() as { runId: string }).runId).toBe(idle);
+    } finally {
+      await runQueue.resume();
+    }
+    await runStatus(idle as string, "completed");
+  });
+
+  it("stays quiet in the conversation list: not running while it runs, not moved by its events (spec §6)", async () => {
+    const { orgId, conv } = await setup();
+    // no suggestion job appends a run-less usage (which moves the list) while the test compares
+    const off = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { promptSuggestions: "off" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    await seedTurns(orgId, conv, 6);
+    // and the title job's usage has landed
+    await waitForEvent(
+      db,
+      conv,
+      (e) => e.type === "usage" && (e.payload as { purpose?: string }).purpose === "title",
+      20_000,
+      "title usage",
+    );
+    const armedSeq = await armedSeqOf(conv);
+    type Row = { id: string; activity: string | null; updatedAt: string; lastSeq: number };
+    const listed = async (): Promise<Row | undefined> => {
+      const res = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations` });
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json() as { conversations: Row[] }).conversations.find((c) => c.id === conv);
+    };
+    const before = await listed();
+    expect(before?.activity).toBeNull();
+    await holdModelCalls(orgId, 10_000);
+    const runId = await startIdle(orgId, conv, armedSeq);
+    expect(runId).not.toBeNull();
+    const idle = runId as string;
+    await waitFor(
+      async () => {
+        const raw = await redis.get(compactionProgressKey(idle));
+        return raw !== null && (JSON.parse(raw) as { phase: string }).phase === "summarizing"
+          ? raw
+          : null;
+      },
+      20_000,
+      "the idle compaction reached its model call",
+    );
+    // run_started is in the log and the run is running: the list still shows the conversation idle
+    const during = await listed();
+    expect(during?.lastSeq).toBeGreaterThan(before?.lastSeq as number);
+    expect(during).toEqual({ ...before, lastSeq: during?.lastSeq });
+    const running = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations?state=running`,
+    });
+    expect((running.json() as { conversations: Row[] }).conversations).toEqual([]);
+    await holdModelCalls(orgId, 0);
+    await k.app.get(RunAbort).request(idle, null, { reason: "superseded" });
+    await runStatus(idle, "aborted");
+    const after = await listed();
+    expect(after).toEqual({ ...before, lastSeq: after?.lastSeq });
+
+    // a person's message still moves it
+    await postMessage(owner, orgId, conv, "echo:back");
+    // six turns, the aborted idle run, then this message's run
+    await waitForTerminal(db, conv, 8, 20_000);
+    expect((await listed())?.updatedAt).not.toBe(before?.updatedAt);
+  });
+
+  it("any other end of an idle run (here a person's stop) leaves the queue unpaused: its end is not in the timeline", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const armedSeq = await armedSeqOf(conv);
+    await holdModelCalls(orgId, 10_000);
+    const runId = await startIdle(orgId, conv, armedSeq);
+    expect(runId).not.toBeNull();
+    const idle = runId as string;
+    await waitFor(
+      async () => {
+        const raw = await redis.get(compactionProgressKey(idle));
+        return raw !== null && (JSON.parse(raw) as { phase: string }).phase === "summarizing"
+          ? raw
+          : null;
+      },
+      20_000,
+      "the idle compaction reached its model call",
+    );
+    // a queue item behind the idle run, written directly (adding one through the queue would
+    // preempt the idle run as superseded)
+    await db
+      .insertInto("conversation_queue")
+      .values({
+        id: randomUUID(),
+        conversation_id: conv,
+        account_id: ownerId,
+        position: "1",
+        text: "echo:queued",
+        content: JSON.stringify([{ type: "text", text: "echo:queued" }]),
+        client_message_id: randomUUID(),
+      })
+      .execute();
+    await holdModelCalls(orgId, 0);
+    await k.app.get(RunAbort).request(idle, ownerId);
+    await runStatus(idle, "aborted");
+    expect(ev(await eventsOf(db, conv), "run_aborted").map((e) => e.payload.reason)).toEqual([
+      "user",
+    ]);
+    const row = await db
+      .selectFrom("conversations")
+      .select("queue_paused")
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect(row.queue_paused).toBe(false);
+    await waitFor(
+      async () =>
+        ev(await eventsOf(db, conv), "user_message").some((e) =>
+          e.payload.content.some((b) => b.type === "text" && b.text === "echo:queued"),
+        ) || null,
+      20_000,
+      "the queued message was sent",
+    );
+  });
+
+  it("a superseded stop ends the idle run: run_aborted without an account, no summary, the queue not paused, the tree not held (S3)", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const armedSeq = await armedSeqOf(conv);
+    await holdModelCalls(orgId, 10_000);
+    const runId = await startIdle(orgId, conv, armedSeq);
+    expect(runId).not.toBeNull();
+    const idle = runId as string;
+    await waitFor(
+      async () => {
+        const raw = await redis.get(compactionProgressKey(idle));
+        return raw !== null && (JSON.parse(raw) as { phase: string }).phase === "summarizing"
+          ? raw
+          : null;
+      },
+      20_000,
+      "the idle compaction reached its model call",
+    );
+    // a queued message waits behind the idle run (Task 8 preempts it; here the stop is sent by hand)
+    const queued = await seedQueued(k.app, orgId, conv, ownerId, {
+      text: "echo:queued",
+      clientMessageId: randomUUID(),
+    });
+    expect(queued.statusCode, queued.body).toBe(201);
+    await holdModelCalls(orgId, 0);
+    await k.app.get(RunAbort).request(idle, null, { reason: "superseded" });
+    await runStatus(idle, "aborted");
+
+    const events = await eventsOf(db, conv);
+    expect(
+      ev(events, "run_aborted")
+        .filter((e) => e.runId === idle)
+        .map((e) => e.payload),
+    ).toEqual([{ byAccountId: null, reason: "superseded" }]);
+    expect(ev(events, "compaction_summary").filter((e) => e.runId === idle)).toEqual([]);
+    const row = await db
+      .selectFrom("conversations")
+      .select(["queue_paused", "tree_stopped_at"])
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ queue_paused: false, tree_stopped_at: null });
+    // the queued message goes out after the idle run's end
+    await waitFor(
+      async () =>
+        ev(await eventsOf(db, conv), "user_message").some((e) =>
+          e.payload.content.some((b) => b.type === "text" && b.text === "echo:queued"),
+        ) || null,
+      20_000,
+      "the queued message was sent",
+    );
   });
 });

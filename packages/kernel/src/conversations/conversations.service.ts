@@ -152,7 +152,8 @@ export function escapeLike(s: string): string {
  * SQL for the activity of the conversation row aliased/named `ref` (a correlated subquery).
  * A run waiting on its sub-agents (status waiting with `wait_expires_at`, set only for a
  * `subagents` wait) is still working, so it reports `running`; only a wait for a person
- * (approval, input) reports `waiting`.
+ * (approval, input) reports `waiting`. An idle compact run is not activity (idle compaction spec
+ * §6: quiet): the latest other run decides.
  */
 function activitySql(ref: string) {
   const id = sql.ref(`${ref}.id`);
@@ -161,7 +162,8 @@ function activitySql(ref: string) {
       WHEN lr.status IN ('queued', 'running') THEN 'running'
       WHEN lr.status = 'waiting' AND lr.wait_expires_at IS NOT NULL THEN 'running'
       WHEN lr.status = 'waiting' THEN 'waiting' END
-    FROM capybara.runs lr WHERE lr.conversation_id = ${id}
+    FROM capybara.runs lr
+    WHERE lr.conversation_id = ${id} AND lr.compact_origin IS DISTINCT FROM 'idle'
     ORDER BY lr.created_at DESC, lr.id DESC LIMIT 1
   )`;
 }

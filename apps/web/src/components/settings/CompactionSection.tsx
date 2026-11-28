@@ -85,6 +85,29 @@ export function CompactionSection({
           disabled={disabled}
           onChange={(maxOutputTokens) => onChange({ maxOutputTokens })}
         />
+        <Stack gap={4}>
+          <SwitchField
+            label={t("idleEnabled.label")}
+            checked={value.idleEnabled}
+            disabled={disabled}
+            onChange={(next) => onChange({ idleEnabled: next })}
+          />
+          <Text variant="small" tone="muted">
+            {t("idleEnabled.hint")}
+          </Text>
+        </Stack>
+        <NumberField
+          field="idleMinTokensFloor"
+          value={value.idleMinTokensFloor}
+          disabled={disabled || !value.idleEnabled}
+          onChange={(idleMinTokensFloor) => onChange({ idleMinTokensFloor })}
+        />
+        <NumberField
+          field="idleMinWindowRatio"
+          value={value.idleMinWindowRatio}
+          disabled={disabled || !value.idleEnabled}
+          onChange={(idleMinWindowRatio) => onChange({ idleMinWindowRatio })}
+        />
       </Stack>
     </FormSection>
   );

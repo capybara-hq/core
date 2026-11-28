@@ -155,6 +155,7 @@ Applied to every request after compaction and before sending:
 - The effective definition and `Wc` are the model the next run would use (the conversation's selection, including `model_switched`); tools and media resolve as for a step; the compact run's events carry `step: 0`.
 - The run appears in the timeline/trajectory as a compact run; step consumers skip runs with no model step.
 - Manual compaction is allowed even when automatic compaction is disabled (explicit user action); the hard guard still applies.
+- A compact run may also be an idle one (`runs.compact_origin = 'idle'`, started by the kernel, no caller; never `manual`): see the idle compaction spec (`2026-11-27-idle-compaction-design.md`).
 - Audit: `conversation.compacted` with the caller and the run id, if the existing conversation actions are audited.
 
 ### 4.8 Settings

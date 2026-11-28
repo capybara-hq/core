@@ -147,6 +147,8 @@ export async function wakeDecisionIn(
     ])
     .where("r.conversation_id", "=", conv.id)
     .where("w.type", "in", WAKE_EVENT_TYPES)
+    // a compact run's boundary is the consumed seq, which may be a wake event: it is no wake run
+    .where("r.compact", "=", false)
     .executeTakeFirst();
   if (last?.started != null) {
     const windowEnd = Number(last.started) + WAKE_WINDOW_MS;

@@ -176,6 +176,9 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
               { control: "input", help: true },
               { control: "input", help: true },
               { control: "input", help: true },
+              { control: "switch", help: true },
+              { control: "input", help: true },
+              { control: "input", help: true },
             ],
           }}
         />

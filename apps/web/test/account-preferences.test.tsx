@@ -7,6 +7,7 @@ import { timeZoneOptions } from "../src/lib/account-preferences";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
 import { openSelect, optionOf, pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -23,6 +24,7 @@ const api = (routes: Parameters<typeof stubApi>[0]) =>
     [`GET ${BASE}/themes`]: () =>
       json(200, { themes: [], resolved: null, org: { id: null, personal: "allowed" } }),
     "GET /api/v1/platform/theme": () => json(200, null),
+    [`GET ${BASE}/settings`]: () => json(200, { settings: {}, deployment: { compaction: {} } }),
     ...routes,
   });
 
@@ -100,5 +102,102 @@ describe("/account/preferences: the time zone (run context spec §3.4)", () => {
     const options = timeZoneOptions("Etc/Unlisted");
     expect(options[0]).toEqual({ value: "UTC", label: "UTC" });
     expect(options.at(-1)).toEqual({ value: "Etc/Unlisted", label: "Etc/Unlisted" });
+  });
+});
+
+describe("/account/preferences: idle compaction", () => {
+  beforeEach(() => resetNavigation("/account/preferences"));
+  afterEach(() => cleanup());
+
+  const sectionOf = async (label: string) => {
+    const heading = await screen.findByText(label, { selector: "h1, h2, h3, h4" });
+    return heading.closest("section") as HTMLElement;
+  };
+
+  it('turning the switch off saves "off", turning it on again saves null', async () => {
+    const m = en.preferences.idleCompaction;
+    let saved: "off" | null = null;
+    const calls = api({
+      [`GET ${PREFS}`]: () => json(200, { timeZone: null, theme: null, idleCompaction: saved }),
+      [`PUT ${PREFS}`]: (call) => {
+        saved = (JSON.parse(String(call.body)) as { idleCompaction: "off" | null }).idleCompaction;
+        return json(200, { timeZone: null, theme: null, idleCompaction: saved });
+      },
+    });
+    await renderRouteWithCache("/account/preferences", lastStubRoutes());
+    const section = await sectionOf(m.title);
+    const user = userEvent.setup();
+    const toggle = within(section).getByRole("switch", { name: m.label });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await user.click(toggle);
+    await user.click(saveButton(en.preferences.save));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ idleCompaction: "off" });
+    await vi.waitFor(() =>
+      expect(
+        within(section).getByRole("switch", { name: m.label }).getAttribute("aria-checked"),
+      ).toBe("false"),
+    );
+    await user.click(within(section).getByRole("switch", { name: m.label }));
+    await user.click(saveButton(en.preferences.save));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "PUT")).toHaveLength(2));
+    expect(bodyOf(calls.filter((c) => c.method === "PUT")[1])).toEqual({ idleCompaction: null });
+  });
+
+  it.each(["zh", "en"] as const)("shows the read-only org-off state (%s)", async (locale) => {
+    const m = msgs[locale].preferences.idleCompaction;
+    api({
+      [`GET ${PREFS}`]: () => json(200, { timeZone: null, theme: null, idleCompaction: null }),
+      [`GET ${BASE}/settings`]: () =>
+        json(200, {
+          settings: { compaction: { idleEnabled: false } },
+          deployment: { compaction: {} },
+        }),
+    });
+    await renderRouteWithCache("/account/preferences", lastStubRoutes(), { locale });
+    const section = await sectionOf(m.title);
+    await vi.waitFor(() => expect(within(section).queryByText(m.orgOff)).not.toBeNull());
+    expect(within(section).queryByRole("switch")).toBeNull();
+  });
+  const guest: typeof ME = {
+    ...ME,
+    memberships: ME.memberships.map((m) => ({ ...m, role: "guest" as const })),
+  };
+
+  it("keeps the switch disabled while the org setting loads, then enables it", async () => {
+    const m = en.preferences.idleCompaction;
+    let release: (r: Response) => void = () => {};
+    api({
+      [`GET ${PREFS}`]: () => json(200, { timeZone: null, theme: null, idleCompaction: null }),
+      [`GET ${BASE}/settings`]: () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    });
+    await renderRouteWithCache("/account/preferences", lastStubRoutes(), { me: guest });
+    const section = await sectionOf(m.title);
+    const toggle = within(section).getByRole("switch", { name: m.label });
+    expect(toggle.hasAttribute("disabled")).toBe(true);
+    release(json(200, { settings: {}, deployment: { compaction: {} } }));
+    await vi.waitFor(() =>
+      expect(within(section).getByRole("switch", { name: m.label }).hasAttribute("disabled")).toBe(
+        false,
+      ),
+    );
+  });
+
+  it("leaves the switch editable when the viewer may not read the org settings", async () => {
+    const m = en.preferences.idleCompaction;
+    api({
+      [`GET ${PREFS}`]: () => json(200, { timeZone: null, theme: null, idleCompaction: null }),
+      [`GET ${BASE}/settings`]: () => json(403, { error: { code: "forbidden", message: "no" } }),
+    });
+    await renderRouteWithCache("/account/preferences", lastStubRoutes(), { me: guest });
+    const section = await sectionOf(m.title);
+    await vi.waitFor(() =>
+      expect(within(section).getByRole("switch", { name: m.label }).hasAttribute("disabled")).toBe(
+        false,
+      ),
+    );
   });
 });

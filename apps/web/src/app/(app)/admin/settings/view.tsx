@@ -686,6 +686,9 @@ function compactionChange(
     "keepRecentTurns",
     "reserveTokens",
     "maxOutputTokens",
+    "idleEnabled",
+    "idleMinTokensFloor",
+    "idleMinWindowRatio",
   ] as const) {
     if (next[f] !== saved[f]) Object.assign(change, { [f]: next[f] });
   }

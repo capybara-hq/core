@@ -8,6 +8,7 @@ import { apiFetch } from "./api";
 export interface Preferences {
   timeZone: string | null;
   theme: string | null;
+  idleCompaction: "off" | null;
 }
 
 export const getPreferences = () => apiFetch<Preferences>("/api/v1/me/preferences");

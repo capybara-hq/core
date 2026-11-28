@@ -212,13 +212,13 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   });
 
   it.each([
-    // the radio cards of tool search, and the compaction section's follow checkbox and switch
-    // (its four numbers are plain fields), the external sharing and prompt suggestion switches,
+    // the radio cards of tool search, and the compaction section's follow checkbox, its switch
+    // and the idle compaction switch (its numbers are plain fields), the external sharing and prompt suggestion switches,
     // the prompt cache section's follow checkbox and switch; the read-only note only for a member
     [
       "/settings/organization",
       `GET ${O}/settings`,
-      { radios: 1, kv: 0, items: 0, switches: 4, groups: 0, hints: 0 },
+      { radios: 1, kv: 0, items: 0, switches: 5, groups: 0, hints: 0 },
     ],
     // the tool policy, outside-sandbox and the device network's ceiling and default radios, the
     // resources' key-value

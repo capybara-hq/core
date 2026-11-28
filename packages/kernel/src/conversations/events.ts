@@ -1183,6 +1183,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * seeds from it).
        */
       triggerSeq: seqNo.optional(),
+      /**
+       * Which compact run this is (idle compaction spec §5.1); display only: absent = manual,
+       * never model-visible.
+       */
+      compactOrigin: z.enum(["manual", "idle"]).optional(),
     }),
   ),
   ev(
@@ -2175,8 +2180,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     "run_aborted",
     z.object({
       byAccountId: z.string().nullable(),
-      /** `eval_stopped`：评测整轮回放被评测运行停下（只出现在 `kind = 'eval'` 的对话里），原因见 `detail`。 */
-      reason: z.enum(["user", "shutdown_exhausted", "eval_stopped", "org_deleted"]),
+      /**
+       * `eval_stopped`: an eval's full-run replay was stopped by the eval run (only in conversations
+       * with `kind = 'eval'`); the cause is in `detail`. `superseded`: an idle compact run preempted
+       * by input (idle compaction spec §5.2); no account.
+       */
+      reason: z.enum(["user", "shutdown_exhausted", "eval_stopped", "org_deleted", "superseded"]),
       /**
        * Why an eval replay stopped (`eval_stopped`), or `wait_timeout`: a sub-agent run stopped
        * (`user`, no account) because its parent's sub-agents wait timed out (phase C).

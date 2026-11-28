@@ -38,6 +38,7 @@ import {
   BUDGET_WRAP_UP_REMINDER,
   type ModelStepDeps,
   type ModelStepInput,
+  prepareCompaction,
   RunError,
   readAllEvents,
   resolveAgentTools,
@@ -2545,6 +2546,204 @@ describe("runModelStep", () => {
           'compaction request blocked by the "guard" policy hook (deny)',
         ]);
         expect(h.sent.filter((r) => r.purpose === "compaction")).toEqual([]);
+      });
+
+      describe("requireInContext: the idle compact run (idle compaction spec §4.3 check 9)", () => {
+        /**
+         * What `CompactionService.force(input, "idle")` does: a compact run's step 0 with
+         * `{ force: true, requireInContext: true }` (never `manual`, ruling R13).
+         */
+        const idleInput = async (agent = icAgent()): Promise<ModelStepInput> => {
+          const compactRunId = randomUUID();
+          await seedRun(compactRunId, agent);
+          return {
+            source: "web",
+            orgId,
+            conversationId,
+            runId: compactRunId,
+            step: 0,
+            agent,
+            agentVersion: 1,
+            absorbedUpToSeq: await lastSeq(),
+            signal: new AbortController().signal,
+            sink: () => {},
+            agentId,
+            accountId,
+            conversationKind: "chat",
+          };
+        };
+        const settings = () => ({ ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 });
+        const idleCompact = async (h: Harness, agent = icAgent()) => {
+          const input = await idleInput(agent);
+          const events = await readAllEvents(eventLog, conversationId);
+          const tools = stepToolsOf(await resolveAgentTools(h.d, input, events), input, h.d);
+          return runCompaction(h.d, input, events, h.d.config.get().runtime, settings(), tools, {
+            force: true,
+            requireInContext: true,
+          });
+        };
+
+        /** An in-context skip: nothing written at all, no summary call, the outcome `skipped`. */
+        const expectSilentSkip = async (h: Harness, agent = icAgent()) => {
+          const before = (await all()).length;
+          const sentBefore = h.sent.length;
+          const progress: unknown[] = [];
+          deps.compactionProgress = {
+            update: (u) => progress.push(u),
+            clear: (id) => progress.push(id),
+          };
+          let out: Awaited<ReturnType<typeof idleCompact>>;
+          try {
+            out = await idleCompact(h, agent);
+          } finally {
+            delete deps.compactionProgress;
+          }
+          expect(progress).toEqual([]);
+          expect({ summarySeq: out.summarySeq, failed: out.failed }).toEqual({
+            summarySeq: null,
+            failed: false,
+          });
+          expect(await all()).toHaveLength(before);
+          expect(h.sent.slice(sentBefore)).toEqual([]);
+        };
+
+        it("a model switched since the last call (model_mismatch) writes nothing", async () => {
+          const h = harness();
+          await cachedStep(h);
+          await eventLog.append(conversationId, [
+            {
+              type: "model_switched",
+              payload: {
+                model: { provider: "model-fake", model: "fake-think" },
+                effort: null,
+                byAccountId: accountId,
+                reason: "user",
+              },
+            },
+          ]);
+          await expectSilentSkip(h, icAgent("fake-think"));
+          expect(h.skips).toEqual(["model_mismatch"]);
+        });
+
+        it("a tool result the model has not read (pending_input) writes nothing", async () => {
+          const h = harness();
+          await seedRun(runId);
+          for (let i = 0; i < 4; i++) {
+            await say(filler(i));
+            await answer(filler(i));
+          }
+          await say('tool:ReadToolOutput:{"id":"x"}');
+          await withSettings({ enabled: false }, async () => {
+            await icStep(h.d, 1);
+          });
+          const call = (await ofType("assistant_message"))
+            .at(-1)
+            ?.payload.content.find((b) => b.type === "tool_call");
+          await eventLog.append(conversationId, [
+            {
+              type: "tool_result",
+              runId,
+              payload: {
+                step: 1,
+                callId: call?.type === "tool_call" ? call.id : "",
+                toolKey: "ReadToolOutput",
+                content: "the output",
+                isError: false,
+              },
+            },
+          ]);
+          await expectSilentSkip(h);
+          expect(h.skips).toEqual(["pending_input"]);
+        });
+
+        it("a last call whose request recorded a fit plan (fit_plan) writes nothing", async () => {
+          const h = harness();
+          await cachedStep(h);
+          const [call] = await ofType("model_call");
+          await sql`UPDATE capybara.conversation_events
+            SET payload = jsonb_set(payload, '{request,fit}',
+              '{"droppedMessageIndexes":[1],"truncated":[]}'::jsonb)
+            WHERE conversation_id = ${conversationId} AND seq = ${call?.seq as number}`.execute(
+            raw,
+          );
+          await expectSilentSkip(h);
+          expect(h.skips).toEqual(["fit_plan"]);
+        });
+
+        it("a settled conversation summarizes in context: cache read, usage of purpose compaction", async () => {
+          const h = harness();
+          await cachedStep(h);
+          const out = await idleCompact(h);
+          expect(out.failed).toBe(false);
+          expect(h.skips).toEqual([]);
+          const [summary] = await ofType("compaction_summary");
+          expect(out.summarySeq).toBe(summary?.seq);
+          expect(summary?.payload.method).toBe("in_context");
+          expect(summary?.payload.step).toBe(0);
+          const usage = await compactionUsage();
+          expect(usage).toHaveLength(1);
+          expect(usage[0]?.payload.cacheReadTokens).toBeGreaterThan(0);
+          const compaction = h.sent.find((r) => r.purpose === "compaction") as ModelRequest;
+          expect(compaction.system).toEqual((h.sent[0] as ModelRequest).system);
+        });
+
+        it("a failed in-context call writes compaction_failed and never sends the transcript request", async () => {
+          const h = harness();
+          await cachedStep(h, ["compact-fail:invalid_request"]);
+          const out = await idleCompact(h);
+          expect(out).toMatchObject({ summarySeq: null, failed: true });
+          expect((await ofType("compaction_failed")).map((f) => f.payload)).toEqual([
+            { attempt: 1, step: 0, reason: "Scripted invalid_request failure" },
+          ]);
+          const calls = h.sent.filter((r) => r.purpose === "compaction");
+          expect(calls).toHaveLength(1);
+          // the in-context request (the conversation's own system prompt), not the transcript one
+          expect(calls[0]?.system).toEqual((h.sent[0] as ModelRequest).system);
+          expect(calls[0]?.toolChoice).toBe("none");
+          expect(h.skips).toEqual([]);
+        });
+
+        it("prepareCompaction writes nothing and plans what the following runCompaction summarizes", async () => {
+          const h = harness();
+          await cachedStep(h);
+          const input = await idleInput();
+          const events = await readAllEvents(eventLog, conversationId);
+          const tools = stepToolsOf(await resolveAgentTools(h.d, input, events), input, h.d);
+          const before = (await all()).length;
+          const sentBefore = h.sent.length;
+          const prepared = await prepareCompaction(
+            h.d,
+            input,
+            events,
+            h.d.config.get().runtime,
+            settings(),
+            tools,
+            { force: true, requireInContext: true },
+          );
+          expect(await all()).toHaveLength(before);
+          expect(h.sent.slice(sentBefore)).toEqual([]);
+          if ("skipped" in prepared) throw new Error(`skipped: ${prepared.skipped}`);
+          expect(prepared.estimate).toBeGreaterThan(0);
+          expect(prepared.window).toBe(prepared.info.contextWindow);
+          expect(prepared.growthTokens).toBeGreaterThan(0);
+          if ("skip" in prepared.inContext) throw new Error(prepared.inContext.skip);
+
+          // the same preparation again inside runCompaction: the same request, the same coverage
+          const out = await runCompaction(
+            h.d,
+            input,
+            events,
+            h.d.config.get().runtime,
+            settings(),
+            tools,
+            { force: true, requireInContext: true },
+          );
+          const [summary] = await ofType("compaction_summary");
+          expect(out.summarySeq).toBe(summary?.seq);
+          expect(summary?.payload.coversUpToSeq).toBe(prepared.inContext.coversUpToSeq);
+          const sent = h.sent.find((r) => r.purpose === "compaction") as ModelRequest;
+          expect(sent.messages).toEqual(prepared.inContext.request.messages);
+        });
       });
     });
 

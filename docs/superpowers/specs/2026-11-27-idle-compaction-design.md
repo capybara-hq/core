@@ -174,21 +174,39 @@ may lower the floor, an org may raise it; the defaults encode the maintainer's r
 
 ### 4.2 Arming: cheap checks at run end, nothing owed when they fail
 
-At run finish (`RunFinish.finishIn`), before owing anything, the kernel checks facts it already
-holds in memory or in the rows the finish reads; if any fails, **no job is owed at all**:
+At run finish, before owing anything, the kernel checks facts it already holds; if any fails, **no
+job is owed at all**. `RunFinish.finishIn` is a generic terminal transaction used by every finish
+path and has no model declaration, and the model registry may call a provider's `listModels` (a
+network call), so the decision is computed by the run worker **before** it calls `finish`, outside
+any transaction, and passed in `FinishRunArgs` as an `idleCompaction` intent. `finishIn` owes the
+outbox row only when it wrote the terminal event, with `armedSeq` = that event's seq. The decision
+swallows its own errors (logged at `warn`, no job owed); a finish never fails because of it:
 
-1. **Kind and trigger.** `kind = 'chat'` (not sub-agent, not eval); `run_started.trigger` is
-   `message`, `background_task` or `subagent` (wakes continuing a conversation a person started);
-   not `schedule` (a scheduled task's conversation is often never read again) and not `compact`.
+1. **Kind and trigger.** `kind = 'chat'` (not sub-agent, not eval); `run_started.trigger` is absent,
+   `message`, `background_task` or `subagent` (wakes continuing a conversation a person started)
+   **and** `runs.automation_run_id IS NULL` (no automation lineage: wakes inherit it from an
+   unattended run); not `schedule` (a scheduled task's conversation is often never read again), not
+   `automation_event` and not `compact`. (Behaviour change, decided in the PR #1024 review,
+   2026-11-28: a wake run continuing an automation's conversation does not arm, per goal 2, never on
+   conversations nobody started by hand.)
 2. **Outcome.** `completed`, `max_steps`, `max_duration` or `max_output`; not `budget` (the run
    stopped to save money), `failed`, `aborted`, nor a suspended run (not terminal).
 3. **Settings.** Effective `enabled` and `idleEnabled` (platform + org) and the owner's preference
    not off (§6.3).
-4. **Cache lifetime.** The run's last request that read or wrote the cache (§9.3) exists, its model
-   declares `mechanism: "explicit"` or an implicit mechanism with a declared lifetime floor, and its
+4. **Cache lifetime.** The run's last request that read or wrote the cache (§9.3) exists, its
+   expiry derives (`deriveCacheExpiry(...) !== null` over the run's calls: explicit, or implicit with
+   a guaranteed, trusted declaration, which phase 1 encodes as `ModelCacheInfo.guaranteed`), and its
    lifetime `L` (the recorded `cacheTtl`, else the model's `defaultTtl`) is **≥ 1800 s**.
 5. **Size.** The last call's actual input (`inputTokens + cacheReadTokens + cacheWriteTokens`) plus
    its output tokens is `≥ idleMinTokens(W)`.
+6. **Quality gate and settled point.** The in-context summary is allowed for the model
+   (`inContextSummaryAllowed`, the phase 1 gate table, §9.4) and the log is at a settled point (no
+   unanswered tool results after the last reply: `unansweredAfterReply` is false). Both are pure and
+   are also checked at fire time (§4.3 check 9); checking them here owes no job that can only end
+   `no_prefix` (anti-goal: a job enqueued for every run whether or not it can ever fire). A
+   `max_steps` or `max_output` run usually ends with tool results after the last reply, so it almost
+   never arms. Arm time also skips a last call whose request recorded a fit plan (`fit_plan`), for
+   the same reason as the settled point: its rebuild would drift.
 
 When all pass, one outbox row (`OutboxService.add`, writing-kernel-api "Owed work") in the same
 transaction:
@@ -208,9 +226,10 @@ to give BullMQ a future job (`kc-enqueue-via-outbox`); a hint would need a new `
 and still a delayed `add`.
 
 Registry entry (`OUTBOX_JOBS`): `idempotent`: "the job re-reads the conversation and starts at most
-one idle compact run under the conversation row lock, only while the conversation's latest seq is
-still `armedSeq`; a duplicate delivery finds the seq advanced (by the first delivery's run) or an
-active compact run and does nothing"; `opts`: `attempts: 2`, short backoff, `removeOnComplete:
+one idle compact run under the conversation row lock, only while the conversation has no event
+after `armedSeq` other than a run-less side-call `usage` event (see check 2 in §4.3); a duplicate
+delivery finds a `run_started` above `armedSeq` (the first delivery's run) or an active compact run
+and does nothing"; `opts`: `attempts: 2`, short backoff, `removeOnComplete:
 true`.
 
 The arm-time checks are a pure function (`idleArmDecision(...)`) over the run's facts, the settings
@@ -223,14 +242,14 @@ the first failing check ends it with that outcome (§7) and writes no event:
 
 | # | Check | Outcome |
 |---|---|---|
-| 1 | org live; conversation live, `kind = 'chat'`; agent not deleted | `gone` |
-| 2 | latest event seq of the conversation `== armedSeq` | `obsolete` |
-| 3 | no active run (queued, running, suspended); no unconsumed message; queue head empty | `busy` |
+| 1 | org live; conversation live, `kind = 'chat'`; agent not deleted; the owner's account active and able to see the agent (re-checked under the row lock) | `gone` |
+| 2 | no event after `armedSeq` other than a run-less side-call `usage` event (`type = 'usage' AND run_id IS NULL`; the title and prompt-suggestion jobs append these after a completed run, so a plain latest-seq equality would end almost every job as `obsolete`) | `obsolete` |
+| 3 | no active run (`queued`, `running` or `waiting`: "suspended" is `waiting`, `ACTIVE_RUN_STATUSES`); no unconsumed message; queue head empty | `busy` |
 | 4 | effective `enabled` and `idleEnabled` (live); owner's preference not off | `disabled` |
 | 5 | the cache is still warm: `now < expiresAt − 30 s` (the job is not late: worker backlog, outage) | `expired` |
 | 6 | the latest compaction record after the latest summary is not a `compaction_failed` (respect the failure backoff) | `backoff` |
 | 7 | the effective definition's model is enabled for the org, resolvable, and the same model as the `cacheCallSeq` call (a switch breaks the prefix) | `no_model` |
-| 8 | size: the calibrated estimate of the next request `>= idleMinTokens(W)`, and the part the plan would summarize (not yet covered by a summary) `>= IDLE_MIN_GROWTH_TOKENS` (20k) with a non-empty plan | `small` |
+| 8 | size: the calibrated estimate of the next request `>= idleMinTokens(W)`, and the part the plan would summarize (not yet covered by a summary) `>= IDLE_MIN_GROWTH_TOKENS` (20k) with a non-empty plan (both come from `prepareCompaction`, see below) | `small` |
 | 9 | the in-context summary applies (§9.4: no drift in the rebuild, it fits the window) | `no_prefix` |
 
 Then it starts the run (§5.1); a refusal there (a message arrived in between) is `obsolete` / `busy`.
@@ -248,13 +267,19 @@ Notes:
   compaction like any other (`compaction_failed`, which then blocks later idle attempts through
   check 6 until a summary succeeds).
 
+The request estimate, the compaction plan and the in-context build live inside `runCompaction`
+(`buildRequest`, `compactionPlan`, `inContextSummary`). It is split into `prepareCompaction`
+(resolve the model, media, request estimate, plan, in-context build) and the call / acceptance part.
+The job uses `prepareCompaction` as a dry run (`CompactionService.probeIdle`) for checks 8 and 9;
+the idle run repeats it.
+
 The re-checks are a pure function too (`idleFireDecision(...)`), unit-tested on its own.
 
 ### 4.4 Re-arm and cancel
 
 There is no cancellation. Every finished run that passes §4.2 owes its own job; an earlier job that
-fires after a later run finds the conversation's latest seq above its `armedSeq` and ends as
-`obsolete`. Any event appended after the arming run (a new message, a queued message, a model
+fires after a later run finds an event above its `armedSeq` (other than a run-less side-call `usage`
+event, check 2) and ends as `obsolete`. Any event appended after the arming run (a new message, a queued message, a model
 switch, a permission profile change) makes the job obsolete; the later run, if it passes §4.2, arms
 its own. Each later request that hits the cache refreshes it (`refreshOnHit`), so the newer job's
 `runAt` is also the right one. Cancelling BullMQ delayed jobs from the run path would add a Redis
@@ -268,20 +293,22 @@ call to a hot transaction path for no gain.
 (`runtime/run-queue.ts`), in one `@Transactional({ propagation: "requires_new" })` method under the
 conversation row lock (the lock `ensureRun` takes):
 
-- re-check checks 1–3 under the lock (latest seq still `armedSeq`, no active run, no unconsumed
-  message); a refusal returns null, never throws (the job is not an API call);
+- re-check checks 1–3 under the lock (no event after `armedSeq` other than a run-less side-call
+  `usage` event, no active run, no unconsumed message); a refusal returns null, never throws (the job is not an API call);
 - insert the run row as `startCompaction` does (`compact: true`, `trigger_seq = consumed_seq`, the
   deterministic run job id via `jobIdFor`, owed through the outbox), with `compact_origin = 'idle'`
-  (a new column, §5.7) and `trigger_account_id` = the conversation's owner
+  (a new column, §5.7; `startCompactionIn` now writes `'manual'` for manual runs) and `trigger_account_id` = the conversation's owner
   (`conversations.account_id`): usage, hooks and audit attribute the calls to the person whose
   conversation it is;
 - the run worker takes the compact path (`CompactionService.force`, `step: 0`) with the in-context
-  request required (`method: "in_context"`; if it no longer applies when the run starts, the run
-  writes nothing and finishes `completed`).
+  request required (`requireInContext: true`, `method: "in_context"`; never `CompactOptions.manual`,
+  ruling R13; if it no longer applies when the run starts, the run writes nothing and finishes
+  `completed`).
 
 `run_started` carries `trigger: "compact"` (unchanged, so every reader that skips compact runs:
 channels' progress, prompt suggestions, eval planning, keeps working) plus a new optional
-`compactOrigin: "idle"` (absent = manual), display only (§6.4, §8).
+`compactOrigin: "idle"` (written only for idle runs; absent = manual, so manual runs' events are
+unchanged), display only (§6.4, §8).
 
 ### 5.2 Race with a new message: preemption (decision Q3)
 
@@ -293,20 +320,33 @@ has no next step, so the message would wait for the whole summary.
 Rule: **a person's message (any `ensureRun` that finds unconsumed input) preempts an idle compact
 run.**
 
-- In `ensureRunIn`, when the active run is a compact run with `compact_origin = 'idle'` and there is
-  unconsumed input, request its abort through the existing abort channel (`RunAbort`, the
-  cross-replica watch the worker already holds) with a new `run_aborted.reason: "superseded"` and
-  no account; then return null as for any active run. The run worker's existing abort branch
-  writes `run_aborted`, no partial summary; the run's finish then calls `ensureRun`, which starts
-  the message's run. A queued, not yet claimed idle run is finished as aborted directly in the same
-  transaction (nothing to stop).
+- `RunQueue.ensureRun` returns null before `ensureRunIn` whenever the conversation run lock has a
+  holder, which is the case for a running idle compact run, so preemption is decided before that
+  early return: when the lock is held, `ensureRun` calls a read-only transaction (`preemptIdleIn`)
+  that finds an active idle compact run and pending input, and after the commit requests the abort
+  through the existing abort channel (`RunAbort.request(runId, null, "superseded")`, the
+  cross-replica watch the worker already holds). `RunAbort` messages gain `reason?: "superseded"`.
+  The run worker's abort branch (`executeCompaction`) writes `run_aborted` with `{ byAccountId:
+  null, reason: "superseded" }`, no partial summary; the run's finish then calls `ensureRun`, which
+  starts the message's run. A queued, not yet claimed idle run (lock free) is ended as aborted
+  inside `ensureRunIn`, which then creates the message's run in the same transaction.
+- An idle compact run never pauses the queue: `RunFinish.finishIn` pauses the conversation queue
+  for every non-`completed` status, so it skips `pauseQueueIn` for any end of a run with
+  `compact_origin = 'idle'` (a superseded abort has no account, so `personStopped` is already
+  false: no tree hold). Otherwise the queued message that preempted the idle run would stay paused,
+  and a failed or stopped idle run, whose end the timeline does not show, would pause the queue
+  with no visible cause.
 - The message's run compacts inline if it needs to (it would have anyway; the cache is still warm,
   so its in-context summary is cheap too). The summary call already made is billed and recorded.
 - If the abort arrives after the `compaction_summary` was written (the `writing` phase), the summary
-  stands: it is a valid summary in the log, the run ends aborted, and the next step uses it.
+  stands: it is a valid summary in the log, the run ends `completed` (the worker finishes it after
+  `force` returns), not aborted, and the next step uses it.
 - A **manual** compact request while an idle compact run is active returns the idle run's id (the
   existing "a compact run already queued or running: the same request again"); the person then
   watches it finish. A manual compact run is never preempted.
+- Compact runs (manual and idle) do not count as wake runs in the background wake window (a compact
+  run's `trigger_seq` can be a `background_task_finished` event).
+- A superseded abort is sent with SET NX on the abort marker, so a person's stop is never relabelled.
 - Background wakes (`background_task`, sub-agent deliveries) are input like a message: they
   preempt too. A scheduled task's message into a chat conversation also preempts.
 
@@ -322,7 +362,9 @@ tier). The derivation (`t0`, `L`, refresh rules) is §9.3.
   goes back to another replica, which re-runs the compaction if the cache is still warm; the
   summary's idempotency keys are the run id and ordinal, compaction spec §4.4).
 - A failed compaction writes `compaction_failed` and the run finishes `completed`, exactly as a
-  manual one; check 6 blocks idle attempts until a summary succeeds.
+  manual one; check 6 blocks idle attempts until a summary succeeds. A refusal by
+  `startIdleCompaction` under the row lock is logged by the first check it now fails: `gone`
+  (re-read), else `obsolete`, else `busy`.
 - Org deletion: the outbox row goes with the org; a run already started is aborted by the existing
   org-deletion path (`org_deleted`).
 
@@ -357,8 +399,11 @@ Decision: no precompute; the idle compact run writes the summary directly.
 
 - Migration `NNNN_idle_compaction.sql`: `ALTER TABLE runs ADD COLUMN IF NOT EXISTS compact_origin
   text NULL` with a check (`'manual' | 'idle'`, null for ordinary runs; existing compact runs read
-  as manual). `runs` has no `org_id` of its own (org via the conversation), so no RLS change; the
-  builder confirms against `check:org-filter`.
+  as manual; new manual runs write `'manual'`). `runs` has no `org_id` of its own (org via the
+  conversation), so no RLS change; the builder confirms against `check:org-filter`. The same
+  migration adds `accounts.idle_compaction text NULL CHECK (idle_compaction = 'off')` for the personal
+  preference (§6.3): personal preferences are columns on `accounts` (`time_zone`, `theme`), not a
+  JSON blob; `accounts` has no `org_id` either.
 - Events (`conversations/events.ts`): `run_started.compactOrigin?: "manual" | "idle"`;
   `run_aborted.reason` gains `"superseded"`. Additive; old logs parse.
 - Phase 1's event changes are in §9 (`model_call.request.cacheTtl`, `compaction_summary.method`).
@@ -397,9 +442,13 @@ No new route. The fields join existing shared schemas (`COMPACTION_SETTINGS`,
 `COMPACTION_SETTINGS_PATCH`, `DEPLOYMENT_SETTINGS_PATCH`, the org settings patch), which the
 existing Platform operations (`admin.settings` / `admin.update-settings`, `org-settings.get` /
 `org-settings.update`) are built from; `platform-parity.test.ts` covers them through the shared
-schema. Same for the personal preference (§6.3), which joins `PreferencesSchema` behind the
-existing `GET` / `PUT /api/v1/me/preferences` operations. `pnpm check:platform-ops` must stay green;
-no exclusion is added.
+schema. `admin.update-settings` already omits `compaction` ("changed in the admin console's settings
+page"); that omit stays, so the platform-level idle fields remain console-only like every compaction
+field. The three fields are added to the `org-settings.update` description and `idleCompaction` to
+the preferences operation's description, which enumerate their fields. Same for the personal
+preference (§6.3), which joins `PreferencesSchema` behind the existing `GET` / `PUT
+/api/v1/me/preferences` operations. `pnpm check:platform-ops` must stay green; no new exclusion is
+added.
 
 ### 6.3 Personal opt-out
 
@@ -432,9 +481,9 @@ No per-conversation switch (decision Q4).
     才会在这些模型上运行。" / "Requests use the model's cache tier of at least 30 minutes (such as 1
     hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price
     instead of 1.25×). Idle compaction runs on these models only with this on."
-    Phase 1 ships this hint without its last sentence (zh "开启后空闲压缩才会在这些模型上运行。", en "Idle
+    Phase 1 shipped this hint without its last sentence (zh "开启后空闲压缩才会在这些模型上运行。", en "Idle
     compaction runs on these models only with this on."), because UI copy does not describe a feature
-    that has not shipped (decision D7, phase 1 plan); phase 2 restores it.
+    that has not shipped (decision D7, phase 1 plan); phase 2 restores it (done).
 - **Account preferences.** "空闲时压缩我的对话" / "Compact my conversations while I'm away", with
   the org state shown when the org has it off ("组织已关闭").
 - **Conversation page.** An idle compaction is quiet:
@@ -444,8 +493,20 @@ No per-conversation switch (decision Q4).
     "Earlier conversation compacted while idle · saved {n} tokens" (the variant is chosen from the
     run's `run_started.compactOrigin`; the timeline already groups events by run).
   - A preempted idle run shows nothing (no "aborted" row): the compacting row disappears and the
-    person's message proceeds.
+    person's message proceeds. (Behaviour change, decided in the PR #1024 review, 2026-11-28.)
+    `apps/web/src/lib/timeline.ts` shows every compact run's `compaction_failed` as a
+    `compact-failed` divider and its stop as `compact-stopped`; for an idle run a failure is silent
+    like an automatic one, and its stop (superseded or a person's) shows nothing. Only its summary
+    draws the idle divider.
   - The divider's menu (or a short help link) says where to turn it off: the account preference.
+- **Out of the page, too.** An idle compact run's `run_finished` pushes no "replied" notification
+  (`push/recipients.ts` skips `compact_origin = 'idle'` as it skips automation runs; a manual
+  compaction keeps its push). It keeps the stored prompt suggestion fresh (`isFresh` ignores idle
+  compact runs for "latest run" and "no `run_started` after `afterSeq`": the summary is
+  display-only for the person and answers nothing). The conversation list stays still: the event
+  append leaves `conversations.updated_at` alone for a batch of one idle compact run's events
+  (decided in the same `UPDATE`, a primary key probe on `runs`, no extra round trip), and the
+  list's activity skips idle compact runs, so the conversation neither moves up nor shows running.
 - **Channels.** Nothing: compact runs already send no progress, and the divider is a web element.
 - Wording rules: zh says 智能体 / 平台, never 企业 or `agent` (`pnpm check:i18n`).
 
@@ -464,7 +525,11 @@ log already holds.
 - **Return after idle** (the value measure): when a run starts on a conversation whose previous
   run ended more than 30 min earlier and whose context at that end was at least `idleMinTokens(W)`,
   log `idle_return` with the gap, the cache lifetime then in use, whether an idle summary was
-  written in between, and the step's inline compaction time if one ran. This also shows the
+  written in between, and the step's inline compaction time if one ran. The "previous run" is the
+  latest non-compact run of the conversation (an idle compact run is itself a run and ends minutes
+  before the return); "idle summary written in between" is a `compaction_summary` in a run with
+  `compactOrigin: "idle"` after that run's end. It is logged at run start; the inline compaction
+  time joins by `runId` with the existing `Compaction` log line. This also shows the
   opportunities the 30-minute rule leaves out (conversations on 5-minute caches).
 - **Admin**: the super admin's usage views may later split compaction usage by origin (decision
   Q5: later).
@@ -980,7 +1045,7 @@ Phase 2:
     purpose `compaction`, `model.request` fired, `run_started.compactOrigin: "idle"`, trigger
     account = owner;
   - nothing owed: a 5-minute cache, `longTtl` off on a 5-minute default model, a small context, a
-    `schedule` run, a `budget` stop, settings or preference off, a sub-agent or eval conversation;
+    `schedule` run, an `automation_event` trigger, a run with `automation_run_id` set, a `budget` stop, settings or preference off, a sub-agent or eval conversation;
   - fire-time: obsolete after a message, busy, expired (a late job), model switched, plan empty;
   - preemption: a message during a running idle compact run (model-fake holding the summary call)
     → `run_aborted.reason: "superseded"`, no summary, then the message's run; a queued idle run
@@ -1011,11 +1076,33 @@ Decided by the maintainer (2026-11-27):
 - **Q4:** no per-conversation switch.
 - **Q5:** usage split by compaction origin in admin views: later.
 - **Q6:** the job runs on `cap-kernel-maintenance`.
-- **Q7:** `background_task` / `subagent` wakes arm; `schedule` does not.
+- **Q7:** `background_task` / `subagent` wakes arm; `schedule` does not (a wake with an automation
+  lineage is the exception, see D1).
 - **Q8:** cache declaration with kernel-derived expiry and the in-context summary first (phase 1),
   idle compaction after (phase 2).
 - **Q10:** `promptCache.longTtl` default off.
 - **Q11:** 5-minute caches never get idle compaction.
+
+Phase 2 plan review (PR #1024, 2026-11-28; delegated by the maintainer to main). The spec issues
+S1–S14 found against the code are accepted as resolved in §4.2, §4.3, §5.1, §5.2, §5.7, §6.2, §6.4
+and §7; S5 and S10 are the behaviour changes.
+
+- **D1 (S5), automation lineage: accepted.** A wake run whose `runs.automation_run_id` is set does
+  not arm, and `automation_event` never arms (goal 2: never on conversations nobody started by hand).
+- **D2 (S9), platform-level idle fields through the Platform tool: accepted.**
+  `admin.update-settings` keeps its existing `compaction` omit (console-only, like every compaction
+  field); the fields are documented on `org-settings.update` and the preference operation.
+- **D3 (S10), a person's stop of an idle run: accepted.** It shows nothing, like a preempted or
+  failed idle run; only an idle summary draws a divider.
+- **D4 (S7), arm-time quality gate and settled point: accepted.** Both are checked at arm time: the
+  same outcomes with fewer owed jobs; `max_steps` and `max_output` runs then almost never arm.
+- **D5, default on with nothing qualifying: accepted with a change.** `idleEnabled` stays on by
+  default (Q1). The release notes say that idle compaction does not fire in the default config
+  (`promptCache.longTtl` off): it runs only where an admin turns on the long cache tier for a gated
+  Sonnet / Qwen4-max line. #1002 (gating an OpenAI 5.6+ model, the only family whose default cache
+  qualifies) waits for OpenAI credits; phase 2 does not depend on it.
+- **D6, size floor in tests: accepted.** The settings range stays 50,000–2,000,000 (no test-only
+  lower bound); integration tests build conversations of about 220k characters on model-fake.
 
 Still open (recommended answers):
 

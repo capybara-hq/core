@@ -241,6 +241,12 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       },
       { dispatch: async (d) => void calls.push(["trigger-dispatch", d]) },
       { flush: async (d) => void calls.push(["automation-coalesce", d]) },
+      {
+        fire: async (d) => {
+          calls.push(["idle-compaction", d]);
+          return "obsolete";
+        },
+      },
     );
     const job = (name: string, data: unknown) => ({ name, data, id: `${name}-1` }) as never;
     await processor.process(job("wait-timeout", { waitId: "w" }), "tok");
@@ -274,6 +280,15 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     await processor.process(job("trigger-dispatch", { orgId: "o", eventId: "e1" }));
     const pair = { orgId: "o", automationId: "a1", subjectKey: "item-0123456789abcdef" };
     await processor.process(job("automation-coalesce", pair));
+    const idle = {
+      orgId: "o",
+      conversationId: "c5",
+      runId: "r5",
+      armedSeq: 9,
+      cacheCallSeq: 7,
+      expiresAt: 1,
+    };
+    await processor.process(job("idle-compaction", idle));
     await processor.process(job("sandbox-suspend-idle", {}));
     // an unknown name fails (BullMQ retries it, a newer replica knows it), never completes unrun
     await expect(processor.process(job("no-such-job", {}))).rejects.toThrow(
@@ -307,6 +322,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["conversation-notice", "o", "n1", 5_000],
       ["trigger-dispatch", { orgId: "o", eventId: "e1" }],
       ["automation-coalesce", pair],
+      ["idle-compaction", idle],
       ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([]);
