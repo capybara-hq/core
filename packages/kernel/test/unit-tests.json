@@ -42,6 +42,7 @@
   "conversations/conversation-ref.test.ts",
   "conversations/event-people.test.ts",
   "conversations/events.test.ts",
+  "conversations/inline-tokens.unit.test.ts",
   "conversations/prompt-suggestion-request.test.ts",
   "ctx/device-provider-check.test.ts",
   "devices/label.test.ts",
