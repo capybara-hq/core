@@ -5,7 +5,9 @@ import { EventLog } from "../conversations/event-log.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { CompactionSettingsService } from "./compaction-settings.service.js";
 import {
+  type CompactOptions,
   type ModelStepInput,
+  prepareCompaction,
   readAllEvents,
   resolveAgentTools,
   runCompaction,
@@ -36,6 +38,31 @@ export interface ForceCompactionInput {
   signal: AbortSignal;
 }
 
+/**
+ * Who started a compact run (idle compaction spec §5.1): a person (`manual`, the compact route) or
+ * the idle compaction job (`idle`).
+ */
+export type CompactOrigin = "manual" | "idle";
+
+/** What {@link CompactionService.probeIdle} reads from the conversation. */
+export type IdleProbeInput = Omit<ForceCompactionInput, "runId" | "signal" | "accountId">;
+
+/**
+ * The dry run of an idle compaction (idle compaction spec §4.3 checks 8 and 9): the calibrated
+ * estimate of the next request, the model's window, the tokens no summary covers yet (`growth`),
+ * whether a plan exists, and whether the in-context summary request was built (no skip).
+ */
+export interface IdleProbe {
+  estimate: number;
+  window: number;
+  growth: number;
+  planned: boolean;
+  inContext: boolean;
+}
+
+/** The run id a probe's step input carries: never written (a probe writes nothing). */
+const PROBE_RUN_ID = "00000000-0000-0000-0000-000000000000";
+
 /** What the compact run recorded: the `compaction_summary` it wrote, and whether it failed. */
 export interface ForcedCompaction {
   summarySeq: number | null;
@@ -43,18 +70,22 @@ export interface ForcedCompaction {
 }
 
 /**
- * The manual compaction a compact run executes (context compaction spec §4.7). It prepares the same
- * environment a model step has (the events, the effective definition's tools, the org's compaction
- * settings) and calls the shared {@link runCompaction} with `force: true`: the trigger,
- * `enabled: false` and the failure backoff are bypassed, the compaction plan is still required, with
- * the manual rule (`manual: true`: every turn before the latest summarized, about a fifth of the
- * window of the latest turn kept; maintainer decision 2026-11-28). A manual compaction always
- * summarizes the transcript with that plan, on a model the in-context gate lists too (ruling R13,
- * idle compaction spec §9.4).
+ * The compaction a compact run executes (context compaction spec §4.7, idle compaction spec §5). It
+ * prepares the same environment a model step has (the events, the effective definition's tools, the
+ * org's compaction settings) and calls the shared {@link runCompaction} with `force: true`: the
+ * trigger, `enabled: false` and the failure backoff are bypassed, the compaction plan is still
+ * required.
  *
- * The run writes only its outcome, with `step: 0`: `compaction_summary` / `compaction_failed` + the
- * summary calls' `usage`, or `compaction_skipped` when there is nothing to summarize (maintainer
- * decision 2026-11-28); no user message and no model step.
+ * - `manual` adds `manual: true`: the manual rule (every turn before the latest summarized, about a
+ *   fifth of the window of the latest turn kept; maintainer decision 2026-11-28), always on the
+ *   transcript, also on a model the in-context gate lists (ruling R13, idle compaction spec §9.4).
+ *   The run writes only its outcome, with `step: 0`: `compaction_summary` / `compaction_failed` +
+ *   the summary calls' `usage`, or `compaction_skipped` when there is nothing to summarize
+ *   (maintainer decision 2026-11-28); no user message and no model step.
+ * - `idle` adds `requireInContext: true` and never `manual` (ruling R13): the automatic plan, the
+ *   in-context summary only. Every early end (nothing to summarize, an unavailable model, an
+ *   in-context skip) writes nothing; a failed call writes `compaction_failed` (the backoff of later
+ *   idle attempts).
  */
 @Injectable()
 export class CompactionService {
@@ -65,7 +96,69 @@ export class CompactionService {
     @Inject(CompactionSettingsService) private readonly settings: CompactionSettingsService,
   ) {}
 
-  async force(input: ForceCompactionInput): Promise<ForcedCompaction> {
+  async force(
+    input: ForceCompactionInput,
+    origin: CompactOrigin = "manual",
+  ): Promise<ForcedCompaction> {
+    const env = await this.environment(input);
+    const opts: CompactOptions =
+      origin === "manual" ? { force: true, manual: true } : { force: true, requireInContext: true };
+    const out = await runCompaction(
+      this.steps.deps,
+      env.stepInput,
+      env.events,
+      this.config.get().runtime,
+      env.compaction,
+      env.tools,
+      opts,
+    );
+    return { summarySeq: out.summarySeq, failed: out.failed };
+  }
+
+  /**
+   * The idle compaction job's dry run (idle compaction spec §4.3 checks 8 and 9): the preparation
+   * an idle compact run would do, with nothing written and no model call. Null when the model or
+   * the attachment storage cannot be reached right now (the probe learns nothing).
+   */
+  async probeIdle(input: IdleProbeInput): Promise<IdleProbe | null> {
+    const env = await this.environment({
+      ...input,
+      runId: PROBE_RUN_ID,
+      // the probe sends nothing: a signal that never aborts
+      signal: new AbortController().signal,
+    });
+    const prepared = await prepareCompaction(
+      this.steps.deps,
+      env.stepInput,
+      env.events,
+      this.config.get().runtime,
+      env.compaction,
+      env.tools,
+      { force: true, requireInContext: true },
+    );
+    if ("skipped" in prepared) {
+      if (prepared.skipped !== "no_plan") return null;
+      return {
+        estimate: prepared.estimate,
+        window: prepared.window,
+        growth: 0,
+        planned: false,
+        inContext: false,
+      };
+    }
+    return {
+      estimate: prepared.estimate,
+      window: prepared.window,
+      growth: prepared.growthTokens,
+      planned: true,
+      inContext: !("skip" in prepared.inContext),
+    };
+  }
+
+  /** The step environment a compact run (or its probe) prepares, as a model step has it. */
+  private async environment(
+    input: Omit<ForceCompactionInput, "accountId"> & { accountId?: string },
+  ) {
     // the run's steps environment (the model registry, the tool registry, media, hooks, progress);
     // no step state is kept on it, so a compact run may share it with the steps of other runs
     const deps = this.steps.deps;
@@ -83,7 +176,7 @@ export class CompactionService {
       sink: () => {},
       absorbedUpToSeq: input.absorbedUpToSeq,
       agentId: input.agentId,
-      accountId: input.accountId,
+      ...(input.accountId !== undefined && { accountId: input.accountId }),
       source: input.source,
       conversationKind: input.conversationKind,
     };
@@ -91,15 +184,6 @@ export class CompactionService {
     // step's request would (spec §4.7)
     const tools = stepToolsOf(await resolveAgentTools(deps, stepInput, events), stepInput, deps);
     const compaction = await this.settings.resolve(input.orgId);
-    const out = await runCompaction(
-      deps,
-      stepInput,
-      events,
-      this.config.get().runtime,
-      compaction,
-      tools,
-      { force: true, manual: true },
-    );
-    return { summarySeq: out.summarySeq, failed: out.failed };
+    return { stepInput, events, tools, compaction };
   }
 }

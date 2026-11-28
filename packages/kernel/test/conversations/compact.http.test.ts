@@ -1,15 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type { ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ConversationSource, ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { normalizeStoredDefinition } from "../../src/agents/definition.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import {
+  CompactionService,
+  type ForceCompactionInput,
+} from "../../src/runtime/compaction.service.js";
 import { compactionProgressKey } from "../../src/runtime/compaction-progress.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
 import { truncateTables } from "../helpers/db.js";
@@ -550,5 +557,87 @@ describe("manual compaction", () => {
     expect(op?.mirrors).toEqual(["POST /api/v1/orgs/:orgId/conversations/:id/compact"]);
     expect(op?.authz).toEqual({ orgAction: "conversations.compact" });
     expect(op?.input.safeParse({ conversationId: randomUUID() }).success).toBe(true);
+  });
+});
+
+describe("idle compaction core (idle compaction spec §4.3, §5)", () => {
+  /** What an idle compact run gives `CompactionService.force`: the conversation's own definition. */
+  async function forceInput(orgId: string, conv: string): Promise<ForceCompactionInput> {
+    const row = await db
+      .selectFrom("conversations")
+      .select(["agent_id", "consumed_seq", "source"])
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    const version = await db
+      .selectFrom("agent_versions")
+      .select(["version", "definition"])
+      .where("agent_id", "=", row.agent_id)
+      .orderBy("version", "desc")
+      .executeTakeFirstOrThrow();
+    return {
+      orgId,
+      conversationId: conv,
+      runId: randomUUID(),
+      accountId: ownerId,
+      agentId: row.agent_id,
+      agent: normalizeStoredDefinition(version.definition),
+      agentVersion: version.version,
+      source: row.source as ConversationSource,
+      conversationKind: "chat",
+      absorbedUpToSeq: Number(row.consumed_seq),
+      signal: new AbortController().signal,
+    };
+  }
+
+  const forceIdle = (input: ForceCompactionInput) =>
+    withOrgScope(input.orgId, () => k.app.get(CompactionService).force(input, "idle"));
+
+  const probe = ({ runId: _r, signal: _s, accountId: _a, ...input }: ForceCompactionInput) =>
+    withOrgScope(input.orgId, () => k.app.get(CompactionService).probeIdle(input));
+
+  it('force(input, "idle") on a finished conversation summarizes in context', async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const input = await forceInput(orgId, conv);
+    const out = await forceIdle(input);
+    expect(out.failed).toBe(false);
+    const events = (await eventsOf(db, conv)).filter((e) => e.runId === input.runId);
+    const summaries = ev(events, "compaction_summary");
+    expect(summaries.map((e) => e.payload.method)).toEqual(["in_context"]);
+    expect(out.summarySeq).toBe(summaries[0]?.seq);
+    expect(ev(events, "usage").map((e) => e.payload.purpose)).toEqual(["compaction"]);
+    // the in-context request: the conversation's own system prompt
+    expect(capture.compactions).toHaveLength(1);
+    expect(capture.compactions[0]?.system).toEqual(capture.sent.at(-1)?.system);
+  });
+
+  it('force(input, "idle") with nothing to summarize writes nothing (no compaction_skipped)', async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 1);
+    const before = (await eventsOf(db, conv)).length;
+    const input = await forceInput(orgId, conv);
+    expect(await forceIdle(input)).toEqual({ summarySeq: null, failed: false });
+    expect(await eventsOf(db, conv)).toHaveLength(before);
+    expect(capture.compactions).toEqual([]);
+  });
+
+  it("probeIdle reads a planned in-context compaction and writes nothing; another model is no prefix", async () => {
+    const { orgId, conv } = await setup();
+    await seedTurns(orgId, conv, 6);
+    const before = (await eventsOf(db, conv)).length;
+    const input = await forceInput(orgId, conv);
+    const got = await probe(input);
+    expect(got).toMatchObject({ planned: true, inContext: true });
+    expect(got?.estimate).toBeGreaterThan(0);
+    expect(got?.window).toBeGreaterThan(got?.estimate ?? 0);
+    expect(got?.growth).toBeGreaterThan(0);
+    expect(await eventsOf(db, conv)).toHaveLength(before);
+    expect(capture.compactions).toEqual([]);
+
+    // the last call was another model than the effective definition's: no cached prefix applies
+    await sql`UPDATE capybara.conversation_events SET payload = jsonb_set(payload, '{model}', '"fake-0"')
+      WHERE conversation_id = ${conv} AND type = 'model_call'`.execute(raw);
+    const switched = await probe(input);
+    expect(switched).toMatchObject({ planned: true, inContext: false });
   });
 });
