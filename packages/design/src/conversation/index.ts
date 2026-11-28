@@ -43,6 +43,17 @@ export {
   type PickerProps,
 } from "./composer";
 export {
+  ComposerEditor,
+  type ComposerEditorHandle,
+  type ComposerEditorProps,
+  type ComposerSegment,
+  type ComposerTokenData,
+  type ComposerTokenKind,
+  type ComposerTrigger,
+  InlineToken,
+  segmentsPlainText,
+} from "./composer-editor/index";
+export {
   ComposerMenu,
   type ComposerMenuCombobox,
   type ComposerMenuController,

@@ -166,6 +166,8 @@ export const REFERENCE_COMPONENTS = [
   "composer",
   // the composer's +, / and @ menus (composer menus spec §1)
   "composer-menu",
+  // the composer's Lexical editor with inline tokens (composer inline tokens spec §1, §2)
+  "composer-editor",
   // the composer's project files picker (composer menus spec §5)
   "project-file-picker",
   "picker-menu",

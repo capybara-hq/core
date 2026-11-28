@@ -1881,3 +1881,57 @@ export const PROJECT_FILES_FIXTURE: {
   max: 10,
   unsupported: "这台设备的连接方式不支持列出文件。",
 };
+
+// ── Composer inline tokens (composer inline tokens spec §1) ─────────────────
+
+/** An inline token as the composer and the bubble draw it (`ComposerTokenData`). */
+export type FixtureInlineToken = {
+  kind: "connector" | "resource" | "file" | "projectFile" | "conversation" | "skill";
+  id: string;
+  label: string;
+  icon?: { src?: string; initial?: string; fileType?: string };
+  state?: "refused";
+  reason?: string;
+};
+
+/**
+ * The composer editor's blocks (`composer-editor`): a sentence with tokens of every kind, the
+ * refused connector, the skill with its argument hint.
+ */
+export const COMPOSER_EDITOR_FIXTURE: {
+  placeholder: string;
+  tokens: {
+    slack: FixtureInlineToken;
+    resource: FixtureInlineToken;
+    file: FixtureInlineToken;
+    projectFile: FixtureInlineToken;
+    conversation: FixtureInlineToken;
+    skill: FixtureInlineToken;
+    refused: FixtureInlineToken;
+  };
+  hint: string;
+} = {
+  placeholder: "输入消息，/ 使用命令",
+  tokens: {
+    slack: { kind: "connector", id: "conn-slack", label: "Slack", icon: { initial: "S" } },
+    resource: {
+      kind: "resource",
+      id: "conn-slack:slack://channel/general",
+      label: "#general",
+      icon: { initial: "S" },
+    },
+    file: { kind: "file", id: "file-1", label: "季度报告.pdf", icon: { fileType: "PDF" } },
+    projectFile: { kind: "projectFile", id: "src/app.ts", label: "src/app.ts" },
+    conversation: { kind: "conversation", id: "conv-1", label: "发票对账的讨论" },
+    skill: { kind: "skill", id: "fix-issue", label: "fix-issue" },
+    refused: {
+      kind: "connector",
+      id: "conn-lark",
+      label: "Lark",
+      icon: { initial: "L" },
+      state: "refused",
+      reason: "这个连接器已不存在或已停用",
+    },
+  },
+  hint: "[issue-number]",
+};
