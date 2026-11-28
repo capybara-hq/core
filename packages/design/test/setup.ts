@@ -9,6 +9,11 @@ Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.releasePointerCapture ??= () => {};
 Element.prototype.scrollIntoView ??= () => {};
+// Lexical (the composer's editor) scrolls its selection into view through the Range's boxes.
+const emptyRect = () => new DOMRect(0, 0, 0, 0);
+Range.prototype.getBoundingClientRect ??= emptyRect;
+Range.prototype.getClientRects ??= () =>
+  Object.assign([], { item: () => null }) as unknown as DOMRectList;
 // By default no media query matches except ClassForms' wide query: a test window is a wide one
 // (ClassForms mounts the medium / expanded copy, useClassForm is "wide"), while every other query
 // (size classes, touch, reduced motion) stays false. Tests override window.matchMedia (see

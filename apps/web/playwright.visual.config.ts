@@ -31,5 +31,14 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 300_000,
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // The composer editor's caret and IME behaviour in Safari's engine (composer inline tokens
+    // spec §2); every other spec stays Chromium only.
+    {
+      name: "webkit",
+      testMatch: /composer-editor\.interaction\.spec\.ts$/,
+      use: { ...devices["Desktop Safari"] },
+    },
+  ],
 });

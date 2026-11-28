@@ -1663,6 +1663,11 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`, 
 | sheet-group-heading | compact-place-sheet | font-size | type.micro |
 | sheet-group-heading | compact-place-sheet | color | color.muted |
 
+**Composer editor** (composer inline tokens spec `docs/superpowers/specs/2026-11-28-composer-inline-tokens-design.md` §1, §2, §6): the Lexical text box with inline tokens (`ComposerEditor`, `InlineToken`) that replaces the textarea when the composer moves onto it; the blocks draw it alone in the composer frame.
+
+<!-- states: composer-editor -->
+States: `empty`, `tokens`, `selected`, `refused`, `skill`, `compact`
+
 #### 6.16.3 Picker menu
 
 - The model, effort and agent menus of the composer, and the quick actions' (§6.16.27): a Menu (§6.7: `panel` ground, 1px `line-strong` border, radius `md`, `shadow-1`, padding `space.1`) **anchored to its trigger** (maintainer decision 2026-11-07; `ConvMenu anchored`):
