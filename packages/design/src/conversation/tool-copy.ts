@@ -38,7 +38,12 @@ export type ToolNotice = "not_loaded" | "reconciling";
  * port of the person's own device opened to a device service for the conversation (a loopback
  * port grant, made by Full access or the review model).
  */
-export type ToolAutoGranted = "directory" | "host" | "outside-sandbox" | "sensitive" | "loopback-port";
+export type ToolAutoGranted =
+  | "directory"
+  | "host"
+  | "outside-sandbox"
+  | "sensitive"
+  | "loopback-port";
 
 /**
  * What a call waits for (§6.16.9): a person's approval, answer or connection, or `watch`, a

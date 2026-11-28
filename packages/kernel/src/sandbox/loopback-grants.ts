@@ -427,8 +427,8 @@ export class LoopbackGrants {
 
   @Transactional()
   private async purgeEndedBatch(): Promise<number> {
-    // org-filter: deployment-wide retention sweep over every org's ended grants, entered under
-    // asPlatform by purgeEnded; nothing live is touched
+    // org-filter: the retention sweep over every org's ended grants, entered under asPlatform by
+    // purgeEnded; nothing live is touched
     const r = await this.db
       .deleteFrom("device_loopback_grants")
       .where(
