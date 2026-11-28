@@ -156,7 +156,7 @@ export function describeFetchError(e: unknown): string {
   const code = (cause as { code?: unknown }).code;
   const text = `${e.message} (${typeof code === "string" ? `${code}: ` : ""}${cause.message})`;
   return typeof code === "string" && CONNECTION_CODES.has(code)
-    ? `${text}. If this deployment reaches the internet through a proxy, set net.httpsProxy (CAPYBARA_NET__HTTPSPROXY); HTTPS_PROXY is not read`
+    ? `${text}. If this deployment reaches the internet through a proxy, set net.httpsProxy (CAPYBARA_NET__HTTPS_PROXY); HTTPS_PROXY is not read`
     : text;
 }
 
