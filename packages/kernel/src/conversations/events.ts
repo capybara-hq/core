@@ -2167,6 +2167,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       method: z.enum(["transcript", "in_context"]).optional(),
       /**
+       * The configured ref of the model that wrote the summary (compaction model spec §7.1): the
+       * compaction model, or the conversation's on the fallback path. Not model-visible; absent
+       * before it.
+       */
+      model: z.object({ provider: z.string(), model: z.string() }).optional(),
+      /**
        * The step the compaction ran in (0 for a manual compact run), so a later compaction in the
        * same step takes the next idempotency key.
        */
@@ -2178,6 +2184,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({
       attempt: count,
       reason: z.string(),
+      /**
+       * The configured ref of the model whose call failed or was denied (compaction model spec
+       * §7.1); not model-visible; absent when no call was built.
+       */
+      model: z.object({ provider: z.string(), model: z.string() }).optional(),
       /** The step the compaction ran in, as on `compaction_summary`. */
       step: count,
     }),

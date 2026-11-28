@@ -56,17 +56,24 @@ type Scope = "deployment" | "org";
  * Each kernel purpose's one muted line: what it is for and what happens while it is unset (the
  * kernel's real fallback: titles and web extraction use the conversation's model, a sub-agent tier
  * the dispatching agent's model, command review asks about a command its rules are unsure about;
- * the eval judge has none, so evals cannot use a judge).
+ * the eval judge has none, so evals cannot use a judge; summaries use the conversation's own model).
  */
 const KERNEL_HINTS: Record<
   string,
-  "hint.eval" | "hint.titles" | "hint.webFetch" | "hint.review" | "hint.vision" | "subagentHint"
+  | "hint.eval"
+  | "hint.titles"
+  | "hint.webFetch"
+  | "hint.review"
+  | "hint.vision"
+  | "hint.compaction"
+  | "subagentHint"
 > = {
   eval: "hint.eval",
   title: "hint.titles",
   review: "hint.review",
   web_fetch: "hint.webFetch",
   vision: "hint.vision",
+  compaction: "hint.compaction",
   subagent_fast: "subagentHint",
   subagent_standard: "subagentHint",
   subagent_capable: "subagentHint",
