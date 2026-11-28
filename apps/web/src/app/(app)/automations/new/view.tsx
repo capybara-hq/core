@@ -18,7 +18,7 @@ import {
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent, ProviderModels } from "../../../../lib/agents";
 import { ApiClientError } from "../../../../lib/api";
@@ -81,6 +81,7 @@ function NewAutomationForm({
   providers: ProviderModels[];
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("automations");
   const tc = useTranslations("common");
   const router = useRouter();
@@ -137,7 +138,7 @@ function NewAutomationForm({
       create
       loading={loading}
       header={{
-        path: [...scope, { label: "automations", href: "/automations" }, { label: "new" }],
+        path: [...scope, pw("automations", "/automations"), pw("new")],
         title: t("form.createTitle"),
         ...(off ? { notice: <Callout tone="warn">{t("turnedOff")}</Callout> } : {}),
       }}

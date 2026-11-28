@@ -28,7 +28,7 @@ import { TemplateDeleteDialog } from "../AgentTemplateCards";
 import { guardedHref } from "../agent/AgentPage";
 import { useComponentSwitch } from "../ComponentSwitch";
 import { FormError } from "../form-error";
-import { usePagePath } from "../shell/path";
+import { usePagePath, usePathWord } from "../shell/path";
 import {
   BasicsEdit,
   ConnectorsEdit,
@@ -110,6 +110,7 @@ export function TemplatePage({
   onCreate(): void;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("agents.templatePage");
   const tt = useTranslations("agents.templates");
   const tc = useTranslations("common");
@@ -204,8 +205,8 @@ export function TemplatePage({
   const header: PageHeaderProps = {
     path: [
       ...scope,
-      { label: "agents", href: "/agents" },
-      { label: "templates", href: TEMPLATES_TAB_HREF },
+      pw("agents", "/agents"),
+      pw("templates", TEMPLATES_TAB_HREF),
       { label: template.name },
     ],
     title: template.name,

@@ -21,7 +21,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import {
   ParentTrajectoryLink,
@@ -64,13 +64,14 @@ export default function TrajectoryPageView({ conversationId }: { conversationId:
 
 function TrajectoryData({ orgId, conversationId }: { orgId: string; conversationId: string }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const read = usePageQuery(trajectoryQuery(orgId, conversationId));
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {
     return (
       <TracePage
-        header={{ path: [...scope, { label: "trajectories", href: "/trajectories" }], title: "" }}
+        header={{ path: [...scope, pw("trajectories", "/trajectories")], title: "" }}
         waterfall={null}
         detail={null}
         loading={{}}
@@ -85,6 +86,7 @@ function TrajectoryView({ orgId, first }: { orgId: string; first: TrajectoryDeta
   // members sees names too
   const people = first.people;
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("trajectories");
   const { me } = useSession();
   const errorMessage = useErrorMessage();
@@ -141,7 +143,7 @@ function TrajectoryView({ orgId, first }: { orgId: string; first: TrajectoryDeta
         header={{
           path: [
             ...scope,
-            { label: "trajectories", href: "/trajectories" },
+            pw("trajectories", "/trajectories"),
             { label: conv.title ?? t("untitled") },
           ],
           title: conv.title ?? t("untitled"),

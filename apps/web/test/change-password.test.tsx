@@ -53,14 +53,33 @@ describe("/change-password decides on the server", () => {
   });
 });
 
+/**
+ * Fills the three fields. Each value is pasted (one input event), not typed key by key: every
+ * keystroke re-renders the whole AuthPage, and the 54 keystrokes per case took over 5 s under a full
+ * parallel run (#988). `delay: null` waits on no timer between user-event's steps.
+ */
+async function fill(
+  user: ReturnType<typeof userEvent.setup>,
+  current: string,
+  next: string,
+  confirm: string,
+) {
+  for (const [label, text] of [
+    [en.changePassword.current, current],
+    [en.changePassword.next, next],
+    [en.changePassword.confirm, confirm],
+  ] as const) {
+    await user.click(screen.getByLabelText(label));
+    await user.paste(text);
+  }
+}
+
 describe("the change-password form", () => {
   it("refuses two different new passwords without asking the kernel", async () => {
     const calls = stubApi({});
     renderPage(<ChangePasswordView />, { locale: "en" });
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(en.changePassword.current), "Gen3ratedPassw0rdXyz");
-    await user.type(screen.getByLabelText(en.changePassword.next), "my own passphrase");
-    await user.type(screen.getByLabelText(en.changePassword.confirm), "my own passphrasf");
+    const user = userEvent.setup({ delay: null });
+    await fill(user, "Gen3ratedPassw0rdXyz", "my own passphrase", "my own passphrasf");
     await user.click(screen.getByRole("button", { name: en.changePassword.submit }));
     expect(await screen.findByText(en.changePassword.mismatch)).toBeTruthy();
     expect(calls).toEqual([]);
@@ -69,10 +88,8 @@ describe("the change-password form", () => {
   it("saves the new password, then loads home as a new document", async () => {
     const calls = stubApi({ "PUT /api/v1/me/password": () => new Response(null, { status: 204 }) });
     renderPage(<ChangePasswordView />, { locale: "en" });
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(en.changePassword.current), "Gen3ratedPassw0rdXyz");
-    await user.type(screen.getByLabelText(en.changePassword.next), "my own passphrase");
-    await user.type(screen.getByLabelText(en.changePassword.confirm), "my own passphrase");
+    const user = userEvent.setup({ delay: null });
+    await fill(user, "Gen3ratedPassw0rdXyz", "my own passphrase", "my own passphrase");
     await user.click(screen.getByRole("button", { name: en.changePassword.submit }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({

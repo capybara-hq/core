@@ -19,7 +19,7 @@ import { useComponentSwitch } from "../../../../../components/ComponentSwitch";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { ownerSide } from "../../../../../lib/catalog";
 import { type OrgComponent, unavailableComponent } from "../../../../../lib/components";
 import { canUpdateOrg } from "../../../../../lib/org-settings";
@@ -105,17 +105,14 @@ function TemplateRoute({
 /** The page while the template is on its way: the head's path and nav, the section's skeleton. */
 function TemplateLoading({ id, section }: { id: string; section: string | undefined }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("agents.templatePage");
   const nav = useTemplateNav(id);
   const open = templateSectionOf(section);
   return (
     <SettingsPage
       header={{
-        path: [
-          ...scope,
-          { label: "agents", href: "/agents" },
-          { label: "templates", href: TEMPLATES_TAB_HREF },
-        ],
+        path: [...scope, pw("agents", "/agents"), pw("templates", TEMPLATES_TAB_HREF)],
         title: "",
         loading: { title: true, avatar: true, actions: 1 },
       }}
@@ -144,6 +141,7 @@ function OffTemplate({
   component: OrgComponent;
 }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("agents.templatePage.off");
   const source = useTemplateSource();
   const { actionsOf, dialog, error } = useComponentSwitch({ orgId, admin });
@@ -156,8 +154,8 @@ function OffTemplate({
         header={{
           path: [
             ...scope,
-            { label: "agents", href: "/agents" },
-            { label: "templates", href: TEMPLATES_TAB_HREF },
+            pw("agents", "/agents"),
+            pw("templates", TEMPLATES_TAB_HREF),
             { label: component.name },
           ],
           title: component.name,

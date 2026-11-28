@@ -280,8 +280,6 @@ export type AgentMapTreeProps = {
 
 const countNodes = (n: AgentMapNode): number =>
   1 + n.children.reduce((s, c) => s + countNodes(c), 0);
-const countRunning = (n: AgentMapNode): number =>
-  (n.status === "running" ? 1 : 0) + n.children.reduce((s, c) => s + countRunning(c), 0);
 const depthOf = (n: AgentMapNode): number => 1 + Math.max(0, ...n.children.map(depthOf));
 
 /**
@@ -305,11 +303,9 @@ export function AgentMapTree({
   // the sub-agents only, the root (the conversation) not counted: the same number as the
   // composer's agents chip (§6.16.29, AC3 ruling 4)
   const agents = countNodes(root) - 1;
+  // no running count: the dots say it, as the chip (maintainer decision 2026-11-28)
   const count = [
     fillCopy(t(agents === 1 ? "agentsChip.one" : "agentsChip.many"), { n: agents }),
-    fillCopy(t("agentMap.running"), {
-      n: root.children.reduce((s, c) => s + countRunning(c), 0),
-    }),
     t("agentMap.hint"),
   ].join(" · ");
 
@@ -318,6 +314,8 @@ export function AgentMapTree({
       " · ",
     );
     const meta = `${n.model} · ${cost}`;
+    // line 2 names the model only on the root and where it differs from the root's
+    const showModel = depth === 0 || n.model !== root.model;
     const body = (
       <>
         <span className="cb-amap-node-line">
@@ -328,8 +326,8 @@ export function AgentMapTree({
         </span>
         {/* the model gives way first: time and tokens always stay whole */}
         <span className="cb-amap-node-meta" data-part="agent-node-meta">
-          <span className="cb-amap-node-model">{n.model}</span>
-          <span className="cb-amap-node-cost">{` · ${cost}`}</span>
+          {showModel ? <span className="cb-amap-node-model">{n.model}</span> : null}
+          <span className="cb-amap-node-cost">{showModel ? ` · ${cost}` : cost}</span>
         </span>
       </>
     );

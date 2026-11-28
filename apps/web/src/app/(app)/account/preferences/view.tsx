@@ -15,7 +15,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
 import {
   type Preferences,
@@ -62,6 +62,7 @@ export default function PreferencesView() {
 
 function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: string | null }) {
   const scope = usePagePath("home");
+  const pw = usePathWord("home");
   const t = useTranslations("preferences");
   const ta = useTranslations("appearance.personal");
   const tc = useTranslations("common");
@@ -104,7 +105,7 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
     onSuccess: (res) => qc.setQueryData(preferencesQuery(accountId).queryKey, res),
   });
   const header = {
-    path: [...scope, { label: "account", href: ACCOUNT_HOME }, { label: "preferences" }],
+    path: [...scope, pw("account", ACCOUNT_HOME), pw("preferences")],
     title: t("title"),
   };
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;

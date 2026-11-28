@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { PUSH_CATEGORIES, type PushRegistrationView } from "../../../../lib/push";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import {
@@ -45,6 +45,7 @@ export default function NotificationsView() {
 function Notifications({ accountId }: { accountId: string }) {
   const t = useTranslations("notifications");
   const scope = usePagePath("home");
+  const pw = usePathWord("home");
   const nav = useAccountNav();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -54,7 +55,7 @@ function Notifications({ accountId }: { accountId: string }) {
   const setPreference = useSetPushPreference(accountId);
   const push = usePushRegistration();
   const header = {
-    path: [...scope, { label: "account", href: ACCOUNT_HOME }, { label: "notifications" }],
+    path: [...scope, pw("account", ACCOUNT_HOME), pw("notifications")],
     title: t("title"),
     description: t("description"),
   };

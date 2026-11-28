@@ -1347,6 +1347,20 @@ it("prunes settled entries past retention, keeps owed ones, and a restart accept
       entry("recent", { retainUntilMs: 2 * hour }),
       entry("lost", { state: "unknown", identity: { pid: 123, token: "t" } }),
       entry("revoked", { revoked: true, stop: { outcome: "stopped" } }),
+      // a revocation recorded before the request arrived: it never launched, nothing is owed
+      entry("revoked-never-launched", {
+        state: "unknown",
+        hash: "revoked",
+        revoked: true,
+        stop: { outcome: "cancel-pending" },
+      }),
+      // a revoked lost process: its stop is owed until it is proven gone
+      entry("revoked-lost", {
+        state: "unknown",
+        identity: { pid: 124, token: "t" },
+        revoked: true,
+        stop: { outcome: "cancel-pending" },
+      }),
       entry("cancel-owed", { state: "unknown", stop: { outcome: "cancel-pending" } }),
       entry("uncleaned", {
         output: { locator: { committed: 0 }, state: "complete", interruptedCancellation: false },
@@ -1390,7 +1404,14 @@ it("prunes settled entries past retention, keeps owed ones, and a restart accept
   const kept = JSON.parse(await readFile(file, "utf8")).entries.map(
     (e: { ref: { operationId: string } }) => e.ref.operationId,
   );
-  expect(kept.sort()).toEqual(["cancel-owed", "lost", "new", "recent", "revoked", "uncleaned"]);
+  expect(kept.sort()).toEqual([
+    "cancel-owed",
+    "lost",
+    "new",
+    "recent",
+    "revoked-lost",
+    "uncleaned",
+  ]);
   // the last commit on disk is a successor that dropped entries of its predecessor
   const restarted = new MacOperationSupervisor(options);
   expect(await restarted.execute(stat("after", now + 30_000), "h-after", signal)).toEqual({
@@ -1399,6 +1420,75 @@ it("prunes settled entries past retention, keeps owed ones, and a restart accept
   });
   // a duplicate delivery of a pruned operation carries its long-past deadline: never run again
   await expect(restarted.execute(stat("settled", 100), "h", signal)).rejects.toThrow(/expired/);
+  // a pruned revocation too: its request arriving late is expired, never run
+  await expect(restarted.execute(stat("revoked-never-launched", 100), "h", signal)).rejects.toThrow(
+    /expired/,
+  );
+});
+
+it("removes a pruned revocation's control file once the pruning commit landed", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-prune-control-"));
+  dirs.push(stateDir);
+  const hour = 60 * 60 * 1000;
+  const ref = { executionId: "e-r", operationId: "r", instanceId: "d", instanceGeneration: "g" };
+  const file = join(stateDir, `operation-journal-${digest("d")}.json`);
+  const text = JSON.stringify({
+    version: 1,
+    entries: [
+      {
+        ref,
+        admitBeforeMs: 100,
+        hash: "revoked",
+        retainUntilMs: 100,
+        state: "unknown",
+        revoked: true,
+        stop: { outcome: "cancel-pending" },
+      },
+    ],
+  });
+  await writeFile(file, text);
+  await writeFile(`${file}.rollback`, text);
+  const control = join(stateDir, `operation-control-${digest(ref)}.json`);
+  await writeFile(
+    control,
+    JSON.stringify({ version: 1, ref, revoked: true, fault: false, stop: "cancel-pending" }),
+  );
+  const supervisor = new MacOperationSupervisor({
+    stateDir,
+    deviceId: "d",
+    instanceGeneration: "g",
+    now: () => 2 * hour,
+    start: async (r: MacWorkerRequest) => {
+      await r.beforeLaunch();
+      await r.onLaunch({ pid: 456, token: "child" });
+      return {
+        ready: Promise.resolve(),
+        completion: Promise.resolve({ size: 1, isDir: false }),
+        cancel: async () => {},
+      };
+    },
+  });
+  // any admission sweeps the journal
+  await supervisor.execute(
+    {
+      kind: "native" as const,
+      native: { method: "stat" as const, path: "/f" },
+      purpose: "operation" as const,
+      scope: { ...scope, operationId: "next", tag: "next", admitBeforeMs: 3 * hour },
+      grant,
+      stateDir,
+      pythonPath: "/usr/bin/python3",
+      beforeLaunch: async () => {},
+      onLaunch: async () => {},
+    },
+    "h-next",
+    signal,
+  );
+  const kept = JSON.parse(await readFile(file, "utf8")).entries.map(
+    (e: { ref: { operationId: string } }) => e.ref.operationId,
+  );
+  expect(kept).toEqual(["next"]);
+  expect((await readdir(stateDir)).filter((n) => n.startsWith("operation-control-"))).toEqual([]);
 });
 
 describe("orphans a lost device process left behind", () => {

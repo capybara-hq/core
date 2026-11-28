@@ -6,7 +6,7 @@ import { ComponentsTable, useOwnerFilter } from "../../../../../components/Admin
 import { adminItemTabs } from "../../../../../components/admin-item-tabs";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../components/shell/path";
 import { adminComponentsQuery } from "../../../../../lib/query/components";
 import { usePageQuery } from "../../../../../lib/query/page-query";
 import { useAdmin } from "../../../../../lib/query/workspace";
@@ -26,12 +26,13 @@ export default function AdminConnectorTemplatesView() {
 
 function AdminConnectorTemplates() {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents");
   const ti = useTranslations("adminItems.tabs");
   const list = usePageQuery(adminComponentsQuery("connector_template"));
   const owner = useOwnerFilter(list.kind === "ready" ? list.data.components : null);
   const header = {
-    path: [...scope, { label: "connectors", href: "/admin/connectors" }, { label: "templates" }],
+    path: [...scope, pw("connectors", "/admin/connectors"), pw("templates")],
     title: t("titles.connector_template"),
     description: t("descriptions.connector_template"),
     ...adminItemTabs("connectors", "templates", {

@@ -377,7 +377,9 @@ describe("/admin/agents/[id]", () => {
     expect(screen.getByRole("button", { name: A.actions.transfer })).toBeTruthy();
     expect(screen.getByRole("button", { name: A.actions.delete })).toBeTruthy();
     // the path links back to the list
-    expect(screen.getByRole("link", { name: "agents" }).getAttribute("href")).toBe("/admin/agents");
+    expect(screen.getByRole("link", { name: en.path.admin.agents }).getAttribute("href")).toBe(
+      "/admin/agents",
+    );
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     // an agent's owner is its 所有者 in zh (maintainer decision V, messages-parity.test.ts)
     expect(zh.adminItems.agents.actions).toEqual({ transfer: "转移所有者", delete: "删除" });

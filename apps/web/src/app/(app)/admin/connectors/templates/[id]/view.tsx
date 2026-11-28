@@ -15,7 +15,7 @@ import {
 import { ErrorFrame } from "../../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../../components/NoAccess";
 import { SetupGuideSection } from "../../../../../../components/SetupGuideSection";
-import { usePagePath } from "../../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../../components/shell/path";
 import { templateGuideIn } from "../../../../../../lib/catalog";
 import {
   componentDescription,
@@ -54,6 +54,7 @@ export default function AdminConnectorTemplateView({ id }: { id: string }) {
 
 function AdminConnectorTemplateRead({ id, orgId }: { id: string; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents.detail");
   const list = usePageQuery(adminComponentsQuery("connector_template"));
   if (list.kind === "notFound") return <NotFound />;
@@ -64,8 +65,8 @@ function AdminConnectorTemplateRead({ id, orgId }: { id: string; orgId: string |
         header={{
           path: [
             ...scope,
-            { label: "connectors", href: "/admin/connectors" },
-            { label: "templates", href: "/admin/connectors/templates" },
+            pw("connectors", "/admin/connectors"),
+            pw("templates", "/admin/connectors/templates"),
             { label: id },
           ],
           title: "",
@@ -90,6 +91,7 @@ function AdminConnectorTemplateRead({ id, orgId }: { id: string; orgId: string |
 
 function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents.detail");
   const locale = useLocale();
   const label = componentLabel(c, locale);
@@ -114,8 +116,8 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
         header={{
           path: [
             ...scope,
-            { label: "connectors", href: "/admin/connectors" },
-            { label: "templates", href: "/admin/connectors/templates" },
+            pw("connectors", "/admin/connectors"),
+            pw("templates", "/admin/connectors/templates"),
             { label: c.name },
           ],
           // the display name with its plugin's mark; the id stays in the path

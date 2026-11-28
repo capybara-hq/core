@@ -8,7 +8,7 @@ import { conversationRow, useConversationRowActions } from "../../../components/
 import { useCursorPages } from "../../../components/cursor-pages";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { usePathname } from "../../../i18n/navigation";
 import { avatarValue } from "../../../lib/agents";
 import type { ConversationListRow } from "../../../lib/conversations";
@@ -46,6 +46,7 @@ export default function ConversationsView() {
 function Conversations({ orgId }: { orgId: string }) {
   const t = useTranslations("conversations");
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const pathname = usePathname();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -90,7 +91,7 @@ function Conversations({ orgId }: { orgId: string }) {
   }
   const count = loading ? undefined : (read.data?.total ?? rows.length);
   const header = {
-    path: [...scope, { label: "conversations" }],
+    path: [...scope, pw("conversations")],
     title: t("title"),
     ...(count !== undefined ? { count } : {}),
     actions: [

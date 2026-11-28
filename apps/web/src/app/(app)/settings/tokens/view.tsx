@@ -23,7 +23,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../components/shell/path";
 import { type OrgRole, roleAtLeast } from "../../../../lib/members";
 import {
   createServiceToken,
@@ -58,6 +58,7 @@ export default function TokensView() {
 
 function Tokens({ orgId, actor }: { orgId: string; actor: OrgRole }) {
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("tokens");
   const tr = useTranslations("members.roles");
   const nav = useOrgSettingsNav();
@@ -110,11 +111,7 @@ function Tokens({ orgId, actor }: { orgId: string; actor: OrgRole }) {
   return (
     <SettingsPage
       header={{
-        path: [
-          ...scope,
-          { label: "settings", href: "/settings/organization" },
-          { label: "tokens" },
-        ],
+        path: [...scope, pw("settings", "/settings/organization"), pw("tokens")],
         title: t("title"),
         description: t("description"),
         actions: [{ label: t("create"), variant: "primary", onSelect: () => setCreating(true) }],

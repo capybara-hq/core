@@ -2750,11 +2750,15 @@ describe("/admin/plugins/sources: cards with a dialog", () => {
     await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     const user = userEvent.setup();
     await user.click(within(card("Acme")).getByRole("button", { name: s.refresh }));
-    expect(await screen.findAllByRole("alert")).toHaveLength(1);
+    const [first] = await screen.findAllByRole("alert");
+    // both failures read the same (an internal error) and an equal toast folds into the one
+    // there, so the first is closed before the toggle fails
+    await user.click(within(first as HTMLElement).getByRole("button"));
+    await waitFor(() => expect(screen.queryAllByRole("alert")).toHaveLength(0));
     await user.click(
       within(card("Acme")).getByRole("switch", { name: fill(s.enabledLabel, { name: "Acme" }) }),
     );
-    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(1));
   });
 
   it("a git source shows its ref and last commit; skipped entries are counted and listed", async () => {

@@ -20,7 +20,7 @@ import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
 import { cardActions } from "../../../components/PluginSwitch";
-import { usePagePath } from "../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
 import { type OwnerSide, ownerSide } from "../../../lib/catalog";
 import { usableRows } from "../../../lib/components";
@@ -56,6 +56,7 @@ const NO_PLUGIN = " own";
 function Skills({ orgId }: { orgId: string }) {
   const timeZone = useTimeZone();
   const scope = usePagePath("org");
+  const pw = usePathWord("org");
   const t = useTranslations("skills");
   const tc = useTranslations("orgComponents");
   const { me } = useSession();
@@ -133,7 +134,7 @@ function Skills({ orgId }: { orgId: string }) {
     <>
       <ListPage
         header={{
-          path: [...scope, { label: "skills" }],
+          path: [...scope, pw("skills")],
           title: t("title"),
           description: t("description"),
           ...(admin ? { actions: [{ ...upload, variant: "primary" as const }] } : {}),

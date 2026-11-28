@@ -14,7 +14,7 @@ import {
 } from "../../../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../../components/shell/path";
+import { usePagePath, usePathWord } from "../../../../../../components/shell/path";
 import { componentDescription, type PlatformComponent } from "../../../../../../lib/components";
 import { retryOnMountOf } from "../../../../../../lib/query/client";
 import {
@@ -45,6 +45,7 @@ export default function AdminAgentTemplateView({ id }: { id: string }) {
 
 function AdminAgentTemplateRead({ id, orgId }: { id: string; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents.detail");
   const list = usePageQuery(adminComponentsQuery("agent_template"));
   if (list.kind === "notFound") return <NotFound />;
@@ -55,8 +56,8 @@ function AdminAgentTemplateRead({ id, orgId }: { id: string; orgId: string | nul
         header={{
           path: [
             ...scope,
-            { label: "agents", href: "/admin/agents" },
-            { label: "templates", href: "/admin/agents/templates" },
+            pw("agents", "/admin/agents"),
+            pw("templates", "/admin/agents/templates"),
             { label: id },
           ],
           title: "",
@@ -79,6 +80,7 @@ function AdminAgentTemplateRead({ id, orgId }: { id: string; orgId: string | nul
 
 function AdminAgentTemplate({ c, orgId }: { c: PlatformComponent; orgId: string | null }) {
   const scope = usePagePath("admin");
+  const pw = usePathWord("admin");
   const t = useTranslations("adminComponents.detail");
   const description = componentDescription(c, useLocale());
   const [tab, setTab] = useState<Tab>("versions");
@@ -91,8 +93,8 @@ function AdminAgentTemplate({ c, orgId }: { c: PlatformComponent; orgId: string 
         header={{
           path: [
             ...scope,
-            { label: "agents", href: "/admin/agents" },
-            { label: "templates", href: "/admin/agents/templates" },
+            pw("agents", "/admin/agents"),
+            pw("templates", "/admin/agents/templates"),
             { label: c.name },
           ],
           title: c.name,
