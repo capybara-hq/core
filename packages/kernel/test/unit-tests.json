@@ -119,6 +119,7 @@
   "runtime/context/compaction.test.ts",
   "runtime/context/current-turn-compaction.test.ts",
   "runtime/context/fit.test.ts",
+  "runtime/context/idle-compaction-rules.test.ts",
   "runtime/context/in-context-boundary.live.test.ts",
   "runtime/context/in-context-compaction.test.ts",
   "runtime/context/pairing.test.ts",
