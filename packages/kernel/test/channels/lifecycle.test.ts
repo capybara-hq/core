@@ -115,8 +115,10 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-/** 新组织（启用 chan-mini）+ agent + 一个连接，等长连接连上。 */
-async function setup(name: string): Promise<{ orgId: string; agentId: string; connId: string }> {
+/** A new org (chan-mini enabled) + agent + one connection, without waiting for it to connect. */
+async function createConnection(
+  name: string,
+): Promise<{ orgId: string; agentId: string; connId: string }> {
   const orgId = await createOrgWithProviders(a, owner, name);
   const agentId = await createAgent(owner, orgId);
   const en = await owner({
@@ -136,10 +138,24 @@ async function setup(name: string): Promise<{ orgId: string; agentId: string; co
     },
   });
   expect(res.statusCode, res.body).toBe(201);
-  const connId = (res.json() as { channel: { id: string } }).channel.id;
-  await waitFor(async () => im.active(connId).length === 1, SCAN * 3, `connection ${name}`);
-  return { orgId, agentId, connId };
+  return { orgId, agentId, connId: (res.json() as { channel: { id: string } }).channel.id };
 }
+
+/** {@link createConnection}, then wait for the long connection. */
+async function setup(name: string): Promise<{ orgId: string; agentId: string; connId: string }> {
+  const created = await createConnection(name);
+  await waitFor(async () => im.active(created.connId).length === 1, SCAN * 3, `connection ${name}`);
+  return created;
+}
+
+const lastErrorOf = async (connId: string): Promise<string | null> =>
+  (
+    await db
+      .selectFrom("channel_connections")
+      .select("last_error")
+      .where("id", "=", connId)
+      .executeTakeFirstOrThrow()
+  ).last_error;
 
 const threadsOf = async (connId: string) =>
   (await sql`SELECT 1 FROM capybara.channel_threads WHERE connection_id = ${connId}`.execute(raw))
@@ -366,6 +382,23 @@ describe("渠道连接生命周期", () => {
     const snapshot = count();
     await sleep(4000);
     expect(count()).toBe(snapshot);
+  });
+
+  it("a connect failure is recorded, and cleared once the connection holds for a lease period", async () => {
+    im.failConnect(503);
+    let connId = "";
+    try {
+      ({ connId } = await createConnection("recovers"));
+      await waitFor(async () => (await lastErrorOf(connId)) !== null, SCAN * 3, "failure recorded");
+      expect(await lastErrorOf(connId)).toContain("503");
+    } finally {
+      im.failConnect(null);
+    }
+    await waitFor(async () => im.active(connId).length === 1, SCAN * 3, "reconnected");
+    // still shown until the connection has held for a whole lease period
+    expect(await lastErrorOf(connId)).not.toBeNull();
+    await waitFor(async () => (await lastErrorOf(connId)) === null, TTL * 2, "error cleared");
+    expect(im.active(connId)).toHaveLength(1);
   });
 
   it("滚动升级：没有加载该插件的副本不取租约、不写 last_error / 退避，出站任务推迟重试；有插件的副本接管并补投", async () => {
