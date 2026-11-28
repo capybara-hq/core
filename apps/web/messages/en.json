@@ -2284,7 +2284,11 @@
       "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner.",
       "serviceTitle": "The agent's browser wants to reach {host}",
       "serviceNote": "Open network mode stops these asks",
-      "serviceOtherApprover": "The agent's browser wants to reach {hosts}; waiting for the device owner."
+      "serviceOtherApprover": "The agent's browser wants to reach {hosts}; waiting for the device owner.",
+      "loopbackTitle": "Allow the browser to reach port {port} on this device?",
+      "loopbackDatabase": "This is a local database port.",
+      "loopbackAllow": "Allow for this conversation",
+      "loopbackOtherApprover": "Only the device's owner can open local port {port}."
     },
     "permissionScope": {
       "intro": "Approving grants this access for this operation only. Each directory includes everything inside it.",

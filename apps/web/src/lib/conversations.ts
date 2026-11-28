@@ -432,6 +432,8 @@ type EventBody =
         policy?: ApprovalPolicy;
         /** A network ask: the device-layer hosts asked for (display only). */
         network?: { hosts: string[] };
+        /** A loopback port ask: the service, the port and whether it is a database port. */
+        loopback?: { service: string; port: number; database: boolean };
         /** A command review ask: what is held and why (display only). */
         command?: CommandAsk;
         /** A secure input request: what the values are for and the field paths (never a value). */

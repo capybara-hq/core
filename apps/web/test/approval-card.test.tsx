@@ -726,3 +726,86 @@ describe("ApprovalCard: a per-call sandbox escalation", () => {
     nothingBelow(container);
   });
 });
+
+describe("ApprovalCard: a loopback port ask (browser loopback port grants §5.2)", () => {
+  const LOOPBACK = {
+    kind: "loopback" as const,
+    deviceId: "d1",
+    service: "browser",
+    url: "http://localhost:5432/",
+    port: 5432,
+    database: false,
+    attempt: 1,
+  };
+  const APPROVAL_LOOPBACK = (detail: Partial<typeof LOOPBACK> = {}): Approval => ({
+    ...APPROVAL_COMMAND(),
+    kind: "network",
+    command: null,
+    detail: { ...LOOPBACK, ...detail },
+    scopes: ["session"],
+  });
+  const loopbackItem = (over: Partial<ApprovalItem> = {}) =>
+    item({
+      toolKey: "browser_open",
+      command: undefined as unknown as CommandAsk,
+      ...over,
+    });
+
+  it("renders a loopback ask with its port and one allow choice", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL_LOOPBACK() }),
+    });
+    const { container } = renderPage(<ApprovalCard orgId="o1" item={loopbackItem()} />, {
+      locale: "en",
+    });
+    expect(
+      await screen.findByRole("group", {
+        name: en.approval.network.loopbackTitle.replace("{port}", "5432"),
+      }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Allow for this conversation" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Allow once|Add to this device/ })).toBeNull();
+    expect(container.querySelectorAll('input[type="checkbox"]').length).toBe(0);
+  });
+
+  it("names a database port", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, { approval: APPROVAL_LOOPBACK({ database: true }) }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={loopbackItem()} />, { locale: "zh" });
+    expect(await screen.findByText(zh.approval.network.loopbackDatabase)).toBeTruthy();
+  });
+
+  it("approves with scope session and no hosts", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL_LOOPBACK() }),
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () =>
+        json(200, { approval: { ...APPROVAL_LOOPBACK(), status: "approved", scope: "session" } }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={loopbackItem()} />, { locale: "en" });
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("button", { name: "Allow for this conversation" }));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      decision: "approve",
+      scope: "session",
+    });
+  });
+
+  it("renders from the log before the detail is read", async () => {
+    stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => new Promise(() => {}) });
+    renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={loopbackItem({ loopback: { service: "browser", port: 3000, database: false } })}
+      />,
+      { locale: "en" },
+    );
+    expect(
+      await screen.findByRole("group", {
+        name: en.approval.network.loopbackTitle.replace("{port}", "3000"),
+      }),
+    ).toBeTruthy();
+  });
+});

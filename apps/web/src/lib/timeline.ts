@@ -250,6 +250,8 @@ export interface ApprovalItem {
   approver?: Waiter;
   /** A network ask (network ask spec §6.5): the device-layer hosts asked for. */
   network?: { hosts: string[] };
+  /** A loopback port ask (browser loopback port grants spec §5.2): the service, port and kind. */
+  loopback?: { service: string; port: number; database: boolean };
   /** A command review ask (auto mode spec §5.4): what is held and why. */
   command?: CommandAsk;
   /** A secure input request: what the values are for and the field paths (never a value). */
@@ -2057,6 +2059,7 @@ export function buildEventTimeline(
             ...(e.payload.network !== undefined
               ? { network: { hosts: [...e.payload.network.hosts] } }
               : {}),
+            ...(e.payload.loopback !== undefined ? { loopback: { ...e.payload.loopback } } : {}),
             ...(e.payload.command !== undefined ? { command: e.payload.command } : {}),
             ...(e.payload.secureInput !== undefined
               ? {
