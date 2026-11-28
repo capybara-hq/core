@@ -956,4 +956,39 @@ describe("loopback port asks", () => {
         : [],
     ).toEqual(["cdn.example.org", "blocked.org"]);
   });
+
+  it("resumes a ready-grant rerun after a crash between the refusal and attempt 2", async () => {
+    await profile("request-approval");
+    // grant already exists from the panel before the call runs
+    await k.app.get(DeviceAccessService).grantLoopbackPort(
+      { extension: "fake-device-access", services: ["echo"], loopbackPorts: true },
+      {
+        orgId,
+        accountId: s.accountId,
+        conversationId: s.conversationId,
+        service: "echo",
+        port: 3999,
+      },
+    );
+    const pipeline = k.app.get(ToolPipeline) as unknown as {
+      runCall: (...args: unknown[]) => Promise<unknown>;
+    };
+    const original = pipeline.runCall;
+    let crashed = false;
+    vi.spyOn(pipeline, "runCall").mockImplementation(function (this: unknown, ...args: unknown[]) {
+      if (args[3] === 2 && !crashed) {
+        crashed = true;
+        return Promise.reject(new ExecutionRevoked());
+      }
+      return original.apply(this, args);
+    });
+    await navigate();
+    await waitForTerminal(db, s.conversationId, 1, 30_000);
+    expect(crashed).toBe(true);
+    expect(await startedAttempts()).toEqual([1, 2]);
+    const [r, ...rest] = await results();
+    expect(rest).toEqual([]);
+    expect(r?.content).toContain(`Loaded ${URL_3999}.`);
+    expect(r?.content).not.toContain("Result unknown");
+  });
 });
