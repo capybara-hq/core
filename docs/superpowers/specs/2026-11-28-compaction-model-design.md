@@ -277,9 +277,9 @@ transaction, errors swallowed) resolves the purpose after the settings and prefe
 - Compaction-model mode skips check 4 (cache lifetime) and check 6 (quality gate, settled point,
   fit plan): none of them bears on a transcript summary.
 - Owed job: the same outbox row (queue `cap-kernel-maintenance`, name `idle-compaction`, job id
-  `idle-compact-<runId>`, `orgId` set), `runAt = now + idleDelayMinutes × 60_000`, with `now` taken in `IdleArm.decide` (the arm decision
-  runs in the worker just before `RunFinish.finish`, so `finished_at` is not known yet; the
-  difference is milliseconds), data
+  `idle-compact-<runId>`, `orgId` set), `runAt = now + idleDelayMinutes × 60_000`, with `now` taken
+  in `IdleArm.decide` (the arm decision runs in the worker just before `RunFinish.finish`, so
+  `finished_at` is not known yet; the difference is milliseconds), data
   `{ orgId, conversationId, runId, armedSeq, mode: "compaction_model" }` (no `cacheCallSeq`,
   `expiresAt`); cache mode writes `mode: "cache"` with its existing fields. `IdleCompactionIntent`
   becomes a union on `mode`. The `OUTBOX_JOBS` `idempotent` sentence is unchanged (the job still
@@ -301,25 +301,25 @@ the previous release may still be in the outbox or queue across a deploy; every 
   disabled C since arming, the job ends `no_model`: it never falls back to V, and never switches to
   cache mode (no expiry was derived).
 - A cache-mode job that finds a compaction model configured at fire time (C wins over in-context,
-  §4.2) ends `no_prefix` and writes nothing: the probe reports `inContext: false`, and no background
-  call the job was not armed for is made. The next finished run arms in compaction-model mode
-  (behaviour, decided in the plan review).
+  §4.2) ends `no_prefix` and writes nothing: the probe reports `inContext: false`, and no
+  background call the job was not armed for is made. The next finished run arms in
+  compaction-model mode (behaviour, decided in the plan review).
 - Check 8 (`small`, size and the 20k growth) via `probeIdle`, which runs `prepareCompaction` in
   the job's mode.
 - Check 9 (`no_prefix`) only in cache mode.
 
 The run: `RunQueue.startIdleCompaction(conversationId, armedSeq, mode)` otherwise unchanged (row
 lock, `compact_origin = 'idle'`, owner as trigger account, preemption by any input, no queue pause).
-The run worker knows only the row, not the job, so the mode is stored on it: `runs.idle_mode` (§7.1),
-which the worker passes to `CompactionService.force`; a run never switches modes between arm, fire
-and run. `CompactOptions.requireInContext` is
-replaced by `idle: "cache" | "compaction_model"`: `cache` keeps today's in-context-or-nothing;
-`compaction_model` requires C (if it no longer resolves when the run starts, the run writes nothing
-and finishes `completed`) and summarizes the transcript with the automatic plan (`keepRecentTurns`,
-the full tail budget; never `manual`). Progress shows from the plan on, as for any transcript
-compaction; because the summarizer is chosen right after the plan and before `hooks.planned` (§4.2),
-a run whose C is gone ends before any progress row. Everything else of idle spec §5 (preemption, abort, shutdown, the quiet UI, no push,
-the conversation list staying still) applies to both modes.
+The run worker knows only the row, not the job, so the mode is stored on it: `runs.idle_mode`
+(§7.1), which the worker passes to `CompactionService.force`; a run never switches modes between
+arm, fire and run. `CompactOptions.requireInContext` is replaced by
+`idle: "cache" | "compaction_model"`: `cache` keeps today's in-context-or-nothing;
+`compaction_model` requires C (if it no longer resolves when the run starts, the run writes
+nothing and finishes `completed`) and summarizes the transcript with the automatic plan
+(`keepRecentTurns`, the full tail budget; never `manual`). Progress shows from the plan on, as for
+any transcript compaction; because the summarizer is chosen right after the plan and before
+`hooks.planned` (§4.2), a run whose C is gone ends before any progress row. Everything else of idle spec §5 (preemption, abort, shutdown, the
+quiet UI, no push, the conversation list staying still) applies to both modes.
 
 ### 6.4 The delay setting
 

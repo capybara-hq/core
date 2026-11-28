@@ -13,7 +13,10 @@ export interface CompactionSettings {
   reserveTokens: number;
   /** The summary call's output cap (1,024–32,000 tokens). */
   maxOutputTokens: number;
-  /** Compact an idle conversation from the prompt cache before the cache expires (idle compaction). */
+  /**
+   * Compact idle conversations in the background (after idleDelayMinutes with a compaction model,
+   * else before a long prompt cache expires).
+   */
   idleEnabled: boolean;
   /** The smallest context an idle compaction runs on, in tokens (50,000–2,000,000). */
   idleMinTokensFloor: number;
