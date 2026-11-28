@@ -128,6 +128,7 @@
 .cb-cmm-drill {
   display: inline-flex;
   flex: none;
+  align-self: center;
   align-items: center;
   justify-content: center;
   width: var(--cb-row-default);
@@ -141,7 +142,6 @@
   cursor: pointer;
 }
 .cb-cmm-drill:hover {
-  background: var(--cb-hover);
   color: var(--cb-ink);
 }
 .cb-cmm-drill:focus-visible {
@@ -318,17 +318,7 @@
 .cb-cmm[data-form="sheet"] .cb-cmm-loading {
   padding: var(--cb-space-3) var(--cb-space-4);
 }
-/* the sheet's drill-in: the head over the search field; the drill button is the row's whole
-   trailing touch.hit area, flush with the row's end */
-.cb-cmm[data-form="sheet"] .cb-cmm-level {
-  margin-bottom: var(--cb-touch-sheet-inset);
-  padding: 0;
-  border-bottom: 0;
-}
-.cb-cmm[data-form="sheet"] .cb-cmm-back {
-  width: var(--cb-touch-hit);
-  height: var(--cb-touch-hit);
-}
+/* the sheet's drill button is the row's whole trailing touch.hit area, flush with the row's end */
 .cb-cmm[data-form="sheet"] .cb-cmm-drill {
   width: var(--cb-touch-hit);
   height: var(--cb-touch-hit);
