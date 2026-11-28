@@ -68,6 +68,7 @@ import {
   invocableSkillsQuery,
   mentionableConnectorsQuery,
 } from "../../lib/query/conversation";
+import { keys } from "../../lib/query/keys";
 import { libraryFileSearchQuery } from "../../lib/query/library";
 import { useAppMutation } from "../../lib/query/mutation";
 import { CONVERSATION_MENTION_ROWS, conversationMentionQuery } from "../../lib/query/shell";
@@ -131,6 +132,17 @@ function normalize(segments: readonly ComposerSegment[]): ComposerSegment[] {
     } else out.push(s);
   }
   return out;
+}
+
+/** The distinct entities the draft's tokens name (of `kind`, or of every kind but the skill). */
+function distinctTokens(segments: readonly ComposerSegment[], kind?: ComposerTokenKind): number {
+  return new Set(
+    segments.flatMap((s) =>
+      isToken(s) && s.kind !== "skill" && (kind === undefined || s.kind === kind)
+        ? [`${s.kind}:${s.id}`]
+        : [],
+    ),
+  ).size;
 }
 
 /** The draft holds no text (whitespace aside) and no token. */
@@ -295,7 +307,8 @@ const str = (v: unknown): string | undefined => (typeof v === "string" ? v : und
 /**
  * The draft's tokens a refusal names, in draft order: a connector the agent cannot use
  * (`conversation.connector_unavailable`), a resource with nothing to read
- * (`connector.resource_unreadable`), a project file not in the project
+ * (`connector.resource_unreadable`), a connector's resources the agent cannot read or a connector
+ * gone (`connector.resources_disabled`, `connector.not_found` naming its `connectorId`), a project file not in the project
  * (`conversation.project_file_unavailable`, `device.path_outside_project`), a conversation that
  * cannot be referenced (`conversation.reference_unavailable`, `conversation.reference_self`), a
  * library file that is gone or not ready (`file.*` naming its `fileId`). None for another error.
@@ -312,6 +325,21 @@ export function refusedTokens(e: unknown, segments: readonly ComposerSegment[]):
         if (id !== undefined) named.push({ kind: "connector", match: (x) => x === id, ...extra });
         break;
       }
+      case "connector.resources_disabled":
+      case "connector.not_found": {
+        // a connector's resources the agent cannot read, or a connector gone: its resource
+        // tokens (the one URI when named), and for a gone one its connector tokens too
+        const id = str(d.connectorId);
+        const uri = str(d.uri);
+        if (id === undefined) break;
+        named.push({
+          kind: "resource",
+          match: (x) => (uri !== undefined ? x === resourceId(id, uri) : x.startsWith(`${id}:`)),
+        });
+        if (e.code === "connector.not_found" && uri === undefined)
+          named.push({ kind: "connector", match: (x) => x === id });
+        break;
+      }
       case "connector.resource_unreadable": {
         const id = str(d.connectorId);
         const uri = str(d.uri);
@@ -322,11 +350,17 @@ export function refusedTokens(e: unknown, segments: readonly ComposerSegment[]):
       case "conversation.project_file_unavailable":
       case "device.path_outside_project": {
         const path = str(d.path);
-        if (path !== undefined) {
-          const want = normalizeProjectPath(path);
+        if (reason === "no_project") {
+          // no project to reference files in: every project file token
+          named.push({ kind: "projectFile", match: () => true, ...extra });
+        } else if (path !== undefined) {
+          // a path clipped in the details ("…" at the end) matches by its prefix
+          const cut = path.endsWith("…");
+          const want = normalizeProjectPath(cut ? path.slice(0, -1) : path);
           named.push({
             kind: "projectFile",
-            match: (x) => normalizeProjectPath(x) === want,
+            match: (x) =>
+              cut ? normalizeProjectPath(x).startsWith(want) : normalizeProjectPath(x) === want,
             ...extra,
           });
         }
@@ -692,7 +726,8 @@ export function ComposerBar({
   /** Files attached any way (a drop, a paste, the picker) count as typing. */
   const addFiles = (list: File[]) => {
     dismissSuggestion();
-    drafts.add(list);
+    // library file tokens count toward the per-message file cap
+    drafts.add(list, distinctTokens(segmentsNow.current, "file"));
   };
 
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -857,7 +892,11 @@ export function ComposerBar({
     setRefused([]);
     const taken = drafts.take(uploads.map((f) => f.key));
     const restore = (marks: RefusedToken[]) => {
-      const cur = segmentsNow.current;
+      // a skill picked while the send was out gives way to the sent one: one skill per message
+      const sentSkill = sentSegments.some((x) => isToken(x) && x.kind === "skill");
+      const cur = sentSkill
+        ? withoutTokens(segmentsNow.current, (x) => x.kind === "skill")
+        : segmentsNow.current;
       putSegments(blank(cur) ? sentSegments : normalize([...sentSegments, "\n", ...cur]));
       setPickedSkill((p) => p ?? sentPicked);
       setRefused(marks);
@@ -909,7 +948,14 @@ export function ComposerBar({
       if (r.ok) {
         draft.current = undefined;
       } else {
-        restore(refusedTokens(r.error, sentSegments));
+        const marks = refusedTokens(r.error, sentSegments);
+        restore(marks);
+        // the agent's connectors changed under the menu: read them again
+        if (
+          agentId !== undefined &&
+          marks.some((x) => x.kind === "connector" || x.kind === "resource")
+        )
+          void qc.invalidateQueries({ queryKey: keys.org(orgId).mentionableConnectors(agentId) });
         drafts.markFailed(r.error);
       }
     } catch (e) {
@@ -943,12 +989,16 @@ export function ComposerBar({
       return;
     }
     const kind = tr.trigger === "@" ? "at" : "slash";
-    setMenu((cur) => {
-      if (cur?.trigger && cur.kind === kind) return { ...cur, q: tr.query, atStart: tr.atStart };
-      const extra = opening.current ?? {};
-      opening.current = null;
-      return { kind, trigger: true, q: tr.query, atStart: tr.atStart, ...extra };
-    });
+    // what a + row asked the new menu to list, taken once here: the updater below stays pure
+    // (StrictMode calls it twice)
+    const following = menu?.trigger === true && menu.kind === kind;
+    const extra = following ? {} : (opening.current ?? {});
+    if (!following) opening.current = null;
+    setMenu((cur) =>
+      cur?.trigger && cur.kind === kind
+        ? { ...cur, q: tr.query, atStart: tr.atStart }
+        : { kind, trigger: true, q: tr.query, atStart: tr.atStart, ...extra },
+    );
     if (kind === "slash" && !(menu?.trigger && menu.kind === "slash")) {
       void loadSkills(true);
       qc.fetchQuery(connectorPromptsQuery(orgId)).catch((e) => toast.error(errorMessage(e)));
@@ -981,17 +1031,23 @@ export function ComposerBar({
   function insert(token: ComposerTokenData) {
     const cur = segmentsNow.current.filter(isToken);
     const already = cur.some((x) => x.kind === token.kind && x.id === token.id);
-    const cap = MAX_OF_KIND[token.kind];
-    const ofKind = new Set(cur.filter((x) => x.kind === token.kind).map((x) => x.id)).size;
-    if (!already && ((cap !== undefined && ofKind >= cap) || cur.length >= MAX_TOKENS)) {
-      toast.error(t("tokenLimit", { max: cap !== undefined && ofKind >= cap ? cap : MAX_TOKENS }));
-      return;
-    }
-    // file tokens and uploads share the per-message file cap
-    const max = drafts.limits.maxPerMessage;
-    if (!already && token.kind === "file" && ofKind + files.length >= max) {
-      toast.error(t("filesLimit", { max }));
-      return;
+    if (!already && token.kind !== "skill") {
+      const cap = MAX_OF_KIND[token.kind];
+      const ofKind = distinctTokens(segmentsNow.current, token.kind);
+      if (cap !== undefined && ofKind >= cap) {
+        toast.error(t("tokenLimit", { max: cap }));
+        return;
+      }
+      if (distinctTokens(segmentsNow.current) >= MAX_TOKENS) {
+        toast.error(t("tokenTotalLimit", { max: MAX_TOKENS }));
+        return;
+      }
+      // file tokens and uploads share the per-message file cap
+      const max = drafts.limits.maxPerMessage;
+      if (token.kind === "file" && ofKind + files.length >= max) {
+        toast.error(t("filesLimit", { max }));
+        return;
+      }
     }
     const m = menu;
     setMenu(null);
@@ -1013,7 +1069,8 @@ export function ComposerBar({
     setRendering(true);
     try {
       const r = await renderPrompt({ p, values });
-      editor.current?.replace([r.text]);
+      // where the `/` and its query stood; the rest of the draft stays
+      editor.current?.insertText(r.text);
       setArgsFor(null);
     } catch (e) {
       toast.error(errorMessage(e));
@@ -1223,8 +1280,8 @@ export function ComposerBar({
 
   /**
    * A connector row (composer inline tokens spec §4): its icon, its name, its description (or
-   * "Connect your account first"); waiting for setup it is disabled with 待配置; with readable
-   * resources a → opens them. The row's pick inserts the connector's token.
+   * "Connect your account first"); waiting for setup it is disabled with its Needs setup badge;
+   * with readable resources a → opens them. The row's pick inserts the connector's token.
    */
   const connectorItem = (c: MentionableConnector, fromPlus: boolean): ComposerMenuItem => {
     const waiting = c.state === "needs_config";
@@ -1273,7 +1330,9 @@ export function ComposerBar({
                 {
                   label: c.name,
                   search: c.slug,
-                  ...(c.description !== undefined ? { description: c.description } : {}),
+                  ...(mentionableDescriptionOf(c, locale) !== undefined
+                    ? { description: mentionableDescriptionOf(c, locale) as string }
+                    : {}),
                 },
                 q,
               ),
@@ -1383,7 +1442,6 @@ export function ComposerBar({
             },
           ]
         : []),
-      ...unavailableGroup(resources?.unavailable),
     ];
   };
 
@@ -1632,6 +1690,7 @@ export function ComposerBar({
     const r = refusalOf(s);
     return r === undefined ? plain : { ...plain, state: "refused", reason: refusalCopy(r) };
   });
+  const refusedCount = new Set(refusedNow.map((r) => `${r.kind}:${r.id}`)).size;
   const firstRefused = shownSegments.find(
     (s): s is ComposerTokenData => isToken(s) && s.state === "refused",
   );
@@ -1721,7 +1780,10 @@ export function ComposerBar({
       {...(firstRefused !== undefined
         ? {
             refused: {
-              label: firstRefused.label,
+              label:
+                refusedCount > 1
+                  ? `${firstRefused.label} (+${refusedCount - 1})`
+                  : firstRefused.label,
               reason: firstRefused.reason ?? "",
               onRemove: () => {
                 putSegments(withoutTokens(segmentsNow.current, (x) => refusalOf(x) !== undefined));
@@ -1834,11 +1896,18 @@ export function ComposerBar({
           onConfirm={(paths) => {
             dismissSuggestion();
             // each picked path not in the draft yet becomes a token at the caret
-            const room = MAX_PROJECT_FILES - new Set(projectTokens).size;
+            const kindRoom = MAX_PROJECT_FILES - new Set(projectTokens).size;
+            const totalRoom = MAX_TOKENS - distinctTokens(segmentsNow.current);
+            const room = Math.max(Math.min(kindRoom, totalRoom), 0);
             const fresh = [...new Set(paths)].filter((p) => !projectTokens.includes(p));
-            for (const path of fresh.slice(0, Math.max(room, 0)))
+            for (const path of fresh.slice(0, room))
               editor.current?.insertToken({ kind: "projectFile", id: path, label: path });
-            if (fresh.length > room) toast.error(t("tokenLimit", { max: MAX_PROJECT_FILES }));
+            if (fresh.length > room)
+              toast.error(
+                kindRoom <= totalRoom
+                  ? t("tokenLimit", { max: MAX_PROJECT_FILES })
+                  : t("tokenTotalLimit", { max: MAX_TOKENS }),
+              );
           }}
           onUnsupported={(e) => {
             const reason = errorMessage(e);

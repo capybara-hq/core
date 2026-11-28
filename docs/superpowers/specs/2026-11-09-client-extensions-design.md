@@ -430,7 +430,7 @@ slots and the overlay draw whatever they like.
 
 A replacement may render `builtin` (to wrap or decorate the default) or replace it entirely; the
 composer frame must render `children` exactly once, inside the frame (the host checks after every
-commit and on every DOM change inside the slot that it holds exactly one composer textarea: none,
+commit and on every DOM change inside the slot that it holds exactly one composer text box, the editor's `data-part="composer-input"`: none,
 two, or one portaled out of the frame all count as crashed, §10.3).
 
 `shell.brand` receives `{ builtin, collapsed, panel }` where `panel` is `"full" | "rail" |

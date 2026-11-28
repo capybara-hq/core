@@ -132,6 +132,29 @@ describe("UserBubble (§6.16.6)", () => {
     expect(body.children[1]?.getAttribute("data-part")).toBe("inline-token");
   });
 
+  it("a token with an action opens it: a link through the provider, or a button", async () => {
+    const onOpen = vi.fn();
+    const conv = { kind: "conversation" as const, id: "c2", label: "Pricing" };
+    const { container } = wrap(
+      <UserBubble
+        segments={["see ", conv, " and ", fileToken, " or ", slackToken]}
+        tokenAction={(t) =>
+          t.kind === "conversation"
+            ? { href: `/chat/${t.id}` }
+            : t.kind === "file"
+              ? { onOpen }
+              : undefined
+        }
+      />,
+    );
+    const link = screen.getByRole("link", { name: "会话：Pricing" });
+    expect(link.getAttribute("href")).toBe("/chat/c2");
+    await userEvent.click(screen.getByRole("button", { name: "文件：a.pdf" }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    // a token without an action stays a mark, never a control
+    expect(container.querySelectorAll('[data-part="inline-token-link"]')).toHaveLength(2);
+  });
+
   it("token names read in line order", () => {
     const { container } = wrap(<UserBubble segments={["a ", slackToken, " b ", fileToken]} />);
     const names = [...container.querySelectorAll('[data-part="inline-token"]')].map((n) =>

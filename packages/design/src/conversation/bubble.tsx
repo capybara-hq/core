@@ -13,8 +13,8 @@ import { Avatar } from "../display/avatar";
 import type { PersonLike } from "../display/person-name";
 import { Icon } from "../icons/icon";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
-import type { ComposerSegment } from "./composer-editor/segments";
-import { InlineToken, skillText } from "./composer-editor/token";
+import type { ComposerSegment, ComposerTokenData } from "./composer-editor/segments";
+import { InlineToken, type InlineTokenAction, skillText } from "./composer-editor/token";
 import { fillCopy } from "./tool-copy";
 
 /**
@@ -53,6 +53,11 @@ export type UserBubbleProps = {
    * (jsdom lays nothing out).
    */
   referenceLong?: boolean;
+  /**
+   * What a token of `segments` opens: a referenced conversation's page, a library file's preview.
+   * Such a token is a link or a button (focusable, its focus ring); the others stay marks.
+   */
+  tokenAction?(token: ComposerTokenData): InlineTokenAction | undefined;
 } & ({ text: string; segments?: never } | { text?: never; segments: ComposerSegment[] });
 
 /** The clamp of a long message in prose lines (`layout.bubble-clamp` = 8 × `type.prose.line`). */
@@ -86,6 +91,15 @@ function segmentsText(segments: ComposerSegment[]): string {
   return segments
     .map((x) => (typeof x === "string" ? x : x.kind === "skill" ? skillText(x.label) : x.label))
     .join("");
+}
+
+/** The `action` prop of a bubble's token, or none. */
+function actionOf(
+  of: UserBubbleProps["tokenAction"],
+  token: ComposerTokenData,
+): { action?: InlineTokenAction } {
+  const action = of?.(token);
+  return action === undefined ? {} : { action };
 }
 
 /** The skill chip inside a bubble (§6.16.6): the composer's chip without its remove button. */
@@ -136,6 +150,7 @@ export function UserBubble({
   author,
   defaultExpanded,
   referenceLong,
+  tokenAction,
 }: UserBubbleProps): JSX.Element {
   const t = useDesignT();
   const text = segments ? segmentsText(segments) : (textProp ?? "");
@@ -197,7 +212,7 @@ export function UserBubble({
                       <Fragment key={i}>{seg}</Fragment>
                     ) : (
                       // biome-ignore lint/suspicious/noArrayIndexKey: a fixed, ordered list
-                      <InlineToken key={i} token={seg} />
+                      <InlineToken key={i} token={seg} {...actionOf(tokenAction, seg)} />
                     ),
                   )
                 : text}

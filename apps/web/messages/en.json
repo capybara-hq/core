@@ -1875,7 +1875,8 @@
       "noAtMatch": "No matching connectors, files or conversations",
       "connectorsFailed": "Connectors could not be read: {reason}"
     },
-    "tokenLimit": "At most {max} of these per message."
+    "tokenLimit": "At most {max} of these per message.",
+    "tokenTotalLimit": "At most {max} references per message."
   },
   "ui": {
     "empty": "Nothing here yet.",

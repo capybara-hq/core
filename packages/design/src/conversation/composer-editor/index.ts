@@ -10,4 +10,4 @@ export {
   type ComposerTokenKind,
   segmentsPlainText,
 } from "./segments";
-export { InlineToken } from "./token";
+export { InlineToken, type InlineTokenAction } from "./token";

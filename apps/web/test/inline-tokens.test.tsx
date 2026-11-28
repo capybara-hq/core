@@ -3,8 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { draftKey } from "../src/components/conversation/ComposerBar";
+import { draftKey, refusedTokens } from "../src/components/conversation/ComposerBar";
 import { startFirstMessage } from "../src/components/conversation/first-message-attempt";
+import { ApiClientError } from "../src/lib/api";
 import type { ConversationEvent, FirstMessageRequest } from "../src/lib/conversations";
 import { personText } from "../src/lib/timeline";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
@@ -369,6 +370,199 @@ describe("composer tokens", () => {
       (bodyOf(posts(calls)[i]) as { clientMessageId: string }).clientMessageId;
     // the same draft is the same message: the retry keeps its id
     expect(id(1)).toBe(id(0));
+  });
+});
+
+describe("composer review fixes", () => {
+  it("a prompt picked mid-sentence goes where its / stood, the rest of the draft kept", async () => {
+    const calls = chatApi({
+      [`GET ${ORG}/connectors/prompts`]: () =>
+        json(200, {
+          prompts: [
+            {
+              connectorId: SLACK,
+              connectorSlug: "slack",
+              connectorName: "Slack",
+              name: "standup",
+              arguments: [],
+            },
+          ],
+          unavailable: [],
+        }),
+      [`POST ${ORG}/connectors/${SLACK}/prompts/standup`]: () => json(200, { text: "STANDUP" }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    await findComposerBox();
+    await mentionSlack("ask ", "then /st");
+    const el = await menu();
+    await within(el).findByRole("option", { name: /standup/ });
+    pressComposer("Enter");
+    await vi.waitFor(() =>
+      expect(calls.some((c) => c.url === `${ORG}/connectors/${SLACK}/prompts/standup`)).toBe(true),
+    );
+    await vi.waitFor(() => expect(draftText()).toBe("ask @Slack then STANDUP"));
+    expect(composerTokens()).toHaveLength(1);
+  });
+
+  it.each([
+    ["File library", "files"],
+    ["a connector's →", "level"],
+  ])("＋ → %s opens its menu under StrictMode", async (_name, which) => {
+    chatApi({
+      [`GET ${ORG}/files`]: () =>
+        json(200, {
+          files: [
+            {
+              id: "lf1",
+              name: "report.pdf",
+              contentType: "application/pdf",
+              size: 1,
+              origin: "upload",
+              agentId: null,
+              sourceConversation: null,
+              versions: 1,
+              createdAt: "2026-11-24T08:00:00Z",
+              previewable: null,
+            },
+          ],
+          next: null,
+        }),
+      [`GET ${ORG}/connectors/resources`]: () =>
+        json(200, {
+          resources: [
+            {
+              connectorId: SLACK,
+              connectorSlug: "slack",
+              connectorName: "Slack",
+              uri: "slack://general",
+              name: "general",
+            },
+          ],
+        }),
+    });
+    await renderChatRoute({ strict: true });
+    await screen.findAllByText("hi");
+    await findComposerBox();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Attach files" }));
+    const plus = await menu();
+    if (which === "files") {
+      await user.click(
+        await within(plus).findByRole("option", { name: en.chat.composerMenu.library }),
+      );
+      const el = await menu();
+      await within(el).findByRole("option", { name: /report\.pdf/ });
+      // only the library's files: no connectors group
+      expect(within(el).queryByRole("option", { name: /Slack/ })).toBeNull();
+    } else {
+      await within(plus).findByRole("option", { name: /Slack/ });
+      await user.click(
+        within(plus).getByRole("button", {
+          name: en.chat.composerMenu.drill.replace("{name}", "Slack"),
+        }),
+      );
+      await within(await menu()).findByRole("option", { name: /general/ });
+    }
+  });
+
+  it("refusals name resource, connector and project file tokens", () => {
+    const err = (code: string, details: unknown[]) =>
+      new ApiClientError(422, code, "refused", [], details);
+    const res = { kind: "resource" as const, id: `${SLACK}:slack://a`, label: "a" };
+    const res2 = { kind: "resource" as const, id: `${SLACK}:slack://b`, label: "b" };
+    const conn = { kind: "connector" as const, id: SLACK, label: "Slack" };
+    const pf = { kind: "projectFile" as const, id: "src/a.ts", label: "src/a.ts" };
+    const longPath = `${"deep/".repeat(60)}gone.ts`;
+    const pfLong = { kind: "projectFile" as const, id: longPath, label: longPath };
+    const draft = [res, " ", res2, " ", conn, " ", pf, " ", pfLong];
+    const ids = (e: unknown) => refusedTokens(e, draft).map((r) => r.id);
+    expect(ids(err("connector.resources_disabled", [{ connectorId: SLACK }]))).toEqual([
+      res.id,
+      res2.id,
+    ]);
+    expect(ids(err("connector.not_found", [{ connectorId: SLACK }]))).toEqual([
+      res.id,
+      res2.id,
+      SLACK,
+    ]);
+    expect(ids(err("connector.not_found", [{ connectorId: SLACK, uri: "slack://b" }]))).toEqual([
+      res2.id,
+    ]);
+    expect(ids(err("conversation.project_file_unavailable", [{ reason: "no_project" }]))).toEqual([
+      "src/a.ts",
+      longPath,
+    ]);
+    // a path the kernel clipped matches by its prefix
+    expect(
+      ids(err("device.path_outside_project", [{ path: `${longPath.slice(0, 200)}…` }])),
+    ).toEqual([longPath]);
+  });
+
+  it("uploads count the draft's library file tokens toward the per-message cap", async () => {
+    chatApi({
+      [`GET ${ORG}/files/limits`]: () => json(200, { ...LIMITS, maxPerMessage: 1 }),
+      [`GET ${ORG}/files`]: () =>
+        json(200, {
+          files: [
+            {
+              id: "lf1",
+              name: "report.pdf",
+              contentType: "application/pdf",
+              size: 1,
+              origin: "upload",
+              agentId: null,
+              sourceConversation: null,
+              versions: 1,
+              createdAt: "2026-11-24T08:00:00Z",
+              previewable: null,
+            },
+          ],
+          next: null,
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    await findComposerBox();
+    typeComposer("@");
+    const el = await menu();
+    await within(el).findByRole("option", { name: /report\.pdf/ });
+    typeComposer("rep");
+    await vi.waitFor(() => expect(within(el).getByRole("option", { name: /report\.pdf/ })));
+    await userEvent.setup().click(within(el).getByRole("option", { name: /report\.pdf/ }));
+    expect(screen.getByRole("img", { name: "File: report.pdf" })).toBeTruthy();
+    pasteComposer("", [new File(["x"], "notes.txt", { type: "text/plain" })]);
+    await screen.findByText(en.chat.filesLimit.replace("{max}", "1"));
+    expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull();
+  });
+});
+
+describe("bubble tokens open", () => {
+  it("a conversation token links to its page, a library file token opens the file", async () => {
+    const text = "see [conversation: Pricing] and [file: report.pdf]";
+    chatApi({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, text, {
+              inline: [
+                { kind: "conversation", start: 4, end: 27, label: "Pricing", ref: { id: "c2" } },
+                { kind: "file", start: 32, end: 50, label: "report.pdf", ref: { fileId: "lf1" } },
+              ],
+            }),
+          ],
+        }),
+    });
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    await renderChatRoute();
+    const link = await screen.findByRole("link", { name: "Conversation: Pricing" });
+    expect(link.getAttribute("href")).toBe("/chat/c2");
+    const file = screen.getByRole("button", { name: "File: report.pdf" });
+    await userEvent.setup().click(file);
+    // the file is not in the conversation's files list: it downloads (a tab opened for it)
+    await vi.waitFor(() =>
+      expect(open.mock.calls.some((c) => String(c[0]).includes("lf1"))).toBe(true),
+    );
   });
 });
 

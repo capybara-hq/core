@@ -601,27 +601,22 @@ describe("the @ menu", () => {
     expect(within(el).getAllByRole("option")).toHaveLength(50);
   });
 
-  it("a connector unavailable to the sender says why when clicked", async () => {
+  it("a connector the sender has not connected says why in its second level", async () => {
     api({
       [`GET ${RESOURCES}`]: () =>
-        json(200, {
-          resources: [],
-          unavailable: [{ connectorId: "k1", connectorName: "Docs", reason: "not_connected" }],
-        }),
+        json(403, { error: { code: "credential.missing", message: "not connected" } }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
     typeComposer("@");
     await drill(await menu(), "Docs");
-    await within(await menu()).findByText(en.chat.unavailableConnectors);
-    await user.click(await screen.findByRole("option", { name: /^Docs/ }));
-    expect(
-      await screen.findByText(
-        en.chat.connectorUnavailableHint.not_connected.replace("{connector}", "Docs"),
+    const reason = en.errors.credential.missing as string;
+    const el = await menu();
+    await vi.waitFor(() =>
+      expect(el.textContent).toContain(
+        en.chat.composerMenu.resourcesFailed.replace("{reason}", reason),
       ),
-    ).toBeTruthy();
-    noMenu();
+    );
   });
 
   it("closes on a press outside the composer and keeps the text", async () => {

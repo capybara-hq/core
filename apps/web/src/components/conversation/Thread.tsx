@@ -3,6 +3,7 @@
 import {
   type BubbleAttachment,
   BubbleAttachments,
+  type ComposerTokenData,
   Disclosure,
   FileOutputs,
   formatBytes,
@@ -815,7 +816,24 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
         return (
           <>
             <UserBubble
-              {...(e.segments !== undefined ? { segments: e.segments } : { text: e.text })}
+              {...(e.segments !== undefined
+                ? {
+                    segments: e.segments,
+                    // a referenced conversation opens its page, a library file as an upload's
+                    // chip does (the right panel once listed, else a download)
+                    tokenAction: (tok: ComposerTokenData) =>
+                      tok.kind === "conversation"
+                        ? { href: `/chat/${encodeURIComponent(tok.id)}` }
+                        : tok.kind === "file"
+                          ? {
+                              onOpen: () => {
+                                if (onOpenFile && listedFiles?.has(tok.id)) onOpenFile(tok.id);
+                                else openDownload(fileDownloadUrl(orgId, tok.id));
+                              },
+                            }
+                          : undefined,
+                  }
+                : { text: e.text })}
               {...(author !== undefined ? { author } : {})}
               {...(e.pending ? { queued: true } : {})}
               {...(e.sender ? { sender: e.sender.name ?? t("parentAgent") } : {})}

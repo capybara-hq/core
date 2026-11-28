@@ -1863,7 +1863,8 @@
       "noAtMatch": "没有匹配的连接器、文件或会话",
       "connectorsFailed": "连接器读取失败：{reason}"
     },
-    "tokenLimit": "这类引用每条消息最多 {max} 个。"
+    "tokenLimit": "这类引用每条消息最多 {max} 个。",
+    "tokenTotalLimit": "每条消息最多引用 {max} 项。"
   },
   "ui": {
     "empty": "这里还没有内容。",

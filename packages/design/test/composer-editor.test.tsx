@@ -241,6 +241,23 @@ describe("ComposerEditor (composer inline tokens spec §2)", () => {
     expect(onTrigger).toHaveBeenLastCalledWith({ trigger: "@", query: "", atStart: false });
   });
 
+  it("insertText puts plain text at the caret, the other segments kept", () => {
+    const { h, editor } = mount();
+    act(() => h().replace(["ask ", slack]));
+    type(editor, " now");
+    act(() => {
+      editor.update(
+        () => {
+          const p = $getRoot().getFirstChildOrThrow() as ElementNode;
+          p.getFirstChildOrThrow().selectEnd();
+        },
+        { discrete: true },
+      );
+    });
+    act(() => h().insertText("please\uFFFC "));
+    expect(h().value()).toEqual(["ask please ", slack, " now"]);
+  });
+
   it("setTriggerQuery replaces the query and keeps the trigger open", () => {
     const onTrigger = vi.fn();
     const { h, editor } = mount({ over: { onTrigger } });

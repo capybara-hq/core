@@ -12,3 +12,5 @@ token and its `tokens`; a refusal marks the token and offers 移除. Bubbles dra
 from `payload.inline`, the skill chip first. The design adds `openTrigger` / `setTriggerQuery` to
 the editor's handle and a `@capybara-hq/design/testing` entry with the editor's test drivers;
 `FileDrop` leaves a paste a child already took alone.
+A sent bubble's conversation token links to its conversation and a library file token opens the
+file; a connector prompt picked mid-sentence goes where its `/` stood.

@@ -485,9 +485,7 @@ export const renderConnectorPrompt = (
 export const listConnectorResources = (orgId: string, connectorId: string, query = "") => {
   const q = new URLSearchParams({ connectorId });
   if (query !== "") q.set("query", query);
-  return apiFetch<{ resources: ConnectorResource[]; unavailable: ConnectorUnavailable[] }>(
-    `${base(orgId)}/resources?${q.toString()}`,
-  );
+  return apiFetch<{ resources: ConnectorResource[] }>(`${base(orgId)}/resources?${q.toString()}`);
 };
 
 /**

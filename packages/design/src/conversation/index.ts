@@ -49,6 +49,7 @@ export {
   type ComposerTokenKind,
   type ComposerTrigger,
   InlineToken,
+  type InlineTokenAction,
   segmentsPlainText,
 } from "./composer-editor/index";
 export {

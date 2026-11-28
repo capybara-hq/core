@@ -227,8 +227,10 @@ export function registerComposerCommands(
         if (event === null || event.shiftKey || event.isComposing || editor.isComposing()) {
           return false;
         }
-        // keyCode 229: the ↵ that confirms an IME's text, reported by some browsers with
-        // isComposing false; it is the IME's, neither a send nor a line break
+        // keyCode 229: the ↵ that confirms an IME's text (Safari reports it after
+        // compositionend, with isComposing false). It is the IME's, neither a send nor a line
+        // break: `true` stops Lexical's own line break, and the default is left alone so the
+        // IME still commits its text.
         if (event.keyCode === 229) return true;
         if (isTouchPointer()) return false;
         event.preventDefault();

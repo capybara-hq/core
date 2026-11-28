@@ -1311,8 +1311,9 @@ export async function listAllEvents(
 }
 
 /**
- * 发送用户消息（运行中发送即插话）：202 `{ event }`。`attachments`（`@` 资源引用）由内核以当前用户的凭据读取，
- * 作为附加文本块写入同一条消息；`files`（已 finalize 的上传附件 id）作为 image / document 引用块追加在最后。
+ * Sends a user message (sent during a run, it is an interjection): 202 `{ event }`. The kernel
+ * resolves `tokens` as the sender (each U+FFFC in `text` becomes its placeholder, the referenced
+ * blocks follow the text) and appends the uploads in `files` (finalized ids) as file blocks.
  */
 export const postMessage = (orgId: string, id: string, m: MessageInput) =>
   apiFetch<{ event: ConversationEvent }>(`${one(orgId, id)}/messages`, {

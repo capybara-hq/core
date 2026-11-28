@@ -1,9 +1,16 @@
 import { type JSX, useId } from "react";
 import { MarkImage } from "../../display/object-mark";
 import { Icon } from "../../icons/icon";
-import { useDesignT } from "../../provider";
+import { useDesignLink, useDesignT } from "../../provider";
 import { typeBadge } from "../files";
 import type { ComposerTokenData } from "./segments";
+
+/**
+ * What a bubble's token opens (composer inline tokens spec §6.16.6): a page (`href`, through the
+ * DesignProvider's link: a referenced conversation) or the page's own action (`onOpen`: a library
+ * file in the right panel). In the composer a token opens nothing.
+ */
+export type InlineTokenAction = { href: string } | { onOpen(): void };
 
 /** A skill token's visible label and plain form: "/name" (a label may already carry the slash). */
 export function skillText(label: string): string {
@@ -60,6 +67,40 @@ function Lead({ token }: { token: ComposerTokenData }): JSX.Element | null {
  * `hidden` draws an invisible copy that only takes the token's room (the hint's ghost line).
  */
 export function InlineToken({
+  token,
+  selected,
+  hidden,
+  action,
+}: {
+  token: ComposerTokenData;
+  selected?: boolean;
+  hidden?: boolean;
+  /** The bubble's tokens that open something: a link or a button around the token. */
+  action?: InlineTokenAction;
+}): JSX.Element {
+  const Link = useDesignLink();
+  const box = (
+    <TokenBox token={token} {...(selected ? { selected } : {})} {...(hidden ? { hidden } : {})} />
+  );
+  if (action === undefined || hidden) return box;
+  return "href" in action ? (
+    <Link href={action.href} className="cb-inline-token-link" data-part="inline-token-link">
+      {box}
+    </Link>
+  ) : (
+    <button
+      type="button"
+      className="cb-inline-token-link"
+      data-part="inline-token-link"
+      onClick={action.onOpen}
+    >
+      {box}
+    </button>
+  );
+}
+
+/** The token's box: its lead and label, named for assistive technology. */
+function TokenBox({
   token,
   selected,
   hidden,

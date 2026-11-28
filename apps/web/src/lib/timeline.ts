@@ -789,17 +789,19 @@ function inlineRetry(
   base: string,
   inline: readonly InlineEntry[],
 ): { text: string; tokens: MessageToken[] } {
+  // a literal U+FFFC in the text (an older message's) would count as a token's marker
+  const run = (from: number, to: number) => base.slice(from, to).split(TOKEN_MARKER).join("");
   let text = "";
   const tokens: MessageToken[] = [];
   let at = 0;
   for (const e of placedEntries(base, inline)) {
     const token = inlineToken(e);
     if (token === null) continue;
-    text += base.slice(at, e.start) + TOKEN_MARKER;
+    text += run(at, e.start) + TOKEN_MARKER;
     tokens.push(token);
     at = e.end;
   }
-  return { text: text + base.slice(at), tokens };
+  return { text: text + run(at, base.length), tokens };
 }
 
 /** The file ids a message names through file tokens (drawn inline, never as cards). */

@@ -47,6 +47,7 @@ import {
   type ComposerTokenData,
   normalizeSegments,
   sameSegments,
+  stripPastedText,
 } from "./segments";
 import { InlineToken } from "./token";
 import { $createTokenNode, $isTokenNode, TokenNode } from "./token-node";
@@ -66,6 +67,11 @@ export type ComposerEditorHandle = {
   insertToken(t: ComposerTokenData, replaceQuery?: { trigger: "@" | "/"; length: number }): void;
   /** Replaces the draft (one undo step), the caret at its end. */
   replace(segments: ComposerSegment[]): void;
+  /**
+   * Inserts plain text at the caret (one undo step; at the end without a caret), cleaned as a
+   * paste is: a rendered connector prompt where its `/` stood.
+   */
+  insertText(text: string): void;
   /** Empties the draft and its undo history (after a send). */
   clear(): void;
   /**
@@ -280,6 +286,24 @@ function Bridge({
           () => {
             $programmatic(editor);
             $writeSegments(segments);
+          },
+          { discrete: true },
+        );
+      },
+      insertText: (text) => {
+        const clean = stripPastedText(text);
+        if (clean === "") return;
+        editor.update(
+          () => {
+            $programmatic(editor);
+            let selection = $isNodeSelection($getSelection())
+              ? $replaceSelectedTokens()
+              : $getSelection();
+            if (!$isRangeSelection(selection)) {
+              $getRoot().selectEnd();
+              selection = $getSelection();
+            }
+            if ($isRangeSelection(selection)) selection.insertRawText(clean);
           },
           { discrete: true },
         );

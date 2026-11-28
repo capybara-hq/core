@@ -107,6 +107,27 @@
   font-weight: 600;
   line-height: var(--cb-type-micro-line);
 }
+/* A bubble's token that opens something (a conversation, a file): a link or a button around the
+   box, with the focus ring and a hover ground; it keeps the token's line box. */
+.cb-inline-token-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  vertical-align: top;
+  cursor: pointer;
+}
+.cb-inline-token-link > .cb-inline-token {
+  cursor: pointer;
+}
+.cb-inline-token-link:hover > .cb-inline-token {
+  background: var(--cb-hover);
+}
 /* The skill token: an action, not a reference: `accent-tint` ground, mono `accent` label. */
 .cb-inline-token[data-kind="skill"] {
   background: var(--cb-accent-tint);
