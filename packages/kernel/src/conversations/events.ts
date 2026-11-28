@@ -1015,7 +1015,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * port it asked to reach on the person's own device. Not model-visible.
        */
       loopback: z
-        .object({ service: z.string(), port: z.number().int().min(1).max(65535) })
+        .object({
+          service: z.string(),
+          port: z.number().int().min(1).max(65535),
+          /** The attempt that reran under a live grant already held (ready-grant rerun). */
+          readyRerunAttempt: z.number().int().positive().optional(),
+        })
         .optional(),
     }),
   ),

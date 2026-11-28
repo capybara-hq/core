@@ -1247,8 +1247,21 @@ function loopbackAskRerunAfter(ask: ApprovalRecord | null): number | null {
  * the call's live loopback port grant (Full access or the review model granted the port to the
  * attempt that was refused it).
  */
-function rerunPoints(ask: ApprovalRecord | null, grant: LoopbackGrantRow | null): Set<number> {
-  const points = [serviceRerunAfter(ask), loopbackAskRerunAfter(ask), grant?.attempt ?? null];
+/** The idempotency key of the `permission_reviewed` event tying a ready-grant rerun to a call. */
+const loopbackReadyRerunIdemKey = (runId: string, callId: string): string =>
+  `permission_reviewed:loopback_ready:${runId}:${callId}`;
+
+function rerunPoints(
+  ask: ApprovalRecord | null,
+  grant: LoopbackGrantRow | null,
+  readyRerun: number | null = null,
+): Set<number> {
+  const points = [
+    serviceRerunAfter(ask),
+    loopbackAskRerunAfter(ask),
+    grant?.attempt ?? null,
+    readyRerun,
+  ];
   return new Set(points.filter((p): p is number => p !== null));
 }
 
@@ -1629,11 +1642,12 @@ export class ToolPipeline {
     // the call's network ask (one per call) and its live loopback port grant
     const ask = await this.deps.approvals.networkForCall(ctx.runId, call.id);
     const grant = await this.loopbackGrantOf(ctx.runId, call.id);
+    const readyRerun = await this.readyLoopbackRerunOf(ctx.conversationId, ctx.runId, call.id);
     let attempt = rounds.length + 1;
     // each time the call ran again (after its network ask, browser use spec §7.1, or a loopback
     // grant or ask) took one attempt more: input rounds asked after a re-run come after it, so
     // every re-run point the count has passed adds one, in order
-    const reruns = rerunPoints(ask, grant);
+    const reruns = rerunPoints(ask, grant, readyRerun);
     if (rounds.length > 0) {
       for (const p of [...reruns].sort((a, b) => a - b)) if (attempt > p) attempt += 1;
     }
@@ -1674,11 +1688,14 @@ export class ToolPipeline {
         (!asksPerAttempt(ask) ||
           (ask.detail as { attempt?: number } | null | undefined)?.attempt === attempt);
       const grantedHere = !askedHere && grant !== null && grant.attempt === attempt;
-      if (askedHere || grantedHere) {
+      const readyRerunHere = !askedHere && !grantedHere && readyRerun === attempt;
+      if (askedHere || grantedHere || readyRerunHere) {
         const notes =
           askedHere && ask !== null
             ? settledNetworkNotes(ask, approvalHours(ask))
-            : [loopbackGrantedNote((grant as LoopbackGrantRow).port)];
+            : grantedHere
+              ? [loopbackGrantedNote((grant as LoopbackGrantRow).port)]
+              : [];
         if (notes === null) return approvalWait(ask as ApprovalRecord);
         const rerunsHere =
           !askedHere ||
@@ -3612,6 +3629,23 @@ export class ToolPipeline {
   }
 
   /**
+   * The attempt that recorded a ready-grant loopback rerun for this call, or null when none did.
+   */
+  private async readyLoopbackRerunOf(
+    conversationId: string,
+    runId: string,
+    callId: string,
+  ): Promise<number | null> {
+    const ev = await this.deps.eventLog.findByIdem(
+      conversationId,
+      loopbackReadyRerunIdemKey(runId, callId),
+    );
+    return ev?.type === "permission_reviewed"
+      ? (ev.payload.loopback?.readyRerunAttempt ?? null)
+      : null;
+  }
+
+  /**
    * A device service's loopback refusal (browser loopback port grants): the port of the person's
    * own device a service of an extension declaring `permissions.deviceAccess.loopbackPorts` was
    * refused. Refused by the device's ceilings, its provider or an unattended run → a note
@@ -3704,16 +3738,6 @@ export class ToolPipeline {
       serviceId,
       facts.rootConversationId,
     );
-    if (live.some((g) => g.port === port)) {
-      // granted already (the panel, an earlier call): the service had not applied it yet, so the
-      // call runs again once; refused again (or granted to this call), its result stands
-      if (rerunning || (await grants.forCall(ctx.runId, call.id)) !== null)
-        return { kind: "write", notes: [loopbackNotAppliedNote(port)] };
-      await this.writeResultIn(ctx, call.id, toolKey, kept, [...pre], callAudit, []);
-      return { kind: "rerun", notes: [] };
-    }
-    // a call that ran again after its grant is not decided again (the port was closed meanwhile)
-    if (rerunning) return { kind: "write", notes: [serviceAskedNote([hp])] };
     const binding = {
       orgId: facts.orgId,
       rootConversationId: facts.rootConversationId,
@@ -3731,6 +3755,36 @@ export class ToolPipeline {
       scopeRevision: facts.scopeRevision,
       authorityRevision: facts.authorityRevision,
     };
+    if (live.some((g) => g.port === port)) {
+      // granted already (the panel, an earlier call): the service had not applied it yet, so the
+      // call runs again once; refused again (or granted to this call), its result stands
+      if (rerunning || (await grants.forCall(ctx.runId, call.id)) !== null)
+        return { kind: "write", notes: [loopbackNotAppliedNote(port)] };
+      const readyCandidate = {
+        binding,
+        permissionScope: { writeDirectories: [], hosts: [] },
+        scopeKind: "loopback-port" as const,
+        loopback: { service: serviceId, port, readyRerunAttempt: attempt },
+      };
+      const readyEvent: AppendEvent = {
+        type: "permission_reviewed",
+        runId: ctx.runId,
+        idemKey: loopbackReadyRerunIdemKey(ctx.runId, call.id),
+        payload: {
+          ...readyCandidate,
+          candidateHash: permissionScopeHash(readyCandidate),
+          outcome: "allow",
+          reason:
+            "Loopback port already granted for this conversation; retrying after the device applies it.",
+          decisionSource: "rule",
+          crossing: "loopback-port",
+        },
+      };
+      await this.writeResultIn(ctx, call.id, toolKey, kept, [readyEvent, ...pre], callAudit, []);
+      return { kind: "rerun", notes: [] };
+    }
+    // a call that ran again after its grant is not decided again (the port was closed meanwhile)
+    if (rerunning) return { kind: "write", notes: [serviceAskedNote([hp])] };
     const reviewed = (
       outcome: "allow" | "ask" | "deny",
       reason: string,
