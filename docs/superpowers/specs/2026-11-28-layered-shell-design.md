@@ -116,17 +116,43 @@ only, recolours `panel`) render unchanged and still pass the readability check.
   form (medium, or collapsed on expanded; `--cb-shell-paper-drop`) has the top row as one band of
   ground across the whole window, and the band holds the paper's first row after the lights and the
   band's sidebar toggle: the conversation title bar, or a deeper page's path row (with its filler).
-  The conversation title bar is the band's whole row (maintainer decision 2026-11-28): its end
-  group (panel, files, tasks, plugins toggles) sits at the window's end edge, above the inline
-  right panel's paper when it is open, and its end padding keeps clear of an end reserve.
-  The paper's colour, and the inline right panel's paper, start `space.2` below the band (as the
-  paper lies `space.2` below the window's top edge elsewhere), and the next row (the thread, the
-  title row) starts on it. A first-level page has no path row: its band holds only the lights and
-  the toggle. Nothing moves in the DOM (no portal or slot): the row stays its paper's first row and
-  keeps the top-row rules (height and centring on the controls, start after the toggle, end clear
-  of an end reserve); the paper's box starts at the window's top edge, transparent, and its colour
-  is a layer below the band. The full sidebar (the lights over its brand row), compact, a banner,
-  and controls at the end (a Windows caption overlay) are unchanged.
+  The conversation title bar is the band's whole row (maintainer decision 2026-11-28): its end group
+  (panel, files, tasks, plugins toggles) sits at the window's end edge, above the inline right
+  panel's paper when it is open, and its end padding keeps clear of an end reserve. The paper's
+  colour, and the inline right panel's paper, start at the band's bottom edge (the controls'
+  bottom), and the next row (the thread, the title row) starts on it. **Optical centring (maintainer
+  decision 2026-11-28, both bands):** the row is centred on the controls, and the paper starts where
+  its icons lie as far above the paper as below the window's top edge; with controls from the
+  window's top edge that is the controls' bottom, which the paper never starts above (48-high
+  caption buttons: their square hover grounds end where the paper starts; the macOS lights, 14 high,
+  lie 17 below the top and 17 above the paper; a 28 control 10 and 10). It replaced the `space.2`
+  gap below the band (16 above a glyph, 24 below it). A first-level page has no path row: its band
+  holds only the lights and the toggle. Nothing moves in the DOM (no portal or slot): the row stays
+  its paper's first row and keeps the top-row rules (height and centring on the controls, start
+  after the toggle, end clear of an end reserve); the paper's box starts at the window's top edge,
+  transparent, and its colour is a layer below the band. The full sidebar (the lights over its brand
+  row), compact and a banner are unchanged.
+- **The end-controls band (desktop shell, #1065).** Where the shell reports its window controls on
+  the end side (the Windows / Linux caption overlay, 138 × 48 at the window's top-right edge), the
+  same band is drawn in every form from 600 up, beside the full sidebar too: the top row is ground
+  at the controls' height (`--cb-shell-row-end`, which feeds `--cb-shell-paper-drop`), the paper's
+  first row (the conversation title bar with its breadcrumb and end group, right-aligned and clear
+  of the controls; a deeper page's path row) sits in it beside the caption buttons, and the papers
+  (the conversation's and the inline right panel's, a page's) start at its bottom edge (optical
+  centring, above) with one top edge, so nothing jumps when the panel opens or closes and the
+  system's square hover and close grounds always lie on the ground. A first-level page (no path row)
+  puts its head's title row (the h1 and the head's actions, or a title-less head's actions) in the
+  band too, centred in it, the actions clear of the caption buttons, so the band is never empty; the
+  tab row or the body starts on the paper below with its usual head gap. **Start and end differ by
+  maintainer decision (2026-11-28):** start controls (the macOS traffic lights) keep the band to the
+  rail's form, and beside the full sidebar the paper keeps its first row (the lights sit over the
+  sidebar's brand row, not over a paper). It is keyed on the reported rectangle alone; without
+  controls (a browser) and below 600 (the flat title bar) nothing changes.
+- **A first-level head beside the full sidebar (maintainer decision 2026-11-28).** A head without a
+  path row reserves the window's top row only where controls reach into the content column (end
+  controls, or start controls past the visible sidebar: `--cb-shell-head-row`); beside the full
+  sidebar, where the lights lie over the sidebar, it starts `space.5` into the paper as in a
+  browser, and the paper's top gutter is `space.2` (the title row's filler drags the window).
 
 ### 3. Page head (`shell/page-header.tsx`)
 
@@ -158,7 +184,7 @@ controls, every overlay is no-drag. Added:
 - the conversation title bar, the right panel's head and the sidebar brand row keep theirs.
 - in the rail-drop band (§2) the band's rows keep their fillers (the title bar's, the path row's;
   the title bar's runs over the inline panel, whose box starts below the band); over a first-level page the gutter is the
-  band's whole height and the `space.2` below it; the controls area (`.cb-shell-band`) covers the
+  band's whole height; the controls area (`.cb-shell-band`) covers the
   lights; the toggle and the rows' controls are no-drag, and every overlay stays no-drag.
 
 The gap between the two conversation papers is the panel's resize handle, not a drag region. The
