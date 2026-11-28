@@ -481,8 +481,9 @@ async function mediaFor(convId: string, snap: CaseSnapshot, seq: number, info: M
 }
 
 /**
- * 核对：快照里每次 model_call（包括较早运行的、失败的尝试）还原出的请求与供应商实际收到的逐项相等（字节相同，含键序）、
- * 基线没有漂移；返回还原结果的漂移（供调用方另行断言）。
+ * Checks that every model_call in the snapshot (earlier runs and failed attempts included) rebuilds
+ * a request equal to what the provider received (the rendered parts byte for byte, key order
+ * included) and that the baseline has no drift.
  */
 async function expectZeroDrift(convId: string, snap: CaseSnapshot, upTo = sent.length) {
   const calls = modelCalls(toEvents(snap));
