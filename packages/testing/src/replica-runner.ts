@@ -47,7 +47,9 @@ function deepMerge(
 /** 启动内核并回报实际监听端口。 */
 async function startKernel(c: RunnerConfig): Promise<void> {
   const base = {
-    db: { url: c.dbUrl, poolMax: 3 },
+    // Allow loaded CI runners more than the 5 s production default to establish initial PG
+    // connections against the shared test container (callers can still override via `overrides`).
+    db: { url: c.dbUrl, poolMax: 3, connectTimeoutMs: 30_000 },
     redis: { url: c.redisUrl },
     masterKey: c.masterKey,
     http: { port: 0, replicaId: c.replicaId },
