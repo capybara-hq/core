@@ -29,12 +29,10 @@ import { READ_RESOURCE } from "./resources.js";
 
 /** 列表请求里每个连接器的超时上限（毫秒；取它与 `tools.timeoutMs` 的较小值）。 */
 const LIST_TIMEOUT_MS = 10_000;
-/** 一次列出的资源最多条数。 */
-const MAX_RESOURCES = 500;
 /** One connector's listing shows at most this many resources. */
 const MAX_CONNECTOR_RESOURCES = 200;
 const UI_TEMPLATE_MIME = "text/html;profile=mcp-app";
-/** 渲染后的提示文本上限（与消息正文上限一致）。 */
+/** The cap on a rendered prompt's text (the same as a message's text). */
 const MAX_PROMPT_CHARS = 100_000;
 /** 每个附件的正文上限（字符）。 */
 export const MAX_ATTACHMENT_CHARS = 50_000;
@@ -264,10 +262,8 @@ export class ConnectorContent {
     orgId: string,
     accountId: string,
     work: (s: ConnectorSession, app: ConnectorRow) => Promise<T[] | undefined>,
-    only?: (apps: ConnectorRow[]) => Promise<ConnectorRow[]>,
   ): Promise<{ items: T[]; unavailable: ConnectorUnavailable[] }> {
-    const all = await this.activeConnectors(orgId);
-    const apps = only ? await only(all) : all;
+    const apps = await this.activeConnectors(orgId);
     const timeoutMs = Math.min(this.config.get().tools.timeoutMs, LIST_TIMEOUT_MS);
     const results = await Promise.all(
       apps.map(async (app) => {
@@ -346,15 +342,17 @@ export class ConnectorContent {
   }
 
   /**
-   * The resources the sender can use; `query` filters by name, URI or description substring (case
-   * insensitive). Without `connectorId`: every active connector, at most {@link MAX_RESOURCES}.
-   * With it: one session on that connector, UI templates and empty resources hidden, at most
-   * {@link MAX_CONNECTOR_RESOURCES}.
+   * One connector's resources the sender can use (the `@` menu's second level, composer inline
+   * tokens spec §5): one session on that connector with the sender's credential, UI templates and
+   * empty resources hidden, at most {@link MAX_CONNECTOR_RESOURCES}; `query` filters by name, URI
+   * or description substring (case insensitive). A connector that is not active or whose
+   * `read_resource` is off → `connector.resources_disabled`; a missing credential or a failed
+   * connection is thrown (`credential.missing`, `connector.connect_failed`).
    */
   async listResources(
     orgId: string,
     accountId: string,
-    opts: { connectorId?: string; query?: string } = {},
+    opts: { connectorId: string; query?: string },
   ): Promise<{ resources: ConnectorResourceView[]; unavailable: ConnectorUnavailable[] }> {
     const q = opts.query?.trim().toLowerCase() ?? "";
     const view = (
@@ -372,61 +370,29 @@ export class ConnectorContent {
     });
     const matches = (r: { name: string; uri: string; description?: string }) =>
       q === "" || [r.name, r.uri, r.description ?? ""].some((v) => v.toLowerCase().includes(q));
-    if (opts.connectorId !== undefined) {
-      const app = await this.connectorRow(orgId, opts.connectorId);
-      if (!(await this.resourcesEnabled([app.id])).has(app.id)) {
-        throw new ApiError(
-          "connector.resources_disabled",
-          "Reading resources is disabled for this connector",
-        );
-      }
-      // A failing connector throws credential.missing / connector.connect_failed here instead of
-      // filling `unavailable`: the caller asked about this one connector only.
-      const items = await this.withSession(
-        orgId,
-        app,
-        accountId,
-        Math.min(this.config.get().tools.timeoutMs, LIST_TIMEOUT_MS),
-        async (s) => (s.listResources ? s.listResources() : []),
+    const app = await this.connectorRow(orgId, opts.connectorId);
+    if (!(await this.resourcesEnabled([app.id])).has(app.id)) {
+      throw new ApiError(
+        "connector.resources_disabled",
+        "Reading resources is disabled for this connector",
       );
-      return {
-        resources: items
-          .filter((r) => listableResource(r) && matches(r))
-          .slice(0, MAX_CONNECTOR_RESOURCES)
-          .map((r) => view(app, r)),
-        unavailable: [],
-      };
     }
-    const { items, unavailable } = await this.acrossConnectors(
+    // A failing connector throws credential.missing / connector.connect_failed here instead of
+    // filling `unavailable`: the caller asked about this one connector only.
+    const items = await this.withSession(
       orgId,
+      app,
       accountId,
-      async (s, app) => {
-        if (!s.listResources) return undefined;
-        return (await s.listResources())
-          .filter(
-            (r) =>
-              q === "" ||
-              [r.name, r.uri, r.description ?? ""].some((v) => v.toLowerCase().includes(q)),
-          )
-          .map(
-            (r): ConnectorResourceView => ({
-              connectorId: app.id,
-              connectorSlug: app.slug,
-              connectorName: app.name,
-              uri: r.uri,
-              name: r.name,
-              ...(r.description !== undefined && { description: r.description }),
-              ...(r.mimeType !== undefined && { mimeType: r.mimeType }),
-            }),
-          );
-      },
-      // 管理员停用了读取资源的连接器不列出（也不打开会话）
-      async (apps) => {
-        const enabled = await this.resourcesEnabled(apps.map((a) => a.id));
-        return apps.filter((a) => enabled.has(a.id));
-      },
+      Math.min(this.config.get().tools.timeoutMs, LIST_TIMEOUT_MS),
+      async (s) => (s.listResources ? s.listResources() : []),
     );
-    return { resources: items.slice(0, MAX_RESOURCES), unavailable };
+    return {
+      resources: items
+        .filter((r) => listableResource(r) && matches(r))
+        .slice(0, MAX_CONNECTOR_RESOURCES)
+        .map((r) => view(app, r)),
+      unavailable: [],
+    };
   }
 
   /**

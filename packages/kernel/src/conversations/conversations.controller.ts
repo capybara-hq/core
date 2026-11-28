@@ -123,51 +123,23 @@ export const MessageTokenSchema = z.discriminatedUnion("type", [
 
 const MessageFields = z.object({
   /**
-   * The person's text. With `tokens`, each U+FFFC marks one token's place, in order. Empty only
-   * with a skill, or with `files` and no tokens, `@` resources, project files or conversation
-   * references (an upload-only message).
+   * The person's text; each U+FFFC marks one token's place, in order. Empty only with a skill, or
+   * with `files` and no tokens (an upload-only message).
    */
   text: z.string().max(100_000),
   clientMessageId: z.string().min(1).max(200).optional(),
   /**
    * Inline tokens (composer inline tokens spec §3.1), in text order: connectors, connector
-   * resources, library files, project files and conversations. Not combined with `attachments`,
-   * `projectFiles` or `conversationRefs`, which they replace.
+   * resources, library files, project files and the sender's conversations. A repeated entity is
+   * resolved and counted once. A project file token needs the conversation's device project (a
+   * new conversation: `project` in the create body).
    */
   tokens: z.array(MessageTokenSchema).max(MAX_TOKENS).optional(),
-  /**
-   * `@` resource references: the kernel reads them with the sender's credentials and writes them
-   * as extra text blocks (see ConversationsService.postUserMessage).
-   */
-  attachments: z
-    .array(z.object({ connectorId: z.uuid(), uri: z.string().min(1).max(2000) }).strict())
-    .max(MAX_ATTACHMENTS)
-    .optional(),
   /**
    * Uploaded file ids (finalized, see the files routes); the per-message cap is
    * `attachments.maxPerMessage` (file tokens count toward it), 100 is only the hard ceiling here.
    */
   files: z.array(z.uuid()).max(100).optional(),
-  /**
-   * Files of the conversation's device project, by path relative to its root (composer menus §5):
-   * checked on the device, never read or uploaded; each becomes a text block after the `@`
-   * resources' bodies. A path repeated (after normalization) is referenced once, so
-   * `payload.projectFiles` may be shorter than this list. A new conversation needs `project` in
-   * the create body.
-   */
-  projectFiles: z
-    .array(z.object({ path: z.string().min(1).max(4096) }).strict())
-    .max(MAX_PROJECT_FILES)
-    .optional(),
-  /**
-   * The sender's own conversations, by id (@ conversations spec §1): each is read at send time
-   * into a quoted text block after the project files' blocks. An id repeated is referenced once,
-   * so `payload.conversationRefs` may be shorter than this list.
-   */
-  conversationRefs: z
-    .array(z.object({ id: z.string().min(1).max(100) }).strict())
-    .max(MAX_CONVERSATION_REFS)
-    .optional(),
   /** Switch the conversation's model from the next run (UI refresh B); the agent's own = back. */
   model: ModelRef.strict().optional(),
   /** Switch the effort: one of the (selected) model's declared `effort` values. */
@@ -197,32 +169,21 @@ const MessageFields = z.object({
   locale: z.enum(["zh", "en"]).optional(),
 });
 
-// `content[0]` is the person's text and the referenced blocks follow it, so with `@` resources,
-// project files, conversation references or tokens the text must not be empty (a token always
-// leaves a placeholder in it). A skill invocation's `content[0]` is the rendered skill, so its text
-// (the arguments) may be empty.
+// `content[0]` is the person's text and the referenced blocks follow it; a token always leaves a
+// placeholder in it, so text may be empty only with a skill (whose `content[0]` is the rendered
+// skill) or with uploads and no tokens (composer inline tokens spec §3.1).
 type RuleBody = {
   text: string;
   files?: string[] | undefined;
   tokens?: unknown[] | undefined;
-  attachments?: unknown[] | undefined;
-  projectFiles?: unknown[] | undefined;
-  conversationRefs?: unknown[] | undefined;
   skill?: unknown;
 };
 
 const textRule: [(b: RuleBody) => boolean, { message: string; path: string[] }] = [
   (b) =>
-    b.text.length > 0 ||
-    b.skill !== undefined ||
-    ((b.files?.length ?? 0) > 0 &&
-      !b.tokens?.length &&
-      !b.attachments?.length &&
-      !b.projectFiles?.length &&
-      !b.conversationRefs?.length),
+    b.text.length > 0 || b.skill !== undefined || ((b.files?.length ?? 0) > 0 && !b.tokens?.length),
   {
-    message:
-      "Text is required unless the message invokes a skill or carries files (and no tokens, @ resources, project files or conversation references)",
+    message: "Text is required unless the message invokes a skill or carries files and no tokens",
     path: ["text"],
   },
 ];
@@ -236,8 +197,7 @@ const TOKEN_KIND_MAX: Partial<Record<MessageToken["type"], number>> = {
 };
 
 /**
- * The token rules: one U+FFFC per token, no old reference field beside `tokens`, the per-kind
- * caps. A project file path that leaves the project is counted by its raw text here and refused
+ * The token rules: one U+FFFC per token, the per-kind caps. A project file path that leaves the project is counted by its raw text here and refused
  * with `device.path_outside_project` when the message resolves it, before anything is written.
  */
 function tokenRules(b: RuleBody & { tokens?: MessageToken[] | undefined }, ctx: z.RefinementCtx) {
@@ -250,17 +210,6 @@ function tokenRules(b: RuleBody & { tokens?: MessageToken[] | undefined }, ctx: 
     });
   }
   if (b.tokens === undefined) return;
-  if (
-    b.attachments !== undefined ||
-    b.projectFiles !== undefined ||
-    b.conversationRefs !== undefined
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      message: "tokens replace attachments, projectFiles and conversationRefs; send only tokens",
-      path: ["tokens"],
-    });
-  }
   const seen = new Map<MessageToken["type"], Set<string>>();
   for (const t of tokens) {
     let key: string;
@@ -404,10 +353,7 @@ export class ConversationsController {
         text: m.text,
         clientMessageId: m.clientMessageId,
         ...(m.tokens !== undefined && { tokens: m.tokens }),
-        ...(m.attachments !== undefined && { attachments: m.attachments }),
         ...(m.files !== undefined && { files: m.files }),
-        ...(m.projectFiles !== undefined && { projectFiles: m.projectFiles }),
-        ...(m.conversationRefs !== undefined && { conversationRefs: m.conversationRefs }),
         ...(m.model !== undefined && { model: m.model }),
         ...(m.effort !== undefined && { effort: m.effort }),
         ...(m.skill !== undefined && { skill: m.skill }),
@@ -796,12 +742,7 @@ export class ConversationsController {
           text: body.text,
           ...(body.clientMessageId !== undefined && { clientMessageId: body.clientMessageId }),
           ...(body.tokens !== undefined && { tokens: body.tokens }),
-          ...(body.attachments !== undefined && { attachments: body.attachments }),
           ...(body.files !== undefined && { files: body.files }),
-          ...(body.projectFiles !== undefined && { projectFiles: body.projectFiles }),
-          ...(body.conversationRefs !== undefined && {
-            conversationRefs: body.conversationRefs,
-          }),
           ...(body.model !== undefined && { model: body.model }),
           ...(body.effort !== undefined && { effort: body.effort }),
           ...(body.retryOf !== undefined && { retryOf: body.retryOf }),

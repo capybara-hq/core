@@ -1936,9 +1936,12 @@ describe("reconstructRequest：基线零漂移", () => {
         method: "POST",
         url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
         payload: {
-          text: "echo:read them",
+          text: "echo:read them \uFFFC \uFFFC",
           files: [id],
-          projectFiles: [{ path: "src/a.ts" }, { path: "./docs/b.md" }],
+          tokens: [
+            { type: "projectFile", path: "src/a.ts" },
+            { type: "projectFile", path: "./docs/b.md" },
+          ],
         },
       });
       expect(res.statusCode, res.body).toBe(202);
@@ -1950,9 +1953,12 @@ describe("reconstructRequest：基线零漂移", () => {
       >;
       expect(message.payload.projectFiles).toEqual([{ path: "src/a.ts" }, { path: "docs/b.md" }]);
       expect(message.payload.content.slice(0, 3)).toEqual([
-        { type: "text", text: "echo:read them" },
-        { type: "text", text: projectFileText("src/a.ts", root) },
-        { type: "text", text: projectFileText("docs/b.md", root) },
+        {
+          type: "text",
+          text: "echo:read them [project file: src/a.ts] [project file: docs/b.md]",
+        },
+        { type: "text", text: `[project file: src/a.ts] ${projectFileText("src/a.ts", root)}` },
+        { type: "text", text: `[project file: docs/b.md] ${projectFileText("docs/b.md", root)}` },
       ]);
       // the upload's `[file: …]` line, then its block
       expect(message.payload.content[3]).toEqual({ type: "text", text: "[file: notes.txt]" });
@@ -1994,7 +2000,11 @@ describe("reconstructRequest：基线零漂移", () => {
     const res = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
-      payload: { text: "echo:same for EU", files: [id], conversationRefs: [{ id: ref }] },
+      payload: {
+        text: "echo:same for EU \uFFFC",
+        files: [id],
+        tokens: [{ type: "conversation", id: ref }],
+      },
     });
     expect(res.statusCode, res.body).toBe(202);
     await waitForTerminal(db, conv, 1, 30_000);
@@ -2003,8 +2013,11 @@ describe("reconstructRequest：基线零漂移", () => {
       { type: "user_message" }
     >;
     expect(message.payload.conversationRefs).toMatchObject([{ id: ref, source: "excerpt" }]);
-    expect(message.payload.content[0]).toEqual({ type: "text", text: "echo:same for EU" });
+    expect((message.payload.content[0] as { text: string }).text).toMatch(
+      /^echo:same for EU \[conversation: .+\]$/,
+    );
     const block = (message.payload.content[1] as { type: string; text: string }).text;
+    expect(block).toMatch(/^\[conversation: .+\]\n/);
     expect(block).toContain(`Referenced conversation: "`);
     expect(block).toContain("User: echo:the pricing thread");
     expect(block).toContain(`conversations.events operation (conversationId ${ref}).`);

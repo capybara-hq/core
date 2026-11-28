@@ -521,7 +521,7 @@ describe("只有附件的消息", () => {
     expect(blocks.map((b) => b.type)).toEqual(["text", "image"]);
   });
 
-  it("text 为空且没有 files → 400；text 为空但带 @ 资源 → 400", async () => {
+  it("empty text without files → 400; empty text with files and a token → 400", async () => {
     const convId = await conversationWith("see-1");
     expect((await post(owner, convId, { text: "" })).statusCode).toBe(400);
     expect((await post(owner, convId, { text: "", files: [] })).statusCode).toBe(400);
@@ -529,7 +529,9 @@ describe("只有附件的消息", () => {
     const res = await post(owner, convId, {
       text: "",
       files: [img],
-      attachments: [{ connectorId: "00000000-0000-4000-8000-000000000001", uri: "x://y" }],
+      tokens: [
+        { type: "resource", connectorId: "00000000-0000-4000-8000-000000000001", uri: "x://y" },
+      ],
     });
     expect(res.statusCode).toBe(400);
   });

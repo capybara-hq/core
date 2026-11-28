@@ -311,7 +311,7 @@ describe("tokens on the message body", () => {
     expect(await userMessages(conv)).toHaveLength(0);
   });
 
-  it("per-kind limits, the token cap, and no old field beside tokens", async () => {
+  it("per-kind limits, the token cap, and the removed reference fields refused", async () => {
     const conv = await createConv(req, orgId, agentId);
     const four = Array.from({ length: 4 }, () => ({
       type: "connector",
@@ -320,12 +320,16 @@ describe("tokens on the message body", () => {
     expect((await send(conv, { text: M.repeat(4), tokens: four })).statusCode).toBe(400);
     const many = Array.from({ length: 21 }, () => ({ type: "file", id: randomUUID() }));
     expect((await send(conv, { text: M.repeat(21), tokens: many })).statusCode).toBe(400);
-    const both = await send(conv, {
-      text: M,
-      tokens: [{ type: "conversation", id: "x" }],
-      conversationRefs: [{ id: "y" }],
-    });
-    expect(both.statusCode, both.body).toBe(400);
+    // attachments, projectFiles and conversationRefs left the body: each is an unknown key
+    for (const old of [
+      { attachments: [{ connectorId: randomUUID(), uri: "doc://1" }] },
+      { projectFiles: [{ path: "a.ts" }] },
+      { conversationRefs: [{ id: "y" }] },
+    ]) {
+      const res = await send(conv, { text: "hi", ...old });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(errOf(res)?.code).toBe("validation_failed");
+    }
     expect(await userMessages(conv)).toHaveLength(0);
   });
 

@@ -6,7 +6,6 @@ import { conversationRefText } from "../../src/conversations/conversation-ref.js
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { ConnectorContent } from "../../src/tools/connector-content.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -25,10 +24,10 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Referencing the sender's own conversations on send (@ conversations spec §1–§2):
- * `conversationRefs` is read as the sender at send time (outside the message's transaction) and
- * logged as one English quoted block per conversation, after the project files' blocks, with
- * `payload.conversationRefs`. The referenced conversations' logs are seeded directly.
+ * Referencing the sender's own conversations on send (@ conversations spec §1–§2, composer inline
+ * tokens spec §3): a `conversation` token is read as the sender at send time (outside the
+ * message's transaction) and logged as one English quoted block per conversation, led by its
+ * placeholder, after the project files' blocks, with `payload.conversationRefs`. The referenced conversations' logs are seeded directly.
  */
 
 let pgc: TestContainer;
@@ -124,6 +123,15 @@ async function seed(conv: string, events: Seed[], authorAccountId = "x"): Promis
   return seq;
 }
 
+/**
+ * A message body naming `ids` as conversation tokens after `text` (one U+FFFC each, composer
+ * inline tokens spec §3.1).
+ */
+const withRefs = (text: string, ids: string[]) => ({
+  text: [text, ...ids.map(() => "\uFFFC")].filter((x) => x !== "").join(" "),
+  tokens: ids.map((id) => ({ type: "conversation", id })),
+});
+
 const send = (req: Req, conv: string, payload: Record<string, unknown>) =>
   req({ method: "POST", url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`, payload });
 
@@ -149,12 +157,12 @@ async function referenced(m: { req: Req }, title: string | null = "Pricing") {
   return id;
 }
 
-describe("conversationRefs on send", () => {
+describe("conversation tokens on send", () => {
   it("an excerpt without a summary: the block after the text, with its id and the closing line", async () => {
     const m = await member();
     const ref = await referenced(m);
     const conv = await createConv(m.req, orgId, agentId);
-    const res = await send(m.req, conv, { text: "same for EU", conversationRefs: [{ id: ref }] });
+    const res = await send(m.req, conv, withRefs("same for EU", [ref]));
     expect(res.statusCode, res.body).toBe(202);
     const row = await db
       .selectFrom("conversations")
@@ -163,10 +171,10 @@ describe("conversationRefs on send", () => {
       .executeTakeFirstOrThrow();
     const [msg] = await userMessages(conv);
     expect(msg?.payload.content).toEqual([
-      { type: "text", text: "same for EU" },
+      { type: "text", text: "same for EU [conversation: Pricing]" },
       {
         type: "text",
-        text: conversationRefText({
+        text: `[conversation: Pricing]\n${conversationRefText({
           id: ref,
           title: "Pricing",
           agentName: "Helper",
@@ -177,7 +185,7 @@ describe("conversationRefs on send", () => {
             { role: "user", text: "what about the EU plan?" },
             { role: "assistant", text: "Prices stay in EUR." },
           ],
-        }),
+        })}`,
       },
     ]);
     const block = textAt(msg, 1);
@@ -223,7 +231,7 @@ describe("conversationRefs on send", () => {
       { type: "assistant_message", text: "VAT is included." },
     ]);
     const conv = await createConv(m.req, orgId, agentId);
-    const res = await send(m.req, conv, { text: "go on", conversationRefs: [{ id: ref }] });
+    const res = await send(m.req, conv, withRefs("go on", [ref]));
     expect(res.statusCode, res.body).toBe(202);
     const [msg] = await userMessages(conv);
     const block = textAt(msg, 1);
@@ -254,7 +262,7 @@ describe("conversationRefs on send", () => {
       })
       .execute();
     const conv = await createConv(m.req, orgId, agentId);
-    const res = await send(m.req, conv, { text: "mid-run", conversationRefs: [{ id: ref }] });
+    const res = await send(m.req, conv, withRefs("mid-run", [ref]));
     expect(res.statusCode, res.body).toBe(202);
     const [msg] = await userMessages(conv);
     expect(textAt(msg, 1)).toContain(
@@ -262,29 +270,19 @@ describe("conversationRefs on send", () => {
     );
   });
 
-  it("duplicates collapse in first order; blocks follow the @ resources' bodies", async () => {
+  it("a repeated conversation is read once, in first order", async () => {
     const m = await member();
     const a = await referenced(m, "A");
     const b = await referenced(m, "B");
     const conv = await createConv(m.req, orgId, agentId);
-    const connectorId = randomUUID();
-    vi.spyOn(k.app.get(ConnectorContent), "resolveAttachments").mockResolvedValue({
-      blocks: [{ type: "text", text: "RESOURCE BODY" }],
-      attachments: [{ appId: connectorId, appName: "Docs", uri: "doc://1", name: "One" }],
-    });
-    const res = await send(m.req, conv, {
-      text: "both",
-      attachments: [{ connectorId, uri: "doc://1" }],
-      conversationRefs: [{ id: b }, { id: a }, { id: b }],
-    });
+    const res = await send(m.req, conv, withRefs("both", [b, a, b]));
     expect(res.statusCode, res.body).toBe(202);
     const [msg] = await userMessages(conv);
     const texts = (msg?.payload.content ?? []).map((c) => (c as { text: string }).text);
-    expect(texts).toHaveLength(4);
-    expect(texts[0]).toBe("both");
-    expect(texts[1]).toBe("RESOURCE BODY");
-    expect(texts[2]).toContain(`"B" (id ${b};`);
-    expect(texts[3]).toContain(`"A" (id ${a};`);
+    expect(texts).toHaveLength(3);
+    expect(texts[0]).toBe("both [conversation: B] [conversation: A] [conversation: B]");
+    expect(texts[1]).toContain(`"B" (id ${b};`);
+    expect(texts[2]).toContain(`"A" (id ${a};`);
     expect(msg?.payload.conversationRefs?.map((r) => r.id)).toEqual([b, a]);
   });
 
@@ -339,7 +337,7 @@ describe("conversationRefs on send", () => {
       invisible,
       elsewhereConv,
     ]) {
-      const res = await send(m.req, conv, { text: "hi", conversationRefs: [{ id }] });
+      const res = await send(m.req, conv, withRefs("hi", [id]));
       expect(res.statusCode, `${id}: ${res.body}`).toBe(422);
       const error = errOf(res);
       expect(error).toMatchObject({
@@ -358,16 +356,13 @@ describe("conversationRefs on send", () => {
     const conv = await createConv(m.req, orgId, agentId);
     const empty = await createConv(m.req, orgId, agentId);
     const fine = await referenced(m);
-    const res = await send(m.req, conv, {
-      text: "hi",
-      conversationRefs: [{ id: fine }, { id: empty }, { id: "nope" }],
-    });
+    const res = await send(m.req, conv, withRefs("hi", [fine, empty, "nope"]));
     expect(res.statusCode, res.body).toBe(422);
     expect(errOf(res)).toMatchObject({
       code: "conversation.reference_unavailable",
       details: [{ id: "nope" }, { id: empty, reason: "empty" }],
     });
-    const only = await send(m.req, conv, { text: "hi", conversationRefs: [{ id: empty }] });
+    const only = await send(m.req, conv, withRefs("hi", [empty]));
     expect(errOf(only)).toMatchObject({
       code: "conversation.reference_unavailable",
       details: [{ id: empty, reason: "empty" }],
@@ -393,10 +388,7 @@ describe("conversationRefs on send", () => {
       })),
     ]);
     const conv = await createConv(m.req, orgId, agentId);
-    const res = await send(m.req, conv, {
-      text: "status?",
-      conversationRefs: [{ id: tools }, { id: replies }],
-    });
+    const res = await send(m.req, conv, withRefs("status?", [tools, replies]));
     expect(res.statusCode, res.body).toBe(202);
     const [msg] = await userMessages(conv);
     expect(textAt(msg, 1)).toContain("Latest messages:\nUser: start the job\n");
@@ -413,7 +405,7 @@ describe("conversationRefs on send", () => {
   it("refuses the conversation being written in", async () => {
     const m = await member();
     const conv = await referenced(m);
-    const res = await send(m.req, conv, { text: "me", conversationRefs: [{ id: conv }] });
+    const res = await send(m.req, conv, withRefs("me", [conv]));
     expect(res.statusCode, res.body).toBe(422);
     expect(errOf(res)).toMatchObject({
       code: "conversation.reference_self",
@@ -422,20 +414,20 @@ describe("conversationRefs on send", () => {
     expect(await userMessages(conv)).toHaveLength(1);
   });
 
-  it("more than three references, empty text or an unknown key is a validation error", async () => {
+  it("more than three references, a marker count mismatch or an unknown key is a validation error", async () => {
     const m = await member();
     const conv = await createConv(m.req, orgId, agentId);
     const ref = await referenced(m);
-    const four = await send(m.req, conv, {
-      text: "hi",
-      conversationRefs: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }],
-    });
+    const four = await send(m.req, conv, withRefs("hi", ["a", "b", "c", "d"]));
     expect(four.statusCode, four.body).toBe(400);
-    const noText = await send(m.req, conv, { text: "", conversationRefs: [{ id: ref }] });
-    expect(noText.statusCode, noText.body).toBe(400);
+    const noMarker = await send(m.req, conv, {
+      text: "",
+      tokens: [{ type: "conversation", id: ref }],
+    });
+    expect(noMarker.statusCode, noMarker.body).toBe(400);
     const extra = await send(m.req, conv, {
-      text: "hi",
-      conversationRefs: [{ id: ref, title: "x" }],
+      text: "hi \uFFFC",
+      tokens: [{ type: "conversation", id: ref, title: "x" }],
     });
     expect(extra.statusCode, extra.body).toBe(400);
     expect(await userMessages(conv)).toEqual([]);
@@ -446,7 +438,7 @@ describe("conversationRefs on send", () => {
     const ref = await referenced(m);
     const conv = await createConv(m.req, orgId, agentId);
     const clientMessageId = randomUUID();
-    const body = { text: "once", clientMessageId, conversationRefs: [{ id: ref }] };
+    const body = { ...withRefs("once", [ref]), clientMessageId };
     const first = await send(m.req, conv, body);
     expect(first.statusCode, first.body).toBe(202);
     // the referenced conversation goes away: a retry would be refused if it were read again
@@ -459,7 +451,7 @@ describe("conversationRefs on send", () => {
     expect(await userMessages(conv)).toHaveLength(1);
   });
 
-  it("create and first-message forward conversationRefs; a refusal creates nothing", async () => {
+  it("create and first-message forward conversation tokens; a refusal creates nothing", async () => {
     const m = await member();
     const ref = await referenced(m);
     const created = await m.req({
@@ -467,7 +459,7 @@ describe("conversationRefs on send", () => {
       url: `/api/v1/orgs/${orgId}/conversations`,
       payload: {
         agentId,
-        message: { text: "new", clientMessageId: randomUUID(), conversationRefs: [{ id: ref }] },
+        message: { ...withRefs("new", [ref]), clientMessageId: randomUUID() },
       },
     });
     expect(created.statusCode, created.body).toBe(201);
@@ -482,11 +474,7 @@ describe("conversationRefs on send", () => {
         url: `/api/v1/orgs/${orgId}/conversations/first-message`,
         payload: { agentId, message, permission: { profile: "request-approval" } },
       });
-    const home = await first({
-      text: "from home",
-      clientMessageId: randomUUID(),
-      conversationRefs: [{ id: ref }],
-    });
+    const home = await first({ ...withRefs("from home", [ref]), clientMessageId: randomUUID() });
     expect(home.statusCode, home.body).toBe(201);
     const c2 = (home.json() as { conversation: { id: string } }).conversation.id;
     const [msg] = await userMessages(c2);
@@ -495,11 +483,7 @@ describe("conversationRefs on send", () => {
     expect(msg?.payload.conversationRefs?.map((r) => r.id)).toEqual([ref]);
 
     const clientMessageId = randomUUID();
-    const refused = await first({
-      text: "x",
-      clientMessageId,
-      conversationRefs: [{ id: "missing-id" }],
-    });
+    const refused = await first({ ...withRefs("x", ["missing-id"]), clientMessageId });
     expect(refused.statusCode, refused.body).toBe(422);
     expect(errOf(refused)?.code).toBe("conversation.reference_unavailable");
     const none = await db
@@ -515,11 +499,7 @@ describe("conversationRefs on send", () => {
     const ref = await referenced(m);
     const body = {
       agentId,
-      message: {
-        text: "from home",
-        clientMessageId: randomUUID(),
-        conversationRefs: [{ id: ref }],
-      },
+      message: { ...withRefs("from home", [ref]), clientMessageId: randomUUID() },
       permission: { profile: "request-approval" },
     };
     const url = `/api/v1/orgs/${orgId}/conversations/first-message`;

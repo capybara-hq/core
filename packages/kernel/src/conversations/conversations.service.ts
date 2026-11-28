@@ -587,22 +587,16 @@ export interface UserMessageInput {
   text: string;
   clientMessageId?: string;
   /**
-   * Inline tokens (composer inline tokens spec §3.1), one U+FFFC in `text` each, in order; never
-   * with `attachments`, `projectFiles` or `conversationRefs` (the HTTP layer refuses both).
+   * Inline tokens (composer inline tokens spec §3.1), one U+FFFC in `text` each, in order:
+   * connectors, connector resources, library files, project files and conversations.
    */
   tokens?: MessageToken[];
+  /**
+   * `@` resources resolved without tokens: the queue's internal path only (a queued message's
+   * resources, read when it is queued); the HTTP body names resources as tokens.
+   */
   attachments?: AttachmentRef[];
   files?: string[];
-  /**
-   * Files of the conversation's device project, referenced by their paths relative to the
-   * project root (composer menus §5): checked with `stat`, never read or copied.
-   */
-  projectFiles?: { path: string }[];
-  /**
-   * The sender's own conversations referenced by id (@ conversations spec §1): each is read at
-   * send time into one text block ({@link conversationRefText}).
-   */
-  conversationRefs?: { id: string }[];
   /** Switch the conversation's model from the next run (the agent's own model = back to it). */
   model?: ModelRef;
   /** Switch the effort (one of the model's declared `effort` values). */
@@ -826,7 +820,6 @@ export class ConversationsService {
     const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
     // the project its files are checked in, read before the write (the binding inside it decides)
     const project =
-      (input.projectFiles?.length ?? 0) > 0 ||
       input.tokens?.some((t) => t.type === "projectFile") === true
         ? await this.bindingFor(orgId, accountId, deviceId, pick.project)
         : undefined;
@@ -1742,26 +1735,17 @@ export class ConversationsService {
    * ends. A failed `ensureRun` is logged, not thrown: the message's transaction owes the ensure-run
    * backstop, which starts the run once the queue is reachable (transactional outbox spec §6).
    *
-   * `attachments` (`@` resource references): the kernel reads each resource with the sender's
-   * credentials (redacted, length-capped) and writes it as an extra text block after the user's
-   * text in the same user_message, with its metadata in `payload.attachments` (attachment i is
-   * `content[i + 1]`). A failed read writes nothing. A repeated send with the same
-   * `clientMessageId` returns the written event without reading again.
+   * `tokens` (composer inline tokens spec §3): resolved as the sender before the write
+   * ({@link resolveExtra}): each marker becomes its placeholder in `content[0]`, the referenced
+   * blocks (resources, project files, conversations, connector mentions) follow it, and
+   * `payload.inline` / `connectorMentions` record them. Any refusal writes nothing; a repeated send
+   * with the same `clientMessageId` returns the written event without resolving again.
    *
    * `files` (uploaded attachment ids): checked and bound to this conversation in the transaction
    * that writes the event (see {@link BindFiles}) and appended last as image / document reference
-   * blocks (after the `@` resource blocks); any unavailable file writes nothing. The log holds
-   * only references, never bytes. With empty `text` (files only: the HTTP layer ensures `files`
-   * and no `@` resources then) no text block is written.
-   *
-   * `projectFiles` (composer menus §5): checked in the conversation's stored project before the
-   * write ({@link resolveExtra}); one block each after the `@` resources' bodies, before the
-   * uploaded files' blocks, and `payload.projectFiles`. Any refusal writes nothing; a repeated
-   * send with the same `clientMessageId` returns the written event without checking again.
-   *
-   * `conversationRefs` (@ conversations spec §1): read as the sender in the same step, one block
-   * each after the project files' blocks, and `payload.conversationRefs`; refused and retried
-   * like the project files.
+   * blocks, each after its `[file: <name>]` line; any unavailable file writes nothing. The log
+   * holds only references, never bytes. With empty `text` (files only: the HTTP layer ensures
+   * `files` and no tokens then) no text block of the person's is written.
    */
   async postUserMessage(
     orgId: string,
@@ -2164,24 +2148,14 @@ export class ConversationsService {
   }
 
   /**
-   * Reads the `@` resources with the sender's credentials and checks the referenced project files
-   * (nothing when there are none). Shared with the queue, which reads the resources when a
-   * message is queued (decision 15; a queued message carries no project files).
-   *
-   * Project files (composer menus §5) are checked in `target`'s project on its device as the
-   * sender (the conversation's owner, through `DeviceProjectFilesService.statAll`, outside any
-   * transaction): no bound project → `conversation.project_file_unavailable` with `reason:
-   * "no_project"`; a path leaving the project → `device.path_outside_project`; one that is not a
-   * file there → `conversation.project_file_unavailable` with its path; the device codes pass on.
-   * Each becomes a {@link projectFileText} block after the resources' bodies.
+   * Resolves what a message references before it is written: its tokens ({@link resolveTokens}),
+   * or, without tokens, the `@` resources the queue passes (read with the sender's credentials
+   * when a message is queued, decision 15; nothing when there are none).
    */
   async resolveExtra(
     orgId: string,
     accountId: string,
-    input: Pick<
-      UserMessageInput,
-      "text" | "tokens" | "files" | "skill" | "attachments" | "projectFiles" | "conversationRefs"
-    >,
+    input: Pick<UserMessageInput, "text" | "tokens" | "files" | "skill" | "attachments">,
     target?: ProjectFilesTarget,
     /** Where the agent's tools are resolved; required when the tokens name connectors or resources. */
     agentContext?: MessageAgentContext,
@@ -2190,34 +2164,9 @@ export class ConversationsService {
       return this.resolveTokens(orgId, accountId, input, input.tokens, target, agentContext);
     }
     const refs = input.attachments ?? [];
-    const files = await this.checkProjectFiles(orgId, accountId, input.projectFiles ?? [], target);
-    const conversations = await this.readConversationRefs(
-      orgId,
-      accountId,
-      input.conversationRefs ?? [],
-      target?.conversationId,
-    );
-    const resolved =
-      refs.length === 0
-        ? { blocks: [], attachments: [] }
-        : await this.content.resolveAttachments(orgId, accountId, refs);
-    if (files === undefined && conversations.length === 0) return resolved;
-    return {
-      blocks: [
-        ...resolved.blocks,
-        ...(files?.paths ?? []).map((path) => ({
-          type: "text" as const,
-          text: projectFileText(path, files?.root ?? ""),
-        })),
-        ...conversations.map((c) => ({ type: "text" as const, text: c.text })),
-      ],
-      attachments: resolved.attachments,
-      ...(files !== undefined && {
-        projectFiles: files.paths.map((path) => ({ path })),
-        projectRoot: files.root,
-      }),
-      ...(conversations.length > 0 && { conversationRefs: conversations.map((c) => c.meta) }),
-    };
+    return refs.length === 0
+      ? { blocks: [], attachments: [] }
+      : this.content.resolveAttachments(orgId, accountId, refs);
   }
 
   /**

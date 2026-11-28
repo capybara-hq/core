@@ -440,9 +440,12 @@ describe("prompts 与 resources", () => {
     expect(httpBodies.join("\n").includes(TOKEN)).toBe(false);
   });
 
-  it("搜索 resources（名称 / URI 子串，不区分大小写）", async () => {
+  it("lists one connector's resources, searched by name or URI substring (case-insensitive)", async () => {
     const connectorId = await installConnector();
-    const all = await call({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/resources` });
+    const all = await call({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/connectors/resources?connectorId=${connectorId}`,
+    });
     expect(all.statusCode, all.body).toBe(200);
     expect((all.json() as { resources: { uri: string }[] }).resources.map((r) => r.uri)).toEqual([
       "docs://handbook",
@@ -450,7 +453,7 @@ describe("prompts 与 resources", () => {
     ]);
     const hit = await call({
       method: "GET",
-      url: `/api/v1/orgs/${orgId}/connectors/resources?query=HAND`,
+      url: `/api/v1/orgs/${orgId}/connectors/resources?connectorId=${connectorId}&query=HAND`,
     });
     expect(hit.json()).toEqual({
       resources: [
@@ -467,7 +470,7 @@ describe("prompts 与 resources", () => {
     });
   });
 
-  it("消息附带资源：内核读取（打码、限长）存为额外文本块，并记录附件元数据", async () => {
+  it("resource tokens: the kernel reads them (redacted, capped) into blocks led by their placeholders", async () => {
     const connectorId = await installConnector();
     const agentId = await agentFor(connectorId);
     const convId = await createConv(req, orgId, agentId);
@@ -475,10 +478,10 @@ describe("prompts 与 resources", () => {
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
       payload: {
-        text: "Please read these",
-        attachments: [
-          { connectorId, uri: "docs://handbook" },
-          { connectorId, uri: "docs://big" },
+        text: "Please read these \uFFFC \uFFFC",
+        tokens: [
+          { type: "resource", connectorId, uri: "docs://handbook" },
+          { type: "resource", connectorId, uri: "docs://big" },
         ],
       },
     });
@@ -488,9 +491,12 @@ describe("prompts 与 resources", () => {
       { type: "user_message" }
     >;
     const blocks = ev.payload.content as { type: string; text: string }[];
-    expect(blocks[0]).toEqual({ type: "text", text: "Please read these" });
+    expect(blocks[0]).toEqual({
+      type: "text",
+      text: "Please read these [resource: Handbook from Forms] [resource: Big file from Forms]",
+    });
     expect(blocks[1]?.text).toBe(
-      `Attached resource "Handbook" (docs://handbook) from the connector Forms:\n\n# Handbook ${"x".repeat(10)} token=[REDACTED]`,
+      `[resource: Handbook from Forms] Attached resource "Handbook" (docs://handbook) from the connector Forms:\n\n# Handbook ${"x".repeat(10)} token=[REDACTED]`,
     );
     expect(blocks[2]?.text.length).toBeLessThan(52_000);
     expect(blocks[2]?.text).toMatch(
@@ -506,8 +512,10 @@ describe("prompts 与 resources", () => {
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
       payload: {
-        text: "x",
-        attachments: [{ connectorId: "3f1c9a2e-8b4d-4e6f-9a1b-2c3d4e5f6a7b", uri: "a" }],
+        text: "x \uFFFC",
+        tokens: [
+          { type: "resource", connectorId: "3f1c9a2e-8b4d-4e6f-9a1b-2c3d4e5f6a7b", uri: "a" },
+        ],
       },
     });
     expect(bad.statusCode, bad.body).toBe(404);
@@ -516,14 +524,18 @@ describe("prompts 与 resources", () => {
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
       payload: {
-        text: "x",
-        attachments: Array.from({ length: 6 }, () => ({ connectorId, uri: "a" })),
+        text: `x ${"\uFFFC".repeat(6)}`,
+        tokens: Array.from({ length: 6 }, (_, i) => ({
+          type: "resource",
+          connectorId,
+          uri: `docs://${i}`,
+        })),
       },
     });
     expect(tooMany.statusCode, tooMany.body).toBe(400);
   });
 
-  it("管理员停用了 read_resource 工具（Ruling A23）：资源不列出，附件被拒", async () => {
+  it("read_resource switched off by an admin (Ruling A23): no listing, the resource token refused", async () => {
     const connectorId = await installConnector();
     const off = await call({
       method: "PATCH",
@@ -531,14 +543,23 @@ describe("prompts 与 resources", () => {
       payload: { tools: { read_resource: { status: "disabled" } } },
     });
     expect(off.statusCode, off.body).toBe(200);
-    const list = await call({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/resources` });
-    expect(list.json()).toEqual({ resources: [], unavailable: [] });
+    const list = await call({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/connectors/resources?connectorId=${connectorId}`,
+    });
+    expect(list.statusCode, list.body).toBe(409);
+    expect((list.json() as { error: { code: string } }).error.code).toBe(
+      "connector.resources_disabled",
+    );
     const agentId = await agentFor(connectorId);
     const convId = await createConv(req, orgId, agentId);
     const res = await call({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
-      payload: { text: "read", attachments: [{ connectorId, uri: "docs://handbook" }] },
+      payload: {
+        text: "read \uFFFC",
+        tokens: [{ type: "resource", connectorId, uri: "docs://handbook" }],
+      },
     });
     expect(res.statusCode, res.body).toBe(409);
     expect((res.json() as { error: { code: string } }).error.code).toBe(
