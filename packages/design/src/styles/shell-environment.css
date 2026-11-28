@@ -459,13 +459,32 @@
   :root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path)) {
     padding-top: calc(var(--cb-shell-row) + var(--cb-space-2) + var(--cb-space-5));
   }
-  /* The inline right panel is a paper under the band as well: the strip above it is ground and a
-     filler. */
+  /* The conversation's title bar is the band's whole row: it runs to the window's end edge over
+     the inline right panel (its end group, the panel and action toggles, at the far end, clear of
+     end controls), so the middle column lets it out sideways (it still clips vertically) and the
+     page is the container it measures. The inline panel's paper starts below the band, its box
+     too, so nothing of the panel lies over the bar's controls and its own strip filler is gone
+     (the bar's filler covers the band). */
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-page {
+    container-type: inline-size;
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-conv-main {
+    overflow-x: visible;
+    overflow-y: clip;
+  }
+  :root[data-shell="desktop"] .cb-shell-column .cb-shell-main .cb-conv-main > .cb-title-bar {
+    width: 100cqw;
+    padding-right: max(
+      calc(var(--cb-space-3) + var(--cb-inset-right)),
+      calc(var(--cb-shell-reserve-end) + var(--cb-space-2))
+    );
+  }
   :root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full]) {
-    padding-top: calc(var(--cb-shell-row) + var(--cb-space-2));
+    margin-top: calc(var(--cb-shell-row) + var(--cb-space-2));
+    padding-top: 0;
   }
   :root[data-shell="desktop"] .cb-shell-main .cb-conv-panel > .cb-drag-fill {
-    height: calc(var(--cb-shell-row) + var(--cb-space-2));
+    height: 0;
   }
 }
 /* Below 600 the floating row is the top row: centred on the controls and clear of them. The side

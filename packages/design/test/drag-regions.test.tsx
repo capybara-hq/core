@@ -485,21 +485,30 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
         Q,
       ),
     ).toBe("calc(var(--cb-shell-row) + var(--cb-space-2) + var(--cb-space-5))");
-    // the inline panel's paper starts at the same line, the strip above it a filler
+    // the conversation's title bar is the band's whole row: it runs to the window's end over the
+    // inline panel (its end group at the far end, clear of end controls) ...
     expect(
-      decl(
-        ':root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full])',
-        "padding-top",
-        Q,
-      ),
-    ).toBe("calc(var(--cb-shell-row) + var(--cb-space-2))");
+      decl(':root[data-shell="desktop"] .cb-shell-main .cb-conv-page', "container-type", Q),
+    ).toBe("inline-size");
+    expect(decl(CONV, "overflow-x", Q)).toBe("visible");
+    expect(decl(CONV, "overflow-y", Q)).toBe("clip");
+    const BAR =
+      ':root[data-shell="desktop"] .cb-shell-column .cb-shell-main .cb-conv-main > .cb-title-bar';
+    expect(decl(BAR, "width", Q)).toBe("100cqw");
+    expect(decl(BAR, "padding-right", Q)).toBe(
+      "max( calc(var(--cb-space-3) + var(--cb-inset-right)), calc(var(--cb-shell-reserve-end) + var(--cb-space-2)) )",
+    );
+    // ... and the inline panel's box starts below the band, so nothing of it lies over the bar
+    const PANEL = ':root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full])';
+    expect(decl(PANEL, "margin-top", Q)).toBe("calc(var(--cb-shell-row) + var(--cb-space-2))");
+    expect(decl(PANEL, "padding-top", Q)).toBe("0");
     expect(
       decl(
         ':root[data-shell="desktop"] .cb-shell-main .cb-conv-panel > .cb-drag-fill',
         "height",
         Q,
       ),
-    ).toBe("calc(var(--cb-shell-row) + var(--cb-space-2))");
+    ).toBe("0");
     // the band's rows keep their reserves: no rule clears the row, the start reserve or the
     // column reserve, so the row starts after the toggle and ends clear of end controls
     expect(

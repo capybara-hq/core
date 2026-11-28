@@ -83,6 +83,9 @@ intended (one paper colour). `preview-light` keeps `#FAF9F6` (an icon preview gr
   form (medium, or collapsed on expanded; `--cb-shell-paper-drop`) has the top row as one band of
   ground across the whole window, and the band holds the paper's first row after the lights and the
   band's sidebar toggle: the conversation title bar, or a deeper page's path row (with its filler).
+  The conversation title bar is the band's whole row (maintainer decision 2026-11-28): its end
+  group (panel, files, tasks, plugins toggles) sits at the window's end edge, above the inline
+  right panel's paper when it is open, and its end padding keeps clear of an end reserve.
   The paper's colour, and the inline right panel's paper, start `space.2` below the band (as the
   paper lies `space.2` below the window's top edge elsewhere), and the next row (the thread, the
   title row) starts on it. A first-level page has no path row: its band holds only the lights and
@@ -120,8 +123,8 @@ controls, every overlay is no-drag. Added:
 - the paper's top gutter (`space.2` of ground above it) is a filler across the content column;
 - the page head's title row filler (§3); the path row filler stays for deeper pages;
 - the conversation title bar, the right panel's head and the sidebar brand row keep theirs.
-- in the rail-drop band (§2) the band's rows keep their fillers (the title bar's, the path row's);
-  the strip above the inline panel is the panel's filler; over a first-level page the gutter is the
+- in the rail-drop band (§2) the band's rows keep their fillers (the title bar's, the path row's;
+  the title bar's runs over the inline panel, whose box starts below the band); over a first-level page the gutter is the
   band's whole height and the `space.2` below it; the controls area (`.cb-shell-band`) covers the
   lights; the toggle and the rows' controls are no-drag, and every overlay stays no-drag.
 
