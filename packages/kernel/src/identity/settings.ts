@@ -208,6 +208,9 @@ const COMPACTION_FIELDS = {
   keepRecentTurns: z.number().int().min(0).max(20),
   reserveTokens: z.number().int().min(0).max(50_000),
   maxOutputTokens: z.number().int().min(1024).max(32_000),
+  idleEnabled: z.boolean(),
+  idleMinTokensFloor: z.number().int().min(50_000).max(2_000_000),
+  idleMinWindowRatio: z.number().min(0.1).max(0.9),
 };
 
 /**
@@ -222,6 +225,9 @@ export const COMPACTION_SETTINGS = z.object({
   keepRecentTurns: COMPACTION_FIELDS.keepRecentTurns.default(4),
   reserveTokens: COMPACTION_FIELDS.reserveTokens.default(8000),
   maxOutputTokens: COMPACTION_FIELDS.maxOutputTokens.default(20_000),
+  idleEnabled: COMPACTION_FIELDS.idleEnabled.default(true),
+  idleMinTokensFloor: COMPACTION_FIELDS.idleMinTokensFloor.default(200_000),
+  idleMinWindowRatio: COMPACTION_FIELDS.idleMinWindowRatio.default(0.3),
 });
 
 export type CompactionSettings = z.infer<typeof COMPACTION_SETTINGS>;
@@ -256,6 +262,9 @@ export function effectiveCompactionSettings(
     keepRecentTurns: org?.keepRecentTurns ?? platform.keepRecentTurns,
     reserveTokens: org?.reserveTokens ?? platform.reserveTokens,
     maxOutputTokens: org?.maxOutputTokens ?? platform.maxOutputTokens,
+    idleEnabled: org?.idleEnabled ?? platform.idleEnabled,
+    idleMinTokensFloor: org?.idleMinTokensFloor ?? platform.idleMinTokensFloor,
+    idleMinWindowRatio: org?.idleMinWindowRatio ?? platform.idleMinWindowRatio,
   };
 }
 
@@ -1134,6 +1143,11 @@ export class SettingsService {
           keepRecentTurns: compactionPatch.keepRecentTurns ?? current.compaction.keepRecentTurns,
           reserveTokens: compactionPatch.reserveTokens ?? current.compaction.reserveTokens,
           maxOutputTokens: compactionPatch.maxOutputTokens ?? current.compaction.maxOutputTokens,
+          idleEnabled: compactionPatch.idleEnabled ?? current.compaction.idleEnabled,
+          idleMinTokensFloor:
+            compactionPatch.idleMinTokensFloor ?? current.compaction.idleMinTokensFloor,
+          idleMinWindowRatio:
+            compactionPatch.idleMinWindowRatio ?? current.compaction.idleMinWindowRatio,
         };
       }
       if (promptCachePatch !== undefined) {

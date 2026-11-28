@@ -61,6 +61,9 @@ describe("COMPACTION_SETTINGS", () => {
       keepRecentTurns: 4,
       reserveTokens: 8000,
       maxOutputTokens: 20_000,
+      idleEnabled: true,
+      idleMinTokensFloor: 200_000,
+      idleMinWindowRatio: 0.3,
     });
   });
 
@@ -74,6 +77,10 @@ describe("COMPACTION_SETTINGS", () => {
     expect(() => COMPACTION_SETTINGS.parse({ reserveTokens: -1 })).toThrow();
     expect(() => COMPACTION_SETTINGS.parse({ maxOutputTokens: 1023 })).toThrow();
     expect(() => COMPACTION_SETTINGS.parse({ maxOutputTokens: 32_001 })).toThrow();
+    expect(() => COMPACTION_SETTINGS.parse({ idleMinTokensFloor: 49_999 })).toThrow();
+    expect(() => COMPACTION_SETTINGS.parse({ idleMinTokensFloor: 2_000_001 })).toThrow();
+    expect(() => COMPACTION_SETTINGS.parse({ idleMinWindowRatio: 0.95 })).toThrow();
+    expect(() => COMPACTION_SETTINGS.parse({ idleMinWindowRatio: 0.09 })).toThrow();
   });
 
   it("accepts the range bounds", () => {
@@ -88,6 +95,14 @@ describe("COMPACTION_SETTINGS", () => {
 });
 
 describe("effectiveCompactionSettings", () => {
+  it("an org's idleEnabled: false turns idle compaction off and keeps the platform's size fields", () => {
+    const platform = { ...defaults, idleMinTokensFloor: 300_000, idleMinWindowRatio: 0.5 };
+    const eff = effectiveCompactionSettings(platform, { idleEnabled: false });
+    expect(eff.idleEnabled).toBe(false);
+    expect(eff.idleMinTokensFloor).toBe(300_000);
+    expect(eff.idleMinWindowRatio).toBe(0.5);
+  });
+
   it("an org value wins over the platform's", () => {
     expect(
       effectiveCompactionSettings({ ...defaults, threshold: 0.8 }, { threshold: 0.6 }).threshold,

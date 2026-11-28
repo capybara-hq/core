@@ -103,6 +103,9 @@ const DEFAULT_COMPACTION = {
   keepRecentTurns: 4,
   reserveTokens: 8000,
   maxOutputTokens: 20_000,
+  idleEnabled: true,
+  idleMinTokensFloor: 200_000,
+  idleMinWindowRatio: 0.3,
 };
 
 const errCode = (res: { json(): unknown }) =>
@@ -741,7 +744,22 @@ describe("超级管理员端点", () => {
       keepRecentTurns: 2,
     });
 
+    // an idle field merges like any other and leaves the rest unchanged
+    const idle = await put({ idleEnabled: false });
+    expect(idle.statusCode).toBe(200);
+    expect(await read()).toEqual({
+      ...DEFAULT_COMPACTION,
+      threshold: 0.7,
+      keepRecentTurns: 2,
+      idleEnabled: false,
+    });
+    expect((await put({ idleEnabled: true })).statusCode).toBe(200);
+
     for (const compaction of [
+      { idleMinTokensFloor: 49_999 },
+      { idleMinTokensFloor: 2_000_001 },
+      { idleMinWindowRatio: 0.95 },
+      { idleEnable: false },
       { threshold: 0.49 },
       { threshold: 0.96 },
       { keepRecentTurns: 21 },
