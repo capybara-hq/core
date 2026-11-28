@@ -585,7 +585,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       [COMPONENTS]: () => json(200, { components: [] }),
     });
     await renderList();
-    // a shared connector: ⋯ alone, holding 修改配置 (a link to the 设置 tab) and 删除
+    // a shared connector: ⋯ alone, holding edit configuration (a link to settings) and delete
     const wiki = await cardOf("Wiki");
     expect(footControls(wiki)).toEqual([MORE.en]);
     const wikiItems = await openCardMenu(wiki);

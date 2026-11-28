@@ -44,8 +44,8 @@ import NotFound from "../not-found";
  * personal one shows the viewer's own state, 连接 (OAuth: the connect route, back here; a
  * credential: its sheet) and, once connected, 权限 (the viewer's own tool policies for their
  * connection), with 如何连接 / 重新连接 / 断开连接 in ⋯ (`usePersonalConnections`); org admins have
- * 修改配置 and 删除 (the detail's 设置 tab delete, same confirmation) in ⋯ on every connector card. Members read the template cards
- * without actions; guests see the connectors only.
+ * edit configuration and delete (the detail settings tab's delete, same confirmation) in ⋯ on every
+ * connector card. Members read the template cards without actions; guests see the connectors only.
  * From the query cache (the layout prefetched the list, the templates and the personal
  * connectors' details on a first load).
  */
@@ -95,7 +95,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   });
   const ownerLabel = useOwnerLabel(orgId);
   const errorMessage = useErrorMessage();
-  // 删除 in ⋯ (org admins): the same mutation and confirmation as the detail's 设置 tab
+  // Delete in ⋯ (org admins): the same mutation and confirmation as the detail's settings tab
   const [deleting, setDeleting] = useState<ConnectorSummary | null>(null);
   const remove = useAppMutation({
     fn: (id: string) => deleteConnector(orgId, id),
