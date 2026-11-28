@@ -1677,6 +1677,7 @@ describe("the loopback port review", () => {
       agentVersion: 1,
       conversationKind: "chat",
       profile: "approve-for-me",
+      attended: true,
       service: "browser.browser",
       port: 3999,
       url: "http://127.0.0.1:3999/",
@@ -1728,6 +1729,34 @@ describe("the loopback port review", () => {
       reason: "The browser asks to reach port 3999 on this device. Review: Not part of the task.",
     });
     expect(JSON.stringify(reviewRequest().messages)).toContain("a sub-agent requested");
+  });
+
+  it("Full access with a refusal is a deny, with no review model call", async () => {
+    answer("allow", "Would allow.");
+    expect(
+      await loopback({
+        profile: "full-access",
+        refusal: "this device does not allow running outside the sandbox",
+      }),
+    ).toMatchObject({
+      decision: "deny",
+      by: "rule",
+      rule: null,
+      reason:
+        "Reaching port 3999 on this device is not possible here (this device does not allow running outside the sandbox).",
+    });
+    expect(reviewChats()).toEqual([]);
+  });
+
+  it("an unattended run is a deny under every profile, with no review model call", async () => {
+    answer("allow", "Would allow.");
+    for (const profile of ["full-access", "approve-for-me", "request-approval"] as const)
+      expect(await loopback({ profile, attended: false })).toMatchObject({
+        decision: "deny",
+        by: "rule",
+        reason: expect.stringContaining("this is an unattended run (an automation)"),
+      });
+    expect(reviewChats()).toEqual([]);
   });
 
   it("Request approval asks the person with no review model call", async () => {

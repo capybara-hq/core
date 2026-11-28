@@ -186,7 +186,20 @@ export interface LoopbackPortReviewInput {
   /** A sub-agent asks: its parent run (the classifier's usage counts there, as for any review). */
   parentRunId?: ReviewInput["parentRunId"];
   budgetRunId?: ReviewInput["budgetRunId"];
+  /**
+   * The EFFECTIVE permission profile of the asking run (operation authority: an unattended run is
+   * `request-approval`), never only the conversation's stored profile: Full access grants the port
+   * from this value alone.
+   */
   profile: PermissionProfile;
+  /** Whether a person is present to answer an ask: an unattended run is refused, never granted. */
+  attended: boolean;
+  /**
+   * Why the port cannot be granted here, the facts an outside-sandbox escalation is refused for
+   * (the org or device outside-sandbox ceiling off, a provider that cannot enforce loopback
+   * ports): a deny with this reason before any approver. Absent or null: nothing refuses it.
+   */
+  refusal?: string | null;
   /** The device service that asks (`<plugin>.<service>`). */
   service: string;
   port: number;
@@ -200,6 +213,14 @@ export interface LoopbackPortReviewInput {
 /** What a Full access allow of a loopback port says. */
 export const LOOPBACK_FULL_ACCESS_REASON =
   "Full access grants this local port within the device's limits.";
+
+/** Why an unattended run never reaches a local port. */
+export const LOOPBACK_UNATTENDED_WHY =
+  "this is an unattended run (an automation) where no one can approve a local port";
+
+/** What a refused loopback port request says (the model and the person read it). */
+export const loopbackRefusedReason = (port: number, why: string): string =>
+  `Reaching port ${port} on this device is not possible here (${why}).`;
 
 /** What a loopback port ask tells the person (and the model, when it is refused). */
 export const loopbackAskReason = (port: number, database: boolean): string =>
@@ -650,7 +671,9 @@ export class CommandReviewService implements CommandReview {
    * the device's ceilings (the caller checked them), except a sub-agent's request, which goes to
    * the review model; Approve for me asks the review model (an ask when none is mapped, unsure or
    * failing); Request approval asks the person. The review model reads the person's messages of
-   * the root conversation. Never throws: a failure is an ask.
+   * the root conversation. An unattended run or a `refusal` is a deny before any approver. The
+   * review model's deny stays a deny (no person is asked), as for an escalation. Never throws: a
+   * failure is an ask.
    */
   async reviewLoopbackPort(
     input: LoopbackPortReviewInput,
@@ -661,6 +684,16 @@ export class CommandReviewService implements CommandReview {
       crossing: "loopback-port",
       subAgent,
     });
+    // refused before the approver: no profile grants what the device or the run cannot allow
+    const why = !input.attended ? LOOPBACK_UNATTENDED_WHY : input.refusal || null;
+    if (why !== null)
+      return {
+        decision: "deny",
+        by: "rule",
+        rule: null,
+        reason: loopbackRefusedReason(input.port, why),
+        approver,
+      };
     if (approver === "none")
       return { ...allow(LOOPBACK_FULL_ACCESS_REASON, null), crossing: "loopback-port", approver };
     const statement = loopbackAskReason(input.port, input.database);

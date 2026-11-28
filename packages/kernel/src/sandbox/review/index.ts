@@ -46,7 +46,9 @@ export type {
 export {
   CommandReviewService,
   LOOPBACK_FULL_ACCESS_REASON,
+  LOOPBACK_UNATTENDED_WHY,
   loopbackAskReason,
+  loopbackRefusedReason,
   REVIEW_REASONS,
 } from "./review.service.js";
 export {
