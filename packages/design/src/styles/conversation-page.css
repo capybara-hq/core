@@ -243,7 +243,7 @@ span.cb-title-btn {
   padding: var(--cb-space-1);
   border: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-md);
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   color: var(--cb-ink);
   box-shadow: var(--cb-shadow-1);
   outline: none;
@@ -834,7 +834,7 @@ span.cb-title-btn {
   max-height: 85dvh;
   border-top: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-md) var(--cb-radius-md) 0 0;
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   box-shadow: var(--cb-shadow-1);
   outline: none;
   animation: cb-fade-in var(--cb-motion) ease-out;
@@ -2214,7 +2214,7 @@ button.cb-property-row {
   margin-bottom: var(--cb-space-2);
   border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-md);
-  background: var(--cb-panel);
+  background: var(--cb-raised);
 }
 @media not all and (min-width: 600px) {
   .cb-conv-latest {

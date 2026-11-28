@@ -15,7 +15,7 @@
   padding: var(--cb-space-1);
   border: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-md);
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   color: var(--cb-ink);
   box-shadow: var(--cb-shadow-1);
 }

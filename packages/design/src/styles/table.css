@@ -13,11 +13,11 @@
 /* An unframed table inside a box takes the box's ground (sticky header, row hover base). */
 .cb-card .cb-table[data-framed="false"],
 .cb-form-section-fields .cb-table[data-framed="false"],
-.cb-dialog .cb-table[data-framed="false"],
-.cb-sheet .cb-table[data-framed="false"],
 .cb-property-section .cb-table[data-framed="false"] {
   --cb-table-ground: var(--cb-panel);
 }
+.cb-dialog .cb-table[data-framed="false"],
+.cb-sheet .cb-table[data-framed="false"],
 .cb-icard .cb-table[data-framed="false"] {
   --cb-table-ground: var(--cb-raised);
 }

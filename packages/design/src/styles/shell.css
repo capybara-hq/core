@@ -947,7 +947,7 @@ a.cb-stat-card:focus-visible {
   z-index: var(--cb-z-popover);
   padding: var(--cb-pad-dense-y) var(--cb-pad-dense-x);
   border-radius: var(--cb-radius-sm);
-  background: var(--cb-panel);
+  background: var(--cb-raised);
   color: var(--cb-ink);
   box-shadow: var(--cb-shadow-1);
 }

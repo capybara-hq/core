@@ -4793,11 +4793,11 @@ export const THEME_TOKENS: {
         };
         readonly panel: {
             readonly dark: "#111110";
-            readonly light: "#FFFFFF";
+            readonly light: "#F6F5F1";
         };
         readonly "panel-2": {
             readonly dark: "#0E0E0D";
-            readonly light: "#FCFBF9";
+            readonly light: "#FAF9F6";
         };
         readonly sidebar: {
             readonly dark: "#171716";
@@ -4885,7 +4885,7 @@ export const THEME_TOKENS: {
         };
         readonly fail: {
             readonly dark: "#FF5C52";
-            readonly light: "#C8302A";
+            readonly light: "#C02D27";
         };
         readonly warn: {
             readonly dark: "#F2C14B";
