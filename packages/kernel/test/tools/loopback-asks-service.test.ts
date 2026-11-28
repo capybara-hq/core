@@ -30,7 +30,7 @@ import {
   loopbackGrantedNote,
   loopbackReviewDeniedNote,
 } from "../../src/tools/loopback-asks.js";
-import { addressLayerNote } from "../../src/tools/network-asks.js";
+import { addressLayerNote, serviceAskedNote } from "../../src/tools/network-asks.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { fakeDeviceAccessCalls } from "../fixtures/extensions/fake-device-access/index.js";
 import {
@@ -923,6 +923,38 @@ describe("loopback port asks", () => {
     expect(r?.content).toContain(`Loaded ${URL_3999}.`);
     expect(r?.content).toContain(loopbackGrantedNote(3999));
     expect(await grants()).toHaveLength(1);
+  });
+
+  it("keeps other refused hosts' notes and network_blocked event when a loopback ask settles", async () => {
+    await profile("request-approval");
+    await postMessage(
+      s.req,
+      orgId,
+      s.conversationId,
+      `tool:${NAVIGATE}:${JSON.stringify({
+        url: URL_3999,
+        service: true,
+        blocked: ["cdn.example.org", { host: "blocked.org", layer: "org" }],
+      })}`,
+    );
+    const ask = await nextAsk();
+    expect((await decide(ask.id, { decision: "deny" })).statusCode).toBe(200);
+    await waitForTerminal(db, s.conversationId, 1, 30_000);
+    const [r, ...rest] = await results();
+    expect(rest).toEqual([]);
+    expect(r?.content).toContain(loopbackDeniedNote(3999));
+    expect(r?.content).toContain("blocked.org was blocked by this device's network policy");
+    expect(r?.content).toContain("an organization admin adds blocked.org");
+    expect(r?.content).toContain(serviceAskedNote(["cdn.example.org"]));
+    const blockedEvents = (await eventsOf(db, s.conversationId)).filter(
+      (e) => e.type === "network_blocked",
+    );
+    expect(blockedEvents).toHaveLength(1);
+    expect(
+      blockedEvents[0]?.type === "network_blocked"
+        ? blockedEvents[0].payload.hosts.map((h) => h.host)
+        : [],
+    ).toEqual(["cdn.example.org", "blocked.org"]);
   });
 
   it("resumes a ready-grant rerun after a crash between the refusal and attempt 2", async () => {

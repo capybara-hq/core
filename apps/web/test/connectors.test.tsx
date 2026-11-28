@@ -585,17 +585,24 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       [COMPONENTS]: () => json(200, { components: [] }),
     });
     await renderList();
-    // a shared connector: 修改配置 is its one button, a link to the 设置 tab
+    // a shared connector: ⋯ alone, holding edit configuration (a link to settings) and delete
     const wiki = await cardOf("Wiki");
-    expect(footControls(wiki)).toEqual([en.connections.editConfig]);
-    expect(
-      within(wiki).getByRole("link", { name: en.connections.editConfig }).getAttribute("href"),
-    ).toBe("/connectors/c-wiki?tab=settings");
+    expect(footControls(wiki)).toEqual([MORE.en]);
+    const wikiItems = await openCardMenu(wiki);
+    expect(wikiItems.map((i) => i.textContent)).toEqual([
+      en.connections.editConfig,
+      en.connectors.settings.delete,
+    ]);
+    expect(wikiItems[0]?.getAttribute("href")).toBe("/connectors/c-wiki?tab=settings");
+    await userEvent.setup().keyboard("{Escape}");
     // not connected: 连接, and 修改配置 stays in ⋯ (a menu of one beside the primary)
     const slack = await cardOf("Slack");
     expect(footControls(slack)).toEqual([en.connections.oauthConnect, MORE.en]);
     const items = await openCardMenu(slack);
-    expect(items.map((i) => i.textContent)).toEqual([en.connections.manageCredentials]);
+    expect(items.map((i) => i.textContent)).toEqual([
+      en.connections.manageCredentials,
+      en.connectors.settings.delete,
+    ]);
     expect(items[0]?.getAttribute("href")).toBe("/connectors/c-slack?tab=credentials");
     await userEvent.setup().keyboard("{Escape}");
     cleanup();
@@ -607,7 +614,57 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       en.connections.reconnect,
       en.connections.manageCredentials,
       en.connections.disconnect,
+      en.connectors.settings.delete,
     ]);
+  });
+
+  it.each(LOCALES)(
+    "删除 in ⋯: org admins confirm by name, the connector is deleted and the list read again (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      let gone = false;
+      const calls = stubApi({
+        "GET /api/v1/orgs/o1/connectors": () =>
+          json(200, { connectors: gone ? [] : [summary({ id: "c-wiki", name: "Wiki" })] }),
+        "DELETE /api/v1/orgs/o1/connectors/c-wiki": () => {
+          gone = true;
+          return noContent();
+        },
+        [COMPONENTS]: () => json(200, { components: [] }),
+      });
+      await renderList({ locale });
+      const card = await cardOf("Wiki", m.connectors.title);
+      const items = await openCardMenu(card, MORE[locale]);
+      const del = items.find((i) => i.textContent === m.connectors.settings.delete);
+      expect(del).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(del as HTMLElement);
+      const dialog = await screen.findByRole("dialog");
+      const confirm = within(dialog).getByRole("button", { name: m.connectors.settings.delete });
+      expect(confirm).toHaveProperty("disabled", true);
+      expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+      await user.type(within(dialog).getByRole("textbox"), "Wiki");
+      await user.click(confirm);
+      await vi.waitFor(() =>
+        expect(
+          calls.some((c) => c.method === "DELETE" && c.url.endsWith("/connectors/c-wiki")),
+        ).toBe(true),
+      );
+      await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await vi.waitFor(() => expect(screen.queryByText("Wiki")).toBeNull());
+    },
+  );
+
+  it("删除 in ⋯ is absent for members", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors": () =>
+        json(200, { connectors: [summary({ id: "c-wiki", name: "Wiki" })] }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+    });
+    await renderList({ me: MEMBER });
+    const card = await cardOf("Wiki");
+    expect(within(card).queryByRole("button", { name: MORE.en })).toBeNull();
+    expect(within(card).queryByText(en.connectors.settings.delete)).toBeNull();
   });
 
   it("a personal credential connector: 连接 opens the credential sheet in place; once connected ⋯ 更新凭据 / 清除凭据", async () => {

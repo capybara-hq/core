@@ -55,6 +55,7 @@ const ICONS = {
   spinner: "loader-circle",
   file: "file",
   "file-text": "file-text",
+  "file-code": "file-code",
   image: "image",
   refresh: "refresh-cw",
   "external-link": "external-link",

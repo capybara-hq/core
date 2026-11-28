@@ -2457,13 +2457,16 @@ export class ToolPipeline {
     let loopbackNotes: readonly string[] = [];
     if (scoped?.loopback !== undefined) {
       const lb = scoped.loopback;
+      const otherHosts = scoped.hosts.filter(
+        (h) => serviceHostKey(h.host) !== serviceHostKey(lb.host),
+      );
       const handled = await this.loopbackBlocked(
         ctx,
         call,
         tool,
         input,
         outKey,
-        { deviceId: scoped.deviceId, loopback: lb, url: scoped.url },
+        { deviceId: scoped.deviceId, loopback: lb, url: scoped.url, otherHosts },
         attempt,
         keptResult,
         rerun.loopbackRerun === true,
@@ -2471,9 +2474,7 @@ export class ToolPipeline {
         callAudit,
       );
       if (handled.kind !== "none") {
-        serviceHosts = scoped.hosts.filter(
-          (h) => serviceHostKey(h.host) !== serviceHostKey(lb.host),
-        );
+        serviceHosts = otherHosts;
         if (handled.kind === "wait") {
           if (hooks && hookBase) {
             fireObserve(
@@ -3474,6 +3475,11 @@ export class ToolPipeline {
      * the call's attempt. Only "always" is offered; once approved the call runs again.
      */
     service?: { name: string; attempt: number; url: string | null },
+    /**
+     * Plan-only pass: compute the `network_blocked` event and every refused host's note without
+     * opening a second network ask (used when a loopback ask already takes this call's ask slot).
+     */
+    planOnly?: true,
   ): Promise<
     | { kind: "wait"; wait: WaitingFor; content: string }
     | {
@@ -3527,6 +3533,16 @@ export class ToolPipeline {
     const addressNote = plan.addressNote;
     if (plan.ask.length === 0 || offer === undefined)
       return { kind: "write", event, notes: plan.notes, addressNote };
+    // plan-only pass (loopback ask takes this call's ask slot): keep every other refused host's
+    // note without opening a second ask
+    if (planOnly === true) {
+      return {
+        kind: "write",
+        event,
+        notes: [...plan.notes, serviceAskedNote(plan.ask.map((h) => h.host))],
+        addressNote,
+      };
+    }
     // one ask per call: a service call that ran again after its ask is not asked again; only a
     // would-be ask is replaced, the plan's other notes (a host on the list, not yet applied) stay
     if (
@@ -3668,6 +3684,7 @@ export class ToolPipeline {
       deviceId: string;
       loopback: { serviceId: string; host: string; port: number };
       url: string | null;
+      otherHosts: readonly { host: string; layer: NetworkBlockedHost["layer"] }[];
     },
     attempt: number,
     kept: KeptToolResult & { text: string },
@@ -3883,12 +3900,47 @@ export class ToolPipeline {
     if (run?.pending === true) return { kind: "write", notes: [otherAskPendingNote([hp])] };
     if ((run?.asks ?? 0) >= MAX_NETWORK_ASKS_PER_RUN)
       return { kind: "write", notes: [tooManyNote([hp])] };
-    const { content, outputId } = await this.keptContent(ctx, call.id, kept);
+    // plan-only pass for other refused hosts reported alongside the loopback port, so their notes
+    // and `network_blocked` event are kept when the loopback ask settles
+    let otherEvent: AppendEvent | null = null;
+    let otherNotes: string[] = [];
+    if (report.otherHosts.length > 0) {
+      const other = await this.networkBlocked(
+        ctx,
+        call.id,
+        toolKey,
+        input,
+        {
+          deviceId: report.deviceId,
+          blocked: report.otherHosts.map(({ host, layer }) => ({ host, port: 443, layer })),
+        },
+        pre,
+        callAudit,
+        kept,
+        undefined,
+        undefined,
+        {
+          name: tool.source.kind === "plugin" ? tool.source.plugin : tool.key,
+          attempt,
+          url: report.url,
+        },
+        true,
+      );
+      if (other.kind === "write") {
+        otherEvent = other.event;
+        otherNotes = other.notes;
+      }
+    }
+    const keptWithOther =
+      otherNotes.length === 0
+        ? kept
+        : { ...kept, content: withNetworkNotes(kept.content, otherNotes) };
+    const { content, outputId } = await this.keptContent(ctx, call.id, keptWithOther);
     const {
       text: _text,
       denialHint: _hint,
       ...rest
-    } = kept as typeof kept & {
+    } = keptWithOther as typeof keptWithOther & {
       denialHint?: DenialHint;
     };
     const result: KeptToolResult = {
@@ -3898,7 +3950,15 @@ export class ToolPipeline {
     };
     // the service's call ran: its display-only events and tool.called now, the result once the
     // ask settles
-    const written = await this.writeResultIn(ctx, call.id, toolKey, kept, [...pre], callAudit, []);
+    const written = await this.writeResultIn(
+      ctx,
+      call.id,
+      toolKey,
+      keptWithOther,
+      otherEvent !== null ? [...pre, otherEvent] : [...pre],
+      callAudit,
+      [],
+    );
     if (written.length > 0)
       await this.deps.eventLog.notify(ctx.conversationId, Math.max(...written.map((e) => e.seq)));
     const ask = await this.deps.approvals.requestLoopback({

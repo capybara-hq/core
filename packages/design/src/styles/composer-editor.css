@@ -1,0 +1,172 @@
+/* ── The composer's editor and its inline tokens (composer inline tokens spec §1, §2, §6) ── */
+
+/* The editor's box: the content editable (`.cb-composer-input`, the textarea's rules: prose type,
+   one line when empty, 8 lines then scrolling) with the placeholder and the hint's ghost over it. */
+.cb-composer-editor {
+  position: relative;
+  min-width: 0;
+}
+.cb-composer-editor > .cb-composer-input {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cb-composer-editor-paragraph {
+  margin: 0;
+}
+.cb-composer-editor-placeholder,
+.cb-composer-editor-ghost {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  overflow: hidden;
+  color: var(--cb-faint);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-size);
+  line-height: var(--cb-type-prose-line);
+  white-space: pre-wrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Lexical's host element around a token's React element. */
+.cb-inline-token-host {
+  display: inline;
+}
+
+/*
+ * One token: an atomic box in the text flow, centred on the line (never baseline-shifted): the
+ * box is the line height minus 4, set at the line's top with half the difference as its block
+ * margin, and its label is centred in it, so the token's text and the sentence's text share one
+ * optical centre (spec §1).
+ */
+.cb-inline-token {
+  --cb-inline-token-inset: 2px;
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: var(--cb-space-1);
+  height: calc(var(--cb-type-prose-line) - 2 * var(--cb-inline-token-inset));
+  max-width: 16em;
+  margin-block: var(--cb-inline-token-inset);
+  padding: 0 var(--cb-space-1);
+  vertical-align: top;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-size);
+  line-height: calc(var(--cb-type-prose-line) - 2 * var(--cb-inline-token-inset));
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+.cb-inline-token-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cb-inline-token > .cb-icon {
+  flex: none;
+  color: var(--cb-muted);
+}
+/* A project file's path is cut at its start, so the file name stays (spec §1). */
+.cb-inline-token[data-kind="projectFile"] > .cb-inline-token-label {
+  direction: rtl;
+  text-align: left;
+}
+/* A connector's mark: its plugin icon contained, else its initial. */
+.cb-inline-token-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-raised);
+  color: var(--cb-ink);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-micro-size);
+  font-weight: 600;
+  line-height: 1;
+}
+.cb-inline-token-mark > .cb-mark-image {
+  width: 100%;
+  height: 100%;
+}
+/* A file's type mark: the type badge (§6.16.19) at its smallest. */
+.cb-inline-token-type {
+  flex: none;
+  padding: 0 calc(var(--cb-space-1) / 2);
+  border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-muted);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-micro-size);
+  font-weight: 600;
+  line-height: var(--cb-type-micro-line);
+}
+/* The skill token: an action, not a reference: `accent-tint` ground, mono `accent` label. */
+.cb-inline-token[data-kind="skill"] {
+  background: var(--cb-accent-tint);
+  color: var(--cb-accent);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-body-size);
+}
+/* Selected (a caret selection over it, a click or a tap): the accent outline. */
+.cb-inline-token[data-selected="true"] {
+  outline: 1px solid var(--cb-accent);
+}
+/* Refused by a send: 1px `fail` border, `fail` label, the alert lead. */
+.cb-inline-token[data-state="refused"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--cb-fail);
+  color: var(--cb-fail);
+}
+.cb-inline-token[data-state="refused"] > .cb-icon {
+  color: var(--cb-fail);
+}
+/* The ghost line's copy of the token only takes its room. */
+.cb-inline-token[data-hidden="true"] {
+  visibility: hidden;
+}
+
+/* Medium (600–840): tokens at most 12em. */
+@media (min-width: 600px) and (max-width: 840px) {
+  .cb-inline-token {
+    max-width: 12em;
+  }
+}
+.cb-composer-editor[data-form="medium"] .cb-inline-token {
+  max-width: 12em;
+}
+
+/* Compact (below 600): tokens at most 10em, marks 14. The [data-form="compact"] rules draw the
+   same in the reference set's wide window; the two must stay identical. */
+@media not all and (min-width: 600px) {
+  .cb-inline-token {
+    max-width: 10em;
+  }
+  .cb-inline-token-mark,
+  .cb-inline-token > .cb-icon {
+    width: 14px;
+    height: 14px;
+  }
+}
+.cb-composer-editor[data-form="compact"] .cb-inline-token {
+  --cb-inline-token-inset: 1px;
+  max-width: 10em;
+}
+.cb-composer-editor[data-form="compact"] .cb-inline-token-mark,
+.cb-composer-editor[data-form="compact"] .cb-inline-token > .cb-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* With the mobile type (compact, or a touch device) the box is the line height minus 2. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-inline-token {
+    --cb-inline-token-inset: 1px;
+  }
+}

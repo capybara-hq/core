@@ -325,6 +325,16 @@ export function compactionPlan(
   return { coversUpToSeq, transcript: parts.join("\n\n") };
 }
 
+/** Whether a `run_started.trigger` belongs to a run opened by a user/automation message. */
+function isMessageRunTrigger(trigger: EventPayload<"run_started">["trigger"]): boolean {
+  return (
+    trigger === undefined ||
+    trigger === "message" ||
+    trigger === "schedule" ||
+    trigger === "automation_event"
+  );
+}
+
 /**
  * The user messages that started run `runId`, among those a summary covering up to
  * `coversUpToSeq` covers (context compaction spec §4.2, revision 2026-11-15): recorded in the
@@ -346,15 +356,7 @@ export function openingSeqs(
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const start = sorted.findLast((e) => e.type === "run_started" && e.runId === runId);
   if (start?.type !== "run_started") return [];
-  const trigger = start.payload.trigger;
-  if (
-    trigger !== undefined &&
-    trigger !== "message" &&
-    trigger !== "schedule" &&
-    trigger !== "automation_event"
-  ) {
-    return [];
-  }
+  if (!isMessageRunTrigger(start.payload.trigger)) return [];
   const first = sorted.find(
     (e) => e.type === "model_call" && e.runId === runId && e.seq > start.seq,
   );
@@ -380,9 +382,9 @@ export function openingSeqs(
 /**
  * The opening messages a manual compaction's summary re-renders (context compaction spec §4.7,
  * maintainer decision 2026-11-28): a compact run is started by no message, so its own run has none;
- * the turn it cuts into is the one the latest run a message started (trigger `message` or
- * `schedule`) opened, and {@link openingSeqs} of that run decides which of its opening messages the
- * summary covers. None when no such run is in the log.
+ * the turn it cuts into is the one the latest run a message started (trigger `message`,
+ * `schedule` or `automation_event`) opened, and {@link openingSeqs} of that run decides which of
+ * its opening messages the summary covers. None when no such run is in the log.
  */
 export function manualOpeningSeqs(
   events: readonly ConversationEvent[],
@@ -390,13 +392,7 @@ export function manualOpeningSeqs(
   absorbedUpToSeq: number,
 ): number[] {
   const start = events
-    .filter(
-      (e) =>
-        e.type === "run_started" &&
-        (e.payload.trigger === undefined ||
-          e.payload.trigger === "message" ||
-          e.payload.trigger === "schedule"),
-    )
+    .filter((e) => e.type === "run_started" && isMessageRunTrigger(e.payload.trigger))
     .reduce<ConversationEvent | null>((a, e) => (a === null || e.seq > a.seq ? e : a), null);
   if (start?.runId == null) return [];
   return openingSeqs(events, start.runId, coversUpToSeq, absorbedUpToSeq);
