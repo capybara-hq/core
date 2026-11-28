@@ -2464,6 +2464,11 @@ textarea {
 .r-uatts[data-conv] {
   max-width: 75%;
 }
+/* Under the mobile sizes the user's bubble is at most 85% wide (spec §6.16.6 "Touch"); the
+   attachments column above it stays at 75%. */
+[data-mobile-sizes] .r-bubble {
+  max-width: 85%;
+}
 .r-convchip {
   max-width: var(--cb-layout-file-card);
   min-width: 0;
