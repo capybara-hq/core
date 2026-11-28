@@ -209,25 +209,45 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Confirms a staged plugin review (reached by the link card of the staged plugin), a trust decision by the person",
   },
   // channels
+  // files (the composer's upload helpers; list, details, usage, add and delete are operations)
+  {
+    route: "GET /api/v1/orgs/:orgId/files/limits",
+    category: "internal",
+    reason:
+      "The composer's size check for a person's file into a conversation; an agent gets files by file reference, not by uploading",
+  },
+  {
+    route: "DELETE /api/v1/orgs/:orgId/files/:id/draft",
+    category: "internal",
+    reason:
+      "Composer housekeeping: drops a draft the person removed before sending; an agent never holds a draft",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/files/:id/content",
+    category: "transport",
+    reason: "Serves a library file's text bytes for the Files page's preview",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/files/:id/download",
+    category: "transport",
+    reason: "Serves a library file's bytes",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/files/:id/previewers",
+    category: "transport",
+    reason: "Previewer lookup feeding the Files page's viewer",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/files/:id/previews/:plugin/:previewerId",
+    category: "transport",
+    reason: "Serves a rendered library file preview",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/files/:id/html-token",
+    category: "transport",
+    reason: "Mints the HTML document's load token for the Files page",
+  },
   // attachments
-  {
-    route: "GET /api/v1/orgs/:orgId/attachments/limits",
-    category: "internal",
-    reason:
-      "The composer's size check for a person's file into a conversation; an agent gets files by file reference, not by attaching",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/attachments",
-    category: "internal",
-    reason:
-      "Registers a person's file into a conversation from the composer; an agent gets files by file reference (fileId), not through attachments",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/attachments/:id/finalize",
-    category: "internal",
-    reason:
-      "Finishes a person's file into a conversation from the composer; an agent gets files by file reference (fileId), not through attachments",
-  },
   {
     route: "GET /api/v1/orgs/:orgId/attachments/:id/download",
     category: "transport",
@@ -385,6 +405,17 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/files/:fileId/shares",
     category: "internal",
     reason: "The right panel's per-file view; conversations.list-shares lists the same shares",
+  },
+  // shares of library files (file library spec §6)
+  {
+    route: "POST /api/v1/orgs/:orgId/files/:fileId/shares",
+    category: "human-only",
+    reason: "Publishing a file outside the library is a person's act",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/files/:fileId/shares",
+    category: "internal",
+    reason: "The Files page's share dialog; conversations.list-shares lists the same shares",
   },
   // the HTML document (file sharing spec §4, §10)
   {
@@ -770,6 +801,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/orgs/:orgId/ui/actions/:plugin/:id",
     category: "transport",
     reason: "Runs an extension UI action from the web app",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/ui/query/:plugin/:id",
+    category: "transport",
+    reason: "the web's channel for plugin components; agents use the plugin's tools",
   },
   {
     route: "POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token",

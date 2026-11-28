@@ -469,27 +469,59 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
         }),
       } as unknown as SandboxToolDeps["storage"],
       eventLog: {
-        append: opts.append ?? appended,
         readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
       } as unknown as SandboxToolDeps["eventLog"],
+      // every delivered file is a new blob here (`puts`); its events go to `append`
+      deliveries: {
+        ensureBlob: async (orgId: string, sha256: string, bytes: Uint8Array) => {
+          const id = `blob-${puts.length}`;
+          puts.push(`blobs/${id}`);
+          return {
+            id,
+            orgId,
+            sha256,
+            size: bytes.byteLength,
+            etag: null,
+            objectKey: `blobs/${id}`,
+            status: "ready" as const,
+          };
+        },
+        appendDelivered: async (_org: string, conv: string, evs: unknown[]) =>
+          (await (opts.append ?? appended)(conv, evs as never)) as never,
+      },
       config: { get: () => cfg },
       ...(opts.byId !== undefined && {
         read: {
           files: {
             db: noRowsDb(),
-            storage: {} as never,
-            attachments: {
-              openForConversation: async (_org: string, _conv: string, id: string) => {
-                const f = opts.byId?.get(id);
-                if (f === undefined) return null;
-                return {
-                  name: f.name,
-                  contentType: f.contentType,
-                  size: f.data.byteLength,
-                  body: new Blob([new Uint8Array(f.data)]).stream(),
-                };
-              },
+            // the files by id are library files the conversation refers to
+            files: {
+              referencedBelow: async () => [],
+              referenced: async (_org: string, _convs: string[], ids: string[]) =>
+                ids.flatMap((id) => {
+                  const f = opts.byId?.get(id);
+                  if (f === undefined) return [];
+                  return [
+                    {
+                      id,
+                      name: f.name,
+                      contentType: f.contentType,
+                      origin: "delivered",
+                      role: "delivered",
+                      sourcePath: `out/${f.name}`,
+                      blob: { size: f.data.byteLength },
+                      data: f.data,
+                    },
+                  ];
+                }),
+              head: async (_org: string, file: { data: Uint8Array }) => ({
+                size: file.data.byteLength,
+              }),
+              open: async (_org: string, file: { data: Uint8Array }) => ({
+                body: new Blob([new Uint8Array(file.data)]).stream(),
+              }),
             },
+            attachments: { openForConversation: async () => null },
           },
         } as unknown as NonNullable<SandboxToolDeps["read"]>,
       }),
@@ -569,7 +601,7 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
     expect(r.puts).toEqual([]);
   });
 
-  it("deliver deletes the uploaded object when writing artifact_created fails", async () => {
+  it("deliver leaves the blob for the sweep when writing artifact_created fails", async () => {
     const r = rig({
       append: async () => {
         throw new Error("db down");
@@ -580,7 +612,8 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
       r.tool("Deliver").run({ file_path: "/workspace/out.txt" }, callCtx()),
     ).rejects.toThrow("db down");
     expect(r.puts).toHaveLength(1);
-    expect(r.deletes).toEqual(r.puts);
+    // a blob may serve other files: an unreferenced one is the blob sweep's
+    expect(r.deletes).toEqual([]);
   });
 
   it("grep exit 2 with partial matches returns them with the error note", async () => {

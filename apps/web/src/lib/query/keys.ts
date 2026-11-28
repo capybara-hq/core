@@ -481,8 +481,75 @@ export const keys = {
         contribution: string,
         rest: string,
       ): readonly unknown[] => [...all, "uiView", scope, plugin, contribution, rest],
-      /** Every share list of the org (an invalidation prefix). */
+      /**
+       * Component queries (`usePluginQuery`, plugin full pages spec §4.1): every query of one
+       * contribution, or of one query name of it (prefixes), or one read (`params` and `rest`:
+       * the JSON of the params, and of the locale and scope ids).
+       */
+      pluginQueries: (plugin: string, contribution: string, query?: string): readonly unknown[] => [
+        ...all,
+        "plugin-query",
+        plugin,
+        contribution,
+        ...(query === undefined ? [] : [query]),
+      ],
+      pluginQuery: (
+        plugin: string,
+        contribution: string,
+        query: string,
+        params: string,
+        rest: string,
+      ): readonly unknown[] => [...all, "plugin-query", plugin, contribution, query, params, rest],
+      /**
+       * The person's file library (file library spec §6): one list per filter set, normalized as
+       * the request is (`libraryFilterQuery`: `q` trimmed, an empty `q` or `agentId` left out), so
+       * equal requests share one entry.
+       */
+      files: (filter: {
+        origin?: string;
+        agentId?: string;
+        type?: string;
+        q?: string;
+        limit?: number;
+        cursor?: string;
+      }): readonly unknown[] => [
+        ...all,
+        "files",
+        {
+          origin: filter.origin ?? null,
+          agentId: filter.agentId === undefined || filter.agentId === "" ? null : filter.agentId,
+          type: filter.type ?? null,
+          q: filter.q === undefined || filter.q.trim() === "" ? null : filter.q.trim(),
+          limit: filter.limit ?? null,
+          cursor: filter.cursor ?? null,
+        },
+      ],
+      /** Every library list (an invalidation prefix). */
+      filesAll: (): readonly unknown[] => [...all, "files"],
+      /** One library file's details (also the prefix of its previews). */
+      file: (fileId: string): readonly unknown[] => [...all, "file", fileId],
+      /** The person's library usage. */
+      fileUsage: (): readonly unknown[] => [...all, "fileUsage"],
+      /** A library file's extension previewers. */
+      libraryPreviewers: (fileId: string): readonly unknown[] => [
+        ...all,
+        "file",
+        fileId,
+        "previewers",
+      ],
+      /** A library file's preview by one previewer (`builtin` or `plugin/id`) and locale. */
+      libraryPreview: (fileId: string, previewer: string, locale: string): readonly unknown[] => [
+        ...all,
+        "file",
+        fileId,
+        "preview",
+        previewer,
+        locale,
+      ],
+      /** Every share list of the org (an invalidation prefix; a library file's shares too). */
       sharesAll: (): readonly unknown[] => [...all, "shares"],
+      /** A library file's shares (any version of it) and the share policy. */
+      libraryFileShares: (fileId: string): readonly unknown[] => [...all, "shares", "file", fileId],
       /** The org's shares: the person's own (`mine`) or every one (`all`, org admins). */
       shares: (scope: "mine" | "all"): readonly unknown[] => [...all, "shares", scope],
       /** Every conversation's pieces of the org (a prefix: e.g. the owner views naming a root). */
@@ -803,3 +870,34 @@ export const keys = {
     };
   },
 };
+
+/** Stands for "any conversation id" in a pattern built from the key builders. */
+const ANY_CONVERSATION = "\u0000any-conversation";
+
+type ConversationKeys = ReturnType<ReturnType<(typeof keys)["org"]>["conversation"]>;
+
+/**
+ * Whether a key is a conversation's read of the given part in the org, whatever the conversation
+ * (`exact`: the part's key itself; otherwise the part as a prefix). The pattern comes from the key
+ * builders, so it follows them. A library write (a delete, a share) changes what every
+ * conversation's file panel shows, and those reads have no common prefix that leaves the
+ * conversations' other reads alone.
+ */
+export function isConversationKey(
+  orgId: string,
+  key: readonly unknown[],
+  part: (c: ConversationKeys) => readonly unknown[],
+  exact = false,
+): boolean {
+  const pattern = part(keys.org(orgId).conversation(ANY_CONVERSATION));
+  if (exact ? key.length !== pattern.length : key.length < pattern.length) return false;
+  return pattern.every((p, i) => p === ANY_CONVERSATION || key[i] === p);
+}
+
+/** Whether a key is one conversation's file list (`conversation(id).files()`) in the org. */
+export const isConversationFilesKey = (orgId: string, key: readonly unknown[]): boolean =>
+  isConversationKey(orgId, key, (c) => c.files(), true);
+
+/** Whether a key is one of a conversation's per-file share lists (`conversation(id).fileShares`). */
+export const isConversationFileSharesKey = (orgId: string, key: readonly unknown[]): boolean =>
+  isConversationKey(orgId, key, (c) => c.fileSharesAll());

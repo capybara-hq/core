@@ -69,6 +69,7 @@ import {
   THEME_AVATAR_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import { createContext, type ReactNode, useContext } from "react";
+import { BOARD_BLOCKS } from "./board-blocks";
 import { BOX_BLOCKS } from "./box-blocks";
 import { BRAND_REFERENCE_BLOCKS } from "./brand-blocks";
 import { CARD_GRID_BLOCKS } from "./card-grid-blocks";
@@ -80,12 +81,14 @@ import { COMMANDS } from "./fixtures";
 import { headRhythmBlocks } from "./head-rhythm-blocks";
 import { SHEET_BLOCKS } from "./overlays";
 import { OVERVIEW_SECTION_BLOCKS } from "./overview-section-blocks";
+import { PRINCIPAL_PICKER_BLOCKS } from "./principal-picker-blocks";
 import { RefBlock } from "./ref-block";
 import { SCHEDULE_CALENDAR_BLOCKS } from "./schedule-calendar-blocks";
 import { SHARE_BLOCKS } from "./share-blocks";
 import { type SidebarFixture, sidebarProps } from "./shell-fixture";
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
 import { listDetailBlocks } from "./templates/inbox";
+import { libraryBlocks } from "./templates/library";
 import { THEME_SWATCH_BLOCKS } from "./theme-swatch-blocks";
 import { TOUCH_BLOCKS } from "./touch-blocks";
 import { TREND_CHART_BLOCKS } from "./trend-chart-blocks";
@@ -1422,10 +1425,13 @@ export const REFERENCE_BLOCKS = {
   ...OVERVIEW_SECTION_BLOCKS,
   ...TREND_CHART_BLOCKS,
   ...SCHEDULE_CALENDAR_BLOCKS,
+  ...BOARD_BLOCKS,
+  ...PRINCIPAL_PICKER_BLOCKS,
   ...THEME_SWATCH_BLOCKS,
   ...DEVICE_BLOCKS,
   ...TOUCH_BLOCKS,
   ...SHEET_BLOCKS,
   ...SHARE_BLOCKS,
   "list-detail": listDetailBlocks,
+  "template-library": libraryBlocks,
 } as const;

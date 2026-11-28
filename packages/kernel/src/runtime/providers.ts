@@ -20,6 +20,7 @@ import {
   type ModelRequest,
   type ModelStreamEvent,
   parseExtensionPoint,
+  validateModelCache,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Redis } from "ioredis";
@@ -453,6 +454,16 @@ export class ProviderRegistry {
       if (problem !== undefined) {
         await this.warnDropped(provider, m.id, hash, problem, cause);
         continue;
+      }
+      // an invalid cache declaration never drops the model: the kernel treats it as not caching
+      // (trustedCache) and says so once per list load (idle compaction spec §9.2)
+      const cacheProblem = kind === "chat" ? validateModelCache(m.cache) : null;
+      if (cacheProblem !== null) {
+        this.log?.warn("model cache declaration invalid; treated as not caching", {
+          provider,
+          model: m.id,
+          problem: cacheProblem,
+        });
       }
       out.push({ ...m, kind });
     }

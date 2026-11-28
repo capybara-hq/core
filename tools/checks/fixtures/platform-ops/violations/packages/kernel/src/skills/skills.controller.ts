@@ -51,3 +51,10 @@ export class AttachmentsController {
   @Post()
   create() {}
 }
+
+@Controller("api/v1/orgs/:orgId/files")
+@OrgAction("skills.read")
+export class LibraryFilesController {
+  @Post()
+  create() {}
+}

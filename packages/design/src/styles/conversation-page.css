@@ -1364,6 +1364,15 @@ span.cb-title-btn {
   display: flex;
   flex-direction: column;
 }
+.cb-property-line {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-property-line > .cb-property-row {
+  flex: 1;
+}
 .cb-property-row {
   display: flex;
   align-items: center;

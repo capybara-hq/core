@@ -1878,6 +1878,23 @@ li:first-child > .cb-ld-row {
 .cb-ld-dot[data-state="warn"] {
   background: var(--cb-warn);
 }
+/* A row's kind (a file's type) in place of the dot slot: a 16 px muted icon. */
+.cb-ld-icon {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--cb-muted);
+}
+/* A group's label heads its rows (今天 / 本周 / 更早): micro, muted, space.3 above its rows' run. */
+.cb-ld-group-label {
+  margin: 0;
+  padding: var(--cb-space-3) var(--cb-space-4) var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  font-weight: 500;
+}
 .cb-ld-text {
   display: flex;
   flex: 1;
@@ -2046,6 +2063,197 @@ li:first-child > .cb-ld-row {
   .cb-inbox-rail .cb-ld-head > *,
   .cb-inbox-rail .cb-ld-meta {
     line-height: calc(var(--cb-grouped-lead) / 2);
+  }
+}
+/* LibraryPage (spec §5.13): the head, the filter row, then the list and the preview as one
+   ListDetail (list 320, preview at least 360) capped at the content width inside the content
+   padding, like the inbox. From 600 each pane is its own card (panel, line-card, radius md), the
+   two space.3 apart in two panes; the list scrolls inside its card, the preview inside its body. */
+.cb-library-frame {
+  display: flex;
+  flex: 1;
+  box-sizing: border-box;
+  min-height: 0;
+  padding: 0 var(--cb-content-pad) var(--cb-space-4);
+  padding-right: calc(var(--cb-content-pad) + var(--cb-inset-right));
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+.cb-library-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  min-height: 0;
+  max-width: var(--cb-layout-content);
+  margin: 0 auto;
+}
+.cb-library-filters {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-library-top {
+  display: contents;
+}
+.cb-library-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.cb-library-list {
+  display: flex;
+  flex-direction: column;
+}
+.cb-library-detail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.cb-library-usage {
+  margin: 0;
+  padding: var(--cb-space-2) var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-library-detail-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  min-height: var(--cb-layout-title-bar);
+  box-sizing: border-box;
+  padding: 0 var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-library-detail-head > .cb-class-form {
+  flex: none;
+}
+.cb-library-detail-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-library-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-library-detail-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-height: 0;
+  padding: var(--cb-space-4);
+  overflow: auto;
+}
+@media (min-width: 600px) {
+  .cb-library-split .cb-listdetail[data-fit] > .cb-listdetail-list,
+  .cb-library-split .cb-listdetail[data-fit] > .cb-listdetail-detail {
+    border: 1px solid var(--cb-line-card);
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-panel);
+  }
+  .cb-library-split .cb-listdetail[data-fit] > .cb-listdetail-detail {
+    overflow: hidden;
+  }
+}
+@container cb-ld (min-width: 680px) {
+  .cb-library-split .cb-listdetail[data-fit="680"] > .cb-listdetail-list {
+    margin-right: var(--cb-space-3);
+  }
+}
+/* Compact (mobile layout spec §5.1): the bar under the head holds the origin views (a full-width
+   Segmented) over the search icon and the 筛选 button; an open file is its own screen, so the
+   head and the bar give way and the frame loses its padding (the detail runs edge to edge). */
+.cb-library-compact-bar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  padding: 0 var(--cb-content-pad) var(--cb-space-3);
+}
+.cb-library-compact-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-2);
+}
+.cb-library-compact-search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-library-compact-search > .cb-input,
+.cb-library-compact-search > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+@media not all and (min-width: 600px) {
+  .cb-template[data-template="LibraryPage"][data-open="true"] .cb-library-top {
+    display: none;
+  }
+  .cb-template[data-template="LibraryPage"][data-open="true"] .cb-library-frame {
+    padding: 0;
+  }
+  .cb-template[data-template="LibraryPage"][data-open="true"] .cb-library-filters {
+    display: none;
+  }
+  /* the rows take the grouped look (as the inbox's): one card, rows padded grouped-pad, 64 high */
+  .cb-library-list .cb-ld-list {
+    overflow: hidden;
+    border: var(--cb-grouped-line);
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-panel);
+  }
+  .cb-library-list .cb-ld-list > li > .cb-ld-row {
+    height: auto;
+    min-height: var(--cb-grouped-row-lead);
+    padding: var(--cb-grouped-pad);
+    border-top: 0;
+  }
+  .cb-library-list .cb-ld-list > li + li > .cb-ld-row {
+    background-image: linear-gradient(var(--cb-line-soft), var(--cb-line-soft));
+    background-repeat: no-repeat;
+    background-position: right top;
+    background-size: calc(100% - var(--cb-grouped-inset)) 1px;
+  }
+  .cb-library-list .cb-ld-head > *,
+  .cb-library-list .cb-ld-meta {
+    line-height: calc(var(--cb-grouped-lead) / 2);
+  }
+  .cb-library-list .cb-ld-group-label {
+    padding-inline: 0;
+  }
+  .cb-library-usage {
+    padding-inline: 0;
+    border-top: 0;
+  }
+  /* the list ends above the floating action button (none under the Duo strip, which hides it) */
+  :root:not([data-native-nav])
+    .cb-template[data-template="LibraryPage"][data-fab="true"]
+    .cb-library-list {
+    padding-bottom: calc(var(--cb-touch-prominent) + 2 * var(--cb-space-4));
   }
 }
 /* TracePage on compact (spec §5.11): the waterfall is the page, an open span its own screen. */

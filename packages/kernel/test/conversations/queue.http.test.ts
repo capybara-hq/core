@@ -17,6 +17,7 @@ import {
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, handlesFor } from "../helpers/identity.js";
+import { migrateLegacyFiles } from "../helpers/library-files.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
@@ -570,6 +571,8 @@ describe("queued files keep their chip metadata (attachments-on-demand)", () => 
         etag: "e1",
       })
       .execute();
+    // written as before the file library, then migrated by 0190
+    await migrateLegacyFiles(db);
     // the app's own queue (one transaction host with its conversations service)
     const { item } = await k.app.get(ConversationQueue).add(orgId, conv, ownerId, {
       text: "process this",

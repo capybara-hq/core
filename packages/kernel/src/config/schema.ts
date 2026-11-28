@@ -1444,6 +1444,21 @@ export const KernelConfigSchema = z.strictObject({
         ),
     })
     .default({ purgeDeletedOrgsAfterDays: 30 }),
+  files: z
+    .strictObject({
+      deletedRetentionDays: z
+        .number()
+        .int()
+        .positive()
+        .default(30)
+        .meta(
+          meta({
+            description:
+              "Days a deleted file keeps its bytes before the blob sweep may delete them.",
+          }),
+        ),
+    })
+    .default({ deletedRetentionDays: 30 }),
   attachments: z
     .strictObject({
       maxBytes: z

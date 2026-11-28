@@ -6,6 +6,13 @@ export { FieldRow, FieldRowGroup } from "./field-row";
 export { FilterChip } from "./filter-chip";
 export { Input, Stepper, Textarea } from "./inputs";
 export { KeyValueEditor } from "./key-value-editor";
+export {
+  type PrincipalOption,
+  PrincipalPicker,
+  PrincipalPickerFrame,
+  type PrincipalPickerFrameProps,
+  type PrincipalPickerProps,
+} from "./principal-picker";
 export { Repeater, type RepeaterItem, type RepeaterPreset, type RepeaterProps } from "./repeater";
 export { Select, type SelectChangeEvent, type SelectOption, type SelectProps } from "./select";
 export { Slider } from "./slider";

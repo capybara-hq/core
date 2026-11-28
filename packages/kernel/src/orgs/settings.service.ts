@@ -1,4 +1,4 @@
-import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
+import { type SandboxLimits, UI_CONTRIBUTION_KEY_RE } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
@@ -15,7 +15,11 @@ import {
   COMPACTION_SETTINGS_PARTIAL,
   COMPACTION_SETTINGS_PATCH,
   type CompactionSettings,
+  PROMPT_CACHE_SETTINGS_PARTIAL,
+  PROMPT_CACHE_SETTINGS_PATCH,
+  type PromptCacheSettings,
   readPlatformCompactionSettings,
+  readPlatformPromptCacheSettings,
   readPromptSuggestions,
   readSandboxLimitOverride,
   type SandboxLimitOverride,
@@ -107,6 +111,8 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  *   absent (or an invalid stored value) = follow the platform, personal picks allowed.
  * - `uiArrangement`: per slot, the extension contributions the org hides and their order (UI slots
  *   spec §5); a slot with no entry follows the platform's; an invalid stored value reads as absent.
+ * - `navigation`: where the org's plugin pages sit in the navigation (`pluginPages`: per contribution
+ *   key the section an admin chose, at most 3 primary); absent follows each page's `nav` suggestion.
  * - `gitGateway`: the org's git gateway switch and host sources (sandbox git credentials spec §9);
  *   not in the PATCH yet; an invalid stored value reads as `{ enabled: false }` (fails closed).
  */
@@ -241,6 +247,37 @@ export const GIT_GATEWAY_INVALID = { enabled: false } as const;
 
 export type GitGatewaySetting = z.infer<typeof GitGatewaySettingSchema>;
 
+/** At most this many plugin pages in the primary navigation (plugin full pages spec §9). */
+export const NAV_PRIMARY_MAX = 3;
+
+/**
+ * The org's placement of plugin pages in the navigation (plugin full pages spec §9): per
+ * contribution key `<plugin>/<id>` the section an org admin chose. A page with no entry follows
+ * the contribution's `nav` suggestion (default `more`). Replaced whole by the PATCH; at most
+ * {@link NAV_PRIMARY_MAX} entries with section `primary`.
+ */
+export const NavigationSettingSchema = z
+  .object({
+    pluginPages: z
+      .array(
+        z
+          .object({
+            contribution: z
+              .string()
+              .regex(UI_CONTRIBUTION_KEY_RE, "must be a contribution key <plugin>/<id>"),
+            section: z.enum(["primary", "more"]),
+          })
+          .strict(),
+      )
+      .max(200)
+      .refine((l) => new Set(l.map((e) => e.contribution)).size === l.length, {
+        message: "a contribution is listed once",
+      }),
+  })
+  .strict();
+
+export type NavigationSetting = z.infer<typeof NavigationSettingSchema>;
+
 const ExternalSharingSetting = z.enum(["on", "off"]);
 const PromptSuggestionsSetting = z.enum(["on", "off"]);
 
@@ -272,6 +309,8 @@ export const OrgSettingsSchema = z.object({
   theme: OrgThemeSettingSchema.optional().catch(undefined),
   /** Hidden and ordered extension contributions per slot; absent = follow the platform. */
   uiArrangement: UiArrangementSchema.optional().catch(undefined),
+  /** Where the org's plugin pages sit in the navigation; absent = follow the suggestions. */
+  navigation: NavigationSettingSchema.optional().catch(undefined),
   /** The org's git gateway switch and host sources; absent = on, sources chosen by default. */
   gitGateway: GitGatewaySettingSchema.optional().catch({ ...GIT_GATEWAY_INVALID }),
   /** Automations (spec §9); the platform bounds clamp it, see `effectiveAutomationSettings`. */
@@ -281,6 +320,8 @@ export const OrgSettingsSchema = z.object({
    * rest follow the platform; absent (or an invalid stored value) follows the platform entirely.
    */
   compaction: COMPACTION_SETTINGS_PARTIAL.optional().catch(undefined),
+  /** Prompt cache override (idle compaction spec): absent or invalid follows the platform. */
+  promptCache: PROMPT_CACHE_SETTINGS_PARTIAL.optional().catch(undefined),
   /**
    * The org's external sharing switch (file sharing spec §8); absent = off. An invalid stored
    * value reads as `off` (never wider). The platform's switch must allow it too.
@@ -351,6 +392,11 @@ export const OrgSettingsPatchSchema = z
      * null removes a slot's entry (it follows the platform again). `platform.page` is refused.
      */
     uiArrangement: OrgUiArrangementPatchSchema.optional(),
+    /**
+     * Where the org's plugin pages sit in the navigation, replaced whole; null clears it (every
+     * page follows its suggestion). More than 3 primary -> 400 `org_settings.nav_primary_limit`.
+     */
+    navigation: NavigationSettingSchema.nullable().optional(),
     /** Fields to change in the automations group; the rest keep their value. */
     automations: AutomationsPatchSchema.optional(),
     /**
@@ -359,6 +405,8 @@ export const OrgSettingsPatchSchema = z
      * (follow the platform again). Strict: a misspelled field is a 400, not a silent no-op.
      */
     compaction: COMPACTION_SETTINGS_PATCH.nullable().optional(),
+    /** Prompt cache override: a partial object merges; null clears it (follow the platform). */
+    promptCache: PROMPT_CACHE_SETTINGS_PATCH.nullable().optional(),
     /**
      * The org's external sharing switch; null clears it (off). `on` while the platform denies it
      * -> 400 `org.external_sharing_not_allowed`; through the Platform tool or an API token it may
@@ -433,6 +481,8 @@ export interface OrgSettingsDeployment {
   publicUrl: boolean;
   /** The platform's conversation compaction settings (what "follow the platform" means). */
   compaction: CompactionSettings;
+  /** The platform's prompt cache settings (what "follow the platform" means). */
+  promptCache: PromptCacheSettings;
   /** The platform's external sharing switch and its source (deny: the org cannot turn it on). */
   externalSharing: ExternalSharingView;
   /** The longest expiry a share may take, in days. */
@@ -697,6 +747,7 @@ export class OrgSettingsService {
       deviceSandbox,
       attribution,
       compaction,
+      promptCache,
       externalSharing,
       shareMaxExpiry,
       promptSuggestions,
@@ -704,6 +755,7 @@ export class OrgSettingsService {
       readDeviceSandboxSettingsView(this.db.db, this.config, this.log),
       readPlatformAttribution(this.db.db, this.config, this.log),
       readPlatformCompactionSettings(this.db.db),
+      readPlatformPromptCacheSettings(this.db.db),
       readExternalSharing(this.db.db, this.config, this.log),
       readShareMaxExpiry(this.db.db, this.config, this.log),
       readPromptSuggestions(this.db.db, this.log),
@@ -719,6 +771,7 @@ export class OrgSettingsService {
       attribution,
       publicUrl: this.config.get().http.publicUrl !== undefined,
       compaction,
+      promptCache,
       externalSharing,
       shareMaxExpiryDays: shareMaxExpiry.value,
       promptSuggestions,
@@ -800,6 +853,14 @@ export class OrgSettingsService {
               field,
             );
       }
+    }
+    const primary = patch.navigation?.pluginPages.filter((e) => e.section === "primary").length;
+    if (primary !== undefined && primary > NAV_PRIMARY_MAX) {
+      throw new ApiError(
+        "org_settings.nav_primary_limit",
+        `At most ${NAV_PRIMARY_MAX} plugin pages can be in the primary navigation`,
+        [{ path: "navigation.pluginPages" }],
+      );
     }
     if (patch.externalSharing === "on") {
       const platform = await readExternalSharing(this.db.db, this.config, this.log);
@@ -976,6 +1037,8 @@ export class OrgSettingsService {
     ) as Partial<OrgSettings>;
     const arrangementPatch = patch.uiArrangement;
     const compactionPatch = patch.compaction;
+    const promptCachePatch = patch.promptCache;
+    delete changes.promptCache;
     delete changes.uiArrangement;
     delete changes.automations;
     delete changes.compaction;
@@ -990,6 +1053,10 @@ export class OrgSettingsService {
       // a partial object merges into the stored fields; null clears the whole override
       if (compactionPatch === null) delete after.compaction;
       else after.compaction = { ...before.compaction, ...compactionPatch };
+    }
+    if (promptCachePatch !== undefined) {
+      if (promptCachePatch === null) delete after.promptCache;
+      else after.promptCache = { ...before.promptCache, ...promptCachePatch };
     }
     if (arrangementPatch !== undefined) {
       after.uiArrangement = mergeArrangement(before.uiArrangement, arrangementPatch);
@@ -1007,12 +1074,17 @@ export class OrgSettingsService {
     if (after.timeZone === undefined) delete after.timeZone;
     if (after.theme === undefined) delete after.theme;
     if (after.uiArrangement === undefined) delete after.uiArrangement;
+    if (after.navigation === undefined) delete after.navigation;
     if (after.gitGateway === undefined) delete after.gitGateway;
     // an empty compaction override is the same as none: follow the platform
     if (after.compaction !== undefined && Object.keys(after.compaction).length === 0) {
       delete after.compaction;
     }
     if (after.compaction === undefined) delete after.compaction;
+    if (after.promptCache !== undefined && Object.keys(after.promptCache).length === 0) {
+      delete after.promptCache;
+    }
+    if (after.promptCache === undefined) delete after.promptCache;
     if (after.externalSharing === undefined) delete after.externalSharing;
     if (after.promptSuggestions === undefined) delete after.promptSuggestions;
     // saving an unreadable security setting writes it even when it equals what it read as
@@ -1038,8 +1110,10 @@ export class OrgSettingsService {
       timeZone: _oldZone,
       theme: _oldTheme,
       uiArrangement: _oldArrangement,
+      navigation: _oldNavigation,
       automations: _oldAutomations,
       compaction: _oldCompaction,
+      promptCache: _oldPromptCache,
       externalSharing: _oldExternalSharing,
       promptSuggestions: _oldPromptSuggestions,
       ...rest

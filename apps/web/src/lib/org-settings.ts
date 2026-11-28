@@ -99,6 +99,8 @@ export interface OrgSettings {
    * follows the platform.
    */
   compaction?: CompactionSettingsPatch;
+  /** The org's prompt cache override (idle compaction spec §6.4); absent follows the platform. */
+  promptCache?: { longTtl?: boolean };
   /**
    * Whether members may share conversation files with anyone who has the link (file sharing spec
    * §8); absent = off. Turning it on needs the platform to allow it.
@@ -109,7 +111,21 @@ export interface OrgSettings {
    * the platform). The org cannot turn on what the platform turned off.
    */
   promptSuggestions?: "on" | "off";
+  /** Where the org's plugin pages sit in the navigation; absent = follow the suggestions. */
+  navigation?: NavigationSetting;
 }
+
+/**
+ * Where the org's plugin pages sit in the navigation (plugin full pages spec §9): per contribution
+ * key `<plugin>/<id>` the section an org admin chose, at most 3 `primary`. A page with no entry
+ * follows its contribution's `nav` suggestion (default `more`).
+ */
+export interface NavigationSetting {
+  pluginPages: { contribution: string; section: "primary" | "more" }[];
+}
+
+/** The most plugin pages in the primary navigation. */
+export const NAV_PRIMARY_MAX = 3;
 
 /** The org level of the themes (`orgs.settings.theme`). */
 export interface OrgThemeSetting {
@@ -144,6 +160,8 @@ export interface OrgSettingsDeployment {
   publicUrl: boolean;
   /** The platform's conversation compaction settings. */
   compaction: CompactionSettings;
+  /** The platform's prompt cache settings. */
+  promptCache?: { longTtl: boolean };
   /** The platform's external sharing switch (`deny`: the org cannot turn it on) and its source. */
   externalSharing?: {
     value: "allow" | "deny";
@@ -181,9 +199,13 @@ export type OrgSettingsPatch = Partial<
     | "theme"
     | "automations"
     | "compaction"
+    | "promptCache"
     | "promptSuggestions"
+    | "navigation"
   >
 > & {
+  /** Replaces the stored value whole; null clears it (every page follows its suggestion). */
+  navigation?: NavigationSetting | null;
   /** The automation fields to change; the rest keep their value. */
   /** `forbiddenToolsUnreadable` is in responses only. */
   automations?: Partial<Omit<AutomationsSettings, "forbiddenToolsUnreadable">>;
@@ -201,6 +223,8 @@ export type OrgSettingsPatch = Partial<
   uiArrangement?: Record<string, UiArrangementEntry | null>;
   /** The fields to override; null clears the whole override (follow the platform again). */
   compaction?: CompactionSettingsPatch | null;
+  /** The field to override; null clears the override (follow the platform again). */
+  promptCache?: { longTtl?: boolean } | null;
   /** null clears it (on again, following the platform). */
   promptSuggestions?: "on" | "off" | null;
 };

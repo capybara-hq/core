@@ -50,7 +50,6 @@ import {
 } from "react";
 import { ApiClientError, ensureSession } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
-import { attachmentDownloadUrl } from "../../lib/attachments";
 import { orgIconUrl } from "../../lib/catalog";
 import type { ModelRef, ToolInfo } from "../../lib/conversations";
 import { type ModelConfigViewer, modelConfigViewer } from "../../lib/model-config";
@@ -78,6 +77,7 @@ import {
   type TimelineTool,
 } from "../../lib/timeline";
 import { uiLocale } from "../../lib/ui";
+import { attachmentDownloadUrl, fileDownloadUrl } from "../../lib/uploads";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { ApprovalCard } from "../ApprovalCard";
 import { ConnectCard, useConnectConnector } from "../ConnectCard";
@@ -823,12 +823,12 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
                           if (file?.kind === "image") setZoomId(id);
                           else if (!id.startsWith("@") && !id.startsWith("project:")) {
                             if (onOpenFile && listedFiles?.has(id)) onOpenFile(id);
-                            else openDownload(attachmentDownloadUrl(orgId, id));
+                            else openDownload(fileDownloadUrl(orgId, id));
                           }
                         }}
                         onDownload={(id) => {
                           if (id.startsWith("@") || id.startsWith("project:")) return;
-                          openDownload(attachmentDownloadUrl(orgId, id));
+                          openDownload(fileDownloadUrl(orgId, id));
                         }}
                       />
                     ),
@@ -853,12 +853,12 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
                 }}
                 onDownload={(i) => {
                   const p = pictures[i];
-                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
+                  if (p) openDownload(fileDownloadUrl(orgId, p.attachmentId));
                 }}
-                // The kernel serves an attachment's image inline at its download URL.
+                // `inline`: the plain URL presigns as an attachment, which would download.
                 onOpenInNewTab={(i) => {
                   const p = pictures[i];
-                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
+                  if (p) openDownload(fileDownloadUrl(orgId, p.attachmentId, { inline: true }));
                 }}
                 // One retry per image (a session refresh, then its retry token): none left, no button
                 {...(shown !== undefined && !retried.has(shown.attachmentId)
@@ -1046,9 +1046,17 @@ function DividerView({
   }
 }
 
-/** An attachment's image as the thread loads it (a retry after a failed load asks again). */
+/** The query a retry adds after a failed load (it asks again past the cache). */
+const retryQuery = (c: EntryContext, id: string, url: string) =>
+  c.retried.has(id) ? `${url}${url.includes("?") ? "&" : "?"}retry=1` : url;
+
+/** A message file's image as the thread loads it: inline, since the plain URL presigns as a download. */
 const imageSrcOf = (c: EntryContext, id: string) =>
-  `${attachmentDownloadUrl(c.orgId, id)}${c.retried.has(id) ? "?retry=1" : ""}`;
+  retryQuery(c, id, fileDownloadUrl(c.orgId, id, { inline: true }));
+
+/** A tool result's image (a `read` copy, an attachment route) as the thread loads it. */
+const toolImageSrcOf = (c: EntryContext, id: string) =>
+  retryQuery(c, id, attachmentDownloadUrl(c.orgId, id));
 
 /** A tool row as the thread draws it: its line range or background label, images, output size. */
 function rowOf(
@@ -1085,7 +1093,7 @@ function rowOf(
             images: r.images.map((m) => ({
               id: m.attachmentId,
               name: m.name,
-              src: imageSrcOf(c, m.attachmentId),
+              src: toolImageSrcOf(c, m.attachmentId),
             })),
           },
         }
@@ -1148,7 +1156,7 @@ function ToolStep({ tools, c }: { tools: TimelineTool[]; c: EntryContext }): Rea
             if (!open) setZoomId(null);
           }}
           images={pictures.map((m) => ({
-            src: imageSrcOf(c, m.attachmentId),
+            src: toolImageSrcOf(c, m.attachmentId),
             name: m.name,
             size: formatBytes(m.size),
           }))}

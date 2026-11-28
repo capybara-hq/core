@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  type IconName,
   InlineCard,
   LoadFailed,
   PropertySection,
@@ -11,7 +10,7 @@ import {
 import { useLocale } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError } from "../../lib/api";
-import { type UiContributionItem, type UiIcon, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
+import { type UiContributionItem, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { BlockBoundary } from "../conversation/BlockBoundary";
 import { isEmptyView, UiViewRenderer } from "../ui-view/UiViewRenderer";
@@ -22,21 +21,6 @@ import {
   type ViewState,
   type ViewTarget,
 } from "./ExtensionViewTab";
-
-/** A contribution's icon (SDK `UI_ICONS`) as a design icon. */
-export const ICON_OF: Record<UiIcon, IconName> = {
-  "list-checks": "list-checks",
-  "layout-grid": "extension",
-  file: "file",
-  chart: "trending-up",
-  calendar: "extension",
-  users: "user",
-  bot: "agent",
-  book: "skills",
-  "message-square": "channel",
-  globe: "globe",
-  puzzle: "extension",
-};
 
 /** The common inputs of an extension block on the conversation page. */
 export type BlockContext = {

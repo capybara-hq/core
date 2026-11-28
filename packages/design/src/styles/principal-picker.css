@@ -1,0 +1,196 @@
+/* PrincipalPicker (spec §6.70): a Select-like field, a popover panel (a bottom sheet on compact)
+   holding a search field and a list of people and agents. */
+
+.cb-pp-root {
+  display: flex;
+  min-width: 0;
+}
+.cb-pp-field {
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0;
+  text-align: start;
+  font: inherit;
+  cursor: pointer;
+}
+.cb-pp-field:disabled {
+  cursor: not-allowed;
+}
+.cb-pp-value {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  padding-left: var(--cb-space-2);
+}
+.cb-pp-label {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-pp-label[data-placeholder="true"] {
+  color: var(--cb-faint);
+}
+.cb-pp-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Mobile sizes (spec §2.5): the value pads space.3 from the border, as the Select's does. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-pp-value {
+    padding-left: var(--cb-space-3);
+  }
+}
+.cb-pp-more {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
+/* The panel: at least the field's width and 240, at most 360 or the window less 16. */
+.cb-popover[data-part="principal-picker-panel"] {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: max(240px, var(--radix-popover-trigger-width, 0px));
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(
+    var(--cb-layout-menu-max-height),
+    var(--radix-popover-content-available-height, var(--cb-layout-menu-max-height))
+  );
+  overflow: hidden;
+}
+.cb-pp-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--cb-space-1);
+}
+.cb-pp-search {
+  margin-bottom: var(--cb-space-1);
+}
+.cb-pp-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
+}
+.cb-pp-group-label {
+  padding: var(--cb-space-2) var(--cb-pad-default-x) var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-pp-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  box-sizing: border-box;
+  min-width: 0;
+  height: var(--cb-row-default);
+  padding: 0 var(--cb-pad-default-x);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+  cursor: pointer;
+}
+.cb-pp-option[data-hinted="true"] {
+  height: var(--cb-row-roomy);
+}
+.cb-pp-option[data-active="true"] {
+  background: var(--cb-hover);
+}
+.cb-pp-option[aria-selected="true"] {
+  background: var(--cb-selected);
+}
+.cb-pp-option[aria-disabled="true"] {
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
+.cb-pp-option > .cb-icon {
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-pp-option .cb-avatar {
+  flex: none;
+}
+.cb-pp-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-pp-name,
+.cb-pp-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-pp-name {
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.cb-pp-hint {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-pp-option[aria-disabled="true"] .cb-pp-hint {
+  color: var(--cb-disabled);
+}
+.cb-pp-empty,
+.cb-pp-loading {
+  padding: var(--cb-space-2) var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
+/* The compact sheet holds the same panel; the search field is the sheet's own width. */
+.cb-bsheet .cb-pp-panel {
+  padding: 0;
+}
+
+/* Drawn in place (the reference blocks and /dev/ui): the panel hangs under the field, the field
+   the frame's width (a button in a block is only as wide as its content; the live picker's
+   root is a flex row for the same reason). */
+.cb-pp-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+}
+.cb-pp-frame-panel {
+  position: static;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: var(--cb-space-1);
+  animation: none;
+}
+.cb-pp-frame-page {
+  display: flex;
+  flex-direction: column;
+  padding: var(--cb-space-4);
+}
+
+@media (forced-colors: active) {
+  .cb-pp-option[data-active="true"] {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+  .cb-pp-option[aria-disabled="true"] {
+    color: GrayText;
+  }
+}

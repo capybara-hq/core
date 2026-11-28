@@ -46,7 +46,7 @@ const bytes = (s: string) => new TextEncoder().encode(s);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 const PDF_BYTES = bytes("%PDF-1.4\n<< /Type /Page >>\n<< /Type /Page >>\n<< /Type /Pages >>");
 
-const ref = (attachmentId: string) => ({ kind: "ref" as const, attachmentId });
+const ref = (attachmentId: string) => ({ kind: "ref" as const, fileId: attachmentId });
 const content: LogContentBlock[] = [
   { type: "text", text: "see these" },
   { type: "image", mediaType: "image/png", source: ref(IMG), name: "cat.png" },

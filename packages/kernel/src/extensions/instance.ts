@@ -20,7 +20,7 @@ import {
   type RegisteredTool,
   type Route,
 } from "../ctx/create-ctx.js";
-import type { UiActionHandler, UiRender } from "../ui/registry.js";
+import type { UiActionHandler, UiQueryHandler, UiRender } from "../ui/registry.js";
 import type { RegisteredHook } from "./hooks.js";
 import { InflightTracker } from "./inflight.js";
 import type { Registration } from "./ledger.js";
@@ -187,6 +187,10 @@ export class ExtensionInstance {
   }
   get uiActions(): ReadonlyMap<string, UiActionHandler> {
     return this.ctx.uiActions;
+  }
+  /** Query handlers registered through `ctx.ui.query` (empty after revocation). */
+  get uiQueries(): ReadonlyMap<string, UiQueryHandler> {
+    return this.ctx.uiQueries;
   }
   /** Setup checks registered through `ctx.setup.check` (empty after revocation). */
   get setupChecks(): ReadonlyMap<string, RegisteredSetupCheck> {

@@ -70,6 +70,8 @@ import { TrajectoryController } from "../evals/trajectory.controller.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { ExtensionPointDefaultsController } from "../extensions/point-defaults.controller.js";
 import { FilesModule } from "../files/files.module.js";
+import { LibraryFilesController } from "../files/library.controller.js";
+import { LibraryReadModule } from "../files/library-read.module.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";
 import { GitModule } from "../git/git.module.js";
 import { HandoffController } from "../handoff/handoff.controller.js";
@@ -190,6 +192,7 @@ const CONTROLLERS: Type[] = [
   AutomationsController,
   AcceptanceController,
   AttachmentsController,
+  LibraryFilesController,
   SkillsController,
   SkillChangesController,
   AgentSkillsController,
@@ -279,6 +282,8 @@ const CONTROLLERS: Type[] = [
     ChannelsModule,
     EvalsModule,
     FilesModule,
+    // the person's files: uploads, drafts, blobs
+    LibraryReadModule,
     UiModule,
     InboxModule,
     ThemesModule,

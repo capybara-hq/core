@@ -32,7 +32,20 @@ export interface ViewState {
 export type ActionFn = (
   actionId: string,
   input?: { payload?: JsonValue; answer?: Record<string, unknown> },
-) => Promise<{ view?: UiView; toast?: string }>;
+) => Promise<{ view?: UiView; toast?: string; invalidate?: string[] }>;
+
+export interface QueryState<T = unknown> {
+  data: T | undefined;
+  status: "loading" | "ready" | "error";
+  error?: string;
+  refetch(): void;
+}
+
+/** Where `useNavigate` may go: this page's params, another page of the plugin, a conversation. */
+export type NavigateTarget =
+  | { params: Record<string, string | null>; replace?: boolean }
+  | { page: { id: string; params?: Record<string, string> } }
+  | { conversation: string };
 
 /**
  * What the host implements per rendered component; the hooks read it, nothing else. The host keeps
@@ -56,6 +69,15 @@ export interface HostApi {
   sizeClass: SizeClass | null;
   /** The two segments of a window spanning two screens, else null. */
   viewportSegments: ViewportSegment[] | null;
+  /**
+   * Runs the `ctx.ui.query` registered under this component's id. The host caches by
+   * `(query, params)`, serves `staleMs` (default 0) of freshness and refetches on invalidation.
+   */
+  query<T = unknown>(query: string, params: JsonValue, opts: { staleMs?: number }): QueryState<T>;
+  /** The page's URL params (`org.page`); empty elsewhere. */
+  pageParams: Record<string, string>;
+  /** Navigates inside the plugin (the host refuses anything else); see {@link NavigateTarget}. */
+  navigate(to: NavigateTarget): void;
   /** Subscribes to client events; returns the unsubscribe function. */
   subscribe(handler: (e: CapybaraEvent) => void): () => void;
 }

@@ -29,6 +29,7 @@ import { chosenDeviceId, type DeviceList } from "../devices";
 import type { EvalSetDetail } from "../evals";
 import { pointsOf } from "../extension-capabilities";
 import { labelLocale } from "../extension-label";
+import { filesUrlOf, libraryFilterOf } from "../files-url";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
@@ -127,6 +128,7 @@ import {
 } from "./evals";
 import { setupRequestQuery } from "./from-template";
 import { inboxQuery, skillChangeQuery } from "./inbox";
+import { libraryFilesQuery, libraryUsageQuery } from "./library";
 import { membersQuery } from "./members";
 import { permissionPreviewQuery } from "./permissions";
 import { pushPreferencesQuery, pushRegistrationsQuery } from "./push";
@@ -148,6 +150,7 @@ import { orgSharesQuery, shareMetaQuery } from "./shares";
 import {
   conversationGroupsQuery,
   conversationListQuery,
+  extensionPagesQuery,
   maybeMeQuery,
   readinessQuery,
 } from "./shell";
@@ -1081,6 +1084,20 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
             ],
   },
   {
+    pattern: "/files",
+    // Members up (guests have no library): the list for the address's filters, the usage and the
+    // agents (the agent filter, the rows' agent names). The open file is the hash, which the
+    // server never sees: its details are read after mount.
+    queries: ({ orgId, me, search }) =>
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [
+            q(libraryFilesQuery(orgId, libraryFilterOf(filesUrlOf(search)))),
+            q(libraryUsageQuery(orgId)),
+            q(agentsQuery(orgId)),
+          ],
+  },
+  {
     pattern: "/inbox",
     queries: ({ orgId }) => (orgId === null ? [] : [q(inboxQuery(orgId))]),
     // The first item is selected at once: its skill change's detail when it is one.
@@ -1357,6 +1374,14 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
             q(platformThemeQuery()),
             q(uiArrangementQuery(orgId)),
           ],
+  },
+  {
+    pattern: "/settings/navigation",
+    // Org admins: the settings (the saved placements) and the org's plugin pages.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin")
+        ? []
+        : [q(orgSettingsQuery(orgId)), q(extensionPagesQuery(orgId))],
   },
   {
     pattern: "/settings/automations",

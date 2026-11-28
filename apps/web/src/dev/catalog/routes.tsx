@@ -17,6 +17,7 @@ export const TEMPLATE_ROUTES = [
   "templates/onboarding",
   "templates/setup",
   "templates/shared-file",
+  "templates/library",
 ] as const;
 
 export const OVERLAY_ROUTES = [
@@ -44,6 +45,7 @@ export const PAGE_ROUTES = [
   "pages/member-skills",
   "pages/member-connectors",
   "pages/member-automations",
+  "pages/member-files",
   "pages/member-conversations",
   "pages/member-inbox",
   "pages/member-profile",
@@ -118,6 +120,8 @@ export const REFERENCE_COMPONENTS = [
   "template-detail",
   "template-overview",
   "template-inbox",
+  // the Files page's template (file library spec §6; design spec §5.13)
+  "template-library",
   "template-trace",
   "template-settings",
   "template-wizard",
@@ -218,6 +222,10 @@ export const REFERENCE_COMPONENTS = [
   "trend-chart",
   // the automations calendar: week, month and the phone agenda (automations calendar design §6)
   "schedule-calendar",
+  // the kanban board: columns, a held card, a locked column, the phone form (spec §6.69)
+  "board",
+  // the people and agents picker: field, panel states, the phone sheet (spec §6.70)
+  "principal-picker",
   // tools with their policy next to them (the agent page's 工具 section, 2026-11-08)
   "tool-policy-list",
   // skills to choose, grouped with a select-all per group (maintainer acceptance 2026-11-12)

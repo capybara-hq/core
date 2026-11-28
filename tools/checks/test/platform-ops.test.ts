@@ -59,6 +59,7 @@ describe("checkPlatformOps", () => {
         "platform-op-upload",
         "platform-op-upload",
         "platform-op-upload",
+        "platform-op-upload",
         ...Array<string>(12).fill("platform-op-handoff"),
       ].sort(),
     );
@@ -114,7 +115,7 @@ describe("checkPlatformOps", () => {
       "POST /api/v1/orgs/:orgId/sessions/mirrored",
     );
     has("platform-op-session-only", exc, lineOf(exc, "sessions/internal"), "human-only or secret");
-    // "upload" is no reason; the attachment routes are internal and name a person's file
+    // "upload" is no reason; the file upload routes are internal and name a person's file
     has("platform-op-upload", exc, lineOf(exc, "multipart bytes"), "skills/d");
     has("platform-op-upload", exc, lineOf(exc, 'category: "upload"'), "skills/e");
     has(
@@ -123,6 +124,7 @@ describe("checkPlatformOps", () => {
       lineOf(exc, "presigned upload"),
       "a person's file into a conversation",
     );
+    has("platform-op-upload", exc, lineOf(exc, "into a conversation as an upload"), "no reason");
     has("platform-op-upload", exc, lineOf(exc, 'skills/g"') - 1, "skills/g");
     has("platform-op-upload", exc, lineOf(exc, 'skills/uploads"') - 1, "skills/uploads");
     has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.inbox"'), "handoff");

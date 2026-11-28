@@ -14,6 +14,7 @@ import {
   trimUtf8,
 } from "../conversations/files.js";
 import { ApiError } from "../errors.js";
+import { BlobsService } from "../files/blobs.service.js";
 import { type PreviewerItem, PreviewerRegistry } from "../files/previewers.js";
 import { HTML_TOKEN_TTL_SECONDS, HtmlTokens } from "../html/html-token.js";
 import { isHtmlType } from "../html/html-type.js";
@@ -23,7 +24,6 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
-import { StorageService } from "../storage/storage.service.js";
 import { type LiveShare, ShareLiveness } from "./liveness.js";
 
 /** What `GET /api/v1/s/:code` answers (the web's `ShareMeta`). */
@@ -104,7 +104,8 @@ export function attachmentDisposition(name: string): string {
  * share needs a web session of an active member of the share's own org (not the session's current
  * org): without one 401 `share.sign_in_required`, a signed-in non-member 404. `ShareLiveness`
  * checks the share and its creator; this service checks the viewer. The bytes are always streamed
- * by the kernel from the snapshot, never a presigned URL; nothing lives in process memory (the
+ * by the kernel from the share's blob (`BlobsService.open`: size and etag checked), never a
+ * presigned URL; nothing lives in process memory (the
  * throttler and the open dedupe are Redis keys with a TTL).
  */
 @Injectable()
@@ -113,7 +114,8 @@ export class ShareOpenService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(ShareLiveness) private readonly liveness: Pick<ShareLiveness, "byCode">,
-    @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
+    /** The share's blob, size and etag checked (a replaced object is not the snapshot). */
+    @Inject(BlobsService) private readonly blobs: Pick<BlobsService, "open">,
     @Inject(HtmlTokens) private readonly tokens: Pick<HtmlTokens, "issue">,
     @Inject(LockService) private readonly locks: Pick<LockService, "lease" | "releaseIf">,
     @Inject(PreviewerRegistry) private readonly previewers: Pick<PreviewerRegistry, "forShare">,
@@ -178,7 +180,7 @@ export class ShareOpenService {
 
   /** Streams the snapshot as `application/octet-stream` (spec §3); `download` adds the attachment name. */
   async content(share: LiveShare, download: boolean, reply: FastifyReply): Promise<void> {
-    const got = await this.storage.kernel(share.orgId).get(share.objectKey);
+    const got = await this.blobs.open(share.orgId, share.blob);
     if (!got) throw shareNotFound();
     sandboxedBytes(reply)
       .header("content-type", "application/octet-stream")
@@ -197,9 +199,9 @@ export class ShareOpenService {
       throw notPreviewable("Only text files have content");
     }
     const max = Math.min(limit, FILE_CONTENT_MAX_BYTES);
-    const got = await this.storage
-      .kernel(share.orgId)
-      .get(share.objectKey, { range: { start: 0, end: max - 1 } });
+    const got = await this.blobs.open(share.orgId, share.blob, {
+      range: { start: 0, end: max - 1 },
+    });
     if (!got) throw shareNotFound();
     let body = await readPrefix(got.body, max);
     if (body.includes(0)) {
@@ -218,7 +220,7 @@ export class ShareOpenService {
   /** Streams a bitmap snapshot (png, jpeg, gif, webp) with its type; any other type → 404. */
   async inline(share: LiveShare, reply: FastifyReply): Promise<void> {
     if (!isInlineArtifactType(share.contentType)) throw shareNotFound();
-    const got = await this.storage.kernel(share.orgId).get(share.objectKey);
+    const got = await this.blobs.open(share.orgId, share.blob);
     if (!got) throw shareNotFound();
     const type = (share.contentType.split(";")[0] ?? "").trim().toLowerCase();
     sandboxedBytes(reply)

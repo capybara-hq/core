@@ -58,7 +58,12 @@ function open(policy: SharePolicy, shares: ShareView[] = [], extra = {}) {
     ...extra,
   });
   renderPage(
-    <ShareDialog orgId="o1" conversationId="c1" file={FILE} open onOpenChange={() => {}} />,
+    <ShareDialog
+      orgId="o1"
+      target={{ kind: "conversation", conversationId: "c1", file: FILE }}
+      open
+      onOpenChange={() => {}}
+    />,
   );
   return calls;
 }

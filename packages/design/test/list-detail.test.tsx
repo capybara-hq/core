@@ -19,6 +19,7 @@ import {
   WizardPage,
 } from "../src/index";
 import { css, parseCss } from "./css-rules";
+import { renderAtClass } from "./width";
 
 afterEach(() => {
   cleanup();
@@ -335,6 +336,35 @@ describe("ListDetailList and ListDetailItem (spec §6.47: the list rows, the ope
     },
     { id: "b", title: "运行完成", meta: "周报 · 周报助手", at: "昨天" },
   ];
+
+  it("more pages: Load more under the grouped list from 600, its failure beside it", () => {
+    const onLoadMore = vi.fn();
+    renderAtClass(
+      1280,
+      <ListDetailList
+        label="文件"
+        groups={[
+          { id: "today", label: "今天", items: [items[0] as (typeof items)[number]] },
+          { id: "older", label: "更早", items: [items[1] as (typeof items)[number]] },
+        ]}
+        onOpen={() => {}}
+        onLoadMore={onLoadMore}
+        hasMore
+        loadMoreError="读取失败"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /加载更多|Load more/ }));
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("读取失败")).toBeTruthy();
+  });
+
+  it("the last page draws no Load more", () => {
+    renderAtClass(
+      1280,
+      <ListDetailList label="文件" items={items} onOpen={() => {}} onLoadMore={() => {}} />,
+    );
+    expect(screen.queryByRole("button", { name: /加载更多|Load more/ })).toBeNull();
+  });
 
   it("draws one row per item: the state dot, title over meta, the time at the end", async () => {
     const onOpen = vi.fn();

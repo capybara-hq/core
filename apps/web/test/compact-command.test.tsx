@@ -69,7 +69,7 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
     [`GET ${INVOCABLE}`]: () => json(200, SKILLS),
     [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
     "GET /api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
-    "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
+    "GET /api/v1/orgs/o1/files/limits": () => json(200, LIMITS),
     ...extra,
   });
 }

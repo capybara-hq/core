@@ -198,7 +198,9 @@ describe("M4 第三段验收（双副本）", () => {
       ),
     );
     for (const s of streams) {
-      expect(uiFrames(s.messages)).toEqual([{ plugin: "fake-tools-ui", contribution: "tasks" }]);
+      expect(uiFrames(s.messages)).toEqual([
+        { plugin: "fake-tools-ui", contribution: "tasks", queries: true },
+      ]);
     }
 
     for (const i of [0, 1] as const) {

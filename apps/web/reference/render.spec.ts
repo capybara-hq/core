@@ -105,6 +105,10 @@ const PAGES = [
   "trend-chart",
   // the automations calendar: week, month and the phone agenda (calendar design §11)
   "schedule-calendar",
+  // the kanban board: columns, a held card, a locked column, the phone form (spec §6.69)
+  "board",
+  // the people and agents picker: field, panel states, the phone sheet (spec §6.70)
+  "principal-picker",
   // a device's head and its two modes (auto mode design §4, plan Task 10)
   "device-nameplate",
   // the mobile and foldable layout: the list-detail region, the sheet drag states

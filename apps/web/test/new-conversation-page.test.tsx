@@ -108,7 +108,7 @@ const GROUPS = {
 };
 
 const routes = (agents: unknown = AGENTS, groups: unknown = GROUPS) => ({
-  [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+  [`GET ${ORG}/files/limits`]: () => json(200, LIMITS),
   [`GET ${ORG}/agents`]: () => json(200, agents),
   [`GET ${ORG}/models`]: () => json(200, MODELS),
   [`GET ${ORG}/devices`]: () => json(200, DEVICES),

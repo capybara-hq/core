@@ -1822,6 +1822,7 @@ export interface ExtensionContext {
     ui: {
         view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
         action(id: string, handler: (args: UiActionArgs) => Promise<UiActionResult>): void;
+        query(id: string, handler: (args: UiQueryArgs) => Promise<JsonValue>): void;
         invalidate(target: {
             orgId?: string;
             conversationId?: string;
@@ -2072,7 +2073,7 @@ export interface FilePreviewArgsBase {
 // @public
 export interface FilePreviewConversationArgs extends FilePreviewArgsBase {
     accountId: string;
-    conversationId: string;
+    conversationId?: string;
     orgId: string;
     source: "conversation";
 }
@@ -2603,6 +2604,9 @@ export function isDialInAnswerTimeoutError(e: unknown): e is DialInAnswerTimeout
 export function isDisallowedSkillRef(v: unknown): v is string;
 
 // @public
+export function isFileId(s: unknown): s is string;
+
+// @public
 export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
 
 // @public
@@ -2854,7 +2858,7 @@ type MediaSource_2 = {
     data: string;
 } | {
     kind: "ref";
-    attachmentId: string;
+    fileId: string;
 };
 export { MediaSource_2 as MediaSource }
 
@@ -4353,7 +4357,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.84";
+export const SDK_VERSION = "0.1.0-rc.85";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -5413,7 +5417,17 @@ export const UI_LIMITS: {
     readonly textChars: 20000;
     readonly payloadBytes: 2000;
     readonly componentDataBytes: 32768;
+    readonly componentQueryBytes: 1048576;
+    readonly componentQueryParamsBytes: 16384;
+    readonly componentActionPayloadBytes: 65536;
+    readonly pageParamsBytes: 2048;
 };
+
+// @public
+export const UI_PAGE_FRAMES: readonly UiPageFrame[];
+
+// @public
+export const UI_PAGE_NAVS: readonly UiPageNav[];
 
 // @public
 export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.user.bubble", "message.assistant", "tool-row", "composer", "composer.box", "composer.options", "composer.send", "properties-panel", "section", "right-panel", "button", "button.primary", "card", "input", "dialog", "code-block", "menu", "segmented", "stat-card", "switch", "switch.knob", "org-avatar", "agent-chip", "image-placeholder"];
@@ -5446,8 +5460,10 @@ export type UiActionResult = {
         zh: string;
         en: string;
     };
+    invalidate?: string[];
 } | {
     view: UiView;
+    invalidate?: string[];
 };
 
 // @public
@@ -5515,9 +5531,11 @@ export type UiBlock = {
 export interface UiContribution {
     after?: string;
     compact?: CompactForm;
+    frame?: UiPageFrame;
     icon?: UiIcon;
     id: string;
     kind: UiKind;
+    nav?: UiPageNav;
     path?: string;
     slot: string;
     title: {
@@ -5563,6 +5581,12 @@ export interface UiOrgRenderArgs extends UiRenderArgsBase {
 }
 
 // @public
+export type UiPageFrame = "host" | "page";
+
+// @public
+export type UiPageNav = "primary" | "more";
+
+// @public
 export function uiPart(name: string): UiPartSpec | undefined;
 
 // @public
@@ -5596,6 +5620,13 @@ export interface UiPlatformRenderArgs extends UiRenderArgsBase {
     orgId?: undefined;
     role: "superAdmin";
     scope: "platform";
+}
+
+// @public
+export interface UiQueryArgs extends UiOrgRenderArgs {
+    params: JsonValue;
+    query: string;
+    signal: AbortSignal;
 }
 
 // @public

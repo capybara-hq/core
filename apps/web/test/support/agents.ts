@@ -49,7 +49,7 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
     [`GET ${ORG}/tools/extensions`]: ok({ extensions: [] }),
     // the avatar picker's choices (the org's default theme hides and adds none)
     [`GET ${ORG}/themes`]: ok(orgThemesBody()),
-    [`GET ${ORG}/attachments/limits`]: ok({
+    [`GET ${ORG}/files/limits`]: ok({
       types: ["image/png"],
       maxBytes: 1,
       imageMaxBytes: 1,

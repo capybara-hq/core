@@ -10,10 +10,10 @@ type NavGroup = { group: string; items: { id: string; label: string; href: strin
 
 /**
  * The organization settings' second-level navigation (`/settings/*`): Organization [General,
- * Appearance, Members, Models, Service tokens, Shares, Audit log] and Capabilities [Sandbox, Scheduled
- * tasks] (plugins and extensions are the workspace's Plugins and Extensions pages). Members see General,
- * Appearance, Members and Sandbox (read-only); the rest is for admins; guests never open these
- * pages. This only hides items, the kernel decides. Groups without items are dropped.
+ * Appearance, Navigation, Members, Models, Service tokens, Shares, Audit log] and Capabilities
+ * [Sandbox, Automations] (plugins and extensions are the workspace's Plugins and Extensions
+ * pages). Members see General, Appearance, Members and Sandbox (read-only); the rest is for
+ * admins; guests never open these pages. This only hides items, the kernel decides. Groups without items are dropped.
  */
 export function useOrgSettingsNav(): NavGroup[] {
   const t = useTranslations("connections.nav");
@@ -28,6 +28,10 @@ export function useOrgSettingsNav(): NavGroup[] {
         // members read it (roles everywhere); admins change it
         ...(member
           ? [{ id: "appearance", label: t("appearance"), href: "/settings/appearance" }]
+          : []),
+        // where the org's plugin pages sit in the sidebar: admins (members see the result)
+        ...(admin
+          ? [{ id: "navigation", label: t("navigation"), href: "/settings/navigation" }]
           : []),
         ...(member ? [{ id: "members", label: t("members"), href: "/settings/members" }] : []),
         ...(admin ? [{ id: "models", label: t("models"), href: "/settings/models" }] : []),

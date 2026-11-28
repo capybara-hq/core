@@ -117,7 +117,7 @@ const homeRoutes = (devices: unknown = DEVICES) => ({
   "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [] }),
   "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
   "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
-  "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
+  "GET /api/v1/orgs/o1/files/limits": () => json(200, LIMITS),
   "GET /api/v1/orgs/o1/devices": () => json(200, devices),
   ...noProjects(),
 });

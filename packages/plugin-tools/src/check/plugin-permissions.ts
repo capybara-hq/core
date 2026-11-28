@@ -106,6 +106,8 @@ interface Manifest {
    * ids (a component may have a server view, client extensions spec §5.2).
    */
   uiViews: Set<string>;
+  /** permissions.ui.components: ctx.ui.query may only use these ids. */
+  uiComponents: Set<string>;
   /** permissions.hooks: ctx.hooks.on may only use these mount points. */
   hooks: Set<string>;
   /** permissions.policyHooks: `mode: "policy"` only on these mount points (M-1). */
@@ -168,6 +170,7 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     http: new Set(),
     tools: new Set(),
     uiViews: new Set(),
+    uiComponents: new Set(),
     hooks: new Set(),
     policyHooks: new Set(),
     setupChecks: new Set(),
@@ -228,6 +231,7 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
       for (const list of ["views", "components"]) {
         for (const v of strings(prop(ue, list)?.value as Node | undefined, decls)) {
           m.uiViews.add(v);
+          if (list === "components") m.uiComponents.add(v);
         }
       }
     }
@@ -377,6 +381,16 @@ function scanSetup(
               `UI view "${id}" is not declared; add it to permissions.ui.views (or permissions.ui.components for a component) and ui in the extension manifest`,
             );
           }
+        } else if (area === "ui" && method === "query") {
+          const id = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
+          if (id === undefined) return dynamic(n, "perm-ui", "the ctx.ui.query id");
+          if (!m.uiComponents.has(id)) {
+            add(
+              n,
+              "perm-ui",
+              `UI component "${id}" is not declared; ctx.ui.query takes a component id: add it to permissions.ui.components and ui in the extension manifest`,
+            );
+          }
         } else if (area === "setup" && method === "check") {
           const id = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
           if (id === undefined) return dynamic(n, "perm-setup-check", "the ctx.setup.check id");
@@ -499,7 +513,7 @@ function scanSetup(
           name === "setup"
         ) {
           // 只有 ctx.http.route / ctx.tools.register / ctx.extensionPoints.get|list /
-          // ctx.ui.view|action|invalidate|verifyEmbedToken 能被确认，其余写法无法确认
+          // ctx.ui.view|action|query|invalidate|verifyEmbedToken can be confirmed; other spellings cannot
           // (likewise only ctx.hooks.on and ctx.setup.check are confirmable)
           const rule =
             name === "http"
@@ -523,7 +537,7 @@ function scanSetup(
               (name === "setup" && memberName(outer) === "check") ||
               (name === "extensionPoints" && ["get", "list"].includes(memberName(outer) ?? "")) ||
               (name === "ui" &&
-                ["view", "action", "invalidate", "verifyEmbedToken"].includes(
+                ["view", "action", "query", "invalidate", "verifyEmbedToken"].includes(
                   memberName(outer) ?? "",
                 )));
           if (!ok) unconfirmed(rule, `how ctx.${name} is used`);
@@ -560,7 +574,7 @@ function scanFile(
  * - perm-tools：ctx.tools.register({ name }) 的名字不在 permissions.tools 里；
  * - perm-extension-point: the ref of ctx.extensionPoints.get|list(ref) is not in requires / optional / provides;
  * - perm-ui: the id of ctx.ui.view|action(id) is in neither permissions.ui.views nor
- *   permissions.ui.components;
+ *   permissions.ui.components, or the id of ctx.ui.query(id) is not in permissions.ui.components;
  * - perm-storage：用了 ctx.storage 而 permissions.storage 不是 true；
  * - perm-hooks: the mount point of ctx.hooks.on(mount, …) is not in permissions.hooks (the mount
  *   point must be a string literal or a same-file const, like the names below), or the options are
@@ -623,14 +637,14 @@ export function findToolRegistrations(pluginDirs: string[]): ToolRegistration[] 
 export interface CtxCalls {
   /** `ctx.tools.register` is called. */
   tools: boolean;
-  /** `ctx.ui.view` or `ctx.ui.action` is called. */
+  /** `ctx.ui.view`, `ctx.ui.action` or `ctx.ui.query` is called. */
   ui: boolean;
   /** `ctx.hooks.on` is called. */
   hooks: boolean;
 }
 
 /**
- * Which of `ctx.tools.register`, `ctx.ui.view|action` and `ctx.hooks.on` the non-test sources
+ * Which of `ctx.tools.register`, `ctx.ui.view|action|query` and `ctx.hooks.on` the non-test sources
  * under `pluginDir` call, found by the same scanner as {@link checkPluginPermissions}.
  */
 export function findCtxCalls(pluginDir: string): CtxCalls {
@@ -641,7 +655,7 @@ export function findCtxCalls(pluginDir: string): CtxCalls {
     if (isParseError(parsed)) continue;
     scanFile(parsed, undefined, (area, method) => {
       if (area === "tools" && method === "register") out.tools = true;
-      else if (area === "ui" && (method === "view" || method === "action")) out.ui = true;
+      else if (area === "ui" && ["view", "action", "query"].includes(method ?? "")) out.ui = true;
       else if (area === "hooks" && method === "on") out.hooks = true;
     });
   }

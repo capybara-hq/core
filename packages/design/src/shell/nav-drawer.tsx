@@ -44,7 +44,12 @@ export interface DrawerNavData {
     icon: IconName;
     badge?: NavBadge;
   }[];
-  /** The second level's entries: Skills, Connectors, Devices and the org's extension pages. */
+  /**
+   * The org's extension pages an admin put in the primary navigation: rows after the sections on
+   * the first level (they are not strip sections).
+   */
+  primaryExtensions?: { id: string; label: string; href: string; icon: IconName }[];
+  /** The second level's entries: Skills, Connectors, Devices and the org's other extension pages. */
   more: { id: string; label: string; href: string; icon: IconName }[];
   /** The row that opens the second level: "Skills, connectors, devices…". */
   moreLabel: string;
@@ -172,6 +177,15 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
                 current={pathname !== undefined && under(pathname, s.href)}
                 data-nav-section={s.id}
                 {...(s.badge ? { badge: s.badge } : {})}
+              />
+            ))}
+            {(data.primaryExtensions ?? []).map((x) => (
+              <NavRow
+                key={x.id}
+                icon={x.icon}
+                label={x.label}
+                href={x.href}
+                current={pathname !== undefined && under(pathname, x.href)}
               />
             ))}
             {data.more.length > 0 ? (

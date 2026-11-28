@@ -112,6 +112,16 @@ describe("perm-ui and components", () => {
   });
 });
 
+describe("perm-ui and ctx.ui.query", () => {
+  it("ctx.ui.query passes on a component id and is reported on a view id or an undeclared id", () => {
+    const f = checkPluginPermissions([fixture("plugin-perm-ui-query")]);
+    expect(f.map((x) => x.line)).toEqual(flagged("plugin-perm-ui-query"));
+    expect(f.map((x) => x.rule)).toEqual(["perm-ui", "perm-ui"]);
+    expect(f.every((x) => x.message.includes("permissions.ui.components"))).toBe(true);
+    expect(f.some((x) => x.message.includes("Cannot statically"))).toBe(false);
+  });
+});
+
 describe("perm-hooks", () => {
   it("undeclared mount or policy mount is reported; a variable mount cannot be confirmed; declared mounts pass", () => {
     const f = checkPluginPermissions([fixture("plugin-perm-hooks")]);

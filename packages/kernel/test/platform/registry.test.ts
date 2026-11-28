@@ -50,6 +50,7 @@ describe("PlatformOperations", () => {
       "connectors",
       "extensions",
       "conversations",
+      "files",
       "orgs",
       "login-sources",
       "accounts",

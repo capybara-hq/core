@@ -295,6 +295,11 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
       "Your own conversations: list, read, rename, archive, delete, read their events, list and stop their background tasks, list and revoke shared file links.",
   },
   {
+    id: "files",
+    description:
+      "Your file library (uploads and the files agents delivered to you): list, read, storage usage, adding a file of this conversation, and asking to delete one (the person confirms on the Files page).",
+  },
+  {
     id: "orgs",
     description:
       "This org (read, rename, members and invitations, its audit log) and, for the super admin, every org and its limits.",

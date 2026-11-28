@@ -1,7 +1,10 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef } from "react";
 import { IconButton } from "../controls/index";
 import { KeyValue } from "../display/key-value";
+import { ListEnd, ListMoreButton, type ListMoreProps } from "../display/list-end";
+import { SkeletonText } from "../display/skeleton";
 import { Icon } from "../icons/icon";
+import type { IconName } from "../icons/paths";
 import { useDesignT } from "../provider";
 import { useViewportSegments } from "../shell/segments";
 import { useRegisterShellPage } from "../shell/shell-page";
@@ -156,29 +159,52 @@ export type ListDetailListItem = {
   at?: string;
   /** Waits for the person: the 6 px `warn` dot at the row's start. */
   waiting?: boolean;
+  /**
+   * What kind of thing the row is (a file's type): a 16 px `muted` icon in the row's lead slot
+   * instead of the dot slot. A waiting row keeps its dot.
+   */
+  icon?: IconName;
 };
+
+/** A titled run of rows (today / this week / earlier): its label heads its rows in the list. */
+export type ListDetailListGroup = { id: string; label: string; items: ListDetailListItem[] };
 
 /**
  * The list of a list-detail region (spec §6.47): 64 px rows split by `line-soft`, each a 6 px state
- * dot slot (filled only for what waits for the person), the title (`body`, `ink`) over the meta
- * (`small`, `muted`), both one line with an ellipsis, and the time at the end. The current row
- * (two panes) is the selected row of §2.3. A row is a button that opens its item.
+ * dot slot (filled only for what waits for the person; a row with an `icon` draws the icon there
+ * instead), the title (`body`, `ink`) over the meta (`small`, `muted`), both one line with an
+ * ellipsis, and the time at the end. The current row (two panes) is the selected row of §2.3. A
+ * row is a button that opens its item. `groups` instead of `items` heads each run of rows with its
+ * label (a `micro` `muted` line, the rows of each group a list named by it); an empty group is
+ * left out.
  */
 export function ListDetailList({
   label,
   items,
+  groups,
   current,
   onOpen,
+  onLoadMore,
+  hasMore,
+  loadingMore,
+  loadMoreError,
 }: {
   label: string;
-  items: ListDetailListItem[];
   current?: string | undefined;
   onOpen(id: string): void;
-}) {
+} & ListMoreProps &
+  (
+    | { items: ListDetailListItem[]; groups?: undefined }
+    | { groups: ListDetailListGroup[]; items?: undefined }
+  )) {
   const t = useDesignT();
-  return (
-    <ul className="cb-ld-list" data-part="list" aria-label={label}>
-      {items.map((it) => (
+  // More pages (a cursor): below 600 the last rows' end reads the next page as it comes into
+  // view, from 600 a Load more button under the list (ListMoreProps).
+  const more: ListMoreProps = { onLoadMore, hasMore, loadingMore, loadMoreError };
+  const end = <ListEnd more={more} skeleton={<LoadingRow />} />;
+  const rows = (list: ListDetailListItem[], name: string, part: string, last: boolean) => (
+    <ul className="cb-ld-list" data-part={part} aria-label={name}>
+      {list.map((it) => (
         <li key={it.id}>
           <button
             type="button"
@@ -195,6 +221,10 @@ export function ListDetailList({
                 role="img"
                 aria-label={t("listDetail.waiting")}
               />
+            ) : it.icon ? (
+              <span className="cb-ld-icon" data-part="list-icon" aria-hidden="true">
+                <Icon name={it.icon} size={16} />
+              </span>
             ) : (
               <span className="cb-ld-dot" data-part="list-dot" aria-hidden="true" />
             )}
@@ -223,7 +253,48 @@ export function ListDetailList({
           </button>
         </li>
       ))}
+      {last ? end : null}
     </ul>
+  );
+  if (groups === undefined) {
+    return (
+      <>
+        {rows(items, label, "list", true)}
+        <ListMoreButton more={more} />
+      </>
+    );
+  }
+  const shown = groups.filter((g) => g.items.length > 0);
+  return (
+    <>
+      {/* biome-ignore lint/a11y/useSemanticElements: a named group of lists, not a form's fieldset */}
+      <div className="cb-ld-groups" data-part="list" role="group" aria-label={label}>
+        {shown.map((g, i) => (
+          <section key={g.id} className="cb-ld-group" data-part="list-group">
+            <h3 className="cb-ld-group-label" data-part="list-group-label">
+              {g.label}
+            </h3>
+            {rows(g.items, g.label, "list-group-rows", i === shown.length - 1)}
+          </section>
+        ))}
+      </div>
+      <ListMoreButton more={more} />
+    </>
+  );
+}
+
+/** The row a list with more pages shows at its end while the next page loads. */
+function LoadingRow() {
+  return (
+    <li data-end="skeleton" aria-hidden>
+      <span className="cb-ld-row" data-part="loading-row">
+        <span className="cb-ld-icon" aria-hidden="true" />
+        <span className="cb-ld-text">
+          <SkeletonText width="55%" />
+          <SkeletonText width="30%" size="small" />
+        </span>
+      </span>
+    </li>
   );
 }
 

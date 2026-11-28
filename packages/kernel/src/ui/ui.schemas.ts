@@ -44,20 +44,39 @@ const FormAnswerSchema = z
     message: `answer must have at most ${UI_LIMITS.tableRows} fields`,
   });
 
-/** 按钮 payload 的 JSON 序列化后 UTF-8 字节数（与 `validateUiView` 对按钮 payload 的上限一致）。 */
-const payloadBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v) ?? "", "utf8");
+/** The UTF-8 bytes of a value serialized as JSON (the measure of every UI payload limit). */
+export const jsonBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v) ?? "", "utf8");
 
+/**
+ * An action's body. `payload` is capped here at the component limit
+ * (`UI_LIMITS.componentActionPayloadBytes`); a view's action keeps `UI_LIMITS.payloadBytes`, which
+ * `UiViews.act` checks once it knows the contribution's kind.
+ */
 export const ActionBody = z.object({
   actionId: z.string().min(1).max(200),
   payload: z
     .unknown()
     .optional()
-    .refine((v) => v === undefined || payloadBytes(v) <= UI_LIMITS.payloadBytes, {
-      message: `payload must be at most ${UI_LIMITS.payloadBytes} bytes as JSON`,
+    .refine((v) => v === undefined || jsonBytes(v) <= UI_LIMITS.componentActionPayloadBytes, {
+      message: `payload must be at most ${UI_LIMITS.componentActionPayloadBytes} bytes as JSON`,
     }),
   answer: FormAnswerSchema.optional(),
   conversationId: z.string().min(1).max(100).optional(),
   /** Only an agent view (`agent.detail.section`). */
+  agentId: z.uuid().optional(),
+  locale: Locale,
+});
+
+/**
+ * `POST query/:plugin/:id`: a component's named query. `params` is any JSON (default `null`), at
+ * most `UI_LIMITS.componentQueryParamsBytes` as JSON (checked by the service: 413
+ * `ui.query_params_too_large`); the context ids are those of the component's slot, as for an action.
+ */
+export const QueryBody = z.object({
+  query: z.string().min(1).max(200),
+  params: z.unknown().optional(),
+  conversationId: z.string().min(1).max(100).optional(),
+  /** Only a component of `agent.detail.section`. */
   agentId: z.uuid().optional(),
   locale: Locale,
 });

@@ -36,9 +36,8 @@ const SPEC: ToolSpec = {
     "Deliver a file to the user as a downloadable artifact. Use it when the user should receive a " +
     "file you produced (a report, chart, spreadsheet, archive and so on); files that stay on the " +
     "device are not visible to the user, and images in tool results are shown to you, not " +
-    "delivered to the user. Pass file_path for a file on the device, or file_id for an attachment " +
-    "or artifact of this conversation, such as the file_id an image in a tool result names (needs " +
-    "no device). Each call delivers only that one file, so a directory must first be packed into " +
+    "delivered to the user. Pass file_path for a file on the device, or file_id for a file id of " +
+    "this conversation, such as the file_id an image in a tool result names (needs no device). Each call delivers only that one file, so a directory must first be packed into " +
     "one archive. The file size is limited (100 MB by default). Do not use it for intermediate " +
     "files the user does not need. An HTML file is shown on its own: files it references by " +
     "relative path are not delivered with it, so inline or embed them.",
@@ -55,7 +54,7 @@ const SPEC: ToolSpec = {
         type: "string",
         minLength: 1,
         description:
-          "Instead of file_path: an attachment or artifact id of this conversation, e.g. the file_id of an image in a tool result.",
+          "Instead of file_path: a file id of this conversation (a file the user sent, a delivered file, or the file_id of an image in a tool result).",
       },
       name: {
         type: "string",
@@ -203,9 +202,9 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
 }
 
 /**
- * A `file_id` delivery: the file of the conversation or its root (an attachment, a `read` copy
- * such as a tool result's image, or an artifact) read from the object store, no device; the
- * artifact's source path is `file_id/<id>`.
+ * A `file_id` delivery: a file of the conversation or its root ({@link findConversationFile}: a
+ * library file they refer to, or a `read` copy such as a tool result's image) read from the object
+ * store, no device; the artifact's source path is `file_id/<id>`.
  */
 async function deliverById(
   deps: SandboxToolDeps,

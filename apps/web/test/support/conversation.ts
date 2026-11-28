@@ -1,5 +1,5 @@
 /** Shared helpers for the conversation page tests: events, a fake EventSource, routes. */
-import { DEFAULT_LIMITS } from "../../src/lib/attachments";
+
 import type { ConversationEvent } from "../../src/lib/conversations";
 import type {
   ConsentReach,
@@ -7,6 +7,7 @@ import type {
   PermissionAvailability,
   PermissionPreview,
 } from "../../src/lib/permissions";
+import { DEFAULT_LIMITS } from "../../src/lib/uploads";
 import { lastStubRoutes } from "./api";
 import { renderRouteWithCache } from "./query";
 
@@ -343,7 +344,7 @@ export function snapshotDefaults(id = "c1"): Parameters<typeof renderRouteWithCa
     [`GET ${base}/permissions`]: ok(permissionsView({ rootConversationId: id })),
     "GET /api/v1/orgs/o1/ui/contributions": ok({ items: [] }),
     "GET /api/v1/orgs/o1/connectors": ok({ connectors: [] }),
-    "GET /api/v1/orgs/o1/attachments/limits": ok(LIMITS),
+    "GET /api/v1/orgs/o1/files/limits": ok(LIMITS),
     // the properties panel's automations (none)
     "GET /api/v1/orgs/o1/automations": ok({ items: [] }),
     "GET /api/v1/orgs/o1/agents/ag1/invocable-skills": ok({ skills: [] }),

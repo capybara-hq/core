@@ -98,7 +98,8 @@ export const base64Bytes = (data: string): number => {
  * `size`), so hook payloads carry neither media bytes nor attachment ids. Media never sits outside
  * user messages, but every message is projected anyway. Building the copy also keeps the per-call
  * clone and freeze of the payload small. A `ref` source should never reach here (the kernel resolves
- * refs before sending); it becomes a placeholder of size 0 and logs a warning.
+ * refs before sending); it becomes a placeholder of size 0 and logs a warning. `cacheTtl` is left
+ * out (a transport option, not part of the hook payload).
  */
 export function hookRequestOf(request: ModelRequest, log?: Pick<Logger, "warn">): HookModelRequest {
   let refs = 0;
@@ -122,7 +123,9 @@ export function hookRequestOf(request: ModelRequest, log?: Pick<Logger, "warn">)
       refs,
     });
   }
-  return { ...request, messages };
+  // cacheTtl is a transport option: hook payloads stay as they were (idle compaction spec §8.1)
+  const { cacheTtl: _transport, ...rest } = request;
+  return { ...rest, messages };
 }
 
 /** Where a denial is recorded (conversation, run, actor and the idem key of its `hook_denied`). */

@@ -5,7 +5,7 @@ import type {
   ConversationEventBody,
   LogContentBlock,
 } from "../../../src/conversations/events.js";
-import type { CompactionSettings } from "../../../src/identity/settings.js";
+import type { CompactionSettings, PromptCacheSettings } from "../../../src/identity/settings.js";
 
 /**
  * Compaction settings shared by the context tests: the trigger and plan test values (a 16k output
@@ -98,13 +98,19 @@ export class Log {
   }
 
   /** A summary; `openingSeqs` names the covered messages it re-renders (spec §4.2). */
-  summary(coversUpToSeq: number, text: string, openingSeqs?: number[]): ConversationEvent {
+  summary(
+    coversUpToSeq: number,
+    text: string,
+    openingSeqs?: number[],
+    method?: "transcript" | "in_context",
+  ): ConversationEvent {
     return this.add({
       type: "compaction_summary",
       payload: {
         coversUpToSeq,
         text,
         ...(openingSeqs !== undefined && { openingSeqs }),
+        ...(method !== undefined && { method }),
         savedTokens: 0,
         step: 0,
       },
@@ -166,4 +172,21 @@ export class Log {
     this.user(`question ${n}`);
     this.assistant(`answer ${n}`);
   }
+}
+
+/**
+ * A `ModelStepDeps.compactionSettings` stub: `resolve` and `resolveStep` answer from the same
+ * values, read on every call (a test may change them between steps).
+ */
+export function stepSettingsStub(
+  compaction: () => CompactionSettings,
+  promptCache: () => PromptCacheSettings = () => ({ longTtl: false }),
+): {
+  resolve: () => Promise<CompactionSettings>;
+  resolveStep: () => Promise<{ compaction: CompactionSettings; promptCache: PromptCacheSettings }>;
+} {
+  return {
+    resolve: async () => compaction(),
+    resolveStep: async () => ({ compaction: compaction(), promptCache: promptCache() }),
+  };
 }

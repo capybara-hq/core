@@ -19,6 +19,7 @@ import { DeviceProjectsService } from "../devices/device-projects.service.js";
 import { projectFilePath } from "../devices/project-paths.js";
 import { clipped } from "../devices/project-rules.js";
 import { ApiError } from "../errors.js";
+import { LibraryFilesService } from "../files/library-files.service.js";
 import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -42,10 +43,9 @@ import { ConnectorContent } from "../tools/connector-content.js";
 import { type QuestionRecord, QuestionsService } from "../tools/questions.service.js";
 import { ConversationAccess, parentReachable } from "./access.js";
 import { type AgentTreeNode, readAgentTree } from "./agent-tree.js";
-import { AttachmentsService } from "./attachments.service.js";
 import { type AppendEvent, EventLog } from "./event-log.js";
 import { peopleOfEvents } from "./event-people.js";
-import type { ConversationEvent, LogContentBlock } from "./events.js";
+import { type ConversationEvent, type LogContentBlock, refFileId } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
 import {
   type ImSenderContext,
@@ -562,9 +562,9 @@ export class ConversationsService {
     /** Reads `@` resources with the sender's credentials. */
     @Inject(ConnectorContent)
     private readonly content: Pick<ConnectorContent, "resolveAttachments">,
-    /** Binds uploaded files to the conversation in the message's transaction. */
-    @Inject(AttachmentsService)
-    private readonly attachments: Pick<AttachmentsService, "bindForMessage">,
+    /** Attaches the sender's library files to the conversation in the message's transaction. */
+    @Inject(LibraryFilesService)
+    private readonly libraryFiles: Pick<LibraryFilesService, "attachForMessage">,
     /** Renders a person's skill invocation (phase D). */
     @Inject(SkillInvoker) private readonly invoker: Pick<SkillInvoker, "prepare">,
     /** Stops a deleted conversation's background tasks. */
@@ -1060,7 +1060,7 @@ export class ConversationsService {
     await unbindConversation(this.db.db, conversationId);
     // its shares stop with it and their snapshots are owed for deletion (file sharing spec §9);
     // a share being created waits on the row lock above (`FOR SHARE`) and then finds it deleted
-    await revokeSharesIn(this.db.db, this.outbox, { conversationId }, "conversation_deleted");
+    await revokeSharesIn(this.db.db, { conversationId }, "conversation_deleted");
     // the device's services (the browser's tabs) forget the conversation: the notice is owed here
     // and delivered by the worker, an offline device's once it is back (close tabs on delete §4)
     if (subject.deviceId)
@@ -1882,6 +1882,23 @@ export class ConversationsService {
     // the run this message starts is owed with it: the direct ensureRun after the commit may never
     // happen (the process died) or fail (transactional outbox spec §6)
     if (fresh.at(-1) === true) await this.runs.oweEnsureRun(conversationId, message.seq, orgId);
+    // the files this message attached were first referred to by it (a queued message's files keep
+    // a null `first_seq`: they were attached when queued, before the message had a seq)
+    const fileIds = blocks.flatMap((b) =>
+      (b.type === "image" || b.type === "document" || b.type === "file") && b.source.kind === "ref"
+        ? [refFileId(b.source)]
+        : [],
+    );
+    if (fileIds.length > 0) {
+      await this.db.db
+        .updateTable("conversation_files")
+        .set({ first_seq: message.seq })
+        .where("org_id", "=", orgId)
+        .where("conversation_id", "=", conversationId)
+        .where("file_id", "in", fileIds)
+        .where("first_seq", "is", null)
+        .execute();
+    }
     const skips =
       fresh.at(-1) === true
         ? await this.skipWaitsIn(conversationId, accountId, message.seq)
@@ -2022,9 +2039,10 @@ export class ConversationsService {
   }
 
   /**
-   * Binds uploaded files inside the message's (or queue item's) transaction; none → no blocks.
-   * The bound files join the conversation's files, so open pages read the list again after the
-   * commit (`changed: files`, a hint).
+   * Attaches the sender's library files inside the message's (or queue item's) transaction
+   * (`LibraryFilesService.attachForMessage`: drafts become ready, the conversation refers to each);
+   * none → no blocks. The files join the conversation's files, so open pages read the list again
+   * after the commit (`changed: files`, a hint).
    */
   @Transactional({ propagation: "mandatory" })
   async bindIn(
@@ -2034,7 +2052,12 @@ export class ConversationsService {
     files: readonly string[],
   ): Promise<LogContentBlock[]> {
     if (files.length === 0) return [];
-    const blocks = await this.attachments.bindForMessage(orgId, conversationId, accountId, files);
+    const blocks = await this.libraryFiles.attachForMessage(
+      orgId,
+      conversationId,
+      accountId,
+      files,
+    );
     afterCommit(() => this.eventLog.publishChanged(conversationId, "files"));
     return blocks;
   }

@@ -124,9 +124,10 @@ const isPluginUnloaded = (err: unknown): boolean =>
 /**
  * The loop deps of a full-run replay: the run's own step deps without anything live that a replay
  * must never trigger, then the replay's overrides. Removed: plugin hooks (P-18), sub-agent and
- * compaction progress on a live stream, fork dispatch (run-replay passes the recorded reports) and
- * the live permission context recorder (permission context replay spec B4): a replay gets only the
- * recorded feeder `overrides.permissionContext`, and none at all for a recording without markers.
+ * compaction progress on a live stream, fork dispatch (run-replay passes the recorded reports), the
+ * in-context summary's live snapshot and the live permission context recorder (permission context
+ * replay spec B4): a replay gets only the recorded feeder `overrides.permissionContext`, and none
+ * at all for a recording without markers.
  */
 export function replayLoopDeps(
   stepDeps: LoopDeps,
@@ -141,6 +142,9 @@ export function replayLoopDeps(
     permissionContext: _noLivePermissionContext,
     // a replay never reads a device for a streaming Write's base
     writeBase: _noWriteBase,
+    // a replayed compaction summarizes the transcript (idle compaction spec §9.4): the replay
+    // conversation has no live snapshot of its own
+    liveSnapshot: _noLiveSnapshot,
     ...replayDeps
   } = stepDeps;
   // the object rest above copied `db` as a value: read it through the step deps' getter

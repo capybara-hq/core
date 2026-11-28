@@ -23,7 +23,15 @@ import type { SetupCheckDefinition } from "./setup-check.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolCallContext, ToolHandler, ToolSpec, ToolWatcher } from "./tool.js";
 import type { TriggersCtx } from "./triggers.js";
-import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
+import type {
+  EmbedClaims,
+  JsonValue,
+  UiActionArgs,
+  UiActionResult,
+  UiQueryArgs,
+  UiRenderArgs,
+  UiView,
+} from "./ui.js";
 
 /** Logger interface. */
 export interface Logger {
@@ -375,6 +383,18 @@ export interface ExtensionContext {
   ui: {
     view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
     action(id: string, handler: (args: UiActionArgs) => Promise<UiActionResult>): void;
+    /**
+     * Registers the data source of `usePluginQuery` for a component (only during `setup`). `id`
+     * must be a component id declared in `permissions.ui.components`; the kernel refuses any other
+     * id. Queries work in any org-scoped component slot (`org.page`, conversation and agent slots
+     * alike). The result is JSON of at most `UI_LIMITS.componentQueryBytes` bytes and the call's
+     * params at most `UI_LIMITS.componentQueryParamsBytes`. Push refresh reaches queries only
+     * through org-stream invalidations (`invalidate({ orgId, contribution })` without a
+     * `conversationId`): a conversation-scoped invalidation does not refetch them, so a component
+     * in a conversation slot refetches through an action result's `invalidate` query names (or
+     * its own `refetch`).
+     */
+    query(id: string, handler: (args: UiQueryArgs) => Promise<JsonValue>): void;
     invalidate(target: {
       /** Required, except for a `platform.page` contribution, where it must be omitted. */
       orgId?: string;

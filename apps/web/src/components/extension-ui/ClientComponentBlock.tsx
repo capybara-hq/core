@@ -1,26 +1,40 @@
 "use client";
 
-import { EmptyState, LoadFailed, SkeletonBars, useToast } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { EmptyState, LoadFailed, SkeletonBars, Text, useToast } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
   Component,
   type ComponentType,
+  createContext,
   createElement,
   type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { useRouter } from "../../i18n/navigation";
 import { reloadDocument } from "../../lib/browser";
 import type { ClientExtensionItem } from "../../lib/client-extensions";
 import type { FormAnswer } from "../../lib/conversations";
+import { applyParamChanges, capPageParams, searchOf } from "../../lib/page-params";
 import { deploymentSettingsQuery } from "../../lib/query/admin";
 import { retryOnMountOf } from "../../lib/query/client";
+import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
-import { postUiAction, type UiContributionItem, type UiView, uiKey, uiLocale } from "../../lib/ui";
+import { pluginQueryQuery } from "../../lib/query/ui";
+import {
+  openUiStream,
+  postUiAction,
+  type UiContributionItem,
+  type UiLocale,
+  type UiView,
+  uiKey,
+  uiLocale,
+} from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { isDisabledForSession } from "../client-ext/crash-budget";
 import {
@@ -28,12 +42,15 @@ import {
   type HostApi,
   HostContext,
   type HostContextValue,
+  type NavigateTarget,
+  type QueryState,
   useHostServices,
   type ViewState,
 } from "../client-ext/host-api";
 import { useClientHostControls, useClientRegistry } from "../client-ext/registry";
 import { BlockBoundary } from "../conversation/BlockBoundary";
 import { targetKey, useExtensionViews, type ViewTarget } from "./ExtensionViewTab";
+import { HostNoticeProvider, TemplateGuard } from "./template-guard";
 
 /**
  * The slot args a component is rendered with (its slot's scope args, client extensions spec §5.2):
@@ -45,6 +62,79 @@ export interface ComponentArgs {
   agentId?: string;
   item?: string;
   card?: { callId: string; key?: string };
+  /** An `org.page` component's URL params (plugin full pages spec §5). */
+  params?: Record<string, string>;
+}
+
+const NO_PARAMS: Record<string, string> = Object.freeze({}) as Record<string, string>;
+
+/** What a component's query hook reads: provided per rendered component by its host. */
+interface QueryScope {
+  orgId: string | null;
+  plugin: string;
+  id: string;
+  conversationId?: string;
+  agentId?: string;
+  locale: UiLocale;
+  /** The component ran a query: the host listens for its contribution's invalidations. */
+  queried(): void;
+}
+
+const QueryScopeContext = createContext<QueryScope | null>(null);
+
+/**
+ * One component query (`usePluginQuery` through the host api; plugin full pages spec §4.1): the
+ * TanStack read of `pluginQueryQuery`, served `staleMs` (default 0) fresh, not retried (the
+ * component's retry is `refetch`, which invalidates the read). A failure is `status: "error"`
+ * with the localized message; a platform page has no queries (the route is org-scoped). It is
+ * the host api's `query` itself, so it reads its component from the host's context.
+ */
+function useComponentQuery<T>(
+  query: string,
+  params: unknown,
+  opts: { staleMs?: number },
+): QueryState<T> {
+  const scope = useContext(QueryScopeContext);
+  if (scope === null)
+    throw new Error("usePluginQuery() runs only inside a component the host drew");
+  const qc = useQueryClient();
+  const messageOf = useErrorMessage();
+  const { orgId, plugin, id, conversationId, agentId, locale } = scope;
+  const q = pluginQueryQuery(orgId ?? "", { plugin, id }, query, params, {
+    ...(conversationId !== undefined && { conversationId }),
+    ...(agentId !== undefined && { agentId }),
+    locale,
+  });
+  const r = useQuery({
+    ...q,
+    enabled: orgId !== null,
+    staleTime: opts.staleMs ?? 0,
+    retry: false,
+  });
+  const queried = scope.queried;
+  useEffect(() => {
+    if (orgId !== null) queried();
+  }, [orgId, queried]);
+  const queryKey = q.queryKey;
+  const hash = JSON.stringify(queryKey);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the key's hash stands for the key
+  const refetch = useCallback(() => {
+    void qc.invalidateQueries({ queryKey, exact: true });
+  }, [qc, hash]);
+  const error = r.error;
+  return useMemo<QueryState<T>>(() => {
+    if (orgId === null) {
+      return { data: undefined, status: "error", error: "no queries on a platform page", refetch };
+    }
+    if (r.status === "error") {
+      return { data: r.data as T | undefined, status: "error", error: messageOf(error), refetch };
+    }
+    return {
+      data: r.data as T | undefined,
+      status: r.status === "success" ? "ready" : "loading",
+      refetch,
+    };
+  }, [orgId, r.status, r.data, error, messageOf, refetch]);
 }
 
 type Render = ComponentType<Record<string, unknown>>;
@@ -195,13 +285,21 @@ export function ComponentHost({
   args,
   render,
   hostProps,
+  templateGuard,
 }: {
   c: UiContributionItem;
   args: ComponentArgs;
   render: Render;
   hostProps: Record<string, unknown>;
+  /**
+   * A `frame: "page"` component: it must render exactly one forwarded page template (any other
+   * component none), and the host's live-refresh line goes into that template's head.
+   */
+  templateGuard?: boolean;
 }) {
   const { plugin, id, slot } = c;
+  const qc = useQueryClient();
+  const router = useRouter();
   const services = useHostServices(plugin, id);
   const locale = uiLocale(useLocale());
   const toast = useToast();
@@ -250,7 +348,8 @@ export function ComponentHost({
     [state, retry],
   );
 
-  // The answer is a new view (it replaces the component's) or a toast: nothing to invalidate.
+  // The answer is a new view (it replaces the component's) or a toast; the query names it lists
+  // (`invalidate`, a component's only) are read again before the action resolves.
   const { mutateAsync } = useAppMutation({
     fn: (req: { actionId: string; payload?: unknown; answer?: FormAnswer }) =>
       postUiAction(orgId, plugin, id, {
@@ -259,7 +358,10 @@ export function ComponentHost({
         ...(agentId !== undefined && { agentId }),
         locale,
       }),
-    invalidates: () => [],
+    invalidates: (_v, r) =>
+      orgId === null || r?.invalidate === undefined
+        ? []
+        : r.invalidate.map((name) => keys.org(orgId).pluginQueries(plugin, id, name)),
   });
   const latest = useRef({ mutateAsync, toast, errorMessage });
   latest.current = { mutateAsync, toast, errorMessage };
@@ -276,22 +378,113 @@ export function ComponentHost({
       } catch (e) {
         throw new Error(messageOf(e));
       }
+      const invalidate = r?.invalidate === undefined ? {} : { invalidate: [...r.invalidate] };
       if (r !== undefined && "view" in r) {
         viewsRef.current.setView(key, r.view);
-        return { view: r.view as UiView };
+        return { view: r.view as UiView, ...invalidate };
       }
       if (r?.toast) {
         // shown by the host, as for a view's action; the component gets the text too
         show.success(r.toast[locale]);
-        return { toast: r.toast[locale] };
+        return { toast: r.toast[locale], ...invalidate };
       }
-      return {};
+      return invalidate;
     },
     [key, locale],
   );
 
+  // Component queries: once one runs, the org UI stream's `event: ui` frames with `queries` for
+  // this contribution read its queries again, and so do the stream's first open (a change between
+  // the first read and the subscription; only queries answered before the subscription started)
+  // and every reconnect (which may have missed some). A
+  // stream that ended (session revoked, the browser gave up) says live refresh stopped, as an org
+  // view does.
+  const [listening, setListening] = useState(false);
+  const [liveLost, setLiveLost] = useState(false);
+  const queried = useCallback(() => setListening(true), []);
+  // ssr-exempt: live updates after first paint (the UI stream)
+  useEffect(() => {
+    if (!listening || orgId === null) return;
+    setLiveLost(false);
+    const queryKey = keys.org(orgId).pluginQueries(plugin, id);
+    const all = () => void qc.invalidateQueries({ queryKey });
+    // the first open reads only what was read before the subscription started: a query answered
+    // after that (a page load's first read) is not fetched a second time, nor is one still in
+    // flight cancelled and sent again
+    const started = Date.now();
+    const stale = () =>
+      void qc.invalidateQueries(
+        { queryKey, predicate: (q) => q.state.dataUpdatedAt < started },
+        { cancelRefetch: false },
+      );
+    return openUiStream(orgId, {
+      onUi: (r) => {
+        if (r.queries === true && r.plugin === plugin && r.contribution === id) all();
+      },
+      onOpen: stale,
+      onReconnect: all,
+      onError: () => setLiveLost(true),
+    });
+  }, [listening, orgId, plugin, id, qc]);
+  const tPage = useTranslations("pluginPage");
+  const queryScope = useMemo<QueryScope>(
+    () => ({
+      orgId,
+      plugin,
+      id,
+      ...(conversationId !== undefined && { conversationId }),
+      ...(agentId !== undefined && { agentId }),
+      locale,
+      queried,
+    }),
+    [orgId, plugin, id, conversationId, agentId, locale, queried],
+  );
+
+  // Page params and navigation (plugin full pages spec §5): `{ params }` on this page only.
+  // The params the next `{ params }` starts from: the page's, or the last navigation's until the
+  // page's next params arrive (two quick calls must not drop the first one's change).
+  const pageParams = args.params ?? NO_PARAMS;
+  const paramsRef = useRef(pageParams);
+  const seenParams = useRef(pageParams);
+  if (seenParams.current !== pageParams) {
+    seenParams.current = pageParams;
+    paramsRef.current = pageParams;
+  }
+  const navigate = useCallback(
+    (to: NavigateTarget) => {
+      const page = (pid: string, params: Record<string, string>) =>
+        `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(pid)}${searchOf(capPageParams(params, { navigated: true }))}`;
+      if (orgId === null) throw new Error("navigate() is not available on a platform page");
+      if ("params" in to) {
+        if (slot !== "org.page") {
+          throw new Error("navigate({ params }) works only on a plugin page (slot org.page)");
+        }
+        const next = capPageParams(applyParamChanges(paramsRef.current, to.params), {
+          navigated: true,
+        });
+        paramsRef.current = next;
+        const url = page(id, next);
+        if (to.replace) router.replace(url, { scroll: false });
+        else router.push(url, { scroll: false });
+        return;
+      }
+      if ("page" in to) {
+        router.push(page(to.page.id, to.page.params ?? {}));
+        return;
+      }
+      router.push(`/chat/${encodeURIComponent(to.conversation)}`);
+    },
+    [orgId, plugin, id, slot, router],
+  );
+
   const api = useMemo<HostApi>(() => {
-    const value = { ...services, action } as HostApi;
+    const value = {
+      ...services,
+      action,
+      query: useComponentQuery,
+      pageParams,
+      navigate,
+    } as HostApi;
     Object.defineProperty(value, "view", {
       enumerable: true,
       get: () => {
@@ -300,7 +493,7 @@ export function ComponentHost({
       },
     });
     return value;
-  }, [services, action, view]);
+  }, [services, action, view, pageParams, navigate]);
 
   const scopeArgs = useMemo(() => {
     const out: Record<string, unknown> = {};
@@ -314,9 +507,29 @@ export function ComponentHost({
     () => ({ plugin, contribution: id, slot, args: scopeArgs, api }),
     [plugin, id, slot, scopeArgs, api],
   );
+  const body = createElement(render, { ...hostProps, plugin, contribution: id, slot });
+  const liveLostLine = liveLost ? (
+    <Text variant="small" tone="warn">
+      {tPage("liveLost")}
+    </Text>
+  ) : null;
   return (
     <HostContext.Provider value={ctx}>
-      {createElement(render, { ...hostProps, plugin, contribution: id, slot })}
+      <QueryScopeContext.Provider value={queryScope}>
+        {templateGuard ? (
+          // a page-frame component draws its whole page: the line goes into its template's head
+          <HostNoticeProvider value={liveLostLine}>
+            <TemplateGuard where={uiKey(plugin, id)}>{body}</TemplateGuard>
+          </HostNoticeProvider>
+        ) : (
+          <>
+            {liveLostLine}
+            <TemplateGuard where={uiKey(plugin, id)} expected={0}>
+              {body}
+            </TemplateGuard>
+          </>
+        )}
+      </QueryScopeContext.Provider>
     </HostContext.Provider>
   );
 }
@@ -360,12 +573,18 @@ export function ClientComponentBlock({
   hostProps,
   frame,
   quiet,
+  page,
 }: {
   c: UiContributionItem;
   args: ComponentArgs;
   hostProps: Record<string, unknown>;
   frame?: (body: ReactNode) => ReactNode;
   quiet?: boolean;
+  /**
+   * A `frame: "page"` component (plugin full pages spec §2): drawn without a frame, inside the
+   * template guard; its failure line is drawn inside `page` (the host's page around it).
+   */
+  page?: (body: ReactNode) => ReactNode;
 }): ReactNode {
   const found = useClientComponent(c);
   const controls = useClientHostControls();
@@ -375,13 +594,21 @@ export function ClientComponentBlock({
     [controls, c.plugin, c.id],
   );
   if (found.status !== "ready") return null;
-  const body = <ComponentHost c={c} args={args} render={found.render} hostProps={hostProps} />;
+  const body = (
+    <ComponentHost
+      c={c}
+      args={args}
+      render={found.render}
+      hostProps={hostProps}
+      templateGuard={page !== undefined}
+    />
+  );
   const block = quiet ? (
     <ClientBoundary fallback={null} onError={onError}>
       {body}
     </ClientBoundary>
   ) : (
-    <BlockBoundary name={c.title[locale]} onError={onError}>
+    <BlockBoundary name={c.title[locale]} onError={onError} {...(page && { failedFrame: page })}>
       {body}
     </BlockBoundary>
   );
@@ -401,21 +628,37 @@ export function ClientComponentBody({
   args,
   hostProps,
   size,
+  page,
 }: {
   c: UiContributionItem;
   args: ComponentArgs;
   hostProps: Record<string, unknown>;
   size: "page" | "panel";
+  /**
+   * A `frame: "page"` component: the host's page drawn around every state but the component's
+   * own (which draws its page itself, plugin full pages spec §2).
+   */
+  page?: (body: ReactNode) => ReactNode;
 }): ReactNode {
   const t = useTranslations("clientExtensions");
   const locale = uiLocale(useLocale());
   const state = useComponentAvailability(c);
-  if (state === "ready") return <ClientComponentBlock c={c} args={args} hostProps={hostProps} />;
-  if (state === "loading") return <SkeletonBars />;
-  if (state === "failed") {
+  if (state === "ready") {
     return (
-      <LoadFailed name={c.title[locale]} reason={t("componentFailed")} onRetry={reloadDocument} />
+      <ClientComponentBlock
+        c={c}
+        args={args}
+        hostProps={hostProps}
+        {...(page !== undefined && { page })}
+      />
     );
   }
-  return <EmptyState size={size} text={t("componentOff")} hint={t("componentOffHint")} />;
+  const framed = (body: ReactNode) => (page ? page(body) : body);
+  if (state === "loading") return framed(<SkeletonBars />);
+  if (state === "failed") {
+    return framed(
+      <LoadFailed name={c.title[locale]} reason={t("componentFailed")} onRetry={reloadDocument} />,
+    );
+  }
+  return framed(<EmptyState size={size} text={t("componentOff")} hint={t("componentOffHint")} />);
 }

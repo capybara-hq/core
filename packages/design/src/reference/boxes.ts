@@ -34,6 +34,9 @@ export const BOXES: readonly BoxRule[] = [
   { name: "EmbedFrame", selector: '.cb-embed:not([data-framed="false"])' },
   { name: "FilePicker", selector: ".cb-file-picker" },
   { name: "option card", selector: '.cb-radio[data-variant="card"]' },
+  // the LibraryPage's two panes (spec §5.13): each pane is a card from 600
+  { name: "LibraryPage list", selector: ".cb-library-list" },
+  { name: "LibraryPage detail", selector: ".cb-library-detail" },
 ];
 
 /*

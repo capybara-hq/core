@@ -64,6 +64,7 @@ export const WEB_UI_TEMPLATES = [
   "OnboardingPage",
   "SetupPage",
   "SharedFilePage",
+  "LibraryPage",
 ] as const;
 
 /** design 包内用：color-mix( 等在 CSS 里合法地引用 token，所以这里只认字面量写法。 */
@@ -72,7 +73,7 @@ const COLOR = /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i;
 const WEB_COLOR = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\(/i;
 const ALLOWED_CSS = "@capybara-hq/design/styles.css";
 const FORBIDDEN_PKG = new RegExp(
-  `^(?:@radix-ui/|@emotion/|@stitches/|@vanilla-extract/|@mui/|@chakra-ui/|@mantine/|@headlessui/|(?:${[
+  `^(?:@radix-ui/|@dnd-kit/|@emotion/|@stitches/|@vanilla-extract/|@mui/|@chakra-ui/|@mantine/|@headlessui/|(?:${[
     "cmdk",
     "styled-components",
     "antd",

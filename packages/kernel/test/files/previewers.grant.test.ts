@@ -20,7 +20,8 @@ const FILE = {
   name: "a.docx",
   contentType: "application/octet-stream",
   size: 5,
-  objectKey: "artifacts/c/f1",
+  objectKey: "blobs/b1",
+  blob: { id: "b1", objectKey: "blobs/b1", size: 5, etag: null },
 };
 
 /** A kysely stand-in for the one `file_previewers` select `ordered()` runs. */
@@ -30,19 +31,22 @@ const db = {
   }),
 } as unknown as KernelSchemaDb;
 
+/** The bytes "hello", as a stream. */
+const hello = () =>
+  new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(new TextEncoder().encode("hello"));
+      c.close();
+    },
+  });
+
 /** An object store that ignores the abort signal and always returns the bytes. */
 const ignoringStore = {
-  kernel: () => ({
-    get: async () => ({
-      body: new ReadableStream<Uint8Array>({
-        start(c) {
-          c.enqueue(new TextEncoder().encode("hello"));
-          c.close();
-        },
-      }),
-    }),
-  }),
+  kernel: () => ({ get: async () => ({ head: { size: 5 }, body: hello() }) }),
 };
+
+/** A conversation file's blob read that ignores the abort signal as well. */
+const ignoringBlobs = { open: async () => ({ head: { size: 5 }, body: hello() }) };
 
 function setup(
   render: NonNullable<FilePreviewer["render"]>,
@@ -76,6 +80,8 @@ function setup(
       enabledPlugins: async () => new Set(["late"]),
     },
     { file: async () => FILE } as never,
+    { live: async () => FILE } as never,
+    ignoringBlobs as never,
     skillFiles as never,
     ignoringStore as never,
     { get: effective },

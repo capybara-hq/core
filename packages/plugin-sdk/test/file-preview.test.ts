@@ -102,7 +102,7 @@ describe("file-preview@1", () => {
     const check = (args: FilePreviewArgs) => {
       // @ts-expect-error accountId exists only on the conversation variant
       void args.accountId;
-      if (args.source === "conversation") return args.accountId;
+      if (args.source === "conversation") return `${args.accountId} ${args.conversationId ?? "-"}`;
       if (args.source === "skill") {
         // @ts-expect-error conversationId exists only on the conversation variant
         void args.conversationId;
@@ -128,5 +128,10 @@ describe("file-preview@1", () => {
         path: "docs/a.html",
       }),
     ).toBe("a k@2/docs/a.html");
+    // a library file previewed outside a conversation has no conversationId
+    expect(check({ ...base, source: "conversation", orgId: "o", accountId: "a" })).toBe("a -");
+    expect(
+      check({ ...base, source: "conversation", orgId: "o", accountId: "a", conversationId: "c" }),
+    ).toBe("a c");
   });
 });

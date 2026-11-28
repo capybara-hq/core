@@ -54,6 +54,7 @@ import {
   pipelineFor,
   questionsFor,
 } from "../helpers/tools.js";
+import { stepSettingsStub } from "./context/fixtures.js";
 
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
@@ -180,7 +181,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
       ),
       tools: registry,
       config: { get: () => config },
-      compactionSettings: { resolve: async () => COMPACTION_SETTINGS.parse({}) },
+      compactionSettings: stepSettingsStub(() => COMPACTION_SETTINGS.parse({})),
       log: silent,
       toolPipeline: pipelineFor({
         db,

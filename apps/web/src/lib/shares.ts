@@ -5,9 +5,9 @@ import type { UiLocale, UiView } from "./ui";
 
 /**
  * File shares (kernel `shares/`, file sharing design §2, §3): a share is a snapshot of one
- * conversation file behind `/s/<code>`. The owner creates, refreshes and revokes them from the
- * right panel; org admins and members list them in settings; anyone with a live link reads the
- * public `/api/v1/s/<code>` routes.
+ * conversation or library file behind `/s/<code>`. The owner creates, refreshes and revokes them
+ * from the right panel or the Files page; org admins and members list them in settings; anyone
+ * with a live link reads the public `/api/v1/s/<code>` routes.
  */
 
 /** `suspended`: an external share while external sharing is off, or its creator lost access. */
@@ -19,7 +19,7 @@ export interface ShareView {
   /** The absolute link from the deployment's public URL; null when the kernel has none set. */
   url: string | null;
   audience: "internal" | "external";
-  conversationId: string;
+  conversationId: string | null;
   fileId: string;
   sourcePath: string | null;
   name: string;
@@ -53,6 +53,9 @@ const orgBase = (orgId: string) => `/api/v1/orgs/${enc(orgId)}`;
 const fileShares = (orgId: string, conversationId: string, fileId: string) =>
   `${orgBase(orgId)}/conversations/${enc(conversationId)}/files/${enc(fileId)}/shares`;
 
+const libraryShares = (orgId: string, fileId: string) =>
+  `${orgBase(orgId)}/files/${enc(fileId)}/shares`;
+
 /** A share page's path or link on an origin: `<origin>/s/<code>` (`""`: the path). */
 export const shareLink = (origin: string, code: string) => `${origin}/s/${code}`;
 
@@ -73,6 +76,21 @@ export const createShare = (
   body: { audience: "internal" | "external"; expiresInDays: ShareExpiry },
 ) =>
   apiFetch<{ share: ShareView }>(fileShares(orgId, conversationId, fileId), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+/** A library file's shares (any version of it) and the org's share policy (file library §6). */
+export const listLibraryFileShares = (orgId: string, fileId: string) =>
+  apiFetch<{ shares: ShareView[]; policy: SharePolicy }>(libraryShares(orgId, fileId));
+
+/** Shares one of the caller's library files (no conversation). */
+export const createLibraryShare = (
+  orgId: string,
+  fileId: string,
+  body: { audience: "internal" | "external"; expiresInDays: ShareExpiry },
+) =>
+  apiFetch<{ share: ShareView }>(libraryShares(orgId, fileId), {
     method: "POST",
     body: JSON.stringify(body),
   });

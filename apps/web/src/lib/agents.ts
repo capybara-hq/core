@@ -2,10 +2,10 @@
 // modules (createContext).
 import type { AvatarValue, PresetId } from "@capybara-hq/design";
 import { apiFetch, clientError } from "./api";
-import { type CreatedAttachment, uploadToStorage } from "./attachments";
 import type { LocalizedName } from "./catalog";
 import type { ModelRef } from "./conversations";
 import type { InstructionFile } from "./instruction-files";
+import { type CreatedAttachment, uploadToStorage } from "./uploads";
 
 /** 内核 agent API 的类型（只声明界面用到的字段）。 */
 
