@@ -37,6 +37,7 @@ import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { CompactionService, type CompactOrigin } from "./compaction.service.js";
 import { ConversationLock, type Lease } from "./conversation-lock.js";
 import { IdleArm } from "./idle-arm.js";
+import { IdleReturn } from "./idle-return.js";
 import { runDeadline, tightestLimit } from "./limits.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
@@ -210,6 +211,8 @@ export class RunWorker {
     @Inject(RunDrafts) private readonly drafts: RunDrafts,
     /** A chat run's finish decides, outside any transaction, whether it arms idle compaction. */
     @Inject(IdleArm) private readonly idleArm: Pick<IdleArm, "decide">,
+    /** A chat run's start logs a return to an idle conversation (best effort). */
+    @Inject(IdleReturn) private readonly idleReturn: Pick<IdleReturn, "record">,
     @Optional() @Inject(RUN_HOOKS) private readonly hooks?: RunHooks,
   ) {
     this.loop = loops.create(steps.deps);
@@ -795,6 +798,9 @@ export class RunWorker {
         agent = started.agent;
         const toSeq = started.toSeq;
         if (toSeq !== undefined) await this.eventLog.notify(conversationId, toSeq);
+        // a return to an idle conversation (idle compaction spec S11): off the run's path, never
+        // throws; this branch is a non-compact run's first start
+        if (conv.kind === "chat") this.track(this.idleReturn.record(conv, runId));
       }
       // Skills catalog snapshot (ruling M17): written before the run is running, and again on a
       // crash retry (deduped by its idem key). Both records re-read the run under the conversation

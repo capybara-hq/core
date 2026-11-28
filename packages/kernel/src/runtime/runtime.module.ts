@@ -31,6 +31,7 @@ import { CompactionSettingsService } from "./compaction-settings.service.js";
 import { ConversationLock } from "./conversation-lock.js";
 import { IdleArm } from "./idle-arm.js";
 import { IdleCompactionJob } from "./idle-compaction.js";
+import { IdleReturn } from "./idle-return.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { PermissionContextRecorder } from "./permission-context.service.js";
 import { PluginContextService } from "./plugin-context.service.js";
@@ -126,6 +127,8 @@ import { WriteBaseService } from "./write-base.service.js";
     CompactionService,
     // a chat run's finish decides whether it owes an idle compaction job (idle compaction spec §4.2)
     IdleArm,
+    // a run start after a long idle gap logs `idle_return` (idle compaction spec S11)
+    IdleReturn,
     // one delivery of the delayed idle compaction job (idle compaction spec §4.3; the maintenance
     // processor, worker role only, consumes it)
     IdleCompactionJob,

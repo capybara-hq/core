@@ -132,6 +132,7 @@
   "runtime/context/tool-changes.test.ts",
   "runtime/device-paths.test.ts",
   "runtime/hook-calls.test.ts",
+  "runtime/idle-return.test.ts",
   "runtime/permission-context.test.ts",
   "runtime/project-knowledge-read.test.ts",
   "runtime/prompt-cache-settings.test.ts",
