@@ -31,6 +31,7 @@ import {
   Logo,
   Markdown,
   Menu,
+  PageLevelContext,
   PersonName,
   Popover,
   PrincipalPicker,
@@ -472,6 +473,7 @@ function hostTemplate(Template: ComponentType<never>, name: string): ComponentTy
   const Hosted = (props: TemplateProps) => {
     useTemplateMark();
     const crumbs = useContext(PageCrumbsContext);
+    const level = useContext(PageLevelContext);
     const notice = useHostNotice();
     if (typeof props.header !== "object" || props.header === null) {
       throw new Error(
@@ -480,10 +482,22 @@ function hostTemplate(Template: ComponentType<never>, name: string): ComponentTy
       );
     }
     const own = headerLinks(props.header, name);
+    // The host's crumbs (the scope and the page's own name) lead; a segment of the plugin's own
+    // path naming the page again goes. A deeper page (one with params, an item opened inside the
+    // page) ends its path with its title, as every object page does (spec §4.2 path rule).
+    const named = new Set(crumbs.map((c) => c.label));
+    const title = (props.header as { title?: unknown }).title;
+    const path = [
+      ...crumbs,
+      ...(own.path ?? []).filter((c) => !named.has(c.label)),
+      ...(level === "deeper" && typeof title === "string" && title !== ""
+        ? [{ label: title }]
+        : []),
+    ];
     // the host's notice (live refresh stopped) sits in the template's head, inside the page
     const header = {
       ...own,
-      path: [...crumbs, ...(own.path ?? [])],
+      path,
       ...(notice !== null && notice !== undefined && notice !== false && { notice }),
     };
     const out: TemplateProps = { ...props, header };

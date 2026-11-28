@@ -66,7 +66,7 @@ function Connections({ orgId, admin }: { orgId: string; admin: boolean }) {
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const header = {
-    path: [...scope, pw("account", ACCOUNT_HOME), pw("connections")],
+    path: [...scope, pw("connections")],
     title: t("nav.connections"),
   };
   // Until the list and every personal connector's detail answered: skeleton cards, one per

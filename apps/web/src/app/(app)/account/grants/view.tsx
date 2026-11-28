@@ -113,7 +113,7 @@ function Grants({ orgId }: { orgId: string }) {
   return (
     <SettingsPage
       header={{
-        path: [...scope, pw("account", ACCOUNT_HOME), pw("grants")],
+        path: [...scope, pw("grants")],
         title: t("nav.grants"),
       }}
       nav={nav}

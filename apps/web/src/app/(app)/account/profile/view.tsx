@@ -153,7 +153,7 @@ function ProfileForm({ account }: { account: Account }) {
   return (
     <SettingsPage
       header={{
-        path: [...scope, pw("account", ACCOUNT_HOME), pw("profile")],
+        path: [...scope, pw("profile")],
         title: t("title"),
       }}
       nav={nav}

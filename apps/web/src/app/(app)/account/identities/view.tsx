@@ -194,7 +194,7 @@ function Identities({
   return (
     <SettingsPage
       header={{
-        path: [...scope, pw("account", ACCOUNT_HOME), pw("identities")],
+        path: [...scope, pw("identities")],
         title: t("title"),
         actions: (read.kind === "ready" ? read.data.linkable : []).map((m) => ({
           label: t("link", { platform: m.label[locale] }),

@@ -1,12 +1,13 @@
 "use client";
 
-import { AppShell } from "@capybara-hq/design";
+import { AppShell, PageLevelContext } from "@capybara-hq/design";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import AdminAgentTemplateView from "../../app/(app)/admin/agents/templates/[id]/view";
 import AdminAgentTemplatesView from "../../app/(app)/admin/agents/templates/view";
 import AdminSettingsView from "../../app/(app)/admin/settings/view";
 import { ADMIN_PAGES as NAV } from "../../components/admin-nav";
+import { pathLevel } from "../../components/shell/levels";
 import { type Session, SessionContext } from "../../components/shell/session";
 import type { AdminOrg, DeploymentSettings } from "../../lib/admin";
 import type { ComponentVersion, PlatformComponent } from "../../lib/components";
@@ -140,6 +141,13 @@ function seededSuper(): QueryClient {
   return qc;
 }
 
+/** The app route each catalog page stands for (its navigation level, levels.ts). */
+const ROUTE: Record<SuperAdminPage, string> = {
+  "agent-templates": "/admin/agents/templates",
+  "agent-template": "/admin/agents/templates/tpl1",
+  settings: "/admin/settings",
+};
+
 function Page({ page }: { page: SuperAdminPage }) {
   switch (page) {
     case "agent-templates":
@@ -162,7 +170,10 @@ export function SuperAdminPageCatalog({ page }: { page: SuperAdminPage }) {
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={SESSION}>
         <AppShell sidebar={sidebar} commands={COMMANDS}>
-          <Page page={page} />
+          {/* the page's real route's navigation level, as the app frame sets it */}
+          <PageLevelContext.Provider value={pathLevel(ROUTE[page])}>
+            <Page page={page} />
+          </PageLevelContext.Provider>
         </AppShell>
       </SessionContext.Provider>
     </QueryClientProvider>

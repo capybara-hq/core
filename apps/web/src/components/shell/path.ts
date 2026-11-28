@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import { useContext } from "react";
 import { usePathname } from "../../i18n/navigation";
 import { HOME_PATH } from "../../lib/routes";
+import { ACCOUNT_HOME } from "../settings-nav";
 import { SessionContext } from "./session";
 
 /** One segment of the page head's path line (design `PageHeaderProps.path`). */
@@ -72,7 +73,7 @@ export const PATH_WORDS = {
     "templates",
   ],
   home: [
-    "account",
+    "root",
     "profile",
     "preferences",
     "notifications",
@@ -95,20 +96,21 @@ export function isPathWord(scope: PathScope, word: string): boolean {
  * The path of a page head (spec §2.4): the scope first, then the page and the object. `rest` are the
  * segments after the scope, route words (from {@link usePathWord}) or object names; segments with
  * an `href` link. The scope links to its root (home, the new conversation, for an org; `/admin` for
- * the admin console, named by `adminLabel`); `~` does not.
+ * the admin console; the personal settings' first page for a personal page), each scope named by
+ * its `labels` (the admin console's and the personal settings' names, never `/admin` or `~`).
  */
 export function buildPagePath(
   scope: PathScope,
   orgSlug: string | undefined,
   rest: PathSegment[],
-  adminLabel = "管理后台",
+  labels: { admin: string; home: string } = { admin: "Admin console", home: "Personal settings" },
 ): PathSegment[] {
   const first: PathSegment =
     scope === "home"
-      ? { label: "~" }
+      ? { label: labels.home, href: ACCOUNT_HOME }
       : scope === "admin"
-        ? { label: adminLabel, href: "/admin" }
-        : { label: orgSlug ?? "~", href: HOME_PATH };
+        ? { label: labels.admin, href: "/admin" }
+        : { label: orgSlug ?? labels.home, href: orgSlug === undefined ? ACCOUNT_HOME : HOME_PATH };
   return [first, ...rest];
 }
 
@@ -118,9 +120,9 @@ export function buildPagePath(
  */
 export function usePagePath(scope: PathScope, ...rest: PathSegment[]): PathSegment[] {
   const me = useContext(SessionContext)?.me;
-  const t = useTranslations("path.admin");
+  const t = useTranslations("path");
   const slug = me?.memberships.find((m) => m.orgId === me.currentOrgId)?.slug;
-  return buildPagePath(scope, slug, rest, t("root"));
+  return buildPagePath(scope, slug, rest, { admin: t("admin.root"), home: t("home.root") });
 }
 
 /**

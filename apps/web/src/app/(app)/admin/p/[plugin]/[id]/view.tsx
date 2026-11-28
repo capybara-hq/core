@@ -39,12 +39,7 @@ function PlatformPageData({ plugin, id }: { plugin: string; id: string }) {
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {
-    return (
-      <DetailPage
-        header={{ path: [...scope, { label: t("pluginPage.pathLabel") }], title: "" }}
-        loading={{ blocks: 1 }}
-      />
-    );
+    return <DetailPage header={{ path: scope, title: "" }} loading={{ blocks: 1 }} />;
   }
   const listed = read.data.find(
     (c) => c.plugin === plugin && c.id === id && c.slot === "platform.page",
@@ -110,9 +105,7 @@ function PlatformPage({
   const locale = uiLocale(useLocale());
   const title = contribution?.title[locale] ?? id;
   return (
-    <DetailPage
-      header={{ path: [...scope, { label: t("pluginPage.pathLabel") }, { label: title }], title }}
-    >
+    <DetailPage header={{ path: [...scope, { label: title }], title }}>
       {contribution ? (
         <ExtensionSlot
           slot="platform.page"

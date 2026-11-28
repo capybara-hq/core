@@ -55,7 +55,7 @@ function Notifications({ accountId }: { accountId: string }) {
   const setPreference = useSetPushPreference(accountId);
   const push = usePushRegistration();
   const header = {
-    path: [...scope, pw("account", ACCOUNT_HOME), pw("notifications")],
+    path: [...scope, pw("notifications")],
     title: t("title"),
     description: t("description"),
   };

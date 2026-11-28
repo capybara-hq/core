@@ -5,6 +5,10 @@ import { describe, expect, it } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { adminItemTabs } from "../src/components/admin-item-tabs";
+import { ADMIN_PAGES } from "../src/components/admin-nav";
+import { ACCOUNT_HREFS, ORG_SETTINGS_HREFS } from "../src/components/settings-nav";
+import { pathLevel } from "../src/components/shell/levels";
+import { NAV_HREFS } from "../src/components/shell/nav";
 import {
   APP_PAGES,
   buildPagePath,
@@ -13,6 +17,7 @@ import {
   routeSegments,
 } from "../src/components/shell/path";
 import { pluginTabs } from "../src/lib/admin-tabs";
+import { evalsTabs } from "../src/lib/evals-tabs";
 
 describe("buildPagePath", () => {
   it("puts the org slug first and links it home (the new conversation)", () => {
@@ -28,19 +33,21 @@ describe("buildPagePath", () => {
     ]);
   });
 
-  it("uses ~ for personal pages and for an org page without an org", () => {
-    expect(buildPagePath("home", "capybara", [])).toEqual([{ label: "~" }]);
-    expect(buildPagePath("org", undefined, [{ label: "agents" }])).toEqual([
-      { label: "~", href: "/" },
-      { label: "agents" },
+  it("names personal pages (and an org page without an org) by the personal settings, never ~", () => {
+    const labels = { admin: "管理后台", home: "个人设置" };
+    expect(buildPagePath("home", "capybara", [], labels)).toEqual([
+      { label: "个人设置", href: "/account/profile" },
+    ]);
+    expect(buildPagePath("org", undefined, [{ label: "智能体" }], labels)).toEqual([
+      { label: "个人设置", href: "/account/profile" },
+      { label: "智能体" },
     ]);
   });
 
   it("starts the admin console with its name linking to its overview", () => {
-    expect(buildPagePath("admin", "capybara", [{ label: "扩展" }], "管理后台")).toEqual([
-      { label: "管理后台", href: "/admin" },
-      { label: "扩展" },
-    ]);
+    expect(
+      buildPagePath("admin", "capybara", [{ label: "扩展" }], { admin: "管理后台", home: "" }),
+    ).toEqual([{ label: "管理后台", href: "/admin" }, { label: "扩展" }]);
   });
 });
 
@@ -86,15 +93,15 @@ describe("route words (names, never URL slugs; maintainer decision 2026-11-28)",
   });
 });
 
+const heads = [
+  adminItemTabs("agents", "items", { items: "a", templates: "t" }).tabs,
+  adminItemTabs("connectors", "items", { items: "c", templates: "t" }).tabs,
+  pluginTabs((k: string) => k),
+];
+
 describe("header tabs are one level (maintainer decision 2026-11-28)", () => {
   // Every head whose tabs are routes: each tab route stands at its first tab's level, so none of
   // them draws a path row (two segments or fewer), whatever segments its page writes.
-  const t = (k: string) => k;
-  const heads = [
-    adminItemTabs("agents", "items", { items: "a", templates: "t" }).tabs,
-    adminItemTabs("connectors", "items", { items: "c", templates: "t" }).tabs,
-    pluginTabs(t),
-  ];
   it("each tab route of a head stands at the head's first tab's level", () => {
     for (const tabs of heads) {
       for (const tab of tabs) {
@@ -110,6 +117,57 @@ describe("header tabs are one level (maintainer decision 2026-11-28)", () => {
     const path = buildPagePath("admin", "acme", [...rest]);
     // an item detail is no tab: its head has no tabs, so its path stays
     expect(headPath(path, undefined, undefined).length).toBe(4);
+  });
+});
+
+describe("the path level follows navigation (maintainer decision 2026-11-29)", () => {
+  // first level: every page the sidebar reaches directly, their header tabs and their settings
+  // sub-nav items; a page reached from inside a page is deeper
+  const first = [
+    ...NAV_HREFS,
+    "/",
+    "/inbox",
+    "/conversations",
+    ...ORG_SETTINGS_HREFS,
+    ...ACCOUNT_HREFS,
+    ...ADMIN_PAGES.map((p) => p.href),
+    ...heads.flat().map((t) => t.href ?? ""),
+    ...evalsTabs((k) => k).map((t) => t.href),
+    // extension pages the 更多 menu and the admin nav open (the host makes one with params deeper)
+    "/p/memory/memory",
+    "/p/collab/projects",
+    "/admin/p/memory/overview",
+  ];
+  it("every sidebar, 更多, account menu, admin nav, tab and settings sub-nav route is first-level", () => {
+    for (const href of first) expect(pathLevel(href), href).toBe("first");
+    // the 更多 menu's 组织设置 and the account menu's 个人设置 among them
+    expect(first).toContain("/settings/organization");
+    expect(first).toContain("/account/profile");
+  });
+  it("a page reached from inside a page is deeper", () => {
+    for (const href of [
+      "/agents/new",
+      "/agents/a1",
+      "/agents/templates/t1",
+      "/connectors/install",
+      "/connectors/c1",
+      "/plugins/i1",
+      "/plugins/i1/enable",
+      "/automations/new",
+      "/evals/new",
+      "/evals/s1",
+      "/trajectories/c1",
+      "/devices/d1",
+      "/channels/new",
+      "/admin/agents/a1",
+      "/admin/agents/templates/t1",
+      "/admin/plugins/import",
+      "/admin/plugins/sources",
+      "/admin/plugins/i1",
+      "/admin/extensions/memory",
+    ]) {
+      expect(pathLevel(href), href).toBe("deeper");
+    }
   });
 });
 

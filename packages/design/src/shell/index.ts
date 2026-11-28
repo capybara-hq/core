@@ -38,6 +38,7 @@ export {
   headPath,
   PageHeader,
   type PageHeaderProps,
+  PageLevelContext,
 } from "./page-header";
 export { isTouchPointer, keyboardInset } from "./pointer";
 export { PreferenceBar, type PreferenceBarProps, ThemeToggle } from "./preference-bar";

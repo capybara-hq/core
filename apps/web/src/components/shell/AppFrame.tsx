@@ -9,6 +9,7 @@ import {
   Logo,
   type MenuItem,
   OverviewPage,
+  PageLevelContext,
   SetupPage,
   type SidebarBrandVariant,
   type SidebarContext,
@@ -65,6 +66,7 @@ import { usePluginPendingCount } from "../PluginsHead";
 import { ACCOUNT_HOME } from "../settings-nav";
 import { useResolvedTheme } from "../theme-root";
 import { noOrgConversations, useConversationGroups, useDrawerRecent } from "./conversations";
+import { pathLevel } from "./levels";
 import {
   activeAdminOf,
   activeNavOf,
@@ -757,7 +759,9 @@ function ShellFrame({
                 />
               </OverviewPage>
             ) : (
-              children
+              <PageLevelContext.Provider value={pathLevel(pathname)}>
+                {children}
+              </PageLevelContext.Provider>
             )}
           </SetupPage>
           {dialogs}
@@ -833,7 +837,9 @@ function ShellFrame({
     >
       <SessionContext.Provider value={session}>
         <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
-          {desktopOnly === undefined ? children : <GatedChildren>{children}</GatedChildren>}
+          <PageLevelContext.Provider value={pathLevel(pathname)}>
+            {desktopOnly === undefined ? children : <GatedChildren>{children}</GatedChildren>}
+          </PageLevelContext.Provider>
         </SetupContext.Provider>
         {dialogs}
       </SessionContext.Provider>

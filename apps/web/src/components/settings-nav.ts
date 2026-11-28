@@ -9,6 +9,35 @@ import { SessionContext } from "./shell/session";
 type NavGroup = { group: string; items: { id: string; label: string; href: string }[] };
 
 /**
+ * Every page of the organization settings' second-level navigation, whoever sees it (the path
+ * level: each is a sibling of the first, so none draws a path row; a test keeps the list in step
+ * with {@link useOrgSettingsNav}).
+ */
+export const ORG_SETTINGS_HREFS = [
+  "/settings/organization",
+  "/settings/appearance",
+  "/settings/navigation",
+  "/settings/members",
+  "/settings/models",
+  "/settings/tokens",
+  "/settings/shares",
+  "/settings/audit",
+  "/settings/sandbox",
+  "/settings/automations",
+] as const;
+
+/** Every page of the personal settings' navigation (see {@link useAccountNav}). */
+export const ACCOUNT_HREFS = [
+  "/account/profile",
+  "/account/preferences",
+  "/account/connections",
+  "/account/grants",
+  "/account/identities",
+  "/account/notifications",
+  "/account/shares",
+] as const;
+
+/**
  * The organization settings' second-level navigation (`/settings/*`): Organization [General,
  * Appearance, Navigation, Members, Models, Service tokens, Shares, Audit log] and Capabilities
  * [Sandbox, Automations] (plugins and extensions are the workspace's Plugins and Extensions

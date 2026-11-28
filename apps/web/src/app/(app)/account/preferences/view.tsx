@@ -105,7 +105,7 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
     onSuccess: (res) => qc.setQueryData(preferencesQuery(accountId).queryKey, res),
   });
   const header = {
-    path: [...scope, pw("account", ACCOUNT_HOME), pw("preferences")],
+    path: [...scope, pw("preferences")],
     title: t("title"),
   };
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;

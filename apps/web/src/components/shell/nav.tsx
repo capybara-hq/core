@@ -164,6 +164,9 @@ const NAV: readonly {
   },
 ];
 
+/** Every workspace page the sidebar's items and its 更多 menu open (the path level's first level). */
+export const NAV_HREFS: readonly string[] = NAV.map((n) => n.href);
+
 const VISIBLE: Record<NavLevel, readonly NavAudience[]> = {
   guest: ["all"],
   member: ["all", "member"],

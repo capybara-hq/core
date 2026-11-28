@@ -25,7 +25,7 @@ function MyShares({ orgId }: { orgId: string }) {
   return (
     <SettingsPage
       header={{
-        path: [...scope, pw("account", ACCOUNT_HOME), pw("shares")],
+        path: [...scope, pw("shares")],
         title: t("mineTitle"),
         description: t("mineDescription"),
       }}

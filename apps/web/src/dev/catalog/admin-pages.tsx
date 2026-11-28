@@ -1,6 +1,6 @@
 "use client";
 
-import { AppShell } from "@capybara-hq/design";
+import { AppShell, PageLevelContext } from "@capybara-hq/design";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import EvalSetView from "../../app/(app)/evals/[setId]/view";
@@ -12,6 +12,7 @@ import AutomationSettingsView from "../../app/(app)/settings/automations/view";
 import MembersView from "../../app/(app)/settings/members/view";
 import TokensView from "../../app/(app)/settings/tokens/view";
 import TrajectoriesView from "../../app/(app)/trajectories/view";
+import { pathLevel } from "../../components/shell/levels";
 import { type Session, SessionContext } from "../../components/shell/session";
 import type { AuditEvent, AuditPage } from "../../lib/admin";
 import type { EvalResultRow, EvalRun, EvalSet, EvalSetDetail } from "../../lib/evals";
@@ -283,6 +284,19 @@ function seededAdmin(): QueryClient {
   return qc;
 }
 
+/** The app route each catalog page stands for (its navigation level, levels.ts). */
+const ROUTE: Record<AdminPage, string> = {
+  members: "/settings/members",
+  tokens: "/settings/tokens",
+  automations: "/settings/automations",
+  audit: "/settings/audit",
+  extensions: "/extensions",
+  trajectories: "/trajectories",
+  evals: "/evals",
+  "eval-set": "/evals/s1",
+  "eval-run": "/evals/runs/r1",
+};
+
 function Page({ page }: { page: AdminPage }) {
   switch (page) {
     case "members":
@@ -317,7 +331,10 @@ export function AdminPageCatalog({ page }: { page: AdminPage }) {
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={SESSION}>
         <AppShell sidebar={sidebar} commands={COMMANDS}>
-          <Page page={page} />
+          {/* the page's real route's navigation level, as the app frame sets it */}
+          <PageLevelContext.Provider value={pathLevel(ROUTE[page])}>
+            <Page page={page} />
+          </PageLevelContext.Provider>
         </AppShell>
       </SessionContext.Provider>
     </QueryClientProvider>
