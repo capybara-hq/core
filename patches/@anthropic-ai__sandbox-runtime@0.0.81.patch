@@ -102,7 +102,7 @@ index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..b55d895f34b4324c87b852cb99f899b9
          allowGitConfig,
          enableWeakerNetworkIsolation,
 diff --git a/dist/sandbox/resolved-address-guard.js b/dist/sandbox/resolved-address-guard.js
-index 54970f754e71188fb6ab98971b39560b0b8f8724..b1ea629e678a40f3382638ebe21ed97b5e98a930 100644
+index 54970f754e71188fb6ab98971b39560b0b8f8724..cb7cf54887e0f2f1b3358ec7543dd523f61eacf1 100644
 --- a/dist/sandbox/resolved-address-guard.js
 +++ b/dist/sandbox/resolved-address-guard.js
 @@ -25,6 +25,8 @@
@@ -307,7 +307,7 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..b1ea629e678a40f3382638ebe21ed97b
  export class ResolvedAddressDeniedError extends Error {
      /**
       * @param reason parenthetical for the violation line and the client, e.g.
-@@ -131,6 +319,30 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -131,6 +319,35 @@ export function createResolvedAddressGuard(opts = {}) {
          ['a listed address', buildRuleSet(opts.deniedResolvedAddresses ?? [])],
      ];
      const resolve = opts.resolve ?? dnsLookup;
@@ -320,11 +320,16 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..b1ea629e678a40f3382638ebe21ed97b
 +        ? createDohResolver(opts.fakeIpDoh, opts.dohRequest ?? defaultDohRequest)
 +        : undefined;
 +    // capybara patch: `allowedLoopbackPorts` (strict mode only) names the loopback ports the proxy
-+    // dials for exactly 127.0.0.1, ::1 and the literal name localhost. The name is never resolved:
-+    // it is dialed at 127.0.0.1. Every other loopback spelling, every other port, and a name whose
-+    // DNS answer is loopback stay refused by the rules above.
++    // dials for exactly the addresses 127.0.0.1 and ::1 and the name localhost, matched after the
++    // runtime's host canonicalization (so `127.1` or `localhost.` are the same destinations). The
++    // name is never resolved: it is dialed at 127.0.0.1, then ::1 (see `lookupFor`). Every other
++    // loopback address, every other port, and a name whose DNS answer is loopback stay refused by
++    // the rules above.
 +    const loopbackPorts = new Set(strict ? (opts.allowedLoopbackPorts ?? []) : []);
-+    /** The fixed address to dial for `hostname:port` under the loopback carve-out, or undefined. */
++    /**
++     * The first fixed address to dial for `hostname:port` under the loopback carve-out (`hostname`
++     * canonical, as the proxy filter passes it), or undefined.
++     */
 +    const loopbackCarveOut = (hostname, port) => {
 +        if (!loopbackPorts.has(port) || typeof hostname !== 'string')
 +            return undefined;
@@ -338,7 +343,7 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..b1ea629e678a40f3382638ebe21ed97b
      /** This host's addresses right now; a malformed entry from the seam is skipped. */
      const localSet = () => {
          const list = new BlockList();
-@@ -140,8 +352,8 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -140,8 +357,8 @@ export function createResolvedAddressGuard(opts = {}) {
          return list;
      };
      /** Why `hostname:port` may not use resolved `address`, or undefined if it may. */
@@ -349,7 +354,7 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..b1ea629e678a40f3382638ebe21ed97b
              return undefined;
          if (!isIP(address))
              return 'an unparsable address';
-@@ -157,9 +369,11 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -157,9 +374,11 @@ export function createResolvedAddressGuard(opts = {}) {
              (v4 !== undefined && inRuleSet(set, v4, port));
          if (denies(refused))
              return 'a deny-listed address';
@@ -363,19 +368,25 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..b1ea629e678a40f3382638ebe21ed97b
              return isLoopbackAddress(address) ? undefined : 'a non-loopback address';
          }
          const why = denied.find(([, set]) => denies(set))?.[0];
-@@ -171,11 +385,34 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -171,11 +390,40 @@ export function createResolvedAddressGuard(opts = {}) {
          return undefined;
      };
      const lookupFor = (port) => (hostname, options, callback) => {
 -        resolve(hostname, { ...options, all: true }, (err, addresses) => {
-+        // capybara patch: a carved-out loopback destination dials its fixed address, unresolved
++        // capybara patch: a carved-out loopback destination dials fixed addresses, unresolved. The
++        // name localhost gets 127.0.0.1 then ::1 (net's autoSelectFamily moves on when the first
++        // refuses, so a server bound to only one of them is reached); an IP literal never reaches
++        // a lookup, so a literal grant stays that one address
 +        const fixed = loopbackCarveOut(hostname, port);
 +        if (fixed !== undefined) {
-+            const family = fixed === '::1' ? 6 : 4;
++            const addresses = fixed === '::1'
++                ? [{ address: '::1', family: 6 }]
++                : isIP(hostname) ? [{ address: fixed, family: 4 }]
++                    : [{ address: '127.0.0.1', family: 4 }, { address: '::1', family: 6 }];
 +            if (options.all)
-+                callback(null, [{ address: fixed, family }]);
++                callback(null, addresses);
 +            else
-+                callback(null, fixed, family);
++                callback(null, addresses[0].address, addresses[0].family);
 +            return;
 +        }
 +        resolve(hostname, { ...options, all: true }, (err, answer) => {
@@ -399,7 +410,7 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..b1ea629e678a40f3382638ebe21ed97b
              const local = localSet();
              const kept = [];
              const dropped = [];
-@@ -211,11 +448,16 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -211,11 +459,16 @@ export function createResolvedAddressGuard(opts = {}) {
                  callback(null, kept);
              else
                  callback(null, first.address, first.family);
@@ -419,10 +430,10 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..b1ea629e678a40f3382638ebe21ed97b
  //# sourceMappingURL=resolved-address-guard.js.map
 \ No newline at end of file
 diff --git a/dist/sandbox/sandbox-config.js b/dist/sandbox/sandbox-config.js
-index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..ea1503dfcc58b8af57bca8a3209206ba57a9200b 100644
+index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..660cdf604eff3251d6386493289b8ecd8875f099 100644
 --- a/dist/sandbox/sandbox-config.js
 +++ b/dist/sandbox/sandbox-config.js
-@@ -608,6 +608,29 @@ export const NetworkConfigSchema = z.object({
+@@ -608,6 +608,31 @@ export const NetworkConfigSchema = z.object({
          'deniedDomains. A permitted name that resolves only into these is refused instead of dialed. A name may ' +
          'resolve to a denied address only if that IP literal (and port) is itself in allowedDomains. Not evaluated ' +
          'for connections routed through parentProxy (including one taken from HTTP_PROXY/HTTPS_PROXY) or mitmProxy (that hop resolves the name).'),
@@ -431,7 +442,9 @@ index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..ea1503dfcc58b8af57bca8a3209206ba
 +        .boolean()
 +        .optional()
 +        .describe('If true, an IP-literal destination is judged by the resolved-address rules like a resolved name (the built-in classes, deniedResolvedAddresses, deniedDomains literals, this host\'s addresses), and localhost names get no loopback carve-out.'),
-+    // capybara patch: loopback ports granted to the sandbox in strict mode
++    // capybara patch: loopback ports granted to the sandbox in strict mode. "Exactly" is the address
++    // after the runtime's host canonicalization (`127.1`, `localhost.` are the same destinations),
++    // and localhost is dialed at 127.0.0.1, then ::1, never resolved
 +    allowedLoopbackPorts: z
 +        .array(z.number().int().min(1).max(65535))
 +        .max(32)
@@ -452,7 +465,7 @@ index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..ea1503dfcc58b8af57bca8a3209206ba
      allowUnixSockets: z
          .array(z.string())
          .optional()
-@@ -640,6 +663,18 @@ export const NetworkConfigSchema = z.object({
+@@ -640,6 +665,18 @@ export const NetworkConfigSchema = z.object({
      }))
          .optional()
          .describe('macOS only: Additional XPC/Mach service names to allow looking up. Supports trailing-wildcard prefix matching (e.g., "2BUA8C4S2C.com.1password.*"). Needed for tools like 1Password CLI, Playwright, or the iOS Simulator that communicate via XPC.'),
@@ -471,7 +484,7 @@ index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..ea1503dfcc58b8af57bca8a3209206ba
      httpProxyPort: z
          .number()
          .int()
-@@ -832,6 +867,22 @@ export const FilesystemConfigSchema = z.object({
+@@ -832,6 +869,22 @@ export const FilesystemConfigSchema = z.object({
          .boolean()
          .optional()
          .describe('Allow writes to .git/config files (default: false). Enables git remote URL updates while keeping .git/hooks protected.'),
@@ -495,7 +508,7 @@ index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..ea1503dfcc58b8af57bca8a3209206ba
  /**
   * Configuration schema for ignoring specific sandbox violations
 diff --git a/dist/sandbox/sandbox-manager.js b/dist/sandbox/sandbox-manager.js
-index d475e55977bf54a2fe00a0c6aba38313761d55aa..befd40881c094ce032543479dd7c098fb333f6bf 100644
+index d475e55977bf54a2fe00a0c6aba38313761d55aa..bbee12d7ca8db022c33bf5ae7d8013a1f98693c9 100644
 --- a/dist/sandbox/sandbox-manager.js
 +++ b/dist/sandbox/sandbox-manager.js
 @@ -26,6 +26,8 @@ import { canonicalizeHost, isValidHost, redactUrl, resolveParentProxy, } from '.
@@ -507,13 +520,14 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..befd40881c094ce032543479dd7c098f
  import { dirname } from 'node:path';
  import { getJavaProxyAgentJarPathAsync } from './java-proxy-agent.js';
  import { getApplySeccompBinaryPathAsync } from './generate-seccomp-filter.js';
-@@ -522,6 +524,22 @@ async function filterNetworkRequest(port, host, sandboxAskCallback, encodedComma
+@@ -522,6 +524,23 @@ async function filterNetworkRequest(port, host, sandboxAskCallback, encodedComma
              return denied(deniedDomainReason(deniedDomain));
          }
      }
 +    // capybara patch: in strict mode a granted loopback port (`allowedLoopbackPorts`) admits exactly
-+    // 127.0.0.1, ::1 and localhost, after the deny list and before the literal check; the guard's
-+    // lookup dials localhost at 127.0.0.1 without resolving it
++    // the addresses 127.0.0.1 and ::1 and the name localhost after canonicalization, after the deny
++    // list and before the literal check; the guard's lookup dials localhost at 127.0.0.1, then ::1,
++    // without resolving it
 +    if (resolvedAddressGuard.loopbackCarveOut(canonicalHost, port) !== undefined) {
 +        logForDebugging(`Allowed granted loopback port: ${host}:${port}`);
 +        return true;
@@ -530,7 +544,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..befd40881c094ce032543479dd7c098f
      // Check allowed domains
      for (const allowedDomain of config.network.allowedDomains) {
          if (matchesDomainPatternWithPort(canonicalHost, port, allowedDomain)) {
-@@ -1493,6 +1511,8 @@ function getFsReadConfig() {
+@@ -1493,6 +1512,8 @@ function getFsReadConfig() {
          allowWithinDeny: allowPaths,
          unlistableDenyDirs: [...unlistableDenyDirs],
          ...literalReadLists(config.filesystem.denyRead, config.filesystem.allowRead),
@@ -539,7 +553,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..befd40881c094ce032543479dd7c098f
      };
  }
  function getFsWriteConfig() {
-@@ -1516,6 +1536,8 @@ function getFsWriteConfig() {
+@@ -1516,6 +1537,8 @@ function getFsWriteConfig() {
          allowOnly,
          denyWithinAllow: denyPaths,
          ...literalWriteLists(config.filesystem.allowWrite, config.filesystem.denyWrite),
@@ -548,7 +562,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..befd40881c094ce032543479dd7c098f
      };
  }
  /**
-@@ -1658,6 +1680,10 @@ function getAllowLocalBinding() {
+@@ -1658,6 +1681,10 @@ function getAllowLocalBinding() {
  function getAllowMachLookup() {
      return config?.network?.allowMachLookup;
  }
@@ -559,7 +573,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..befd40881c094ce032543479dd7c098f
  function getIgnoreViolations() {
      return config?.ignoreViolations;
  }
-@@ -1866,6 +1892,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+@@ -1866,6 +1893,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
                  config?.filesystem.denyWrite ??
                  []),
              ...literalWriteLists(customConfig?.filesystem?.allowWrite ?? config?.filesystem.allowWrite, customConfig?.filesystem?.denyWrite ?? config?.filesystem.denyWrite),
@@ -568,7 +582,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..befd40881c094ce032543479dd7c098f
          };
          // For a caller that never reads checkDependencies(), the CLI among them.
          if (!ownInstallLogged) {
-@@ -1917,6 +1945,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+@@ -1917,6 +1946,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
              ...(ownAllowWithinDeny.length > 0 && { ownAllowWithinDeny }),
              unlistableDenyDirs: [...unlistableDenyDirs],
              ...literalReadLists(customConfig?.filesystem?.denyRead ?? config?.filesystem.denyRead, customConfig?.filesystem?.allowRead ?? config?.filesystem.allowRead),
@@ -577,7 +591,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..befd40881c094ce032543479dd7c098f
          };
      }
      // Nothing below walks, and what it waits for is not this thread.
-@@ -1993,6 +2023,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+@@ -1993,6 +2024,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
                  allowAllUnixSockets: getAllowAllUnixSockets(),
                  allowLocalBinding: getAllowLocalBinding(),
                  allowMachLookup: getAllowMachLookup(),
