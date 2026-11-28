@@ -29,7 +29,7 @@
 .p-step { position: relative; display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: var(--cb-space-2); }
 .p-step { --p-clear: calc(7px + 4px); }
 .p-step:has(> .p-gut > .p-dot) { --p-clear: calc(2.5px + 4px); }
-.p-step[data-part="rail-planning"] { --p-clear: calc(5px + 4px); }
+.p-step[data-part="rail-planning"] { --p-clear: calc(7.5px + 4px); }
 .p-step::before, .p-step::after { content: ""; position: absolute; left: 9.5px; width: 1px; background: var(--cb-line); }
 .p-step::before { top: 0; height: calc(var(--cb-row-dense) / 2 - var(--p-clear)); }
 .p-step::after { top: calc(var(--cb-row-dense) / 2 + var(--p-clear)); bottom: 0; }
@@ -62,8 +62,8 @@
 .p-tail p { margin: 0; flex: none; }
 .p-tail p + p { margin-top: var(--cb-space-2); }
 .p-cursor { display: inline-block; width: var(--cb-space-2); height: var(--cb-space-4); background: var(--cb-accent); vertical-align: text-bottom; }
-.p-plan { display: grid; place-items: center; width: 14px; height: 10px; color: var(--cb-accent); fill: currentColor; }
-.p-plan svg { display: block; width: 14px; height: 10px; }
+.p-plan { display: grid; place-items: center; width: 21px; height: 15px; margin-inline: -0.5px; color: var(--cb-accent); fill: currentColor; }
+.p-plan svg { display: block; width: 21px; height: 15px; }
 .p-plan svg path:nth-child(3) { visibility: hidden; }
 </style>
 </head>
