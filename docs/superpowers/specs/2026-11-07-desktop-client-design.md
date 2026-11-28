@@ -673,7 +673,10 @@ reports it).
   page's bar; the AppShell draws one over the controls rectangle (`.cb-shell-band`), which every
   row there keeps empty. The rail's band (above) adds no drag region of its own: the controls area
   and the content column's row fillers cover it, and the expand button or sidebar toggle in it is
-  a control, never a drag region. While any overlay is open (a menu, popover, tooltip, toast, dialog,
+  a control, never a drag region. Chromium resolves `app-region` in DOM order (a later drag box
+  under a no-drag one takes it back), so a no-drag control laid over a filler comes after it in
+  DOM order: the band's search field follows the content column (#1120); the band's sidebar
+  toggle lies over none (the paper's gutter starts past it). While any overlay is open (a menu, popover, tooltip, toast, dialog,
   sheet, palette, drawer) no filler drags, so an overlay landing over one stays clickable and
   hoverable and the window does not move under a modal. Double-clicking a filler does what the
   title bar does (macOS: zoom or minimize as System Settings say; Windows: maximize); a

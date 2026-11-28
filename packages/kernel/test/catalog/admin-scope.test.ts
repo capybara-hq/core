@@ -5,6 +5,7 @@ import { createOrg, enableConnectorExtensions, waitFor } from "../helpers/runs.j
 import {
   configureConnector,
   importSkill,
+  MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
   scopeQueueIdle,
@@ -12,7 +13,7 @@ import {
   setBuiltin,
   startOrgEnv,
 } from "./org-env.js";
-import { skillPlugin } from "./packages.js";
+import { mcpTemplate, skillPlugin, templatePlugin } from "./packages.js";
 
 /**
  * The super admin's plugin scope and disable (plugin and component management spec §5 rules
@@ -408,5 +409,130 @@ describe("disable", () => {
       (i) => i.id === itemId,
     );
     expect(item?.state).toBe("on");
+  });
+});
+
+describe("delete", () => {
+  /** Imports the tgz as the super admin with scope named [the test org]; returns the item id. */
+  async function importNamed(bytes: Uint8Array): Promise<string> {
+    const prep = await env.root({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(bytes),
+    });
+    expect(prep.statusCode, prep.body).toBe(200);
+    const c = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/catalog/imports/${prep.json().stagingId}/confirm`,
+      payload: { reviewHash: prep.json().review.reviewHash, scope: "named", orgs: [env.orgId] },
+    });
+    expect(c.statusCode, c.body).toBe(201);
+    const itemId = c.json().item.id as string;
+    await idle();
+    await waitFor(async () => (await liveOrgs(itemId)).join() === env.orgId, 30_000, "installed");
+    return itemId;
+  }
+
+  it("deleting a plugin switches its connectors off; importing it again relinks them and switches them back on", async () => {
+    const tgz = await templatePlugin("gh", mcpTemplate({ endpoint: { url: env.mcp.url } }), {
+      name: "relink-gh",
+    });
+    const first = await importNamed(tgz);
+    const connectors = () =>
+      env.db
+        .selectFrom("connectors as c")
+        .leftJoin("platform_connector_templates as p", "p.id", "c.platform_template_id")
+        .select([
+          "c.id",
+          "c.status",
+          "c.disabled_by_plugin_id",
+          "c.catalog_item_id",
+          "p.catalog_item_id as template_item_id",
+        ])
+        .where("c.org_id", "=", env.orgId)
+        .where("c.deleted_at", "is", null)
+        .orderBy("c.created_at")
+        .execute();
+    const [made] = await connectors();
+    if (made === undefined) throw new Error("no connector installed");
+    await configureConnector(env, made.id);
+    // A second connector from the template, which an org admin then disabled by hand: deleting the
+    // plugin leaves it off and unmarked, and re-importing relinks it without switching it on
+    const tpl = await env.db
+      .selectFrom("platform_connector_templates")
+      .select("id")
+      .where("catalog_item_id", "=", first)
+      .executeTakeFirstOrThrow();
+    const more = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/connector-templates/${tpl.id}/connectors`,
+      payload: { name: "relink-gh-2", config: { credential: { token: MCP_TOKEN } } },
+    });
+    expect(more.statusCode, more.body).toBe(201);
+    const second = (more.json() as { connector: { id: string } }).connector.id;
+    const off = await env.boss({
+      method: "PATCH",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${second}`,
+      payload: { status: "disabled" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+
+    const del = await env.root({ method: "DELETE", url: `${base}/${first}` });
+    expect(del.statusCode, del.body).toBe(204);
+    // switched off with the plugin (spec §5 rule 8), as an uninstall does; the admin's disable
+    // keeps no marker
+    expect(await connectors()).toEqual([
+      {
+        id: made.id,
+        status: "disabled",
+        disabled_by_plugin_id: first,
+        catalog_item_id: first,
+        template_item_id: first,
+      },
+      {
+        id: second,
+        status: "disabled",
+        disabled_by_plugin_id: null,
+        catalog_item_id: first,
+        template_item_id: first,
+      },
+    ]);
+
+    // The same plugin imported again is a new item: the connectors move to it and its install
+    // takes them back as re-enabling does (the one the delete switched off comes back on)
+    const again = await importNamed(tgz);
+    expect(again).not.toBe(first);
+    expect(await connectors()).toEqual([
+      {
+        id: made.id,
+        status: "active",
+        disabled_by_plugin_id: null,
+        catalog_item_id: again,
+        template_item_id: again,
+      },
+      {
+        id: second,
+        status: "disabled",
+        disabled_by_plugin_id: null,
+        catalog_item_id: again,
+        template_item_id: again,
+      },
+    ]);
+    // the connectors API shows the template's icon and description again
+    const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+    expect(list.statusCode, list.body).toBe(200);
+    const shown = (
+      list.json() as {
+        connectors: { id: string; icon: string | null; templateDescription: string | null }[];
+      }
+    ).connectors.filter((c) => c.id === made.id || c.id === second);
+    expect(shown).toHaveLength(2);
+    for (const c of shown) {
+      expect(c.icon).toMatch(/\/icon\?v=t-/);
+      expect(c.templateDescription).toBe("GitHub over MCP");
+    }
+    // no second connector was created for the template
+    expect(await connectors()).toHaveLength(2);
   });
 });

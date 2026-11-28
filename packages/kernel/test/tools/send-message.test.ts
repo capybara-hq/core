@@ -799,7 +799,8 @@ describe("SendMessage to a sub-agent", () => {
       url: `/api/v1/orgs/${orgId}/conversations/${childId}/abort`,
     });
     expect(res.statusCode, res.body).toBe(202);
-    release("hold");
+    // the stop alone ends the held model call once its broadcast reaches the worker; releasing
+    // the barrier here would race that broadcast and let the run complete (#1020)
     await settled(childId, 1);
     expect((await runRows(childId))[0]?.status).toBe("aborted");
     const out = await send(ctx, "s1", childId, "AFTER-STOP: carry on");

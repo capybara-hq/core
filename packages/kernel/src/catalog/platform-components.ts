@@ -38,6 +38,7 @@ import {
 import { putCatalogFiles } from "./catalog-items.js";
 import { CatalogItemLock } from "./locks.js";
 import { assertNotAwaiting } from "./ownership.js";
+import { relinkDeletedItemConnectors } from "./plugin-connectors.js";
 
 /** A skill, agent template or theme version a sync wrote (`from` null: the component was created). */
 export interface ChangedRef {
@@ -978,6 +979,18 @@ export class PlatformComponents {
             ...owned,
           })
           .execute();
+        // The plugin imported again after its delete: the connectors the deleted item's template
+        // made move to this one, and its installs take them back (spec §5 rule 8). Their orgs are
+        // not locked: nothing else writes a deleted plugin's connectors but their org's admins,
+        // whose row locks this waits for without holding anything they need
+        await relinkDeletedItemConnectors(t, {
+          itemId: plan.itemId,
+          name: plan.plugin,
+          ownerOrgId,
+          version: plan.version,
+          templateId: c.name,
+          newTemplateId: c.id,
+        });
       }
       out.connectorTemplates.push({
         kind: "connector_template",
