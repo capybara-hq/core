@@ -2394,7 +2394,7 @@ States: `default`, `hover`, `editing`, `paused`
 
 - Sub-agents group like tools (phase C runtime; durations "41 秒", "1 分 12 秒" / "41s", "1m 12s", `formatDuration`, §7). **Running**: a header tool line with a `spinner` (16) and "正在运行 N 个子智能体" / "N subagents running", then one Agent call block per sub-agent, `space.2` apart. **Waiting**: when every active sub-agent waits for a person, the header has no `spinner` and says what the first one waits for in `accent` ("等待批准" / "Waiting for approval"), with " · 已完成 N 个" / " · N done" in `faint` as when running (§6.16.9). **Done**: a collapsed header "N 个子智能体已完成（M 个失败）· 共 X 次调用 · <duration>" / "N subagents done (M failed) · X calls · <duration>" with the failure count in `fail` and the totals in `faint`; sub-agents that reached a limit add "（K 个已达上限）" / " (K reached a limit)" in `warn` after it (**Limit** state); opening it shows the blocks. With `onOpenMap` the header ends with the link button "智能体图" / "Agent map" (`tool-link` style, part `subagent-map-link`; agent map spec §9.2) in every state; a done header then is a toggle beside the link, never nesting it (§6.16.9).
 - **Agent call block** (`AgentCallBlock({ description, prompt, state, onOpen?, defaultExpanded? })`, agent map spec §9.5, as Claude Code draws an `Agent` call): a tool box (`panel`, radius `md`, `small`) whose header (`row.dense`, padding `pad.default`) is the tool name "Agent" (600, `ink`) and the task description (`ink`), one line with an ellipsis; the body is the IN block of an expanded tool row (§6.16.9: the label "输入" / "IN" in `micro` `faint`, 4ch) with the prompt in `ink`, line breaks kept, **two lines with an ellipsis**. When the two lines hide something (measured, again on resize) a link button "展开" / "Show more" (`aria-expanded`, `aria-controls` the prompt) opens it in full and becomes "收起" / "Show less". No prompt: no body.
-- **Status line** under the box (`row.dense`, padding 0 `pad.default.x`, `small`, `muted`, gap `space.2`): the status dot of the agent map (§6.16.28: 8, round, `role="img"` with the status word; running `accent` pulsing every `motion.pulse`, waiting `warn`, completed `ok`, limit reached `warn`, failed `fail`, stopped `faint`), the state (one line, ellipsis) and at the end the link button "在智能体图中查看" / "View in agent map" (`onOpen`: that agent's level 2). While the child works: "后台运行中：<current tool summary>" / "Working in the background: <summary>" ("后台运行中" alone before the first summary; a queued child counts as working); waiting for a person: "后台等待中：<summary>" / "Waiting in the background: <summary>". A foreground child (a fork skill's, or one in a log written before background sub-agents) has the neutral copy: "运行中：<summary>" / "Working: <summary>", "等待中：<summary>" / "Waiting: <summary>" (`background: false`). Once it has ended: "完成" / "Completed", "已达上限" / "Limit reached" (in `warn`), "失败" / "Failed" (in `fail`) or "已停止" / "Stopped", then " · <time> · <tokens>" (each left out when unknown; tokens as the agent map writes them). The action stays after the end. A call refused before any child ran says "失败 · <the refusal's first line>" (the whole text as the tooltip) and has no action: there is nothing to open. The line is not a live region (the summary changes with every tool call).
+- **Status line** under the box (`row.dense`, padding 0 `pad.default.x`, `small`, `muted`, gap `space.2`): the status dot of the agent map (§6.16.28: 8, round, `role="img"` with the status word; one colour rule with the map: running `accent` pulsing every `motion.pulse`, waiting `warn`, limit reached `warn`, completed `faint` filled, stopped a hollow `faint` ring, failed `fail`), the state (one line, ellipsis) and at the end the link button "在智能体图中查看" / "View in agent map" (`onOpen`: that agent's level 2). While the child works: "后台运行中：<current tool summary>" / "Working in the background: <summary>" ("后台运行中" alone before the first summary; a queued child counts as working); waiting for a person: "后台等待中：<summary>" / "Waiting in the background: <summary>". A foreground child (a fork skill's, or one in a log written before background sub-agents) has the neutral copy: "运行中：<summary>" / "Working: <summary>", "等待中：<summary>" / "Waiting: <summary>" (`background: false`). Once it has ended: "完成" / "Completed", "已达上限" / "Limit reached" (in `warn`), "失败" / "Failed" (in `fail`) or "已停止" / "Stopped", then " · <time> · <tokens>" (each left out when unknown; tokens as the agent map writes them). The action stays after the end. A call refused before any child ran says "失败 · <the refusal's first line>" (the whole text as the tooltip) and has no action: there is nothing to open. The line is not a live region (the summary changes with every tool call).
 
 <!-- states: subagent-group -->
 States: `running`, `waiting`, `done`, `failed`, `stopped`, `limit`, `expanded`, `map-link`
@@ -2424,7 +2424,7 @@ States: `running`, `waiting`, `done`, `failed`, `stopped`, `limit`, `expanded`, 
 | tool-line | done | height | row.dense |
 | agent-dot[data-status=failed] | failed | background-color | color.fail |
 | agent-call-status[data-status=failed] fail-word | failed | color | color.fail |
-| agent-dot[data-status=aborted] | stopped | background-color | color.faint |
+| agent-dot[data-status=aborted] | stopped | width | space.2 |
 | agent-call-more | expanded | color | color.muted |
 | agent-call-prompt[data-expanded=true] | expanded | color | color.ink |
 | subagent-map-link | map-link | color | color.muted |
@@ -2965,10 +2965,11 @@ from levels 2 and 3 (`onBack`); focus is trapped and returned, and when the view
 level or agent, `view`) it moves to the new head's back button, else its title.
 `AgentMapTree({ root, background, selectedId, onOpen })` is level 1:
 
-- **Count line** at the top of the body (prose `small`, `muted`, `space.2` above the tree): "N 个智能体 · M 个运行中 · 点击查看详情" /
-  "N agents · M running · Click a node for details" ("1 agent"); N counts the sub-agents, every
-  node but the root (the conversation itself), M the running ones among them: the same number
-  as the composer's agents chip (§6.16.29; AC3 ruling 4, 2026-11-07).
+- **Count line** at the top of the body (prose `small`, `muted`, `space.2` above the tree): "N 个智能体 · 点击查看详情" /
+  "N agents · Click a node for details" ("1 agent"); N counts the sub-agents, every node but the
+  root (the conversation itself): the same number as the composer's agents chip (§6.16.29; AC3
+  ruling 4, 2026-11-07). No running count: the dots carry the states, as on the chip (maintainer
+  decision 2026-11-28).
 - **Tree**: a dense tree, not stacked cards: columns left to right by depth, `space.5` apart; a
   parent sits level with its first child (top-anchored, so a long column of children never pushes
   it away from them when scrolled); standard elbow connectors (1px `line-strong`) meet every node
@@ -2981,21 +2982,26 @@ level or agent, `view`) it moves to the new head's back button, else its title.
 - **Node**: a compact card-button 336 wide and `row.roomy` (44) high, the same for the root and
   every sub-agent (padding 0 `space.2`, 1px `line` border on `raised`, radius `sm`; hover the
   `hover` ground); line 1 the status dot and the description (`body`, 500, `ink`); line 2
-  exactly "model · time · tokens" (`small`, `muted`, "opus 5.5 · 42分18秒 · 392.7k tokens"; the
+  "model · time · tokens" (`small`, `muted`, "opus 5.5 · 42分18秒 · 392.7k tokens") on the root
+  and on a sub-agent whose model differs from the root's, else "time · tokens" ("12分04秒 ·
+  188.2k tokens"; maintainer decision 2026-11-28: the model is news only where it changes). The
   model is its display name alone, no provider prefix: the map is about the agents, and the
-  prefix would push the model name into an ellipsis), indented past the dot. Both lines are one
-  line; the description ends with an ellipsis, and on line 2 only the model gives way (its own
-  ellipsis) while " · time · tokens" always stays whole. The node's tooltip is the full text.
+  prefix would push the model name into an ellipsis; line 2 is indented past the dot. Both lines
+  are one line; the description ends with an ellipsis, and on line 2 only the model gives way (its
+  own ellipsis) while time and tokens always stay whole. The node's tooltip is the full text, the
+  model included.
   The root (the conversation itself) has no hover and is not a button: it has no summary to open
   and is never selected.
   The node open at level 2 has the `selected` ground and an `accent` border
   (`aria-current="true"`). Activating a node opens it
   (`onOpen`).
-- **Status is only the dot** (8, round, `role="img"` with the status word as its label): running
-  `accent`, pulsing every `motion.pulse` (still under reduced motion); waiting `warn`; completed
-  `ok`; limit reached `warn` ("已达上限" / "Limit reached": the run ended on its step or time limit
-  or its tree's token budget after handing back what it had, not a failure); failed `fail`; stopped
-  `faint`. No status words in the tree (the exception to §2.4's icon and text rule): the **legend**
+- **Status is only the dot** (8, round, `role="img"` with the status word as its label), one
+  colour rule wherever the dot is drawn (tree nodes, the level 2 head, the legend, the Agent call
+  block's status line §6.16.15, the agents chip §6.16.29; maintainer decision 2026-11-28): running
+  `accent`, pulsing every `motion.pulse` (still under reduced motion); waiting `warn`; limit
+  reached `warn` ("已达上限" / "Limit reached": the run ended on its step or time limit or its
+  tree's token budget after handing back what it had, not a failure); completed `faint`, filled;
+  stopped `faint`, hollow (a 1.5px `faint` ring on no ground); failed `fail`. No status words in the tree (the exception to §2.4's icon and text rule): the **legend**
   names the six statuses in a tooltip (one per line, `space.1` apart) on the count line's
   "图例" / "Legend" trigger at its right end (prose `small`, `faint`, dotted underline; hover or
   focus opens it); every dot also carries its word as its accessible label.
@@ -3091,7 +3097,7 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 | agent-node-meta | tree | color | color.muted |
 | agent-dot | tree | width | space.2 |
 | agent-dot[data-status=waiting] | tree | background-color | color.warn |
-| agent-dot[data-status=completed] | tree | background-color | color.ok |
+| agent-dot[data-status=completed] | tree | background-color | color.faint |
 | agent-dot[data-status=failed] | tree | background-color | color.fail |
 | agent-task | tree | height | row.dense |
 | agent-task-tag | tree | font-size | type.micro |
@@ -3146,7 +3152,7 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 #### 6.16.29 Agents chip
 
 `AgentsChip({ count, running, waiting?, onOpen })` is the agent map's entry (acceptance item AC3,
-maintainer ruling 2026-11-07, like Claude Code's "0 agents" chip). It sits in the composer's control
+maintainer ruling 2026-11-07, like Claude Code's "● 3 agents" chip). It sits in the composer's control
 row (`ComposerBox.agents`, §6.16.2) after the effort picker and the quick actions, and replaces the
 title bar's agent map icon (§6.16.1).
 
@@ -3155,15 +3161,14 @@ title bar's agent map icon (§6.16.1).
   0: nothing, and nothing takes its place.
 - **Look**: a ghost picker (§6.16.2: `default`-step button, padding 0 `space.2`, `muted`, `hover`
   ground and `ink` on hover), no chevron (it opens a dialog, not a menu): the label "N 个智能体" /
-  "N agents" ("1 agent"), its number (`agents-chip-number`) in `ink` at weight 500 with tabular
-  figures and its words `muted`, so the count is what reads first. It always leads with a mark
-  `space.2` before the label: the agent map's status dot (§6.16.28: 8, round, `role="img"`) while
-  a sub-agent is active (running, queued included: the `accent` dot pulsing every `motion.pulse`;
-  else, while one waits for a person, `warn`), else the `agent` icon 14 in the chip's `muted`.
-  While some are active an activity part follows the label `space.2` after it,
-  "· 3 个运行中" / "· 3 running" (else "· 2 个等待中" / "· 2 waiting"), its number in `ink` like the
-  label's; it repeats the accessible name, so it is `aria-hidden`, and the dot alone carries the
-  color (the `accent` text contrast is 3:1, too low for body text). It draws no box of its own
+  "N agents" ("1 agent") and nothing more, its number (`agents-chip-number`) in `ink` at weight 500
+  with tabular figures and its words `muted`, so the count is what reads first. A dot leads it
+  `space.2` before the label and carries the state (maintainer decision 2026-11-28, as Claude
+  Code's chip, green while any runs and grey once all are done): the agent map's status dot
+  (§6.16.28: 8, round) in `accent`, pulsing every `motion.pulse`, while a sub-agent is active
+  (running, queued included); else `warn` while one waits for a person; else `faint` (every
+  sub-agent settled; this dot is `aria-hidden`). The running and waiting counts are not drawn: the
+  accessible name says them, and the dot alone carries the color. It draws no box of its own
   inside the composer (one box is enough, §1). (Maintainer, 2026-11-07: "稍微来点设计感".)
 - **Count**: N is every sub-agent of the conversation's tree, at every depth, at all times (the
   root is not counted; the map's count line shows the same N, §6.16.28). The page reads the agent
@@ -3174,9 +3179,8 @@ title bar's agent map icon (§6.16.1).
   1 running", then "，N 个等待中" / ", N waiting" while some wait. A child of the conversation that
   is active with nothing below it that counts is working itself (a stale tree never drops the
   dot).
-- **Below 600** (state `narrow`): the mark (the dot, or the `agent` icon 14 when nothing is
-  active) and the count alone ("● 3"), without the label and the activity part; the full text
-  stays its accessible name and tooltip. The chip and the icon
+- **Below 600** (state `narrow`): the dot and the count alone ("● 3"), without the label; the
+  full text stays its accessible name and tooltip. The chip and the icon
   buttons keep their size; a picker's label gives way with an ellipsis (§6.16.2), so the send
   button stays inside the composer with the model, effort, quick actions and the chip.
 - **Open**: activating it (click, Enter, Space) opens the agent map at its root level (`#agents`;
@@ -3193,7 +3197,8 @@ States: `default`, `running`, `waiting`, `hover`, `narrow`
 | agents-chip | default | padding-left | space.2 |
 | agents-chip | default | color | color.muted |
 | agents-chip-number | default | color | color.ink |
-| agents-chip-icon | default | color | color.muted |
+| agent-dot | default | width | space.2 |
+| agent-dot | default | background-color | color.faint |
 | agents-chip | running | height | control.default |
 | agent-dot | running | width | space.2 |
 | agent-dot | running | background-color | color.accent |

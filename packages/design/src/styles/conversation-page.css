@@ -576,19 +576,11 @@ span.cb-title-btn {
 .cb-agents-chip-count {
   display: none;
 }
-/* The mark that leads when nothing is active: the agent icon in the chip's own muted ink. */
-.cb-agents-chip-icon {
-  display: inline-flex;
-  align-items: center;
-}
 /* The number is the chip's point: ink at 500, tabular; the words stay muted (spec §6.16.29). */
 .cb-agents-chip-number {
   color: var(--cb-ink);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-}
-.cb-agents-chip-activity {
-  white-space: nowrap;
 }
 /* A picker's label gives way with an ellipsis when the row is short (a phone); the icon
  * buttons (＋, quick actions, send) keep their square. */
@@ -1202,8 +1194,7 @@ span.cb-title-btn {
   margin: 0 0 var(--cb-space-2);
 }
 @media not all and (min-width: 600px) {
-  .cb-agents-chip-label,
-  .cb-agents-chip-activity {
+  .cb-agents-chip-label {
     display: none;
   }
   .cb-agents-chip-count {
