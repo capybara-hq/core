@@ -566,7 +566,7 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
  *
  * Tokens (composer inline tokens spec): everything picked through `/` or `@` is an inline token
  * where it was typed: a skill, a connector, a connector resource, a library file, a conversation;
- * ＋ 项目文件 inserts project file tokens at the caret. Uploads stay cards in the strip. The
+ * + → Project files inserts project file tokens at the caret. Uploads stay cards in the strip. The
  * message goes out as `text` with one U+FFFC per token and the `tokens` in order; the skill token
  * leaves the text as `skill` (at most one per message). A refusal marks the tokens it names and
  * shows the Remove line.

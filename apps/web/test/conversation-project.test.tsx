@@ -173,10 +173,12 @@ describe("binding a new conversation to a project (the top strip)", () => {
     const user = userEvent.setup();
     await user.click(await vi.waitFor(() => projectPicker() as HTMLElement));
     await user.click(await screen.findByRole("menuitemradio", { name: "core" }));
-    await user.type(input(), "/");
+    typeComposer("/");
     await user.click(await screen.findByRole("option", { name: /^fix-issue/ }));
+    // the picked skill is the draft's leading token
+    expect(screen.getByRole("img", { name: "Skill: /fix-issue" })).toBeTruthy();
     expect(calls.some((c) => c.url === `${INVOCABLE}?deviceId=e1&project=core`)).toBe(true);
-    await user.type(input(), "1063{Enter}");
+    sendComposer("1063");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
       deviceId: "e1",
