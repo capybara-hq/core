@@ -564,6 +564,56 @@ button.cb-tool-line:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A referenced conversation (§6.16.6): a link chip, the chats icon, at most layout.file-card */
+.cb-bubble-conv {
+  position: relative;
+  max-width: var(--cb-layout-file-card);
+  text-decoration: none;
+}
+a.cb-bubble-conv:hover {
+  background: var(--cb-hover);
+}
+a.cb-bubble-conv:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 1px;
+}
+span.cb-bubble-conv {
+  cursor: default;
+}
+.cb-attachment-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-muted);
+}
+/* Compact (below 600, or forced by the reference set and catalog): its own line, the title wraps.
+   A media query and an attribute selector cannot share one rule, so the two blocks below (the
+   media query's and the [data-form="compact"] one) must stay identical. */
+@media not all and (min-width: 600px) {
+  .cb-bubble-conv {
+    align-items: flex-start;
+    max-width: 100%;
+  }
+  .cb-bubble-conv .cb-attachment-icon {
+    min-height: var(--cb-type-small-line);
+    align-items: center;
+  }
+  .cb-bubble-conv .cb-bubble-file-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+.cb-bubble-atts[data-form="compact"] .cb-bubble-conv {
+  align-items: flex-start;
+  max-width: 100%;
+}
+.cb-bubble-atts[data-form="compact"] .cb-bubble-conv .cb-attachment-icon {
+  min-height: var(--cb-type-small-line);
+  align-items: center;
+}
+.cb-bubble-atts[data-form="compact"] .cb-bubble-conv .cb-bubble-file-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .cb-type-badge {
   flex: none;
   padding: 0 var(--cb-space-1);
@@ -1940,6 +1990,15 @@ button.cb-file-card:focus-visible {
 }
 .cb-strip-chip[data-state="rejected"] {
   border-color: var(--cb-fail);
+}
+/* A referenced conversation (§6.16.21): at most layout.file-card, the title truncates first */
+.cb-strip-chip[data-kind="conversation"] {
+  max-width: var(--cb-layout-file-card);
+  min-width: 0;
+}
+.cb-strip-chip[data-kind="conversation"] > .cb-fail-word,
+.cb-strip-chip[data-kind="conversation"] > .cb-icon-btn {
+  flex: none;
 }
 .cb-strip-row {
   display: flex;

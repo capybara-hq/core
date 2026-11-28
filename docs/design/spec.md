@@ -285,7 +285,7 @@ The content area holds, top to bottom, in a fixed order:
 - There is no floating row on medium and expanded; on compact it lies over the page's top (§4.6).
 - **Short window** (`data-short`, §4.7): height below 480 sets `data-short` on the shell, whatever the width.
 
-**Inside the desktop shell** (desktop client spec §7.3 "The top row", mobile layout spec §9.3): the shell has no band above it; the sidebar's brand row, the conversation title bar, a template head's path row, the compact floating row and the shared file page's bar are the window's top row, as high as the window controls' rectangle and keeping clear of it (the brand's wordmark gives way beside the lights; where the controls reach past the rail, the top row is one band across the window on the page ground, the rail's surface and divider start below it with a `line-soft` hairline under the band across the window, and the collapsed rail's expand button, or the medium rail's sidebar toggle, sits in the band after the controls). The path row's path follows whatever precedes it in the row, not the centred content frame (maintainer decision 2026-11-21): beside the full sidebar it starts at the title bar's start padding, past a rail right after the band's toggle; a path of the org slug alone is not shown there. A browser keeps the path row in the content frame. The window drags only from `DragFill` spacers (empty, `aria-hidden`, drawn by those templates between their controls) and the controls area, never from a row that holds controls, and not while an overlay is open.
+**Inside the desktop shell** (desktop client spec §7.3 "The top row", mobile layout spec §9.3): the shell has no band above it; the sidebar's brand row, the conversation title bar, a template head's path row, the compact floating row and the shared file page's bar are the window's top row, as high as the window controls' rectangle and keeping clear of it (the brand's wordmark gives way beside the lights; where the controls reach past the rail, the top row is one band of ground across the whole window in the rail's form (medium, or collapsed on expanded): the rail starts below it, the collapsed rail's expand button, or the medium rail's sidebar toggle, sits in the band after the controls, centred on them, and the paper's first row (the conversation title bar, a deeper page's path row) follows in the band, the title bar across the whole band with its end group at the window's end edge (above the inline right panel, clear of end controls); the paper's colour (both papers on a conversation) starts `space.2` below the band, as it lies `space.2` below the window's top edge elsewhere, with the next row on it; a first-level page's band holds only the lights and the toggle; no hairline closes the band; the full sidebar is unchanged, the lights sit over its brand row). The path row's path follows whatever precedes it in the row, not the centred content frame (maintainer decision 2026-11-21): beside the full sidebar it starts at the title bar's start padding, past a rail right after the band's toggle; a path of the org slug alone is not shown there. A browser keeps the path row in the content frame. The window drags only from `DragFill` spacers (empty, `aria-hidden`, drawn by those templates between their controls) and the controls area, never from a row that holds controls, and not while an overlay is open.
 
 ### 4.1 Sidebar
 
@@ -1823,6 +1823,7 @@ States: `collapsed`, `expanded`, `live`, `in-rail`
 - **Long** (states `long`, `expanded`; acceptance item AC4, 2026-11-07, Claude's "Show more"): the bubble's text (`bubble-body`, the skill chip and the text) is clamped at `layout.bubble-clamp` (208, eight prose lines) and its last line fades out (a mask from opaque to transparent over the last `type.prose.line`, like the text output's fade, §6.16.20). Only when the clamp hides something (measured, and again on resize; the server render and hydration, which cannot measure, guess from the text: more than eight lines, counting the hard lines and each line's wrapping at about 34 CJK or 68 other characters, so a long message is folded from the first paint and the measurement then corrects it) a link button "展开" / "Show more" (`small`, the §6.16 link button: `muted`, underlined in `line-strong`) sits under the bubble, right-aligned, `space.2` below it and before the details; it has `aria-expanded` and `aria-controls` the text, opens it in full and becomes "收起" / "Show less". The attachments above, the skill chip on the first line and the details below always show. The open state is the bubble's own, local to the view and never kept (a reload or another conversation starts folded). A pending bubble (the queued form) and the transcript's bubbles behave the same.
 - **Pending** (the queued form, `queued`): a message on its way, or an interjection the run has not taken in yet, or a leftover queued message (§6.11 "No queue"): the dashed bubble of §6.16.14 at opacity .6, and for an interjection or a leftover "待处理" / "Pending" under it in `small` `faint`; no actions.
 - Attachments sit above the bubble, right-aligned, `space.2` apart: images as `layout.thumb` square thumbnails (radius `sm`, cropped to fill), then files as attachment chips (§6.16.21, without the remove button). A thumbnail opens the image; a file chip opens the file in the right panel (§6.16.22) like a delivered file, and a dense `download` icon button ("下载" / "Download") after the chip downloads it (a resource mention has none). A thumbnail that fails to load is reported to the caller, which may refresh the session and reload it once (as AttachmentPreview's `retry`).
+- **Conversation** (states `conversation`, `compact-conversation`; @ conversations spec `docs/superpowers/specs/2026-11-28-at-conversation-design.md` §3): a conversation the message referenced is a **link chip** among the file chips, in the page's order after the thumbnails: the attachment chip look (§6.16.21: `row.default` minimum height, padding `pad.dense`, 1px `line` border, radius `sm`, `panel` ground, `small` `ink`, gap `space.2`) with the `chats` icon 14 in `muted` (`attachment-icon`) in place of the type badge, then the title (`attachment-name`, one line with an ellipsis; a conversation without a title reads 「未命名会话」 / "Untitled conversation"). It is a design link (the DesignProvider's `link`, §6.13) to the page's `href` (`/chat/<id>`), named 「打开会话 <title>」 / "Open conversation <title>"; hover puts it on the `hover` ground, focus draws the file chip's ring. It has no download button and never opens the right panel. An `href` that is not a safe link (`isSafeAttachmentHref`) draws the same chip as plain text. The chip is at most `layout.file-card` wide from 600 up. **Compact** (below 600; the reference set and catalog force it with `form="compact"`): the chip stands on its own line, as wide as its title up to the attachments column (`max-width` 100%), and the title wraps instead of cutting, so a long title stays whole; the mobile sizes (§2.5) make it 44 high.
 - **Skill invocation** (phase D, state `skill`): the bubble starts with the skill chip, the composer's chip (§6.16.2) without its remove button: `control.dense` high, radius `sm`, padding 0 `space.2`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, centered on the first prose line, `space.2` before the text, which is the invocation's arguments (none: the chip alone). Under the bubble, right-aligned, at most 75% wide, `space.2` below it: a closed Disclosure (§6.5) "技能说明" / "Skill instructions" in `small` `muted`, a `row.dense` summary line whose chevron is `muted` too (not the Disclosure's usual `faint`), padded 0 `space.2` with radius `sm` (its hover ground never touches the words) and pulled right by `space.2` so the words stay on the bubble's edge, whose body is the text sent in the person's name (`small`, line breaks kept). A queued invocation (§6.16.14) shows the same chip in its dashed bubble.
 
 - **Sender** (state `sender`, agent map spec §9.4): a message another agent sent (a parent's message in a sub-agent's transcript) has, above the bubble and right-aligned, "来自 <sender>" / "From <sender>" (`small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above the bubble). A person's own message has none.
@@ -1830,7 +1831,7 @@ States: `collapsed`, `expanded`, `live`, `in-rail`
 - **Author** (state `author`, account profile design): `author` `{ name, avatarUrl, showName? }` is the person who wrote the message, drawn as a 40 circle `Avatar` (as tall as a one-line bubble) (§6.30, `shape="circle"`: the picture, or the initial of `name` when `avatarUrl` is `null` or fails) at the bubble's end side: the bubble and the circle sit in one row, `space.2` apart, top-aligned, the row as wide as the thread, the bubble still at most 75%. With `showName` the name is above the message (above the attachments too), right-aligned and pulled in by the circle's width and the gap so it ends on the bubble's edge: `small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above what follows (the trajectory's form, where the writer is not the viewer). The conversation page passes `author` only for a message another person wrote, never for the viewer's own (maintainer decision 2026-11-21). Without `author` nothing is drawn and the bubble is as before; a message with no bubble (attachments only) shows the name line but no circle.
 
 <!-- states: user-bubble -->
-States: `default`, `attachments`, `skill`, `sender`, `author`, `long`, `expanded`
+States: `default`, `attachments`, `conversation`, `compact-conversation`, `skill`, `sender`, `author`, `long`, `expanded`
 
 <!-- size-table: user-bubble -->
 | Part | State | Property | Value |
@@ -1845,6 +1846,20 @@ States: `default`, `attachments`, `skill`, `sender`, `author`, `long`, `expanded
 | thumb | attachments | height | layout.thumb |
 | thumb | attachments | border-radius | radius.sm |
 | attachment | attachments | border-radius | radius.sm |
+| attachment[data-kind=conversation] | conversation | min-height | row.default |
+| attachment[data-kind=conversation] | conversation | padding-left | pad.dense.x |
+| attachment[data-kind=conversation] | conversation | border-radius | radius.sm |
+| attachment[data-kind=conversation] | conversation | border-top-color | color.line |
+| attachment[data-kind=conversation] | conversation | background-color | color.panel |
+| attachment[data-kind=conversation] | conversation | font-size | type.small |
+| attachment[data-kind=conversation] | conversation | max-width | layout.file-card |
+| attachment-icon | conversation | color | color.muted |
+| attachment-name | conversation | color | color.ink |
+| attachment[data-kind=conversation] | compact-conversation | min-height | row.default |
+| attachment[data-kind=conversation] | compact-conversation | max-width | 100% |
+| attachment[data-kind=conversation] | compact-conversation | border-radius | radius.sm |
+| attachment[data-kind=conversation] | compact-conversation | font-size | type.small |
+| attachment-icon | compact-conversation | color | color.muted |
 | bubble-skill | skill | height | control.dense |
 | bubble-skill | skill | border-radius | radius.sm |
 | bubble-skill | skill | padding-left | space.2 |
@@ -1872,6 +1887,10 @@ States: `default`, `attachments`, `skill`, `sender`, `author`, `long`, `expanded
 | bubble | long | background-color | color.selected |
 | bubble-more | expanded | font-size | type.small |
 | bubble-more | expanded | color | color.muted |
+
+| | compact | medium | expanded |
+|---|---|---|---|
+| Conversation chip | icon + title, on its own line, the title wraps; 44 high (mobile sizes) | icon + title, one line, ellipsis, at most `layout.file-card` | icon + title, one line, ellipsis, at most `layout.file-card` |
 
 #### 6.16.7 Run divider
 
@@ -2554,10 +2573,11 @@ States: `two`, `more`, `image`, `image-hover`, `text`, `generating`, `generating
 
 - Attachments in the composer, above the textarea: wrapping, gap `space.2`, `space.2` below. Images are `layout.thumb` square thumbnails (radius `sm`) with a `space.4` round remove button (`x` 12, `panel` ground, 1px `line` border, `muted`) overlapping their top right corner by `space.1`. Files are chips: `row.default` minimum height, padding `pad.dense`, 1px `line` border, radius `sm`, `panel` ground, `small`, gap `space.2`: type badge, name (one line, ellipsis), size `muted`, a dense remove icon button ("移除 <name>" / "Remove <name>").
 - **Uploading**: the chip stacks the name, the percent in `muted` and a 2px progress bar (`line` track, `ink` fill, `role="progressbar"`). **Rejected** (too large, wrong type, too many): a `fail` border and the reason in `fail` instead of the size; it can still be removed; when the caller supplies a retry (an upload that failed in transit, not a precheck), a dense `refresh` icon button ("重试 <name>" / "Retry <name>") sits before the remove button.
+- **Conversation** (states `conversation`, `conversation-refused`; @ conversations spec `docs/superpowers/specs/2026-11-28-at-conversation-design.md` §3): a conversation picked from the `@` menu is a chip of the file chip's look with the `chats` icon 14 in `muted` (`attachment-icon`, named 「会话」 / "Conversation") in place of the type badge, the title (`attachment-name`, one line with an ellipsis; without a title 「未命名会话」 / "Untitled conversation"), no size, and the remove button. The chip is at most `layout.file-card` wide at every size class (a compact strip is wider than that); a longer title truncates first: the icon and the remove button always show. **Refused** (`conversation-refused`: the kernel refused the reference at send, the conversation is no longer available or is the one being written in): the rejected look, a `fail` border and the page's reason in `fail` after the title (`role="alert"`); it can still be removed. The page passes data only (`kind: "conversation"`, the title, `error`).
 - Supersedes §6.9's AttachmentChip looks; FileDrop and FileButton are unchanged.
 
 <!-- states: attachment-strip -->
-States: `image`, `file`, `uploading`, `rejected`
+States: `image`, `file`, `uploading`, `rejected`, `conversation`, `conversation-refused`
 
 <!-- size-table: attachment-strip -->
 | Part | State | Property | Value |
@@ -2575,6 +2595,21 @@ States: `image`, `file`, `uploading`, `rejected`
 | progress | uploading | height | 2 |
 | progress | uploading | background-color | color.line |
 | attachment | rejected | border-top-color | color.fail |
+| attachment[data-kind=conversation] | conversation | min-height | row.default |
+| attachment[data-kind=conversation] | conversation | padding-left | pad.dense.x |
+| attachment[data-kind=conversation] | conversation | border-radius | radius.sm |
+| attachment[data-kind=conversation] | conversation | border-top-color | color.line |
+| attachment[data-kind=conversation] | conversation | background-color | color.panel |
+| attachment[data-kind=conversation] | conversation | font-size | type.small |
+| attachment[data-kind=conversation] | conversation | max-width | layout.file-card |
+| attachment-icon | conversation | color | color.muted |
+| attachment-name | conversation | color | color.ink |
+| attachment[data-kind=conversation] | conversation-refused | border-top-color | color.fail |
+| attachment-icon | conversation-refused | color | color.muted |
+
+| | compact | medium | expanded |
+|---|---|---|---|
+| Conversation chip | icon + title, the title truncates first; the mobile sizes (§2.5) | icon + title, at most `layout.file-card` | icon + title, in full up to `layout.file-card` |
 
 #### 6.16.22 File preview
 
@@ -3139,6 +3174,7 @@ The composer's ＋, `/` and `@` menus (`ComposerMenu`, `useComposerMenu`; compos
 - **Kinds**: ＋ (`plus`: everything a person can add or use, for people who do not know the keys: 添加 · 能力 · 连接器), `/` (`slash`: skills by source, a connector's prompts, unavailable connectors, then commands last), `@` (`at`: matching files, then resources grouped by connector). The page builds the groups and passes data only.
 - **Shell** (from 600 up): anchored to the composer frame: as wide as the frame (its border included), start-aligned, `space.2` above it, so it covers the thread and never the composer; a Menu's ground and line (§6.7: `panel`, 1px `line-strong`, radius `md`, `shadow-1`, padding `space.1`, `z.popover`); at most `layout.menu-max-height` high, its list scrolling inside while the footer stays.
 - **Rows** (`composer-menu-item`, the described-item row of §6.16.3): the **lead** (`composer-menu-lead`, a `space.6` square): an icon 16 `muted` for the row's kind (a command `terminal`, a skill `skills`, a ＋ row its own: 上传文件 `upload`, 项目文件 `folder`…), or for a thing a connector brings (the connector's ＋ row, its prompts and resources) its `ObjectMark` 24 (the connector's icon, falling back to the initial, §6.17), or for a file its type badge (§6.16.19); then the name (`ink`, one line, ellipsis; never a leading `/` or `$`), an optional hint after it (`composer-menu-hint`, `faint`: a skill's argument hint), and one optional line under it (`composer-menu-desc`, prose `small` `muted`, one line with an ellipsis); a trailing badge (`composer-menu-badge`, the `warn` Badge: 待配置 / Needs setup on a connector waiting for setup). A row without a line is `row.default` high, padding `space.1` `pad.default.x`; with one, padding `space.2` `pad.default.x`. Radius `sm`. The **active** row (`aria-selected="true"`) is on `selected`; the pointer moving onto a row makes it active. A disabled row is `disabled` (lead and line too), skipped by ↑↓, a click does nothing. Group labels (`composer-menu-label`) are the menu label look (`micro` `muted`, padding `space.2` `pad.default.x` `space.1`); groups keep the page's order whatever the query, so a command never takes the first ↵ meant for a skill.
+- **Conversations** (state `conversations`; @ conversations spec `docs/superpowers/specs/2026-11-28-at-conversation-design.md` §3): the `@` menu's 会话 / "Conversations" group, after the files and before the connectors' resources, lists the person's own conversations whose title matches the query (the most recent with an empty query, at most five). A row is the described row: the `chats` icon 16 `muted` as the lead, the title as the name (the page writes 「未命名会话」 / "Untitled conversation" for one without a title), and the line `<agent> · <relative time>` (「研究助手 · 2 小时前」); no hint, no badge. The page passes the rows as data (`icon: "chats"`, `label`, `description`); the component adds nothing of its own. Compact: the same rows in the sheet, `touch.row` high like every sheet row.
 - **Query**: no search box of its own: the query is the composer text after the trigger (`/fix`, `@report`); the rows are ranked with the palette's `commandScore` (§6.7: label prefix, search-text prefix, label substring, search-text substring, description substring; anything else hidden), the rest of a group ordered by score. The `@` menu's results come searched from the kernel (`filter={false}`: every row stays in the page's order); while the rows are still an earlier query's (the query has not rested, or its answer is on its way) the page filters them like the other menus, so ↵ never picks a row the query no longer matches. No match: the empty line (`composer-menu-empty`, prose `small` `muted`, padding `space.2` `pad.default.x`, the page's sentence); results on their way: the loading row (`composer-menu-loading`, the spinner and 「正在加载」 / "Loading", same look) in place of the empty line; both in an always-mounted live region. An optional **notice** under the list (a `muted` line and a next-step text link that closes the menu as it navigates: the `/` menu of an agent with no invocable skills links someone who can edit the agent to its skills section).
 - **Footer** (`composer-menu-foot`, from 841 up; the composer menus spec's size table, which keeps medium without key hints): a `line-soft` hairline, padding `space.2` `pad.default.x` `space.1`, `micro` `faint`, the keys `muted`: 「@ 文件与资源 · / 技能与命令 · ↑↓ 选择 · ↵ 使用 · esc 关闭」 / "@ Files and resources · / Skills and commands · ↑↓ Select · ↵ Use · esc Close", and at its end the `muted` hint 「输入以搜索」 / "Type to search" (not on ＋). The `@` and `/` hints are buttons (`composer-menu-switch`, `aria-pressed` on the current one, hover `ink`) that switch to that menu; a click keeps the focus in the composer.
 - **Keys** (the composer textarea keeps the focus; `useComposerMenu().onKeyDown`, offered before the composer's own): ↑↓ move the active row (wrapping, skipping disabled rows), ↵ picks it; with no row to choose it closes the menu (results on their way: it waits) and never sends the draft while the menu is open (the next ↵ sends), Esc closes once and keeps the text, Backspace through the trigger closes (the key still deletes it; with a selection it is plain editing and the menu stays to the page's trigger rule), a space right after `@`, or after `@…` with nothing found, closes (the person is writing an address or plain text). Only key moves scroll the active row into view; the pointer never scrolls the list. The footer's switch hints are pointer shortcuts outside the tab order (the keys switch by typing the trigger). Nothing during an IME composition: its ↵ confirms the text and never picks; the page treats the composition's intermediate text as no query (it opens, closes and searches nothing) and checks what it commits at `compositionend` (`ComposerBox onCompositionStart` / `onCompositionEnd`), while a key an IME commits directly (keyCode 229 with no composition, Shift+2 giving `@`) types like any other. **Leaving** the composer closes the anchored menu and keeps the text: a press outside the composer frame, or the focus moving to an element outside it (the focus leaving the window keeps it open); the compact sheet closes as any bottom sheet. A pick calls the row's action; the page closes or switches the menu (技能 opens `/`). A click on a row keeps the focus in the composer.
@@ -3146,7 +3182,7 @@ The composer's ＋, `/` and `@` menus (`ComposerMenu`, `useComposerMenu`; compos
 - **Accessibility**: the composer textarea is the combobox (§6.16.2 "Menus"); the list is a `listbox` named by the menu's title, groups `group`s named by their label, rows `option`s named by their name (and badge) and described by their line, a disabled row `aria-disabled`; the ＋ button keeps `aria-haspopup="menu"` with `aria-expanded`, and while its menu is open `aria-controls` the listbox.
 
 <!-- states: composer-menu -->
-States: `plus`, `slash`, `at`, `empty`, `loading`, `compact`
+States: `plus`, `slash`, `at`, `conversations`, `empty`, `loading`, `compact`
 
 <!-- size-table: composer-menu -->
 | Part | State | Property | Value |
@@ -3177,6 +3213,12 @@ States: `plus`, `slash`, `at`, `empty`, `loading`, `compact`
 | composer-menu-item | at | padding-left | pad.default.x |
 | composer-menu-lead | at | width | space.6 |
 | composer-menu-desc | at | color | color.muted |
+| composer-menu-item[data-described=true] | conversations | padding-top | space.2 |
+| composer-menu-item[data-described=true] | conversations | padding-left | pad.default.x |
+| composer-menu-lead | conversations | width | space.6 |
+| composer-menu-lead | conversations | color | color.muted |
+| composer-menu-desc | conversations | font-size | type.small |
+| composer-menu-desc | conversations | color | color.muted |
 | composer-menu-empty | empty | font-size | type.small |
 | composer-menu-empty | empty | color | color.muted |
 | composer-menu-loading | loading | font-size | type.small |
@@ -3191,6 +3233,7 @@ States: `plus`, `slash`, `at`, `empty`, `loading`, `compact`
 | | compact | medium | expanded |
 |---|---|---|---|
 | Menu | bottom sheet, search field on top, rows `touch.row`, no key hints | anchored above the composer, no key hints | anchored above the composer, key hints |
+| 会话 rows | `touch.row`, `chats` + title + `<agent> · <time>` | the described row: `chats` + title + `<agent> · <time>` | the same rows, key hints in the footer |
 
 #### 6.16.31 Project file picker
 

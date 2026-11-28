@@ -96,8 +96,12 @@ rules (no arguments, refused while running).
 ### 4. @ menu
 
 - Groups: 最近文件 / 匹配的文件 (the file library: `GET /orgs/:orgId/files?q=<query>&limit=8`, from
-  the file library line), then connector resources grouped by connector with the connector icon
-  (`GET connectors/resources?query=<query>`: the web now passes `query`).
+  the file library line), then 会话 (the sender's own conversations by title: `GET
+  /orgs/:orgId/conversations?q=<query>&limit=9`, the current and the referenced ones dropped, at
+  most 5 rows, icon `chats`, title or 未命名会话, `<agent name> · <relative time>`; an empty query
+  lists the most recent; a pick is a conversation chip sent as `conversationRefs`, at most 3; added by the
+  @ conversations spec 2026-11-28 §3), then connector resources grouped by connector with the
+  connector icon (`GET connectors/resources?query=<query>`: the web now passes `query`).
 - Picking a file adds it to the attachment strip as an uploaded file (its id goes into `files`; the
   file library makes any ready file of the sender sendable). Picking a resource adds `{connectorId,
   uri}` as today. Limits: files per message as today; resources `MAX_ATTACHMENTS` (5).
@@ -123,8 +127,11 @@ rules (no arguments, refused while running).
   `DriftReason`). The web shows the paths as file chips on the bubble.
 - **Picker (web):** a sheet / popover listing the project's root, folders navigable with a path row,
   a filter field, multi-select, 「引用」 adds the paths as chips to the attachment strip.
-- Platform tool: the listing route gets an operation (read-only); `projectFiles` is a field of the
-  existing send-message operation's shared schema (parity test).
+- Platform tool: the listing route gets an operation (read-only). `projectFiles` is a field of the
+  shared send body `MessageFields` (`conversations.controller.ts`); no Platform operation carries
+  that body: the send routes are exclusions (`POST …/:id/messages` and `POST …/conversations`
+  `internal`, first-message `human-only`, `platform/exclusions.ts`), so the field changes no
+  operation (corrected by the @ conversations spec, 2026-11-28).
 
 ### 6. Composer layout
 
@@ -183,6 +190,6 @@ rules (no arguments, refused while running).
 - **Device access / sandboxes.** The listing goes through the owner browse scope, read-only, bounded to
   the project root; no writes; the conversation owner's own device only.
 - **Platform tool.** One read operation for the listing route; `projectFiles` added to the shared
-  send-message schema (parity test).
+  `MessageFields` send body, which no operation carries (the send routes are exclusions).
 - **Kernel.** Routes in the devices module with `createZodDto`, explicit `@Inject`, errors registered.
 - **Language / i18n.** New copy zh / en; zh uses 智能体 / 平台 / 超级管理员.

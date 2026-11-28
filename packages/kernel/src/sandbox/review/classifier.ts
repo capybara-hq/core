@@ -359,7 +359,9 @@ export const PERSON_MESSAGES_READ = 20;
  * referenced project files (`payload.projectFiles`, blocks `1 + attachments.length + i`: the
  * person's intent, worded by the kernel). The `@` resources' bodies (`payload.attachments`,
  * blocks `1 .. attachments.length`) are content read from a connector, not the person's
- * instructions, so they are skipped, like images, documents and uploaded files.
+ * instructions, so they are skipped, like images, documents and uploaded files. So are the
+ * referenced conversations' blocks (`payload.conversationRefs`, after the project file lines):
+ * quoted material, not the person's intent.
  */
 function textOfUserMessage(payload: unknown): string {
   const p = payload as { content?: unknown; attachments?: unknown; projectFiles?: unknown } | null;

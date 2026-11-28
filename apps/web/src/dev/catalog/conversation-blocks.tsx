@@ -46,6 +46,7 @@ import {
 import {
   AGENT_MAP_FIXTURE,
   CONV_FIXTURE,
+  CONVERSATION_REF_FIXTURE,
   DIVIDER_FIXTURE,
   FILE_FIXTURE,
   type FixtureFile,
@@ -140,6 +141,18 @@ function thinkingRowBlocks(): ReactNode {
 
 // ── User bubble ─────────────────────────────────────────────────────────────
 
+/** The fixture's referenced conversations (or `refs`) as bubble link chips. */
+function conversationItems(
+  refs: { id: string; title: string; href: string }[] = CONVERSATION_REF_FIXTURE.refs,
+) {
+  return refs.map((r) => ({
+    id: r.id,
+    kind: "conversation" as const,
+    name: r.title,
+    href: r.href,
+  }));
+}
+
 function userBubbleBlocks(): ReactNode {
   const [image, pdf] = FILE_FIXTURE.attachments;
   const items = [
@@ -164,6 +177,27 @@ function userBubbleBlocks(): ReactNode {
           attachments={<BubbleAttachments items={items} onOpen={noop} onDownload={noop} />}
         />
       </Block>
+      {/* the at-conversation spec §3: referenced conversations as link chips, no download */}
+      <Block id="user-bubble-conversation">
+        <UserBubble
+          text={CONVERSATION_REF_FIXTURE.message}
+          attachments={<BubbleAttachments items={conversationItems()} />}
+        />
+      </Block>
+      {/* compact: each chip on its own line, the long title wraps (phone window, mobile sizes) */}
+      <RefBlock id="user-bubble-compact-conversation" width={390} pad>
+        <Stack gap={4}>
+          <UserBubble
+            text={CONVERSATION_REF_FIXTURE.message}
+            attachments={
+              <BubbleAttachments
+                items={conversationItems([CONVERSATION_REF_FIXTURE.long])}
+                form="compact"
+              />
+            }
+          />
+        </Stack>
+      </RefBlock>
       <Block id="user-bubble-skill">
         <UserBubble
           text={SKILL_FIXTURE.bubble.arguments}
@@ -1310,6 +1344,28 @@ function StripBlock({ id, index }: { id: string; index: number }) {
   );
 }
 
+/** Referenced conversations in the strip (§6.16.21): a short and a long title, or one refused. */
+function ConversationStripBlock({ id, refused }: { id: string; refused?: boolean }) {
+  const R = CONVERSATION_REF_FIXTURE;
+  const refs = refused ? [R.refused.ref] : [R.refs[0], R.long].filter((r) => r !== undefined);
+  return (
+    <Block id={id}>
+      <ComposerFrame>
+        <AttachmentStrip
+          items={refs.map((r) => ({
+            id: r.id,
+            kind: "conversation" as const,
+            name: r.title,
+            ...(refused ? { error: R.refused.error } : {}),
+            onRemove: noop,
+          }))}
+        />
+        <ComposerInput aria-label="消息" defaultValue={R.message} readOnly tabIndex={-1} />
+      </ComposerFrame>
+    </Block>
+  );
+}
+
 function attachmentStripBlocks(): ReactNode {
   return (
     <>
@@ -1317,6 +1373,8 @@ function attachmentStripBlocks(): ReactNode {
       <StripBlock id="attachment-strip-file" index={1} />
       <StripBlock id="attachment-strip-uploading" index={2} />
       <StripBlock id="attachment-strip-rejected" index={3} />
+      <ConversationStripBlock id="attachment-strip-conversation" />
+      <ConversationStripBlock id="attachment-strip-conversation-refused" refused />
     </>
   );
 }

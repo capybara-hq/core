@@ -226,6 +226,11 @@ type EventBody =
          * root: file i's text block is `content[1 + attachments.length + i]`.
          */
         projectFiles?: { path: string }[];
+        /**
+         * Referenced conversations (@ conversations spec §2): reference i's quoted text block is
+         * `content[1 + attachments.length + projectFiles.length + i]`.
+         */
+        conversationRefs?: ConversationRefMeta[];
         authorAccountId: string;
         /**
          * Who wrote it, at send time (model-facing data; the page names authors from the live
@@ -956,6 +961,20 @@ export const createConversation = (orgId: string, agentId: string) =>
     body: JSON.stringify({ agentId }),
   });
 
+/** At most this many conversations a message references (kernel `MAX_CONVERSATION_REFS`). */
+export const MAX_CONVERSATION_REFS = 3;
+
+/** One referenced conversation as a logged `user_message` names it (`payload.conversationRefs`). */
+export interface ConversationRefMeta {
+  id: string;
+  /** The title at send time; null: untitled. */
+  title: string | null;
+  /** `summary`: built from its latest compaction summary; `excerpt`: from its last messages. */
+  source: "summary" | "excerpt";
+  /** The highest seq read from it. */
+  upToSeq: number;
+}
+
 /** What a message carries besides its text (`POST …/messages`, the first message). */
 export interface MessageInput {
   text: string;
@@ -967,6 +986,11 @@ export interface MessageInput {
    * paths relative to the project root, at most 10; they need text like `@` resources.
    */
   projectFiles?: { path: string }[];
+  /**
+   * The sender's own conversations, referenced by id (@ conversations spec §1): at most
+   * {@link MAX_CONVERSATION_REFS}; they need text like `@` resources.
+   */
+  conversationRefs?: { id: string }[];
   /** Switch the conversation's model from the next run (the agent's own model = back to it). */
   model?: ModelRef;
   effort?: Effort;
@@ -1002,6 +1026,8 @@ const messageBody = (m: MessageInput) => ({
   ...(m.files !== undefined && m.files.length > 0 && { files: m.files }),
   ...(m.projectFiles !== undefined &&
     m.projectFiles.length > 0 && { projectFiles: m.projectFiles }),
+  ...(m.conversationRefs !== undefined &&
+    m.conversationRefs.length > 0 && { conversationRefs: m.conversationRefs }),
   ...(m.model !== undefined && { model: m.model }),
   ...(m.effort !== undefined && { effort: m.effort }),
   ...(m.retryOf !== undefined && { retryOf: m.retryOf }),

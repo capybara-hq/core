@@ -1615,6 +1615,8 @@ export const COMPOSER_MENU_FIXTURE: {
   plus: FixtureComposerMenuGroup[];
   slash: FixtureComposerMenuGroup[];
   at: FixtureComposerMenuGroup[];
+  /** The @ menu's Conversations group for the same query, drawn after the files (state `conversations`). */
+  conversations: FixtureComposerMenuGroup;
   atQuery: string;
   emptyQuery: string;
   empty: { slash: string; at: string };
@@ -1765,9 +1767,62 @@ export const COMPOSER_MENU_FIXTURE: {
       ],
     },
   ],
+  conversations: {
+    id: "conversations",
+    label: "会话",
+    items: [
+      {
+        id: "c_q3",
+        label: "第三季度差异核对",
+        icon: "chats",
+        description: "财务对账 · 2 小时前",
+      },
+      {
+        id: "c_review",
+        label: "季度复盘提纲",
+        icon: "chats",
+        description: "研究助手 · 昨天",
+      },
+    ],
+  },
   atQuery: "季度",
   emptyQuery: "预算表2019",
   empty: { slash: "没有匹配的技能或命令", at: "没有匹配的文件或资源" },
+};
+
+// ── Referenced conversations (§6.16.6, §6.16.21) ────────────────────────────
+
+export type FixtureConversationRef = {
+  id: string;
+  /** Empty: a conversation without a title (the chip reads "Untitled conversation"). */
+  title: string;
+  href: string;
+};
+
+/**
+ * Conversations a message references (@ conversations spec §3): the chips of the composer's strip
+ * (one long title that truncates, one refused at send with its reason) and of a sent bubble.
+ */
+export const CONVERSATION_REF_FIXTURE: {
+  refs: FixtureConversationRef[];
+  long: FixtureConversationRef;
+  refused: { ref: FixtureConversationRef; error: string };
+  message: string;
+} = {
+  refs: [
+    { id: "c_pricing", title: "定价方案讨论", href: "/chat/c_pricing" },
+    { id: "c_q3", title: "第三季度差异核对", href: "/chat/c_q3" },
+  ],
+  long: {
+    id: "c_long",
+    title: "2026年欧盟与北美两套价格表的定价方案讨论与折扣规则逐项核对",
+    href: "/chat/c_long",
+  },
+  refused: {
+    ref: { id: "c_gone", title: "旧版报价单整理", href: "/chat/c_gone" },
+    error: "会话已不可用",
+  },
+  message: "按定价那段会话里定的方案，做一份欧盟版",
 };
 
 // ── Project file picker (§6.16.31) ──────────────────────────────────────────

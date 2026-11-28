@@ -111,6 +111,22 @@ only, recolours `panel`) render unchanged and still pass the readability check.
   sits in the gap.
 - Inside a template `--cb-content-pad` is `space.6` (compact keeps 16).
 - Compact (below 600): unchanged (full-bleed page, floating row).
+- **The rail-drop band (desktop shell, #1046).** Where the window's start controls reach past the
+  rail (`--cb-shell-rail-drop`, the macOS traffic lights 92 wide beside the 48 rail), the rail's
+  form (medium, or collapsed on expanded; `--cb-shell-paper-drop`) has the top row as one band of
+  ground across the whole window, and the band holds the paper's first row after the lights and the
+  band's sidebar toggle: the conversation title bar, or a deeper page's path row (with its filler).
+  The conversation title bar is the band's whole row (maintainer decision 2026-11-28): its end
+  group (panel, files, tasks, plugins toggles) sits at the window's end edge, above the inline
+  right panel's paper when it is open, and its end padding keeps clear of an end reserve.
+  The paper's colour, and the inline right panel's paper, start `space.2` below the band (as the
+  paper lies `space.2` below the window's top edge elsewhere), and the next row (the thread, the
+  title row) starts on it. A first-level page has no path row: its band holds only the lights and
+  the toggle. Nothing moves in the DOM (no portal or slot): the row stays its paper's first row and
+  keeps the top-row rules (height and centring on the controls, start after the toggle, end clear
+  of an end reserve); the paper's box starts at the window's top edge, transparent, and its colour
+  is a layer below the band. The full sidebar (the lights over its brand row), compact, a banner,
+  and controls at the end (a Windows caption overlay) are unchanged.
 
 ### 3. Page head (`shell/page-header.tsx`)
 
@@ -140,6 +156,10 @@ controls, every overlay is no-drag. Added:
 - the paper's top gutter (`space.2` of ground above it) is a filler across the content column;
 - the page head's title row filler (§3); the path row filler stays for deeper pages;
 - the conversation title bar, the right panel's head and the sidebar brand row keep theirs.
+- in the rail-drop band (§2) the band's rows keep their fillers (the title bar's, the path row's;
+  the title bar's runs over the inline panel, whose box starts below the band); over a first-level page the gutter is the
+  band's whole height and the `space.2` below it; the controls area (`.cb-shell-band`) covers the
+  lights; the toggle and the rows' controls are no-drag, and every overlay stays no-drag.
 
 The gap between the two conversation papers is the panel's resize handle, not a drag region. The
 macOS traffic lights and a Windows caption overlay keep using the shell's reserved start / end insets;

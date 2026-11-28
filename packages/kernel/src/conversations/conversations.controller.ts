@@ -35,6 +35,7 @@ import {
   type ArtifactPreview,
   ConversationArtifacts,
 } from "./artifacts.js";
+import { MAX_CONVERSATION_REFS } from "./conversation-ref.js";
 import {
   CompactBody,
   DOWNLOAD_AS,
@@ -123,6 +124,15 @@ const MessageFields = z.object({
     .array(z.object({ path: z.string().min(1).max(4096) }).strict())
     .max(MAX_PROJECT_FILES)
     .optional(),
+  /**
+   * The sender's own conversations, by id (@ conversations spec §1): each is read at send time
+   * into a quoted text block after the project files' blocks. An id repeated is referenced once,
+   * so `payload.conversationRefs` may be shorter than this list.
+   */
+  conversationRefs: z
+    .array(z.object({ id: z.string().min(1).max(100) }).strict())
+    .max(MAX_CONVERSATION_REFS)
+    .optional(),
   /** Switch the conversation's model from the next run (UI refresh B); the agent's own = back. */
   model: ModelRef.strict().optional(),
   /** Switch the effort: one of the (selected) model's declared `effort` values. */
@@ -152,16 +162,17 @@ const MessageFields = z.object({
   locale: z.enum(["zh", "en"]).optional(),
 });
 
-// The body of `@` resource i is `content[i + 1]` and project file i's block follows them, so
-// `content[0]` must be the user's text: with `@` resources or project files the text must not be
-// empty. A skill invocation's `content[0]` is the rendered skill, so its text (the arguments) may
-// be empty.
+// The body of `@` resource i is `content[i + 1]`, then the project files' and the referenced
+// conversations' blocks follow, so `content[0]` must be the user's text: with `@` resources,
+// project files or conversation references the text must not be empty. A skill invocation's
+// `content[0]` is the rendered skill, so its text (the arguments) may be empty.
 const textRule: [
   (b: {
     text: string;
     files?: string[] | undefined;
     attachments?: unknown[] | undefined;
     projectFiles?: unknown[] | undefined;
+    conversationRefs?: unknown[] | undefined;
     skill?: unknown;
   }) => boolean,
   { message: string; path: string[] },
@@ -169,10 +180,13 @@ const textRule: [
   (b) =>
     b.text.length > 0 ||
     b.skill !== undefined ||
-    ((b.files?.length ?? 0) > 0 && !b.attachments?.length && !b.projectFiles?.length),
+    ((b.files?.length ?? 0) > 0 &&
+      !b.attachments?.length &&
+      !b.projectFiles?.length &&
+      !b.conversationRefs?.length),
   {
     message:
-      "Text is required unless the message invokes a skill or carries files (and no @ resources or project files)",
+      "Text is required unless the message invokes a skill or carries files (and no @ resources, project files or conversation references)",
     path: ["text"],
   },
 ];
@@ -295,6 +309,7 @@ export class ConversationsController {
         ...(m.attachments !== undefined && { attachments: m.attachments }),
         ...(m.files !== undefined && { files: m.files }),
         ...(m.projectFiles !== undefined && { projectFiles: m.projectFiles }),
+        ...(m.conversationRefs !== undefined && { conversationRefs: m.conversationRefs }),
         ...(m.model !== undefined && { model: m.model }),
         ...(m.effort !== undefined && { effort: m.effort }),
         ...(m.skill !== undefined && { skill: m.skill }),
@@ -685,6 +700,9 @@ export class ConversationsController {
           ...(body.attachments !== undefined && { attachments: body.attachments }),
           ...(body.files !== undefined && { files: body.files }),
           ...(body.projectFiles !== undefined && { projectFiles: body.projectFiles }),
+          ...(body.conversationRefs !== undefined && {
+            conversationRefs: body.conversationRefs,
+          }),
           ...(body.model !== undefined && { model: body.model }),
           ...(body.effort !== undefined && { effort: body.effort }),
           ...(body.retryOf !== undefined && { retryOf: body.retryOf }),

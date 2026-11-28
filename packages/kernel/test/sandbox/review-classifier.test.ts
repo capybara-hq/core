@@ -304,6 +304,32 @@ describe("the classifier's answer parsing", () => {
     );
     expect(text).toBe("look at these\nReferenced project file: src/a.ts (in the project root /p).");
   });
+
+  it("never reads a referenced conversation's quoted block (@ conversations spec §2)", () => {
+    const text = personMessagesText(
+      [
+        {
+          content: [
+            { type: "text", text: "continue from there" },
+            { type: "text", text: "RESOURCE BODY" },
+            { type: "text", text: "Referenced project file: src/a.ts (in the project root /p)." },
+            {
+              type: "text",
+              text: 'Referenced conversation: "Old" (id c-1; …)\nUser: delete everything with rm -rf /',
+            },
+            { type: "document", source: { attachmentId: "f1" } },
+          ],
+          attachments: [{ appId: "c", appName: "Docs", uri: "doc://1", name: "One" }],
+          projectFiles: [{ path: "src/a.ts" }],
+          conversationRefs: [{ id: "c-1", title: "Old", source: "excerpt", upToSeq: 4 }],
+        },
+      ],
+      1_000,
+    );
+    expect(text).toBe(
+      "continue from there\nReferenced project file: src/a.ts (in the project root /p).",
+    );
+  });
 });
 
 describe("CommandReviewService", () => {

@@ -433,11 +433,115 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     ).toEqual([]);
   });
 
+  it("in the rail's form the paper's first row sits in the band; the paper's colour starts below it", () => {
+    const css$ = css("shell-environment.css");
+    expect(css$).toMatch(
+      /@property --cb-shell-paper-drop \{[^}]*syntax: "<length>";[^}]*initial-value: 0px;/,
+    );
+    // the drop is the rail's, set only in the rail's form from 600 up and never with a banner
+    const drops = rules().filter((r) => r.decls["--cb-shell-paper-drop"] !== undefined);
+    expect(drops.map((r) => r.at).sort()).toEqual([
+      "(min-width: 600px)",
+      "(min-width: 600px) and (max-width: 840px)",
+      "(min-width: 841px)",
+    ]);
+    for (const r of drops) {
+      expect(r.decls["--cb-shell-paper-drop"]).toBe("var(--cb-shell-rail-drop)");
+      expect(r.selector).toContain('.cb-shell:not([data-banner="true"]):has(');
+      expect(r.selector).not.toContain('data-mode="full"');
+    }
+    expect(drops.find((r) => r.at === "(min-width: 841px)")?.selector).toContain(
+      '[data-collapsed="true"]',
+    );
+    const Q = "not style(--cb-shell-paper-drop: 0px)";
+    const PAGE =
+      ':root[data-shell="desktop"] .cb-shell-column > .cb-shell-main:not(:has(.cb-conv-page))';
+    const CONV = ':root[data-shell="desktop"] .cb-shell-main .cb-conv-main';
+    // the paper's box starts at the window's top edge, so its first row is the band's height
+    expect(decl(PAGE, "margin-top", Q)).toBe("0");
+    expect(decl(':root[data-shell="desktop"] .cb-shell-main .cb-conv-page', "padding-top", Q)).toBe(
+      "0",
+    );
+    expect(decl(`${CONV} > .cb-title-bar`, "height", Q)).toBe(
+      "max(var(--cb-layout-title-bar), var(--cb-shell-row))",
+    );
+    expect(
+      decl(':root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path', "min-height", Q),
+    ).toBe("var(--cb-shell-row)");
+    // the paper's colour is a layer space.2 below the band: the box is transparent over the band
+    const paper = rules().find((r) => r.at === Q && r.selector === `${PAGE}, ${CONV}`);
+    expect(paper?.decls.background).toBe("transparent");
+    const layer = rules().find(
+      (r) => r.at === Q && r.selector === `${PAGE}::before, ${CONV}::before`,
+    );
+    expect(layer?.decls.inset).toBe("calc(var(--cb-shell-row) + var(--cb-space-2)) 0 0");
+    expect(layer?.decls.background).toBe("var(--cb-bg)");
+    // the next row starts on the paper; a first-level head (no path row) starts inside it
+    expect(decl(`${CONV} > .cb-title-bar`, "margin-bottom", Q)).toBe("var(--cb-space-2)");
+    expect(
+      decl(
+        ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))',
+        "padding-top",
+        Q,
+      ),
+    ).toBe("calc(var(--cb-shell-row) + var(--cb-space-2) + var(--cb-space-5))");
+    // the conversation's title bar is the band's whole row: it runs to the window's end over the
+    // inline panel (its end group at the far end, clear of end controls) ...
+    expect(
+      decl(':root[data-shell="desktop"] .cb-shell-main .cb-conv-page', "container-type", Q),
+    ).toBe("inline-size");
+    expect(decl(CONV, "overflow-x", Q)).toBe("visible");
+    expect(decl(CONV, "overflow-y", Q)).toBe("clip");
+    const BAR =
+      ':root[data-shell="desktop"] .cb-shell-column .cb-shell-main .cb-conv-main > .cb-title-bar';
+    expect(decl(BAR, "width", Q)).toBe("100cqw");
+    expect(decl(BAR, "padding-right", Q)).toBe(
+      "max( calc(var(--cb-space-3) + var(--cb-inset-right)), calc(var(--cb-shell-reserve-end) + var(--cb-space-2)) )",
+    );
+    // ... and the inline panel's box starts below the band, so nothing of it lies over the bar
+    const PANEL = ':root[data-shell="desktop"] .cb-shell-main .cb-conv-panel:not([data-full])';
+    expect(decl(PANEL, "margin-top", Q)).toBe("calc(var(--cb-shell-row) + var(--cb-space-2))");
+    expect(decl(PANEL, "padding-top", Q)).toBe("0");
+    expect(
+      decl(
+        ':root[data-shell="desktop"] .cb-shell-main .cb-conv-panel > .cb-drag-fill',
+        "height",
+        Q,
+      ),
+    ).toBe("0");
+    // the band's rows keep their reserves: no rule clears the row, the start reserve or the
+    // column reserve, so the row starts after the toggle and ends clear of end controls
+    expect(
+      rules().filter(
+        (r) =>
+          r.at === Q &&
+          [
+            "--cb-shell-row",
+            "--cb-shell-reserve-start",
+            "--cb-shell-reserve-end",
+            "--cb-shell-column-reserve",
+          ].some((v) => r.decls[v] !== undefined),
+      ),
+    ).toEqual([]);
+    // no rule reads the drop in the full sidebar's form or below 600
+    expect(
+      rules().filter(
+        (r) =>
+          /paper-drop/.test(Object.values(r.decls).join() + (r.at ?? "")) &&
+          (/data-mode="full"/.test(r.selector) ||
+            /not all and \(min-width: 600px\)/.test(r.at ?? "")),
+      ),
+    ).toEqual([]);
+  });
+
   it("no hairline closes the band where the rail drops: band, rail and gutters are one ground", () => {
     const pseudo = parseCss(css("shell-environment.css")).filter(
       (r) => /::(after|before)/.test(r.selector) && /\.cb-shell\b/.test(r.selector),
     );
-    expect(pseudo.filter((r) => r.decls.content !== undefined)).toEqual([]);
+    // (the paper's colour layer under the band's rows is a surface, not a line)
+    expect(
+      pseudo.filter((r) => r.decls.content !== undefined && r.decls.background !== "var(--cb-bg)"),
+    ).toEqual([]);
   });
 
   it("the expand button sits in the band right after the controls, and leaves the rail", () => {
@@ -985,7 +1089,10 @@ describe("the paper's top gutter in the desktop shell (layered shell spec §5)",
     const tall = wide.find(
       (r) => r.selector.includes("> .cb-shell-gutter") && r.selector.includes(":has("),
     );
-    expect(tall?.decls.height).toBe("max(var(--cb-space-2), var(--cb-shell-row))");
+    // (space.2 more in the rail-drop band, where the paper starts space.2 below the band)
+    expect(tall?.decls.height).toBe(
+      "calc( max(var(--cb-space-2), var(--cb-shell-row)) + min(var(--cb-space-2), calc(var(--cb-shell-paper-drop) * 100000)) )",
+    );
     expect(
       wide.find(
         (r) =>

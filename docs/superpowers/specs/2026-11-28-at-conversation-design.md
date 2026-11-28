@@ -133,7 +133,9 @@ The proposals below were accepted as written, with these rulings on the review's
   partial index `conversation_events_compaction_summary_idx ON conversation_events
   (conversation_id, seq) WHERE type = 'compaction_summary'`, a migration like 0133; the table has no
   `org_id`, so no RLS policy) and the newest `user_message` / `assistant_message` events after its
-  `coversUpToSeq` (or after 0), newest first, at most `REF_TURN_MESSAGES` (12) rows.
+  `coversUpToSeq` (or after 0), newest first, at most `REF_TURN_MESSAGES` (12) rows; only rows
+  with a text block count (a run's tool-only steps are skipped in the query), and "no
+  `user_message` yet" is checked against the whole log, not just those rows.
 - The queue does not take `conversationRefs` (it has no HTTP entry; like project files).
 
 ### 2. Model input: the logged block
@@ -173,15 +175,17 @@ its conversations.events operation (conversationId <id>).
 ### 3. Web: the @ menu and the bubble
 
 - `@` gains a 会话 group after the files and before the connector resources: `GET
-  /orgs/:orgId/conversations?q=<rested query>&limit=6` through a new `defineQuery`
+  /orgs/:orgId/conversations?q=<rested query>&limit=9` through a new `defineQuery`
   (`conversationMentionQuery`, the same debounce and IME hold as the files), the current
-  conversation dropped client-side, at most 5 rows. Rows: `icon: "chats"`, the title (Untitled →
+  conversation and the already referenced ones dropped client-side, at most 5 rows (9 = 5 rows +
+  the current one + up to 3 referenced, so the dropped rows never leave the group short). Rows: `icon: "chats"`, the title (Untitled →
   「未命名会话」), description `<agent name> · <relative time>`; an empty query lists the most
   recent. Picking adds a conversation chip to the attachment strip (`chats` icon, the title);
   ↵ / Backspace rules as for files. ＋ gains no row (decision: `@` is the way in; open to change).
 - The draft identity, retry and restore paths (`ComposerBar` draft, `first-message-attempt.ts`)
   carry `conversationRefs` like `projectFiles`; a refusal marks the refused chip (as
-  `missingProjectFiles` does) with the error's copy.
+  `missingProjectFiles` does) with the error's copy. Retry of a failed run whose reference has
+  become unavailable shows only the conversation's error line (there is no draft chip to mark).
 - Bubble: `userText` shows `content[0]` when `conversationRefs` is present; `BubbleAttachments`
   gains a link chip (`kind: "conversation"`, `href`, `chats` icon, through the DesignProvider's
   `link`), opening `/chat/<id>`; a deleted or archived target opens the not-found / archived page

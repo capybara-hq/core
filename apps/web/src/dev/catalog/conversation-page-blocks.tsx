@@ -802,6 +802,19 @@ function composerMenuBlocks(): ReactNode {
           }}
         />
       </Block>
+      {/* the @ menu's Conversations group after the files (the at-conversation spec §3) */}
+      <Block id="composer-menu-conversations" offsetTop={420}>
+        <ComposerMenuComposer
+          value={`对比一下 @${M.atQuery}`}
+          menu={{
+            kind: "at",
+            groups: menuGroups([...M.at.slice(0, 1), M.conversations]),
+            query: M.atQuery,
+            filter: false,
+            empty: M.empty.at,
+          }}
+        />
+      </Block>
       <Block id="composer-menu-empty" offsetTop={160}>
         <ComposerMenuComposer
           value={`@${M.emptyQuery}`}

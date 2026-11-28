@@ -15,12 +15,14 @@ import {
   Field,
   FileDrop,
   formatDateTime,
+  formatRelative,
   Input,
   isTouchPointer,
   type PickerProps,
   Stack,
   typeBadge,
   useComposerMenu,
+  useNow,
   useTimeZone,
   useToast,
 } from "@capybara-hq/design";
@@ -48,7 +50,7 @@ import {
   connectorDescriptionOf,
   renderConnectorPrompt,
 } from "../../lib/connectors";
-import type { MessageInput } from "../../lib/conversations";
+import { MAX_CONVERSATION_REFS, type MessageInput } from "../../lib/conversations";
 import { focusWhenPossible } from "../../lib/deferred-focus";
 import type { LibraryFileView } from "../../lib/library-files";
 import {
@@ -59,6 +61,7 @@ import {
 } from "../../lib/query/conversation";
 import { libraryFileSearchQuery } from "../../lib/query/library";
 import { useAppMutation } from "../../lib/query/mutation";
+import { CONVERSATION_MENTION_ROWS, conversationMentionQuery } from "../../lib/query/shell";
 import {
   findInvocable,
   type InvocableSkill,
@@ -88,6 +91,20 @@ export interface DraftAttachment {
   name: string;
 }
 
+/** A conversation referenced in the draft (@ conversations spec §3): its id and its title. */
+export interface DraftConversationRef {
+  id: string;
+  /** The title when it was picked; null: untitled (the chip reads "Untitled conversation"). */
+  title: string | null;
+}
+
+/**
+ * Why the kernel refused a referenced conversation (@ conversations spec §1): gone or not the
+ * sender's (`unavailable`), without messages yet (`empty`), or the conversation written in
+ * (`self`).
+ */
+export type RefusedConversationRef = { id: string; why: "unavailable" | "empty" | "self" };
+
 /**
  * `clientMessageId`: `crypto.randomUUID` only exists in secure contexts (HTTPS / localhost);
  * elsewhere the same randomness from `getRandomValues`.
@@ -99,14 +116,15 @@ export function newClientMessageId(): string {
 }
 
 /**
- * A draft's identity: text + resources + files + project files + skill (any change makes it a new
- * message).
+ * A draft's identity: text + resources + files + project files + referenced conversations + skill
+ * (any change makes it a new message).
  */
 const draftKey = (
   text: string,
   attachments: DraftAttachment[],
   files: string[],
   projectFiles: string[],
+  conversationRefs: DraftConversationRef[],
   skill: string | undefined,
 ) =>
   JSON.stringify([
@@ -114,6 +132,7 @@ const draftKey = (
     attachments.map((a) => [a.connectorId, a.uri]),
     files,
     projectFiles,
+    conversationRefs.map((c) => c.id),
     skill ?? null,
   ]);
 
@@ -149,6 +168,39 @@ export function missingProjectFiles(e: unknown, draft: readonly string[]): strin
     }),
   );
   return draft.filter((p) => named.has(normalizeProjectPath(p)));
+}
+
+/**
+ * The draft's referenced conversations a refusal names (`conversation.reference_unavailable`, with
+ * `reason: "empty"` for one without messages, or `conversation.reference_self`), in draft order;
+ * none for another error.
+ */
+export function refusedConversationRefs(
+  e: unknown,
+  draft: readonly DraftConversationRef[],
+): RefusedConversationRef[] {
+  if (
+    !(e instanceof ApiClientError) ||
+    (e.code !== "conversation.reference_unavailable" && e.code !== "conversation.reference_self")
+  )
+    return [];
+  const named = new Map<string, RefusedConversationRef["why"]>();
+  for (const d of e.rawDetails) {
+    const { id, reason } = (d ?? {}) as { id?: unknown; reason?: unknown };
+    if (typeof id !== "string") continue;
+    named.set(
+      id,
+      e.code === "conversation.reference_self"
+        ? "self"
+        : reason === "empty"
+          ? "empty"
+          : "unavailable",
+    );
+  }
+  return draft.flatMap((c) => {
+    const why = named.get(c.id);
+    return why === undefined ? [] : [{ id: c.id, why }];
+  });
 }
 
 /** A slash command: `/<connector slug>:<prompt name>`. */
@@ -196,7 +248,13 @@ type Trigger = { kind: "slash" | "at"; at: number; end: number };
 /** What the composer sends: the message without the switch (the caller adds model / effort). */
 export type ComposerMessage = Pick<
   MessageInput,
-  "text" | "clientMessageId" | "attachments" | "files" | "projectFiles" | "skill"
+  | "text"
+  | "clientMessageId"
+  | "attachments"
+  | "files"
+  | "projectFiles"
+  | "conversationRefs"
+  | "skill"
 > & {
   /**
    * What a pending bubble shows until the log has the message (never sent): the skill's chip
@@ -206,6 +264,8 @@ export type ComposerMessage = Pick<
     skill?: string;
     /** `type`: the file's type badge, as the thread's chip shows it. */
     files: { name: string; kind: "image" | "file"; type?: string }[];
+    /** The referenced conversations, as link chips. Absent: none. */
+    conversations?: DraftConversationRef[];
   };
   /**
    * The draft as it was sent, for a view that outlives this composer (the new conversation's
@@ -227,6 +287,10 @@ export type ComposerDraft = {
   projectFiles?: string[];
   /** Of those, the paths the failed send was refused for (marked on their chips). */
   missing?: string[];
+  /** Referenced conversations (@ conversations spec §3). */
+  conversationRefs?: DraftConversationRef[];
+  /** Of those, the ones the failed send was refused for (marked on their chips). */
+  refusedRefs?: RefusedConversationRef[];
   /** The draft's `clientMessageId`, kept for the retry (the kernel dedupes it). */
   id?: { key: string; id: string };
 };
@@ -411,6 +475,7 @@ export function ComposerBar({
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
+  const te = useTranslations("errors");
   const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -424,6 +489,14 @@ export function ComposerBar({
   const [projectFiles, setProjectFiles] = useState<string[]>(initialDraft?.projectFiles ?? []);
   /** Paths the kernel refused at the last send ({@link missingProjectFiles}). */
   const [missingFiles, setMissingFiles] = useState<readonly string[]>(initialDraft?.missing ?? []);
+  /** Referenced conversations (@ conversations spec §3), in pick order. */
+  const [conversationRefs, setConversationRefs] = useState<DraftConversationRef[]>(
+    initialDraft?.conversationRefs ?? [],
+  );
+  /** Of those, the ones the kernel refused at the last send ({@link refusedConversationRefs}). */
+  const [refusedRefs, setRefusedRefs] = useState<readonly RefusedConversationRef[]>(
+    initialDraft?.refusedRefs ?? [],
+  );
   const [pickingFiles, setPickingFiles] = useState(false);
   /** The device cannot list its project files: the + row shows why, disabled. */
   const [listUnsupported, setListUnsupported] = useState<string | null>(null);
@@ -514,8 +587,12 @@ export function ComposerBar({
     }
   }
 
-  /** `@` resources or project files are attached: they need text (their blocks follow it). */
-  const needsText = attachments.length > 0 || projectFiles.length > 0;
+  /**
+   * `@` resources, project files or conversations are referenced: they need text (their blocks
+   * follow it).
+   */
+  const needsText =
+    attachments.length > 0 || projectFiles.length > 0 || conversationRefs.length > 0;
   // A lone "/" is the menu's trigger, not a message.
   const empty = (value: string) =>
     skill === null && (value === "" || value === "/") && (files.length === 0 || needsText);
@@ -541,12 +618,13 @@ export function ComposerBar({
     const sentSkill = skill;
     const sentAttachments = attachments;
     const sentProjectFiles = projectFiles;
+    const sentRefs = conversationRefs;
     const value = text.trim();
     if (sendDisabled && !empty(value)) onBlocked?.();
     if (drafts.blocking || sendDisabled || resolving.current) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
-    // Files alone can be sent; `@` resources and project files need text (their blocks follow
-    // content[0]).
+    // Files alone can be sent; `@` resources, project files and conversations need text (their
+    // blocks follow content[0]).
     if (empty(value)) return;
     // The built-in /compact command (context compaction spec §4.10), before the skill lookup: no
     // arguments, no user message. A skill chip owns the text after it, so it is not a command then.
@@ -605,6 +683,8 @@ export function ComposerBar({
     setAttachments((cur) => cur.filter((a) => !sentAttachments.includes(a)));
     setProjectFiles((cur) => cur.filter((p) => !sentProjectFiles.includes(p)));
     setMissingFiles([]);
+    setConversationRefs((cur) => cur.filter((c) => !sentRefs.includes(c)));
+    setRefusedRefs([]);
     const taken = drafts.take(sent.map((f) => f.key));
     const restore = () => {
       setText((cur) => (cur.trim() === "" ? sentText : `${sentText}\n${cur}`));
@@ -617,10 +697,14 @@ export function ComposerBar({
         ...sentProjectFiles,
         ...cur.filter((p) => !sentProjectFiles.includes(p)),
       ]);
+      setConversationRefs((cur) => [
+        ...sentRefs,
+        ...cur.filter((c) => !sentRefs.some((s) => s.id === c.id)),
+      ]);
       drafts.restore(taken);
     };
     const message = (text: string, name: string | undefined): ComposerMessage => {
-      const key = draftKey(text, attachments, fileIds, sentProjectFiles, name);
+      const key = draftKey(text, attachments, fileIds, sentProjectFiles, sentRefs, name);
       if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
       return {
         text,
@@ -630,6 +714,7 @@ export function ComposerBar({
         ...(sentProjectFiles.length > 0
           ? { projectFiles: sentProjectFiles.map((path) => ({ path })) }
           : {}),
+        ...(sentRefs.length > 0 ? { conversationRefs: sentRefs.map((c) => ({ id: c.id })) } : {}),
         ...(name !== undefined ? { skill: { name } } : {}),
         // the chip shows the bare name, as the thread's bubble does
         display: {
@@ -641,6 +726,7 @@ export function ComposerBar({
               type: typeBadge(path, ""),
             })),
           ],
+          ...(sentRefs.length > 0 ? { conversations: sentRefs } : {}),
           ...(name !== undefined ? { skill: skillChipLabel(name) } : {}),
         },
         draft: {
@@ -649,6 +735,7 @@ export function ComposerBar({
           attachments: sentAttachments,
           files: taken,
           projectFiles: sentProjectFiles,
+          conversationRefs: sentRefs,
           id: draft.current,
         },
       };
@@ -674,6 +761,7 @@ export function ComposerBar({
         restore();
         drafts.markFailed(r.error);
         setMissingFiles(missingProjectFiles(r.error, sentProjectFiles));
+        setRefusedRefs(refusedConversationRefs(r.error, sentRefs));
       }
     } catch (e) {
       restore();
@@ -870,6 +958,8 @@ export function ComposerBar({
   const atScope = menu?.kind === "at" ? menu.scope : undefined;
   const showFiles = menu?.kind === "at" && (atScope === undefined || atScope === "files");
   const showResources = menu?.kind === "at" && atScope !== "files";
+  // the sender's own conversations (@ conversations spec §3): only in the whole `@` menu
+  const showConversations = menu?.kind === "at" && atScope === undefined;
   const resourcesQ = useQuery({
     ...connectorResourcesQuery(orgId, searched),
     enabled: showResources,
@@ -882,6 +972,12 @@ export function ComposerBar({
     enabled: showFiles,
     placeholderData: keepPreviousData,
   });
+  // The sender's conversations whose title matches the same rested query, their own cache entry.
+  const conversationsQ = useQuery({
+    ...conversationMentionQuery(orgId, searched),
+    enabled: showConversations,
+    placeholderData: keepPreviousData,
+  });
   // The query the shown files answer (placeholder rows are an earlier query's): it names the group.
   const [filesFor, setFilesFor] = useState("");
   const filesSettled = filesQ.data !== undefined && !filesQ.isPlaceholderData;
@@ -889,13 +985,15 @@ export function ComposerBar({
     if (filesSettled) setFilesFor(searched);
   }, [filesSettled, searched]);
   const timeZone = useTimeZone();
+  const now = useNow();
   // The rows are an earlier query's (the query has not rested yet, or its answer is on its way):
   // the menu filters them by the query itself, so ↵ never attaches a row the query no longer
   // matches.
   const staleResources =
     searched !== atQuery ||
     (showResources && resourcesQ.isPlaceholderData) ||
-    (showFiles && filesQ.isPlaceholderData);
+    (showFiles && filesQ.isPlaceholderData) ||
+    (showConversations && conversationsQ.isPlaceholderData);
   const connectorById = new Map<string, ConnectorSummary>(
     (connectorList ?? []).map((c) => [c.id, c]),
   );
@@ -1050,18 +1148,64 @@ export function ComposerBar({
   };
 
   /**
-   * The `@` menu: the library's files, then the kernel's resource matches grouped by connector
-   * (only the files for `"files"`, only one connector's resources for a connector scope).
+   * The `@` menu's conversations group (@ conversations spec §3): the sender's matching
+   * conversations, newest first, without the one written in and those already referenced, at most
+   * {@link CONVERSATION_MENTION_ROWS}; with {@link MAX_CONVERSATION_REFS} referenced the rows are
+   * disabled and say why.
+   */
+  const conversationsGroup = (): ComposerMenuGroup[] => {
+    const list = (conversationsQ.data?.conversations ?? [])
+      .filter((c) => c.id !== conversationId && !conversationRefs.some((r) => r.id === c.id))
+      .slice(0, CONVERSATION_MENTION_ROWS);
+    if (list.length === 0) return [];
+    const full = conversationRefs.length >= MAX_CONVERSATION_REFS;
+    return [
+      {
+        id: "conversations",
+        label: t("composerMenu.conversations"),
+        items: list.map((c): ComposerMenuItem => {
+          const when = formatRelative(c.updatedAt, locale, now);
+          return {
+            id: `conversation:${c.id}`,
+            label: c.title || t("composerMenu.untitledConversation"),
+            icon: "chats",
+            ...(full
+              ? {
+                  disabled: true,
+                  description: t("composerMenu.conversationLimit", { max: MAX_CONVERSATION_REFS }),
+                }
+              : { description: c.agent ? `${c.agent.name} · ${when}` : when }),
+            onSelect: () => {
+              picked();
+              dismissSuggestion();
+              setConversationRefs((cur) =>
+                cur.some((r) => r.id === c.id) || cur.length >= MAX_CONVERSATION_REFS
+                  ? cur
+                  : [...cur, { id: c.id, title: c.title }],
+              );
+            },
+          };
+        }),
+      },
+    ];
+  };
+
+  /**
+   * The `@` menu: the library's files, the sender's conversations, then the kernel's resource
+   * matches grouped by connector (only the files for `"files"`, only one connector's resources
+   * for a connector scope).
    */
   const atContent = (scope: MenuState["scope"]): ComposerMenuGroup[] => {
     const files = showFiles ? filesGroup() : [];
     if (scope === "files") return files;
+    const conversations = showConversations ? conversationsGroup() : [];
     const only = typeof scope === "object" ? scope.connectorId : undefined;
     const list = (resources?.resources ?? [])
       .filter((r) => only === undefined || r.connectorId === only)
       .slice(0, MAX_RESOURCE_ROWS);
     return [
       ...files,
+      ...conversations,
       ...byConnector(list).map((g) => ({
         id: `resources-${g.id}`,
         label: g.label,
@@ -1221,14 +1365,25 @@ export function ComposerBar({
   // source it lists failed (then the empty line is the reason).
   const libraryFailed = showFiles && filesQ.isError;
   const resourcesFailed = showResources && resourcesQ.isError;
+  const conversationsFailed = showConversations && conversationsQ.isError;
   const resting = searched !== atQuery;
   const atLoading =
     (showFiles && !filesQ.isError && (filesQ.isFetching || resting)) ||
+    (showConversations && !conversationsQ.isError && (conversationsQ.isFetching || resting)) ||
     (showResources && !resourcesQ.isError && (resourcesQ.isFetching || resting));
+  const anyFailed = libraryFailed || resourcesFailed || conversationsFailed;
   const everyFailed =
-    (libraryFailed || resourcesFailed) &&
+    anyFailed &&
     (libraryFailed || !showFiles) &&
+    (conversationsFailed || !showConversations) &&
     (resourcesFailed || !showResources);
+  /** The first failed source's reason as the menu says it (files, conversations, resources). */
+  const failure = (): string =>
+    libraryFailed
+      ? t("composerMenu.libraryFailed", { reason: errorMessage(filesQ.error) })
+      : conversationsFailed
+        ? t("composerMenu.conversationsFailed", { reason: errorMessage(conversationsQ.error) })
+        : t("composerMenu.resourcesFailed", { reason: errorMessage(resourcesQ.error) });
   const menuProps: ComposerMenuProps | null =
     menu === null
       ? null
@@ -1242,7 +1397,13 @@ export function ComposerBar({
           loading: menu.kind === "at" && atLoading,
           empty:
             menu.kind === "at" && everyFailed
-              ? errorMessage(resourcesFailed ? resourcesQ.error : filesQ.error)
+              ? errorMessage(
+                  resourcesFailed
+                    ? resourcesQ.error
+                    : conversationsFailed
+                      ? conversationsQ.error
+                      : filesQ.error,
+                )
               : noInvocable && commandGroup === null
                 ? guidance
                 : menu.kind === "at"
@@ -1256,14 +1417,8 @@ export function ComposerBar({
                   : t("composerMenu.noMatch"),
           // one source failed and the other did not (both failing is the empty line above): the
           // failure is said under the rows of the one that answered
-          ...(menu.kind === "at" && !everyFailed && (libraryFailed || resourcesFailed)
-            ? {
-                notice: {
-                  text: libraryFailed
-                    ? t("composerMenu.libraryFailed", { reason: errorMessage(filesQ.error) })
-                    : t("composerMenu.resourcesFailed", { reason: errorMessage(resourcesQ.error) }),
-                },
-              }
+          ...(menu.kind === "at" && !everyFailed && anyFailed
+            ? { notice: { text: failure() } }
             : {}),
           ...(noInvocable
             ? commandGroup !== null
@@ -1290,6 +1445,12 @@ export function ComposerBar({
 
   const missingArgs =
     argsFor?.arguments.filter((a) => a.required && (args[a.name] ?? "").trim() === "") ?? [];
+
+  /** A refused conversation chip's line: the refusal's own copy (`errors.conversation.*`). */
+  const refusedRefCopy = (why: RefusedConversationRef["why"]): string =>
+    why === "self"
+      ? te("conversation.reference_self")
+      : te(`conversation.reference_unavailable.${why === "empty" ? "empty" : "default"}`);
 
   const strip: AttachmentStripItem[] = [
     ...files.map((f): AttachmentStripItem => {
@@ -1322,6 +1483,20 @@ export function ComposerBar({
         },
       }),
     ),
+    ...conversationRefs.map((c): AttachmentStripItem => {
+      const why = refusedRefs.find((r) => r.id === c.id)?.why;
+      return {
+        id: `conversation:${c.id}`,
+        kind: "conversation",
+        // empty: the design draws "Untitled conversation"
+        name: c.title ?? "",
+        ...(why !== undefined ? { error: refusedRefCopy(why) } : {}),
+        onRemove: () => {
+          setConversationRefs((list) => list.filter((x) => x.id !== c.id));
+          setRefusedRefs((list) => list.filter((x) => x.id !== c.id));
+        },
+      };
+    }),
     ...attachments.map(
       (a): AttachmentStripItem => ({
         id: `@${a.connectorId}:${a.uri}`,

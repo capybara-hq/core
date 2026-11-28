@@ -17,7 +17,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { AutomationFirer } from "../../src/automations/fire.js";
 import { AutomationStore } from "../../src/automations/store.js";
-import { projectFileText } from "../../src/conversations/conversations.service.js";
+import {
+  ConversationsService,
+  projectFileText,
+} from "../../src/conversations/conversations.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { createKv } from "../../src/ctx/kv.js";
@@ -1973,6 +1976,56 @@ describe("reconstructRequest：基线零漂移", () => {
     } finally {
       stat.mockRestore();
       kernelRead.mockRestore();
+    }
+  });
+
+  it("referenced conversations: their logged blocks before an uploaded file's, zero drift, nothing read at build time", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+    // the referenced conversation: one real exchange
+    const ref = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, ref, "echo:the pricing thread");
+    await waitForTerminal(db, ref, 1, 30_000);
+    const conv = await createConv(owner, orgId, agentId);
+    const id = await attach("notes.txt", Buffer.from("notes", "utf8"), "text/plain");
+    reset();
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+      payload: { text: "echo:same for EU", files: [id], conversationRefs: [{ id: ref }] },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const message = (await eventsOf(db, conv)).find((e) => e.type === "user_message") as Extract<
+      ConversationEvent,
+      { type: "user_message" }
+    >;
+    expect(message.payload.conversationRefs).toMatchObject([{ id: ref, source: "excerpt" }]);
+    expect(message.payload.content[0]).toEqual({ type: "text", text: "echo:same for EU" });
+    const block = (message.payload.content[1] as { type: string; text: string }).text;
+    expect(block).toContain(`Referenced conversation: "`);
+    expect(block).toContain("User: echo:the pricing thread");
+    expect(block).toContain(`conversations.events operation (conversationId ${ref}).`);
+    expect(message.payload.content[2]).toMatchObject({
+      type: "document",
+      source: { kind: "ref", fileId: id },
+    });
+    // the request carries the logged block as it is
+    expect(JSON.stringify(sent[0]?.messages)).toContain(JSON.stringify(block).slice(1, 200));
+    // the replay rebuilds every request from the log alone: the referenced conversation is never
+    // read again, even after it changes
+    await postMessage(owner, orgId, ref, "echo:a later turn");
+    await waitForTerminal(db, ref, 2, 30_000);
+    const read = vi.spyOn(
+      k.app.get(ConversationsService) as unknown as { readConversationRef: () => unknown },
+      "readConversationRef",
+    );
+    try {
+      // `sent` also holds the later turn's request: this conversation made the first one only
+      await expectZeroDrift(conv, await snapshotOf(conv), 1);
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
     }
   });
 

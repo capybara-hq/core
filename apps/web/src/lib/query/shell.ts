@@ -4,6 +4,7 @@ import {
   type ConversationSearch,
   listConversationGroups,
   listConversations,
+  MAX_CONVERSATION_REFS,
 } from "../conversations";
 import { listInbox } from "../inbox";
 import { getMe, type Me } from "../session";
@@ -126,6 +127,33 @@ export const drawerRecentQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).conversationList("recent"),
     fn: () => listConversations(orgId, { limit: CONVERSATION_PAGE }),
+    freshness: "live",
+  });
+
+/** At most this many conversations the composer's `@` menu lists. */
+export const CONVERSATION_MENTION_ROWS = 5;
+
+/**
+ * How many conversations the composer's `@` search reads: the rows it shows plus the ones it
+ * drops client-side (the conversation being written in and up to
+ * {@link MAX_CONVERSATION_REFS} already referenced), so a full menu stays full.
+ */
+export const CONVERSATION_MENTION_LIMIT = CONVERSATION_MENTION_ROWS + 1 + MAX_CONVERSATION_REFS;
+
+/**
+ * The composer `@` menu's conversations group (@ conversations spec §3): my newest conversations
+ * whose title contains `q` (all of them, newest first, for a blank `q`), at most
+ * {@link CONVERSATION_MENTION_LIMIT}. Under the list prefix, so a rename or a new conversation
+ * refreshes it.
+ */
+export const conversationMentionQuery = (orgId: string, q: string) =>
+  defineQuery({
+    key: keys.org(orgId).conversationList(JSON.stringify(["mention", q.trim()])),
+    fn: () =>
+      listConversations(orgId, {
+        limit: CONVERSATION_MENTION_LIMIT,
+        ...(q.trim() !== "" ? { q } : {}),
+      }),
     freshness: "live",
   });
 

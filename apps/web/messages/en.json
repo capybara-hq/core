@@ -192,7 +192,12 @@
         "default": "A referenced project file is no longer available. Check that it still exists in the project, then remove it and try again.",
         "no_project": "This conversation has no device project, so it can't reference project files. Remove them, or start the conversation in a project."
       },
-      "busy": "The conversation is busy. Wait for the current run to finish."
+      "busy": "The conversation is busy. Wait for the current run to finish.",
+      "reference_unavailable": {
+        "default": "A referenced conversation is no longer available. Remove it and try again.",
+        "empty": "A referenced conversation has no messages yet. Remove it and try again."
+      },
+      "reference_self": "A conversation can't reference itself. Remove that reference."
     },
     "background_task": {
       "not_found": "The background task does not exist or has been cleaned up.",
@@ -1551,7 +1556,7 @@
     "attachments": "Attachments",
     "removeAttachment": "Remove {name}",
     "attachLimit": "At most {max} attachments per message.",
-    "referencesNeedText": "Write a message to send with the referenced resources or project files.",
+    "referencesNeedText": "Write a message to send with the referenced resources, project files or conversations.",
     "projectFileMissing": "{path} is no longer in the project. Remove it or pick it again.",
     "noInvocable": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills before you can invoke it with /.",
     "noInvocableAction": "Choose skills",
@@ -1832,6 +1837,9 @@
       "library": "File library",
       "recentFiles": "Recent files",
       "matchingFiles": "Matching files",
+      "conversations": "Conversations",
+      "untitledConversation": "Untitled conversation",
+      "conversationLimit": "At most {max} conversations per message",
       "fileOrigin": {
         "upload": "Uploaded {date}",
         "delivered": "Delivered {date}",
@@ -1839,8 +1847,9 @@
       },
       "fileByAgent": "{agent} · {how}",
       "noFiles": "No matching files",
-      "noFilesOrResources": "No matching files or resources",
+      "noFilesOrResources": "No matching files, conversations or resources",
       "libraryFailed": "The file library could not be read: {reason}",
+      "conversationsFailed": "Conversations could not be read: {reason}",
       "resourcesFailed": "Connector resources could not be read: {reason}",
       "resources": "Connector resources",
       "projectFiles": "Project files",
