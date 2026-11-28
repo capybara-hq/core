@@ -221,7 +221,23 @@ async function expectNoSuggestion(id: string): Promise<void> {
 
 describe("prompt suggestions end to end", () => {
   it("a completed web run sends one suggestion on the stream; a later open gets it too", async () => {
-    const id = await createConv(owner, orgId, agentId);
+    // one builtin with an input schema whose keys jsonb reorders (`required` before `properties`)
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Reader",
+          instructions: "Be helpful.",
+          model: { provider: "model-fake", model: "fake-1" },
+          disabledTools: builtinsOff("AskUserQuestion"),
+        },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const reader = (res.json() as { agent: { id: string } }).agent.id;
+    const id = await createConv(owner, orgId, reader);
     const live = await open(id);
     await postMessage(owner, orgId, id, "suggest:Run the tests");
     const [end] = await waitForTerminal(db, id);
@@ -255,6 +271,13 @@ describe("prompt suggestions end to end", () => {
     expect(side.messages[n + 1]?.role).toBe("user");
     expect(side.system).toEqual(last.system);
     expect(side.tools).toEqual(last.tools);
+    expect(last.tools.map((t) => t.name)).toEqual(["AskUserQuestion"]);
+    // byte for byte with key order: the provider renders the prompt from this JSON, and a tool
+    // schema read back from jsonb in another key order missed the whole prompt cache
+    expect(JSON.stringify([side.system, side.tools, side.messages.slice(0, n)])).toBe(
+      JSON.stringify([last.system, last.tools, last.messages]),
+    );
+    expect(side.cacheTtl).toBe(last.cacheTtl);
     expect(side.toolChoice).toEqual(last.toolChoice);
     expect(side.params).toEqual(last.params);
     expect(side.purpose).toBe("suggestion");
