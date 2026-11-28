@@ -925,7 +925,7 @@ export interface ToolOutputsTable {
 export interface ToolSpecsTable {
   spec_hash: string;
   spec: Json<unknown>;
-  /** 0199: the definition's JSON text as sent (key order kept); null on older rows. */
+  /** 0200: the definition's JSON text as sent (key order kept); null on older rows. */
   spec_text: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Ts;
 }
