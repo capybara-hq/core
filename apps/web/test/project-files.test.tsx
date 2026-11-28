@@ -1,10 +1,11 @@
-import { typeBadge } from "@capybara-hq/design";
+import { focusComposerEnd } from "@capybara-hq/design/testing";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { composerBox, composerTokens, draftText, sendComposer } from "./support/composer";
 import {
   AGENTS,
   CONV,
@@ -23,10 +24,10 @@ import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 
 /**
- * Project files (composer menus §5, plan Task 6): the + menu's Project files row opens the picker
- * on the conversation's device project; chosen files become chips, go out as `projectFiles` and
- * need text like `@` resources; the bubble shows a logged message's project files as chips, never their
- * English blocks.
+ * Project files (composer menus §5, composer inline tokens spec): the + menu's Project files row
+ * opens the picker on the conversation's device project; chosen files become `projectFile` tokens
+ * at the caret and go out in `tokens` (one U+FFFC each in the text); a refusal marks its token;
+ * the bubble shows an older logged message's project files as chips, never their English blocks.
  */
 
 const params = { conversationId: "c1" };
@@ -92,13 +93,12 @@ function chatApi(
     [`GET ${BASE}/files`]: () => json(200, { files: [], next: null }),
     [`GET ${BASE}/subagents`]: () => json(200, { subagents: [] }),
     [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
+    [`GET ${ORG}/agents/ag1/mentionable-connectors`]: () => json(200, { connectors: [] }),
     [`GET ${FILES}`]: listing,
     ...extra,
   });
 }
 
-const input = (m = en) =>
-  screen.getByRole("combobox", { name: m.chat.inputLabel, hidden: true }) as HTMLTextAreaElement;
 /** The + button (named by the design: Attach files, in zh too). */
 const plus = (m = en) =>
   screen.getByRole("button", { name: m === zh ? "添加附件" : "Attach files" });
@@ -121,7 +121,29 @@ async function reference(user: ReturnType<typeof userEvent.setup>, names: string
 /** A refusal of the send, as the kernel answers it (422). */
 const refusal = (code: string, details: unknown[]) => () =>
   json(422, { error: { code, message: "refused", details } });
-const missingText = (path: string) => en.chat.projectFileMissing.replace("{path}", path);
+const MARK = "\uFFFC";
+/**
+ * Types `text` after the draft and sends it. jsdom puts the caret at the start when the picker
+ * hands the focus back, so the caret goes to the end first, where a browser keeps it.
+ */
+const sendAfter = (text: string) => {
+  focusComposerEnd(composerBox());
+  sendComposer(text);
+};
+/** The draft's project file token named `path`, as drawn. */
+const tokenOf = (path: string) =>
+  screen.getByRole("img", { name: new RegExp(`^Project file: ${path}`) });
+/** The refusal line (the fail Callout) once it shows. */
+const refusalLine = () =>
+  vi.waitFor(() => {
+    const el = [...document.querySelectorAll('[data-part="callout"]')].find(
+      (c) => c.getAttribute("data-tone") === "fail",
+    );
+    if (!el) throw new Error("no refusal line");
+    return el as HTMLElement;
+  });
+const posted = (calls: Call[]) =>
+  calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
 
 beforeEach(() => {
   params.conversationId = "c1";
@@ -149,7 +171,7 @@ describe("the project file picker", () => {
     ).toBeNull();
   });
 
-  it("opens on the root, navigates folders, filters, keeps a selection across folders and adds chips", async () => {
+  it("opens on the root, navigates folders, filters, keeps a selection across folders and adds tokens", async () => {
     const calls = chatApi();
     await renderChatRoute();
     await screen.findByText("hi");
@@ -175,45 +197,40 @@ describe("the project file picker", () => {
     await user.click(within(dialog).getByRole("option", { name: "app.ts" }));
     await user.click(within(dialog).getByRole("button", { name: "Reference" }));
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    const strip = screen.getByRole("group", { name: en.chat.files });
-    expect(within(strip).getByText("README.md")).toBeTruthy();
-    // the whole path names the chip (src/index.ts and test/index.ts are told apart), no size
-    expect(within(strip).getByText("src/app.ts")).toBeTruthy();
-    expect(strip.textContent).not.toMatch(/\d\s*B\b/);
-    // a chip's × removes it
-    await user.click(within(strip).getByRole("button", { name: "Remove README.md" }));
-    expect(within(strip).queryByText("README.md")).toBeNull();
-    expect(within(strip).getByRole("button", { name: "Remove src/app.ts" })).toBeTruthy();
+    // the whole path names each token (src/index.ts and test/index.ts are told apart); no strip
+    expect(tokenOf("README.md")).toBeTruthy();
+    expect(tokenOf("src/app.ts")).toBeTruthy();
+    expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull();
   });
 
-  it("sends the paths as projectFiles; without text send is disabled with the hint", async () => {
+  it("project file picks insert tokens", async () => {
     const calls = chatApi({
       [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(9, "x") }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.click(plus());
-    await user.click(await projectRow());
-    const dialog = await picker();
-    await user.click(await within(dialog).findByRole("option", { name: "README.md" }));
-    await user.click(within(dialog).getByRole("button", { name: "Reference" }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect((sendButton() as HTMLButtonElement).disabled).toBe(true);
-    // the hint stands in the empty input (the composer's placeholder)
-    expect(input().getAttribute("placeholder")).toBe(en.chat.referencesNeedText);
-    await user.type(input(), "read it{Enter}");
-    const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
-    expect(post).toHaveLength(1);
-    expect(bodyOf(post[0])).toMatchObject({
-      text: "read it",
-      projectFiles: [{ path: "README.md" }],
+    await reference(user, ["README.md", "package.json"]);
+    expect(composerTokens()).toHaveLength(2);
+    // tokens alone can be sent: each renders a placeholder
+    expect((sendButton() as HTMLButtonElement).disabled).toBe(false);
+    sendAfter("read them");
+    await vi.waitFor(() => expect(posted(calls)).toHaveLength(1));
+    const body = bodyOf(posted(calls)[0]) as { text: string; tokens: unknown[] };
+    expect(body.text.split(MARK).length - 1).toBe(body.tokens.length);
+    expect(body).toMatchObject({
+      text: `${MARK} ${MARK} read them`,
+      tokens: [
+        { type: "projectFile", path: "README.md" },
+        { type: "projectFile", path: "package.json" },
+      ],
     });
-    // the chips leave with the message
-    await vi.waitFor(() => expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull());
+    expect(body).not.toHaveProperty("projectFiles");
+    // the tokens leave with the message
+    await vi.waitFor(() => expect(composerTokens()).toHaveLength(0));
   });
 
-  it("a refused path stays as a chip that says it is gone", async () => {
+  it("a refused path marks its token and says it is gone", async () => {
     chatApi({
       [`POST ${BASE}/messages`]: () =>
         json(422, {
@@ -227,17 +244,14 @@ describe("the project file picker", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.click(plus());
-    await user.click(await projectRow());
-    const dialog = await picker();
-    await user.click(await within(dialog).findByRole("option", { name: "README.md" }));
-    await user.click(within(dialog).getByRole("button", { name: "Reference" }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await user.type(input(), "read it{Enter}");
-    expect(
-      await screen.findByText(en.chat.projectFileMissing.replace("{path}", "README.md")),
-    ).toBeTruthy();
-    expect(input().value).toBe("read it");
+    await reference(user, ["README.md"]);
+    sendAfter("read it");
+    const line = await refusalLine();
+    expect(line.textContent).toContain(
+      `README.md can't be used: ${en.errors.conversation.project_file_unavailable.default}`,
+    );
+    expect(tokenOf("README.md").getAttribute("data-state")).toBe("refused");
+    expect(draftText()).toBe("@README.md read it");
   });
 
   it("the + row is hidden on someone else's conversation (the listing is the owner's)", async () => {
@@ -308,7 +322,7 @@ describe("the project file picker", () => {
     expect(await within(dialog).findByRole("option", { name: "README.md" })).toBeTruthy();
   });
 
-  it("a path leaving the project marks its chip (paths compared normalized); a new pick clears the marks", async () => {
+  it("a path leaving the project marks its token (paths compared normalized); Remove takes it out", async () => {
     chatApi({
       [`POST ${BASE}/messages`]: refusal("device.path_outside_project", [{ path: "./README.md" }]),
     });
@@ -316,19 +330,13 @@ describe("the project file picker", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await reference(user, ["README.md"]);
-    await user.type(input(), "read it{Enter}");
-    expect(await screen.findByText(missingText("README.md"))).toBeTruthy();
-    // picked again: the marks go
-    await user.click(plus());
-    await user.click(await projectRow());
-    const dialog = await picker();
-    await within(dialog).findByRole("option", { name: "README.md" });
-    await user.click(within(dialog).getByRole("button", { name: "Reference" }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.queryByText(missingText("README.md"))).toBeNull();
-    expect(
-      within(screen.getByRole("group", { name: en.chat.files })).getByText("README.md"),
-    ).toBeTruthy();
+    sendAfter("read it");
+    const line = await refusalLine();
+    expect(line.textContent).toContain(en.errors.device.path_outside_project);
+    expect(tokenOf("README.md").getAttribute("data-state")).toBe("refused");
+    await user.click(within(line).getByRole("button", { name: "Remove" }));
+    await vi.waitFor(() => expect(composerTokens()).toHaveLength(0));
+    expect(draftText()).toBe("read it");
   });
 
   it.each(["zh", "en"] as const)(
@@ -349,7 +357,7 @@ describe("the project file picker", () => {
       await user.click(await within(dialog).findByRole("option", { name: "README.md" }));
       await user.click(within(dialog).getAllByRole("button").at(-1) as HTMLElement);
       await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-      await user.type(input(m), "read it{Enter}");
+      sendAfter("read it");
       const copy = m.errors.conversation.project_file_unavailable;
       expect(await screen.findByText(copy.no_project)).toBeTruthy();
       expect(screen.queryByText(copy.default)).toBeNull();
@@ -380,15 +388,18 @@ describe("the project file picker", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Retry" }));
     const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
+    // an older message's references follow its text as tokens
     expect(bodyOf(post[0])).toMatchObject({
-      text: "look",
+      text: `look ${MARK}${MARK}`,
       retryOf: 1,
-      attachments: [{ connectorId: "k1", uri: "docs://h" }],
-      projectFiles: [{ path: "src/app.ts" }],
+      tokens: [
+        { type: "resource", connectorId: "k1", uri: "docs://h" },
+        { type: "projectFile", path: "src/app.ts" },
+      ],
     });
   });
 
-  it("the pending bubble names each project file by its whole path with its type badge", async () => {
+  it("the pending bubble draws each project file token by its whole path", async () => {
     chatApi({ [`POST ${BASE}/messages`]: () => new Promise<Response>(() => {}) });
     await renderChatRoute();
     await screen.findByText("hi");
@@ -400,14 +411,14 @@ describe("the project file picker", () => {
     await user.click(await within(dialog).findByRole("option", { name: "app.ts" }));
     await user.click(within(dialog).getByRole("button", { name: "Reference" }));
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await user.type(input(), "read it{Enter}");
+    sendAfter("read it");
     const bubble = await vi.waitFor(() => {
       const el = document.querySelector("[data-pending]");
       if (!el) throw new Error("no pending bubble");
       return el as HTMLElement;
     });
-    const chip = within(bubble).getByText("src/app.ts").closest('[data-part="attachment"]');
-    expect(chip?.querySelector(".cb-type-badge")?.textContent).toBe(typeBadge("src/app.ts", ""));
+    expect(within(bubble).getByRole("img", { name: "Project file: src/app.ts" })).toBeTruthy();
+    expect(bubble.textContent).toContain("read it");
   });
 
   it("a device that cannot list closes the picker, says why and disables the row", async () => {
@@ -447,10 +458,11 @@ describe("a new conversation in a project", () => {
       json(200, permissionPreview({ deviceId: "e1" })),
     [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [], next: null }),
     [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
+    [`GET ${ORG}/agents/ag1/mentionable-connectors`]: () => json(200, { connectors: [] }),
     [`GET ${FILES}`]: listing,
   });
 
-  it("the create body carries the project and the project files", async () => {
+  it("the create body carries the project and the project file tokens", async () => {
     resetNavigation("/");
     const calls = stubApi({
       ...newRoutes(),
@@ -476,12 +488,12 @@ describe("a new conversation in a project", () => {
     await user.click(await within(dialog).findByRole("option", { name: "package.json" }));
     await user.click(within(dialog).getByRole("button", { name: "Reference" }));
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await user.type(input(), "go{Enter}");
+    sendAfter("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
       deviceId: "e1",
       project: "core",
-      message: { text: "go", projectFiles: [{ path: "package.json" }] },
+      message: { text: `${MARK} go`, tokens: [{ type: "projectFile", path: "package.json" }] },
     });
   });
 });
@@ -505,6 +517,7 @@ describe("a new conversation in a project: refusals and project changes", () => 
       json(200, permissionPreview({ deviceId: "e1" })),
     [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [], next: null }),
     [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
+    [`GET ${ORG}/agents/ag1/mentionable-connectors`]: () => json(200, { connectors: [] }),
     [`GET ${FILES}`]: listing,
     ...extra,
   });
@@ -516,7 +529,7 @@ describe("a new conversation in a project: refusals and project changes", () => 
     await user.click(await screen.findByRole("menuitemradio", { name }));
   };
 
-  it("a refused create marks the chip in the composer it comes back to", async () => {
+  it("a refused create marks the token in the composer it comes back to", async () => {
     resetNavigation("/");
     const r = routes({
       [`POST ${ORG}/conversations/first-message`]: refusal(
@@ -529,13 +542,15 @@ describe("a new conversation in a project: refusals and project changes", () => 
     const user = userEvent.setup();
     await pickProject(user, "core");
     await reference(user, ["package.json"]);
-    await user.type(input(), "go{Enter}");
-    expect(await screen.findByText(missingText("package.json"))).toBeTruthy();
-    expect(input().value).toBe("go");
+    sendAfter("go");
+    const line = await refusalLine();
+    expect(line.textContent).toContain("package.json can't be used");
+    expect(tokenOf("package.json").getAttribute("data-state")).toBe("refused");
+    expect(draftText()).toBe("@package.json go");
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it("switching the project drops the chips", async () => {
+  it("switching the project drops the tokens", async () => {
     resetNavigation("/");
     const r = routes();
     stubApi(r);
@@ -543,11 +558,9 @@ describe("a new conversation in a project: refusals and project changes", () => 
     const user = userEvent.setup();
     await pickProject(user, "core");
     await reference(user, ["README.md"]);
-    expect(
-      within(screen.getByRole("group", { name: en.chat.files })).getByText("README.md"),
-    ).toBeTruthy();
+    expect(composerTokens()).toHaveLength(1);
     await pickProject(user, "web");
-    await vi.waitFor(() => expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull());
+    await vi.waitFor(() => expect(composerTokens()).toHaveLength(0));
   });
 });
 

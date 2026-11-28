@@ -3,6 +3,7 @@
 import {
   type BubbleAttachment,
   BubbleAttachments,
+  type ComposerSegment,
   QueuePaused,
   Stack,
   Text,
@@ -25,9 +26,9 @@ export type PendingSend = {
   clientMessageId: string;
   text: string;
   skill?: string;
+  /** The sentence with its inline tokens (absent: `text` alone). */
+  segments?: ComposerSegment[];
   files: { name: string; kind: "image" | "file"; type?: string }[];
-  /** The referenced conversations (link chips after the files). */
-  conversations?: { id: string; title: string | null }[];
 };
 
 /** The `clientMessageId`s of the log's user messages. */
@@ -57,8 +58,8 @@ export function usePendingSends(events: readonly ConversationEvent[] | undefined
       clientMessageId: m.clientMessageId,
       text: m.text,
       ...(m.display?.skill !== undefined ? { skill: m.display.skill } : {}),
+      ...(m.display?.segments !== undefined ? { segments: m.display.segments } : {}),
       files: m.display?.files ?? [],
-      ...(m.display?.conversations !== undefined ? { conversations: m.display.conversations } : {}),
     };
     setList((cur) => [...cur.filter((x) => x.clientMessageId !== p.clientMessageId), p]);
   }, []);
@@ -77,31 +78,21 @@ export function PendingBubbles({ items }: { items: readonly PendingSend[] }) {
       {items.map((p) => (
         <div key={p.clientMessageId} data-pending={p.clientMessageId}>
           <UserBubble
-            text={p.text}
+            {...(p.segments !== undefined ? { segments: p.segments } : { text: p.text })}
             queued
             {...(p.skill !== undefined ? { skill: p.skill } : {})}
-            {...(p.files.length > 0 || (p.conversations?.length ?? 0) > 0
+            {...(p.files.length > 0
               ? {
                   attachments: (
                     <BubbleAttachments
-                      items={[
-                        ...p.files.map(
-                          (f, i): BubbleAttachment => ({
-                            id: `${p.clientMessageId}:${i}`,
-                            kind: f.kind,
-                            name: f.name,
-                            ...(f.type !== undefined ? { type: f.type } : {}),
-                          }),
-                        ),
-                        ...(p.conversations ?? []).map(
-                          (c): BubbleAttachment => ({
-                            id: `${p.clientMessageId}:conversation:${c.id}`,
-                            kind: "conversation",
-                            name: c.title ?? "",
-                            href: `/chat/${encodeURIComponent(c.id)}`,
-                          }),
-                        ),
-                      ]}
+                      items={p.files.map(
+                        (f, i): BubbleAttachment => ({
+                          id: `${p.clientMessageId}:${i}`,
+                          kind: f.kind,
+                          name: f.name,
+                          ...(f.type !== undefined ? { type: f.type } : {}),
+                        }),
+                      )}
                     />
                   ),
                 }

@@ -439,14 +439,22 @@ export const keys = {
         "connectorMyPolicies",
         connectorId,
       ],
+      /** The connectors' prompts (the `/` menu). */
+      connectorPrompts: (): readonly unknown[] => [...all, "connectorItems", "prompts"],
       /**
-       * The connectors' prompts (`/` menu) or resources (`@` menu; one entry per search text, all
-       * under the `resources` prefix).
+       * One connector's resources (the `@` menu's second level), one entry per search text, all
+       * under the connector's prefix.
        */
-      connectorItems: (kind: "prompts" | "resources", query?: string): readonly unknown[] =>
+      connectorResources: (connectorId: string, query?: string): readonly unknown[] =>
         query === undefined
-          ? [...all, "connectorItems", kind]
-          : [...all, "connectorItems", kind, query],
+          ? [...all, "connectorItems", "resources", connectorId]
+          : [...all, "connectorItems", "resources", connectorId, query],
+      /** The connectors an agent can be pointed at with `@` (the `@` menu's first level). */
+      mentionableConnectors: (agentId: string): readonly unknown[] => [
+        ...all,
+        "mentionableConnectors",
+        agentId,
+      ],
       /** The extensions' UI contributions (enabled and loaded). */
       contributions: (): readonly unknown[] => [...all, "contributions"],
       /** The org's UI arrangement listing (every arrangeable slot, with the hidden ones). */

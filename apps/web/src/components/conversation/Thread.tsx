@@ -815,7 +815,7 @@ function EntryNode({ e, c }: { e: ThreadEntry; c: EntryContext }): ReactNode {
         return (
           <>
             <UserBubble
-              text={e.text}
+              {...(e.segments !== undefined ? { segments: e.segments } : { text: e.text })}
               {...(author !== undefined ? { author } : {})}
               {...(e.pending ? { queued: true } : {})}
               {...(e.sender ? { sender: e.sender.name ?? t("parentAgent") } : {})}

@@ -40,6 +40,7 @@ import {
   registerComposerCommands,
 } from "./commands";
 import {
+  $plainWithCaret,
   $readSegments,
   $writeSegments,
   type ComposerSegment,
@@ -72,6 +73,19 @@ export type ComposerEditorHandle = {
    * new trigger character is typed.
    */
   dismissTrigger(): void;
+  /**
+   * Types `trigger` at the caret as a keystroke would (a space first when the character before
+   * it is not whitespace), so its menu opens and what is typed next is its query: the + menu's
+   * rows that open `@` or `/`.
+   */
+  openTrigger(trigger: "@" | "/"): void;
+  /**
+   * Replaces the `length` characters before the caret (the open trigger's query) with `query`,
+   * the trigger staying open: the `@` menu's drill into a connector's resources (an empty query)
+   * and the compact sheet's search field. A `length` that covers the trigger too removes it, and
+   * its menu closes (a pick that inserts no token).
+   */
+  setTriggerQuery(length: number, query: string): void;
 };
 
 export type ComposerEditorProps = {
@@ -281,6 +295,64 @@ function Bridge({
         editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
       },
       dismissTrigger: () => dismiss.current(),
+      openTrigger: (trigger) => {
+        const before = editor.getEditorState().read(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
+          const { text, caret } = $plainWithCaret(selection);
+          return caret === null || caret === 0 ? "" : (text[caret - 1] ?? "");
+        });
+        // a space first, as its own update: the trigger must be the one character typed
+        if (before === null || (before !== "" && !/\s/.test(before))) {
+          editor.update(
+            () => {
+              $programmatic(editor);
+              let selection = $getSelection();
+              if (!$isRangeSelection(selection)) {
+                $getRoot().selectEnd();
+                selection = $getSelection();
+              }
+              if (!$isRangeSelection(selection)) return;
+              if (!selection.isCollapsed()) selection.removeText();
+              const { text, caret } = $plainWithCaret(selection);
+              const c = caret === null || caret === 0 ? "" : (text[caret - 1] ?? "");
+              if (c !== "" && !/\s/.test(c)) selection.insertText(" ");
+            },
+            { discrete: true },
+          );
+        }
+        // no programmatic tag: the trigger listener reads it as typed
+        editor.update(
+          () => {
+            $addUpdateTag(HISTORY_PUSH_TAG);
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) selection.insertText(trigger);
+            else $getRoot().selectEnd().insertText(trigger);
+          },
+          { discrete: true },
+        );
+      },
+      setTriggerQuery: (length, query) => {
+        editor.update(
+          () => {
+            $programmatic(editor);
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+            const anchor = selection.anchor;
+            const node = anchor.getNode();
+            if (length > 0) {
+              if ($isTextNode(node) && anchor.offset >= length) {
+                node.spliceText(anchor.offset - length, length, "", true);
+              } else {
+                for (let i = 0; i < length; i++) selection.deleteCharacter(true);
+              }
+            }
+            const now = $getSelection();
+            if (query !== "" && $isRangeSelection(now)) now.insertText(query);
+          },
+          { discrete: true },
+        );
+      },
     }),
     [editor],
   );

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { typeComposer } from "./support/composer";
 import { CONV, renderChatRoute } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
 import type { Routes } from "./support/server";
@@ -222,7 +223,7 @@ describe("输入框：上传文件", () => {
     const group = screen.getByRole("group", { name: en.chat.files });
     act(() => xhr.progress(2, 4));
     expect(within(group).getByRole("progressbar").getAttribute("aria-valuenow")).toBe("50");
-    await user.type(screen.getByLabelText(en.chat.inputLabel), "look");
+    typeComposer("look");
     expect(screen.getByRole("button", { name: en.chat.send })).toHaveProperty("disabled", true);
     await user.keyboard("{Enter}");
     expect(posted(calls, `${BASE}/messages`)).toHaveLength(0);
@@ -236,8 +237,8 @@ describe("输入框：上传文件", () => {
     const post = posted(calls, `${BASE}/messages`)[0];
     const body = JSON.parse(String(post?.body)) as Record<string, unknown>;
     expect(body).toMatchObject({ text: "look", files: [ID1] });
-    // 上传文件与 `@` 资源引用是两份：没有资源时不带 attachments
-    expect(body.attachments).toBeUndefined();
+    // uploads are cards, not tokens: a message without tokens carries none
+    expect(body.tokens).toBeUndefined();
     // 发送成功：输入框的文件清空，时间线显示缩略图
     await vi.waitFor(() => expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull());
     const log = screen.getByRole("log");
@@ -398,7 +399,7 @@ describe("输入框：上传文件", () => {
     );
     expect(posted(calls, ATT)).toHaveLength(0);
     // 有出错的文件时不能发送；移除后可以
-    await user.type(screen.getByLabelText(zh.chat.inputLabel), "hi");
+    typeComposer("hi");
     expect(screen.getByRole("button", { name: zh.chat.send })).toHaveProperty("disabled", true);
     await user.click(within(group).getByRole("button", { name: "移除 a.exe" }));
     await user.click(within(group).getByRole("button", { name: "移除 huge.png" }));
@@ -606,7 +607,7 @@ describe("输入框：上传文件（修正轮 1）", () => {
     });
     const group = screen.getByRole("group", { name: en.chat.files });
     await vi.waitFor(() => expect(within(group).queryByRole("progressbar")).toBeNull());
-    await user.type(screen.getByLabelText(en.chat.inputLabel), "go");
+    typeComposer("go");
     await user.click(screen.getByRole("button", { name: en.chat.send }));
     // the files left with the send at once and came back with its failure (a new strip)
     const back = await screen.findByRole("group", { name: en.chat.files });
@@ -630,7 +631,7 @@ describe("输入框：上传文件（修正轮 1）", () => {
     await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
     act(() => (FakeXhr.instances[0] as FakeXhr).respond(204));
     const send = screen.getByRole("button", { name: en.chat.send });
-    await user.type(screen.getByLabelText(en.chat.inputLabel), "go");
+    typeComposer("go");
     await vi.waitFor(() => expect(send).toHaveProperty("disabled", false));
     await user.click(send);
     await vi.waitFor(() => expect(posted(calls, `${BASE}/messages`)).toHaveLength(1));

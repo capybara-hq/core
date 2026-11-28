@@ -5,6 +5,15 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
+  backspaceComposer,
+  composerTokens,
+  draftText,
+  pasteComposer,
+  pressComposer,
+  sendComposer,
+  typeComposer,
+} from "./support/composer";
+import {
   AGENTS,
   CONV,
   FakeEventSource,
@@ -16,9 +25,11 @@ import { resetNavigation } from "./support/navigation";
 import { stubWindowWidth } from "./support/width";
 
 /**
- * Composer menus (spec 2026-11-28 composer menus §1–§4): + opens a menu of what can be added or
- * used, `/` lists skills and commands, `@` searches connector resources; one menu anchored to the
- * composer whose query is the text after the trigger, never the command palette.
+ * Composer menus (spec 2026-11-28 composer menus §1–§4, composer inline tokens §4): + opens a menu
+ * of what can be added or used, `/` lists skills and commands, `@` lists the agent's connectors,
+ * the library's files and the sender's conversations, a connector's → opens its resources; one
+ * menu anchored to the composer whose query is the text after the trigger, never the command
+ * palette. Every pick is an inline token.
  */
 
 const params = { conversationId: "c1" };
@@ -93,6 +104,29 @@ const CONNECTORS = {
   ],
 };
 
+/** The agent's connectors as the `@` menu reads them (kernel `MentionableConnector`). */
+const mentionable = (over: Record<string, unknown>) => ({
+  slug: "docs",
+  icon: null,
+  state: "ready",
+  credential: "none",
+  toolCount: 2,
+  resources: true,
+  ...over,
+});
+const MENTIONABLE = {
+  connectors: [
+    mentionable({
+      id: "k1",
+      name: "Docs",
+      icon: "/api/v1/orgs/o1/connectors/k1/icon",
+      description: "The handbook",
+    }),
+    mentionable({ id: "k2", name: "CRM", slug: "crm", state: "needs_config", toolCount: 0 }),
+  ],
+};
+const MENTIONABLE_URL = `${ORG}/agents/ag1/mentionable-connectors`;
+
 const resource = (connectorId: string, connectorName: string, name: string) => ({
   connectorId,
   connectorSlug: connectorName.toLowerCase(),
@@ -151,14 +185,20 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
     [`GET ${INVOCABLE}`]: () => json(200, SKILLS),
     [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
     [`GET ${ORG}/connectors`]: () => json(200, CONNECTORS),
-    // no library files unless a test lists some (the `@` menu then shows resources alone)
+    // no library files unless a test lists some (the `@` menu then shows the connectors alone)
     [`GET ${LIBRARY}`]: () => json(200, { files: [], next: null }),
     // no other conversations (the `@` menu's conversations group stays away)
     [`GET ${ORG}/conversations`]: () => json(200, { conversations: [], next: null }),
+    [`GET ${MENTIONABLE_URL}`]: () => json(200, MENTIONABLE),
+    // one connector's resources (the `@` menu's second level), searched by `query`
     [`GET ${RESOURCES}`]: (c) => {
-      const q = new URL(c.url, "http://x").searchParams.get("query") ?? "";
+      const u = new URL(c.url, "http://x");
+      const q = u.searchParams.get("query") ?? "";
+      const id = u.searchParams.get("connectorId");
       return json(200, {
-        resources: ALL_RESOURCES.filter((r) => r.name.toLowerCase().includes(q.toLowerCase())),
+        resources: ALL_RESOURCES.filter(
+          (r) => r.connectorId === id && r.name.toLowerCase().includes(q.toLowerCase()),
+        ),
         unavailable: [],
       });
     },
@@ -167,7 +207,7 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
 }
 
 const input = (m = en) =>
-  screen.getByRole("combobox", { name: m.chat.inputLabel, hidden: true }) as HTMLTextAreaElement;
+  screen.getByRole("combobox", { name: m.chat.inputLabel, hidden: true }) as HTMLElement;
 const menu = async () => {
   await screen.findByRole("listbox");
   return document.querySelector('[data-part="composer-menu"]') as HTMLElement;
@@ -183,13 +223,19 @@ const iconOf = (option: HTMLElement) =>
   option
     .querySelector('[data-part="composer-menu-lead"] [data-part="icon"]')
     ?.getAttribute("data-icon");
-/** Types each character at the end of the draft, one change each, with no time between them. */
-const typeAtEnd = (...chars: string[]) => {
-  for (const c of chars) {
-    const value = input().value + c;
-    fireEvent.change(input(), { target: { value, selectionStart: value.length } });
-  }
+/** Empties the draft's text, character by character from its end. */
+function clearComposer() {
+  for (let i = draftText().length; i > 0 && draftText() !== ""; i--) backspaceComposer();
+}
+/** Opens a connector row's second level (its → button). */
+const drill = async (el: HTMLElement, name: string) => {
+  const row = await within(el).findByRole("option", { name: new RegExp(`^${name}`) });
+  fireEvent.click(row.querySelector('[data-part="composer-menu-drill"]') as HTMLElement);
 };
+const levelTitle = () =>
+  document.querySelector('[data-part="composer-menu-level"]')?.textContent ?? null;
+const token = (name: string) => screen.queryByRole("img", { name });
+const MARK = "\uFFFC";
 const resourceReads = (calls: Call[]) =>
   calls.filter((c) => c.method === "GET" && c.url.split("?")[0] === RESOURCES).map((c) => c.url);
 const libraryReads = (calls: Call[]) =>
@@ -207,7 +253,7 @@ afterEach(() => {
 });
 
 describe("the + menu", () => {
-  it("lists Add, Abilities and the usable connectors; one waiting for setup is disabled", async () => {
+  it("lists Add, Abilities and the agent's connectors; one waiting for setup is disabled", async () => {
     api();
     await renderChatRoute({ locale: "zh" });
     await screen.findByText("hi");
@@ -222,19 +268,23 @@ describe("the + menu", () => {
     await within(el).findByText("Docs");
     const m = zh.chat.composerMenu;
     expect(headingsOf(el)).toEqual([m.add, m.abilities, m.connectors]);
-    // project files join with a device project; a disabled connector is absent
-    expect(labelsOf(el)).toEqual([m.upload, m.library, m.resources, m.skills, "Docs", "CRM"]);
+    // project files join with a device project; resources are reached through their connector
+    expect(labelsOf(el)).toEqual([m.upload, m.library, m.skills, "Docs", "CRM"]);
     expect(iconOf(within(el).getByRole("option", { name: m.upload }))).toBe("upload");
     expect(iconOf(within(el).getByRole("option", { name: m.library }))).toBe("file-text");
     expect(iconOf(within(el).getByRole("option", { name: m.skills }))).toBe("skills");
-    // a connector row carries its plugin's icon and its description
-    const docs = within(el).getByRole("option", { name: "Docs" });
+    // a connector row carries its icon, its description and the → to its resources
+    const docs = within(el).getByRole("option", { name: /^Docs/ });
     expect(docs.querySelector('[data-part="mark-image"]')?.getAttribute("src")).toBe(
       "/api/v1/orgs/o1/connectors/k1/icon",
     );
     expect(docs.textContent).toContain("The handbook");
+    expect(
+      docs.querySelector('[data-part="composer-menu-drill"]')?.getAttribute("aria-label"),
+    ).toBe(m.drill.replace("{name}", "Docs"));
     const crm = within(el).getByRole("option", { name: `CRM ${m.needsConfig}` });
     expect(crm.getAttribute("aria-disabled")).toBe("true");
+    expect(crm.querySelector('[data-part="composer-menu-drill"]')).toBeNull();
     // a second click on + closes it
     await user.click(plus);
     noMenu();
@@ -264,28 +314,41 @@ describe("the + menu", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Attach files" }));
     await user.click(await screen.findByRole("option", { name: en.chat.composerMenu.skills }));
-    expect(input().value).toBe("/");
+    expect(draftText()).toBe("/");
     const el = await menu();
     expect(el.getAttribute("data-kind")).toBe("slash");
     await within(el).findByText("fix-issue");
   });
 
-  it("a connector row opens @ for that connector alone", async () => {
+  it("a connector row inserts its token at the caret", async () => {
     const calls = api();
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("read");
+    pasteComposer("read");
     await user.click(screen.getByRole("button", { name: "Attach files" }));
-    await user.click(await screen.findByRole("option", { name: "Docs" }));
-    expect(input().value).toBe("read @");
+    await user.click(await screen.findByRole("option", { name: /^Docs/ }));
+    noMenu();
+    expect(token("Connector: Docs")).not.toBeNull();
+    expect(draftText()).toBe("read@Docs ");
+    expect(resourceReads(calls)).toEqual([]);
+  });
+
+  it("a connector row's → types @ and opens that connector's resources", async () => {
+    const calls = api();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    pasteComposer("read");
+    await user.click(screen.getByRole("button", { name: "Attach files" }));
+    await drill(await menu(), "Docs");
+    await vi.waitFor(() => expect(draftText()).toBe("read @"));
     const el = await menu();
     expect(el.getAttribute("data-kind")).toBe("at");
     await within(el).findByText("Handbook");
-    expect(headingsOf(el)).toEqual(["Docs"]);
+    expect(levelTitle()).toContain(en.chat.composerMenu.resourcesHead.replace("{name}", "Docs"));
     expect(within(el).queryByText("Accounts")).toBeNull();
-    expect(resourceReads(calls)).toEqual([RESOURCES]);
+    expect(resourceReads(calls)).toEqual([`${RESOURCES}?connectorId=k1`]);
   });
 });
 
@@ -294,22 +357,19 @@ describe("the / menu", () => {
     api({ [`POST ${BASE}/compact`]: () => json(202, { runId: "cr1" }) });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     let el = await menu();
     await within(el).findByText("fix-issue");
     expect(labelsOf(el)).toEqual(["fix-issue", "finish", "compact"]);
     expect(iconOf(within(el).getByRole("option", { name: "fix-issue" }))).toBe("skills");
     expect(iconOf(within(el).getByRole("option", { name: "compact" }))).toBe("terminal");
-    await user.type(input(), "fi");
+    typeComposer("fi");
     el = await menu();
     expect(labelsOf(el)).toEqual(["fix-issue", "finish"]);
     // the first ↵ picks the first skill, never the command
-    await user.keyboard("{Enter}");
-    expect(document.querySelector('[data-part="composer-token"]')?.textContent).toContain(
-      "/fix-issue",
-    );
-    expect(input().value).toBe("");
+    pressComposer("Enter");
+    expect(token("Skill: /fix-issue")).not.toBeNull();
+    expect(draftText()).toBe("/fix-issue ");
     noMenu();
   });
 
@@ -317,34 +377,47 @@ describe("the / menu", () => {
     const calls = api();
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     await within(await menu()).findByText("finish");
-    await user.keyboard("{ArrowDown}");
+    pressComposer("ArrowDown");
     const active = document.getElementById(input().getAttribute("aria-activedescendant") ?? "");
     expect(active?.querySelector(".cb-cmm-label")?.textContent).toBe("finish");
-    await user.keyboard("{Enter}");
-    expect(document.querySelector('[data-part="composer-token"]')?.textContent).toContain(
-      "/finish",
-    );
+    pressComposer("Enter");
+    expect(token("Skill: /finish")).not.toBeNull();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("opens after whitespace too; with a skill token the others are disabled and no command shows", async () => {
+    api();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    typeComposer("please /");
+    let el = await menu();
+    await within(el).findByText("fix-issue");
+    // a `/` that is not the whole draft offers no command
+    expect(within(el).queryByRole("option", { name: "compact" })).toBeNull();
+    pressComposer("Enter");
+    typeComposer("now /");
+    el = await menu();
+    const finish = await within(el).findByRole("option", { name: /^finish/ });
+    expect(finish.getAttribute("aria-disabled")).toBe("true");
+    expect(finish.textContent).toContain(en.chat.composerMenu.oneSkill);
   });
 
   it("Backspace through the trigger closes; Esc closes and keeps the text", async () => {
     api();
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     await menu();
-    await user.keyboard("{Backspace}");
+    pressComposer("Backspace");
     noMenu();
-    expect(input().value).toBe("");
-    await user.type(input(), "/fi");
+    clearComposer();
+    typeComposer("/fi");
     await menu();
-    await user.keyboard("{Escape}");
+    pressComposer("Escape");
     noMenu();
-    expect(input().value).toBe("/fi");
+    expect(draftText()).toBe("/fi");
     expect(input().getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -352,47 +425,111 @@ describe("the / menu", () => {
     api();
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     await within(await menu()).findByText("fix-issue");
     fireEvent.keyDown(input(), { key: "Enter", keyCode: 229 });
-    expect(document.querySelector('[data-part="composer-token"]')).toBeNull();
+    expect(composerTokens()).toHaveLength(0);
     await menu();
   });
 });
 
 describe("the @ menu", () => {
-  it("opens after whitespace, searches the kernel with the query (debounced) and attaches the pick", async () => {
+  it("opens after whitespace, lists the agent's connectors filtered by the query and inserts the pick", async () => {
     const calls = api({
       [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(9, "x") }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "see @");
+    typeComposer("see @");
     let el = await menu();
-    await within(el).findByText("Accounts");
-    // grouped by connector, each row with its connector's mark
-    expect(headingsOf(el)).toEqual(["Docs", "CRM"]);
-    const handbook = within(el).getByRole("option", { name: "Handbook" });
+    await within(el).findByRole("option", { name: /^Docs/ });
+    expect(headingsOf(el)).toEqual([en.chat.composerMenu.connectorsGroup]);
+    const docs = within(el).getByRole("option", { name: /^Docs/ });
+    expect(docs.querySelector('[data-part="mark-image"]')?.getAttribute("src")).toBe(
+      "/api/v1/orgs/o1/connectors/k1/icon",
+    );
+    // the connectors are read once per agent and filtered in the browser; no resource is read
+    typeComposer("cr");
+    el = await menu();
+    await vi.waitFor(() => expect(labelsOf(el)).toEqual(["CRM"]));
+    clearComposer();
+    typeComposer("see @do");
+    el = await menu();
+    await vi.waitFor(() => expect(labelsOf(el)).toEqual(["Docs"]));
+    expect(calls.filter((c) => c.url === MENTIONABLE_URL)).toHaveLength(1);
+    expect(resourceReads(calls)).toEqual([]);
+    pressComposer("Enter");
+    expect(draftText()).toBe("see @Docs ");
+    expect(token("Connector: Docs")).not.toBeNull();
+    pressComposer("Enter");
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`)).toHaveLength(
+        1,
+      ),
+    );
+    const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
+    expect(bodyOf(post[0] as Call)).toMatchObject({
+      text: `see ${MARK}`,
+      tokens: [{ type: "connector", connectorId: "k1" }],
+    });
+  });
+
+  it("→ opens a connector's resources: the query goes, the @ stays, typing searches them", async () => {
+    const calls = api({
+      [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(9, "x") }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    typeComposer("see @do");
+    await within(await menu()).findByRole("option", { name: /^Docs/ });
+    pressComposer("ArrowRight");
+    await vi.waitFor(() => expect(draftText()).toBe("see @"));
+    let el = await menu();
+    await within(el).findByText("Handbook");
+    expect(levelTitle()).toContain("Docs · Resources");
+    const handbook = within(el).getByRole("option", { name: /^Handbook/ });
     expect(handbook.querySelector('[data-part="mark-image"]')?.getAttribute("src")).toBe(
       "/api/v1/orgs/o1/connectors/k1/icon",
     );
     // three keys with no time between them: only the query they leave is read
-    typeAtEnd("r", "e", "p");
-    await vi.waitFor(() => expect(resourceReads(calls)).toContain(`${RESOURCES}?query=rep`));
+    typeComposer("rep");
+    await vi.waitFor(() =>
+      expect(resourceReads(calls)).toContain(`${RESOURCES}?connectorId=k1&query=rep`),
+    );
     el = await menu();
     await vi.waitFor(() => expect(labelsOf(el)).toEqual(["Report"]));
-    expect(resourceReads(calls)).toEqual([RESOURCES, `${RESOURCES}?query=rep`]);
-    await user.keyboard("{Enter}");
-    expect(input().value).toBe("see ");
-    expect(screen.getByText("@Report")).toBeTruthy();
-    await user.type(input(), "{Enter}");
+    expect(resourceReads(calls)).toEqual([
+      `${RESOURCES}?connectorId=k1`,
+      `${RESOURCES}?connectorId=k1&query=rep`,
+    ]);
+    pressComposer("Enter");
+    expect(draftText()).toBe("see @Report ");
+    expect(token("Resource: Report")).not.toBeNull();
+    pressComposer("Enter");
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`)).toHaveLength(
+        1,
+      ),
+    );
     const post = calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`);
     expect(bodyOf(post[0] as Call)).toMatchObject({
-      text: "see",
-      attachments: [{ connectorId: "k1", uri: "docs://report" }],
+      text: `see ${MARK}`,
+      tokens: [{ type: "resource", connectorId: "k1", uri: "docs://report" }],
     });
+  });
+
+  it("Backspace on the second level's empty query goes back and keeps the @", async () => {
+    api();
+    await renderChatRoute();
+    await screen.findByText("hi");
+    typeComposer("@do");
+    await within(await menu()).findByRole("option", { name: /^Docs/ });
+    pressComposer("ArrowRight");
+    await within(await menu()).findByText("Handbook");
+    pressComposer("Backspace");
+    await vi.waitFor(() => expect(levelTitle()).toBeNull());
+    await within(await menu()).findByRole("option", { name: /^Docs/ });
+    expect(draftText()).toBe("@");
   });
 
   it("a sixth resource is refused with the limit", async () => {
@@ -404,92 +541,40 @@ describe("the @ menu", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     for (let i = 0; i < 6; i++) {
-      await user.type(input(), " @");
-      await user.click(await screen.findByRole("option", { name: `Doc${i}` }));
+      typeComposer(" @");
+      await drill(await menu(), "Docs");
+      await user.click(await screen.findByRole("option", { name: new RegExp(`^Doc${i}`) }));
     }
-    expect(await screen.findByText(en.chat.attachLimit.replace("{max}", "5"))).toBeTruthy();
-    expect(screen.queryByText("@Doc5")).toBeNull();
-    expect(screen.getByText("@Doc4")).toBeTruthy();
+    expect(await screen.findByText(en.chat.tokenLimit.replace("{max}", "5"))).toBeTruthy();
+    expect(token("Resource: Doc5")).toBeNull();
+    expect(token("Resource: Doc4")).not.toBeNull();
   });
 
   it("a@b mid-word opens nothing; @ followed by a space closes", async () => {
     api();
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "mail a@b");
+    typeComposer("mail a@b");
     noMenu();
-    await user.clear(input());
-    await user.type(input(), "@");
+    clearComposer();
+    typeComposer("@");
     await menu();
-    await user.type(input(), " ");
+    typeComposer(" ");
     noMenu();
-    expect(input().value).toBe("@ ");
-  });
-
-  it("a key an IME commits directly (keyCode 229, no composition) opens it", async () => {
-    api();
-    await renderChatRoute({ locale: "zh" });
-    await screen.findByText("hi");
-    // a Chinese IME's Shift+2: the key reports 229 and commits "@" with no composition
-    fireEvent.keyDown(input(zh), { key: "Process", keyCode: 229 });
-    fireEvent.change(input(zh), { target: { value: "@", selectionStart: 1 } });
-    expect((await menu()).getAttribute("data-kind")).toBe("at");
-  });
-
-  it("a composition's intermediate text opens nothing; a composition committing @ does", async () => {
-    api();
-    await renderChatRoute({ locale: "zh" });
-    await screen.findByText("hi");
-    const el = input(zh);
-    fireEvent.compositionStart(el, { data: "" });
-    fireEvent.change(el, { target: { value: "@" } });
-    fireEvent.change(el, { target: { value: "你" } });
-    fireEvent.compositionEnd(el, { data: "你" });
-    noMenu();
-    fireEvent.change(el, { target: { value: "你 " } });
-    fireEvent.compositionStart(el, { data: "" });
-    fireEvent.change(el, { target: { value: "你 @" } });
-    noMenu();
-    fireEvent.compositionEnd(el, { data: "@" });
-    expect((await menu()).getAttribute("data-kind")).toBe("at");
-  });
-
-  it("inside the menu an IME's intermediate text is not searched; what it commits is", async () => {
-    const calls = api();
-    await renderChatRoute({ locale: "zh" });
-    await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(zh), "@");
-    const el = await menu();
-    await within(el).findByText("Accounts");
-    const field = input(zh);
-    fireEvent.compositionStart(field, { data: "" });
-    fireEvent.change(field, { target: { value: "@z" } });
-    fireEvent.change(field, { target: { value: "@zh" } });
-    // the pinyin is no query: the rows stay, nothing loads
-    expect(labelsOf(await menu())).toEqual(["Handbook", "Report", "Accounts"]);
-    expect(document.querySelector('[data-part="composer-menu-loading"]')).toBeNull();
-    fireEvent.change(field, { target: { value: "@acc" } });
-    fireEvent.compositionEnd(field, { data: "acc" });
-    await vi.waitFor(() => expect(resourceReads(calls)).toContain(`${RESOURCES}?query=acc`));
-    await vi.waitFor(async () => expect(labelsOf(await menu())).toEqual(["Accounts"]));
-    expect(resourceReads(calls).filter((u) => u.includes("query=z"))).toEqual([]);
+    expect(draftText()).toBe("@ ");
   });
 
   it("↵ before the query's results arrive picks among the rows that match it", async () => {
-    const calls = api();
+    const calls = api({ [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES) });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "@");
-    await within(await menu()).findByText("Accounts");
-    // typed and picked at once: the rows are still the empty query's
-    typeAtEnd("a", "c", "c");
-    fireEvent.keyDown(input(), { key: "Enter" });
-    expect(await screen.findByText("@Accounts")).toBeTruthy();
-    expect(screen.queryByText("@Handbook")).toBeNull();
-    expect(input().value).toBe("");
+    typeComposer("@");
+    await within(await menu()).findByText("budget.xlsx");
+    // typed and picked at once: the file rows are still the empty query's
+    typeComposer("bud");
+    pressComposer("Enter");
+    expect(token("File: budget.xlsx")).not.toBeNull();
+    expect(token("File: report.pdf")).toBeNull();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
@@ -497,58 +582,43 @@ describe("the @ menu", () => {
     api();
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "see @");
+    typeComposer("see @");
     await menu();
-    await user.keyboard("{Backspace}");
+    pressComposer("Backspace");
     noMenu();
-    expect(input().value).toBe("see ");
   });
 
-  it("a pick in the middle of the text leaves the caret where the trigger stood", async () => {
-    api();
-    await renderChatRoute();
-    await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("ab later");
-    await user.type(input(), "@", { initialSelectionStart: 3, initialSelectionEnd: 3 });
-    expect(input().value).toBe("ab @later");
-    await user.click(await screen.findByRole("option", { name: "Handbook" }));
-    expect(input().value).toBe("ab later");
-    expect(input().selectionStart).toBe(3);
-    expect(input().selectionEnd).toBe(3);
-  });
-
-  it("draws at most 50 rows, also for one connector", async () => {
+  it("draws at most 50 resource rows", async () => {
     const many = Array.from({ length: 60 }, (_, i) => resource("k1", "Docs", `Doc${i}`));
     api({ [`GET ${RESOURCES}`]: () => json(200, { resources: many, unavailable: [] }) });
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Attach files" }));
-    await user.click(await screen.findByRole("option", { name: "Docs" }));
+    await drill(await menu(), "Docs");
     const el = await menu();
     await within(el).findByText("Doc0");
     expect(within(el).getAllByRole("option")).toHaveLength(50);
   });
 
-  it("an unavailable connector's row says why when clicked", async () => {
+  it("a connector unavailable to the sender says why when clicked", async () => {
     api({
       [`GET ${RESOURCES}`]: () =>
         json(200, {
           resources: [],
-          unavailable: [{ connectorId: "k2", connectorName: "CRM", reason: "not_connected" }],
+          unavailable: [{ connectorId: "k1", connectorName: "Docs", reason: "not_connected" }],
         }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "@");
-    await user.click(await screen.findByRole("option", { name: /^CRM/ }));
+    typeComposer("@");
+    await drill(await menu(), "Docs");
+    await within(await menu()).findByText(en.chat.unavailableConnectors);
+    await user.click(await screen.findByRole("option", { name: /^Docs/ }));
     expect(
       await screen.findByText(
-        en.chat.connectorUnavailableHint.not_connected.replace("{connector}", "CRM"),
+        en.chat.connectorUnavailableHint.not_connected.replace("{connector}", "Docs"),
       ),
     ).toBeTruthy();
     noMenu();
@@ -558,12 +628,11 @@ describe("the @ menu", () => {
     api();
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "see @");
+    typeComposer("see @");
     await menu();
     fireEvent.pointerDown(screen.getByText("hi"));
     noMenu();
-    expect(input().value).toBe("see @");
+    expect(draftText()).toBe("see @");
   });
 });
 
@@ -578,16 +647,18 @@ describe("the @ menu's library files", () => {
         (c.method === "DELETE" && c.url.startsWith(`${LIBRARY}/`)),
     );
 
-  it("lists 最近文件 first for the empty query, each with its type mark and when it came", async () => {
+  it("lists 最近文件 after the connectors for the empty query, each with its type mark and when it came", async () => {
     api({ [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES) });
     await renderChatRoute({ locale: "zh" });
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(zh), "@");
+    typeComposer("@", input(zh));
     const el = await menu();
     await within(el).findByText("report.pdf");
-    await within(el).findByText("Accounts");
-    expect(headingsOf(el)).toEqual([zh.chat.composerMenu.recentFiles, "Docs", "CRM"]);
+    await within(el).findByText("Docs");
+    expect(headingsOf(el)).toEqual([
+      zh.chat.composerMenu.connectorsGroup,
+      zh.chat.composerMenu.recentFiles,
+    ]);
     const report = within(el).getByRole("option", { name: /report\.pdf/ });
     expect(report.querySelector('[data-part="composer-menu-lead"]')?.textContent).toBe("PDF");
     expect(report.textContent).toContain("2026-11-24 上传");
@@ -595,7 +666,7 @@ describe("the @ menu's library files", () => {
     expect(notes.textContent).toContain("Researcher 2026-11-20 生成");
   });
 
-  it("searches the library with q (debounced) under Matching files; a pick is sent by id, never uploaded", async () => {
+  it("searches the library with q (debounced) under Matching files; a pick is a token sent by id, never uploaded", async () => {
     const calls = api({
       [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
       [`POST ${BASE}/messages`]: send,
@@ -603,22 +674,26 @@ describe("the @ menu's library files", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "see @");
+    typeComposer("see @");
     await within(await menu()).findByText("report.pdf");
-    typeAtEnd("r", "e", "p");
+    typeComposer("rep");
     await vi.waitFor(() => expect(libraryReads(calls)).toContain(`${LIBRARY}?q=rep&limit=8`));
     expect(libraryReads(calls)).toEqual([`${LIBRARY}?limit=8`, `${LIBRARY}?q=rep&limit=8`]);
     let el = await menu();
-    await vi.waitFor(() => expect(labelsOf(el)).toEqual(["report.pdf", "Report"]));
+    await vi.waitFor(() => expect(labelsOf(el)).toEqual(["report.pdf"]));
     el = await menu();
-    expect(headingsOf(el)).toEqual([en.chat.composerMenu.matchingFiles, "Docs"]);
+    expect(headingsOf(el)).toEqual([en.chat.composerMenu.matchingFiles]);
     await user.click(within(el).getByRole("option", { name: /report\.pdf/ }));
-    expect(input().value).toBe("see ");
-    const group = screen.getByRole("group", { name: en.chat.files });
-    expect(within(group).getByText("report.pdf")).toBeTruthy();
-    await user.type(input(), "{Enter}");
+    expect(draftText()).toBe("see @report.pdf ");
+    expect(token("File: report.pdf")).not.toBeNull();
+    // a library file is a token in the sentence, never a card in the strip
+    expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull();
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
-    expect(bodyOf(posts(calls)[0])).toMatchObject({ text: "see", files: ["lf1"] });
+    expect(bodyOf(posts(calls)[0])).toMatchObject({
+      text: `see ${MARK}`,
+      tokens: [{ type: "file", id: "lf1" }],
+    });
     expect(uploadsOrDiscards(calls)).toEqual([]);
   });
 
@@ -635,62 +710,33 @@ describe("the @ menu's library files", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "@");
+    typeComposer("@");
     await within(await menu()).findByText("report.pdf");
-    expect(headingsOf(await menu())[0]).toBe(en.chat.composerMenu.recentFiles);
-    typeAtEnd("r", "e", "p");
+    expect(headingsOf(await menu())).toContain(en.chat.composerMenu.recentFiles);
+    typeComposer("rep");
     await vi.waitFor(() => expect(libraryReads(calls)).toContain(`${LIBRARY}?q=rep&limit=8`));
     // the rows are still the empty query's: so is the heading
-    expect(headingsOf(await menu())[0]).toBe(en.chat.composerMenu.recentFiles);
+    expect(headingsOf(await menu())).toContain(en.chat.composerMenu.recentFiles);
     release();
     await vi.waitFor(async () =>
-      expect(headingsOf(await menu())[0]).toBe(en.chat.composerMenu.matchingFiles),
+      expect(headingsOf(await menu())).toContain(en.chat.composerMenu.matchingFiles),
     );
     expect(labelsOf(await menu())[0]).toBe("report.pdf");
   });
 
-  it("a file already in the draft is not added twice; removing one discards nothing", async () => {
+  it("removing a picked library file's token discards nothing", async () => {
     const calls = api({ [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES) });
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    for (let i = 0; i < 2; i++) {
-      await user.type(input(), "@");
-      await user.click(await screen.findByRole("option", { name: /report\.pdf/ }));
-    }
-    const group = screen.getByRole("group", { name: en.chat.files });
-    expect(within(group).getAllByText("report.pdf")).toHaveLength(1);
-    await user.click(within(group).getByRole("button", { name: /report\.pdf/ }));
-    expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull();
+    typeComposer("@");
+    await user.click(await screen.findByRole("option", { name: /report\.pdf/ }));
+    expect(token("File: report.pdf")).not.toBeNull();
+    // the space after the token, then the token as one unit
+    backspaceComposer();
+    pressComposer("Backspace");
+    await vi.waitFor(() => expect(token("File: report.pdf")).toBeNull());
     expect(uploadsOrDiscards(calls)).toEqual([]);
-  });
-
-  it("the per-message file count applies to library files", async () => {
-    api({
-      [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
-      [`GET ${LIBRARY}/limits`]: () =>
-        json(200, {
-          types: ["application/pdf"],
-          maxBytes: 1_000_000,
-          imageMaxBytes: 1_000_000,
-          extensions: [],
-          maxPerMessage: 2,
-          requestMediaBytes: 10_000_000,
-          available: true,
-        }),
-    });
-    await renderChatRoute();
-    await screen.findByText("hi");
-    const user = userEvent.setup();
-    for (const name of [/report\.pdf/, /notes\.md/, /budget\.xlsx/]) {
-      await user.type(input(), "@");
-      await user.click(await screen.findByRole("option", { name }));
-    }
-    expect(await screen.findByText(en.chat.filesLimit.replace("{max}", "2"))).toBeTruthy();
-    const group = screen.getByRole("group", { name: en.chat.files });
-    expect(within(group).queryByText("budget.xlsx")).toBeNull();
-    expect(within(group).getByText("notes.md")).toBeTruthy();
   });
 
   it("+ → File library opens @ with the files alone", async () => {
@@ -700,29 +746,16 @@ describe("the @ menu's library files", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Attach files" }));
     await user.click(await screen.findByRole("option", { name: en.chat.composerMenu.library }));
-    expect(input().value).toBe("@");
+    await vi.waitFor(() => expect(draftText()).toBe("@"));
     const el = await menu();
     expect(el.getAttribute("data-kind")).toBe("at");
     await within(el).findByText("report.pdf");
     expect(headingsOf(el)).toEqual([en.chat.composerMenu.recentFiles]);
-    expect(within(el).queryByText("Handbook")).toBeNull();
+    expect(within(el).queryByText("Docs")).toBeNull();
     expect(resourceReads(calls)).toEqual([]);
   });
 
-  it("+ → Connector resources lists no files", async () => {
-    const calls = api({ [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES) });
-    await renderChatRoute();
-    await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Attach files" }));
-    await user.click(await screen.findByRole("option", { name: en.chat.composerMenu.resources }));
-    const el = await menu();
-    await within(el).findByText("Handbook");
-    expect(within(el).queryByText("report.pdf")).toBeNull();
-    expect(libraryReads(calls)).toEqual([]);
-  });
-
-  it("a library file sent is read again: the next @ shows the library afresh", async () => {
+  it("a library file token sent leaves the library's listing as it was (only uploads add to it)", async () => {
     const calls = api({
       [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
       [`POST ${BASE}/messages`]: send,
@@ -730,19 +763,19 @@ describe("the @ menu's library files", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "see @");
+    typeComposer("see @");
     await user.click(await screen.findByRole("option", { name: /report\.pdf/ }));
-    await user.type(input(), "{Enter}");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
-    expect(libraryReads(calls)).toEqual([`${LIBRARY}?limit=8`]);
-    await user.type(input(), "@");
+    expect(bodyOf(posts(calls)[0])).not.toHaveProperty("files");
+    await vi.waitFor(() => expect(draftText()).toBe(""));
+    typeComposer("@");
     await within(await menu()).findByText("report.pdf");
-    await vi.waitFor(() =>
-      expect(libraryReads(calls)).toEqual([`${LIBRARY}?limit=8`, `${LIBRARY}?limit=8`]),
-    );
+    // the cached listing serves the next @: nothing sent was new to the library
+    expect(libraryReads(calls)).toEqual([`${LIBRARY}?limit=8`]);
   });
 
-  it("a failed send gives a library file back; neither its failure, removal nor unmount discards it", async () => {
+  it("a refused library file is marked in the draft given back; its removal discards nothing", async () => {
     const calls = api({
       [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
       [`POST ${BASE}/messages`]: () =>
@@ -758,17 +791,25 @@ describe("the @ menu's library files", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     for (const name of [/report\.pdf/, /notes\.md/]) {
-      await user.type(input(), "@");
+      typeComposer("@");
       await user.click(await screen.findByRole("option", { name }));
     }
-    await user.type(input(), "see{Enter}");
+    sendComposer("see");
     await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
-    // given back with the failure marked on the file the kernel named
-    const back = await screen.findByRole("group", { name: en.chat.files });
-    expect((await within(back).findByRole("alert")).textContent).toBe(en.errors.file.not_found);
-    expect(within(back).getByText("notes.md")).toBeTruthy();
-    await user.click(within(back).getByRole("button", { name: /report\.pdf/ }));
-    expect(within(back).queryByText("report.pdf")).toBeNull();
+    // given back with the refusal marked on the file the kernel named
+    const line = await vi.waitFor(() => {
+      const el = [...document.querySelectorAll('[data-part="callout"]')].find(
+        (c) => c.getAttribute("data-tone") === "fail",
+      );
+      if (!el) throw new Error("no refusal line");
+      return el as HTMLElement;
+    });
+    expect(line.textContent).toContain(`report.pdf can't be used: ${en.errors.file.not_found}`);
+    expect(token("File: report.pdf, unavailable")).not.toBeNull();
+    expect(token("File: notes.md")).not.toBeNull();
+    await user.click(within(line).getByRole("button", { name: "Remove" }));
+    await vi.waitFor(() => expect(token("File: report.pdf, unavailable")).toBeNull());
+    expect(token("File: notes.md")).not.toBeNull();
     cleanup();
     expect(uploadsOrDiscards(calls)).toEqual([]);
   });
@@ -790,7 +831,7 @@ describe("the @ menu's library files", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "@");
+    typeComposer("@");
     const el = await menu();
     await within(el).findByText("report.pdf");
     await vi.waitFor(() => {
@@ -799,40 +840,38 @@ describe("the @ menu's library files", () => {
       expect(row.textContent).toContain(en.chat.filesUnavailable);
     });
     await user.click(within(el).getByRole("option", { name: /report\.pdf/ }));
-    expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull();
+    expect(composerTokens()).toHaveLength(0);
   });
 
-  it("failed resources keep the files and say so under them", async () => {
+  it("failed connectors keep the files and say so under them", async () => {
     api({
       [`GET ${LIBRARY}`]: librarySearch(LIBRARY_FILES),
-      [`GET ${RESOURCES}`]: () =>
+      [`GET ${MENTIONABLE_URL}`]: () =>
         json(500, { error: { code: "internal", message: "boom", requestId: "r1" } }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "@");
+    typeComposer("@");
     const el = await menu();
     await within(el).findByText("report.pdf");
     expect(headingsOf(el)).toEqual([en.chat.composerMenu.recentFiles]);
     await vi.waitFor(() =>
-      expect(el.textContent).toContain(en.chat.composerMenu.resourcesFailed.split("{reason}")[0]),
+      expect(el.textContent).toContain(en.chat.composerMenu.connectorsFailed.split("{reason}")[0]),
     );
     expect(el.textContent).not.toContain(en.chat.composerMenu.libraryFailed.split("{reason}")[0]);
   });
 
-  it("a failed library read keeps the resources and says so under them", async () => {
+  it("a failed library read keeps the connectors and says so under them", async () => {
     api({
       [`GET ${LIBRARY}`]: () =>
         json(500, { error: { code: "internal", message: "boom", requestId: "r1" } }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "@");
+    typeComposer("@");
     const el = await menu();
-    await within(el).findByText("Accounts");
-    expect(headingsOf(el)).toEqual(["Docs", "CRM"]);
+    await within(el).findByText("Docs");
+    expect(headingsOf(el)).toEqual([en.chat.composerMenu.connectorsGroup]);
     await vi.waitFor(() =>
       expect(el.textContent).toContain(en.chat.composerMenu.libraryFailed.split("{reason}")[0]),
     );
@@ -840,29 +879,16 @@ describe("the @ menu's library files", () => {
 });
 
 describe("menu switches and edges", () => {
-  it("+ over an open @ menu takes its trigger out of the text first", async () => {
+  it("+ over an open @ menu opens the + menu; the typed @ stays as text", async () => {
     api();
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "see @rep");
+    typeComposer("see @rep");
     await menu();
     await user.click(screen.getByRole("button", { name: "Attach files" }));
     expect((await menu()).getAttribute("data-kind")).toBe("plus");
-    expect(input().value).toBe("see ");
-  });
-
-  it('+ → Connector resources over a draft adds " @" and opens @', async () => {
-    api();
-    await renderChatRoute();
-    await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("read");
-    await user.click(screen.getByRole("button", { name: "Attach files" }));
-    await user.click(await screen.findByRole("option", { name: en.chat.composerMenu.resources }));
-    expect(input().value).toBe("read @");
-    expect((await menu()).getAttribute("data-kind")).toBe("at");
+    expect(draftText()).toBe("see @rep");
   });
 
   it("a click on a connector waiting for setup does nothing", async () => {
@@ -876,25 +902,22 @@ describe("menu switches and edges", () => {
       await within(el).findByRole("option", { name: `CRM ${zh.chat.composerMenu.needsConfig}` }),
     );
     expect((await menu()).getAttribute("data-kind")).toBe("plus");
-    expect(input(zh).value).toBe("");
+    expect(draftText(input(zh))).toBe("");
     expect(resourceReads(calls)).toEqual([]);
   });
 
   it("compact: the sheet's search field rewrites the text after the trigger", async () => {
     stubWindowWidth(390);
-    const calls = api();
+    api();
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("see ");
-    fireEvent.change(input(), { target: { value: "see @", selectionStart: 5 } });
+    typeComposer("see @");
     const field = await screen.findByRole("searchbox", { name: en.chat.composerMenu.search });
-    fireEvent.change(field, { target: { value: "rep" } });
-    expect(input().value).toBe("see @rep");
-    await vi.waitFor(() => expect(resourceReads(calls)).toContain(`${RESOURCES}?query=rep`));
-    await user.click(await screen.findByRole("option", { name: "Report" }));
-    expect(input().value).toBe("see ");
-    expect(screen.getByText("@Report")).toBeTruthy();
+    fireEvent.change(field, { target: { value: "do" } });
+    await vi.waitFor(() => expect(draftText()).toBe("see @do"));
+    await user.click(await screen.findByRole("option", { name: /^Docs/ }));
+    expect(draftText()).toBe("see @Docs ");
+    expect(token("Connector: Docs")).not.toBeNull();
   });
 });

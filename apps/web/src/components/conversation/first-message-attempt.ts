@@ -61,9 +61,8 @@ export function firstMessageControls(orgId: string, r: FirstMessageRequest): str
 }
 
 /**
- * The logical request apart from its id and the browser context: org, agent, text, resources,
- * files, project files, referenced conversations, skill, device, project, profile with its consent
- * revision, model and effort. Any change makes a new logical request with a new id; the
+ * The logical request apart from its id and the browser context: org, agent, text, inline tokens,
+ * uploads, skill, device, project, profile with its consent revision, model and effort. Any change makes a new logical request with a new id; the
  * composer's narrower draft key is not the authority here.
  */
 export function firstMessageIntent(orgId: string, r: FirstMessageRequest): string {
@@ -72,10 +71,8 @@ export function firstMessageIntent(orgId: string, r: FirstMessageRequest): strin
     orgId,
     r.agentId,
     m.text,
-    (m.attachments ?? []).map((a) => [a.connectorId, a.uri]),
+    m.tokens ?? [],
     m.files ?? [],
-    (m.projectFiles ?? []).map((f) => f.path),
-    (m.conversationRefs ?? []).map((c) => c.id),
     m.skill?.name ?? null,
     m.model ?? null,
     m.effort ?? null,

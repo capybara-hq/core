@@ -231,6 +231,11 @@ type EventBody =
          * `content[1 + attachments.length + projectFiles.length + i]`.
          */
         conversationRefs?: ConversationRefMeta[];
+        /**
+         * Where each inline token's placeholder stands (composer inline tokens spec §3.5): the
+         * bubble draws the tokens from it. Absent: no tokens.
+         */
+        inline?: InlineEntry[];
         authorAccountId: string;
         /**
          * Who wrote it, at send time (model-facing data; the page names authors from the live
@@ -975,22 +980,46 @@ export interface ConversationRefMeta {
   upToSeq: number;
 }
 
+/** The marker that stands for one token in a message's `text` (U+FFFC; composer inline tokens §3.1). */
+export const TOKEN_MARKER = "\uFFFC";
+
+/**
+ * One inline token of a message (kernel `MessageToken`, composer inline tokens spec §3.1): its
+ * place in `text` is a {@link TOKEN_MARKER}, in order.
+ */
+export type MessageToken =
+  | { type: "connector"; connectorId: string }
+  | { type: "resource"; connectorId: string; uri: string }
+  | { type: "file"; id: string }
+  | { type: "projectFile"; path: string }
+  | { type: "conversation"; id: string };
+
+/** Where a logged token's placeholder stands (kernel `payload.inline`; display only). */
+export interface InlineEntry {
+  kind: MessageToken["type"];
+  /** UTF-16 offsets into `content[0]`, or into `skill.arguments` for an invocation. */
+  start: number;
+  end: number;
+  label: string;
+  ref:
+    | { connectorId: string; uri?: string }
+    | { fileId: string }
+    | { path: string }
+    | { id: string };
+}
+
 /** What a message carries besides its text (`POST …/messages`, the first message). */
 export interface MessageInput {
+  /** The person's text, one {@link TOKEN_MARKER} per token in `tokens`, in order. */
   text: string;
   clientMessageId: string;
-  attachments?: { connectorId: string; uri: string }[];
+  /**
+   * Inline tokens (composer inline tokens spec §3.1): connectors, connector resources, library
+   * files, project files and the sender's conversations, in text order.
+   */
+  tokens?: MessageToken[];
+  /** Uploaded files (the attachment cards), by id. */
   files?: string[];
-  /**
-   * Files of the conversation's device project, referenced, not uploaded (composer menus §5):
-   * paths relative to the project root, at most 10; they need text like `@` resources.
-   */
-  projectFiles?: { path: string }[];
-  /**
-   * The sender's own conversations, referenced by id (@ conversations spec §1): at most
-   * {@link MAX_CONVERSATION_REFS}; they need text like `@` resources.
-   */
-  conversationRefs?: { id: string }[];
   /** Switch the conversation's model from the next run (the agent's own model = back to it). */
   model?: ModelRef;
   effort?: Effort;
@@ -1022,12 +1051,8 @@ export function browserContext(): { timeZone?: string; locale?: "zh" | "en" } {
 const messageBody = (m: MessageInput) => ({
   text: m.text,
   clientMessageId: m.clientMessageId,
-  ...(m.attachments !== undefined && m.attachments.length > 0 && { attachments: m.attachments }),
+  ...(m.tokens !== undefined && m.tokens.length > 0 && { tokens: m.tokens }),
   ...(m.files !== undefined && m.files.length > 0 && { files: m.files }),
-  ...(m.projectFiles !== undefined &&
-    m.projectFiles.length > 0 && { projectFiles: m.projectFiles }),
-  ...(m.conversationRefs !== undefined &&
-    m.conversationRefs.length > 0 && { conversationRefs: m.conversationRefs }),
   ...(m.model !== undefined && { model: m.model }),
   ...(m.effort !== undefined && { effort: m.effort }),
   ...(m.retryOf !== undefined && { retryOf: m.retryOf }),

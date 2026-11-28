@@ -477,8 +477,47 @@ export const renderConnectorPrompt = (
     body: JSON.stringify({ arguments: args }),
   });
 
-/** The resources the caller can reference; `query` (trimmed, non-empty) filters on the kernel. */
-export const listConnectorResources = (orgId: string, query = "") =>
-  apiFetch<{ resources: ConnectorResource[]; unavailable: ConnectorUnavailable[] }>(
-    `${base(orgId)}/resources${query === "" ? "" : `?query=${encodeURIComponent(query)}`}`,
+/**
+ * One connector's resources for the `@` menu's second level (composer inline tokens spec §4, §5):
+ * one session on that connector; `query` (trimmed, non-empty) filters on the kernel. UI templates
+ * and empty resources are not listed.
+ */
+export const listConnectorResources = (orgId: string, connectorId: string, query = "") => {
+  const q = new URLSearchParams({ connectorId });
+  if (query !== "") q.set("query", query);
+  return apiFetch<{ resources: ConnectorResource[]; unavailable: ConnectorUnavailable[] }>(
+    `${base(orgId)}/resources?${q.toString()}`,
   );
+};
+
+/**
+ * A connector the `@` menu offers for an agent (kernel `MentionableConnector`, composer inline
+ * tokens spec §4): the org's live connectors the agent is offered tools of, and the ones waiting
+ * for setup (`needs_config`, drawn disabled). `icon` is the kernel icon URL (null: the initial);
+ * `credential` is the viewer's own credential for a personal one; `resources`: the agent may read
+ * its resources (the row's second level). `descriptionZh`: the template's Chinese description,
+ * when `description` is the template's English one.
+ */
+export interface MentionableConnector {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  descriptionZh?: string;
+  icon: string | null;
+  state: "ready" | "needs_config";
+  credential: "connected" | "missing" | "none";
+  toolCount: number;
+  resources: boolean;
+}
+
+export const listMentionableConnectors = (orgId: string, agentId: string) =>
+  apiFetch<{ connectors: MentionableConnector[] }>(
+    `/api/v1/orgs/${encodeURIComponent(orgId)}/agents/${encodeURIComponent(agentId)}/mentionable-connectors`,
+  );
+
+/** The row's line in the person's language: the Chinese template description for zh when given. */
+export const mentionableDescriptionOf = (
+  c: MentionableConnector,
+  locale: string,
+): string | undefined => (locale === "zh" && c.descriptionZh ? c.descriptionZh : c.description);

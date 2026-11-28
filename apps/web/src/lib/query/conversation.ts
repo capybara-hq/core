@@ -10,6 +10,7 @@ import {
   listConnectorPrompts,
   listConnectorResources,
   listConnectors,
+  listMentionableConnectors,
 } from "../connectors";
 import {
   type BackgroundTaskOutput,
@@ -406,16 +407,27 @@ export const myToolPoliciesQuery = (orgId: string, connectorId: string) =>
 /** The connectors' prompts for the composer's `/` menu. */
 export const connectorPromptsQuery = (orgId: string) =>
   defineQuery({
-    key: keys.org(orgId).connectorItems("prompts"),
+    key: keys.org(orgId).connectorPrompts(),
     fn: () => listConnectorPrompts(orgId),
     freshness: "orgConfig",
   });
 
-/** The connectors' resources for the composer's `@` menu, searched on the kernel by `query`. */
-export const connectorResourcesQuery = (orgId: string, query: string) =>
+/** One connector's resources for the `@` menu's second level, searched on the kernel by `query`. */
+export const connectorResourcesQuery = (orgId: string, connectorId: string, query: string) =>
   defineQuery({
-    key: keys.org(orgId).connectorItems("resources", query),
-    fn: () => listConnectorResources(orgId, query),
+    key: keys.org(orgId).connectorResources(connectorId, query),
+    fn: () => listConnectorResources(orgId, connectorId, query),
+    freshness: "orgConfig",
+  });
+
+/**
+ * The connectors the `@` menu offers for `agentId` (composer inline tokens spec §4): read once per
+ * agent and filtered in the browser as the query changes.
+ */
+export const mentionableConnectorsQuery = (orgId: string, agentId: string) =>
+  defineQuery({
+    key: keys.org(orgId).mentionableConnectors(agentId),
+    fn: () => listMentionableConnectors(orgId, agentId).then((r) => r.connectors),
     freshness: "orgConfig",
   });
 

@@ -7,6 +7,7 @@ import ChatPage from "../src/app/(app)/chat/[conversationId]/page";
 import { navigateBrowser } from "../src/lib/browser";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
+import { draftText, pressComposer, sendComposer, typeComposer } from "./support/composer";
 import {
   AGENTS,
   CONV,
@@ -267,7 +268,7 @@ describe("the conversation page (ConversationPage)", () => {
       await renderChat(locale);
       const stop = await screen.findByRole("button", { name: m.chat.stop });
       expect(FakeEventSource.instances[0]?.url).toBe(`${BASE}/stream?after=2`);
-      expect(input(m)).toHaveProperty("disabled", false);
+      expect(input(m).getAttribute("contenteditable")).toBe("true");
       await userEvent.setup().click(stop);
       expect(posts(calls, `${BASE}/abort`)[0]?.headers.get("x-capybara-csrf")).toBe("1");
       act(() => {
@@ -495,17 +496,18 @@ describe("the conversation page (ConversationPage)", () => {
     });
     await renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
-    expect(input().getAttribute("placeholder")).toBe(en.chat.runningHint);
-    const user = userEvent.setup();
-    await user.type(input(), "later{Enter}");
+    expect(input().getAttribute("aria-placeholder")).toBe(en.chat.runningHint);
+    sendComposer("later");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     expect(
       typeof (bodyOf(posts(calls, `${BASE}/messages`)[0]) as { clientMessageId: unknown })
         .clientMessageId,
     ).toBe("string");
-    await user.type(input(), "now{Meta>}{Enter}{/Meta}");
+    typeComposer("now");
+    pressComposer("Enter", { metaKey: true });
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
-    await user.type(input(), "now2{Control>}{Enter}{/Control}");
+    typeComposer("now2");
+    pressComposer("Enter", { ctrlKey: true });
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(3));
     expect(
       posts(calls, `${BASE}/messages`).map((c) => (bodyOf(c) as { text: string }).text),
@@ -536,7 +538,7 @@ describe("the conversation page (ConversationPage)", () => {
     );
     await user.click(await screen.findByRole("menuitemradio", { name: "High" }));
     await user.keyboard("{Escape}");
-    await user.type(input(), "later{Enter}");
+    sendComposer("later");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     expect(bodyOf(posts(calls, `${BASE}/messages`)[0])).toMatchObject({
       text: "later",
@@ -544,7 +546,7 @@ describe("the conversation page (ConversationPage)", () => {
       effort: "high",
     });
     // the pick went with that message: the next one carries none
-    await user.type(input(), "again{Enter}");
+    sendComposer("again");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
     const body = bodyOf(posts(calls, `${BASE}/messages`)[1]) as Record<string, unknown>;
     expect(body).not.toHaveProperty("model");
@@ -560,11 +562,11 @@ describe("the conversation page (ConversationPage)", () => {
     });
     await renderChat();
     await screen.findByText("hi");
-    expect(input().getAttribute("placeholder")).toBe(en.chat.placeholder);
-    const user = userEvent.setup();
-    await user.type(input(), "one{Enter}");
+    expect(input().getAttribute("aria-placeholder")).toBe(en.chat.placeholder);
+    sendComposer("one");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
-    await user.type(input(), "two{Meta>}{Enter}{/Meta}");
+    typeComposer("two");
+    pressComposer("Enter", { metaKey: true });
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
     expect(posts(calls, `${BASE}/queue`)).toHaveLength(0);
   });
@@ -619,10 +621,9 @@ describe("the conversation page (ConversationPage)", () => {
         await renderChat(locale);
         await screen.findByText("hi");
         await vi.waitFor(() =>
-          expect(input(m).getAttribute("placeholder")).toBe(m.chat.waitingSkipHint),
+          expect(input(m).getAttribute("aria-placeholder")).toBe(m.chat.waitingSkipHint),
         );
-        const user = userEvent.setup();
-        await user.type(input(m), "use prod");
+        typeComposer("use prod");
         const send = screen.queryByRole("button", { name: m.chat.send, hidden: true });
         const stop = screen.queryByRole("button", { name: m.chat.stop, hidden: true });
         expect((send ?? stop)?.hasAttribute("disabled")).toBe(false);
@@ -641,7 +642,7 @@ describe("the conversation page (ConversationPage)", () => {
         await renderChat(locale);
         await screen.findByText("hi");
         await vi.waitFor(() =>
-          expect(input(m).getAttribute("placeholder")).toBe(m.chat.waitingHint),
+          expect(input(m).getAttribute("aria-placeholder")).toBe(m.chat.waitingHint),
         );
       },
     );
@@ -653,7 +654,9 @@ describe("the conversation page (ConversationPage)", () => {
       });
       await renderChat("en");
       await screen.findByText("hi");
-      await vi.waitFor(() => expect(input().getAttribute("placeholder")).toBe(en.chat.waitingHint));
+      await vi.waitFor(() =>
+        expect(input().getAttribute("aria-placeholder")).toBe(en.chat.waitingHint),
+      );
     });
   });
 
@@ -681,10 +684,9 @@ describe("the conversation page (ConversationPage)", () => {
       const d = deferredSend();
       await renderChat();
       await screen.findByText("hi");
-      fireEvent.change(input(), { target: { value: "next" } });
-      fireEvent.keyDown(input(), { key: "Enter" });
+      sendComposer("next");
       // no await: the same tick
-      expect(input()).toHaveProperty("value", "");
+      expect(draftText()).toBe("");
       const pending = bubbles("next");
       expect(pending).toHaveLength(1);
       expect(pending[0]?.closest("[data-pending]")).not.toBeNull();
@@ -695,8 +697,7 @@ describe("the conversation page (ConversationPage)", () => {
       const d = deferredSend();
       await renderChat();
       await screen.findByText("hi");
-      const user = userEvent.setup();
-      await user.type(input(), "next{Enter}");
+      sendComposer("next");
       await vi.waitFor(() => expect(posts(d.calls, `${BASE}/messages`)).toHaveLength(1));
       const event = userMsg(2, "next", { clientMessageId: d.cmid() });
       act(() => FakeEventSource.instances[0]?.emit("event", event));
@@ -711,8 +712,7 @@ describe("the conversation page (ConversationPage)", () => {
       const d = deferredSend();
       await renderChat();
       await screen.findByText("hi");
-      const user = userEvent.setup();
-      await user.type(input(), "next{Enter}");
+      sendComposer("next");
       await vi.waitFor(() => expect(posts(d.calls, `${BASE}/messages`)).toHaveLength(1));
       const event = userMsg(2, "next", { clientMessageId: d.cmid() });
       await act(async () => d.answer(json(202, { event })));
@@ -737,9 +737,9 @@ describe("the conversation page (ConversationPage)", () => {
         ),
       );
       expect(line()).toBeNull();
-      const user = userEvent.setup();
-      await user.type(input(), "next{Enter}");
+      sendComposer("next");
       expect(line()).not.toBeNull();
+      await vi.waitFor(() => expect(d.cmid()).not.toBe(""));
       const es = FakeEventSource.instances[0] as FakeEventSource;
       act(() => es.emit("event", userMsg(4, "next", { clientMessageId: d.cmid() })));
       act(() => es.emit("event", runStarted(5, "r2")));
@@ -815,9 +815,8 @@ describe("the conversation page (ConversationPage)", () => {
       });
       await renderChat();
       await screen.findByText("hi");
-      const user = userEvent.setup();
-      await user.type(input(), "one{Enter}");
-      await user.type(input(), "two{Enter}");
+      sendComposer("one");
+      sendComposer("two");
       await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
       expect(
         posts(calls, `${BASE}/messages`).map((c) => (bodyOf(c) as { text: string }).text),
@@ -833,10 +832,9 @@ describe("the conversation page (ConversationPage)", () => {
         (container.querySelector('[role="status"][data-part="run-announce"]') as HTMLElement)
           .textContent ?? "";
       expect(status()).toContain(en.chat.status.idle);
-      fireEvent.change(input(), { target: { value: "next" } });
-      fireEvent.keyDown(input(), { key: "Enter" });
+      sendComposer("next");
       expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
-      expect(input().getAttribute("placeholder")).toBe(en.chat.runningHint);
+      expect(input().getAttribute("aria-placeholder")).toBe(en.chat.runningHint);
       expect(status()).toContain(en.chat.status.running);
       expect(container.querySelector('[data-part="rail-planning"]')).not.toBeNull();
       // the log has the message, its run has not started: still running, all three agree
@@ -861,7 +859,7 @@ describe("the conversation page (ConversationPage)", () => {
       });
       const { container } = await renderChat();
       await screen.findByText("hi");
-      await userEvent.setup().type(input(), "next{Enter}");
+      sendComposer("next");
       await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
       expect(container.querySelector('[data-part="rail-planning"]')).not.toBeNull();
       expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
@@ -880,8 +878,7 @@ describe("the conversation page (ConversationPage)", () => {
       // this tab's clock from here on: the send's time and the backstop's timer
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
       try {
-        fireEvent.change(input(), { target: { value: "next" } });
-        fireEvent.keyDown(input(), { key: "Enter" });
+        sendComposer("next");
         await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
         expect(container.querySelector('[data-part="rail-planning"]')).not.toBeNull();
         act(() => vi.advanceTimersByTime(59_000));
@@ -908,7 +905,7 @@ describe("the conversation page (ConversationPage)", () => {
       });
       const { container } = await renderChat();
       await screen.findByText("hi");
-      await userEvent.setup().type(input(), "next{Enter}");
+      sendComposer("next");
       await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
       expect(container.querySelector('[data-part="rail-planning"]')).not.toBeNull();
       expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
@@ -925,12 +922,12 @@ describe("the conversation page (ConversationPage)", () => {
       });
       const { container } = await renderChat();
       await screen.findByText("hi");
-      await userEvent.setup().type(input(), "next{Enter}");
+      sendComposer("next");
       // the stream delivers the written message, the POST fails
       act(() =>
         FakeEventSource.instances[0]?.emit("event", userMsg(2, "next", { clientMessageId: cmid })),
       );
-      await vi.waitFor(() => expect(input()).toHaveProperty("value", "next"));
+      await vi.waitFor(() => expect(draftText()).toBe("next"));
       expect(container.querySelector('[data-part="rail-planning"]')).toBeNull();
       expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
     });
@@ -939,11 +936,11 @@ describe("the conversation page (ConversationPage)", () => {
       const d = deferredSend();
       await renderChat();
       await screen.findByText("hi");
-      const user = userEvent.setup();
-      await user.type(input(), "next{Enter}");
+      sendComposer("next");
       expect(bubbles("next")).toHaveLength(1);
+      await vi.waitFor(() => expect(d.cmid()).not.toBe(""));
       await act(async () => d.answer(json(500, { error: { code: "internal", message: "boom" } })));
-      await vi.waitFor(() => expect(input()).toHaveProperty("value", "next"));
+      await vi.waitFor(() => expect(draftText()).toBe("next"));
       expect(bubbles("next")).toHaveLength(0);
     });
   });
@@ -952,9 +949,10 @@ describe("the conversation page (ConversationPage)", () => {
     const calls = api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
     await renderChat();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "a{Shift>}{Enter}{/Shift}b");
-    expect(input()).toHaveProperty("value", "a\nb");
+    typeComposer("a");
+    pressComposer("Enter", { shiftKey: true });
+    typeComposer("b");
+    expect(draftText()).toBe("a\nb");
     fireEvent.keyDown(input(), { key: "Enter", isComposing: true });
     expect(posts(calls, `${BASE}/messages`)).toHaveLength(0);
   });
@@ -973,12 +971,12 @@ describe("the conversation page (ConversationPage)", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     const send = () => user.click(screen.getByRole("button", { name: en.chat.send }));
-    await user.type(input(), "first");
+    typeComposer("first");
     await send();
-    expect(input()).toHaveProperty("value", "first");
+    expect(draftText()).toBe("first");
     await send();
     await screen.findByText("first");
-    await user.type(input(), "second");
+    typeComposer("second");
     await send();
     await screen.findByText("second");
     const ids = posts(calls, `${BASE}/messages`).map(
@@ -1018,8 +1016,7 @@ describe("the conversation page (ConversationPage)", () => {
         }),
       ),
     );
-    const user = userEvent.setup();
-    await user.type(input(), "later{Enter}");
+    sendComposer("later");
     await screen.findByText("later");
     act(() => es.giveUp());
     await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
@@ -1058,9 +1055,9 @@ describe("the conversation page (ConversationPage)", () => {
     );
     await user.click(await screen.findByRole("menuitemradio", { name: "High" }));
     await user.keyboard("{Escape}");
-    await user.type(input(), "one{Enter}");
+    sendComposer("one");
     await screen.findByText("one");
-    await user.type(input(), "two{Enter}");
+    sendComposer("two");
     await screen.findByText("two");
     const bodies = posts(calls, `${BASE}/messages`).map(
       (c) => bodyOf(c) as Record<string, unknown>,
@@ -1552,14 +1549,14 @@ describe("switching conversations", () => {
     });
     const r = await renderChat();
     expect(await screen.findByText("queued in one")).toBeTruthy();
-    await userEvent.setup().type(input(), "draft for one");
+    typeComposer("draft for one");
     // the client navigation to c2: the same view gets new props and reads c2 from the browser
     const element = await ChatPage({ params: Promise.resolve({ conversationId: "c2" }) });
     r.rerender(pageElement(element, { locale: "en" }));
     expect(await screen.findByText("in two")).toBeTruthy();
     expect(screen.queryByText("queued in one")).toBeNull();
     expect(screen.queryByText("in one")).toBeNull();
-    expect(input()).toHaveProperty("value", "");
+    expect(draftText()).toBe("");
   });
 });
 
@@ -1601,7 +1598,7 @@ describe("a new conversation (/)", () => {
     );
     // Nothing is fetched in the browser, and nothing is created before the first send.
     expect(calls).toEqual([]);
-    await userEvent.setup().type(input(), "start{Enter}");
+    sendComposer("start");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
       agentId: "ag2",
@@ -1632,7 +1629,7 @@ describe("a new conversation (/)", () => {
     expect(screen.queryByRole("button", { name: /: Second agent$/ })).toBeNull();
     await userEvent.setup().click(agentChip("Echo agent"));
     expect(agentChip("Echo agent").getAttribute("aria-pressed")).toBe("true");
-    expect(input().getAttribute("placeholder")).toBe("What should Echo agent do?");
+    expect(input().getAttribute("aria-placeholder")).toBe("What should Echo agent do?");
   });
 });
 
@@ -1659,9 +1656,8 @@ describe("the first message from / (conversation send spec §2.1)", () => {
 
   it("switches to the conversation layout with the pending bubble at once", async () => {
     const d = await startNew();
-    fireEvent.change(input(), { target: { value: "start" } });
-    fireEvent.keyDown(input(), { key: "Enter" });
-    expect(input()).toHaveProperty("value", "");
+    sendComposer("start");
+    expect(draftText()).toBe("");
     expect(document.querySelector('[data-part="new-conversation-body"]')).toBeNull();
     const bubble = screen.getByText("start", { selector: '[data-part="bubble-body"]' });
     expect(bubble.closest("[data-pending]")).not.toBeNull();
@@ -1670,7 +1666,7 @@ describe("the first message from / (conversation send spec §2.1)", () => {
 
   it("seeds the cache from the answer and navigates without waiting for the groups", async () => {
     const d = await startNew();
-    await userEvent.setup().type(input(), "start{Enter}");
+    sendComposer("start");
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
     const event = userMsg(1, "start", { clientMessageId: d.cmid() });
     const conversation = CONV("c9").conversation;
@@ -1705,7 +1701,7 @@ describe("the first message from / (conversation send spec §2.1)", () => {
 
   it("a create that switched the model answers both events: /chat/<id> reads no events and streams after the last (no skeleton)", async () => {
     const d = await startNew();
-    await userEvent.setup().type(input(), "start{Enter}");
+    sendComposer("start");
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
     const switched = ev(
       1,
@@ -1747,11 +1743,11 @@ describe("the first message from / (conversation send spec §2.1)", () => {
 
   it("a second ↵ before the conversation exists keeps the text and says why, until it exists", async () => {
     const d = await startNew();
-    const user = userEvent.setup();
-    await user.type(input(), "start{Enter}");
+    sendComposer("start");
     expect(screen.queryByText(en.chat.sendAfterCreate)).toBeNull();
-    await user.type(input(), "again{Enter}");
-    expect(input()).toHaveProperty("value", "again");
+    await vi.waitFor(() => expect(d.cmid()).not.toBe(""));
+    sendComposer("again");
+    expect(draftText()).toBe("again");
     expect(screen.getByText(en.chat.sendAfterCreate)).toBeTruthy();
     expect(zh.chat.sendAfterCreate).toBe("会话创建后即可继续发送");
     expect(en.chat.sendAfterCreate).toBe("You can send again once the conversation is created");
@@ -1766,10 +1762,10 @@ describe("the first message from / (conversation send spec §2.1)", () => {
 
   it("a failed create goes back to the new conversation with the text in the composer", async () => {
     const d = await startNew();
-    await userEvent.setup().type(input(), "start{Enter}");
+    sendComposer("start");
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
     await act(async () => d.answer(json(500, { error: { code: "internal", message: "boom" } })));
-    await vi.waitFor(() => expect(input()).toHaveProperty("value", "start"));
+    await vi.waitFor(() => expect(draftText()).toBe("start"));
     expect(screen.queryByText("start", { selector: '[data-part="bubble-body"]' })).toBeNull();
     expect(router.replace).not.toHaveBeenCalled();
   });
@@ -1838,7 +1834,7 @@ describe("the conversation page in the app frame", () => {
   });
 });
 
-describe("composer: / prompts and @ resources", () => {
+describe("composer: / prompts and @ connector resources", () => {
   const APPS = "/api/v1/orgs/o1/connectors";
   const PROMPTS = {
     prompts: [
@@ -1876,9 +1872,9 @@ describe("composer: / prompts and @ resources", () => {
     await renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     // the trigger stays in the text: what follows it is the menu's query
-    expect(input()).toHaveProperty("value", "/");
+    expect(draftText()).toBe("/");
     // the prompt's name (no leading `/`), its description as the row's description
     const option = await screen.findByRole("option", { name: "summarize" });
     expect(option.textContent).toContain("Summarize a topic");
@@ -1887,20 +1883,34 @@ describe("composer: / prompts and @ resources", () => {
       screen.getByRole("option", { name: `Mail ${en.chat.connectorUnavailable.not_connected}` }),
     ).toBeTruthy();
     await user.click(option);
-    // the pick takes the trigger out of the text
-    expect(input()).toHaveProperty("value", "");
+    // the rendered prompt replaces the draft (the `/` with it) once the dialog inserts it
     const dialog = await screen.findByRole("dialog", { name: "/docs:summarize" });
     await user.type(within(dialog).getByLabelText(/topic/), "cats");
     await user.click(within(dialog).getByRole("button", { name: en.chat.insertPrompt }));
-    await vi.waitFor(() => expect(input()).toHaveProperty("value", "Summarize cats please"));
+    await vi.waitFor(() => expect(draftText()).toBe("Summarize cats please"));
     expect(bodyOf(calls.find((c) => c.url === `${APPS}/a1/prompts/summarize`))).toEqual({
       arguments: { topic: "cats" },
     });
   });
 
-  it("@ attaches a resource sent with the message; the bubble shows it, not its body", async () => {
+  it("@ → a connector's resources: the pick is a token sent with the message; the bubble shows it, not its body", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      "GET /api/v1/orgs/o1/agents/ag1/mentionable-connectors": () =>
+        json(200, {
+          connectors: [
+            {
+              id: "a1",
+              slug: "docs",
+              name: "Docs",
+              icon: null,
+              state: "ready",
+              credential: "none",
+              toolCount: 1,
+              resources: true,
+            },
+          ],
+        }),
       [`GET ${APPS}/resources`]: () => json(200, RESOURCES),
       [`POST ${BASE}/messages`]: (c) =>
         json(202, {
@@ -1909,12 +1919,22 @@ describe("composer: / prompts and @ resources", () => {
             "user_message",
             {
               content: [
-                { type: "text", text: (bodyOf(c) as { text: string }).text },
-                { type: "text", text: "Attached resource …" },
+                { type: "text", text: "read [resource: Handbook from Docs]" },
+                { type: "text", text: "[resource: Handbook from Docs] Attached resource …" },
               ],
               attachments: [
                 { appId: "a1", appName: "Docs", uri: "docs://handbook", name: "Handbook" },
               ],
+              inline: [
+                {
+                  kind: "resource",
+                  start: 5,
+                  end: 35,
+                  label: "Handbook",
+                  ref: { connectorId: "a1", uri: "docs://handbook" },
+                },
+              ],
+              clientMessageId: (bodyOf(c) as { clientMessageId: string }).clientMessageId,
               authorAccountId: "a1",
             },
             null,
@@ -1924,19 +1944,23 @@ describe("composer: / prompts and @ resources", () => {
     await renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "read @");
-    expect(input()).toHaveProperty("value", "read @");
-    await user.click(await screen.findByRole("option", { name: "Handbook" }));
-    // the pick takes the trigger out of the text
-    expect(input()).toHaveProperty("value", "read ");
-    expect(screen.getByText("@Handbook")).toBeTruthy();
+    typeComposer("read @");
+    expect(draftText()).toBe("read @");
+    await screen.findByRole("option", { name: /Docs/ });
+    // → opens the connector's resources (its second level)
+    pressComposer("ArrowRight");
+    await user.click(await screen.findByRole("option", { name: /Handbook/ }));
+    // the pick replaces the trigger with the resource's token
+    expect(draftText()).toBe("read @Handbook ");
+    expect(screen.getByRole("img", { name: "Resource: Handbook" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: en.chat.send }));
     expect(bodyOf(posts(calls, `${BASE}/messages`)[0])).toMatchObject({
-      text: "read",
-      attachments: [{ connectorId: "a1", uri: "docs://handbook" }],
+      text: "read \uFFFC",
+      tokens: [{ type: "resource", connectorId: "a1", uri: "docs://handbook" }],
     });
-    expect(await screen.findByText("@Handbook · Docs")).toBeTruthy();
-    expect(screen.queryByText("Attached resource …")).toBeNull();
+    const token = await screen.findByRole("img", { name: "Resource: Handbook" });
+    expect(token.closest('[data-part="bubble"]')).not.toBeNull();
+    expect(screen.queryByText(/Attached resource/)).toBeNull();
   });
 });
 

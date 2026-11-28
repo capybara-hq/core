@@ -44,9 +44,8 @@ import {
   type ComposerControl,
   type ComposerDraft,
   type ComposerMessage,
-  missingProjectFiles,
   newClientMessageId,
-  refusedConversationRefs,
+  refusedTokens,
 } from "./ComposerBar";
 import {
   type FirstMessageAttempt,
@@ -210,7 +209,7 @@ export function useNewConversationPage(
   const [restore, setRestore] = useState<{ n: number; draft?: ComposerDraft }>(() =>
     draft === null
       ? { n: 0 }
-      : { n: 0, draft: { text: draft, skill: null, attachments: [], files: [] } },
+      : { n: 0, draft: { segments: draft === "" ? [] : [draft], skill: null, files: [] } },
   );
   /** A second ↵ came before the conversation exists: the composer says why it waits. */
   const [blocked, setBlocked] = useState(false);
@@ -267,18 +266,11 @@ export function useNewConversationPage(
       if (m) {
         pending.drop(attempt.clientMessageId);
         setBlocked(false);
-        // the next composer marks the refused project files and conversations (this one is gone
-        // with the remount)
-        const missing = missingProjectFiles(e, m.draft?.projectFiles ?? []);
-        const refusedRefs = refusedConversationRefs(e, m.draft?.conversationRefs ?? []);
+        // the next composer marks the tokens the kernel refused (this one is gone with the
+        // remount)
+        const refused = refusedTokens(e, m.draft?.segments ?? []);
         const draft =
-          m.draft !== undefined && (missing.length > 0 || refusedRefs.length > 0)
-            ? {
-                ...m.draft,
-                ...(missing.length > 0 ? { missing } : {}),
-                ...(refusedRefs.length > 0 ? { refusedRefs } : {}),
-              }
-            : m.draft;
+          m.draft !== undefined && refused.length > 0 ? { ...m.draft, refused } : m.draft;
         setRestore((r) => ({ n: r.n + 1, ...(draft !== undefined ? { draft } : {}) }));
       }
       return { ok: false, error: e };
@@ -297,10 +289,8 @@ export function useNewConversationPage(
       agentId: agent.id,
       message: {
         text: m.text,
-        ...(m.attachments !== undefined ? { attachments: m.attachments } : {}),
+        ...(m.tokens !== undefined ? { tokens: m.tokens } : {}),
         ...(m.files !== undefined ? { files: m.files } : {}),
-        ...(m.projectFiles !== undefined ? { projectFiles: m.projectFiles } : {}),
-        ...(m.conversationRefs !== undefined ? { conversationRefs: m.conversationRefs } : {}),
         ...(m.skill !== undefined ? { skill: m.skill } : {}),
         ...selection.pending,
       },

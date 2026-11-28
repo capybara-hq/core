@@ -5,6 +5,14 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
+  backspaceComposer,
+  draftText,
+  pasteComposer,
+  pressComposer,
+  sendComposer,
+  typeComposer,
+} from "./support/composer";
+import {
   AGENTS,
   CONV,
   DEVICES,
@@ -160,6 +168,15 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
 }
 
 const input = () => screen.getByRole("combobox", { name: en.chat.inputLabel, hidden: true });
+/** Empties the draft's text, character by character from its end. */
+function clearComposer() {
+  for (let i = draftText().length; i > 0 && draftText() !== ""; i--) backspaceComposer();
+}
+/** The skill token in the draft (the skill is an inline token, composer inline tokens §1). */
+const skillToken = (name: string) => screen.queryByRole("img", { name: `Skill: /${name}` });
+/** The skill's argument hint: ghost text after a lone skill token. */
+const argumentHint = () =>
+  document.querySelector('[data-part="composer-editor"] .cb-composer-editor-hint')?.textContent;
 /** The composer menu anchored above the composer (spec 2026-11-28 composer menus §1). */
 const menu = async () => {
   await screen.findByRole("listbox");
@@ -201,8 +218,7 @@ describe("the / menu", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     const dialog = await menu();
     await within(dialog).findByText("fix-issue");
     // one heading per source (project root §4.6): the library's, then the plugins'
@@ -234,18 +250,17 @@ describe("the / menu", () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     await within(await menu()).findByText("fix-issue");
     // the query is the composer text after the trigger (no search box of its own)
-    await user.type(input(), "fix");
+    typeComposer("fix");
     expect(optionTexts(await menu())).toEqual(["fix-issue[issue-number]Fix a GitHub issue"]);
-    await user.clear(input());
-    await user.type(input(), "/superpowers:brain");
+    clearComposer();
+    typeComposer("/superpowers:brain");
     expect(optionTexts(await menu())).toEqual(["brainstormingsuperpowers · Think before building"]);
   });
 
-  it("picking a skill shows the chip; the text after it is sent as its arguments", async () => {
+  it("picking a skill inserts its token; the text after it is sent as its arguments", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`POST ${BASE}/messages`]: () => json(202, { event: invocation(2) }),
@@ -253,25 +268,22 @@ describe("the / menu", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     await user.click(await screen.findByRole("option", { name: /^fix-issue/ }));
-    expect(input()).toHaveProperty("value", "");
-    expect(document.querySelector('[data-part="composer-token"]')?.textContent).toContain(
-      "/fix-issue",
-    );
-    // the argument hint is the placeholder
-    expect(input().getAttribute("placeholder")).toBe("[issue-number]");
-    await user.type(input(), "123{Enter}");
+    // the trigger and query gave way to the token (and the space after it)
+    expect(draftText()).toBe("/fix-issue ");
+    expect(skillToken("fix-issue")).not.toBeNull();
+    // the argument hint is ghost text after the lone token
+    expect(argumentHint()).toBe("[issue-number]");
+    sendComposer("123");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     const post = posts(calls, `${BASE}/messages`);
-    expect(post).toHaveLength(1);
     expect(sentMessage(post[0] as Call)).toEqual({ text: "123", skill: { name: "fix-issue" } });
-    // sent: the chip is gone
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-part="composer-token"]')).toBeNull(),
-    );
+    // sent: the token is gone
+    await vi.waitFor(() => expect(skillToken("fix-issue")).toBeNull());
   });
 
-  it("a skill without arguments can be sent with the chip alone; Backspace removes the chip", async () => {
+  it("a skill without arguments can be sent with its token alone; Backspace removes the token", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`POST ${BASE}/messages`]: () =>
@@ -282,11 +294,13 @@ describe("the / menu", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     await user.click(await screen.findByRole("option", { name: /^release-check/ }));
-    await user.type(input(), "{Backspace}");
-    expect(document.querySelector('[data-part="composer-token"]')).toBeNull();
-    await user.type(input(), "/");
+    // the space after the token, then the token itself as one unit
+    backspaceComposer();
+    pressComposer("Backspace");
+    await vi.waitFor(() => expect(skillToken("release-check")).toBeNull());
+    typeComposer("/");
     await user.click(await screen.findByRole("option", { name: /^release-check/ }));
     await user.click(screen.getByRole("button", { name: en.chat.send }));
     expect(sentMessage(posts(calls, `${BASE}/messages`)[0] as Call)).toEqual({
@@ -304,10 +318,8 @@ describe("a lone /", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("/");
-    await user.keyboard("{Enter}");
+    pasteComposer("/");
+    pressComposer("Enter");
     await new Promise((r) => setTimeout(r, 50));
     expect(posts(calls, `${BASE}/messages`)).toHaveLength(0);
   });
@@ -320,7 +332,7 @@ describe("a lone /", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    await userEvent.setup().type(input(), "/");
+    typeComposer("/");
     const dialog = await menu();
     expect(await within(dialog).findByText(en.chat.noInvocable)).toBeTruthy();
     // The owner of the agent can edit it: the next step is its skills section
@@ -356,7 +368,7 @@ describe("a lone /", () => {
         },
       });
       await screen.findByText("hi");
-      await userEvent.setup().type(input(), "/");
+      typeComposer("/");
       const dialog = await menu();
       expect(await within(dialog).findByText(m.noInvocableReadOnly)).toBeTruthy();
       expect(within(dialog).queryByRole("link")).toBeNull();
@@ -372,20 +384,18 @@ describe("typed /name", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
     // pasted, so the menu never opens
-    await user.click(input());
-    await user.paste("/fix-issue 7");
-    await user.keyboard("{Enter}");
+    pasteComposer("/fix-issue 7");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
-    await user.paste("/nope 7");
-    await user.keyboard("{Enter}");
+    pasteComposer("/nope 7");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
-    await user.paste("/etc/hosts");
-    await user.keyboard("{Enter}");
+    pasteComposer("/etc/hosts");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(3));
-    await user.paste("/superpowers:brainstorming  a b ");
-    await user.keyboard("{Enter}");
+    pasteComposer("/superpowers:brainstorming  a b ");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(4));
     expect(posts(calls, `${BASE}/messages`).map((c) => sentMessage(c))).toEqual([
       { text: "7", skill: { name: "fix-issue" } },
@@ -415,10 +425,8 @@ describe("a typed /name from a stale list", () => {
     await screen.findByText("hi");
     // the first list comes with the server's snapshot
     expect(server.filter((c) => c.url.split("?")[0] === INVOCABLE)).toHaveLength(1);
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("/fix-issue 7");
-    await user.keyboard("{Enter}");
+    pasteComposer("/fix-issue 7");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
     const sent = posts(calls, `${BASE}/messages`);
     expect(sent.map(sentMessage)).toEqual([
@@ -433,7 +441,7 @@ describe("a typed /name from a stale list", () => {
         calls.filter((c) => c.method === "GET" && c.url.split("?")[0] === INVOCABLE),
       ).toHaveLength(1),
     );
-    await vi.waitFor(() => expect((input() as HTMLTextAreaElement).value).toBe(""));
+    await vi.waitFor(() => expect(draftText()).toBe(""));
   });
 });
 
@@ -449,25 +457,23 @@ describe("a pending send", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("first");
-    await user.keyboard("{Enter}");
+    pasteComposer("first");
+    pressComposer("Enter");
     // cleared before the kernel answers (conversation send spec §2.1)
-    expect((input() as HTMLTextAreaElement).value).toBe("");
+    expect(draftText()).toBe("");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     // typed after the send left, before it returns
-    await user.paste("and then");
+    pasteComposer("and then");
     release?.();
     await new Promise((r) => setTimeout(r, 20));
-    expect((input() as HTMLTextAreaElement).value).toBe("and then");
+    expect(draftText()).toBe("and then");
     // a draft replaced while pending stays whole
-    await user.clear(input());
-    await user.paste("second");
-    await user.keyboard("{Enter}");
+    clearComposer();
+    pasteComposer("second");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
-    await user.clear(input());
-    await user.paste("other");
+    clearComposer();
+    pasteComposer("other");
     release?.();
     await vi.waitFor(() =>
       expect(posts(calls, `${BASE}/messages`).map(sentMessage)).toEqual([
@@ -476,7 +482,7 @@ describe("a pending send", () => {
       ]),
     );
     await new Promise((r) => setTimeout(r, 20));
-    expect((input() as HTMLTextAreaElement).value).toBe("other");
+    expect(draftText()).toBe("other");
   });
 });
 
@@ -493,9 +499,9 @@ describe("an invocation while running", () => {
     await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     await user.click(await screen.findByRole("option", { name: /^fix-issue/ }));
-    await user.type(input(), "9{Enter}");
+    sendComposer("9");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     expect(sentMessage(posts(calls, `${BASE}/messages`)[0] as Call)).toEqual({
       text: "9",
@@ -515,10 +521,8 @@ describe("an invocation while running", () => {
     });
     await renderChatRoute();
     await screen.findByText("hi");
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("/fix-issue 9");
-    await user.keyboard("{Enter}");
+    pasteComposer("/fix-issue 9");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     expect(sentMessage(posts(calls, `${BASE}/messages`)[0] as Call)).toEqual({
       text: "9",
@@ -730,11 +734,11 @@ describe("a new conversation", () => {
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
       [`GET ${ORG}/files/limits`]: () => json(200, LIMITS),
     });
-    expect(input()).toHaveProperty("disabled", false);
+    expect(input().getAttribute("contenteditable")).toBe("true");
     const user = userEvent.setup();
-    await user.type(input(), "/");
+    typeComposer("/");
     await user.click(await screen.findByRole("option", { name: /^fix-issue/ }));
-    await user.type(input(), "123{Enter}");
+    sendComposer("123");
     await vi.waitFor(() =>
       expect(posts(calls, `${ORG}/conversations/first-message`)).toHaveLength(1),
     );
@@ -765,17 +769,15 @@ describe("a new conversation", () => {
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
       [`GET ${ORG}/files/limits`]: () => json(200, LIMITS),
     });
-    const user = userEvent.setup();
-    await user.click(input());
-    await user.paste("/fix-issue 7");
-    await user.keyboard("{Enter}");
+    pasteComposer("/fix-issue 7");
+    pressComposer("Enter");
     await vi.waitFor(() => expect(calls.some((c) => c.url === INVOCABLE)).toBe(true));
     // still resolving: the text stays, nothing pending yet
-    expect(input()).toHaveProperty("value", "/fix-issue 7");
+    expect(draftText()).toBe("/fix-issue 7");
     expect(document.querySelector("[data-pending]")).toBeNull();
     await act(async () => answer(json(200, SKILLS)));
     await vi.waitFor(() => expect(document.querySelector("[data-pending]")).not.toBeNull());
-    expect(input()).toHaveProperty("value", "");
+    expect(draftText()).toBe("");
     const pending = document.querySelector("[data-pending]") as HTMLElement;
     expect(pending.querySelector('[data-part="bubble-skill"]')?.textContent).toBe("/fix-issue");
     expect(posts(calls, `${ORG}/conversations/first-message`)).toHaveLength(1);

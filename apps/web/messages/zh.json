@@ -1566,9 +1566,6 @@
     "waiting": "等你处理",
     "attachments": "附件",
     "removeAttachment": "移除 {name}",
-    "attachLimit": "每条消息最多 {max} 个附件。",
-    "referencesNeedText": "引用资源、项目文件或会话时，请写一句消息再发送。",
-    "projectFileMissing": "{path} 已不在项目中，请移除或重新选择。",
     "noInvocable": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中，才能用 / 调用。",
     "noInvocableAction": "去选择技能",
     "noInvocableReadOnly": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中才能调用，请联系它的所有者或组织管理员。",
@@ -1846,11 +1843,9 @@
       },
       "fileByAgent": "{agent} {how}",
       "noFiles": "没有匹配的文件",
-      "noFilesOrResources": "没有匹配的文件、会话或资源",
       "libraryFailed": "文件库读取失败：{reason}",
       "conversationsFailed": "会话读取失败：{reason}",
       "resourcesFailed": "连接器资源读取失败：{reason}",
-      "resources": "连接器资源",
       "projectFiles": "项目文件",
       "projectFilesHint": "引用项目 {project} 中的文件，不上传",
       "abilities": "能力",
@@ -1858,9 +1853,17 @@
       "connectors": "连接器",
       "needsConfig": "待配置",
       "noMatch": "没有匹配项",
-      "noResources": "没有匹配的资源",
-      "search": "搜索"
-    }
+      "noResources": "{name} 没有可引用的资源",
+      "search": "搜索",
+      "connectorsGroup": "连接器",
+      "drill": "查看 {name} 的资源",
+      "resourcesHead": "{name} · 资源",
+      "connectYourAccount": "需要连接你的账号",
+      "oneSkill": "一条消息只能使用一个技能",
+      "noAtMatch": "没有匹配的连接器、文件或会话",
+      "connectorsFailed": "连接器读取失败：{reason}"
+    },
+    "tokenLimit": "这类引用每条消息最多 {max} 个。"
   },
   "ui": {
     "empty": "这里还没有内容。",
