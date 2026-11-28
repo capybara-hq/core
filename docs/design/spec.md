@@ -1672,6 +1672,21 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`, 
 <!-- states: composer-editor -->
 States: `empty`, `tokens`, `selected`, `refused`, `skill`, `compact`
 
+<!-- size-table: composer-editor -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| composer-input | empty | font-size | type.prose |
+| inline-token | tokens | border-radius | radius.sm |
+| inline-token | tokens | padding-left | space.1 |
+| inline-token | tokens | padding-right | space.1 |
+| inline-token | tokens | background-color | color.selected |
+| inline-token | tokens | color | color.ink |
+| inline-token | tokens | font-size | type.prose |
+| inline-token[data-state=refused] | refused | color | color.fail |
+| inline-token[data-kind=skill] | skill | background-color | color.accent-tint |
+| inline-token[data-kind=skill] | skill | color | color.accent |
+| inline-token[data-kind=skill] | skill | font-size | type.body |
+
 #### 6.16.3 Picker menu
 
 - The model, effort and agent menus of the composer, and the quick actions' (§6.16.27): a Menu (§6.7: `panel` ground, 1px `line-strong` border, radius `md`, `shadow-1`, padding `space.1`) **anchored to its trigger** (maintainer decision 2026-11-07; `ConvMenu anchored`):
