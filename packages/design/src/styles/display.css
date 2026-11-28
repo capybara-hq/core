@@ -1647,7 +1647,9 @@ a.cb-attachment:hover {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: var(--cb-radius-sm);
+  /* Cap at 25% so compact/touch radius scaling (--cb-radius-sm: 12px) never rounds small agent
+     avatars into circles like people (spec §6.30, #1013). */
+  border-radius: min(var(--cb-radius-sm), 25%);
   background: var(--cb-selected);
   color: var(--cb-ink);
   font-family: var(--cb-font);
@@ -1677,7 +1679,7 @@ a.cb-attachment:hover {
 .cb-avatar[data-size="64"] {
   width: 64px;
   height: 64px;
-  border-radius: var(--cb-radius-md);
+  border-radius: min(var(--cb-radius-md), 25%);
   font-size: var(--cb-type-h1-size);
 }
 /* A person's avatar (spec §6.30): a circle, the initial muted on selected. */

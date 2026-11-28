@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -362,5 +364,23 @@ describe("AvatarPicker (spec §6.30)", () => {
       expect(some.some((c) => c?.kind === "preset" && c.id === "panda")).toBe(false);
       expect(some[10]).toEqual({ kind: "theme", key: "chrome", src: "/theme/chrome.png" });
     });
+  });
+
+  it("caps square avatar radius at 25% so compact scaling never draws small agents as circles", () => {
+    const displayCss = readFileSync(resolve(__dirname, "../src/styles/display.css"), "utf8");
+    const convListCss = readFileSync(
+      resolve(__dirname, "../src/styles/conversation-list.css"),
+      "utf8",
+    );
+    expect(displayCss).toMatch(
+      /\.cb-avatar\s*\{[^}]*border-radius:\s*min\(var\(--cb-radius-sm\),\s*25%\)/,
+    );
+    expect(displayCss).toMatch(
+      /\.cb-avatar\[data-size="64"\]\s*\{[^}]*border-radius:\s*min\(var\(--cb-radius-md\),\s*25%\)/,
+    );
+    expect(displayCss).toMatch(/\.cb-avatar\[data-shape="circle"\]\s*\{[^}]*border-radius:\s*50%/);
+    expect(convListCss).toMatch(
+      /\.cb-convlist-avatar\s*>\s*\.cb-avatar[^{]*\{[^}]*border-radius:\s*min\(var\(--cb-radius-sm\),\s*25%\)/,
+    );
   });
 });

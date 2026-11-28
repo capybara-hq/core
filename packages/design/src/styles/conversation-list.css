@@ -89,7 +89,7 @@
 .cb-convlist-avatar > .cb-skeleton-box {
   width: var(--cb-convlist-avatar);
   height: var(--cb-convlist-avatar);
-  border-radius: var(--cb-radius-sm);
+  border-radius: min(var(--cb-radius-sm), 25%);
 }
 .cb-convlist-avatar > .cb-avatar > :is(svg, img) {
   width: 100%;
