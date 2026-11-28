@@ -161,6 +161,21 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Request building and replays never read another conversation, so no `DriftReason`. The command review skips
   these blocks (quoted material, not the person's intent). Case in `reconstruct.test.ts` ("referenced
   conversations …").
+- **Inline tokens** (composer inline tokens spec `docs/superpowers/specs/2026-11-28-composer-inline-tokens-design.md`
+  §3.5, §3.6): each U+FFFC marker of the body is logged in `content[0]` (or `skill.arguments`) as its English
+  placeholder (`[connector: …]`, `[resource: … from …]`, `[file: …]`, `[project file: …]`, `[conversation: …]`),
+  and each file block follows its `[file: <label>]` line (file tokens first, then uploads, labels numbered per
+  kind). Placeholders and file lines are logged content, rebuilt as they are; `payload.inline` (offsets, labels,
+  refs) is display only: request building never reads it. No `DriftReason`. Case in `reconstruct.test.ts`
+  ("inline tokens …").
+- **Connector mentions** (same spec §3.5): a connector token logs a mention block (after the referenced
+  conversations' blocks) and `payload.connectorMentions[]` `{ connectorId, slug, name, toolCount, loadedTools }`.
+  `loadedTools` holds the connector's offered keys whenever it offers at most 20 tools (empty above that),
+  whatever the send-time tool search state; `loadedToolKeys` adds them to the loaded set beside
+  `tool_result.loadedTools`, in seq order, so a step with tool search sends their full definitions from this
+  message on (later turns too), and a step without tool search ignores them (every tool is loaded anyway). The
+  mention block's last sentence is the send-time tool search snapshot. From the log alone: no `DriftReason`.
+  Case in `reconstruct.test.ts` ("connector mention loads tools …").
 - **A reply cut off at the output token limit** (issue #951): an `assistant_message` with `stopReason:
   "max_tokens"` is followed in the request by the `role: "system"` `OUTPUT_TRUNCATED_TEXT`
   (`runtime/context/output-truncated.ts`), derived from the logged stop reason alone, so no event
