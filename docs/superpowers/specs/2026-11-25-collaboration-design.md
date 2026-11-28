@@ -275,9 +275,37 @@ expiry). The kernel writes it too (a declined offer, §4.4; a depth stop, §4.7)
 
 `ctx.inbox.post / resolve` (permission `permissions.inbox`): an item for one person with a title,
 a short body, a link (the plugin's page) and up to three actions; an action names one of the
-plugin's UI actions (`ctx.ui.action`), which the kernel calls with the person who clicked. The inbox lists them under the
-plugin's name; push follows the person's push settings. Items have an expiry. Channel cards for
-them are a later phase.
+plugin's UI actions (`ctx.ui.action`), which the kernel calls with the person who clicked. The
+inbox lists them under the plugin's name; push follows the person's push settings. Items have an
+expiry. Channel cards for them are a later phase.
+
+As built: kernel items have the kinds `automation_offer`, `automation_offer_declined` and
+`automation_depth_stopped` (no actions; the web writes their copy by kind). A plugin item links only
+under `/p/<plugin>/`, carries at most three actions (each idempotent) and a `dedupeKey` (one open
+item per key and person), and expires after 30 days by default (90 at most); an offer's item
+expires after 7 days. Closed and expired rows are swept after `inbox.retentionDays` (platform
+config, default 30). Dismissing is `inbox.item-dismiss`; clicking an action is a human-only route.
+
+### 4.10 As built (collaboration kernel)
+
+- **Cause handles.** `ctx.triggers.causeOf(call)` stores a row in `trigger_cause_handles` (org,
+  plugin, run, depth, trigger account); the handle is valid for 24 hours and accepted only for the
+  same org and extension. A queued emit with `cause: { handle }` keeps the chain depth.
+- **Event retention.** Trigger events are deleted after `automations.eventRetentionDays` (platform
+  config, default 30), except an event with an open offer; an event still pending after 10 minutes
+  is dispatched again by the sweep and given up (`undelivered`) after 24 hours.
+- **Acceptance.** `automation_acceptance` holds the person's rule per source (`auto`, `confirm`,
+  `off`; no row follows `automations.directedDefault`); `automation_offers` holds offers
+  (unique per event; `open`, `accepted`, `declined`, `expired`). Offers expire after 7 days. The
+  acceptance automation (`origin = acceptance`) has a fixed trigger, agent and mode; people edit
+  its name, grants and pause state. It does not count against the per-member task limits.
+- **Personal page.** A person sets their rules at `/account/automations` ("Accepting work"); the
+  org default sits in the org's automation settings. `automations.acceptance-set` is a Platform
+  operation declared `personOnly`: the ask is always the person's, never decided by a review model
+  or a full-access profile, and refused in an unattended run.
+- **`run.lifecycle`.** The payload carries ids only (org, account, agent, run, conversation,
+  subject, `waitingOn` `approval` or `input`); `offer_declined` has `reason` `declined`, `off` or
+  `paused` (the acceptance automation is paused or ended) and no run or conversation.
 
 ## 5. Plugin: data (`plugin_collab`)
 
@@ -408,7 +436,8 @@ create private agents from them as today.
 ## AGENTS.md rules touched
 
 - **Extensions:** new `ctx.triggers`, `ctx.inbox`, `ctx.agents.usableBy`,
-  `ctx.conversations.bySubject`; new permission keys `triggers`, `inbox`, `agents`, `conversations`; new extension point
+  `ctx.conversations.bySubject`, `ctx.people`; new permission keys `triggers`, `inbox`, `agents`,
+  `conversations`, `people`; new extension point
   `trigger-source@1` (`multi`, org-scoped); new observe hook `run.lifecycle`. Hooks still observe
   only.
 - **Multi-replica discipline:** dispatch is an outbox job; coalescing is a BullMQ delayed job with a

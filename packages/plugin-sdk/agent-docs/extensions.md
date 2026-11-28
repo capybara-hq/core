@@ -107,6 +107,23 @@ ctx.setup.check("bot-token", {
 - The platform runs checks only when a person or an agent asks, caches results for five minutes,
   times a run out after 10 seconds and redacts known secrets from results.
 
+## Inbox, people and run notices
+
+- `ctx.inbox` (`permissions.inbox: true`) posts a personal item for one active member of an org that
+  enabled the extension: a title, a short body, a link under `/p/<extension name>/` and up to three
+  actions, each naming a UI action of the extension that the kernel calls as the person who clicked
+  (actions must be idempotent). Pass a `dedupeKey` to keep one open item per subject; items expire
+  (30 days by default, 90 at most) and the person's push settings apply. `ctx.inbox.resolve` closes
+  an item the extension posted. Errors are `InboxError` (`invalid_item`, `org_disabled`, `not_found`).
+- `ctx.agents.usableBy`, `ctx.conversations.bySubject` and `ctx.people.get` / `search` read org
+  facts for pages (`permissions.agents`, `conversations`, `people`; each call names an `orgId`, and
+  the extension must be enabled there). They return ids, names and avatars, never emails or
+  conversation content.
+- The `run.lifecycle` hook (`permissions.hooks`) tells the extension that a run of a conversation
+  about its subject started, is waiting on a person, finished or failed, and that directed work was
+  not run (`offer_declined`). It is delivered at least once: make the handler idempotent and treat
+  it as a hint. For events about your subjects see `trigger-source`.
+
 ## Extension points
 
 An extension *provides* a point (`provides`) or *consumes* one (`requires`, or `optional`). Refs

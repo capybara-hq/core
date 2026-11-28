@@ -14,4 +14,6 @@ Declare the event types the extension emits in `permissions.triggers.emit` (lowe
 
 `visible` answers which of the given accounts may see a subject; the kernel only wakes agents of accounts it lists, and a throw or a missing answer means nobody. `subjectLink` optionally gives people a link to the subject. Automation filters are conjunctions over facts: `eq` compares scalars, `in` matches a scalar fact against a list, `contains` matches a list fact against a scalar, and a missing fact never matches.
 
+A directed event (its declaration says so, and `audience` names a person and an agent) never reaches automations people made: it runs only through the audience person's acceptance rule for the source (`auto`, `confirm` or `off`; the person sets it on their own page and the org sets the default), so an assignment may be offered, accepted at once, or not accepted; the `run.lifecycle` hook reports the outcome (see `extensions`).
+
 See `extensions` for the rules every extension follows.

@@ -1913,7 +1913,8 @@ export type TriggerEventState = "pending" | "dispatched" | "undelivered" | "dept
 /**
  * 0191: a serializable trigger cause (`ctx.triggers.causeOf`, collaboration spec §4.2): an opaque
  * id bound to the org, the extension that asked for it and the run of the tool call it was made
- * from (with the depth and trigger account the run had then), accepted by `emit` (`cause: { handle }`) until `expires_at`.
+ * from (with the depth and trigger account the run had then), accepted by `emit`
+ * (`cause: { handle }`) until `expires_at`.
  */
 export interface TriggerCauseHandlesTable {
   id: string;
