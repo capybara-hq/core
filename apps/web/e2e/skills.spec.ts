@@ -317,7 +317,7 @@ test("phase D: invoke skills from the / menu and typed, send one while running, 
 
   // 1. the / menu: skills first, tagged; filter, pick, the chip, the arguments
   await input.press("/");
-  // the composer menu: the textarea is its combobox, what follows the trigger its query
+  // the composer menu: the editor is its combobox, what follows the trigger its query
   const menu = page.getByRole("listbox");
   await expect(menu.getByRole("option", { name: /^e2e-fix-issue/ })).toBeVisible();
   await expect(menu.getByRole("option", { name: /^e2e-manual-check/ })).toContainText(
@@ -329,9 +329,17 @@ test("phase D: invoke skills from the / menu and typed, send one while running, 
   await input.pressSequentially("fix-iss");
   await expect(menu.getByRole("option")).toHaveCount(1);
   await menu.getByRole("option", { name: /^e2e-fix-issue/ }).click();
-  await expect(page.locator('[data-part="composer-token"]')).toContainText("/e2e-fix-issue");
-  await expect(input).toHaveAttribute("placeholder", "[issue-number]");
-  await input.fill("123");
+  // the pick is an inline skill token in the editor
+  await expect(
+    input.getByRole("img", {
+      name: designZh("composer.token.skill").replace("{name}", "/e2e-fix-issue"),
+      exact: true,
+    }),
+  ).toBeVisible();
+  // the skill's argument hint follows the lone token and describes the text box
+  await expect(input).toHaveAccessibleDescription("[issue-number]");
+  // typed after the token (a fill would replace the whole draft, the token with it)
+  await input.pressSequentially("123");
   await input.press("Enter");
   await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
   const first = bubble("/e2e-fix-issue");
@@ -375,7 +383,7 @@ test("phase D: invoke skills from the / menu and typed, send one while running, 
   await input.press("Enter");
   // the send has landed (the composer is clear) and the reply streams
   await expect(page.locator('[data-entry="user"]').filter({ hasText: "slow:300:" })).toBeVisible();
-  await expect(input).toHaveValue("");
+  await expect(input).toHaveText("");
   await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
   // while the run goes, ↵ sends an interjection (run input spec D1): logged at once, pending
   // (待处理) until a step takes it in; nothing is queued

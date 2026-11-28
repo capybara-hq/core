@@ -30,7 +30,7 @@ async function newChat(page: Page, agentId: string) {
   await page.goto(`/?agent=${agentId}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   // The agent is picked once the agents list loaded (the composer's placeholder names it).
-  await expect(composer(page)).not.toHaveAttribute("placeholder", /—/);
+  await expect(composer(page)).toHaveAttribute("aria-placeholder", /^[^—]+$/);
 }
 
 // exact: a stopped run's row is named "… 已停止 …" too
@@ -48,7 +48,7 @@ test("a new conversation is created on the first send only; the title is generat
   const agentId = await createAgent(page, orgId, "Cap first send");
   await newChat(page, agentId);
   await expect(composer(page)).toHaveAttribute(
-    "placeholder",
+    "aria-placeholder",
     zh.chat.newPlaceholder.replace("{agent}", "Cap first send"),
   );
   // Nothing exists before the first send.
@@ -91,7 +91,7 @@ test("↵ and ⌘↵ / Ctrl+↵ while running send interjections (no queue), pla
   await send(page, `slow:500:${LONG}`);
   await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
   // the hint says a message reaches the agent at its next step (run input spec §4)
-  await expect(composer(page)).toHaveAttribute("placeholder", zh.chat.runningHint);
+  await expect(composer(page)).toHaveAttribute("aria-placeholder", zh.chat.runningHint);
   // ↵ sends now: in the log at once, pending (待处理) at the bottom until a step takes it in
   await composer(page).fill("echo:now");
   await composer(page).press("Enter");

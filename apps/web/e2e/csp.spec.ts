@@ -79,7 +79,7 @@ test("every page boots under the CSP", async ({ page }) => {
   nonces.add(await visit(page, `/?agent=${agentId}`));
   await hydrated(page);
   const input = composer(page);
-  await expect(input).not.toHaveAttribute("placeholder", /—/);
+  await expect(input).toHaveAttribute("aria-placeholder", /^[^—]+$/);
   await input.fill("echo:csp ok");
   await input.press("Enter");
   await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
