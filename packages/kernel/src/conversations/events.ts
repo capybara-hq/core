@@ -2180,10 +2180,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     "run_aborted",
     z.object({
       byAccountId: z.string().nullable(),
-      /** `eval_stopped`：评测整轮回放被评测运行停下（只出现在 `kind = 'eval'` 的对话里），原因见 `detail`。 */
       /**
-       * `superseded`: an idle compact run preempted by input (idle compaction spec §5.2); no
-       * account.
+       * `eval_stopped`: an eval's full-run replay was stopped by the eval run (only in conversations
+       * with `kind = 'eval'`); the cause is in `detail`. `superseded`: an idle compact run preempted
+       * by input (idle compaction spec §5.2); no account.
        */
       reason: z.enum(["user", "shutdown_exhausted", "eval_stopped", "org_deleted", "superseded"]),
       /**
