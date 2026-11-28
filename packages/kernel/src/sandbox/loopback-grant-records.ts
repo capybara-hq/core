@@ -8,6 +8,7 @@ import {
 import { type Selectable, sql } from "kysely";
 import type { DeviceLoopbackGrantsTable, KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import { asPlatform } from "../infra/database/org-scope.js";
 import type { OutboxService } from "../infra/outbox/outbox.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import type { DeviceSandbox } from "./device-sandbox.js";
@@ -33,6 +34,54 @@ export interface LoopbackRefreshJobData {
   orgId: string;
   deviceId: string;
   serviceId: string;
+  /** The change that owed it (the job id's last part), so a follow-up names its own id. */
+  change?: string;
+  /** The follow-up number after failed sends (absent for the first job). */
+  followUp?: number;
+}
+
+/**
+ * The most follow-ups one change owes after failed sends, about a day at
+ * {@link LOOPBACK_FOLLOW_UP_MAX_DELAY_MS}: a device the kernel records as running keeps getting
+ * the live set until one send lands, so a narrowing never stays on the machine because a send
+ * failed.
+ */
+export const LOOPBACK_MAX_FOLLOW_UPS = 300;
+/** The first follow-up's delay; it doubles up to {@link LOOPBACK_FOLLOW_UP_MAX_DELAY_MS}. */
+export const LOOPBACK_FOLLOW_UP_DELAY_MS = 30_000;
+export const LOOPBACK_FOLLOW_UP_MAX_DELAY_MS = 300_000;
+
+/**
+ * Owes the follow-up of a refresh whose send failed (`-t<n>` after its change), delayed with a
+ * doubling backoff; false past {@link LOOPBACK_MAX_FOLLOW_UPS}.
+ */
+export async function oweLoopbackFollowUp(
+  outbox: Pick<OutboxService, "add">,
+  data: LoopbackRefreshJobData,
+): Promise<boolean> {
+  const n = (data.followUp ?? 0) + 1;
+  if (n > LOOPBACK_MAX_FOLLOW_UPS) return false;
+  const change = data.change ?? "x";
+  const delay = Math.min(
+    LOOPBACK_FOLLOW_UP_DELAY_MS * 2 ** (n - 1),
+    LOOPBACK_FOLLOW_UP_MAX_DELAY_MS,
+  );
+  const next: LoopbackRefreshJobData = {
+    orgId: data.orgId,
+    deviceId: data.deviceId,
+    serviceId: data.serviceId,
+    change,
+    followUp: n,
+  };
+  await outbox.add({
+    queue: MAINTENANCE_QUEUE_NAME,
+    name: LOOPBACK_REFRESH_JOB,
+    jobId: loopbackRefreshJobId(data.deviceId, data.serviceId, `${change}-t${n}`),
+    data: next,
+    runAt: new Date(Date.now() + delay),
+    orgId: data.orgId,
+  });
+  return true;
 }
 
 /**
@@ -131,6 +180,7 @@ export async function oweRefresh(
     orgId: target.orgId,
     deviceId: target.deviceId,
     serviceId: target.serviceId,
+    change,
   };
   await outbox.add({
     queue: MAINTENANCE_QUEUE_NAME,
@@ -162,16 +212,34 @@ export async function oweLoopbackRefreshes(
     if (!v) throw new Error(`A ${under.level} loopback refresh needs its subject`);
     return v;
   };
-  let q = db
-    .selectFrom("device_loopback_grants")
-    .select(["org_id", "device_id", "service_id"])
-    .distinct()
-    .where("revoked_at", "is", null);
-  // the platform level reaches every org (its writer holds the exclusive platform lock)
-  if (under.level !== "platform") q = q.where("org_id", "=", need(under.orgId));
-  if (under.level === "device") q = q.where("device_id", "=", need(under.deviceId));
-  if (under.level === "root") q = q.where("conversation_id", "=", need(under.rootConversationId));
-  const rows = await q.orderBy("org_id").orderBy("device_id").orderBy("service_id").execute();
+  const rows =
+    under.level === "platform"
+      ? await asPlatform("platform ceiling publication: loopback grants of every org", () => {
+          // org-filter: deployment-wide platform-level writer under the exclusive platform lock:
+          // the live grants it may narrow lie in every org; each refresh runs in its own org
+          return db
+            .selectFrom("device_loopback_grants")
+            .select(["org_id", "device_id", "service_id"])
+            .distinct()
+            .where("revoked_at", "is", null)
+            .orderBy("org_id")
+            .orderBy("device_id")
+            .orderBy("service_id")
+            .execute();
+        })
+      : await db
+          .selectFrom("device_loopback_grants")
+          .select(["org_id", "device_id", "service_id"])
+          .distinct()
+          .where("org_id", "=", need(under.orgId))
+          .where("revoked_at", "is", null)
+          .$if(under.level === "device", (q) => q.where("device_id", "=", need(under.deviceId)))
+          .$if(under.level === "root", (q) =>
+            q.where("conversation_id", "=", need(under.rootConversationId)),
+          )
+          .orderBy("device_id")
+          .orderBy("service_id")
+          .execute();
   for (const r of rows)
     await oweRefresh(
       outbox,
@@ -179,6 +247,27 @@ export async function oweLoopbackRefreshes(
       change,
     );
   return rows.length;
+}
+
+/**
+ * Revokes a deleted device's live grants (reason `revoked`, audited with `cause: "device-deleted"`)
+ * and owes their refreshes, in the caller's transaction (the device's deletion or its owner's
+ * offboarding).
+ */
+export async function revokeLoopbackGrantsOfDevice(
+  db: KernelSchemaDb,
+  outbox: Pick<OutboxService, "add">,
+  target: { orgId: string; deviceId: string },
+): Promise<void> {
+  const rows = await db
+    .updateTable("device_loopback_grants")
+    .set({ revoked_at: sql<Date>`now()`, revoke_reason: "revoked" })
+    .where("org_id", "=", target.orgId)
+    .where("device_id", "=", target.deviceId)
+    .where("revoked_at", "is", null)
+    .returning(["id", "org_id", "device_id", "service_id", "conversation_id", "port"])
+    .execute();
+  await endedGrants(db, outbox, rows, "revoked", null, "device-deleted");
 }
 
 /**
@@ -219,6 +308,8 @@ export async function endedGrants(
   }[],
   reason: LoopbackRevokeReason,
   actorAccountId: string | null,
+  /** What ended them when the reason alone does not say (`device-deleted`, `provider-support`). */
+  cause?: string,
 ): Promise<void> {
   const owed = new Map<string, { target: LoopbackRefreshJobData; grantId: string }>();
   for (const r of [...rows].sort((a, b) => a.id.localeCompare(b.id))) {
@@ -234,6 +325,7 @@ export async function endedGrants(
         conversationId: r.conversation_id,
         port: r.port,
         reason,
+        ...(cause !== undefined && { cause }),
       },
     });
     const key = `${r.device_id}\n${r.service_id}`;

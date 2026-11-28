@@ -6,6 +6,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { asPlatform } from "../infra/database/org-scope.js";
@@ -13,6 +14,8 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { XactLock } from "../infra/database/xact-lock.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { DeviceServices } from "./device-services.js";
 import {
   endedGrants,
@@ -23,6 +26,7 @@ import {
   LoopbackLimitError,
   type LoopbackRefreshJobData,
   loopbackRefusal,
+  oweLoopbackFollowUp,
   oweRefresh,
   rowOf,
 } from "./loopback-grant-records.js";
@@ -64,6 +68,7 @@ export class LoopbackGrants {
     @Inject(PermissionFacts)
     private readonly facts: Pick<PermissionFacts, "deviceSandboxFacts">,
     @Inject(DeviceServices) private readonly services: Pick<DeviceServices, "refreshLoopback">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
   /**
@@ -85,8 +90,25 @@ export class LoopbackGrants {
   ): Promise<LoopbackGrantRow> {
     if ((by.source === "owner-panel") !== (by.call === undefined))
       throw new Error("A loopback grant names its call unless the owner's panel made it");
-    await this.locks.lock(key.deviceId, key.serviceId);
     const db = this.db.db;
+    // the root must be a live root conversation, read FOR SHARE: a deletion that commits first is
+    // seen here (the row is re-checked after its lock), and one that comes later waits for this
+    // transaction and then revokes the grant with the conversation's other grants
+    const root = await db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", key.rootConversationId)
+      .where("org_id", "=", key.orgId)
+      .where("deleted_at", "is", null)
+      .where("parent_conversation_id", "is", null)
+      .forShare()
+      .executeTakeFirst();
+    if (!root)
+      throw new ApiError(
+        "conversation.not_found",
+        "The conversation was deleted or is not a root conversation; a loopback port is granted to a live root conversation",
+      );
+    await this.locks.lock(key.deviceId, key.serviceId);
     const stale = await db
       .updateTable("device_loopback_grants")
       .set({ revoked_at: sql<Date>`now()`, revoke_reason: "expired" })
@@ -243,30 +265,58 @@ export class LoopbackGrants {
   }
 
   /**
-   * The refresh job: revokes the (device, service)'s live grants (reason `outside-sandbox-off`,
-   * audited) when the device refuses loopback grants now ({@link loopbackRefusal}: a ceiling
-   * switched off, a provider that lost its support), then sends the live set to an `ifRunning`
-   * ensure of the service (`DeviceServices.refreshLoopback`; a stopped service or instance needs
-   * nothing: its next ensure sends the set).
+   * The refresh job. First it revokes the (device, service)'s live grants (reason
+   * `outside-sandbox-off`, audited) when the device refuses loopback grants now: a ceiling layer
+   * keeps running outside the sandbox off, or the provider's known support lacks
+   * `network.loopbackPorts` (a provider that lost it). A support not known (none stored, or a
+   * failed read) revokes nothing: grants are consents, and new ones are refused meanwhile. Then it
+   * sends the live set to an `ifRunning` ensure of the service (`DeviceServices.refreshLoopback`),
+   * always, so a revocation already recorded reaches the machine whatever the support says (a
+   * provider without support ignores the set). A stopped service or instance needs nothing: its
+   * next ensure sends the set. A failed send owes a delayed follow-up
+   * ({@link oweLoopbackFollowUp}), so a narrowing never stays on a machine the kernel records as
+   * running because one send failed.
    */
   async refresh(data: LoopbackRefreshJobData, signal: AbortSignal): Promise<void> {
     const facts = await this.facts.deviceSandboxFacts(data.orgId, data.deviceId);
     // no run here: only the device's ceiling decides whether a call could run outside now
-    const escalation = facts.box.outsideSandbox ? null : "the outside-sandbox setting is off";
-    if (loopbackRefusal(facts.box, facts.support, escalation) !== null)
-      await this.revokeRefused(data);
+    const ceilingOff = !facts.box.outsideSandbox && facts.box.layer.outsideSandbox !== "provider";
+    if (ceilingOff) await this.revokeRefused(data, "ceiling");
+    else if (
+      facts.support !== null &&
+      loopbackRefusal(
+        facts.box,
+        facts.support,
+        facts.box.outsideSandbox ? null : "the provider runs nothing outside the sandbox",
+      ) !== null
+    )
+      await this.revokeRefused(data, "provider-support");
     signal.throwIfAborted();
     try {
       await this.services.refreshLoopback(data.orgId, data.deviceId, data.serviceId, signal);
     } catch (err) {
       // a provider without services runs none, so nothing holds a port there
       if (err instanceof DeviceAccessError && err.code === "capability_missing") return;
-      throw err;
+      const owed = await this.followUp(data);
+      this.log.warn("loopback refresh failed", {
+        deviceId: data.deviceId,
+        serviceId: data.serviceId,
+        followUp: owed ? (data.followUp ?? 0) + 1 : null,
+        err,
+      });
     }
   }
 
   @Transactional()
-  private async revokeRefused(data: LoopbackRefreshJobData): Promise<void> {
+  private followUp(data: LoopbackRefreshJobData): Promise<boolean> {
+    return oweLoopbackFollowUp(this.outbox, data);
+  }
+
+  @Transactional()
+  private async revokeRefused(
+    data: LoopbackRefreshJobData,
+    cause: "ceiling" | "provider-support",
+  ): Promise<void> {
     const rows = await this.db
       .updateTable("device_loopback_grants")
       .set({ revoked_at: sql<Date>`now()`, revoke_reason: "outside-sandbox-off" })
@@ -290,6 +340,7 @@ export class LoopbackGrants {
           conversationId: r.conversation_id,
           port: r.port,
           reason: "outside-sandbox-off",
+          cause,
         },
       });
   }

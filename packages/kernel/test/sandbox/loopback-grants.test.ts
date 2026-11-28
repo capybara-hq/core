@@ -6,9 +6,10 @@ import { fileURLToPath } from "node:url";
 import type { DeviceAccessError, DeviceServiceSpec } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DevicesService } from "../../src/devices/devices.service.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
@@ -20,6 +21,7 @@ import {
   LoopbackLimitError,
   loopbackRefreshJobId,
 } from "../../src/sandbox/loopback-grants.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import type { SandboxUseContext } from "../../src/sandbox/use-context.js";
 import {
   FAKE_PERMISSION_SUPPORT,
@@ -168,6 +170,7 @@ const use = (): SandboxUseContext => ({
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   failing = false;
   await k.app.get(DeviceServices).stop(use(), SERVICE, AbortSignal.timeout(30_000));
 });
@@ -267,7 +270,8 @@ describe("loopback port grants", () => {
     await sql`UPDATE capybara.device_loopback_grants SET expires_at = now() - interval '1 second'
       WHERE id = ${g.id}`.execute(raw);
     expect(await grants.livePorts(orgId, s.deviceId, SERVICE)).toEqual([]);
-    expect(await grants.expireDue()).toBe(1);
+    // the worker's own expiry tick may sweep it first: assert the outcome, not who swept it
+    expect(await grants.expireDue()).toBeLessThanOrEqual(1);
     const [row] = await rows();
     expect(row?.revoke_reason).toBe("expired");
     expect(row?.revoked_at).not.toBeNull();
@@ -342,6 +346,134 @@ describe("loopback port grants", () => {
       expect.objectContaining({
         detail: expect.objectContaining({ reason: "outside-sandbox-off" }),
       }),
+    ]);
+  });
+
+  it("refuses a grant on a deleted or non-root conversation", async () => {
+    await db
+      .updateTable("conversations")
+      .set({ deleted_at: sql<Date>`now()` })
+      .where("id", "=", s.conversationId)
+      .execute();
+    await expect(grant(3999)).rejects.toMatchObject({ code: "conversation.not_found" });
+    expect(await rows()).toEqual([]);
+  });
+
+  it("a grant waiting on a concurrent deletion sees it and is refused", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked!: () => void;
+    const holding = new Promise<void>((r) => {
+      locked = r;
+    });
+    // the deletion holds the conversation row until the grant waits for it
+    const deletion = raw.transaction().execute(async (trx) => {
+      await sql`UPDATE capybara.conversations SET deleted_at = now() WHERE id = ${s.conversationId}`.execute(
+        trx,
+      );
+      locked();
+      await gate;
+    });
+    await holding;
+    const granting = grant(3999).catch((e: unknown) => e);
+    await waitFor(
+      async () => {
+        const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND query ILIKE '%conversations%for share%'`.execute(raw);
+        return (r.rows[0]?.n ?? 0) > 0;
+      },
+      20_000,
+      "the grant waiting for the conversation row",
+    );
+    release();
+    await deletion;
+    expect(await granting).toMatchObject({ code: "conversation.not_found" });
+    expect(await rows()).toEqual([]);
+  });
+
+  it("keeps the grants while the provider's support is not known, and still sends the set", async () => {
+    await k.app.get(DeviceServices).ensure(use(), spec(), AbortSignal.timeout(30_000));
+    await grant(3999);
+    await drainRefreshes();
+    await waitForLastPorts([3999]);
+    const facts = k.app.get(PermissionFacts);
+    const real = facts.deviceSandboxFacts.bind(facts);
+    // a support read that failed: no support, so the box assumes no crossing (provider layer)
+    vi.spyOn(facts, "deviceSandboxFacts").mockImplementation(async (...a) => {
+      const r = await real(...a);
+      return {
+        ...r,
+        support: null,
+        box: {
+          ...r.box,
+          outsideSandbox: false,
+          loopbackPorts: false,
+          layer: { ...r.box.layer, outsideSandbox: "provider" },
+        },
+      };
+    });
+    const sends = (await readFakeServiceLoopbackPorts(sandboxRoot)).length;
+    await grants.refresh(
+      { orgId, deviceId: s.deviceId, serviceId: SERVICE },
+      AbortSignal.timeout(30_000),
+    );
+    expect((await rows())[0]?.revoke_reason).toBeNull();
+    expect((await readFakeServiceLoopbackPorts(sandboxRoot)).slice(sends)).toEqual([[3999]]);
+    // a known support without loopback ports revokes (a provider that lost it)
+    vi.mocked(facts.deviceSandboxFacts).mockImplementation(async (...a) => {
+      const r = await real(...a);
+      return {
+        ...r,
+        support: {
+          ...FAKE_PERMISSION_SUPPORT,
+          network: { ...FAKE_PERMISSION_SUPPORT.network, loopbackPorts: false },
+        },
+        box: { ...r.box, loopbackPorts: false },
+      };
+    });
+    await grants.refresh(
+      { orgId, deviceId: s.deviceId, serviceId: SERVICE },
+      AbortSignal.timeout(30_000),
+    );
+    expect((await rows())[0]?.revoke_reason).toBe("outside-sandbox-off");
+    expect(await audits("device.loopback_revoked")).toEqual([
+      expect.objectContaining({ detail: expect.objectContaining({ cause: "provider-support" }) }),
+    ]);
+    expect(await lastPorts()).toEqual([]);
+  });
+
+  it("a failed send owes a delayed follow-up until one lands", async () => {
+    const g = await grant(3999);
+    failing = true;
+    const services = k.app.get(DeviceServices);
+    vi.spyOn(services, "refreshLoopback").mockRejectedValueOnce(new Error("machine unreachable"));
+    const change = `r${g.id}`;
+    await grants.refresh(
+      { orgId, deviceId: s.deviceId, serviceId: SERVICE, change },
+      AbortSignal.timeout(30_000),
+    );
+    const [first] = await owed(loopbackRefreshJobId(s.deviceId, SERVICE, `${change}-t1`));
+    expect(first).toMatchObject({
+      data: { orgId, deviceId: s.deviceId, serviceId: SERVICE, change, followUp: 1 },
+    });
+    expect(new Date(first?.run_at as Date).getTime()).toBeGreaterThan(Date.now());
+    // a follow-up that fails again owes the next one
+    vi.spyOn(services, "refreshLoopback").mockRejectedValueOnce(new Error("machine unreachable"));
+    await grants.refresh(first?.data as never, AbortSignal.timeout(30_000));
+    expect(await owed(loopbackRefreshJobId(s.deviceId, SERVICE, `${change}-t2`))).toHaveLength(1);
+  });
+
+  it("revokes a deleted device's grants in the deleting transaction", async () => {
+    const g = await grant(3999);
+    failing = true;
+    await k.app.get(DevicesService).remove(orgId, s.accountId, s.deviceId);
+    const [row] = await rows();
+    expect(row?.revoke_reason).toBe("revoked");
+    expect(await owed(loopbackRefreshJobId(s.deviceId, SERVICE, `r${g.id}`))).toHaveLength(1);
+    expect(await audits("device.loopback_revoked")).toEqual([
+      expect.objectContaining({ detail: expect.objectContaining({ cause: "device-deleted" }) }),
     ]);
   });
 });
