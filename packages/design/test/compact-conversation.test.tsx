@@ -240,7 +240,8 @@ describe("the composer's settings sheet joins the back handling (Decision 25)", 
     render(
       <DesignProvider locale="zh">
         <ComposerBox
-          value=""
+          segments={[]}
+          onSubmit={() => {}}
           onChange={noop}
           placeholder="p"
           onAttach={noop}

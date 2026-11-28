@@ -94,7 +94,8 @@ function devicePicker(onPick = vi.fn()): PickerProps {
 
 const box = (over: Partial<ComposerBoxProps> = {}) => (
   <ComposerBox
-    value=""
+    segments={[]}
+    onSubmit={() => {}}
     onChange={() => {}}
     placeholder="p"
     onAttach={() => {}}

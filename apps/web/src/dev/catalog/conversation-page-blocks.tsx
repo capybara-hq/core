@@ -570,8 +570,15 @@ function composerProps(
         : "";
   const [image, pdf] = FI.attachments;
   return {
-    value,
+    // the skill state: the skill token leads the draft, its argument hint the ghost after it
+    segments:
+      state === "skill"
+        ? [{ kind: "skill", id: "fix-issue", label: SKILL_FIXTURE.chip.label }, " "]
+        : value === ""
+          ? []
+          : [value],
     onChange: noop,
+    onSubmit: noop,
     placeholder:
       state === "new" || state === "device"
         ? K.newPlaceholder.replace("研究助手", C.agent.name)
@@ -597,7 +604,7 @@ function composerProps(
       : {}),
     onAttach: noop,
     pickers: pickers(state, open),
-    ...(state === "skill" ? { token: { ...SKILL_FIXTURE.chip, onRemove: noop } } : {}),
+    ...(state === "skill" ? { skillHint: SKILL_FIXTURE.chip.hint } : {}),
     send:
       state === "running"
         ? { mode: "stop", onClick: noop }
@@ -752,7 +759,7 @@ function ComposerMenuComposer({
   return (
     <ComposerBox
       {...composerProps("idle")}
-      value={value}
+      segments={value === "" ? [] : [value]}
       send={{ mode: "send", disabled: value === "", onClick: noop }}
       {...(menu.kind === "plus" ? { attachOpen: true } : {})}
       menu={{

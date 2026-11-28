@@ -8,7 +8,8 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { type ReactElement, type KeyboardEvent as ReactKeyboardEvent, useState } from "react";
+import { $getSelection } from "lexical";
+import { type ReactElement, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { messages } from "../src/i18n";
 import {
@@ -16,17 +17,19 @@ import {
   ComposerMenu,
   type ComposerMenuGroup,
   type ComposerMenuProps,
+  type ComposerSegment,
   DesignProvider,
   OVERLAY_HISTORY_MARKER,
   rankComposerMenu,
   useComposerMenu,
 } from "../src/index";
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
+import { draftText, editorOf, focusEnd, select, typeText } from "./composer-editor-helpers";
 import { matchMediaFor } from "./width";
 
 // The composer's menus (spec §6.16.30): +, / and @ share one shell anchored above the composer
-// (a bottom sheet on compact); the textarea is the combobox, the list a listbox, and the query is
-// the composer text after the trigger.
+// (a bottom sheet on compact); the composer's editor is the combobox, the list a listbox, and the
+// query is the composer text after the trigger.
 
 const realMatchMedia = window.matchMedia;
 afterEach(() => {
@@ -113,7 +116,8 @@ function Harness({
   loading?: boolean;
   kind?: ComposerMenuProps["kind"];
 }) {
-  const [text, setText] = useState(initial);
+  const [segments, setSegments] = useState<ComposerSegment[]>(initial === "" ? [] : [initial]);
+  const text = segments.filter((x) => typeof x === "string").join("");
   const [closed, setClosed] = useState(false);
   const open = !closed && (kind === "plus" || text.startsWith(kind === "at" ? "@" : "/"));
   const props: ComposerMenuProps | null = open
@@ -134,20 +138,13 @@ function Harness({
   const menu = useComposerMenu(props);
   return (
     <ComposerBox
-      value={text}
-      onChange={setText}
+      segments={segments}
+      onChange={setSegments}
+      // the page's send: the editor's ↵ without Shift, never while an IME composes
+      onSubmit={() => onSend?.()}
       placeholder="输入消息"
       onAttach={() => {}}
       {...(attachOpen !== undefined ? { attachOpen } : {})}
-      {...(onSend
-        ? {
-            // the page's send: ↵ without Shift, never while an IME composes
-            onKeyDown: (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-              const composing = e.nativeEvent.isComposing || e.keyCode === 229;
-              if (e.key === "Enter" && !e.shiftKey && !composing) onSend();
-            },
-          }
-        : {})}
       pickers={{ model: { label: "切换模型", value: "m", groups: [], onPick: () => {} } }}
       send={{ mode: "send", onClick: () => {} }}
       menu={
@@ -163,7 +160,17 @@ function Harness({
   );
 }
 
-const textarea = () => screen.getByRole("combobox", { name: "消息" }) as HTMLTextAreaElement;
+/** The composer's editor; a key reaches it with a caret (at the end unless a test placed one). */
+const textarea = () => {
+  const box = screen.getByRole("combobox", { name: "消息" });
+  if (
+    editorOf(box)
+      .getEditorState()
+      .read(() => $getSelection()) === null
+  )
+    focusEnd(box);
+  return box;
+};
 const options = () => screen.getAllByRole("option");
 const active = () => {
   const id = textarea().getAttribute("aria-activedescendant");
@@ -245,8 +252,8 @@ describe("ComposerMenu (anchored)", () => {
     expect(picks["fix-issue"]).toHaveBeenCalledTimes(1);
   });
 
-  it("↵ is the menu's: the composer's own Enter handler never sees it", () => {
-    const onKeyDown = vi.fn();
+  it("↵ is the menu's: the composer's send never sees it", () => {
+    const onSubmit = vi.fn();
     function WithEnter() {
       const props: ComposerMenuProps = {
         kind: "slash",
@@ -258,9 +265,9 @@ describe("ComposerMenu (anchored)", () => {
       const menu = useComposerMenu(props);
       return (
         <ComposerBox
-          value="/"
+          segments={["/"]}
           onChange={() => {}}
-          onKeyDown={onKeyDown}
+          onSubmit={onSubmit}
           placeholder="输入消息"
           onAttach={() => {}}
           pickers={{ model: { label: "切换模型", value: "m", groups: [], onPick: () => {} } }}
@@ -274,11 +281,10 @@ describe("ComposerMenu (anchored)", () => {
       );
     }
     wrap(<WithEnter />);
-    key("Enter");
-    expect(onKeyDown).not.toHaveBeenCalled();
-    // a key the menu does not handle reaches the composer's handler
-    key("a");
-    expect(onKeyDown).toHaveBeenCalledTimes(1);
+    expect(key("Enter")).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled();
+    // a key the menu does not handle stays the editor's
+    expect(key("a")).toBe(true);
   });
 
   it("Esc closes and keeps the text", () => {
@@ -286,7 +292,7 @@ describe("ComposerMenu (anchored)", () => {
     wrap(<Harness groups={slashGroups()} initial="/fi" onClose={onClose} />);
     key("Escape");
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(textarea().value).toBe("/fi");
+    expect(draftText()).toBe("/fi");
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
@@ -419,7 +425,7 @@ describe("ComposerMenu (anchored)", () => {
   it("a click picks without moving focus out of the textarea; a disabled row is not picked", () => {
     const picks: Picks = {};
     wrap(<Harness groups={slashGroups(picks)} />);
-    textarea().focus();
+    focusEnd();
     const fix = options()[1] as HTMLElement;
     // the mousedown keeps the focus in the composer
     expect(fireEvent.mouseDown(fix)).toBe(false);
@@ -492,7 +498,9 @@ describe("ComposerMenu (anchored)", () => {
   it("speaks English with the en locale", () => {
     wrap(<Harness groups={slashGroups()} onSwitch={() => {}} />, "en");
     const foot = document.querySelector('[data-part="composer-menu-foot"]') as HTMLElement;
-    expect(within(foot).getByRole("button", { name: "@ Connectors, files and conversations" })).toBeTruthy();
+    expect(
+      within(foot).getByRole("button", { name: "@ Connectors, files and conversations" }),
+    ).toBeTruthy();
     expect(foot.textContent).toContain("esc Close");
   });
 
@@ -550,8 +558,9 @@ describe("the ＋ button", () => {
 
   it("keeps aria-haspopup=menu and reports attachOpen as aria-expanded", () => {
     const base = {
-      value: "",
+      segments: [],
       onChange: () => {},
+      onSubmit: () => {},
       placeholder: "输入消息",
       onAttach: () => {},
       pickers: { model: { label: "切换模型", value: "m", groups: [], onPick: () => {} } },
@@ -572,7 +581,8 @@ describe("the ＋ button", () => {
   it("without attachOpen it stays a plain button (the file picker)", () => {
     wrap(
       <ComposerBox
-        value=""
+        segments={[]}
+        onSubmit={() => {}}
         onChange={() => {}}
         placeholder="输入消息"
         onAttach={() => {}}
@@ -756,11 +766,13 @@ describe("ComposerMenu keyboard edges", () => {
   it("Backspace with a selection is plain editing: the menu does not close on the key", () => {
     const onClose = vi.fn();
     wrap(<Harness groups={slashGroups()} initial="/" onClose={onClose} />);
-    textarea().setSelectionRange(0, 1);
-    const ev = new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true });
-    textarea().dispatchEvent(ev);
+    select(0, 1);
+    act(() => {
+      textarea().dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }),
+      );
+    });
     expect(onClose).not.toHaveBeenCalled();
-    expect(ev.defaultPrevented).toBe(false);
   });
 
   it("only key moves scroll the active row into view; the pointer never scrolls", () => {
@@ -792,7 +804,8 @@ describe("ComposerMenu keyboard edges", () => {
     key("ArrowDown");
     key("ArrowDown");
     expect(active()?.textContent).toContain("compact");
-    fireEvent.change(textarea(), { target: { value: "/brain" } });
+    focusEnd();
+    typeText("brain");
     const el = active();
     expect(el?.getAttribute("role")).toBe("option");
     expect(el?.textContent).toContain("brainstorming");
@@ -1006,7 +1019,8 @@ function LevelHarness({
   withLevel?: boolean;
   drills?: Record<string, ReturnType<typeof vi.fn>>;
 }) {
-  const [text, setText] = useState(initial);
+  const [segments, setSegments] = useState<ComposerSegment[]>(initial === "" ? [] : [initial]);
+  const text = segments.filter((x) => typeof x === "string").join("");
   const props: ComposerMenuProps = {
     kind: "at",
     groups: connectorGroups({}, drills),
@@ -1019,8 +1033,9 @@ function LevelHarness({
   const menu = useComposerMenu(props);
   return (
     <ComposerBox
-      value={text}
-      onChange={setText}
+      segments={segments}
+      onChange={setSegments}
+      onSubmit={() => {}}
       placeholder="输入消息"
       onAttach={() => {}}
       pickers={{ model: { label: "切换模型", value: "m", groups: [], onPick: () => {} } }}
@@ -1074,11 +1089,11 @@ describe("ComposerMenu drill-in", () => {
     const drills: Record<string, ReturnType<typeof vi.fn>> = {};
     wrap(<LevelHarness onBack={() => {}} withLevel={false} drills={drills} />);
     // the caret mid-text: → moves it, it does not drill
-    textarea().setSelectionRange(0, 0);
+    select(0);
     key("ArrowRight");
     expect(drills.slack).not.toHaveBeenCalled();
     // the caret at the end (where typing the query leaves it): → drills
-    textarea().setSelectionRange(1, 1);
+    select(1);
     const ev = createEvent.keyDown(textarea(), { key: "ArrowRight" });
     fireEvent(textarea(), ev);
     expect(drills.slack).toHaveBeenCalledTimes(1);
@@ -1116,10 +1131,9 @@ describe("ComposerMenu drill-in", () => {
   it("Backspace with a query does not go back", () => {
     const onBack = vi.fn();
     wrap(<LevelHarness onBack={onBack} initial="@sl" />);
-    const ev = createEvent.keyDown(textarea(), { key: "Backspace" });
-    fireEvent(textarea(), ev);
+    // the key stays the editor's (it deletes the query's last character)
+    fireEvent.keyDown(textarea(), { key: "Backspace" });
     expect(onBack).not.toHaveBeenCalled();
-    expect(ev.defaultPrevented).toBe(false);
   });
 
   it("compact renders the drill-in in the sheet", () => {
@@ -1295,8 +1309,9 @@ describe("ComposerMenu drill-in", () => {
       const menu = useComposerMenu(props);
       return (
         <ComposerBox
-          value={text}
+          segments={[text]}
           onChange={() => {}}
+          onSubmit={() => {}}
           placeholder="输入消息"
           onAttach={() => {}}
           pickers={{ model: { label: "切换模型", value: "m", groups: [], onPick: () => {} } }}

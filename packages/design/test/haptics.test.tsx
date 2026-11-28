@@ -33,8 +33,9 @@ function Pressable({ onLongPress }: { onLongPress: () => void }) {
 }
 
 const composer = (onClick: () => void): ComposerBoxProps => ({
-  value: "你好",
+  segments: ["你好"],
   onChange: noop,
+  onSubmit: noop,
   placeholder: "消息",
   onAttach: noop,
   pickers: {

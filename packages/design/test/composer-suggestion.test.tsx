@@ -4,11 +4,18 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ComposerBox, type ComposerBoxProps, DesignProvider } from "../src/index";
+import {
+  ComposerBox,
+  type ComposerBoxProps,
+  type ComposerSegment,
+  DesignProvider,
+} from "../src/index";
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
+import { backspace, composerText, draftText, focusEnd, typeText } from "./composer-editor-helpers";
 
 // The prompt suggestion in the composer (spec §6.16.2 state `suggestion`, prompt suggestions spec
-// §5): the placeholder, Tab fills, Esc and typing dismiss, the touch button, no focus trap.
+// §5): the placeholder, Tab fills, Esc and typing dismiss, the touch button, no focus trap. The
+// text box is the inline token editor (composer inline tokens spec §2).
 
 const originalMatchMedia = window.matchMedia;
 afterEach(() => {
@@ -24,8 +31,9 @@ const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "en") =>
   render(<DesignProvider locale={locale}>{ui}</DesignProvider>);
 
 const props = (over: Partial<ComposerBoxProps> = {}): ComposerBoxProps => ({
-  value: "",
+  segments: [],
   onChange: noop,
+  onSubmit: noop,
   placeholder: IDLE,
   onAttach: noop,
   pickers: { model: { label: "Model", value: "opus 5.5", groups: [], onPick: noop } },
@@ -41,13 +49,13 @@ function Harness({
   onDismiss?(): void;
   over?: Partial<ComposerBoxProps>;
 }) {
-  const [value, setValue] = useState("");
+  const [segments, setSegments] = useState<ComposerSegment[]>([]);
   const [shown, setShown] = useState(true);
   return (
     <ComposerBox
       {...props({
-        value,
-        onChange: setValue,
+        segments,
+        onChange: setSegments,
         ...(shown
           ? {
               suggestion: {
@@ -65,7 +73,8 @@ function Harness({
   );
 }
 
-const input = () => screen.getByRole("textbox") as HTMLTextAreaElement;
+const input = () => composerText();
+const placeholderOf = () => input().getAttribute("aria-placeholder");
 
 function touchPointer() {
   window.matchMedia = ((query: string) => ({
@@ -79,12 +88,15 @@ function touchPointer() {
 describe("ComposerBox suggestion: the placeholder", () => {
   it("is the suggestion text when the draft is empty, idle and has no chip", () => {
     wrap(<ComposerBox {...props({ suggestion: { text: TEXT, onDismiss: noop } })} />);
-    expect(input().getAttribute("placeholder")).toBe(TEXT);
+    expect(placeholderOf()).toBe(TEXT);
+    expect(document.querySelector(".cb-composer-editor-placeholder")?.textContent).toBe(TEXT);
   });
 
   it("is not shown while the draft has text", () => {
-    wrap(<ComposerBox {...props({ value: "hi", suggestion: { text: TEXT, onDismiss: noop } })} />);
-    expect(input().getAttribute("placeholder")).toBe(IDLE);
+    wrap(
+      <ComposerBox {...props({ segments: ["hi"], suggestion: { text: TEXT, onDismiss: noop } })} />,
+    );
+    expect(placeholderOf()).toBe(IDLE);
     expect(input().hasAttribute("aria-describedby")).toBe(false);
   });
 
@@ -97,20 +109,22 @@ describe("ComposerBox suggestion: the placeholder", () => {
         })}
       />,
     );
-    expect(input().getAttribute("placeholder")).toBe("Messages sent while it works");
+    expect(placeholderOf()).toBe("Messages sent while it works");
   });
 
-  it("gives way to a skill chip", () => {
+  it("gives way to a skill token", () => {
     wrap(
       <ComposerBox
         {...props({
-          token: { label: "/fix-issue", hint: "[issue-number]", onRemove: noop },
+          segments: [{ kind: "skill", id: "fix-issue", label: "/fix-issue" }, " "],
+          skillHint: "[issue-number]",
           suggestion: { text: TEXT, onDismiss: noop },
         })}
       />,
     );
-    expect(input().getAttribute("placeholder")).toBe("[issue-number]");
+    expect(document.querySelector(".cb-composer-editor-hint")?.textContent).toBe("[issue-number]");
     expect(document.querySelector('[data-part="composer-suggestion-hint"]')).toBeNull();
+    expect(document.querySelector(".cb-composer-editor-placeholder")).toBeNull();
   });
 
   it("describes the textarea with a hidden Tab hint only while shown, with no live region", () => {
@@ -135,13 +149,15 @@ describe("ComposerBox suggestion: the placeholder", () => {
 
   it("is one line with an ellipsis on a phone", () => {
     wrap(<ComposerBox {...props({ suggestion: { text: TEXT, onDismiss: noop } })} />);
-    expect(input().getAttribute("data-suggestion")).toBe("true");
+    expect(input().closest('[data-part="composer-editor"]')?.getAttribute("data-suggestion")).toBe(
+      "true",
+    );
     const css = readFileSync(resolve(__dirname, "../src/styles/conversation-page.css"), "utf8");
     const phone = [...css.matchAll(/@media not all and \(min-width: 600px\) \{([\s\S]*?)\n\}/g)]
       .map((m) => m[1])
       .join("\n");
     const rule = phone.match(
-      /\.cb-composer-input\[data-suggestion="true"\]::placeholder \{([^}]*)\}/,
+      /\.cb-composer-editor\[data-suggestion="true"\] \.cb-composer-editor-placeholder \{([^}]*)\}/,
     )?.[1];
     expect(rule).toContain("white-space: nowrap");
     expect(rule).toContain("text-overflow: ellipsis");
@@ -160,22 +176,23 @@ describe("ComposerBox suggestion: keys", () => {
     const user = userEvent.setup();
     const onDismiss = vi.fn();
     wrap(<Harness onDismiss={onDismiss} />);
-    input().focus();
+    focusEnd();
     await user.keyboard("{Tab}");
-    expect(input().value).toBe(TEXT);
+    expect(draftText()).toBe(TEXT);
     expect(onDismiss).toHaveBeenCalledTimes(1);
-    // focus stays in the text, the caret at the end (set on the next frame)
+    // focus stays in the text, the caret at the end
     expect(document.activeElement).toBe(input());
-    await act(() => new Promise((r) => requestAnimationFrame(() => r(undefined))));
-    expect(input().selectionStart).toBe(TEXT.length);
-    expect(input().selectionEnd).toBe(TEXT.length);
+    typeText("!");
+    expect(draftText()).toBe(`${TEXT}!`);
   });
 
   it("Tab with text in the draft is not intercepted", () => {
     const onChange = vi.fn();
     const onDismiss = vi.fn();
     wrap(
-      <ComposerBox {...props({ value: "hi", onChange, suggestion: { text: TEXT, onDismiss } })} />,
+      <ComposerBox
+        {...props({ segments: ["hi"], onChange, suggestion: { text: TEXT, onDismiss } })}
+      />,
     );
     const ev = fireEvent.keyDown(input(), { key: "Tab" });
     expect(ev).toBe(true);
@@ -185,7 +202,7 @@ describe("ComposerBox suggestion: keys", () => {
 
   it("Tab without a suggestion is not intercepted", () => {
     const onChange = vi.fn();
-    wrap(<ComposerBox {...props({ onChange, onKeyDown: noop })} />);
+    wrap(<ComposerBox {...props({ onChange })} />);
     expect(fireEvent.keyDown(input(), { key: "Tab" })).toBe(true);
     expect(onChange).not.toHaveBeenCalled();
   });
@@ -221,10 +238,10 @@ describe("ComposerBox suggestion: keys", () => {
         <Harness />
       </>,
     );
-    input().focus();
+    focusEnd();
     await user.keyboard("{Shift>}{Tab}{/Shift}");
     expect(screen.getByRole("button", { name: "before" })).toBe(document.activeElement);
-    expect(input().value).toBe("");
+    expect(draftText()).toBe("");
   });
 
   it("Tab during IME composition is ignored", () => {
@@ -245,51 +262,77 @@ describe("ComposerBox suggestion: keys", () => {
         <button type="button">after</button>
       </>,
     );
-    input().focus();
+    focusEnd();
     await user.keyboard("{Escape}");
     expect(onDismiss).toHaveBeenCalledTimes(1);
-    expect(input().getAttribute("placeholder")).toBe(IDLE);
+    expect(placeholderOf()).toBe(IDLE);
     await user.keyboard("{Tab}");
-    expect(input().value).toBe("");
+    expect(draftText()).toBe("");
     expect(document.activeElement).not.toBe(input());
   });
 
-  it("the caller's onKeyDown still gets the other keys", () => {
-    const onKeyDown = vi.fn();
-    wrap(<ComposerBox {...props({ onKeyDown, suggestion: { text: TEXT, onDismiss: noop } })} />);
-    fireEvent.keyDown(input(), { key: "a" });
+  it("an open menu's keys come before the suggestion's Tab", () => {
+    const onDismiss = vi.fn();
+    const onKeyDown = vi.fn(() => true);
+    wrap(
+      <ComposerBox
+        {...props({
+          suggestion: { text: TEXT, onDismiss },
+          menu: {
+            combobox: { role: "combobox", "aria-expanded": true, "aria-autocomplete": "list" },
+            onKeyDown,
+          },
+        })}
+      />,
+    );
+    fireEvent.keyDown(input(), { key: "Tab" });
     expect(onKeyDown).toHaveBeenCalledTimes(1);
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 });
 
 describe("ComposerBox suggestion: typing dismisses", () => {
   it("typing a character dismisses it for the run", async () => {
-    const user = userEvent.setup();
     const onDismiss = vi.fn();
     wrap(<Harness onDismiss={onDismiss} />);
-    await user.type(input(), "x");
+    focusEnd();
+    typeText("x");
     expect(onDismiss).toHaveBeenCalledTimes(1);
-    expect(input().value).toBe("x");
+    expect(draftText()).toBe("x");
     // emptied again, the idle placeholder comes back, not the suggestion
-    await user.type(input(), "{Backspace}");
-    expect(input().getAttribute("placeholder")).toBe(IDLE);
+    backspace();
+    expect(draftText()).toBe("");
+    expect(placeholderOf()).toBe(IDLE);
   });
 
-  it("a change to an empty value does not dismiss", () => {
+  it("an edit that empties the draft does not dismiss", () => {
     const onDismiss = vi.fn();
-    wrap(<ComposerBox {...props({ suggestion: { text: TEXT, onDismiss } })} />);
-    fireEvent.change(input(), { target: { value: "" } });
+    function Draft() {
+      const [segments, setSegments] = useState<ComposerSegment[]>(["x"]);
+      return (
+        <ComposerBox
+          {...props({ segments, onChange: setSegments, suggestion: { text: TEXT, onDismiss } })}
+        />
+      );
+    }
+    wrap(<Draft />);
+    focusEnd();
+    backspace();
+    expect(draftText()).toBe("");
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
   it("a paste dismisses it", async () => {
-    const user = userEvent.setup();
     const onDismiss = vi.fn();
     wrap(<Harness onDismiss={onDismiss} />);
-    input().focus();
-    await user.paste("pasted");
+    focusEnd();
+    await act(async () => {
+      fireEvent.paste(input(), {
+        clipboardData: { files: [], types: ["text/plain"], getData: () => "pasted" },
+      });
+    });
     expect(onDismiss).toHaveBeenCalled();
-    expect(input().value).toBe("pasted");
+    expect(draftText()).toBe("pasted");
   });
 
   it("attaching a file dismisses it", async () => {
@@ -324,7 +367,7 @@ describe("ComposerBox suggestion: the touch button", () => {
     expect(button.closest('[data-part="composer-bar"]')).not.toBeNull();
     expect(button.closest('[data-part="composer-box"]')).toBeNull();
     await user.click(button);
-    expect(input().value).toBe(TEXT);
+    expect(draftText()).toBe(TEXT);
     expect(onDismiss).toHaveBeenCalledTimes(1);
     expect(document.activeElement).not.toBe(input());
     // shown only while the suggestion shows
@@ -334,7 +377,7 @@ describe("ComposerBox suggestion: the touch button", () => {
   it("is absent while the draft has text or a run is going", () => {
     touchPointer();
     const { rerender } = wrap(
-      <ComposerBox {...props({ value: "hi", suggestion: { text: TEXT, onDismiss: noop } })} />,
+      <ComposerBox {...props({ segments: ["hi"], suggestion: { text: TEXT, onDismiss: noop } })} />,
     );
     expect(document.querySelector('[data-part="composer-suggestion-use"]')).toBeNull();
     rerender(
@@ -358,11 +401,11 @@ describe("ComposerBox suggestion: the touch button", () => {
     const onDismiss = vi.fn();
     wrap(
       <ComposerBox
-        {...props({ value: "hi", hint: "running", suggestion: { text: TEXT, onDismiss } })}
+        {...props({ segments: ["hi"], hint: "running", suggestion: { text: TEXT, onDismiss } })}
       />,
     );
     // the paste event alone (a file changes no text); a text change has its own rule
-    fireEvent.paste(input(), { clipboardData: { getData: () => "" } });
+    fireEvent.paste(input(), { clipboardData: { files: [], types: [], getData: () => "" } });
     await user.click(screen.getByRole("button", { name: "Attach files" }));
     expect(onDismiss).not.toHaveBeenCalled();
   });

@@ -72,7 +72,8 @@ function Harness({ deviceId, project, deviceLabel = "Laptop", initial }: Where) 
   return (
     <>
       <ComposerBox
-        value=""
+        segments={[]}
+        onSubmit={() => {}}
         onChange={() => {}}
         placeholder="Message"
         onAttach={() => {}}

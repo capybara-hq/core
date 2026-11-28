@@ -2274,7 +2274,7 @@ button.cb-file-card:focus-visible {
     border-color var(--cb-motion-hover),
     box-shadow var(--cb-motion-hover);
 }
-/* The textarea's own focus (not :focus-within): an open picker menu leaves the frame neutral. */
+/* The text's own focus (not :focus-within): an open picker menu leaves the frame neutral. */
 .cb-composer:has(.cb-composer-input:focus) {
   border-color: var(--cb-accent);
   box-shadow:
@@ -2320,6 +2320,12 @@ button.cb-file-card:focus-visible {
 }
 .cb-composer > .cb-callout > .cb-callout-text {
   flex: 1 1 60%;
+}
+/* Compact: the buttons always stand under the sentence (the refusal line, inline tokens spec §6). */
+@media not all and (min-width: 600px) {
+  .cb-composer > .cb-callout > .cb-callout-text {
+    flex-basis: calc(100% - 12px - var(--cb-space-1));
+  }
 }
 
 /* ── Greeting (§6.16.25) ── */

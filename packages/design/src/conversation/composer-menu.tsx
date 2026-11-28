@@ -163,7 +163,7 @@ export type ComposerMenuController = {
    * types). `true` when the menu took the key (the composer then stops); never during an IME
    * composition.
    */
-  onKeyDown(e: KeyboardEvent<HTMLElement>, caret?: ComposerMenuCaret): boolean;
+  onKeyDown(e: ComposerMenuKeyEvent, caret?: ComposerMenuCaret): boolean;
   /** The rows after ranking, for `ComposerMenu`. */
   shown: ComposerMenuShownGroup[];
   /** The pointer moved onto a row. */
@@ -210,7 +210,13 @@ export function rankComposerMenu(
     .filter((g) => g.items.length > 0);
 }
 
-const noModifier = (e: KeyboardEvent<HTMLElement>) =>
+/**
+ * A key the menu reads: a React handler's event, or the composer editor's own DOM event (with the
+ * caret passed beside it).
+ */
+export type ComposerMenuKeyEvent = KeyboardEvent<HTMLElement> | globalThis.KeyboardEvent;
+
+const noModifier = (e: ComposerMenuKeyEvent) =>
   !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 
 /**
@@ -267,14 +273,15 @@ export function useComposerMenu(p: ComposerMenuProps | null): ComposerMenuContro
     item.onSelect();
   };
   const handle = (
-    e: KeyboardEvent<HTMLElement>,
+    e: ComposerMenuKeyEvent,
     from: "composer" | "field",
     given?: ComposerMenuCaret,
   ): boolean => {
     if (!p) return false;
-    const caretFacts = () => given ?? readCaret(e);
+    const caretFacts = () => given ?? readCaret(e as KeyboardEvent<HTMLElement>);
     // an IME composition owns its keys (Enter confirms the text, it never picks)
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return false;
+    const composing = "nativeEvent" in e ? e.nativeEvent.isComposing : e.isComposing;
+    if (composing || e.keyCode === 229) return false;
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && noModifier(e)) {
       e.preventDefault();
       move(e.key === "ArrowDown" ? 1 : -1);

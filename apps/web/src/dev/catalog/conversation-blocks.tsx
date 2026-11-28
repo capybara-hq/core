@@ -7,8 +7,8 @@ import {
   ApprovalBlock,
   AttachmentStrip,
   BubbleAttachments,
+  ComposerEditor,
   ComposerFrame,
-  ComposerInput,
   ConnectBlock,
   CsvPreview,
   type DiffData,
@@ -1345,11 +1345,12 @@ function StripBlock({ id, index }: { id: string; index: number }) {
             },
           ]}
         />
-        <ComposerInput
-          aria-label="消息"
-          defaultValue="帮我对一下这几个文件"
-          readOnly
-          tabIndex={-1}
+        <ComposerEditor
+          segments={["帮我对一下这几个文件"]}
+          onChange={noop}
+          onSubmit={noop}
+          placeholder=""
+          disabled
         />
       </ComposerFrame>
     </Block>
@@ -1372,7 +1373,13 @@ function ConversationStripBlock({ id, refused }: { id: string; refused?: boolean
             onRemove: noop,
           }))}
         />
-        <ComposerInput aria-label="消息" defaultValue={R.message} readOnly tabIndex={-1} />
+        <ComposerEditor
+          segments={[R.message]}
+          onChange={noop}
+          onSubmit={noop}
+          placeholder=""
+          disabled
+        />
       </ComposerFrame>
     </Block>
   );

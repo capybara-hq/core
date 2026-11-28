@@ -31,7 +31,7 @@ import {
   useState,
 } from "react";
 import { useDesignT } from "../../provider";
-import type { ComposerMenuCombobox } from "../composer-menu";
+import type { ComposerMenuCaret, ComposerMenuCombobox } from "../composer-menu";
 import {
   $replaceSelectedTokens,
   type ComposerCommandProps,
@@ -82,8 +82,11 @@ export type ComposerEditorProps = {
   hint?: string;
   /** The open trigger at the caret; null when there is none. */
   onTrigger?(t: ComposerTrigger | null): void;
-  /** The menu's keys, offered first; `true` stops the editor's own handling. */
-  onKeyDown?(e: KeyboardEvent): boolean;
+  /**
+   * The menu's keys, offered first with where the caret stands (`useComposerMenu().onKeyDown`
+   * takes both); `true` stops the editor's own handling. Never called during an IME composition.
+   */
+  onKeyDown?(e: KeyboardEvent, caret: ComposerMenuCaret): boolean;
   onPasteFiles?(files: File[]): void;
   /** The raw pasted text (the token warning's hook). */
   onPasteText?(text: string): void;
@@ -93,6 +96,13 @@ export type ComposerEditorProps = {
   combobox?: ComposerMenuCombobox;
   autoFocus?: boolean;
   disabled?: boolean;
+  /** The id of an element that further describes the text box (the suggestion's Tab hint). */
+  describedBy?: string;
+  /**
+   * The placeholder is a prompt suggestion (§6.16.2 state `suggestion`): one line cut with an
+   * ellipsis on a phone.
+   */
+  suggestion?: boolean;
   /** The reference set and catalog only: draw the medium or compact form in a wide window. */
   referenceForm?: "medium" | "compact";
 };
@@ -205,7 +215,14 @@ function Bridge({
     handle,
     () => ({
       value: () => editor.getEditorState().read($readSegments),
-      focus: () => editor.focus(),
+      focus: () => {
+        editor.focus();
+        // the DOM selection Lexical sets focuses the text in a browser, not everywhere (jsdom)
+        const root = editor.getRootElement();
+        if (root !== null && !root.contains(root.ownerDocument.activeElement)) {
+          root.focus({ preventScroll: true });
+        }
+      },
       insertToken: (t, replaceQuery) => {
         editor.update(
           () => {
@@ -287,6 +304,7 @@ export const ComposerEditor: ForwardRefExoticComponent<
   const ghost = props.hint ? ghostOf(shown) : null;
   const hintId = `${id}-hint`;
   const { role: _role, ...aria } = props.combobox ?? ({} as Partial<ComposerMenuCombobox>);
+  const describedBy = [ghost ? hintId : undefined, props.describedBy].filter(Boolean).join(" ");
   return (
     <LexicalComposer
       initialConfig={{
@@ -306,6 +324,7 @@ export const ComposerEditor: ForwardRefExoticComponent<
         className="cb-composer-editor"
         data-part="composer-editor"
         data-form={props.referenceForm}
+        data-suggestion={props.suggestion ? "true" : undefined}
       >
         <PlainTextPlugin
           contentEditable={
@@ -318,7 +337,7 @@ export const ComposerEditor: ForwardRefExoticComponent<
               ariaLabel={t("composer.message")}
               autoCapitalize="sentences"
               autoCorrect="on"
-              {...(ghost ? { ariaDescribedBy: hintId } : {})}
+              {...(describedBy ? { ariaDescribedBy: describedBy } : {})}
               {...aria}
               aria-placeholder={props.placeholder}
               placeholder={

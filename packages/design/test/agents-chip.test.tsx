@@ -164,7 +164,8 @@ describe("AgentsChip (§6.16.29, acceptance item AC3)", () => {
     });
     wrap(
       <ComposerBox
-        value=""
+        segments={[]}
+        onSubmit={() => {}}
         onChange={() => {}}
         placeholder="输入消息"
         onAttach={() => {}}

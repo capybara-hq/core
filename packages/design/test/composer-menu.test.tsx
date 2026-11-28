@@ -232,7 +232,8 @@ describe("the composer's permission picker", () => {
     ];
     return (
       <ComposerBox
-        value=""
+        segments={[]}
+        onSubmit={() => {}}
         onChange={() => {}}
         placeholder="Message"
         onAttach={() => {}}
@@ -649,7 +650,8 @@ describe("the composer's settings chip (touch, §6.16.2)", () => {
     const box = (
       <DesignProvider locale="zh">
         <ComposerBox
-          value=""
+          segments={[]}
+          onSubmit={() => {}}
           onChange={() => {}}
           placeholder="p"
           onAttach={() => {}}

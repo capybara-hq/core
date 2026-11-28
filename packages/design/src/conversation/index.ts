@@ -35,8 +35,6 @@ export {
   ComposerBox,
   type ComposerBoxProps,
   ComposerFrame,
-  ComposerInput,
-  type ComposerToken,
   isShortPickerValue,
   Picker,
   type PickerItem,
@@ -55,10 +53,12 @@ export {
 } from "./composer-editor/index";
 export {
   ComposerMenu,
+  type ComposerMenuCaret,
   type ComposerMenuCombobox,
   type ComposerMenuController,
   type ComposerMenuGroup,
   type ComposerMenuItem,
+  type ComposerMenuKeyEvent,
   type ComposerMenuKind,
   type ComposerMenuProps,
   type ComposerMenuShownGroup,

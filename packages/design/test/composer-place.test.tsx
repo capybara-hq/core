@@ -90,8 +90,9 @@ const mode: ModeMenuProps = {
 
 function props(over: Partial<ComposerBoxProps> = {}): ComposerBoxProps {
   return {
-    value: "",
+    segments: [],
     onChange: vi.fn(),
+    onSubmit: vi.fn(),
     placeholder: "输入消息",
     onAttach: vi.fn(),
     pickers: {
