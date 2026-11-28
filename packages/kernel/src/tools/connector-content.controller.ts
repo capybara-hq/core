@@ -20,7 +20,10 @@ const PromptBody = z
   })
   .strict();
 
-const ResourcesQuery = z.object({ query: z.string().max(200).optional() });
+const ResourcesQuery = z.object({
+  connectorId: z.string().uuid().optional(),
+  query: z.string().max(200).optional(),
+});
 
 class ConnectorPromptBody extends createZodDto(PromptBody, "ConnectorPromptBody") {}
 class ConnectorResourcesQuery extends createZodDto(ResourcesQuery, "ConnectorResourcesQuery") {}
@@ -45,7 +48,10 @@ export class ConnectorContentController {
     return this.content.listPrompts(org.orgId, p.account.id);
   }
 
-  /** 发起人可用的资源，`query` 按名称 / URI / 描述子串过滤。 */
+  /**
+   * 发起人可用的资源，`query` 按名称 / URI / 描述子串过滤；带 `connectorId` 时只在该连接器上开一次会话
+   * （第二级列表，隐藏 UI 模板与空资源）。
+   */
   @Get("resources")
   @OrgAction("connectors.use")
   async resources(
@@ -54,7 +60,10 @@ export class ConnectorContentController {
     @ZQuery(ConnectorResourcesQuery) q: z.infer<typeof ResourcesQuery>,
   ): Promise<{ resources: ConnectorResourceView[]; unavailable: ConnectorUnavailable[] }> {
     const p = requireUser(principal);
-    return this.content.listResources(org.orgId, p.account.id, q.query);
+    return this.content.listResources(org.orgId, p.account.id, {
+      ...(q.connectorId !== undefined && { connectorId: q.connectorId }),
+      ...(q.query !== undefined && { query: q.query }),
+    });
   }
 
   /** 按参数渲染一个提示模板为文本（放进输入框，由用户发送）。 */

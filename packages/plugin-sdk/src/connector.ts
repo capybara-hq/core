@@ -23,8 +23,12 @@ export interface ConnectorSession {
     signal: AbortSignal,
     ctx?: { spec: ToolSpec },
   ): Promise<ToolResult>;
+  /**
+   * Optional: `size` is the remote's size in bytes when it states one; the kernel does not list a
+   * resource whose size is 0.
+   */
   listResources?(): Promise<
-    { uri: string; name: string; description?: string; mimeType?: string }[]
+    { uri: string; name: string; description?: string; mimeType?: string; size?: number }[]
   >;
   readResource?(uri: string): Promise<ToolResult>;
   /**
