@@ -13,12 +13,17 @@ export interface CompactionSettings {
   reserveTokens: number;
   /** The summary call's output cap (1,024–32,000 tokens). */
   maxOutputTokens: number;
-  /** Compact an idle conversation from the prompt cache before the cache expires (idle compaction). */
+  /**
+   * Compact idle conversations in the background (after idleDelayMinutes with a compaction model,
+   * else before a long prompt cache expires).
+   */
   idleEnabled: boolean;
   /** The smallest context an idle compaction runs on, in tokens (50,000–2,000,000). */
   idleMinTokensFloor: number;
   /** The smallest context as a share of the model's window (0.1–0.9). */
   idleMinWindowRatio: number;
+  /** With a compaction model set: minutes after the last reply before an idle compaction (5–1440). */
+  idleDelayMinutes: number;
 }
 
 /** A change to the compaction settings: only the fields given. */
@@ -34,6 +39,7 @@ export const COMPACTION_DEFAULTS: CompactionSettings = {
   idleEnabled: true,
   idleMinTokensFloor: 200_000,
   idleMinWindowRatio: 0.3,
+  idleDelayMinutes: 30,
 };
 
 /** The bounds of the kernel's compaction fields (a value outside them is a 400). */
@@ -44,6 +50,7 @@ export const COMPACTION_BOUNDS = {
   maxOutputTokens: { min: 1024, max: 32_000, decimal: false },
   idleMinTokensFloor: { min: 50_000, max: 2_000_000, decimal: false },
   idleMinWindowRatio: { min: 0.1, max: 0.9, decimal: true },
+  idleDelayMinutes: { min: 5, max: 1440, decimal: false },
 } as const;
 
 /** The values an organization gets: its stored override over the platform's settings. */
@@ -60,5 +67,6 @@ export function effectiveCompaction(
     idleEnabled: override?.idleEnabled ?? platform.idleEnabled,
     idleMinTokensFloor: override?.idleMinTokensFloor ?? platform.idleMinTokensFloor,
     idleMinWindowRatio: override?.idleMinWindowRatio ?? platform.idleMinWindowRatio,
+    idleDelayMinutes: override?.idleDelayMinutes ?? platform.idleDelayMinutes,
   };
 }

@@ -9,6 +9,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { withOrgScope } from "../../src/infra/database/org-scope.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
+import { ModelPurposesService } from "../../src/models/purposes.js";
 import type { IdleArmSkip } from "../../src/runtime/context/idle-compaction-rules.js";
 import { IdleArm } from "../../src/runtime/idle-arm.js";
 import {
@@ -93,6 +94,9 @@ beforeAll(async () => {
             models: [
               { id: "fake-1", contextWindow: 400_000 },
               { id: "fake-nc", contextWindow: 400_000, cache: "none" },
+              // compaction models: eligible (200k), and one whose window leaves no useful chunk
+              { id: "fake-c", contextWindow: 200_000, cache: "none" },
+              { id: "fake-c-small", contextWindow: 32_000, cache: "none" },
             ],
           },
         },
@@ -119,7 +123,7 @@ beforeEach(async () => {
   onRunning = undefined;
   await truncateTables(
     raw,
-    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.deployment_settings",
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.deployment_settings, capybara.model_purpose_mappings",
   );
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
@@ -135,10 +139,24 @@ async function patchOrg(orgId: string, payload: Record<string, unknown>): Promis
   expect(res.statusCode, res.body).toBe(200);
 }
 
-/** An org with the long cache tier and the lowest size floor; a conversation on `model`. */
+/** Maps the org's `compaction` purpose to the model-fake model `model`. */
+async function mapCompaction(orgId: string, model: string): Promise<void> {
+  const res = await owner({
+    method: "PUT",
+    url: `/api/v1/orgs/${orgId}/model-purposes/compaction`,
+    payload: { target: { model: { provider: "model-fake", model }, params: {} } },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+}
+
+/**
+ * An org with the long cache tier and the lowest size floor; a conversation on `model`; the org's
+ * `compaction` purpose mapped to `compactionModel` when given.
+ */
 async function setup(
   model = "fake-1",
   settings: Record<string, unknown> = {},
+  compactionModel?: string,
 ): Promise<{ orgId: string; conv: string }> {
   const orgId = await createOrgWithProviders(k, owner, `Acme ${++orgCount}`);
   await patchOrg(orgId, {
@@ -146,6 +164,7 @@ async function setup(
     compaction: { idleMinTokensFloor: 50_000, idleMinWindowRatio: 0.1 },
     ...settings,
   });
+  if (compactionModel !== undefined) await mapCompaction(orgId, compactionModel);
   const agentId = await createAgent(owner, orgId, { provider: "model-fake", model });
   const conv = await createConv(owner, orgId, agentId);
   return { orgId, conv };
@@ -201,9 +220,15 @@ function skipReasons(): () => IdleArmSkip[] {
  */
 async function expectNotArmed(
   reason: IdleArmSkip | undefined,
-  opts: { model?: string; settings?: Record<string, unknown>; long?: boolean; text?: string } = {},
+  opts: {
+    model?: string;
+    settings?: Record<string, unknown>;
+    long?: boolean;
+    text?: string;
+    compactionModel?: string;
+  } = {},
 ): Promise<ConversationEvent[]> {
-  const { orgId, conv } = await setup(opts.model, opts.settings);
+  const { orgId, conv } = await setup(opts.model, opts.settings, opts.compactionModel);
   if (opts.long !== false) await seedLongHistory(orgId, conv);
   const reasons = skipReasons();
   const events = await turn(orgId, conv, opts.text ?? "echo:ok");
@@ -293,6 +318,7 @@ describe("arming idle compaction at a run's finish", () => {
           conversationId: conv,
           runId: finished?.runId,
           armedSeq: finished?.seq,
+          mode: "cache",
           cacheCallSeq: call?.seq,
           expiresAt: t0 + 3_600_000,
         },
@@ -464,5 +490,192 @@ describe("arming idle compaction at a run's finish", () => {
     );
     expect(seq).toEqual(expect.any(Number));
     expect(await idleRows()).toEqual([]);
+  });
+});
+
+/**
+ * Compaction-model mode (compaction model spec §6.1, §6.2): when the org's `compaction` purpose
+ * resolves to a usable and eligible model at arm time, the job is due `idleDelayMinutes` after the
+ * run's end and carries `mode: "compaction_model"` without the cache fields; the cache lifetime,
+ * the quality gate, the fit plan and the settled point do not apply. Otherwise cache mode decides.
+ */
+describe("arming idle compaction on the compaction model", () => {
+  /** The org's compaction settings with `longTtl` off: cache mode alone would arm nothing. */
+  const noLongTtl = { promptCache: { longTtl: false } };
+  const lowFloor = { idleMinTokensFloor: 50_000, idleMinWindowRatio: 0.1 };
+
+  async function expectCompactionModelRow(
+    orgId: string,
+    conv: string,
+    events: ConversationEvent[],
+    delayMinutes: number,
+  ): Promise<void> {
+    const finished = events.find((e) => e.type === "run_finished") as ConversationEvent;
+    const rows = await idleRows();
+    expect(rows).toEqual([
+      {
+        queue: MAINTENANCE_QUEUE_NAME,
+        job_name: IDLE_COMPACTION_JOB,
+        job_id: idleCompactionJobId(finished.runId as string),
+        data: {
+          orgId,
+          conversationId: conv,
+          runId: finished.runId,
+          armedSeq: finished.seq,
+          mode: "compaction_model",
+        },
+        run_at: expect.any(Date),
+        org_id: orgId,
+      },
+    ]);
+    // `now` is taken just before the terminal transaction (C4): within a second of its event
+    const due = finished.createdAt.getTime() + delayMinutes * 60_000;
+    const runAt = (rows[0] as { run_at: Date }).run_at.getTime();
+    expect(Math.abs(runAt - due)).toBeLessThan(1_000);
+  }
+
+  it("with longTtl off and a compaction model mapped, owes a compaction_model job due 30 minutes after the run", async () => {
+    const { orgId, conv } = await setup("fake-1", noLongTtl, "fake-c");
+    await seedLongHistory(orgId, conv);
+    const events = await turn(orgId, conv, "echo:ok");
+    expect(events.find((e) => e.type === "run_finished")?.payload).toMatchObject({
+      reason: "completed",
+    });
+    await expectCompactionModelRow(orgId, conv, events, 30);
+  });
+
+  it("is due idleDelayMinutes after the run", async () => {
+    const { orgId, conv } = await setup(
+      "fake-1",
+      { ...noLongTtl, compaction: { ...lowFloor, idleDelayMinutes: 5 } },
+      "fake-c",
+    );
+    await seedLongHistory(orgId, conv);
+    const events = await turn(orgId, conv, "echo:ok");
+    await expectCompactionModelRow(orgId, conv, events, 5);
+  });
+
+  it("arms on a conversation model that declares no cache", async () => {
+    const { orgId, conv } = await setup("fake-nc", {}, "fake-c");
+    await seedLongHistory(orgId, conv);
+    const events = await turn(orgId, conv, "echo:ok");
+    await expectCompactionModelRow(orgId, conv, events, 30);
+  });
+
+  it("still arms a max_steps run with an unanswered tool result after the reply (no settled check)", async () => {
+    const { orgId, conv } = await setup("fake-1", noLongTtl, "fake-c");
+    await seedLongHistory(orgId, conv);
+    const events = await turn(orgId, conv, 'tool:NoSuchTool:{"a":1}');
+    const finished = events.find((e) => e.type === "run_finished");
+    expect(finished?.payload).toMatchObject({ reason: "max_steps" });
+    const runId = finished?.runId as string;
+    await withOrgScope(orgId, () =>
+      k.app.get(EventLog).append(conv, [
+        {
+          type: "tool_result",
+          runId,
+          payload: {
+            step: 3,
+            callId: "call-unanswered",
+            content: "a result the model never saw",
+            isError: false,
+            toolKey: "NoSuchTool",
+          },
+        },
+      ]),
+    );
+    const convRow = await convRowOf(conv);
+    const before = Date.now();
+    const intent = await withOrgScope(orgId, () =>
+      k.app.get(IdleArm).decide({ id: runId }, convRow, "max_steps"),
+    );
+    expect(intent).toEqual({ orgId, mode: "compaction_model", runAt: expect.any(Number) });
+    expect((intent?.runAt as number) - before).toBeGreaterThanOrEqual(1_800_000);
+    expect((intent?.runAt as number) - Date.now()).toBeLessThanOrEqual(1_800_000);
+  });
+
+  it("an ineligible compaction model (32k window) leaves cache mode deciding", async () => {
+    await expectNotArmed("short_ttl", { settings: noLongTtl, compactionModel: "fake-c-small" });
+    const { orgId, conv } = await setup("fake-1", {}, "fake-c-small");
+    await seedLongHistory(orgId, conv);
+    await turn(orgId, conv, "echo:ok");
+    expect((await idleRows()).map((r) => (r.data as { mode: string }).mode)).toEqual(["cache"]);
+  });
+
+  it("a compaction model disabled in the org leaves cache mode deciding", async () => {
+    const { orgId, conv } = await setup("fake-1", {}, "fake-c");
+    const res = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/models/model-fake/disabled`,
+      payload: { disable: ["fake-c"] },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    await seedLongHistory(orgId, conv);
+    const events = await turn(orgId, conv, "echo:ok");
+    const call = events.find((e) => e.type === "model_call");
+    const rows = await idleRows();
+    expect(rows.map((r) => r.data)).toEqual([
+      expect.objectContaining({ mode: "cache", cacheCallSeq: call?.seq }),
+    ]);
+  });
+
+  it("owes nothing with a compaction model mapped when idle compaction is off, the owner opted out, the run was scheduled or the context is small", async () => {
+    await expectNotArmed("disabled", {
+      settings: { ...noLongTtl, compaction: { ...lowFloor, idleEnabled: false } },
+      compactionModel: "fake-c",
+    });
+    await expectNotArmed("small", {
+      settings: noLongTtl,
+      compactionModel: "fake-c",
+      long: false,
+    });
+    onRunning = async (runId) => {
+      await sql`UPDATE capybara.conversation_events
+        SET payload = jsonb_set(payload, '{trigger}', to_jsonb('schedule'::text))
+        WHERE run_id = ${runId} AND type = 'run_started'`.execute(raw);
+    };
+    await expectNotArmed("trigger", { settings: noLongTtl, compactionModel: "fake-c" });
+    onRunning = undefined;
+    const res = await owner({
+      method: "PUT",
+      url: "/api/v1/me/preferences",
+      payload: { idleCompaction: "off" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    await expectNotArmed("personal_off", { settings: noLongTtl, compactionModel: "fake-c" });
+  });
+
+  it("a small context skips before the purpose read (no compaction purpose lookup, no fallback warning)", async () => {
+    const purposes = k.app.get(ModelPurposesService);
+    const resolve = vi.spyOn(purposes, "resolve");
+    const warn = vi.spyOn(
+      (k.app.get(IdleArm) as unknown as { log: { warn: (...a: unknown[]) => void } }).log,
+      "warn",
+    );
+    const { orgId, conv } = await setup("fake-1", noLongTtl, "fake-c");
+    const reasons = skipReasons();
+    await turn(orgId, conv, "echo:ok");
+    expect(await idleRows()).toEqual([]);
+    expect(reasons()).toEqual(["small"]);
+    expect(resolve.mock.calls.filter(([, purpose]) => purpose === "compaction")).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("a failing purpose read (a database error) still finishes the run and owes nothing", async () => {
+    const purposes = k.app.get(ModelPurposesService);
+    const resolve = purposes.resolve.bind(purposes);
+    let reads = 0;
+    vi.spyOn(purposes, "resolve").mockImplementation((orgId, purpose) => {
+      if (purpose === "compaction") {
+        reads++;
+        return Promise.reject(new Error("connection terminated unexpectedly"));
+      }
+      return resolve(orgId, purpose);
+    });
+    const events = await expectNotArmed(undefined, { compactionModel: "fake-c" });
+    expect(events.find((e) => e.type === "run_finished")?.payload).toMatchObject({
+      reason: "completed",
+    });
+    expect(reads).toBeGreaterThan(0);
   });
 });

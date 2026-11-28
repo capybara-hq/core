@@ -155,6 +155,7 @@ const KERNEL = [
   "title",
   "review",
   "web_fetch",
+  "compaction",
   "subagent_fast",
   "subagent_standard",
   "subagent_capable",
@@ -163,12 +164,13 @@ const KERNEL = [
 ];
 
 describe("purpose list", () => {
-  it("the kernel purposes (eval, title, review, web_fetch, sub-agent tiers) and plugin purposes; null when unmapped", async () => {
+  it("the kernel purposes (eval, title, review, web_fetch, compaction, sub-agent tiers) and plugin purposes; null when unmapped", async () => {
     expect(KERNEL_PURPOSES).toEqual([
       { purpose: "eval", kind: "chat", label: { zh: "评测评委", en: "Eval judge" } },
       { purpose: "title", kind: "chat", label: { zh: "会话标题", en: "Conversation titles" } },
       { purpose: "review", kind: "chat", label: { zh: "命令审查", en: "Command review" } },
       { purpose: "web_fetch", kind: "chat", label: { zh: "网页提取", en: "Web page extraction" } },
+      { purpose: "compaction", kind: "chat", label: { zh: "摘要压缩", en: "Compaction" } },
       {
         purpose: "subagent_fast",
         kind: "chat",
@@ -392,6 +394,44 @@ describe("kinds and disabled models (spec B §5.3)", () => {
     expect(await k.app.get(ModelPurposesService).resolve(orgId, "embed-consumer.memory")).toEqual(
       EMBED,
     );
+  });
+
+  it("compaction maps to a chat model, refuses an embedding model, and shows default, override and effective", async () => {
+    expect(await put(ent, adminUrl("compaction"), FAKE_1)).toMatchObject({
+      purpose: "compaction",
+      default: FAKE_1,
+      effective: FAKE_1,
+    });
+    const refused = await ent({
+      method: "PUT",
+      url: adminUrl("compaction"),
+      payload: { target: EMBED },
+    });
+    expect(refused.statusCode, refused.body).toBe(400);
+    expect(refused.body).toContain("needs a chat model");
+    expect(await put(admin, orgUrl("compaction"), E1)).toMatchObject({
+      default: FAKE_1,
+      override: E1,
+      effective: E1,
+    });
+    expect(find(await list(admin, orgUrl()), "compaction")).toMatchObject({
+      default: FAKE_1,
+      override: E1,
+      effective: E1,
+    });
+    expect(await k.app.get(ModelPurposesService).resolve(orgId, "compaction")).toEqual(E1);
+    const availability = await k.app.get(ModelPurposesService).availability(orgId);
+    expect(availability.find((a) => a.purpose === "compaction")).toEqual({
+      purpose: "compaction",
+      available: true,
+    });
+    const audited = await db
+      .selectFrom("audit_events")
+      .select(["target"])
+      .where("action", "=", "model.purpose_mapped")
+      .where("target", "=", "compaction")
+      .execute();
+    expect(audited).toHaveLength(2);
   });
 
   it("image purpose maps to an image model", async () => {

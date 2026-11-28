@@ -232,13 +232,12 @@ const ALLOWED: Record<string, Record<string, string[]>> = {
   // A head without a path row (layered shell spec §3) starts below the row it reserves instead:
   // the top row only where controls reach into the content column (`--cb-shell-head-row`; beside
   // the full sidebar the head starts as in a browser, maintainer decision 2026-11-28). The second
-  // value is the start band's (layered shell spec §2): the paper starts at the band's bottom edge
-  // and the title row space.5 into it; the third the end band's, whose band row is the title row.
+  // value is the bands' (layered shell spec §2, start and end alike): the paper starts at the
+  // band's bottom edge and the title row space.5 into it.
   ':root[data-shell="desktop"] .cb-shell-main .cb-template-head:not(:has(.cb-pageheader-path))': {
     "padding-top": [
       "max(var(--cb-space-5), calc(var(--cb-shell-head-row) - var(--cb-space-2)))",
       "calc(var(--cb-shell-row) + var(--cb-space-5))",
-      "0",
     ],
   },
   ':root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path': {

@@ -2,9 +2,13 @@ import type { ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 
 /**
- * 把工具定义按指纹存进 `capybara.tool_specs`（内容寻址：同一指纹只存一次，已存在不改）。
- * `model_call` 只记 `{key, specHash}`，定义本身存这里——连接器刷新 / 插件升级改了定义之后，早先请求用过的定义
- * 仍可按指纹取回，模型请求可由日志还原。
+ * Stores tool definitions by fingerprint in `capybara.tool_specs` (content-addressed: one row per
+ * fingerprint, never changed, except that a row written before `spec_text` existed gets it on the
+ * next write). `model_call` records only `{key, specHash}`; the definition lives here, so after a
+ * connector refresh or a plugin upgrade the definitions an earlier request used can still be read
+ * back and the request rebuilt from the log. `spec_text` keeps the JSON text as sent: `spec` is
+ * jsonb, which reorders keys, and a rebuilt request must serialize byte for byte like the original
+ * (a provider renders its tools from that JSON; a reordered schema misses the prompt cache).
  */
 export async function recordToolSpecs(
   /** The pool or a transaction (a transaction is a Kysely handle too). */
@@ -17,20 +21,33 @@ export async function recordToolSpecs(
   // 按指纹排序插入：并发事务插入同一批指纹时加锁顺序一致，不会互相死锁
   const rows = [...unique]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([hash, spec]) => ({ spec_hash: hash, spec: JSON.stringify(spec) }));
+    .map(([hash, spec]) => {
+      const text = JSON.stringify(spec);
+      return { spec_hash: hash, spec: text, spec_text: text };
+    });
   await db
     .insertInto("tool_specs")
     .values(rows)
-    .onConflict((oc) => oc.column("spec_hash").doNothing())
+    .onConflict((oc) =>
+      oc
+        .column("spec_hash")
+        .doUpdateSet((eb) => ({ spec_text: eb.ref("excluded.spec_text") }))
+        .where("tool_specs.spec_text", "is", null),
+    )
     .execute();
 }
 
-/** 按指纹取回工具定义；没有记录 → null。 */
+/** A stored definition: its JSON text as sent when recorded, else the jsonb value. */
+export function storedToolSpec(row: { spec: unknown; spec_text: string | null }): ToolSpec {
+  return (row.spec_text !== null ? JSON.parse(row.spec_text) : row.spec) as ToolSpec;
+}
+
+/** The tool definition stored under a fingerprint ({@link storedToolSpec}); null when none. */
 export async function loadToolSpec(db: KernelSchemaDb, specHash: string): Promise<ToolSpec | null> {
   const row = await db
     .selectFrom("tool_specs")
-    .select("spec")
+    .select(["spec", "spec_text"])
     .where("spec_hash", "=", specHash)
     .executeTakeFirst();
-  return row ? (row.spec as ToolSpec) : null;
+  return row ? storedToolSpec(row) : null;
 }

@@ -272,7 +272,11 @@ export function ApprovalCard({
   const approvalQ = approvalQuery(orgId, item.approvalId);
   const approval = useQuery({
     ...approvalQ,
-    enabled: decided === null || item.network !== undefined || decidedByUnknown,
+    enabled:
+      decided === null ||
+      item.network !== undefined ||
+      item.loopback !== undefined ||
+      decidedByUnknown,
     retry: false,
     // a 404 the server read (not this viewer's to decide) stays as it was painted
     retryOnMount: retryOnMountOf(approvalQ.queryKey),
@@ -375,18 +379,27 @@ export function ApprovalCard({
       : view && typeof view.input === "object" && view.input !== null
         ? (view.input as Record<string, unknown>)
         : {};
-  const netAsk = networkAskOf(item, view);
+  const loopback = loopbackAskOf(item, view);
+  const netAsk = loopback === undefined ? networkAskOf(item, view) : undefined;
   // a device service's ask (the agent's browser) words its own title and body
   const network: NetworkAsk | undefined =
-    netAsk?.service === true
+    loopback !== undefined
       ? {
-          hosts: netAsk.hosts,
-          command: netAsk.command,
-          ...(netAsk.appliesAt ? { appliesAt: netAsk.appliesAt } : {}),
-          title: t("network.serviceTitle", { host: netAsk.hosts.join(", ") }),
-          body: t("network.serviceNote"),
+          hosts: [`localhost:${loopback.port}`],
+          command: "",
+          title: t("network.loopbackTitle", { port: loopback.port }),
+          // the body names a database port, else the page that was loading
+          body: loopback.database ? t("network.loopbackDatabase") : (loopback.url ?? ""),
         }
-      : netAsk;
+      : netAsk?.service === true
+        ? {
+            hosts: netAsk.hosts,
+            command: netAsk.command,
+            ...(netAsk.appliesAt ? { appliesAt: netAsk.appliesAt } : {}),
+            title: t("network.serviceTitle", { host: netAsk.hosts.join(", ") }),
+            body: t("network.serviceNote"),
+          }
+        : netAsk;
   const asked = commandAskOf(item, view);
   const lead = asked === undefined ? undefined : commandLeadOf(item, view);
   // the card words the ask in the UI's language; the kernel's reason stays model-facing text
@@ -408,7 +421,9 @@ export function ApprovalCard({
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
   // the scopes exactly as the view lists them: a network ask may offer "always" (add the hosts to
   // the device's own list)
-  const scopes = view ? scopesFor(view) : (["once"] as const);
+  // a loopback ask offers one choice, for this conversation
+  const scopes =
+    loopback !== undefined ? (["session"] as const) : view ? scopesFor(view) : (["once"] as const);
   // A permission change replaced the ask before anyone decided it: a final line, never actions.
   if (outcome?.decision === "superseded") {
     return (
@@ -472,7 +487,10 @@ export function ApprovalCard({
       : undefined;
   let state: ApprovalState;
   if (outcome !== null) {
-    const granted = outcome.decision === "approved" ? detail?.grantedHosts : undefined;
+    const granted =
+      outcome.decision === "approved" && detail?.kind !== "loopback"
+        ? detail?.grantedHosts
+        : undefined;
     state = {
       kind: "decided",
       decision: outcome.decision,
@@ -502,9 +520,11 @@ export function ApprovalCard({
       return (
         <div data-role="approval" data-approval-id={item.approvalId}>
           <Text variant="small" tone="muted">
-            {t(netAsk?.service ? "network.serviceOtherApprover" : "network.otherApprover", {
-              hosts: network.hosts.join(", "),
-            })}
+            {loopback !== undefined
+              ? t("network.loopbackOtherApprover", { port: loopback.port })
+              : t(netAsk?.service ? "network.serviceOtherApprover" : "network.otherApprover", {
+                  hosts: network.hosts.join(", "),
+                })}
           </Text>
         </div>
       );
@@ -540,6 +560,11 @@ export function ApprovalCard({
           ? { policy: t(`policy.${item.policy}`) }
           : {})}
         {...(network !== undefined ? { network } : {})}
+        {...(loopback !== undefined
+          ? {
+              scopeLabels: { session: t("network.loopbackAllow") },
+            }
+          : {})}
         {...(command !== undefined ? { command } : {})}
         state={state}
         {...(view?.file !== undefined
@@ -554,7 +579,12 @@ export function ApprovalCard({
           : {})}
         {...(secureInput !== undefined ? { secureInput } : {})}
         onApprove={(scope, hosts) =>
-          void onDecide("approve", scope, undefined, network !== undefined ? hosts : undefined)
+          void onDecide(
+            "approve",
+            scope,
+            undefined,
+            network !== undefined && loopback === undefined ? hosts : undefined,
+          )
         }
         onDeny={(reason) => void onDecide("deny", "once", reason)}
         {...details}
@@ -654,6 +684,8 @@ export function networkAskOf(
   view: Approval | null | undefined,
 ): (NetworkAsk & { service?: true }) | undefined {
   const detail = view?.kind === "network" ? view.detail : undefined;
+  // a loopback ask has its own reading ({@link loopbackAskOf})
+  if (detail?.kind === "loopback") return undefined;
   if (detail?.kind === "service") {
     return {
       hosts: [...detail.hosts],
@@ -678,6 +710,29 @@ export function networkAskOf(
     command: stringField(item.input, "command") ?? "",
     ...(description ? { description } : {}),
   };
+}
+
+/** A loopback port ask (browser loopback port grants spec §5.2): the port and what it holds. */
+export interface LoopbackAsk {
+  port: number;
+  database: boolean;
+  url: string | null;
+}
+
+/**
+ * The loopback port ask of an approval: from its detail once read, else from the log's
+ * `approval_requested.loopback` (no page url there); undefined for any other approval.
+ */
+export function loopbackAskOf(
+  item: Pick<ApprovalItem, "loopback">,
+  view: Approval | null | undefined,
+): LoopbackAsk | undefined {
+  const detail = view?.kind === "network" ? view.detail : undefined;
+  if (detail?.kind === "loopback") {
+    return { port: detail.port, database: detail.database, url: detail.url };
+  }
+  if (item.loopback === undefined) return undefined;
+  return { port: item.loopback.port, database: item.loopback.database, url: null };
 }
 
 /**

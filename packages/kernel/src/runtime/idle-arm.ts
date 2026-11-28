@@ -6,16 +6,23 @@ import { COMPACTION_SETTINGS } from "../identity/settings.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { ModelPurposesService } from "../models/purposes.js";
+import {
+  type CompactionModelPort,
+  chooseSummarizer,
+  compactionModelPort,
+} from "./compaction-model.js";
 import { CompactionSettingsService } from "./compaction-settings.service.js";
 import { deriveCacheExpiry } from "./context/cache-expiry.js";
 import {
   type IdleArmFacts,
   type IdleArmSkip,
   idleArmDecision,
+  idleMinTokens,
   type RunStartedTrigger,
 } from "./context/idle-compaction-rules.js";
 import { inContextSummaryAllowed, unansweredAfterReply } from "./context/in-context-compaction.js";
-import { ProviderRegistry, type ResolvedModelInfo } from "./providers.js";
+import { type BoundProvider, ProviderRegistry, type ResolvedModelInfo } from "./providers.js";
 import type { IdleCompactionIntent } from "./run-finish.js";
 
 /** How a chat run ended, as the run worker's finish branches that write `run_finished` see it. */
@@ -32,6 +39,8 @@ const PASSING: IdleArmFacts = {
   automationRunId: null,
   outcome: "completed",
   settings: COMPACTION_SETTINGS.parse({}),
+  mode: "cache",
+  now: 0,
   personalOff: false,
   expiry: {
     callSeq: 0,
@@ -92,18 +101,29 @@ const modelKey = (provider: string, model: string) => `${provider}\u0000${model}
  * The arm decision of idle compaction at a chat run's finish (idle compaction spec §4.2, S4–S7):
  * gathers {@link IdleArmFacts} and asks {@link idleArmDecision} whether the run's terminal
  * transaction owes an `idle-compaction` job. The run worker calls it before `RunFinish.finish`,
- * outside any transaction (the model registry may list a provider's models over the network).
+ * outside any transaction (the model registry and the `compaction` purpose may list a provider's
+ * models over the network).
+ *
+ * The job's mode (compaction model spec §6.1, §6.2): `compaction_model` when the summarizer a
+ * compaction would choose now against the last step call's model is the compaction model (usable
+ * and eligible, the same `chooseSummarizer` the compaction runs), else `cache`.
  */
 @Injectable()
 export class IdleArm {
+  /** The org's `compaction` purpose, read from PG on every decision (nothing cached). */
+  private readonly compactionModel: CompactionModelPort;
+
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(CompactionSettingsService)
     private readonly compaction: Pick<CompactionSettingsService, "resolve">,
     @Inject(AccountsService) private readonly accounts: Pick<AccountsService, "idleCompactionOff">,
     @Inject(ProviderRegistry) private readonly models: Pick<ProviderRegistry, "resolve">,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "debug" | "warn">,
-  ) {}
+    @Inject(ModelPurposesService) purposes: Pick<ModelPurposesService, "resolve">,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+  ) {
+    this.compactionModel = compactionModelPort(purposes);
+  }
 
   /**
    * The intent `RunFinish.finishIn` owes the job from, or undefined when the run does not arm.
@@ -170,7 +190,8 @@ export class IdleArm {
     reason = failing();
     if (reason !== undefined) return skip(reason);
 
-    known.settings = await this.compaction.resolve(conv.org_id);
+    const settings = await this.compaction.resolve(conv.org_id);
+    known.settings = settings;
     reason = failing();
     if (reason !== undefined) return skip(reason);
 
@@ -190,21 +211,53 @@ export class IdleArm {
         .orderBy("seq")
         .execute()
     ).map(toEvent);
-    const infos = new Map<string, ResolvedModelInfo>();
+    const resolved = new Map<string, { provider: BoundProvider; info: ResolvedModelInfo }>();
     for (const e of calls) {
       if (e.type !== "model_call") continue;
       const key = modelKey(e.payload.provider, e.payload.model);
-      if (infos.has(key)) continue;
-      const { info } = await this.models.resolve(conv.org_id, {
-        provider: e.payload.provider,
-        model: e.payload.model,
-      });
-      infos.set(key, info);
+      if (resolved.has(key)) continue;
+      resolved.set(
+        key,
+        await this.models.resolve(conv.org_id, {
+          provider: e.payload.provider,
+          model: e.payload.model,
+        }),
+      );
     }
-    const infoOf = (provider: string, model: string) => infos.get(modelKey(provider, model));
-    known.expiry = deriveCacheExpiry(calls, (p, m) => infoOf(p, m)?.cache);
+    const infoOf = (provider: string, model: string) =>
+      resolved.get(modelKey(provider, model))?.info;
     const last = lastStepCall(calls);
-    const lastInfo = last && infoOf(last.call.payload.provider, last.call.payload.model);
+    const lastModel =
+      last && resolved.get(modelKey(last.call.payload.provider, last.call.payload.model));
+    const lastInfo = lastModel?.info;
+
+    // a context under the size floor arms in neither mode: skip before the purpose read (and the
+    // summarizer choice's fallback warnings) a small finish would otherwise pay every time
+    if (last !== undefined && lastInfo !== undefined) {
+      const u = last.usage.payload;
+      const total = u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens + u.outputTokens;
+      if (total < idleMinTokens(lastInfo.contextWindow, settings)) return skip("small");
+    }
+
+    // compaction model spec §6.1, C2: the mode is the summarizer a compaction would choose now,
+    // V = the last step call's model under the effective settings; a failed purpose read throws
+    // (no job, logged by `decide`)
+    if (last !== undefined && lastModel !== undefined) {
+      const { summarizer } = await chooseSummarizer(
+        { compactionModel: this.compactionModel, registry: this.models, log: this.log },
+        conv.org_id,
+        {
+          ref: { provider: last.call.payload.provider, model: last.call.payload.model },
+          provider: lastModel.provider,
+          info: lastModel.info,
+        },
+        settings,
+      );
+      known.mode = summarizer.source === "compaction_model" ? "compaction_model" : "cache";
+    }
+    // C4: the run's end is not written yet; the terminal transaction follows within milliseconds
+    known.now = Date.now();
+    known.expiry = deriveCacheExpiry(calls, (p, m) => infoOf(p, m)?.cache);
     known.lastCall =
       last && lastInfo
         ? {
@@ -221,6 +274,7 @@ export class IdleArm {
     if (reason !== undefined || last === undefined || lastInfo === undefined) {
       return skip(reason ?? "no_cache");
     }
+    if (known.mode === "compaction_model") return this.armed(runId, conv, known);
 
     // S7: the in-context quality gate (ruling R8) and the settled point (ruling R9)
     known.inContextAllowed = inContextSummaryAllowed(last.call.payload.provider, lastInfo.id);
@@ -249,17 +303,34 @@ export class IdleArm {
       openers: [],
     });
 
+    return this.armed(runId, conv, known);
+  }
+
+  /** The final decision over every fact gathered: the intent, or undefined with the skip logged. */
+  private armed(
+    runId: string,
+    conv: { id: string; org_id: string },
+    known: Partial<IdleArmFacts>,
+  ): IdleCompactionIntent | undefined {
     const d = idleArmDecision({ ...PASSING, ...known });
-    if (!d.arm) return skip(d.reason);
+    const fields = { context: "IdleCompaction", conversationId: conv.id, runId };
+    if (!d.arm) {
+      this.log.debug("idle compaction not armed", { ...fields, reason: d.reason });
+      return undefined;
+    }
+    if (d.mode === "compaction_model") {
+      this.log.debug("idle compaction armed", { ...fields, mode: d.mode, runAt: d.runAt });
+      return { orgId: conv.org_id, mode: "compaction_model", runAt: d.runAt };
+    }
     this.log.debug("idle compaction armed", {
-      context: "IdleCompaction",
-      conversationId: conv.id,
-      runId,
+      ...fields,
+      mode: d.mode,
       runAt: d.runAt,
       expiresAt: d.expiresAt,
     });
     return {
       orgId: conv.org_id,
+      mode: "cache",
       cacheCallSeq: d.cacheCallSeq,
       expiresAt: d.expiresAt,
       runAt: d.runAt,

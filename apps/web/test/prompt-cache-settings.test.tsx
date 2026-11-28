@@ -110,9 +110,13 @@ describe("prompt cache settings", () => {
     expect(isOn(switchIn(section))).toBe(false);
     expect(within(section).getByText(T.longTtlHint)).toBeTruthy();
     expect(T.longTtlHint).toBe(
-      "Requests use the model's cache tier of at least 30 minutes (such as 1 hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price instead of 1.25×). Idle compaction runs on these models only with this on.",
+      "Requests use the model's cache tier of at least 30 minutes (such as 1 hour); cache writes are billed at the long tier's price (Anthropic about 2× the input price instead of 1.25×). Without a compaction model, idle compaction runs on these models only with this on.",
     );
-    expect(zh.promptCache.longTtlHint.endsWith("开启后空闲压缩才会在这些模型上运行。")).toBe(true);
+    expect(
+      zh.promptCache.longTtlHint.endsWith(
+        "未配置摘要压缩模型时，开启后空闲压缩才会在这些模型上运行。",
+      ),
+    ).toBe(true);
     expect(zh.promptCache.title).toBe("提示缓存");
     expect(zh.promptCache.longTtl).toBe("长提示缓存");
   });

@@ -120,7 +120,12 @@ A new entry in `KERNEL_PURPOSES` (`models/purposes.ts`):
 ### 4.2 Resolution and fallback
 
 Each compaction resolves the purpose once, in `prepareCompaction`, through
-`ModelPurposesService.resolve(orgId, "compaction")`:
+`ModelPurposesService.resolve(orgId, "compaction")`. `ModelStepDeps` carries no purposes service, so
+the step reaches it through a new optional dep `compactionModel?: CompactionModelPort` (absent =
+unmapped, which test stubs and step replays rely on); `RunSteps` provides it, and full-run replays
+inherit it through `replayLoopDeps` and resolve C through the billed replay registry (§7.3). The
+purpose is resolved only after the trigger passed and a plan exists, so a step that does not compact
+pays no extra read; the summarizer is chosen right after the plan and before `hooks.planned`.
 
 | Result | Summarizer |
 |---|---|
@@ -136,6 +141,10 @@ written by V is better than the trim the hard guard would apply. This is the rul
 
 The idle compact run is the exception (§6.3): it never falls back to V, because a full-price
 background summary on V is what the idle core rule forbids.
+
+A configured, usable, eligible C always wins over the in-context summary (§12 Q2): the in-context
+attempt skips with `InContextFallback` `"compaction_model"`. Unmapped is today's behaviour byte for
+byte: `params: {}`, `summaryCap = min(setting, V max)`, the in-context path where the gate allows.
 
 ### 4.3 Eligibility: a window too small to be useful
 
@@ -175,7 +184,8 @@ The summary call sends the mapping's params, sanitized against C's declarations
 (`sanitizeParams(info.parameters, target.params)`, as `ModelPurposesService.chat` does). No
 `paramDefaults`: the measured transcript recall (§1) was taken with the vendors' defaults, and
 thinking may help a summarizer; an admin who wants it off sets `thinking: "off"` in the mapping.
-The fallback path (V) keeps today's `params: {}`.
+The fallback path (V) keeps today's `params: {}`. `buildCompactionRequest` hard-codes `params: {}`
+today; it gains `opts: { retry?; params? }` with `params` defaulting to `{}`.
 
 ## 5. Chunking and the summary cap
 
@@ -234,7 +244,7 @@ assistant reply describing it) is in the transcript and survives.
 
 | | Cache mode (idle spec phase 2, unchanged) | Compaction-model mode (new) |
 |---|---|---|
-| When | no compaction model usable for the org at arm time | the `compaction` purpose resolves to a usable C at arm time |
+| When | no compaction model usable and eligible for the org at arm time | the `compaction` purpose resolves to a usable **and eligible** C (§4.3) at arm time (behaviour, decided in the plan review) |
 | Request | in-context, V, cached prefix | transcript, C |
 | Gate table, settled point, fit-plan skip | required | not applicable |
 | Timing | `min(t0 + 0.9 × L, expiresAt − 30 s)`, `L ≥ 30 min` | `run end + idleDelayMinutes` |
@@ -247,6 +257,12 @@ argument changes: the background summary costs a few cents on a large context (�
 the returning person both the wait and a cold full-price re-read of the large context by V (on an
 expensive V, that re-read alone costs more than the summary). So compaction-model mode is timed by
 idle duration. Without a compaction model, phase 2 behaviour is unchanged.
+
+Eligibility is decided per compaction (§4.3), and an ineligible C makes every inline compaction use
+V. So arm time asks the same question the compaction asks: compaction-model mode only if
+`chooseSummarizer` returns C against V = the last call's model and the effective settings;
+otherwise cache mode. An ineligible C then never owes jobs that could only end `no_model`
+(behaviour, decided in the plan review).
 
 ### 6.2 Arming (idle spec §4.2)
 
@@ -261,7 +277,9 @@ transaction, errors swallowed) resolves the purpose after the settings and prefe
 - Compaction-model mode skips check 4 (cache lifetime) and check 6 (quality gate, settled point,
   fit plan): none of them bears on a transcript summary.
 - Owed job: the same outbox row (queue `cap-kernel-maintenance`, name `idle-compaction`, job id
-  `idle-compact-<runId>`, `orgId` set), `runAt = finishedAt + idleDelayMinutes × 60 s`, data
+  `idle-compact-<runId>`, `orgId` set), `runAt = now + idleDelayMinutes × 60_000`, with `now` taken
+  in `IdleArm.decide` (the arm decision runs in the worker just before `RunFinish.finish`, so
+  `finished_at` is not known yet; the difference is milliseconds), data
   `{ orgId, conversationId, runId, armedSeq, mode: "compaction_model" }` (no `cacheCallSeq`,
   `expiresAt`); cache mode writes `mode: "cache"` with its existing fields. `IdleCompactionIntent`
   becomes a union on `mode`. The `OUTBOX_JOBS` `idempotent` sentence is unchanged (the job still
@@ -269,27 +287,39 @@ transaction, errors swallowed) resolves the purpose after the settings and prefe
 
 ### 6.3 Fire time (idle spec §4.3) and the run
 
-`idleFireDecision` takes the job's `mode`:
+`idleFireDecision` takes the job's `mode`; the consumer reads `data.mode ?? "cache"` (jobs owed by
+the previous release may still be in the outbox or queue across a deploy; every new row carries
+`mode`):
 
 - Checks 1–4 and 6 unchanged (gone, obsolete, busy, disabled, backoff).
 - Check 5 (`expired`) only in cache mode. A compaction-model job that fires late (worker backlog,
   outage) still runs: lateness costs nothing here.
-- Check 7 (`no_model`) in compaction-model mode: V resolvable for the org (its window sizes the
-  plan) **and** the purpose still resolves to a usable, eligible C. If an admin cleared or disabled
-  it since arming, the job ends `no_model`: it never falls back to V, and never switches to cache
-  mode (no expiry was derived).
+- Check 7 (`no_model`) in compaction-model mode: the effective definition's model resolves for the
+  org (its window sizes the plan) **and** `chooseSummarizer` returns C. There is no armed call to
+  compare with (cache mode compares the effective model with the armed call), so a model switch
+  since arming does not end the job: the probe sizes against the new V. If an admin cleared or
+  disabled C since arming, the job ends `no_model`: it never falls back to V, and never switches to
+  cache mode (no expiry was derived).
+- A cache-mode job that finds a compaction model configured at fire time (C wins over in-context,
+  §4.2) ends `no_prefix` and writes nothing: the probe reports `inContext: false`, and no
+  background call the job was not armed for is made. The next finished run arms in
+  compaction-model mode (behaviour, decided in the plan review).
 - Check 8 (`small`, size and the 20k growth) via `probeIdle`, which runs `prepareCompaction` in
   the job's mode.
 - Check 9 (`no_prefix`) only in cache mode.
 
-The run: `RunQueue.startIdleCompaction` unchanged (row lock, `compact_origin = 'idle'`, owner as
-trigger account, preemption by any input, no queue pause). `CompactOptions.requireInContext` is
-replaced by `idle: "cache" | "compaction_model"`: `cache` keeps today's in-context-or-nothing;
-`compaction_model` requires C (if it no longer resolves when the run starts, the run writes nothing
-and finishes `completed`) and summarizes the transcript with the automatic plan (`keepRecentTurns`,
-the full tail budget; never `manual`). Progress shows from the plan on, as for any transcript
-compaction. Everything else of idle spec §5 (preemption, abort, shutdown, the quiet UI, no push,
-the conversation list staying still) applies to both modes.
+The run: `RunQueue.startIdleCompaction(conversationId, armedSeq, mode)` otherwise unchanged (row
+lock, `compact_origin = 'idle'`, owner as trigger account, preemption by any input, no queue pause).
+The run worker knows only the row, not the job, so the mode is stored on it: `runs.idle_mode`
+(§7.1), which the worker passes to `CompactionService.force`; a run never switches modes between
+arm, fire and run. `CompactOptions.requireInContext` is replaced by
+`idle: "cache" | "compaction_model"`: `cache` keeps today's in-context-or-nothing;
+`compaction_model` requires C (if it no longer resolves when the run starts, the run writes
+nothing and finishes `completed`) and summarizes the transcript with the automatic plan
+(`keepRecentTurns`, the full tail budget; never `manual`). Progress shows from the plan on, as for
+any transcript compaction; because the summarizer is chosen right after the plan and before
+`hooks.planned` (§4.2), a run whose C is gone ends before any progress row. Everything else of idle spec §5 (preemption, abort, shutdown, the
+quiet UI, no push, the conversation list staying still) applies to both modes.
 
 ### 6.4 The delay setting
 
@@ -317,7 +347,9 @@ transcript summarizer.
   summary is always `"transcript"`.
 - `compaction_failed` gains the same optional `model` (the model whose call failed or was denied;
   absent when no call was sent, such as `the model is unavailable`).
-- Idle job data gains `mode` (§6.2); `run_started.compactOrigin` is unchanged.
+- Idle job data gains `mode` (§6.2); `run_started.compactOrigin` is unchanged. Migration 0200 adds
+  `runs.idle_mode text NULL CHECK (idle_mode IN ('cache', 'compaction_model'))`, written by
+  `startIdleCompaction` and read by the run worker (§6.3); `runs` has no `org_id`, so no RLS policy.
 
 All additive; old logs parse. None of these fields is model-visible: request building reads
 `compaction_summary.text`, `openingSeqs` and `method` (for the framing sentence, compaction spec
@@ -444,28 +476,25 @@ The maintainer raised two concerns for very large windows. Both are out of this 
   shape, replay of its results, privacy of the covered events, access rules for sub-agents), so it
   needs its own design.
 
-## 12. Open questions (with recommendations)
+## 12. Decisions
 
-- **Q1. Call-time fallback to the conversation model.** When C's call fails (provider error,
-  timeout, cut off twice), should the compaction retry once on V? Recommendation: **no** for this
-  change. Resolution-time fallback (§4.2) covers a removed, disabled or unlisted model; a call-time
-  failure writes `compaction_failed` and its backoff as today, the hard guard and the reactive path
-  still protect the step, and an outage of C shows in the logs instead of silently doubling cost.
-  Revisit if prod logs show C outages causing trims.
-- **Q2. In-context first when the cache is warm.** Should a gated, settled, warm in-context summary
-  on V take precedence over C? Recommendation: **no**: the maintainer's rule is "configured means
-  preferred"; (b) and (c) in §10 cost about the same; a single summarizer per org is easier to
-  reason about and to evaluate.
-- **Q3. An explicit org opt-out** ("use the conversation's model" as an org override value) while
-  a platform default exists. Recommendation: **not now**; disabling the default's model or provider
-  in the org already gives that result (§8). Add a sentinel only if an org needs the model for
-  agents but not for summaries.
-- **Q4. A quality gate on the compaction purpose** (refuse or warn on a target outside a measured
-  table, as `IN_CONTEXT_SUMMARY_MODELS` does for in-context). Recommendation: **no hard gate**; the
-  admin chooses deliberately, and the transcript measurements of §1 are in the docs and the hint asks
-  for a tested model. `gpt-5-nano` (19.6% recall) shows the risk, so the release notes name the
-  measured models.
-- **Q5. The idle delay default.** Recommendation: **30 minutes** (§6.4).
+Decided as recommended during design review (2026-11-28).
+
+- **Q1. No call-time retry on the conversation model.** Resolution-time fallback (§4.2) covers a
+  removed, disabled or unlisted model; a failed C call (provider error, timeout, cut off twice, a
+  policy denial) writes `compaction_failed` and its backoff as today and never retries on V. A policy
+  denial is never routed around. The hard guard and the reactive path still protect the step, and an
+  outage of C shows in the logs instead of silently doubling cost. Revisit if prod logs show C
+  outages causing trims.
+- **Q2. A configured compaction model always wins over in-context.** "Configured means preferred";
+  (b) and (c) in §10 cost about the same, and a single summarizer per org is easier to reason about
+  and to evaluate.
+- **Q3. No explicit org "use the conversation's model" override.** An org disables the default's
+  model or provider in the org instead (§8); the effective target is then unconfigured there.
+- **Q4. No hard quality gate on the purpose.** The admin chooses deliberately; the purposes hint
+  asks for a tested model, and the release notes list the measured transcript recall (§1), naming
+  `gpt-5-nano` (19.6%) as the risk.
+- **Q5. `idleDelayMinutes` defaults to 30** (§6.4).
 
 ## 13. Tests
 

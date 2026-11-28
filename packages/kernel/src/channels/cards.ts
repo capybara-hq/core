@@ -18,6 +18,7 @@ import {
   type CommandAskDetail,
   type CommandNetworkAskDetail,
   type GitAskView,
+  type LoopbackAskDetail,
   networkAskHosts,
   type ServiceNetworkAskDetail,
 } from "../tools/approvals.service.js";
@@ -259,10 +260,12 @@ type NetworkCardDetail =
   | (Pick<CommandNetworkAskDetail, "kind" | "hosts" | "command"> &
       Partial<Pick<CommandNetworkAskDetail, "appliesAt">>)
   | (Pick<ServiceNetworkAskDetail, "kind" | "hosts" | "url"> &
-      Partial<Pick<ServiceNetworkAskDetail, "appliesAt">>);
+      Partial<Pick<ServiceNetworkAskDetail, "appliesAt">>)
+  | Pick<LoopbackAskDetail, "kind" | "port" | "url" | "database">;
 
 /**
- * A network ask's card text (a device service's: browser use spec §7.1, its own title and a note
+ * A network ask's card text (a loopback port ask's: its port and the session choice; a device
+ * service's: browser use spec §7.1, its own title and a note
  * that open network mode stops the asks): the title names the host (or the number of hosts); the preview lists
  * the hosts, then the command clipped to {@link CARD_SUMMARY_MAX}, for several hosts that the
  * decision applies to all of them (an IM card has no per-host choice) and, when `scopes` offers
@@ -276,6 +279,18 @@ export function networkCardText(
   redact: (s: string) => string = (s) => s,
   scopes: readonly string[] = [],
 ): NetworkCardText {
+  // a loopback port ask: the port, then what it holds (a database port) or the page, and one
+  // choice, for this conversation (browser loopback port grants)
+  if (detail.kind === "loopback") {
+    const preview = detail.database
+      ? phrase("loopbackDatabase", locale)
+      : cut(redact((detail.url ?? "").trim()), CARD_SUMMARY_MAX);
+    return {
+      title: phrase("loopbackTitle", locale).replace("{port}", String(detail.port)),
+      inputPreview: preview,
+      scopeLabels: { session: phrase("loopbackAllow", locale) },
+    };
+  }
   const service = detail.kind === "service";
   const hosts = [...new Set(networkAskHosts(detail).map(redact))];
   const title =
@@ -471,6 +486,8 @@ export async function approvalCard(
       ? commandCardText(v.command, v.scopes, locale, redact)
       : null;
   const special = network ?? command;
+  const serviceAsk =
+    v.kind === "network" && (v.detail?.kind === "service" || v.detail?.kind === "loopback");
   const display =
     v.summary === null && special === null
       ? (await toolInfo({ db: d.db, registry: d.registry }, v.orgId, [v.toolKey]))[0]
@@ -480,8 +497,9 @@ export async function approvalCard(
     id: v.id,
     title: network?.title ?? command?.title ?? phrase("approvalTitle", locale),
     // the label carries the source, so no separate appName (renderers would repeat it); a
-    // network or command ask's command ran in Bash
-    toolName: special !== null ? "Bash" : approvalToolName(v, locale),
+    // command's network ask and a command ask ran in Bash, a device service's ask (network or
+    // loopback port) names the extension's tool that asked
+    toolName: special !== null && !serviceAsk ? "Bash" : approvalToolName(v, locale),
     agentName: v.agent.name || "Agent",
     // the field keeps its contract name; it carries the call line (a network ask's hosts and
     // command, a command ask's reason and command), never the raw input
