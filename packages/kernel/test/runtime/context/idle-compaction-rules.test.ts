@@ -112,6 +112,13 @@ describe("idleArmDecision", () => {
     expect(idleArmDecision(armFacts(over))).toEqual({ arm: false, reason });
   });
 
+  it("skips with no_cache when there is no last call, even with an expiry", () => {
+    expect(idleArmDecision(armFacts({ lastCall: null, expiry }))).toEqual({
+      arm: false,
+      reason: "no_cache",
+    });
+  });
+
   it("arms at exactly the threshold", () => {
     expect(
       idleArmDecision(

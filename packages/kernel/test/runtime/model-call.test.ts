@@ -2587,7 +2587,18 @@ describe("runModelStep", () => {
         const expectSilentSkip = async (h: Harness, agent = icAgent()) => {
           const before = (await all()).length;
           const sentBefore = h.sent.length;
-          const out = await idleCompact(h, agent);
+          const progress: unknown[] = [];
+          deps.compactionProgress = {
+            update: (u) => progress.push(u),
+            clear: (id) => progress.push(id),
+          };
+          let out: Awaited<ReturnType<typeof idleCompact>>;
+          try {
+            out = await idleCompact(h, agent);
+          } finally {
+            delete deps.compactionProgress;
+          }
+          expect(progress).toEqual([]);
           expect({ summarySeq: out.summarySeq, failed: out.failed }).toEqual({
             summarySeq: null,
             failed: false,
