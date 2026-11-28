@@ -8,11 +8,11 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0199_runs_idle_mode.sql (compaction model spec §6.1): `runs.idle_mode` is the mode of an idle
+ * 0200_runs_idle_mode.sql (compaction model spec §6.1): `runs.idle_mode` is the mode of an idle
  * compact run ('cache' | 'compaction_model'), null on every other run. Nullable text with a check
  * constraint, and running the file again changes nothing.
  */
-const FILE = "0199_runs_idle_mode.sql";
+const FILE = "0200_runs_idle_mode.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -48,7 +48,7 @@ afterAll(async () => {
   await pg?.stop();
 });
 
-describe("0199_runs_idle_mode", () => {
+describe("0200_runs_idle_mode", () => {
   it("adds a nullable text column", async () => {
     const r = await sql<{ data_type: string; is_nullable: string }>`select data_type, is_nullable
       from information_schema.columns

@@ -681,7 +681,7 @@ export interface RunsTable {
     "manual" | "idle" | null | undefined,
     "manual" | "idle" | null
   >;
-  /** 0199: an idle compact run's mode (compaction model spec §6.1); null on every other run. */
+  /** 0200: an idle compact run's mode (compaction model spec §6.1); null on every other run. */
   idle_mode: ColumnType<IdleMode | null, IdleMode | null | undefined, IdleMode | null>;
 }
 

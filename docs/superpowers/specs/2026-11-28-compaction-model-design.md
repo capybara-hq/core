@@ -347,7 +347,7 @@ transcript summarizer.
   summary is always `"transcript"`.
 - `compaction_failed` gains the same optional `model` (the model whose call failed or was denied;
   absent when no call was sent, such as `the model is unavailable`).
-- Idle job data gains `mode` (§6.2); `run_started.compactOrigin` is unchanged. Migration 0199 adds
+- Idle job data gains `mode` (§6.2); `run_started.compactOrigin` is unchanged. Migration 0200 adds
   `runs.idle_mode text NULL CHECK (idle_mode IN ('cache', 'compaction_model'))`, written by
   `startIdleCompaction` and read by the run worker (§6.3); `runs` has no `org_id`, so no RLS policy.
 
