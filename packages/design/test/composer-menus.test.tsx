@@ -492,7 +492,9 @@ describe("ComposerMenu (anchored)", () => {
   it("speaks English with the en locale", () => {
     wrap(<Harness groups={slashGroups()} onSwitch={() => {}} />, "en");
     const foot = document.querySelector('[data-part="composer-menu-foot"]') as HTMLElement;
-    expect(within(foot).getByRole("button", { name: "@ Connectors, files and conversations" })).toBeTruthy();
+    expect(
+      within(foot).getByRole("button", { name: "@ Connectors, files and conversations" }),
+    ).toBeTruthy();
     expect(foot.textContent).toContain("esc Close");
   });
 
@@ -1244,6 +1246,72 @@ describe("ComposerMenu drill-in", () => {
       ).toBe(true);
     });
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("a key from a target without caret facts never drills", () => {
+    const drills: Record<string, ReturnType<typeof vi.fn>> = {};
+    let ctl: ReturnType<typeof useComposerMenu> | undefined;
+    function H() {
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: connectorGroups({}, drills),
+        query: "",
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+      };
+      ctl = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={ctl} referenceAnchored />;
+    }
+    wrap(<H />);
+    const div = document.createElement("div");
+    const ev = {
+      key: "ArrowRight",
+      keyCode: 0,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      currentTarget: div,
+      nativeEvent: {},
+      preventDefault: () => {},
+    } as unknown as React.KeyboardEvent<HTMLElement>;
+    act(() => {
+      expect(ctl?.onKeyDown(ev)).toBe(false);
+    });
+    expect(drills.slack).not.toHaveBeenCalled();
+  });
+
+  it("compact keeps the search field focused through drill and back", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    function Compact() {
+      const [level, setLevel] = useState(false);
+      const props: ComposerMenuProps = {
+        kind: "at",
+        groups: connectorGroups({}, {}).map((g) => ({
+          ...g,
+          items: g.items.map((it) =>
+            it.drill ? { ...it, drill: { ...it.drill, onDrill: () => setLevel(true) } } : it,
+          ),
+        })),
+        query: "",
+        filter: false,
+        empty: "没有匹配",
+        onClose: () => {},
+        onQueryChange: () => {},
+        ...(level ? { level: { title: "Slack · 资源", onBack: () => setLevel(false) } } : {}),
+      };
+      const menu = useComposerMenu(props);
+      return <ComposerMenu {...props} controller={menu} />;
+    }
+    wrap(<Compact />);
+    const field = () => screen.getByRole("searchbox");
+    field().focus();
+    fireEvent.keyDown(field(), { key: "ArrowRight" });
+    expect(screen.getByRole("dialog", { name: "Slack · 资源" })).toBeTruthy();
+    expect(document.activeElement).toBe(field());
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(document.activeElement).toBe(field());
   });
 
   it("→ on a disabled drill row does nothing; ← with a query does not go back", () => {

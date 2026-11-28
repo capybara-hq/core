@@ -17,15 +17,13 @@ import type { ComposerSegment } from "./composer-editor/segments";
 import { InlineToken, skillText } from "./composer-editor/token";
 import { fillCopy } from "./tool-copy";
 
+/**
+ * The message is `text`, or `segments` (text runs and inline tokens, composer inline tokens spec
+ * §1), never both: each token is a read-only {@link InlineToken} in the sentence. The text runs
+ * keep the bubble's own `pre-wrap` treatment (the bubble draws plain text, not markdown), so
+ * tokens interleave as inline boxes. The skill chip still comes first.
+ */
 export type UserBubbleProps = {
-  text: string;
-  /**
-   * The message as text runs and inline tokens (composer inline tokens spec §1): when given, drawn
-   * instead of `text`, each token a read-only {@link InlineToken} in the sentence. The text runs
-   * keep the bubble's own `pre-wrap` treatment (the bubble draws plain text, not markdown), so
-   * tokens interleave as inline boxes. The skill chip still comes first.
-   */
-  segments?: ComposerSegment[];
   /** Shown above the bubble, right-aligned (usually {@link BubbleAttachments}). */
   attachments?: ReactNode;
   /** The queued form (§6.16.14): dashed border, translucent. */
@@ -55,7 +53,7 @@ export type UserBubbleProps = {
    * (jsdom lays nothing out).
    */
   referenceLong?: boolean;
-};
+} & ({ text: string; segments?: never } | { text?: never; segments: ComposerSegment[] });
 
 /** The clamp of a long message in prose lines (`layout.bubble-clamp` = 8 × `type.prose.line`). */
 const CLAMP_LINES = 8;
@@ -140,7 +138,7 @@ export function UserBubble({
   referenceLong,
 }: UserBubbleProps): JSX.Element {
   const t = useDesignT();
-  const text = segments ? segmentsText(segments) : textProp;
+  const text = segments ? segmentsText(segments) : (textProp ?? "");
   const bodyId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
   // Per bubble and local to the view (acceptance item AC4): never persisted.

@@ -408,6 +408,10 @@ button.cb-tool-line:focus-visible {
 }
 /* A token inside the bubble (composer inline tokens spec §1): read-only, so no outline. The bubble
  * itself is `selected`, so a reference token takes `raised`; the skill token keeps its tint. */
+/* the connector mark reads as a tile on the token's raised ground */
+.cb-bubble .cb-inline-token-mark {
+  background: var(--cb-selected);
+}
 .cb-bubble .cb-inline-token {
   background: var(--cb-raised);
   cursor: inherit;
