@@ -1,5 +1,12 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.142
+
+### Patch Changes
+
+- Updated dependencies [a38800d]
+  - @capybara-hq/design@0.2.0-rc.55
+
 ## 0.1.0-rc.141
 
 No changes in this release.
