@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AgentLookupModule } from "../agents/agent-lookup.js";
 import { AutomationStoreModule } from "../automations/store.module.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { ConversationAccessModule } from "../conversations/access.js";
@@ -41,6 +42,7 @@ import { ConnectorsService } from "./connectors.service.js";
 import { CredentialsModule } from "./credentials.module.js";
 import { ToolDrift } from "./drift.js";
 import { ConversationToolInfo, OrgExtensionTools } from "./info.js";
+import { MentionableConnectorsService } from "./mentionable-connectors.js";
 import { OAuthFlow } from "./oauth/flow.js";
 import { OrgToolSwitches } from "./org-tool-switches.js";
 import { ToolOutputs } from "./outputs.js";
@@ -110,6 +112,8 @@ import { WatchedWaitsLock } from "./watched-waits-lock.js";
     AutomationStoreModule,
     // connector credentials (also the git gateway's, without importing this module)
     CredentialsModule,
+    // the agent the mentionable connectors are listed for, as the viewer may see it
+    AgentLookupModule,
   ],
   providers: [
     PermissionApprovalJobs,
@@ -139,6 +143,8 @@ import { WatchedWaitsLock } from "./watched-waits-lock.js";
     ConversationToolInfo,
     OrgExtensionTools,
     OrgToolSwitches,
+    // the composer's `@` menu: the connectors an agent can be pointed at
+    MentionableConnectorsService,
   ],
   exports: [
     PermissionApprovalJobs,
@@ -160,6 +166,7 @@ import { WatchedWaitsLock } from "./watched-waits-lock.js";
     ConversationToolInfo,
     OrgExtensionTools,
     OrgToolSwitches,
+    MentionableConnectorsService,
   ],
 })
 export class ToolsModule {}

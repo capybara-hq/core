@@ -16,6 +16,10 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import {
+  type MentionableConnector,
+  MentionableConnectorsService,
+} from "../tools/mentionable-connectors.js";
 import { AgentProfileService } from "./agent-profile.service.js";
 import {
   AgentCreateBody,
@@ -64,6 +68,8 @@ export class AgentsController {
     @Inject(AgentProfileService) private readonly profiles: AgentProfileService,
     @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
     @Inject(AgentsFromTemplate) private readonly fromTemplate: AgentsFromTemplate,
+    @Inject(MentionableConnectorsService)
+    private readonly mentionable: MentionableConnectorsService,
   ) {}
 
   /** A response's view with its provenance link (`createdFrom.available`, ruling P4-8). */
@@ -162,6 +168,24 @@ export class AgentsController {
         await this.agents.get(org.orgId, agentId, viewerOf(principal)),
       ),
     };
+  }
+
+  /**
+   * The connectors the web input box's `@` menu offers for this agent (composer inline tokens
+   * spec §4): the org's live, active connectors the agent is offered tools of, plus the
+   * `needs_config` ones, with the caller's credential state. A person only (a service token ->
+   * 403 `forbidden`); an agent the caller cannot see -> 404 `agent.not_found`. Opens no
+   * connector session.
+   */
+  @Get(":agentId/mentionable-connectors")
+  @OrgAction("agents.use")
+  async mentionableConnectors(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("agentId") agentId: string,
+  ): Promise<{ connectors: MentionableConnector[] }> {
+    const p = requireUser(principal);
+    return this.mentionable.list(org.orgId, p.account.id, agentId);
   }
 
   @Patch(":agentId")
