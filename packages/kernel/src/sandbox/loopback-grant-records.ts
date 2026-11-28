@@ -157,6 +157,30 @@ export function loopbackRefusal(
   return null;
 }
 
+/**
+ * Whether the device refuses loopback grants now, as far as that is known: a ceiling layer keeps
+ * running outside the sandbox off (`ceiling`), or a known, usable support lacks loopback ports
+ * (`provider-support`: no `network.loopbackPorts`, an old capybara-device, or nothing run outside
+ * the sandbox). A support not known (none stored, a failed read, or a closed one naming an
+ * `unavailableReason`, as while a device re-binds) refuses nothing: grants are consents and are
+ * kept until the support is known again. Null when nothing known refuses.
+ */
+export function knownLoopbackRefusal(facts: {
+  box: DeviceSandbox;
+  support: SandboxPermissionSupport | null;
+}): "ceiling" | "provider-support" | null {
+  const { box, support } = facts;
+  // no run here: only the device's ceiling decides whether a call could run outside now
+  if (!box.outsideSandbox && box.layer.outsideSandbox !== "provider") return "ceiling";
+  if (support === null || support.unavailableReason !== undefined) return null;
+  const refusal = loopbackRefusal(
+    box,
+    support,
+    box.outsideSandbox ? null : "the provider runs nothing outside the sandbox",
+  );
+  return refusal === null ? null : "provider-support";
+}
+
 export const rowOf = (r: Selectable<DeviceLoopbackGrantsTable>): LoopbackGrantRow => ({
   id: r.id,
   port: r.port,
@@ -212,6 +236,9 @@ export async function oweLoopbackRefreshes(
     if (!v) throw new Error(`A ${under.level} loopback refresh needs its subject`);
     return v;
   };
+  // RLS phase 5: the platform level reads every org's grants under asPlatform, but owes their
+  // outbox rows in the caller's scope; once RLS is enabled, those inserts must run under
+  // asPlatform too (or per row in its own org), or the policy refuses other orgs' rows
   const rows =
     under.level === "platform"
       ? await asPlatform("platform ceiling publication: loopback grants of every org", () => {

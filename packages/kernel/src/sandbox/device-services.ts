@@ -6,6 +6,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { LockService } from "../infra/lock/lock.service.js";
+import { knownLoopbackRefusal } from "./loopback-grant-records.js";
 import { LoopbackLivePorts } from "./loopback-live-ports.js";
 import { PermissionFacts } from "./permission-facts.js";
 import { type DeviceServiceMethods, SandboxService } from "./sandbox.service.js";
@@ -31,12 +32,13 @@ export const LOOPBACK_SET_LOCK_WAIT_MS = 60_000;
  * extension's service names, so the provider never sees a bare name two extensions could share.
  *
  * Every ensure sends the provider the service's live loopback port grants (browser loopback port
- * grants design §4: the whole sorted set), but only a non-empty set, and only while the device
- * sandbox admits loopback ports (`DeviceSandbox.loopbackPorts`: the provider's support reports
- * `network.loopbackPorts` and the ceilings allow running outside the sandbox). Otherwise
- * `loopbackPorts` is left out, which closes every loopback port: a provider without support never
- * sees the key, and a ceiling switched off narrows on the next ensure, before the refresh job
- * revokes the grants.
+ * grants design §4: the whole sorted set), but only a non-empty set, and never while the device
+ * refuses loopback grants as far as is known ({@link knownLoopbackRefusal}: a ceiling keeps
+ * running outside the sandbox off, or a known support lacks `network.loopbackPorts`). Then
+ * `loopbackPorts` is left out, which closes every loopback port: a provider known to lack support
+ * never sees the key, and a ceiling switched off narrows on the next ensure, before the refresh
+ * job revokes the grants. A support not known (as while a device re-binds) keeps sending the set,
+ * as it keeps the grants; a provider without support ignores it.
  * Reading the set and sending it are one step per (device, service) across replicas (a
  * `LockService` lock taken outside any transaction): an ensure that read an older set can never
  * reach the device after one that read a newer set.
@@ -70,7 +72,8 @@ export class DeviceServices {
       async (held) => {
         const ports = await this.loopback.livePorts(orgId, deviceId, name);
         const admitted =
-          ports.length > 0 && (await this.facts.deviceSandboxFacts(orgId, deviceId)).box.loopbackPorts;
+          ports.length > 0 &&
+          knownLoopbackRefusal(await this.facts.deviceSandboxFacts(orgId, deviceId)) === null;
         return send(admitted ? { loopbackPorts: ports } : {}, AbortSignal.any([signal, held.lost]));
       },
     );

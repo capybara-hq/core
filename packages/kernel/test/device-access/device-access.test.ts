@@ -1650,16 +1650,13 @@ describe("ctx.deviceAccess loopback port grants", () => {
     await access.ensureService(CALLER, callOf(), echoServiceSpec());
     await access.grantLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
     const from = await sentCount();
-    // the revoke's own send, told from an owed refresh job's by its caller
-    const direct: string[] = [];
-    const services = k.app.get(DeviceServices);
-    const original = services.refreshLoopback.bind(services);
-    vi.spyOn(services, "refreshLoopback").mockImplementation(async (...args) => {
-      if (new Error().stack?.includes("DeviceAccessService.refreshLoopback")) direct.push(args[2]);
-      return original(...args);
-    });
+    // the revoke's own send (the service's private step, not an owed refresh job's)
+    const direct = vi.spyOn(
+      access as unknown as { refreshLoopback(d: unknown, serviceId: string): Promise<void> },
+      "refreshLoopback",
+    );
     await access.revokeLoopbackPort(LOOPBACK, { ...scopeOf(), port: 3999 });
-    expect(direct).toEqual([ID]);
+    expect(direct.mock.calls.map((c) => c[1])).toEqual([ID]);
     expect(await access.loopbackPorts(LOOPBACK, scopeOf())).toEqual([]);
     // the revoke's own send went last (a send of the older set in flight, the grant's owed
     // refresh, lands before it: the per-service lock orders them)

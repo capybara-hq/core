@@ -286,6 +286,28 @@ describe("loopback port grants", () => {
     expect((await grant(3999)).id).not.toBe(g.id);
   });
 
+  it("the expiry pass deletes grant rows that ended more than 30 days ago", async () => {
+    const old = await grant(3999);
+    const recent = await grant(4000);
+    const live = await grant(4001);
+    failing = true;
+    await sql`UPDATE capybara.device_loopback_grants
+      SET revoked_at = now() - interval '31 days', revoke_reason = 'revoked'
+      WHERE id = ${old.id}`.execute(raw);
+    await sql`UPDATE capybara.device_loopback_grants
+      SET revoked_at = now() - interval '29 days', revoke_reason = 'expired'
+      WHERE id = ${recent.id}`.execute(raw);
+    // the worker's own tick may purge it first: assert the outcome, not who purged it
+    await grants.expireDue();
+    expect((await rows()).map((r) => r.id)).toEqual([recent.id, live.id]);
+    // the audit log keeps the purged grant
+    expect(
+      (await audits("device.loopback_granted")).some(
+        (a) => (a.detail as { grantId?: string }).grantId === old.id,
+      ),
+    ).toBe(true);
+  });
+
   it("refuses a 33rd live port with loopback_limit", async () => {
     for (let p = 1; p <= 32; p++) await grant(10_000 + p);
     const err = await grant(20_000).catch((e: unknown) => e);
@@ -421,6 +443,31 @@ describe("loopback port grants", () => {
     );
     expect((await rows())[0]?.revoke_reason).toBeNull();
     expect((await readFakeServiceLoopbackPorts(sandboxRoot)).slice(sends)).toEqual([[3999]]);
+    // a closed support naming why (a device re-binding a new generation) is not known either
+    vi.mocked(facts.deviceSandboxFacts).mockImplementation(async (...a) => {
+      const r = await real(...a);
+      return {
+        ...r,
+        support: {
+          ...FAKE_PERMISSION_SUPPORT,
+          outsideSandbox: false,
+          network: { ...FAKE_PERMISSION_SUPPORT.network, loopbackPorts: false },
+          unavailableReason: "the device is binding a new generation",
+        },
+        box: {
+          ...r.box,
+          outsideSandbox: false,
+          loopbackPorts: false,
+          layer: { ...r.box.layer, outsideSandbox: "provider" },
+        },
+      };
+    });
+    await grants.refresh(
+      { orgId, deviceId: s.deviceId, serviceId: SERVICE },
+      AbortSignal.timeout(30_000),
+    );
+    expect((await rows())[0]?.revoke_reason).toBeNull();
+    expect(await lastPorts()).toEqual([3999]);
     // a known support without loopback ports revokes (a provider that lost it)
     vi.mocked(facts.deviceSandboxFacts).mockImplementation(async (...a) => {
       const r = await real(...a);

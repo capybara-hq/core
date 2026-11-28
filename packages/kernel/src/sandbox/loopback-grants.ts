@@ -20,6 +20,7 @@ import { DeviceServices } from "./device-services.js";
 import {
   endedGrants,
   isDatabasePort,
+  knownLoopbackRefusal,
   LOOPBACK_GRANT_TTL_HOURS,
   type LoopbackGrantKey,
   type LoopbackGrantRow,
@@ -38,6 +39,13 @@ import { escalationCeilingWhy, escalationRuntimeWhy } from "./review/permission-
 // the constants, types and plain functions live in a leaf module (no services imported), so
 // conversation deletion and ceiling writes import them without an import cycle
 export * from "./loopback-grant-records.js";
+
+/** How long an ended grant row is kept before the expiry pass deletes it (the audit log stays). */
+export const LOOPBACK_ENDED_RETENTION_DAYS = 30;
+/** The rows one retention batch deletes. */
+export const LOOPBACK_PURGE_BATCH = 500;
+/** The retention batches one expiry pass runs at most. */
+export const LOOPBACK_PURGE_MAX_BATCHES = 20;
 
 /**
  * The lock of one (device, service)'s live set (decision R9: one provider per
@@ -317,29 +325,21 @@ export class LoopbackGrants {
    * The refresh job. First it revokes the (device, service)'s live grants (reason
    * `outside-sandbox-off`, audited) when the device refuses loopback grants now: a ceiling layer
    * keeps running outside the sandbox off, or the provider's known support lacks
-   * `network.loopbackPorts` (a provider that lost it). A support not known (none stored, or a
-   * failed read) revokes nothing: grants are consents, and new ones are refused meanwhile. Then it
-   * sends the live set to an `ifRunning` ensure of the service (`DeviceServices.refreshLoopback`),
-   * always, so a revocation already recorded reaches the machine whatever the support says (a
-   * provider without support ignores the set). A stopped service or instance needs nothing: its
+   * `network.loopbackPorts` (a provider that lost it; {@link knownLoopbackRefusal}). A support
+   * not known (none stored, a failed read, or a closed one with an `unavailableReason`, as while a
+   * device re-binds) revokes nothing: grants are consents, and new ones are refused meanwhile.
+   * Then it sends the live set to an `ifRunning` ensure of the service
+   * (`DeviceServices.refreshLoopback`), always, so a revocation already recorded reaches the
+   * machine whatever the support says. A stopped service or instance needs nothing: its
    * next ensure sends the set. A failed send owes a delayed follow-up
    * ({@link oweLoopbackFollowUp}), so a narrowing never stays on a machine the kernel records as
    * running because one send failed.
    */
   async refresh(data: LoopbackRefreshJobData, signal: AbortSignal): Promise<void> {
-    const facts = await this.facts.deviceSandboxFacts(data.orgId, data.deviceId);
-    // no run here: only the device's ceiling decides whether a call could run outside now
-    const ceilingOff = !facts.box.outsideSandbox && facts.box.layer.outsideSandbox !== "provider";
-    if (ceilingOff) await this.revokeRefused(data, "ceiling");
-    else if (
-      facts.support !== null &&
-      loopbackRefusal(
-        facts.box,
-        facts.support,
-        facts.box.outsideSandbox ? null : "the provider runs nothing outside the sandbox",
-      ) !== null
-    )
-      await this.revokeRefused(data, "provider-support");
+    const refused = knownLoopbackRefusal(
+      await this.facts.deviceSandboxFacts(data.orgId, data.deviceId),
+    );
+    if (refused !== null) await this.revokeRefused(data, refused);
     signal.throwIfAborted();
     try {
       await this.services.refreshLoopback(data.orgId, data.deviceId, data.serviceId, signal);
@@ -396,10 +396,57 @@ export class LoopbackGrants {
 
   /**
    * The expiry pass: marks every live grant past its `expires_at` revoked (reason `expired`,
-   * audited) and owes one refresh per (device, service). Returns how many it ended.
+   * audited) and owes one refresh per (device, service). Returns how many it ended. Then it
+   * deletes the grant rows that ended more than {@link LOOPBACK_ENDED_RETENTION_DAYS} days ago
+   * ({@link purgeEnded}; the audit log keeps every grant and its end).
    */
-  expireDue(): Promise<number> {
-    return asPlatform("loopback grant expiry sweep over every org", () => this.expireDueIn());
+  async expireDue(): Promise<number> {
+    const ended = await asPlatform("loopback grant expiry sweep over every org", () =>
+      this.expireDueIn(),
+    );
+    await this.purgeEnded();
+    return ended;
+  }
+
+  /**
+   * Deletes ended grant rows older than the retention, in batches of
+   * {@link LOOPBACK_PURGE_BATCH} (each its own transaction), at most
+   * {@link LOOPBACK_PURGE_MAX_BATCHES} per pass: the next pass takes the rest. Returns how many.
+   */
+  async purgeEnded(): Promise<number> {
+    let total = 0;
+    for (let i = 0; i < LOOPBACK_PURGE_MAX_BATCHES; i++) {
+      const n = await asPlatform("loopback grant retention sweep over every org", () =>
+        this.purgeEndedBatch(),
+      );
+      total += n;
+      if (n < LOOPBACK_PURGE_BATCH) break;
+    }
+    return total;
+  }
+
+  @Transactional()
+  private async purgeEndedBatch(): Promise<number> {
+    // org-filter: deployment-wide retention sweep over every org's ended grants, entered under
+    // asPlatform by purgeEnded; nothing live is touched
+    const r = await this.db
+      .deleteFrom("device_loopback_grants")
+      .where(
+        "id",
+        "in",
+        this.db
+          .selectFrom("device_loopback_grants")
+          .select("id")
+          .where("revoked_at", "is not", null)
+          .where(
+            "revoked_at",
+            "<",
+            sql<Date>`now() - make_interval(days => ${LOOPBACK_ENDED_RETENTION_DAYS})`,
+          )
+          .limit(LOOPBACK_PURGE_BATCH),
+      )
+      .executeTakeFirst();
+    return Number(r.numDeletedRows);
   }
 
   @Transactional()

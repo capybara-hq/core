@@ -142,7 +142,7 @@ beforeAll(async () => {
 let svc: SandboxService;
 let services: DeviceServices;
 let locks: LockService;
-/** Whether the stubbed device sandbox admits loopback ports (`DeviceSandbox.loopbackPorts`). */
+/** Whether the stubbed device's ceilings allow running outside the sandbox. */
 let loopbackAdmitted: boolean;
 
 afterAll(async () => {
@@ -184,7 +184,14 @@ beforeEach(async () => {
   locks = new LockService(redis, createLogger("error"));
   loopbackAdmitted = true;
   const facts = {
-    deviceSandboxFacts: async () => ({ box: { loopbackPorts: loopbackAdmitted } }),
+    deviceSandboxFacts: async () => ({
+      box: {
+        outsideSandbox: loopbackAdmitted,
+        loopbackPorts: loopbackAdmitted,
+        layer: { outsideSandbox: loopbackAdmitted ? null : "org" },
+      },
+      support: null,
+    }),
   } as unknown as Pick<PermissionFacts, "deviceSandboxFacts">;
   services = new DeviceServices(svc, new LoopbackLivePorts(kdb), locks, facts);
 });
@@ -354,7 +361,7 @@ describe("device services", () => {
     expect((await readFakeSandboxOps(root)).filter((o) => o[0] === "update")).toEqual([]);
   });
 
-  it("leaves the set out when it is empty or the device sandbox does not admit loopback ports", async () => {
+  it("leaves the set out when it is empty or a ceiling refuses loopback ports", async () => {
     const sent: (readonly number[] | undefined)[] = [];
     const ensure = provider.ensureService?.bind(provider);
     if (!ensure) throw new Error("device-fake has services");
@@ -368,7 +375,7 @@ describe("device services", () => {
       VALUES (${randomUUID()}, ${seed.orgId}, ${deviceId}, 'fake-ext.echo', ${seed.conversationId},
         3999, 'owner-panel', now() + interval '1 hour')`.execute(raw);
     await services.ensure(use(), spec(), signal());
-    // the support lost loopback ports, or a ceiling closed outside-sandbox running
+    // the org closed running outside the sandbox
     loopbackAdmitted = false;
     await services.ensure(use(), spec(), signal());
     await services.refreshLoopback(seed.orgId, deviceId, "fake-ext.echo", signal());

@@ -40,6 +40,11 @@ CREATE INDEX IF NOT EXISTS device_loopback_grants_expiry_idx
   ON device_loopback_grants (expires_at)
   WHERE revoked_at IS NULL;
 
+-- The retention sweep's scan of ended grants (deleted 30 days after they end).
+CREATE INDEX IF NOT EXISTS device_loopback_grants_ended_idx
+  ON device_loopback_grants (revoked_at)
+  WHERE revoked_at IS NOT NULL;
+
 -- The by-root revocation (conversation deleted) and refresh scans of live grants.
 CREATE INDEX IF NOT EXISTS device_loopback_grants_root_idx
   ON device_loopback_grants (conversation_id)
