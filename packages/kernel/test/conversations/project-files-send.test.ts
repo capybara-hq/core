@@ -588,4 +588,54 @@ describe("projectFiles on send", () => {
       .execute();
     expect(none).toEqual([]);
   });
+
+  it("first-message (the new-conversation home): the files are referenced, a missing path refused", async () => {
+    const d = await owned();
+    const machine = await connect(d);
+    const first = (message: Record<string, unknown>) =>
+      d.req({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/first-message`,
+        payload: {
+          agentId,
+          deviceId: d.deviceId,
+          project: "app",
+          message,
+          permission: { profile: "request-approval" },
+        },
+      });
+    const created = await first({
+      text: "start here",
+      clientMessageId: randomUUID(),
+      projectFiles: [{ path: "./src/a.ts" }, { path: "README.md" }],
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const conv = (created.json() as { conversation: { id: string } }).conversation.id;
+    const [m] = await userMessages(conv);
+    expect(m?.payload.content).toEqual([
+      { type: "text", text: "start here" },
+      { type: "text", text: projectFileText("src/a.ts", ROOT) },
+      { type: "text", text: projectFileText("README.md", ROOT) },
+    ]);
+    expect(m?.payload.projectFiles).toEqual([{ path: "src/a.ts" }, { path: "README.md" }]);
+    expect(statPaths(machine)).toEqual([`${ROOT}/src/a.ts`, `${ROOT}/README.md`]);
+
+    const clientMessageId = randomUUID();
+    const refused = await first({
+      text: "start",
+      clientMessageId,
+      projectFiles: [{ path: "gone.ts" }],
+    });
+    expect(refused.statusCode, refused.body).toBe(422);
+    expect(errOf(refused)).toMatchObject({
+      code: "conversation.project_file_unavailable",
+      details: [{ path: "gone.ts" }],
+    });
+    const none = await db
+      .selectFrom("conversations")
+      .select("id")
+      .where("create_request_id", "=", clientMessageId)
+      .execute();
+    expect(none).toEqual([]);
+  });
 });
