@@ -259,7 +259,9 @@ const MAC_TLS_TRUST_SERVICES: readonly string[] = Object.freeze(["com.apple.Trus
  *
  * Listening stays refused (`allowLocalBinding: false`) under every profile: Seatbelt cannot limit a
  * bind to loopback (spec "Known limitations"), and with it the command could reach every local
- * port. `allowPrivate` is a trusted test seam (like the Linux forwarder's): it lifts the address
+ * port. A device service's grant may name `loopbackPorts`: the patched runtime's
+ * `allowedLoopbackPorts`, which it honours only in strict mode (always on outside the seam), lets
+ * the proxy dial exactly those ports on 127.0.0.1, ::1 and localhost. `allowPrivate` is a trusted test seam (like the Linux forwarder's): it lifts the address
  * rules so a fixture on loopback can be granted; nothing in production sets it.
  *
  * TLS trust needs one Mach service, `com.apple.TrustEvaluationAgent` (the per-user agent, not its
@@ -272,7 +274,7 @@ const MAC_TLS_TRUST_SERVICES: readonly string[] = Object.freeze(["com.apple.Trus
  * 26 with a leaf whose AIA URL pointed at a local listener). `trustd` stays closed.
  */
 export function macNetworkConfig(
-  grant: Pick<LocalOperationGrant, "hosts" | "openNetwork">,
+  grant: Pick<LocalOperationGrant, "hosts" | "openNetwork" | "loopbackPorts">,
   options: { allowPrivate?: boolean } = {},
 ): {
   askAll: boolean;
@@ -290,6 +292,9 @@ export function macNetworkConfig(
       allowedDomains: grant.openNetwork ? [] : [...grant.hosts],
       deniedDomains: [],
       ...closed,
+      // a device service's granted loopback ports (strict mode only in the runtime)
+      ...(grant.loopbackPorts &&
+        grant.loopbackPorts.length > 0 && { allowedLoopbackPorts: [...grant.loopbackPorts] }),
       ...doh,
       allowLocalBinding: false,
       allowMachLookup: [...MAC_TLS_TRUST_SERVICES],

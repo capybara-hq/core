@@ -33,6 +33,8 @@ import { macServiceLauncher } from "../src/services/mac-launcher.js";
 import { parseServiceOpBody, serveServiceOp } from "../src/services/ops.js";
 import {
   MAX_SERVICE_SOCKET_PATH_BYTES,
+  networkKey,
+  ServiceSpecError,
   ServiceSupervisor,
   servicePaths,
 } from "../src/services/supervisor.js";
@@ -613,10 +615,17 @@ it("service.request waits no longer than the envelope deadline and answers", asy
   });
 });
 
+interface CeilingNet {
+  network: "open" | "allowlist";
+  allowedDomains: string[];
+  revision?: string;
+  outsideSandbox?: boolean;
+}
+
 function ceiling(
   roots: { workspace: string },
   denies: string[] = [],
-  net: { network: "open" | "allowlist"; allowedDomains: string[]; revision?: string } = {
+  net: CeilingNet = {
     network: "open",
     allowedDomains: [],
   },
@@ -642,7 +651,7 @@ function ceiling(
 /** A supervisor on the macOS launcher with a fake worker that runs the echo service in-process. */
 async function macFixture(
   denies: (deviceDir: string) => string[] = () => [],
-  net?: () => { network: "open" | "allowlist"; allowedDomains: string[]; revision?: string },
+  net?: () => CeilingNet,
 ) {
   const f = await fixture();
   const requests: MacWorkerRequest[] = [];
@@ -1306,4 +1315,117 @@ it("a running service reports the SDK's digest of the files it was sent (the pin
     ok: true,
     result: { state: "running", filesDigest: DEVICE_SERVICE_FILES_DIGEST_VECTOR.digest },
   });
+});
+
+it("parses network.loopbackPorts and refuses a bad one", () => {
+  const body = (loopbackPorts: unknown) => ({
+    op: "service.ensure",
+    spec: spec(),
+    network: { kind: "allowlist", hosts: [], loopbackPorts },
+  });
+  expect(parseServiceOpBody(body([3999, 80]))).toMatchObject({
+    network: { kind: "allowlist", hosts: [], loopbackPorts: [80, 3999] },
+  });
+  // an empty set is kept as sent (it closes every port)
+  expect(parseServiceOpBody(body([]))).toMatchObject({ network: { loopbackPorts: [] } });
+  // absent: no key at all
+  const { network } = parseServiceOpBody({
+    op: "service.ensure",
+    spec: spec(),
+    network: { kind: "allowlist", hosts: [] },
+  }) as { network: object };
+  expect(network).not.toHaveProperty("loopbackPorts");
+  for (const bad of [
+    [70000],
+    [0],
+    [1.5],
+    ["80"],
+    [80, 80],
+    80,
+    Array.from({ length: 33 }, (_, i) => i + 1),
+  ])
+    expect(() => parseServiceOpBody(body(bad))).toThrow(ServiceSpecError);
+  expect(() =>
+    parseServiceOpBody({
+      op: "service.ensure",
+      spec: spec(),
+      network: { kind: "allowlist", hosts: [], other: 1 },
+    }),
+  ).toThrow(ServiceSpecError);
+});
+
+it("networkKey adds the sorted loopback ports, and is unchanged without any", () => {
+  expect(networkKey({ kind: "allowlist", hosts: ["B.example.com"] })).toBe(
+    "allowlist:b.example.com",
+  );
+  expect(networkKey({ kind: "allowlist", hosts: ["b.example.com"], loopbackPorts: [] })).toBe(
+    "allowlist:b.example.com",
+  );
+  expect(networkKey({ kind: "open-public", hosts: [], loopbackPorts: [3999, 80] })).toBe(
+    "open-public:;loopback:80,3999",
+  );
+  expect(networkKey(undefined)).toBe("none");
+});
+
+it("restarts a running service when its loopback ports change, and keeps it when they do not", async () => {
+  const { supervisor, echo } = await fixture();
+  const ensure = (loopbackPorts: number[]) =>
+    serveServiceOp(
+      supervisor,
+      {
+        op: "service.ensure",
+        spec: spec(),
+        network: { kind: "allowlist", hosts: ["a.example.com"], loopbackPorts },
+      },
+      signal(),
+    );
+  expect(await ensure([])).toMatchObject({ ok: true, result: { state: "running" } });
+  await ensure([]);
+  expect(echo.calls).toHaveLength(1);
+  expect(await ensure([3999])).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(echo.calls).toHaveLength(2);
+  expect(echo.calls[1]?.network).toEqual({
+    kind: "allowlist",
+    hosts: ["a.example.com"],
+    loopbackPorts: [3999],
+  });
+  await ensure([3999]);
+  expect(echo.calls).toHaveLength(2);
+});
+
+it("drops loopback ports from the key while the owner ceiling forbids running outside the sandbox", async () => {
+  let outsideSandbox = false;
+  const f = await macFixture(undefined, () => ({
+    network: "allowlist",
+    allowedDomains: ["a.example.com"],
+    outsideSandbox,
+    revision: outsideSandbox ? "r2" : "r1",
+  }));
+  const ensure = (loopbackPorts: number[]) =>
+    serveServiceOp(
+      f.supervisor,
+      {
+        op: "service.ensure",
+        spec: spec(),
+        network: { kind: "allowlist", hosts: ["a.example.com"], loopbackPorts },
+      },
+      signal(),
+    );
+  expect(await ensure([3999])).toMatchObject({ ok: true, result: { state: "running" } });
+  // the owner's ceiling bounds the ports on the machine too: none reach the grant
+  expect(f.requests[0]?.grant).not.toHaveProperty("loopbackPorts");
+  // the same as no ports at all: kept, not restarted
+  await ensure([]);
+  expect(f.requests).toHaveLength(1);
+  // the owner allows running outside the sandbox: the requested ports take effect
+  outsideSandbox = true;
+  expect(await ensure([3999, 80])).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(f.requests).toHaveLength(2);
+  expect(f.requests[1]?.grant.loopbackPorts).toEqual([80, 3999]);
+  await ensure([80, 3999]);
+  expect(f.requests).toHaveLength(2);
+  // a changed set restarts it with the new set, sent whole
+  expect(await ensure([80])).toMatchObject({ ok: true, result: { state: "running" } });
+  expect(f.requests).toHaveLength(3);
+  expect(f.requests[2]?.grant.loopbackPorts).toEqual([80]);
 });

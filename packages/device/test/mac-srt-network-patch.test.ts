@@ -881,6 +881,19 @@ describe("the macOS worker's network configuration", () => {
     expect(NetworkConfigSchema.parse(allowlist.network)).toMatchObject(allowlist.network);
   });
 
+  it("adds allowedLoopbackPorts only for granted ports", async () => {
+    const granted = macNetworkConfig({ hosts: [], loopbackPorts: [3999] });
+    expect(granted.network.allowedLoopbackPorts).toEqual([3999]);
+    expect(granted.network).toMatchObject(closed);
+    expect(macNetworkConfig({ hosts: [] }).network).not.toHaveProperty("allowedLoopbackPorts");
+    expect(macNetworkConfig({ hosts: [], loopbackPorts: [] }).network).not.toHaveProperty(
+      "allowedLoopbackPorts",
+    );
+    // the patched runtime's schema takes it as written
+    const { NetworkConfigSchema } = await load("sandbox-config.js");
+    expect(NetworkConfigSchema.parse(granted.network)).toMatchObject(granted.network);
+  });
+
   it("lifts the address rules only through the trusted test seam", () => {
     const seam = macNetworkConfig({ hosts: ["127.0.0.1:8080"] }, { allowPrivate: true });
     expect(seam.network).not.toHaveProperty("deniedResolvedAddresses");
