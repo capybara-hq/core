@@ -1,6 +1,7 @@
 import { Controller, Get, Inject, Patch, Post, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import type { z } from "zod";
+import { requestSignal } from "../http/request-signal.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -82,6 +83,7 @@ export class PermissionProfilesController {
         clientMessageId: message.clientMessageId,
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
         ...(message.files !== undefined ? { files: message.files } : {}),
+        ...(message.projectFiles !== undefined ? { projectFiles: message.projectFiles } : {}),
         ...(message.model !== undefined ? { model: message.model } : {}),
         ...(message.effort !== undefined ? { effort: message.effort } : {}),
         ...(message.skill !== undefined ? { skill: message.skill } : {}),
@@ -92,7 +94,7 @@ export class PermissionProfilesController {
         ...(deviceId !== undefined ? { deviceId } : {}),
         ...(project !== undefined ? { project } : {}),
       },
-      { source: "web", initialPermission: permission },
+      { source: "web", initialPermission: permission, signal: requestSignal(reply) },
     );
     reply.status(out.created ? 201 : 200);
     return { conversation: out.conversation, event: out.event, events: out.events };
