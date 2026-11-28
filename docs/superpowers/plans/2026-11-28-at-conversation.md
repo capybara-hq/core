@@ -121,3 +121,10 @@ Follow writing-web-ui's change flow (spec → reference blocks → catalog → c
 - Next: pull the reference PNGs, compare in the Linux Playwright image
   (COMPARE=composer-menu,attachment-strip,user-bubble; all three already in ACCEPTED), blind review,
   size classes, merge origin/main, renumber migration if needed (0196 free on 2026-11-28), PR.
+- Acceptance: Linux compare (playwright v1.64.1-noble) + blind review: one severe difference in
+  user-bubble-compact-conversation was the reference's (75% instead of the spec's 85% compact bubble),
+  fixed 181bdf71c, references re-rendered 240c512cb. Other blocks matched (menu: anti-aliasing only).
+  Size shots 390/720/1280 checked. All three components already in ACCEPTED.
+- verify --fast: all static checks pass; unit run had 2 timeouts in automations-event-form.test.tsx
+  (unrelated, from main; passes alone 16/16, load-sensitive). Migration 0196 still free.
+- Next: PR (Refs #1029), visual-update, CI watch.
